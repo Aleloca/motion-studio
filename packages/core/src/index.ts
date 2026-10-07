@@ -8,3 +8,4 @@ export * from './doctor.ts';
 export * from './agent/runner.ts';
 export * from './agent/claude-stream-parser.ts';
 export * from './agent/claude-code-runner.ts';
+export * from './jobs/job-queue.ts';
