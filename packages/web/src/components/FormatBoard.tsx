@@ -9,7 +9,7 @@ interface BoardProps {
   fileUrl: (n: number, file: string) => string; pins: Pin[]; showSafeZone: boolean; onOpen: (id: string) => void;
 }
 
-function Frame({ preset, version, fileUrl, pins, showSafeZone }: { preset: FormatPreset; version: VersionEntry | null; fileUrl: BoardProps['fileUrl']; pins: Pin[]; showSafeZone: boolean }) {
+function Frame({ preset, version, fileUrl, pins, showSafeZone }: { preset: FormatPreset; version: VersionEntry | null; fileUrl: BoardProps['fileUrl']; pins: Array<{ pin: Pin; number: number }>; showSafeZone: boolean }) {
   const size = fitFrame(preset.width, preset.height, 300, 260);
   const out: OutputFileInfo | undefined = version?.outputs.find((o) => o.format === preset.id);
   const label = `${preset.channel} · ${preset.name}`;
@@ -26,8 +26,8 @@ function Frame({ preset, version, fileUrl, pins, showSafeZone }: { preset: Forma
           <span style={band({ left: 0, right: 0, bottom: 0, height: `${(sz.bottom / preset.height) * 100}%` })} />
         </>
       )}
-      {pins.map((p, k) => (
-        <span key={k} aria-label={`Commento ${k + 1}`} style={{ position: 'absolute', left: `${p.x * 100}%`, top: `${p.y * 100}%`, transform: 'translate(-50%, -100%)', width: 22, height: 22, borderRadius: '50% 50% 50% 0', background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 11, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid var(--on-accent)' }}>{k + 1}</span>
+      {pins.map(({ pin: p, number }) => (
+        <span key={number} aria-label={`Commento ${number}`} style={{ position: 'absolute', left: `${p.x * 100}%`, top: `${p.y * 100}%`, transform: 'translate(-50%, -100%)', width: 22, height: 22, borderRadius: '50% 50% 50% 0', background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 11, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid var(--on-accent)' }}>{number}</span>
       ))}
     </div>
   );
@@ -43,7 +43,7 @@ export function FormatBoard({ presets, formats, version, compare, fileUrl, pins,
           <span className="muted" style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{channel}</span>
           <div className="row" style={{ alignItems: 'flex-end', gap: 18 }}>
             {items.map((p) => {
-              const formatPins = pins.filter((x) => x.format === p.id);
+              const formatPins = pins.map((pin, i) => ({ pin, number: i + 1 })).filter((x) => x.pin.format === p.id);
               return (
                 <button key={p.id} type="button" onClick={() => onOpen(p.id)} aria-label={`${p.channel} · ${p.name} — apri`} style={{ all: 'unset', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <div className="row" style={{ gap: 10, alignItems: 'flex-end' }}>

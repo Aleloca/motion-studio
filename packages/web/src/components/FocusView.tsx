@@ -4,9 +4,9 @@ import { useEffect, useRef, useState, type MouseEvent } from 'react';
 const VIDEO = /\.(mp4|webm|mov)(\?|$)/i;
 const round = (v: number, d: number) => Math.round(v * 10 ** d) / 10 ** d;
 
-export function FocusView({ preset, src, compareSrc, versionN, compareN, pins, onAddPin, onClose }: {
+export function FocusView({ preset, src, compareSrc, versionN, compareN, pins, pinNumbers, onAddPin, onClose }: {
   preset: FormatPreset; src: string | null; compareSrc: string | null; versionN: number | null; compareN: number | null;
-  pins: Pin[]; onAddPin: (pin: Pin) => void; onClose: () => void;
+  pins: Pin[]; /** 1-based global numbers of `pins`, so markers match the pending list; defaults to 1..n. */ pinNumbers?: number[]; onAddPin: (pin: Pin) => void; onClose: () => void;
 }) {
   const [commenting, setCommenting] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -24,12 +24,12 @@ export function FocusView({ preset, src, compareSrc, versionN, compareN, pins, o
 
   const media = (url: string | null, n: number | null, main: boolean) => (
     <figure style={{ margin: 0, display: 'flex', flexDirection: 'column', gap: 6, flex: '1 1 0', minWidth: 0 }}>
-      <div style={{ position: 'relative', aspectRatio: `${preset.width} / ${preset.height}`, maxHeight: '70vh', background: 'var(--surface-2)', borderRadius: 6, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div data-testid={main ? 'focus-frame' : undefined} style={{ position: 'relative', aspectRatio: `${preset.width} / ${preset.height}`, width: `min(100%, calc(70vh * ${preset.width} / ${preset.height}))`, margin: '0 auto', background: 'var(--surface-2)', borderRadius: 6, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         {!url && <span className="muted">Nessun output</span>}
         {url && VIDEO.test(url) && <video ref={main ? videoRef : undefined} src={url} controls style={{ width: '100%', height: '100%', objectFit: 'contain' }} />}
         {url && !VIDEO.test(url) && <img src={url} alt={`${preset.channel} · ${preset.name}${n ? ` v${n}` : ''}`} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />}
         {main && pins.map((p, k) => (
-          <span key={k} aria-label={`Commento ${k + 1}`} style={{ position: 'absolute', left: `${p.x * 100}%`, top: `${p.y * 100}%`, transform: 'translate(-50%, -100%)', width: 24, height: 24, borderRadius: '50% 50% 50% 0', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 800, fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{k + 1}</span>
+          <span key={k} aria-label={`Commento ${pinNumbers?.[k] ?? k + 1}`} style={{ position: 'absolute', left: `${p.x * 100}%`, top: `${p.y * 100}%`, transform: 'translate(-50%, -100%)', width: 24, height: 24, borderRadius: '50% 50% 50% 0', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 800, fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{pinNumbers?.[k] ?? k + 1}</span>
         ))}
         {main && commenting && (
           <button type="button" aria-label="Clicca sul punto da commentare" onClick={place}

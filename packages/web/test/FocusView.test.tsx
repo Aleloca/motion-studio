@@ -23,4 +23,13 @@ describe('FocusView', () => {
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     expect(onClose).toHaveBeenCalled();
   });
+  it('keeps the preset ratio for tall presets and numbers markers by global index', () => {
+    const story = DEFAULT_FORMATS.find((f) => f.height > f.width * 1.5)!;
+    render(<FocusView preset={story} src="/f/s.png" compareSrc={null} versionN={1} compareN={null} pins={[{ format: story.id, x: 0.1, y: 0.1, timeSec: null }]} pinNumbers={[3]} onAddPin={() => {}} onClose={() => {}} />);
+    const frame = screen.getByTestId('focus-frame');
+    expect(frame.style.maxHeight).toBe('');
+    expect(frame.style.aspectRatio.replace(/\s/g, '')).toBe(`${story.width}/${story.height}`);
+    expect(frame.style.width).toBe(`min(100%, ${(70 * story.width) / story.height}vh)`);
+    expect(screen.getByLabelText('Commento 3')).toBeTruthy();
+  });
 });

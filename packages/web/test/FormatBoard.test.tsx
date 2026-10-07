@@ -29,4 +29,10 @@ describe('FormatBoard', () => {
     expect(screen.getByLabelText('Instagram · Post 1:1 v1')).toBeTruthy();
     expect(screen.getByLabelText('Instagram · Post 1:1 v2')).toBeTruthy();
   });
+  it('numbers pin markers by their global index', () => {
+    render(<FormatBoard presets={DEFAULT_FORMATS} formats={['instagram-post-1x1', 'web-banner-300x250']} version={v1} compare={null} fileUrl={url}
+      pins={[{ format: 'web-banner-300x250', x: 0.1, y: 0.1, timeSec: null }, { format: 'instagram-post-1x1', x: 0.5, y: 0.5, timeSec: null }]} showSafeZone={false} onOpen={() => {}} />);
+    expect(screen.getByLabelText('Commento 2')).toBeTruthy();
+    expect(screen.queryByLabelText('Commento 1')).toBeTruthy();
+  });
 });

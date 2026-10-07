@@ -17,15 +17,22 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
   const [safeZone, setSafeZone] = useState(false);
   const [focus, setFocus] = useState<string | null>(null);
   const [pins, setPins] = useState<Pin[]>([]);
+  const [presetsLoaded, setPresetsLoaded] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [presetsFailure, setPresetsFailure] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  useEffect(() => { api.getFormats().then((s) => setPresets(s.presets)).catch(() => {}); }, []);
+  useEffect(() => { api.getFormats()
+      .then((s) => { setPresets(s.presets); setCatalogError(s.error); setPresetsLoaded(true); })
+      .catch((e: unknown) => { setPresetsFailure(e instanceof Error ? e.message : String(e)); setPresetsLoaded(true); });
+   }, []);
   const versions = detail?.versions ?? [];
   const latest = versions.at(-1) ?? null;
   // Follow new versions automatically unless the user picked an older one.
   useEffect(() => { setSelected((s) => (s === null || s === (versions.at(-2)?.n ?? null) ? latest?.n ?? null : s)); }, [latest?.n]); // eslint-disable-line react-hooks/exhaustive-deps
   const version = versions.find((v) => v.n === selected) ?? latest;
-  const compare = compareN !== null ? versions.find((v) => v.n === compareN) ?? null : null;
+  const compare = compareN !== null && compareN !== version?.n ? versions.find((v) => v.n === compareN) ?? null : null;
+  useEffect(() => { if (compareN !== null && compareN === version?.n) setCompareN(null); }, [compareN, version?.n]);
   const job = useMemo(() => Object.values(live.jobs).find((j) => j.key === detail?.jobKey && (j.state === 'queued' || j.state === 'running'))
     ?? Object.values(live.jobs).filter((j) => j.key === detail?.jobKey).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0], [live.jobs, detail?.jobKey]);
   const fileUrl = (n: number, file: string) => api.fileUrl(slug, creative, `outputs/v${n}/${file}`);
@@ -55,7 +62,7 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
         )}
         {versions.length > 1 && (
           <label className="row" style={{ gap: 6 }}>Confronta con
-            <select value={compareN ?? ''} onChange={(e) => setCompareN(e.target.value ? Number(e.target.value) : null)} style={{ minHeight: 36, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}>
+            <select value={compare?.n ?? ''} onChange={(e) => setCompareN(e.target.value ? Number(e.target.value) : null)} style={{ minHeight: 36, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}>
               <option value="">—</option>
               {versions.filter((v) => v.n !== version?.n).map((v) => <option key={v.n} value={v.n}>v{v.n}</option>)}
             </select>
@@ -75,10 +82,12 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
           <ul style={{ margin: '4px 0 0' }}>{version.problems.map((p) => <li key={p}>{p}</li>)}</ul>
         </div>
       )}
+      {presetsFailure && <p role="alert" className="error" style={{ margin: 12 }}>Impossibile caricare i formati: {presetsFailure}</p>}
+      {catalogError && <p className="warn" style={{ margin: 12 }}>{catalogError}</p>}
       {actionError && <p role="alert" className="error" style={{ margin: 12 }}>{actionError}</p>}
       <div style={{ flex: 1, display: 'flex', flexWrap: 'wrap', minHeight: 0 }}>
         <main className="dots" style={{ flex: '999 1 560px', minWidth: 0, overflow: 'auto' }}>
-          <FormatBoard presets={presets} formats={c.brief.formats} version={version ?? null} compare={compare} fileUrl={fileUrl} pins={pins} showSafeZone={safeZone} onOpen={setFocus} />
+          <FormatBoard presets={presets} formats={presetsLoaded && !presetsFailure ? c.brief.formats : []} version={version ?? null} compare={compare} fileUrl={fileUrl} pins={pins} showSafeZone={safeZone} onOpen={setFocus} />
         </main>
         <div style={{ flex: '1 1 360px', maxWidth: 440, minWidth: 0, display: 'flex' }}>
           <ConversationPanel slug={slug} detail={detail} conversation={conversation} presets={presets} job={job} liveEvents={job ? live.events[job.id] ?? [] : []}
@@ -92,6 +101,7 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
           compareSrc={compare ? (outFor(compare, focusPreset.id) ? fileUrl(compare.n, outFor(compare, focusPreset.id)!.file) : '') : null}
           versionN={version?.n ?? null} compareN={compare?.n ?? null}
           pins={pins.filter((p) => p.format === focusPreset.id)}
+          pinNumbers={pins.flatMap((p, i) => (p.format === focusPreset.id ? [i + 1] : []))}
           onAddPin={(pin) => setPins((p) => [...p, pin])} onClose={() => setFocus(null)} />
       )}
     </div>
