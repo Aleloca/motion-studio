@@ -9,3 +9,6 @@ export * from './agent/runner.ts';
 export * from './agent/claude-stream-parser.ts';
 export * from './agent/claude-code-runner.ts';
 export * from './jobs/job-queue.ts';
+export * from './server/event-hub.ts';
+export * from './server/app.ts';
+export * from './server/main.ts';
