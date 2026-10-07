@@ -7,6 +7,7 @@ export type AgentEvent =
   | { kind: 'tool_use'; id: string; name: string; input: unknown }
   | { kind: 'tool_result'; toolUseId: string; isError: boolean; content: string }
   | { kind: 'rate_limit'; status: string; resetsAt?: number }
+  | { kind: 'progress'; text: string }
   | { kind: 'stderr'; text: string }
   | { kind: 'parse_error'; line: string }
   | { kind: 'result'; ok: boolean; sessionId?: string; text?: string; costUsd?: number; error?: string };
@@ -28,8 +29,25 @@ export interface JobSummary {
   notes?: string[];
 }
 
+export type ApprovalKind = 'tool' | 'provider';
+export interface ApprovalRequest {
+  id: string; jobId: string; projectSlug: string; creativeSlug: string | null; kind: ApprovalKind;
+  /** Italian title, e.g. "Scrivere un file fuori dal progetto". */
+  title: string;
+  /** The command / path / provider summary, plain text. */
+  detail: string;
+  /** e.g. 'Bash', 'Write', 'provider:openai-images'. */
+  toolName: string;
+  /** Rule saved by "Sempre per questo progetto" (null = not offered). */
+  alwaysRule: string | null;
+  createdAt: string; expiresAt: string;
+}
+export type ApprovalDecision = 'once' | 'always' | 'deny';
+
 export type ServerMessage =
-  | { type: 'snapshot'; jobs: JobSummary[] }
+  | { type: 'snapshot'; jobs: JobSummary[]; approvals: ApprovalRequest[] }
+  | { type: 'approval'; approval: ApprovalRequest }
+  | { type: 'approval_resolved'; id: string; decision: ApprovalDecision | 'expired' | 'cancelled' }
   | { type: 'job'; job: JobSummary }
   | { type: 'agent'; jobId: string; event: AgentEvent }
   /** A creative's files changed (status, versions, conversation): clients refetch it. */
@@ -42,7 +60,7 @@ export type ServerMessage =
   | { type: 'project'; project: string };
 
 export interface DoctorCheck {
-  id: 'node' | 'git' | 'ffmpeg' | 'claude' | 'claude-auth';
+  id: 'node' | 'git' | 'ffmpeg' | 'claude' | 'claude-auth' | 'sandbox';
   label: string;
   ok: boolean;
   required: boolean;

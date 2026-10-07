@@ -89,7 +89,7 @@ export class LibraryStore {
           file: item.file, kind, origin: item.origin, sourceUrl: item.sourceUrl ?? existing?.sourceUrl ?? null,
           description: item.description || existing?.description || '', tags: item.tags?.length ? item.tags : existing?.tags ?? [],
           width: probed?.width ?? existing?.width ?? null, height: probed?.height ?? existing?.height ?? null,
-          addedAt: existing?.addedAt ?? now(),
+          addedAt: existing?.addedAt ?? now(), attribution: existing?.attribution ?? null,
         };
         if (existing) assets[assets.indexOf(existing)] = entry; else assets.push(entry);
         out.push(entry);

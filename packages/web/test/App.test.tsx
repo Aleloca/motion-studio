@@ -21,7 +21,7 @@ class FakeWebSocket {
 }
 
 const okChecks: DoctorCheck[] = [{ id: 'git', label: 'Git', ok: true, required: true, message: 'Installato' }];
-const settings = { schemaVersion: 1 as const, maxConcurrentJobs: 2, expertMode: false, theme: 'system' as const, model: null };
+const settings = { schemaVersion: 1 as const, maxConcurrentJobs: 2, expertMode: false, theme: 'system' as const, model: null, sandboxMode: 'auto' as const, extraAllowedDomains: [] as string[], confirmPaidProviders: true };
 
 function start(workspace: Promise<WorkspaceInfo>, doctor: Promise<DoctorCheck[]> = Promise.resolve(okChecks)) {
   vi.stubGlobal('WebSocket', FakeWebSocket);

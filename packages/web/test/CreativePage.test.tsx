@@ -14,7 +14,7 @@ vi.mock('../src/api.ts', () => ({
   ApiError: class extends Error {},
 }));
 const { CreativePage } = await import('../src/screens/CreativePage.tsx');
-const live = { jobs: {}, events: {}, creativeTicks: {} } as unknown as EventsState;
+const live = { approvals: {}, jobs: {}, events: {}, creativeTicks: {} } as unknown as EventsState;
 
 
 describe('CreativePage catalog loading', () => {

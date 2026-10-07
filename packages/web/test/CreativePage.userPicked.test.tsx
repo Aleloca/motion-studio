@@ -20,7 +20,7 @@ const { CreativePage } = await import('../src/screens/CreativePage.tsx');
 
 describe('CreativePage version selection', () => {
   it('follows new versions again after the user sends a message', async () => {
-    const live = { jobs: {}, events: {}, creativeTicks: {} as Record<string, number>, projectTicks: {} as Record<string, number> };
+    const live = { approvals: {}, jobs: {}, events: {}, creativeTicks: {} as Record<string, number>, projectTicks: {} as Record<string, number> };
     const { rerender } = render(<CreativePage slug="acme" creative="c1" live={live} expert={false} />);
     await waitFor(() => screen.getByRole('radio', { name: 'v2' }));
     await userEvent.click(screen.getByRole('radio', { name: 'v1' }));

@@ -6,12 +6,17 @@ export const appConfigSchema = z.object({
 });
 export type AppConfig = z.infer<typeof appConfigSchema>;
 
+export const domainSchema = z.string().trim().toLowerCase().regex(/^(\*\.)?([a-z0-9-]+\.)+[a-z]{2,}$/, 'dominio non valido (es. api.esempio.it o *.esempio.it)');
+
 export const workspaceSettingsSchema = z.object({
   schemaVersion: z.literal(1),
   maxConcurrentJobs: z.number().int().min(1).max(8).default(2),
   expertMode: z.boolean().default(false),
   theme: z.enum(['system', 'light', 'dark']).default('system'),
   model: z.string().min(1).nullable().default(null),
+  sandboxMode: z.enum(['auto', 'off']).default('auto'),
+  extraAllowedDomains: z.array(domainSchema).max(100).default([]),
+  confirmPaidProviders: z.boolean().default(true),
 });
 export type WorkspaceSettings = z.infer<typeof workspaceSettingsSchema>;
 

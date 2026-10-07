@@ -22,7 +22,7 @@ const api = {
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { AssetsPage } = await import('../src/screens/AssetsPage.tsx');
-const live = { jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
+const live = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
 
 beforeEach(() => {
   vi.clearAllMocks();

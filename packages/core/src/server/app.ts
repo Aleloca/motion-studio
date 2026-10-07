@@ -233,7 +233,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   app.get('/api/events', { websocket: true }, (socket) => {
     hub.add(socket);
-    hub.send(socket, { type: 'snapshot', jobs: queue.list() });
+    hub.send(socket, { type: 'snapshot', jobs: queue.list(), approvals: [] });
   });
 
   registerCreativeRoutes(app, { requireWorkspace, turns, media, openPath: deps.openPath ?? (async () => {}), isJobActive });

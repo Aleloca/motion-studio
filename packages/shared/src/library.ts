@@ -30,6 +30,7 @@ export const assetEntrySchema = z.object({
   width: z.number().int().positive().nullable(),
   height: z.number().int().positive().nullable(),
   addedAt: z.iso.datetime(),
+  attribution: z.string().max(500).nullable().default(null),
 });
 export type AssetEntry = z.infer<typeof assetEntrySchema>;
 

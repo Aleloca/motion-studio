@@ -14,7 +14,7 @@ const { ReferencesPage } = await import('../src/screens/ReferencesPage.tsx');
 
 describe('ReferencesPage', () => {
   it('edits notes, toggles brand use and deletes', async () => {
-    render(<ReferencesPage slug="acme" live={{ jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} }} />);
+    render(<ReferencesPage slug="acme" live={{ approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} }} />);
     const note = await screen.findByLabelText('Nota per mood.jpg');
     await userEvent.type(note, 'Luce calda');
     note.blur();
@@ -27,7 +27,7 @@ describe('ReferencesPage', () => {
     await waitFor(() => expect(api.deleteReference).toHaveBeenCalledWith('acme', 'mood.jpg'));
   });
   it('keeps a note being typed across a live reload', async () => {
-    const live = { jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
+    const live = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
     const { rerender } = render(<ReferencesPage slug="acme" live={live} />);
     const note = await screen.findByLabelText('Nota per mood.jpg');
     await userEvent.type(note, 'Bozza');

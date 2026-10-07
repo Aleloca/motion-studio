@@ -1,7 +1,7 @@
-import type { AgentEvent, JobSummary, ServerMessage } from '@motion-studio/shared';
+import type { AgentEvent, ApprovalRequest, JobSummary, ServerMessage } from '@motion-studio/shared';
 
-export interface EventsState { jobs: Record<string, JobSummary>; events: Record<string, AgentEvent[]>; creativeTicks: Record<string, number>; projectTicks: Record<string, number> }
-export const initialEventsState: EventsState = { jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
+export interface EventsState { approvals: Record<string, ApprovalRequest>; jobs: Record<string, JobSummary>; events: Record<string, AgentEvent[]>; creativeTicks: Record<string, number>; projectTicks: Record<string, number> }
+export const initialEventsState: EventsState = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
 const MAX_EVENTS = 2000;
 
 export function eventsReducer(state: EventsState, msg: ServerMessage): EventsState {
@@ -11,9 +11,16 @@ export function eventsReducer(state: EventsState, msg: ServerMessage): EventsSta
       return {
         ...state,
         jobs: Object.fromEntries(msg.jobs.map((j) => [j.id, j])),
+        approvals: Object.fromEntries((msg.approvals ?? []).map((a) => [a.id, a])),
         creativeTicks: Object.fromEntries(Object.entries(state.creativeTicks).map(([k, v]) => [k, v + 1])),
         projectTicks: Object.fromEntries(Object.entries(state.projectTicks).map(([k, v]) => [k, v + 1])),
       };
+    case 'approval':
+      return { ...state, approvals: { ...state.approvals, [msg.approval.id]: msg.approval } };
+    case 'approval_resolved': {
+      const { [msg.id]: _gone, ...rest } = state.approvals;
+      return { ...state, approvals: rest };
+    }
     case 'job':
       return { ...state, jobs: { ...state.jobs, [msg.job.id]: msg.job } };
     case 'agent': {

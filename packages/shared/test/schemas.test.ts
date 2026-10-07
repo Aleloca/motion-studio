@@ -4,7 +4,7 @@ import { appConfigSchema, projectFileSchema, workspaceSettingsSchema } from '../
 describe('workspaceSettingsSchema', () => {
   it('fills defaults from an empty versioned object', () => {
     expect(workspaceSettingsSchema.parse({ schemaVersion: 1 })).toEqual({
-      schemaVersion: 1, maxConcurrentJobs: 2, expertMode: false, theme: 'system', model: null,
+      schemaVersion: 1, maxConcurrentJobs: 2, expertMode: false, theme: 'system', model: null, sandboxMode: 'auto', extraAllowedDomains: [], confirmPaidProviders: true,
     });
   });
   it('rejects a concurrency outside 1..8', () => {
