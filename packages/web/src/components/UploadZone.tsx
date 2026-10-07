@@ -7,15 +7,16 @@ export function UploadZone({ label, onFiles, disabled }: { label: string; onFile
   const [error, setError] = useState<string | null>(null);
   const send = async (list: FileList | File[] | null) => {
     const files = Array.from(list ?? []);
-    if (!files.length || disabled) return;
+    if (!files.length || disabled || busy) return;
     setBusy(true); setError(null);
     try { await onFiles(files); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   };
+  const open = () => { if (!disabled && !busy) input.current?.click(); };
   const onDrop = (e: DragEvent) => { e.preventDefault(); setOver(false); void send(e.dataTransfer.files); };
   return (
     <div className="stack" style={{ gap: 6 }}>
       <div role="button" tabIndex={0} aria-label={label} aria-disabled={disabled || busy}
-        onClick={() => input.current?.click()} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.current?.click(); } }}
+        onClick={open} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }}
         onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={onDrop}
         style={{ border: `2px dashed ${over ? 'var(--accent)' : 'var(--border)'}`, borderRadius: 12, padding: 18, textAlign: 'center', background: over ? 'var(--accent-soft)' : 'var(--surface)', cursor: 'pointer' }}>
         <strong>{busy ? 'Caricamento…' : label}</strong>

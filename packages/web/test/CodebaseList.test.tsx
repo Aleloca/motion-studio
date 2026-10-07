@@ -20,4 +20,16 @@ describe('CodebaseList', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Rimuovi /Users/me/app' }));
     expect(onChange).toHaveBeenLastCalledWith([]);
   });
+  it('rejects duplicates and handles Enter without submitting the parent form', async () => {
+    const onChange = vi.fn();
+    const onSubmit = vi.fn((e: { preventDefault(): void }) => e.preventDefault());
+    render(<form onSubmit={onSubmit}><CodebaseList value={[{ path: '/a' }]} onChange={onChange} /></form>);
+    await userEvent.type(screen.getByLabelText('Percorso assoluto della cartella'), '/a{Enter}');
+    expect(screen.getByRole('alert').textContent).toBe('Cartella già collegata');
+    expect(onChange).not.toHaveBeenCalled();
+    await userEvent.clear(screen.getByLabelText('Percorso assoluto della cartella'));
+    await userEvent.type(screen.getByLabelText('Percorso assoluto della cartella'), '/b{Enter}');
+    expect(onChange).toHaveBeenLastCalledWith([{ path: '/a' }, { path: '/b' }]);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
 });

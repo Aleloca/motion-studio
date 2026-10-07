@@ -13,4 +13,12 @@ describe('UploadZone', () => {
     fireEvent.change(screen.getByLabelText('Carica asset', { selector: 'input' }), { target: { files: [file] } });
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('File troppo grande'));
   });
+  it('ignores clicks while disabled', () => {
+    const click = vi.spyOn(HTMLInputElement.prototype, 'click');
+    render(<UploadZone label="Carica asset" onFiles={async () => {}} disabled />);
+    fireEvent.click(screen.getByRole('button', { name: 'Carica asset' }));
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Carica asset' }), { key: 'Enter' });
+    expect(click).not.toHaveBeenCalled();
+    click.mockRestore();
+  });
 });

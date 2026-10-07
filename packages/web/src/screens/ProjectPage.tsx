@@ -77,7 +77,7 @@ export function ProjectPage({ slug, tab, live, expert }: { slug: string; tab: Pr
         {TABS.map(([t, label]) => <a key={t} href={href.project(slug, t)} aria-current={tab === t ? 'page' : undefined}>{label}</a>)}
       </nav>
       {tab === 'creatives' && <CreativeList slug={slug} tick={tick} />}
-      {tab === 'settings' && <ProjectSettings slug={slug} tick={live.projectTicks[slug] ?? 0} />}
+      {tab === 'settings' && <ProjectSettings key={slug} slug={slug} tick={live.projectTicks[slug] ?? 0} />}
       {tab === 'console' && <ProjectConsole slug={slug} jobKey={jobKey} live={live} expert={expert} />}
       {(tab === 'brand' || tab === 'assets' || tab === 'references') && <p className="muted">In arrivo</p>}
     </main>

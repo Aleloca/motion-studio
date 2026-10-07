@@ -1,5 +1,5 @@
 import type { LinkedCodebase } from '@motion-studio/shared';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.ts';
 import { CodebaseList } from '../components/CodebaseList.tsx';
 import { useProjectData } from '../useProjectData.ts';
@@ -9,15 +9,18 @@ export function ProjectSettings({ slug, tick }: { slug: string; tick: number }) 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [codebases, setCodebases] = useState<LinkedCodebase[]>([]);
-  const [status, setStatus] = useState<string | null>(null);
+  const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
+  // Seed the form on first load and after a save only: live reloads must not discard edits.
+  const needsSeed = useRef(true);
   useEffect(() => {
-    if (!data) return;
+    if (!data || !needsSeed.current) return;
+    needsSeed.current = false;
     setName(data[0].project.name); setDescription(data[0].project.description); setCodebases(data[0].project.linkedCodebases);
   }, [data]);
   const save = async () => {
     setStatus(null);
-    try { await api.updateProject(slug, { name, description, linkedCodebases: codebases }); setStatus('Salvato'); reload(); }
-    catch (e) { setStatus(e instanceof Error ? e.message : String(e)); }
+    try { await api.updateProject(slug, { name, description, linkedCodebases: codebases }); needsSeed.current = true; setStatus({ ok: true, text: 'Salvato' }); reload(); }
+    catch (e) { setStatus({ ok: false, text: e instanceof Error ? e.message : String(e) }); }
   };
   if (error) return <p role="alert" className="error">{error}</p>;
   if (!data) return <p className="muted">Caricamento…</p>;
@@ -29,7 +32,8 @@ export function ProjectSettings({ slug, tick }: { slug: string; tick: number }) 
       <textarea id="ps-desc" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
       <strong>Codebase collegate al progetto</strong>
       <CodebaseList value={codebases} checks={data[1]} onChange={setCodebases} />
-      <div className="row"><div style={{ flex: 1 }} />{status && <span role="status" className="muted">{status}</span>}<button type="submit" className="primary">Salva</button></div>
+      {status && !status.ok && <p role="alert" className="error" style={{ margin: 0 }}>{status.text}</p>}
+      <div className="row"><div style={{ flex: 1 }} />{status?.ok && <span role="status" className="muted">{status.text}</span>}<button type="submit" className="primary">Salva</button></div>
     </form>
   );
 }

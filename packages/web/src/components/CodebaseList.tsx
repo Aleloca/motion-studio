@@ -1,5 +1,5 @@
 import type { LinkedCodebase } from '@motion-studio/shared';
-import { useState } from 'react';
+import { useState, type KeyboardEvent } from 'react';
 import type { CodebaseCheck } from '../api.ts';
 
 export function CodebaseList({ value, checks, onChange, disabled }: { value: LinkedCodebase[]; checks?: CodebaseCheck[]; onChange: (next: LinkedCodebase[]) => void; disabled?: boolean }) {
@@ -9,10 +9,12 @@ export function CodebaseList({ value, checks, onChange, disabled }: { value: Lin
   const add = () => {
     const p = path.trim();
     if (!p || !(p.startsWith('/') || p.startsWith('~'))) { setError('Indica un percorso assoluto'); return; }
+    if (value.some((c) => c.path === p)) { setError('Cartella già collegata'); return; }
     setError(null);
     onChange([...value, { path: p, ...(note.trim() ? { note: note.trim() } : {}) }]);
     setPath(''); setNote('');
   };
+  const onEnter = (e: KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
   return (
     <div className="stack" style={{ gap: 8 }}>
       <p className="muted" style={{ margin: 0, fontSize: 13 }}>Le cartelle collegate sono in sola lettura: l'agente può leggerle ma non modificarle.</p>
@@ -26,8 +28,8 @@ export function CodebaseList({ value, checks, onChange, disabled }: { value: Lin
         </div>
       ))}
       <div className="row" style={{ gap: 8 }}>
-        <input aria-label="Percorso assoluto della cartella" placeholder="/Users/tuonome/dev/app" value={path} disabled={disabled} onChange={(e) => setPath(e.target.value)} style={{ flex: '2 1 240px', width: 'auto' }} />
-        <input aria-label="Nota (facoltativa)" placeholder="Es. app iOS, schermate in /Screens" value={note} disabled={disabled} onChange={(e) => setNote(e.target.value)} style={{ flex: '1 1 160px', width: 'auto' }} />
+        <input aria-label="Percorso assoluto della cartella" placeholder="/Users/tuonome/dev/app" value={path} disabled={disabled} onChange={(e) => setPath(e.target.value)} onKeyDown={onEnter} style={{ flex: '2 1 240px', width: 'auto' }} />
+        <input aria-label="Nota (facoltativa)" placeholder="Es. app iOS, schermate in /Screens" value={note} disabled={disabled} onChange={(e) => setNote(e.target.value)} onKeyDown={onEnter} style={{ flex: '1 1 160px', width: 'auto' }} />
         <button type="button" disabled={disabled} onClick={add}>Collega</button>
       </div>
       {error && <p role="alert" className="error" style={{ margin: 0 }}>{error}</p>}
