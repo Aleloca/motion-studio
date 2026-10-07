@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,10 +51,28 @@ describe('assets API', () => {
     const up = await app.inject({ method: 'POST', url: `${P}/assets`, ...multipart([{ name: 'a.png', content: 'x' }]) });
     expect(up.statusCode).toBe(422);
     expect(await readFile(json, 'utf8')).toBe('{bad');
+    expect((await readdir(join(base, 'ws', 'acme', 'assets'))).sort()).toEqual(['.gitkeep', 'assets.json']);
   });
   it('never serves project files outside assets/ and references/', async () => {
     await symlink(join(base, 'ws', 'acme', 'project.json'), join(base, 'ws', 'acme', 'assets', 'leak.json'));
     for (const p of ['project.json', 'assets/../project.json', 'assets/leak.json', 'brand/brand-kit.json']) {
+      expect((await app.inject(`${P}/files/${p}`)).statusCode, p).toBe(404);
+    }
+  });
+});
+
+describe('metadata isolation and concurrency', () => {
+  it('serializes concurrent edits made by separate requests', async () => {
+    const names = Array.from({ length: 10 }, (_, i) => `f${i}.png`);
+    await app.inject({ method: 'POST', url: `${P}/assets`, ...multipart(names.map((name) => ({ name, content: 'x' }))) });
+    const rs = await Promise.all(names.map((n, i) => app.inject({ method: 'PATCH', url: `${P}/assets/item/${n}`, payload: { description: `d${i}` } })));
+    expect(rs.map((r) => r.statusCode)).toEqual(names.map(() => 200));
+    const list = (await app.inject(`${P}/assets`)).json().assets as Array<{ file: string; description: string }>;
+    expect(names.map((n) => list.find((a) => a.file === n)?.description)).toEqual(names.map((_, i) => `d${i}`));
+  });
+  it('does not serve the metadata files', async () => {
+    await app.inject({ method: 'POST', url: `${P}/assets`, ...multipart([{ name: 'a.png', content: 'x' }]) });
+    for (const p of ['assets/assets.json', 'assets/./assets.json', 'references/references.json']) {
       expect((await app.inject(`${P}/files/${p}`)).statusCode, p).toBe(404);
     }
   });

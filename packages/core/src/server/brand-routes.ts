@@ -42,8 +42,7 @@ export function registerBrandRoutes(app: FastifyInstance, ctx: BrandRoutesContex
 
   app.put<{ Params: { slug: string }; Body: { kit?: unknown } }>('/api/projects/:slug/brand/kit', async (req) => {
     const { store, projectDir } = await project(req.params.slug);
-    await store.readKit(); // a corrupt file on disk → 422, never overwritten from the UI
-    const kit = await store.writeKit(req.body?.kit);
+    const kit = await store.replaceReadableKit(req.body?.kit); // a corrupt file on disk → 422, never overwritten from the UI
     await done(projectDir, req.params.slug, 'Brand kit aggiornato');
     return kit;
   });
@@ -78,10 +77,13 @@ export function registerBrandRoutes(app: FastifyInstance, ctx: BrandRoutesContex
   app.post<{ Params: { slug: string } }>('/api/projects/:slug/brand/analyze', async (req, reply) => {
     const { sourceIds } = parse(analyzeBody, req.body);
     const { store, ref } = await project(req.params.slug);
-    const refs = await new LibraryStore(ref.projectDir, ctx.media).listReferences().catch(() => []);
+    const refs = await new LibraryStore(ref.projectDir, ctx.media).listReferences(); // a corrupt references.json surfaces as 422
+    let added = 0;
     for (const r of refs.filter((x) => x.useForBrand)) {
-      await store.addSource({ kind: 'image', file: `references/${r.file}` }).catch((e) => { if ((e as WorkspaceError).status !== 409) throw e; });
+      await store.addSource({ kind: 'image', file: `references/${r.file}` }).then(() => { added++; }, (e) => { if ((e as WorkspaceError).status !== 409) throw e; });
     }
+    // Persist the new sources even when the analysis is then refused (409/400).
+    if (added) await done(ref.projectDir, req.params.slug, 'Aggiungi sorgenti brand dai riferimenti');
     return reply.status(202).send(await ctx.brand.analyze(ref, sourceIds));
   });
 

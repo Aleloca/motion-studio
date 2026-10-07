@@ -12,8 +12,11 @@ import { WorkspaceError } from '../workspace-store.ts';
 export type LibraryKind = 'assets' | 'references';
 const now = () => new Date().toISOString();
 
+// Shared by every LibraryStore instance (one per request): keys are absolute metadata paths.
+const SHARED_LOCK = new KeyedMutex();
+
 export class LibraryStore {
-  private readonly lock = new KeyedMutex();
+  private readonly lock = { run: <T>(key: 'assets' | 'references', fn: () => Promise<T>): Promise<T> => SHARED_LOCK.run(join(this.dir(key), key === 'assets' ? 'assets.json' : 'references.json'), fn) };
   constructor(private readonly projectDir: string, private readonly media: MediaTools) {}
 
   dir(kind: LibraryKind) { return join(this.projectDir, kind); }

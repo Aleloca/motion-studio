@@ -1,3 +1,4 @@
+import { posix } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
@@ -105,6 +106,8 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
 
   app.get<{ Params: { slug: string; '*': string } }>('/api/projects/:slug/files/*', async (req, reply) => {
     const { projectDir } = await project(req.params.slug);
+    const rel = posix.normalize(req.params['*'] ?? '.');
+    if (rel === 'assets/assets.json' || rel === 'references/references.json') return reply.status(404).send({ error: 'File non trovato' });
     return sendConfinedFile(reply, projectDir, req.params['*'] ?? '', ['assets/', 'references/']);
   });
 }

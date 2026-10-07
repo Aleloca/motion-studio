@@ -99,9 +99,12 @@ export function isPrivateHost(hostname: string): boolean {
   return isPrivateIPv4(host);
 }
 
+// Shared by every BrandStore instance (one per request): keys are absolute paths, so writers of the same files serialize.
+const SHARED_LOCK = new KeyedMutex();
+
 export class BrandStore {
   private readonly dir: string;
-  private readonly lock = new KeyedMutex();
+  private readonly lock = { run: <T>(key: string, fn: () => Promise<T>): Promise<T> => SHARED_LOCK.run(join(this.dir, key), fn) };
   constructor(projectDir: string) { this.dir = join(projectDir, 'brand'); }
 
   private path(name: string) { return join(this.dir, name); }
@@ -111,13 +114,25 @@ export class BrandStore {
     catch (e) { if (e instanceof JsonFileError && e.reason === 'missing') return EMPTY_BRAND_KIT; throw e; }
   }
 
-  writeKit(kit: unknown): Promise<BrandKit> {
+  /** Replaces the kit, but refuses (JsonFileError) when the file on disk is corrupt: checked under the same lock as the write. */
+  replaceReadableKit(kit: unknown): Promise<BrandKit> {
     return this.lock.run('kit', async () => {
+      await this.readKit();
+      return this.writeKitUnlocked(kit);
+    });
+  }
+
+  writeKit(kit: unknown): Promise<BrandKit> {
+    return this.lock.run('kit', () => this.writeKitUnlocked(kit));
+  }
+
+  private async writeKitUnlocked(kit: unknown): Promise<BrandKit> {
+    {
       const parsed = brandKitSchema.safeParse(kit);
       if (!parsed.success) throw new WorkspaceError(400, `Brand kit non valido: ${issues(parsed.error)}`);
       await writeJsonFileAtomic(this.path('brand-kit.json'), parsed.data);
       return parsed.data;
-    });
+    }
   }
 
   async readGuidelines(): Promise<string> {

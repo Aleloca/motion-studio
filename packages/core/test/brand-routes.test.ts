@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -61,6 +61,16 @@ describe('brand API', () => {
     expect(o.kitError).toContain('brand-kit.json');
     expect(o.kit.colors).toEqual([]);
     expect((await app.inject({ method: 'PUT', url: `${P}/brand/kit`, payload: { kit: { schemaVersion: 1 } } })).statusCode).toBe(422);
+  });
+  it('refuses image sources that escape references/', async () => {
+    await symlink(join(base, 'ws', 'acme', 'project.json'), join(base, 'ws', 'acme', 'references', 'leak.jpg'));
+    for (const file of ['references/../project.json', 'references/leak.jpg']) {
+      expect((await app.inject({ method: 'POST', url: `${P}/brand/sources`, payload: { kind: 'image', file } })).statusCode, file).toBe(400);
+    }
+  });
+  it('surfaces a corrupt references.json on analyze', async () => {
+    await writeFile(join(base, 'ws', 'acme', 'references', 'references.json'), '{bad');
+    expect((await app.inject({ method: 'POST', url: `${P}/brand/analyze`, payload: {} })).statusCode).toBe(422);
   });
   it('validates sources', async () => {
     expect((await app.inject({ method: 'POST', url: `${P}/brand/sources`, payload: { kind: 'website', url: 'ftp://x' } })).statusCode).toBe(400);
