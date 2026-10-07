@@ -12,7 +12,7 @@ function SimpleLine({ e }: { e: AgentEvent }) {
   return null;
 }
 
-function ExpertLine({ e }: { e: AgentEvent }) {
+export function ExpertLine({ e }: { e: AgentEvent }) {
   const tag = (t: string) => <span style={{ color: 'var(--accent-ink)', minWidth: 90, display: 'inline-block' }}>{t}</span>;
   switch (e.kind) {
     case 'session': return <div>{tag('session')}{e.sessionId}</div>;
