@@ -1,0 +1,16 @@
+{
+  "name": "@motion-studio/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/server/main.ts"
+  },
+  "dependencies": {
+    "@motion-studio/shared": "workspace:*",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": { "tsx": "^4.20.0" }
+}
