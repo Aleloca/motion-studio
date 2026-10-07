@@ -80,7 +80,7 @@ describe('ConversationPanel', () => {
     await userEvent.type(goal, 'Nuovo obiettivo');
     await userEvent.click(screen.getByRole('button', { name: 'Salva e rigenera' }));
     await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'c1', {}));
-    expect(api.updateCreative).toHaveBeenCalledWith('acme', 'c1', { title: 'Lancio', brief: expect.objectContaining({ goal: 'Nuovo obiettivo', formats: ['instagram-post-1x1'] }) });
+    expect(api.updateCreative).toHaveBeenCalledWith('acme', 'c1', { title: 'Lancio', brief: expect.objectContaining({ goal: 'Nuovo obiettivo', formats: ['instagram-post-1x1'] }), linkedCodebases: [] });
     expect(base.onChanged).toHaveBeenCalled();
   });
   it('shows every agent event in the expert tab', async () => {

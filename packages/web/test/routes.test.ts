@@ -16,3 +16,12 @@ describe('parseRoute', () => {
     expect(parseRoute(href.project('acme', 'console'))).toEqual({ name: 'project', slug: 'acme', tab: 'console' });
   });
 });
+
+describe('project tabs', () => {
+  it.each(['brand', 'assets', 'references', 'settings', 'console'] as const)('%s', (tab) => {
+    expect(parseRoute(href.project('acme', tab))).toEqual({ name: 'project', slug: 'acme', tab });
+  });
+  it('unknown tabs fall back to projects', () => {
+    expect(parseRoute('#/p/acme/nope')).toEqual({ name: 'projects' });
+  });
+});

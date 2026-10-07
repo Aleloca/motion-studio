@@ -29,6 +29,7 @@ describe('NewCreative', () => {
       title: 'Lancio della nuova app',
       brief: { goal: 'Lancio della nuova app', message: '', formats: ['instagram-post-1x1', 'web-banner-300x250'], durationSec: 15, assets: [], notes: '' },
       generate: true,
+      linkedCodebases: [],
     }]);
     expect(location.hash).toBe('#/p/acme/c/2026-10-07-lancio');
   });

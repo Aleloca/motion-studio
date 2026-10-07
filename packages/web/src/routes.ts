@@ -1,6 +1,8 @@
+export type ProjectTab = 'creatives' | 'brand' | 'assets' | 'references' | 'settings' | 'console';
+const TABS: ProjectTab[] = ['brand', 'assets', 'references', 'settings', 'console'];
 export type Route =
   | { name: 'projects' }
-  | { name: 'project'; slug: string; tab: 'creatives' | 'console' }
+  | { name: 'project'; slug: string; tab: ProjectTab }
   | { name: 'new-creative'; slug: string }
   | { name: 'creative'; slug: string; creative: string };
 
@@ -11,14 +13,17 @@ export function parseRoute(hash: string): Route {
   if (m) return { name: 'creative', slug: m[1]!, creative: m[2]! };
   m = hash.match(new RegExp(`^#/p/(${SLUG})/new$`));
   if (m) return { name: 'new-creative', slug: m[1]! };
-  m = hash.match(new RegExp(`^#/p/(${SLUG})(/console)?$`));
-  if (m) return { name: 'project', slug: m[1]!, tab: m[2] ? 'console' : 'creatives' };
+  m = hash.match(new RegExp(`^#/p/(${SLUG})(?:/([a-z]+))?$`));
+  if (m) {
+    const tab = (m[2] ?? 'creatives') as ProjectTab;
+    if (tab === 'creatives' || TABS.includes(tab)) return { name: 'project', slug: m[1]!, tab };
+  }
   return { name: 'projects' };
 }
 
 export const href = {
   projects: () => '#/',
-  project: (slug: string, tab: 'creatives' | 'console' = 'creatives') => (tab === 'console' ? `#/p/${slug}/console` : `#/p/${slug}`),
+  project: (slug: string, tab: ProjectTab = 'creatives') => (tab === 'creatives' ? `#/p/${slug}` : `#/p/${slug}/${tab}`),
   newCreative: (slug: string) => `#/p/${slug}/new`,
   creative: (slug: string, c: string) => `#/p/${slug}/c/${c}`,
 };

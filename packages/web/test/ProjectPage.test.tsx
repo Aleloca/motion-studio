@@ -51,3 +51,15 @@ describe('ProjectPage errors', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('Impossibile caricare il progetto: Progetto non trovato');
   });
 });
+
+describe('ProjectPage tabs', () => {
+  afterEach(() => vi.clearAllMocks());
+  it('lists every tab and marks the active one', async () => {
+    vi.mocked(api.getProject).mockResolvedValue({ slug: 'acme', project, jobKey: 'project:/w:acme' });
+    render(<ProjectPage slug="acme" tab="brand" expert={false} live={{ jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} }} />);
+    await screen.findByText('Acme');
+    expect(screen.getAllByRole('link').filter((l) => l.closest('nav')).map((l) => l.textContent)).toEqual(['Creatività', 'Brand', 'Asset', 'Riferimenti', 'Impostazioni', 'Console agente']);
+    expect(screen.getByRole('link', { name: 'Brand' }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByText('In arrivo')).toBeTruthy();
+  });
+});

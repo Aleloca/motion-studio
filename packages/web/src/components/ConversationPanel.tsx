@@ -1,7 +1,8 @@
-import type { AgentEvent, Brief, ConversationEntry, CreativeDetail, FormatPreset, JobSummary, Pin } from '@motion-studio/shared';
+import type { AgentEvent, Brief, ConversationEntry, CreativeDetail, FormatPreset, JobSummary, LinkedCodebase, Pin } from '@motion-studio/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.ts';
 import { ExpertLine } from './AgentConsole.tsx';
+import { CodebaseList } from './CodebaseList.tsx';
 import { FormatPicker } from './FormatPicker.tsx';
 
 export interface ConversationPanelProps {
@@ -37,13 +38,14 @@ function BriefEditor({ slug, detail, presets, disabled, onChanged }: { slug: str
   const [title, setTitle] = useState(c.title);
   const [brief, setBrief] = useState<Brief>(c.brief);
   const [assets, setAssets] = useState(c.brief.assets.join(', '));
+  const [codebases, setCodebases] = useState<LinkedCodebase[]>(c.linkedCodebases);
   const [error, setError] = useState<string | null>(null);
   const set = <K extends keyof Brief>(k: K, v: Brief[K]) => setBrief((b) => ({ ...b, [k]: v }));
   const save = async (regenerate: boolean) => {
     setError(null);
     let saved = false;
     try {
-      await api.updateCreative(slug, detail.slug, { title, brief: { ...brief, assets: assets.split(',').map((a) => a.trim()).filter(Boolean) } });
+      await api.updateCreative(slug, detail.slug, { title, brief: { ...brief, assets: assets.split(',').map((a) => a.trim()).filter(Boolean) }, linkedCodebases: codebases });
       saved = true;
       if (regenerate) await api.sendCreativeTurn(slug, detail.slug, {});
     } catch (e) { setError(message(e)); }
@@ -61,6 +63,8 @@ function BriefEditor({ slug, detail, presets, disabled, onChanged }: { slug: str
       <label htmlFor="b-notes">Note</label><input id="b-notes" value={brief.notes} onChange={(e) => set('notes', e.target.value)} />
       <strong>Formati</strong>
       <FormatPicker presets={presets} selected={brief.formats} onToggle={(id) => set('formats', brief.formats.includes(id) ? brief.formats.filter((x) => x !== id) : [...brief.formats, id])} />
+      <strong>Codebase di questa creatività</strong>
+      <CodebaseList value={codebases} onChange={setCodebases} disabled={disabled} />
       {error && <p role="alert" className="error" style={{ margin: 0 }}>{error}</p>}
       <div className="row">
         <button type="submit" disabled={disabled}>Salva</button>

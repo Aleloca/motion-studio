@@ -2,8 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '../api.ts';
 import { AgentConsole } from '../components/AgentConsole.tsx';
 import { sessionIdOf, type EventsState } from '../eventsReducer.ts';
-import { href } from '../routes.ts';
+import { href, type ProjectTab } from '../routes.ts';
 import { CreativeList } from './CreativeList.tsx';
+import { ProjectSettings } from './ProjectSettings.tsx';
+
+const TABS: Array<[ProjectTab, string]> = [['creatives', 'Creatività'], ['brand', 'Brand'], ['assets', 'Asset'], ['references', 'Riferimenti'], ['settings', 'Impostazioni'], ['console', 'Console agente']];
 
 function ProjectConsole({ slug, jobKey, live, expert }: { slug: string; jobKey: string | null; live: EventsState; expert: boolean }) {
   const [prompt, setPrompt] = useState('');
@@ -52,7 +55,7 @@ function ProjectConsole({ slug, jobKey, live, expert }: { slug: string; jobKey: 
   );
 }
 
-export function ProjectPage({ slug, tab, live, expert }: { slug: string; tab: 'creatives' | 'console'; live: EventsState; expert: boolean }) {
+export function ProjectPage({ slug, tab, live, expert }: { slug: string; tab: ProjectTab; live: EventsState; expert: boolean }) {
   const [name, setName] = useState<string>(slug);
   const [jobKey, setJobKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -71,10 +74,12 @@ export function ProjectPage({ slug, tab, live, expert }: { slug: string; tab: 'c
       <h1 style={{ margin: 0, fontSize: 24 }}>{name}</h1>
       {error && <p role="alert" className="error" style={{ margin: 0 }}>{error}</p>}
       <nav className="tabs" aria-label="Sezioni progetto">
-        <a href={href.project(slug)} aria-current={tab === 'creatives' ? 'page' : undefined}>Creatività</a>
-        <a href={href.project(slug, 'console')} aria-current={tab === 'console' ? 'page' : undefined}>Console agente</a>
+        {TABS.map(([t, label]) => <a key={t} href={href.project(slug, t)} aria-current={tab === t ? 'page' : undefined}>{label}</a>)}
       </nav>
-      {tab === 'creatives' ? <CreativeList slug={slug} tick={tick} /> : <ProjectConsole slug={slug} jobKey={jobKey} live={live} expert={expert} />}
+      {tab === 'creatives' && <CreativeList slug={slug} tick={tick} />}
+      {tab === 'settings' && <ProjectSettings slug={slug} tick={live.projectTicks[slug] ?? 0} />}
+      {tab === 'console' && <ProjectConsole slug={slug} jobKey={jobKey} live={live} expert={expert} />}
+      {(tab === 'brand' || tab === 'assets' || tab === 'references') && <p className="muted">In arrivo</p>}
     </main>
   );
 }

@@ -1,6 +1,7 @@
-import type { FormatPreset } from '@motion-studio/shared';
+import type { FormatPreset, LinkedCodebase } from '@motion-studio/shared';
 import { useEffect, useState } from 'react';
 import { api } from '../api.ts';
+import { CodebaseList } from '../components/CodebaseList.tsx';
 import { FormatPicker } from '../components/FormatPicker.tsx';
 import { FormatPreview } from '../components/FormatPreview.tsx';
 import { href } from '../routes.ts';
@@ -16,6 +17,7 @@ export function NewCreative({ slug }: { slug: string }) {
   const [formats, setFormats] = useState<string[]>([]);
   const [durationSec, setDurationSec] = useState<number | null>(15);
   const [assets, setAssets] = useState('');
+  const [codebases, setCodebases] = useState<LinkedCodebase[]>([]);
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +39,7 @@ export function NewCreative({ slug }: { slug: string }) {
           assets: assets.split(',').map((a) => a.trim()).filter(Boolean), notes: notes.trim(),
         },
         generate,
+        linkedCodebases: codebases,
       });
       location.hash = href.creative(slug, created.slug);
     } catch (e) {
@@ -70,6 +73,8 @@ export function NewCreative({ slug }: { slug: string }) {
           </fieldset>
           <label htmlFor="assets"><strong>Asset da usare</strong> <span className="muted">(percorsi nel progetto, separati da virgola)</span></label>
           <input id="assets" value={assets} onChange={(e) => setAssets(e.target.value)} placeholder="assets/logo.svg" />
+          <strong>Codebase di questa creatività <span className="muted" style={{ fontWeight: 400 }}>(oltre a quelle del progetto)</span></strong>
+          <CodebaseList value={codebases} onChange={setCodebases} />
           <label htmlFor="notes"><strong>Note per l'agente</strong> <span className="muted">(facoltative)</span></label>
           <input id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
           <label htmlFor="title"><strong>Titolo</strong> <span className="muted">(facoltativo)</span></label>

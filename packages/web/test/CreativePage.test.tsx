@@ -6,7 +6,7 @@ import type { EventsState } from '../src/eventsReducer.ts';
 
 let getFormats: () => Promise<unknown> = async () => ({});
 let detail: Record<string, unknown> = {
-  creative: { title: 'Lancio', status: 'draft', error: null, resumeFrom: null, brief: { goal: 'g', message: '', formats: ['instagram-post-1x1'], durationSec: 15, assets: [], notes: '' } },
+  creative: { title: 'Lancio', status: 'draft', error: null, resumeFrom: null, linkedCodebases: [], brief: { goal: 'g', message: '', formats: ['instagram-post-1x1'], durationSec: 15, assets: [], notes: '' } },
   versions: [], jobKey: 'k',
 };
 vi.mock('../src/api.ts', () => ({
