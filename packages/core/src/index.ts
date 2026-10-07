@@ -32,3 +32,5 @@ export * from './server/library-routes.ts';
 export * from './server/project-routes.ts';
 export * from './agent/sandbox.ts';
 export * from './agent/policy.ts';
+export * from './secrets/vault.ts';
+export * from './server/settings-routes.ts';

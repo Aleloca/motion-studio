@@ -16,6 +16,8 @@ import type { AppConfigStore } from '../app-config.ts';
 import type { Git } from '../git.ts';
 import { JobConflictError, JobQueue } from '../jobs/job-queue.ts';
 import { JsonFileError } from '../json-file.ts';
+import { MemoryVault, type SecretsVault } from '../secrets/vault.ts';
+import { registerSettingsRoutes } from './settings-routes.ts';
 import { expandHome, WorkspaceError, WorkspaceStore } from '../workspace-store.ts';
 import { recoverWorkspace, registerCreativeRoutes } from './creative-routes.ts';
 import { registerBrandRoutes } from './brand-routes.ts';
@@ -31,6 +33,7 @@ export interface ServerDeps {
   webDir?: string;
   media?: MediaTools;
   openPath?: (path: string) => Promise<void>;
+  vault?: SecretsVault;
 }
 
 const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?$/i;
@@ -242,6 +245,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   registerBrandRoutes(app, routeCtx);
   registerLibraryRoutes(app, routeCtx);
   registerProjectRoutes(app, { requireWorkspace, jobKeyOf: projectJobKey, broadcast: (m) => hub.broadcast(m) });
+
+  registerSettingsRoutes(app, { vault: deps.vault ?? new MemoryVault() });
 
   const serveWeb = Boolean(deps.webDir && (await stat(deps.webDir).catch(() => null))?.isDirectory());
   // Always registered: it provides reply.sendFile to the creative file route; it serves the web build only when present.

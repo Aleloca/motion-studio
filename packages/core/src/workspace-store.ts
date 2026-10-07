@@ -16,7 +16,7 @@ import { KeyedMutex } from './keyed-mutex.ts';
 import { CLAUDE_MD, CONTEXT_MD, GITIGNORE, PROJECT_DIRS } from './project-template.ts';
 
 export class WorkspaceError extends Error {
-  constructor(public readonly status: 400 | 404 | 409 | 413 | 422, message: string, public readonly code?: WorkspaceProblemCode) {
+  constructor(public readonly status: 400 | 404 | 409 | 413 | 422 | 500, message: string, public readonly code?: WorkspaceProblemCode) {
     super(message);
     this.name = 'WorkspaceError';
   }

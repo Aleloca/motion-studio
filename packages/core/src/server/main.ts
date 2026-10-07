@@ -5,6 +5,7 @@ import { runDoctor } from '../doctor.ts';
 import { execCommand } from '../exec.ts';
 import { Git } from '../git.ts';
 import { createFfmpegTools } from '../media/media-tools.ts';
+import { KeyringVault } from '../secrets/vault.ts';
 import { buildServer } from './app.ts';
 
 export async function startServer(opts: { port?: number; host?: string; configDir?: string; webDir?: string; claudeCommand?: string[] } = {}) {
@@ -15,6 +16,7 @@ export async function startServer(opts: { port?: number; host?: string; configDi
     runner: new ClaudeCodeRunner(claudeCommand),
     doctor: () => runDoctor({ exec: execCommand, claudeCommand }),
     webDir: opts.webDir,
+    vault: new KeyringVault(),
     media: await createFfmpegTools(),
     openPath: async (p) => { await open(p); },
   });
