@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -51,7 +51,7 @@ describe('projects', () => {
     expect(project).toMatchObject({ schemaVersion: 1, name: 'Acme', description: 'Campagne Acme', linkedCodebases: [] });
     const dir = ws.projectDir(slug);
     for (const rel of ['project.json', 'brand', 'assets', 'references', 'creatives', '.studio/context.md', 'CLAUDE.md', '.gitignore']) {
-      await expect(readFile(join(dir, rel)).catch((e) => e.code)).not.toBe('ENOENT');
+      await expect(stat(join(dir, rel))).resolves.toBeTruthy();
     }
     expect(await readFile(join(dir, 'CLAUDE.md'), 'utf8')).toContain('@.studio/context.md');
     expect(await readFile(join(dir, '.gitignore'), 'utf8')).toContain('outputs/');
