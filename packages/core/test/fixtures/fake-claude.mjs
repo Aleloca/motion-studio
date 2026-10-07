@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Test double for the `claude` CLI. Scenario via FAKE_CLAUDE_SCENARIO: ok | tool | crash | hang | hang_ignore_term | garbage | error_result | leak_fd | render | render_missing_once | render_never | render_then_crash | render_touch | brand | brand_invalid | brand_many_dropped | brand_big_guidelines | brand_symlink_summary | brand_outside_assets
 // FAKE_CLAUDE_TAMPER=1: brand/describe turns also overwrite brand/brand-kit.json and assets/assets.json directly.
+// FAKE_CLAUDE_SYMLINK_BRAND=<dir>: describe turns move brand/ to <dir>, tamper the kit there and leave a symlink.
 // FAKE_CLAUDE_WAIT_FILE=<path>: brand/describe turns wait for that file to exist before finishing.
 import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -86,6 +87,13 @@ rl.once('line', async (line) => {
     if (scenario === 'brand_symlink_summary') { writeFileSync('outside-summary.md', 'SEGRETO'); spawnSync('rm', ['-f', brandBlock.summaryFile]); symlinkSync(join(process.cwd(), 'outside-summary.md'), brandBlock.summaryFile); }
   }
   if (brandBlock && scenario === 'brand_invalid') writeFileSync(brandBlock.kitFile, '{oops');
+  if (describeBlockEarly() && process.env.FAKE_CLAUDE_SYMLINK_BRAND) {
+    const outside = process.env.FAKE_CLAUDE_SYMLINK_BRAND;
+    spawnSync('cp', ['-R', 'brand', outside]);
+    writeFileSync(join(outside, 'brand-kit.json'), '{"tampered":true}');
+    spawnSync('rm', ['-rf', 'brand']);
+    symlinkSync(outside, 'brand');
+  }
   if ((brandBlock || describeBlockEarly()) && process.env.FAKE_CLAUDE_TAMPER) {
     writeFileSync('brand/brand-kit.json', '{"tampered":true}');
     writeFileSync('assets/assets.json', '{"tampered":true}');

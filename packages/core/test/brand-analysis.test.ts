@@ -172,6 +172,19 @@ describe('agent perimeter (I1, I5)', () => {
     expect((await lib.listAssets())[0]).toMatchObject({ file: 'foto.jpg', description: 'Descrizione di assets/foto.jpg' });
     expect(job.notes).toContain("L'agente ha provato a modificare direttamente brand/brand-kit.json: modifica annullata");
   });
+  it('never restores through a metadata folder the agent replaced with a symlink', T, async () => {
+    const lib = new LibraryStore(ref.projectDir, NoMediaTools);
+    await writeFile(join(ref.projectDir, 'assets', 'foto.jpg'), 'x');
+    await lib.registerAssets([{ file: 'foto.jpg', origin: 'upload' }]);
+    const outside = join(ref.projectDir, '..', 'fuori');
+    process.env.FAKE_CLAUDE_SYMLINK_BRAND = outside;
+    try {
+      const job = await done((await service.describeAssets(ref)).id);
+      expect(job.state).toBe('succeeded');
+      expect(await readFile(join(outside, 'brand-kit.json'), 'utf8')).toBe('{"tampered":true}');
+      expect(job.notes).toContain("L'agente ha provato a modificare direttamente brand/brand-kit.json: modifica non annullabile");
+    } finally { delete process.env.FAKE_CLAUDE_SYMLINK_BRAND; }
+  });
   it('keeps an app write made during the turn', T, async () => {
     const wait = join(ref.projectDir, '..', 'go');
     process.env.FAKE_CLAUDE_WAIT_FILE = wait;
@@ -222,6 +235,17 @@ describe('agent output hardening (I6, M1, M3)', () => {
     await done((await service.analyze(ref)).id);
     const ps = await brand.listProposals();
     expect(ps.map((p) => p.status).sort()).toEqual(['discarded', 'open']);
+  });
+  it('validates a new proposal before superseding the open one', T, async () => {
+    await done((await service.analyze(ref)).id);
+    const [first] = await brand.listProposals();
+    const at = new Date().toISOString();
+    const sources = Array.from({ length: 101 }, (_, i) => ({ id: `s-${i + 1}`, kind: 'website', url: `https://acme${i}.example`, file: null, addedAt: at, lastAnalyzedAt: null }));
+    await writeFile(join(ref.projectDir, 'brand', 'sources.json'), JSON.stringify({ schemaVersion: 1, sources }));
+    const job = await done((await service.analyze(ref)).id);
+    expect(job.state).toBe('failed');
+    expect(job.error).toMatch(/^Proposta non valida: sourceIds/);
+    expect(await brand.listProposals()).toEqual([expect.objectContaining({ id: first!.id, status: 'open' })]);
   });
   it('rejects an invalid proposal with a readable error', async () => {
     const id = await brand.newProposalId();

@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { lstat, readFile, realpath, rename, rm, unlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { fileDenyRules } from '../codebases.ts';
 import { fileLock } from '../file-locks.ts';
 
@@ -38,18 +38,37 @@ async function sameContent(abs: string, bytes: Buffer | null): Promise<boolean> 
   return (await readFile(abs)).equals(bytes);
 }
 
+/** The file's folder is a real directory (not a symlink) whose real path is inside the project. */
+async function confinedParent(abs: string, projectDir: string): Promise<boolean> {
+  const parent = dirname(abs);
+  const info = await lstat(parent).catch(() => null);
+  if (!info?.isDirectory()) return false;
+  const [real, realProject] = await Promise.all([realpath(parent).catch(() => null), realpath(projectDir).catch(() => null)]);
+  return real !== null && realProject !== null && real.startsWith(realProject + sep);
+}
+
+export const tamperNote = (rel: string) => `L'agente ha provato a modificare direttamente ${rel}: modifica annullata`;
+export const unrestorableNote = (rel: string) => `L'agente ha provato a modificare direttamente ${rel}: modifica non annullabile`;
+
 /**
  * Puts back the pre-turn bytes of every guarded file the agent changed (an interpreter can bypass the deny rules).
  * Under each file's lock, and only when the app did not write the file meanwhile: an app write is the user's,
- * built on what was on disk at that moment, and wins. Returns the project-relative paths restored.
+ * built on what was on disk at that moment, and wins. Never writes through a folder that is no longer a real
+ * directory inside the project (e.g. replaced by a symlink): that file is reported as not restorable.
+ * Returns one note per changed file.
  */
-export async function restoreGuarded(snapshot: GuardSnapshot): Promise<string[]> {
-  const restored: string[] = [];
+export async function restoreGuarded(snapshot: GuardSnapshot, projectDir: string): Promise<string[]> {
+  const notes: string[] = [];
   for (const g of snapshot) {
     if (g.bytes === undefined) continue;
     const bytes = g.bytes;
     await fileLock.run(g.abs, async () => {
       if (fileLock.writeCount(g.abs) !== g.writes || await sameContent(g.abs, bytes)) return;
+      if (!(await confinedParent(g.abs, projectDir))) {
+        // A missing folder with nothing to put back is no change at all.
+        if (bytes !== null || (await lstat(dirname(g.abs)).catch(() => null))) notes.push(unrestorableNote(g.rel));
+        return;
+      }
       const info = await lstat(g.abs).catch(() => null);
       if (info && !info.isFile() && !info.isSymbolicLink()) await rm(g.abs, { recursive: true, force: true });
       if (bytes === null) await rm(g.abs, { force: true });
@@ -59,13 +78,11 @@ export async function restoreGuarded(snapshot: GuardSnapshot): Promise<string[]>
         try { await writeFile(tmp, bytes, { flag: 'wx' }); await rename(tmp, g.abs); }
         catch (err) { await unlink(tmp).catch(() => {}); throw err; }
       }
-      restored.push(g.rel);
+      notes.push(tamperNote(g.rel));
     });
   }
-  return restored;
+  return notes;
 }
-
-export const tamperNote = (rel: string) => `L'agente ha provato a modificare direttamente ${rel}: modifica annullata`;
 
 export const MAX_AGENT_FILE_BYTES = 1024 * 1024;
 export type AgentFile = { text: string } | { skipped: string } | null;

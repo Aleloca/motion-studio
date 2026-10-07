@@ -1,6 +1,6 @@
 import { appendFile, lstat, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
-import { brandKitIssues, brandKitSchema, relativeFileSchema, webUrlSchema, type AssetEntry, type BrandKit, type BrandProposal, type JobSummary, type ServerMessage } from '@motion-studio/shared';
+import { brandKitIssues, brandKitSchema, brandProposalSchema, relativeFileSchema, webUrlSchema, type AssetEntry, type BrandKit, type BrandProposal, type JobSummary, type ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import { BRAND_ANALYSIS_TOOLS, DESCRIBE_TOOLS, type AgentRunner } from '../agent/runner.ts';
 import type { Git } from '../git.ts';
@@ -9,7 +9,7 @@ import { KeyedMutex } from '../keyed-mutex.ts';
 import { LibraryStore } from '../library/library-store.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { WorkspaceError } from '../workspace-store.ts';
-import { guardRules, readAgentFile, restoreGuarded, snapshotGuarded, tamperNote } from './agent-guard.ts';
+import { guardRules, readAgentFile, restoreGuarded, snapshotGuarded } from './agent-guard.ts';
 import { applyBrandChanges, diffBrandKits } from './brand-diff.ts';
 import { buildBrandPrompt, buildDescribePrompt } from './brand-prompt.ts';
 import { BrandStore } from './brand-store.ts';
@@ -69,7 +69,7 @@ export class BrandService {
 
   /**
    * Runs one agent turn with the live metadata files denied to the editing tools; whatever the outcome, files the agent
-   * still managed to change (e.g. through an interpreter) are restored. `tampered` receives the restored paths.
+   * still managed to change (e.g. through an interpreter) are restored. `tampered` receives one note per file the agent changed.
    */
   private async runAgent(ref: ProjectRef, prompt: string, allowedTools: readonly string[], logFile: string | null, signal: AbortSignal, jobId: string, tampered: string[]): Promise<'ok' | 'cancelled'> {
     const guard = await snapshotGuarded(ref.projectDir);
@@ -86,7 +86,7 @@ export class BrandService {
       if (outcome.status === 'failed') throw new Error(outcome.error ?? 'Turno non riuscito');
       return 'ok';
     } finally {
-      tampered.push(...(await restoreGuarded(guard)));
+      tampered.push(...(await restoreGuarded(guard, ref.projectDir)));
     }
   }
 
@@ -111,7 +111,7 @@ export class BrandService {
         await rm(dir, { recursive: true, force: true });
         return 'cancelled';
       }
-      const dropped: string[] = tampered.map(tamperNote);
+      const dropped: string[] = [...tampered];
       const kitFile = await readAgentFile(join(dir, 'brand-kit.json'));
       if (kitFile === null || 'skipped' in kitFile) throw new Error(`Proposta non valida: brand-kit.json ${kitFile ? kitFile.skipped : 'mancante'}`);
       let json: unknown;
@@ -172,6 +172,9 @@ export class BrandService {
         guidelines: proposedGuidelines !== currentGuidelines ? { current: currentGuidelines, proposed: proposedGuidelines } : null,
         assetsAdded: registered.map((a) => a.file),
       };
+      // Validated before anything is superseded: an invalid proposal leaves the open one in place.
+      const valid = brandProposalSchema.safeParse(proposal);
+      if (!valid.success) throw new Error(`Proposta non valida: ${valid.error.issues.map((i) => `${i.path.join('.') || '(radice)'}: ${i.message}`).join('; ')}`);
       // Under the apply lock: a new proposal supersedes the open ones (they would diff against an outdated kit).
       await this.locks.run(`apply:${ref.projectDir}`, async () => {
         for (const old of await store.listProposals()) if (old.status === 'open' && old.id !== id) await store.writeProposal({ ...old, status: 'discarded' });
@@ -206,7 +209,7 @@ export class BrandService {
             await mkdir(join(ref.projectDir, 'assets', '.describe'), { recursive: true });
             const prompt = buildDescribePrompt({ outFile: outRel, files: targets.map((t) => `assets/${t.file}`) });
             const tampered: string[] = [];
-            const outcome = await this.runAgent(ref, prompt, DESCRIBE_TOOLS, null, signal, jobId, tampered).finally(() => notes.push(...tampered.map(tamperNote)));
+            const outcome = await this.runAgent(ref, prompt, DESCRIBE_TOOLS, null, signal, jobId, tampered).finally(() => notes.push(...tampered));
             if (outcome === 'cancelled') return 'cancelled';
             const wanted = new Set(targets.map((t) => t.file));
             const described = await readLenient(outAbs, describedAsset);

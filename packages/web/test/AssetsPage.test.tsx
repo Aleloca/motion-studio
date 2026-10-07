@@ -147,4 +147,15 @@ describe('AssetsPage (final review)', () => {
     await screen.findByRole('button', { name: 'Apri foto.jpg' });
     expect(screen.queryByLabelText('Dettaglio asset')).toBeNull();
   });
+  it('saves only the field being edited and shows a concurrent update of the other one', async () => {
+    const { rerender } = render(<AssetsPage slug="acme" live={live} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Apri logo.svg' }));
+    const panel = screen.getByLabelText('Dettaglio asset');
+    await userEvent.type(within(panel).getByLabelText('Tag (separati da virgola)'), ', nuovo');
+    (listing.assets[0] as { description: string }).description = 'Descritto dal job';
+    rerender(<AssetsPage slug="acme" live={{ ...live, projectTicks: { acme: 1 } }} />);
+    await waitFor(() => expect((within(panel).getByLabelText('Descrizione') as HTMLTextAreaElement).value).toBe('Descritto dal job'));
+    await userEvent.click(within(panel).getByRole('button', { name: 'Salva' }));
+    await waitFor(() => expect(api.updateAsset).toHaveBeenCalledWith('acme', 'logo.svg', { tags: ['logo', 'nuovo'] }));
+  });
 });

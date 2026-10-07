@@ -13,18 +13,20 @@ const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 function Detail({ slug, asset, onChanged, onClose }: { slug: string; asset: AssetEntry; onChanged(): void; onClose(): void }) {
   // Edits live in `edit` (null = untouched): a live reload never overwrites what is being typed.
-  const [edit, setEdit] = useState<{ description: string; tags: string } | null>(null);
+  const [edit, setEdit] = useState<Partial<{ description: string; tags: string }>>({});
   const [error, setError] = useState<string | null>(null);
-  const description = edit?.description ?? asset.description;
-  const tags = edit?.tags ?? asset.tags.join(', ');
+  const description = edit.description ?? asset.description;
+  const tags = edit.tags ?? asset.tags.join(', ');
   const parseTags = (t: string) => t.split(',').map((x) => x.trim()).filter(Boolean);
-  const edited = edit !== null && (edit.description !== asset.description || edit.tags !== asset.tags.join(', '));
-  // Only the fields actually changed are sent: a concurrent edit of the other field is not overwritten.
+  // Per field: only what is being typed is held (and sent); the other field keeps following the server.
   const changes = () => ({
-    ...(description !== asset.description ? { description } : {}),
-    ...(JSON.stringify(parseTags(tags)) !== JSON.stringify(asset.tags) ? { tags: parseTags(tags) } : {}),
+    ...(edit.description !== undefined ? { description: edit.description } : {}),
+    ...(edit.tags !== undefined ? { tags: parseTags(edit.tags) } : {}),
   });
-  useEffect(() => { if (edit && !edited) setEdit(null); }, [edit, edited]);
+  useEffect(() => {
+    const same = { description: edit.description === asset.description, tags: edit.tags === asset.tags.join(', ') };
+    if (same.description || same.tags) setEdit(({ description: d, tags: t }) => ({ ...(same.description ? {} : { description: d }), ...(same.tags ? {} : { tags: t }) }));
+  }, [edit, asset]);
   const run = async (fn: () => Promise<unknown>, close = false) => {
     setError(null);
     try { await fn(); onChanged(); if (close) onClose(); } catch (e) { setError(msg(e)); }
@@ -38,9 +40,9 @@ function Detail({ slug, asset, onChanged, onClose }: { slug: string; asset: Asse
       <span className="muted" style={{ fontSize: 13 }}>{ORIGIN[asset.origin]} · aggiunto il {new Date(asset.addedAt).toLocaleDateString('it-IT')}{asset.width ? ` · ${asset.width}×${asset.height}` : ''}</span>
       {asset.sourceUrl && <a href={asset.sourceUrl} target="_blank" rel="noreferrer" style={{ overflowWrap: 'anywhere' }}>{asset.sourceUrl}</a>}
       <label htmlFor="ad-desc">Descrizione</label>
-      <textarea id="ad-desc" rows={3} value={description} onChange={(e) => setEdit({ description: e.target.value, tags })} />
+      <textarea id="ad-desc" rows={3} value={description} onChange={(e) => setEdit((x) => ({ ...x, description: e.target.value }))} />
       <label htmlFor="ad-tags">Tag (separati da virgola)</label>
-      <input id="ad-tags" value={tags} onChange={(e) => setEdit({ description, tags: e.target.value })} />
+      <input id="ad-tags" value={tags} onChange={(e) => setEdit((x) => ({ ...x, tags: e.target.value }))} />
       {error && <p role="alert" className="error" style={{ margin: 0 }}>{error}</p>}
       <div className="row">
         <ConfirmButton label="Elimina" onConfirm={() => void run(() => api.deleteAsset(slug, asset.file), true)} />
