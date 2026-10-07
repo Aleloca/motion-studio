@@ -1,5 +1,4 @@
-import { lstat, realpath, stat } from 'node:fs/promises';
-import { isAbsolute, join, normalize, sep } from 'node:path';
+import { stat } from 'node:fs/promises';
 import type { FastifyInstance } from 'fastify';
 import { briefSchema, linkedCodebaseSchema, pinSchema, type CreativeDetail } from '@motion-studio/shared';
 import { z } from 'zod';
@@ -9,6 +8,7 @@ import { creativeJobKey, type CreativeRef, type CreativeTurnService } from '../c
 import { FormatCatalog } from '../formats/format-catalog.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
+import { sendConfinedFile } from './serve-file.ts';
 
 export interface CreativeRoutesContext {
   requireWorkspace: () => WorkspaceStore;
@@ -21,7 +21,6 @@ export interface CreativeRoutesContext {
 const turnBody = z.object({ text: z.string().max(10_000).optional(), pins: z.array(pinSchema).max(50).optional() });
 const createBody = z.object({ title: z.string(), brief: briefSchema, generate: z.boolean().optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
 const editBody = z.object({ title: z.string().optional(), brief: briefSchema.optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
-const SERVED_PREFIXES = [`outputs${sep}`, `work${sep}.feedback${sep}`];
 
 function parse<T>(schema: z.ZodType<T>, body: unknown): T {
   const r = schema.safeParse(body ?? {});
@@ -121,18 +120,6 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
 
   app.get<{ Params: { slug: string; c: string; '*': string } }>('/api/projects/:slug/creatives/:c/files/*', async (req, reply) => {
     const ref = await refOf(req.params.slug, req.params.c);
-    const base = ref.store.dir(ref.creativeSlug);
-    const rel = normalize(req.params['*'] ?? ''); // Fastify already decoded the wildcard: never decode twice
-    const notFound = () => reply.status(404).send({ error: 'File non trovato' });
-    if (!rel || isAbsolute(rel) || rel.split(sep).includes('..') || !SERVED_PREFIXES.some((p) => rel.startsWith(p))) return notFound();
-    const info = await lstat(`${base}${sep}${rel}`).catch(() => null);
-    if (!info?.isFile()) return notFound();
-    const real = await realpath(`${base}${sep}${rel}`).catch(() => null);
-    const realBase = await realpath(base).catch(() => base);
-    // Exact match: rejects a symlink/junction at any level below base (it would bypass the allowed prefixes).
-    if (!real || real !== join(realBase, rel)) return notFound();
-    // Agent-written HTML/SVG is served same-origin: sandbox it so scripts cannot reach the loopback API.
-    reply.header('Content-Security-Policy', 'sandbox').header('X-Content-Type-Options', 'nosniff');
-    return reply.sendFile(rel, base);
+    return sendConfinedFile(reply, ref.store.dir(ref.creativeSlug), req.params['*'] ?? '', ['outputs/', 'work/.feedback/']);
   });
 }

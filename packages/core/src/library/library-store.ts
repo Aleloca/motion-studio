@@ -25,6 +25,9 @@ export class LibraryStore {
     return join(this.dir(kind), ...file.split('/'));
   }
 
+  /** Absolute path of an existing regular file confined to the library folder (symlinks out of it refused). */
+  existingFile(kind: LibraryKind, file: string): Promise<string> { return this.mustBeFile(kind, file); }
+
   private async mustBeFile(kind: LibraryKind, file: string): Promise<string> {
     const abs = this.resolve(kind, file);
     const info = await lstat(abs).catch(() => null);

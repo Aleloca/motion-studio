@@ -93,3 +93,8 @@ export const brandProposalSchema = z.object({
   assetsAdded: z.array(relativeFileSchema).max(1000),
 });
 export type BrandProposal = z.infer<typeof brandProposalSchema>;
+
+export interface BrandOverview {
+  kit: BrandKit; kitError: string | null; guidelines: string; sources: BrandSource[]; sourcesError: string | null;
+  proposals: BrandProposal[]; jobKey: string;
+}

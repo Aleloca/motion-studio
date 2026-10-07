@@ -1,10 +1,13 @@
 import { stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
+import fastifyMultipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance } from 'fastify';
-import type { DoctorCheck, ProjectDetail, WorkspaceInfo, WorkspaceProblem, WorkspaceSettings } from '@motion-studio/shared';
+import type { DoctorCheck, ProjectDetail, ServerMessage, WorkspaceInfo, WorkspaceProblem, WorkspaceSettings } from '@motion-studio/shared';
+import { BrandService } from '../brand/brand-analysis.ts';
+import { UPLOAD_LIMITS } from '../library/upload.ts';
 import { CreativeTurnService } from '../creatives/creative-turns.ts';
 import { FormatCatalog } from '../formats/format-catalog.ts';
 import { NoMediaTools, type MediaTools } from '../media/media-tools.ts';
@@ -15,7 +18,10 @@ import { JobConflictError, JobQueue } from '../jobs/job-queue.ts';
 import { JsonFileError } from '../json-file.ts';
 import { expandHome, WorkspaceError, WorkspaceStore } from '../workspace-store.ts';
 import { recoverWorkspace, registerCreativeRoutes } from './creative-routes.ts';
+import { registerBrandRoutes } from './brand-routes.ts';
 import { EventHub } from './event-hub.ts';
+import { registerLibraryRoutes } from './library-routes.ts';
+import { registerProjectRoutes } from './project-routes.ts';
 
 export interface ServerDeps {
   appConfig: AppConfigStore;
@@ -90,6 +96,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     broadcast: (msg) => hub.broadcast(msg),
   });
 
+  const brandService = new BrandService({
+    queue, runner: deps.runner, git: deps.git, media,
+    model: async () => (await requireWorkspace().readSettings()).model,
+    broadcast: (msg) => hub.broadcast(msg),
+  });
+
   app.setErrorHandler((error: unknown, _req, reply) => {
     const err = error as Error;
     if (err instanceof WorkspaceError) return reply.status(err.status).send({ error: err.message });
@@ -120,6 +132,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   await app.register(fastifyWebsocket);
+  await app.register(fastifyMultipart, { limits: UPLOAD_LIMITS });
 
   app.get('/api/health', async () => ({ ok: true }));
   app.get('/api/doctor', async () => deps.doctor());
@@ -224,6 +237,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   registerCreativeRoutes(app, { requireWorkspace, turns, media, openPath: deps.openPath ?? (async () => {}), isJobActive });
+
+  const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m) };
+  registerBrandRoutes(app, routeCtx);
+  registerLibraryRoutes(app, routeCtx);
+  registerProjectRoutes(app, { requireWorkspace, jobKeyOf: projectJobKey });
 
   const serveWeb = Boolean(deps.webDir && (await stat(deps.webDir).catch(() => null))?.isDirectory());
   // Always registered: it provides reply.sendFile to the creative file route; it serves the web build only when present.
