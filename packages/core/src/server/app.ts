@@ -160,6 +160,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
           signal.addEventListener('abort', () => run.cancel(), { once: true });
           const result = await run.done;
           if (result.status === 'failed') throw new Error(result.error ?? 'Turno non riuscito');
+          // A cancel that arrived after an ok result yields 'succeeded' from the runner: keep it.
+          return result.status === 'cancelled' ? 'cancelled' : undefined;
         },
       });
       return reply.status(202).send(job);

@@ -11,13 +11,25 @@ export class JobConflictError extends Error {
 export interface JobSpec {
   key: string;
   label: string;
-  run: (signal: AbortSignal, jobId: string) => Promise<void>;
+  /**
+   * Outcome contract: resolving means the work completed ('succeeded'), even if an abort arrived late;
+   * resolving to 'cancelled' reports an explicit cancellation; rejecting means 'failed', or 'cancelled'
+   * when the signal was aborted (the rejection is taken to be caused by the abort).
+   */
+  run: (signal: AbortSignal, jobId: string) => Promise<void | 'cancelled'>;
 }
 
 interface Entry { summary: JobSummary; spec: JobSpec; controller: AbortController }
 
 const MAX_KEPT = 100;
 const ACTIVE = new Set(['queued', 'running']);
+const MAX_CONCURRENCY = 8;
+
+/** Integer in 1..8; a non-finite value keeps the previous one. */
+function clampConcurrency(n: number, previous: number): number {
+  if (!Number.isFinite(n)) return previous;
+  return Math.min(MAX_CONCURRENCY, Math.max(1, Math.trunc(n)));
+}
 
 export class JobQueue {
   private concurrency: number;
@@ -26,7 +38,7 @@ export class JobQueue {
   private idleWaiters: Array<() => void> = [];
 
   constructor(opts: { concurrency: number; onUpdate?: (job: JobSummary) => void }) {
-    this.concurrency = opts.concurrency;
+    this.concurrency = clampConcurrency(opts.concurrency, 1);
     this.onUpdate = opts.onUpdate;
   }
 
@@ -59,7 +71,7 @@ export class JobQueue {
   list(): JobSummary[] { return this.entries.map((e) => ({ ...e.summary })); }
 
   setConcurrency(n: number): void {
-    this.concurrency = n;
+    this.concurrency = clampConcurrency(n, this.concurrency);
     this.pump();
   }
 
@@ -84,7 +96,7 @@ export class JobQueue {
     entry.summary.startedAt = new Date().toISOString();
     this.update(entry);
     Promise.resolve().then(() => entry.spec.run(entry.controller.signal, entry.summary.id)).then(
-      () => this.finish(entry, entry.controller.signal.aborted ? 'cancelled' : 'succeeded'),
+      (outcome) => this.finish(entry, outcome === 'cancelled' ? 'cancelled' : 'succeeded'),
       (err: unknown) => this.finish(entry, entry.controller.signal.aborted ? 'cancelled' : 'failed', err instanceof Error ? err.message : String(err)),
     ).finally(() => this.pump());
   }

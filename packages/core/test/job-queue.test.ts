@@ -99,4 +99,48 @@ describe('JobQueue', () => {
     expect(q.list().find((j) => j.id === job.id)).toMatchObject({ state: 'succeeded' });
     expect(updates.length).toBeGreaterThanOrEqual(3);
   });
+  it('a run that resolves normally succeeds even if the abort arrived after the work finished', async () => {
+    const q = new JobQueue({ concurrency: 1 });
+    const d = deferred();
+    const job = q.enqueue({ key: 'k', label: 'a', run: () => d.promise });
+    await tick();
+    q.cancel(job.id);
+    d.resolve();
+    await q.whenIdle();
+    expect(q.list()[0]).toMatchObject({ state: 'succeeded' });
+  });
+  it('a run can resolve to "cancelled" to report an explicit cancellation', async () => {
+    const q = new JobQueue({ concurrency: 1 });
+    const job = q.enqueue({
+      key: 'k', label: 'a',
+      run: (signal) => new Promise<'cancelled'>((res) => signal.addEventListener('abort', () => res('cancelled'))),
+    });
+    await tick();
+    q.cancel(job.id);
+    await q.whenIdle();
+    expect(q.list()[0]).toMatchObject({ state: 'cancelled' });
+  });
+  it('clamps concurrency to 1..8 and ignores non-integers', async () => {
+    const running = (q: JobQueue) => q.list().filter((j) => j.state === 'running').length;
+    const q = new JobQueue({ concurrency: 2 });
+    const ds = Array.from({ length: 10 }, () => deferred());
+    ds.forEach((d, i) => q.enqueue({ key: `k${i}`, label: `${i}`, run: () => d.promise }));
+    await tick();
+    expect(running(q)).toBe(2);
+    q.setConcurrency(Number.NaN);
+    q.setConcurrency(100);
+    await tick();
+    expect(running(q)).toBe(8);
+    q.setConcurrency(0);
+    q.setConcurrency(2.5);
+    ds.forEach((d) => d.resolve());
+    await q.whenIdle();
+    const q2 = new JobQueue({ concurrency: 0 });
+    const d2 = deferred();
+    q2.enqueue({ key: 'x', label: 'x', run: () => d2.promise });
+    await tick();
+    expect(running(q2)).toBe(1);
+    d2.resolve();
+    await q2.whenIdle();
+  });
 });
