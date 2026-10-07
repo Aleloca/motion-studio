@@ -1,10 +1,20 @@
-import type { DoctorCheck } from '@motion-studio/shared';
-import { useState } from 'react';
+import type { DoctorCheck, WorkspaceProblem } from '@motion-studio/shared';
+import { useEffect, useState } from 'react';
 import { api, ApiError } from '../api.ts';
 
-export function Onboarding({ checks, workspacePath, error: loadError, onRecheck, onWorkspaceSet }: {
+function workspaceProblemText(problem: WorkspaceProblem, path: string | null): string {
+  const where = path ?? '';
+  switch (problem.code) {
+    case 'not-found': return `Cartella non trovata: ${where}, scegline un'altra`;
+    case 'invalid': return `Contenuto non valido in ${where}: ${problem.message}`;
+    case 'not-writable': return problem.message;
+  }
+}
+
+export function Onboarding({ checks, workspacePath, workspaceError, error: loadError, onRecheck, onWorkspaceSet }: {
   checks: DoctorCheck[] | null;
   workspacePath: string | null;
+  workspaceError?: WorkspaceProblem | null;
   error?: string | null;
   onRecheck: () => void;
   onWorkspaceSet: () => void;
@@ -12,6 +22,8 @@ export function Onboarding({ checks, workspacePath, error: loadError, onRecheck,
   const [path, setPath] = useState(workspacePath ?? '');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The configured path usually arrives after mount: prefill it unless the user already typed something.
+  useEffect(() => { if (workspacePath) setPath((p) => p || workspacePath); }, [workspacePath]);
 
   const save = async () => {
     setBusy(true); setError(null);
@@ -41,6 +53,9 @@ export function Onboarding({ checks, workspacePath, error: loadError, onRecheck,
         <label htmlFor="ws-path"><strong>Cartella di lavoro</strong></label>
         <p className="muted" style={{ margin: 0 }}>Qui Motion Studio salva tutti i progetti. Se non esiste, viene creata.</p>
         <input id="ws-path" value={path} onChange={(e) => setPath(e.target.value)} placeholder="/Users/tuonome/MotionStudio" />
+        {workspaceError && !error && (
+          <p role="alert" className="error" style={{ margin: 0 }}>{workspaceProblemText(workspaceError, workspacePath)}</p>
+        )}
         {error && <p role="alert" className="error" style={{ margin: 0 }}>{error}</p>}
         <div className="row"><button type="button" className="primary" disabled={busy || !path.trim()} onClick={save}>Usa questa cartella</button></div>
       </section>

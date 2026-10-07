@@ -1,4 +1,4 @@
-import type { DoctorCheck, WorkspaceSettings } from '@motion-studio/shared';
+import type { DoctorCheck, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useEffect, useState } from 'react';
 import { api } from './api.ts';
 import { applyTheme, ThemeToggle } from './components/ThemeToggle.tsx';
@@ -19,8 +19,9 @@ function useHashRoute(): string {
 
 export function App() {
   const [checks, setChecks] = useState<DoctorCheck[] | null>(null);
-  const [ws, setWs] = useState<{ path: string | null; settings: WorkspaceSettings | null } | null>(null);
+  const [ws, setWs] = useState<WorkspaceInfo | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
   const live = useServerEvents();
   const route = useHashRoute();
 
@@ -35,13 +36,21 @@ export function App() {
 
   const blocking = checks?.some((c) => c.required && !c.ok) ?? true;
   if (!ws || !ws.settings || blocking) {
-    return <Onboarding checks={checks} workspacePath={ws?.path ?? null} error={loadError} onRecheck={refresh} onWorkspaceSet={refresh} />;
+    return (
+      <Onboarding checks={checks} workspacePath={ws?.path ?? null} workspaceError={ws?.error ?? null} error={loadError}
+        onRecheck={refresh} onWorkspaceSet={refresh} />
+    );
   }
   const settings = ws.settings;
   const update = async (patch: Partial<WorkspaceSettings>) => {
-    const next = await api.updateSettings(patch);
-    applyTheme(next.theme);
-    setWs({ ...ws, settings: next });
+    setSettingsError(null);
+    try {
+      const next = await api.updateSettings(patch);
+      applyTheme(next.theme);
+      setWs((prev) => (prev ? { ...prev, settings: next } : prev));
+    } catch (e) {
+      setSettingsError(`Impossibile salvare le impostazioni: ${e instanceof Error ? e.message : String(e)}`);
+    }
   };
   const running = Object.values(live.jobs).filter((j) => j.state === 'running').length;
   const queued = Object.values(live.jobs).filter((j) => j.state === 'queued').length;
@@ -60,6 +69,7 @@ export function App() {
         </label>
         <ThemeToggle value={settings.theme} onChange={(theme) => void update({ theme })} />
       </header>
+      {settingsError && <p role="alert" className="error page" style={{ margin: 0, paddingBottom: 0 }}>{settingsError}</p>}
       {projectSlug ? <ProjectPage key={projectSlug} slug={projectSlug} live={live} expert={settings.expertMode} /> : <ProjectList />}
     </>
   );

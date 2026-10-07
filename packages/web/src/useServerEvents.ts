@@ -11,7 +11,13 @@ export function useServerEvents(): EventsState {
     const connect = () => {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       ws = new WebSocket(`${proto}://${location.host}/api/events`);
-      ws.onmessage = (e) => dispatch(JSON.parse(String(e.data)) as ServerMessage);
+      ws.onmessage = (e) => {
+        let msg: ServerMessage;
+        try { msg = JSON.parse(String(e.data)) as ServerMessage; } catch { return; } // ignore malformed frames
+        dispatch(msg);
+      };
+      // An error is followed by 'close' (which reconnects); closing explicitly covers sockets stuck after an error.
+      ws.onerror = () => ws?.close();
       ws.onclose = () => { if (!stopped) retry = setTimeout(connect, 1000); };
     };
     connect();
