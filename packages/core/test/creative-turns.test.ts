@@ -60,7 +60,7 @@ describe('CreativeTurnService', () => {
     expect(v1).toMatchObject({ n: 1, status: 'complete', problems: [], sessionId: 'fake-session-1', request: 'Generazione dal brief', basedOn: null, tools: ['fake'] });
     expect(v1!.outputs.map((o) => o.file)).toEqual(['instagram-post-1x1.mp4', 'web-banner-300x250.png']);
     expect(v1!.commit).toMatch(/^[0-9a-f]{40}$/);
-    const log = await execCommand('git', ['log', '-1', '--format=%s'], { cwd: ref.projectDir });
+    const log = await execCommand('git', ['log', '-1', '--format=%s', 'HEAD~1'], { cwd: ref.projectDir });
     expect(log.stdout.trim()).toBe('Lancio: v1');
     expect((await store.get(ref.creativeSlug)).status).toBe('ready');
     const conv = await store.readConversation(ref.creativeSlug);
@@ -381,5 +381,21 @@ describe('CreativeTurnService', () => {
     await service.restore(ref, 1);
     const conv = await store.readConversation(ref.creativeSlug);
     expect(conv.some((e) => e.type === 'system' && e.text.startsWith('Rimossi'))).toBe(false);
+  });
+
+  it('leaves the project tree clean after a version, a brief edit and a restore', async () => {
+    const clean = async () => (await execCommand('git', ['status', '--porcelain'], { cwd: ref.projectDir })).stdout.trim();
+    await finalState((await service.start(ref)).id);
+    expect(await clean()).toBe('');
+    const log = (await execCommand('git', ['log', '--format=%s'], { cwd: ref.projectDir })).stdout.trim().split('\n');
+    expect(log.slice(0, 2)).toEqual(['Lancio: v1 · stato', 'Lancio: v1']);
+    const [v1] = await store.readVersions(ref.creativeSlug);
+    const workCommit = (await execCommand('git', ['rev-parse', 'HEAD~1'], { cwd: ref.projectDir })).stdout.trim();
+    expect(v1!.commit).toBe(workCommit);
+    await service.updateBrief(ref, { title: 'Lancio 2' });
+    expect(await clean()).toBe('');
+    await finalState((await service.start(ref, { text: 'x', pins: [] })).id);
+    await service.restore(ref, 1);
+    expect(await clean()).toBe('');
   });
 });

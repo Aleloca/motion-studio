@@ -94,7 +94,7 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
         </main>
         <div style={{ flex: '1 1 360px', maxWidth: 440, minWidth: 0, display: 'flex' }}>
           <ConversationPanel slug={slug} detail={detail} conversation={conversation} presets={presets} job={job} liveEvents={job ? live.events[job.id] ?? [] : []}
-            expert={expert} pins={pins} onRemovePin={(i) => setPins((p) => p.filter((_, k) => k !== i))} onSent={() => setPins([])}
+            expert={expert} pins={pins} onRemovePin={(i) => setPins((p) => p.filter((_, k) => k !== i))} onSent={() => { setPins([]); setUserPicked(false); }}
             onSelectVersion={pick} onChanged={reload} />
         </div>
       </div>

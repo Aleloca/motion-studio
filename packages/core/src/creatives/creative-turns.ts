@@ -44,10 +44,12 @@ export class CreativeTurnService {
     return this.locks.run(key, async () => {
       if (this.isActive(key)) throw new WorkspaceError(409, 'Attendi la fine della generazione in corso prima di modificare il brief');
       const store = new CreativeStore(ref.projectDir);
-      return store.update(ref.creativeSlug, {
+      const updated = await store.update(ref.creativeSlug, {
         ...(patch.title !== undefined ? { title: patch.title } : {}),
         ...(patch.brief ? { brief: patch.brief } : {}),
       });
+      await this.deps.git.commitAll(ref.projectDir, `${updated.title}: brief aggiornato`);
+      return updated;
     });
   }
 
@@ -95,6 +97,7 @@ export class CreativeTurnService {
       await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: `Rimossi ${removed} file non salvati in una versione` });
     }
     await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: `Ripartenza dalla versione ${n}: il prossimo messaggio lavora su quella base.` });
+    await this.deps.git.commitAll(ref.projectDir, `${updated.title}: ripartenza da v${n}`);
     this.changed(ref);
     return updated;
   }
@@ -173,12 +176,14 @@ export class CreativeTurnService {
       if (signal.aborted) {
         await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: `Annullamento arrivato a lavoro quasi concluso: la versione v${n} è stata salvata.` });
       }
+      await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${n} · stato`);
       this.changed(ref);
     } catch (err) {
       if (signal.aborted && !finalizing) return await this.cancelled(ref, store, previous, (await store.readVersions(slug)).length > 0);
       const text = err instanceof Error ? err.message : String(err);
       await store.update(slug, { status: 'error', error: text }).catch(() => {});
       await store.appendConversation(slug, { type: 'system', at: now(), level: 'error', text: `Generazione non riuscita: ${text}` }).catch(() => {});
+      await this.commitState(ref, store);
       this.changed(ref);
       // After a late abort the queue would read a plain rejection as a cancel: this failure is real.
       throw finalizing ? new JobFailedError(text) : err;
@@ -190,8 +195,15 @@ export class CreativeTurnService {
       ? previous : hasVersions ? 'ready' : 'draft';
     await store.update(ref.creativeSlug, { status: restored, error: null });
     await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: 'Generazione annullata.' });
+    await this.commitState(ref, store);
     this.changed(ref);
     return 'cancelled';
+  }
+
+  /** Best-effort commit of the creative's metadata so the project tree stays clean. */
+  private async commitState(ref: CreativeRef, store: CreativeStore): Promise<void> {
+    const title = (await store.get(ref.creativeSlug)).title;
+    await this.deps.git.commitAll(ref.projectDir, `${title}: stato`).catch(() => null);
   }
 
   /**
