@@ -3,8 +3,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from './api.ts';
 import { applyTheme, ThemeToggle } from './components/ThemeToggle.tsx';
 import { Onboarding } from './screens/Onboarding.tsx';
+import { CreativePage } from './screens/CreativePage.tsx';
+import { NewCreative } from './screens/NewCreative.tsx';
 import { ProjectList } from './screens/ProjectList.tsx';
 import { ProjectPage } from './screens/ProjectPage.tsx';
+import { parseRoute } from './routes.ts';
 import { useServerEvents } from './useServerEvents.ts';
 
 function useHashRoute(): string {
@@ -54,7 +57,7 @@ export function App() {
   };
   const running = Object.values(live.jobs).filter((j) => j.state === 'running').length;
   const queued = Object.values(live.jobs).filter((j) => j.state === 'queued').length;
-  const projectSlug = route.match(/^#\/p\/([a-z0-9-]+)/)?.[1];
+  const r = parseRoute(route);
 
   return (
     <>
@@ -70,7 +73,10 @@ export function App() {
         <ThemeToggle value={settings.theme} onChange={(theme) => void update({ theme })} />
       </header>
       {settingsError && <p role="alert" className="error page" style={{ margin: 0, paddingBottom: 0 }}>{settingsError}</p>}
-      {projectSlug ? <ProjectPage key={projectSlug} slug={projectSlug} live={live} expert={settings.expertMode} /> : <ProjectList />}
+      {r.name === 'project' && <ProjectPage key={r.slug} slug={r.slug} tab={r.tab} live={live} expert={settings.expertMode} />}
+      {r.name === 'new-creative' && <NewCreative key={r.slug} slug={r.slug} />}
+      {r.name === 'creative' && <CreativePage key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} expert={settings.expertMode} />}
+      {r.name === 'projects' && <ProjectList />}
     </>
   );
 }

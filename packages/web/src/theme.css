@@ -38,3 +38,10 @@ input, textarea { width: 100%; padding: 10px 12px; border-radius: 10px; border: 
 .badge.ok { color: var(--ok); } .badge.err { color: var(--danger); } .badge.run { background: var(--accent-soft); color: var(--accent-ink); }
 .error { color: var(--danger); }
 .warn { background: var(--warn-bg); border: 1px solid var(--warn-border); color: var(--warn-text); border-radius: 12px; padding: 12px; }
+.badge.warn-badge { background: var(--warn-bg); color: var(--warn-text); }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); }
+.tabs a, .tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; padding: 8px 12px; color: var(--muted); text-decoration: none; min-height: 40px; }
+.tabs [aria-current='page'], .tabs [aria-selected='true'] { color: var(--text); border-bottom-color: var(--accent); font-weight: 700; }
+.chip { min-height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border); background: transparent; font-size: 13px; }
+.chip[aria-pressed='true'] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); font-weight: 700; }
+.dots { background-color: var(--bg); background-image: radial-gradient(var(--dot) 1px, transparent 1px); background-size: 20px 20px; }
