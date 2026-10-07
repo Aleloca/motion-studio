@@ -28,7 +28,7 @@ Opzioni del launcher (dopo il nome dello script, es. `pnpm motion-studio --port 
 3. Motion Studio controlla gli output (presenza, risoluzione, durata; con ffmpeg/ffprobe installati li verifica davvero): se qualcosa non torna chiede all'agente di correggere, fino a 3 tentativi; poi salva la versione, anche se incompleta.
 4. Ogni versione è un commit git del progetto. Dalla pagina della creatività puoi aprire un formato, aggiungere commenti su un punto/istante, chiedere modifiche, confrontare versioni e ripartire da una versione precedente.
 
-Limiti attuali: brand kit, asset e codebase collegate arrivano nella fase 3; approvazioni dalla UI, tool MCP e rigenerazione automatica col comando del manifest nella fase 4; app desktop ed export in cartella scelta nella fase 5.
+Limiti attuali: approvazioni dalla UI, tool MCP e rigenerazione automatica col comando del manifest nella fase 4; app desktop ed export in cartella scelta nella fase 5.
 
 ## Sicurezza nella fase 2
 - **Turni delle creatività:** l'agente può eseguire senza chiedere conferma `node`, `python3`, `npm`/`npx`/`pnpm`, `pip`/`pip3`, `ffmpeg`/`ffprobe` e `mkdir`/`cp`/`mv`, oltre a modificare i file del progetto. Queste regole non lo confinano nella cartella del progetto: i comandi ammessi possono leggere e scrivere ovunque l'utente possa farlo. Tutti gli altri comandi vengono rifiutati.
@@ -37,13 +37,13 @@ Limiti attuali: brand kit, asset e codebase collegate arrivano nella fase 3; app
 
 ## Brand, asset e codebase collegate
 - **Brand**: palette, font, loghi, tono, cose da fare e da evitare, stile fotografico; ogni voce mostra da dove arriva (manuale, sito, immagine). Le linee guida discorsive sono in `brand/guidelines.md`.
-- **Analisi brand**: aggiungi uno o più siti (e le immagini di riferimento con "Usa per l'analisi brand") e premi **Analizza brand**. L'agente visita i siti, scarica gli asset utili in `assets/` e propone modifiche: le applichi voce per voce, le voci inserite a mano non vengono mai rimosse.
+- **Analisi brand**: aggiungi uno o più siti (e le immagini di riferimento con "Usa per l'analisi brand") e premi **Analizza brand**. L'agente visita i siti, scarica gli asset utili in `assets/` e propone modifiche: le applichi voce per voce, le voci inserite a mano non vengono mai rimosse. L'agente lavora su copie: brand kit, linee guida, sorgenti e metadati di asset e riferimenti non possono essere modificati dagli strumenti di modifica e, se l'agente li cambia comunque, Motion Studio annulla la modifica e lo segnala.
 - **Asset e riferimenti**: carica file trascinandoli, filtra per tipo e origine, aggiungi descrizioni e tag (anche con **Descrivi con l'agente**).
-- **Codebase collegate** (Impostazioni del progetto o della singola creatività): cartelle del tuo computer che l'agente può leggere ma non modificare (regole di sola lettura su ogni turno; se una cartella è un repository git e risulta modificata dopo un turno, la conversazione lo segnala).
+- **Codebase collegate** (Impostazioni del progetto o della singola creatività): cartelle del tuo computer che l'agente può leggere; gli strumenti di modifica sono bloccati su ogni turno e, se una cartella è un repository git e risulta modificata dopo un turno, la conversazione lo segnala. Non puoi collegare la cartella del progetto o del workspace, una cartella che le contiene né una cartella al loro interno.
 
 Limite attuale: le regole bloccano gli strumenti di modifica dell'agente, ma gli interpreti che l'agente può usare (per esempio node o python) potrebbero comunque scrivere nella cartella. Motion Studio rileva e segnala le modifiche solo nelle cartelle che sono repository git; per le altre le modifiche non verrebbero rilevate. Collega preferibilmente repository git con le modifiche già committate.
 
-Sicurezza: durante l'analisi brand l'agente può anche usare `WebFetch` e `curl` per scaricare i file dai siti indicati.
+Sicurezza: durante l'analisi brand l'agente può usare `WebFetch` e `curl` per scaricare i file dai siti indicati: fino alla fase 4 (sandbox) analizza solo siti di cui ti fidi.
 
 ## Limiti attuali dell'agente
 - **Console del progetto:** i turni girano con `--permission-mode acceptEdits`, quindi l'agente può modificare i file nella cartella del progetto senza chiedere conferma (le richieste che richiederebbero un'approvazione vengono rifiutate). Le approvazioni dall'interfaccia arrivano nella fase 4.

@@ -19,6 +19,7 @@
 - Codebase collegate: percorsi assoluti esistenti, **mai copiate**, in sola lettura: `--add-dir <path>` + `--disallowedTools Edit(/<path>/**)` per ogni cartella (con path assoluto la regola diventa `Edit(//abs/path/**)`); il prompt le dichiara in sola lettura con la nota; dopo il turno, se la cartella è un repo git e `git status --porcelain` è cambiato, la conversazione riporta un avviso. Cartella mancante → avviso nel prompt e nella conversazione, il turno parte senza.
 - Limiti upload: 200 MB per file, 50 file per richiesta; nomi file ripuliti (niente separatori, niente `..`), collisioni risolte con `-2`, `-3`…
 - Gli strumenti aggiuntivi dell'analisi brand sono `WebFetch` e `Bash(curl:*)` oltre ad `AGENT_ALLOWED_TOOLS` (spec §6.1: fetch del sito, download asset).
+  - **Aggiornamento (revisione finale, decisione dell'orchestratore):** l'analisi usa solo `BRAND_ANALYSIS_TOOLS` (`WebFetch`, `Bash(curl:*)`, `Bash(mkdir:*)`, `Bash(ffprobe:*)`) e la descrizione degli asset solo `DESCRIBE_TOOLS` (`Read`, `Bash(ffmpeg:*)`, `Bash(ffprobe:*)`), definiti in `agent/runner.ts`; `AGENT_ALLOWED_TOOLS` resta solo nei turni delle creatività.
 - Fuori scope (README): provider MCP Google Fonts/stock/gpt-image-2 e screenshot via MCP (Fase 4), approvazioni dalla UI (Fase 4), dialog nativo per scegliere cartelle (Fase 5: in Fase 3 il percorso si incolla).
 
 ## Review Focus
