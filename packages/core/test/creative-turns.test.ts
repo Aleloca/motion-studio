@@ -221,4 +221,25 @@ describe('CreativeTurnService', () => {
     expect(await finalState(job.id)).toBe('succeeded');
     expect((await store.readVersions(ref.creativeSlug)).map((v) => v.n)).toEqual([1, 2]);
   });
+
+  it('a start() right after a queued cancel is not clobbered by the stale cleanup', async () => {
+    const q1 = new JobQueue({ concurrency: 1 });
+    const svc = new CreativeTurnService({
+      queue: q1, git: new Git(), media: NoMediaTools,
+      runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),
+      presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
+    });
+    let release!: () => void;
+    q1.enqueue({ key: 'blocker', label: 'blocker', run: () => new Promise<void>((r) => { release = r; }) });
+    const first = await svc.start(ref);
+    q1.cancel(first.id);
+    const second = svc.start(ref);
+    release();
+    await second;
+    await q1.whenIdle();
+    expect((await store.get(ref.creativeSlug)).status).toBe('ready');
+    expect(await store.readVersions(ref.creativeSlug)).toHaveLength(1);
+    const conv = await store.readConversation(ref.creativeSlug);
+    expect(conv.some((e) => e.type === 'system' && e.text === 'Generazione annullata.')).toBe(false);
+  });
 });

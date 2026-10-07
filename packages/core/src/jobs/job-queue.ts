@@ -17,7 +17,7 @@ export interface JobSpec {
    * when the signal was aborted (the rejection is taken to be caused by the abort).
    */
   run: (signal: AbortSignal, jobId: string) => Promise<void | 'cancelled'>;
-  /** Called when the job is cancelled while still queued (run() never starts). Errors are swallowed; idle waiters resolve after it settles. */
+  /** Called when the job is cancelled while still queued (run() never starts). Errors are swallowed. The queue is pumped after it settles; a whenIdle() called after the cancel may resolve before the hook finishes. */
   onCancelledBeforeStart?: () => void | Promise<void>;
 }
 

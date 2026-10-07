@@ -2,6 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import type { CreativeFile, CreativeStatus, FormatPreset, JobSummary, Pin, ServerMessage } from '@motion-studio/shared';
 import type { AgentRunner } from '../agent/runner.ts';
+import { KeyedMutex } from '../keyed-mutex.ts';
 import type { Git } from '../git.ts';
 import { JobConflictError, type JobQueue } from '../jobs/job-queue.ts';
 import type { MediaTools } from '../media/media-tools.ts';
@@ -29,14 +30,19 @@ class AgentFailure extends Error {}
 
 export class CreativeTurnService {
   private readonly maxAttempts: number;
+  private readonly locks = new KeyedMutex();
   constructor(private readonly deps: CreativeTurnDeps) { this.maxAttempts = deps.maxAttempts ?? 3; }
 
   async start(ref: CreativeRef, message?: { text: string; pins: Pin[] }): Promise<JobSummary> {
+    return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), () => this.startLocked(ref, message));
+  }
+
+  private async startLocked(ref: CreativeRef, message?: { text: string; pins: Pin[] }): Promise<JobSummary> {
     const store = new CreativeStore(ref.projectDir);
     const before = await store.get(ref.creativeSlug);
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     // Same check the queue does, but before touching the creative's files.
-    if (this.deps.queue.list().some((j) => j.key === key && (j.state === 'queued' || j.state === 'running'))) throw new JobConflictError(key);
+    if (this.isActive(key)) throw new JobConflictError(key);
     if (message) await store.appendConversation(ref.creativeSlug, { type: 'user', at: now(), text: message.text, pins: message.pins, attachments: [] });
     await store.update(ref.creativeSlug, { status: 'working', error: null });
     this.changed(ref);
@@ -44,15 +50,25 @@ export class CreativeTurnService {
       key,
       label: `Creatività · ${before.title}`,
       run: (signal, jobId) => this.run(ref, store, before.status, message, signal, jobId),
-      onCancelledBeforeStart: async () => {
+      onCancelledBeforeStart: () => this.locks.run(key, async () => {
+        // A new start() may have won the lock after the cancel: the creative belongs to that job now.
+        if (this.isActive(key)) return;
         await this.cancelled(ref, store, before.status, (await store.readVersions(ref.creativeSlug)).length > 0);
-      },
+      }),
     });
   }
 
   async restore(ref: CreativeRef, n: number): Promise<CreativeFile> {
+    return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), () => this.restoreLocked(ref, n));
+  }
+
+  private isActive(key: string): boolean {
+    return this.deps.queue.list().some((j) => j.key === key && (j.state === 'queued' || j.state === 'running'));
+  }
+
+  private async restoreLocked(ref: CreativeRef, n: number): Promise<CreativeFile> {
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
-    if (this.deps.queue.list().some((j) => j.key === key && (j.state === 'queued' || j.state === 'running'))) {
+    if (this.isActive(key)) {
       throw new WorkspaceError(409, 'Attendi la fine della generazione in corso prima di ripartire da una versione');
     }
     const store = new CreativeStore(ref.projectDir);
