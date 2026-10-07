@@ -2,7 +2,7 @@
 
 App locale e open-source per creare video in motion graphics e immagini usando il tuo agente di coding (inizialmente **Claude Code**). Tutto resta sul tuo computer: i progetti sono cartelle con file JSON/Markdown versionate con git.
 
-> Stato: fase 2 (creatività). Vedi `docs/superpowers/specs/` per il design completo.
+> Stato: fase 3 (brand, asset e codebase collegate). Vedi `docs/superpowers/specs/` per il design completo.
 
 ## Requisiti
 - Node.js 22+
@@ -35,9 +35,18 @@ Limiti attuali: brand kit, asset e codebase collegate arrivano nella fase 3; app
 - **Approvazioni:** le richieste di permesso dall'interfaccia arrivano nella fase 4; fino ad allora usa Motion Studio solo con progetti e brief di cui ti fidi.
 - **Output non verificati:** senza ffmpeg/ffprobe installati Motion Studio non può controllare davvero risoluzione e durata, e mostra gli output come "non verificati".
 
+## Brand, asset e codebase collegate
+- **Brand**: palette, font, loghi, tono, cose da fare e da evitare, stile fotografico; ogni voce mostra da dove arriva (manuale, sito, immagine). Le linee guida discorsive sono in `brand/guidelines.md`.
+- **Analisi brand**: aggiungi uno o più siti (e le immagini di riferimento con "Usa per l'analisi brand") e premi **Analizza brand**. L'agente visita i siti, scarica gli asset utili in `assets/` e propone modifiche: le applichi voce per voce, le voci inserite a mano non vengono mai rimosse.
+- **Asset e riferimenti**: carica file trascinandoli, filtra per tipo e origine, aggiungi descrizioni e tag (anche con **Descrivi con l'agente**).
+- **Codebase collegate** (Impostazioni del progetto o della singola creatività): cartelle del tuo computer che l'agente può leggere ma non modificare (regole di sola lettura su ogni turno; se una cartella è un repository git e risulta modificata dopo un turno, la conversazione lo segnala).
+
+Limite attuale: le regole bloccano gli strumenti di modifica dell'agente, ma gli interpreti che l'agente può usare (per esempio node o python) potrebbero comunque scrivere nella cartella. Motion Studio rileva e segnala le modifiche solo nelle cartelle che sono repository git; per le altre le modifiche non verrebbero rilevate. Collega preferibilmente repository git con le modifiche già committate.
+
+Sicurezza: durante l'analisi brand l'agente può anche usare `WebFetch` e `curl` per scaricare i file dai siti indicati.
+
 ## Limiti attuali dell'agente
 - **Console del progetto:** i turni girano con `--permission-mode acceptEdits`, quindi l'agente può modificare i file nella cartella del progetto senza chiedere conferma (le richieste che richiederebbero un'approvazione vengono rifiutate). Le approvazioni dall'interfaccia arrivano nella fase 4.
-- **Codebase collegate:** le `linkedCodebases` di `project.json` vengono ignorate; la fase 3 le renderà disponibili all'agente in sola lettura.
 
 ## Sviluppo
 ```bash
