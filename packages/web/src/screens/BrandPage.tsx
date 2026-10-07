@@ -1,5 +1,5 @@
 import type { AssetEntry, BrandKit, BrandNote } from '@motion-studio/shared';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api.ts';
 import { MediaThumb } from '../components/MediaThumb.tsx';
 import { ProposalReview } from '../components/ProposalReview.tsx';
@@ -39,10 +39,20 @@ export function BrandPage({ slug, live }: { slug: string; live: EventsState }) {
   const [url, setUrl] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [rawWeights, setRawWeights] = useState<Record<string, string>>({});
+  const [rawText, setRawText] = useState<{ tone?: string; photo?: string }>({});
+  const seeded = useRef<{ kit: string; guidelines: string } | null>(null);
 
   const overview = data?.[0];
   const assets = data?.[1].assets ?? [];
-  useEffect(() => { if (overview) { setDraft(overview.kit); setGuidelines(overview.guidelines); } }, [overview]);
+  // Reseed each field from the server only when it has no unsaved edits (it still equals what was seeded last).
+  useEffect(() => {
+    if (!overview) return;
+    const prev = seeded.current;
+    setDraft((d) => (d === null || !prev || JSON.stringify(d) === prev.kit ? overview.kit : d));
+    setGuidelines((g) => (!prev || g === prev.guidelines ? overview.guidelines : g));
+    seeded.current = { kit: JSON.stringify(overview.kit), guidelines: overview.guidelines };
+  }, [overview]);
   const job = useMemo(() => Object.values(live.jobs).filter((j) => j.key === overview?.jobKey).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0], [live.jobs, overview?.jobKey]);
   const running = job && (job.state === 'queued' || job.state === 'running');
   const act = async (fn: () => Promise<unknown>, ok?: string) => {
@@ -94,8 +104,9 @@ export function BrandPage({ slug, live }: { slug: string; live: EventsState }) {
               <select aria-label={`Ruolo font ${k + 1}`} value={f.role} disabled={locked} onChange={(e) => edit({ role: e.target.value as typeof f.role })}>
                 {['heading', 'body', 'accent', 'other'].map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
-              <input aria-label={`Pesi font ${k + 1}`} value={f.weights.join(', ')} disabled={locked} style={{ width: 120 }}
-                onChange={(e) => edit({ weights: e.target.value.split(',').map((w) => Number(w.trim())).filter((w) => Number.isInteger(w) && w >= 100 && w <= 900) })} />
+              <input aria-label={`Pesi font ${k + 1}`} value={rawWeights[f.id] ?? f.weights.join(', ')} disabled={locked} style={{ width: 120 }}
+                onChange={(e) => { setRawWeights({ ...rawWeights, [f.id]: e.target.value }); edit({ weights: e.target.value.split(',').map((w) => Number(w.trim())).filter((w) => w !== 0 && Number.isInteger(w) && w >= 100 && w <= 900) }); }}
+                onBlur={() => setRawWeights(({ [f.id]: _drop, ...rest }) => rest)} />
               <select aria-label={`File font ${k + 1}`} value={f.file ?? ''} disabled={locked} onChange={(e) => edit({ file: e.target.value || null })}>
                 <option value="">Nessun file</option>
                 {assets.filter((a) => a.kind === 'font').map((a) => <option key={a.file} value={`assets/${a.file}`}>{a.file}</option>)}
@@ -138,9 +149,11 @@ export function BrandPage({ slug, live }: { slug: string; live: EventsState }) {
 
       <Section title="Tono e stile">
         <label htmlFor="bp-tone"><strong>Tono di voce</strong></label>
-        <textarea id="bp-tone" rows={2} disabled={locked} value={draft.tone?.text ?? ''} onChange={(e) => set('tone', e.target.value.trim() ? { id: 'tone', text: e.target.value, source: MANUAL } : null)} />
+        <textarea id="bp-tone" rows={2} disabled={locked} value={rawText.tone ?? draft.tone?.text ?? ''} onBlur={() => setRawText({ ...rawText, tone: undefined })}
+          onChange={(e) => { setRawText({ ...rawText, tone: e.target.value }); set('tone', e.target.value.trim() ? { id: 'tone', text: e.target.value.trim(), source: MANUAL } : null); }} />
         <label htmlFor="bp-photo"><strong>Stile fotografico</strong></label>
-        <textarea id="bp-photo" rows={2} disabled={locked} value={draft.photoStyle?.text ?? ''} onChange={(e) => set('photoStyle', e.target.value.trim() ? { id: 'photo-style', text: e.target.value, source: MANUAL } : null)} />
+        <textarea id="bp-photo" rows={2} disabled={locked} value={rawText.photo ?? draft.photoStyle?.text ?? ''} onBlur={() => setRawText({ ...rawText, photo: undefined })}
+          onChange={(e) => { setRawText({ ...rawText, photo: e.target.value }); set('photoStyle', e.target.value.trim() ? { id: 'photo-style', text: e.target.value.trim(), source: MANUAL } : null); }} />
         <strong>Fare</strong>
         <NoteList label="Fare" prefix="fare" items={draft.dos} disabled={locked} onChange={(v) => set('dos', v)} />
         <strong>Evitare</strong>
@@ -151,13 +164,13 @@ export function BrandPage({ slug, live }: { slug: string; live: EventsState }) {
         <div style={{ flex: 1 }} />
         {status && <span role="status" className="muted">{status}</span>}
         <button type="button" disabled={!dirty || locked} onClick={() => setDraft(overview.kit)}>Annulla modifiche</button>
-        <button type="button" className="primary" disabled={!dirty || locked} onClick={() => void act(() => api.saveBrandKit(slug, draft), 'Brand kit salvato')}>Salva brand kit</button>
+        <button type="button" className="primary" disabled={!dirty || locked} onClick={() => void act(async () => { await api.saveBrandKit(slug, draft); if (seeded.current) seeded.current.kit = JSON.stringify(draft); }, 'Brand kit salvato')}>Salva brand kit</button>
       </div>
 
       <Section title="Linee guida">
         <label htmlFor="bp-guidelines" className="muted">Linee guida (Markdown)</label>
         <textarea id="bp-guidelines" rows={10} className="mono" value={guidelines} onChange={(e) => setGuidelines(e.target.value)} />
-        <button type="button" style={{ alignSelf: 'flex-end' }} disabled={guidelines === overview.guidelines} onClick={() => void act(() => api.saveGuidelines(slug, guidelines), 'Linee guida salvate')}>Salva linee guida</button>
+        <button type="button" style={{ alignSelf: 'flex-end' }} disabled={guidelines === overview.guidelines} onClick={() => void act(async () => { await api.saveGuidelines(slug, guidelines); if (seeded.current) seeded.current.guidelines = guidelines; }, 'Linee guida salvate')}>Salva linee guida</button>
       </Section>
 
       <Section title="Sorgenti e analisi">

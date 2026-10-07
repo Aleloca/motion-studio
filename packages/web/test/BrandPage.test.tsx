@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const site = { kind: 'website' as const, ref: 'https://acme.example' };
 let overview: BrandOverview;
 const api = {
-  getBrand: vi.fn(async () => overview),
+  getBrand: vi.fn(async () => structuredClone(overview)),
   listAssets: vi.fn(async () => ({ assets: [], error: null, unregistered: [] })),
   saveBrandKit: vi.fn(async (_s: string, k: unknown) => k),
   saveGuidelines: vi.fn(async () => ({ ok: true })),
@@ -61,5 +61,33 @@ describe('BrandPage', () => {
     expect((screen.getByRole('button', { name: '+ Colore' }) as HTMLButtonElement).disabled).toBe(true);
     await userEvent.click(screen.getByRole('button', { name: 'Annulla' }));
     expect(api.cancelJob).toHaveBeenCalledWith('j1');
+  });
+  it('keeps unsaved kit edits when a source is added or guidelines are saved', async () => {
+    render(<BrandPage slug="acme" live={live} />);
+    await waitFor(() => screen.getByDisplayValue('Blu'));
+    await userEvent.type(screen.getByLabelText('Nome colore 1'), 'x');
+    await userEvent.type(screen.getByLabelText('Indirizzo del sito'), 'https://b.example');
+    await userEvent.click(screen.getByRole('button', { name: 'Aggiungi sito' }));
+    await waitFor(() => expect(api.getBrand).toHaveBeenCalledTimes(2));
+    const gl = screen.getByLabelText('Linee guida (Markdown)');
+    await userEvent.type(gl, '!');
+    await userEvent.click(screen.getByRole('button', { name: 'Salva linee guida' }));
+    await waitFor(() => expect(api.getBrand).toHaveBeenCalledTimes(3));
+    expect((screen.getByLabelText('Nome colore 1') as HTMLInputElement).value).toBe('Blux');
+    expect((gl as HTMLTextAreaElement).value).toBe('Tono diretto!');
+  });
+  it('lets font weights be typed freely and parses them', async () => {
+    overview.kit = { ...overview.kit, fonts: [{ id: 'f1', family: 'Inter', role: 'body', weights: [400], file: null, source: site }] };
+    render(<BrandPage slug="acme" live={live} />);
+    await waitFor(() => screen.getByDisplayValue('Inter'));
+    const w = screen.getByLabelText('Pesi font 1') as HTMLInputElement;
+    await userEvent.clear(w);
+    await userEvent.type(w, '400, 700');
+    expect(w.value).toBe('400, 700');
+    await userEvent.tab();
+    expect(w.value).toBe('400, 700');
+    await userEvent.click(screen.getByRole('button', { name: 'Salva brand kit' }));
+    await waitFor(() => expect(api.saveBrandKit).toHaveBeenCalled());
+    expect((api.saveBrandKit.mock.calls[0]![1] as typeof overview.kit).fonts[0]!.weights).toEqual([400, 700]);
   });
 });
