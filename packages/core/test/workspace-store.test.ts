@@ -114,3 +114,16 @@ describe('projects', () => {
     expect((await ws.updateSettings({ maxConcurrentJobs: 99 }).catch((e) => e)).status).toBe(400);
   });
 });
+
+describe('updateProject', () => {
+  it('normalizes and stores linked codebases and commits', async () => {
+    const ws = await WorkspaceStore.open(join(base, 'ws'), new Git());
+    const { slug } = await ws.createProject({ name: 'Acme' });
+    const p = await ws.updateProject(slug, { linkedCodebases: [{ path: '/Users/me/app/', note: 'iOS' }, { path: '/Users/me/app' }] });
+    expect(p.linkedCodebases).toEqual([{ path: '/Users/me/app', note: 'iOS' }]);
+    const log = await execCommand('git', ['log', '-1', '--format=%s'], { cwd: ws.projectDir(slug) });
+    expect(log.stdout.trim()).toBe('Progetto aggiornato');
+    expect((await ws.updateProject(slug, { linkedCodebases: [{ path: 'relative' }] }).catch((e) => e)).status).toBe(400);
+    expect((await ws.updateProject(slug, { name: ' ' }).catch((e) => e)).status).toBe(400);
+  });
+});

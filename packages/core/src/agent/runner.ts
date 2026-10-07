@@ -11,6 +11,8 @@ export interface AgentTurnRequest {
   mcpConfigPath?: string;
   /** Permission rules the agent may use without asking (e.g. `Bash(node:*)`); omitted = only the default policy. */
   allowedTools?: string[];
+  /** Permission rules that are always denied (e.g. read-only linked codebases: `Edit(//abs/path/**)`). */
+  disallowedTools?: string[];
 }
 
 /**
@@ -21,6 +23,9 @@ export const AGENT_ALLOWED_TOOLS: readonly string[] = [
   'Bash(ffmpeg:*)', 'Bash(ffprobe:*)', 'Bash(node:*)', 'Bash(npm:*)', 'Bash(npx:*)', 'Bash(pnpm:*)',
   'Bash(python3:*)', 'Bash(pip:*)', 'Bash(pip3:*)', 'Bash(mkdir:*)', 'Bash(cp:*)', 'Bash(mv:*)',
 ];
+
+/** Brand analysis also fetches websites and downloads files (spec §6.1). */
+export const BRAND_ALLOWED_TOOLS: readonly string[] = [...AGENT_ALLOWED_TOOLS, 'WebFetch', 'Bash(curl:*)'];
 
 export interface AgentRunResult {
   status: 'succeeded' | 'failed' | 'cancelled';

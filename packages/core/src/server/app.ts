@@ -1,5 +1,5 @@
 import { stat } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import fastifyWebsocket from '@fastify/websocket';
@@ -13,7 +13,7 @@ import type { AppConfigStore } from '../app-config.ts';
 import type { Git } from '../git.ts';
 import { JobConflictError, JobQueue } from '../jobs/job-queue.ts';
 import { JsonFileError } from '../json-file.ts';
-import { WorkspaceError, WorkspaceStore } from '../workspace-store.ts';
+import { expandHome, WorkspaceError, WorkspaceStore } from '../workspace-store.ts';
 import { recoverWorkspace, registerCreativeRoutes } from './creative-routes.ts';
 import { EventHub } from './event-hub.ts';
 
@@ -46,13 +46,6 @@ function isLoopbackOrigin(origin: string): boolean {
 
 // 1..128 of [A-Za-z0-9-], not starting with '-' so it can never be read as a CLI flag after --resume.
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/;
-
-/** `~` and `~/…` refer to the user's home folder. */
-function expandHome(path: string): string {
-  if (path === '~') return homedir();
-  if (path.startsWith('~/')) return join(homedir(), path.slice(2));
-  return path;
-}
 
 function describeWorkspaceProblem(err: unknown): WorkspaceProblem {
   if (err instanceof WorkspaceError && err.code) return { code: err.code, message: err.message };

@@ -1,10 +1,12 @@
 import { access, constants, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { isAbsolute, join, normalize } from 'node:path';
 import {
   type WorkspaceProblemCode,
   projectFileSchema,
   workspaceSettingsSchema,
   type ProjectFile,
+  type LinkedCodebase,
   type ProjectListItem,
   type WorkspaceSettings,
 } from '@motion-studio/shared';
@@ -18,6 +20,19 @@ export class WorkspaceError extends Error {
     super(message);
     this.name = 'WorkspaceError';
   }
+}
+
+/** `~` and `~/…` refer to the user's home folder. */
+export function expandHome(path: string): string {
+  if (path === '~') return homedir();
+  if (path.startsWith('~/')) return join(homedir(), path.slice(2));
+  return path;
+}
+
+export function normalizeCodebasePath(p: string): string {
+  const s = normalize(expandHome(p.trim()));
+  if (!isAbsolute(s)) throw new WorkspaceError(400, `La cartella collegata deve essere un percorso assoluto: ${p}`);
+  return s.length > 1 ? s.replace(/[\\/]+$/, '') : s;
 }
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -36,6 +51,7 @@ export function slugify(name: string): string {
 
 export class WorkspaceStore {
   private readonly createLock = new KeyedMutex();
+  private readonly projectLock = new KeyedMutex();
   private constructor(public readonly root: string, private readonly git: Git) {}
 
   /** `create: false` (used at startup) refuses to recreate a workspace folder that disappeared. */
@@ -136,5 +152,21 @@ export class WorkspaceStore {
       throw err;
     }
     return { slug, project };
+  }
+
+  updateProject(slug: string, patch: { name?: string; description?: string; linkedCodebases?: LinkedCodebase[] }): Promise<ProjectFile> {
+    return this.projectLock.run(slug, async () => {
+      const current = await this.getProject(slug);
+      const linkedCodebases = patch.linkedCodebases
+        ? patch.linkedCodebases.map((c) => ({ path: normalizeCodebasePath(c.path), ...(c.note?.trim() ? { note: c.note.trim() } : {}) }))
+            .filter((c, i, all) => all.findIndex((x) => x.path === c.path) === i)
+        : current.linkedCodebases;
+      const parsed = projectFileSchema.safeParse({ ...current, ...patch, linkedCodebases, updatedAt: new Date().toISOString() });
+      if (!parsed.success) throw new WorkspaceError(400, `Progetto non valido: ${parsed.error.issues.map((i) => i.path.join('.')).join(', ')}`);
+      const dir = this.projectDir(slug);
+      await writeJsonFileAtomic(join(dir, 'project.json'), parsed.data);
+      await this.git.commitAll(dir, 'Progetto aggiornato');
+      return parsed.data;
+    });
   }
 }

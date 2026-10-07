@@ -75,6 +75,11 @@ describe('buildClaudeArgs', () => {
     expect(buildClaudeArgs({ cwd: '/x', prompt: 'p' })).not.toContain('--allowedTools');
     expect(buildClaudeArgs({ cwd: '/x', prompt: 'p', allowedTools: [] })).not.toContain('--allowedTools');
   });
+  it('puts deny rules before the allow group', () => {
+    const args = buildClaudeArgs({ cwd: '/x', prompt: 'p', addDirs: ['/a b'], disallowedTools: ['Edit(//a b/**)'], allowedTools: ['Bash(node:*)'] });
+    expect(args.slice(-4)).toEqual(['--disallowedTools', 'Edit(//a b/**)', '--allowedTools', 'Bash(node:*)']);
+    expect(args).toContain('--add-dir');
+  });
 });
 
 describe('AGENT_ALLOWED_TOOLS', () => {
