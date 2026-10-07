@@ -41,31 +41,67 @@ export async function validateOutputs(opts: {
     }
 
     const probed = media.available ? await media.probe(path) : null;
-    const width = probed?.width ?? entry.width;
-    const height = probed?.height ?? entry.height;
-    const durationSec = probed ? probed.durationSec : entry.durationSec ?? null;
-    if (width !== preset.width || height !== preset.height) {
-      problems.push(`${entry.file}: risoluzione ${width}×${height}, attesa ${preset.width}×${preset.height}`);
-    }
-    if (preset.kind === 'video') {
-      if (probed && durationSec === null) problems.push(`${entry.file}: non sembra un video`);
-      if (durationSec !== null) {
-        if (preset.maxDurationSec !== undefined && durationSec > preset.maxDurationSec) {
-          problems.push(`${entry.file}: durata ${durationSec.toFixed(1)}s oltre il massimo di ${preset.maxDurationSec}s`);
-        }
-        const target = opts.durationSec;
-        if (target !== null && Math.abs(durationSec - target) > Math.max(1, target * 0.1)) {
-          problems.push(`${entry.file}: durata ${durationSec.toFixed(1)}s, richiesta circa ${target}s`);
+    let verified = probed !== null;
+    let width = probed?.width ?? entry.width;
+    let height = probed?.height ?? entry.height;
+    let durationSec = probed ? probed.durationSec : entry.durationSec ?? null;
+
+    // If media tools were used but failed to read the file, report it and skip validation
+    if (media.available && probed === null) {
+      problems.push(`${entry.file}: file non leggibile come media`);
+      verified = false;
+    } else {
+      // Only validate resolution/duration when we have valid probe data or manifest fallback
+      if (width !== preset.width || height !== preset.height) {
+        problems.push(`${entry.file}: risoluzione ${width}×${height}, attesa ${preset.width}×${preset.height}`);
+      }
+      if (preset.kind === 'video') {
+        if (probed && durationSec === null) problems.push(`${entry.file}: non sembra un video`);
+        if (durationSec !== null) {
+          if (preset.maxDurationSec !== undefined && durationSec > preset.maxDurationSec) {
+            problems.push(`${entry.file}: durata ${durationSec.toFixed(1)}s oltre il massimo di ${preset.maxDurationSec}s`);
+          }
+          const target = opts.durationSec;
+          if (target !== null && Math.abs(durationSec - target) > Math.max(1, target * 0.1)) {
+            problems.push(`${entry.file}: durata ${durationSec.toFixed(1)}s, richiesta circa ${target}s`);
+          }
         }
       }
     }
 
     let preview: string | null = null;
-    if (preset.kind === 'video' && media.available) {
+    if (preset.kind === 'video' && media.available && probed !== null) {
       const rel = `.previews/${basename(entry.file, extname(entry.file))}.jpg`;
-      if (await media.poster(path, join(dir, rel))) preview = rel;
+      const previewDir = join(dir, '.previews');
+      const targetPath = join(dir, rel);
+
+      // Check if .previews exists and is safe
+      let canExtractPoster = true;
+      const previewDirInfo = await lstat(previewDir).catch(() => null);
+      if (previewDirInfo !== null && !previewDirInfo.isDirectory()) {
+        // .previews exists but is not a directory (e.g., symlink, regular file)
+        canExtractPoster = false;
+      }
+
+      // Check if target jpg path is safe
+      if (canExtractPoster) {
+        const targetInfo = await lstat(targetPath).catch(() => null);
+        if (targetInfo !== null && !targetInfo.isFile()) {
+          // Target exists but is not a regular file (e.g., symlink, directory)
+          canExtractPoster = false;
+        }
+      }
+
+      if (canExtractPoster) {
+        try {
+          if (await media.poster(path, targetPath)) preview = rel;
+        } catch {
+          // poster() rejected (e.g., mkdir failed because .previews is a file), skip preview
+          preview = null;
+        }
+      }
     }
-    outputs.push({ format: id, file: entry.file, width, height, durationSec, verified: probed !== null, preview });
+    outputs.push({ format: id, file: entry.file, width, height, durationSec, verified, preview });
   }
   return { outputs, problems, tools: manifest.tools, renderCommand: manifest.renderCommand ?? null };
 }

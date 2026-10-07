@@ -90,4 +90,44 @@ describe('validateOutputs', () => {
     expect(r.problems).toEqual(['File non trovato per banner: banner.png']);
     expect(r.outputs).toEqual([]);
   });
+  it('handles poster() rejection gracefully', async () => {
+    await manifest([sq]);
+    await writeFile(join(dir, 'sq.mp4'), 'v');
+    const brokenMedia: MediaTools = {
+      available: true,
+      probe: async () => ({ width: 1080, height: 1080, durationSec: 15 }),
+      poster: async () => { throw new Error('mkdir failed'); },
+      frame: async () => true,
+    };
+    const r = await validateOutputs({ dir, requested: ['sq'], presets, durationSec: null, media: brokenMedia });
+    expect(r.problems).toEqual([]);
+    expect(r.outputs[0]).toMatchObject({ verified: true, preview: null });
+  });
+  it.skipIf(process.platform === 'win32')('skips poster when .previews is a symlink', async () => {
+    await manifest([sq]);
+    await writeFile(join(dir, 'sq.mp4'), 'v');
+    const otherDir = await mkdtemp(join(tmpdir(), 'ms-other-'));
+    await symlink(otherDir, join(dir, '.previews'));
+    const r = await validateOutputs({ dir, requested: ['sq'], presets, durationSec: null,
+      media: fakeMedia({ 'sq.mp4': { width: 1080, height: 1080, durationSec: 15 } }) });
+    expect(r.problems).toEqual([]);
+    expect(r.outputs[0]).toMatchObject({ preview: null });
+  });
+  it.skipIf(process.platform === 'win32')('skips poster when .previews is a regular file', async () => {
+    await manifest([sq]);
+    await writeFile(join(dir, 'sq.mp4'), 'v');
+    await writeFile(join(dir, '.previews'), 'not a directory');
+    const r = await validateOutputs({ dir, requested: ['sq'], presets, durationSec: null,
+      media: fakeMedia({ 'sq.mp4': { width: 1080, height: 1080, durationSec: 15 } }) });
+    expect(r.problems).toEqual([]);
+    expect(r.outputs[0]).toMatchObject({ preview: null });
+  });
+  it('reports unreadable media when probe returns null with available tools', async () => {
+    await manifest([sq]);
+    await writeFile(join(dir, 'sq.mp4'), 'v');
+    const r = await validateOutputs({ dir, requested: ['sq'], presets, durationSec: null,
+      media: fakeMedia({ 'sq.mp4': null }) });
+    expect(r.problems).toEqual(['sq.mp4: file non leggibile come media']);
+    expect(r.outputs[0]).toMatchObject({ verified: false, preview: null });
+  });
 });
