@@ -8,13 +8,21 @@ export class JobConflictError extends Error {
   }
 }
 
+/** A rejection with this error is always 'failed', even when the job's signal was aborted. */
+export class JobFailedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'JobFailedError';
+  }
+}
+
 export interface JobSpec {
   key: string;
   label: string;
   /**
    * Outcome contract: resolving means the work completed ('succeeded'), even if an abort arrived late;
    * resolving to 'cancelled' reports an explicit cancellation; rejecting means 'failed', or 'cancelled'
-   * when the signal was aborted (the rejection is taken to be caused by the abort).
+   * when the signal was aborted (the rejection is taken to be caused by the abort) unless the error is a JobFailedError.
    */
   run: (signal: AbortSignal, jobId: string) => Promise<void | 'cancelled'>;
   /** Called when the job is cancelled while still queued (run() never starts). Errors are swallowed. The queue is pumped after it settles; a whenIdle() called after the cancel may resolve before the hook finishes. */
@@ -107,7 +115,7 @@ export class JobQueue {
     this.update(entry);
     Promise.resolve().then(() => entry.spec.run(entry.controller.signal, entry.summary.id)).then(
       (outcome) => this.finish(entry, outcome === 'cancelled' ? 'cancelled' : 'succeeded'),
-      (err: unknown) => this.finish(entry, entry.controller.signal.aborted ? 'cancelled' : 'failed', err instanceof Error ? err.message : String(err)),
+      (err: unknown) => this.finish(entry, entry.controller.signal.aborted && !(err instanceof JobFailedError) ? 'cancelled' : 'failed', err instanceof Error ? err.message : String(err)),
     ).finally(() => this.pump());
   }
 

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,7 +10,7 @@ import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { CreativeTurnService, type CreativeRef } from '../src/creatives/creative-turns.ts';
 import { execCommand } from '../src/exec.ts';
 import { Git } from '../src/git.ts';
-import { JobConflictError, JobQueue } from '../src/jobs/job-queue.ts';
+import { JobQueue } from '../src/jobs/job-queue.ts';
 import { NoMediaTools, type MediaTools } from '../src/media/media-tools.ts';
 import { CONTEXT_MD } from '../src/project-template.ts';
 import { WorkspaceStore } from '../src/workspace-store.ts';
@@ -143,7 +143,8 @@ describe('CreativeTurnService', () => {
   it('rejects a second job on the same creative', async () => {
     process.env.FAKE_CLAUDE_SCENARIO = 'hang';
     const job = await service.start(ref);
-    await expect(service.start(ref)).rejects.toBeInstanceOf(JobConflictError);
+    const err = await service.start(ref).catch((e) => e);
+    expect(err).toMatchObject({ status: 409, message: 'Una generazione è già in corso per questa creatività' });
     queue.cancel(job.id);
     await queue.whenIdle();
   });
@@ -252,5 +253,133 @@ describe('CreativeTurnService', () => {
     expect(await store.readVersions(ref.creativeSlug)).toHaveLength(1);
     const conv = await store.readConversation(ref.creativeSlug);
     expect(conv.some((e) => e.type === 'system' && e.text === 'Generazione annullata.')).toBe(false);
+  });
+
+  it('clears the outputs left by a failed turn before the next attempt', async () => {
+    process.env.FAKE_CLAUDE_SCENARIO = 'render_then_crash';
+    expect(await finalState((await service.start(ref)).id)).toBe('failed');
+    const v1Dir = store.outputsDir(ref.creativeSlug, 1);
+    expect(await readdir(v1Dir)).toContain('manifest.json');
+    process.env.FAKE_CLAUDE_SCENARIO = 'ok'; // the retry delivers nothing: stale files must not count
+    expect(await finalState((await service.start(ref, { text: 'riprova', pins: [] })).id)).toBe('succeeded');
+    const [v1] = await store.readVersions(ref.creativeSlug);
+    expect(v1).toMatchObject({ n: 1, status: 'incomplete', problems: ['manifest.json mancante in v1'] });
+    expect(await readdir(v1Dir).catch(() => [])).not.toContain('instagram-post-1x1.mp4');
+  });
+
+  it('never removes the outputs folder of a saved version', async () => {
+    await finalState((await service.start(ref)).id);
+    // Out-of-order versions.json: the next number (2) is already a saved version.
+    const [v1] = await store.readVersions(ref.creativeSlug);
+    await writeFile(join(store.dir(ref.creativeSlug), 'versions.json'), JSON.stringify({ schemaVersion: 1, versions: [{ ...v1, n: 2 }, v1] }));
+    await mkdir(store.outputsDir(ref.creativeSlug, 2), { recursive: true });
+    await writeFile(join(store.outputsDir(ref.creativeSlug, 2), 'saved.txt'), 'keep');
+    await finalState((await service.start(ref, { text: 'ancora', pins: [] })).id);
+    expect(await readFile(join(store.outputsDir(ref.creativeSlug, 2), 'saved.txt'), 'utf8')).toBe('keep');
+  });
+
+  it('extracts pin frames from the version being resumed from', async () => {
+    await finalState((await service.start(ref)).id);
+    await finalState((await service.start(ref, { text: 'cambia', pins: [] })).id);
+    await service.restore(ref, 1);
+    const sources: string[] = [];
+    const media: MediaTools = {
+      available: true,
+      probe: async (p) => (p.endsWith('.png') ? { width: 300, height: 250, durationSec: null } : { width: 1080, height: 1080, durationSec: 10 }),
+      poster: async () => false,
+      frame: async (input) => { sources.push(input); return false; },
+    };
+    const svc = new CreativeTurnService({
+      queue, git: new Git(), media, runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),
+      presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
+    });
+    await finalState((await svc.start(ref, { text: 'da v1', pins: [{ format: 'instagram-post-1x1', x: 0.5, y: 0.5, timeSec: 1 }] })).id);
+    expect(sources).toEqual([join(store.outputsDir(ref.creativeSlug, 1), 'instagram-post-1x1.mp4')]);
+  });
+
+  it('a pins-only message uses a neutral instruction as request and prompt', async () => {
+    await finalState((await service.start(ref)).id);
+    await finalState((await service.start(ref, { text: '', pins: [{ format: 'instagram-post-1x1', x: 0.1, y: 0.2, timeSec: null, note: 'più luce' }] })).id);
+    expect((await store.readVersions(ref.creativeSlug)).at(-1)!.request).toBe('Applica i commenti puntuali.');
+    const last = (await prompts()).at(-1)!.prompt;
+    expect(last).toContain('## Richiesta\nApplica i commenti puntuali.');
+    expect(last).not.toContain('Rigenera tutti i formati');
+  });
+
+  describe('late cancel (after the last agent turn)', () => {
+    const lateCancelService = (git: Git) => {
+      let jobId = '';
+      const media: MediaTools = {
+        available: true,
+        probe: async (p) => {
+          queue.cancel(jobId); // the abort arrives while the outputs are being validated
+          return p.endsWith('.png') ? { width: 300, height: 250, durationSec: null } : { width: 1080, height: 1080, durationSec: 10 };
+        },
+        poster: async () => false, frame: async () => false,
+      };
+      const svc = new CreativeTurnService({
+        queue, git, media, runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),
+        presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
+      });
+      return { start: async () => { jobId = (await svc.start(ref)).id; return jobId; } };
+    };
+
+    it('still saves the version and tells the user', async () => {
+      const id = await lateCancelService(new Git()).start();
+      expect(await finalState(id)).toBe('succeeded');
+      expect((await store.readVersions(ref.creativeSlug)).map((v) => v.n)).toEqual([1]);
+      expect((await store.get(ref.creativeSlug)).status).toBe('ready');
+      const conv = await store.readConversation(ref.creativeSlug);
+      expect(conv.at(-1)).toMatchObject({ type: 'system', level: 'info', text: 'Annullamento arrivato a lavoro quasi concluso: la versione v1 è stata salvata.' });
+      expect(conv.some((e) => e.type === 'system' && e.text === 'Generazione annullata.')).toBe(false);
+    });
+
+    it('treats a commit error after the late abort as a failure, not a cancel', async () => {
+      const git = new Git();
+      git.commitAll = async () => { throw new Error('git commit fallito: disco pieno'); };
+      const id = await lateCancelService(git).start();
+      expect(await finalState(id)).toBe('failed');
+      const c = await store.get(ref.creativeSlug);
+      expect(c).toMatchObject({ status: 'error', error: 'git commit fallito: disco pieno' });
+      expect(await store.readVersions(ref.creativeSlug)).toEqual([]);
+      const conv = await store.readConversation(ref.creativeSlug);
+      expect(conv.some((e) => e.type === 'system' && e.text === 'Generazione annullata.')).toBe(false);
+    });
+  });
+
+  it('updateBrief edits title and brief, and refuses while a generation is active', async () => {
+    const updated = await service.updateBrief(ref, { title: 'Nuovo', brief: { ...brief, durationSec: 6 } });
+    expect(updated).toMatchObject({ title: 'Nuovo', brief: { durationSec: 6 } });
+    process.env.FAKE_CLAUDE_SCENARIO = 'hang';
+    const job = await service.start(ref);
+    const err = await service.updateBrief(ref, { title: 'Altro' }).catch((e) => e);
+    expect(err).toMatchObject({ status: 409, message: 'Attendi la fine della generazione in corso prima di modificare il brief' });
+    expect((await store.get(ref.creativeSlug)).title).toBe('Nuovo');
+    queue.cancel(job.id);
+    await queue.whenIdle();
+  });
+
+  it('restore removes unsaved files in work/ (keeping ignored ones) and logs how many', async () => {
+    await finalState((await service.start(ref)).id);
+    const work = store.workDir(ref.creativeSlug);
+    await writeFile(join(work, 'appunti.txt'), 'non salvato');
+    await mkdir(join(work, 'tmp'), { recursive: true });
+    await writeFile(join(work, 'tmp', 'x.txt'), 'x');
+    await mkdir(join(work, 'node_modules', 'pkg'), { recursive: true });
+    await writeFile(join(work, 'node_modules', 'pkg', 'index.js'), '');
+    await service.restore(ref, 1);
+    const entries = await readdir(work);
+    expect(entries).not.toContain('appunti.txt');
+    expect(entries).not.toContain('tmp');
+    expect(entries).toContain('node_modules');
+    const conv = await store.readConversation(ref.creativeSlug);
+    expect(conv.some((e) => e.type === 'system' && e.text === 'Rimossi 2 file non salvati in una versione')).toBe(true);
+  });
+
+  it('restore logs nothing about removed files when work/ is clean', async () => {
+    await finalState((await service.start(ref)).id);
+    await service.restore(ref, 1);
+    const conv = await store.readConversation(ref.creativeSlug);
+    expect(conv.some((e) => e.type === 'system' && e.text.startsWith('Rimossi'))).toBe(false);
   });
 });

@@ -80,10 +80,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   app.put<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c', async (req) => {
     const body = parse(editBody, req.body);
     const ref = await refOf(req.params.slug, req.params.c);
-    if (ctx.isJobActive(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug))) {
-      throw new WorkspaceError(409, 'Attendi la fine della generazione in corso prima di modificare il brief');
-    }
-    return ref.store.update(ref.creativeSlug, { ...(body.title !== undefined ? { title: body.title } : {}), ...(body.brief ? { brief: body.brief } : {}) });
+    return ctx.turns.updateBrief(ref, body);
   });
 
   app.get<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/conversation', async (req) => {

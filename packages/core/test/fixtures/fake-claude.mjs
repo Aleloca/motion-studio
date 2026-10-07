@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Test double for the `claude` CLI. Scenario via FAKE_CLAUDE_SCENARIO: ok | tool | crash | hang | hang_ignore_term | garbage | error_result | leak_fd | render | render_missing_once | render_never
+// Test double for the `claude` CLI. Scenario via FAKE_CLAUDE_SCENARIO: ok | tool | crash | hang | hang_ignore_term | garbage | error_result | leak_fd | render | render_missing_once | render_never | render_then_crash
 import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -53,7 +53,8 @@ rl.once('line', async (line) => {
   if (block && scenario === 'render') render(false);
   if (block && scenario === 'render_missing_once') render(!isFix);
   if (block && scenario === 'render_never') render(true);
-  if (scenario === 'crash') { process.stderr.write('boom: something failed\n'); process.exit(2); }
+  if (block && scenario === 'render_then_crash') render(false);
+  if (scenario === 'crash' || scenario === 'render_then_crash') { process.stderr.write('boom: something failed\n'); process.exit(2); }
   out({ type: 'system', subtype: 'init', session_id: sessionId, model: 'fake-model' });
   if (scenario === 'garbage') process.stdout.write('this is not json\n');
   if (scenario === 'hang_ignore_term') { process.on('SIGTERM', () => {}); setInterval(() => {}, 1000); return; }

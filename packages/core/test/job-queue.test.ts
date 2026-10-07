@@ -1,6 +1,6 @@
 import type { JobSummary } from '@motion-studio/shared';
 import { describe, expect, it } from 'vitest';
-import { JobConflictError, JobQueue } from '../src/jobs/job-queue.ts';
+import { JobConflictError, JobFailedError, JobQueue } from '../src/jobs/job-queue.ts';
 
 const deferred = () => {
   let resolve!: () => void;
@@ -168,5 +168,19 @@ describe('JobQueue', () => {
     await q.whenIdle();
     expect(calls).toEqual(['queued', 'queued2']);
     expect(q.list().every((j) => j.state === 'cancelled')).toBe(true);
+  });
+});
+
+describe('JobFailedError', () => {
+  it('marks the job failed even when the signal was aborted', async () => {
+    const q = new JobQueue({ concurrency: 1 });
+    const job = q.enqueue({
+      key: 'a', label: 'a',
+      run: (signal) => new Promise<void>((_, rej) => signal.addEventListener('abort', () => rej(new JobFailedError('commit fallito')))),
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    q.cancel(job.id);
+    await q.whenIdle();
+    expect(q.list()[0]).toMatchObject({ state: 'failed', error: 'commit fallito' });
   });
 });

@@ -90,4 +90,31 @@ describe('Git.restorePath', () => {
     await expect(git.restorePath(dir, 'deadbeef', 'x')).rejects.toThrow('Versione non trovata');
     await expect(git.restorePath(dir, '--help', 'x')).rejects.toThrow('Versione non trovata');
   });
+  it('treats the path literally and removes untracked files except ignored ones', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-restore-'));
+    const git = new Git();
+    await git.init(dir);
+    await writeFile(join(dir, '.gitignore'), 'node_modules/\n');
+    await mkdir(join(dir, 'w*'));
+    await writeFile(join(dir, 'w*', 'a.txt'), 'v1');
+    await mkdir(join(dir, 'wx'));
+    await writeFile(join(dir, 'wx', 'a.txt'), 'other');
+    const v1 = (await git.commitAll(dir, 'v1'))!;
+    await writeFile(join(dir, 'w*', 'a.txt'), 'changed');
+    await writeFile(join(dir, 'w*', 'loose.txt'), 'loose');
+    await mkdir(join(dir, 'w*', 'node_modules'));
+    await writeFile(join(dir, 'w*', 'node_modules', 'm.js'), '');
+    await writeFile(join(dir, 'wx', 'a.txt'), 'other changed');
+    await writeFile(join(dir, 'wx', 'loose.txt'), 'keep');
+    expect(await git.restorePath(dir, v1, 'w*')).toBe(1);
+    expect((await readdir(join(dir, 'w*'))).sort()).toEqual(['a.txt', 'node_modules']);
+    expect(await readFile(join(dir, 'w*', 'a.txt'), 'utf8')).toBe('v1');
+    // A glob-like name must not reach the sibling folder.
+    expect(await readFile(join(dir, 'wx', 'a.txt'), 'utf8')).toBe('other changed');
+    expect((await readdir(join(dir, 'wx'))).sort()).toEqual(['a.txt', 'loose.txt']);
+  });
+  it('reports a missing git instead of an unknown version', async () => {
+    const exec: CommandExec = async () => ({ code: -1, stdout: '', stderr: '', notFound: true });
+    await expect(new Git(exec).restorePath('/r', 'abcdef1', 'work')).rejects.toThrow('git non trovato');
+  });
 });

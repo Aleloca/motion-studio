@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { execCommand, type CommandExec } from './exec.ts';
 import { KeyedMutex } from './keyed-mutex.ts';
 
+const NOT_FOUND = 'git non trovato: installalo per usare Motion Studio';
 const IDENTITY = ['-c', 'user.name=Motion Studio', '-c', 'user.email=motion-studio@localhost'];
 
 /** The git subcommand, skipping `-c key=value` pairs; the rest (e.g. commit messages) is never echoed. */
@@ -31,18 +32,27 @@ export class Git {
     });
   }
 
-  restorePath(dir: string, commit: string, relPath: string): Promise<void> {
+  /**
+   * Brings relPath back to `commit` and deletes the untracked, non-ignored files below it (ignored ones such as
+   * node_modules/ or .venv/ survive). Returns how many entries were deleted (an untracked folder counts as one).
+   */
+  restorePath(dir: string, commit: string, relPath: string): Promise<number> {
     return this.lock.run(resolve(dir), async () => {
-      const exists = /^[0-9a-f]{7,40}$/.test(commit)
-        && (await this.exec('git', ['cat-file', '-e', `${commit}^{commit}`], { cwd: dir })).code === 0;
-      if (!exists) throw new Error(`Versione non trovata nel repository: ${commit}`);
-      await this.must(dir, ['restore', `--source=${commit}`, '--staged', '--worktree', '--', relPath]);
+      if (!/^[0-9a-f]{7,40}$/.test(commit)) throw new Error(`Versione non trovata nel repository: ${commit}`);
+      const check = await this.exec('git', ['cat-file', '-e', `${commit}^{commit}`], { cwd: dir });
+      if (check.notFound) throw new Error(NOT_FOUND);
+      if (check.code !== 0) throw new Error(`Versione non trovata nel repository: ${commit}`);
+      const spec = `:(literal)${relPath}`;
+      await this.must(dir, ['restore', `--source=${commit}`, '--staged', '--worktree', '--', spec]);
+      const pending = (await this.must(dir, ['clean', '-n', '-d', '--', spec])).split('\n').filter((l) => l.trim() !== '').length;
+      if (pending > 0) await this.must(dir, ['clean', '-f', '-d', '--', spec]);
+      return pending;
     });
   }
 
   private async must(cwd: string, args: string[]): Promise<string> {
     const r = await this.exec('git', args, { cwd });
-    if (r.notFound) throw new Error('git non trovato: installalo per usare Motion Studio');
+    if (r.notFound) throw new Error(NOT_FOUND);
     if (r.code !== 0) throw new Error(`git ${subcommand(args)} fallito: ${r.stderr.trim()}`);
     return r.stdout;
   }
