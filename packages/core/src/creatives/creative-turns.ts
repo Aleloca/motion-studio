@@ -44,6 +44,9 @@ export class CreativeTurnService {
       key,
       label: `Creatività · ${before.title}`,
       run: (signal, jobId) => this.run(ref, store, before.status, message, signal, jobId),
+      onCancelledBeforeStart: async () => {
+        await this.cancelled(ref, store, before.status, (await store.readVersions(ref.creativeSlug)).length > 0);
+      },
     });
   }
 
@@ -92,15 +95,16 @@ export class CreativeTurnService {
         });
         const run = this.deps.runner.start({ cwd: ref.projectDir, prompt, resumeSessionId, forkSession, model }, (event) => {
           this.deps.broadcast({ type: 'agent', jobId, event });
-          lastWrite = store.appendConversation(slug, { type: 'agent', at: now(), jobId, event });
+          // Chained so writes stay ordered and a failure surfaces when the chain is awaited after the turn.
+          lastWrite = lastWrite.then(() => store.appendConversation(slug, { type: 'agent', at: now(), jobId, event }));
+          lastWrite.catch(() => {}); // observed here; the same rejection is rethrown by the await below
           const sid = event.kind === 'session' || event.kind === 'result' ? event.sessionId : undefined;
           if (sid) this.deps.queue.patch(jobId, { sessionId: sid });
         });
         const onAbort = () => run.cancel();
         signal.addEventListener('abort', onAbort, { once: true });
         if (signal.aborted) onAbort(); // cancelled before the listener existed (e.g. while preparing the turn)
-        const outcome = await run.done;
-        signal.removeEventListener('abort', onAbort);
+        const outcome = await run.done.finally(() => signal.removeEventListener('abort', onAbort));
         await lastWrite;
         if (outcome.status === 'cancelled') return await this.cancelled(ref, store, previous, versions.length > 0);
         if (outcome.status === 'failed') throw new AgentFailure(outcome.error ?? 'Turno non riuscito');
@@ -154,8 +158,12 @@ export class CreativeTurnService {
       const output = latest.outputs.find((o) => o.format === pin.format);
       if (!output) continue;
       const target = join(store.workDir(ref.creativeSlug), '.feedback', `${n}-${i + 1}.jpg`);
-      if (await this.deps.media.frame(join(store.outputsDir(ref.creativeSlug, latest.n), output.file), target, pin.timeSec)) {
-        out.push(relative(ref.projectDir, target));
+      try {
+        if (await this.deps.media.frame(join(store.outputsDir(ref.creativeSlug, latest.n), output.file), target, pin.timeSec)) {
+          out.push(relative(ref.projectDir, target));
+        }
+      } catch {
+        // The feedback frame is optional: the pin still travels as text.
       }
     }
     return out;

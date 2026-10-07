@@ -17,6 +17,8 @@ export interface JobSpec {
    * when the signal was aborted (the rejection is taken to be caused by the abort).
    */
   run: (signal: AbortSignal, jobId: string) => Promise<void | 'cancelled'>;
+  /** Called when the job is cancelled while still queued (run() never starts). Errors are swallowed; idle waiters resolve after it settles. */
+  onCancelledBeforeStart?: () => void | Promise<void>;
 }
 
 interface Entry { summary: JobSummary; spec: JobSpec; controller: AbortController }
@@ -61,7 +63,7 @@ export class JobQueue {
     if (!entry || !ACTIVE.has(entry.summary.state)) return false;
     if (entry.summary.state === 'queued') {
       this.finish(entry, 'cancelled');
-      this.pump();
+      Promise.resolve().then(() => entry.spec.onCancelledBeforeStart?.()).catch(() => {}).finally(() => this.pump());
     } else {
       entry.controller.abort();
     }

@@ -10,7 +10,7 @@ import { CreativeTurnService, type CreativeRef } from '../src/creatives/creative
 import { execCommand } from '../src/exec.ts';
 import { Git } from '../src/git.ts';
 import { JobConflictError, JobQueue } from '../src/jobs/job-queue.ts';
-import { NoMediaTools } from '../src/media/media-tools.ts';
+import { NoMediaTools, type MediaTools } from '../src/media/media-tools.ts';
 import { CONTEXT_MD } from '../src/project-template.ts';
 import { WorkspaceStore } from '../src/workspace-store.ts';
 
@@ -165,5 +165,60 @@ describe('CreativeTurnService', () => {
     expect(v1!.status).toBe('incomplete');
     expect(v1!.problems.some((p) => p.startsWith('Preset sconosciuto: ghost'))).toBe(true);
     expect((await store.get(ref.creativeSlug)).status).toBe('incomplete');
+  });
+
+  it('restores the creative when it is cancelled while still queued', async () => {
+    const q1 = new JobQueue({ concurrency: 1 });
+    const svc = new CreativeTurnService({
+      queue: q1, git: new Git(), media: NoMediaTools,
+      runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),
+      presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
+    });
+    let release!: () => void;
+    q1.enqueue({ key: 'blocker', label: 'blocker', run: () => new Promise<void>((r) => { release = r; }) });
+    const job = await svc.start(ref);
+    expect((await store.get(ref.creativeSlug)).status).toBe('working');
+    q1.cancel(job.id);
+    await new Promise((r) => setTimeout(r, 200));
+    expect((await store.get(ref.creativeSlug)).status).toBe('draft');
+    expect((await store.readConversation(ref.creativeSlug)).at(-1)).toMatchObject({ type: 'system', text: 'Generazione annullata.' });
+    release();
+    await q1.whenIdle();
+  });
+
+  it('fails the job when a conversation write fails, with no unhandled rejection', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (e: unknown) => unhandled.push(e);
+    process.on('unhandledRejection', onUnhandled);
+    const original = CreativeStore.prototype.appendConversation;
+    CreativeStore.prototype.appendConversation = async function (this: CreativeStore, slug, entry) {
+      if (entry.type === 'agent') throw new Error('disco pieno');
+      return original.call(this, slug, entry);
+    };
+    try {
+      const job = await service.start(ref);
+      expect(await finalState(job.id)).toBe('failed');
+      await new Promise((r) => setTimeout(r, 100));
+    } finally {
+      CreativeStore.prototype.appendConversation = original;
+      process.off('unhandledRejection', onUnhandled);
+    }
+    expect(unhandled).toEqual([]);
+    const c = await store.get(ref.creativeSlug);
+    expect(c.status).toBe('error');
+    expect(c.error).toContain('disco pieno');
+  });
+
+  it('does not fail the turn when extracting a pin frame throws', async () => {
+    await finalState((await service.start(ref)).id);
+    const throwing: MediaTools = { available: true, probe: async () => null, poster: async () => false, frame: async () => { throw new Error('ffmpeg esploso'); } };
+    const svc = new CreativeTurnService({
+      queue, git: new Git(), media: throwing,
+      runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),
+      presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
+    });
+    const job = await svc.start(ref, { text: 'ritocca', pins: [{ format: 'instagram-post-1x1', x: 0.5, y: 0.5, timeSec: 1, note: 'qui' }] });
+    expect(await finalState(job.id)).toBe('succeeded');
+    expect((await store.readVersions(ref.creativeSlug)).map((v) => v.n)).toEqual([1, 2]);
   });
 });

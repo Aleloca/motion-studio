@@ -156,4 +156,17 @@ describe('JobQueue', () => {
     await q.whenIdle();
     expect(updates.map((u) => [u.state, u.sessionId])).toEqual([['queued', undefined], ['running', undefined], ['running', 's1'], ['succeeded', 's1']]);
   });
+  it('calls onCancelledBeforeStart for a queued cancel only, and survives a throwing hook', async () => {
+    const q = new JobQueue({ concurrency: 1 });
+    const calls: string[] = [];
+    const block = deferred();
+    const running = q.enqueue({ key: 'a', label: 'a', run: (signal) => new Promise<'cancelled'>((res) => signal.addEventListener('abort', () => res('cancelled'))), onCancelledBeforeStart: () => { calls.push('running'); } });
+    const queued = q.enqueue({ key: 'b', label: 'b', run: () => block.promise, onCancelledBeforeStart: () => { calls.push('queued'); throw new Error('hook'); } });
+    const queued2 = q.enqueue({ key: 'c', label: 'c', run: () => block.promise, onCancelledBeforeStart: async () => { calls.push('queued2'); throw new Error('hook'); } });
+    await tick();
+    q.cancel(queued.id); q.cancel(queued2.id); q.cancel(running.id);
+    await q.whenIdle();
+    expect(calls).toEqual(['queued', 'queued2']);
+    expect(q.list().every((j) => j.state === 'cancelled')).toBe(true);
+  });
 });
