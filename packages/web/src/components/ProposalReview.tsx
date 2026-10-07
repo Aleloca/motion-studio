@@ -29,7 +29,11 @@ function Preview({ value, field }: { value: unknown; field: BrandField }) {
   return <span style={{ whiteSpace: 'pre-wrap' }}>{v.text ?? v.family ?? v.file ?? ''}</span>;
 }
 
-export function ProposalReview({ slug, proposal, onDone }: { slug: string; proposal: BrandProposal; onDone: () => void }) {
+export function ProposalReview(props: { slug: string; proposal: BrandProposal; onDone: () => void }) {
+  return <ProposalReviewBody key={props.proposal.id} {...props} />;
+}
+
+function ProposalReviewBody({ slug, proposal, onDone }: { slug: string; proposal: BrandProposal; onDone: () => void }) {
   const [checked, setChecked] = useState<Set<string>>(() => new Set(proposal.changes.map((c) => c.id)));
   const [guidelines, setGuidelines] = useState(Boolean(proposal.guidelines));
   const [error, setError] = useState<string | null>(null);

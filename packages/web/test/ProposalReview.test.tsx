@@ -49,4 +49,23 @@ describe('ProposalReview', () => {
     expect(screen.queryByRole('button', { name: 'Applica selezionate' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Chiudi' })).toBeTruthy();
   });
+  it('resets selection when a different proposal is shown', async () => {
+    const { rerender } = render(<ProposalReview slug="acme" proposal={proposal} onDone={() => {}} />);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Aggiorna tono' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Applica le linee guida proposte' }));
+    const next: BrandProposal = { ...proposal, id: 'p-20261007-110000', changes: [{ ...proposal.changes[0]!, id: 'colors:add:blu' }, { ...proposal.changes[1]!, id: 'tone:update:-2' }] };
+    rerender(<ProposalReview slug="acme" proposal={next} onDone={() => {}} />);
+    for (const cb of screen.getAllByRole('checkbox')) expect((cb as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole('checkbox', { name: 'Applica le linee guida proposte' }) as HTMLInputElement).checked).toBe(true);
+  });
+  it('shows an apply error and re-enables the buttons', async () => {
+    api.applyProposal.mockRejectedValueOnce(new Error('Conflitto'));
+    const onDone = vi.fn();
+    render(<ProposalReview slug="acme" proposal={proposal} onDone={onDone} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Applica selezionate' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('Conflitto');
+    expect(onDone).not.toHaveBeenCalled();
+    expect((screen.getByRole('button', { name: 'Applica selezionate' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('button', { name: 'Scarta proposta' }) as HTMLButtonElement).disabled).toBe(false);
+  });
 });
