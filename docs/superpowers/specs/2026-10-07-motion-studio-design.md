@@ -200,15 +200,26 @@ Strumenti di coordinamento sempre disponibili: `report_progress`, `request_appro
 
 I provider sono moduli indipendenti con un'interfaccia comune, così aggiungerne altri (musica generata, video AI) non richiede modifiche al core.
 
-## 8. Interfaccia (contenuti)
+## 8. Interfaccia
 
-L'aspetto visivo sarà scelto confrontando 2–3 varianti prima dello sviluppo. Qui sono fissati i contenuti.
+### 8.1 Direzione scelta: ibrido "Tavola + Conversazione"
+
+Scelta dopo il confronto di tre varianti (A · Studio, B · Conversazione al centro, C · Tavola dei formati):
+
+- **Base C, tavola dei formati.** Nella creatività tutti i formati richiesti sono affiancati nelle proporzioni reali, su una superficie con zoom, "adatta alla finestra" e raggruppamento per canale. I commenti sono pin ancorati al formato e al timestamp. Le safe zone dei preset sono visualizzabili. Il selettore di versione e la funzione "Confronta" stanno nella barra superiore.
+- **Vista focus.** Con un doppio clic su un formato lo si apre grande con il player completo (scrubbing, marcatori dei commenti, "+ Commento al frame"). È l'impostazione della variante A, usata come modalità di C.
+- **Brief guidato, da B.** Un campo grande "Cosa vuoi realizzare?" e blocchi per formati, asset, codebase e durata. Selezionando i formati compaiono a lato i riquadri vuoti nelle proporzioni reali.
+- **Conversazione in un pannello laterale apribile, con il registro di B.** Ogni versione appare come card con le miniature dei formati e le azioni (anteprima, riparti da qui, mostra nel Finder). Il lavoro in corso mostra i passi e il progresso, e le approvazioni compaiono inline nella conversazione.
+- **Modalità esperto, con la densità di A.** Il pannello laterale aggiunge una scheda con stream completo, tool call, comandi e diff, in carattere monospace.
+- **Temi.** Chiaro e scuro, entrambi di prima classe, con un'opzione "segui il sistema". Tutti i colori sono definiti come token di tema; nessuna schermata ha colori fissi.
+
+### 8.2 Contenuti
 
 - **Primo avvio / Doctor:** scelta workspace; verifica Claude Code (installato e autenticato), git, ffmpeg, Node; configurazione opzionale dei provider.
 - **Home:** card dei progetti (anteprima, colori del brand, n. creatività), ricerca, "Nuovo progetto", indicatore globale dei job.
 - **Progetto:** Panoramica · Brand (kit visuale, `guidelines.md`, sorgenti, "Analizza") · Asset · Riferimenti · Creatività (con stato: bozza, in lavorazione, in attesa di approvazione, pronta, incompleta, errore, interrotta) · Impostazioni (codebase collegate, permessi).
-- **Creatività:** chat + passi; anteprima (player con scrubbing / viewer, selettore formato, commenti su frame); barra versioni (confronta, riparti da, esporta); pannello brief modificabile (una modifica genera una nuova versione).
-- **Impostazioni globali:** provider e chiavi, parallelismo, modalità esperto, editor catalogo formati, modello dell'agente.
+- **Creatività:** tavola dei formati con commenti a pin e vista focus; pannello conversazione (card versione, passi, approvazioni; scheda esperto); selettore versioni (confronta, riparti da, esporta); brief consultabile e modificabile (una modifica genera una nuova versione).
+- **Impostazioni globali:** provider e chiavi, parallelismo, modalità esperto, tema (chiaro / scuro / sistema), editor catalogo formati, modello dell'agente.
 - **Notifiche:** toast in-app e notifiche di sistema (Electron) per job completati e approvazioni richieste.
 
 ## 9. Gestione errori
@@ -247,4 +258,4 @@ Il prodotto è definito per intero; l'implementazione procede in quest'ordine:
 4. Server MCP con provider, approvazioni, parallelismo.
 5. Electron, packaging e release, UI rifinita secondo la variante scelta.
 
-Prima della fase 1 si esplorano 2–3 varianti di UI per scegliere la direzione visiva.
+La direzione visiva è fissata in §8.1. I mockup di riferimento sono sulla tavola di design del progetto.
