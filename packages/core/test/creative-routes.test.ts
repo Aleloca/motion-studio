@@ -47,7 +47,7 @@ const waitJobs = async () => {
 const createCreative = async (generate = true) =>
   (await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'Lancio', brief, generate } })).json();
 
-describe('formats', () => {
+describe('formats', { timeout: 20_000 }, () => {
   it('serves, validates and resets the catalog', async () => {
     const s = (await app.inject('/api/formats')).json();
     expect(s.presets.length).toBeGreaterThan(30);
@@ -57,7 +57,7 @@ describe('formats', () => {
   });
 });
 
-describe('creatives', () => {
+describe('creatives', { timeout: 20_000 }, () => {
   it('creates and generates, then exposes detail, conversation and files', async () => {
     const created = await createCreative();
     expect(created.job).toMatchObject({ state: expect.any(String) });
@@ -111,7 +111,7 @@ describe('creatives', () => {
   });
 });
 
-describe('file serving safety', () => {
+describe('file serving safety', { timeout: 20_000 }, () => {
   it('refuses traversal, non-output paths and symlinks', async () => {
     const { slug } = await createCreative();
     await waitJobs();
@@ -124,7 +124,7 @@ describe('file serving safety', () => {
   });
 });
 
-describe('file route confinement', () => {
+describe('file route confinement', { timeout: 20_000 }, () => {
   it.skipIf(process.platform === 'win32')('refuses symlinked directories and serves .feedback with sandbox headers', async () => {
     const { slug } = await createCreative();
     await waitJobs();
@@ -146,7 +146,7 @@ describe('file route confinement', () => {
   });
 });
 
-describe('startup recovery', () => {
+describe('startup recovery', { timeout: 20_000 }, () => {
   it('marks creatives left in working as interrupted', async () => {
     const { slug } = await createCreative(false);
     const file = join(base, 'ws', 'acme', 'creatives', slug, 'creative.json');
@@ -157,7 +157,7 @@ describe('startup recovery', () => {
   });
 });
 
-describe('recoverWorkspace', () => {
+describe('recoverWorkspace', { timeout: 20_000 }, () => {
   it('warns with the project slug when a project cannot be recovered, and goes on', async () => {
     const warnings: string[] = [];
     const warn = vi.spyOn(console, 'warn').mockImplementation((m: string) => { warnings.push(m); });

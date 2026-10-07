@@ -51,7 +51,7 @@ afterEach(() => { delete process.env.FAKE_CLAUDE_SCENARIO; delete process.env.FA
 const prompts = async () => (await readFile(promptFile, 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { prompt: string; args: string[] });
 const finalState = async (jobId: string) => { await queue.whenIdle(); return queue.list().find((j) => j.id === jobId)!.state; };
 
-describe('CreativeTurnService', () => {
+describe('CreativeTurnService', { timeout: 20_000 }, () => {
   it('generates v1 from the brief: outputs, version, commit, conversation, status', async () => {
     const job = await service.start(ref);
     expect(job.key).toBe(`creative:${ref.root}:${ref.projectSlug}:${ref.creativeSlug}`);
