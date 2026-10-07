@@ -149,3 +149,35 @@ describe('turns over WebSocket', () => {
     expect((await app.inject({ method: 'POST', url: '/api/projects/acme/turns', payload: { prompt: '  ' } })).statusCode).toBe(400);
   });
 });
+
+describe('loopback guard and client errors', () => {
+  it('rejects non-loopback Host and Origin headers', async () => {
+    expect((await app.inject({ url: '/api/health', headers: { host: 'evil.example' } })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'POST', url: '/api/projects', headers: { origin: 'https://evil.example' }, payload: { name: 'x' } })).statusCode).toBe(403);
+    expect((await app.inject({ url: '/api/health', headers: { origin: 'not a url' } })).statusCode).toBe(403);
+  });
+  it('accepts loopback hosts and a localhost dev origin', async () => {
+    for (const host of ['127.0.0.1:4317', 'localhost:4317', '[::1]:4317']) {
+      expect((await app.inject({ url: '/api/health', headers: { host, origin: 'http://localhost:5173' } })).statusCode).toBe(200);
+    }
+  });
+  it('refuses a cross-origin WebSocket upgrade but accepts a local one', async () => {
+    const address = await app.listen({ port: 0, host: '127.0.0.1' });
+    const url = `${address.replace('http', 'ws')}/api/events`;
+    const status = await new Promise<number>((resolve, reject) => {
+      const ws = new WebSocket(url, { headers: { origin: 'https://evil.example' } });
+      ws.once('unexpected-response', (_req, res) => { resolve(res.statusCode ?? 0); res.destroy(); ws.terminate(); });
+      ws.once('open', () => reject(new Error('should not open')));
+      ws.once('error', () => undefined);
+    });
+    expect(status).toBe(403);
+    const ok = new WebSocket(url, { headers: { origin: 'http://localhost:5173' } });
+    await new Promise((r) => ok.once('open', r));
+    await new Promise((r) => { ok.once('close', r); ok.close(); });
+  });
+  it('returns 400 for a malformed JSON body', async () => {
+    const res = await app.inject({ method: 'PUT', url: '/api/workspace', headers: { 'content-type': 'application/json' }, payload: '{bad' });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBeTruthy();
+  });
+});

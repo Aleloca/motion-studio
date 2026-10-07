@@ -20,6 +20,25 @@ export interface ServerDeps {
   webDir?: string;
 }
 
+const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
+
+function isLoopbackHost(host: string | undefined): boolean {
+  if (!host) return false;
+  try {
+    return LOOPBACK.has(new URL(`http://${host}`).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isLoopbackOrigin(origin: string): boolean {
+  try {
+    return LOOPBACK.has(new URL(origin).hostname);
+  } catch {
+    return false;
+  }
+}
+
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   const hub = new EventHub();
@@ -47,7 +66,20 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     if (err instanceof JobConflictError) return reply.status(409).send({ error: err.message });
     if (err instanceof JsonFileError) return reply.status(422).send({ error: err.message });
     if ((err as { validation?: unknown }).validation) return reply.status(400).send({ error: err.message });
+    const status = (err as { statusCode?: unknown }).statusCode;
+    if (typeof status === 'number' && status >= 400 && status < 500) return reply.status(status).send({ error: err.message });
     return reply.status(500).send({ error: err.message });
+  });
+
+  // Loopback-only by design: blocks DNS rebinding (Host) and cross-site requests/WebSockets (Origin).
+  // In phase 5 Electron loads the UI from http://127.0.0.1:<port>, so this check stays valid.
+  app.addHook('onRequest', async (req, reply) => {
+    const origin = req.headers.origin;
+    if (!isLoopbackHost(req.headers.host) || (origin !== undefined && !isLoopbackOrigin(origin))) {
+      // A rejected WebSocket upgrade leaves the raw socket open (nobody owns it any more): close it once the 403 is flushed.
+      if (req.raw.headers.upgrade) reply.raw.once('finish', () => req.raw.socket.destroy());
+      return reply.status(403).send({ error: 'Richiesta non consentita: origine non locale' });
+    }
   });
 
   // preClose, registered before the websocket plugin's own preClose, so clients still
