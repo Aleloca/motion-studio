@@ -20,19 +20,22 @@ function useHashRoute(): string {
 export function App() {
   const [checks, setChecks] = useState<DoctorCheck[] | null>(null);
   const [ws, setWs] = useState<{ path: string | null; settings: WorkspaceSettings | null } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const live = useServerEvents();
   const route = useHashRoute();
 
   const refresh = useCallback(() => {
     setChecks(null);
-    void api.getDoctor().then(setChecks);
-    void api.getWorkspace().then((w) => { setWs(w); if (w.settings) applyTheme(w.settings.theme); });
+    setLoadError(null);
+    const fail = (e: unknown) => setLoadError(e instanceof Error ? e.message : String(e));
+    api.getDoctor().then(setChecks).catch(fail);
+    api.getWorkspace().then((w) => { setWs(w); if (w.settings) applyTheme(w.settings.theme); }).catch(fail);
   }, []);
   useEffect(refresh, [refresh]);
 
   const blocking = checks?.some((c) => c.required && !c.ok) ?? true;
   if (!ws || !ws.settings || blocking) {
-    return <Onboarding checks={checks} workspacePath={ws?.path ?? null} onRecheck={refresh} onWorkspaceSet={refresh} />;
+    return <Onboarding checks={checks} workspacePath={ws?.path ?? null} error={loadError} onRecheck={refresh} onWorkspaceSet={refresh} />;
   }
   const settings = ws.settings;
   const update = async (patch: Partial<WorkspaceSettings>) => {
@@ -57,7 +60,7 @@ export function App() {
         </label>
         <ThemeToggle value={settings.theme} onChange={(theme) => void update({ theme })} />
       </header>
-      {projectSlug ? <ProjectPage slug={projectSlug} live={live} expert={settings.expertMode} /> : <ProjectList />}
+      {projectSlug ? <ProjectPage key={projectSlug} slug={projectSlug} live={live} expert={settings.expertMode} /> : <ProjectList />}
     </>
   );
 }

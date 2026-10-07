@@ -2,9 +2,10 @@ import type { DoctorCheck } from '@motion-studio/shared';
 import { useState } from 'react';
 import { api, ApiError } from '../api.ts';
 
-export function Onboarding({ checks, workspacePath, onRecheck, onWorkspaceSet }: {
+export function Onboarding({ checks, workspacePath, error: loadError, onRecheck, onWorkspaceSet }: {
   checks: DoctorCheck[] | null;
   workspacePath: string | null;
+  error?: string | null;
   onRecheck: () => void;
   onWorkspaceSet: () => void;
 }) {
@@ -24,7 +25,8 @@ export function Onboarding({ checks, workspacePath, onRecheck, onWorkspaceSet }:
       <h1 style={{ margin: 0, fontSize: 28 }}>Benvenuto in Motion Studio</h1>
       <section className="card stack" aria-label="Controllo ambiente">
         <div className="row"><strong>Controllo ambiente</strong><div style={{ flex: 1 }} /><button type="button" onClick={onRecheck}>Ricontrolla</button></div>
-        {!checks && <p className="muted">Controllo in corso…</p>}
+        {loadError && <p role="alert" className="error" style={{ margin: 0 }}>Impossibile contattare il server di Motion Studio: {loadError}</p>}
+        {!checks && !loadError && <p className="muted">Controllo in corso…</p>}
         {checks?.map((c) => (
           <div key={c.id} className="row" style={{ alignItems: 'flex-start' }}>
             <span className={`badge ${c.ok ? 'ok' : c.required ? 'err' : ''}`}>{c.ok ? 'OK' : c.required ? 'Manca' : 'Consigliato'}</span>
