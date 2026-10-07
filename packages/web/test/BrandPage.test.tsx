@@ -8,8 +8,8 @@ let overview: BrandOverview;
 const api = {
   getBrand: vi.fn(async () => structuredClone(overview)),
   listAssets: vi.fn(async () => ({ assets: [], error: null, unregistered: [] })),
-  saveBrandKit: vi.fn(async (_s: string, k: unknown) => k),
-  saveGuidelines: vi.fn(async () => ({ ok: true })),
+  saveBrandKit: vi.fn(async (_s: string, k: unknown) => { overview.kit = k as BrandOverview['kit']; return k; }),
+  saveGuidelines: vi.fn(async (_s: string, text: string) => { overview.guidelines = text; return { ok: true }; }),
   addBrandSource: vi.fn(async () => ({})),
   removeBrandSource: vi.fn(async () => ({ ok: true })),
   analyzeBrand: vi.fn(async () => ({ id: 'j1' })),
@@ -69,12 +69,12 @@ describe('BrandPage', () => {
     await userEvent.type(screen.getByLabelText('Indirizzo del sito'), 'https://b.example');
     await userEvent.click(screen.getByRole('button', { name: 'Aggiungi sito' }));
     await waitFor(() => expect(api.getBrand).toHaveBeenCalledTimes(2));
-    const gl = screen.getByLabelText('Linee guida (Markdown)');
-    await userEvent.type(gl, '!');
+    await userEvent.type(screen.getByLabelText('Linee guida (Markdown)'), '!');
     await userEvent.click(screen.getByRole('button', { name: 'Salva linee guida' }));
     await waitFor(() => expect(api.getBrand).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect((screen.getByLabelText('Linee guida (Markdown)') as HTMLTextAreaElement).value).toBe('Tono diretto!'));
     expect((screen.getByLabelText('Nome colore 1') as HTMLInputElement).value).toBe('Blux');
-    expect((gl as HTMLTextAreaElement).value).toBe('Tono diretto!');
+    expect((screen.getByRole('button', { name: 'Salva linee guida' }) as HTMLButtonElement).disabled).toBe(true);
   });
   it('lets font weights be typed freely and parses them', async () => {
     overview.kit = { ...overview.kit, fonts: [{ id: 'f1', family: 'Inter', role: 'body', weights: [400], file: null, source: site }] };

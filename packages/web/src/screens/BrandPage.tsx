@@ -105,7 +105,7 @@ export function BrandPage({ slug, live }: { slug: string; live: EventsState }) {
                 {['heading', 'body', 'accent', 'other'].map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
               <input aria-label={`Pesi font ${k + 1}`} value={rawWeights[f.id] ?? f.weights.join(', ')} disabled={locked} style={{ width: 120 }}
-                onChange={(e) => { setRawWeights({ ...rawWeights, [f.id]: e.target.value }); edit({ weights: e.target.value.split(',').map((w) => Number(w.trim())).filter((w) => w !== 0 && Number.isInteger(w) && w >= 100 && w <= 900) }); }}
+                onChange={(e) => { setRawWeights({ ...rawWeights, [f.id]: e.target.value }); edit({ weights: e.target.value.split(',').map((w) => Number(w.trim())).filter((w) => Number.isInteger(w) && w >= 100 && w <= 900) }); }}
                 onBlur={() => setRawWeights(({ [f.id]: _drop, ...rest }) => rest)} />
               <select aria-label={`File font ${k + 1}`} value={f.file ?? ''} disabled={locked} onChange={(e) => edit({ file: e.target.value || null })}>
                 <option value="">Nessun file</option>
@@ -163,7 +163,7 @@ export function BrandPage({ slug, live }: { slug: string; live: EventsState }) {
       <div className="row">
         <div style={{ flex: 1 }} />
         {status && <span role="status" className="muted">{status}</span>}
-        <button type="button" disabled={!dirty || locked} onClick={() => setDraft(overview.kit)}>Annulla modifiche</button>
+        <button type="button" disabled={!dirty || locked} onClick={() => { setDraft(overview.kit); setRawWeights({}); setRawText({}); }}>Annulla modifiche</button>
         <button type="button" className="primary" disabled={!dirty || locked} onClick={() => void act(async () => { await api.saveBrandKit(slug, draft); if (seeded.current) seeded.current.kit = JSON.stringify(draft); }, 'Brand kit salvato')}>Salva brand kit</button>
       </div>
 
