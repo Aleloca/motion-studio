@@ -14,7 +14,7 @@ const { ConversationPanel, mergeJobEvents } = await import('../src/components/Co
 const at = '2026-10-07T10:00:00.000Z';
 const detail = (versions = 1): CreativeDetail => ({
   slug: 'c1', jobKey: 'creative:k',
-  creative: { schemaVersion: 1, title: 'Lancio', status: 'ready', error: null, createdAt: at, updatedAt: at, resumeFrom: null,
+  creative: { schemaVersion: 1, title: 'Lancio', status: 'ready', error: null, createdAt: at, updatedAt: at, resumeFrom: null, linkedCodebases: [],
     brief: { goal: 'Lancio app', message: '', formats: ['instagram-post-1x1'], durationSec: 15, assets: [], notes: '' } },
   versions: Array.from({ length: versions }, (_, i) => ({ n: i + 1, commit: 'c', sessionId: 's', status: 'complete' as const, createdAt: at, request: 'r', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: null })),
 });

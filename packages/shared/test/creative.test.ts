@@ -3,7 +3,7 @@ import { creativeFileSchema, manifestSchema, pinSchema, versionsFileSchema } fro
 
 const now = '2026-10-07T10:00:00.000Z';
 const creative = {
-  schemaVersion: 1, title: 'Lancio app', status: 'draft', error: null, createdAt: now, updatedAt: now, resumeFrom: null,
+  schemaVersion: 1, title: 'Lancio app', status: 'draft', error: null, createdAt: now, updatedAt: now, resumeFrom: null, linkedCodebases: [],
   brief: { goal: 'Far capire che prenotare è immediato', message: '', formats: ['instagram-post-1x1'], durationSec: 15, assets: [], notes: '' },
 };
 

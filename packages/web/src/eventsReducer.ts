@@ -1,7 +1,7 @@
 import type { AgentEvent, JobSummary, ServerMessage } from '@motion-studio/shared';
 
-export interface EventsState { jobs: Record<string, JobSummary>; events: Record<string, AgentEvent[]>; creativeTicks: Record<string, number> }
-export const initialEventsState: EventsState = { jobs: {}, events: {}, creativeTicks: {} };
+export interface EventsState { jobs: Record<string, JobSummary>; events: Record<string, AgentEvent[]>; creativeTicks: Record<string, number>; projectTicks: Record<string, number> }
+export const initialEventsState: EventsState = { jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
 const MAX_EVENTS = 2000;
 
 export function eventsReducer(state: EventsState, msg: ServerMessage): EventsState {
@@ -23,6 +23,9 @@ export function eventsReducer(state: EventsState, msg: ServerMessage): EventsSta
       const key = `${msg.project}/${msg.creative}`;
       return { ...state, creativeTicks: { ...state.creativeTicks, [key]: (state.creativeTicks[key] ?? 0) + 1 } };
     }
+    case 'brand':
+    case 'library':
+      return { ...state, projectTicks: { ...state.projectTicks, [msg.project]: (state.projectTicks[msg.project] ?? 0) + 1 } };
   }
 }
 

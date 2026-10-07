@@ -19,7 +19,7 @@ describe('ProjectPage after a reload', () => {
     vi.mocked(api.getProject).mockResolvedValue({ slug: 'acme', project, jobKey: 'project:/w:acme' });
     vi.mocked(api.cancelJob).mockRejectedValue(new Error('server giù'));
     const other = job({ id: 'j0', key: 'project:/w:altro' });
-    render(<ProjectPage slug="acme" tab="console" expert={false} live={{ jobs: { j0: other, j1: job({ sessionId: 'sess-9' }) }, events: {}, creativeTicks: {} }} />);
+    render(<ProjectPage slug="acme" tab="console" expert={false} live={{ jobs: { j0: other, j1: job({ sessionId: 'sess-9' }) }, events: {}, creativeTicks: {}, projectTicks: {} }} />);
     expect(await screen.findByText('sessione sess-9')).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Annulla' }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('server giù'));
@@ -27,16 +27,16 @@ describe('ProjectPage after a reload', () => {
   it('uses the attached job session id for the next turn (no events after a reload)', async () => {
     vi.mocked(api.getProject).mockResolvedValue({ slug: 'acme', project, jobKey: 'project:/w:acme' });
     vi.mocked(api.startTurn).mockResolvedValue(job({ id: 'j2', state: 'queued' }));
-    const { rerender } = render(<ProjectPage slug="acme" tab="console" expert={false} live={{ jobs: { j1: job({}) }, events: {}, creativeTicks: {} }} />);
+    const { rerender } = render(<ProjectPage slug="acme" tab="console" expert={false} live={{ jobs: { j1: job({}) }, events: {}, creativeTicks: {}, projectTicks: {} }} />);
     await screen.findByText('Acme');
-    rerender(<ProjectPage slug="acme" tab="console" expert={false} live={{ jobs: { j1: job({ state: 'succeeded', sessionId: 'sess-9' }) }, events: {}, creativeTicks: {} }} />);
+    rerender(<ProjectPage slug="acme" tab="console" expert={false} live={{ jobs: { j1: job({ state: 'succeeded', sessionId: 'sess-9' }) }, events: {}, creativeTicks: {}, projectTicks: {} }} />);
     await userEvent.type(screen.getByLabelText(/Chiedi all'agente/), 'ciao');
     await userEvent.click(screen.getByRole('button', { name: 'Invia' }));
     expect(api.startTurn).toHaveBeenCalledWith('acme', 'ciao', 'sess-9');
   });
   it('does not attach to finished jobs', async () => {
     vi.mocked(api.getProject).mockResolvedValue({ slug: 'acme', project, jobKey: 'project:/w:acme' });
-    render(<ProjectPage slug="acme" tab="console" expert={false} live={{ jobs: { j1: job({ state: 'succeeded', sessionId: 'sess-9' }) }, events: {}, creativeTicks: {} }} />);
+    render(<ProjectPage slug="acme" tab="console" expert={false} live={{ jobs: { j1: job({ state: 'succeeded', sessionId: 'sess-9' }) }, events: {}, creativeTicks: {}, projectTicks: {} }} />);
     await screen.findByText('Acme');
     expect(screen.queryByText('sessione sess-9')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Annulla' })).toBeNull();
@@ -47,7 +47,7 @@ describe('ProjectPage errors', () => {
   afterEach(() => vi.clearAllMocks());
   it('shows a getProject failure', async () => {
     vi.mocked(api.getProject).mockRejectedValue(new Error('Progetto non trovato'));
-    render(<ProjectPage slug="acme" tab="console" expert={false} live={{ jobs: {}, events: {}, creativeTicks: {} }} />);
+    render(<ProjectPage slug="acme" tab="console" expert={false} live={{ jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} }} />);
     expect((await screen.findByRole('alert')).textContent).toBe('Impossibile caricare il progetto: Progetto non trovato');
   });
 });

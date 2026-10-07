@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { AgentEvent } from './events.ts';
+import { linkedCodebaseSchema } from './schemas.ts';
 
 export const creativeStatusSchema = z.enum(['draft', 'working', 'ready', 'incomplete', 'error', 'interrupted']);
 export type CreativeStatus = z.infer<typeof creativeStatusSchema>;
@@ -23,6 +24,7 @@ export const creativeFileSchema = z.object({
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
   resumeFrom: z.object({ version: z.number().int().min(1), sessionId: z.string().min(1) }).nullable(),
+  linkedCodebases: z.array(linkedCodebaseSchema).default([]),
 });
 export type CreativeFile = z.infer<typeof creativeFileSchema>;
 

@@ -31,7 +31,11 @@ export type ServerMessage =
   | { type: 'job'; job: JobSummary }
   | { type: 'agent'; jobId: string; event: AgentEvent }
   /** A creative's files changed (status, versions, conversation): clients refetch it. */
-  | { type: 'creative'; project: string; creative: string };
+  | { type: 'creative'; project: string; creative: string }
+  /** Brand kit, guidelines, sources or proposals of a project changed. */
+  | { type: 'brand'; project: string }
+  /** Assets or references of a project changed. */
+  | { type: 'library'; project: string };
 
 export interface DoctorCheck {
   id: 'node' | 'git' | 'ffmpeg' | 'claude' | 'claude-auth';

@@ -4,7 +4,7 @@ import { buildCreativePrompt, parseStudioBlock } from '../src/creatives/prompt.t
 import { CONTEXT_MD } from '../src/project-template.ts';
 
 const creative: CreativeFile = {
-  schemaVersion: 1, title: 'Lancio app', status: 'draft', error: null, resumeFrom: null,
+  schemaVersion: 1, title: 'Lancio app', status: 'draft', error: null, resumeFrom: null, linkedCodebases: [],
   createdAt: '2026-10-07T10:00:00.000Z', updatedAt: '2026-10-07T10:00:00.000Z',
   brief: { goal: 'Far capire che prenotare è immediato', message: 'Prenota in 3 tap', formats: ['instagram-post-1x1', 'web-banner-300x250', 'ghost'],
     durationSec: 15, assets: ['assets/logo.svg'], notes: 'Chiudi sempre con il logo' },
