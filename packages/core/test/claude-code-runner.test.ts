@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import type { AgentEvent } from '@motion-studio/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildClaudeArgs, claudeCommandFromEnv, ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
+import { AGENT_ALLOWED_TOOLS } from '../src/agent/runner.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const runner = (opts: { drainMs?: number } = {}) => new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200, ...opts });
@@ -65,6 +66,21 @@ describe('buildClaudeArgs', () => {
     const args = buildClaudeArgs({ cwd: '/x', prompt: 'p', resumeSessionId: 's1', forkSession: true });
     expect(args.slice(args.indexOf('--resume'), args.indexOf('--resume') + 3)).toEqual(['--resume', 's1', '--fork-session']);
     expect(buildClaudeArgs({ cwd: '/x', prompt: 'p', forkSession: true })).not.toContain('--fork-session');
+  });
+  it('passes allowed tool rules as the last, variadic --allowedTools flag', () => {
+    const args = buildClaudeArgs({ cwd: '/x', prompt: 'p', model: 'sonnet', resumeSessionId: 's1', allowedTools: ['Bash(node:*)', 'Bash(ffmpeg:*)'] });
+    expect(args.slice(-3)).toEqual(['--allowedTools', 'Bash(node:*)', 'Bash(ffmpeg:*)']);
+    expect(args.filter((a) => a === '--allowedTools')).toHaveLength(1);
+    expect(args).toContain('--permission-prompts');
+    expect(buildClaudeArgs({ cwd: '/x', prompt: 'p' })).not.toContain('--allowedTools');
+    expect(buildClaudeArgs({ cwd: '/x', prompt: 'p', allowedTools: [] })).not.toContain('--allowedTools');
+  });
+});
+
+describe('AGENT_ALLOWED_TOOLS', () => {
+  it('lists the local interpreters, package managers and media tools of spec §6.3', () => {
+    expect(AGENT_ALLOWED_TOOLS).toEqual(['Bash(ffmpeg:*)', 'Bash(ffprobe:*)', 'Bash(node:*)', 'Bash(npm:*)', 'Bash(npx:*)', 'Bash(pnpm:*)',
+      'Bash(python3:*)', 'Bash(pip:*)', 'Bash(pip3:*)', 'Bash(mkdir:*)', 'Bash(cp:*)', 'Bash(mv:*)']);
   });
 });
 

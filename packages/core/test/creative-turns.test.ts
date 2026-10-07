@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { DEFAULT_FORMATS, type Brief, type ServerMessage } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
+import { AGENT_ALLOWED_TOOLS } from '../src/agent/runner.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { CreativeTurnService, type CreativeRef } from '../src/creatives/creative-turns.ts';
 import { execCommand } from '../src/exec.ts';
@@ -67,6 +68,16 @@ describe('CreativeTurnService', () => {
     expect(conv.at(-1)).toMatchObject({ type: 'version', n: 1, status: 'complete' });
     expect(messages.some((m) => m.type === 'creative')).toBe(true);
     expect((await prompts())[0]!.prompt).toContain('Realizza la creatività "Lancio" (versione 1)');
+  });
+
+  it('lets every creative turn (first, fix, iteration) use the allowed tool rules', async () => {
+    process.env.FAKE_CLAUDE_SCENARIO = 'render_missing_once';
+    await finalState((await service.start(ref)).id);
+    process.env.FAKE_CLAUDE_SCENARIO = 'render';
+    await finalState((await service.start(ref, { text: 'ancora', pins: [] })).id);
+    const all = await prompts();
+    expect(all).toHaveLength(3);
+    for (const { args } of all) expect(args.slice(args.indexOf('--allowedTools') + 1)).toEqual([...AGENT_ALLOWED_TOOLS]);
   });
 
   it('rewrites .studio/context.md before each turn', async () => {

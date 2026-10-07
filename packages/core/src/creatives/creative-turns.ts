@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import type { CreativeFile, CreativeStatus, FormatPreset, JobSummary, Pin, ServerMessage } from '@motion-studio/shared';
-import type { AgentRunner } from '../agent/runner.ts';
+import { AGENT_ALLOWED_TOOLS, type AgentRunner } from '../agent/runner.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 import type { Git } from '../git.ts';
 import { JobConflictError, type JobQueue } from '../jobs/job-queue.ts';
@@ -109,7 +109,7 @@ export class CreativeTurnService {
           attachments: kind === 'iteration' ? attachments : undefined,
           problems,
         });
-        const run = this.deps.runner.start({ cwd: ref.projectDir, prompt, resumeSessionId, forkSession, model }, (event) => {
+        const run = this.deps.runner.start({ cwd: ref.projectDir, prompt, resumeSessionId, forkSession, model, allowedTools: [...AGENT_ALLOWED_TOOLS] }, (event) => {
           this.deps.broadcast({ type: 'agent', jobId, event });
           // Chained so writes stay ordered and a failure surfaces when the chain is awaited after the turn.
           lastWrite = lastWrite.then(() => store.appendConversation(slug, { type: 'agent', at: now(), jobId, event }));

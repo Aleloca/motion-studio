@@ -45,6 +45,13 @@ describe('buildCreativePrompt', () => {
     expect(p).toContain('- Manca il formato Web · Banner 300×250 (web-banner-300x250)');
     expect(p).toContain('stessa cartella');
   });
+
+  it('every kind asks for Italian replies right before the machine block', () => {
+    for (const kind of ['first', 'iteration', 'fix'] as const) {
+      const p = buildCreativePrompt({ ...base, kind, userText: 'x', problems: ['y'] });
+      expect(p).toMatch(/Rispondi sempre in italiano\.\n\n```motion-studio\n/);
+    }
+  });
 });
 
 describe('parseStudioBlock', () => {

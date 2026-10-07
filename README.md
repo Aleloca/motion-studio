@@ -30,8 +30,13 @@ Opzioni del launcher (dopo il nome dello script, es. `pnpm motion-studio --port 
 
 Limiti attuali: brand kit, asset e codebase collegate arrivano nella fase 3; approvazioni dalla UI, tool MCP e rigenerazione automatica col comando del manifest nella fase 4; app desktop ed export in cartella scelta nella fase 5.
 
-## Limiti della fase 1
-- **Permessi dell'agente:** i turni girano con `--permission-mode acceptEdits`, quindi l'agente può modificare i file nella cartella del progetto senza chiedere conferma (le richieste che richiederebbero un'approvazione vengono rifiutate). Le approvazioni dall'interfaccia arrivano nella fase 4.
+## Sicurezza nella fase 2
+- **Turni delle creatività:** l'agente può eseguire senza chiedere conferma `node`, `python3`, `npm`/`npx`/`pnpm`, `pip`/`pip3`, `ffmpeg`/`ffprobe` e `mkdir`/`cp`/`mv`, oltre a modificare i file del progetto. Queste regole non lo confinano nella cartella del progetto: i comandi ammessi possono leggere e scrivere ovunque l'utente possa farlo. Tutti gli altri comandi vengono rifiutati.
+- **Approvazioni:** le richieste di permesso dall'interfaccia arrivano nella fase 4; fino ad allora usa Motion Studio solo con progetti e brief di cui ti fidi.
+- **Output non verificati:** senza ffmpeg/ffprobe installati Motion Studio non può controllare davvero risoluzione e durata, e mostra gli output come "non verificati".
+
+## Limiti attuali dell'agente
+- **Console del progetto:** i turni girano con `--permission-mode acceptEdits`, quindi l'agente può modificare i file nella cartella del progetto senza chiedere conferma (le richieste che richiederebbero un'approvazione vengono rifiutate). Le approvazioni dall'interfaccia arrivano nella fase 4.
 - **Codebase collegate:** le `linkedCodebases` di `project.json` vengono ignorate; la fase 3 le renderà disponibili all'agente in sola lettura.
 
 ## Sviluppo

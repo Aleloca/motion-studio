@@ -56,6 +56,7 @@ export function buildCreativePrompt(i: PromptInput): string {
     `- Spazio di lavoro: ${base}/work/ (sorgenti, script, dipendenze locali)`,
     `- Consegna: ${outputDir}/ con un file per formato (\`<id>.<estensione>\`) e manifest.json, come da contratto in .studio/context.md`,
     '- Ogni formato è una ricomposizione dedicata, non un ritaglio.',
+    '', 'Rispondi sempre in italiano.',
     '', '```motion-studio', JSON.stringify(block), '```',
   );
   return parts.filter((l, idx, arr) => !(l === '' && arr[idx - 1] === '')).join('\n');

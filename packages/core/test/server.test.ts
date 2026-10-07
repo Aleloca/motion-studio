@@ -158,7 +158,9 @@ describe('turns over WebSocket', () => {
     const { messages, ws } = await connect();
     const id = (await app.inject({ method: 'POST', url: '/api/projects/acme/turns', payload: { prompt: 'x' } })).json().id;
     await waitFor(() => messages.some((m) => m.type === 'job' && m.job.id === id && m.job.state === 'succeeded'));
-    expect(JSON.parse(await readFile(join(base, 'args.json'), 'utf8')).args).not.toContain('--add-dir');
+    const args = JSON.parse(await readFile(join(base, 'args.json'), 'utf8')).args;
+    expect(args).not.toContain('--add-dir');
+    expect(args).not.toContain('--allowedTools'); // the project console keeps the phase-1 policy
     ws.close();
   });
   it('rejects a second concurrent turn on the same project, and cancels a hanging one', async () => {
