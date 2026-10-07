@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, symlink } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import fastifyMultipart from '@fastify/multipart';
@@ -28,6 +28,11 @@ describe('sanitizeFileName', () => {
     ['', 'file'],
     ['a'.repeat(200) + '.png', 'a'.repeat(116) + '.png'],
     ['C:\\Users\\x\\logo.svg', 'logo.svg'],
+    ['.png', 'file.png'],
+    ['è.png', 'file.png'],
+    ['日本語.svg', 'file.svg'],
+    ['a.' + 'x'.repeat(200), 'a'],
+    ['.' + 'x'.repeat(200), 'file'],
   ])('%s → %s', (input, out) => { expect(sanitizeFileName(input)).toBe(out); });
 });
 
@@ -39,9 +44,24 @@ describe('saveUploads', () => {
     expect((await readdir(dir)).sort()).toEqual(['logo-2.png', 'logo.png', 'x.svg']);
   });
   it('never writes through an existing symlink name', async () => {
-    await symlink('/etc/hosts', join(dir, 'a.png'));
+    const target = join(dir, '..', 'target.txt');
+    await writeFile(target, 'untouched');
+    await symlink(target, join(dir, 'a.png'));
     const r = await app.inject({ method: 'POST', url: '/up', ...multipart([{ name: 'a.png', content: 'x' }]) });
     expect(r.json().saved).toEqual(['a-2.png']);
+    expect(await readFile(target, 'utf8')).toBe('untouched');
+    expect((await lstat(join(dir, 'a.png'))).isSymbolicLink()).toBe(true);
+  });
+  it('gives concurrent uploads of the same name distinct files', async () => {
+    const [a, b] = await Promise.all([
+      app.inject({ method: 'POST', url: '/up', ...multipart([{ name: 'logo.png', content: 'AAA' }]) }),
+      app.inject({ method: 'POST', url: '/up', ...multipart([{ name: 'logo.png', content: 'BBB' }]) }),
+    ]);
+    const names = [a.json().saved[0], b.json().saved[0]];
+    expect([...names].sort()).toEqual(['logo-2.png', 'logo.png']);
+    expect(await readFile(join(dir, names[0]), 'utf8')).toBe('AAA');
+    expect(await readFile(join(dir, names[1]), 'utf8')).toBe('BBB');
+    expect((await readdir(dir)).sort()).toEqual(['logo-2.png', 'logo.png']);
   });
   it('rejects oversize files with 413 and leaves nothing behind', async () => {
     const r = await app.inject({ method: 'POST', url: '/up', ...multipart([{ name: 'ok.png', content: 'a' }, { name: 'big.png', content: Buffer.alloc(4096) }]) });
