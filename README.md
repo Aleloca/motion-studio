@@ -30,6 +30,7 @@ Opzioni del launcher (dopo il nome dello script, es. `pnpm motion-studio --port 
 ```bash
 pnpm dev                  # core (tsx watch, porta 4317) + web (Vite, porta 5173 con proxy /api)
 pnpm test                 # tutti i test (usano un finto `claude`, nessun consumo di quota)
+npx vitest run packages/core/test/server.test.ts   # un singolo file (dalla radice del repository)
 pnpm typecheck
 ```
 
