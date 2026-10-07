@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -68,7 +68,7 @@ describe('projects', () => {
     const err = await ws.createProject({ name: '   ' }).catch((e) => e);
     expect(err.status).toBe(400);
   });
-  it('lists projects sorted by name and reports a corrupted one without rewriting it', async () => {
+  it('lists projects sorted by slug and reports a corrupted one without rewriting it', async () => {
     const ws = await WorkspaceStore.open(join(base, 'ws'), new Git());
     await ws.createProject({ name: 'Orto Urbano' });
     const { slug } = await ws.createProject({ name: 'Acme' });
@@ -80,6 +80,22 @@ describe('projects', () => {
     expect(bad).toMatchObject({ ok: false });
     expect(bad && !bad.ok && bad.error).toContain('JSON non valido');
     expect(await readFile(broken, 'utf8')).toBe('{ "schemaVersion": 1, "name": ');
+  });
+  it('reports a schema-invalid project.json with the reason', async () => {
+    const ws = await WorkspaceStore.open(join(base, 'ws'), new Git());
+    const { slug } = await ws.createProject({ name: 'Acme' });
+    await writeFile(join(ws.projectDir(slug), 'project.json'), JSON.stringify({ schemaVersion: 1, name: 'Acme' }));
+    const [item] = await ws.listProjects();
+    expect(item).toMatchObject({ slug, ok: false });
+    expect(item && !item.ok && item.error).toContain('contenuto non valido');
+  });
+  it('removes the just-created project folder when a later step fails', async () => {
+    class BrokenGit extends Git { override async init(): Promise<void> { throw new Error('git init rotto'); } }
+    const ws = await WorkspaceStore.open(join(base, 'ws'), new BrokenGit());
+    await mkdir(join(base, 'ws', 'altro'));
+    await expect(ws.createProject({ name: 'Acme' })).rejects.toThrow('git init rotto');
+    expect(await stat(join(base, 'ws', 'acme')).catch(() => null)).toBeNull();
+    expect((await stat(join(base, 'ws', 'altro'))).isDirectory()).toBe(true);
   });
   it('ignores folders without project.json and the .studio folder', async () => {
     const ws = await WorkspaceStore.open(join(base, 'ws'), new Git());

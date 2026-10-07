@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { z } from 'zod';
 
@@ -39,6 +39,11 @@ export async function readJsonFile<T>(path: string, schema: z.ZodType<T>): Promi
 export async function writeJsonFileAtomic(path: string, data: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.${randomBytes(6).toString('hex')}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
-  await rename(tmp, path);
+  try {
+    await writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+    await rename(tmp, path);
+  } catch (err) {
+    await unlink(tmp).catch(() => { /* never created or already gone */ });
+    throw err;
+  }
 }

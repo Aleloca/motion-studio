@@ -1,4 +1,4 @@
-import { access, constants, mkdir, readdir, stat, writeFile } from 'node:fs/promises';
+import { access, constants, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   type WorkspaceProblemCode,
@@ -25,7 +25,7 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 export function slugify(name: string): string {
   const s = name
     .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
@@ -118,17 +118,23 @@ export class WorkspaceStore {
     });
     const now = new Date().toISOString();
     const project: ProjectFile = { schemaVersion: 1, name, description: input.description?.trim() ?? '', createdAt: now, updatedAt: now, linkedCodebases: [] };
-    for (const d of PROJECT_DIRS) {
-      await mkdir(join(dir, d), { recursive: true });
-      await writeFile(join(dir, d, '.gitkeep'), '');
+    try {
+      for (const d of PROJECT_DIRS) {
+        await mkdir(join(dir, d), { recursive: true });
+        await writeFile(join(dir, d, '.gitkeep'), '');
+      }
+      await mkdir(join(dir, '.studio'), { recursive: true });
+      await writeFile(join(dir, '.studio', 'context.md'), CONTEXT_MD);
+      await writeFile(join(dir, 'CLAUDE.md'), CLAUDE_MD);
+      await writeFile(join(dir, '.gitignore'), GITIGNORE);
+      await writeJsonFileAtomic(join(dir, 'project.json'), project);
+      await this.git.init(dir);
+      await this.git.commitAll(dir, `Crea progetto ${name}`);
+    } catch (err) {
+      // Only the folder created above: never leave a half-built project behind.
+      await rm(dir, { recursive: true, force: true }).catch(() => {});
+      throw err;
     }
-    await mkdir(join(dir, '.studio'), { recursive: true });
-    await writeFile(join(dir, '.studio', 'context.md'), CONTEXT_MD);
-    await writeFile(join(dir, 'CLAUDE.md'), CLAUDE_MD);
-    await writeFile(join(dir, '.gitignore'), GITIGNORE);
-    await writeJsonFileAtomic(join(dir, 'project.json'), project);
-    await this.git.init(dir);
-    await this.git.commitAll(dir, `Crea progetto ${name}`);
     return { slug, project };
   }
 }

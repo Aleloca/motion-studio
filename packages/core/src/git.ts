@@ -1,7 +1,17 @@
+import { resolve } from 'node:path';
 import { execCommand, type CommandExec } from './exec.ts';
 import { KeyedMutex } from './keyed-mutex.ts';
 
 const IDENTITY = ['-c', 'user.name=Motion Studio', '-c', 'user.email=motion-studio@localhost'];
+
+/** The git subcommand, skipping `-c key=value` pairs; the rest (e.g. commit messages) is never echoed. */
+function subcommand(args: string[]): string {
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '-c') { i++; continue; }
+    return args[i]!;
+  }
+  return '';
+}
 
 export class Git {
   private readonly lock = new KeyedMutex();
@@ -12,7 +22,7 @@ export class Git {
   }
 
   commitAll(dir: string, message: string): Promise<string | null> {
-    return this.lock.run(dir, async () => {
+    return this.lock.run(resolve(dir), async () => {
       await this.must(dir, ['add', '-A']);
       const status = await this.must(dir, ['status', '--porcelain']);
       if (status.trim() === '') return null;
@@ -24,7 +34,7 @@ export class Git {
   private async must(cwd: string, args: string[]): Promise<string> {
     const r = await this.exec('git', args, { cwd });
     if (r.notFound) throw new Error('git non trovato: installalo per usare Motion Studio');
-    if (r.code !== 0) throw new Error(`git ${args.filter((a) => !a.startsWith('user.')).join(' ')} fallito: ${r.stderr.trim()}`);
+    if (r.code !== 0) throw new Error(`git ${subcommand(args)} fallito: ${r.stderr.trim()}`);
     return r.stdout;
   }
 }

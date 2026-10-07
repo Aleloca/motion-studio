@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -42,5 +42,20 @@ describe('writeJsonFileAtomic', () => {
     await writeJsonFileAtomic(p, { a: 1 });
     expect(await readFile(p, 'utf8')).toBe('{\n  "a": 1\n}\n');
     expect(await readdir(join(dir, 'nested', 'deep'))).toEqual(['b.json']);
+  });
+  it('overwrites an existing file', async () => {
+    const p = join(dir, 'c.json');
+    await writeJsonFileAtomic(p, { a: 1 });
+    await writeJsonFileAtomic(p, { a: 2 });
+    expect(JSON.parse(await readFile(p, 'utf8'))).toEqual({ a: 2 });
+    expect(await readdir(dir)).toEqual(['c.json']);
+  });
+  it('removes the temp file and rethrows when the final rename fails', async () => {
+    const p = join(dir, 'target');
+    await mkdir(join(p, 'inner'), { recursive: true }); // renaming a file onto a non-empty folder fails
+    const err = await writeJsonFileAtomic(p, { a: 1 }).catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as NodeJS.ErrnoException).code).toMatch(/EISDIR|ENOTEMPTY|EEXIST|EPERM/);
+    expect(await readdir(dir)).toEqual(['target']);
   });
 });

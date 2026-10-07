@@ -63,4 +63,29 @@ describe('runDoctor', () => {
     const checks = await runDoctor({ exec, claudeCommand: ['node', '/fake.mjs'], nodeVersion: 'v24.9.0' });
     expect(checks.find((c) => c.id === 'claude')).toMatchObject({ ok: true, version: '9.9.9' });
   });
+  it('treats a non-JSON auth status as logged out', async () => {
+    const checks = await runDoctor({
+      exec: fakeExec({ ...allGood, 'claude auth status --json': ok('Logged in as someone') }),
+      claudeCommand: ['claude'], nodeVersion: 'v24.9.0',
+    });
+    expect(checks.find((c) => c.id === 'claude-auth')).toMatchObject({ ok: false, fix: 'claude auth login' });
+  });
+  it('distinguishes an installed tool that fails from a missing one', async () => {
+    const broken = (stderr: string): CommandResult => ({ code: 1, stdout: '', stderr, notFound: false });
+    const checks = await runDoctor({
+      exec: fakeExec({ ...allGood, 'git --version': broken('xcrun: error: invalid developer path\nmore'), 'ffmpeg -version': broken('dyld: missing lib'), 'claude --version': broken('SyntaxError: bad\n') }),
+      claudeCommand: ['claude'], nodeVersion: 'v24.9.0',
+    });
+    expect(checks.find((c) => c.id === 'git')).toEqual({ id: 'git', label: 'Git', required: true, ok: false, message: 'Installato ma non risponde correttamente: xcrun: error: invalid developer path' });
+    expect(checks.find((c) => c.id === 'ffmpeg')).toMatchObject({ ok: false, message: 'Installato ma non risponde correttamente: dyld: missing lib' });
+    expect(checks.find((c) => c.id === 'ffmpeg')?.fix).toBeUndefined();
+    expect(checks.find((c) => c.id === 'claude')).toMatchObject({ ok: false, message: 'Installato ma non risponde correttamente: SyntaxError: bad' });
+    expect(checks.find((c) => c.id === 'claude')?.fix).toBeUndefined();
+    expect(checks.find((c) => c.id === 'claude-auth')).toMatchObject({ ok: false });
+  });
+  it('keeps the install fix when a tool is not found', async () => {
+    const { ['git --version']: _, ...rest } = allGood;
+    const checks = await runDoctor({ exec: fakeExec(rest), claudeCommand: ['claude'], nodeVersion: 'v24.9.0' });
+    expect(checks.find((c) => c.id === 'git')).toMatchObject({ ok: false, message: 'Git non trovato', fix: 'Installa Git da https://git-scm.com' });
+  });
 });

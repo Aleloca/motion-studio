@@ -25,8 +25,8 @@ export const projectFileSchema = z.object({
   schemaVersion: z.literal(1),
   name: z.string().trim().min(1),
   description: z.string(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
   linkedCodebases: z.array(linkedCodebaseSchema),
 });
 export type ProjectFile = z.infer<typeof projectFileSchema>;

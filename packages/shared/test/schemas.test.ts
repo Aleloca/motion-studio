@@ -21,6 +21,12 @@ describe('projectFileSchema', () => {
   it('accepts a valid project', () => {
     expect(projectFileSchema.parse(valid)).toEqual(valid);
   });
+  it('trims the name', () => {
+    expect(projectFileSchema.parse({ ...valid, name: '  Acme  ' }).name).toBe('Acme');
+  });
+  it('rejects a non-ISO date', () => {
+    expect(projectFileSchema.safeParse({ ...valid, createdAt: 'ieri' }).success).toBe(false);
+  });
   it('rejects an empty name', () => {
     expect(projectFileSchema.safeParse({ ...valid, name: '  ' }).success).toBe(false);
   });
