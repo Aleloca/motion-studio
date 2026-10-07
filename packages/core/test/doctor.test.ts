@@ -1,0 +1,66 @@
+import { describe, expect, it } from 'vitest';
+import { hasBlockingFailure, runDoctor } from '../src/doctor.ts';
+import type { CommandExec, CommandResult } from '../src/exec.ts';
+
+const ok = (stdout: string): CommandResult => ({ code: 0, stdout, stderr: '', notFound: false });
+const missing: CommandResult = { code: -1, stdout: '', stderr: 'ENOENT', notFound: true };
+
+function fakeExec(table: Record<string, CommandResult>): CommandExec {
+  return async (cmd, args) => table[[cmd, ...args].join(' ')] ?? missing;
+}
+
+const allGood = {
+  'git --version': ok('git version 2.50.1'),
+  'ffmpeg -version': ok('ffmpeg version 8.0.1 Copyright'),
+  'claude --version': ok('2.1.292 (Claude Code)'),
+  'claude auth status --json': ok(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai' })),
+};
+
+describe('runDoctor', () => {
+  it('reports everything ok with versions', async () => {
+    const checks = await runDoctor({ exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0' });
+    expect(checks.map((c) => [c.id, c.ok, c.version])).toEqual([
+      ['node', true, '24.9.0'],
+      ['git', true, '2.50.1'],
+      ['ffmpeg', true, '8.0.1'],
+      ['claude', true, '2.1.292'],
+      ['claude-auth', true, undefined],
+    ]);
+    expect(hasBlockingFailure(checks)).toBe(false);
+  });
+  it('flags missing claude with an install fix and skips the auth probe', async () => {
+    const { ['claude --version']: _, ['claude auth status --json']: __, ...rest } = allGood;
+    const checks = await runDoctor({ exec: fakeExec(rest), claudeCommand: ['claude'], nodeVersion: 'v24.9.0' });
+    const claude = checks.find((c) => c.id === 'claude')!;
+    expect(claude.ok).toBe(false);
+    expect(claude.fix).toContain('npm install -g @anthropic-ai/claude-code');
+    expect(checks.find((c) => c.id === 'claude-auth')).toMatchObject({ ok: false, message: 'Installa prima Claude Code' });
+    expect(hasBlockingFailure(checks)).toBe(true);
+  });
+  it('flags a logged-out claude with the login command', async () => {
+    const checks = await runDoctor({
+      exec: fakeExec({ ...allGood, 'claude auth status --json': { code: 1, stdout: JSON.stringify({ loggedIn: false }), stderr: '', notFound: false } }),
+      claudeCommand: ['claude'], nodeVersion: 'v24.9.0',
+    });
+    expect(checks.find((c) => c.id === 'claude-auth')).toMatchObject({ ok: false, fix: 'claude auth login' });
+  });
+  it('treats missing ffmpeg as non-blocking', async () => {
+    const { ['ffmpeg -version']: _, ...rest } = allGood;
+    const checks = await runDoctor({ exec: fakeExec(rest), claudeCommand: ['claude'], nodeVersion: 'v24.9.0' });
+    expect(checks.find((c) => c.id === 'ffmpeg')).toMatchObject({ ok: false, required: false });
+    expect(hasBlockingFailure(checks)).toBe(false);
+  });
+  it('rejects node older than 22', async () => {
+    const checks = await runDoctor({ exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v20.11.0' });
+    expect(checks[0]).toMatchObject({ id: 'node', ok: false, required: true });
+  });
+  it('uses a custom claude command prefix', async () => {
+    const exec = fakeExec({
+      ...allGood,
+      'node /fake.mjs --version': ok('9.9.9 (Claude Code)'),
+      'node /fake.mjs auth status --json': ok(JSON.stringify({ loggedIn: true })),
+    });
+    const checks = await runDoctor({ exec, claudeCommand: ['node', '/fake.mjs'], nodeVersion: 'v24.9.0' });
+    expect(checks.find((c) => c.id === 'claude')).toMatchObject({ ok: true, version: '9.9.9' });
+  });
+});
