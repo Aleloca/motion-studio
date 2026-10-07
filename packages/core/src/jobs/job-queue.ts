@@ -83,9 +83,9 @@ export class JobQueue {
     entry.summary.state = 'running';
     entry.summary.startedAt = new Date().toISOString();
     this.update(entry);
-    entry.spec.run(entry.controller.signal, entry.summary.id).then(
+    Promise.resolve().then(() => entry.spec.run(entry.controller.signal, entry.summary.id)).then(
       () => this.finish(entry, entry.controller.signal.aborted ? 'cancelled' : 'succeeded'),
-      (err: Error) => this.finish(entry, entry.controller.signal.aborted ? 'cancelled' : 'failed', err.message),
+      (err: unknown) => this.finish(entry, entry.controller.signal.aborted ? 'cancelled' : 'failed', err instanceof Error ? err.message : String(err)),
     ).finally(() => this.pump());
   }
 
@@ -96,7 +96,13 @@ export class JobQueue {
     this.update(entry);
   }
 
-  private update(entry: Entry): void { this.onUpdate?.({ ...entry.summary }); }
+  private update(entry: Entry): void {
+    try {
+      this.onUpdate?.({ ...entry.summary });
+    } catch {
+      // Swallow listener errors to prevent stranding the queue
+    }
+  }
 
   private trim(): void {
     for (let i = this.entries.length - 1; i >= 0 && this.entries.length > MAX_KEPT; i--) {

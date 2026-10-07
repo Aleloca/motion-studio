@@ -76,4 +76,27 @@ describe('JobQueue', () => {
     d1.resolve(); d2.resolve();
     await q.whenIdle();
   });
+  it('handles a non-async run that throws synchronously', async () => {
+    const q = new JobQueue({ concurrency: 1 });
+    const job = q.enqueue({ key: 'k', label: 'a', run: () => { throw new Error('sync error'); } });
+    await q.whenIdle();
+    expect(q.list().find((j) => j.id === job.id)).toMatchObject({ state: 'failed', error: 'sync error' });
+  });
+  it('handles a run that rejects with a non-Error value', async () => {
+    const q = new JobQueue({ concurrency: 1 });
+    const job = q.enqueue({ key: 'k', label: 'a', run: async () => { throw 'string error'; } });
+    await q.whenIdle();
+    expect(q.list().find((j) => j.id === job.id)).toMatchObject({ state: 'failed', error: 'string error' });
+  });
+  it('handles onUpdate throwing without stranding the job', async () => {
+    const updates: JobSummary[] = [];
+    const q = new JobQueue({ concurrency: 1, onUpdate: (j) => {
+      updates.push(j);
+      if (j.state === 'running') throw new Error('listener error');
+    } });
+    const job = q.enqueue({ key: 'k', label: 'a', run: async () => {} });
+    await q.whenIdle();
+    expect(q.list().find((j) => j.id === job.id)).toMatchObject({ state: 'succeeded' });
+    expect(updates.length).toBeGreaterThanOrEqual(3);
+  });
 });
