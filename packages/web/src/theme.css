@@ -4,6 +4,7 @@
   --on-accent: #FFFFFF; --ok: #15803D; --danger: #B42318; --scrim: rgba(0, 0, 0, 0.55);
   --warn-bg: #FFF6EC; --warn-border: #F3D3AE; --warn-text: #5A3300;
   --font: 'Manrope', system-ui, sans-serif; --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --logo-bg-dark: #111111; --logo-bg-light: #FFFFFF;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {

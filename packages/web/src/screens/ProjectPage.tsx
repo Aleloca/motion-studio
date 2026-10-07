@@ -3,6 +3,7 @@ import { api, ApiError } from '../api.ts';
 import { AgentConsole } from '../components/AgentConsole.tsx';
 import { sessionIdOf, type EventsState } from '../eventsReducer.ts';
 import { href, type ProjectTab } from '../routes.ts';
+import { BrandPage } from './BrandPage.tsx';
 import { CreativeList } from './CreativeList.tsx';
 import { ProjectSettings } from './ProjectSettings.tsx';
 
@@ -79,7 +80,8 @@ export function ProjectPage({ slug, tab, live, expert }: { slug: string; tab: Pr
       {tab === 'creatives' && <CreativeList slug={slug} tick={tick} />}
       {tab === 'settings' && <ProjectSettings key={slug} slug={slug} tick={live.projectTicks[slug] ?? 0} />}
       {tab === 'console' && <ProjectConsole slug={slug} jobKey={jobKey} live={live} expert={expert} />}
-      {(tab === 'brand' || tab === 'assets' || tab === 'references') && <p className="muted">In arrivo</p>}
+      {tab === 'brand' && <BrandPage key={slug} slug={slug} live={live} />}
+      {(tab === 'assets' || tab === 'references') && <p className="muted">In arrivo</p>}
     </main>
   );
 }
