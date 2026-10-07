@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,7 +24,7 @@ beforeEach(async () => {
     doctor: async () => [{ id: 'git', label: 'Git', ok: true, required: true, message: 'ok' }],
   });
 });
-afterEach(async () => { await app.close(); delete process.env.FAKE_CLAUDE_SCENARIO; });
+afterEach(async () => { await app.close(); delete process.env.FAKE_CLAUDE_SCENARIO; delete process.env.FAKE_CLAUDE_ARGS_FILE; });
 
 const setWorkspace = (path = join(base, 'Spazio di lavoro')) =>
   app.inject({ method: 'PUT', url: '/api/workspace', payload: { path } });
@@ -104,6 +104,19 @@ describe('turns over WebSocket', () => {
     expect(messages[0]).toMatchObject({ type: 'snapshot' });
     const agentKinds = messages.filter((m) => m.type === 'agent' && m.jobId === jobId).map((m) => (m as any).event.kind);
     expect(agentKinds).toEqual(['session', 'text', 'result']);
+    ws.close();
+  });
+  it('does not pass linked codebases to the agent in phase 1', async () => {
+    process.env.FAKE_CLAUDE_ARGS_FILE = join(base, 'args.json');
+    await setWorkspace();
+    await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' } });
+    const projectJson = join(base, 'Spazio di lavoro', 'acme', 'project.json');
+    const project = JSON.parse(await readFile(projectJson, 'utf8'));
+    await writeFile(projectJson, JSON.stringify({ ...project, linkedCodebases: [{ path: base }] }));
+    const { messages, ws } = await connect();
+    const id = (await app.inject({ method: 'POST', url: '/api/projects/acme/turns', payload: { prompt: 'x' } })).json().id;
+    await waitFor(() => messages.some((m) => m.type === 'job' && m.job.id === id && m.job.state === 'succeeded'));
+    expect(JSON.parse(await readFile(join(base, 'args.json'), 'utf8')).args).not.toContain('--add-dir');
     ws.close();
   });
   it('rejects a second concurrent turn on the same project, and cancels a hanging one', async () => {

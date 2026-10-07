@@ -7,17 +7,47 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildClaudeArgs, claudeCommandFromEnv, ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
-const runner = () => new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 });
+const runner = (opts: { drainMs?: number } = {}) => new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200, ...opts });
 
-async function run(scenario: string, prompt = 'ciao', extra: Partial<Parameters<ClaudeCodeRunner['start']>[0]> = {}) {
+// Every spawned fake records its pid; afterEach kills its whole process group even if the test failed.
+const argsFiles: string[] = [];
+
+async function run(
+  scenario: string,
+  prompt = 'ciao',
+  extra: Partial<Parameters<ClaudeCodeRunner['start']>[0]> = {},
+  opts: { drainMs?: number; onEvent?: (e: AgentEvent) => void } = {},
+) {
   process.env.FAKE_CLAUDE_SCENARIO = scenario;
+  if (!process.env.FAKE_CLAUDE_ARGS_FILE) process.env.FAKE_CLAUDE_ARGS_FILE = join(await mkdtemp(join(tmpdir(), 'ms-args-')), 'args.json');
+  const argsFile = process.env.FAKE_CLAUDE_ARGS_FILE;
+  argsFiles.push(argsFile);
   const cwd = await mkdtemp(join(tmpdir(), 'ms run è '));
   const events: AgentEvent[] = [];
-  const handle = runner().start({ cwd, prompt, ...extra }, (e) => events.push(e));
-  return { handle, events, cwd };
+  const handle = runner(opts).start({ cwd, prompt, ...extra }, opts.onEvent ?? ((e) => events.push(e)));
+  const leaderPid = async () => (JSON.parse(await readFile(argsFile, 'utf8')) as { pid: number }).pid;
+  return { handle, events, cwd, leaderPid };
 }
 
-afterEach(() => { delete process.env.FAKE_CLAUDE_SCENARIO; delete process.env.FAKE_CLAUDE_ARGS_FILE; });
+const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+function grandchildPid(events: AgentEvent[]): number | undefined {
+  for (const e of events) {
+    const m = e.kind === 'stderr' ? /^grandchild-pid: (\d+)$/.exec(e.text) : null;
+    if (m) return Number(m[1]);
+  }
+  return undefined;
+}
+
+afterEach(async () => {
+  for (const f of argsFiles.splice(0)) {
+    const pid = await readFile(f, 'utf8').then((t) => (JSON.parse(t) as { pid: number }).pid, () => undefined);
+    if (pid) { try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ } }
+  }
+  delete process.env.FAKE_CLAUDE_SCENARIO;
+  delete process.env.FAKE_CLAUDE_ARGS_FILE;
+  delete process.env.MOTION_STUDIO_CLAUDE_COMMAND;
+});
 
 describe('buildClaudeArgs', () => {
   it('builds headless stream-json args with optional flags', () => {
@@ -41,6 +71,14 @@ describe('claudeCommandFromEnv', () => {
     expect(claudeCommandFromEnv()).toEqual(['node', '/fake.mjs']);
     delete process.env.MOTION_STUDIO_CLAUDE_COMMAND;
   });
+  it('names the variable when the override is not valid JSON or has the wrong shape', () => {
+    process.env.MOTION_STUDIO_CLAUDE_COMMAND = '[node';
+    expect(() => claudeCommandFromEnv()).toThrow(/MOTION_STUDIO_CLAUDE_COMMAND/);
+    process.env.MOTION_STUDIO_CLAUDE_COMMAND = '{"cmd":"node"}';
+    expect(() => claudeCommandFromEnv()).toThrow(/MOTION_STUDIO_CLAUDE_COMMAND/);
+    process.env.MOTION_STUDIO_CLAUDE_COMMAND = '[]';
+    expect(() => claudeCommandFromEnv()).toThrow(/MOTION_STUDIO_CLAUDE_COMMAND/);
+  });
 });
 
 describe('ClaudeCodeRunner', () => {
@@ -51,11 +89,9 @@ describe('ClaudeCodeRunner', () => {
     expect(events[1]).toEqual({ kind: 'text', text: 'echo: ciao mondo' });
   });
   it('runs in the requested cwd (with spaces) and passes resume', async () => {
-    const argsFile = join(await mkdtemp(join(tmpdir(), 'ms-args-')), 'args.json');
-    process.env.FAKE_CLAUDE_ARGS_FILE = argsFile;
     const { handle, cwd } = await run('ok', 'x', { resumeSessionId: 'abc' });
     await expect(handle.done).resolves.toMatchObject({ status: 'succeeded', sessionId: 'abc' });
-    const recorded = JSON.parse(await readFile(argsFile, 'utf8'));
+    const recorded = JSON.parse(await readFile(process.env.FAKE_CLAUDE_ARGS_FILE!, 'utf8'));
     expect(recorded.args).toContain('--resume');
     expect(await import('node:fs/promises').then((f) => f.realpath(recorded.cwd))).toBe(await import('node:fs/promises').then((f) => f.realpath(cwd)));
   });
@@ -76,12 +112,13 @@ describe('ClaudeCodeRunner', () => {
     const { handle } = await run('error_result');
     await expect(handle.done).resolves.toMatchObject({ status: 'failed', error: 'Usage limit reached', sessionId: 'fake-session-1' });
   });
-  it('cancels a hanging process and reports cancelled', async () => {
+  it('cancels a hanging process and reports cancelled, killing its descendants', async () => {
     const { handle, events } = await run('hang');
-    await new Promise((r) => setTimeout(r, 300));
+    await vi.waitFor(() => expect(grandchildPid(events)).toBeDefined());
     expect(events[0]?.kind).toBe('session');
     handle.cancel();
     await expect(handle.done).resolves.toMatchObject({ status: 'cancelled' });
+    await vi.waitFor(() => expect(alive(grandchildPid(events)!)).toBe(false));
   });
   it('cancel reaches the whole process group and does not wait for descendants holding the pipes', async () => {
     const { handle } = await run('hang');
@@ -92,14 +129,35 @@ describe('ClaudeCodeRunner', () => {
     expect(Date.now() - t0).toBeLessThan(5000);
   });
   it('escalates to SIGKILL when the process ignores SIGTERM', async () => {
-    const argsFile = join(await mkdtemp(join(tmpdir(), 'ms-args-')), 'args.json');
-    process.env.FAKE_CLAUDE_ARGS_FILE = argsFile;
-    const { handle, events } = await run('hang_ignore_term');
+    const { handle, events, leaderPid } = await run('hang_ignore_term');
     await vi.waitFor(() => expect(events[0]?.kind).toBe('session'));
-    const { pid } = JSON.parse(await readFile(argsFile, 'utf8')) as { pid: number };
+    const pid = await leaderPid();
     handle.cancel();
     await expect(handle.done).resolves.toMatchObject({ status: 'cancelled' });
     await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow());
+  });
+  it('resolves after a short drain when a descendant keeps the pipes open after claude exits', async () => {
+    const { handle, events } = await run('leak_fd', 'x', {}, { drainMs: 200 });
+    const t0 = Date.now();
+    await expect(handle.done).resolves.toEqual({ status: 'succeeded', sessionId: 'fake-session-1' });
+    expect(Date.now() - t0).toBeLessThan(3000);
+    expect(events.some((e) => e.kind === 'result')).toBe(true);
+    expect(alive(grandchildPid(events)!)).toBe(true); // nobody cancelled: the descendant is left alone (afterEach cleans it)
+  });
+  it('cancel after claude exited still reaches the process group, resolves promptly and keeps the ok result', async () => {
+    const { handle, events, leaderPid } = await run('leak_fd', 'x', {}, { drainMs: 60_000 });
+    await vi.waitFor(() => expect(grandchildPid(events)).toBeDefined());
+    const pid = await leaderPid();
+    await vi.waitFor(() => expect(alive(pid)).toBe(false));
+    const t0 = Date.now();
+    handle.cancel();
+    await expect(handle.done).resolves.toEqual({ status: 'succeeded', sessionId: 'fake-session-1' });
+    expect(Date.now() - t0).toBeLessThan(2000);
+    await vi.waitFor(() => expect(alive(grandchildPid(events)!)).toBe(false));
+  });
+  it('survives a throwing event listener', async () => {
+    const { handle } = await run('ok', 'x', {}, { onEvent: () => { throw new Error('listener boom'); } });
+    await expect(handle.done).resolves.toMatchObject({ status: 'succeeded' });
   });
   it('reports a missing project folder without spawning', async () => {
     const res = await runner().start({ cwd: join(tmpdir(), 'ms-does-not-exist-xyz'), prompt: 'x' }, () => {}).done;

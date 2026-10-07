@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Test double for the `claude` CLI. Scenario via FAKE_CLAUDE_SCENARIO: ok | tool | crash | hang | hang_ignore_term | garbage | error_result
+// Test double for the `claude` CLI. Scenario via FAKE_CLAUDE_SCENARIO: ok | tool | crash | hang | hang_ignore_term | garbage | error_result | leak_fd
 import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
@@ -27,7 +27,16 @@ rl.once('line', async (line) => {
   out({ type: 'system', subtype: 'init', session_id: sessionId, model: 'fake-model' });
   if (scenario === 'garbage') process.stdout.write('this is not json\n');
   if (scenario === 'hang_ignore_term') { process.on('SIGTERM', () => {}); setInterval(() => {}, 1000); return; }
-  if (scenario === 'hang') { spawn('sleep', ['30'], { stdio: 'inherit' }); setInterval(() => {}, 1000); return; }
+  // Grandchildren share our stdio and process group; their pid is reported on stderr so tests can check they are killed.
+  const grandchild = () => { const c = spawn('sleep', ['30'], { stdio: 'inherit' }); process.stderr.write(`grandchild-pid: ${c.pid}\n`); };
+  if (scenario === 'hang') { grandchild(); setInterval(() => {}, 1000); return; }
+  if (scenario === 'leak_fd') {
+    // Leader exits after a successful result while a descendant keeps stdout/stderr open.
+    grandchild();
+    out({ type: 'result', subtype: 'success', is_error: false, result: 'done', session_id: sessionId, total_cost_usd: 0 });
+    await sleep(50);
+    process.exit(0);
+  }
   if (scenario === 'tool') {
     out({ type: 'assistant', session_id: sessionId, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'tu_1', name: 'Bash', input: { command: 'ls' } }] } });
     out({ type: 'user', session_id: sessionId, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu_1', content: 'a.txt' }] } });

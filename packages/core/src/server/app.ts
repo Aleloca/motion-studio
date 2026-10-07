@@ -151,7 +151,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
               cwd,
               prompt,
               resumeSessionId,
-              addDirs: project.linkedCodebases.map((c) => c.path),
+              // Phase 1 deliberately ignores project.linkedCodebases (no --add-dir): phase 3 will pass them
+              // together with per-session deny rules on Edit/Write so they stay read-only (spec §6.3).
               model: settings.model ?? undefined,
             },
             (event) => hub.broadcast({ type: 'agent', jobId, event }),
