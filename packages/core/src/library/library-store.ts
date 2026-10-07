@@ -103,6 +103,9 @@ export class LibraryStore {
 
   removeAsset(file: string): Promise<void> {
     return this.lock.run('assets', async () => {
+      // Validate path first (before any write)
+      this.resolve('assets', file);
+
       const assets = await this.listAssets();
       if (!assets.some((a) => a.file === file)) throw new WorkspaceError(404, `Asset ${file} non trovato`);
       // Write metadata first
@@ -146,6 +149,9 @@ export class LibraryStore {
 
   removeReference(file: string): Promise<void> {
     return this.lock.run('references', async () => {
+      // Validate path first (before any write)
+      this.resolve('references', file);
+
       const refs = await this.listReferences();
       if (!refs.some((r) => r.file === file)) throw new WorkspaceError(404, `Riferimento ${file} non trovato`);
       // Write metadata first

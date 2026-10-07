@@ -1,6 +1,5 @@
 import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises';
-import { platform } from 'node:os';
-import { tmpdir } from 'node:os';
+import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { LibraryStore } from '../src/library/library-store.ts';
@@ -66,8 +65,7 @@ describe('assets', () => {
   it('rejects metadata file names', async () => {
     expect((await lib.registerAssets([{ file: 'assets.json', origin: 'upload' }]).catch((e) => e)).status).toBe(400);
   });
-  it('confines symlinked subdirectories', async function (this: any) {
-    if (platform() === 'win32') this.skip();
+  it.skipIf(platform() === 'win32')('confines symlinked subdirectories', async () => {
     // Create a temp outside directory
     const tmpOutside = await mkdtemp(join(tmpdir(), 'ms-outside-'));
     await writeFile(join(tmpOutside, 'outside.png'), 'outside');
@@ -77,6 +75,41 @@ describe('assets', () => {
     const err = await lib.registerAssets([{ file: 'linked/outside.png', origin: 'upload' }]).catch((e) => e);
     expect(err.status).toBe(400);
     // File outside should still exist (not touched)
+    const content = await readFile(join(tmpOutside, 'outside.png'), 'utf8');
+    expect(content).toBe('outside');
+  });
+  it.skipIf(platform() === 'win32')('does not delete files outside assets dir on remove', async () => {
+    // Create a temp outside directory with a file
+    const tmpOutside = await mkdtemp(join(tmpdir(), 'ms-asset-outside-'));
+    await writeFile(join(tmpOutside, 'outside.png'), 'outside');
+    // Symlink it into assets
+    await symlink(tmpOutside, join(project, 'assets', 'linked'));
+
+    // Pre-seed assets.json with an entry for linked/outside.png
+    const assetsJsonPath = join(project, 'assets', 'assets.json');
+    await writeFile(assetsJsonPath, JSON.stringify({
+      schemaVersion: 1,
+      assets: [{
+        file: 'linked/outside.png',
+        kind: 'image',
+        origin: 'upload',
+        sourceUrl: null,
+        description: 'Outside file',
+        tags: [],
+        width: 100,
+        height: 100,
+        addedAt: new Date().toISOString(),
+      }],
+    }));
+
+    // Remove the entry - should remove from metadata but NOT delete outside file
+    await lib.removeAsset('linked/outside.png');
+
+    // Entry should be gone from metadata
+    const assets = await lib.listAssets();
+    expect(assets).toEqual([]);
+
+    // Outside file should still exist
     const content = await readFile(join(tmpOutside, 'outside.png'), 'utf8');
     expect(content).toBe('outside');
   });
@@ -93,19 +126,34 @@ describe('references', () => {
   it('rejects metadata file name references.json', async () => {
     expect((await lib.registerReferences(['references.json']).catch((e) => e)).status).toBe(400);
   });
-  it('does not delete files outside references dir on remove', async function (this: any) {
-    if (platform() === 'win32') this.skip();
-    // Create a temp outside directory
+  it.skipIf(platform() === 'win32')('does not delete files outside references dir on remove', async () => {
+    // Create a temp outside directory with a file
     const tmpOutside = await mkdtemp(join(tmpdir(), 'ms-ref-outside-'));
     await writeFile(join(tmpOutside, 'outside.jpg'), 'outside');
     // Symlink it into references
     await symlink(tmpOutside, join(project, 'references', 'linked'));
-    // Register the file inside symlinked dir
-    await lib.registerReferences(['linked/outside.jpg']).catch(() => null);
-    // Try to remove it (should skip file deletion, drop only the entry)
-    await lib.removeReference('linked/outside.jpg').catch(() => null);
+
+    // Pre-seed references.json with an entry for linked/outside.jpg
+    const refsJsonPath = join(project, 'references', 'references.json');
+    await writeFile(refsJsonPath, JSON.stringify({
+      schemaVersion: 1,
+      references: [{
+        file: 'linked/outside.jpg',
+        note: 'Outside reference',
+        useForBrand: false,
+        addedAt: new Date().toISOString(),
+      }],
+    }));
+
+    // Remove the entry - should remove from metadata but NOT delete outside file
+    await lib.removeReference('linked/outside.jpg');
+
+    // Entry should be gone from metadata
+    const refs = await lib.listReferences();
+    expect(refs).toEqual([]);
+
     // Outside file should still exist
-    const content = await readFile(join(tmpOutside, 'outside.jpg'), 'utf8').catch(() => null);
+    const content = await readFile(join(tmpOutside, 'outside.jpg'), 'utf8');
     expect(content).toBe('outside');
   });
 });
