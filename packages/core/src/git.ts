@@ -31,6 +31,15 @@ export class Git {
     });
   }
 
+  restorePath(dir: string, commit: string, relPath: string): Promise<void> {
+    return this.lock.run(resolve(dir), async () => {
+      const exists = /^[0-9a-f]{7,40}$/.test(commit)
+        && (await this.exec('git', ['cat-file', '-e', `${commit}^{commit}`], { cwd: dir })).code === 0;
+      if (!exists) throw new Error(`Versione non trovata nel repository: ${commit}`);
+      await this.must(dir, ['restore', `--source=${commit}`, '--staged', '--worktree', '--', relPath]);
+    });
+  }
+
   private async must(cwd: string, args: string[]): Promise<string> {
     const r = await this.exec('git', args, { cwd });
     if (r.notFound) throw new Error('git non trovato: installalo per usare Motion Studio');

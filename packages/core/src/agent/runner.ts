@@ -4,6 +4,8 @@ export interface AgentTurnRequest {
   cwd: string;
   prompt: string;
   resumeSessionId?: string;
+  /** With resumeSessionId: continue in a new session branched from it (used to restart from a past version). */
+  forkSession?: boolean;
   addDirs?: string[];
   model?: string;
   mcpConfigPath?: string;

@@ -10,7 +10,10 @@ export function buildClaudeArgs(req: AgentTurnRequest): string[] {
     // Phase 1: edits auto-accepted, anything that would prompt is denied. Phase 4 replaces this with UI approvals.
     '--permission-mode', 'acceptEdits', '--permission-prompts', 'none',
   ];
-  if (req.resumeSessionId) args.push('--resume', req.resumeSessionId);
+  if (req.resumeSessionId) {
+    args.push('--resume', req.resumeSessionId);
+    if (req.forkSession) args.push('--fork-session');
+  }
   for (const d of req.addDirs ?? []) args.push('--add-dir', d);
   if (req.model) args.push('--model', req.model);
   if (req.mcpConfigPath) args.push('--mcp-config', req.mcpConfigPath);

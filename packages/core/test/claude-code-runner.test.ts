@@ -61,6 +61,11 @@ describe('buildClaudeArgs', () => {
       '--resume', 's1', '--add-dir', '/a b', '--add-dir', '/c', '--model', 'sonnet', '--mcp-config', '/m.json',
     ]);
   });
+  it('adds --fork-session right after --resume, only when resuming', () => {
+    const args = buildClaudeArgs({ cwd: '/x', prompt: 'p', resumeSessionId: 's1', forkSession: true });
+    expect(args.slice(args.indexOf('--resume'), args.indexOf('--resume') + 3)).toEqual(['--resume', 's1', '--fork-session']);
+    expect(buildClaudeArgs({ cwd: '/x', prompt: 'p', forkSession: true })).not.toContain('--fork-session');
+  });
 });
 
 describe('claudeCommandFromEnv', () => {

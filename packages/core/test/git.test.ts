@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -63,5 +63,31 @@ describe('execCommand', () => {
     const r = await execCommand('definitely-not-a-binary-ms', ['--version']);
     expect(r.notFound).toBe(true);
     expect(r.code).toBe(-1);
+  });
+});
+
+describe('Git.restorePath', () => {
+  it('restores a folder to a past commit, removing files added later', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-restore-'));
+    const git = new Git();
+    await git.init(dir);
+    await mkdir(join(dir, 'work'));
+    await writeFile(join(dir, 'work', 'a.txt'), 'v1');
+    const v1 = (await git.commitAll(dir, 'v1'))!;
+    await writeFile(join(dir, 'work', 'a.txt'), 'v2');
+    await writeFile(join(dir, 'work', 'b.txt'), 'new');
+    await git.commitAll(dir, 'v2');
+    await git.restorePath(dir, v1, 'work');
+    expect(await readFile(join(dir, 'work', 'a.txt'), 'utf8')).toBe('v1');
+    expect(await readdir(join(dir, 'work'))).toEqual(['a.txt']);
+  });
+  it('rejects unknown or malformed commits', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-restore-'));
+    const git = new Git();
+    await git.init(dir);
+    await writeFile(join(dir, 'x'), '1');
+    await git.commitAll(dir, 'c');
+    await expect(git.restorePath(dir, 'deadbeef', 'x')).rejects.toThrow('Versione non trovata');
+    await expect(git.restorePath(dir, '--help', 'x')).rejects.toThrow('Versione non trovata');
   });
 });
