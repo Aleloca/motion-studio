@@ -5,3 +5,6 @@ export * from './git.ts';
 export * from './app-config.ts';
 export * from './workspace-store.ts';
 export * from './doctor.ts';
+export * from './agent/runner.ts';
+export * from './agent/claude-stream-parser.ts';
+export * from './agent/claude-code-runner.ts';
