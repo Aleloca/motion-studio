@@ -7,7 +7,7 @@ import { ProjectPage } from '../src/screens/ProjectPage.tsx';
 
 vi.mock('../src/api.ts', () => ({
   ApiError: class extends Error {},
-  api: { getProject: vi.fn(), startTurn: vi.fn(), cancelJob: vi.fn() },
+  api: { getProject: vi.fn(), startTurn: vi.fn(), cancelJob: vi.fn(), listAssets: vi.fn(), listReferences: vi.fn(), getBrand: vi.fn(), uploadFiles: vi.fn() },
 }));
 
 const project = { schemaVersion: 1 as const, name: 'Acme', description: '', createdAt: '2026-10-07T10:00:00.000Z', updatedAt: '2026-10-07T10:00:00.000Z', linkedCodebases: [] };
@@ -56,10 +56,18 @@ describe('ProjectPage tabs', () => {
   afterEach(() => vi.clearAllMocks());
   it('lists every tab and marks the active one', async () => {
     vi.mocked(api.getProject).mockResolvedValue({ slug: 'acme', project, jobKey: 'project:/w:acme' });
+    vi.mocked(api.listAssets).mockResolvedValue({ assets: [], error: null, unregistered: [] });
+    vi.mocked(api.getBrand).mockResolvedValue({ jobKey: 'brand:k' } as never);
     render(<ProjectPage slug="acme" tab="assets" expert={false} live={{ jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} }} />);
     await screen.findByText('Acme');
     expect(screen.getAllByRole('link').filter((l) => l.closest('nav')).map((l) => l.textContent)).toEqual(['Creatività', 'Brand', 'Asset', 'Riferimenti', 'Impostazioni', 'Console agente']);
     expect(screen.getByRole('link', { name: 'Asset' }).getAttribute('aria-current')).toBe('page');
-    expect(screen.getByText('In arrivo')).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Carica asset' })).toBeTruthy();
+  });
+  it('renders the references library on its tab', async () => {
+    vi.mocked(api.getProject).mockResolvedValue({ slug: 'acme', project, jobKey: 'project:/w:acme' });
+    vi.mocked(api.listReferences).mockResolvedValue({ references: [], error: null });
+    render(<ProjectPage slug="acme" tab="references" expert={false} live={{ jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} }} />);
+    expect(await screen.findByRole('button', { name: 'Carica riferimenti' })).toBeTruthy();
   });
 });
