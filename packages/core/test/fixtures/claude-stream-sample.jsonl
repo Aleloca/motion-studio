@@ -1,0 +1,9 @@
+{"type":"system","subtype":"hook_started","hook_id":"h1","hook_name":"SessionStart:startup","hook_event":"SessionStart","session_id":"s-123"}
+{"type":"system","subtype":"init","cwd":"/ws/acme","session_id":"s-123","tools":["Bash","Edit"],"model":"claude-haiku-4-5-20251001"}
+{"type":"system","subtype":"thinking_tokens","estimated_tokens":50,"session_id":"s-123"}
+{"type":"assistant","message":{"model":"claude-haiku-4-5-20251001","role":"assistant","content":[{"type":"thinking","thinking":"","signature":"x"}]},"session_id":"s-123"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Creo la scena."},{"type":"tool_use","id":"tu_1","name":"Write","input":{"file_path":"work/a.txt","content":"hi"}}]},"session_id":"s-123"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"File created","is_error":false}]},"session_id":"s-123"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_2","content":[{"type":"text","text":"permission denied"}],"is_error":true}]},"session_id":"s-123"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1791395400,"rateLimitType":"five_hour"},"session_id":"s-123"}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":6731,"result":"ok","session_id":"s-123","total_cost_usd":0.0156526}
