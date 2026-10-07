@@ -176,14 +176,14 @@ export class CreativeTurnService {
       if (signal.aborted) {
         await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: `Annullamento arrivato a lavoro quasi concluso: la versione v${n} è stata salvata.` });
       }
-      await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${n} · stato`);
+      await this.commitState(ref, `${creative.title}: v${n} · stato`);
       this.changed(ref);
     } catch (err) {
       if (signal.aborted && !finalizing) return await this.cancelled(ref, store, previous, (await store.readVersions(slug)).length > 0);
       const text = err instanceof Error ? err.message : String(err);
       await store.update(slug, { status: 'error', error: text }).catch(() => {});
       await store.appendConversation(slug, { type: 'system', at: now(), level: 'error', text: `Generazione non riuscita: ${text}` }).catch(() => {});
-      await this.commitState(ref, store);
+      await this.commitState(ref, `${await this.titleOf(store, slug)}: stato`);
       this.changed(ref);
       // After a late abort the queue would read a plain rejection as a cancel: this failure is real.
       throw finalizing ? new JobFailedError(text) : err;
@@ -195,15 +195,18 @@ export class CreativeTurnService {
       ? previous : hasVersions ? 'ready' : 'draft';
     await store.update(ref.creativeSlug, { status: restored, error: null });
     await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: 'Generazione annullata.' });
-    await this.commitState(ref, store);
+    await this.commitState(ref, `${await this.titleOf(store, ref.creativeSlug)}: stato`);
     this.changed(ref);
     return 'cancelled';
   }
 
-  /** Best-effort commit of the creative's metadata so the project tree stays clean. */
-  private async commitState(ref: CreativeRef, store: CreativeStore): Promise<void> {
-    const title = (await store.get(ref.creativeSlug)).title;
-    await this.deps.git.commitAll(ref.projectDir, `${title}: stato`).catch(() => null);
+  /** Best-effort commit of the creative's metadata: never throws, so it cannot change the outcome of a turn. */
+  private async commitState(ref: CreativeRef, message: string): Promise<void> {
+    try { await this.deps.git.commitAll(ref.projectDir, message); } catch { /* the tree stays dirty until the next commit */ }
+  }
+
+  private async titleOf(store: CreativeStore, slug: string): Promise<string> {
+    try { return (await store.get(slug)).title; } catch { return slug; }
   }
 
   /**

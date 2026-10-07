@@ -398,4 +398,27 @@ describe('CreativeTurnService', () => {
     await service.restore(ref, 1);
     expect(await clean()).toBe('');
   });
+
+  it('a failing "· stato" commit does not fail a saved version', async () => {
+    const git = new Git();
+    const real = git.commitAll.bind(git);
+    git.commitAll = async (dir, msg) => { if (msg.endsWith('· stato')) throw new Error('disco pieno'); return real(dir, msg); };
+    const svc = new CreativeTurnService({
+      queue, git, media: NoMediaTools,
+      runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),
+      presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
+    });
+    expect(await finalState((await svc.start(ref)).id)).toBe('succeeded');
+    expect((await store.get(ref.creativeSlug)).status).toBe('ready');
+    expect(await store.readVersions(ref.creativeSlug)).toHaveLength(1);
+  });
+
+  it('keeps the original failure when creative.json is unreadable while committing state', async () => {
+    process.env.FAKE_CLAUDE_SCENARIO = 'hang';
+    const job = await service.start(ref);
+    await new Promise((r) => setTimeout(r, 500));
+    await writeFile(join(ref.projectDir, 'creatives', ref.creativeSlug, 'creative.json'), '{broken');
+    queue.cancel(job.id);
+    expect(await finalState(job.id)).toBe('cancelled');
+  });
 });
