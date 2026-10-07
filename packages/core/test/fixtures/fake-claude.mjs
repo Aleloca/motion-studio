@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-// Test double for the `claude` CLI. Scenario via FAKE_CLAUDE_SCENARIO: ok | tool | crash | hang | garbage | error_result
+// Test double for the `claude` CLI. Scenario via FAKE_CLAUDE_SCENARIO: ok | tool | crash | hang | hang_ignore_term | garbage | error_result
+import { spawn } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
 const args = process.argv.slice(2);
-if (process.env.FAKE_CLAUDE_ARGS_FILE) writeFileSync(process.env.FAKE_CLAUDE_ARGS_FILE, JSON.stringify({ args, cwd: process.cwd() }));
+if (process.env.FAKE_CLAUDE_ARGS_FILE) writeFileSync(process.env.FAKE_CLAUDE_ARGS_FILE, JSON.stringify({ args, cwd: process.cwd(), pid: process.pid }));
 if (args[0] === '--version') { console.log('9.9.9 (Claude Code)'); process.exit(0); }
 if (args[0] === 'auth' && args[1] === 'status') {
   const loggedIn = process.env.FAKE_CLAUDE_LOGGED_IN !== '0';
@@ -25,7 +26,8 @@ rl.once('line', async (line) => {
   if (scenario === 'crash') { process.stderr.write('boom: something failed\n'); process.exit(2); }
   out({ type: 'system', subtype: 'init', session_id: sessionId, model: 'fake-model' });
   if (scenario === 'garbage') process.stdout.write('this is not json\n');
-  if (scenario === 'hang') { setInterval(() => {}, 1000); return; }
+  if (scenario === 'hang_ignore_term') { process.on('SIGTERM', () => {}); setInterval(() => {}, 1000); return; }
+  if (scenario === 'hang') { spawn('sleep', ['30'], { stdio: 'inherit' }); setInterval(() => {}, 1000); return; }
   if (scenario === 'tool') {
     out({ type: 'assistant', session_id: sessionId, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'tu_1', name: 'Bash', input: { command: 'ls' } }] } });
     out({ type: 'user', session_id: sessionId, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu_1', content: 'a.txt' }] } });

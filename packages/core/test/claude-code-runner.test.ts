@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AgentEvent } from '@motion-studio/shared';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildClaudeArgs, claudeCommandFromEnv, ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
@@ -82,6 +82,28 @@ describe('ClaudeCodeRunner', () => {
     expect(events[0]?.kind).toBe('session');
     handle.cancel();
     await expect(handle.done).resolves.toMatchObject({ status: 'cancelled' });
+  });
+  it('cancel reaches the whole process group and does not wait for descendants holding the pipes', async () => {
+    const { handle } = await run('hang');
+    await new Promise((r) => setTimeout(r, 300));
+    const t0 = Date.now();
+    handle.cancel();
+    await expect(handle.done).resolves.toMatchObject({ status: 'cancelled' });
+    expect(Date.now() - t0).toBeLessThan(5000);
+  });
+  it('escalates to SIGKILL when the process ignores SIGTERM', async () => {
+    const argsFile = join(await mkdtemp(join(tmpdir(), 'ms-args-')), 'args.json');
+    process.env.FAKE_CLAUDE_ARGS_FILE = argsFile;
+    const { handle, events } = await run('hang_ignore_term');
+    await vi.waitFor(() => expect(events[0]?.kind).toBe('session'));
+    const { pid } = JSON.parse(await readFile(argsFile, 'utf8')) as { pid: number };
+    handle.cancel();
+    await expect(handle.done).resolves.toMatchObject({ status: 'cancelled' });
+    await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow());
+  });
+  it('reports a missing project folder without spawning', async () => {
+    const res = await runner().start({ cwd: join(tmpdir(), 'ms-does-not-exist-xyz'), prompt: 'x' }, () => {}).done;
+    expect(res).toEqual({ status: 'failed', error: `Cartella del progetto non trovata: ${join(tmpdir(), 'ms-does-not-exist-xyz')}` });
   });
   it('fails clearly when the claude binary does not exist', async () => {
     const r = new ClaudeCodeRunner(['definitely-not-claude-ms']);

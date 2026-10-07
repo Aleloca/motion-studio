@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { statSync } from 'node:fs';
 import type { AgentEvent } from '@motion-studio/shared';
 import { LineSplitter, parseClaudeLine } from './claude-stream-parser.ts';
 import type { AgentRun, AgentRunner, AgentRunResult, AgentTurnRequest } from './runner.ts';
@@ -37,7 +38,24 @@ export class ClaudeCodeRunner implements AgentRunner {
   start(req: AgentTurnRequest, onEvent: (e: AgentEvent) => void): AgentRun {
     const [bin, ...prefix] = this.claudeCommand;
     if (!bin) throw new Error('claudeCommand vuoto');
-    const child = spawn(bin, [...prefix, ...buildClaudeArgs(req)], { cwd: req.cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+    let cwdIsDir = false;
+    try { cwdIsDir = statSync(req.cwd).isDirectory(); } catch { /* reported below */ }
+    if (!cwdIsDir) {
+      return {
+        done: Promise.resolve({ status: 'failed', error: `Cartella del progetto non trovata: ${req.cwd}` }),
+        cancel: () => {},
+      };
+    }
+    const posix = process.platform !== 'win32';
+    // Own process group on POSIX so cancel can reach descendants (tool commands, MCP servers).
+    const child = spawn(bin, [...prefix, ...buildClaudeArgs(req)], { cwd: req.cwd, stdio: ['pipe', 'pipe', 'pipe'], detached: posix });
+    const signal = (sig: NodeJS.Signals) => {
+      try {
+        if (posix && child.pid) process.kill(-child.pid, sig);
+        else child.kill(sig);
+      } catch { /* already gone (ESRCH) */ }
+    };
+    const running = () => child.exitCode === null && child.signalCode === null;
     let cancelled = false;
     let sessionId = req.resumeSessionId;
     let result: Extract<AgentEvent, { kind: 'result' }> | undefined;
@@ -61,7 +79,14 @@ export class ClaudeCodeRunner implements AgentRunner {
     child.stdin.on('error', () => { /* process may exit before reading stdin */ });
     child.stdin.end(`${JSON.stringify({ type: 'user', message: { role: 'user', content: req.prompt } })}\n`);
 
-    const done = new Promise<AgentRunResult>((resolve) => {
+    const done = new Promise<AgentRunResult>((resolveOnce) => {
+      let settled = false;
+      const resolve = (r: AgentRunResult) => { if (!settled) { settled = true; resolveOnce(r); } };
+      // After a cancel, descendants may keep the pipes open so 'close' may never come: resolve on 'exit'.
+      child.on('exit', () => {
+        if (!cancelled) return;
+        resolve(sessionId ? { status: 'cancelled', sessionId } : { status: 'cancelled' });
+      });
       child.on('error', (err: NodeJS.ErrnoException) => {
         resolve(err.code === 'ENOENT'
           ? { status: 'failed', error: `Comando claude non trovato (${bin}). Installa Claude Code o controlla il Doctor.` }
@@ -81,10 +106,10 @@ export class ClaudeCodeRunner implements AgentRunner {
     return {
       done,
       cancel: () => {
-        if (cancelled || child.exitCode !== null) return;
+        if (cancelled || !running()) return;
         cancelled = true;
-        child.kill('SIGTERM');
-        const t = setTimeout(() => { if (child.exitCode === null) child.kill('SIGKILL'); }, this.killGraceMs);
+        signal('SIGTERM');
+        const t = setTimeout(() => { if (running()) signal('SIGKILL'); }, this.killGraceMs);
         t.unref();
       },
     };
