@@ -496,6 +496,20 @@ describe('brand and codebases in creative turns', { timeout: 20_000 }, () => {
     delete process.env.FAKE_CLAUDE_TOUCH;
     expect((await sys()).some((e) => e.level === 'error' && e.text.includes(`la codebase ${dir} risulta modificata`))).toBe(true);
   });
+  it('skips linked folders that overlap the project or the workspace, with a note', async () => {
+    const cb = await mkdtemp(join(tmpdir(), 'ms-cb-ok-'));
+    // Written behind the API's back (hand-edited project.json): the turn must not hand the project to --add-dir.
+    const pj = JSON.parse(await readFile(join(ref.projectDir, 'project.json'), 'utf8'));
+    pj.linkedCodebases = [{ path: ref.root }, { path: join(ref.projectDir, 'assets') }, { path: cb }];
+    await writeFile(join(ref.projectDir, 'project.json'), JSON.stringify(pj));
+    expect(await finalState((await service.start(ref)).id)).toBe('succeeded');
+    const { args } = (await prompts())[0]!;
+    expect(args.filter((a) => a === '--add-dir')).toHaveLength(1);
+    expect(args[args.indexOf('--add-dir') + 1]).toBe(cb);
+    const texts = (await sys()).map((e) => e.text);
+    expect(texts).toContain(`Codebase ignorata (${ref.root}): La cartella collegata non può contenere il progetto né trovarsi al suo interno`);
+    expect(texts).toContain(`Codebase ignorata (${join(ref.projectDir, 'assets')}): La cartella collegata non può contenere il progetto né trovarsi al suo interno`);
+  });
   it('keeps working with a corrupt brand kit', async () => {
     await mkdir(join(ref.projectDir, 'brand'), { recursive: true });
     await writeFile(join(ref.projectDir, 'brand', 'brand-kit.json'), '{oops');

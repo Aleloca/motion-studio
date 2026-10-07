@@ -148,6 +148,14 @@ describe('turns over WebSocket', () => {
     expect(agentKinds).toEqual(['session', 'text', 'result']);
     ws.close();
   });
+  it('broadcasts a project message when the project is updated', async () => {
+    await setWorkspace();
+    await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' } });
+    const { messages, ws } = await connect();
+    expect((await app.inject({ method: 'PUT', url: '/api/projects/acme', payload: { name: 'Acme 2' } })).statusCode).toBe(200);
+    await waitFor(() => messages.some((m) => m.type === 'project' && m.project === 'acme'));
+    ws.close();
+  });
   it('does not pass linked codebases to the agent in phase 1', async () => {
     process.env.FAKE_CLAUDE_ARGS_FILE = join(base, 'args.json');
     await setWorkspace();

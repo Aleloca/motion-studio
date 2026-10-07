@@ -77,13 +77,20 @@ export function registerBrandRoutes(app: FastifyInstance, ctx: BrandRoutesContex
   app.post<{ Params: { slug: string } }>('/api/projects/:slug/brand/analyze', async (req, reply) => {
     const { sourceIds } = parse(analyzeBody, req.body);
     const { store, ref } = await project(req.params.slug);
-    const refs = await new LibraryStore(ref.projectDir, ctx.media).listReferences(); // a corrupt references.json surfaces as 422
-    let added = 0;
-    for (const r of refs.filter((x) => x.useForBrand)) {
-      await store.addSource({ kind: 'image', file: `references/${r.file}` }).then(() => { added++; }, (e) => { if ((e as WorkspaceError).status !== 409) throw e; });
+    const lib = new LibraryStore(ref.projectDir, ctx.media);
+    const refs = await lib.listReferences(); // a corrupt references.json surfaces as 422
+    const exists = (file: string) => lib.existingFile('references', file).then(() => true, () => false);
+    const usable = new Set<string>();
+    for (const r of refs) if (r.useForBrand && await exists(r.file)) usable.add(`references/${r.file}`);
+    // Image sources whose reference is gone from disk or excluded from the brand are dropped; usable references are added.
+    const drop: string[] = [];
+    for (const s of await store.readSources()) {
+      if (s.kind !== 'image' || s.file === null || usable.has(s.file)) continue;
+      const file = s.file.slice('references/'.length);
+      if (refs.some((r) => r.file === file && !r.useForBrand) || !(await exists(file))) drop.push(s.file);
     }
-    // Persist the new sources even when the analysis is then refused (409/400).
-    if (added) await done(ref.projectDir, req.params.slug, 'Aggiungi sorgenti brand dai riferimenti');
+    // Persist the change even when the analysis is then refused (409/400).
+    if (await store.syncImageSources([...usable], drop)) await done(ref.projectDir, req.params.slug, 'Allinea sorgenti brand ai riferimenti');
     return reply.status(202).send(await ctx.brand.analyze(ref, sourceIds));
   });
 

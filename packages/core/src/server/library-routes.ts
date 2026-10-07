@@ -1,8 +1,10 @@
-import { posix } from 'node:path';
+import { rm } from 'node:fs/promises';
+import { join, posix } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import type { BrandService } from '../brand/brand-analysis.ts';
+import { BrandStore } from '../brand/brand-store.ts';
 import type { Git } from '../git.ts';
 import { JsonFileError } from '../json-file.ts';
 import { LibraryStore } from '../library/library-store.ts';
@@ -27,9 +29,20 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
     const projectDir = ws.projectDir(slug);
     return { ws, projectDir, lib: new LibraryStore(projectDir, ctx.media), ref: { root: ws.root, projectSlug: slug, projectDir } };
   };
-  const done = async (projectDir: string, slug: string, msg: string) => {
+  const done = async (projectDir: string, slug: string, msg: string, brandToo = false) => {
     await ctx.git.commitAll(projectDir, msg);
     ctx.broadcast({ type: 'library', project: slug });
+    if (brandToo) ctx.broadcast({ type: 'brand', project: slug });
+  };
+  /** Saved files whose registration failed must not stay behind as unregistered leftovers. */
+  const registerOrRemove = async <T>(dir: string, saved: string[], register: () => Promise<T>): Promise<T> => {
+    try { return await register(); }
+    catch (err) { await Promise.all(saved.map((n) => rm(join(dir, n), { force: true }))); throw err; }
+  };
+  /** A reference that is gone or excluded from the brand must not stay an image source of the analysis. */
+  const dropImageSource = async (projectDir: string, file: string) => {
+    try { return await new BrandStore(projectDir).removeImageSource(`references/${file}`); }
+    catch (e) { if (e instanceof JsonFileError) return false; throw e; } // corrupt sources.json: the analyze route reports it
   };
 
   app.get<{ Params: { slug: string } }>('/api/projects/:slug/assets', async (req) => {
@@ -42,7 +55,7 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
     const { lib, projectDir } = await project(req.params.slug);
     await lib.listAssets(); // corrupt assets.json → 422 before any file is written
     const saved = await saveUploads(req, lib.dir('assets'));
-    const assets = await lib.registerAssets(saved.map((file) => ({ file, origin: 'upload' as const })));
+    const assets = await registerOrRemove(lib.dir('assets'), saved, () => lib.registerAssets(saved.map((file) => ({ file, origin: 'upload' as const }))));
     await done(projectDir, req.params.slug, `Carica ${saved.length} asset`);
     return reply.status(201).send({ assets });
   });
@@ -85,7 +98,7 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
     const { lib, projectDir } = await project(req.params.slug);
     await lib.listReferences();
     const saved = await saveUploads(req, lib.dir('references'));
-    const references = await lib.registerReferences(saved);
+    const references = await registerOrRemove(lib.dir('references'), saved, () => lib.registerReferences(saved));
     await done(projectDir, req.params.slug, `Carica ${saved.length} riferimenti`);
     return reply.status(201).send({ references });
   });
@@ -93,21 +106,24 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
   app.patch<{ Params: { slug: string; '*': string } }>('/api/projects/:slug/references/item/*', async (req) => {
     const { lib, projectDir } = await project(req.params.slug);
     const entry = await lib.updateReference(req.params['*'], parse(refPatch, req.body));
-    await done(projectDir, req.params.slug, `Aggiorna riferimento ${entry.file}`);
+    const dropped = entry.useForBrand ? false : await dropImageSource(projectDir, entry.file);
+    await done(projectDir, req.params.slug, `Aggiorna riferimento ${entry.file}`, dropped);
     return entry;
   });
 
   app.delete<{ Params: { slug: string; '*': string } }>('/api/projects/:slug/references/item/*', async (req) => {
     const { lib, projectDir } = await project(req.params.slug);
     await lib.removeReference(req.params['*']);
-    await done(projectDir, req.params.slug, `Elimina riferimento ${req.params['*']}`);
+    const dropped = await dropImageSource(projectDir, req.params['*']);
+    await done(projectDir, req.params.slug, `Elimina riferimento ${req.params['*']}`, dropped);
     return { ok: true };
   });
 
   app.get<{ Params: { slug: string; '*': string } }>('/api/projects/:slug/files/*', async (req, reply) => {
     const { projectDir } = await project(req.params.slug);
     const rel = posix.normalize(req.params['*'] ?? '.');
-    if (rel === 'assets/assets.json' || rel === 'references/references.json') return reply.status(404).send({ error: 'File non trovato' });
+    const lower = rel.toLowerCase();
+    if (lower === 'assets/assets.json' || lower === 'references/references.json') return reply.status(404).send({ error: 'File non trovato' });
     return sendConfinedFile(reply, projectDir, req.params['*'] ?? '', ['assets/', 'references/']);
   });
 }

@@ -3,10 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AppConfigStore } from '../src/app-config.ts';
 import { Git } from '../src/git.ts';
+import { LibraryStore } from '../src/library/library-store.ts';
 import { buildServer } from '../src/server/app.ts';
 import { multipart } from './helpers/multipart.ts';
 
@@ -22,7 +23,7 @@ beforeEach(async () => {
   await app.inject({ method: 'PUT', url: '/api/workspace', payload: { path: join(base, 'ws') } });
   await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' } });
 });
-afterEach(() => app.close());
+afterEach(async () => { vi.restoreAllMocks(); await app.close(); });
 
 describe('assets API', () => {
   it('uploads, lists, edits, serves and deletes assets', async () => {
@@ -72,7 +73,7 @@ describe('metadata isolation and concurrency', () => {
   });
   it('does not serve the metadata files', async () => {
     await app.inject({ method: 'POST', url: `${P}/assets`, ...multipart([{ name: 'a.png', content: 'x' }]) });
-    for (const p of ['assets/assets.json', 'assets/./assets.json', 'references/references.json']) {
+    for (const p of ['assets/assets.json', 'assets/./assets.json', 'references/references.json', 'assets/ASSETS.json', 'references/References.JSON']) {
       expect((await app.inject(`${P}/files/${p}`)).statusCode, p).toBe(404);
     }
   });
@@ -102,5 +103,31 @@ describe('loopback guard on new routes', () => {
     const up = await app.inject({ method: 'POST', url: `${P}/assets`, ...multipart([{ name: 'a.png', content: 'x' }]), headers: { ...multipart([]).headers, host: 'evil.example' } });
     expect(up.statusCode).toBe(403);
     expect((await app.inject({ method: 'GET', url: `${P}/files/assets/a.png`, headers: { host: 'evil.example' } })).statusCode).toBe(403);
+  });
+});
+
+describe('upload cleanup', () => {
+  it.each([
+    ['assets', 'registerAssets'],
+    ['references', 'registerReferences'],
+  ] as const)('removes the saved %s files when registration fails', async (kind, method) => {
+    vi.spyOn(LibraryStore.prototype, method).mockRejectedValueOnce(new Error('boom'));
+    const r = await app.inject({ method: 'POST', url: `${P}/${kind}`, ...multipart([{ name: 'a.png', content: 'x' }, { name: 'b.png', content: 'y' }]) });
+    expect(r.statusCode).toBe(500);
+    expect(await readdir(join(base, 'ws', 'acme', kind))).toEqual(['.gitkeep']);
+  });
+});
+
+describe('references and brand image sources', () => {
+  const sources = async () => (await app.inject(`${P}/brand`)).json().sources as Array<{ kind: string; file: string | null }>;
+  it('drops the image source when the reference is excluded or deleted', async () => {
+    await app.inject({ method: 'POST', url: `${P}/references`, ...multipart([{ name: 'a.jpg', content: 'x' }, { name: 'b.jpg', content: 'y' }]) });
+    await app.inject({ method: 'POST', url: `${P}/brand/sources`, payload: { kind: 'image', file: 'references/a.jpg' } });
+    await app.inject({ method: 'POST', url: `${P}/brand/sources`, payload: { kind: 'image', file: 'references/b.jpg' } });
+    await app.inject({ method: 'POST', url: `${P}/brand/sources`, payload: { kind: 'website', url: 'https://acme.example' } });
+    expect((await app.inject({ method: 'PATCH', url: `${P}/references/item/a.jpg`, payload: { useForBrand: false } })).statusCode).toBe(200);
+    expect((await sources()).map((s) => s.file)).toEqual(['references/b.jpg', null]);
+    expect((await app.inject({ method: 'DELETE', url: `${P}/references/item/b.jpg` })).statusCode).toBe(200);
+    expect((await sources()).map((s) => s.kind)).toEqual(['website']);
   });
 });

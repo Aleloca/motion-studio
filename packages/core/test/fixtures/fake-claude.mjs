@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-// Test double for the `claude` CLI. Scenario via FAKE_CLAUDE_SCENARIO: ok | tool | crash | hang | hang_ignore_term | garbage | error_result | leak_fd | render | render_missing_once | render_never | render_then_crash | render_touch | brand | brand_invalid
+// Test double for the `claude` CLI. Scenario via FAKE_CLAUDE_SCENARIO: ok | tool | crash | hang | hang_ignore_term | garbage | error_result | leak_fd | render | render_missing_once | render_never | render_then_crash | render_touch | brand | brand_invalid | brand_many_dropped | brand_big_guidelines | brand_symlink_summary | brand_outside_assets
+// FAKE_CLAUDE_TAMPER=1: brand/describe turns also overwrite brand/brand-kit.json and assets/assets.json directly.
+// FAKE_CLAUDE_WAIT_FILE=<path>: brand/describe turns wait for that file to exist before finishing.
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -31,10 +33,14 @@ const ffmpegOk = hasFfmpeg();
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+let currentPrompt = '';
+const describeBlockEarly = () => /```motion-studio-describe\n/.test(currentPrompt);
+
 const rl = createInterface({ input: process.stdin });
 rl.once('line', async (line) => {
   const msg = JSON.parse(line);
   const prompt = typeof msg.message?.content === 'string' ? msg.message.content : '';
+  currentPrompt = prompt;
   if (process.env.FAKE_CLAUDE_PROMPT_FILE) appendFileSync(process.env.FAKE_CLAUDE_PROMPT_FILE, `${JSON.stringify({ prompt, args })}\n`);
   // Same rule as parseStudioBlock: the last motion-studio fence wins.
   const block = (() => { const m = [...prompt.matchAll(/```motion-studio\n([\s\S]*?)\n```/g)].at(-1); return m ? JSON.parse(m[1]) : null; })();
@@ -54,7 +60,7 @@ rl.once('line', async (line) => {
   if (block && scenario === 'render') render(false);
   if (scenario === 'render_touch' && block) { render(false); if (process.env.FAKE_CLAUDE_TOUCH) writeFileSync(process.env.FAKE_CLAUDE_TOUCH, 'modified'); if (process.env.FAKE_CLAUDE_GIT_INIT) spawnSync('git', ['init', '-q'], { cwd: process.env.FAKE_CLAUDE_GIT_INIT }); }
   const brandBlock = (() => { const m = prompt.match(/```motion-studio-brand\n([\s\S]*?)\n```/); return m ? JSON.parse(m[1]) : null; })();
-  if (brandBlock && (scenario === 'brand' || scenario === 'render')) {
+  if (brandBlock && (scenario === 'brand' || scenario === 'render' || scenario.startsWith('brand_') && scenario !== 'brand_invalid')) {
     const kit = JSON.parse(readFileSync(brandBlock.kitFile, 'utf8'));
     const url = brandBlock.sources.find((s) => s.kind === 'website')?.url ?? 'https://acme.example';
     kit.colors.push({ id: 'arancio', name: 'Arancio', hex: '#FF7A45', role: 'accent', source: { kind: 'website', ref: url } });
@@ -67,13 +73,29 @@ rl.once('line', async (line) => {
     writeFileSync(brandBlock.guidelinesFile, '# Linee guida\nTono energico.');
     writeFileSync(brandBlock.assetsListFile, JSON.stringify([{ file: 'brand/logo.svg', sourceUrl: `${url}/logo.svg`, description: 'Logo principale', tags: ['logo'] }, { file: '../evil' }]));
     writeFileSync(brandBlock.summaryFile, 'Palette arancio/blu, tono energico.');
+    if (scenario === 'brand_many_dropped') {
+      for (let i = 0; i < 25; i++) kit.logos.push({ id: `ghost-${i}`, file: `assets/brand/ghost-${i}.svg`, variant: 'icon', background: 'any', source: { kind: 'website', ref: url } });
+      writeFileSync(brandBlock.kitFile, JSON.stringify(kit));
+    }
+    if (scenario === 'brand_outside_assets') {
+      kit.logos.push({ id: 'progetto', file: 'project.json', variant: 'icon', background: 'any', source: { kind: 'website', ref: url } });
+      kit.fonts.push({ id: 'ref-font', family: 'Ref', role: 'body', weights: [400], file: 'brand/guidelines.md', source: { kind: 'website', ref: url } });
+      writeFileSync(brandBlock.kitFile, JSON.stringify(kit));
+    }
+    if (scenario === 'brand_big_guidelines') writeFileSync(brandBlock.guidelinesFile, 'x'.repeat(200_001));
+    if (scenario === 'brand_symlink_summary') { writeFileSync('outside-summary.md', 'SEGRETO'); spawnSync('rm', ['-f', brandBlock.summaryFile]); symlinkSync(join(process.cwd(), 'outside-summary.md'), brandBlock.summaryFile); }
   }
   if (brandBlock && scenario === 'brand_invalid') writeFileSync(brandBlock.kitFile, '{oops');
+  if ((brandBlock || describeBlockEarly()) && process.env.FAKE_CLAUDE_TAMPER) {
+    writeFileSync('brand/brand-kit.json', '{"tampered":true}');
+    writeFileSync('assets/assets.json', '{"tampered":true}');
+  }
   const describeBlock = (() => { const m = prompt.match(/```motion-studio-describe\n([\s\S]*?)\n```/); return m ? JSON.parse(m[1]) : null; })();
   if (describeBlock) {
     mkdirSync(dirname(describeBlock.outFile), { recursive: true });
     writeFileSync(describeBlock.outFile, JSON.stringify(describeBlock.files.map((f) => ({ file: f.replace(/^assets\//, ''), description: `Descrizione di ${f}`, tags: ['auto'] }))));
   }
+  if ((brandBlock || describeBlockEarly()) && process.env.FAKE_CLAUDE_WAIT_FILE) { while (!existsSync(process.env.FAKE_CLAUDE_WAIT_FILE)) await sleep(20); }
   if (block && scenario === 'render_missing_once') render(!isFix);
   if (block && scenario === 'render_never') render(true);
   if (block && scenario === 'render_then_crash') render(false);

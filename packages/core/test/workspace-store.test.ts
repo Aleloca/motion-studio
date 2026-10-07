@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -56,6 +56,7 @@ describe('projects', () => {
     expect(await readFile(join(dir, 'CLAUDE.md'), 'utf8')).toContain('@.studio/context.md');
     expect(await readFile(join(dir, '.gitignore'), 'utf8')).toContain('outputs/');
     expect(await readFile(join(dir, '.gitignore'), 'utf8')).toContain('creatives/*/work/out/');
+    expect((await readFile(join(dir, '.gitignore'), 'utf8')).split('\n')).toEqual(expect.arrayContaining(['.*.part', 'assets/.describe/']));
     const log = await execCommand('git', ['log', '--format=%s'], { cwd: dir });
     expect(log.stdout.trim()).toBe('Crea progetto Acme');
   });
@@ -131,5 +132,24 @@ describe('updateProject', () => {
     expect(u).toMatchObject({ name: 'Acme 2', description: 'd', linkedCodebases: [{ path: '/Users/me/app', note: 'iOS' }] });
     expect(u.updatedAt).not.toBe(before.updatedAt);
     expect((await ws.updateProject(slug, { name: undefined })).name).toBe('Acme 2');
+  });
+  it('refuses codebases that contain the project or the workspace or sit inside them', async () => {
+    const ws = await WorkspaceStore.open(join(base, 'ws'), new Git());
+    const { slug } = await ws.createProject({ name: 'Acme' });
+    const dir = ws.projectDir(slug);
+    await mkdir(join(base, 'ws-sibling'));
+    for (const path of [dir, `${dir}/`, join(dir, 'assets'), ws.root, base, join(ws.root, 'altro'), join(dir, '..', slug, 'brand')]) {
+      const err = await ws.updateProject(slug, { linkedCodebases: [{ path }] }).catch((e) => e);
+      expect(err.status, path).toBe(400);
+      expect(err.message, path).toBe('La cartella collegata non può contenere il progetto né trovarsi al suo interno');
+    }
+    // A sibling whose name only shares the prefix is fine.
+    expect((await ws.updateProject(slug, { linkedCodebases: [{ path: join(base, 'ws-sibling') }] })).linkedCodebases).toEqual([{ path: join(base, 'ws-sibling') }]);
+  });
+  it('compares real paths, so a symlink to the project is refused', async () => {
+    const ws = await WorkspaceStore.open(join(base, 'ws'), new Git());
+    const { slug } = await ws.createProject({ name: 'Acme' });
+    await symlink(ws.projectDir(slug), join(base, 'link'));
+    expect((await ws.updateProject(slug, { linkedCodebases: [{ path: join(base, 'link') }] }).catch((e) => e)).status).toBe(400);
   });
 });

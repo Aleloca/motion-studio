@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { brandKitSchema, brandSourceSchema, sourceRefSchema, EMPTY_BRAND_KIT } from '../src/index.ts';
+import { brandKitIssues, brandKitSchema, brandSourceSchema, brandSourcesFileSchema, sourceRefSchema, EMPTY_BRAND_KIT } from '../src/index.ts';
 
 const manual = { kind: 'manual', ref: null } as const;
 
@@ -46,5 +46,30 @@ describe('brandSourceSchema', () => {
     expect(brandSourceSchema.safeParse(image).success).toBe(true);
     expect(brandSourceSchema.safeParse({ ...website, file: 'x.png' }).success).toBe(false);
     expect(brandSourceSchema.safeParse({ ...image, url: 'https://x.com' }).success).toBe(false);
+  });
+});
+
+describe('brandSourcesFileSchema', () => {
+  it('refuses duplicate source ids', () => {
+    const s = { id: 's-1', kind: 'website', url: 'https://example.com', file: null, addedAt: '2026-10-07T10:00:00.000Z', lastAnalyzedAt: null };
+    expect(brandSourcesFileSchema.safeParse({ schemaVersion: 1, sources: [s, { ...s, url: 'https://b.example' }] }).success).toBe(false);
+    expect(brandSourcesFileSchema.safeParse({ schemaVersion: 1, sources: [s, { ...s, id: 's-2', url: 'https://b.example' }] }).success).toBe(true);
+  });
+});
+
+describe('brandKitIssues (Italian messages)', () => {
+  const issues = (kit: unknown) => { const r = brandKitSchema.safeParse(kit); if (r.success) throw new Error('valid'); return brandKitIssues(r.error); };
+  it('names the field and the item in Italian', () => {
+    const c = { id: 'a', name: 'A', hex: '#123456', role: 'other', source: manual };
+    expect(issues({ schemaVersion: 1, colors: [c, { ...c, id: 'b', hex: 'blu' }] })).toBe('colore 2: hex non valido (usa #RRGGBB)');
+    expect(issues({ schemaVersion: 1, colors: [{ ...c, name: ' ' }] })).toBe('colore 1: nome obbligatorio');
+    const f = { id: 'f', family: 'Inter', role: 'body', weights: [400], file: null, source: manual };
+    expect(issues({ schemaVersion: 1, fonts: [{ ...f, weights: [450.5] }] })).toBe('font 1: pesi non validi (numeri interi da 100 a 900)');
+    expect(issues({ schemaVersion: 1, fonts: [{ ...f, family: '' }] })).toBe('font 1: famiglia obbligatoria');
+    expect(issues({ schemaVersion: 1, dos: [{ id: 'd', text: ' ', source: manual }] })).toBe('cosa da fare 1: testo obbligatorio');
+    expect(issues({ schemaVersion: 1, colors: [c, c] })).toBe('id duplicati');
+  });
+  it('has no English source messages', () => {
+    expect(sourceRefSchema.safeParse({ kind: 'manual', ref: 'x' }).error!.issues[0]!.message).toBe('le fonti manuali devono avere ref: null');
   });
 });

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,7 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { recoverWorkspace } from '../src/server/creative-routes.ts';
-import type { WorkspaceStore } from '../src/workspace-store.ts';
+import { WorkspaceStore } from '../src/workspace-store.ts';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AppConfigStore } from '../src/app-config.ts';
 import { Git } from '../src/git.ts';
@@ -158,6 +158,34 @@ describe('startup recovery', { timeout: 20_000 }, () => {
 });
 
 describe('recoverWorkspace', { timeout: 20_000 }, () => {
+  it('sweeps leftovers and completes the .gitignore of existing projects', async () => {
+    const ws = await WorkspaceStore.open(join(base, 'ws'), new Git());
+    const dir = ws.projectDir('acme');
+    await writeFile(join(dir, '.gitignore'), 'outputs/\n');
+    const old = new Date(Date.now() - 2 * 3600_000);
+    for (const f of ['assets/.old.part', 'references/.old.part']) { await writeFile(join(dir, f), 'x'); await utimes(join(dir, f), old, old); }
+    await writeFile(join(dir, 'assets', '.fresh.part'), 'x');
+    await mkdir(join(dir, 'brand', 'proposals', 'p-20260101-000000'), { recursive: true });
+    await mkdir(join(dir, 'brand', 'proposals', 'p-20260101-000001'), { recursive: true });
+    await writeFile(join(dir, 'brand', 'proposals', 'p-20260101-000001', 'proposal.json'), '{}');
+    await mkdir(join(dir, 'assets', '.describe'), { recursive: true });
+    await writeFile(join(dir, 'assets', '.describe', 'job.json'), '[]');
+    await recoverWorkspace(ws);
+    expect((await readdir(join(dir, 'assets'))).sort()).toEqual(['.describe', '.fresh.part', '.gitkeep']);
+    expect(await readdir(join(dir, 'assets', '.describe'))).toEqual([]);
+    expect(await readdir(join(dir, 'references'))).toEqual(['.gitkeep']);
+    expect(await readdir(join(dir, 'brand', 'proposals'))).toEqual(['p-20260101-000001']);
+    expect((await readFile(join(dir, '.gitignore'), 'utf8')).split('\n')).toEqual(['outputs/', '.*.part', 'assets/.describe/', '']);
+    await recoverWorkspace(ws);
+    expect((await readFile(join(dir, '.gitignore'), 'utf8')).split('\n')).toEqual(['outputs/', '.*.part', 'assets/.describe/', '']);
+  });
+  it('leaves brand job files alone while a brand job runs', async () => {
+    const ws = await WorkspaceStore.open(join(base, 'ws'), new Git());
+    const dir = ws.projectDir('acme');
+    await mkdir(join(dir, 'brand', 'proposals', 'p-20260101-000000'), { recursive: true });
+    await recoverWorkspace(ws, (key) => key.startsWith('brand:'));
+    expect(await readdir(join(dir, 'brand', 'proposals'))).toEqual(['p-20260101-000000']);
+  });
   it('warns with the project slug when a project cannot be recovered, and goes on', async () => {
     const warnings: string[] = [];
     const warn = vi.spyOn(console, 'warn').mockImplementation((m: string) => { warnings.push(m); });
@@ -191,5 +219,15 @@ describe('creative linked codebases', { timeout: 20_000 }, () => {
     expect(res.json().creative.linkedCodebases).toEqual([{ path: '/tmp/app' }]);
     const bad = await app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${res.json().slug}`, payload: { linkedCodebases: [{ path: 'rel' }] } });
     expect(bad.statusCode).toBe(400);
+  });
+  it('refuses codebases overlapping the project or the workspace', async () => {
+    const ws = join(base, 'ws');
+    const res = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'C', brief, linkedCodebases: [{ path: join(ws, 'acme') }] } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('La cartella collegata non può contenere il progetto né trovarsi al suo interno');
+    const ok = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'C', brief } });
+    const edit = await app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${ok.json().slug}`, payload: { linkedCodebases: [{ path: base }] } });
+    expect(edit.statusCode).toBe(400);
+    expect(edit.json().error).toBe('La cartella collegata non può contenere il progetto né trovarsi al suo interno');
   });
 });

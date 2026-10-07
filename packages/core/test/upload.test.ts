@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import fastifyMultipart from '@fastify/multipart';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { sanitizeFileName, saveUploads } from '../src/library/upload.ts';
+import { claimName, sanitizeFileName, saveUploads } from '../src/library/upload.ts';
 import { WorkspaceError } from '../src/workspace-store.ts';
 import { multipart } from './helpers/multipart.ts';
 
@@ -74,5 +74,31 @@ describe('saveUploads', () => {
     expect(await readdir(dir)).toEqual([]);
     const none = await app.inject({ method: 'POST', url: '/up', ...multipart([]) });
     expect(none.statusCode).toBe(400);
+  });
+});
+
+describe('reserved metadata names', () => {
+  it('treats assets.json / references.json (any case) as taken', async () => {
+    const r = await app.inject({ method: 'POST', url: '/up', ...multipart([{ name: 'assets.json', content: 'a' }, { name: 'REFERENCES.JSON', content: 'b' }]) });
+    expect(r.json().saved).toEqual(['assets-2.json', 'REFERENCES-2.JSON']);
+    expect((await readdir(dir)).sort()).toEqual(['REFERENCES-2.JSON', 'assets-2.json']);
+  });
+});
+
+describe('claimName without hard links', () => {
+  it.each(['EPERM', 'ENOTSUP', 'EXDEV', 'ENOSYS'])('falls back to an exclusive copy on %s', async (code) => {
+    const tmp = join(dir, '.t.part');
+    await writeFile(tmp, 'data');
+    await writeFile(join(dir, 'logo.png'), 'old');
+    const fail = async () => { throw Object.assign(new Error(code), { code }); };
+    expect(await claimName(dir, tmp, 'logo.png', { link: fail })).toBe('logo-2.png');
+    expect(await readFile(join(dir, 'logo-2.png'), 'utf8')).toBe('data');
+    expect(await readFile(join(dir, 'logo.png'), 'utf8')).toBe('old');
+  });
+  it('rethrows other link errors', async () => {
+    const tmp = join(dir, '.t.part');
+    await writeFile(tmp, 'data');
+    const fail = async () => { throw Object.assign(new Error('EIO'), { code: 'EIO' }); };
+    await expect(claimName(dir, tmp, 'x.png', { link: fail })).rejects.toMatchObject({ code: 'EIO' });
   });
 });

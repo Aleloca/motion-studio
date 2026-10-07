@@ -1,11 +1,11 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  brandKitSchema, brandProposalSchema, brandSourcesFileSchema, brandSourceSchema, EMPTY_BRAND_KIT,
+  brandKitIssues, brandKitSchema, brandProposalSchema, brandSourcesFileSchema, brandSourceSchema, EMPTY_BRAND_KIT,
   type BrandKit, type BrandProposal, type BrandSource,
 } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
-import { KeyedMutex } from '../keyed-mutex.ts';
+import { fileLock } from '../file-locks.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 
 const PROPOSAL_RE = /^p-\d{8}-\d{6}(-\d+)?$/;
@@ -99,12 +99,10 @@ export function isPrivateHost(hostname: string): boolean {
   return isPrivateIPv4(host);
 }
 
-// Shared by every BrandStore instance (one per request): keys are absolute paths, so writers of the same files serialize.
-const SHARED_LOCK = new KeyedMutex();
-
 export class BrandStore {
   private readonly dir: string;
-  private readonly lock = { run: <T>(key: string, fn: () => Promise<T>): Promise<T> => SHARED_LOCK.run(join(this.dir, key), fn) };
+  // Shared with every other instance (one per request) and with the brand jobs' guards: keys are the files' absolute paths.
+  private readonly lock = { run: <T>(name: string, fn: () => Promise<T>): Promise<T> => fileLock.run(this.path(name), fn) };
   constructor(projectDir: string) { this.dir = join(projectDir, 'brand'); }
 
   private path(name: string) { return join(this.dir, name); }
@@ -116,21 +114,24 @@ export class BrandStore {
 
   /** Replaces the kit, but refuses (JsonFileError) when the file on disk is corrupt: checked under the same lock as the write. */
   replaceReadableKit(kit: unknown): Promise<BrandKit> {
-    return this.lock.run('kit', async () => {
-      await this.readKit();
-      return this.writeKitUnlocked(kit);
-    });
+    return this.updateReadableKit(() => kit);
+  }
+
+  /** Read-modify-write of the kit under its lock; a corrupt file on disk refuses (JsonFileError). */
+  updateReadableKit(updater: (current: BrandKit) => unknown): Promise<BrandKit> {
+    return this.lock.run('brand-kit.json', async () => this.writeKitUnlocked(updater(await this.readKit())));
   }
 
   writeKit(kit: unknown): Promise<BrandKit> {
-    return this.lock.run('kit', () => this.writeKitUnlocked(kit));
+    return this.lock.run('brand-kit.json', () => this.writeKitUnlocked(kit));
   }
 
   private async writeKitUnlocked(kit: unknown): Promise<BrandKit> {
     {
       const parsed = brandKitSchema.safeParse(kit);
-      if (!parsed.success) throw new WorkspaceError(400, `Brand kit non valido: ${issues(parsed.error)}`);
+      if (!parsed.success) throw new WorkspaceError(400, `Brand kit non valido: ${brandKitIssues(parsed.error)}`);
       await writeJsonFileAtomic(this.path('brand-kit.json'), parsed.data);
+      fileLock.noteWrite(this.path('brand-kit.json'));
       return parsed.data;
     }
   }
@@ -141,9 +142,10 @@ export class BrandStore {
 
   writeGuidelines(text: string): Promise<void> {
     if (text.length > 200_000) throw new WorkspaceError(400, 'Linee guida troppo lunghe (massimo 200.000 caratteri)');
-    return this.lock.run('guidelines', async () => {
+    return this.lock.run('guidelines.md', async () => {
       await mkdir(this.dir, { recursive: true });
       await writeFile(this.path('guidelines.md'), text);
+      fileLock.noteWrite(this.path('guidelines.md'));
     });
   }
 
@@ -153,7 +155,7 @@ export class BrandStore {
   }
 
   addSource(input: { kind: 'website'; url: string } | { kind: 'image'; file: string }): Promise<BrandSource> {
-    return this.lock.run('sources', async () => {
+    return this.lock.run('sources.json', async () => {
       const sources = await this.readSources();
       const n = Math.max(0, ...sources.map((s) => Number(s.id.slice(2)) || 0)) + 1;
 
@@ -175,24 +177,61 @@ export class BrandStore {
       if (!parsed.success) throw new WorkspaceError(400, `Sorgente non valida: ${issues(parsed.error)}`);
       const s = parsed.data;
       if (sources.some((x) => (s.url && x.url === s.url) || (s.file && x.file === s.file))) throw new WorkspaceError(409, 'Sorgente già presente');
-      await writeJsonFileAtomic(this.path('sources.json'), { schemaVersion: 1, sources: [...sources, s] });
+      await this.writeSourcesUnlocked({ schemaVersion: 1, sources: [...sources, s] });
       return s;
     });
   }
 
   removeSource(id: string): Promise<void> {
-    return this.lock.run('sources', async () => {
+    return this.lock.run('sources.json', async () => {
       const sources = await this.readSources();
       if (!sources.some((s) => s.id === id)) throw new WorkspaceError(404, `Sorgente ${id} non trovata`);
-      await writeJsonFileAtomic(this.path('sources.json'), { schemaVersion: 1, sources: sources.filter((s) => s.id !== id) });
+      await this.writeSourcesUnlocked({ schemaVersion: 1, sources: sources.filter((s) => s.id !== id) });
+    });
+  }
+
+  /**
+   * Keeps image sources in step with the references (`references/<file>` paths): drops the image sources in `drop`,
+   * adds one for each file in `add` that has none. Returns whether sources.json changed.
+   */
+  syncImageSources(add: string[], drop: string[]): Promise<boolean> {
+    return this.lock.run('sources.json', async () => {
+      const sources = await this.readSources();
+      const kept = sources.filter((s) => s.kind !== 'image' || s.file === null || !drop.includes(s.file));
+      let n = Math.max(0, ...sources.map((s) => Number(s.id.slice(2)) || 0));
+      const added: BrandSource[] = [];
+      for (const file of add) {
+        if (drop.includes(file) || [...kept, ...added].some((s) => s.file === file)) continue;
+        const parsed = brandSourceSchema.safeParse({ id: `s-${++n}`, kind: 'image', url: null, file, addedAt: new Date().toISOString(), lastAnalyzedAt: null });
+        if (parsed.success) added.push(parsed.data);
+      }
+      if (kept.length === sources.length && added.length === 0) return false;
+      await this.writeSourcesUnlocked({ schemaVersion: 1, sources: [...kept, ...added] });
+      return true;
+    });
+  }
+
+  /** Drops the image source pointing at `file` (e.g. `references/x.png`), if any. Returns whether one was removed. */
+  removeImageSource(file: string): Promise<boolean> {
+    return this.lock.run('sources.json', async () => {
+      const sources = await this.readSources();
+      const kept = sources.filter((s) => !(s.kind === 'image' && s.file === file));
+      if (kept.length === sources.length) return false;
+      await this.writeSourcesUnlocked({ schemaVersion: 1, sources: kept });
+      return true;
     });
   }
 
   markAnalyzed(ids: string[], at: string): Promise<void> {
-    return this.lock.run('sources', async () => {
+    return this.lock.run('sources.json', async () => {
       const sources = await this.readSources();
-      await writeJsonFileAtomic(this.path('sources.json'), { schemaVersion: 1, sources: sources.map((s) => (ids.includes(s.id) ? { ...s, lastAnalyzedAt: at } : s)) });
+      await this.writeSourcesUnlocked({ schemaVersion: 1, sources: sources.map((s) => (ids.includes(s.id) ? { ...s, lastAnalyzedAt: at } : s)) });
     });
+  }
+
+  private async writeSourcesUnlocked(data: { schemaVersion: 1; sources: BrandSource[] }): Promise<void> {
+    await writeJsonFileAtomic(this.path('sources.json'), data);
+    fileLock.noteWrite(this.path('sources.json'));
   }
 
   newProposalId(now = new Date()): Promise<string> {
@@ -219,7 +258,9 @@ export class BrandStore {
   }
 
   writeProposal(p: BrandProposal): Promise<void> {
-    return this.lock.run(`p:${p.id}`, () => writeJsonFileAtomic(join(this.proposalDir(p.id), 'proposal.json'), p));
+    const parsed = brandProposalSchema.safeParse(p);
+    if (!parsed.success) return Promise.reject(new Error(`Proposta non valida: ${issues(parsed.error)}`));
+    return fileLock.run(join(this.proposalDir(p.id), 'proposal.json'), () => writeJsonFileAtomic(join(this.proposalDir(p.id), 'proposal.json'), parsed.data));
   }
 
   async listProposals(): Promise<BrandProposal[]> {

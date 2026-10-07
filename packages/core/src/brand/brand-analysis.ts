@@ -1,15 +1,15 @@
-import { appendFile, lstat, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { appendFile, lstat, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
-import { brandKitSchema, relativeFileSchema, webUrlSchema, type AssetEntry, type BrandKit, type BrandProposal, type JobSummary, type ServerMessage } from '@motion-studio/shared';
+import { brandKitIssues, brandKitSchema, relativeFileSchema, webUrlSchema, type AssetEntry, type BrandKit, type BrandProposal, type JobSummary, type ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
-import { AGENT_ALLOWED_TOOLS, BRAND_ALLOWED_TOOLS, type AgentRunner } from '../agent/runner.ts';
+import { BRAND_ANALYSIS_TOOLS, DESCRIBE_TOOLS, type AgentRunner } from '../agent/runner.ts';
 import type { Git } from '../git.ts';
 import type { JobQueue } from '../jobs/job-queue.ts';
-import { JsonFileError, readJsonFile } from '../json-file.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 import { LibraryStore } from '../library/library-store.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { WorkspaceError } from '../workspace-store.ts';
+import { guardRules, readAgentFile, restoreGuarded, snapshotGuarded, tamperNote } from './agent-guard.ts';
 import { applyBrandChanges, diffBrandKits } from './brand-diff.ts';
 import { buildBrandPrompt, buildDescribePrompt } from './brand-prompt.ts';
 import { BrandStore } from './brand-store.ts';
@@ -20,21 +20,33 @@ export interface BrandServiceDeps { queue: JobQueue; runner: AgentRunner; git: G
 
 const listedAsset = z.object({ file: relativeFileSchema, sourceUrl: webUrlSchema.nullish(), description: z.string().max(2000).optional(), tags: z.array(z.string().min(1).max(40)).max(30).optional() });
 const describedAsset = z.object({ file: relativeFileSchema, description: z.string().max(2000), tags: z.array(z.string().min(1).max(40)).max(30).optional() });
+const MAX_GUIDELINES = 200_000;
+const MAX_DROPPED_SHOWN = 20;
+const MAX_SUMMARY = 5000;
+const GUIDELINES_TOO_LONG = 'Linee guida proposte troppo lunghe';
 
-async function readLenient<T>(path: string, item: z.ZodType<T>): Promise<T[]> {
-  const raw = await readFile(path, 'utf8').catch(() => '[]');
+/** Valid items of a JSON array the agent wrote; `skipped` explains a file that was not read (symlink, too large). */
+async function readLenient<T>(path: string, item: z.ZodType<T>): Promise<{ items: T[]; skipped?: string }> {
+  const file = await readAgentFile(path);
+  if (file === null) return { items: [] };
+  if ('skipped' in file) return { items: [], skipped: file.skipped };
   let data: unknown;
-  try { data = JSON.parse(raw); } catch { return []; }
-  return Array.isArray(data) ? data.flatMap((d) => { const r = item.safeParse(d); return r.success ? [r.data] : []; }) : [];
+  try { data = JSON.parse(file.text); } catch { return { items: [] }; }
+  return { items: Array.isArray(data) ? data.flatMap((d) => { const r = item.safeParse(d); return r.success ? [r.data] : []; }) : [] };
 }
 const isFile = async (p: string) => Boolean((await lstat(p).catch(() => null))?.isFile());
-/** A regular file whose real path stays inside the project (no symlinked folders leading out). */
+/** A regular file whose real path stays inside `root` (no symlinked folders leading out). */
 async function isFileInside(root: string, p: string): Promise<boolean> {
   if (!(await isFile(p))) return false;
   const [real, realRoot] = await Promise.all([realpath(p).catch(() => null), realpath(root).catch(() => null)]);
   return real !== null && realRoot !== null && real.startsWith(realRoot + sep);
 }
 const hidden = (file: string) => file.split('/').some((s) => s.startsWith('.'));
+const droppedText = (dropped: string[]) => {
+  if (dropped.length === 0) return '';
+  const extra = dropped.length - MAX_DROPPED_SHOWN;
+  return `Voci scartate: ${[...dropped.slice(0, MAX_DROPPED_SHOWN), ...(extra > 0 ? [`e altre ${extra}`] : [])].join('; ')}`;
+};
 
 export class BrandService {
   private readonly locks = new KeyedMutex();
@@ -55,18 +67,27 @@ export class BrandService {
     });
   }
 
-  private async runAgent(ref: ProjectRef, prompt: string, allowedTools: readonly string[], logFile: string | null, signal: AbortSignal, jobId: string): Promise<'ok' | 'cancelled'> {
-    const run = this.deps.runner.start({ cwd: ref.projectDir, prompt, model: (await this.deps.model()) ?? undefined, allowedTools: [...allowedTools] }, (event) => {
-      this.deps.broadcast({ type: 'agent', jobId, event });
-      if (logFile) void appendFile(logFile, `${JSON.stringify({ at: new Date().toISOString(), event })}\n`).catch(() => {});
-    });
-    const onAbort = () => run.cancel();
-    signal.addEventListener('abort', onAbort, { once: true });
-    if (signal.aborted) onAbort();
-    const outcome = await run.done.finally(() => signal.removeEventListener('abort', onAbort));
-    if (outcome.status === 'cancelled') return 'cancelled';
-    if (outcome.status === 'failed') throw new Error(outcome.error ?? 'Turno non riuscito');
-    return 'ok';
+  /**
+   * Runs one agent turn with the live metadata files denied to the editing tools; whatever the outcome, files the agent
+   * still managed to change (e.g. through an interpreter) are restored. `tampered` receives the restored paths.
+   */
+  private async runAgent(ref: ProjectRef, prompt: string, allowedTools: readonly string[], logFile: string | null, signal: AbortSignal, jobId: string, tampered: string[]): Promise<'ok' | 'cancelled'> {
+    const guard = await snapshotGuarded(ref.projectDir);
+    try {
+      const run = this.deps.runner.start({ cwd: ref.projectDir, prompt, model: (await this.deps.model()) ?? undefined, allowedTools: [...allowedTools], disallowedTools: await guardRules(ref.projectDir) }, (event) => {
+        this.deps.broadcast({ type: 'agent', jobId, event });
+        if (logFile) void appendFile(logFile, `${JSON.stringify({ at: new Date().toISOString(), event })}\n`).catch(() => {});
+      });
+      const onAbort = () => run.cancel();
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted) onAbort();
+      const outcome = await run.done.finally(() => signal.removeEventListener('abort', onAbort));
+      if (outcome.status === 'cancelled') return 'cancelled';
+      if (outcome.status === 'failed') throw new Error(outcome.error ?? 'Turno non riuscito');
+      return 'ok';
+    } finally {
+      tampered.push(...(await restoreGuarded(guard)));
+    }
   }
 
   private async runAnalysis(ref: ProjectRef, store: BrandStore, sources: Awaited<ReturnType<BrandStore['readSources']>>, signal: AbortSignal, jobId: string): Promise<void | 'cancelled'> {
@@ -85,26 +106,41 @@ export class BrandService {
         assetsListFile: rel(join(dir, 'assets.json')), summaryFile: rel(join(dir, 'summary.md')),
         sources: sources.map((s) => ({ id: s.id, kind: s.kind, url: s.url, file: s.file })),
       };
-      if ((await this.runAgent(ref, buildBrandPrompt(block), BRAND_ALLOWED_TOOLS, join(dir, 'log.jsonl'), signal, jobId)) === 'cancelled') {
+      const tampered: string[] = [];
+      if ((await this.runAgent(ref, buildBrandPrompt(block), BRAND_ANALYSIS_TOOLS, join(dir, 'log.jsonl'), signal, jobId, tampered)) === 'cancelled') {
         await rm(dir, { recursive: true, force: true });
         return 'cancelled';
       }
-      let proposed: BrandKit;
-      try { proposed = await readJsonFile(join(dir, 'brand-kit.json'), brandKitSchema); }
-      catch (e) { throw new Error(`Proposta non valida: ${e instanceof JsonFileError ? e.message.replace(/^.*?: /, '') : (e as Error).message}`); }
-      const dropped: string[] = [];
+      const dropped: string[] = tampered.map(tamperNote);
+      const kitFile = await readAgentFile(join(dir, 'brand-kit.json'));
+      if (kitFile === null || 'skipped' in kitFile) throw new Error(`Proposta non valida: brand-kit.json ${kitFile ? kitFile.skipped : 'mancante'}`);
+      let json: unknown;
+      try { json = JSON.parse(kitFile.text); } catch (e) { throw new Error(`Proposta non valida: JSON non valido (${(e as Error).message})`); }
+      const parsedKit = brandKitSchema.safeParse(json);
+      if (!parsedKit.success) throw new Error(`Proposta non valida: ${brandKitIssues(parsedKit.error)}`);
+      let proposed: BrandKit = parsedKit.data;
+      // Logos and fonts must point at an existing regular file inside assets/.
       const keepFile = async (file: string | null, label: string) => {
-        if (file === null || await isFileInside(ref.projectDir, join(ref.projectDir, ...file.split('/')))) return true;
+        if (file === null) return true;
+        if (!file.startsWith('assets/')) { dropped.push(`${label} (${file} fuori da assets/)`); return false; }
+        if (await isFileInside(library.dir('assets'), join(ref.projectDir, ...file.split('/')))) return true;
         dropped.push(`${label} (${file} non trovato)`);
         return false;
       };
-      proposed = { ...proposed,
-        logos: (await Promise.all(proposed.logos.map(async (l) => ((await keepFile(l.file, l.id)) ? l : null)))).filter((l) => l !== null),
-        fonts: (await Promise.all(proposed.fonts.map(async (f) => ((await keepFile(f.file, f.id)) ? f : null)))).filter((f) => f !== null) };
+      const logos: BrandKit['logos'] = [];
+      for (const l of proposed.logos) if (await keepFile(l.file, l.id)) logos.push(l);
+      const fonts: BrandKit['fonts'] = [];
+      for (const f of proposed.fonts) if (await keepFile(f.file, f.id)) fonts.push(f);
+      proposed = { ...proposed, logos, fonts };
 
-      const listed = (await readLenient(join(dir, 'assets.json'), listedAsset)).filter((a) => !hidden(a.file));
-      const existingListed: typeof listed = [];
-      for (const a of listed) if (await isFile(library.resolve('assets', a.file))) existingListed.push(a);
+      const listedRead = await readLenient(join(dir, 'assets.json'), listedAsset);
+      if (listedRead.skipped) dropped.push(`assets.json della proposta (ignorato: ${listedRead.skipped})`);
+      const existingListed: typeof listedRead.items = [];
+      for (const a of listedRead.items.filter((x) => !hidden(x.file))) {
+        // resolve() refuses reserved names (assets.json): one bad entry must not sink the proposal.
+        try { if (await isFile(library.resolve('assets', a.file))) existingListed.push(a); }
+        catch (e) { if (!(e instanceof WorkspaceError)) throw e; dropped.push(`${a.file} (non registrato)`); }
+      }
       const appeared = (await library.unregisteredAssets()).filter((f) => !before.has(f) && !existingListed.some((a) => a.file === f));
       const registered: AssetEntry[] = [];
       for (const item of [
@@ -116,22 +152,38 @@ export class BrandService {
         catch (e) { if (!(e instanceof WorkspaceError)) throw e; dropped.push(`${item.file} (non registrato)`); }
       }
 
-      const proposedGuidelines = await readFile(join(dir, 'guidelines.md'), 'utf8').catch(() => currentGuidelines);
-      const summaryText = (await readFile(join(dir, 'summary.md'), 'utf8').catch(() => '')).slice(0, 2000).trim();
+      let proposedGuidelines = currentGuidelines;
+      const guidelinesFile = await readAgentFile(join(dir, 'guidelines.md'));
+      if (guidelinesFile && 'skipped' in guidelinesFile) {
+        if (guidelinesFile.skipped === 'file troppo grande') throw new Error(GUIDELINES_TOO_LONG);
+        dropped.push(`guidelines.md (ignorato: ${guidelinesFile.skipped})`);
+      } else if (guidelinesFile) {
+        if (guidelinesFile.text.length > MAX_GUIDELINES) throw new Error(GUIDELINES_TOO_LONG);
+        proposedGuidelines = guidelinesFile.text;
+      }
+      const summaryFile = await readAgentFile(join(dir, 'summary.md'));
+      if (summaryFile && 'skipped' in summaryFile) dropped.push(`summary.md (ignorato: ${summaryFile.skipped})`);
+      const summaryText = summaryFile && 'text' in summaryFile ? summaryFile.text.slice(0, 2000).trim() : '';
       const proposal: BrandProposal = {
         schemaVersion: 1, id, createdAt: new Date().toISOString(), sourceIds: sources.map((s) => s.id), status: 'open',
-        summary: [summaryText, dropped.length ? `Voci scartate: ${dropped.join('; ')}` : ''].filter(Boolean).join('\n\n'),
-        changes: diffBrandKits(await store.readKit(), proposed),
+        summary: [summaryText, droppedText(dropped)].filter(Boolean).join('\n\n').slice(0, MAX_SUMMARY),
+        // Against the kit the agent was given: the proposal is what the agent changed, not a revert of later manual edits.
+        changes: diffBrandKits(currentKit, proposed),
         guidelines: proposedGuidelines !== currentGuidelines ? { current: currentGuidelines, proposed: proposedGuidelines } : null,
         assetsAdded: registered.map((a) => a.file),
       };
-      await store.writeProposal(proposal);
+      // Under the apply lock: a new proposal supersedes the open ones (they would diff against an outdated kit).
+      await this.locks.run(`apply:${ref.projectDir}`, async () => {
+        for (const old of await store.listProposals()) if (old.status === 'open' && old.id !== id) await store.writeProposal({ ...old, status: 'discarded' });
+        await store.writeProposal(proposal);
+      });
       await store.markAnalyzed(proposal.sourceIds, proposal.createdAt);
       await this.deps.git.commitAll(ref.projectDir, `Analisi brand ${id}`);
       this.changed(ref, 'brand', 'library');
     } catch (err) {
       await rm(dir, { recursive: true, force: true }).catch(() => {});
-      this.changed(ref, 'brand');
+      // Assets may already be registered when a late step fails.
+      this.changed(ref, 'brand', 'library');
       throw err;
     }
   }
@@ -149,16 +201,27 @@ export class BrandService {
         run: async (signal, jobId) => {
           const outRel = `assets/.describe/${jobId}.json`;
           const outAbs = join(ref.projectDir, 'assets', '.describe', `${jobId}.json`);
-          await mkdir(join(ref.projectDir, 'assets', '.describe'), { recursive: true });
-          const prompt = buildDescribePrompt({ outFile: outRel, files: targets.map((t) => `assets/${t.file}`) });
-          if ((await this.runAgent(ref, prompt, AGENT_ALLOWED_TOOLS, null, signal, jobId)) === 'cancelled') return 'cancelled';
-          const wanted = new Set(targets.map((t) => t.file));
-          for (const d of await readLenient(outAbs, describedAsset)) {
-            if (wanted.has(d.file)) await library.updateAsset(d.file, { description: d.description, ...(d.tags ? { tags: d.tags } : {}) });
+          const notes: string[] = [];
+          try {
+            await mkdir(join(ref.projectDir, 'assets', '.describe'), { recursive: true });
+            const prompt = buildDescribePrompt({ outFile: outRel, files: targets.map((t) => `assets/${t.file}`) });
+            const tampered: string[] = [];
+            const outcome = await this.runAgent(ref, prompt, DESCRIBE_TOOLS, null, signal, jobId, tampered).finally(() => notes.push(...tampered.map(tamperNote)));
+            if (outcome === 'cancelled') return 'cancelled';
+            const wanted = new Set(targets.map((t) => t.file));
+            const described = await readLenient(outAbs, describedAsset);
+            if (described.skipped) notes.push(`File delle descrizioni ignorato: ${described.skipped}`);
+            for (const d of described.items) {
+              if (!wanted.has(d.file)) continue;
+              try { await library.updateAsset(d.file, { description: d.description, ...(d.tags ? { tags: d.tags } : {}) }); }
+              catch (e) { if (!(e instanceof WorkspaceError && e.status === 404)) throw e; notes.push(`${d.file} eliminato durante la descrizione: saltato`); }
+            }
+            await this.deps.git.commitAll(ref.projectDir, 'Descrizione asset');
+            this.changed(ref, 'library');
+          } finally {
+            await rm(outAbs, { force: true }).catch(() => {});
+            if (notes.length) this.deps.queue.patch(jobId, { notes });
           }
-          await rm(outAbs, { force: true });
-          await this.deps.git.commitAll(ref.projectDir, 'Descrizione asset');
-          this.changed(ref, 'library');
         },
       });
     });
@@ -169,7 +232,7 @@ export class BrandService {
       const store = new BrandStore(ref.projectDir);
       const proposal = await store.readProposal(id);
       if (proposal.status !== 'open') throw new WorkspaceError(409, 'La proposta è già stata applicata o scartata');
-      const kit = await store.writeKit(applyBrandChanges(await store.readKit(), proposal.changes, acceptedIds));
+      const kit = await store.updateReadableKit((current) => applyBrandChanges(current, proposal.changes, acceptedIds));
       if (applyGuidelines && proposal.guidelines) await store.writeGuidelines(proposal.guidelines.proposed);
       const next: BrandProposal = { ...proposal, status: 'applied' };
       await store.writeProposal(next);

@@ -1,6 +1,6 @@
-import { access, constants, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { access, constants, mkdir, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { isAbsolute, join, normalize } from 'node:path';
+import { isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
   type WorkspaceProblemCode,
   projectFileSchema,
@@ -49,6 +49,30 @@ export function normalizeCodebaseList(list: LinkedCodebase[]): LinkedCodebase[] 
     out.push({ path, ...(c.note?.trim() ? { note: c.note.trim() } : {}) });
   }
   return out;
+}
+
+export const CODEBASE_OVERLAP = 'La cartella collegata non può contenere il progetto né trovarsi al suo interno';
+
+const isWithin = (inner: string, outer: string) => inner === outer || inner.startsWith(outer.endsWith(sep) ? outer : outer + sep);
+/** The normalised path, plus its real path when it exists and differs (symlinks). */
+const pathForms = async (p: string) => {
+  const n = resolve(p);
+  const real = await realpath(n).catch(() => null);
+  return real && real !== n ? [n, real] : [n];
+};
+
+/** True when `path` is one of `protectedDirs`, an ancestor of one, or inside one (normalised and real paths compared). */
+export async function codebaseOverlaps(path: string, protectedDirs: string[]): Promise<boolean> {
+  const mine = await pathForms(path);
+  for (const dir of protectedDirs) {
+    for (const b of await pathForms(dir)) if (mine.some((a) => isWithin(a, b) || isWithin(b, a))) return true;
+  }
+  return false;
+}
+
+/** Refuses (400) linked folders overlapping the project or the workspace: they would hand the project to --add-dir. */
+export async function assertCodebasesOutside(list: LinkedCodebase[], protectedDirs: string[]): Promise<void> {
+  for (const c of list) if (await codebaseOverlaps(c.path, protectedDirs)) throw new WorkspaceError(400, CODEBASE_OVERLAP);
 }
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -176,6 +200,7 @@ export class WorkspaceStore {
       const linkedCodebases = patch.linkedCodebases
         ? normalizeCodebaseList(patch.linkedCodebases)
         : current.linkedCodebases;
+      if (patch.linkedCodebases) await assertCodebasesOutside(linkedCodebases, [this.projectDir(slug), this.root]);
       const parsed = projectFileSchema.safeParse({ ...current, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)), linkedCodebases, updatedAt: new Date().toISOString() });
       if (!parsed.success) throw new WorkspaceError(400, `Progetto non valido: ${parsed.error.issues.map((i) => i.path.join('.')).join(', ')}`);
       const dir = this.projectDir(slug);

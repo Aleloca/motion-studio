@@ -1,4 +1,4 @@
-import { mkdtemp, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,6 +54,21 @@ describe('brand API', () => {
     expect((await app.inject({ method: 'POST', url: `${P}/brand/analyze`, payload: {} })).statusCode).toBe(202);
     await waitJobs();
     expect((await app.inject(`${P}/brand`)).json().sources).toEqual([expect.objectContaining({ kind: 'image', file: 'references/mood.jpg' })]);
+  });
+  it('syncs image sources with the references before analyzing', { timeout: 20_000 }, async () => {
+    await app.inject({ method: 'POST', url: `${P}/references`, ...multipart([{ name: 'a.jpg', content: 'x' }, { name: 'b.jpg', content: 'y' }, { name: 'c.jpg', content: 'z' }]) });
+    for (const f of ['a.jpg', 'b.jpg']) await app.inject({ method: 'POST', url: `${P}/brand/sources`, payload: { kind: 'image', file: `references/${f}` } });
+    await app.inject({ method: 'POST', url: `${P}/brand/sources`, payload: { kind: 'website', url: 'https://acme.example' } });
+    // Changed behind the routes' back: a.jpg excluded in references.json, b.jpg deleted from disk.
+    const refsFile = join(base, 'ws', 'acme', 'references', 'references.json');
+    const refs = JSON.parse(await readFile(refsFile, 'utf8'));
+    refs.references = refs.references.map((r: { file: string }) => (r.file === 'a.jpg' ? { ...r, useForBrand: false } : r));
+    await writeFile(refsFile, JSON.stringify(refs));
+    await rm(join(base, 'ws', 'acme', 'references', 'b.jpg'));
+    expect((await app.inject({ method: 'POST', url: `${P}/brand/analyze`, payload: {} })).statusCode).toBe(202);
+    await waitJobs();
+    const files = ((await app.inject(`${P}/brand`)).json().sources as Array<{ kind: string; file: string | null; url: string | null }>).map((s) => s.file ?? s.url);
+    expect(files).toEqual(['https://acme.example', 'references/c.jpg']);
   });
   it('reports a corrupt kit and refuses to overwrite it', async () => {
     await writeFile(join(base, 'ws', 'acme', 'brand', 'brand-kit.json'), '{oops');

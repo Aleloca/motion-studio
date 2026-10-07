@@ -25,6 +25,10 @@ describe('readOnlyRules escaping', () => {
     expect(readOnlyRules(['/a/s*t?'])).toEqual(['Edit(//a/s\\*t\\?/**)']);
     expect(readOnlyRules(['/a/b\\c'])).toEqual(['Edit(//a/b\\\\c/**)']);
   });
+  it('escapes braces, parentheses and extglob characters', () => {
+    expect(readOnlyRules(['/a/app {a,b}'])).toEqual(['Edit(//a/app \\{a,b\\}/**)']);
+    expect(readOnlyRules(['/a/x(1)!+@'])).toEqual(['Edit(//a/x\\(1\\)\\!\\+\\@/**)']);
+  });
 });
 
 describe('normalizeCodebasePath root', () => {
@@ -105,6 +109,30 @@ describe('codebaseSnapshot', () => {
     expect(val(before)).not.toBeNull();
     await writeFile(join(repo, 'a.txt'), '2');
     expect(val(await codebaseSnapshot(repo))).not.toBe(val(before));
+  });
+  it('detects edits to untracked files', { timeout: 20_000 }, async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'ms-cb-git-'));
+    await git(repo, 'init', '-q');
+    await writeFile(join(repo, 'new.txt'), '1');
+    const first = val(await codebaseSnapshot(repo));
+    await writeFile(join(repo, 'new.txt'), '2');
+    expect(val(await codebaseSnapshot(repo))).not.toBe(first);
+  });
+  it('is scoped to the linked subfolder of a larger repo', { timeout: 20_000 }, async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'ms-cb-git-'));
+    await mkdir(join(repo, 'app'));
+    await writeFile(join(repo, 'app', 'a.txt'), '1');
+    await writeFile(join(repo, 'other.txt'), '1');
+    await git(repo, 'init', '-q');
+    await git(repo, 'add', '-A');
+    await git(repo, 'commit', '-q', '-m', 'init');
+    const sub = join(repo, 'app');
+    const clean = val(await codebaseSnapshot(sub));
+    await writeFile(join(repo, 'other.txt'), '2');
+    await writeFile(join(repo, 'outside-new.txt'), 'x');
+    expect(val(await codebaseSnapshot(sub))).toBe(clean);
+    await writeFile(join(sub, 'a.txt'), '2');
+    expect(val(await codebaseSnapshot(sub))).not.toBe(clean);
   });
   it('reports failed on timeout or other errors', async () => {
     expect(await codebaseSnapshot('/x', async () => ({ code: -1, hash: '', stderr: '', timedOut: true }))).toEqual({ unavailable: 'failed' });

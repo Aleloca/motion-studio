@@ -48,6 +48,8 @@ node_modules/
 .cache/
 *.tmp
 .DS_Store
+.*.part
+assets/.describe/
 `;
 
 export const PROJECT_DIRS = ['brand', 'assets', 'references', 'creatives'] as const;

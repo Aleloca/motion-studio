@@ -3,7 +3,7 @@ import { join, relative } from 'node:path';
 import { EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Pin, type ServerMessage, type VersionEntry } from '@motion-studio/shared';
 import { AGENT_ALLOWED_TOOLS, type AgentRunner } from '../agent/runner.ts';
 import { BrandStore } from '../brand/brand-store.ts';
-import { checkCodebases, codebaseSnapshot, normalizeCodebaseList, normalizeCodebasePath, readOnlyRules } from '../codebases.ts';
+import { assertCodebasesOutside, checkCodebases, codebaseOverlaps, CODEBASE_OVERLAP, codebaseSnapshot, normalizeCodebaseList, readOnlyRules } from '../codebases.ts';
 import { readJsonFile } from '../json-file.ts';
 import { LibraryStore } from '../library/library-store.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
@@ -48,12 +48,14 @@ export class CreativeTurnService {
     return this.locks.run(key, async () => {
       if (this.isActive(key)) throw new WorkspaceError(409, 'Attendi la fine della generazione in corso prima di modificare il brief');
       const store = new CreativeStore(ref.projectDir);
+      const linkedCodebases = patch.linkedCodebases ? normalizeCodebaseList(patch.linkedCodebases) : null;
+      if (linkedCodebases) await assertCodebasesOutside(linkedCodebases, [ref.projectDir, ref.root]);
       const updated = await store.update(ref.creativeSlug, {
         ...(patch.title !== undefined ? { title: patch.title } : {}),
         ...(patch.brief ? { brief: patch.brief } : {}),
-        ...(patch.linkedCodebases ? { linkedCodebases: normalizeCodebaseList(patch.linkedCodebases) } : {}),
+        ...(linkedCodebases ? { linkedCodebases } : {}),
       });
-      await this.deps.git.commitAll(ref.projectDir, `${updated.title}: brief aggiornato`);
+      await this.commitState(ref, `${updated.title}: brief aggiornato`);
       return updated;
     });
   }
@@ -102,7 +104,7 @@ export class CreativeTurnService {
       await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: `Rimossi ${removed} file non salvati in una versione` });
     }
     await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: `Ripartenza dalla versione ${n}: il prossimo messaggio lavora su quella base.` });
-    await this.deps.git.commitAll(ref.projectDir, `${updated.title}: ripartenza da v${n}`);
+    await this.commitState(ref, `${updated.title}: ripartenza da v${n}`);
     this.changed(ref);
     return updated;
   }
@@ -233,7 +235,11 @@ export class CreativeTurnService {
     const project = await readJsonFile(join(ref.projectDir, 'project.json'), projectFileSchema);
     const normalized: LinkedCodebase[] = [];
     for (const c of [...project.linkedCodebases, ...creativeCodebases]) {
-      try { normalized.push(...normalizeCodebaseList([c])); } catch (e) { await note(`Codebase ignorata (${c.path}): ${(e as Error).message}`); }
+      try {
+        const [n] = normalizeCodebaseList([c]);
+        if (n && await codebaseOverlaps(n.path, [ref.projectDir, ref.root])) await note(`Codebase ignorata (${n.path}): ${CODEBASE_OVERLAP}`);
+        else if (n) normalized.push(n);
+      } catch (e) { await note(`Codebase ignorata (${c.path}): ${(e as Error).message}`); }
     }
     const checks = await checkCodebases(normalizeCodebaseList(normalized));
     for (const c of checks.filter((x) => !x.exists)) await note(`Codebase non trovata, ignorata in questo turno: ${c.path}`);

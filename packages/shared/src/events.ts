@@ -24,6 +24,8 @@ export interface JobSummary {
   error?: string;
   /** Agent session to resume for the next turn, known once the agent reported it. */
   sessionId?: string;
+  /** Informational notes the job reported (e.g. a change by the agent that was undone). */
+  notes?: string[];
 }
 
 export type ServerMessage =
@@ -35,7 +37,9 @@ export type ServerMessage =
   /** Brand kit, guidelines, sources or proposals of a project changed. */
   | { type: 'brand'; project: string }
   /** Assets or references of a project changed. */
-  | { type: 'library'; project: string };
+  | { type: 'library'; project: string }
+  /** The project's metadata (name, description, linked codebases) changed. */
+  | { type: 'project'; project: string };
 
 export interface DoctorCheck {
   id: 'node' | 'git' | 'ffmpeg' | 'claude' | 'claude-auth';

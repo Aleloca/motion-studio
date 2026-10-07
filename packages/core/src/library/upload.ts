@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { link, rm } from 'node:fs/promises';
+import { constants, copyFile, link, rm } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 // Side-effect-free import that loads the plugin's type augmentation (`req.files()`), also for packages that typecheck core's sources.
@@ -36,16 +36,33 @@ function candidates(name: string): (i: number) => string {
   return (i) => (i === 1 ? name : `${stem}-${i}${ext}`);
 }
 
-/** Atomically claims a free name by hard-linking the finished temp file to it (EEXIST = taken, try the next). */
-async function claimName(dir: string, tmp: string, name: string): Promise<string> {
+/** The libraries' metadata files: never a name for an uploaded file (any letter case, macOS volumes ignore it). */
+const RESERVED = new Set(['assets.json', 'references.json']);
+/** link() errors meaning "this volume has no hard links": fall back to an exclusive copy. */
+const NO_LINKS = new Set(['EPERM', 'ENOTSUP', 'EXDEV', 'ENOSYS']);
+
+export interface ClaimOps { link?: typeof link; copyFile?: typeof copyFile }
+
+/**
+ * Atomically claims a free name by hard-linking the finished temp file to it (EEXIST = taken, try the next).
+ * Where hard links are unavailable it copies with COPYFILE_EXCL, which is just as exclusive. The caller removes tmp.
+ */
+export async function claimName(dir: string, tmp: string, name: string, ops: ClaimOps = {}): Promise<string> {
+  const doLink = ops.link ?? link;
+  const doCopy = ops.copyFile ?? copyFile;
   const nth = candidates(name);
+  let useCopy = false;
   for (let i = 1; ; i++) {
     const candidate = nth(i);
+    if (RESERVED.has(candidate.toLowerCase())) continue;
     try {
-      await link(tmp, join(dir, candidate));
+      if (useCopy) await doCopy(tmp, join(dir, candidate), constants.COPYFILE_EXCL);
+      else await doLink(tmp, join(dir, candidate));
       return candidate;
     } catch (err) {
-      if ((err as { code?: string }).code !== 'EEXIST') throw err;
+      const code = (err as { code?: string }).code;
+      if (!useCopy && code && NO_LINKS.has(code)) { useCopy = true; i--; continue; }
+      if (code !== 'EEXIST') throw err;
     }
   }
 }

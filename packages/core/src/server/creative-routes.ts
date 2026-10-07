@@ -2,11 +2,13 @@ import { stat } from 'node:fs/promises';
 import type { FastifyInstance } from 'fastify';
 import { briefSchema, linkedCodebaseSchema, pinSchema, type CreativeDetail } from '@motion-studio/shared';
 import { z } from 'zod';
-import { normalizeCodebaseList } from '../codebases.ts';
+import { brandJobKey } from '../brand/brand-analysis.ts';
+import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
 import { creativeJobKey, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
 import { FormatCatalog } from '../formats/format-catalog.ts';
 import type { MediaTools } from '../media/media-tools.ts';
+import { completeGitignore, sweepProject } from '../project-maintenance.ts';
 import { WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import { sendConfinedFile } from './serve-file.ts';
 
@@ -28,12 +30,19 @@ function parse<T>(schema: z.ZodType<T>, body: unknown): T {
   return r.data;
 }
 
-/** Marks as interrupted the creatives left in `working` by a previous run, in every readable project. */
+/**
+ * In every readable project: marks as interrupted the creatives left in `working` by a previous run, sweeps leftovers
+ * of interrupted uploads and brand jobs, and completes the .gitignore.
+ */
 export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: string) => boolean = () => false): Promise<void> {
   for (const p of await ws.listProjects()) {
     if (!p.ok) continue;
-    await new CreativeStore(ws.projectDir(p.slug)).recoverInterrupted((slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug))).catch((err: Error) => {
+    const dir = ws.projectDir(p.slug);
+    await new CreativeStore(dir).recoverInterrupted((slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug))).catch((err: Error) => {
       console.warn(`Motion Studio: recupero delle creatività non riuscito nel progetto ${p.slug}: ${err.message}`);
+    });
+    await Promise.all([sweepProject(dir, !isJobActive(brandJobKey(ws.root, p.slug))), completeGitignore(dir)]).catch((err: Error) => {
+      console.warn(`Motion Studio: pulizia non riuscita nel progetto ${p.slug}: ${err.message}`);
     });
   }
 }
@@ -64,6 +73,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const ws = ctx.requireWorkspace();
     await ws.getProject(req.params.slug);
     const linkedCodebases = body.linkedCodebases ? normalizeCodebaseList(body.linkedCodebases) : null;
+    if (linkedCodebases) await assertCodebasesOutside(linkedCodebases, [ws.projectDir(req.params.slug), ws.root]);
     const store = new CreativeStore(ws.projectDir(req.params.slug));
     const created = await store.create({ title: body.title, brief: body.brief });
     const slug = created.slug;

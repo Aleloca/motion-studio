@@ -5,26 +5,28 @@ import {
   type AssetEntry, type AssetOrigin, type ReferenceEntry,
 } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
-import { KeyedMutex } from '../keyed-mutex.ts';
+import { fileLock } from '../file-locks.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 
 export type LibraryKind = 'assets' | 'references';
 const now = () => new Date().toISOString();
 
-// Shared by every LibraryStore instance (one per request): keys are absolute metadata paths.
-const SHARED_LOCK = new KeyedMutex();
+/** Name of a library's metadata file; it is reserved (also in other letter cases: macOS volumes ignore case). */
+export const metadataFileOf = (kind: LibraryKind) => (kind === 'assets' ? 'assets.json' : 'references.json');
+export const isReservedName = (kind: LibraryKind, file: string) => file.toLowerCase() === metadataFileOf(kind);
 
 export class LibraryStore {
-  private readonly lock = { run: <T>(key: 'assets' | 'references', fn: () => Promise<T>): Promise<T> => SHARED_LOCK.run(join(this.dir(key), key === 'assets' ? 'assets.json' : 'references.json'), fn) };
+  // Shared with every other instance (one per request) and with the brand jobs' guards: keys are the metadata files' absolute paths.
+  private readonly lock = { run: <T>(kind: LibraryKind, fn: () => Promise<T>): Promise<T> => fileLock.run(this.metadataPath(kind), fn) };
   constructor(private readonly projectDir: string, private readonly media: MediaTools) {}
 
   dir(kind: LibraryKind) { return join(this.projectDir, kind); }
+  metadataPath(kind: LibraryKind) { return join(this.dir(kind), metadataFileOf(kind)); }
 
   resolve(kind: LibraryKind, file: string): string {
     if (!relativeFileSchema.safeParse(file).success) throw new WorkspaceError(400, `Percorso non valido: ${file}`);
-    const metaFile = kind === 'assets' ? 'assets.json' : 'references.json';
-    if (file === metaFile) throw new WorkspaceError(400, `File riservato: ${file}`);
+    if (isReservedName(kind, file)) throw new WorkspaceError(400, `File riservato: ${file}`);
     return join(this.dir(kind), ...file.split('/'));
   }
 
@@ -62,14 +64,16 @@ export class LibraryStore {
     const data = { schemaVersion: 1, assets };
     const parsed = assetsFileSchema.safeParse(data);
     if (!parsed.success) throw new WorkspaceError(400, 'Metadati degli asset non validi');
-    await writeJsonFileAtomic(join(this.dir('assets'), 'assets.json'), parsed.data);
+    await writeJsonFileAtomic(this.metadataPath('assets'), parsed.data);
+    fileLock.noteWrite(this.metadataPath('assets'));
   }
 
   private async writeReferences(references: ReferenceEntry[]): Promise<void> {
     const data = { schemaVersion: 1, references };
     const parsed = referencesFileSchema.safeParse(data);
     if (!parsed.success) throw new WorkspaceError(400, 'Metadati dei riferimenti non validi');
-    await writeJsonFileAtomic(join(this.dir('references'), 'references.json'), parsed.data);
+    await writeJsonFileAtomic(this.metadataPath('references'), parsed.data);
+    fileLock.noteWrite(this.metadataPath('references'));
   }
 
   registerAssets(items: Array<{ file: string; origin: AssetOrigin; sourceUrl?: string | null; description?: string; tags?: string[] }>): Promise<AssetEntry[]> {
@@ -184,7 +188,7 @@ export class LibraryStore {
         if (e.isDirectory()) await walk(abs);
         else if (e.isFile()) {
           const rel = relative(root, abs).split(sep).join('/');
-          if (rel !== 'assets.json' && !known.has(rel)) found.push(rel);
+          if (!isReservedName('assets', rel) && !known.has(rel)) found.push(rel);
         }
       }
     };

@@ -241,7 +241,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m) };
   registerBrandRoutes(app, routeCtx);
   registerLibraryRoutes(app, routeCtx);
-  registerProjectRoutes(app, { requireWorkspace, jobKeyOf: projectJobKey });
+  registerProjectRoutes(app, { requireWorkspace, jobKeyOf: projectJobKey, broadcast: (m) => hub.broadcast(m) });
 
   const serveWeb = Boolean(deps.webDir && (await stat(deps.webDir).catch(() => null))?.isDirectory());
   // Always registered: it provides reply.sendFile to the creative file route; it serves the web build only when present.

@@ -24,8 +24,11 @@ export const AGENT_ALLOWED_TOOLS: readonly string[] = [
   'Bash(python3:*)', 'Bash(pip:*)', 'Bash(pip3:*)', 'Bash(mkdir:*)', 'Bash(cp:*)', 'Bash(mv:*)',
 ];
 
-/** Brand analysis also fetches websites and downloads files (spec §6.1). */
-export const BRAND_ALLOWED_TOOLS: readonly string[] = [...AGENT_ALLOWED_TOOLS, 'WebFetch', 'Bash(curl:*)'];
+/** Brand analysis: fetch the sites and download files into assets/ (spec §6.1); no interpreters or package managers. */
+export const BRAND_ANALYSIS_TOOLS: readonly string[] = ['WebFetch', 'Bash(curl:*)', 'Bash(mkdir:*)', 'Bash(ffprobe:*)'];
+
+/** Asset descriptions: read the files and inspect media; nothing else. */
+export const DESCRIBE_TOOLS: readonly string[] = ['Read', 'Bash(ffmpeg:*)', 'Bash(ffprobe:*)'];
 
 export interface AgentRunResult {
   status: 'succeeded' | 'failed' | 'cancelled';
