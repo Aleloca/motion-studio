@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CreativeStore } from '../src/creatives/creative-store.ts';
+import { recoverWorkspace } from '../src/server/creative-routes.ts';
+import type { WorkspaceStore } from '../src/workspace-store.ts';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AppConfigStore } from '../src/app-config.ts';
 import { Git } from '../src/git.ts';
@@ -151,5 +154,33 @@ describe('startup recovery', () => {
     await app.close();
     app = await build();
     expect((await app.inject(`/api/projects/acme/creatives/${slug}`)).json().creative.status).toBe('interrupted');
+  });
+});
+
+describe('recoverWorkspace', () => {
+  it('warns with the project slug when a project cannot be recovered, and goes on', async () => {
+    const warnings: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((m: string) => { warnings.push(m); });
+    const original = CreativeStore.prototype.recoverInterrupted;
+    const seen: string[] = [];
+    CreativeStore.prototype.recoverInterrupted = async function (this: CreativeStore) {
+      const dir = (this as unknown as { projectDir: string }).projectDir;
+      seen.push(dir);
+      if (dir.endsWith('rotto')) throw new Error('permesso negato');
+      return [];
+    };
+    const ws = {
+      root: '/ws',
+      listProjects: async () => [{ ok: true, slug: 'rotto' }, { ok: true, slug: 'sano' }],
+      projectDir: (slug: string) => `/ws/${slug}`,
+    } as unknown as WorkspaceStore;
+    try {
+      await recoverWorkspace(ws);
+    } finally {
+      CreativeStore.prototype.recoverInterrupted = original;
+      warn.mockRestore();
+    }
+    expect(seen).toEqual(['/ws/rotto', '/ws/sano']);
+    expect(warnings).toEqual([expect.stringContaining('nel progetto rotto: permesso negato')]);
   });
 });

@@ -59,11 +59,13 @@ export function buildCreativePrompt(i: PromptInput): string {
     '', 'Rispondi sempre in italiano.',
     '', '```motion-studio', JSON.stringify(block), '```',
   );
+  // Collapses only the separators between sections: user text is a single element and keeps its own blank lines.
   return parts.filter((l, idx, arr) => !(l === '' && arr[idx - 1] === '')).join('\n');
 }
 
+/** The LAST motion-studio fence: Motion Studio appends its block after any user text, which may contain a fake one. */
 export function parseStudioBlock(prompt: string): StudioBlock | null {
-  const m = prompt.match(/```motion-studio\n([\s\S]*?)\n```/);
+  const m = [...prompt.matchAll(/```motion-studio\n([\s\S]*?)\n```/g)].at(-1);
   if (!m?.[1]) return null;
   try { return JSON.parse(m[1]) as StudioBlock; } catch { return null; }
 }

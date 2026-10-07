@@ -16,6 +16,9 @@ describe('creativeFileSchema', () => {
   it('rejects a duration outside 1..600', () => {
     expect(creativeFileSchema.safeParse({ ...creative, brief: { ...creative.brief, durationSec: 0 } }).success).toBe(false);
   });
+  it('requires ISO datetimes', () => {
+    expect(creativeFileSchema.safeParse({ ...creative, createdAt: '7 ottobre' }).success).toBe(false);
+  });
 });
 
 describe('manifestSchema', () => {
@@ -24,6 +27,11 @@ describe('manifestSchema', () => {
     expect(manifestSchema.parse(m)).toEqual(m);
     expect(manifestSchema.safeParse({ ...m, files: [{ ...m.files[0], file: '../x.png' }] }).success).toBe(false);
     expect(manifestSchema.safeParse({ ...m, files: [{ ...m.files[0], file: 'a/b.png' }] }).success).toBe(false);
+  });
+  it('accepts null durationSec and renderCommand', () => {
+    const m = { schemaVersion: 1, files: [{ format: 'b', file: 'b.png', width: 300, height: 250, durationSec: null }], tools: [], renderCommand: null };
+    expect(manifestSchema.safeParse(m).success).toBe(true);
+    expect(manifestSchema.safeParse({ ...m, files: [{ ...m.files[0], durationSec: 0 }] }).success).toBe(false);
   });
 });
 

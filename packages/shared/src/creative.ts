@@ -20,8 +20,8 @@ export const creativeFileSchema = z.object({
   brief: briefSchema,
   status: creativeStatusSchema,
   error: z.string().nullable(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
+  createdAt: z.iso.datetime(),
+  updatedAt: z.iso.datetime(),
   resumeFrom: z.object({ version: z.number().int().min(1), sessionId: z.string().min(1) }).nullable(),
 });
 export type CreativeFile = z.infer<typeof creativeFileSchema>;
@@ -37,7 +37,7 @@ export const versionEntrySchema = z.object({
   commit: z.string().nullable(),
   sessionId: z.string().nullable(),
   status: z.enum(['complete', 'incomplete']),
-  createdAt: z.string().datetime(),
+  createdAt: z.iso.datetime(),
   request: z.string(),
   outputs: z.array(outputFileInfoSchema),
   problems: z.array(z.string()),
@@ -58,10 +58,10 @@ export const manifestSchema = z.object({
     file: z.string().regex(FILE_NAME).refine((f) => f !== '.' && f !== '..', 'nome file non valido'),
     width: z.number().int().positive(),
     height: z.number().int().positive(),
-    durationSec: z.number().positive().optional(),
+    durationSec: z.number().positive().nullish(),
   })),
   tools: z.array(z.string()).default([]),
-  renderCommand: z.string().optional(),
+  renderCommand: z.string().nullish(),
 });
 export type ManifestFile = z.infer<typeof manifestSchema>;
 

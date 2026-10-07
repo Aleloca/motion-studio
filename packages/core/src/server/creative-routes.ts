@@ -31,7 +31,10 @@ function parse<T>(schema: z.ZodType<T>, body: unknown): T {
 /** Marks as interrupted the creatives left in `working` by a previous run, in every readable project. */
 export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: string) => boolean = () => false): Promise<void> {
   for (const p of await ws.listProjects()) {
-    if (p.ok) await new CreativeStore(ws.projectDir(p.slug)).recoverInterrupted((slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug))).catch(() => []);
+    if (!p.ok) continue;
+    await new CreativeStore(ws.projectDir(p.slug)).recoverInterrupted((slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug))).catch((err: Error) => {
+      console.warn(`Motion Studio: recupero delle creatività non riuscito nel progetto ${p.slug}: ${err.message}`);
+    });
   }
 }
 

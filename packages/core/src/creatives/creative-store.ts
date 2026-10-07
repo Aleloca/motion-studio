@@ -1,5 +1,5 @@
 import { appendFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import {
   creativeFileSchema, versionsFileSchema,
   type Brief, type ConversationEntry, type CreativeFile, type CreativeListItem, type VersionEntry,
@@ -10,6 +10,10 @@ import { slugify, WorkspaceError } from '../workspace-store.ts';
 
 export const CREATIVE_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
 
+const pad2 = (n: number) => String(n).padStart(2, '0');
+/** yyyy-mm-dd in the user's local time zone (a creative made at 23:30 belongs to that day). */
+const localDay = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
 const issues = (e: { issues: Array<{ path: PropertyKey[]; message: string }> }) =>
   e.issues.map((i) => `${i.path.map(String).join('.')}: ${i.message}`).join('; ');
 
@@ -17,7 +21,7 @@ export class CreativeStore {
   private readonly root: string;
   private readonly lock = new KeyedMutex();
 
-  constructor(projectDir: string) { this.root = join(projectDir, 'creatives'); }
+  constructor(private readonly projectDir: string) { this.root = join(projectDir, 'creatives'); }
 
   dir(slug: string): string {
     if (!CREATIVE_SLUG_RE.test(slug)) throw new WorkspaceError(400, `Identificativo creatività non valido: ${slug}`);
@@ -36,7 +40,7 @@ export class CreativeStore {
     const creative = parsed.data;
     await mkdir(this.root, { recursive: true });
     const slug = await this.lock.run('create', async () => {
-      const base = `${at.slice(0, 10)}-${slugify(creative.title)}`.slice(0, 70).replace(/-+$/, '');
+      const base = `${localDay(now)}-${slugify(creative.title)}`.slice(0, 70).replace(/-+$/, '');
       for (let n = 1; ; n++) {
         const candidate = n === 1 ? base : `${base}-${n}`;
         try {
@@ -139,12 +143,17 @@ export class CreativeStore {
     const recovered: string[] = [];
     for (const item of await this.list()) {
       if (!item.ok || item.status !== 'working' || isActive(item.slug)) continue;
-      await this.update(item.slug, { status: 'interrupted', error: 'Il lavoro è stato interrotto (app chiusa durante la generazione).' });
-      await this.appendConversation(item.slug, {
-        type: 'system', at: new Date().toISOString(), level: 'error',
-        text: 'Lavoro interrotto: Motion Studio è stato chiuso durante la generazione. Invia un messaggio per riprendere.',
-      });
-      recovered.push(item.slug);
+      try {
+        await this.update(item.slug, { status: 'interrupted', error: 'Il lavoro è stato interrotto (app chiusa durante la generazione).' });
+        await this.appendConversation(item.slug, {
+          type: 'system', at: new Date().toISOString(), level: 'error',
+          text: 'Lavoro interrotto: Motion Studio è stato chiuso durante la generazione. Invia un messaggio per riprendere.',
+        });
+        recovered.push(item.slug);
+      } catch (err) {
+        // One broken creative must not stop the others from being recovered.
+        console.warn(`Motion Studio: recupero non riuscito per la creatività ${basename(this.projectDir)}/${item.slug}: ${(err as Error).message}`);
+      }
     }
     return recovered;
   }

@@ -17,6 +17,8 @@ export async function validateOutputs(opts: {
   } catch (err) {
     if (err instanceof JsonFileError && err.reason === 'missing') return empty([`manifest.json mancante in ${basename(dir)}`]);
     if (err instanceof JsonFileError) return empty([`manifest.json non valido: ${err.message.replace(/^.*?: /, '')}`]);
+    // e.g. a directory (EISDIR) or no read permission (EACCES): the agent can fix it like any other problem.
+    if ((err as NodeJS.ErrnoException).code) return empty([`manifest.json non valido: ${(err as Error).message}`]);
     throw err;
   }
 
@@ -44,7 +46,8 @@ export async function validateOutputs(opts: {
     let verified = probed !== null;
     let width = probed?.width ?? entry.width;
     let height = probed?.height ?? entry.height;
-    let durationSec = probed ? probed.durationSec : entry.durationSec ?? null;
+    // Images have no duration, whatever the manifest says.
+    let durationSec = preset.kind === 'image' ? null : probed ? probed.durationSec : entry.durationSec ?? null;
 
     // If media tools were used but failed to read the file, report it and skip validation
     if (media.available && probed === null) {
@@ -71,7 +74,8 @@ export async function validateOutputs(opts: {
 
     let preview: string | null = null;
     if (preset.kind === 'video' && media.available && probed !== null) {
-      const rel = `.previews/${basename(entry.file, extname(entry.file))}.jpg`;
+      // Full file name: sq.mp4 and sq.webm must not share a poster.
+      const rel = `.previews/${entry.file}.jpg`;
       const previewDir = join(dir, '.previews');
       const targetPath = join(dir, rel);
 

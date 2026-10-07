@@ -34,9 +34,24 @@ describe('validateOutputs', () => {
     expect(r.tools).toEqual(['remotion']);
     expect(r.renderCommand).toBe('npm run render');
     expect(r.outputs).toEqual([
-      { format: 'sq', file: 'sq.mp4', width: 1080, height: 1080, durationSec: 15.2, verified: true, preview: '.previews/sq.jpg' },
+      { format: 'sq', file: 'sq.mp4', width: 1080, height: 1080, durationSec: 15.2, verified: true, preview: '.previews/sq.mp4.jpg' },
       { format: 'banner', file: 'banner.png', width: 300, height: 250, durationSec: null, verified: true, preview: null },
     ]);
+  });
+  it('accepts null durationSec/renderCommand and ignores durationSec for images', async () => {
+    await manifest([{ ...sq, durationSec: null }, { ...banner, durationSec: 99 }], { renderCommand: null });
+    await writeFile(join(dir, 'sq.mp4'), 'v');
+    await writeFile(join(dir, 'banner.png'), 'i');
+    const r = await validateOutputs({ dir, requested: ['sq', 'banner'], presets, durationSec: 15, media: NoMediaTools });
+    expect(r.problems).toEqual([]);
+    expect(r.renderCommand).toBeNull();
+    expect(r.outputs.map((o) => o.durationSec)).toEqual([null, null]);
+  });
+  it('reports a manifest.json that is a directory instead of throwing', async () => {
+    await mkdir(join(dir, 'manifest.json'));
+    const r = await validateOutputs({ dir, requested: ['sq'], presets, durationSec: null, media: NoMediaTools });
+    expect(r.problems).toHaveLength(1);
+    expect(r.problems[0]).toMatch(/^manifest\.json non valido: .*EISDIR/);
   });
   it('reports a missing manifest', async () => {
     const r = await validateOutputs({ dir, requested: ['sq'], presets, durationSec: null, media: NoMediaTools });

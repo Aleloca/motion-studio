@@ -55,6 +55,7 @@ describe('projects', () => {
     }
     expect(await readFile(join(dir, 'CLAUDE.md'), 'utf8')).toContain('@.studio/context.md');
     expect(await readFile(join(dir, '.gitignore'), 'utf8')).toContain('outputs/');
+    expect(await readFile(join(dir, '.gitignore'), 'utf8')).toContain('creatives/*/work/out/');
     const log = await execCommand('git', ['log', '--format=%s'], { cwd: dir });
     expect(log.stdout.trim()).toBe('Crea progetto Acme');
   });

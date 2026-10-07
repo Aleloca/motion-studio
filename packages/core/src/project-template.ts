@@ -24,6 +24,8 @@ Sei libero di scegliere strumenti e tecniche (Remotion, Motion Canvas, HTML + Pl
      "tools": ["remotion"],
      "renderCommand": "comando da eseguire in work/ per rigenerare gli output" }
    \`\`\`
+   - \`file\` è il solo nome del file, senza sottocartelle (il file sta direttamente in \`outputs/vN/\`).
+   - \`durationSec\` (secondi, numero positivo) va indicato solo per i video; per le immagini omettilo.
 Ogni formato è una **ricomposizione** dedicata (layout adattato, testi ridimensionati, safe zone rispettate), mai un ritaglio di un master.
 Motion Studio controlla gli output dopo il turno: se mancano formati o le risoluzioni non tornano, riceverai l'elenco dei problemi da correggere.
 Suggerimenti (non vincoli): per video brevi Remotion funziona bene; per immagini statiche HTML/CSS renderizzato con Playwright.
@@ -33,6 +35,7 @@ export const CLAUDE_MD = `@.studio/context.md
 `;
 
 export const GITIGNORE = `outputs/
+creatives/*/work/out/
 node_modules/
 .venv/
 .cache/

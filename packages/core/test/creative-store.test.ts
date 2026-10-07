@@ -1,12 +1,12 @@
 import { appendFile, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { Brief, VersionEntry } from '@motion-studio/shared';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 
 const brief: Brief = { goal: 'Lancio app', message: 'Prenota in 3 tap', formats: ['instagram-post-1x1'], durationSec: 15, assets: [], notes: '' };
-const day = new Date('2026-10-07T10:00:00.000Z');
+const day = new Date(2026, 9, 7, 12, 0); // local noon: the slug uses the local date
 let projectDir: string;
 let store: CreativeStore;
 beforeEach(async () => {
@@ -30,6 +30,17 @@ describe('create / get / list', () => {
     }
     expect(await store.get(slug)).toEqual(creative);
   });
+  it('dates the slug with the local day, not the UTC one', async () => {
+    const tz = process.env.TZ;
+    process.env.TZ = 'America/Los_Angeles';
+    try {
+      // 03:00 UTC on Oct 8 is still Oct 7 in Los Angeles.
+      const { slug } = await store.create({ title: 'Sera', brief }, new Date('2026-10-08T03:00:00.000Z'));
+      expect(slug).toBe('2026-10-07-sera');
+    } finally {
+      if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz;
+    }
+  });
   it('makes slugs unique on the same day', async () => {
     const a = await store.create({ title: 'Teaser', brief }, day);
     const b = await store.create({ title: 'Teaser', brief }, day);
@@ -40,7 +51,7 @@ describe('create / get / list', () => {
     expect(err.status).toBe(400);
   });
   it('lists newest first with cover and version count, and reports broken ones', async () => {
-    const a = await store.create({ title: 'Prima', brief }, new Date('2026-10-01T10:00:00.000Z'));
+    const a = await store.create({ title: 'Prima', brief }, new Date(2026, 9, 1, 12, 0));
     const b = await store.create({ title: 'Seconda', brief }, day);
     await store.appendVersion(a.slug, version(1));
     await store.update(a.slug, { status: 'ready' });
@@ -95,4 +106,26 @@ describe('recoverInterrupted', () => {
     expect(conv.at(-1)).toMatchObject({ type: 'system', level: 'error' });
     expect(await readFile(join(store.dir(slug), 'creative.json'), 'utf8')).toContain('interrupted');
   });
+  it('warns with project and creative slug when one creative cannot be recovered, and goes on', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const a = await store.create({ title: 'A', brief }, day);
+    const b = await store.create({ title: 'B', brief }, day);
+    await store.update(a.slug, { status: 'working' });
+    await store.update(b.slug, { status: 'working' });
+    const original = CreativeStore.prototype.appendConversation;
+    CreativeStore.prototype.appendConversation = async function (this: CreativeStore, slug, entry) {
+      if (slug === a.slug) throw new Error('disco pieno');
+      return original.call(this, slug, entry);
+    };
+    try {
+      expect(await store.recoverInterrupted()).toEqual([b.slug]);
+    } finally {
+      CreativeStore.prototype.appendConversation = original;
+    }
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toContain(`${basename(projectDir)}/${a.slug}`);
+    expect(warn.mock.calls[0]![0]).toContain('disco pieno');
+  });
 });
+
+afterEach(() => { vi.restoreAllMocks(); });
