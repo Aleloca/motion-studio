@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// Test double for the `claude` CLI. Scenario via FAKE_CLAUDE_SCENARIO: ok | tool | crash | hang | hang_ignore_term | garbage | error_result | leak_fd
-import { spawn } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+// Test double for the `claude` CLI. Scenario via FAKE_CLAUDE_SCENARIO: ok | tool | crash | hang | hang_ignore_term | garbage | error_result | leak_fd | render | render_missing_once | render_never
+import { spawn, spawnSync } from 'node:child_process';
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 
 const args = process.argv.slice(2);
@@ -15,7 +16,18 @@ if (args[0] === 'auth' && args[1] === 'status') {
 
 const scenario = process.env.FAKE_CLAUDE_SCENARIO ?? 'ok';
 const resumeAt = args.indexOf('--resume');
-const sessionId = resumeAt >= 0 ? args[resumeAt + 1] : 'fake-session-1';
+const resumed = resumeAt >= 0 ? args[resumeAt + 1] : null;
+const sessionId = resumed ? (args.includes('--fork-session') ? `${resumed}-fork` : resumed) : 'fake-session-1';
+const hasFfmpeg = () => spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status === 0;
+// Real (tiny) media when ffmpeg is installed, so tests that use real MediaTools see valid files.
+const writeMedia = (file, f, durationSec) => {
+  if (!ffmpegOk) { writeFileSync(file, 'fake-media'); return; }
+  const input = ['-f', 'lavfi', '-i', `color=c=blue:s=${f.width}x${f.height}${f.kind === 'video' ? `:d=${durationSec}:r=5` : ''}`];
+  const output = f.kind === 'video' ? ['-pix_fmt', 'yuv420p', file] : ['-frames:v', '1', file];
+  const r = spawnSync('ffmpeg', ['-y', '-loglevel', 'error', ...input, ...output], { stdio: 'ignore' });
+  if (r.status !== 0) writeFileSync(file, 'fake-media');
+};
+const ffmpegOk = hasFfmpeg();
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -23,6 +35,24 @@ const rl = createInterface({ input: process.stdin });
 rl.once('line', async (line) => {
   const msg = JSON.parse(line);
   const prompt = typeof msg.message?.content === 'string' ? msg.message.content : '';
+  if (process.env.FAKE_CLAUDE_PROMPT_FILE) appendFileSync(process.env.FAKE_CLAUDE_PROMPT_FILE, `${JSON.stringify({ prompt, args })}\n`);
+  const block = (() => { const m = prompt.match(/```motion-studio\n([\s\S]*?)\n```/); return m ? JSON.parse(m[1]) : null; })();
+  const isFix = prompt.includes('non rispettano il contratto');
+  const render = (skipLast) => {
+    mkdirSync(block.outputDir, { recursive: true });
+    mkdirSync(block.workDir, { recursive: true });
+    writeFileSync(join(block.workDir, 'scene.txt'), `${prompt.length}:${Date.now()}`);
+    const formats = skipLast ? block.formats.slice(0, -1) : block.formats;
+    const files = formats.map((f) => {
+      const file = `${f.id}.${f.extensions[0]}`;
+      writeMedia(join(block.outputDir, file), f, block.durationSec ?? 10);
+      return { format: f.id, file, width: f.width, height: f.height, ...(f.kind === 'video' ? { durationSec: block.durationSec ?? 10 } : {}) };
+    });
+    writeFileSync(join(block.outputDir, 'manifest.json'), JSON.stringify({ schemaVersion: 1, files, tools: ['fake'], renderCommand: 'node render.js' }));
+  };
+  if (block && scenario === 'render') render(false);
+  if (block && scenario === 'render_missing_once') render(!isFix);
+  if (block && scenario === 'render_never') render(true);
   if (scenario === 'crash') { process.stderr.write('boom: something failed\n'); process.exit(2); }
   out({ type: 'system', subtype: 'init', session_id: sessionId, model: 'fake-model' });
   if (scenario === 'garbage') process.stdout.write('this is not json\n');
