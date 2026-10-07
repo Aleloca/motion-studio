@@ -29,6 +29,13 @@ Sei libero di scegliere strumenti e tecniche (Remotion, Motion Canvas, HTML + Pl
 Ogni formato è una **ricomposizione** dedicata (layout adattato, testi ridimensionati, safe zone rispettate), mai un ritaglio di un master.
 Motion Studio controlla gli output dopo il turno: se mancano formati o le risoluzioni non tornano, riceverai l'elenco dei problemi da correggere.
 Suggerimenti (non vincoli): per video brevi Remotion funziona bene; per immagini statiche HTML/CSS renderizzato con Playwright.
+
+## Brand e asset
+- \`brand/brand-kit.json\`: colori, font, loghi, tono, cose da fare e da evitare (ogni voce con la sua fonte).
+- \`brand/guidelines.md\`: linee guida discorsive.
+- \`assets/assets.json\`: elenco degli asset con descrizione, tag e origine; i file sono in \`assets/\`.
+- \`references/references.json\`: immagini di riferimento con note; i file sono in \`references/\`.
+Le regole del brand hanno la precedenza sulle scelte generiche. Usa gli asset del progetto prima di generarne di nuovi.
 `;
 
 export const CLAUDE_MD = `@.studio/context.md

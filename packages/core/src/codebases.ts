@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import type { LinkedCodebase } from '@motion-studio/shared';
 import { execCommand, type CommandExec } from './exec.ts';
@@ -24,7 +25,16 @@ export async function checkCodebases(list: LinkedCodebase[]): Promise<CodebaseCh
 const escapeGlob = (p: string) => p.replace(/[\\[\]*?]/g, '\\$&');
 export const readOnlyRules = (paths: string[]) => paths.map((p) => `Edit(/${escapeGlob(p)}/**)`);
 
+/**
+ * Fingerprint of a git working tree: status (untracked and ignored files included) plus a hash of the
+ * content diff against HEAD, so editing an already-modified file changes it. Null when it cannot be computed.
+ */
 export async function codebaseSnapshot(path: string, exec: CommandExec = execCommand): Promise<string | null> {
-  const r = await exec('git', ['-C', path, 'status', '--porcelain=v1', '-uall'], { timeoutMs: 30_000 });
-  return r.code === 0 ? r.stdout.trim() : null;
+  const run = (...args: string[]) => exec('git', ['-C', path, ...args], { timeoutMs: 30_000 });
+  const status = await run('status', '--porcelain=v1', '-uall', '--ignored');
+  if (status.code !== 0) return null;
+  let diff = await run('diff', 'HEAD', '--binary');
+  if (diff.code !== 0) diff = await run('diff', '--binary'); // repository without commits
+  if (diff.code !== 0) return null;
+  return `${status.stdout.trim()}\n#diff ${createHash('sha256').update(diff.stdout).digest('hex')}`;
 }

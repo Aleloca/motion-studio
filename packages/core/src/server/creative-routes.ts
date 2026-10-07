@@ -1,10 +1,10 @@
 import { lstat, realpath, stat } from 'node:fs/promises';
 import { isAbsolute, join, normalize, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { briefSchema, pinSchema, type CreativeDetail } from '@motion-studio/shared';
+import { briefSchema, linkedCodebaseSchema, pinSchema, type CreativeDetail } from '@motion-studio/shared';
 import { z } from 'zod';
 import { CreativeStore } from '../creatives/creative-store.ts';
-import { creativeJobKey, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
+import { creativeJobKey, normalizeCodebases, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
 import { FormatCatalog } from '../formats/format-catalog.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
@@ -18,8 +18,8 @@ export interface CreativeRoutesContext {
 }
 
 const turnBody = z.object({ text: z.string().max(10_000).optional(), pins: z.array(pinSchema).max(50).optional() });
-const createBody = z.object({ title: z.string(), brief: briefSchema, generate: z.boolean().optional() });
-const editBody = z.object({ title: z.string().optional(), brief: briefSchema.optional() });
+const createBody = z.object({ title: z.string(), brief: briefSchema, generate: z.boolean().optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
+const editBody = z.object({ title: z.string().optional(), brief: briefSchema.optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
 const SERVED_PREFIXES = [`outputs${sep}`, `work${sep}.feedback${sep}`];
 
 function parse<T>(schema: z.ZodType<T>, body: unknown): T {
@@ -63,8 +63,11 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const body = parse(createBody, req.body);
     const ws = ctx.requireWorkspace();
     await ws.getProject(req.params.slug);
+    const linkedCodebases = body.linkedCodebases ? normalizeCodebases(body.linkedCodebases) : null;
     const store = new CreativeStore(ws.projectDir(req.params.slug));
-    const { slug, creative } = await store.create({ title: body.title, brief: body.brief });
+    const created = await store.create({ title: body.title, brief: body.brief });
+    const slug = created.slug;
+    const creative = linkedCodebases ? await store.update(slug, { linkedCodebases }) : created.creative;
     const ref = { root: ws.root, projectSlug: req.params.slug, projectDir: ws.projectDir(req.params.slug), creativeSlug: slug };
     const job = body.generate ? await ctx.turns.start(ref) : null;
     return reply.status(201).send({ slug, creative: job ? await store.get(slug) : creative, job });

@@ -75,3 +75,42 @@ describe('CONTEXT_MD', () => {
     expect(CONTEXT_MD).toContain('`file` è il solo nome del file, senza sottocartelle');
   });
 });
+
+describe('brand and codebase context', () => {
+  const manual = { kind: 'manual' as const, ref: null };
+  const context = {
+    kit: { schemaVersion: 1 as const, colors: [{ id: 'blu', name: 'Blu Acme', hex: '#1E3A5F', role: 'primary' as const, source: manual }],
+      fonts: [{ id: 'titoli', family: 'Manrope', role: 'heading' as const, weights: [700, 800], file: 'assets/fonts/manrope.woff2', source: manual }],
+      logos: [{ id: 'logo', file: 'assets/logo.svg', variant: 'primary' as const, background: 'light' as const, source: manual }],
+      tone: { id: 'tone', text: 'Diretto', source: manual }, dos: [{ id: 'd1', text: 'Usa foto reali', source: manual }],
+      donts: [{ id: 'n1', text: 'Niente gradienti', source: manual }], photoStyle: null },
+    hasGuidelines: true, assets: 12, references: 3,
+    codebases: [{ path: '/Users/me/app ios', note: 'schermate in /Screens' }], missingCodebases: ['/Users/me/old'],
+  };
+  it('adds brand and read-only codebase sections to first and iteration prompts', () => {
+    for (const kind of ['first', 'iteration'] as const) {
+      const p = buildCreativePrompt({ ...base, kind, userText: 'x', context });
+      expect(p).toContain('- Colore Blu Acme (primary): #1E3A5F');
+      expect(p).toContain('- Font heading: Manrope (pesi 700, 800) — file assets/fonts/manrope.woff2');
+      expect(p).toContain('- Logo primary (sfondo light): assets/logo.svg');
+      expect(p).toContain('- Evitare: Niente gradienti');
+      expect(p).toContain('- Linee guida complete: brand/guidelines.md');
+      expect(p).toContain('- Asset disponibili: 12 (elenco in assets/assets.json)');
+      expect(p).toContain('## Codebase di riferimento (sola lettura)');
+      expect(p).toContain('- /Users/me/app ios: schermate in /Screens');
+      expect(p).toContain('- /Users/me/old: non disponibile in questo turno');
+      expect(p).toContain('Non modificare mai file in queste cartelle: leggile soltanto.\nLe regole bloccano gli strumenti di modifica; gli interpreti potrebbero scrivere: Motion Studio rileva e segnala le modifiche nei repo git.');
+    }
+  });
+  it('omits empty sections and never adds them to fix prompts', () => {
+    const empty = { ...context, kit: { ...context.kit, colors: [], fonts: [], logos: [], tone: null, dos: [], donts: [] }, hasGuidelines: false, assets: 0, references: 0, codebases: [], missingCodebases: [] };
+    expect(buildCreativePrompt({ ...base, kind: 'first', context: empty })).not.toContain('## Brand');
+    expect(buildCreativePrompt({ ...base, kind: 'fix', problems: ['x'], context })).not.toContain('## Brand');
+  });
+});
+
+describe('CONTEXT_MD brand section', () => {
+  it('explains brand and asset files', () => {
+    for (const f of ['## Brand e asset', 'brand/brand-kit.json', 'brand/guidelines.md', 'assets/assets.json', 'references/references.json', 'precedenza']) expect(CONTEXT_MD).toContain(f);
+  });
+});

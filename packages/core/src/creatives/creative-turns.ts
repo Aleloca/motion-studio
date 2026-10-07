@@ -1,7 +1,11 @@
 import { lstat, rm, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
-import type { Brief, CreativeFile, CreativeStatus, FormatPreset, JobSummary, Pin, ServerMessage, VersionEntry } from '@motion-studio/shared';
+import { EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Pin, type ServerMessage, type VersionEntry } from '@motion-studio/shared';
 import { AGENT_ALLOWED_TOOLS, type AgentRunner } from '../agent/runner.ts';
+import { BrandStore } from '../brand/brand-store.ts';
+import { checkCodebases, codebaseSnapshot, normalizeCodebasePath, readOnlyRules } from '../codebases.ts';
+import { readJsonFile } from '../json-file.ts';
+import { LibraryStore } from '../library/library-store.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 import type { Git } from '../git.ts';
 import { JobFailedError, type JobQueue } from '../jobs/job-queue.ts';
@@ -10,7 +14,7 @@ import { CONTEXT_MD } from '../project-template.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import { CreativeStore } from './creative-store.ts';
 import { validateOutputs } from './output-contract.ts';
-import { buildCreativePrompt, type PromptKind } from './prompt.ts';
+import { buildCreativePrompt, type CreativeContext, type PromptKind } from './prompt.ts';
 
 export interface CreativeTurnDeps {
   queue: JobQueue; runner: AgentRunner; git: Git; media: MediaTools;
@@ -27,6 +31,19 @@ const PINS_ONLY = 'Applica i commenti puntuali.';
 const UNKNOWN_PRESET = 'Preset sconosciuto:';
 const now = () => new Date().toISOString();
 
+/** Normalizes every path and drops duplicates (the first note wins). */
+export function normalizeCodebases(list: LinkedCodebase[]): LinkedCodebase[] {
+  const seen = new Set<string>();
+  const out: LinkedCodebase[] = [];
+  for (const c of list) {
+    const path = normalizeCodebasePath(c.path);
+    if (seen.has(path)) continue;
+    seen.add(path);
+    out.push({ ...c, path });
+  }
+  return out;
+}
+
 class AgentFailure extends Error {}
 
 export class CreativeTurnService {
@@ -39,7 +56,7 @@ export class CreativeTurnService {
   }
 
   /** Edits title and/or brief; refused while a generation is queued or running for the creative. */
-  async updateBrief(ref: CreativeRef, patch: { title?: string; brief?: Brief }): Promise<CreativeFile> {
+  async updateBrief(ref: CreativeRef, patch: { title?: string; brief?: Brief; linkedCodebases?: LinkedCodebase[] }): Promise<CreativeFile> {
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     return this.locks.run(key, async () => {
       if (this.isActive(key)) throw new WorkspaceError(409, 'Attendi la fine della generazione in corso prima di modificare il brief');
@@ -47,6 +64,7 @@ export class CreativeTurnService {
       const updated = await store.update(ref.creativeSlug, {
         ...(patch.title !== undefined ? { title: patch.title } : {}),
         ...(patch.brief ? { brief: patch.brief } : {}),
+        ...(patch.linkedCodebases ? { linkedCodebases: normalizeCodebases(patch.linkedCodebases) } : {}),
       });
       await this.deps.git.commitAll(ref.projectDir, `${updated.title}: brief aggiornato`);
       return updated;
@@ -120,6 +138,9 @@ export class CreativeTurnService {
       const attachments = await this.extractPinFrames(ref, store, message?.pins ?? [], pinSource, n);
       const request = message?.text || (message?.pins.length ? PINS_ONLY : versions.length === 0 ? undefined : REGENERATE);
 
+      const { context, existing } = await this.buildContext(ref, store, creative.linkedCodebases);
+      const uncheckable = new Set<string>();
+
       let resumeSessionId = creative.resumeFrom?.sessionId ?? latest?.sessionId ?? undefined;
       let forkSession = Boolean(creative.resumeFrom);
       let kind: PromptKind = versions.length === 0 ? 'first' : 'iteration';
@@ -133,9 +154,15 @@ export class CreativeTurnService {
           userText: kind === 'fix' ? undefined : request,
           pins: kind === 'iteration' ? message?.pins : undefined,
           attachments: kind === 'iteration' ? attachments : undefined,
-          problems,
+          problems, context,
         });
-        const run = this.deps.runner.start({ cwd: ref.projectDir, prompt, resumeSessionId, forkSession, model, allowedTools: [...AGENT_ALLOWED_TOOLS] }, (event) => {
+        const snapshotsBefore = await Promise.all(existing.map((p) => codebaseSnapshot(p)));
+        for (const [k, p] of existing.entries()) {
+          if (snapshotsBefore[k] !== null || uncheckable.has(p)) continue;
+          uncheckable.add(p);
+          await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: `Codebase ${p} non controllabile (non è un repository git): eventuali modifiche non verrebbero rilevate` });
+        }
+        const run = this.deps.runner.start({ cwd: ref.projectDir, prompt, resumeSessionId, forkSession, model, allowedTools: [...AGENT_ALLOWED_TOOLS], addDirs: existing, disallowedTools: readOnlyRules(existing) }, (event) => {
           this.deps.broadcast({ type: 'agent', jobId, event });
           // Chained so writes stay ordered and a failure surfaces when the chain is awaited after the turn.
           lastWrite = lastWrite.then(() => store.appendConversation(slug, { type: 'agent', at: now(), jobId, event }));
@@ -148,6 +175,12 @@ export class CreativeTurnService {
         if (signal.aborted) onAbort(); // cancelled before the listener existed (e.g. while preparing the turn)
         const outcome = await run.done.finally(() => signal.removeEventListener('abort', onAbort));
         await lastWrite;
+        const snapshotsAfter = await Promise.all(existing.map((p) => codebaseSnapshot(p)));
+        for (const [k, p] of existing.entries()) {
+          if (snapshotsBefore[k] !== null && snapshotsAfter[k] !== snapshotsBefore[k]) {
+            await store.appendConversation(slug, { type: 'system', at: now(), level: 'error', text: `Attenzione: la codebase ${p} risulta modificata durante il turno. Controlla le modifiche.` });
+          }
+        }
         if (outcome.status === 'cancelled') return await this.cancelled(ref, store, previous, versions.length > 0);
         if (outcome.status === 'failed') throw new AgentFailure(outcome.error ?? 'Turno non riuscito');
         resumeSessionId = outcome.sessionId ?? resumeSessionId;
@@ -188,6 +221,26 @@ export class CreativeTurnService {
       // After a late abort the queue would read a plain rejection as a cancel: this failure is real.
       throw finalizing ? new JobFailedError(text) : err;
     }
+  }
+
+  private async buildContext(ref: CreativeRef, store: CreativeStore, creativeCodebases: LinkedCodebase[]): Promise<{ context: CreativeContext; existing: string[] }> {
+    const note = (text: string) => store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text });
+    const brand = new BrandStore(ref.projectDir);
+    const library = new LibraryStore(ref.projectDir, this.deps.media);
+    let kit = EMPTY_BRAND_KIT;
+    try { kit = await brand.readKit(); } catch (e) { await note(`Brand kit non leggibile: ${(e as Error).message}`); }
+    const hasGuidelines = (await brand.readGuidelines().catch(() => '')).trim() !== '';
+    let assets = 0;
+    try { assets = (await library.listAssets()).length; } catch (e) { await note(`Elenco asset non leggibile: ${(e as Error).message}`); }
+    const references = (await library.listReferences().catch(() => [])).length;
+    const project = await readJsonFile(join(ref.projectDir, 'project.json'), projectFileSchema);
+    const checks = await checkCodebases([...project.linkedCodebases, ...creativeCodebases]);
+    for (const c of checks.filter((x) => !x.exists)) await note(`Codebase non trovata, ignorata in questo turno: ${c.path}`);
+    const existing = checks.filter((c) => c.exists);
+    return {
+      context: { kit, hasGuidelines, assets, references, codebases: existing.map(({ path, note: n }) => ({ path, ...(n ? { note: n } : {}) })), missingCodebases: checks.filter((c) => !c.exists).map((c) => c.path) },
+      existing: existing.map((c) => c.path),
+    };
   }
 
   private async cancelled(ref: CreativeRef, store: CreativeStore, previous: CreativeStatus, hasVersions: boolean): Promise<'cancelled'> {

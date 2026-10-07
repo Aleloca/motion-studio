@@ -184,3 +184,12 @@ describe('recoverWorkspace', { timeout: 20_000 }, () => {
     expect(warnings).toEqual([expect.stringContaining('nel progetto rotto: permesso negato')]);
   });
 });
+
+describe('creative linked codebases', { timeout: 20_000 }, () => {
+  it('accepts and normalizes linkedCodebases on create and edit', async () => {
+    const res = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'C', brief, linkedCodebases: [{ path: '/tmp/app/' }] } });
+    expect(res.json().creative.linkedCodebases).toEqual([{ path: '/tmp/app' }]);
+    const bad = await app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${res.json().slug}`, payload: { linkedCodebases: [{ path: 'rel' }] } });
+    expect(bad.statusCode).toBe(400);
+  });
+});

@@ -6,6 +6,7 @@ import { DEFAULT_FORMATS, type Brief, type ServerMessage } from '@motion-studio/
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AGENT_ALLOWED_TOOLS } from '../src/agent/runner.ts';
+import { BrandStore } from '../src/brand/brand-store.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { CreativeTurnService, type CreativeRef } from '../src/creatives/creative-turns.ts';
 import { execCommand } from '../src/exec.ts';
@@ -420,5 +421,64 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     await writeFile(join(ref.projectDir, 'creatives', ref.creativeSlug, 'creative.json'), '{broken');
     queue.cancel(job.id);
     expect(await finalState(job.id)).toBe('cancelled');
+  });
+});
+
+describe('brand and codebases in creative turns', { timeout: 20_000 }, () => {
+  const sys = async () => (await store.readConversation(ref.creativeSlug)).flatMap((e) => (e.type === 'system' ? [e] : []));
+  it('passes existing codebases read-only, warns about missing ones and adds the brand to the prompt', async () => {
+    const cbBase = await mkdtemp(join(tmpdir(), 'ms-cb è '));
+    const appDir = join(cbBase, 'app ios');
+    await mkdir(appDir);
+    const ws = await WorkspaceStore.open(ref.root, new Git());
+    await ws.updateProject(ref.projectSlug, { linkedCodebases: [{ path: appDir, note: 'iOS' }, { path: join(cbBase, 'missing') }] });
+    await new BrandStore(ref.projectDir).writeKit({ schemaVersion: 1, colors: [{ id: 'blu', name: 'Blu', hex: '#1E3A5F', role: 'primary', source: { kind: 'manual', ref: null } }], fonts: [], logos: [], tone: null, dos: [], donts: [], photoStyle: null });
+    await finalState((await service.start(ref)).id);
+    const { prompt, args } = (await prompts())[0]!;
+    expect(args.slice(args.indexOf('--add-dir'), args.indexOf('--add-dir') + 2)).toEqual(['--add-dir', appDir]);
+    expect(args).toContain(`Edit(/${appDir}/**)`);
+    expect(prompt).toContain('- Colore Blu (primary): #1E3A5F');
+    expect(prompt).toContain(`- ${appDir}: iOS`);
+    const entries = await sys();
+    expect(entries.some((e) => e.text === `Codebase non trovata, ignorata in questo turno: ${join(cbBase, 'missing')}`)).toBe(true);
+    const unchecked = entries.filter((e) => e.text.includes('non controllabile'));
+    expect(unchecked).toHaveLength(1);
+    expect(unchecked[0]).toMatchObject({ level: 'info', text: `Codebase ${appDir} non controllabile (non è un repository git): eventuali modifiche non verrebbero rilevate` });
+  });
+  it('warns when a linked git codebase changed during the turn', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'ms-cb-git-'));
+    await execCommand('git', ['init', '-q'], { cwd: repo });
+    const ws = await WorkspaceStore.open(ref.root, new Git());
+    await ws.updateProject(ref.projectSlug, { linkedCodebases: [{ path: repo }] });
+    process.env.FAKE_CLAUDE_SCENARIO = 'render_touch';
+    process.env.FAKE_CLAUDE_TOUCH = join(repo, 'touched.txt');
+    await finalState((await service.start(ref)).id);
+    delete process.env.FAKE_CLAUDE_TOUCH;
+    const entries = await sys();
+    expect(entries.some((e) => e.level === 'error' && e.text.includes(`la codebase ${repo} risulta modificata`))).toBe(true);
+    expect(entries.some((e) => e.text.includes('non controllabile'))).toBe(false);
+  });
+  it('warns when an already modified tracked file is modified again', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'ms-cb-git-'));
+    const git = (...a: string[]) => execCommand('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: repo });
+    await git('init', '-q');
+    await writeFile(join(repo, 'tracked.txt'), 'v1');
+    await git('add', '-A');
+    await git('commit', '-q', '-m', 'init');
+    await writeFile(join(repo, 'tracked.txt'), 'dirty');
+    const ws = await WorkspaceStore.open(ref.root, new Git());
+    await ws.updateProject(ref.projectSlug, { linkedCodebases: [{ path: repo }] });
+    process.env.FAKE_CLAUDE_SCENARIO = 'render_touch';
+    process.env.FAKE_CLAUDE_TOUCH = join(repo, 'tracked.txt');
+    await finalState((await service.start(ref)).id);
+    delete process.env.FAKE_CLAUDE_TOUCH;
+    expect((await sys()).some((e) => e.level === 'error' && e.text.includes(`la codebase ${repo} risulta modificata`))).toBe(true);
+  });
+  it('keeps working with a corrupt brand kit', async () => {
+    await mkdir(join(ref.projectDir, 'brand'), { recursive: true });
+    await writeFile(join(ref.projectDir, 'brand', 'brand-kit.json'), '{oops');
+    const job = await service.start(ref);
+    expect(await finalState(job.id)).toBe('succeeded');
+    expect((await sys()).some((e) => e.text.startsWith('Brand kit non leggibile'))).toBe(true);
   });
 });

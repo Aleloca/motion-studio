@@ -1,14 +1,47 @@
 import type { CreativeFile, FormatPreset, Pin } from '@motion-studio/shared';
+import type { BrandKit } from '@motion-studio/shared';
 import { findPreset } from '../formats/format-catalog.ts';
+
+export interface CreativeContext {
+  kit: BrandKit; hasGuidelines: boolean; assets: number; references: number;
+  codebases: Array<{ path: string; note?: string }>; missingCodebases: string[];
+}
 
 export type PromptKind = 'first' | 'iteration' | 'fix';
 export interface PromptInput {
   slug: string; creative: CreativeFile; presets: FormatPreset[]; version: number; kind: PromptKind;
   userText?: string; pins?: Pin[]; attachments?: string[]; problems?: string[];
+  context?: CreativeContext;
 }
 export interface StudioBlock {
   outputDir: string; workDir: string; durationSec: number | null;
   formats: Array<{ id: string; width: number; height: number; kind: 'video' | 'image'; extensions: string[] }>;
+}
+
+function contextSections(c: CreativeContext): string[] {
+  const k = c.kit;
+  const brand = [
+    ...k.colors.map((x) => `- Colore ${x.name} (${x.role}): ${x.hex}`),
+    ...k.fonts.map((x) => `- Font ${x.role}: ${x.family}${x.weights.length ? ` (pesi ${x.weights.join(', ')})` : ''}${x.file ? ` — file ${x.file}` : ''}`),
+    ...k.logos.map((x) => `- Logo ${x.variant} (sfondo ${x.background}): ${x.file}`),
+    ...(k.tone ? [`- Tono: ${k.tone.text}`] : []),
+    ...k.dos.map((x) => `- Fare: ${x.text}`),
+    ...k.donts.map((x) => `- Evitare: ${x.text}`),
+    ...(k.photoStyle ? [`- Stile fotografico: ${k.photoStyle.text}`] : []),
+    ...(c.hasGuidelines ? ['- Linee guida complete: brand/guidelines.md'] : []),
+    ...(c.assets ? [`- Asset disponibili: ${c.assets} (elenco in assets/assets.json)`] : []),
+    ...(c.references ? [`- Riferimenti: ${c.references} (references/references.json)`] : []),
+  ];
+  const out: string[] = [];
+  if (brand.length) out.push('', '## Brand', ...brand);
+  if (c.codebases.length || c.missingCodebases.length) {
+    out.push('', '## Codebase di riferimento (sola lettura)',
+      ...c.codebases.map((x) => `- ${x.path}${x.note ? `: ${x.note}` : ''}`),
+      ...c.missingCodebases.map((p) => `- ${p}: non disponibile in questo turno`),
+      'Non modificare mai file in queste cartelle: leggile soltanto.',
+      'Le regole bloccano gli strumenti di modifica; gli interpreti potrebbero scrivere: Motion Studio rileva e segnala le modifiche nei repo git.');
+  }
+  return out;
 }
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
@@ -50,6 +83,7 @@ export function buildCreativePrompt(i: PromptInput): string {
       ...(i.problems ?? []).map((p) => `- ${p}`),
     );
   }
+  if (i.context && i.kind !== 'fix') parts.push(...contextSections(i.context));
   parts.push(
     '', '## Formati richiesti', ...formatLines,
     '', '## Dove lavorare',

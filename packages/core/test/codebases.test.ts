@@ -62,12 +62,36 @@ describe('checkCodebases', () => {
 });
 
 describe('codebaseSnapshot', () => {
-  it('returns git status for repos and null otherwise', async () => {
+  const git = (cwd: string, ...a: string[]) => execCommand('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd });
+  it('returns a snapshot for repos (also without commits) and null otherwise', async () => {
     const repo = await mkdtemp(join(tmpdir(), 'ms-cb-git-'));
-    await execCommand('git', ['init', '-q'], { cwd: repo });
-    expect(await codebaseSnapshot(repo)).toBe('');
+    await git(repo, 'init', '-q');
+    const empty = await codebaseSnapshot(repo);
+    expect(empty).not.toBeNull();
     await writeFile(join(repo, 'new.txt'), 'x');
-    expect(await codebaseSnapshot(repo)).toContain('new.txt');
+    const withNew = await codebaseSnapshot(repo);
+    expect(withNew).toContain('new.txt');
+    expect(withNew).not.toBe(empty);
     expect(await codebaseSnapshot(await mkdtemp(join(tmpdir(), 'ms-cb-plain-')))).toBeNull();
+  }, { timeout: 20_000 });
+  it('detects ignored files and a tracked file modified again', async () => {
+    const repo = await mkdtemp(join(tmpdir(), 'ms-cb-git-'));
+    await git(repo, 'init', '-q');
+    await writeFile(join(repo, 'a.txt'), '1');
+    await writeFile(join(repo, '.gitignore'), 'ign.txt\n');
+    await git(repo, 'add', '-A');
+    await git(repo, 'commit', '-q', '-m', 'init');
+    const clean = await codebaseSnapshot(repo);
+    await writeFile(join(repo, 'ign.txt'), 'x');
+    const ignored = await codebaseSnapshot(repo);
+    expect(ignored).not.toBe(clean);
+    await writeFile(join(repo, 'a.txt'), '2');
+    const first = await codebaseSnapshot(repo);
+    expect(first).not.toBe(ignored);
+    await writeFile(join(repo, 'a.txt'), '3');
+    expect(await codebaseSnapshot(repo)).not.toBe(first);
+  }, { timeout: 20_000 });
+  it('returns null when a command times out or fails', async () => {
+    expect(await codebaseSnapshot('/x', async () => ({ code: -1, stdout: '', stderr: 'timeout', notFound: false }))).toBeNull();
   });
 });
