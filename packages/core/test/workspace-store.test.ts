@@ -125,5 +125,11 @@ describe('updateProject', () => {
     expect(log.stdout.trim()).toBe('Progetto aggiornato');
     expect((await ws.updateProject(slug, { linkedCodebases: [{ path: 'relative' }] }).catch((e) => e)).status).toBe(400);
     expect((await ws.updateProject(slug, { name: ' ' }).catch((e) => e)).status).toBe(400);
+    const before = await ws.getProject(slug);
+    await new Promise((r) => setTimeout(r, 5));
+    const u = await ws.updateProject(slug, { name: 'Acme 2', description: 'd', linkedCodebases: undefined });
+    expect(u).toMatchObject({ name: 'Acme 2', description: 'd', linkedCodebases: [{ path: '/Users/me/app', note: 'iOS' }] });
+    expect(u.updatedAt).not.toBe(before.updatedAt);
+    expect((await ws.updateProject(slug, { name: undefined })).name).toBe('Acme 2');
   });
 });

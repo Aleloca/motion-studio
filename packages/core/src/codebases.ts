@@ -20,7 +20,9 @@ export async function checkCodebases(list: LinkedCodebase[]): Promise<CodebaseCh
 }
 
 /** Claude Code permission rule syntax: an absolute path is written with a leading '//'. */
-export const readOnlyRules = (paths: string[]) => paths.map((p) => `Edit(/${p}/**)`);
+/** Glob metacharacters in the path are escaped so a folder like `cb [x]` is matched literally. */
+const escapeGlob = (p: string) => p.replace(/[\\[\]*?]/g, '\\$&');
+export const readOnlyRules = (paths: string[]) => paths.map((p) => `Edit(/${escapeGlob(p)}/**)`);
 
 export async function codebaseSnapshot(path: string, exec: CommandExec = execCommand): Promise<string | null> {
   const r = await exec('git', ['-C', path, 'status', '--porcelain=v1', '-uall'], { timeoutMs: 30_000 });

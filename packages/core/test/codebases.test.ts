@@ -19,6 +19,32 @@ describe('readOnlyRules', () => {
   });
 });
 
+describe('readOnlyRules escaping', () => {
+  it('escapes glob metacharacters, backslash first', () => {
+    expect(readOnlyRules(['/a/cb [x]'])).toEqual(['Edit(//a/cb \\[x\\]/**)']);
+    expect(readOnlyRules(['/a/s*t?'])).toEqual(['Edit(//a/s\\*t\\?/**)']);
+    expect(readOnlyRules(['/a/b\\c'])).toEqual(['Edit(//a/b\\\\c/**)']);
+  });
+});
+
+describe('normalizeCodebasePath root', () => {
+  it('refuses the filesystem root and keeps backslashes', () => {
+    for (const r of ['/', ' // ']) {
+      expect((() => { try { normalizeCodebasePath(r); } catch (e) { return (e as { status: number }).status; } })()).toBe(400);
+    }
+    expect(normalizeCodebasePath('/a/b\\')).toBe('/a/b\\');
+  });
+});
+
+describe('normalizeCodebasePath home', () => {
+  it('refuses the home folder itself but not subfolders', () => {
+    for (const h of ['~', '~/', homedir(), homedir() + '/']) {
+      expect((() => { try { normalizeCodebasePath(h); } catch (e) { return (e as { status: number }).status; } })()).toBe(400);
+    }
+    expect(normalizeCodebasePath('~/dev')).toBe(join(homedir(), 'dev'));
+  });
+});
+
 describe('checkCodebases', () => {
   it('flags missing folders and files, and dedupes', async () => {
     const base = await mkdtemp(join(tmpdir(), 'ms-cb è '));

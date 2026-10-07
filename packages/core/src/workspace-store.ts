@@ -32,7 +32,10 @@ export function expandHome(path: string): string {
 export function normalizeCodebasePath(p: string): string {
   const s = normalize(expandHome(p.trim()));
   if (!isAbsolute(s)) throw new WorkspaceError(400, `La cartella collegata deve essere un percorso assoluto: ${p}`);
-  return s.length > 1 ? s.replace(/[\\/]+$/, '') : s;
+  const stripped = s.replace(/\/+$/, '');
+  if (!stripped) throw new WorkspaceError(400, 'Non puoi collegare la radice del disco');
+  if (stripped === homedir().replace(/\/+$/, '')) throw new WorkspaceError(400, "Collega una cartella specifica, non l'intera home");
+  return stripped;
 }
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -161,7 +164,7 @@ export class WorkspaceStore {
         ? patch.linkedCodebases.map((c) => ({ path: normalizeCodebasePath(c.path), ...(c.note?.trim() ? { note: c.note.trim() } : {}) }))
             .filter((c, i, all) => all.findIndex((x) => x.path === c.path) === i)
         : current.linkedCodebases;
-      const parsed = projectFileSchema.safeParse({ ...current, ...patch, linkedCodebases, updatedAt: new Date().toISOString() });
+      const parsed = projectFileSchema.safeParse({ ...current, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)), linkedCodebases, updatedAt: new Date().toISOString() });
       if (!parsed.success) throw new WorkspaceError(400, `Progetto non valido: ${parsed.error.issues.map((i) => i.path.join('.')).join(', ')}`);
       const dir = this.projectDir(slug);
       await writeJsonFileAtomic(join(dir, 'project.json'), parsed.data);
