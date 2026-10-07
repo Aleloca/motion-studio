@@ -35,4 +35,18 @@ describe('FormatBoard', () => {
     expect(screen.getByLabelText('Commento 2')).toBeTruthy();
     expect(screen.queryByLabelText('Commento 1')).toBeTruthy();
   });
+  it('marks unverified outputs with a muted badge', () => {
+    const unverified = { ...v1, outputs: [{ ...v1.outputs[0]!, verified: false }] };
+    const { rerender } = render(<FormatBoard presets={DEFAULT_FORMATS} formats={['instagram-post-1x1']} version={v1} compare={null} fileUrl={url} pins={[]} showSafeZone={false} onOpen={() => {}} />);
+    expect(screen.queryByText('non verificato')).toBeNull();
+    rerender(<FormatBoard presets={DEFAULT_FORMATS} formats={['instagram-post-1x1']} version={unverified} compare={null} fileUrl={url} pins={[]} showSafeZone={false} onOpen={() => {}} />);
+    expect(screen.getByText('non verificato')).toBeTruthy();
+  });
+  it('draws the safe zone on all four sides and uses a focusable frame button', () => {
+    const preset = { ...DEFAULT_FORMATS[0]!, id: 'sz', safeZone: { top: 100, bottom: 100, left: 54, right: 108 } };
+    render(<FormatBoard presets={[preset]} formats={['sz']} version={null} compare={null} fileUrl={url} pins={[]} showSafeZone onOpen={() => {}} />);
+    expect(screen.getByTestId('safe-left').style.width).toBe(`${(54 / preset.width) * 100}%`);
+    expect(screen.getByTestId('safe-right').style.width).toBe(`${(108 / preset.width) * 100}%`);
+    expect(screen.getByRole('button', { name: /apri/ }).className).toBe('frame-open');
+  });
 });

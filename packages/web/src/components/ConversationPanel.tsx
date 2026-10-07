@@ -1,5 +1,5 @@
 import type { AgentEvent, Brief, ConversationEntry, CreativeDetail, FormatPreset, JobSummary, Pin } from '@motion-studio/shared';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.ts';
 import { ExpertLine } from './AgentConsole.tsx';
 import { FormatPicker } from './FormatPicker.tsx';
@@ -14,6 +14,24 @@ type Tab = 'chat' | 'brief' | 'expert';
 const pinLabel = (p: Pin, k: number) => `${k + 1} · ${p.format}${p.timeSec !== null ? ` @ ${p.timeSec.toFixed(1)}s` : ''}`;
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+/**
+ * Events of the active job across a page reload. `persisted` are the job's agent entries read from conversation.jsonl
+ * (everything written before the last fetch), `live` the events received over the socket since page load. Both are
+ * in emission order and `live` continues the persisted history, so the longest suffix of `persisted` that equals a
+ * prefix of `live` is the overlap (a mid-job refetch persists events already seen live): it is shown once.
+ */
+export function mergeJobEvents(persisted: AgentEvent[], live: AgentEvent[]): AgentEvent[] {
+  if (persisted.length === 0) return live;
+  const p = persisted.map((e) => JSON.stringify(e));
+  const l = live.map((e) => JSON.stringify(e));
+  for (let k = Math.min(p.length, l.length); k > 0; k--) {
+    let same = true;
+    for (let i = 0; i < k && same; i++) same = p[p.length - k + i] === l[i];
+    if (same) return [...persisted, ...live.slice(k)];
+  }
+  return [...persisted, ...live];
+}
+
 function BriefEditor({ slug, detail, presets, disabled, onChanged }: { slug: string; detail: CreativeDetail; presets: FormatPreset[]; disabled: boolean; onChanged(): void }) {
   const c = detail.creative;
   const [title, setTitle] = useState(c.title);
@@ -23,11 +41,14 @@ function BriefEditor({ slug, detail, presets, disabled, onChanged }: { slug: str
   const set = <K extends keyof Brief>(k: K, v: Brief[K]) => setBrief((b) => ({ ...b, [k]: v }));
   const save = async (regenerate: boolean) => {
     setError(null);
+    let saved = false;
     try {
       await api.updateCreative(slug, detail.slug, { title, brief: { ...brief, assets: assets.split(',').map((a) => a.trim()).filter(Boolean) } });
+      saved = true;
       if (regenerate) await api.sendCreativeTurn(slug, detail.slug, {});
-      onChanged();
     } catch (e) { setError(message(e)); }
+    // The brief is saved even if starting the generation failed: the page must show it.
+    if (saved) onChanged();
   };
   return (
     <form className="stack" onSubmit={(e) => { e.preventDefault(); void save(false); }} style={{ padding: 14, overflow: 'auto' }}>
@@ -51,11 +72,17 @@ function BriefEditor({ slug, detail, presets, disabled, onChanged }: { slug: str
 
 export function ConversationPanel(props: ConversationPanelProps) {
   const { slug, detail, conversation, job, liveEvents, expert, pins } = props;
-  const [tab, setTab] = useState<Tab>('chat');
+  const [selectedTab, setTab] = useState<Tab>('chat');
+  // The expert tab disappears when expert mode is turned off: fall back to the conversation.
+  const tab: Tab = selectedTab === 'expert' && !expert ? 'chat' : selectedTab;
+  useEffect(() => { if (!expert) setTab((t) => (t === 'expert' ? 'chat' : t)); }, [expert]);
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const active = job && (job.state === 'queued' || job.state === 'running') ? job : undefined;
   const persistedAgent = (e: ConversationEntry) => e.type === 'agent' && e.jobId !== active?.id;
+  const activeEvents = useMemo(() => (active
+    ? mergeJobEvents(conversation.flatMap((e) => (e.type === 'agent' && e.jobId === active.id ? [e.event] : [])), liveEvents)
+    : []), [active, conversation, liveEvents]);
 
   const send = async (body: { text?: string; pins?: Pin[] }) => {
     setError(null);
@@ -70,7 +97,7 @@ export function ConversationPanel(props: ConversationPanelProps) {
   const tabs: Array<[Tab, string]> = [['chat', 'Conversazione'], ['brief', 'Brief'], ...(expert ? [['expert', 'Esperto'] as [Tab, string]] : [])];
   const allAgentEvents = [
     ...conversation.filter((e): e is Extract<ConversationEntry, { type: 'agent' }> => persistedAgent(e)).map((e) => e.event),
-    ...(active ? liveEvents : []),
+    ...activeEvents,
   ];
 
   return (
@@ -103,15 +130,18 @@ export function ConversationPanel(props: ConversationPanelProps) {
           })}
           {active && (
             <div className="card stack" style={{ padding: 12, gap: 6, background: 'var(--surface-2)' }}>
-              <div className="row"><span className="badge run">In lavorazione</span><div style={{ flex: 1 }} /><button type="button" onClick={() => void api.cancelJob(active.id).catch((e: unknown) => setError(message(e)))}>Annulla</button></div>
-              {liveEvents.filter((e) => e.kind === 'text').map((e, k) => <p key={k} style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{e.kind === 'text' ? e.text : ''}</p>)}
-              {liveEvents.filter((e) => e.kind === 'tool_use').slice(-5).map((e, k) => <span key={k} className="muted" style={{ fontSize: 13 }}>Usa lo strumento {e.kind === 'tool_use' ? e.name : ''}</span>)}
+              <div className="row"><span className="badge run">{active.state === 'queued' ? 'In coda' : 'In lavorazione'}</span><div style={{ flex: 1 }} /><button type="button" onClick={() => void api.cancelJob(active.id).catch((e: unknown) => setError(message(e)))}>Annulla</button></div>
+              {activeEvents.filter((e) => e.kind === 'text').map((e, k) => <p key={k} style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{e.kind === 'text' ? e.text : ''}</p>)}
+              {activeEvents.filter((e) => e.kind === 'tool_use').slice(-5).map((e, k) => <span key={k} className="muted" style={{ fontSize: 13 }}>Usa lo strumento {e.kind === 'tool_use' ? e.name : ''}</span>)}
             </div>
           )}
         </div>
       )}
 
-      {tab === 'brief' && <BriefEditor slug={slug} detail={detail} presets={props.presets} disabled={Boolean(active)} onChanged={props.onChanged} />}
+      {/* Kept mounted while hidden, so an unsaved brief draft survives tab switches. */}
+      <div hidden={tab !== 'brief'} style={{ display: tab === 'brief' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+        <BriefEditor slug={slug} detail={detail} presets={props.presets} disabled={Boolean(active)} onChanged={props.onChanged} />
+      </div>
 
       {tab === 'expert' && (
         <div className="mono stack" style={{ flex: 1, overflow: 'auto', padding: 14, gap: 4 }}>
@@ -131,7 +161,7 @@ export function ConversationPanel(props: ConversationPanelProps) {
             </div>
           )}
           <label htmlFor="cp-text" className="muted" style={{ fontSize: 12 }}>Chiedi una modifica</label>
-          <textarea id="cp-text" rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder="Es. rallenta il finale e alza la CTA nel 9:16" />
+          <textarea id="cp-text" rows={2} maxLength={10_000} value={text} onChange={(e) => setText(e.target.value)} placeholder="Es. rallenta il finale e alza la CTA nel 9:16" />
           {error && <p role="alert" className="error" style={{ margin: 0 }}>{error}</p>}
           <div className="row">
             {detail.versions.length === 0 && <button type="button" disabled={Boolean(active)} onClick={() => void send({})}>Genera</button>}

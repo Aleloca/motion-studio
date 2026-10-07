@@ -9,7 +9,7 @@ const api = {
   cancelJob: vi.fn(async () => ({ cancelled: true })),
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
-const { ConversationPanel } = await import('../src/components/ConversationPanel.tsx');
+const { ConversationPanel, mergeJobEvents } = await import('../src/components/ConversationPanel.tsx');
 
 const at = '2026-10-07T10:00:00.000Z';
 const detail = (versions = 1): CreativeDetail => ({
@@ -58,8 +58,10 @@ describe('ConversationPanel', () => {
   it('shows live progress, cancels and blocks sending while a job runs', async () => {
     render(<ConversationPanel {...base} detail={detail()} conversation={[{ type: 'agent', at, jobId: 'j1', event: { kind: 'text', text: 'persistito' } }]}
       job={running} liveEvents={[{ kind: 'text', text: 'dal vivo' }, { kind: 'tool_use', id: 't', name: 'Bash', input: {} }]} />);
-    expect(screen.getByText('dal vivo')).toBeTruthy();
-    expect(screen.queryByText('persistito')).toBeNull();
+    // Persisted events of the active job (written before a reload) come first, then the live ones.
+    const texts = screen.getAllByText(/persistito|dal vivo/).map((n) => n.textContent);
+    expect(texts).toEqual(['persistito', 'dal vivo']);
+    expect(screen.getByText('In lavorazione')).toBeTruthy();
     expect(screen.getByText('Usa lo strumento Bash')).toBeTruthy();
     expect((screen.getByRole('button', { name: 'Invia' }) as HTMLButtonElement).disabled).toBe(true);
     await userEvent.click(screen.getByRole('button', { name: 'Annulla' }));
@@ -85,5 +87,74 @@ describe('ConversationPanel', () => {
     render(<ConversationPanel {...base} expert detail={detail()} conversation={conversation} job={undefined} />);
     await userEvent.click(screen.getByRole('tab', { name: 'Esperto' }));
     expect(screen.getByText('tool Write')).toBeTruthy();
+  });
+  it('after a reload shows the persisted events of the active job once, also after a refetch mid-job', () => {
+    const ev = (text: string) => ({ kind: 'text' as const, text });
+    const persisted = (texts: string[]): ConversationEntry[] => texts.map((t) => ({ type: 'agent', at, jobId: 'j1', event: ev(t) }));
+    const { rerender } = render(<ConversationPanel {...base} detail={detail()} conversation={persisted(['a', 'b'])} job={running} liveEvents={[]} />);
+    const shown = () => screen.getAllByText(/^[a-d]$/).map((n) => n.textContent);
+    expect(shown()).toEqual(['a', 'b']);
+    rerender(<ConversationPanel {...base} detail={detail()} conversation={persisted(['a', 'b'])} job={running} liveEvents={[ev('c')]} />);
+    expect(shown()).toEqual(['a', 'b', 'c']);
+    // A creative tick refetches the conversation: 'c' is now persisted too, and 'd' arrived live.
+    rerender(<ConversationPanel {...base} detail={detail()} conversation={persisted(['a', 'b', 'c'])} job={running} liveEvents={[ev('c'), ev('d')]} />);
+    expect(shown()).toEqual(['a', 'b', 'c', 'd']);
+  });
+  it('labels a queued job "In coda"', () => {
+    render(<ConversationPanel {...base} detail={detail()} conversation={[]} job={{ ...running, state: 'queued' }} />);
+    expect(screen.getByText('In coda')).toBeTruthy();
+    expect(screen.queryByText('In lavorazione')).toBeNull();
+  });
+  it('refreshes the page when the brief is saved but regenerating fails', async () => {
+    api.sendCreativeTurn.mockRejectedValueOnce(new Error('Una generazione è già in corso per questa creatività'));
+    render(<ConversationPanel {...base} detail={detail()} conversation={[]} job={undefined} />);
+    await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Salva e rigenera' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('già in corso');
+    expect(base.onChanged).toHaveBeenCalled();
+  });
+  it('does not refresh when saving the brief fails', async () => {
+    api.updateCreative.mockRejectedValueOnce(new Error('Brief non valido'));
+    render(<ConversationPanel {...base} detail={detail()} conversation={[]} job={undefined} />);
+    await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Salva e rigenera' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Brief non valido');
+    expect(api.sendCreativeTurn).not.toHaveBeenCalled();
+    expect(base.onChanged).not.toHaveBeenCalled();
+  });
+  it('falls back to the conversation when expert mode is turned off on the expert tab', async () => {
+    const { rerender } = render(<ConversationPanel {...base} expert detail={detail()} conversation={conversation} job={undefined} />);
+    await userEvent.click(screen.getByRole('tab', { name: 'Esperto' }));
+    rerender(<ConversationPanel {...base} expert={false} detail={detail()} conversation={conversation} job={undefined} />);
+    expect(screen.getByRole('tab', { name: 'Conversazione' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText('Ingrandisco il logo.')).toBeTruthy();
+    rerender(<ConversationPanel {...base} expert detail={detail()} conversation={conversation} job={undefined} />);
+    expect(screen.getByRole('tab', { name: 'Conversazione' }).getAttribute('aria-selected')).toBe('true');
+  });
+  it('limits the message to 10000 characters', () => {
+    render(<ConversationPanel {...base} detail={detail()} conversation={[]} job={undefined} />);
+    expect((screen.getByLabelText('Chiedi una modifica') as HTMLTextAreaElement).maxLength).toBe(10000);
+  });
+  it('keeps the brief draft across tab switches', async () => {
+    render(<ConversationPanel {...base} detail={detail()} conversation={[]} job={undefined} />);
+    await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
+    await userEvent.clear(screen.getByLabelText('Obiettivo'));
+    await userEvent.type(screen.getByLabelText('Obiettivo'), 'Bozza');
+    await userEvent.click(screen.getByRole('tab', { name: 'Conversazione' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
+    expect((screen.getByLabelText('Obiettivo') as HTMLTextAreaElement).value).toBe('Bozza');
+  });
+});
+
+describe('mergeJobEvents', () => {
+  const ev = (text: string) => ({ kind: 'text' as const, text });
+  it('drops the overlap between persisted and live events', () => {
+    expect(mergeJobEvents([ev('a'), ev('b')], [ev('b'), ev('c')])).toEqual([ev('a'), ev('b'), ev('c')]);
+    expect(mergeJobEvents([ev('a'), ev('b')], [ev('a'), ev('b')])).toEqual([ev('a'), ev('b')]);
+  });
+  it('concatenates when there is no overlap, and handles empty sides', () => {
+    expect(mergeJobEvents([ev('a')], [ev('b')])).toEqual([ev('a'), ev('b')]);
+    expect(mergeJobEvents([], [ev('b')])).toEqual([ev('b')]);
+    expect(mergeJobEvents([ev('a')], [])).toEqual([ev('a')]);
   });
 });

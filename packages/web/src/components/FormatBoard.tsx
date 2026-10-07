@@ -24,8 +24,11 @@ function Frame({ preset, version, fileUrl, pins, showSafeZone }: { preset: Forma
         <>
           <span style={band({ left: 0, right: 0, top: 0, height: `${(sz.top / preset.height) * 100}%` })} />
           <span style={band({ left: 0, right: 0, bottom: 0, height: `${(sz.bottom / preset.height) * 100}%` })} />
+          <span data-testid="safe-left" style={band({ top: 0, bottom: 0, left: 0, width: `${(sz.left / preset.width) * 100}%` })} />
+          <span data-testid="safe-right" style={band({ top: 0, bottom: 0, right: 0, width: `${(sz.right / preset.width) * 100}%` })} />
         </>
       )}
+      {out?.verified === false && <span className="badge" style={{ position: 'absolute', top: 6, left: 6 }}>non verificato</span>}
       {pins.map(({ pin: p, number }) => (
         <span key={number} aria-label={`Commento ${number}`} style={{ position: 'absolute', left: `${p.x * 100}%`, top: `${p.y * 100}%`, transform: 'translate(-50%, -100%)', width: 22, height: 22, borderRadius: '50% 50% 50% 0', background: 'var(--accent)', color: 'var(--on-accent)', fontSize: 11, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid var(--on-accent)' }}>{number}</span>
       ))}
@@ -45,7 +48,7 @@ export function FormatBoard({ presets, formats, version, compare, fileUrl, pins,
             {items.map((p) => {
               const formatPins = pins.map((pin, i) => ({ pin, number: i + 1 })).filter((x) => x.pin.format === p.id);
               return (
-                <button key={p.id} type="button" onClick={() => onOpen(p.id)} aria-label={`${p.channel} · ${p.name} — apri`} style={{ all: 'unset', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <button key={p.id} type="button" onClick={() => onOpen(p.id)} aria-label={`${p.channel} · ${p.name} — apri`} className="frame-open">
                   <div className="row" style={{ gap: 10, alignItems: 'flex-end' }}>
                     {compare && (
                       <div className="stack" style={{ gap: 4 }}>

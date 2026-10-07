@@ -26,6 +26,9 @@ button, input, textarea { font: inherit; color: inherit; }
 button { min-height: 36px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; }
 button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 700; }
 button:disabled { opacity: 0.55; cursor: not-allowed; }
+/* FormatBoard: a whole frame is the button that opens the focus view. */
+button.frame-open { all: unset; cursor: pointer; display: flex; flex-direction: column; gap: 6px; border-radius: 6px; }
+button.frame-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 input, textarea { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
 .muted { color: var(--muted); }

@@ -42,3 +42,12 @@ describe('ProjectPage after a reload', () => {
     expect(screen.queryByRole('button', { name: 'Annulla' })).toBeNull();
   });
 });
+
+describe('ProjectPage errors', () => {
+  afterEach(() => vi.clearAllMocks());
+  it('shows a getProject failure', async () => {
+    vi.mocked(api.getProject).mockRejectedValue(new Error('Progetto non trovato'));
+    render(<ProjectPage slug="acme" tab="console" expert={false} live={{ jobs: {}, events: {}, creativeTicks: {} }} />);
+    expect((await screen.findByRole('alert')).textContent).toBe('Impossibile caricare il progetto: Progetto non trovato');
+  });
+});

@@ -7,7 +7,12 @@ const MAX_EVENTS = 2000;
 export function eventsReducer(state: EventsState, msg: ServerMessage): EventsState {
   switch (msg.type) {
     case 'snapshot':
-      return { ...state, jobs: Object.fromEntries(msg.jobs.map((j) => [j.id, j])) };
+      // A snapshot follows a (re)connection: anything may have changed meanwhile, so every open creative refetches.
+      return {
+        ...state,
+        jobs: Object.fromEntries(msg.jobs.map((j) => [j.id, j])),
+        creativeTicks: Object.fromEntries(Object.entries(state.creativeTicks).map(([k, v]) => [k, v + 1])),
+      };
     case 'job':
       return { ...state, jobs: { ...state.jobs, [msg.job.id]: msg.job } };
     case 'agent': {

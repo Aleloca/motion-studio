@@ -13,6 +13,9 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
   const { detail, conversation, error, reload } = useCreative(slug, creative, live.creativeTicks[`${slug}/${creative}`] ?? 0);
   const [presets, setPresets] = useState<FormatPreset[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
+  // Set when the user explicitly picks a version: from then on new versions no longer steal the selection.
+  const [userPicked, setUserPicked] = useState(false);
+  const pick = (n: number) => { setUserPicked(true); setSelected(n); };
   const [compareN, setCompareN] = useState<number | null>(null);
   const [safeZone, setSafeZone] = useState(false);
   const [focus, setFocus] = useState<string | null>(null);
@@ -28,8 +31,8 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
    }, []);
   const versions = detail?.versions ?? [];
   const latest = versions.at(-1) ?? null;
-  // Follow new versions automatically unless the user picked an older one.
-  useEffect(() => { setSelected((s) => (s === null || s === (versions.at(-2)?.n ?? null) ? latest?.n ?? null : s)); }, [latest?.n]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Follow new versions automatically until the user picks one.
+  useEffect(() => { if (!userPicked) setSelected(latest?.n ?? null); }, [latest?.n, userPicked]);
   const version = versions.find((v) => v.n === selected) ?? latest;
   const compare = compareN !== null && compareN !== version?.n ? versions.find((v) => v.n === compareN) ?? null : null;
   useEffect(() => { if (compareN !== null && compareN === version?.n) setCompareN(null); }, [compareN, version?.n]);
@@ -54,7 +57,7 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
         {versions.length > 0 && (
           <div role="radiogroup" aria-label="Versione" className="row" style={{ gap: 4 }}>
             {versions.map((v) => (
-              <button key={v.n} type="button" role="radio" aria-checked={version?.n === v.n} className={version?.n === v.n ? 'primary' : ''} onClick={() => setSelected(v.n)}>
+              <button key={v.n} type="button" role="radio" aria-checked={version?.n === v.n} className={version?.n === v.n ? 'primary' : ''} onClick={() => pick(v.n)}>
                 v{v.n}{v.status === 'incomplete' ? ' ⚠' : ''}
               </button>
             ))}
@@ -92,7 +95,7 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
         <div style={{ flex: '1 1 360px', maxWidth: 440, minWidth: 0, display: 'flex' }}>
           <ConversationPanel slug={slug} detail={detail} conversation={conversation} presets={presets} job={job} liveEvents={job ? live.events[job.id] ?? [] : []}
             expert={expert} pins={pins} onRemovePin={(i) => setPins((p) => p.filter((_, k) => k !== i))} onSent={() => setPins([])}
-            onSelectVersion={setSelected} onChanged={reload} />
+            onSelectVersion={pick} onChanged={reload} />
         </div>
       </div>
       {focusPreset && (
@@ -100,6 +103,7 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
           src={version && outFor(version, focusPreset.id) ? fileUrl(version.n, outFor(version, focusPreset.id)!.file) : null}
           compareSrc={compare ? (outFor(compare, focusPreset.id) ? fileUrl(compare.n, outFor(compare, focusPreset.id)!.file) : '') : null}
           versionN={version?.n ?? null} compareN={compare?.n ?? null}
+          verified={(version && outFor(version, focusPreset.id)?.verified) !== false}
           pins={pins.filter((p) => p.format === focusPreset.id)}
           pinNumbers={pins.flatMap((p, i) => (p.format === focusPreset.id ? [i + 1] : []))}
           onAddPin={(pin) => setPins((p) => [...p, pin])} onClose={() => setFocus(null)} />

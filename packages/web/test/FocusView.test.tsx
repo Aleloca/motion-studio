@@ -32,4 +32,31 @@ describe('FocusView', () => {
     expect(frame.style.width).toBe(`min(100%, ${(70 * story.width) / story.height}vh)`);
     expect(screen.getByLabelText('Commento 3')).toBeTruthy();
   });
+  it('shows "non verificato" in the header for unverified outputs', () => {
+    const { rerender } = render(<FocusView preset={banner} src="/f/b.png" compareSrc={null} versionN={1} compareN={null} pins={[]} onAddPin={() => {}} onClose={() => {}} />);
+    expect(screen.queryByText('non verificato')).toBeNull();
+    rerender(<FocusView preset={banner} src="/f/b.png" compareSrc={null} versionN={1} compareN={null} verified={false} pins={[]} onAddPin={() => {}} onClose={() => {}} />);
+    expect(screen.getByText('non verificato')).toBeTruthy();
+  });
+  it('traps Tab inside the dialog and gives focus back to the opener on close', async () => {
+    const opener = document.createElement('button');
+    opener.textContent = 'apri';
+    document.body.appendChild(opener);
+    opener.focus();
+    const { unmount } = render(<FocusView preset={banner} src="/f/b.png" compareSrc={null} versionN={1} compareN={null} pins={[]} onAddPin={() => {}} onClose={() => {}} />);
+    expect(document.activeElement).toBe(screen.getByRole('dialog'));
+    const add = screen.getByRole('button', { name: 'Aggiungi commento' });
+    const close = screen.getByRole('button', { name: 'Chiudi' });
+    await userEvent.tab();
+    expect(document.activeElement).toBe(add);
+    await userEvent.tab();
+    expect(document.activeElement).toBe(close);
+    await userEvent.tab();
+    expect(document.activeElement).toBe(add);
+    await userEvent.tab({ shift: true });
+    expect(document.activeElement).toBe(close);
+    unmount();
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
 });

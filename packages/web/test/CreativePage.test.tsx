@@ -1,10 +1,11 @@
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { DEFAULT_FORMATS } from '@motion-studio/shared';
 import { describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 
 let getFormats: () => Promise<unknown> = async () => ({});
-const detail = {
+let detail: Record<string, unknown> = {
   creative: { title: 'Lancio', status: 'draft', error: null, resumeFrom: null, brief: { goal: 'g', message: '', formats: ['instagram-post-1x1'], durationSec: 15, assets: [], notes: '' } },
   versions: [], jobKey: 'k',
 };
@@ -28,5 +29,27 @@ describe('CreativePage catalog loading', () => {
     render(<CreativePage slug="acme" creative="c" live={live} expert={false} />);
     expect(await screen.findByText('catalogo non valido')).toBeTruthy();
     await waitFor(() => expect(screen.getByLabelText('Instagram · Post 1:1 — apri')).toBeTruthy());
+  });
+});
+
+describe('CreativePage version selection', () => {
+  const v = (n: number) => ({ n, commit: 'c', sessionId: 's', status: 'complete', createdAt: '2026-10-07T10:00:00.000Z', request: 'r', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: null });
+  const withVersions = (ns: number[]) => { detail = { ...detail, versions: ns.map(v) }; };
+  const liveTick = (t: number) => ({ ...live, creativeTicks: { 'acme/c': t } }) as unknown as EventsState;
+  const checked = () => screen.getAllByRole('radio').filter((r) => r.getAttribute('aria-checked') === 'true').map((r) => r.textContent);
+
+  it('follows new versions until the user picks one, then keeps the pick', async () => {
+    getFormats = async () => ({ presets: DEFAULT_FORMATS, error: null, path: '/x' });
+    withVersions([1]);
+    const { rerender } = render(<CreativePage slug="acme" creative="c" live={liveTick(0)} expert={false} />);
+    await waitFor(() => expect(checked()).toEqual(['v1']));
+    withVersions([1, 2, 3]); // two versions arrived between refreshes
+    rerender(<CreativePage slug="acme" creative="c" live={liveTick(1)} expert={false} />);
+    await waitFor(() => expect(checked()).toEqual(['v3']));
+    await userEvent.click(screen.getByRole('radio', { name: 'v3' })); // explicit pick, even of the latest
+    withVersions([1, 2, 3, 4]);
+    rerender(<CreativePage slug="acme" creative="c" live={liveTick(2)} expert={false} />);
+    await waitFor(() => expect(screen.getAllByRole('radio')).toHaveLength(4));
+    expect(checked()).toEqual(['v3']);
   });
 });

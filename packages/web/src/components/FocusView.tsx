@@ -1,17 +1,38 @@
 import type { FormatPreset, Pin } from '@motion-studio/shared';
-import { useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 
 const VIDEO = /\.(mp4|webm|mov)(\?|$)/i;
 const round = (v: number, d: number) => Math.round(v * 10 ** d) / 10 ** d;
 
-export function FocusView({ preset, src, compareSrc, versionN, compareN, pins, pinNumbers, onAddPin, onClose }: {
+const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), video[controls], [tabindex]:not([tabindex="-1"])';
+
+export function FocusView({ preset, src, compareSrc, versionN, compareN, verified = true, pins, pinNumbers, onAddPin, onClose }: {
   preset: FormatPreset; src: string | null; compareSrc: string | null; versionN: number | null; compareN: number | null;
+  /** false when the shown output could not be checked with ffprobe. */ verified?: boolean;
   pins: Pin[]; /** 1-based global numbers of `pins`, so markers match the pending list; defaults to 1..n. */ pinNumbers?: number[]; onAddPin: (pin: Pin) => void; onClose: () => void;
 }) {
   const [commenting, setCommenting] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { dialogRef.current?.focus(); }, []);
+  useEffect(() => {
+    // Focus moves into the dialog and goes back to the opener (the frame button) when it closes.
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialogRef.current?.focus();
+    return () => { if (opener?.isConnected) opener.focus(); };
+  }, []);
+
+  const keyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape') { onClose(); return; }
+    if (e.key !== 'Tab' || !dialogRef.current) return;
+    // Focus trap: Tab / Shift+Tab cycle inside the dialog.
+    const items = [...dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)];
+    const first = items[0];
+    const last = items.at(-1);
+    if (!first || !last) { e.preventDefault(); return; }
+    const current = document.activeElement;
+    if (e.shiftKey && (current === first || current === dialogRef.current)) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && current === last) { e.preventDefault(); first.focus(); }
+  };
 
   const place = (e: MouseEvent<HTMLButtonElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -42,12 +63,13 @@ export function FocusView({ preset, src, compareSrc, versionN, compareN, pins, p
 
   return (
     <div role="dialog" aria-modal="true" aria-label={`${preset.channel} · ${preset.name}`} tabIndex={-1} ref={dialogRef}
-      onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
+      onKeyDown={keyDown}
       style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, zIndex: 50 }}>
       <div className="card stack" style={{ width: 'min(1100px, 100%)', maxHeight: '95vh', overflow: 'auto' }}>
         <div className="row">
           <strong>{preset.channel} · {preset.name}</strong>
           <span className="mono muted">{preset.width}×{preset.height}</span>
+          {src && !verified && <span className="badge">non verificato</span>}
           <div style={{ flex: 1 }} />
           <button type="button" aria-pressed={commenting} onClick={() => setCommenting((c) => !c)} disabled={!src}>Aggiungi commento</button>
           <button type="button" onClick={onClose}>Chiudi</button>

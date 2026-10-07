@@ -10,10 +10,15 @@ export function CreativeList({ slug, tick }: { slug: string; tick: number }) {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<CreativeStatus | 'all'>('all');
   useEffect(() => {
-    api.listCreatives(slug).then(setItems).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+    let alive = true; // a slow response for a previous slug/tick must not overwrite a newer one
+    api.listCreatives(slug)
+      .then((r) => { if (alive) { setItems(r); setError(null); } })
+      .catch((e: unknown) => { if (alive) setError(e instanceof Error ? e.message : String(e)); });
+    return () => { alive = false; };
   }, [slug, tick]);
 
-  const visible = (items ?? []).filter((i) => filter === 'all' || (i.ok && i.status === filter));
+  // Unreadable creatives have no status: they stay visible under every filter so they are never forgotten.
+  const visible = (items ?? []).filter((i) => filter === 'all' || !i.ok || i.status === filter);
   return (
     <section className="stack" aria-label="Creatività">
       <div className="row">
