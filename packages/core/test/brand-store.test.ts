@@ -34,23 +34,43 @@ describe('kit and guidelines', () => {
 describe('isPrivateHost', () => {
   it('rejects private and loopback hosts', () => {
     expect(isPrivateHost('localhost')).toBe(true);
+    expect(isPrivateHost('localhost.')).toBe(true);
+    expect(isPrivateHost('x.localhost')).toBe(true);
+    expect(isPrivateHost('x.localhost.')).toBe(true);
     expect(isPrivateHost('127.0.0.1')).toBe(true);
+    expect(isPrivateHost('0.0.0.0')).toBe(true);
     expect(isPrivateHost('::1')).toBe(true);
     expect(isPrivateHost('[::1]')).toBe(true);
+    expect(isPrivateHost('::')).toBe(true);
+    expect(isPrivateHost('[::]')).toBe(true);
     expect(isPrivateHost('10.0.0.0')).toBe(true);
     expect(isPrivateHost('192.168.1.1')).toBe(true);
     expect(isPrivateHost('172.16.0.0')).toBe(true);
     expect(isPrivateHost('172.31.255.255')).toBe(true);
     expect(isPrivateHost('169.254.1.1')).toBe(true);
+    // fe80::/10 (fe80-febf)
     expect(isPrivateHost('fe80::1')).toBe(true);
+    expect(isPrivateHost('fe90::1')).toBe(true);
+    expect(isPrivateHost('[febf::1]')).toBe(true);
+    // fc00::/7
     expect(isPrivateHost('fc00::1')).toBe(true);
     expect(isPrivateHost('fd00::1')).toBe(true);
+    // IPv4-mapped IPv6
+    expect(isPrivateHost('[::ffff:127.0.0.1]')).toBe(true);
+    expect(isPrivateHost('[::ffff:10.0.0.1]')).toBe(true);
+    expect(isPrivateHost('[::ffff:192.168.1.1]')).toBe(true);
+    expect(isPrivateHost('[::ffff:7f00:1]')).toBe(true);
+    expect(isPrivateHost('[::ffff:c0a8:101]')).toBe(true);
   });
-  it('accepts public hosts', () => {
+  it('accepts public hosts and handles false positives', () => {
     expect(isPrivateHost('example.com')).toBe(false);
     expect(isPrivateHost('8.8.8.8')).toBe(false);
     expect(isPrivateHost('172.32.0.1')).toBe(false);
     expect(isPrivateHost('1.1.1.1')).toBe(false);
+    // Domain names should not be rejected by IPv6 patterns
+    expect(isPrivateHost('fcbarcelona.com')).toBe(false);
+    expect(isPrivateHost('fdic.gov')).toBe(false);
+    expect(isPrivateHost('fc.example')).toBe(false);
   });
 });
 
@@ -88,5 +108,7 @@ describe('proposals', () => {
     expect((await store.listProposals()).map((p) => p.id)).toEqual([b, a]);
     expect((await store.readProposal('p-nope').catch((e) => e)).status).toBe(404);
     expect((await store.readProposal('../x').catch((e) => e)).status).toBe(400);
+    expect((await store.readProposal('').catch((e) => e)).status).toBe(400);
+    expect((await store.readProposal('.').catch((e) => e)).status).toBe(400);
   });
 });

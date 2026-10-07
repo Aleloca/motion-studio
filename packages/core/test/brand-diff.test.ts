@@ -47,4 +47,11 @@ describe('applyBrandChanges', () => {
     expect(next.colors.map((c) => c.id)).toEqual(['blu', 'rosso', 'arancio']);
     expect(next.tone).toMatchObject({ text: 'Energico e diretto', source: site });
   });
+  it('never removes manual items even if removal is accepted', () => {
+    // Create a manual removal change (should not happen in diffBrandKits, but could come from hand-edited proposal)
+    const manualRemoveChange = { id: 'colors:remove:blu', field: 'colors' as const, op: 'remove' as const, itemId: 'blu', before: current.colors[0], after: null };
+    const next = applyBrandChanges(current, [manualRemoveChange], ['colors:remove:blu']);
+    // blu is manual, so it should not be removed
+    expect(next.colors.map((c) => c.id)).toEqual(['blu', 'grigio', 'rosso']);
+  });
 });

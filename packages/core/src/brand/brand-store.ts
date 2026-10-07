@@ -11,48 +11,92 @@ import { WorkspaceError } from '../workspace-store.ts';
 const PROPOSAL_RE = /^p-\d{8}-\d{6}(-\d+)?$/;
 const issues = (e: { issues: Array<{ path: PropertyKey[]; message: string }> }) => e.issues.map((i) => `${i.path.map(String).join('.')}: ${i.message}`).join('; ');
 
+function isPrivateIPv4Octets(a: number, b: number, c: number, d: number): boolean {
+  // 0.0.0.0/8 (this network)
+  if (a === 0) return true;
+
+  // 127.0.0.0/8 (loopback)
+  if (a === 127) return true;
+
+  // 10.0.0.0/8 (private)
+  if (a === 10) return true;
+
+  // 172.16.0.0/12 (private)
+  if (a === 172 && b >= 16 && b <= 31) return true;
+
+  // 192.168.0.0/16 (private)
+  if (a === 192 && b === 168) return true;
+
+  // 169.254.0.0/16 (link-local)
+  if (a === 169 && b === 254) return true;
+
+  return false;
+}
+
+function isPrivateIPv4(ipStr: string): boolean {
+  const parts = ipStr.split('.');
+  if (parts.length !== 4 || !parts.every((p) => /^\d+$/.test(p))) return false;
+
+  const nums = parts.map((p) => Number(p));
+  return isPrivateIPv4Octets(nums[0]!, nums[1]!, nums[2]!, nums[3]!);
+}
+
 export function isPrivateHost(hostname: string): boolean {
-  const h = hostname.toLowerCase();
+  let h = hostname.toLowerCase();
+
+  // Strip trailing dot
+  if (h.endsWith('.')) h = h.slice(0, -1);
 
   // localhost variants
   if (h === 'localhost' || h.endsWith('.localhost')) return true;
 
-  // Remove brackets for IPv6
+  // Remove brackets for IPv6 literals
   const host = h.startsWith('[') && h.endsWith(']') ? h.slice(1, -1) : h;
 
-  // IPv6 loopback ::1
-  if (host === '::1') return true;
+  // Check if this is an IPv6 literal (contains ':')
+  const isIPv6Literal = host.includes(':');
 
-  // IPv6 link-local fe80::/10
-  if (host.startsWith('fe80:')) return true;
+  if (isIPv6Literal) {
+    // IPv6 loopback ::1 and ::
+    if (host === '::1' || host === '::') return true;
 
-  // IPv6 unique local fc00::/7
-  if (host.startsWith('fc') || host.startsWith('fd')) return true;
+    // IPv6 link-local fe80::/10 (fe80-febf::/10)
+    // Match patterns like fe80::, fe81::, ..., febf::
+    if (host.startsWith('fe')) {
+      const firstByte = host.slice(2, 4);
+      if (/^[89a-f]/.test(firstByte) && host[4] === ':') return true;
+    }
 
-  // Parse IPv4
-  const parts = host.split('.');
-  if (parts.length === 4 && parts.every((p) => /^\d+$/.test(p))) {
-    const nums = parts.map((p) => Number(p));
-    const a = nums[0]!;
-    const b = nums[1]!;
+    // IPv6 unique local fc00::/7 (fc00-fdff::/7)
+    // Match patterns like fc00::, fd00::, etc.
+    if (host.startsWith('fc:') || host.startsWith('fd:')) return true;
+    if ((host.startsWith('fc') || host.startsWith('fd')) && host.length > 2) {
+      const thirdChar = host[2]!;
+      if (thirdChar === ':' || (thirdChar >= '0' && thirdChar <= '9') || (thirdChar >= 'a' && thirdChar <= 'f')) return true;
+    }
 
-    // 127.0.0.0/8 (loopback)
-    if (a === 127) return true;
-
-    // 10.0.0.0/8 (private)
-    if (a === 10) return true;
-
-    // 172.16.0.0/12 (private)
-    if (a === 172 && b >= 16 && b <= 31) return true;
-
-    // 192.168.0.0/16 (private)
-    if (a === 192 && b === 168) return true;
-
-    // 169.254.0.0/16 (link-local)
-    if (a === 169 && b === 254) return true;
+    // IPv4-mapped IPv6: ::ffff:a.b.c.d or ::ffff:HHHH:HHHH
+    if (host.startsWith('::ffff:')) {
+      const ipPart = host.slice(7);
+      // Check for dotted-quad form ::ffff:a.b.c.d
+      if (ipPart.includes('.')) {
+        return isPrivateIPv4(ipPart);
+      }
+      // Check for hex form ::ffff:HHHH:HHHH - convert to IPv4
+      const parts = ipPart.split(':');
+      if (parts.length === 2) {
+        const a = parseInt(parts[0]!, 16) >> 8;
+        const b = parseInt(parts[0]!, 16) & 0xff;
+        const c = parseInt(parts[1]!, 16) >> 8;
+        const d = parseInt(parts[1]!, 16) & 0xff;
+        return isPrivateIPv4Octets(a, b, c, d);
+      }
+    }
+    return false;
   }
 
-  return false;
+  // IPv4 check (only for non-IPv6 literals)
+  return isPrivateIPv4(host);
 }
 
 export class BrandStore {
@@ -98,15 +142,15 @@ export class BrandStore {
       const sources = await this.readSources();
       const n = Math.max(0, ...sources.map((s) => Number(s.id.slice(2)) || 0)) + 1;
 
-      // Validate private host for website sources
+      // For website sources: parse URL and validate host before schema validation
       if (input.kind === 'website') {
+        let url: URL;
         try {
-          const url = new URL(input.url.trim());
-          if (isPrivateHost(url.hostname)) throw new WorkspaceError(400, 'Indirizzo locale o privato non ammesso come sorgente');
-        } catch (e) {
-          if (e instanceof WorkspaceError) throw e;
-          // URL parsing error will be caught by schema validation below
+          url = new URL(input.url.trim());
+        } catch {
+          throw new WorkspaceError(400, `Sorgente non valida: URL non valido`);
         }
+        if (isPrivateHost(url.hostname)) throw new WorkspaceError(400, 'Indirizzo locale o privato non ammesso come sorgente');
       }
 
       const parsed = brandSourceSchema.safeParse({
@@ -150,7 +194,7 @@ export class BrandStore {
   }
 
   proposalDir(id: string): string {
-    if (id.includes('..') || id.includes('/')) throw new WorkspaceError(400, `Identificativo proposta non valido: ${id}`);
+    if (!/^[a-z0-9][a-z0-9-]{0,80}$/.test(id)) throw new WorkspaceError(400, `Identificativo proposta non valido: ${id}`);
     return join(this.dir, 'proposals', id);
   }
 

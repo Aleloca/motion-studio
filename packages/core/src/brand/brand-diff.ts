@@ -46,8 +46,15 @@ export function applyBrandChanges(current: BrandKit, changes: BrandChange[], acc
   for (const c of changes) {
     if (!accepted.has(c.id)) continue;
     if (SCALARS.has(c.field)) { next[c.field] = c.op === 'remove' ? null : c.after; continue; }
-    const arr = [...(next[c.field] as Array<{ id: string }>)];
-    if (c.op === 'remove') { next[c.field] = arr.filter((i) => i.id !== c.itemId); continue; }
+    const arr = [...(next[c.field] as Array<{ id: string; source?: { kind: string } }>)];
+    if (c.op === 'remove') {
+      // Never remove manual items
+      const itemToRemove = arr.find((i) => i.id === c.itemId);
+      if (itemToRemove?.source?.kind !== 'manual') {
+        next[c.field] = arr.filter((i) => i.id !== c.itemId);
+      }
+      continue;
+    }
     const index = arr.findIndex((i) => i.id === c.itemId);
     if (index >= 0) arr[index] = c.after as { id: string }; else arr.push(c.after as { id: string });
     next[c.field] = arr;
