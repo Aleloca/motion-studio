@@ -29,45 +29,48 @@ export type SourceKind = 'manual' | 'website' | 'image';
 export type SourceRef = z.infer<typeof sourceRefSchema>;
 
 const WEIGHTS = 'pesi non validi (numeri interi da 100 a 900)';
-const colorSchema = z.object({
+export const brandColorSchema = z.object({
   id, name: z.string().trim().min(1, 'nome obbligatorio').max(60, 'nome troppo lungo (massimo 60 caratteri)'),
   hex: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'hex non valido (usa #RRGGBB)').transform((h) => h.toUpperCase()),
   role: z.enum(['primary', 'secondary', 'accent', 'background', 'text', 'other'], { message: 'ruolo non valido' }), source: sourceRefSchema,
 });
-const fontSchema = z.object({
+export const brandFontSchema = z.object({
   id, family: z.string().trim().min(1, 'famiglia obbligatoria').max(80, 'famiglia troppo lunga (massimo 80 caratteri)'),
   role: z.enum(['heading', 'body', 'accent', 'other'], { message: 'ruolo non valido' }),
   weights: z.array(z.number({ message: WEIGHTS }).int(WEIGHTS).min(100, WEIGHTS).max(900, WEIGHTS)).max(9, 'al massimo 9 pesi'),
   file: relativeFileSchema.nullable(), source: sourceRefSchema,
 });
-const logoSchema = z.object({
+export const brandLogoSchema = z.object({
   id, file: relativeFileSchema, variant: z.enum(['primary', 'secondary', 'mono', 'icon', 'other'], { message: 'variante non valida' }),
   background: z.enum(['light', 'dark', 'any'], { message: 'sfondo non valido' }), source: sourceRefSchema,
 });
-const noteSchema = z.object({ id, text: z.string().trim().min(1, 'testo obbligatorio').max(2000, 'testo troppo lungo (massimo 2000 caratteri)'), source: sourceRefSchema });
+export const brandNoteSchema = z.object({ id, text: z.string().trim().min(1, 'testo obbligatorio').max(2000, 'testo troppo lungo (massimo 2000 caratteri)'), source: sourceRefSchema });
+
+/** Maximum number of items per list in a brand kit. */
+export const BRAND_KIT_LIMITS = { colors: 40, fonts: 20, logos: 30, dos: 50, donts: 50 } as const;
 
 const uniqueIds = (items: Array<{ id: string }>) => new Set(items.map((i) => i.id)).size === items.length;
 
 export const brandKitSchema = z.object({
   schemaVersion: z.literal(1),
-  colors: z.array(colorSchema).max(40).default([]),
-  fonts: z.array(fontSchema).max(20).default([]),
-  logos: z.array(logoSchema).max(30).default([]),
-  tone: noteSchema.nullable().default(null),
-  dos: z.array(noteSchema).max(50).default([]),
-  donts: z.array(noteSchema).max(50).default([]),
-  photoStyle: noteSchema.nullable().default(null),
+  colors: z.array(brandColorSchema).max(BRAND_KIT_LIMITS.colors).default([]),
+  fonts: z.array(brandFontSchema).max(BRAND_KIT_LIMITS.fonts).default([]),
+  logos: z.array(brandLogoSchema).max(BRAND_KIT_LIMITS.logos).default([]),
+  tone: brandNoteSchema.nullable().default(null),
+  dos: z.array(brandNoteSchema).max(BRAND_KIT_LIMITS.dos).default([]),
+  donts: z.array(brandNoteSchema).max(BRAND_KIT_LIMITS.donts).default([]),
+  photoStyle: brandNoteSchema.nullable().default(null),
 }).refine((k) => [k.colors, k.fonts, k.logos, k.dos, k.donts].every(uniqueIds), { message: 'id duplicati' });
 export type BrandKit = z.infer<typeof brandKitSchema>;
 
-const FIELD_LABELS: Record<string, string> = {
+export const BRAND_FIELD_LABELS: Record<string, string> = {
   colors: 'colore', fonts: 'font', logos: 'logo', dos: 'cosa da fare', donts: 'cosa da evitare', tone: 'tono di voce', photoStyle: 'stile fotografico',
 };
 /** Brand kit validation issues in Italian, naming the item ("colore 2: hex non valido (usa #RRGGBB)"). */
 export function brandKitIssues(error: { issues: Array<{ path: PropertyKey[]; message: string }> }): string {
   return error.issues.map((i) => {
     const [field, index] = i.path;
-    const label = typeof field === 'string' ? FIELD_LABELS[field] : undefined;
+    const label = typeof field === 'string' ? BRAND_FIELD_LABELS[field] : undefined;
     if (!label) return i.message;
     return `${typeof index === 'number' ? `${label} ${index + 1}` : label}: ${i.message}`;
   }).join('; ');

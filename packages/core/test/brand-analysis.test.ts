@@ -73,6 +73,46 @@ describe('analyze', () => {
     expect(job.state).toBe('failed');
     expect(job.error).toContain('Proposta non valida');
     expect(await brand.listProposals()).toEqual([]);
+    // The downloads of a failed turn are still registered, not left orphaned under assets/.
+    const lib = new LibraryStore(ref.projectDir, NoMediaTools);
+    expect((await lib.listAssets()).map((a) => a.file)).toEqual(['brand/logo.svg', 'brand/unlisted.png']);
+    expect(await lib.unregisteredAssets()).toEqual([]);
+  });
+  it('keeps the valid items of a partly invalid kit and lists the others', T, async () => {
+    process.env.FAKE_CLAUDE_SCENARIO = 'brand_mixed';
+    const job = await done((await service.analyze(ref)).id);
+    expect(job.error).toBeUndefined();
+    expect(job.state).toBe('succeeded');
+    const [p] = await brand.listProposals();
+    const after = (cid: string) => p!.changes.find((c) => c.id === cid)?.after;
+    expect(p!.changes.map((c) => c.id)).toEqual(expect.arrayContaining(['colors:add:arancio', 'fonts:add:sans', 'fonts:add:serif', 'logos:add:logo']));
+    expect(p!.changes.map((c) => c.id).filter((c) => /blu|mono|wordmark|ghost|gergo/.test(c))).toEqual([]);
+    expect(after('fonts:add:sans')).toMatchObject({ weights: [400, 700] });
+    expect(after('fonts:add:serif')).toMatchObject({ weights: [400, 700] });
+    const tone = p!.changes.find((c) => c.field === 'tone')!.after;
+    expect(tone).toEqual({ id: expect.stringMatching(/^[a-z0-9][a-z0-9-]*$/), text: 'Chiaro, amichevole e tecnico.', source: { kind: 'website', ref: 'https://acme.example' } });
+    const dos = p!.changes.filter((c) => c.field === 'dos').map((c) => c.after);
+    expect(dos).toEqual([
+      { id: 'usa-esempi-di-codice-reali', text: 'Usa esempi di codice reali', source: { kind: 'website', ref: 'https://acme.example' } },
+      { id: 'cita-la-community', text: 'Cita la community', source: { kind: 'image', ref: 'brand/sources/x.png' } },
+    ]);
+    expect(p!.summary).toContain('colore «Blu scuro»: ruolo non valido');
+    expect(p!.summary).toContain('colore «Blu»: ruolo non valido');
+    expect(p!.summary).toContain('font «Mono»: ruolo non valido');
+    expect(p!.summary).toContain('logo «wordmark»: variante non valida');
+    expect(p!.summary).toContain('cosa da evitare «gergo»: testo obbligatorio');
+    // The manual colour the agent broke is kept as it was.
+    expect(p!.changes.some((c) => c.field === 'colors' && c.itemId === 'blu')).toBe(false);
+    expect((await brand.readKit()).colors.map((c) => c.id)).toEqual(['blu']);
+  });
+  it('documents the kit format and every allowed value in the prompt', T, async () => {
+    await done((await service.analyze(ref)).id);
+    const { prompt } = await argvOf();
+    for (const v of ['primary', 'secondary', 'accent', 'background', 'text', 'other', 'heading', 'body', 'mono', 'icon', 'light', 'dark', 'any']) expect(prompt).toContain(`"${v}"`);
+    expect(prompt).toContain('[400, 700]');
+    expect(prompt).toContain('"assets/brand/logo.svg"');
+    expect(prompt).toContain('"photoStyle"');
+    expect(prompt).toContain('"donts"');
   });
   it('refuses to start without sources and while another brand job runs', T, async () => {
     await brand.removeSource('s-1');

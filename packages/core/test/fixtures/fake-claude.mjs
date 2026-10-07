@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Test double for the `claude` CLI. Scenario via FAKE_CLAUDE_SCENARIO: ok | tool | crash | hang | hang_ignore_term | garbage | error_result | leak_fd | render | render_missing_once | render_never | render_then_crash | render_touch | brand | brand_invalid | brand_many_dropped | brand_big_guidelines | brand_symlink_summary | brand_outside_assets
+// Test double for the `claude` CLI. Scenario via FAKE_CLAUDE_SCENARIO: ok | tool | crash | hang | hang_ignore_term | garbage | error_result | leak_fd | render | render_missing_once | render_never | render_then_crash | render_touch | brand | brand_invalid | brand_many_dropped | brand_big_guidelines | brand_symlink_summary | brand_outside_assets | brand_mixed
 // FAKE_CLAUDE_TAMPER=1: brand/describe turns also overwrite brand/brand-kit.json and assets/assets.json directly.
 // FAKE_CLAUDE_SYMLINK_BRAND=<dir>: describe turns move brand/ to <dir>, tamper the kit there and leave a symlink.
 // FAKE_CLAUDE_WAIT_FILE=<path>: brand/describe turns wait for that file to exist before finishing.
@@ -61,7 +61,7 @@ rl.once('line', async (line) => {
   if (block && scenario === 'render') render(false);
   if (scenario === 'render_touch' && block) { render(false); if (process.env.FAKE_CLAUDE_TOUCH) writeFileSync(process.env.FAKE_CLAUDE_TOUCH, 'modified'); if (process.env.FAKE_CLAUDE_GIT_INIT) spawnSync('git', ['init', '-q'], { cwd: process.env.FAKE_CLAUDE_GIT_INIT }); }
   const brandBlock = (() => { const m = prompt.match(/```motion-studio-brand\n([\s\S]*?)\n```/); return m ? JSON.parse(m[1]) : null; })();
-  if (brandBlock && (scenario === 'brand' || scenario === 'render' || scenario.startsWith('brand_') && scenario !== 'brand_invalid')) {
+  if (brandBlock && (scenario === 'brand' || scenario === 'render' || scenario.startsWith('brand_'))) {
     const kit = JSON.parse(readFileSync(brandBlock.kitFile, 'utf8'));
     const url = brandBlock.sources.find((s) => s.kind === 'website')?.url ?? 'https://acme.example';
     kit.colors.push({ id: 'arancio', name: 'Arancio', hex: '#FF7A45', role: 'accent', source: { kind: 'website', ref: url } });
@@ -81,6 +81,19 @@ rl.once('line', async (line) => {
     if (scenario === 'brand_outside_assets') {
       kit.logos.push({ id: 'progetto', file: 'project.json', variant: 'icon', background: 'any', source: { kind: 'website', ref: url } });
       kit.fonts.push({ id: 'ref-font', family: 'Ref', role: 'body', weights: [400], file: 'brand/guidelines.md', source: { kind: 'website', ref: url } });
+      writeFileSync(brandBlock.kitFile, JSON.stringify(kit));
+    }
+    if (scenario === 'brand_mixed') {
+      // Shapes a real agent produced on an empty kit: unknown enums, string notes, string weights.
+      kit.colors.push({ id: 'blu-scuro', name: 'Blu scuro', hex: '#123456', role: 'brand', source: { kind: 'website', ref: url } });
+      kit.colors[0] = { ...kit.colors[0], role: 'principale' };
+      kit.fonts.push({ id: 'sans', family: 'Open Sans', role: 'body', weights: '400, 700', file: null, source: { kind: 'website', ref: url } });
+      kit.fonts.push({ id: 'mono', family: 'Mono', role: 'code', weights: ['400'], file: null, source: { kind: 'website', ref: url } });
+      kit.fonts.push({ id: 'serif', family: 'Serif', role: 'heading', weights: ['400', 700], file: null, source: { kind: 'website', ref: url } });
+      kit.logos.push({ id: 'wordmark', file: 'assets/brand/logo.svg', variant: 'wordmark', background: 'light', source: { kind: 'website', ref: url } });
+      kit.tone = 'Chiaro, amichevole e tecnico.';
+      kit.dos = ['Usa esempi di codice reali', { text: 'Cita la community', source: { kind: 'image', ref: 'brand/sources/x.png' } }];
+      kit.donts = [{ id: 'gergo', text: '', source: { kind: 'website', ref: url } }];
       writeFileSync(brandBlock.kitFile, JSON.stringify(kit));
     }
     if (scenario === 'brand_big_guidelines') writeFileSync(brandBlock.guidelinesFile, 'x'.repeat(200_001));

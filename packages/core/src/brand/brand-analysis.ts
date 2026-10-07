@@ -1,6 +1,6 @@
 import { appendFile, lstat, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
-import { brandKitIssues, brandKitSchema, brandProposalSchema, relativeFileSchema, webUrlSchema, type AssetEntry, type BrandKit, type BrandProposal, type JobSummary, type ServerMessage } from '@motion-studio/shared';
+import { brandProposalSchema, relativeFileSchema, webUrlSchema, type AssetEntry, type BrandKit, type BrandProposal, type JobSummary, type ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import { BRAND_ANALYSIS_TOOLS, DESCRIBE_TOOLS, type AgentRunner } from '../agent/runner.ts';
 import type { Git } from '../git.ts';
@@ -13,6 +13,7 @@ import { guardRules, readAgentFile, restoreGuarded, snapshotGuarded } from './ag
 import { applyBrandChanges, diffBrandKits } from './brand-diff.ts';
 import { buildBrandPrompt, buildDescribePrompt } from './brand-prompt.ts';
 import { BrandStore } from './brand-store.ts';
+import { parseProposedKit } from './proposed-kit.ts';
 
 export interface ProjectRef { root: string; projectSlug: string; projectDir: string }
 export const brandJobKey = (root: string, slug: string) => `brand:${root}:${slug}`;
@@ -94,6 +95,8 @@ export class BrandService {
     const library = new LibraryStore(ref.projectDir, this.deps.media);
     const id = await store.newProposalId();
     const dir = store.proposalDir(id);
+    // Set once the agent turn is over and until its downloads are registered.
+    let pendingDownloads: (() => ReturnType<BrandService['registerDownloads']>) | null = null;
     const rel = (p: string) => relative(ref.projectDir, p).split('\\').join('/');
     try {
       const currentKit = await store.readKit();
@@ -111,14 +114,18 @@ export class BrandService {
         await rm(dir, { recursive: true, force: true });
         return 'cancelled';
       }
+      pendingDownloads = () => this.registerDownloads(library, join(dir, 'assets.json'), before);
       const dropped: string[] = [...tampered];
       const kitFile = await readAgentFile(join(dir, 'brand-kit.json'));
       if (kitFile === null || 'skipped' in kitFile) throw new Error(`Proposta non valida: brand-kit.json ${kitFile ? kitFile.skipped : 'mancante'}`);
       let json: unknown;
       try { json = JSON.parse(kitFile.text); } catch (e) { throw new Error(`Proposta non valida: JSON non valido (${(e as Error).message})`); }
-      const parsedKit = brandKitSchema.safeParse(json);
-      if (!parsedKit.success) throw new Error(`Proposta non valida: ${brandKitIssues(parsedKit.error)}`);
-      let proposed: BrandKit = parsedKit.data;
+      const firstSite = sources.find((s) => s.kind === 'website' && s.url);
+      const firstImage = sources.find((s) => s.kind === 'image' && s.file);
+      const defaultSource = firstSite ? { kind: 'website' as const, ref: firstSite.url } : { kind: 'image' as const, ref: firstImage?.file ?? null };
+      const parsedKit = parseProposedKit(json, currentKit, defaultSource);
+      dropped.push(...parsedKit.dropped);
+      let proposed: BrandKit = parsedKit.kit;
       // Logos and fonts must point at an existing regular file inside assets/.
       const keepFile = async (file: string | null, label: string) => {
         if (file === null) return true;
@@ -133,24 +140,10 @@ export class BrandService {
       for (const f of proposed.fonts) if (await keepFile(f.file, f.id)) fonts.push(f);
       proposed = { ...proposed, logos, fonts };
 
-      const listedRead = await readLenient(join(dir, 'assets.json'), listedAsset);
-      if (listedRead.skipped) dropped.push(`assets.json della proposta (ignorato: ${listedRead.skipped})`);
-      const existingListed: typeof listedRead.items = [];
-      for (const a of listedRead.items.filter((x) => !hidden(x.file))) {
-        // resolve() refuses reserved names (assets.json): one bad entry must not sink the proposal.
-        try { if (await isFile(library.resolve('assets', a.file))) existingListed.push(a); }
-        catch (e) { if (!(e instanceof WorkspaceError)) throw e; dropped.push(`${a.file} (non registrato)`); }
-      }
-      const appeared = (await library.unregisteredAssets()).filter((f) => !before.has(f) && !existingListed.some((a) => a.file === f));
-      const registered: AssetEntry[] = [];
-      for (const item of [
-        ...existingListed.map((a) => ({ file: a.file, origin: 'website' as const, sourceUrl: a.sourceUrl ?? null, description: a.description, tags: a.tags })),
-        ...appeared.map((file) => ({ file, origin: 'website' as const, sourceUrl: null })),
-      ]) {
-        // The store confines paths; one unusable entry (e.g. a symlink out of assets/) must not sink the whole proposal.
-        try { registered.push(...(await library.registerAssets([item]))); }
-        catch (e) { if (!(e instanceof WorkspaceError)) throw e; dropped.push(`${item.file} (non registrato)`); }
-      }
+      pendingDownloads = null;
+      const downloads = await this.registerDownloads(library, join(dir, 'assets.json'), before);
+      dropped.push(...downloads.dropped);
+      const registered = downloads.registered;
 
       let proposedGuidelines = currentGuidelines;
       const guidelinesFile = await readAgentFile(join(dir, 'guidelines.md'));
@@ -184,11 +177,43 @@ export class BrandService {
       await this.deps.git.commitAll(ref.projectDir, `Analisi brand ${id}`);
       this.changed(ref, 'brand', 'library');
     } catch (err) {
+      // A turn that completed but produced an unusable proposal still downloaded files: register them rather than leave them orphaned.
+      if (pendingDownloads) {
+        const downloads = await pendingDownloads().catch(() => null);
+        if (downloads?.registered.length) await this.deps.git.commitAll(ref.projectDir, `Asset dell'analisi brand ${id} (non riuscita)`).catch(() => null);
+      }
       await rm(dir, { recursive: true, force: true }).catch(() => {});
       // Assets may already be registered when a late step fails.
       this.changed(ref, 'brand', 'library');
       throw err;
     }
+  }
+
+  /**
+   * Registers what the agent downloaded under assets/: the files it listed (with their details) that pass the store's
+   * checks, plus files that appeared during the turn without being listed. `dropped` explains the entries left out.
+   */
+  private async registerDownloads(library: LibraryStore, listFile: string, before: Set<string>): Promise<{ registered: AssetEntry[]; dropped: string[] }> {
+    const dropped: string[] = [];
+    const listedRead = await readLenient(listFile, listedAsset);
+    if (listedRead.skipped) dropped.push(`assets.json della proposta (ignorato: ${listedRead.skipped})`);
+    const existingListed: typeof listedRead.items = [];
+    for (const a of listedRead.items.filter((x) => !hidden(x.file))) {
+      // resolve() refuses reserved names (assets.json): one bad entry must not sink the proposal.
+      try { if (await isFile(library.resolve('assets', a.file))) existingListed.push(a); }
+      catch (e) { if (!(e instanceof WorkspaceError)) throw e; dropped.push(`${a.file} (non registrato)`); }
+    }
+    const appeared = (await library.unregisteredAssets()).filter((f) => !before.has(f) && !existingListed.some((a) => a.file === f));
+    const registered: AssetEntry[] = [];
+    for (const item of [
+      ...existingListed.map((a) => ({ file: a.file, origin: 'website' as const, sourceUrl: a.sourceUrl ?? null, description: a.description, tags: a.tags })),
+      ...appeared.map((file) => ({ file, origin: 'website' as const, sourceUrl: null })),
+    ]) {
+      // The store confines paths; one unusable entry (e.g. a symlink out of assets/) must not sink the whole proposal.
+      try { registered.push(...(await library.registerAssets([item]))); }
+      catch (e) { if (!(e instanceof WorkspaceError)) throw e; dropped.push(`${item.file} (non registrato)`); }
+    }
+    return { registered, dropped };
   }
 
   describeAssets(ref: ProjectRef, files?: string[]): Promise<JobSummary> {
