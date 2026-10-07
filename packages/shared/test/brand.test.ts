@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { brandKitSchema, brandSourceSchema, EMPTY_BRAND_KIT } from '../src/index.ts';
+import { brandKitSchema, brandSourceSchema, sourceRefSchema, EMPTY_BRAND_KIT } from '../src/index.ts';
 
 const manual = { kind: 'manual', ref: null } as const;
 
@@ -19,11 +19,32 @@ describe('brandKitSchema', () => {
   });
 });
 
+describe('sourceRefSchema', () => {
+  it('enforces per-kind validation', () => {
+    expect(sourceRefSchema.safeParse({ kind: 'manual', ref: null }).success).toBe(true);
+    expect(sourceRefSchema.safeParse({ kind: 'manual', ref: 'something' }).success).toBe(false);
+    expect(sourceRefSchema.safeParse({ kind: 'website', ref: 'https://example.com' }).success).toBe(true);
+    expect(sourceRefSchema.safeParse({ kind: 'website', ref: null }).success).toBe(false);
+    expect(sourceRefSchema.safeParse({ kind: 'website', ref: 'file:///x' }).success).toBe(false);
+    expect(sourceRefSchema.safeParse({ kind: 'image', ref: 'assets/logo.svg' }).success).toBe(true);
+    expect(sourceRefSchema.safeParse({ kind: 'image', ref: null }).success).toBe(false);
+    expect(sourceRefSchema.safeParse({ kind: 'image', ref: '../x.svg' }).success).toBe(false);
+  });
+});
+
 describe('brandSourceSchema', () => {
   it('accepts http(s) websites only', () => {
     const s = { id: 's1', kind: 'website', url: 'https://example.com', file: null, addedAt: '2026-10-07T10:00:00.000Z', lastAnalyzedAt: null };
     expect(brandSourceSchema.safeParse(s).success).toBe(true);
     expect(brandSourceSchema.safeParse({ ...s, url: 'file:///etc/passwd' }).success).toBe(false);
     expect(brandSourceSchema.safeParse({ ...s, url: null }).success).toBe(false);
+  });
+  it('enforces website/image specific requirements', () => {
+    const website = { id: 's1', kind: 'website' as const, url: 'https://example.com', file: null, addedAt: '2026-10-07T10:00:00.000Z', lastAnalyzedAt: null };
+    const image = { id: 's2', kind: 'image' as const, url: null, file: 'img/ref.png', addedAt: '2026-10-07T10:00:00.000Z', lastAnalyzedAt: null };
+    expect(brandSourceSchema.safeParse(website).success).toBe(true);
+    expect(brandSourceSchema.safeParse(image).success).toBe(true);
+    expect(brandSourceSchema.safeParse({ ...website, file: 'x.png' }).success).toBe(false);
+    expect(brandSourceSchema.safeParse({ ...image, url: 'https://x.com' }).success).toBe(false);
   });
 });

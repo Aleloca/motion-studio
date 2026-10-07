@@ -5,6 +5,8 @@ export const relativeFileSchema = z.string().min(1).max(300).refine(
   'percorso non valido (deve essere relativo, senza ".." o "\\")',
 );
 
+export const webUrlSchema = z.string().url().refine((u) => /^https?:\/\//i.test(u), 'solo indirizzi http(s)');
+
 export type AssetKind = 'image' | 'video' | 'svg' | 'font' | 'audio' | 'other';
 export type AssetOrigin = 'upload' | 'website' | 'generated' | 'stock';
 
@@ -14,19 +16,20 @@ const EXT: Record<string, AssetKind> = {
   woff: 'font', woff2: 'font', ttf: 'font', otf: 'font', mp3: 'audio', wav: 'audio', m4a: 'audio', aac: 'audio', ogg: 'audio',
 };
 export function assetKindOf(file: string): AssetKind {
-  return EXT[file.split('.').pop()?.toLowerCase() ?? ''] ?? 'other';
+  const ext = file.split('.').pop()?.toLowerCase() ?? '';
+  return (Object.hasOwn(EXT, ext) ? EXT[ext] : 'other') as AssetKind;
 }
 
 export const assetEntrySchema = z.object({
   file: relativeFileSchema,
   kind: z.enum(['image', 'video', 'svg', 'font', 'audio', 'other']),
   origin: z.enum(['upload', 'website', 'generated', 'stock']),
-  sourceUrl: z.string().url().nullable(),
+  sourceUrl: webUrlSchema.nullable(),
   description: z.string().max(2000),
   tags: z.array(z.string().min(1).max(40)).max(30),
   width: z.number().int().positive().nullable(),
   height: z.number().int().positive().nullable(),
-  addedAt: z.string().datetime(),
+  addedAt: z.iso.datetime(),
 });
 export type AssetEntry = z.infer<typeof assetEntrySchema>;
 
@@ -37,7 +40,7 @@ export const assetsFileSchema = z.object({ schemaVersion: z.literal(1), assets: 
 export type AssetsFile = z.infer<typeof assetsFileSchema>;
 
 export const referenceEntrySchema = z.object({
-  file: relativeFileSchema, note: z.string().max(2000), useForBrand: z.boolean(), addedAt: z.string().datetime(),
+  file: relativeFileSchema, note: z.string().max(2000), useForBrand: z.boolean(), addedAt: z.iso.datetime(),
 });
 export type ReferenceEntry = z.infer<typeof referenceEntrySchema>;
 export const referencesFileSchema = z.object({ schemaVersion: z.literal(1), references: z.array(referenceEntrySchema).default([]) })

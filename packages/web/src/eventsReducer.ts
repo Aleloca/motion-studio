@@ -12,6 +12,7 @@ export function eventsReducer(state: EventsState, msg: ServerMessage): EventsSta
         ...state,
         jobs: Object.fromEntries(msg.jobs.map((j) => [j.id, j])),
         creativeTicks: Object.fromEntries(Object.entries(state.creativeTicks).map(([k, v]) => [k, v + 1])),
+        projectTicks: Object.fromEntries(Object.entries(state.projectTicks).map(([k, v]) => [k, v + 1])),
       };
     case 'job':
       return { ...state, jobs: { ...state.jobs, [msg.job.id]: msg.job } };

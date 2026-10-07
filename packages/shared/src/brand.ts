@@ -1,10 +1,30 @@
 import { z } from 'zod';
-import { relativeFileSchema } from './library.ts';
+import { relativeFileSchema, webUrlSchema } from './library.ts';
 
 const id = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/);
-const webUrl = z.string().url().refine((u) => /^https?:\/\//i.test(u), 'solo indirizzi http(s)');
 
-export const sourceRefSchema = z.object({ kind: z.enum(['manual', 'website', 'image']), ref: z.string().nullable() });
+export const sourceRefSchema = z.object({ kind: z.enum(['manual', 'website', 'image']), ref: z.string().nullable() })
+  .superRefine((s, ctx) => {
+    if (s.kind === 'manual' && s.ref !== null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'manual sources devono avere ref: null', path: ['ref'] });
+    }
+    if (s.kind === 'website') {
+      if (s.ref === null) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'website sources richiedono url http(s) come ref', path: ['ref'] });
+      } else {
+        const urlResult = webUrlSchema.safeParse(s.ref);
+        if (!urlResult.success) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'website sources devono avere url http(s) come ref', path: ['ref'] });
+      }
+    }
+    if (s.kind === 'image') {
+      if (s.ref === null) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'image sources richiedono percorso relativo come ref', path: ['ref'] });
+      } else {
+        const fileResult = relativeFileSchema.safeParse(s.ref);
+        if (!fileResult.success) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'image sources devono avere percorso relativo come ref', path: ['ref'] });
+      }
+    }
+  });
 export type SourceKind = 'manual' | 'website' | 'image';
 export type SourceRef = z.infer<typeof sourceRefSchema>;
 
@@ -43,9 +63,18 @@ export type BrandNote = BrandKit['dos'][number];
 export const EMPTY_BRAND_KIT: BrandKit = { schemaVersion: 1, colors: [], fonts: [], logos: [], tone: null, dos: [], donts: [], photoStyle: null };
 
 export const brandSourceSchema = z.object({
-  id, kind: z.enum(['website', 'image']), url: webUrl.nullable(), file: relativeFileSchema.nullable(),
-  addedAt: z.string().datetime(), lastAnalyzedAt: z.string().datetime().nullable(),
-}).refine((s) => (s.kind === 'website' ? s.url !== null : s.file !== null), 'sorgente incompleta');
+  id, kind: z.enum(['website', 'image']), url: webUrlSchema.nullable(), file: relativeFileSchema.nullable(),
+  addedAt: z.iso.datetime(), lastAnalyzedAt: z.iso.datetime().nullable(),
+}).superRefine((s, ctx) => {
+  if (s.kind === 'website') {
+    if (s.url === null) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'website sources richiedono url', path: ['url'] });
+    if (s.file !== null) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'website sources devono avere file: null', path: ['file'] });
+  }
+  if (s.kind === 'image') {
+    if (s.file === null) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'image sources richiedono file', path: ['file'] });
+    if (s.url !== null) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'image sources devono avere url: null', path: ['url'] });
+  }
+});
 export type BrandSource = z.infer<typeof brandSourceSchema>;
 export const brandSourcesFileSchema = z.object({ schemaVersion: z.literal(1), sources: z.array(brandSourceSchema).default([]) });
 export type BrandSourcesFile = z.infer<typeof brandSourcesFileSchema>;
@@ -58,9 +87,9 @@ export const brandChangeSchema = z.object({
 });
 export type BrandChange = z.infer<typeof brandChangeSchema>;
 export const brandProposalSchema = z.object({
-  schemaVersion: z.literal(1), id, createdAt: z.string().datetime(), sourceIds: z.array(z.string()),
-  status: z.enum(['open', 'applied', 'discarded']), summary: z.string(),
-  changes: z.array(brandChangeSchema), guidelines: z.object({ current: z.string(), proposed: z.string() }).nullable(),
-  assetsAdded: z.array(z.string()),
+  schemaVersion: z.literal(1), id, createdAt: z.iso.datetime(), sourceIds: z.array(id).max(100),
+  status: z.enum(['open', 'applied', 'discarded']), summary: z.string().max(5000),
+  changes: z.array(brandChangeSchema).max(500), guidelines: z.object({ current: z.string().max(200_000), proposed: z.string().max(200_000) }).nullable(),
+  assetsAdded: z.array(relativeFileSchema).max(1000),
 });
 export type BrandProposal = z.infer<typeof brandProposalSchema>;
