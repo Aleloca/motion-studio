@@ -5,6 +5,7 @@ import { MediaThumb } from '../components/MediaThumb.tsx';
 import { ProposalReview } from '../components/ProposalReview.tsx';
 import { SourceBadge } from '../components/SourceBadge.tsx';
 import type { EventsState } from '../eventsReducer.ts';
+import { brandJobFailedText, brandJobRunningText, COLOR_ROLES, FONT_ROLES, isActiveJob, isDescribeJob, LOGO_BACKGROUNDS, LOGO_VARIANTS } from '../labels.ts';
 import { useProjectData } from '../useProjectData.ts';
 
 const MANUAL = { kind: 'manual' as const, ref: null };
@@ -54,7 +55,7 @@ export function BrandPage({ slug, live }: { slug: string; live: EventsState }) {
     seeded.current = { kit: JSON.stringify(overview.kit), guidelines: overview.guidelines };
   }, [overview]);
   const job = useMemo(() => Object.values(live.jobs).filter((j) => j.key === overview?.jobKey).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0], [live.jobs, overview?.jobKey]);
-  const running = job && (job.state === 'queued' || job.state === 'running');
+  const running = isActiveJob(job);
   const act = async (fn: () => Promise<unknown>, ok?: string) => {
     setActionError(null); setStatus(null);
     try { await fn(); if (ok) setStatus(ok); reload(); } catch (e) { setActionError(msg(e)); }
@@ -66,6 +67,8 @@ export function BrandPage({ slug, live }: { slug: string; live: EventsState }) {
   const dirty = JSON.stringify(draft) !== JSON.stringify(overview.kit);
   const set = <K extends keyof BrandKit>(k: K, v: BrandKit[K]) => setDraft({ ...draft, [k]: v });
   const openProposal = overview.proposals.find((p) => p.status === 'open');
+  // A failed analysis stays visible only until a newer proposal exists (a later analysis succeeded).
+  const failure = job?.state === 'failed' && (isDescribeJob(job) || !overview.proposals.some((p) => p.createdAt > job.createdAt)) ? brandJobFailedText(job) : null;
 
   return (
     <div className="stack">
@@ -84,7 +87,7 @@ export function BrandPage({ slug, live }: { slug: string; live: EventsState }) {
                 <input aria-label={`Nome colore ${k + 1}`} value={c.name} disabled={locked} onChange={(e) => edit({ name: e.target.value })} />
                 <input aria-label={`Hex colore ${k + 1}`} className="mono" value={c.hex} disabled={locked} onChange={(e) => edit({ hex: e.target.value })} />
                 <select aria-label={`Ruolo colore ${k + 1}`} value={c.role} disabled={locked} onChange={(e) => edit({ role: e.target.value as typeof c.role })}>
-                  {['primary', 'secondary', 'accent', 'background', 'text', 'other'].map((r) => <option key={r} value={r}>{r}</option>)}
+                  {(Object.keys(COLOR_ROLES) as Array<keyof typeof COLOR_ROLES>).map((r) => <option key={r} value={r}>{COLOR_ROLES[r]}</option>)}
                 </select>
                 <div className="row" style={{ gap: 6 }}><SourceBadge source={c.source} /><div style={{ flex: 1 }} />
                   <button type="button" disabled={locked} aria-label={`Rimuovi colore ${k + 1}`} onClick={() => set('colors', draft.colors.filter((_, i) => i !== k))}>Rimuovi</button></div>
@@ -102,7 +105,7 @@ export function BrandPage({ slug, live }: { slug: string; live: EventsState }) {
             <div key={f.id} className="row" style={{ gap: 6 }}>
               <input aria-label={`Famiglia font ${k + 1}`} value={f.family} disabled={locked} onChange={(e) => edit({ family: e.target.value })} style={{ flex: '1 1 160px', width: 'auto' }} />
               <select aria-label={`Ruolo font ${k + 1}`} value={f.role} disabled={locked} onChange={(e) => edit({ role: e.target.value as typeof f.role })}>
-                {['heading', 'body', 'accent', 'other'].map((r) => <option key={r} value={r}>{r}</option>)}
+                {(Object.keys(FONT_ROLES) as Array<keyof typeof FONT_ROLES>).map((r) => <option key={r} value={r}>{FONT_ROLES[r]}</option>)}
               </select>
               <input aria-label={`Pesi font ${k + 1}`} value={rawWeights[f.id] ?? f.weights.join(', ')} disabled={locked} style={{ width: 120 }}
                 onChange={(e) => { setRawWeights({ ...rawWeights, [f.id]: e.target.value }); edit({ weights: e.target.value.split(',').map((w) => Number(w.trim())).filter((w) => Number.isInteger(w) && w >= 100 && w <= 900) }); }}
@@ -130,10 +133,10 @@ export function BrandPage({ slug, live }: { slug: string; live: EventsState }) {
                   <MediaThumb src={api.projectFileUrl(slug, l.file)} alt={`Logo ${l.id}`} style={{ objectFit: 'contain' }} />
                 </div>
                 <select aria-label={`Variante logo ${k + 1}`} value={l.variant} disabled={locked} onChange={(e) => edit({ variant: e.target.value as typeof l.variant })}>
-                  {['primary', 'secondary', 'mono', 'icon', 'other'].map((v) => <option key={v} value={v}>{v}</option>)}
+                  {(Object.keys(LOGO_VARIANTS) as Array<keyof typeof LOGO_VARIANTS>).map((v) => <option key={v} value={v}>{LOGO_VARIANTS[v]}</option>)}
                 </select>
                 <select aria-label={`Sfondo logo ${k + 1}`} value={l.background} disabled={locked} onChange={(e) => edit({ background: e.target.value as typeof l.background })}>
-                  {['light', 'dark', 'any'].map((v) => <option key={v} value={v}>{v}</option>)}
+                  {(Object.keys(LOGO_BACKGROUNDS) as Array<keyof typeof LOGO_BACKGROUNDS>).map((v) => <option key={v} value={v}>{LOGO_BACKGROUNDS[v]}</option>)}
                 </select>
                 <SourceBadge source={l.source} />
                 <button type="button" disabled={locked} aria-label={`Rimuovi logo ${k + 1}`} onClick={() => set('logos', draft.logos.filter((_, i) => i !== k))}>Rimuovi</button>
@@ -188,8 +191,8 @@ export function BrandPage({ slug, live }: { slug: string; live: EventsState }) {
         </form>
         <p className="muted" style={{ margin: 0, fontSize: 13 }}>Le immagini si aggiungono dalla scheda Riferimenti, spuntando "Usa per l'analisi brand".</p>
         <div className="row">
-          {running && <><span className="badge run">Analisi in corso…</span><button type="button" onClick={() => void api.cancelJob(job!.id).catch((e: unknown) => setActionError(msg(e)))}>Annulla</button></>}
-          {job?.state === 'failed' && <span className="error">Analisi non riuscita: {job.error}</span>}
+          {running && <><span className="badge run">{brandJobRunningText(job!)}</span><button type="button" onClick={() => void api.cancelJob(job!.id).catch((e: unknown) => setActionError(msg(e)))}>Annulla</button></>}
+          {failure && <span className="error">{failure}</span>}
           <div style={{ flex: 1 }} />
           <button type="button" className="primary" disabled={Boolean(running)} onClick={() => void act(() => api.analyzeBrand(slug))}>Analizza brand</button>
         </div>

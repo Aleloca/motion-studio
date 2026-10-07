@@ -22,6 +22,8 @@ describe('ReferencesPage', () => {
     await userEvent.click(screen.getByRole('checkbox', { name: "Usa per l'analisi brand" }));
     await waitFor(() => expect(api.updateReference).toHaveBeenCalledWith('acme', 'mood.jpg', { useForBrand: false }));
     await userEvent.click(screen.getByRole('button', { name: 'Elimina mood.jpg' }));
+    expect(api.deleteReference).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Conferma eliminazione di mood.jpg' }));
     await waitFor(() => expect(api.deleteReference).toHaveBeenCalledWith('acme', 'mood.jpg'));
   });
   it('keeps a note being typed across a live reload', async () => {

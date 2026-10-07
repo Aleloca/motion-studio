@@ -62,6 +62,7 @@ export function ProjectPage({ slug, tab, live, expert }: { slug: string; tab: Pr
   const [name, setName] = useState<string>(slug);
   const [jobKey, setJobKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const projectTick = live.projectTicks[slug] ?? 0;
   useEffect(() => {
     let alive = true;
     setError(null);
@@ -69,7 +70,7 @@ export function ProjectPage({ slug, tab, live, expert }: { slug: string; tab: Pr
       .then((r) => { if (alive) { setName(r.project.name); setJobKey(r.jobKey); } })
       .catch((e: unknown) => { if (alive) setError(`Impossibile caricare il progetto: ${e instanceof Error ? e.message : String(e)}`); });
     return () => { alive = false; };
-  }, [slug]);
+  }, [slug, projectTick]);
   const tick = Object.entries(live.creativeTicks).filter(([k]) => k.startsWith(`${slug}/`)).reduce((a, [, v]) => a + v, 0);
   return (
     <main className="page stack">
@@ -80,7 +81,7 @@ export function ProjectPage({ slug, tab, live, expert }: { slug: string; tab: Pr
         {TABS.map(([t, label]) => <a key={t} href={href.project(slug, t)} aria-current={tab === t ? 'page' : undefined}>{label}</a>)}
       </nav>
       {tab === 'creatives' && <CreativeList slug={slug} tick={tick} />}
-      {tab === 'settings' && <ProjectSettings key={slug} slug={slug} tick={live.projectTicks[slug] ?? 0} />}
+      {tab === 'settings' && <ProjectSettings key={slug} slug={slug} tick={projectTick} />}
       {tab === 'console' && <ProjectConsole slug={slug} jobKey={jobKey} live={live} expert={expert} />}
       {tab === 'brand' && <BrandPage key={slug} slug={slug} live={live} />}
       {tab === 'assets' && <AssetsPage key={slug} slug={slug} live={live} />}

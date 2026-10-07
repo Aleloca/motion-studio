@@ -17,7 +17,7 @@ export function CodebaseList({ value, checks, onChange, disabled }: { value: Lin
   const onEnter = (e: KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
   return (
     <div className="stack" style={{ gap: 8 }}>
-      <p className="muted" style={{ margin: 0, fontSize: 13 }}>Le cartelle collegate sono in sola lettura: l'agente può leggerle ma non modificarle.</p>
+      <p className="muted" style={{ margin: 0, fontSize: 13 }}>Le cartelle collegate sono in sola lettura. L'agente può leggerle; gli strumenti di modifica sono bloccati e le modifiche nei repository git vengono segnalate.</p>
       {value.map((c, i) => (
         <div key={c.path} className="row" style={{ gap: 8 }}>
           <span className="mono" style={{ overflowWrap: 'anywhere', flex: '1 1 240px' }}>{c.path}</span>

@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { EMPTY_BRAND_KIT, type BrandOverview } from '@motion-studio/shared';
+import { EMPTY_BRAND_KIT, type BrandOverview, type JobSummary } from '@motion-studio/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const site = { kind: 'website' as const, ref: 'https://acme.example' };
@@ -89,5 +89,40 @@ describe('BrandPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Salva brand kit' }));
     await waitFor(() => expect(api.saveBrandKit).toHaveBeenCalled());
     expect((api.saveBrandKit.mock.calls[0]![1] as typeof overview.kit).fonts[0]!.weights).toEqual([400, 700]);
+  });
+});
+
+const bjob = (over: Partial<JobSummary>): JobSummary => ({ id: 'j1', key: 'brand:k', label: 'Analisi brand', state: 'running', createdAt: '2026-10-07T10:00:00.000Z', ...over });
+const proposal = (createdAt: string) => ({ schemaVersion: 1 as const, id: 'p-1', createdAt, sourceIds: [], status: 'applied' as const, summary: '', changes: [], guidelines: null, assetsAdded: [] });
+
+describe('BrandPage (final review)', () => {
+  it('shows roles, variants and backgrounds in Italian', async () => {
+    overview.kit = { ...overview.kit, fonts: [{ id: 'f1', family: 'Inter', role: 'heading', weights: [400], file: null, source: site }], logos: [{ id: 'l1', file: 'assets/logo.svg', variant: 'mono', background: 'dark', source: site }] };
+    render(<BrandPage slug="acme" live={live} />);
+    await screen.findByDisplayValue('Blu');
+    expect((screen.getByLabelText('Ruolo colore 1') as HTMLSelectElement).selectedOptions[0]!.textContent).toBe('Primario');
+    expect((screen.getByLabelText('Ruolo font 1') as HTMLSelectElement).selectedOptions[0]!.textContent).toBe('Titoli');
+    expect((screen.getByLabelText('Variante logo 1') as HTMLSelectElement).selectedOptions[0]!.textContent).toBe('Monocromatico');
+    expect((screen.getByLabelText('Sfondo logo 1') as HTMLSelectElement).selectedOptions[0]!.textContent).toBe('Scuro');
+  });
+  it('names a running describe job as such', async () => {
+    render(<BrandPage slug="acme" live={{ ...live, jobs: { j1: bjob({ label: 'Descrizione asset' }) } }} />);
+    await screen.findByText('Descrizione in corso…');
+    expect(screen.queryByText('Analisi in corso…')).toBeNull();
+  });
+  it('shows a failed analysis only while no newer proposal exists', async () => {
+    const failed = { j1: bjob({ state: 'failed', error: 'boom', createdAt: '2026-10-07T10:00:00.000Z' }) };
+    const { unmount } = render(<BrandPage slug="acme" live={{ ...live, jobs: failed }} />);
+    await screen.findByText('Analisi non riuscita: boom');
+    unmount();
+    overview.proposals = [proposal('2026-10-07T11:00:00.000Z')];
+    render(<BrandPage slug="acme" live={{ ...live, jobs: failed }} />);
+    await screen.findByDisplayValue('Blu');
+    expect(screen.queryByText(/Analisi non riuscita/)).toBeNull();
+  });
+  it('reports a failed describe job as a description failure', async () => {
+    render(<BrandPage slug="acme" live={{ ...live, jobs: { j1: bjob({ label: 'Descrizione asset', state: 'failed', error: 'boom' }) } }} />);
+    await screen.findByText('Descrizione non riuscita: boom');
+    expect(screen.queryByText(/Analisi non riuscita/)).toBeNull();
   });
 });

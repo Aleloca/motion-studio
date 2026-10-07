@@ -2,12 +2,13 @@ import type { AssetEntry, AssetKind, AssetOrigin } from '@motion-studio/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.ts';
 import { AssetPreview } from '../components/AssetPreview.tsx';
+import { ConfirmButton } from '../components/ConfirmButton.tsx';
 import { UploadZone } from '../components/UploadZone.tsx';
 import type { EventsState } from '../eventsReducer.ts';
+import { ASSET_KINDS, brandJobFailedText, brandJobRunningText, isActiveJob, isDescribeJob } from '../labels.ts';
 import { useProjectData } from '../useProjectData.ts';
 
 const ORIGIN: Record<AssetOrigin, string> = { upload: 'Caricato', website: 'Da sito', generated: 'Generato', stock: 'Stock' };
-const KINDS: AssetKind[] = ['image', 'svg', 'video', 'font', 'audio', 'other'];
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 function Detail({ slug, asset, onChanged, onClose }: { slug: string; asset: AssetEntry; onChanged(): void; onClose(): void }) {
@@ -18,6 +19,11 @@ function Detail({ slug, asset, onChanged, onClose }: { slug: string; asset: Asse
   const tags = edit?.tags ?? asset.tags.join(', ');
   const parseTags = (t: string) => t.split(',').map((x) => x.trim()).filter(Boolean);
   const edited = edit !== null && (edit.description !== asset.description || edit.tags !== asset.tags.join(', '));
+  // Only the fields actually changed are sent: a concurrent edit of the other field is not overwritten.
+  const changes = () => ({
+    ...(description !== asset.description ? { description } : {}),
+    ...(JSON.stringify(parseTags(tags)) !== JSON.stringify(asset.tags) ? { tags: parseTags(tags) } : {}),
+  });
   useEffect(() => { if (edit && !edited) setEdit(null); }, [edit, edited]);
   const run = async (fn: () => Promise<unknown>, close = false) => {
     setError(null);
@@ -37,10 +43,10 @@ function Detail({ slug, asset, onChanged, onClose }: { slug: string; asset: Asse
       <input id="ad-tags" value={tags} onChange={(e) => setEdit({ description, tags: e.target.value })} />
       {error && <p role="alert" className="error" style={{ margin: 0 }}>{error}</p>}
       <div className="row">
-        <button type="button" onClick={() => void run(() => api.deleteAsset(slug, asset.file), true)}>Elimina</button>
+        <ConfirmButton label="Elimina" onConfirm={() => void run(() => api.deleteAsset(slug, asset.file), true)} />
         <div style={{ flex: 1 }} />
         <button type="button" onClick={onClose}>Chiudi</button>
-        <button type="button" className="primary" onClick={() => void run(() => api.updateAsset(slug, asset.file, { description, tags: parseTags(tags) }))}>Salva</button>
+        <button type="button" className="primary" onClick={() => void run(() => api.updateAsset(slug, asset.file, changes()))}>Salva</button>
       </div>
     </aside>
   );
@@ -56,7 +62,14 @@ export function AssetsPage({ slug, live }: { slug: string; live: EventsState }) 
   const [actionError, setActionError] = useState<string | null>(null);
   const listing = data?.[0];
   const jobKey = data?.[1] ?? null;
-  const job = Object.values(live.jobs).find((j) => j.key === jobKey && (j.state === 'queued' || j.state === 'running'));
+  const jobs = Object.values(live.jobs).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  // Newest brand job of this project; with the key unknown (brand overview unreadable) a running brand job of a
+  // project with this slug still blocks the button: the server would answer 409 anyway.
+  const job = jobKey ? jobs.find((j) => j.key === jobKey) : jobs.find((j) => isActiveJob(j) && j.key.startsWith('brand:') && j.key.endsWith(`:${slug}`));
+  const running = isActiveJob(job);
+  useEffect(() => {
+    if (listing && selected && !listing.assets.some((a) => a.file === selected)) setSelected(null);
+  }, [listing, selected]);
   const visible = useMemo(() => (listing?.assets ?? []).filter((a) =>
     (kind === 'all' || a.kind === kind) && (origin === 'all' || a.origin === origin)
     && (!query.trim() || `${a.file} ${a.description} ${a.tags.join(' ')}`.toLowerCase().includes(query.trim().toLowerCase()))), [listing, kind, origin, query]);
@@ -79,7 +92,7 @@ export function AssetsPage({ slug, live }: { slug: string; live: EventsState }) 
       <div className="row" style={{ gap: 8 }}>
         <label className="row" style={{ gap: 6 }}>Tipo
           <select aria-label="Tipo" value={kind} onChange={(e) => setKind(e.target.value as AssetKind | 'all')}>
-            <option value="all">Tutti</option>{KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
+            <option value="all">Tutti</option>{(Object.keys(ASSET_KINDS) as AssetKind[]).map((k) => <option key={k} value={k}>{ASSET_KINDS[k]}</option>)}
           </select>
         </label>
         <label className="row" style={{ gap: 6 }}>Origine
@@ -88,9 +101,11 @@ export function AssetsPage({ slug, live }: { slug: string; live: EventsState }) 
           </select>
         </label>
         <input aria-label="Cerca negli asset" placeholder="Cerca per nome, descrizione o tag" value={query} onChange={(e) => setQuery(e.target.value)} style={{ flex: 1, width: 'auto' }} />
-        {job ? <span className="badge run">Descrizione in corso…</span> : null}
-        <button type="button" disabled={Boolean(job)} onClick={() => void act(() => api.describeAssets(slug))}>Descrivi con l'agente</button>
+        {job && running ? <span className="badge run">{brandJobRunningText(job)}</span> : null}
+        <button type="button" disabled={running} onClick={() => void act(() => api.describeAssets(slug))}>Descrivi con l'agente</button>
       </div>
+      {job && !running && isDescribeJob(job) && job.state === 'failed' && <p className="error" style={{ margin: 0 }}>{brandJobFailedText(job)}</p>}
+      {job && !running && isDescribeJob(job) && (job.notes ?? []).map((n) => <p key={n} className="warn" style={{ margin: 0 }}>{n}</p>)}
       <div className="row" style={{ alignItems: 'flex-start', gap: 16 }}>
         <div style={{ flex: '999 1 480px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
           {visible.map((a) => (

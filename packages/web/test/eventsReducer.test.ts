@@ -27,6 +27,14 @@ describe('eventsReducer', () => {
   });
 });
 
+describe('project ticks', () => {
+  it('bumps the project tick on project, brand and library messages', () => {
+    let s = eventsReducer(initialEventsState, { type: 'project', project: 'acme' });
+    s = eventsReducer(s, { type: 'brand', project: 'acme' });
+    expect(s.projectTicks.acme).toBe(2);
+  });
+});
+
 describe('sessionIdOf', () => {
   it('prefers the result session id, then the session event', () => {
     expect(sessionIdOf([{ kind: 'session', sessionId: 's1' }])).toBe('s1');

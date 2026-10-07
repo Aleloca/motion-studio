@@ -43,6 +43,19 @@ describe('ProjectPage after a reload', () => {
   });
 });
 
+describe('ProjectPage header', () => {
+  afterEach(() => vi.clearAllMocks());
+  it('reloads the project name when the project tick changes', async () => {
+    vi.mocked(api.getProject).mockResolvedValue({ slug: 'acme', project, jobKey: 'project:/w:acme' });
+    const live = { jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
+    const { rerender } = render(<ProjectPage slug="acme" tab="console" expert={false} live={live} />);
+    await screen.findByRole('heading', { name: 'Acme' });
+    vi.mocked(api.getProject).mockResolvedValue({ slug: 'acme', project: { ...project, name: 'Acme Nuovo' }, jobKey: 'project:/w:acme' });
+    rerender(<ProjectPage slug="acme" tab="console" expert={false} live={{ ...live, projectTicks: { acme: 1 } }} />);
+    expect(await screen.findByRole('heading', { name: 'Acme Nuovo' })).toBeTruthy();
+  });
+});
+
 describe('ProjectPage errors', () => {
   afterEach(() => vi.clearAllMocks());
   it('shows a getProject failure', async () => {

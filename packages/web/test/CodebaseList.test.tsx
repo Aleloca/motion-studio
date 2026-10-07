@@ -8,6 +8,7 @@ describe('CodebaseList', () => {
     const onChange = vi.fn();
     render(<CodebaseList value={[{ path: '/Users/me/app', note: 'iOS' }]} checks={[{ path: '/Users/me/app', note: 'iOS', exists: false }]} onChange={onChange} />);
     expect(screen.getByText('Non trovata')).toBeTruthy();
+    expect(screen.getByText(/L'agente può leggerle; gli strumenti di modifica sono bloccati e le modifiche nei repository git vengono segnalate\./)).toBeTruthy();
     await userEvent.type(screen.getByLabelText('Percorso assoluto della cartella'), 'dev/app');
     await userEvent.click(screen.getByRole('button', { name: 'Collega' }));
     expect(screen.getByRole('alert').textContent).toBe('Indica un percorso assoluto');

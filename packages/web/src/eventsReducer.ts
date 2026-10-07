@@ -24,6 +24,7 @@ export function eventsReducer(state: EventsState, msg: ServerMessage): EventsSta
       const key = `${msg.project}/${msg.creative}`;
       return { ...state, creativeTicks: { ...state.creativeTicks, [key]: (state.creativeTicks[key] ?? 0) + 1 } };
     }
+    case 'project':
     case 'brand':
     case 'library':
       return { ...state, projectTicks: { ...state.projectTicks, [msg.project]: (state.projectTicks[msg.project] ?? 0) + 1 } };

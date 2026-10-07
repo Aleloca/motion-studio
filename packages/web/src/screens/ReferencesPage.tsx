@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api.ts';
+import { ConfirmButton } from '../components/ConfirmButton.tsx';
 import { UploadZone } from '../components/UploadZone.tsx';
 import type { EventsState } from '../eventsReducer.ts';
 import { useProjectData } from '../useProjectData.ts';
@@ -36,7 +37,7 @@ export function ReferencesPage({ slug, live }: { slug: string; live: EventsState
               <input type="checkbox" checked={r.useForBrand} onChange={(e) => void act(() => api.updateReference(slug, r.file, { useForBrand: e.target.checked }))} style={{ width: 16, height: 16 }} />
               Usa per l'analisi brand
             </label>
-            <button type="button" aria-label={`Elimina ${r.file}`} onClick={() => void act(() => api.deleteReference(slug, r.file))}>Elimina</button>
+            <ConfirmButton label="Elimina" ariaLabel={`Elimina ${r.file}`} confirmAriaLabel={`Conferma eliminazione di ${r.file}`} onConfirm={() => void act(() => api.deleteReference(slug, r.file))} />
           </div>
         ))}
       </div>
