@@ -1,4 +1,4 @@
-import { lstat, readdir, rm } from 'node:fs/promises';
+import { lstat, readdir, realpath, rm } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import {
   assetKindOf, assetsFileSchema, referencesFileSchema, relativeFileSchema,
@@ -20,6 +20,8 @@ export class LibraryStore {
 
   resolve(kind: LibraryKind, file: string): string {
     if (!relativeFileSchema.safeParse(file).success) throw new WorkspaceError(400, `Percorso non valido: ${file}`);
+    const metaFile = kind === 'assets' ? 'assets.json' : 'references.json';
+    if (file === metaFile) throw new WorkspaceError(400, `File riservato: ${file}`);
     return join(this.dir(kind), ...file.split('/'));
   }
 
@@ -27,6 +29,16 @@ export class LibraryStore {
     const abs = this.resolve(kind, file);
     const info = await lstat(abs).catch(() => null);
     if (!info?.isFile()) throw new WorkspaceError(400, `File non trovato o non valido: ${kind}/${file}`);
+
+    // Confine: check that the real path is inside the library directory
+    const libDir = this.dir(kind);
+    const realAbs = await realpath(abs).catch(() => null);
+    const realLib = await realpath(libDir).catch(() => libDir);
+    if (!realAbs) throw new WorkspaceError(400, `File non accessibile: ${kind}/${file}`);
+    if (!realAbs.startsWith(realLib + sep) && realAbs !== realLib) {
+      throw new WorkspaceError(400, `File al di fuori della cartella: ${kind}/${file}`);
+    }
+
     return abs;
   }
 
@@ -40,8 +52,19 @@ export class LibraryStore {
     catch (e) { if (e instanceof JsonFileError && e.reason === 'missing') return []; throw e; }
   }
 
-  private writeAssets(assets: AssetEntry[]) { return writeJsonFileAtomic(join(this.dir('assets'), 'assets.json'), { schemaVersion: 1, assets }); }
-  private writeReferences(references: ReferenceEntry[]) { return writeJsonFileAtomic(join(this.dir('references'), 'references.json'), { schemaVersion: 1, references }); }
+  private async writeAssets(assets: AssetEntry[]): Promise<void> {
+    const data = { schemaVersion: 1, assets };
+    const parsed = assetsFileSchema.safeParse(data);
+    if (!parsed.success) throw new WorkspaceError(400, 'Metadati degli asset non validi');
+    await writeJsonFileAtomic(join(this.dir('assets'), 'assets.json'), parsed.data);
+  }
+
+  private async writeReferences(references: ReferenceEntry[]): Promise<void> {
+    const data = { schemaVersion: 1, references };
+    const parsed = referencesFileSchema.safeParse(data);
+    if (!parsed.success) throw new WorkspaceError(400, 'Metadati dei riferimenti non validi');
+    await writeJsonFileAtomic(join(this.dir('references'), 'references.json'), parsed.data);
+  }
 
   registerAssets(items: Array<{ file: string; origin: AssetOrigin; sourceUrl?: string | null; description?: string; tags?: string[] }>): Promise<AssetEntry[]> {
     return this.lock.run('assets', async () => {
@@ -72,10 +95,9 @@ export class LibraryStore {
       const i = assets.findIndex((a) => a.file === file);
       if (i < 0) throw new WorkspaceError(404, `Asset ${file} non trovato`);
       const next = { ...assets[i]!, ...(patch.description !== undefined ? { description: patch.description } : {}), ...(patch.tags ? { tags: patch.tags } : {}) };
-      const parsed = assetsFileSchema.safeParse({ schemaVersion: 1, assets: assets.map((a, k) => (k === i ? next : a)) });
-      if (!parsed.success) throw new WorkspaceError(400, 'Metadati dell\'asset non validi');
-      await this.writeAssets(parsed.data.assets);
-      return parsed.data.assets[i]!;
+      const updated = assets.map((a, k) => (k === i ? next : a));
+      await this.writeAssets(updated);
+      return updated[i]!;
     });
   }
 
@@ -83,9 +105,16 @@ export class LibraryStore {
     return this.lock.run('assets', async () => {
       const assets = await this.listAssets();
       if (!assets.some((a) => a.file === file)) throw new WorkspaceError(404, `Asset ${file} non trovato`);
-      const abs = this.resolve('assets', file);
-      if ((await lstat(abs).catch(() => null))?.isFile()) await rm(abs);
+      // Write metadata first
       await this.writeAssets(assets.filter((a) => a.file !== file));
+      // Then delete the file (only if inside the directory)
+      const abs = this.resolve('assets', file);
+      const libDir = this.dir('assets');
+      const realAbs = await realpath(abs).catch(() => null);
+      const realLib = await realpath(libDir).catch(() => libDir);
+      if (realAbs && realAbs.startsWith(realLib + sep)) {
+        await rm(abs).catch(() => { /* file already gone or inaccessible */ });
+      }
     });
   }
 
@@ -109,11 +138,9 @@ export class LibraryStore {
       const refs = await this.listReferences();
       const i = refs.findIndex((r) => r.file === file);
       if (i < 0) throw new WorkspaceError(404, `Riferimento ${file} non trovato`);
-      refs[i] = { ...refs[i]!, ...patch };
-      const parsed = referencesFileSchema.safeParse({ schemaVersion: 1, references: refs });
-      if (!parsed.success) throw new WorkspaceError(400, 'Metadati del riferimento non validi');
-      await this.writeReferences(parsed.data.references);
-      return parsed.data.references[i]!;
+      const updated = refs.map((r, k) => (k === i ? { ...r, ...patch } : r));
+      await this.writeReferences(updated);
+      return updated[i]!;
     });
   }
 
@@ -121,9 +148,16 @@ export class LibraryStore {
     return this.lock.run('references', async () => {
       const refs = await this.listReferences();
       if (!refs.some((r) => r.file === file)) throw new WorkspaceError(404, `Riferimento ${file} non trovato`);
-      const abs = this.resolve('references', file);
-      if ((await lstat(abs).catch(() => null))?.isFile()) await rm(abs);
+      // Write metadata first
       await this.writeReferences(refs.filter((r) => r.file !== file));
+      // Then delete the file (only if inside the directory)
+      const abs = this.resolve('references', file);
+      const libDir = this.dir('references');
+      const realAbs = await realpath(abs).catch(() => null);
+      const realLib = await realpath(libDir).catch(() => libDir);
+      if (realAbs && realAbs.startsWith(realLib + sep)) {
+        await rm(abs).catch(() => { /* file already gone or inaccessible */ });
+      }
     });
   }
 

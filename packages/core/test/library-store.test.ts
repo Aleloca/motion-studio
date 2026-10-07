@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises';
+import { platform } from 'node:os';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -53,6 +54,32 @@ describe('assets', () => {
     await expect(lib.registerAssets([{ file: 'c.png', origin: 'upload' }])).rejects.toMatchObject({ reason: 'schema' });
     expect(await readFile(join(project, 'assets', 'assets.json'), 'utf8')).toBe('{"schemaVersion":1,"assets":[{}]}');
   });
+  it('validates schema before writing: 2001-char description → 400, file unchanged', async () => {
+    await writeFile(join(project, 'assets', 'd.png'), 'x');
+    const longDesc = 'x'.repeat(2001);
+    const err = await lib.registerAssets([{ file: 'd.png', origin: 'upload', description: longDesc }]).catch((e) => e);
+    expect(err.status).toBe(400);
+    // assets.json should not exist or be unchanged
+    const existing = await readFile(join(project, 'assets', 'assets.json'), 'utf8').catch(() => null);
+    expect(existing).toBe(null);
+  });
+  it('rejects metadata file names', async () => {
+    expect((await lib.registerAssets([{ file: 'assets.json', origin: 'upload' }]).catch((e) => e)).status).toBe(400);
+  });
+  it('confines symlinked subdirectories', async function (this: any) {
+    if (platform() === 'win32') this.skip();
+    // Create a temp outside directory
+    const tmpOutside = await mkdtemp(join(tmpdir(), 'ms-outside-'));
+    await writeFile(join(tmpOutside, 'outside.png'), 'outside');
+    // Symlink it into assets
+    await symlink(tmpOutside, join(project, 'assets', 'linked'));
+    // Try to register a file inside the symlinked dir → should fail (400)
+    const err = await lib.registerAssets([{ file: 'linked/outside.png', origin: 'upload' }]).catch((e) => e);
+    expect(err.status).toBe(400);
+    // File outside should still exist (not touched)
+    const content = await readFile(join(tmpOutside, 'outside.png'), 'utf8');
+    expect(content).toBe('outside');
+  });
 });
 
 describe('references', () => {
@@ -62,5 +89,23 @@ describe('references', () => {
     expect(await lib.updateReference('mood.jpg', { note: 'Luce calda', useForBrand: false })).toMatchObject({ note: 'Luce calda', useForBrand: false });
     await lib.removeReference('mood.jpg');
     expect(await lib.listReferences()).toEqual([]);
+  });
+  it('rejects metadata file name references.json', async () => {
+    expect((await lib.registerReferences(['references.json']).catch((e) => e)).status).toBe(400);
+  });
+  it('does not delete files outside references dir on remove', async function (this: any) {
+    if (platform() === 'win32') this.skip();
+    // Create a temp outside directory
+    const tmpOutside = await mkdtemp(join(tmpdir(), 'ms-ref-outside-'));
+    await writeFile(join(tmpOutside, 'outside.jpg'), 'outside');
+    // Symlink it into references
+    await symlink(tmpOutside, join(project, 'references', 'linked'));
+    // Register the file inside symlinked dir
+    await lib.registerReferences(['linked/outside.jpg']).catch(() => null);
+    // Try to remove it (should skip file deletion, drop only the entry)
+    await lib.removeReference('linked/outside.jpg').catch(() => null);
+    // Outside file should still exist
+    const content = await readFile(join(tmpOutside, 'outside.jpg'), 'utf8').catch(() => null);
+    expect(content).toBe('outside');
   });
 });
