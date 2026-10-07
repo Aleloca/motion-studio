@@ -1,4 +1,5 @@
 import type { DoctorCheck } from '@motion-studio/shared';
+import type { SandboxSupport } from './agent/sandbox.ts';
 import type { CommandExec, CommandResult } from './exec.ts';
 
 const versionIn = (s: string) => s.match(/(\d+\.\d+(?:\.\d+)?)/)?.[1];
@@ -10,7 +11,7 @@ const brokenMessage = (r: CommandResult) => {
   return `Installato ma non risponde correttamente${detail ? `: ${detail}` : ''}`;
 };
 
-export async function runDoctor(opts: { exec: CommandExec; claudeCommand: string[]; nodeVersion?: string }): Promise<DoctorCheck[]> {
+export async function runDoctor(opts: { exec: CommandExec; claudeCommand: string[]; nodeVersion?: string; sandbox?: () => Promise<SandboxSupport> }): Promise<DoctorCheck[]> {
   const { exec } = opts;
   const [claudeBin, ...claudePrefix] = opts.claudeCommand;
   if (!claudeBin) throw new Error('claudeCommand vuoto');
@@ -58,6 +59,12 @@ export async function runDoctor(opts: { exec: CommandExec; claudeCommand: string
     checks.push(loggedIn
       ? { id: 'claude-auth', label: 'Accesso a Claude', required: true, ok: true, message: 'Autenticato' }
       : { id: 'claude-auth', label: 'Accesso a Claude', required: true, ok: false, message: 'Claude Code non è autenticato', fix: 'claude auth login' });
+  }
+  if (opts.sandbox) {
+    const s = await opts.sandbox();
+    checks.push(s.available
+      ? { id: 'sandbox', label: 'Sandbox dell\'agente', required: false, ok: true, message: 'Disponibile: l\'agente lavora isolato nella cartella del progetto' }
+      : { id: 'sandbox', label: 'Sandbox dell\'agente', required: false, ok: false, message: s.reason, fix: 'Senza sandbox Motion Studio usa permessi più ristretti; vedi il README' });
   }
   return checks;
 }

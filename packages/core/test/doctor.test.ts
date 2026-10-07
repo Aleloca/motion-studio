@@ -88,4 +88,8 @@ describe('runDoctor', () => {
     const checks = await runDoctor({ exec: fakeExec(rest), claudeCommand: ['claude'], nodeVersion: 'v24.9.0' });
     expect(checks.find((c) => c.id === 'git')).toMatchObject({ ok: false, message: 'Git non trovato', fix: 'Installa Git da https://git-scm.com' });
   });
+  it('reports the sandbox as an optional check', async () => {
+    const checks = await runDoctor({ exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', sandbox: async () => ({ available: false, reason: 'manca bubblewrap' }) });
+    expect(checks.at(-1)).toMatchObject({ id: 'sandbox', ok: false, required: false, message: 'manca bubblewrap' });
+  });
 });

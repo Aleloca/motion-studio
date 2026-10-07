@@ -1,0 +1,45 @@
+import { describe, expect, it } from 'vitest';
+import { buildAgentPolicy, type PolicyInput } from '../src/agent/policy.ts';
+import { AGENT_ALLOWED_TOOLS, BRAND_ANALYSIS_TOOLS, DESCRIBE_TOOLS } from '../src/agent/runner.ts';
+
+const base: PolicyInput = {
+  kind: 'creative', sandbox: true, home: '/Users/me', configDir: '/Users/me/Library/Application Support/Motion Studio',
+  codebases: ['/Users/me/dev/app [ios]'], protectedFiles: [], extraDomains: ['api.acme.io'],
+  projectAllowRules: ['Bash(brew:*)'], mcpTools: ['mcp__studio__report_progress'],
+};
+type Sb = { sandbox: { enabled: boolean; autoAllowBashIfSandboxed: boolean; filesystem: { denyRead: string[]; denyWrite: string[] }; network?: { allowedDomains: string[] } } };
+
+describe('buildAgentPolicy with sandbox', () => {
+  it('creative: sandbox, read-only codebases, render domains, project rules and MCP tools', () => {
+    const p = buildAgentPolicy(base);
+    const s = p.settings as Sb;
+    expect(s.sandbox).toMatchObject({ enabled: true, autoAllowBashIfSandboxed: true });
+    expect(s.sandbox.filesystem.denyRead).toEqual(expect.arrayContaining(['/Users/me/.ssh', base.configDir]));
+    expect(s.sandbox.filesystem.denyWrite).toEqual(['/Users/me/dev/app [ios]']);
+    expect(s.sandbox.network!.allowedDomains).toEqual(expect.arrayContaining(['registry.npmjs.org', 'api.acme.io']));
+    expect(p.addDirs).toEqual(['/Users/me/dev/app [ios]']);
+    expect(p.disallowedTools[0]).toBe('Edit(//Users/me/dev/app \\[ios\\]/**)');
+    expect(p.allowedTools).toEqual(['Bash(brew:*)', 'mcp__studio__report_progress']);
+  });
+  it('brand analysis: no sandbox network, narrow tools, no auto-allowed Bash, protected files', () => {
+    const p = buildAgentPolicy({ ...base, kind: 'brand-analysis', codebases: [], protectedFiles: ['/p/brand/brand-kit.json'] });
+    const s = p.settings as Sb;
+    expect(s.sandbox.network).toBeUndefined();
+    expect(s.sandbox.autoAllowBashIfSandboxed).toBe(false);
+    expect(s.sandbox.filesystem.denyWrite).toEqual(['/p/brand/brand-kit.json']);
+    expect(p.allowedTools.slice(0, BRAND_ANALYSIS_TOOLS.length)).toEqual([...BRAND_ANALYSIS_TOOLS]);
+    expect(p.disallowedTools).toEqual(expect.arrayContaining(['Write(//p/brand/brand-kit.json)']));
+  });
+  it('describe: no network at all', () => {
+    const s = buildAgentPolicy({ ...base, kind: 'describe', codebases: [] }).settings as Sb;
+    expect(s.sandbox.network).toBeUndefined();
+  });
+});
+
+describe('buildAgentPolicy without sandbox', () => {
+  it('falls back to the phase 3 tool lists', () => {
+    expect(buildAgentPolicy({ ...base, sandbox: false }).settings).toBeNull();
+    expect(buildAgentPolicy({ ...base, sandbox: false, projectAllowRules: [], mcpTools: [] }).allowedTools).toEqual([...AGENT_ALLOWED_TOOLS]);
+    expect(buildAgentPolicy({ ...base, kind: 'describe', sandbox: false, projectAllowRules: [], mcpTools: [] }).allowedTools).toEqual([...DESCRIBE_TOOLS]);
+  });
+});

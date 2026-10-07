@@ -44,7 +44,7 @@ export function buildBrandPrompt(b: BrandBlock): string {
     '', '## Sorgenti',
     ...b.sources.map((s) => (s.kind === 'website' ? `- Sito (${s.id}): ${s.url}` : `- Immagine (${s.id}): ${s.file} (leggila)`)),
     '', '## Cosa fare',
-    `1. Visita i siti (WebFetch; per scaricare file usa curl) e osserva le immagini. Ricava palette, font, loghi, tono di voce, cose da fare e da evitare, stile fotografico.`,
+    `1. Visita i siti (WebFetch; i file si scaricano con lo strumento Motion Studio download_file, se disponibile, altrimenti non si scaricano) e osserva le immagini. Ricava palette, font, loghi, tono di voce, cose da fare e da evitare, stile fotografico.`,
     `2. Aggiorna la COPIA del brand kit in ${b.kitFile} (stesso formato di brand/brand-kit.json): mantieni gli id delle voci esistenti, usa id nuovi in kebab-case per le voci nuove, imposta source = {"kind":"website","ref":"<url>"} o {"kind":"image","ref":"<file>"}. Non modificare le voci con source "manual" a meno che siano chiaramente sbagliate.`,
     brandKitFormat(),
     `3. Scarica in assets/brand/ (immagini, loghi) e assets/fonts/ (font) solo gli asset utili e con licenza d'uso plausibile per il brand; i loghi e i font nel kit devono puntare a file esistenti (es. "assets/brand/logo.svg").`,

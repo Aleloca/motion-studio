@@ -7,16 +7,19 @@ import type { AgentRun, AgentRunner, AgentRunResult, AgentTurnRequest } from './
 export function buildClaudeArgs(req: AgentTurnRequest): string[] {
   const args = [
     '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
-    // Phase 1: edits auto-accepted, anything that would prompt is denied. Phase 4 replaces this with UI approvals.
-    '--permission-mode', 'acceptEdits', '--permission-prompts', 'none',
+    '--permission-mode', 'acceptEdits',
   ];
+  // Without a prompt tool anything that would prompt is denied; with one, prompts reach the app (phase 4 approvals).
+  if (req.permissionPromptTool) args.push('--permission-prompt-tool', req.permissionPromptTool);
+  else args.push('--permission-prompts', 'none');
   if (req.resumeSessionId) {
     args.push('--resume', req.resumeSessionId);
     if (req.forkSession) args.push('--fork-session');
   }
   for (const d of req.addDirs ?? []) args.push('--add-dir', d);
   if (req.model) args.push('--model', req.model);
-  if (req.mcpConfigPath) args.push('--mcp-config', req.mcpConfigPath);
+  if (req.settings) args.push('--settings', JSON.stringify(req.settings));
+  if (req.mcpConfig) args.push('--strict-mcp-config', '--mcp-config', JSON.stringify(req.mcpConfig));
   // Both rule flags are variadic: deny first, allow last, so each group is ended by the next flag and cannot swallow others.
   if (req.disallowedTools?.length) args.push('--disallowedTools', ...req.disallowedTools);
   // Variadic flag: kept last so it cannot swallow other flags (the prompt travels on stdin, there are no positionals).
@@ -67,7 +70,7 @@ export class ClaudeCodeRunner implements AgentRunner {
     }
     const posix = process.platform !== 'win32';
     // Own process group on POSIX so cancel can reach descendants (tool commands, MCP servers).
-    const child = spawn(bin, [...prefix, ...buildClaudeArgs(req)], { cwd: req.cwd, stdio: ['pipe', 'pipe', 'pipe'], detached: posix });
+    const child = spawn(bin, [...prefix, ...buildClaudeArgs(req)], { cwd: req.cwd, stdio: ['pipe', 'pipe', 'pipe'], detached: posix, env: { ...process.env, ...req.env } });
     const signal = (sig: NodeJS.Signals) => {
       try {
         // The group outlives its leader: this still reaches descendants after claude itself exited.

@@ -8,7 +8,14 @@ export interface AgentTurnRequest {
   forkSession?: boolean;
   addDirs?: string[];
   model?: string;
-  mcpConfigPath?: string;
+  /** Claude Code settings for this turn (e.g. the sandbox), passed as --settings <json>. */
+  settings?: Record<string, unknown>;
+  /** Inline MCP configuration ({ mcpServers: … }), passed with --strict-mcp-config. */
+  mcpConfig?: Record<string, unknown>;
+  /** MCP tool that answers permission prompts (replaces `--permission-prompts none`). */
+  permissionPromptTool?: string;
+  /** Extra environment variables for the agent process. */
+  env?: Record<string, string>;
   /** Permission rules the agent may use without asking (e.g. `Bash(node:*)`); omitted = only the default policy. */
   allowedTools?: string[];
   /** Permission rules that are always denied (e.g. read-only linked codebases: `Edit(//abs/path/**)`). */
@@ -24,8 +31,8 @@ export const AGENT_ALLOWED_TOOLS: readonly string[] = [
   'Bash(python3:*)', 'Bash(pip:*)', 'Bash(pip3:*)', 'Bash(mkdir:*)', 'Bash(cp:*)', 'Bash(mv:*)',
 ];
 
-/** Brand analysis: fetch the sites and download files into assets/ (spec §6.1); no interpreters or package managers. */
-export const BRAND_ANALYSIS_TOOLS: readonly string[] = ['WebFetch', 'Bash(curl:*)', 'Bash(mkdir:*)', 'Bash(ffprobe:*)'];
+/** Brand analysis: read the sites with WebFetch; files are downloaded with the `download_file` MCP tool; no interpreters or package managers. */
+export const BRAND_ANALYSIS_TOOLS: readonly string[] = ['WebFetch', 'Bash(mkdir:*)', 'Bash(ffprobe:*)'];
 
 /** Asset descriptions: read the files and inspect media; nothing else. */
 export const DESCRIBE_TOOLS: readonly string[] = ['Read', 'Bash(ffmpeg:*)', 'Bash(ffprobe:*)'];

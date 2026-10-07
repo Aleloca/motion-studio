@@ -56,11 +56,24 @@ describe('buildClaudeArgs', () => {
       '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
       '--permission-mode', 'acceptEdits', '--permission-prompts', 'none',
     ]);
-    expect(buildClaudeArgs({ cwd: '/x', prompt: 'p', resumeSessionId: 's1', addDirs: ['/a b', '/c'], model: 'sonnet', mcpConfigPath: '/m.json' })).toEqual([
+    expect(buildClaudeArgs({ cwd: '/x', prompt: 'p', resumeSessionId: 's1', addDirs: ['/a b', '/c'], model: 'sonnet', settings: { a: 1 }, mcpConfig: { mcpServers: {} } })).toEqual([
       '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
       '--permission-mode', 'acceptEdits', '--permission-prompts', 'none',
-      '--resume', 's1', '--add-dir', '/a b', '--add-dir', '/c', '--model', 'sonnet', '--mcp-config', '/m.json',
+      '--resume', 's1', '--add-dir', '/a b', '--add-dir', '/c', '--model', 'sonnet',
+      '--settings', '{"a":1}', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
     ]);
+  });
+  it('passes settings, inline MCP config and the permission prompt tool', () => {
+    const args = buildClaudeArgs({ cwd: '/x', prompt: 'p', settings: { sandbox: { enabled: true } }, mcpConfig: { mcpServers: {} }, permissionPromptTool: 'mcp__studio__approve' });
+    expect(args).toContain('--strict-mcp-config');
+    expect(args[args.indexOf('--settings') + 1]).toBe('{"sandbox":{"enabled":true}}');
+    expect(args[args.indexOf('--mcp-config') + 1]).toBe('{"mcpServers":{}}');
+    expect(args[args.indexOf('--permission-prompt-tool') + 1]).toBe('mcp__studio__approve');
+    expect(args).not.toContain('--permission-prompts');
+  });
+  it('keeps --permission-prompts none without a prompt tool', () => {
+    const args = buildClaudeArgs({ cwd: '/x', prompt: 'p' });
+    expect(args.slice(args.indexOf('--permission-prompts'), args.indexOf('--permission-prompts') + 2)).toEqual(['--permission-prompts', 'none']);
   });
   it('adds --fork-session right after --resume, only when resuming', () => {
     const args = buildClaudeArgs({ cwd: '/x', prompt: 'p', resumeSessionId: 's1', forkSession: true });
@@ -180,6 +193,13 @@ describe('ClaudeCodeRunner', () => {
     await expect(handle.done).resolves.toEqual({ status: 'succeeded', sessionId: 'fake-session-1' });
     expect(Date.now() - t0).toBeLessThan(2000);
     await vi.waitFor(() => expect(alive(grandchildPid(events)!)).toBe(false));
+  });
+  it('passes extra environment variables to claude', async () => {
+    const argsFile = join(await mkdtemp(join(tmpdir(), 'ms-env-')), 'args.json');
+    process.env.FAKE_CLAUDE_ARGS_FILE = argsFile;
+    const { handle } = await run('ok', 'x', { env: { MS_TEST_ENV: 'ciao' } });
+    await handle.done;
+    expect(JSON.parse(await readFile(argsFile, 'utf8')).env).toBe('ciao');
   });
   it('survives a throwing event listener', async () => {
     const { handle } = await run('ok', 'x', {}, { onEvent: () => { throw new Error('listener boom'); } });
