@@ -42,4 +42,21 @@ describe('parseClaudeLine', () => {
     const [ev] = parseClaudeLine(line);
     expect(ev && ev.kind === 'tool_result' && ev.content.length).toBe(4000);
   });
+  it('uses empty strings for missing tool_result content and missing ids', () => {
+    const user = JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', content: null }, { type: 'tool_result' }] } });
+    expect(parseClaudeLine(user)).toEqual([
+      { kind: 'tool_result', toolUseId: '', isError: false, content: '' },
+      { kind: 'tool_result', toolUseId: '', isError: false, content: '' },
+    ]);
+    const assistant = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', input: {} }] } });
+    expect(parseClaudeLine(assistant)).toEqual([{ kind: 'tool_use', id: '', name: '', input: {} }]);
+  });
+  it('describes a result without text by its subtype', () => {
+    const line = JSON.stringify({ type: 'result', subtype: 'error_max_turns', is_error: true, session_id: 's' });
+    expect(parseClaudeLine(line)).toEqual([{ kind: 'result', ok: false, sessionId: 's', error: 'Turno terminato con esito error_max_turns' }]);
+  });
+  it('emits parse_error for JSON lines that are not objects', () => {
+    expect(parseClaudeLine('123')).toEqual([{ kind: 'parse_error', line: '123' }]);
+    expect(parseClaudeLine('[1]')).toEqual([{ kind: 'parse_error', line: '[1]' }]);
+  });
 });

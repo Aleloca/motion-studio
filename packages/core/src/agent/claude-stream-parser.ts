@@ -24,8 +24,11 @@ function toolResultText(content: unknown): string {
   if (Array.isArray(content)) {
     return content.map((c) => (isObj(c) && typeof c.text === 'string' ? c.text : JSON.stringify(c))).join('\n');
   }
-  return JSON.stringify(content ?? '');
+  if (content === undefined || content === null) return '';
+  return JSON.stringify(content);
 }
+
+const str = (v: unknown): string => (typeof v === 'string' ? v : v === undefined || v === null ? '' : String(v));
 
 export function parseClaudeLine(line: string): AgentEvent[] {
   let msg: unknown;
@@ -48,7 +51,7 @@ export function parseClaudeLine(line: string): AgentEvent[] {
       for (const c of content) {
         if (!isObj(c)) continue;
         if (c.type === 'text' && typeof c.text === 'string' && c.text !== '') out.push({ kind: 'text', text: c.text });
-        if (c.type === 'tool_use') out.push({ kind: 'tool_use', id: String(c.id), name: String(c.name), input: c.input });
+        if (c.type === 'tool_use') out.push({ kind: 'tool_use', id: str(c.id), name: str(c.name), input: c.input });
       }
       return out;
     }
@@ -56,7 +59,7 @@ export function parseClaudeLine(line: string): AgentEvent[] {
       const content = isObj(msg.message) && Array.isArray(msg.message.content) ? msg.message.content : [];
       return content.filter((c): c is Json => isObj(c) && c.type === 'tool_result').map((c) => ({
         kind: 'tool_result' as const,
-        toolUseId: String(c.tool_use_id),
+        toolUseId: str(c.tool_use_id),
         isError: c.is_error === true,
         content: toolResultText(c.content).slice(0, MAX_TOOL_RESULT),
       }));
