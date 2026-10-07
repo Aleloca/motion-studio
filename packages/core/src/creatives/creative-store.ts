@@ -135,10 +135,10 @@ export class CreativeStore {
     return out;
   }
 
-  async recoverInterrupted(): Promise<string[]> {
+  async recoverInterrupted(isActive: (slug: string) => boolean = () => false): Promise<string[]> {
     const recovered: string[] = [];
     for (const item of await this.list()) {
-      if (!item.ok || item.status !== 'working') continue;
+      if (!item.ok || item.status !== 'working' || isActive(item.slug)) continue;
       await this.update(item.slug, { status: 'interrupted', error: 'Il lavoro è stato interrotto (app chiusa durante la generazione).' });
       await this.appendConversation(item.slug, {
         type: 'system', at: new Date().toISOString(), level: 'error',

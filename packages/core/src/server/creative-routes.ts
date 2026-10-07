@@ -1,5 +1,5 @@
 import { lstat, realpath, stat } from 'node:fs/promises';
-import { isAbsolute, normalize, relative, sep } from 'node:path';
+import { isAbsolute, join, normalize, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { briefSchema, pinSchema, type CreativeDetail } from '@motion-studio/shared';
 import { z } from 'zod';
@@ -29,9 +29,9 @@ function parse<T>(schema: z.ZodType<T>, body: unknown): T {
 }
 
 /** Marks as interrupted the creatives left in `working` by a previous run, in every readable project. */
-export async function recoverWorkspace(ws: WorkspaceStore): Promise<void> {
+export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: string) => boolean = () => false): Promise<void> {
   for (const p of await ws.listProjects()) {
-    if (p.ok) await new CreativeStore(ws.projectDir(p.slug)).recoverInterrupted().catch(() => []);
+    if (p.ok) await new CreativeStore(ws.projectDir(p.slug)).recoverInterrupted((slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug))).catch(() => []);
   }
 }
 
@@ -125,7 +125,10 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     if (!info?.isFile()) return notFound();
     const real = await realpath(`${base}${sep}${rel}`).catch(() => null);
     const realBase = await realpath(base).catch(() => base);
-    if (!real || relative(realBase, real).startsWith('..')) return notFound();
+    // Exact match: rejects a symlink/junction at any level below base (it would bypass the allowed prefixes).
+    if (!real || real !== join(realBase, rel)) return notFound();
+    // Agent-written HTML/SVG is served same-origin: sandbox it so scripts cannot reach the loopback API.
+    reply.header('Content-Security-Policy', 'sandbox').header('X-Content-Type-Options', 'nosniff');
     return reply.sendFile(rel, base);
   });
 }

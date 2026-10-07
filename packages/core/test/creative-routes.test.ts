@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -118,6 +118,28 @@ describe('file serving safety', () => {
     for (const p of ['creative.json', 'outputs/../creative.json', 'outputs/%2e%2e/creative.json', '..%2f..%2fproject.json', 'outputs/v1/leak.txt', 'work/scene.txt']) {
       expect((await app.inject(files + p)).statusCode, p).toBe(404);
     }
+  });
+});
+
+describe('file route confinement', () => {
+  it.skipIf(process.platform === 'win32')('refuses symlinked directories and serves .feedback with sandbox headers', async () => {
+    const { slug } = await createCreative();
+    await waitJobs();
+    const dir = join(base, 'ws', 'acme', 'creatives', slug);
+    await mkdir(join(dir, 'work', '.feedback'), { recursive: true });
+    await writeFile(join(dir, 'work', '.feedback', 'ok.txt'), 'ok');
+    await writeFile(join(dir, 'work', 'secret.txt'), 'secret');
+    await symlink('..', join(dir, 'outputs', 'v2'));
+    const files = `/api/projects/acme/creatives/${slug}/files/`;
+    expect((await app.inject(files + 'outputs/v2/creative.json')).statusCode).toBe(404);
+    expect((await app.inject(files + 'outputs/v2/work/secret.txt')).statusCode).toBe(404);
+    const ok = await app.inject(files + 'work/.feedback/ok.txt');
+    expect(ok.statusCode).toBe(200);
+    expect(ok.headers['content-security-policy']).toBe('sandbox');
+    expect(ok.headers['x-content-type-options']).toBe('nosniff');
+    await rm(join(dir, 'work', '.feedback'), { recursive: true });
+    await symlink('.', join(dir, 'work', '.feedback'));
+    expect((await app.inject(files + 'work/.feedback/secret.txt')).statusCode).toBe(404);
   });
 });
 

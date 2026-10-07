@@ -79,7 +79,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       const ws = await WorkspaceStore.open(configured, deps.git, { create: false });
       queue.setConcurrency((await ws.readSettings()).maxConcurrentJobs);
       workspace = ws;
-      await recoverWorkspace(ws);
+      await recoverWorkspace(ws, isJobActive);
     } catch (err) {
       workspaceProblem = { path: configured, error: describeWorkspaceProblem(err) };
     }
@@ -148,7 +148,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const settings = await ws.readSettings(); // corrupt settings → 422 before the choice is persisted
     await deps.appConfig.setWorkspacePath(path);
     // Re-selecting the workspace in use must not mark its running creatives as interrupted.
-    if (workspace?.root !== ws.root) await recoverWorkspace(ws);
+    if (workspace?.root !== ws.root) await recoverWorkspace(ws, isJobActive);
     workspace = ws;
     workspaceProblem = null;
     queue.setConcurrency(settings.maxConcurrentJobs);
