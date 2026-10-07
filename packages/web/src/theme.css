@@ -1,7 +1,7 @@
 :root {
   --bg: #F4F4F1; --dot: #D4D4CE; --surface: #FFFFFF; --surface-2: #ECECE8; --border: #D6D6D1;
   --text: #18181B; --muted: #52525B; --accent: #6D28D9; --accent-soft: #EDE7FB; --accent-ink: #5B21B6;
-  --on-accent: #FFFFFF; --ok: #15803D; --danger: #B42318;
+  --on-accent: #FFFFFF; --ok: #15803D; --danger: #B42318; --scrim: rgba(0, 0, 0, 0.55);
   --warn-bg: #FFF6EC; --warn-border: #F3D3AE; --warn-text: #5A3300;
   --font: 'Manrope', system-ui, sans-serif; --mono: 'JetBrains Mono', ui-monospace, monospace;
   color-scheme: light;
@@ -10,14 +10,14 @@
   :root:not([data-theme='light']) {
     --bg: #0E0F12; --dot: #262830; --surface: #17181C; --surface-2: #1F2026; --border: #2E3038;
     --text: #ECECEF; --muted: #A1A1AA; --accent: #7C3AED; --accent-soft: #2A2140; --accent-ink: #C4B5FD;
-    --ok: #4ADE80; --danger: #FCA5A5; --warn-bg: #2A1F12; --warn-border: #5A3A1E; --warn-text: #FFD2B8;
+    --ok: #4ADE80; --danger: #FCA5A5; --scrim: rgba(0, 0, 0, 0.7); --warn-bg: #2A1F12; --warn-border: #5A3A1E; --warn-text: #FFD2B8;
     color-scheme: dark;
   }
 }
 :root[data-theme='dark'] {
   --bg: #0E0F12; --dot: #262830; --surface: #17181C; --surface-2: #1F2026; --border: #2E3038;
   --text: #ECECEF; --muted: #A1A1AA; --accent: #7C3AED; --accent-soft: #2A2140; --accent-ink: #C4B5FD;
-  --ok: #4ADE80; --danger: #FCA5A5; --warn-bg: #2A1F12; --warn-border: #5A3A1E; --warn-text: #FFD2B8;
+  --ok: #4ADE80; --danger: #FCA5A5; --scrim: rgba(0, 0, 0, 0.7); --warn-bg: #2A1F12; --warn-border: #5A3A1E; --warn-text: #FFD2B8;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -45,3 +45,4 @@ input, textarea { width: 100%; padding: 10px 12px; border-radius: 10px; border: 
 .chip { min-height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border); background: transparent; font-size: 13px; }
 .chip[aria-pressed='true'] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); font-weight: 700; }
 .dots { background-color: var(--bg); background-image: radial-gradient(var(--dot) 1px, transparent 1px); background-size: 20px 20px; }
+.topbar select { padding: 0 8px; }

@@ -1,0 +1,63 @@
+import type { FormatPreset, Pin } from '@motion-studio/shared';
+import { useEffect, useRef, useState, type MouseEvent } from 'react';
+
+const VIDEO = /\.(mp4|webm|mov)(\?|$)/i;
+const round = (v: number, d: number) => Math.round(v * 10 ** d) / 10 ** d;
+
+export function FocusView({ preset, src, compareSrc, versionN, compareN, pins, onAddPin, onClose }: {
+  preset: FormatPreset; src: string | null; compareSrc: string | null; versionN: number | null; compareN: number | null;
+  pins: Pin[]; onAddPin: (pin: Pin) => void; onClose: () => void;
+}) {
+  const [commenting, setCommenting] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { dialogRef.current?.focus(); }, []);
+
+  const place = (e: MouseEvent<HTMLButtonElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const x = Math.min(1, Math.max(0, round((e.clientX - r.left) / r.width, 3)));
+    const y = Math.min(1, Math.max(0, round((e.clientY - r.top) / r.height, 3)));
+    const video = videoRef.current;
+    onAddPin({ format: preset.id, x, y, timeSec: video ? round(video.currentTime, 1) : null });
+    setCommenting(false);
+  };
+
+  const media = (url: string | null, n: number | null, main: boolean) => (
+    <figure style={{ margin: 0, display: 'flex', flexDirection: 'column', gap: 6, flex: '1 1 0', minWidth: 0 }}>
+      <div style={{ position: 'relative', aspectRatio: `${preset.width} / ${preset.height}`, maxHeight: '70vh', background: 'var(--surface-2)', borderRadius: 6, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        {!url && <span className="muted">Nessun output</span>}
+        {url && VIDEO.test(url) && <video ref={main ? videoRef : undefined} src={url} controls style={{ width: '100%', height: '100%', objectFit: 'contain' }} />}
+        {url && !VIDEO.test(url) && <img src={url} alt={`${preset.channel} · ${preset.name}${n ? ` v${n}` : ''}`} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />}
+        {main && pins.map((p, k) => (
+          <span key={k} aria-label={`Commento ${k + 1}`} style={{ position: 'absolute', left: `${p.x * 100}%`, top: `${p.y * 100}%`, transform: 'translate(-50%, -100%)', width: 24, height: 24, borderRadius: '50% 50% 50% 0', background: 'var(--accent)', color: 'var(--on-accent)', fontWeight: 800, fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{k + 1}</span>
+        ))}
+        {main && commenting && (
+          <button type="button" aria-label="Clicca sul punto da commentare" onClick={place}
+            style={{ position: 'absolute', inset: 0, background: 'transparent', border: '2px dashed var(--accent)', cursor: 'crosshair', borderRadius: 0 }} />
+        )}
+      </div>
+      {n !== null && <figcaption className="muted" style={{ fontSize: 12 }}>v{n}</figcaption>}
+    </figure>
+  );
+
+  return (
+    <div role="dialog" aria-modal="true" aria-label={`${preset.channel} · ${preset.name}`} tabIndex={-1} ref={dialogRef}
+      onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
+      style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, zIndex: 50 }}>
+      <div className="card stack" style={{ width: 'min(1100px, 100%)', maxHeight: '95vh', overflow: 'auto' }}>
+        <div className="row">
+          <strong>{preset.channel} · {preset.name}</strong>
+          <span className="mono muted">{preset.width}×{preset.height}</span>
+          <div style={{ flex: 1 }} />
+          <button type="button" aria-pressed={commenting} onClick={() => setCommenting((c) => !c)} disabled={!src}>Aggiungi commento</button>
+          <button type="button" onClick={onClose}>Chiudi</button>
+        </div>
+        <div className="row" style={{ alignItems: 'flex-start', gap: 16, flexWrap: 'nowrap' }}>
+          {compareSrc !== null && media(compareSrc, compareN, false)}
+          {media(src, versionN, true)}
+        </div>
+        {commenting && <p className="muted" style={{ margin: 0 }}>Clicca sul punto da commentare{videoRef.current ? ': il commento usa il tempo corrente del video' : ''}.</p>}
+      </div>
+    </div>
+  );
+}
