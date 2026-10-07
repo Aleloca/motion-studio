@@ -38,6 +38,19 @@ export function normalizeCodebasePath(p: string): string {
   return stripped;
 }
 
+/** Normalizes paths, trims notes (blank dropped) and dedupes by path (the first wins). Throws on invalid paths. */
+export function normalizeCodebaseList(list: LinkedCodebase[]): LinkedCodebase[] {
+  const seen = new Set<string>();
+  const out: LinkedCodebase[] = [];
+  for (const c of list) {
+    const path = normalizeCodebasePath(c.path);
+    if (seen.has(path)) continue;
+    seen.add(path);
+    out.push({ path, ...(c.note?.trim() ? { note: c.note.trim() } : {}) });
+  }
+  return out;
+}
+
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 export function slugify(name: string): string {
@@ -161,8 +174,7 @@ export class WorkspaceStore {
     return this.projectLock.run(slug, async () => {
       const current = await this.getProject(slug);
       const linkedCodebases = patch.linkedCodebases
-        ? patch.linkedCodebases.map((c) => ({ path: normalizeCodebasePath(c.path), ...(c.note?.trim() ? { note: c.note.trim() } : {}) }))
-            .filter((c, i, all) => all.findIndex((x) => x.path === c.path) === i)
+        ? normalizeCodebaseList(patch.linkedCodebases)
         : current.linkedCodebases;
       const parsed = projectFileSchema.safeParse({ ...current, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)), linkedCodebases, updatedAt: new Date().toISOString() });
       if (!parsed.success) throw new WorkspaceError(400, `Progetto non valido: ${parsed.error.issues.map((i) => i.path.join('.')).join(', ')}`);

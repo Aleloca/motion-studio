@@ -474,6 +474,28 @@ describe('brand and codebases in creative turns', { timeout: 20_000 }, () => {
     delete process.env.FAKE_CLAUDE_TOUCH;
     expect((await sys()).some((e) => e.level === 'error' && e.text.includes(`la codebase ${repo} risulta modificata`))).toBe(true);
   });
+  it('uses creative-level codebases and passes a path linked twice once', async () => {
+    const cb = await mkdtemp(join(tmpdir(), 'ms-cb-dup-'));
+    const ws = await WorkspaceStore.open(ref.root, new Git());
+    await ws.updateProject(ref.projectSlug, { linkedCodebases: [{ path: cb }] });
+    await store.update(ref.creativeSlug, { linkedCodebases: [{ path: `${cb}/`, note: 'dup' }] });
+    await finalState((await service.start(ref)).id);
+    const { args } = (await prompts())[0]!;
+    expect(args.filter((a) => a === '--add-dir')).toHaveLength(1);
+    expect(args).toContain(cb);
+  });
+  it('warns when a non-repo codebase becomes a repo during the turn', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-cb-plain-'));
+    const ws = await WorkspaceStore.open(ref.root, new Git());
+    await ws.updateProject(ref.projectSlug, { linkedCodebases: [{ path: dir }] });
+    process.env.FAKE_CLAUDE_SCENARIO = 'render_touch';
+    process.env.FAKE_CLAUDE_TOUCH = join(dir, 'x.txt');
+    process.env.FAKE_CLAUDE_GIT_INIT = dir;
+    await finalState((await service.start(ref)).id);
+    delete process.env.FAKE_CLAUDE_GIT_INIT;
+    delete process.env.FAKE_CLAUDE_TOUCH;
+    expect((await sys()).some((e) => e.level === 'error' && e.text.includes(`la codebase ${dir} risulta modificata`))).toBe(true);
+  });
   it('keeps working with a corrupt brand kit', async () => {
     await mkdir(join(ref.projectDir, 'brand'), { recursive: true });
     await writeFile(join(ref.projectDir, 'brand', 'brand-kit.json'), '{oops');

@@ -3,7 +3,7 @@ import { join, relative } from 'node:path';
 import { EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Pin, type ServerMessage, type VersionEntry } from '@motion-studio/shared';
 import { AGENT_ALLOWED_TOOLS, type AgentRunner } from '../agent/runner.ts';
 import { BrandStore } from '../brand/brand-store.ts';
-import { checkCodebases, codebaseSnapshot, normalizeCodebasePath, readOnlyRules } from '../codebases.ts';
+import { checkCodebases, codebaseSnapshot, normalizeCodebaseList, normalizeCodebasePath, readOnlyRules } from '../codebases.ts';
 import { readJsonFile } from '../json-file.ts';
 import { LibraryStore } from '../library/library-store.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
@@ -31,19 +31,6 @@ const PINS_ONLY = 'Applica i commenti puntuali.';
 const UNKNOWN_PRESET = 'Preset sconosciuto:';
 const now = () => new Date().toISOString();
 
-/** Normalizes every path and drops duplicates (the first note wins). */
-export function normalizeCodebases(list: LinkedCodebase[]): LinkedCodebase[] {
-  const seen = new Set<string>();
-  const out: LinkedCodebase[] = [];
-  for (const c of list) {
-    const path = normalizeCodebasePath(c.path);
-    if (seen.has(path)) continue;
-    seen.add(path);
-    out.push({ ...c, path });
-  }
-  return out;
-}
-
 class AgentFailure extends Error {}
 
 export class CreativeTurnService {
@@ -64,7 +51,7 @@ export class CreativeTurnService {
       const updated = await store.update(ref.creativeSlug, {
         ...(patch.title !== undefined ? { title: patch.title } : {}),
         ...(patch.brief ? { brief: patch.brief } : {}),
-        ...(patch.linkedCodebases ? { linkedCodebases: normalizeCodebases(patch.linkedCodebases) } : {}),
+        ...(patch.linkedCodebases ? { linkedCodebases: normalizeCodebaseList(patch.linkedCodebases) } : {}),
       });
       await this.deps.git.commitAll(ref.projectDir, `${updated.title}: brief aggiornato`);
       return updated;
@@ -158,9 +145,13 @@ export class CreativeTurnService {
         });
         const snapshotsBefore = await Promise.all(existing.map((p) => codebaseSnapshot(p)));
         for (const [k, p] of existing.entries()) {
-          if (snapshotsBefore[k] !== null || uncheckable.has(p)) continue;
+          const snap = snapshotsBefore[k]!;
+          if ('value' in snap || uncheckable.has(p)) continue;
           uncheckable.add(p);
-          await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: `Codebase ${p} non controllabile (non è un repository git): eventuali modifiche non verrebbero rilevate` });
+          const text = snap.unavailable === 'not-git'
+            ? `Codebase ${p} non controllabile (non è un repository git): eventuali modifiche non verrebbero rilevate`
+            : `Codebase ${p}: controllo delle modifiche non riuscito, eventuali modifiche non verrebbero rilevate`;
+          await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text });
         }
         const run = this.deps.runner.start({ cwd: ref.projectDir, prompt, resumeSessionId, forkSession, model, allowedTools: [...AGENT_ALLOWED_TOOLS], addDirs: existing, disallowedTools: readOnlyRules(existing) }, (event) => {
           this.deps.broadcast({ type: 'agent', jobId, event });
@@ -177,7 +168,11 @@ export class CreativeTurnService {
         await lastWrite;
         const snapshotsAfter = await Promise.all(existing.map((p) => codebaseSnapshot(p)));
         for (const [k, p] of existing.entries()) {
-          if (snapshotsBefore[k] !== null && snapshotsAfter[k] !== snapshotsBefore[k]) {
+          const b = snapshotsBefore[k]!;
+          const a = snapshotsAfter[k]!;
+          // A repo that appears during the turn (git init) counts as a change too.
+          const changed = 'value' in b ? 'value' in a && a.value !== b.value : 'value' in a;
+          if (changed) {
             await store.appendConversation(slug, { type: 'system', at: now(), level: 'error', text: `Attenzione: la codebase ${p} risulta modificata durante il turno. Controlla le modifiche.` });
           }
         }
@@ -229,12 +224,18 @@ export class CreativeTurnService {
     const library = new LibraryStore(ref.projectDir, this.deps.media);
     let kit = EMPTY_BRAND_KIT;
     try { kit = await brand.readKit(); } catch (e) { await note(`Brand kit non leggibile: ${(e as Error).message}`); }
-    const hasGuidelines = (await brand.readGuidelines().catch(() => '')).trim() !== '';
+    let hasGuidelines = false;
+    try { hasGuidelines = (await brand.readGuidelines()).trim() !== ''; } catch (e) { await note(`Linee guida non leggibili: ${(e as Error).message}`); }
     let assets = 0;
     try { assets = (await library.listAssets()).length; } catch (e) { await note(`Elenco asset non leggibile: ${(e as Error).message}`); }
-    const references = (await library.listReferences().catch(() => [])).length;
+    let references = 0;
+    try { references = (await library.listReferences()).length; } catch (e) { await note(`Elenco riferimenti non leggibile: ${(e as Error).message}`); }
     const project = await readJsonFile(join(ref.projectDir, 'project.json'), projectFileSchema);
-    const checks = await checkCodebases([...project.linkedCodebases, ...creativeCodebases]);
+    const normalized: LinkedCodebase[] = [];
+    for (const c of [...project.linkedCodebases, ...creativeCodebases]) {
+      try { normalized.push(...normalizeCodebaseList([c])); } catch (e) { await note(`Codebase ignorata (${c.path}): ${(e as Error).message}`); }
+    }
+    const checks = await checkCodebases(normalizeCodebaseList(normalized));
     for (const c of checks.filter((x) => !x.exists)) await note(`Codebase non trovata, ignorata in questo turno: ${c.path}`);
     const existing = checks.filter((c) => c.exists);
     return {

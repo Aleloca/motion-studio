@@ -52,7 +52,7 @@ rl.once('line', async (line) => {
     writeFileSync(join(block.outputDir, 'manifest.json'), JSON.stringify({ schemaVersion: 1, files, tools: ['fake'], renderCommand: 'node render.js' }));
   };
   if (block && scenario === 'render') render(false);
-  if (scenario === 'render_touch' && block) { render(false); if (process.env.FAKE_CLAUDE_TOUCH) writeFileSync(process.env.FAKE_CLAUDE_TOUCH, 'modified'); }
+  if (scenario === 'render_touch' && block) { render(false); if (process.env.FAKE_CLAUDE_TOUCH) writeFileSync(process.env.FAKE_CLAUDE_TOUCH, 'modified'); if (process.env.FAKE_CLAUDE_GIT_INIT) spawnSync('git', ['init', '-q'], { cwd: process.env.FAKE_CLAUDE_GIT_INIT }); }
   if (block && scenario === 'render_missing_once') render(!isFix);
   if (block && scenario === 'render_never') render(true);
   if (block && scenario === 'render_then_crash') render(false);
