@@ -29,7 +29,9 @@ export interface JobSummary {
 export type ServerMessage =
   | { type: 'snapshot'; jobs: JobSummary[] }
   | { type: 'job'; job: JobSummary }
-  | { type: 'agent'; jobId: string; event: AgentEvent };
+  | { type: 'agent'; jobId: string; event: AgentEvent }
+  /** A creative's files changed (status, versions, conversation): clients refetch it. */
+  | { type: 'creative'; project: string; creative: string };
 
 export interface DoctorCheck {
   id: 'node' | 'git' | 'ffmpeg' | 'claude' | 'claude-auth';

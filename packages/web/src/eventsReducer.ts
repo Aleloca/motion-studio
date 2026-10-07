@@ -14,6 +14,8 @@ export function eventsReducer(state: EventsState, msg: ServerMessage): EventsSta
       const list = [...(state.events[msg.jobId] ?? []), msg.event];
       return { ...state, events: { ...state.events, [msg.jobId]: list.length > MAX_EVENTS ? list.slice(-MAX_EVENTS) : list } };
     }
+    case 'creative':
+      return state; // handled by useCreative (Task 10)
   }
 }
 
