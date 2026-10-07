@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Test double for the `claude` CLI. Scenario via FAKE_CLAUDE_SCENARIO: ok | tool | crash | hang | hang_ignore_term | garbage | error_result | leak_fd | render | render_missing_once | render_never | render_then_crash | render_touch
+// Test double for the `claude` CLI. Scenario via FAKE_CLAUDE_SCENARIO: ok | tool | crash | hang | hang_ignore_term | garbage | error_result | leak_fd | render | render_missing_once | render_never | render_then_crash | render_touch | brand | brand_invalid
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 
 const args = process.argv.slice(2);
@@ -53,6 +53,27 @@ rl.once('line', async (line) => {
   };
   if (block && scenario === 'render') render(false);
   if (scenario === 'render_touch' && block) { render(false); if (process.env.FAKE_CLAUDE_TOUCH) writeFileSync(process.env.FAKE_CLAUDE_TOUCH, 'modified'); if (process.env.FAKE_CLAUDE_GIT_INIT) spawnSync('git', ['init', '-q'], { cwd: process.env.FAKE_CLAUDE_GIT_INIT }); }
+  const brandBlock = (() => { const m = prompt.match(/```motion-studio-brand\n([\s\S]*?)\n```/); return m ? JSON.parse(m[1]) : null; })();
+  if (brandBlock && (scenario === 'brand' || scenario === 'render')) {
+    const kit = JSON.parse(readFileSync(brandBlock.kitFile, 'utf8'));
+    const url = brandBlock.sources.find((s) => s.kind === 'website')?.url ?? 'https://acme.example';
+    kit.colors.push({ id: 'arancio', name: 'Arancio', hex: '#FF7A45', role: 'accent', source: { kind: 'website', ref: url } });
+    mkdirSync('assets/brand', { recursive: true });
+    writeFileSync('assets/brand/logo.svg', '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    writeFileSync('assets/brand/unlisted.png', 'x');
+    kit.logos.push({ id: 'logo', file: 'assets/brand/logo.svg', variant: 'primary', background: 'light', source: { kind: 'website', ref: url } });
+    kit.logos.push({ id: 'ghost', file: 'assets/brand/ghost.svg', variant: 'icon', background: 'any', source: { kind: 'website', ref: url } });
+    writeFileSync(brandBlock.kitFile, JSON.stringify(kit));
+    writeFileSync(brandBlock.guidelinesFile, '# Linee guida\nTono energico.');
+    writeFileSync(brandBlock.assetsListFile, JSON.stringify([{ file: 'brand/logo.svg', sourceUrl: `${url}/logo.svg`, description: 'Logo principale', tags: ['logo'] }, { file: '../evil' }]));
+    writeFileSync(brandBlock.summaryFile, 'Palette arancio/blu, tono energico.');
+  }
+  if (brandBlock && scenario === 'brand_invalid') writeFileSync(brandBlock.kitFile, '{oops');
+  const describeBlock = (() => { const m = prompt.match(/```motion-studio-describe\n([\s\S]*?)\n```/); return m ? JSON.parse(m[1]) : null; })();
+  if (describeBlock) {
+    mkdirSync(dirname(describeBlock.outFile), { recursive: true });
+    writeFileSync(describeBlock.outFile, JSON.stringify(describeBlock.files.map((f) => ({ file: f.replace(/^assets\//, ''), description: `Descrizione di ${f}`, tags: ['auto'] }))));
+  }
   if (block && scenario === 'render_missing_once') render(!isFix);
   if (block && scenario === 'render_never') render(true);
   if (block && scenario === 'render_then_crash') render(false);
