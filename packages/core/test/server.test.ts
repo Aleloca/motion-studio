@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,12 +26,20 @@ beforeEach(async () => {
 });
 afterEach(async () => { await app.close(); delete process.env.FAKE_CLAUDE_SCENARIO; delete process.env.FAKE_CLAUDE_ARGS_FILE; });
 
+const buildWith = (opts: { webDir?: string } = {}) => buildServer({
+  appConfig: new AppConfigStore(join(base, 'config')),
+  git: new Git(),
+  runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),
+  doctor: async () => [],
+  ...opts,
+});
+
 const setWorkspace = (path = join(base, 'Spazio di lavoro')) =>
   app.inject({ method: 'PUT', url: '/api/workspace', payload: { path } });
 
 describe('workspace', () => {
   it('starts unconfigured and returns 409 for projects', async () => {
-    expect((await app.inject('/api/workspace')).json()).toEqual({ path: null, settings: null });
+    expect((await app.inject('/api/workspace')).json()).toEqual({ path: null, settings: null, error: null });
     const res = await app.inject('/api/projects');
     expect(res.statusCode).toBe(409);
     expect(res.json().error).toContain('workspace');
@@ -46,6 +54,40 @@ describe('workspace', () => {
     const file = join(base, 'f.txt');
     await writeFile(file, 'x');
     expect((await setWorkspace(file)).statusCode).toBe(400);
+  });
+  it('expands ~ to the home folder', async () => {
+    const home = process.env.HOME;
+    process.env.HOME = base;
+    try {
+      const res = await setWorkspace('~/Studio');
+      expect(res.statusCode).toBe(200);
+      expect(res.json().path).toBe(join(base, 'Studio'));
+      expect((await stat(join(base, 'Studio', '.studio', 'settings.json'))).isFile()).toBe(true);
+    } finally {
+      process.env.HOME = home;
+    }
+  });
+  it('reports a configured workspace folder that no longer exists without recreating it', async () => {
+    const gone = join(base, 'sparito');
+    await new AppConfigStore(join(base, 'config')).setWorkspacePath(gone);
+    await app.close();
+    app = await buildWith();
+    const body = (await app.inject('/api/workspace')).json();
+    expect(body).toMatchObject({ path: gone, settings: null, error: { code: 'not-found' } });
+    expect(body.error.message).toContain(gone);
+    expect(await stat(gone).catch(() => null)).toBeNull();
+    expect((await app.inject('/api/projects')).statusCode).toBe(409);
+  });
+  it('reports corrupt workspace settings as invalid and leaves the file untouched', async () => {
+    await setWorkspace();
+    const settingsFile = join(base, 'Spazio di lavoro', '.studio', 'settings.json');
+    await writeFile(settingsFile, '{corrupt');
+    await app.close();
+    app = await buildWith();
+    const body = (await app.inject('/api/workspace')).json();
+    expect(body).toMatchObject({ path: join(base, 'Spazio di lavoro'), settings: null, error: { code: 'invalid' } });
+    expect(body.error.message).toContain('settings.json');
+    expect(await readFile(settingsFile, 'utf8')).toBe('{corrupt');
   });
   it('validates settings updates', async () => {
     await setWorkspace();
@@ -156,6 +198,30 @@ describe('turns over WebSocket', () => {
     expect(failed && failed.type === 'job' && failed.job.error).toContain('boom');
     ws.close();
   });
+  it('exposes the job key on the project and the session id on the job', async () => {
+    await setWorkspace();
+    await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' } });
+    const { messages, ws } = await connect();
+    const { jobKey } = (await app.inject('/api/projects/acme')).json();
+    expect(jobKey).toBe(`project:${join(base, 'Spazio di lavoro')}:acme`);
+    const job = (await app.inject({ method: 'POST', url: '/api/projects/acme/turns', payload: { prompt: 'x' } })).json();
+    expect(job.key).toBe(jobKey);
+    await waitFor(() => messages.some((m) => m.type === 'job' && m.job.id === job.id && m.job.state === 'succeeded'));
+    expect(messages.some((m) => m.type === 'job' && m.job.id === job.id && m.job.state === 'running' && m.job.sessionId === 'fake-session-1')).toBe(true);
+    expect((await app.inject('/api/jobs')).json()[0]).toMatchObject({ id: job.id, sessionId: 'fake-session-1' });
+    ws.close();
+  });
+  it('validates resumeSessionId', async () => {
+    await setWorkspace();
+    await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' } });
+    for (const resumeSessionId of ['--model', 'a b', 'x'.repeat(129), 42]) {
+      const res = await app.inject({ method: 'POST', url: '/api/projects/acme/turns', payload: { prompt: 'x', resumeSessionId } });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toContain('sessione');
+    }
+    const ok = await app.inject({ method: 'POST', url: '/api/projects/acme/turns', payload: { prompt: 'x', resumeSessionId: '0b9c-AF12' } });
+    expect(ok.statusCode).toBe(202);
+  });
   it('rejects an empty prompt with 400', async () => {
     await setWorkspace();
     await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' } });
@@ -168,6 +234,28 @@ describe('loopback guard and client errors', () => {
     expect((await app.inject({ url: '/api/health', headers: { host: 'evil.example' } })).statusCode).toBe(403);
     expect((await app.inject({ method: 'POST', url: '/api/projects', headers: { origin: 'https://evil.example' }, payload: { name: 'x' } })).statusCode).toBe(403);
     expect((await app.inject({ url: '/api/health', headers: { origin: 'not a url' } })).statusCode).toBe(403);
+  });
+  it('rejects look-alike hosts and origins', async () => {
+    for (const host of ['evil.com@127.0.0.1', '127.0.0.1.evil.com', 'localhost.evil.com:4317', '127.0.0.1:4317/x', '127.0.0.1:']) {
+      expect((await app.inject({ url: '/api/health', headers: { host } })).statusCode, host).toBe(403);
+    }
+    for (const origin of ['http://evil.com@127.0.0.1', 'http://127.0.0.1.evil.com', 'file://localhost', 'http://u:p@localhost:5173']) {
+      expect((await app.inject({ url: '/api/health', headers: { origin } })).statusCode, origin).toBe(403);
+    }
+    expect((await app.inject({ url: '/api/health', headers: { host: 'LOCALHOST:4317', origin: 'http://[::1]:4317' } })).statusCode).toBe(200);
+  });
+  it('replies 404 with an error body for unknown API routes without a web folder', async () => {
+    const res = await app.inject('/api/nope');
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toEqual({ error: 'Non trovato' });
+  });
+  it('serves the web app for unknown pages and 404 for unknown API routes with a web folder', async () => {
+    const webDir = await mkdtemp(join(tmpdir(), 'ms-web-'));
+    await writeFile(join(webDir, 'index.html'), '<html>studio</html>');
+    await app.close();
+    app = await buildWith({ webDir });
+    expect((await app.inject('/qualcosa')).body).toContain('studio');
+    expect((await app.inject('/api/nope')).json()).toEqual({ error: 'Non trovato' });
   });
   it('accepts loopback hosts and a localhost dev origin', async () => {
     for (const host of ['127.0.0.1:4317', 'localhost:4317', '[::1]:4317']) {

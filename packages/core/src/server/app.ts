@@ -1,9 +1,10 @@
 import { stat } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
+import { homedir } from 'node:os';
+import { isAbsolute, join } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance } from 'fastify';
-import type { DoctorCheck, WorkspaceSettings } from '@motion-studio/shared';
+import type { DoctorCheck, ProjectDetail, WorkspaceInfo, WorkspaceProblem, WorkspaceSettings } from '@motion-studio/shared';
 import type { AgentRunner } from '../agent/runner.ts';
 import type { AppConfigStore } from '../app-config.ts';
 import type { Git } from '../git.ts';
@@ -20,38 +21,58 @@ export interface ServerDeps {
   webDir?: string;
 }
 
-const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
+const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?$/i;
+const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
 
 function isLoopbackHost(host: string | undefined): boolean {
-  if (!host) return false;
-  try {
-    return LOOPBACK.has(new URL(`http://${host}`).hostname);
-  } catch {
-    return false;
-  }
+  return host !== undefined && LOOPBACK_HOST.test(host);
 }
 
 function isLoopbackOrigin(origin: string): boolean {
   try {
-    return LOOPBACK.has(new URL(origin).hostname);
+    const url = new URL(origin);
+    return (url.protocol === 'http:' || url.protocol === 'https:') && url.username === '' && url.password === ''
+      && LOOPBACK_HOSTNAMES.has(url.hostname);
   } catch {
     return false;
   }
 }
+
+// 1..128 of [A-Za-z0-9-], not starting with '-' so it can never be read as a CLI flag after --resume.
+const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/;
+
+/** `~` and `~/…` refer to the user's home folder. */
+function expandHome(path: string): string {
+  if (path === '~') return homedir();
+  if (path.startsWith('~/')) return join(homedir(), path.slice(2));
+  return path;
+}
+
+function describeWorkspaceProblem(err: unknown): WorkspaceProblem {
+  if (err instanceof WorkspaceError && err.code) return { code: err.code, message: err.message };
+  return { code: 'invalid', message: err instanceof Error ? err.message : String(err) };
+}
+
+/** Key of a project's agent jobs: unique per workspace root, so two workspaces never collide. */
+const projectJobKey = (root: string, slug: string) => `project:${root}:${slug}`;
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   const hub = new EventHub();
   const queue = new JobQueue({ concurrency: 2, onUpdate: (job) => hub.broadcast({ type: 'job', job }) });
   let workspace: WorkspaceStore | null = null;
+  // Why the configured workspace could not be opened at startup (shown by the onboarding).
+  let workspaceProblem: { path: string; error: WorkspaceProblem } | null = null;
 
   const configured = (await deps.appConfig.read()).workspacePath;
   if (configured) {
     try {
-      workspace = await WorkspaceStore.open(configured, deps.git);
-      queue.setConcurrency((await workspace.readSettings()).maxConcurrentJobs);
-    } catch {
-      workspace = null; // surfaced to the UI as "workspace not configured"
+      // Never recreate a vanished workspace folder nor rewrite corrupt settings: report them instead.
+      const ws = await WorkspaceStore.open(configured, deps.git, { create: false });
+      queue.setConcurrency((await ws.readSettings()).maxConcurrentJobs);
+      workspace = ws;
+    } catch (err) {
+      workspaceProblem = { path: configured, error: describeWorkspaceProblem(err) };
     }
   }
 
@@ -94,18 +115,24 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.get('/api/health', async () => ({ ok: true }));
   app.get('/api/doctor', async () => deps.doctor());
 
-  app.get('/api/workspace', async () => ({
-    path: workspace?.root ?? null,
-    settings: workspace ? await workspace.readSettings() : null,
-  }));
+  app.get('/api/workspace', async (): Promise<WorkspaceInfo> => {
+    if (!workspace) return { path: workspaceProblem?.path ?? null, settings: null, error: workspaceProblem?.error ?? null };
+    try {
+      return { path: workspace.root, settings: await workspace.readSettings(), error: null };
+    } catch (err) {
+      return { path: workspace.root, settings: null, error: describeWorkspaceProblem(err) };
+    }
+  });
 
   app.put<{ Body: { path?: unknown } }>('/api/workspace', async (req) => {
-    const path = req.body?.path;
-    if (typeof path !== 'string' || !isAbsolute(path)) throw new WorkspaceError(400, 'Indica un percorso assoluto per il workspace');
+    const raw = req.body?.path;
+    const path = typeof raw === 'string' ? expandHome(raw.trim()) : '';
+    if (!isAbsolute(path)) throw new WorkspaceError(400, 'Indica un percorso assoluto per il workspace');
     const ws = await WorkspaceStore.open(path, deps.git);
+    const settings = await ws.readSettings(); // corrupt settings → 422 before the choice is persisted
     await deps.appConfig.setWorkspacePath(path);
     workspace = ws;
-    const settings = await ws.readSettings();
+    workspaceProblem = null;
     queue.setConcurrency(settings.maxConcurrentJobs);
     return { path, settings };
   });
@@ -126,9 +153,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return reply.status(201).send(created);
   });
 
-  app.get<{ Params: { slug: string } }>('/api/projects/:slug', async (req) => {
-    const project = await requireWorkspace().getProject(req.params.slug);
-    return { slug: req.params.slug, project };
+  app.get<{ Params: { slug: string } }>('/api/projects/:slug', async (req): Promise<ProjectDetail> => {
+    const ws = requireWorkspace();
+    const project = await ws.getProject(req.params.slug);
+    return { slug: req.params.slug, project, jobKey: projectJobKey(ws.root, req.params.slug) };
   });
 
   app.post<{ Params: { slug: string }; Body: { prompt?: unknown; resumeSessionId?: unknown } }>(
@@ -139,11 +167,15 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       const project = await ws.getProject(slug);
       const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
       if (!prompt) throw new WorkspaceError(400, 'Scrivi una richiesta per l\'agente');
-      const resumeSessionId = typeof req.body?.resumeSessionId === 'string' ? req.body.resumeSessionId : undefined;
+      const rawSession = req.body?.resumeSessionId;
+      if (rawSession != null && (typeof rawSession !== 'string' || !SESSION_ID_RE.test(rawSession))) {
+        throw new WorkspaceError(400, 'Identificativo della sessione non valido');
+      }
+      const resumeSessionId = rawSession ?? undefined;
       const settings = await ws.readSettings();
       const cwd = ws.projectDir(slug);
       const job = queue.enqueue({
-        key: `project:${slug}`,
+        key: projectJobKey(ws.root, slug),
         label: `Turno · ${project.name}`,
         run: async (signal, jobId) => {
           const run = deps.runner.start(
@@ -155,7 +187,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
               // together with per-session deny rules on Edit/Write so they stay read-only (spec §6.3).
               model: settings.model ?? undefined,
             },
-            (event) => hub.broadcast({ type: 'agent', jobId, event }),
+            (event) => {
+              hub.broadcast({ type: 'agent', jobId, event });
+              const sessionId = event.kind === 'session' ? event.sessionId : event.kind === 'result' ? event.sessionId : undefined;
+              if (sessionId) queue.patch(jobId, { sessionId });
+            },
           );
           signal.addEventListener('abort', () => run.cancel(), { once: true });
           const result = await run.done;
@@ -176,12 +212,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     hub.send(socket, { type: 'snapshot', jobs: queue.list() });
   });
 
-  if (deps.webDir && (await stat(deps.webDir).catch(() => null))?.isDirectory()) {
-    await app.register(fastifyStatic, { root: deps.webDir });
-    app.setNotFoundHandler((req, reply) =>
-      req.url.startsWith('/api/') ? reply.status(404).send({ error: 'Non trovato' }) : reply.sendFile('index.html'),
-    );
-  }
+  const serveWeb = Boolean(deps.webDir && (await stat(deps.webDir).catch(() => null))?.isDirectory());
+  if (serveWeb) await app.register(fastifyStatic, { root: deps.webDir! });
+  // A single handler (Fastify allows one per context): unknown API routes always get a JSON 404,
+  // other paths fall back to the SPA when the web build is available.
+  app.setNotFoundHandler((req, reply) =>
+    !serveWeb || req.url.startsWith('/api/') ? reply.status(404).send({ error: 'Non trovato' }) : reply.sendFile('index.html'),
+  );
 
   return app;
 }

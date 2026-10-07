@@ -1,6 +1,7 @@
 import { access, constants, mkdir, readdir, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
+  type WorkspaceProblemCode,
   projectFileSchema,
   workspaceSettingsSchema,
   type ProjectFile,
@@ -13,7 +14,7 @@ import { KeyedMutex } from './keyed-mutex.ts';
 import { CLAUDE_MD, CONTEXT_MD, GITIGNORE, PROJECT_DIRS } from './project-template.ts';
 
 export class WorkspaceError extends Error {
-  constructor(public readonly status: 400 | 404 | 409, message: string) {
+  constructor(public readonly status: 400 | 404 | 409, message: string, public readonly code?: WorkspaceProblemCode) {
     super(message);
     this.name = 'WorkspaceError';
   }
@@ -37,14 +38,16 @@ export class WorkspaceStore {
   private readonly createLock = new KeyedMutex();
   private constructor(public readonly root: string, private readonly git: Git) {}
 
-  static async open(root: string, git: Git): Promise<WorkspaceStore> {
+  /** `create: false` (used at startup) refuses to recreate a workspace folder that disappeared. */
+  static async open(root: string, git: Git, opts: { create?: boolean } = {}): Promise<WorkspaceStore> {
     const info = await stat(root).catch(() => null);
-    if (info && !info.isDirectory()) throw new WorkspaceError(400, `Il percorso ${root} è un file, non una cartella`);
+    if (info && !info.isDirectory()) throw new WorkspaceError(400, `Il percorso ${root} è un file, non una cartella`, 'not-found');
+    if (!info && opts.create === false) throw new WorkspaceError(404, `Cartella del workspace non trovata: ${root}`, 'not-found');
     try {
       await mkdir(join(root, '.studio'), { recursive: true });
       await access(root, constants.W_OK);
     } catch {
-      throw new WorkspaceError(400, `Impossibile scrivere nella cartella ${root}: controlla i permessi`);
+      throw new WorkspaceError(400, `Impossibile scrivere nella cartella ${root}: controlla i permessi`, 'not-writable');
     }
     const store = new WorkspaceStore(root, git);
     const settingsPath = store.settingsPath();

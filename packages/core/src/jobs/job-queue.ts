@@ -68,6 +68,14 @@ export class JobQueue {
     return true;
   }
 
+  /** Records agent-neutral details learnt while the job runs (e.g. the session id) and broadcasts them. */
+  patch(id: string, fields: Pick<JobSummary, 'sessionId'>): void {
+    const entry = this.entries.find((e) => e.summary.id === id);
+    if (!entry || entry.summary.sessionId === fields.sessionId) return;
+    Object.assign(entry.summary, fields);
+    this.update(entry);
+  }
+
   list(): JobSummary[] { return this.entries.map((e) => ({ ...e.summary })); }
 
   setConcurrency(n: number): void {

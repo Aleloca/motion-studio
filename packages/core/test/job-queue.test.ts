@@ -143,4 +143,17 @@ describe('JobQueue', () => {
     d2.resolve();
     await q2.whenIdle();
   });
+  it('patches the session id of a job and broadcasts it once', async () => {
+    const updates: JobSummary[] = [];
+    const q = new JobQueue({ concurrency: 1, onUpdate: (j) => updates.push(j) });
+    const d = deferred();
+    const job = q.enqueue({ key: 'k', label: 'a', run: () => d.promise });
+    await tick();
+    q.patch(job.id, { sessionId: 's1' });
+    q.patch(job.id, { sessionId: 's1' });
+    q.patch('unknown', { sessionId: 's2' });
+    d.resolve();
+    await q.whenIdle();
+    expect(updates.map((u) => [u.state, u.sessionId])).toEqual([['queued', undefined], ['running', undefined], ['running', 's1'], ['succeeded', 's1']]);
+  });
 });

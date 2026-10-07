@@ -1,4 +1,4 @@
-import type { ProjectFile } from './schemas.ts';
+import type { ProjectFile, WorkspaceSettings } from './schemas.ts';
 
 /** Agent-neutral event stream produced by any AgentRunner. */
 export type AgentEvent =
@@ -22,6 +22,8 @@ export interface JobSummary {
   startedAt?: string;
   finishedAt?: string;
   error?: string;
+  /** Agent session to resume for the next turn, known once the agent reported it. */
+  sessionId?: string;
 }
 
 export type ServerMessage =
@@ -42,3 +44,16 @@ export interface DoctorCheck {
 export type ProjectListItem =
   | { slug: string; ok: true; project: ProjectFile }
   | { slug: string; ok: false; error: string };
+
+export type WorkspaceProblemCode = 'not-found' | 'invalid' | 'not-writable';
+export interface WorkspaceProblem { code: WorkspaceProblemCode; message: string }
+
+/** GET /api/workspace: `error` explains why a configured workspace is not usable (path is then the configured one). */
+export interface WorkspaceInfo {
+  path: string | null;
+  settings: WorkspaceSettings | null;
+  error: WorkspaceProblem | null;
+}
+
+/** GET /api/projects/:slug. `jobKey` is the key of this project's agent jobs (to find an active one). */
+export interface ProjectDetail { slug: string; project: ProjectFile; jobKey: string }
