@@ -1,16 +1,20 @@
 import { stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { DoctorCheck, ProjectDetail, WorkspaceInfo, WorkspaceProblem, WorkspaceSettings } from '@motion-studio/shared';
+import { CreativeTurnService } from '../creatives/creative-turns.ts';
+import { FormatCatalog } from '../formats/format-catalog.ts';
+import { NoMediaTools, type MediaTools } from '../media/media-tools.ts';
 import type { AgentRunner } from '../agent/runner.ts';
 import type { AppConfigStore } from '../app-config.ts';
 import type { Git } from '../git.ts';
 import { JobConflictError, JobQueue } from '../jobs/job-queue.ts';
 import { JsonFileError } from '../json-file.ts';
 import { WorkspaceError, WorkspaceStore } from '../workspace-store.ts';
+import { recoverWorkspace, registerCreativeRoutes } from './creative-routes.ts';
 import { EventHub } from './event-hub.ts';
 
 export interface ServerDeps {
@@ -19,6 +23,8 @@ export interface ServerDeps {
   runner: AgentRunner;
   doctor: () => Promise<DoctorCheck[]>;
   webDir?: string;
+  media?: MediaTools;
+  openPath?: (path: string) => Promise<void>;
 }
 
 const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?$/i;
@@ -60,6 +66,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   const hub = new EventHub();
   const queue = new JobQueue({ concurrency: 2, onUpdate: (job) => hub.broadcast({ type: 'job', job }) });
+  const media = deps.media ?? NoMediaTools;
+  const isJobActive = (key: string) => queue.list().some((j) => j.key === key && (j.state === 'queued' || j.state === 'running'));
   let workspace: WorkspaceStore | null = null;
   // Why the configured workspace could not be opened at startup (shown by the onboarding).
   let workspaceProblem: { path: string; error: WorkspaceProblem } | null = null;
@@ -71,6 +79,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       const ws = await WorkspaceStore.open(configured, deps.git, { create: false });
       queue.setConcurrency((await ws.readSettings()).maxConcurrentJobs);
       workspace = ws;
+      await recoverWorkspace(ws);
     } catch (err) {
       workspaceProblem = { path: configured, error: describeWorkspaceProblem(err) };
     }
@@ -80,6 +89,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     if (!workspace) throw new WorkspaceError(409, 'Nessun workspace configurato: scegli una cartella di lavoro');
     return workspace;
   };
+
+  const turns = new CreativeTurnService({
+    queue, runner: deps.runner, git: deps.git, media,
+    presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
+    model: async () => (await requireWorkspace().readSettings()).model,
+    broadcast: (msg) => hub.broadcast(msg),
+  });
 
   app.setErrorHandler((error: unknown, _req, reply) => {
     const err = error as Error;
@@ -131,6 +147,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const ws = await WorkspaceStore.open(path, deps.git);
     const settings = await ws.readSettings(); // corrupt settings → 422 before the choice is persisted
     await deps.appConfig.setWorkspacePath(path);
+    // Re-selecting the workspace in use must not mark its running creatives as interrupted.
+    if (workspace?.root !== ws.root) await recoverWorkspace(ws);
     workspace = ws;
     workspaceProblem = null;
     queue.setConcurrency(settings.maxConcurrentJobs);
@@ -212,8 +230,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     hub.send(socket, { type: 'snapshot', jobs: queue.list() });
   });
 
+  registerCreativeRoutes(app, { requireWorkspace, turns, media, openPath: deps.openPath ?? (async () => {}), isJobActive });
+
   const serveWeb = Boolean(deps.webDir && (await stat(deps.webDir).catch(() => null))?.isDirectory());
-  if (serveWeb) await app.register(fastifyStatic, { root: deps.webDir! });
+  // Always registered: it provides reply.sendFile to the creative file route; it serves the web build only when present.
+  await app.register(fastifyStatic, { root: serveWeb ? deps.webDir! : tmpdir(), serve: serveWeb });
   // A single handler (Fastify allows one per context): unknown API routes always get a JSON 404,
   // other paths fall back to the SPA when the web build is available.
   app.setNotFoundHandler((req, reply) =>

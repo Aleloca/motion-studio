@@ -15,6 +15,7 @@
     "@fastify/websocket": "^11.3.3",
     "@motion-studio/shared": "workspace:*",
     "fastify": "^5.12.5",
+    "open": "^10.2.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
