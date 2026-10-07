@@ -34,8 +34,21 @@ const itemName = (raw: unknown, index: number): string => {
   if (isObject(raw)) for (const k of ['name', 'family', 'id', 'file']) { const v = raw[k]; if (typeof v === 'string' && v.trim()) return `«${v.trim().slice(0, 60)}»`; }
   return String(index + 1);
 };
-/** Italian issues of one item, deduplicated ("ruolo non valido; pesi non validi …"). */
-const itemIssues = (error: z.ZodError) => [...new Set(error.issues.map((i) => (i.code === 'invalid_type' ? `${i.path.join('.') || 'valore'} mancante o non valido` : i.message)))].join(', ');
+/** Italian messages for a missing or mistyped field, where zod has only its generic English one. */
+const FIELD_ISSUES: Record<string, string> = {
+  id: 'identificativo non valido (minuscole, cifre e trattini)', name: 'nome obbligatorio', hex: 'hex non valido (usa #RRGGBB)',
+  role: 'ruolo non valido', family: 'famiglia obbligatoria', weights: 'pesi non validi (numeri interi da 100 a 900)',
+  file: 'file non valido', variant: 'variante non valida', background: 'sfondo non valido', text: 'testo obbligatorio', source: 'fonte non valida',
+};
+const ZOD_DEFAULT = /^Invalid input/;
+const issueText = (i: z.core.$ZodIssue) => {
+  if (i.code !== 'invalid_type' || !ZOD_DEFAULT.test(i.message)) return i.message;
+  const key = i.path[0];
+  return (typeof key === 'string' && Object.hasOwn(FIELD_ISSUES, key) ? FIELD_ISSUES[key] : undefined) ?? 'valore mancante o non valido';
+};
+/** Italian issues of one item, deduplicated ("ruolo non valido, pesi non validi …"). */
+const itemIssues = (error: z.ZodError) => [...new Set(error.issues.map(issueText))].join(', ');
+const own = (o: Record<string, unknown>, key: string) => (Object.hasOwn(o, key) ? o[key] : undefined);
 
 /**
  * Reads the kit the agent proposed item by item: invalid items are dropped and described in `dropped`, an invalid
@@ -49,26 +62,31 @@ export function parseProposedKit(json: unknown, current: BrandKit, source: Sourc
 
   for (const field of Object.keys(BRAND_KIT_LIMITS) as ListField[]) {
     const label = BRAND_FIELD_LABELS[field]!;
-    const raw = json[field] ?? [];
+    const raw = own(json, field);
     const currentItems = current[field] as Array<{ id: string }>;
     const out: Array<{ id: string }> = [];
     const ids = new Set<string>();
-    const fallback = (rawItem: unknown) => {
+    const limit = BRAND_KIT_LIMITS[field];
+    const fallback = (rawItem: unknown, name: string) => {
       const id = isObject(rawItem) && typeof rawItem.id === 'string' ? rawItem.id : null;
       const kept = id !== null && !ids.has(id) ? currentItems.find((c) => c.id === id) : undefined;
-      if (kept) { out.push(kept); ids.add(kept.id); }
+      if (!kept) return;
+      if (out.length >= limit) { dropped.push(`${name}: versione attuale non mantenuta (troppe voci, massimo ${limit})`); return; }
+      out.push(kept); ids.add(kept.id);
     };
-    if (!Array.isArray(raw)) {
+    // Only an explicit list (even empty) replaces the current items: an omitted key keeps them.
+    if (raw === undefined) out.push(...currentItems);
+    else if (!Array.isArray(raw)) {
       dropped.push(`${label}: elenco non valido`);
       out.push(...currentItems);
     } else {
       raw.forEach((rawItem, index) => {
         const name = `${label} ${itemName(rawItem, index)}`;
         const parsed = ITEM_SCHEMAS[field].safeParse(coerce(field, rawItem, source, ids));
-        if (!parsed.success) { dropped.push(`${name}: ${itemIssues(parsed.error)}`); fallback(rawItem); return; }
+        if (!parsed.success) { dropped.push(`${name}: ${itemIssues(parsed.error)}`); fallback(rawItem, name); return; }
         const item = parsed.data as { id: string };
         if (ids.has(item.id)) { dropped.push(`${name}: id duplicato`); return; }
-        if (out.length >= BRAND_KIT_LIMITS[field]) { dropped.push(`${name}: troppe voci (massimo ${BRAND_KIT_LIMITS[field]})`); return; }
+        if (out.length >= limit) { dropped.push(`${name}: troppe voci (massimo ${limit})`); return; }
         out.push(item); ids.add(item.id);
       });
     }
@@ -76,8 +94,10 @@ export function parseProposedKit(json: unknown, current: BrandKit, source: Sourc
   }
 
   for (const field of ['tone', 'photoStyle'] as NoteField[]) {
-    const raw = json[field];
-    if (raw === undefined || raw === null) continue;
+    const raw = own(json, field);
+    // Omitted keeps the current note, an explicit null removes it.
+    if (raw === undefined) { kit[field] = current[field]; continue; }
+    if (raw === null) continue;
     const parsed = brandNoteSchema.safeParse(coerce(field, raw, source, new Set()));
     if (parsed.success) kit[field] = parsed.data;
     else { dropped.push(`${BRAND_FIELD_LABELS[field]}: ${itemIssues(parsed.error)}`); kit[field] = current[field]; }

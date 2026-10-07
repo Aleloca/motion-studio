@@ -9,7 +9,7 @@ export interface DescribeBlock { outFile: string; files: string[] }
 const list = (values: readonly string[]) => values.map((v) => JSON.stringify(v)).join(', ');
 const src = { kind: 'website', ref: 'https://esempio.it' };
 /** A complete kit with one item per list: the shape the agent must write (the app validates it item by item). */
-const KIT_EXAMPLE = JSON.stringify({
+export const KIT_EXAMPLE = JSON.stringify({
   schemaVersion: 1,
   colors: [{ id: 'blu-notte', name: 'Blu notte', hex: '#1E3A5F', role: 'primary', source: src }],
   fonts: [{ id: 'titoli', family: 'Inter', role: 'heading', weights: [400, 700], file: 'assets/fonts/Inter.woff2', source: src }],
