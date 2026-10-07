@@ -14,4 +14,5 @@ export * from './server/event-hub.ts';
 export * from './server/app.ts';
 export * from './server/main.ts';
 export * from './creatives/creative-store.ts';
+export * from './creatives/output-contract.ts';
 export * from './media/media-tools.ts';
