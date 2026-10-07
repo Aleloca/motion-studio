@@ -1,6 +1,6 @@
-import { fileDenyRules, readOnlyRules } from '../codebases.ts';
+import { dirDenyRules, fileDenyRules, readOnlyRules } from '../codebases.ts';
 import { AGENT_ALLOWED_TOOLS, BRAND_ANALYSIS_TOOLS, DESCRIBE_TOOLS } from './runner.ts';
-import { DEFAULT_ALLOWED_DOMAINS, sensitiveHomePaths } from './sandbox.ts';
+import { DEFAULT_ALLOWED_DOMAINS, sensitiveHomeEntries, sensitiveHomePaths } from './sandbox.ts';
 
 export type AgentJobKind = 'creative' | 'brand-analysis' | 'describe' | 'console';
 export interface PolicyInput {
@@ -17,7 +17,14 @@ const AUTO_BASH: Record<AgentJobKind, boolean> = { creative: true, console: true
 const unique = (xs: string[]) => [...new Set(xs)];
 
 export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
-  const disallowedTools = [...readOnlyRules(i.codebases), ...(i.protectedFiles.length ? fileDenyRules(EDIT_TOOLS, i.protectedFiles) : [])];
+  // The sandbox denyRead only covers Bash: the Read tool needs its own deny rules.
+  const sensitive = sensitiveHomeEntries(i.home);
+  const disallowedTools = [
+    ...readOnlyRules(i.codebases),
+    ...dirDenyRules(['Read'], [...sensitive.dirs, i.configDir]),
+    ...fileDenyRules(['Read'], sensitive.files),
+    ...(i.protectedFiles.length ? fileDenyRules(EDIT_TOOLS, i.protectedFiles) : []),
+  ];
   const extra = [...i.projectAllowRules, ...i.mcpTools];
   if (!i.sandbox) {
     return { settings: null, allowedTools: unique([...LEGACY_TOOLS[i.kind], ...extra]), disallowedTools, addDirs: [...i.codebases] };
@@ -30,6 +37,8 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
   const settings = {
     sandbox: {
       enabled: true,
+      failIfUnavailable: true,
+      allowUnsandboxedCommands: false,
       autoAllowBashIfSandboxed: AUTO_BASH[i.kind],
       filesystem: { denyRead: [...sensitiveHomePaths(i.home), i.configDir], denyWrite: [...i.codebases, ...i.protectedFiles] },
       ...(network ? { network } : {}),

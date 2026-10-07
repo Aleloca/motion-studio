@@ -36,7 +36,40 @@ describe('buildAgentPolicy with sandbox', () => {
   });
 });
 
+describe('buildAgentPolicy hardening', () => {
+  it('fails closed and forbids per-command opt-out', () => {
+    const s = buildAgentPolicy(base).settings as Sb & { sandbox: { failIfUnavailable: boolean; allowUnsandboxedCommands: boolean } };
+    expect(s.sandbox.failIfUnavailable).toBe(true);
+    expect(s.sandbox.allowUnsandboxedCommands).toBe(false);
+  });
+  it('denies the Read tool on sensitive paths, with and without sandbox', () => {
+    for (const sandbox of [true, false]) {
+      const d = buildAgentPolicy({ ...base, sandbox }).disallowedTools;
+      expect(d).toEqual(expect.arrayContaining([
+        'Read(//Users/me/.ssh/**)', 'Read(//Users/me/.netrc)',
+        'Read(//Users/me/Library/Application Support/Motion Studio/**)',
+      ]));
+    }
+  });
+  it('console: network on, auto-allowed Bash, no default tools', () => {
+    const p = buildAgentPolicy({ ...base, kind: 'console', projectAllowRules: [], mcpTools: [] });
+    const s = p.settings as Sb;
+    expect(s.sandbox.network!.allowedDomains).toContain('api.acme.io');
+    expect(s.sandbox.autoAllowBashIfSandboxed).toBe(true);
+    expect(p.allowedTools).toEqual([]);
+  });
+  it('deduplicates a project rule equal to a default tool', () => {
+    const p = buildAgentPolicy({ ...base, sandbox: false, projectAllowRules: ['Bash(node:*)'], mcpTools: [] });
+    expect(p.allowedTools.filter((t) => t === 'Bash(node:*)')).toHaveLength(1);
+  });
+});
+
 describe('buildAgentPolicy without sandbox', () => {
+  it('brand analysis keeps its narrow tools without curl', () => {
+    const p = buildAgentPolicy({ ...base, kind: 'brand-analysis', sandbox: false, projectAllowRules: [], mcpTools: [] });
+    expect(p.allowedTools).toEqual([...BRAND_ANALYSIS_TOOLS]);
+    expect(p.allowedTools).not.toContain('Bash(curl:*)');
+  });
   it('falls back to the phase 3 tool lists', () => {
     expect(buildAgentPolicy({ ...base, sandbox: false }).settings).toBeNull();
     expect(buildAgentPolicy({ ...base, sandbox: false, projectAllowRules: [], mcpTools: [] }).allowedTools).toEqual([...AGENT_ALLOWED_TOOLS]);

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -195,11 +195,13 @@ describe('ClaudeCodeRunner', () => {
     await vi.waitFor(() => expect(alive(grandchildPid(events)!)).toBe(false));
   });
   it('passes extra environment variables to claude', async () => {
-    const argsFile = join(await mkdtemp(join(tmpdir(), 'ms-env-')), 'args.json');
+    const dir = await mkdtemp(join(tmpdir(), 'ms-env-'));
+    const argsFile = join(dir, 'args.json');
     process.env.FAKE_CLAUDE_ARGS_FILE = argsFile;
     const { handle } = await run('ok', 'x', { env: { MS_TEST_ENV: 'ciao' } });
     await handle.done;
     expect(JSON.parse(await readFile(argsFile, 'utf8')).env).toBe('ciao');
+    await rm(dir, { recursive: true, force: true });
   });
   it('survives a throwing event listener', async () => {
     const { handle } = await run('ok', 'x', {}, { onEvent: () => { throw new Error('listener boom'); } });

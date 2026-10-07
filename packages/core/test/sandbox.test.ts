@@ -16,6 +16,16 @@ describe('detectSandbox', () => {
     expect(r.available).toBe(false);
     expect(r.reason).toContain('bubblewrap');
   });
+  it('linux names only what is missing', async () => {
+    const onlyBwrap: CommandExec = async (cmd) => ({ code: cmd === 'bwrap' ? 0 : -1, stdout: '', stderr: '', notFound: cmd !== 'bwrap' });
+    const r = await detectSandbox({ platform: 'linux', exec: onlyBwrap });
+    expect(r.available).toBe(false);
+    expect(r.reason).toContain('socat');
+    expect(r.reason).not.toContain('Mancano bubblewrap');
+  });
+  it('other platforms are unsupported', async () => {
+    expect(await detectSandbox({ platform: 'freebsd' })).toMatchObject({ available: false, reason: 'La sandbox non è supportata su freebsd' });
+  });
   it('windows is unsupported', async () => {
     expect(await detectSandbox({ platform: 'win32' })).toMatchObject({ available: false, reason: 'La sandbox di Claude Code non è disponibile su Windows' });
   });

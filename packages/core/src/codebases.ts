@@ -23,7 +23,8 @@ export async function checkCodebases(list: LinkedCodebase[]): Promise<CodebaseCh
 /** Claude Code permission rule syntax: an absolute path is written with a leading '//'. */
 /** Glob metacharacters in the path are escaped so a folder like `cb [x]` or `app {a,b}` is matched literally. */
 const escapeGlob = (p: string) => p.replace(/[\\[\]*?{}()!+@]/g, '\\$&');
-export const readOnlyRules = (paths: string[]) => paths.map((p) => `Edit(/${escapeGlob(p)}/**)`);
+export const dirDenyRules = (tools: string[], dirs: string[]) => dirs.flatMap((d) => tools.map((t) => `${t}(/${escapeGlob(d)}/**)`));
+export const readOnlyRules = (paths: string[]) => dirDenyRules(['Edit'], paths);
 /** Deny rules for each tool on each exact absolute file path (same escaping as readOnlyRules). */
 export const fileDenyRules = (tools: string[], files: string[]) => files.flatMap((f) => tools.map((t) => `${t}(/${escapeGlob(f)})`));
 

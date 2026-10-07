@@ -12,6 +12,12 @@ export const DEFAULT_ALLOWED_DOMAINS: readonly string[] = [
 
 const SENSITIVE = ['.ssh', '.aws', '.gnupg', '.kube', '.docker', '.azure', '.config/gh', '.config/gcloud', '.netrc', '.npmrc',
   '.pypirc', '.git-credentials', 'Library/Keychains', 'Library/Application Support/Motion Studio', '.config/motion-studio'];
+const SENSITIVE_FILES = new Set(['.netrc', '.npmrc', '.pypirc', '.git-credentials']);
+/** Sensitive entries split by kind: folders need a `/**` rule, single files an exact one. */
+export const sensitiveHomeEntries = (home: string) => ({
+  dirs: SENSITIVE.filter((p) => !SENSITIVE_FILES.has(p)).map((p) => join(home, ...p.split('/'))),
+  files: SENSITIVE.filter((p) => SENSITIVE_FILES.has(p)).map((p) => join(home, ...p.split('/'))),
+});
 export const sensitiveHomePaths = (home: string) => SENSITIVE.map((p) => join(home, ...p.split('/')));
 
 export async function detectSandbox(opts: { platform?: NodeJS.Platform; exec?: CommandExec; exists?: (p: string) => Promise<boolean> } = {}): Promise<SandboxSupport> {
