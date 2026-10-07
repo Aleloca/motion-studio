@@ -42,7 +42,7 @@ describe('App startup', () => {
     start(Promise.resolve({ path: '/Users/me/Studio', settings: null, error: { code: 'not-found', message: 'Cartella del workspace non trovata: /Users/me/Studio' } }));
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toBe("Cartella non trovata: /Users/me/Studio, scegline un'altra");
-    expect(screen.getByLabelText<HTMLInputElement>('Cartella di lavoro').value).toBe('/Users/me/Studio');
+    await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>('Cartella di lavoro').value).toBe('/Users/me/Studio'));
     expect(alert.textContent).not.toContain('Impossibile contattare');
   });
   it('explains invalid workspace content', async () => {
