@@ -12,5 +12,6 @@ describe('parseCliArgs', () => {
   it('rejects an invalid port', () => {
     expect(() => parseCliArgs(['--port', 'abc'])).toThrow('Porta non valida');
     expect(() => parseCliArgs(['--port', '70000'])).toThrow('Porta non valida');
+    for (const p of ['0x10', '1e3', '0', ' 80', '80.0', '']) expect(() => parseCliArgs(['--port', p]), p).toThrow('Porta non valida');
   });
 });

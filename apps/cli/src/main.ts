@@ -18,10 +18,24 @@ async function main() {
   try {
     const { url, close } = await startServer({ port: args.port, webDir });
     console.log(`Motion Studio è attivo su ${url}`);
-    if (args.open) await open(url);
-    const stop = async () => { await close(); process.exit(0); };
-    process.on('SIGINT', stop);
-    process.on('SIGTERM', stop);
+    // Registered before opening the browser so a stop is always handled.
+    let closing = false;
+    const stop = () => {
+      if (closing) process.exit(1); // second signal while closing: force quit
+      closing = true;
+      close().then(() => process.exit(0), (err: unknown) => {
+        console.error(`Chiusura non riuscita: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      });
+    };
+    for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(sig, stop);
+    if (args.open) {
+      try {
+        await open(url);
+      } catch {
+        console.log(`Apri manualmente ${url}`);
+      }
+    }
   } catch (e) {
     const err = e as NodeJS.ErrnoException;
     console.error(err.code === 'EADDRINUSE' ? `La porta ${args.port} è già in uso: riprova con --port <altra>` : err.message);

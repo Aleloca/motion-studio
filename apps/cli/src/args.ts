@@ -10,7 +10,8 @@ export function parseCliArgs(argv: string[]): { port: number; open: boolean; hel
     },
     strict: true,
   });
-  const port = Number(values.port);
+  // Decimal digits only: Number() would also accept '0x10', '1e3' or ' 80'.
+  const port = /^\d+$/.test(values.port) ? Number(values.port) : Number.NaN;
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`Porta non valida: ${values.port}`);
   return { port, open: !values['no-open'], help: values.help ?? false };
 }
