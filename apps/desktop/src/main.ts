@@ -1,4 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, session, shell, type IpcMainInvokeEvent } from 'electron';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveLoginShellPath, startServer } from '@motion-studio/core';
 import { absolutePathArg, pickFolderArgs, tokenFromAppUrl } from './helpers.ts';
@@ -7,27 +9,32 @@ import { externalUrlAllowed, isAppUrl, windowOptions } from './window.ts';
 const REPO_URL = 'https://github.com/Aleloca/motion-studio';
 const smokeArg = process.argv.find((a) => a === '--smoke-test' || a.startsWith('--smoke-test='));
 
-/** Dev: the source tree (dist/main.cjs is two levels under apps/desktop). Packaged: next to the asar (MCP server outside it). */
+/** Dev: the source tree (dist/main.cjs is two levels under apps/desktop). Packaged: extraResources. */
 function resourcePaths() {
   if (app.isPackaged) {
-    const unpacked = join(process.resourcesPath, 'app.asar.unpacked');
-    return { webDir: join(unpacked, 'web'), mcpServerPath: join(unpacked, 'mcp-studio.mjs') };
+    // extraResources: outside the asar so the MCP server can be run by plain node.
+    return { webDir: join(process.resourcesPath, 'web'), mcpServerPath: join(process.resourcesPath, 'mcp-studio.mjs') };
   }
   const root = join(__dirname, '..', '..', '..');
   return { webDir: join(root, 'packages', 'web', 'dist'), mcpServerPath: join(root, 'packages', 'mcp-studio', 'src', 'server.mjs') };
 }
 
-async function boot() {
+async function boot(configDir?: string) {
   const shellPath = await resolveLoginShellPath();
   process.env.PATH = shellPath.path;
   console.log(`PATH source: ${shellPath.source}`);
-  return startServer({ port: 'auto', ...resourcePaths(), mcpEnv: { ELECTRON_RUN_AS_NODE: '1' } });
+  return startServer({ port: 'auto', ...(configDir ? { configDir } : {}), ...resourcePaths(), mcpEnv: { ELECTRON_RUN_AS_NODE: '1' } });
 }
 
 /** The smoke output never contains the token. */
 async function smoke(mode: string) {
-  const server = await boot();
+  // Throwaway config: a smoke run never touches the user's real Motion Studio folder.
+  const configDir = await mkdtemp(join(tmpdir(), 'motion-studio-smoke-'));
+  const server = await boot(configDir);
   try {
+    // Only resolves the native module (no keychain call): proves it is reachable from the bundle.
+    await import('@napi-rs/keyring');
+    console.log('KEYRING_OK');
     if (mode === 'doctor') {
       const res = await fetch(`${server.url}/api/doctor`, { headers: { 'x-motion-studio-ui': tokenFromAppUrl(server.appUrl) ?? '' } });
       if (!res.ok) throw new Error(`doctor HTTP ${res.status}`);
@@ -38,7 +45,7 @@ async function smoke(mode: string) {
       if (!res.ok) throw new Error(`health HTTP ${res.status}`);
       console.log(`SMOKE_OK ${server.url}`);
     }
-  } finally { await server.close(); }
+  } finally { await server.close(); await rm(configDir, { recursive: true, force: true }); }
 }
 
 function buildMenu() {
@@ -55,10 +62,11 @@ function buildMenu() {
 async function run() {
   const server = await boot();
   const origin = new URL(server.url).origin;
-  let win: BrowserWindow | null = null;
   let closing = false;
+  const win = new BrowserWindow(windowOptions(join(__dirname, 'preload.cjs'), nativeTheme.shouldUseDarkColors));
 
-  const trusted = (e: IpcMainInvokeEvent) => isAppUrl(e.senderFrame?.url ?? '', origin);
+  const trusted = (e: IpcMainInvokeEvent) =>
+    e.sender === win.webContents && e.senderFrame === e.sender.mainFrame && isAppUrl(e.senderFrame?.url ?? '', origin);
   ipcMain.handle('ms:pick-folder', async (e, arg: unknown) => {
     const args = trusted(e) ? pickFolderArgs(arg) : null;
     if (!args) throw new Error('Richiesta non valida');
@@ -71,21 +79,26 @@ async function run() {
     shell.showItemInFolder(p);
   });
 
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(permission === 'notifications'));
-  app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
+  const allowed = (permission: string, requestingUrl: string) => permission === 'notifications' && isAppUrl(requestingUrl, origin);
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, cb, details) => cb(allowed(permission, details.requestingUrl)));
+  session.defaultSession.setPermissionCheckHandler((_wc, permission, requestingOrigin) => allowed(permission, requestingOrigin));
   app.on('before-quit', (e) => {
     if (closing) return;
     closing = true;
     e.preventDefault();
-    void server.close().catch(() => {}).finally(() => app.quit());
+    const bound = new Promise<void>((r) => setTimeout(r, 5000));
+    void Promise.race([server.close().catch(() => {}), bound]).finally(() => app.quit());
   });
+  // Deliberate on macOS too: closing the window ends the app, which also stops the in-process core.
   app.on('window-all-closed', () => app.quit());
 
   buildMenu();
-  win = new BrowserWindow(windowOptions(join(__dirname, 'preload.cjs'), nativeTheme.shouldUseDarkColors));
-  win.once('ready-to-show', () => win?.show());
+  win.once('ready-to-show', () => win.show());
   win.webContents.setWindowOpenHandler(({ url }) => { if (externalUrlAllowed(url)) void shell.openExternal(url); return { action: 'deny' }; });
-  win.webContents.on('will-navigate', (e, url) => { if (!isAppUrl(url, origin)) e.preventDefault(); });
+  const guard = (e: { preventDefault: () => void }, url: string) => { if (!isAppUrl(url, origin)) e.preventDefault(); };
+  win.webContents.on('will-navigate', (e, url) => guard(e, url));
+  win.webContents.on('will-redirect', (e, url) => guard(e, url));
+  win.webContents.on('will-frame-navigate', (e) => guard(e, e.url));
   await win.loadURL(server.appUrl);
 }
 
@@ -97,5 +110,6 @@ if (smokeArg) {
 } else if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
+  app.on('second-instance', () => { const w = BrowserWindow.getAllWindows()[0]; if (w) { if (w.isMinimized()) w.restore(); w.focus(); } });
   void app.whenReady().then(run).catch((err) => { dialog.showErrorBox('Motion Studio', String((err as Error).message ?? err)); app.exit(1); });
 }

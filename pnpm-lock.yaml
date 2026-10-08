@@ -51,6 +51,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@napi-rs/keyring':
+        specifier: ^2.1.0
+        version: 2.1.0
       electron-updater:
         specifier: ^6.8.9
         version: 6.8.9
