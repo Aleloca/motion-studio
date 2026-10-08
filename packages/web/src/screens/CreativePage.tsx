@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.ts';
 import { ConversationPanel } from '../components/ConversationPanel.tsx';
 import { FocusView } from '../components/FocusView.tsx';
+import { ExportDialog } from '../components/ExportDialog.tsx';
 import { FormatBoard } from '../components/FormatBoard.tsx';
 import { StatusBadge } from '../components/StatusBadge.tsx';
 import type { EventsState } from '../eventsReducer.ts';
@@ -23,6 +24,7 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
   const [presetsLoaded, setPresetsLoaded] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [presetsFailure, setPresetsFailure] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => { api.getFormats()
@@ -74,6 +76,7 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
         )}
         <label className="row" style={{ gap: 6 }}><input type="checkbox" checked={safeZone} onChange={(e) => setSafeZone(e.target.checked)} style={{ width: 16, height: 16 }} />Safe zone</label>
         {version && <button type="button" onClick={() => act(api.revealVersion(slug, creative, version.n))}>Mostra nella cartella</button>}
+        <button type="button" disabled={!version} onClick={() => setExporting(true)}>Esporta…</button>
         {version && latest && version.n !== latest.n && (
           <button type="button" onClick={() => act(api.restoreVersion(slug, creative, version.n))}>Riparti da v{version.n}</button>
         )}
@@ -99,6 +102,7 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
             onSelectVersion={pick} onChanged={reload} />
         </div>
       </div>
+      {exporting && version && <ExportDialog slug={slug} creative={creative} version={version.n} onClose={() => setExporting(false)} />}
       {focusPreset && (
         <FocusView preset={focusPreset}
           src={version && outFor(version, focusPreset.id) ? fileUrl(version.n, outFor(version, focusPreset.id)!.file) : null}

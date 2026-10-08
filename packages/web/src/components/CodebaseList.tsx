@@ -1,6 +1,7 @@
 import type { LinkedCodebase } from '@motion-studio/shared';
 import { useState, type KeyboardEvent } from 'react';
 import type { CodebaseCheck } from '../api.ts';
+import { desktop } from '../desktop.ts';
 
 export function CodebaseList({ value, checks, onChange, disabled }: { value: LinkedCodebase[]; checks?: CodebaseCheck[]; onChange: (next: LinkedCodebase[]) => void; disabled?: boolean }) {
   const [path, setPath] = useState('');
@@ -13,6 +14,11 @@ export function CodebaseList({ value, checks, onChange, disabled }: { value: Lin
     setError(null);
     onChange([...value, { path: p, ...(note.trim() ? { note: note.trim() } : {}) }]);
     setPath(''); setNote('');
+  };
+  const bridge = desktop();
+  const choose = async () => {
+    try { const picked = await bridge?.pickFolder('Scegli la cartella da collegare', path.trim() || undefined); if (picked) { setPath(picked); setError(null); } }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
   const onEnter = (e: KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
   return (
@@ -30,6 +36,7 @@ export function CodebaseList({ value, checks, onChange, disabled }: { value: Lin
       <div className="row" style={{ gap: 8 }}>
         <input aria-label="Percorso assoluto della cartella" placeholder="/Users/tuonome/dev/app" value={path} disabled={disabled} onChange={(e) => setPath(e.target.value)} onKeyDown={onEnter} style={{ flex: '2 1 240px', width: 'auto' }} />
         <input aria-label="Nota (facoltativa)" placeholder="Es. app iOS, schermate in /Screens" value={note} disabled={disabled} onChange={(e) => setNote(e.target.value)} onKeyDown={onEnter} style={{ flex: '1 1 160px', width: 'auto' }} />
+        {bridge && <button type="button" disabled={disabled} onClick={choose}>Scegli cartella…</button>}
         <button type="button" disabled={disabled} onClick={add}>Collega</button>
       </div>
       {error && <p role="alert" className="error" style={{ margin: 0 }}>{error}</p>}

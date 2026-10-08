@@ -108,3 +108,15 @@ describe('Onboarding sandbox check', () => {
     expect(screen.getByText('installa bubblewrap')).toBeTruthy();
   });
 });
+
+describe('Onboarding native picker', () => {
+  it('fills the workspace path from the folder picker in the app', async () => {
+    (window as unknown as { motionStudio: unknown }).motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: async () => '/Users/me/MS', revealPath: async () => {} };
+    try {
+      const { Onboarding } = await import('../src/screens/Onboarding.tsx');
+      render(<Onboarding checks={[]} workspacePath={null} onRecheck={() => {}} onWorkspaceSet={() => {}} />);
+      await userEvent.click(screen.getByRole('button', { name: 'Scegli cartella…' }));
+      expect((screen.getByLabelText('Cartella di lavoro') as HTMLInputElement).value).toBe('/Users/me/MS');
+    } finally { delete (window as unknown as { motionStudio?: unknown }).motionStudio; }
+  });
+});

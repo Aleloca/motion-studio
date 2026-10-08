@@ -1,6 +1,7 @@
 import type { DoctorCheck, WorkspaceProblem } from '@motion-studio/shared';
 import { useEffect, useState } from 'react';
 import { api, ApiError } from '../api.ts';
+import { desktop } from '../desktop.ts';
 
 function workspaceProblemText(problem: WorkspaceProblem, path: string | null): string {
   const where = path ?? '';
@@ -32,6 +33,12 @@ export function Onboarding({ checks, workspacePath, workspaceError, error: loadE
     finally { setBusy(false); }
   };
 
+  const bridge = desktop();
+  const choose = async () => {
+    try { const picked = await bridge?.pickFolder('Scegli la cartella di lavoro', path.trim() || undefined); if (picked) setPath(picked); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  };
+
   return (
     <main className="page stack" style={{ maxWidth: 720 }}>
       <h1 style={{ margin: 0, fontSize: 28 }}>Benvenuto in Motion Studio</h1>
@@ -52,7 +59,10 @@ export function Onboarding({ checks, workspacePath, workspaceError, error: loadE
       <section className="card stack" aria-label="Workspace">
         <label htmlFor="ws-path"><strong>Cartella di lavoro</strong></label>
         <p className="muted" style={{ margin: 0 }}>Qui Motion Studio salva tutti i progetti. Se non esiste, viene creata.</p>
-        <input id="ws-path" value={path} onChange={(e) => setPath(e.target.value)} placeholder="/Users/tuonome/MotionStudio" />
+        <div className="row" style={{ gap: 8 }}>
+          <input id="ws-path" value={path} onChange={(e) => setPath(e.target.value)} placeholder="/Users/tuonome/MotionStudio" style={{ flex: '1 1 240px', width: 'auto' }} />
+          {bridge && <button type="button" disabled={busy} onClick={choose}>Scegli cartella…</button>}
+        </div>
         {workspaceError && !error && (
           <p role="alert" className="error" style={{ margin: 0 }}>{workspaceProblemText(workspaceError, workspacePath)}</p>
         )}

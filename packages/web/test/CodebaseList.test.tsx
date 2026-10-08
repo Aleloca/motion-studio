@@ -33,4 +33,12 @@ describe('CodebaseList', () => {
     expect(onChange).toHaveBeenLastCalledWith([{ path: '/a' }, { path: '/b' }]);
     expect(onSubmit).not.toHaveBeenCalled();
   });
+  it('fills the path from the native folder picker in the app', async () => {
+    (window as unknown as { motionStudio: unknown }).motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: async () => '/Users/me/picked', revealPath: async () => {} };
+    try {
+      render(<CodebaseList value={[]} onChange={() => {}} />);
+      await userEvent.click(screen.getByRole('button', { name: 'Scegli cartella…' }));
+      expect((screen.getByLabelText('Percorso assoluto della cartella') as HTMLInputElement).value).toBe('/Users/me/picked');
+    } finally { delete (window as unknown as { motionStudio?: unknown }).motionStudio; }
+  });
 });
