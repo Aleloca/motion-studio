@@ -12,6 +12,7 @@ import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { CreativeTurnService, type CreativeRef } from '../src/creatives/creative-turns.ts';
 import { execCommand } from '../src/exec.ts';
 import { Git } from '../src/git.ts';
+import { setLocale } from '../src/i18n.ts';
 import { JobQueue } from '../src/jobs/job-queue.ts';
 import { NoMediaTools, type MediaTools } from '../src/media/media-tools.ts';
 import { CONTEXT_MD } from '../src/project-template.ts';
@@ -180,6 +181,18 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     expect(last.prompt).toContain('Aggiungi i formati instagram-reel-9x16 riusando i sorgenti esistenti in work/ e lo stesso stile della versione 1.');
     expect(last.prompt).toContain('Il comando di render della versione 1 era: node render.js.');
     expect((await store.readVersions(ref.creativeSlug)).at(-1)!.request).toMatch(/^Aggiungi i formati instagram-reel-9x16/);
+  });
+
+  it('saves the version request in the language current when the turn starts', { timeout: 20_000 }, async () => {
+    setLocale('en');
+    await finalState((await service.start(ref)).id);
+    await store.update(ref.creativeSlug, { brief: { ...brief, formats: [...brief.formats, 'instagram-reel-9x16'] } });
+    await finalState((await service.start(ref)).id);
+    expect((await store.readVersions(ref.creativeSlug)).at(-1)!.request)
+      .toBe('Add the formats instagram-reel-9x16, reusing the existing sources in work/ and the same style as version 1. The render command of version 1 was: node render.js. Deliver all the requested formats again.');
+    await store.update(ref.creativeSlug, { brief });
+    await finalState((await service.start(ref, { text: '', pins: [] })).id);
+    expect((await store.readVersions(ref.creativeSlug)).at(-1)!.request).toBe('Regenerate all formats from the updated brief.');
   });
 
   it('bases the add-formats request on the restored version, not the latest', { timeout: 20_000 }, async () => {

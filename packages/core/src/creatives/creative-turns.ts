@@ -38,13 +38,11 @@ function addFormatsRequest(formats: string[], base: VersionEntry | undefined): s
   const added = formats.filter((f) => !present.has(f));
   if (added.length === 0) return undefined;
   const command = base.renderCommand ? sanitizeCommand(base.renderCommand) : '';
-  return `Aggiungi i formati ${added.join(', ')} riusando i sorgenti esistenti in work/ e lo stesso stile della versione ${base.n}.`
-    + (command ? ` Il comando di render della versione ${base.n} era: ${command}.` : '')
-    + ' Riconsegna tutti i formati richiesti.';
+  const j = t().jobs;
+  return j.addFormatsRequest({ formats: added.join(', '), n: base.n })
+    + (command ? ` ${j.renderCommandWas({ n: base.n, command })}` : '')
+    + ` ${j.redeliverAll}`;
 }
-
-const REGENERATE = 'Rigenera tutti i formati partendo dal brief aggiornato.';
-const PINS_ONLY = 'Applica i commenti puntuali.';
 const now = () => new Date().toISOString();
 
 class AgentFailure extends Error {}
@@ -142,7 +140,7 @@ export class CreativeTurnService {
       // Pins and the add-formats base refer to the version on screen: the one being resumed from, else the latest.
       const pinSource = creative.resumeFrom ? versions.find((v) => v.n === creative.resumeFrom!.version) : latest;
       const attachments = await this.extractPinFrames(ref, store, message?.pins ?? [], pinSource, n);
-      const request = message?.text || (message?.pins.length ? PINS_ONLY : versions.length === 0 ? undefined : (addFormatsRequest(creative.brief.formats, pinSource) ?? REGENERATE));
+      const request = message?.text || (message?.pins.length ? t().jobs.pinsOnlyRequest : versions.length === 0 ? undefined : (addFormatsRequest(creative.brief.formats, pinSource) ?? t().jobs.regenerateRequest));
 
       const { context, existing } = await this.buildContext(ref, store, creative.linkedCodebases);
       const uncheckable = new Set<string>();

@@ -222,6 +222,11 @@ export const en = {
     writeError: 'write error',
   },
   jobs: {
+    regenerateRequest: 'Regenerate all formats from the updated brief.',
+    pinsOnlyRequest: 'Apply the pinned comments.',
+    addFormatsRequest: (p: { formats: string; n: number }) => `Add the formats ${p.formats}, reusing the existing sources in work/ and the same style as version ${p.n}.`,
+    renderCommandWas: (p: { n: number; command: string }) => `The render command of version ${p.n} was: ${p.command}.`,
+    redeliverAll: 'Deliver all the requested formats again.',
     updateProjectCommit: 'Project updated',
     brandKitCommit: 'Brand kit updated',
     guidelinesCommit: 'Guidelines updated',

@@ -220,6 +220,11 @@ export const it: Messages = {
     writeError: 'errore di scrittura',
   },
   jobs: {
+    regenerateRequest: 'Rigenera tutti i formati partendo dal brief aggiornato.',
+    pinsOnlyRequest: 'Applica i commenti puntuali.',
+    addFormatsRequest: (p) => `Aggiungi i formati ${p.formats} riusando i sorgenti esistenti in work/ e lo stesso stile della versione ${p.n}.`,
+    renderCommandWas: (p) => `Il comando di render della versione ${p.n} era: ${p.command}.`,
+    redeliverAll: 'Riconsegna tutti i formati richiesti.',
     updateProjectCommit: 'Progetto aggiornato',
     brandKitCommit: 'Brand kit aggiornato',
     guidelinesCommit: 'Linee guida aggiornate',
