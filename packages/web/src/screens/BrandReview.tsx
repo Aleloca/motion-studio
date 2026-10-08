@@ -14,16 +14,31 @@ const GUIDELINES = '__guidelines';
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const shown = (c: BrandChange) => (c.op === 'remove' ? c.before : c.after);
 
+/** What an Apply did, so the page can undo exactly that (as an inverse on the kit as it is then, never a snapshot). */
+export interface AppliedProposal {
+  proposalId: string;
+  /** The kit the server returned. */
+  kit: BrandKit;
+  /** The accepted changes. */
+  changes: BrandChange[];
+  /** Set when the guidelines were replaced. */
+  guidelines: { before: string; after: string } | null;
+}
+
 export interface BrandReviewProps {
   open: boolean;
   slug: string;
   proposal: BrandProposal;
-  /** The current kit and guidelines: palette for the logo stages, and what Undo restores. */
+  /** The current kit and guidelines: the palette for the logo stages, the guidelines Undo can put back. */
   kit: BrandKit;
   guidelines: string;
   sources: BrandSource[];
   onClose(): void;
-  /** The brand changed (applied, undone or discarded): reload it. */
+  /** The proposal was applied: the page adopts the new kit (rebasing unsaved edits) and reloads. */
+  onApplied(a: AppliedProposal): void;
+  /** Undo from the toast: the page reverts the applied changes through its saver. */
+  onUndo(a: AppliedProposal): void;
+  /** The proposal was discarded: reload. */
   onChanged(): void;
 }
 
@@ -42,7 +57,7 @@ export function BrandReview(props: BrandReviewProps) {
   );
 }
 
-function ReviewBody({ slug, proposal, kit, guidelines, sources, onClose, onChanged }: BrandReviewProps) {
+function ReviewBody({ slug, proposal, kit, guidelines, sources, onClose, onApplied, onUndo, onChanged }: BrandReviewProps) {
   const t = useT();
   const r = t.web.brandReview;
   const all = useMemo(() => [...proposal.changes.map((c) => c.id), ...(proposal.guidelines ? [GUIDELINES] : [])], [proposal]);
@@ -50,6 +65,7 @@ function ReviewBody({ slug, proposal, kit, guidelines, sources, onClose, onChang
   const [busy, setBusy] = useState<'apply' | 'discard' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [current, setCurrent] = useState<GroupId | null>(null);
+  const [confirming, setConfirming] = useState(false);
 
   const idsOf = (g: GroupId) => (g === 'guidelines' ? (proposal.guidelines ? [GUIDELINES] : []) : proposal.changes.filter((c) => c.field === g).map((c) => c.id));
   const groups = GROUPS.filter((g) => idsOf(g).length > 0);
@@ -61,30 +77,18 @@ function ReviewBody({ slug, proposal, kit, guidelines, sources, onClose, onChang
 
   const apply = async () => {
     setBusy('apply'); setError(null);
-    const prevKit = kit;
-    const prevGuidelines = guidelines;
     const useGuidelines = on.has(GUIDELINES);
+    const accepted = proposal.changes.filter((c) => on.has(c.id));
     try {
-      await api.applyProposal(slug, proposal.id, proposal.changes.filter((c) => on.has(c.id)).map((c) => c.id), useGuidelines);
+      const res = await api.applyProposal(slug, proposal.id, accepted.map((c) => c.id), useGuidelines);
+      const applied: AppliedProposal = {
+        proposalId: proposal.id, kit: res.kit, changes: accepted,
+        guidelines: useGuidelines && proposal.guidelines ? { before: guidelines, after: proposal.guidelines.proposed } : null,
+      };
+      onApplied(applied);
       onClose();
-      onChanged();
-      // Undo: the API keeps the proposal applied, but the kit (and guidelines) go back to what they were.
-      toast.show(r.applied({ count: n }), {
-        tone: 'ok',
-        action: {
-          label: r.undo,
-          run: () => {
-            void (async () => {
-              try {
-                await api.saveBrandKit(slug, prevKit);
-                if (useGuidelines) await api.saveGuidelines(slug, prevGuidelines);
-                toast.show(r.restored, { tone: 'ok' });
-              } catch (e) { toast.show(message(e)); }
-              onChanged();
-            })();
-          },
-        },
-      });
+      // Undo: the API keeps the proposal applied; the page reverts exactly these changes on the kit as it is then.
+      toast.show(r.applied({ count: n }), { tone: 'ok', action: { label: r.undo, run: () => onUndo(applied) } });
     } catch (e) { setError(message(e)); } finally { setBusy(null); }
   };
   const discard = async () => {
@@ -152,13 +156,19 @@ function ReviewBody({ slug, proposal, kit, guidelines, sources, onClose, onChang
         </div>
       )}
       <footer className="ms-review-foot">
-        {error ? <span className="ms-bwarn" role="alert">{error}</span> : <span className="ms-muted ms-bsmall-text">{r.footnote}</span>}
+        {error ? <span className="ms-bwarn" role="alert">{error}</span> : confirming ? null : <span className="ms-muted ms-bsmall-text">{r.footnote}</span>}
         <div className="ms-grow" />
         {all.length === 0 ? (
           <Button variant="ink" size="lg" loading={busy === 'discard'} onClick={() => void discard()}>{r.close}</Button>
+        ) : confirming ? (
+          <span className="ms-review-confirm" role="group" aria-label={r.discardAll}>
+            <span className="ms-bwarn">{r.confirmDiscard({ count: all.length })}</span>
+            <Button variant="ghost" size="lg" disabled={busy !== null} onClick={() => setConfirming(false)}>{r.keepReviewing}</Button>
+            <Button variant="danger" size="lg" loading={busy === 'discard'} autoFocus onClick={() => void discard()}>{r.discardAll}</Button>
+          </span>
         ) : (
           <>
-            <Button variant="ghost" size="lg" loading={busy === 'discard'} disabled={busy !== null} onClick={() => void discard()}>{r.discardAll}</Button>
+            <Button variant="ghost" size="lg" disabled={busy !== null} onClick={() => setConfirming(true)}>{r.discardAll}</Button>
             <Button variant="ink" size="lg" loading={busy === 'apply'} disabled={n === 0 || busy !== null} onClick={() => void apply()}>{r.apply({ n, m: all.length })}</Button>
           </>
         )}

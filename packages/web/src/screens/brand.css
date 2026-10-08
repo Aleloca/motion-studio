@@ -304,3 +304,6 @@
   .ms-review-main { grid-template-columns: minmax(0, 1fr); }
   .ms-review-nav { display: none; }
 }
+.ms-review-confirm { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
+.ms-bguide-ask { align-items: center; }
+.ms-bguide-ask .ms-bwarn { margin-right: auto; font-size: 13px; }

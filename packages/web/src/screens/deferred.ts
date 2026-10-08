@@ -16,29 +16,37 @@ export interface DeferredRemoval {
   ms?: number;
 }
 
-const pending = new Set<() => void>();
+const pending = new Set<() => Promise<void>>();
 let listening = false;
-function flushAll() { for (const run of [...pending]) run(); }
+function flushAll() { void flushDeferred(); }
 
-/** Hides-then-deletes: returns a function that commits at once (used when the same item is removed again). */
-export function deferRemoval(o: DeferredRemoval): () => void {
+/** Sends every pending delete now and waits for them (e.g. before an analysis, so a removed source is not analyzed). */
+export async function flushDeferred(): Promise<void> {
+  await Promise.all([...pending].map((run) => run()));
+}
+
+/** Hides-then-deletes: returns a function that commits at once. */
+export function deferRemoval(o: DeferredRemoval): () => Promise<void> {
   let done = false;
-  const commit = () => {
+  let id = 0;
+  const commit = async () => {
     if (done) return;
     done = true;
     clearTimeout(timer);
     pending.delete(commit);
-    o.commit().catch((e: unknown) => { o.restore(); o.onError?.(e); });
+    // The delete is going out: its Undo must not stay on screen (a toast held open by the pointer).
+    toast.dismiss(id);
+    try { await o.commit(); } catch (e) { o.restore(); o.onError?.(e); }
   };
   const ms = o.ms ?? TOAST_MS;
-  // A little after the toast's own time, so the Undo button is never shown for a delete already sent.
-  const timer = setTimeout(commit, ms + 400);
+  // A little after the toast's own time; a toast held longer is dismissed when the delete goes out.
+  const timer = setTimeout(() => { void commit(); }, ms + 400);
   pending.add(commit);
   if (!listening && typeof window !== 'undefined') {
     listening = true;
     window.addEventListener('pagehide', flushAll);
   }
-  const id = toast.show(o.text, {
+  id = toast.show(o.text, {
     ms,
     action: {
       label: o.undoLabel,
@@ -55,5 +63,3 @@ export function deferRemoval(o: DeferredRemoval): () => void {
   return commit;
 }
 
-/** Test-only: sends every pending delete now. */
-export const __flushDeferred = flushAll;

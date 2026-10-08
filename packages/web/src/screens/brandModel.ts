@@ -1,5 +1,5 @@
 // Brand page model: pure helpers shared by the Brand page and the proposal review (no React, no API).
-import type { AgentEvent, BrandKit, BrandOverview, BrandSource, JobSummary, SourceRef } from '@motion-studio/shared';
+import type { AgentEvent, BrandChange, BrandKit, BrandOverview, BrandSource, JobSummary, SourceRef } from '@motion-studio/shared';
 
 export const MANUAL: SourceRef = { kind: 'manual', ref: null };
 
@@ -19,9 +19,13 @@ export function normalizeFamily(input: string): string {
   return first.replace(/\s+/g, ' ').trim();
 }
 
-/** Six hex digits, with or without the leading '#', any case → '#RRGGBB' upper case; anything else → null. */
+/**
+ * Six hex digits, or the three-digit shorthand (each digit doubled), with or without the leading '#', any case →
+ * '#RRGGBB' upper case; anything else → null.
+ */
 export function normalizeHex(input: string): string | null {
   const v = input.trim().replace(/^#/, '');
+  if (/^[0-9a-fA-F]{3}$/.test(v)) return `#${[...v].map((d) => d + d).join('').toUpperCase()}`;
   return /^[0-9a-fA-F]{6}$/.test(v) ? `#${v.toUpperCase()}` : null;
 }
 
@@ -139,4 +143,59 @@ export const nextId = (prefix: string, ids: string[]) => { for (let n = 1; ; n++
 export function parseWeights(input: string): number[] | null {
   const out = [...new Set(input.split(/[\s,·]+/).filter(Boolean).map(Number).filter((w) => Number.isInteger(w) && w >= 100 && w <= 900))].sort((a, b) => a - b).slice(0, 9);
   return out.length ? out : null;
+}
+
+type ListField = 'colors' | 'fonts' | 'logos' | 'dos' | 'donts';
+type Item = { id: string; source?: SourceRef };
+const isScalar = (f: BrandChange['field']): f is 'tone' | 'photoStyle' => f === 'tone' || f === 'photoStyle';
+const listOf = (k: BrandKit, f: ListField) => k[f] as Item[];
+
+/**
+ * The accepted changes of a proposal applied to `kit`, as the core does it (applyBrandChanges): used to rebase local
+ * edits that were not saved yet onto a proposal the server just applied.
+ */
+export function applyChanges(kit: BrandKit, changes: BrandChange[]): BrandKit {
+  const next = structuredClone(kit) as BrandKit & Record<string, unknown>;
+  for (const c of changes) {
+    if (isScalar(c.field)) { (next as Record<string, unknown>)[c.field] = c.op === 'remove' ? null : c.after; continue; }
+    const arr = [...listOf(next, c.field)];
+    if (c.op === 'remove') {
+      if (arr.find((i) => i.id === c.itemId)?.source?.kind !== 'manual') (next as Record<string, unknown>)[c.field] = arr.filter((i) => i.id !== c.itemId);
+      continue;
+    }
+    const at = arr.findIndex((i) => i.id === c.itemId);
+    if (at >= 0) arr[at] = c.after as Item; else arr.push(c.after as Item);
+    (next as Record<string, unknown>)[c.field] = arr;
+  }
+  return next;
+}
+
+/**
+ * The inverse of applied changes on the kit as it is now (never a stale snapshot): what was added goes (by id), what
+ * was updated or removed gets its `before` back. Edits made since to other items stay. A tone / photo style is put
+ * back only while it still holds the proposal's text (an edit made since wins).
+ */
+export function undoChanges(kit: BrandKit, changes: BrandChange[]): BrandKit {
+  const next = structuredClone(kit) as BrandKit & Record<string, unknown>;
+  const set = (f: string, v: unknown) => { (next as Record<string, unknown>)[f] = v; };
+  for (const c of [...changes].reverse()) {
+    if (isScalar(c.field)) {
+      const now = next[c.field];
+      // Only undo the scalar if it still holds what the proposal put there.
+      const applied = c.op === 'remove' ? null : (c.after as { text: string } | null);
+      if ((now?.text ?? null) === (applied?.text ?? null)) set(c.field, c.before ?? null);
+      continue;
+    }
+    const arr = [...listOf(next, c.field)];
+    const at = arr.findIndex((i) => i.id === c.itemId);
+    if (c.op === 'add') {
+      if (at >= 0) arr.splice(at, 1);
+    } else if (c.op === 'update') {
+      if (at >= 0) arr[at] = c.before as Item;
+    } else if (at < 0 && c.before) {
+      arr.push(c.before as Item);
+    }
+    set(c.field, arr);
+  }
+  return next;
 }

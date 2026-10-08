@@ -13,13 +13,15 @@ export interface SelectProps<T extends string> {
   /** Accessible name of the trigger and of the list. */
   label: string;
   className?: string;
+  /** The value stays visible; the list cannot open (e.g. a read-only brand kit). */
+  disabled?: boolean;
 }
 
 /**
  * Drop-down in a popover, replacing the native <select> (spec §4.3): a button showing the value opens a listbox;
  * arrows / Home / End move, Enter or Space choose, a letter jumps, Esc closes. Focus goes back to the button.
  */
-export function Select<T extends string>({ value, options, onChange, label, className }: SelectProps<T>) {
+export function Select<T extends string>({ value, options, onChange, label, className, disabled }: SelectProps<T>) {
   const uid = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -80,6 +82,7 @@ export function Select<T extends string>({ value, options, onChange, label, clas
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-labelledby={`${uid}-l ${uid}-v`}
+        disabled={disabled}
         onClick={() => (open ? setOpen(false) : show())}
         onKeyDown={onTriggerKey}
       >
@@ -87,7 +90,7 @@ export function Select<T extends string>({ value, options, onChange, label, clas
         <span id={`${uid}-v`} className="ms-select-value">{current?.label ?? ''}</span>
         <Icon name="chevron" size={14} className="ms-select-chev" />
       </button>
-      <Popover open={open} onClose={() => setOpen(false)} anchor={trigger} width={width}>
+      <Popover open={open && !disabled} onClose={() => setOpen(false)} anchor={trigger} width={width}>
         <div
           role="listbox"
           aria-label={label}

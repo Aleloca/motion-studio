@@ -30,9 +30,20 @@ export interface BrandSaver {
   flush(): void;
   saveGuidelines(text: string): Promise<boolean>;
   retry(): void;
+  /**
+   * The server changed the kit on its own (a proposal applied): with nothing local pending, `server` becomes the kit;
+   * otherwise `rebase` is applied to the local kit so the pending save carries both.
+   */
+  rebase(server: BrandKit, rebase: (k: BrandKit) => BrandKit): void;
+  /** A local edit is waiting or a save is in flight. */
+  pending(): boolean;
 }
 
-export function useBrandSaver(slug: string, serverKit: BrandKit | null, onSaved: () => void): BrandSaver {
+/**
+ * `onStale` is called after a save when a newer server kit arrived while edits were pending (and so was not taken):
+ * the caller refetches, and the fresh kit reseeds once nothing is pending.
+ */
+export function useBrandSaver(slug: string, serverKit: BrandKit | null, onStale: () => void): BrandSaver {
   const [kit, setKit] = useState<BrandKit | null>(serverKit);
   const [status, setStatus] = useState<SaveStatus>({ saving: false, saved: false, error: null });
   const latest = useRef<BrandKit | null>(serverKit);
@@ -42,12 +53,15 @@ export function useBrandSaver(slug: string, serverKit: BrandKit | null, onSaved:
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const errorRetry = useRef<(() => void) | null>(null);
-  const onSavedRef = useRef(onSaved);
-  onSavedRef.current = onSaved;
+  /** A server kit was skipped because local edits were pending: reconcile after the next successful save. */
+  const skipped = useRef(false);
+  const onStaleRef = useRef(onStale);
+  onStaleRef.current = onStale;
 
   // The server's kit replaces the local one only when nothing local is pending or in flight (no edit is ever lost).
   useEffect(() => {
-    if (!serverKit || dirty.current || kitInFlight.current) return;
+    if (!serverKit) return;
+    if (dirty.current || kitInFlight.current) { skipped.current = true; return; }
     latest.current = serverKit;
     setKit(serverKit);
   }, [serverKit]);
@@ -69,8 +83,8 @@ export function useBrandSaver(slug: string, serverKit: BrandKit | null, onSaved:
     if (idle) {
       if (savedTimer.current) clearTimeout(savedTimer.current);
       savedTimer.current = setTimeout(() => setStatus((s) => ({ ...s, saved: false })), SAVED_MS);
+      if (target === 'kit' && skipped.current) { skipped.current = false; onStaleRef.current(); }
     }
-    onSavedRef.current();
   };
 
   const flushKit = useCallback(async (): Promise<void> => {
@@ -125,11 +139,27 @@ export function useBrandSaver(slug: string, serverKit: BrandKit | null, onSaved:
 
   const retry = useCallback(() => { errorRetry.current?.(); }, []);
 
+  const pending = useCallback(() => dirty.current || kitInFlight.current || debounce.current !== null, []);
+
+  const rebase = useCallback((server: BrandKit, apply: (k: BrandKit) => BrandKit) => {
+    if (!dirty.current && !kitInFlight.current) {
+      latest.current = server;
+      setKit(server);
+      return;
+    }
+    // Local edits not on the server yet: put the server's change under them and let the pending save carry both.
+    const value = apply(latest.current ?? server);
+    latest.current = value;
+    setKit(value);
+    dirty.current = true;
+    if (!kitInFlight.current && !debounce.current) void flushKit();
+  }, [flushKit]);
+
   // Leaving the page: a pending typed edit is saved, not dropped.
   useEffect(() => () => {
     if (savedTimer.current) clearTimeout(savedTimer.current);
     if (debounce.current) void flushKit();
   }, [flushKit]);
 
-  return { kit, status, edit, flush, saveGuidelines, retry };
+  return { kit, status, edit, flush, saveGuidelines, retry, rebase, pending };
 }

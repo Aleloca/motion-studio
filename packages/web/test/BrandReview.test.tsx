@@ -5,8 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../src/i18n.tsx';
 import { __resetToasts, getToasts } from '../src/ui/toast.tsx';
 
+let appliedKit: BrandKit;
 const api = {
-  applyProposal: vi.fn(async () => ({})),
+  applyProposal: vi.fn(async () => ({ kit: appliedKit, proposal: {} })),
   discardProposal: vi.fn(async () => ({})),
   saveBrandKit: vi.fn(async (_s: string, k: BrandKit) => k),
   saveGuidelines: vi.fn(async () => ({ ok: true })),
@@ -28,10 +29,11 @@ const proposal: BrandProposal = {
     { id: 'dos:add:d1', field: 'dos', op: 'add', itemId: 'd1', before: null, after: { id: 'd1', text: 'Show the case number.', source: site } },
   ],
 };
+appliedKit = { ...kit, colors: [...kit.colors, proposal.changes[1]!.after as BrandKit['colors'][number]] };
 const sources = [{ id: 's-1', kind: 'website' as const, url: 'https://acme.example', file: null, addedAt: '2026-10-07T10:00:00.000Z', lastAnalyzedAt: null }];
 const en = (node: React.ReactNode) => render(<I18nProvider locale="en">{node}</I18nProvider>);
 const sheet = (over: Partial<React.ComponentProps<typeof BrandReview>> = {}) => {
-  const props = { open: true, slug: 'acme', proposal, kit, guidelines: 'Old rules', sources, onClose: vi.fn(), onChanged: vi.fn(), ...over };
+  const props = { open: true, slug: 'acme', proposal, kit, guidelines: 'Old rules', sources, onClose: vi.fn(), onChanged: vi.fn(), onApplied: vi.fn(), onUndo: vi.fn(), ...over };
   return { props, view: en(<BrandReview {...props} />) };
 };
 
@@ -64,23 +66,30 @@ describe('BrandReview', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Apply 3 of 6' }));
     await waitFor(() => expect(api.applyProposal).toHaveBeenCalledWith('acme', 'p-1', ['logos:add:dark', 'dos:add:d1'], true));
     expect(props.onClose).toHaveBeenCalled();
-    expect(props.onChanged).toHaveBeenCalled();
+    expect(props.onApplied).toHaveBeenCalledWith(expect.objectContaining({ proposalId: 'p-1', kit: appliedKit, changes: [proposal.changes[3], proposal.changes[4]] }));
   });
 
-  it('Undo after applying restores the previous kit and guidelines', async () => {
-    sheet();
+  it('Undo after applying hands the applied changes back to the page, never a kit snapshot', async () => {
+    const { props } = sheet();
     await userEvent.click(screen.getByRole('button', { name: 'Apply 6 of 6' }));
     await waitFor(() => expect(api.applyProposal).toHaveBeenCalled());
     const t = getToasts().find((x) => x.text === 'Applied 6 suggestions to the brand');
     expect(t?.action?.label).toBe('Undo');
     await act(async () => { t!.action!.run(); });
-    await waitFor(() => expect(api.saveBrandKit).toHaveBeenCalledWith('acme', kit));
-    expect(api.saveGuidelines).toHaveBeenCalledWith('acme', 'Old rules');
+    expect(props.onUndo).toHaveBeenCalledWith({ proposalId: 'p-1', kit: appliedKit, changes: proposal.changes, guidelines: { before: 'Old rules', after: '# Acme\n\nA **detective** game.' } });
+    expect(api.saveBrandKit).not.toHaveBeenCalled();
+    expect(api.saveGuidelines).not.toHaveBeenCalled();
   });
 
-  it('Discard all discards the proposal', async () => {
+  it('Discard all asks first, then discards the proposal', async () => {
     const { props } = sheet();
     await userEvent.click(screen.getByRole('button', { name: 'Discard all' }));
+    expect(api.discardProposal).not.toHaveBeenCalled();
+    expect(screen.getByText("Discard all 6 suggestions? This can't be undone.")).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Keep reviewing' }));
+    expect(screen.queryByText(/This can't be undone/)).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Discard all' }));
+    await userEvent.click(within(screen.getByRole('group', { name: 'Discard all' })).getByRole('button', { name: 'Discard all' }));
     await waitFor(() => expect(api.discardProposal).toHaveBeenCalledWith('acme', 'p-1'));
     expect(props.onClose).toHaveBeenCalled();
     expect(getToasts().some((x) => x.text === 'Suggestions discarded')).toBe(true);

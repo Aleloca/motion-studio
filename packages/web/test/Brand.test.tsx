@@ -20,14 +20,22 @@ const api = {
   analyzeBrand: vi.fn(async () => ({ id: 'j1' })),
   cancelJob: vi.fn(async () => ({ cancelled: true })),
   uploadFiles: vi.fn(async () => ({ assets: [] })),
-  applyProposal: vi.fn(),
+  applyProposal: vi.fn(async (_s: string, _id: string, ids: string[], g: boolean) => {
+    const p = overview.proposals[0]!;
+    const accepted = p.changes.filter((c) => ids.includes(c.id));
+    overview.kit = applyChanges(overview.kit, accepted);
+    if (g && p.guidelines) overview.guidelines = p.guidelines.proposed;
+    overview.proposals = [{ ...p, status: 'applied' }];
+    return { kit: structuredClone(overview.kit), proposal: overview.proposals[0] };
+  }),
   discardProposal: vi.fn(),
   projectFileUrl: (s: string, r: string) => `/f/${s}/${r}`,
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { Brand } = await import('../src/screens/Brand.tsx');
-const { normalizeFamily, swatchText } = await import('../src/screens/brandModel.ts');
-const { __flushDeferred } = await import('../src/screens/deferred.ts');
+const { applyChanges } = await import('../src/screens/brandModel.ts');
+const { normalizeFamily, normalizeHex, swatchText } = await import('../src/screens/brandModel.ts');
+const { flushDeferred } = await import('../src/screens/deferred.ts');
 
 const live = (over: Partial<EventsState> = {}): EventsState => ({ approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {}, ...over });
 const en = (node: React.ReactNode) => render(<I18nProvider locale="en">{node}</I18nProvider>);
@@ -193,7 +201,7 @@ describe('Brand · overview and sources', () => {
     expect(api.removeBrandSource).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole('button', { name: 'Actions for acme.example' }));
     await userEvent.click(screen.getByRole('button', { name: 'Remove' }));
-    await act(async () => { __flushDeferred(); });
+    await act(async () => { await flushDeferred(); });
     expect(api.removeBrandSource).toHaveBeenCalledWith('acme', 's-1');
   });
 
@@ -216,5 +224,107 @@ describe('Brand · empty project', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Analyze' }));
     await waitFor(() => expect(api.addBrandSource).toHaveBeenCalledWith('acme', { kind: 'website', url: 'https://acme.example' }));
     await waitFor(() => expect(api.analyzeBrand).toHaveBeenCalledWith('acme'));
+  });
+});
+
+const proposalWith = (over: Partial<BrandProposal> = {}): BrandProposal => ({
+  schemaVersion: 1, id: 'p-1', createdAt: '2026-10-08T10:05:00.000Z', sourceIds: ['s-1'], status: 'open', summary: '', assetsAdded: [],
+  guidelines: { current: '# Acme\n\nA detective game.', proposed: '# Acme v2' },
+  changes: [
+    { id: 'colors:add:amber', field: 'colors', op: 'add', itemId: 'amber', before: null, after: { id: 'amber', name: 'Lamp amber', hex: '#C8873A', role: 'accent', source: site } },
+    { id: 'colors:update:ink', field: 'colors', op: 'update', itemId: 'ink', before: { id: 'ink', name: 'Ink black', hex: '#1B1913', role: 'background', source: site }, after: { id: 'ink', name: 'Ink', hex: '#111111', role: 'background', source: site } },
+    { id: 'dos:remove:d1', field: 'dos', op: 'remove', itemId: 'd1', before: { id: 'd1', text: 'Show the case number', source: site }, after: null },
+  ],
+  ...over,
+});
+
+describe('Brand · fix round 1', () => {
+  it('Undo after Apply reverts only the applied changes, keeping an edit made in between, through the saver', async () => {
+    overview.proposals = [proposalWith()];
+    en(<Brand slug="acme" live={live()} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Review' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Apply 4 of 4' }));
+    await waitFor(() => expect(api.applyProposal).toHaveBeenCalled());
+    // An edit between Apply and Undo: Parchment becomes the accent.
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit color Parchment' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Accent' }));
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(lastKit().colors.find((c) => c.id === 'paper')!.role).toBe('accent'));
+    expect(lastKit().colors.map((c) => c.id)).toEqual(['ink', 'paper', 'amber']); // the applied kit was adopted
+    const undo = getToasts().find((x) => x.text === 'Applied 4 suggestions to the brand')!;
+    await act(async () => { undo.action!.run(); });
+    await waitFor(() => expect(lastKit().colors.map((c) => c.id)).toEqual(['ink', 'paper']));
+    const k = lastKit();
+    expect(k.colors[0]).toMatchObject({ name: 'Ink black', hex: '#1B1913' });
+    expect(k.colors[1]!.role).toBe('accent'); // the edit made in between survives
+    expect(k.dos.map((d) => d.id)).toEqual(['d1']);
+    await waitFor(() => expect(api.saveGuidelines).toHaveBeenCalledWith('acme', '# Acme\n\nA detective game.'));
+    expect(await screen.findByText(/· applied · undone$/)).toBeTruthy();
+  });
+
+  it('a finished analysis does not open the review over an open popover: toast and card only', async () => {
+    const view = en(<Brand slug="acme" live={live({ jobs: { j1: job() } })} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit color Ink black' }));
+    expect(screen.getByLabelText('Hex')).toBeTruthy();
+    overview.proposals = [proposalWith({ createdAt: '2026-10-08T10:06:00.000Z' })];
+    view.rerender(<I18nProvider locale="en"><Brand slug="acme" live={live({ jobs: { j1: job({ state: 'succeeded' }) }, projectTicks: { acme: 1 } })} /></I18nProvider>);
+    await waitFor(() => expect(getToasts().some((x) => x.text === 'Brand suggestions are ready')).toBe(true));
+    expect(screen.queryByRole('dialog', { name: 'Review brand suggestions' })).toBeNull();
+    expect(screen.getByText('Suggestions ready')).toBeTruthy();
+    expect(screen.getByLabelText('Hex')).toBeTruthy(); // the popover is still there and usable
+  });
+
+  it('closing the guidelines editor with a draft asks first; Esc keeps the draft', async () => {
+    en(<Brand slug="acme" live={live()} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Open full document' }));
+    const dialog = screen.getByRole('dialog', { name: 'Guidelines' });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Edit' }));
+    await userEvent.type(within(dialog).getByLabelText('Guidelines (Markdown)'), ' More.');
+    await userEvent.keyboard('{Escape}');
+    expect(screen.getByRole('dialog', { name: 'Guidelines' })).toBeTruthy();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(within(dialog).getByText('Discard your changes to the guidelines?')).toBeTruthy();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
+    expect((within(dialog).getByLabelText('Guidelines (Markdown)') as HTMLTextAreaElement).value).toContain('More.');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Discard' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Guidelines' })).toBeNull());
+    expect(api.saveGuidelines).not.toHaveBeenCalled();
+  });
+
+  it('a read-only kit disables the selects of the font editor', async () => {
+    overview.kitError = 'brand-kit.json: invalid JSON';
+    en(<Brand slug="acme" live={live()} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit font Inter' }));
+    for (const b of screen.getAllByRole('button', { name: /^(Role|Font file)/ })) expect((b as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('Analyze sends pending source deletes first, so a removed source is not analyzed', async () => {
+    overview.sources.push({ id: 's-2', kind: 'website', url: 'https://b.example', file: null, addedAt: '2026-10-07T10:00:00.000Z', lastAnalyzedAt: null });
+    en(<Brand slug="acme" live={live()} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Actions for b.example' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await userEvent.click(screen.getByRole('button', { name: /Analyze again/ }));
+    await waitFor(() => expect(api.analyzeBrand).toHaveBeenCalled());
+    expect(api.removeBrandSource).toHaveBeenCalledWith('acme', 's-2');
+    expect(api.removeBrandSource.mock.invocationCallOrder[0]!).toBeLessThan(api.analyzeBrand.mock.invocationCallOrder[0]!);
+  });
+
+  it('empty project: a failed analysis is retried without adding the source twice', async () => {
+    overview = { ...overview, kit: EMPTY_BRAND_KIT, guidelines: '', sources: [] };
+    api.analyzeBrand.mockRejectedValueOnce(new Error('Agent unavailable'));
+    en(<Brand slug="acme" live={live()} />);
+    await userEvent.type(await screen.findByLabelText('Website'), 'acme.example');
+    await userEvent.click(screen.getByRole('button', { name: 'Analyze' }));
+    expect(await screen.findByText('Agent unavailable')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Analyze' }));
+    await waitFor(() => expect(api.analyzeBrand).toHaveBeenCalledTimes(2));
+    expect(api.addBrandSource).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts the 3-digit hex shorthand', () => {
+    expect(normalizeHex('fff')).toBe('#FFFFFF');
+    expect(normalizeHex('#1a2')).toBe('#11AA22');
+    expect(normalizeHex('12')).toBeNull();
   });
 });

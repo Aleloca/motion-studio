@@ -102,6 +102,9 @@ export function pushLayer(layer: Layer): () => void {
 
 export const isTopLayer = (id: number): boolean => top()?.id === id;
 
+/** A popover or modal is open somewhere: something that opens by itself should not land on top of it. */
+export const anyLayerOpen = (): boolean => stack.length > 0;
+
 /**
  * Where focus can go back to once `el` closes, nearest first: `el` itself, then the anchor of each open layer that
  * holds it (a menu item → the menu's button → …). Callers take the first one still connected.
