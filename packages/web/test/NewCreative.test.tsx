@@ -26,7 +26,10 @@ const { NewCreative, titleFromBrief, maxLengthNote } = await import('../src/scre
 
 const shell = (name: string) => ({ catalog: { projects: [{ slug: 'acme', name }], creatives: {}, refresh: () => {} } }) as unknown as Shell;
 
-beforeEach(() => { vi.clearAllMocks(); location.hash = ''; });
+// ⌘↵ is the Mac chord: the tests run on a Mac platform.
+let platform: ReturnType<typeof vi.spyOn> | null = null;
+beforeEach(() => { vi.clearAllMocks(); location.hash = ''; platform = vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel'); });
+afterEach(() => { platform?.mockRestore(); platform = null; });
 
 const board = () => waitFor(() => screen.getByRole('group', { name: 'Instagram' }));
 const brief = () => screen.getByLabelText('Cosa vuoi realizzare?');

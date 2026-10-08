@@ -1,13 +1,18 @@
 import { useEffect, useRef, type RefObject } from 'react';
+import { isMac } from '../shell/ShellContext.tsx';
 
 /**
  * Whether `el` belongs to the page the user is on. PageHost keeps a leaving page mounted for its exit (with only
- * pointer-events off) and marks the current one `data-page-active`; an element outside any page host counts as active.
+ * pointer-events off) and marks the current one `data-page-active`; with nested hosts every enclosing page must be
+ * marked. An element outside any page host counts as active.
  */
 export function isActivePage(el: Element | null): boolean {
   if (!el || !el.isConnected) return false;
-  const page = el.closest('.ms-page');
-  return !page || page.hasAttribute('data-page-active');
+  // Page hosts nest (the project tabs sit in a soft host inside a page): every enclosing page must be the current one.
+  for (let page = el.closest('.ms-page'); page; page = page.parentElement?.closest('.ms-page') ?? null) {
+    if (!page.hasAttribute('data-page-active')) return false;
+  }
+  return true;
 }
 
 /**
@@ -28,5 +33,8 @@ export function usePageShortcut(ref: RefObject<Element | null>, match: (e: Keybo
   }, [ref]);
 }
 
-/** ⌘↵ on macOS, Ctrl+↵ elsewhere (either is accepted). */
-export const isSubmitChord = (e: KeyboardEvent): boolean => e.key === 'Enter' && (e.metaKey || e.ctrlKey);
+/** ⌘↵ on macOS, Ctrl+↵ elsewhere (the same rule as ⌘K in App); never with Alt or while an IME is composing. */
+export function isSubmitChord(e: KeyboardEvent): boolean {
+  if (e.key !== 'Enter' || e.isComposing || e.altKey) return false;
+  return isMac() ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+}
