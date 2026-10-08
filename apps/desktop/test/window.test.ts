@@ -1,0 +1,23 @@
+import { describe, expect, it } from 'vitest';
+import { externalUrlAllowed, isAppUrl, windowOptions } from '../src/window.ts';
+
+describe('window security', () => {
+  it('locks down the renderer', () => {
+    const o = windowOptions('/p/preload.cjs');
+    expect(o.webPreferences).toMatchObject({ contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, preload: '/p/preload.cjs' });
+  });
+  it('keeps navigation on the core origin', () => {
+    expect(isAppUrl('http://127.0.0.1:4318/#/p/acme', 'http://127.0.0.1:4318')).toBe(true);
+    expect(isAppUrl('http://127.0.0.1:4318/#t=abc', 'http://127.0.0.1:4318/#t=abc')).toBe(true);
+    expect(isAppUrl('http://127.0.0.1:9999/', 'http://127.0.0.1:4318')).toBe(false);
+    expect(isAppUrl('https://evil.example/', 'http://127.0.0.1:4318')).toBe(false);
+    expect(isAppUrl('file:///etc/passwd', 'http://127.0.0.1:4318')).toBe(false);
+    expect(isAppUrl('not a url', 'http://127.0.0.1:4318')).toBe(false);
+  });
+  it('opens only web and mail links externally', () => {
+    expect(externalUrlAllowed('https://github.com/Aleloca/motion-studio')).toBe(true);
+    expect(externalUrlAllowed('mailto:a@b.it')).toBe(true);
+    expect(externalUrlAllowed('file:///Applications/Calculator.app')).toBe(false);
+    expect(externalUrlAllowed('javascript:alert(1)')).toBe(false);
+  });
+});

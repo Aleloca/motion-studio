@@ -1,0 +1,23 @@
+{
+  "name": "motion-studio-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Motion Studio: app desktop (Electron)",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build": "tsup",
+    "dev": "electron .",
+    "smoke": "electron . --smoke-test",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  },
+  "devDependencies": {
+    "@motion-studio/core": "workspace:*",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
+    "tsup": "^8.5.0"
+  }
+}
