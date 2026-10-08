@@ -20,7 +20,7 @@ const ENABLED = new Set((process.env.MOTION_STUDIO_TOOLS ?? '').split(',').map((
 
 const str = (description, extra = {}) => ({ type: 'string', description, ...extra });
 const TOOLS = [
-  { name: 'approve', description: 'Internal to Motion Studio (permission requests).', inputSchema: { type: 'object', properties: { tool_name: str('Tool'), input: { type: 'object' }, tool_use_id: str('Id') }, additionalProperties: true } },
+  { name: 'approve', description: 'For Motion Studio internal use only (permission requests).', inputSchema: { type: 'object', properties: { tool_name: str('Tool'), input: { type: 'object' }, tool_use_id: str('Id') }, additionalProperties: true } },
   { name: 'report_progress', description: 'Tell the user where you are (one short sentence).', inputSchema: { type: 'object', properties: { message: str('Short sentence', { maxLength: 300 }) }, required: ['message'] } },
   { name: 'validate_output', description: 'Checks the outputs of the current version against the contract and returns the problems.', inputSchema: { type: 'object', properties: {} } },
   { name: 'read_brand_kit', description: 'Reads the project brand kit and guidelines.', inputSchema: { type: 'object', properties: {} } },

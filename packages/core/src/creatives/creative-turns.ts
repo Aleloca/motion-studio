@@ -181,7 +181,7 @@ export class CreativeTurnService {
             const sid = event.kind === 'session' || event.kind === 'result' ? event.sessionId : undefined;
             if (sid) this.deps.queue.patch(jobId, { sessionId: sid });
           },
-          validate: () => validateOutputs({ dir: store.outputsDir(slug, n), requested: creative.brief.formats, presets, durationSec: creative.brief.durationSec, media: this.deps.media }),
+          validate: () => validateOutputs({ dir: store.outputsDir(slug, n), requested: creative.brief.formats, presets, durationSec: creative.brief.durationSec, media: this.deps.media, locale }),
         });
         const onAbort = () => run.cancel();
         signal.addEventListener('abort', onAbort, { once: true });
@@ -203,7 +203,7 @@ export class CreativeTurnService {
         resumeSessionId = outcome.sessionId ?? resumeSessionId;
         forkSession = false;
 
-        result = await validateOutputs({ dir: store.outputsDir(slug, n), requested: creative.brief.formats, presets, durationSec: creative.brief.durationSec, media: this.deps.media });
+        result = await validateOutputs({ dir: store.outputsDir(slug, n), requested: creative.brief.formats, presets, durationSec: creative.brief.durationSec, media: this.deps.media, locale });
         problems = result.problems;
         // A preset missing from the catalog cannot be fixed by the agent: retrying would only waste turns.
         if (problems.length === result.unknownPresets.length || attempt === this.maxAttempts) break;

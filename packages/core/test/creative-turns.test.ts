@@ -103,6 +103,20 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     }
   });
 
+  it('validates in the language of the job start: the fix prompt and the saved problems', async () => {
+    process.env.FAKE_CLAUDE_SCENARIO = 'render_never';
+    const push = messages.push.bind(messages);
+    messages.push = (...m) => { if (m.some((x) => x.type === 'agent')) setLocale('en'); return push(...m); };
+    try { await finalState((await service.start(ref)).id); } finally { setLocale('it'); }
+    const all = await prompts();
+    expect(all).toHaveLength(3);
+    for (const { prompt } of all.slice(1)) {
+      expect(prompt).toContain('- Manca il formato Web · Banner 300×250 (web-banner-300x250)');
+      expect(prompt).not.toContain('Missing');
+    }
+    expect((await store.readVersions(ref.creativeSlug))[0]!.problems).toEqual(['Manca il formato Web · Banner 300×250 (web-banner-300x250)']);
+  });
+
   it('asks the agent to fix missing outputs and then succeeds', async () => {
     process.env.FAKE_CLAUDE_SCENARIO = 'render_missing_once';
     await finalState((await service.start(ref)).id);

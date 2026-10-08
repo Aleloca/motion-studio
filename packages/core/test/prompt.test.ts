@@ -138,5 +138,5 @@ describe('CONTEXT_MD brand section', () => {
 });
 
 describe('CONTEXT_MD language', () => {
-  it('is English', () => { expect(CONTEXT_MD).not.toMatch(/italiano|Contratto|Regole/); });
+  it('is English', () => { expect(CONTEXT_MD).not.toMatch(/[àèéìòù]|\b(italiano|Contratto|Regole|Struttura|Strumenti|Suggerimenti|Brand e asset|progetto|cartella)\b/i); });
 });

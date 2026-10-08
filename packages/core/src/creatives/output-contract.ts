@@ -1,10 +1,10 @@
 import { lstat } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
-import { formatLabel, manifestSchema, type FormatPreset, type OutputFileInfo } from '@motion-studio/shared';
+import { formatLabel, manifestSchema, messages, type Locale, type FormatPreset, type OutputFileInfo } from '@motion-studio/shared';
 import { findPreset } from '../formats/format-catalog.ts';
 import { JsonFileError, readJsonFile } from '../json-file.ts';
 import type { MediaTools } from '../media/media-tools.ts';
-import { currentLocale, t } from '../i18n.ts';
+import { currentLocale } from '../i18n.ts';
 
 export interface ValidationResult { outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: string | null;
   /** Requested ids missing from the format catalog: the agent cannot fix those, so they never justify another attempt. */
@@ -13,9 +13,12 @@ export interface ValidationResult { outputs: OutputFileInfo[]; problems: string[
 
 export async function validateOutputs(opts: {
   dir: string; requested: string[]; presets: FormatPreset[]; durationSec: number | null; media: MediaTools;
+  /** Language of the problems: the job's, captured at start (default: the current one). */
+  locale?: Locale;
 }): Promise<ValidationResult> {
   const { dir, media } = opts;
-  const v = t().validation;
+  const locale = opts.locale ?? currentLocale();
+  const v = messages(locale).validation;
   let manifest;
   try {
     manifest = await readJsonFile(join(dir, 'manifest.json'), manifestSchema);
@@ -34,7 +37,7 @@ export async function validateOutputs(opts: {
     const preset = findPreset(opts.presets, id);
     if (!preset) { problems.push(v.unknownPreset({ id })); unknownPresets.push(id); continue; }
     const entry = manifest.files.find((f) => f.format === id);
-    if (!entry) { problems.push(v.missingFormat({ label: formatLabel(preset, currentLocale()), id })); continue; }
+    if (!entry) { problems.push(v.missingFormat({ label: formatLabel(preset, locale), id })); continue; }
     const path = join(dir, entry.file);
     const info = await lstat(path).catch(() => null);
     if (!info || !info.isFile()) { problems.push(v.fileNotFound({ id, file: entry.file })); continue; }
