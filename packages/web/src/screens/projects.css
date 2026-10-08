@@ -1,0 +1,116 @@
+/* Projects, the home (spec §6.2 #3), ported from the prototype's Projects / ProjectCard and the Projects boards. */
+.ms-projects { width: 1200px; max-width: calc(100% - 48px); margin: 0 auto; padding: 32px 0 48px; display: flex; flex-direction: column; gap: 28px; color: var(--text); }
+.ms-projects .ms-grow { flex: 1; }
+
+/* Jump back in. */
+.ms-jump { display: flex; flex-direction: column; gap: 12px; }
+.ms-jump-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.ms-jump-head h2 { margin: 0; font-size: 15px; font-weight: 700; }
+.ms-jump-head span { font-size: 12px; color: var(--muted); }
+.ms-jump-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 12px; }
+@media (min-width: 1100px) { .ms-jump-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.ms-jump-tile {
+  display: flex; gap: 12px; padding: 10px; border-radius: 12px; color: inherit; text-decoration: none; min-width: 0;
+  transition: box-shadow var(--d-s) var(--e-std), transform var(--d-s) var(--e-std);
+}
+.ms-jump-tile:hover { box-shadow: 0 0 0 1px var(--faint), 0 10px 24px var(--shadow); transform: translateY(-1px); }
+.ms-jump-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ms-jump-thumb { height: 78px; flex: none; border-radius: 6px; overflow: hidden; background: var(--field); color: var(--faint); display: flex; align-items: center; justify-content: center; }
+.ms-jump-thumb img, .ms-jump-thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ms-jump-text { display: flex; flex-direction: column; gap: 4px; padding-top: 2px; min-width: 0; flex: 1; }
+.ms-jump-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-jump-sub { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-jump-state { margin-top: auto; min-width: 0; }
+.ms-js { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); min-width: 0; }
+.ms-js .ms-dot { width: 6px; height: 6px; }
+.ms-js-warn { color: var(--warn); }
+.ms-js-warn .ms-dot { color: var(--accent); }
+.ms-js-ok { color: var(--ok); }
+.ms-js-fail { color: var(--warn); }
+.ms-js-run { flex-direction: column; align-items: stretch; gap: 4px; }
+.ms-js-step { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-jump-new {
+  display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px; border-radius: 12px; min-height: 98px;
+  border: 1px dashed var(--line); color: var(--muted); text-decoration: none; text-align: center; overflow-wrap: anywhere;
+  transition: color var(--d-s) var(--e-std), border-color var(--d-s) var(--e-std), background var(--d-s) var(--e-std);
+}
+.ms-jump-new:hover { color: var(--text); border-color: var(--faint); background: var(--panel); }
+.ms-jump-new:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Projects header. */
+.ms-projects-list { display: flex; flex-direction: column; gap: 14px; }
+.ms-projects-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ms-projects-head h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.015em; }
+.ms-projects-count { font-family: var(--mono); font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.ms-select.ms-projects-sort { width: auto; flex: none; height: 32px; gap: 6px; padding: 0 10px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); font-size: 12px; }
+.ms-select.ms-projects-sort:hover { background: var(--field); }
+.ms-projects-alert {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px;
+  background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); overflow-wrap: anywhere;
+}
+.ms-projects-alert > svg { color: var(--warn); flex: none; }
+.ms-projects-alert > span { flex: 1; min-width: 0; }
+.ms-projects-empty { display: flex; flex-direction: column; gap: 4px; }
+.ms-projects-empty b { font-size: 15px; }
+.ms-projects-empty span { color: var(--muted); }
+
+.ms-projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 16px; }
+@media (min-width: 1100px) { .ms-projects-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+/* Project card. */
+.ms-pcard {
+  display: flex; flex-direction: column; overflow: hidden; color: inherit; text-decoration: none; min-width: 0;
+  transition: box-shadow var(--d-s) var(--e-std), transform var(--d-s) var(--e-std);
+}
+a.ms-pcard:hover { box-shadow: 0 0 0 1px var(--faint), 0 12px 30px var(--shadow); transform: translateY(-2px); }
+a.ms-pcard:active { transform: translateY(0) scale(.995); }
+a.ms-pcard:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ms-pcover { position: relative; height: 176px; width: 100%; background: var(--field); display: flex; align-items: center; justify-content: center; overflow: hidden; flex: none; }
+.ms-pcover.ms-n1, .ms-pcover.ms-n2, .ms-pcover.ms-n3 { display: grid; gap: 2px; background: var(--ink); }
+.ms-pcover.ms-n2 { grid-template-columns: 1.3fr 1fr; }
+.ms-pcover.ms-n3 { grid-template-columns: 1.3fr 1fr 1fr; }
+.ms-pcover img, .ms-pcover video { width: 100%; height: 100%; object-fit: cover; display: block; min-width: 0; }
+.ms-pcover-word {
+  font-size: 40px; font-weight: 700; letter-spacing: -.03em; color: var(--text); margin: 0 20px 6px; text-align: center; line-height: 1.1;
+  max-width: calc(100% - 40px); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; text-wrap: balance;
+}
+.ms-pcover-word.ms-long { font-size: 28px; }
+.ms-pstrip { position: absolute; left: 0; right: 0; bottom: 0; height: 5px; display: flex; }
+.ms-pstrip span { flex: 1; }
+.ms-pcover-wait {
+  position: absolute; left: 10px; top: 10px; display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 94%, transparent); color: var(--warn); font-size: 11px; font-weight: 600; box-shadow: 0 2px 8px var(--shadow);
+}
+.ms-pcover-wait .ms-dot { width: 6px; height: 6px; color: var(--accent); }
+
+.ms-pcard-body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ms-pcard-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.ms-pmono {
+  width: 32px; height: 32px; border-radius: 8px; flex: none; display: flex; align-items: center; justify-content: center;
+  background: var(--field); color: var(--text); font-size: 13px; font-weight: 700; letter-spacing: -.02em;
+}
+.ms-pcard-id { display: flex; flex-direction: column; min-width: 0; }
+.ms-pcard-name { font-size: 15px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-pcard-site { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-pcard-when { margin-left: auto; font-size: 12px; color: var(--faint); white-space: nowrap; flex: none; }
+.ms-pcard-stats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); min-height: 18px; }
+.ms-pcard-stats b { color: var(--text); font-variant-numeric: tabular-nums; }
+.ms-pcard-error { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.ms-pcard.ms-broken .ms-pcard-row { flex-wrap: wrap; }
+
+/* Loading placeholders. */
+.ms-pcard.ms-skel { animation: ms-pskel 1.4s var(--e-std) infinite alternate; }
+.ms-pcard.ms-skel .ms-pcard-body i { display: block; height: 10px; border-radius: 5px; background: var(--field); width: 35%; }
+.ms-pcard.ms-skel .ms-pcard-body i:first-child { width: 55%; height: 12px; }
+@keyframes ms-pskel { from { opacity: 1; } to { opacity: .55; } }
+
+/* Start a new project (dashed card with the inline form). */
+.ms-pnew { display: flex; flex-direction: column; justify-content: center; gap: 14px; padding: 22px; border-radius: 14px; border: 1.5px dashed var(--line); min-width: 0; margin: 0; }
+.ms-pnew-icon { width: 40px; height: 40px; border-radius: 10px; background: var(--field); color: var(--text); display: flex; align-items: center; justify-content: center; }
+.ms-pnew-text { display: flex; flex-direction: column; gap: 4px; }
+.ms-pnew-text b { font-size: 15px; }
+.ms-pnew-text span { color: var(--muted); line-height: 1.5; text-wrap: pretty; }
+.ms-pnew-row { display: flex; gap: 8px; min-width: 0; }
+.ms-pnew-row .ms-input { flex: 1; min-width: 0; height: 34px; }
+.ms-pnew-row .ms-btn { height: 34px; }
+.ms-pnew-error { margin: 0; font-size: 12px; color: var(--warn); overflow-wrap: anywhere; }

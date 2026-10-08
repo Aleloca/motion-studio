@@ -15,7 +15,6 @@ const api = {
   fileUrl: (s: string, c: string, r: string) => `/f/${s}/${c}/${r}`,
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
-const { CreativeList } = await import('../src/screens/CreativeList.tsx');
 const { NewCreative } = await import('../src/screens/NewCreative.tsx');
 const { ConversationPanel } = await import('../src/components/ConversationPanel.tsx');
 const { FormatBoard } = await import('../src/components/FormatBoard.tsx');
@@ -23,14 +22,6 @@ const { FocusView } = await import('../src/components/FocusView.tsx');
 const en = (node: React.ReactNode) => render(<I18nProvider locale="en">{node}</I18nProvider>);
 
 describe('creatives in English', () => {
-  it('lists creatives with English status, counts and date', async () => {
-    en(<CreativeList slug="acme" tick={0} />);
-    await waitFor(() => screen.getByText('Launch'));
-    expect(within(screen.getByRole('link', { name: /Launch/ })).getByText('Ready')).toBeTruthy();
-    expect(screen.getByText('2 formats · 1 version')).toBeTruthy();
-    expect(screen.getByText('Updated 10/7/2026')).toBeTruthy();
-    expect(screen.getByRole('link', { name: '+ New creative' })).toBeTruthy();
-  });
   it('shows the brief form with English format names', async () => {
     en(<NewCreative slug="acme" />);
     await waitFor(() => screen.getByRole('group', { name: 'Instagram' }));

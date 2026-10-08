@@ -433,6 +433,28 @@ describe('project bar', () => {
     expect(location.hash).toBe('#/p/bravo');
   });
 
+  it('changes from Creatives to Brand in place with T2 (soft fade, 6 px lift)', async () => {
+    history.replaceState(null, '', '/#/p/acme');
+    stubAnimations();
+    const frames: string[] = [];
+    const stubbed = Element.prototype.animate;
+    Element.prototype.animate = function (this: Element, f: Keyframe[], o: KeyframeAnimationOptions) {
+      if (this.classList.contains('ms-page')) frames.push(String(f[0]?.transform ?? ''));
+      return stubbed.call(this, f, o);
+    } as never;
+    await startApp();
+    expect(await screen.findByText('Ancora nessuna creatività')).toBeTruthy();
+    frames.length = 0;
+    const nav = screen.getByRole('navigation', { name: 'Sezioni progetto' });
+    await userEvent.click(within(nav).getByRole('link', { name: 'Brand' }));
+    await waitFor(() => expect(location.hash).toBe('#/p/acme/brand'));
+    // The project page stays (no T1 slide); its tab content enters from 6 px below, the old one fades out in place.
+    await waitFor(() => expect(frames).toContain('translate(0px,6px) scale(1)'));
+    expect(frames.some((t) => /translate\((-?16|24)px/.test(t))).toBe(false);
+    await finishAll();
+    expect(screen.queryByText('Ancora nessuna creatività')).toBeNull();
+  });
+
   it('opens the account menu with Settings, System check and Replay setup', async () => {
     await startApp();
     await userEvent.click(screen.getByRole('button', { name: 'Menu account' }));

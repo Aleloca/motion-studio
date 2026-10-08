@@ -54,3 +54,22 @@ export const formatDateTime = (locale: Locale, iso: string): string => formatDat
 export function formatNumber(locale: Locale, value: number, opts?: Intl.NumberFormatOptions): string {
   return new Intl.NumberFormat(locale, opts).format(value);
 }
+
+const RELATIVE_STEPS: Array<[Intl.RelativeTimeFormatUnit, number]> = [['second', 60], ['minute', 60], ['hour', 24], ['day', 7]];
+
+/**
+ * "5 min ago", "yesterday", "2 hours ago" in `locale` (Intl, no catalog strings); after a week the date. Future times
+ * (clock skew) read as now.
+ */
+export function relativeTime(locale: Locale, iso: string, now: number = Date.now()): string {
+  const at = new Date(iso).getTime();
+  if (Number.isNaN(at)) return iso;
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto', style: 'short' });
+  let value = Math.max(0, (now - at) / 1000);
+  if (value < 45) return rtf.format(0, 'second');
+  for (const [unit, size] of RELATIVE_STEPS) {
+    if (value < size) return rtf.format(-Math.round(value), unit);
+    value /= size;
+  }
+  return formatDate(locale, iso);
+}

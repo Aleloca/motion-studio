@@ -4,7 +4,8 @@ import { Icon } from './Icon.tsx';
 import type { IconName } from './icons.ts';
 import { rovingIndex } from './roving.ts';
 
-export interface SegmentedOption<V extends string> { value: V; label: string; icon?: IconName; count?: number }
+/** `accent`: the count is a state that needs the user (e.g. "Needs you"): shown as the orange count badge. */
+export interface SegmentedOption<V extends string> { value: V; label: string; icon?: IconName; count?: number; accent?: boolean }
 
 export interface SegmentedProps<V extends string> {
   options: readonly SegmentedOption<V>[];
@@ -48,7 +49,7 @@ export function Segmented<V extends string>({ options, value, onChange, label, c
           >
             {o.icon ? <Icon name={o.icon} size={13} /> : null}
             <span>{o.label}</span>
-            {o.count !== undefined ? <span className="ms-n">{o.count}</span> : null}
+            {o.count !== undefined ? <span className={cx('ms-n', o.accent && o.count > 0 && 'ms-accent')}>{o.count}</span> : null}
           </button>
         );
       })}

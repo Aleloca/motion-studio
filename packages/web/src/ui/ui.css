@@ -100,6 +100,8 @@
 .ms-seg button:hover { color: var(--text); }
 .ms-seg button.ms-on { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px var(--shadow), 0 0 0 1px var(--line2); }
 .ms-seg .ms-n { color: var(--faint); font-weight: 400; font-variant-numeric: tabular-nums; }
+/* A count that needs the user: the orange badge (text in --onAccentStrong for AA). */
+.ms-seg .ms-n.ms-accent { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: var(--onAccentStrong); font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
 
 /* Chips, tags, pills, badges. */
 .ms-chip { height: 24px; min-height: 0; padding: 0 9px; margin: 0; border-radius: 999px; border: 0; box-shadow: inset 0 0 0 1px var(--line); font: inherit; font-size: 12px; display: inline-flex; align-items: center; gap: 5px; background: transparent; color: var(--text); white-space: nowrap; max-width: 100%; transition: background var(--d-s) var(--e-std), box-shadow var(--d-s) var(--e-std); }
@@ -131,6 +133,11 @@ button.ms-vbadge:hover { box-shadow: inset 0 0 0 1px var(--line); }
 /* Progress bar (T10). */
 .ms-progress { height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; width: 100%; }
 .ms-progress i { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width .6s var(--e-std); }
+/* Indeterminate progress (no value is known, e.g. a job that reports steps only): a short segment that slides. */
+.ms-progress.ms-indet { position: relative; }
+.ms-progress.ms-indet i { position: absolute; top: 0; bottom: 0; width: 34%; animation: ms-indet 1.4s var(--e-std) infinite; }
+@keyframes ms-indet { from { left: -34%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .ms-progress.ms-indet i { animation: none; left: 0; width: 100%; opacity: .5; } }
 
 /* Countdown ring (T8). */
 .ms-ring { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; color: var(--warn); font-variant-numeric: tabular-nums; }

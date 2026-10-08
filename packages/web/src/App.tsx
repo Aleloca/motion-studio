@@ -1,14 +1,19 @@
 import type { ApprovalRequest, DoctorCheck, LanguageSetting, Locale, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
-import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { api } from './api.ts';
 import { detectedLocale, I18nProvider, useLocale, type LanguageState } from './i18n.tsx';
 import { PageHost } from './motion/index.ts';
-import { depthOf, href, parseRoute, projectOf, routeKey, type ProjectTab, type Route } from './routes.ts';
+import { depthOf, href, parseRoute, projectOf, routeKey, type Route } from './routes.ts';
+import { AssetsPage } from './screens/AssetsPage.tsx';
+import { BrandPage } from './screens/BrandPage.tsx';
 import { CreativePage } from './screens/CreativePage.tsx';
 import { NewCreative } from './screens/NewCreative.tsx';
 import { Pairing } from './screens/Pairing.tsx';
-import { ProjectList } from './screens/ProjectList.tsx';
-import { ProjectPage } from './screens/ProjectPage.tsx';
+import { ProjectConsole } from './screens/ProjectConsole.tsx';
+import { ProjectCreatives } from './screens/ProjectCreatives.tsx';
+import { Projects } from './screens/Projects.tsx';
+import { ProjectSettings } from './screens/ProjectSettings.tsx';
+import { ReferencesPage } from './screens/ReferencesPage.tsx';
 import { SettingsPage } from './screens/SettingsPage.tsx';
 import { Welcome, type WelcomeProps } from './screens/Welcome.tsx';
 import { useCatalog } from './shell/catalog.ts';
@@ -213,7 +218,7 @@ function AppShell({ route, live, settings, checks, activity, setActivity, langua
   const expert = settings?.expertMode ?? false;
   const render = (r: Route) => {
     switch (r.name) {
-      case 'projects': return <ProjectList />;
+      case 'projects': return <Projects live={live} />;
       case 'project': return <ProjectHost route={r} live={live} expert={expert} />;
       case 'new-creative': return <NewCreative key={r.slug} slug={r.slug} />;
       // The format view (Task 13) opens on the creative until then.
@@ -238,14 +243,22 @@ function AppShell({ route, live, settings, checks, activity, setActivity, langua
   );
 }
 
-/** A project page: its tabs change in place with T2 (soft fade and 6 px lift). */
+/**
+ * A project page: its tabs (in the project bar) change in place with T2 (soft fade and 6 px lift). Creatives is the
+ * redesigned screen; the other tabs keep their current screens until their tasks replace them.
+ */
 function ProjectHost({ route, live, expert }: { route: Extract<Route, { name: 'project' }>; live: EventsState; expert: boolean }) {
-  return (
-    <PageHost
-      route={route}
-      keyOf={(r) => r.tab}
-      soft
-      render={(r) => <ProjectPage key={r.slug} slug={r.slug} tab={r.tab as ProjectTab} live={live} expert={expert} embedded />}
-    />
-  );
+  return <PageHost route={route} keyOf={(r) => r.tab} soft render={(r) => <ProjectTabPage route={r} live={live} expert={expert} />} />;
+}
+
+function ProjectTabPage({ route: { slug, tab }, live, expert }: { route: Extract<Route, { name: 'project' }>; live: EventsState; expert: boolean }) {
+  const legacy = (page: ReactNode) => <main className="page stack">{page}</main>;
+  switch (tab) {
+    case 'creatives': return <ProjectCreatives key={slug} slug={slug} live={live} />;
+    case 'brand': return legacy(<BrandPage key={slug} slug={slug} live={live} />);
+    case 'assets': return legacy(<AssetsPage key={slug} slug={slug} live={live} />);
+    case 'references': return legacy(<ReferencesPage key={slug} slug={slug} live={live} />);
+    case 'settings': return legacy(<ProjectSettings key={slug} slug={slug} tick={live.projectTicks[slug] ?? 0} />);
+    case 'console': return <ProjectConsole key={slug} slug={slug} live={live} expert={expert} />;
+  }
 }

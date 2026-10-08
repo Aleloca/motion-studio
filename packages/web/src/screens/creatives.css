@@ -1,0 +1,113 @@
+/* Project · Creatives (spec §6.2 #4), ported from the prototype's Creatives / CreativeCard and the Creatives boards. */
+.ms-creatives { width: 1240px; max-width: calc(100% - 48px); margin: 0 auto; padding: 28px 0 48px; display: flex; flex-direction: column; gap: 18px; color: var(--text); }
+.ms-creatives .ms-grow { flex: 1; }
+.ms-creatives-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.ms-creatives-head h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.015em; }
+.ms-creatives-seg { margin-left: 8px; overflow-x: auto; scrollbar-width: none; }
+
+/* Search field (prototype .search): panel with a hairline, the icon inside. */
+.ms-csearch {
+  width: 220px; max-width: 100%; height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-radius: 8px;
+  background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); color: var(--faint);
+  transition: box-shadow var(--d-s) var(--e-std);
+}
+.ms-csearch:focus-within { box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
+.ms-csearch input { flex: 1; min-width: 0; height: 100%; padding: 0; margin: 0; border: 0; border-radius: 0; background: transparent; color: var(--text); font: inherit; outline: none; }
+.ms-csearch input::placeholder { color: var(--faint); opacity: 1; }
+.ms-csearch input::-webkit-search-cancel-button, .ms-csearch input::-webkit-search-decoration { -webkit-appearance: none; appearance: none; }
+
+.ms-creatives-alert {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px;
+  background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); color: var(--text); overflow-wrap: anywhere;
+}
+.ms-creatives-alert > svg { color: var(--warn); flex: none; }
+.ms-creatives-alert > span { flex: 1; min-width: 0; }
+
+.ms-creatives-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 16px; position: relative; }
+@media (min-width: 1180px) { .ms-creatives-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+/* Card. */
+.ms-ccard { position: relative; display: flex; flex-direction: column; overflow: hidden; transition: box-shadow var(--d-m) var(--e-std), transform var(--d-s) var(--e-std); }
+.ms-ccard:not(.ms-broken):not(.ms-skel):hover { box-shadow: 0 0 0 1px var(--faint), 0 12px 30px var(--shadow); transform: translateY(-2px); }
+/* Needs you: the accent ring stays on hover (T13: selection-like emphasis with an m transition). */
+.ms-ccard.ms-needs, .ms-ccard.ms-needs:hover { box-shadow: 0 0 0 1.5px var(--accent), 0 12px 30px var(--shadow); }
+.ms-ccard:focus-within { box-shadow: 0 0 0 1px var(--faint), 0 12px 30px var(--shadow); }
+
+.ms-ccard-stage {
+  position: relative; height: 210px; display: flex; align-items: center; justify-content: center; gap: 10px; flex: none;
+  background-color: var(--bg); background-image: radial-gradient(var(--dot) 1px, transparent 1px); background-size: 14px 14px;
+}
+.ms-frame { position: relative; flex: none; border-radius: 3px; overflow: hidden; transition: width var(--d-m) var(--e-std), height var(--d-m) var(--e-std); }
+.ms-frame-out { box-shadow: 0 6px 16px var(--shadow); background: var(--field); }
+.ms-frame-out img, .ms-frame-out video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ms-st-running .ms-frame-out img, .ms-st-running .ms-frame-out video { filter: saturate(.6) brightness(.9); }
+.ms-st-failed .ms-frame-out img, .ms-st-failed .ms-frame-out video,
+.ms-st-interrupted .ms-frame-out img, .ms-st-interrupted .ms-frame-out video { opacity: .5; }
+.ms-frame-empty {
+  border-radius: 10px; border: 1.5px dashed var(--line); display: flex; align-items: center; justify-content: center;
+  font-size: 10px; color: var(--faint); font-variant-numeric: tabular-nums;
+}
+.ms-frame-warn {
+  position: absolute; inset: 0; margin: auto; width: 36px; height: 36px; border-radius: 50%; background: var(--panel); color: var(--warn);
+  display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px var(--shadow);
+}
+.ms-stage-more { position: absolute; right: 14px; bottom: 10px; font-size: 10px; color: var(--faint); }
+
+/* T10: the sheen that runs over a frame while it is being generated. */
+.ms-shimmer {
+  position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--panel) 32%, transparent) 50%, transparent 70%);
+  background-size: 250% 100%; animation: ms-sheen 1.6s var(--e-std) infinite;
+}
+@keyframes ms-sheen { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+
+.ms-ccard-body { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px 14px; border-top: 1px solid var(--line2); min-width: 0; flex: 1; }
+.ms-broken .ms-ccard-body { border-top: 0; }
+.ms-ccard-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ms-ccard-head h3 { margin: 0; font-size: 14px; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-ccard-when { margin-left: auto; font-size: 12px; color: var(--faint); white-space: nowrap; flex: none; }
+/* The title is the card's link; its ::after covers the card so the whole card opens the creative. */
+.ms-ccard-link { color: inherit; text-decoration: none; }
+.ms-ccard-link::after { content: ''; position: absolute; inset: 0; border-radius: inherit; }
+.ms-ccard-link:focus-visible { outline: none; }
+.ms-ccard-link:focus-visible::after { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 14px; }
+/* Actions sit above the stretched link. */
+.ms-cc-act, .ms-ccard .ms-ring { position: relative; z-index: 1; }
+.ms-ccard-error { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+
+.ms-ccard-tags { display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.ms-ftag { height: 22px; padding: 0 7px 0 4px; gap: 5px; max-width: 100%; }
+.ms-ftag-name { overflow: hidden; text-overflow: ellipsis; }
+
+.ms-cc-needs { display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 10px; border-radius: 10px; background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); min-width: 0; }
+.ms-cc-needs .ms-dot { color: var(--accent); }
+.ms-cc-needs-title { font-size: 12px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-cc-needs .ms-ring { font-size: 11px; color: var(--muted); }
+
+.ms-cc-run { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 10px; background: var(--field); min-width: 0; }
+.ms-cc-step { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .ms-shimmer { display: none; } }
+
+.ms-cc-ok, .ms-cc-warn { display: flex; align-items: center; gap: 8px; font-size: 12px; min-width: 0; }
+.ms-cc-ok { color: var(--ok); }
+.ms-cc-warn { color: var(--warn); }
+.ms-cc-fail, .ms-cc-draft { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ms-cc-fail-text { font-size: 12px; color: var(--warn); flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ms-cc-note { font-size: 12px; color: var(--muted); flex: 1; min-width: 0; }
+.ms-cc-act { margin-left: auto; flex: none; }
+
+/* Loading placeholders. */
+.ms-skel .ms-ccard-body i { display: block; height: 10px; border-radius: 5px; background: var(--field); }
+.ms-skel .ms-ccard-body i:first-child { width: 55%; height: 12px; }
+.ms-skel .ms-ccard-body i:last-child { width: 35%; }
+.ms-skel { animation: ms-skel 1.4s var(--e-std) infinite alternate; }
+@keyframes ms-skel { from { opacity: 1; } to { opacity: .55; } }
+
+/* Empty project: one designed card over the dot grid (prototype). */
+.ms-creatives-empty { width: auto; max-width: none; margin: 0; min-height: 100%; padding: 24px; align-items: center; justify-content: center;
+  background-color: var(--bg); background-image: radial-gradient(var(--dot) 1px, transparent 1px); background-size: 20px 20px; }
+.ms-cempty { width: 460px; max-width: 100%; padding: 28px; display: flex; flex-direction: column; align-items: flex-start; gap: 12px; box-shadow: 0 0 0 1px var(--line), 0 18px 40px var(--shadow); }
+.ms-cempty-icon { width: 40px; height: 40px; border-radius: 10px; background: var(--field); color: var(--text); display: flex; align-items: center; justify-content: center; }
+.ms-cempty h1 { margin: 0; font-size: 18px; font-weight: 700; text-wrap: balance; }
+.ms-cempty p { margin: 0; color: var(--muted); line-height: 1.5; text-wrap: pretty; }
+.ms-cempty-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
