@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Open from the terminal</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+body{margin:0}
+a{color:#E8501A}a:hover{color:#B93E12}
+</style>
+</helmet>
+<div style="width: 1440px; height: 900px; box-sizing: border-box; background-color: {{p.bg}}; background-image: radial-gradient({{p.dot}} 1px, transparent 1px); background-size: 20px 20px; color: {{p.text}}; font-family: 'Schibsted Grotesk', ui-sans-serif, system-ui, sans-serif; font-size: 13px; display: flex; align-items: center; justify-content: center">
+<div style="width: 560px; display: flex; flex-direction: column; gap: 22px">
+<div style="display: flex; align-items: center; gap: 10px"><div style="width: 28px; height: 28px; border-radius: 8px; background: {{p.ink}}; display: flex; align-items: center; justify-content: center"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 2.5v7l6-3.5-6-3.5Z" fill="#FF5A1F"></path></svg></div><span style="font-weight: 700; font-size: 15px">Motion Studio</span></div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<h1 style="margin: 0; font-size: 28px; line-height: 1.15; font-weight: 700; letter-spacing: -0.02em">Open Motion Studio from the link in your terminal</h1>
+<p style="margin: 0; color: {{p.muted}}; font-size: 14px; line-height: 1.55">This tab doesn't have the private key that Motion Studio printed when it started. It keeps other apps and websites on this Mac from controlling your projects.</p>
+</div>
+<div style="border-radius: 14px; background: #141414; box-shadow: 0 20px 50px {{p.shadow}}; overflow: hidden">
+<div style="height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 12px; background: #1E1E1E"><span style="width: 10px; height: 10px; border-radius: 50%; background: #3A3A3A"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #3A3A3A"></span><span style="width: 10px; height: 10px; border-radius: 50%; background: #3A3A3A"></span><span style="margin-left: 8px; font-size: 11px; color: #8A8A8A">Terminal</span></div>
+<div style="padding: 14px 16px; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.8; color: #CFCFCF">
+<div><span style="color: #8A8A8A">$</span> npx @motion-studio/cli</div>
+<div style="color: #8A8A8A">Motion Studio is running.</div>
+<div>Open: <span style="color: #FF8A5C; text-decoration: underline">http://127.0.0.1:4318/#t=•••••••••••</span></div>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-radius: 12px; background: {{p.panel}}; box-shadow: 0 0 0 1px {{p.line}}">
+<b style="font-weight: 600">Closed the terminal or lost the link?</b>
+<span style="color: {{p.muted}}">Run this in a new terminal window. It prints the link again without restarting anything.</span>
+<div style="display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 6px 0 12px; border-radius: 8px; background: {{p.field}}; font-family: 'JetBrains Mono', monospace; font-size: 12.5px">npx @motion-studio/cli --print-url<button type="button" style="margin-left: auto; height: 28px; padding: 0 10px; border-radius: 6px; border: 0; background: {{p.panel}}; box-shadow: 0 0 0 1px {{p.line}}; color: {{p.text}}; font-family: 'Schibsted Grotesk', sans-serif; font-size: 12px">Copy</button></div>
+</div>
+<span style="font-size: 12px; color: {{p.faint}}">Using the desktop app? Open Motion Studio from Applications; it never needs this step.</span>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const light = { bg: '#F5F5F4', panel: '#FFFFFF', line: '#E5E5E3', line2: '#EFEFED', text: '#171717', muted: '#6B6B6B', faint: '#A3A3A3', field: '#F2F2F1', dot: '#DEDEDB', ink: '#171717', inkText: '#FFFFFF', shadow: 'rgba(0,0,0,0.14)', suffix: '' };
+    const night = { bg: '#0F0F0F', panel: '#171717', line: '#2A2A2A', line2: '#212121', text: '#EDEDED', muted: '#9C9C9C', faint: '#6B6B6B', field: '#222222', dot: '#242424', ink: '#EDEDED', inkText: '#0F0F0F', shadow: 'rgba(0,0,0,0.6)', suffix: 'Dark' };
+    return { p: dark ? night : light };
+  }
+}
+</script>
+</body>
+</html>

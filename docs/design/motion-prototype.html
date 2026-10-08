@@ -1,0 +1,389 @@
+<title>Motion Studio Motion</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: control rail on top, the app stage below scaled to fit; every motion token lives here */
+:root{
+  --bg:#F5F5F4; --panel:#FFFFFF; --line:#E5E5E3; --line2:#EFEFED; --text:#171717; --muted:#6B6B6B; --faint:#A3A3A3;
+  --field:#F2F2F1; --dot:#D8D8D5; --ink:#171717; --inkText:#FFFFFF; --accent:#FF5A1F; --accentSoft:#FFF1EA;
+  --ok:#2E7A4C; --okBg:#E4F3EA; --warnBg:#FFF5EF; --warnLine:#FFD3C0; --warnText:#D9480F; --shadow:rgba(0,0,0,.14);
+  --page:#EDEDEB;
+  --sans:'Schibsted Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --mono:'JetBrains Mono', ui-monospace, Menlo, monospace;
+  --d-xs:120ms; --d-s:200ms; --d-m:320ms; --d-l:480ms;
+  --e-std:cubic-bezier(.2,0,0,1); --e-out:cubic-bezier(.16,1,.3,1); --e-in:cubic-bezier(.4,0,1,1);
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0F0F0F; --panel:#171717; --line:#2A2A2A; --line2:#212121; --text:#EDEDED; --muted:#9C9C9C; --faint:#6B6B6B;
+  --field:#222222; --dot:#2A2A2A; --ink:#EDEDED; --inkText:#0F0F0F; --accentSoft:#2A1A12;
+  --ok:#6FCF97; --okBg:#132A1D; --warnBg:#231711; --warnLine:#55301E; --warnText:#FF8A5C; --shadow:rgba(0,0,0,.55); --page:#090909; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0F0F0F; --panel:#171717; --line:#2A2A2A; --line2:#212121; --text:#EDEDED; --muted:#9C9C9C; --faint:#6B6B6B;
+  --field:#222222; --dot:#2A2A2A; --ink:#EDEDED; --inkText:#0F0F0F; --accentSoft:#2A1A12;
+  --ok:#6FCF97; --okBg:#132A1D; --warnBg:#231711; --warnLine:#55301E; --warnText:#FF8A5C; --shadow:rgba(0,0,0,.55); --page:#090909; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--page);color:var(--text);font:14px/1.45 var(--sans)}
+.wrap{max-width:1360px;margin:0 auto;padding-inline:16px;padding-block:20px 40px;display:grid;gap:14px}
+.rail{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.rail h1{font-size:15px;margin:0 12px 0 0;font-weight:700;letter-spacing:-.01em}
+.btn{height:32px;padding:0 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--text);font:inherit;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{border-color:var(--faint)}
+.btn.primary{background:var(--ink);color:var(--inkText);border-color:var(--ink);font-weight:600}
+.btn[aria-pressed="true"]{background:var(--accentSoft);border-color:var(--accent);color:var(--text)}
+.btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn .n{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.sep{width:1px;height:20px;background:var(--line)}
+.caption{min-height:22px;color:var(--muted);font-size:13px}
+.caption b{color:var(--text)}
+.stage-box{position:relative;width:100%;aspect-ratio:1280/760;border-radius:12px;overflow:hidden;box-shadow:0 20px 60px var(--shadow);background:var(--bg)}
+.stage{position:absolute;left:0;top:0;width:1280px;height:760px;transform-origin:0 0;font-size:13px;overflow:hidden;background:var(--bg)}
+/* app chrome */
+.top{position:absolute;left:0;right:0;top:0;height:48px;display:flex;align-items:center;gap:12px;padding:0 14px;background:var(--panel);border-bottom:1px solid var(--line);z-index:5}
+.logo{width:24px;height:24px;border-radius:7px;background:var(--ink);display:flex;align-items:center;justify-content:center}
+.crumb{display:flex;gap:6px;align-items:center;color:var(--muted)}
+.crumb b{color:var(--text);font-weight:600}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600}
+.view{position:absolute;left:0;right:0;top:48px;bottom:0}
+.dots{background-color:var(--bg);background-image:radial-gradient(var(--dot) 1px,transparent 1px);background-size:20px 20px}
+.side{position:absolute;top:0;bottom:0;background:var(--panel);border-color:var(--line);border-style:solid;border-width:0;padding:12px;display:flex;flex-direction:column;gap:6px}
+.side.l{left:0;width:220px;border-right-width:1px}
+.side.r{right:0;width:300px;border-left-width:1px}
+.lab{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.row{display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border-radius:6px}
+.row.sel{background:var(--accentSoft)}
+.chip{width:16px;height:16px;border-radius:4px;color:#fff;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center}
+.board{position:absolute;display:flex;flex-direction:column;gap:6px}
+.board .t{font-size:12px;color:var(--muted)}
+.board .t b{color:var(--text)}
+.frame{position:relative;overflow:hidden;border-radius:4px;box-shadow:0 10px 28px var(--shadow);background:#000}
+.frame img{width:100%;height:100%;object-fit:cover;display:block}
+.badge{display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:999px;background:var(--field);color:var(--text);font-size:11px;font-weight:600;margin-left:6px}
+.open-ed{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);height:36px;padding:0 14px;border-radius:999px;border:0;background:rgba(255,255,255,.94);color:#171717;font:inherit;font-weight:700;box-shadow:0 8px 24px rgba(0,0,0,.3);cursor:pointer}
+.msg{display:flex;flex-direction:column;gap:3px;padding:9px 11px;border-radius:4px 12px 12px 12px;background:var(--field);max-width:100%}
+.msg .w{font-size:11px;color:var(--muted)}
+.card{border-radius:12px;border:1px solid var(--warnLine);background:var(--warnBg);padding:12px;display:flex;flex-direction:column;gap:8px}
+.ring{width:22px;height:22px}
+.ring circle{fill:none;stroke-width:3}
+.toast{position:absolute;left:50%;top:60px;transform:translateX(-50%);display:flex;align-items:center;gap:10px;height:38px;padding:0 6px 0 14px;border-radius:999px;background:var(--panel);border:1px solid var(--line);box-shadow:0 12px 30px var(--shadow);z-index:20;white-space:nowrap}
+.toast .go{height:26px;padding:0 12px;border-radius:999px;border:0;background:var(--accent);color:#fff;font:inherit;font-weight:700}
+.shimmer{position:absolute;inset:0;background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.28) 50%,transparent 70%);background-size:220% 100%;animation:sh 1.4s linear infinite;mix-blend-mode:overlay}
+@keyframes sh{from{background-position:120% 0}to{background-position:-120% 0}}
+.bar{height:3px;border-radius:2px;background:var(--line);overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--accent)}
+.typing{display:inline-flex;gap:3px}
+.typing span{width:5px;height:5px;border-radius:50%;background:var(--faint);animation:tp 1s infinite}
+.typing span:nth-child(2){animation-delay:.15s}.typing span:nth-child(3){animation-delay:.3s}
+@keyframes tp{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-2px)}}
+.field{height:28px;display:flex;align-items:center;gap:6px;padding:0 8px;border-radius:6px;background:var(--field);font-family:var(--mono);font-size:11.5px}
+.field small{font-size:10px;color:var(--faint)}
+.draft{position:absolute;left:50%;top:14px;transform:translateX(-50%);display:flex;align-items:center;gap:10px;height:34px;padding:0 5px 0 12px;border-radius:999px;background:var(--panel);border:1px solid var(--line);box-shadow:0 8px 20px var(--shadow);font-size:12px;white-space:nowrap;overflow:hidden;z-index:6}
+.draft .save{height:24px;padding:0 10px;border-radius:999px;border:0;background:var(--ink);color:var(--inkText);font:inherit;font-weight:600}
+.pop{position:absolute;right:110px;top:52px;width:280px;padding:8px;border-radius:12px;background:var(--panel);border:1px solid var(--line);box-shadow:0 18px 50px var(--shadow);z-index:12;transform-origin:85% 0}
+.vrow{display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:8px}
+.vrow.cur{background:var(--field)}
+.vrow .th{width:22px;height:38px;border-radius:4px;overflow:hidden;flex:none}
+.vrow .th img{width:100%;height:100%;object-fit:cover}
+.track{height:30px;display:flex;gap:3px;align-items:center}
+.clip{height:24px;border-radius:5px;background:var(--field);font-size:11px;display:flex;align-items:center;padding:0 8px;white-space:nowrap;overflow:hidden}
+.list-item{display:flex;align-items:center;gap:14px;padding:10px;border-radius:10px;background:var(--panel);border:1px solid var(--line)}
+.list-item .th{width:54px;height:54px;border-radius:6px;overflow:hidden}
+.list-item .th img{width:100%;height:100%;object-fit:cover}
+.hidden{display:none!important}
+@media (max-width:640px){.rail h1{width:100%}}
+</style>
+
+<div class="wrap">
+  <div class="rail" role="toolbar" aria-label="Scenes">
+    <h1>Motion prototype</h1>
+    <button class="btn primary" id="play-all" type="button">▶ Play all</button>
+    <span class="sep"></span>
+    <button class="btn" type="button" data-s="page"><span class="n">1</span>Change page</button>
+    <button class="btn" type="button" data-s="editor"><span class="n">2</span>Open the editor</button>
+    <button class="btn" type="button" data-s="versions"><span class="n">3</span>Version history</button>
+    <button class="btn" type="button" data-s="approval"><span class="n">4</span>Approval arrives</button>
+    <button class="btn" type="button" data-s="generate"><span class="n">5</span>Generating</button>
+    <button class="btn" type="button" data-s="draft"><span class="n">6</span>Edit and save</button>
+    <span class="sep"></span>
+    <button class="btn" type="button" id="slow" aria-pressed="false">0.25× slow motion</button>
+    <button class="btn" type="button" id="theme">Toggle theme</button>
+  </div>
+  <div class="caption" id="caption" aria-live="polite">Pick a scene, or <b>Play all</b>. Slow motion shows every curve in detail.</div>
+
+  <div class="stage-box" id="box">
+  <div class="stage" id="stage">
+    <div class="top">
+      <div class="logo"><svg width="11" height="11" viewBox="0 0 12 12"><path d="M3 2.5v7l6-3.5-6-3.5Z" fill="#FF5A1F"/></svg></div>
+      <div class="crumb" id="crumb"><span>Half Story</span><span>/</span><b id="crumb-last">Creatives</b></div>
+      <div style="flex:1"></div>
+      <span style="font-family:var(--mono);font-size:12px;color:var(--muted)">38.2k tokens</span>
+      <button class="btn" type="button" id="vbtn" style="height:30px">★ v5 <span style="color:var(--faint);font-size:12px">· Reel</span></button>
+      <button class="btn primary" type="button" style="height:30px">Export</button>
+    </div>
+
+    <!-- LIST VIEW -->
+    <div class="view dots" id="v-list">
+      <div style="position:absolute;left:50%;top:40px;transform:translateX(-50%);width:720px;display:grid;gap:10px" id="list">
+        <div style="display:flex;justify-content:space-between;align-items:baseline"><b style="font-size:20px">Creatives</b><span style="color:var(--muted)">3 in Half Story</span></div>
+        <div class="list-item" data-open><div class="th"><img src="__R25__" alt=""></div><div style="flex:1"><b>A crime a week</b><div style="color:var(--muted);font-size:12px">Reel, TikTok, Shorts, Image · edited 5 min ago</div></div><span class="pill" style="background:var(--okBg);color:var(--ok)">Ready</span></div>
+        <div class="list-item"><div class="th"><img src="__R1__" alt=""></div><div style="flex:1"><b>Case 092 teaser</b><div style="color:var(--muted);font-size:12px">Reel · draft</div></div><span class="pill" style="background:var(--field);color:var(--muted)">Draft</span></div>
+        <div class="list-item"><div class="th"><img src="__SQ__" alt=""></div><div style="flex:1"><b>App Store screenshots</b><div style="color:var(--muted);font-size:12px">5 formats · yesterday</div></div><span class="pill" style="background:var(--okBg);color:var(--ok)">Ready</span></div>
+      </div>
+    </div>
+
+    <!-- CANVAS VIEW -->
+    <div class="view hidden" id="v-canvas">
+      <div class="side l" id="c-left">
+        <div class="lab">Formats</div>
+        <div class="row sel"><span class="chip" style="background:#C13584">IG</span>Reel<span class="badge" style="margin-left:auto">★ v5</span></div>
+        <div class="row"><span class="chip" style="background:#C13584">IG</span>Image<span class="badge" style="margin-left:auto">★ v2</span></div>
+        <div class="row"><span class="chip" style="background:#111">TT</span>TikTok<span style="margin-left:auto;font-size:11px;color:var(--faint)">follows Reel</span></div>
+        <div class="row"><span class="chip" style="background:#E62117">YT</span>Shorts<span style="margin-left:auto;font-size:11px;color:var(--faint)">follows Reel</span></div>
+      </div>
+      <div class="dots" style="position:absolute;left:220px;right:300px;top:0;bottom:0" id="c-main">
+        <div class="board" style="left:48px;top:36px" id="b-reel">
+          <span class="t"><b>Instagram Reel</b><span class="badge" id="reel-badge">★ v5</span></span>
+          <div class="frame" style="width:270px;height:480px" id="reel-frame"><img id="reel-img" src="__R45__" alt="Reel"><button class="open-ed" type="button" id="open-ed">Open editor</button></div>
+          <div class="bar hidden" id="gen-bar" style="width:270px"><i id="gen-fill"></i></div>
+        </div>
+        <div class="board" style="left:360px;top:36px" id="b-img">
+          <span class="t"><b>Instagram Image</b><span class="badge">★ v2</span></span>
+          <div class="frame" style="width:300px;height:300px"><img src="__SQ__" alt="Image"></div>
+        </div>
+        <div class="board" style="left:360px;top:380px" id="b-tt">
+          <span class="t"><b>TikTok</b> · follows Reel</span>
+          <div class="frame" style="width:120px;height:213px"><img src="__R45__" alt=""></div>
+        </div>
+        <div class="board" style="left:500px;top:380px" id="b-yt">
+          <span class="t"><b>Shorts</b> · follows Reel</span>
+          <div class="frame" style="width:120px;height:213px"><img src="__R45__" alt=""></div>
+        </div>
+      </div>
+      <div class="side r" id="c-right">
+        <div style="display:flex;gap:14px;border-bottom:1px solid var(--line2);padding-bottom:8px;margin-bottom:4px"><b>Chat</b><span style="color:var(--muted)">Comments <span id="chat-count" class="pill" style="background:var(--accent);color:#fff;display:none">1</span></span></div>
+        <div id="chat" style="display:flex;flex-direction:column;gap:10px"></div>
+      </div>
+    </div>
+
+    <!-- EDITOR VIEW -->
+    <div class="view dots hidden" id="v-editor">
+      <div class="side l" id="e-left" style="width:200px">
+        <div class="lab">Scenes</div>
+        <div class="row" style="height:56px"><div class="vrow th" style="width:28px;height:48px;border-radius:4px;overflow:hidden"><img src="__R25__" alt="" style="width:100%;height:100%;object-fit:cover"></div>Crime scene</div>
+        <div class="row" style="height:56px"><div style="width:28px;height:48px;border-radius:4px;overflow:hidden"><img src="__R1__" alt="" style="width:100%;height:100%;object-fit:cover"></div>Ink bleed</div>
+        <div class="row sel" style="height:56px"><div style="width:28px;height:48px;border-radius:4px;overflow:hidden"><img src="__R45__" alt="" style="width:100%;height:100%;object-fit:cover"></div>Calder at night</div>
+        <div style="flex:1"></div>
+        <button class="btn" type="button" id="back">← All formats</button>
+      </div>
+      <div style="position:absolute;left:200px;right:280px;top:0;bottom:190px;display:flex;align-items:center;justify-content:center">
+        <div class="frame" style="width:270px;height:480px;visibility:hidden" id="e-player"><img src="__R45__" alt="Reel in editor"></div>
+      </div>
+      <div class="draft hidden" id="draft"><span style="width:7px;height:7px;border-radius:50%;background:var(--accent)"></span><span id="draft-text"><b>Draft</b> <span style="color:var(--muted)">· 1 edit</span></span><button class="save" type="button" id="save">Save as v8</button></div>
+      <div class="side r" id="e-right" style="width:280px">
+        <div class="lab">Clip · Text</div>
+        <div class="field"><small>IN</small>3.60s</div>
+        <div class="field" id="dur-field"><small>DUR</small><span id="dur">1.70s</span></div>
+        <div class="lab" style="margin-top:8px">Typography</div>
+        <div class="field" style="font-family:var(--sans)">Newsreader · Regular · 58</div>
+        <div class="lab" style="margin-top:8px">Fill</div>
+        <div class="field"><span style="width:14px;height:14px;border-radius:3px;background:#FBE8C3"></span>FBE8C3 <small style="margin-left:auto">Parchment</small></div>
+      </div>
+      <div id="e-time" style="position:absolute;left:0;right:0;bottom:0;height:190px;background:var(--panel);border-top:1px solid var(--line);padding:12px 16px 12px 110px;display:flex;flex-direction:column;gap:6px">
+        <div class="track"><div class="clip" style="flex:3">Crime scene</div><div class="clip" style="flex:.6">Ink</div><div class="clip" style="flex:3.4">Calder at night</div></div>
+        <div class="track"><div class="clip" style="flex:3">A crime a week.</div><div style="flex:.6"></div><div class="clip" style="flex:1.7;background:var(--accent);color:#fff" id="sel-clip">A whole city to question.</div><div class="clip" style="flex:1.7">A new case every Monday.</div></div>
+        <div class="track"><div style="flex:4.6"></div><div class="clip" style="flex:2.4">Wordmark</div></div>
+      </div>
+      <div class="pop hidden" id="pop">
+        <div style="display:flex;justify-content:space-between;padding:4px 8px 8px"><b>Reel versions</b><span style="font-size:11px;color:var(--faint)">7</span></div>
+        <div class="vrow cur"><div class="th"><img src="__R45__" alt=""></div><div><b>v7</b> <span style="font-size:11px;color:var(--faint)">16:20 · editing</span></div></div>
+        <div class="vrow"><div class="th"><img src="__R6__" alt=""></div><div><b>v6</b> <span style="font-size:11px;color:var(--faint)">16:12</span></div></div>
+        <div class="vrow"><div class="th"><img src="__R45__" alt=""></div><div><b>v5</b> <span style="font-size:11px;color:var(--faint)">16:02</span> <span class="badge">★ export</span></div></div>
+        <div class="vrow"><div class="th"><img src="__R25__" alt=""></div><div><b>v4</b> <span style="font-size:11px;color:var(--faint)">15:55</span></div></div>
+        <div class="vrow"><div class="th"><img src="__R1__" alt=""></div><div><b>v3</b> <span style="font-size:11px;color:var(--faint)">15:41</span></div></div>
+      </div>
+    </div>
+
+    <div class="toast hidden" id="toast"><span style="width:8px;height:8px;border-radius:50%;background:var(--accent)" id="toast-dot"></span><span id="toast-text">The agent needs your OK to render</span><button class="go" type="button">Review</button></div>
+  </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const stage = $('stage'), box = $('box');
+let SPEED = 1;
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const D = { xs: 120, s: 200, m: 320, l: 480 };
+const E = { std: 'cubic-bezier(.2,0,0,1)', out: 'cubic-bezier(.16,1,.3,1)', in: 'cubic-bezier(.4,0,1,1)', spring: 'cubic-bezier(.34,1.56,.64,1)' };
+const wait = (ms) => new Promise((r) => setTimeout(r, ms * SPEED));
+function anim(el, frames, ms, ease = E.std, delay = 0) {
+  if (reduce) { const last = frames[frames.length - 1]; Object.assign(el.style, last); return Promise.resolve(); }
+  const a = el.animate(frames, { duration: ms * SPEED, easing: ease, delay: delay * SPEED, fill: 'both' });
+  return a.finished.then(() => { try { a.commitStyles(); } catch (e) {} a.cancel(); });
+}
+function fit() { const s = box.clientWidth / 1280; stage.style.transform = `scale(${s})`; }
+addEventListener('resize', fit); fit();
+const show = (el) => el.classList.remove('hidden');
+const hide = (el) => el.classList.add('hidden');
+const cap = (t) => { $('caption').innerHTML = t; };
+function rectIn(el) { const s = box.clientWidth / 1280, b = stage.getBoundingClientRect(), r = el.getBoundingClientRect(); return { x: (r.left - b.left) / s, y: (r.top - b.top) / s, w: r.width / s, h: r.height / s }; }
+let view = 'list';
+function setView(v) { ['list', 'canvas', 'editor'].forEach((k) => (k === v ? show : hide)($('v-' + k))); view = v; $('crumb-last').textContent = v === 'list' ? 'Creatives' : v === 'canvas' ? 'A crime a week' : 'A crime a week / Reel'; }
+function resetAll() { hide($('pop')); hide($('toast')); hide($('draft')); hide($('gen-bar')); $('chat').innerHTML = ''; $('chat-count').style.display = 'none'; $('reel-badge').textContent = '★ v5'; $('dur').textContent = '1.70s'; document.querySelectorAll('.shimmer').forEach((n) => n.remove()); }
+
+async function toCanvasFromList() {
+  cap('<b>Change page.</b> The page you leave slides 24 px back and fades in 200 ms (ease-in); the new one arrives from 24 px ahead in 320 ms (emphasized ease-out). Lists stagger by 30 ms.');
+  const list = $('v-list');
+  await anim(list, [{ opacity: 1, transform: 'translateX(0)' }, { opacity: 0, transform: 'translateX(-24px)' }], D.s, E.in);
+  setView('canvas'); list.style.opacity = ''; list.style.transform = '';
+  const c = $('v-canvas');
+  const items = [$('c-left'), $('b-reel'), $('b-img'), $('b-tt'), $('b-yt'), $('c-right')];
+  items.forEach((n) => (n.style.opacity = 0));
+  await Promise.all(items.map((n, i) => anim(n, [{ opacity: 0, transform: 'translateX(24px)' }, { opacity: 1, transform: 'translateX(0)' }], D.m, E.out, i * 30)));
+}
+async function scenePage() {
+  resetAll(); setView('list');
+  await Promise.all([...document.querySelectorAll('#list > *')].map((n, i) => anim(n, [{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }], D.m, E.out, i * 40)));
+  await wait(500);
+  const row = document.querySelector('[data-open]');
+  await anim(row, [{ transform: 'scale(1)' }, { transform: 'scale(.985)' }, { transform: 'scale(1)' }], D.s, E.std);
+  await toCanvasFromList();
+}
+
+async function openEditor() {
+  cap('<b>Open the editor.</b> The Reel artboard itself grows into the player (shared element, 480 ms emphasized). Everything else on the canvas recedes; scenes, inspector and timeline slide in from their own edges with a 40 ms stagger.');
+  const from = rectIn($('reel-frame'));
+  const others = [$('b-img'), $('b-tt'), $('b-yt'), $('c-left'), $('c-right')];
+  const fadeOut = Promise.all(others.map((n) => anim(n, [{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(.97)' }], D.s, E.in)));
+  const ghost = $('reel-frame').cloneNode(true); ghost.id = ''; ghost.querySelector('button')?.remove();
+  Object.assign(ghost.style, { position: 'absolute', left: from.x + 'px', top: from.y + 'px', width: from.w + 'px', height: from.h + 'px', zIndex: 30, margin: 0 });
+  stage.appendChild(ghost); $('reel-frame').style.visibility = 'hidden';
+  await fadeOut;
+  setView('editor');
+  const parts = [$('e-left'), $('e-right'), $('e-time')];
+  parts.forEach((n) => (n.style.opacity = 0));
+  const to = rectIn($('e-player'));
+  const dx = to.x - from.x, dy = to.y - from.y, sx = to.w / from.w, sy = to.h / from.h;
+  ghost.style.transformOrigin = '0 0';
+  const grow = anim(ghost, [{ transform: 'translate(0,0) scale(1)', borderRadius: '4px' }, { transform: `translate(${dx}px,${dy}px) scale(${sx},${sy})`, borderRadius: '6px' }], D.l, E.out);
+  const slides = [
+    anim($('e-left'), [{ opacity: 0, transform: 'translateX(-16px)' }, { opacity: 1, transform: 'none' }], D.m, E.out, 160),
+    anim($('e-right'), [{ opacity: 0, transform: 'translateX(16px)' }, { opacity: 1, transform: 'none' }], D.m, E.out, 200),
+    anim($('e-time'), [{ opacity: 0, transform: 'translateY(24px)' }, { opacity: 1, transform: 'none' }], D.m, E.out, 240)
+  ];
+  await Promise.all([grow, ...slides]);
+  $('e-player').style.visibility = 'visible'; ghost.remove();
+  others.forEach((n) => { n.style.opacity = ''; n.style.transform = ''; }); $('reel-frame').style.visibility = '';
+}
+async function closeEditor() {
+  cap('<b>Back to all formats.</b> The reverse path, 20% faster: leaving should always feel quicker than arriving.');
+  const parts = [$('e-left'), $('e-right'), $('e-time')];
+  await Promise.all(parts.map((n, i) => anim(n, [{ opacity: 1 }, { opacity: 0 }], D.xs, E.in, i * 20)));
+  setView('canvas'); parts.forEach((n) => (n.style.opacity = ''));
+  const items = [$('c-left'), $('b-img'), $('b-tt'), $('b-yt'), $('c-right')];
+  await Promise.all([anim($('reel-frame'), [{ transform: 'scale(1.06)', opacity: .6 }, { transform: 'scale(1)', opacity: 1 }], D.m, E.out), ...items.map((n, i) => anim(n, [{ opacity: 0, transform: 'scale(.98)' }, { opacity: 1, transform: 'scale(1)' }], D.m, E.out, 60 + i * 30))]);
+}
+async function sceneEditor() {
+  resetAll(); if (view !== 'canvas') setView('canvas');
+  await wait(300);
+  await anim($('open-ed'), [{ transform: 'translate(-50%,-50%) scale(1)' }, { transform: 'translate(-50%,-50%) scale(.94)' }, { transform: 'translate(-50%,-50%) scale(1)' }], D.s);
+  await openEditor(); await wait(900); await closeEditor();
+}
+
+async function sceneVersions() {
+  resetAll(); if (view !== 'editor') { setView('editor'); $('e-player').style.visibility = 'visible'; }
+  cap('<b>Version history.</b> Opens from the button it belongs to: scale 0.96 → 1 and 4 px drop in 200 ms with a soft overshoot; rows follow 20 ms apart. Closing is a 120 ms fade, no movement.');
+  await wait(300);
+  const pop = $('pop'); show(pop);
+  const rows = [...pop.querySelectorAll('.vrow')];
+  await Promise.all([anim(pop, [{ opacity: 0, transform: 'translateY(-4px) scale(.96)' }, { opacity: 1, transform: 'none' }], D.s, E.spring), ...rows.map((r, i) => anim(r, [{ opacity: 0, transform: 'translateY(-3px)' }, { opacity: 1, transform: 'none' }], D.s, E.out, 40 + i * 20))]);
+  await wait(700);
+  await anim(rows[2], [{ background: 'transparent' }, { background: 'var(--accentSoft)' }], D.s);
+  await wait(900);
+  await anim(pop, [{ opacity: 1 }, { opacity: 0 }], D.xs, E.in); hide(pop); pop.style.opacity = ''; rows[2].style.background = '';
+}
+
+function ring(sec) { return `<svg class="ring" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="var(--warnLine)"/><circle id="ring-p" cx="12" cy="12" r="9" stroke="var(--accent)" stroke-dasharray="56.5" stroke-dashoffset="0" transform="rotate(-90 12 12)" stroke-linecap="round"/></svg>`; }
+async function sceneApproval() {
+  resetAll(); if (view !== 'canvas') setView('canvas');
+  cap('<b>Approval arrives.</b> A toast drops in from under the top bar (320 ms, emphasized), the card enters the chat with a soft highlight that pulses twice, and the countdown ring drains in real time. In the desktop app the Dock badge bounces too.');
+  await wait(300);
+  const t = $('toast'); $('toast-text').textContent = 'The agent needs your OK to render'; show(t);
+  const chat = $('chat');
+  chat.insertAdjacentHTML('beforeend', `<div class="card" id="ap"><div style="display:flex;align-items:center;gap:8px">${ring()}<b>Render the reel again?</b></div><span style="color:var(--muted);font-size:12px">Only this creative's folder · no internet</span><div style="display:flex;gap:6px"><button class="btn primary" type="button" style="height:28px">Allow</button><button class="btn" type="button" style="height:28px">Always here</button></div></div>`);
+  const card = $('ap');
+  await Promise.all([
+    anim(t, [{ opacity: 0, transform: 'translate(-50%,-16px)' }, { opacity: 1, transform: 'translate(-50%,0)' }], D.m, E.out),
+    anim(card, [{ opacity: 0, transform: 'translateY(10px)' }, { opacity: 1, transform: 'none' }], D.m, E.out, 80)
+  ]);
+  const cnt = $('chat-count'); cnt.style.display = 'inline-flex';
+  anim(cnt, [{ transform: 'scale(.6)' }, { transform: 'scale(1.25)' }, { transform: 'scale(1)' }], D.m, E.spring);
+  anim($('ring-p'), [{ strokeDashoffset: 0 }, { strokeDashoffset: 56.5 }], 6000, 'linear');
+  for (let i = 0; i < 2; i++) await anim(card, [{ boxShadow: '0 0 0 0 rgba(255,90,31,.45)' }, { boxShadow: '0 0 0 8px rgba(255,90,31,0)' }], 900, E.out);
+  await wait(800);
+  await anim(t, [{ opacity: 1 }, { opacity: 0, transform: 'translate(-50%,-8px)' }], D.s, E.in); hide(t); t.style.opacity = ''; t.style.transform = '';
+}
+
+async function sceneGenerate() {
+  resetAll(); if (view !== 'canvas') setView('canvas');
+  cap('<b>Generating.</b> The artboard keeps its last frame under a moving sheen, progress grows on a thin bar, and each agent step lands as its own message. When the render is done the new frame crossfades in (blur → sharp, 480 ms) and the version badge pops.');
+  const frame = $('reel-frame'); frame.insertAdjacentHTML('beforeend', '<div class="shimmer"></div>');
+  show($('gen-bar')); const fill = $('gen-fill'); fill.style.width = '0%';
+  anim(fill, [{ width: '0%' }, { width: '35%' }, { width: '62%' }, { width: '100%' }], 3600, 'cubic-bezier(.3,.1,.2,1)');
+  const chat = $('chat');
+  const steps = ['Reading your comment at 0:05', 'Logo scaled to 82%, end card held for 2 s', 'Rendering 210 frames'];
+  for (const s of steps) {
+    chat.insertAdjacentHTML('beforeend', `<div class="msg"><span class="w">Agent · now</span><span><span class="typing"><span></span><span></span><span></span></span></span></div>`);
+    const m = chat.lastElementChild; await anim(m, [{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'none' }], D.m, E.out);
+    await wait(600); m.lastElementChild.textContent = s;
+    await anim(m.lastElementChild, [{ opacity: 0 }, { opacity: 1 }], D.s);
+    await wait(350);
+  }
+  await wait(600);
+  frame.querySelector('.shimmer')?.remove();
+  const img = $('reel-img'); const next = img.cloneNode(); next.src = '__R6__'; next.style.position = 'absolute'; next.style.inset = 0; frame.appendChild(next);
+  await anim(next, [{ opacity: 0, filter: 'blur(8px)' }, { opacity: 1, filter: 'blur(0)' }], D.l, E.out);
+  img.src = '__R6__'; next.remove(); hide($('gen-bar'));
+  const b = $('reel-badge'); b.textContent = 'v8 new';
+  await anim(b, [{ transform: 'scale(.7)', background: 'var(--accent)', color: '#fff' }, { transform: 'scale(1.15)' }, { transform: 'scale(1)', background: 'var(--field)', color: 'var(--text)' }], 600, E.spring);
+  const t = $('toast'); $('toast-text').textContent = 'Reel v8 is ready'; show(t);
+  await anim(t, [{ opacity: 0, transform: 'translate(-50%,-16px)' }, { opacity: 1, transform: 'translate(-50%,0)' }], D.m, E.out);
+  await wait(1400); await anim(t, [{ opacity: 1 }, { opacity: 0 }], D.s, E.in); hide(t); t.style.opacity = ''; t.style.transform = '';
+  img.src = '__R45__';
+}
+
+async function sceneDraft() {
+  resetAll(); if (view !== 'editor') { setView('editor'); $('e-player').style.visibility = 'visible'; }
+  cap('<b>Edit and save.</b> A direct edit flashes the field and the clip it changed, the timeline clip stretches to its new length, and the Draft pill drops in. Save morphs the pill into a confirmation, then it leaves on its own.');
+  await wait(300);
+  const f = $('dur-field');
+  await anim(f, [{ boxShadow: 'inset 0 0 0 1px var(--accent)' }, { boxShadow: 'inset 0 0 0 1px transparent' }], 700);
+  $('dur').textContent = '2.70s';
+  const clip = $('sel-clip');
+  anim(clip, [{ flexGrow: 1.7 }, { flexGrow: 2.7 }], D.m, E.out);
+  const d = $('draft'); show(d); $('draft-text').innerHTML = '<b>Draft</b> <span style="color:var(--muted)">· 1 edit · rendered 1s ago</span>'; $('save').classList.remove('hidden');
+  await anim(d, [{ opacity: 0, transform: 'translate(-50%,-10px)' }, { opacity: 1, transform: 'translate(-50%,0)' }], D.m, E.out);
+  await wait(1200);
+  await anim($('save'), [{ transform: 'scale(1)' }, { transform: 'scale(.94)' }, { transform: 'scale(1)' }], D.s);
+  const w0 = d.offsetWidth;
+  $('save').classList.add('hidden'); $('draft-text').innerHTML = '<b style="color:var(--ok)">✓ Saved as Reel v8</b>';
+  const w1 = d.offsetWidth;
+  await anim(d, [{ width: w0 + 'px' }, { width: w1 + 'px' }], D.m, E.out);
+  d.style.width = '';
+  await wait(1100);
+  await anim(d, [{ opacity: 1 }, { opacity: 0, transform: 'translate(-50%,-6px)' }], D.s, E.in); hide(d); d.style.opacity = ''; d.style.transform = '';
+  clip.style.flexGrow = ''; $('dur').textContent = '1.70s';
+}
+
+const scenes = { page: scenePage, editor: sceneEditor, versions: sceneVersions, approval: sceneApproval, generate: sceneGenerate, draft: sceneDraft };
+let busy = false;
+async function run(fn) { if (busy) return; busy = true; document.querySelectorAll('.rail .btn[data-s], #play-all').forEach((b) => (b.disabled = true)); try { await fn(); } finally { busy = false; document.querySelectorAll('.rail .btn[data-s], #play-all').forEach((b) => (b.disabled = false)); } }
+document.querySelectorAll('[data-s]').forEach((b) => b.addEventListener('click', () => run(scenes[b.dataset.s])));
+$('play-all').addEventListener('click', () => run(async () => { for (const k of ['page', 'editor', 'versions', 'approval', 'generate', 'draft']) { await scenes[k](); await wait(700); } cap('That was every scene. Try them one by one in slow motion.'); }));
+$('open-ed').addEventListener('click', () => run(openEditor));
+$('back').addEventListener('click', () => run(closeEditor));
+$('vbtn').addEventListener('click', () => run(sceneVersions));
+document.querySelector('[data-open]').addEventListener('click', () => run(toCanvasFromList));
+$('slow').addEventListener('click', (e) => { SPEED = SPEED === 1 ? 4 : 1; e.currentTarget.setAttribute('aria-pressed', String(SPEED === 4)); });
+$('theme').addEventListener('click', () => { const r = document.documentElement; const dark = r.dataset.theme ? r.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; r.dataset.theme = dark ? 'light' : 'dark'; });
+if (reduce) cap('Your system asks for reduced motion: scenes jump to their end state. The app will do the same.');
+</script>

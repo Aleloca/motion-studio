@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>References</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Newsreader:ital,opsz,wght@1,6..72,400&display=swap">
+<style>
+body{margin:0}
+a{color:#E8501A}a:hover{color:#B93E12}
+</style>
+</helmet>
+<div style="width: 1440px; height: 900px; box-sizing: border-box; background: {{p.bg}}; color: {{p.text}}; font-family: 'Schibsted Grotesk', ui-sans-serif, system-ui, sans-serif; font-size: 13px; display: flex; flex-direction: column; overflow: hidden">
+
+<div style="height: 52px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 14px; background: {{p.panel}}; border-bottom: 1px solid {{p.line}}">
+<div style="width: 26px; height: 26px; border-radius: 7px; background: {{p.ink}}; display: flex; align-items: center; justify-content: center"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 2.5v7l6-3.5-6-3.5Z" fill="#FF5A1F"></path></svg></div>
+<button type="button" style="display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px 0 6px; border-radius: 8px; border: 0; background: transparent; color: {{p.text}}; font: inherit; font-weight: 600"><span style="width: 20px; height: 20px; border-radius: 5px; background: #1B1913; color: #FBE8C3; font-family: Georgia, serif; font-size: 9px; font-weight: 700; display: flex; align-items: center; justify-content: center">HS</span>Half Story<svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="{{p.faint}}" stroke-width="1.4"><path d="M3.5 4.5 6 7l2.5-2.5"></path></svg></button>
+<nav aria-label="Project sections" style="display: flex; gap: 2px; margin-left: 4px">
+<a href="#" style="height: 32px; display: flex; align-items: center; padding: 0 12px; border-radius: 8px; color: {{p.muted}}; text-decoration: none">Creatives</a>
+<a href="#" style="height: 32px; display: flex; align-items: center; padding: 0 12px; border-radius: 8px; color: {{p.muted}}; text-decoration: none">Brand</a>
+<a href="#" style="height: 32px; display: flex; align-items: center; padding: 0 12px; border-radius: 8px; color: {{p.muted}}; text-decoration: none">Assets</a>
+<a href="#" style="height: 32px; display: flex; align-items: center; padding: 0 12px; border-radius: 8px; background: {{p.field}}; color: {{p.text}}; font-weight: 600; text-decoration: none">References</a>
+<a href="#" style="height: 32px; display: flex; align-items: center; padding: 0 12px; border-radius: 8px; color: {{p.muted}}; text-decoration: none">Settings</a>
+</nav>
+<div style="flex: 1"></div>
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: {{p.muted}}">38.2k tokens</span>
+<span style="width: 28px; height: 28px; border-radius: 50%; background: #FF5A1F; color: #FFFFFF; font-weight: 700; font-size: 11px; display: flex; align-items: center; justify-content: center">AL</span>
+</div>
+
+<div style="flex: 1; min-height: 0; overflow: hidden; padding: 24px 0">
+<div style="width: 1280px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px">
+<div style="display: flex; align-items: flex-end; gap: 16px">
+<div style="display: flex; flex-direction: column; gap: 4px"><h1 style="margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.015em">References</h1><span style="color: {{p.muted}}">Inspiration for the look and feel. The agent reads them; renders only use what's in Assets.</span></div>
+<div style="flex: 1"></div>
+<div style="display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: {{p.field}}">
+<span style="height: 28px; padding: 0 12px; border-radius: 7px; background: {{p.panel}}; font-weight: 600; display: flex; align-items: center; box-shadow: 0 1px 2px {{p.shadow}}">All <span style="color: {{p.faint}}; font-weight: 400; margin-left: 4px">7</span></span>
+<span style="height: 28px; padding: 0 12px; border-radius: 7px; color: {{p.muted}}; display: flex; align-items: center">Images 4</span>
+<span style="height: 28px; padding: 0 12px; border-radius: 7px; color: {{p.muted}}; display: flex; align-items: center">Links 2</span>
+<span style="height: 28px; padding: 0 12px; border-radius: 7px; color: {{p.muted}}; display: flex; align-items: center">Notes 1</span>
+</div>
+<div style="display: flex; gap: 6px"><label for="ref-url{{p.suffix}}" style="position: absolute; left: -9999px">Paste a link</label><input id="ref-url{{p.suffix}}" type="text" placeholder="Paste a link or drop images" style="width: 280px; height: 34px; padding: 0 12px; border-radius: 9px; border: 0; background: {{p.panel}}; box-shadow: inset 0 0 0 1px {{p.line}}; color: {{p.text}}; font: inherit"><button type="button" style="height: 34px; padding: 0 14px; border-radius: 9px; border: 0; background: {{p.ink}}; color: {{p.inkText}}; font: inherit; font-weight: 600">Add</button></div>
+</div>
+
+<div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 10px; background: {{p.panel}}; box-shadow: 0 0 0 1px {{p.line}}"><span style="width: 8px; height: 8px; border-radius: 50%; background: #FF5A1F"></span><span><b>2 references</b> feed the next brand analysis</span><span style="color: {{p.muted}}">· turn it on for any card with the switch</span><a href="#" style="margin-left: auto; font-size: 12px">Analyze brand with these</a></div>
+
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; align-items: start">
+
+<div style="display: flex; flex-direction: column; gap: 14px">
+<div style="border-radius: 14px; background: {{p.panel}}; box-shadow: 0 0 0 1.5px #FF5A1F; overflow: hidden"><img src="/_blob/5679df1e240468bacd50a425bf84116c" alt="Crime scene" style="width: 100%; height: 380px; object-fit: cover; display: block"><div style="padding: 10px 12px; display: flex; flex-direction: column; gap: 6px"><span style="line-height: 1.45">The single orange leaf is the whole palette idea.</span><div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: {{p.muted}}">half-story.com<span style="margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: {{p.text}}">Brand analysis<span style="width: 28px; height: 16px; border-radius: 8px; background: #FF5A1F; position: relative"><span style="position: absolute; right: 2px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: #FFF"></span></span></span></div></div></div>
+<div style="border-radius: 14px; background: {{p.panel}}; box-shadow: 0 0 0 1px {{p.line}}; padding: 14px; display: flex; flex-direction: column; gap: 8px"><span style="font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: {{p.muted}}">Note</span><span style="font-family: 'Newsreader', Georgia, serif; font-style: italic; font-size: 18px; line-height: 1.35">Typewriter clicks for the text reveals, never a music bed louder than the rain.</span><span style="font-size: 12px; color: {{p.faint}}">You · today 15:02</span></div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 14px">
+<div style="border-radius: 14px; background: {{p.panel}}; box-shadow: 0 0 0 1.5px #FF5A1F; overflow: hidden"><img src="/_blob/7fbfc020c78d1bfc5408657c745c77e6" alt="Case 091 cover" style="width: 100%; height: 200px; object-fit: cover; display: block"><div style="padding: 10px 12px; display: flex; flex-direction: column; gap: 6px"><span style="line-height: 1.45">Art Deco lines, rain and one warm light source.</span><div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: {{p.muted}}">half-story.com<span style="margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: {{p.text}}">Brand analysis<span style="width: 28px; height: 16px; border-radius: 8px; background: #FF5A1F; position: relative"><span style="position: absolute; right: 2px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: #FFF"></span></span></span></div></div></div>
+<a href="#" style="border-radius: 14px; background: {{p.panel}}; box-shadow: 0 0 0 1px {{p.line}}; overflow: hidden; color: inherit; text-decoration: none; display: flex; flex-direction: column"><div style="height: 150px; background: #0B0B0B; display: flex; align-items: center; justify-content: center; position: relative"><span style="color: #E8E2D6; font-family: 'Newsreader', Georgia, serif; font-style: italic; font-size: 26px">title sequence</span><span style="position: absolute; left: 10px; top: 10px; height: 22px; padding: 0 8px; border-radius: 6px; background: rgba(255,255,255,0.15); color: #FFF; font-size: 11px; display: flex; align-items: center; gap: 5px"><svg width="10" height="10" viewBox="0 0 12 12"><path d="M4 3v6l5-3-5-3Z" fill="#FFF"></path></svg>Video · 1:42</span></div><div style="padding: 10px 12px; display: flex; flex-direction: column; gap: 6px"><b style="font-weight: 600">Noir title sequences, a study</b><span style="font-size: 12px; color: {{p.muted}}; line-height: 1.45">Slow push-ins, type that appears letter by letter.</span><div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: {{p.muted}}"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M5 7 7 5M4.5 5.5 3 7a1.8 1.8 0 0 0 2.5 2.5L7 8M7.5 6.5 9 5a1.8 1.8 0 0 0-2.5-2.5L5 4"></path></svg>vimeo.com<span style="margin-left: auto; width: 28px; height: 16px; border-radius: 8px; background: {{p.line}}; position: relative"><span style="position: absolute; left: 2px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: #FFF"></span></span></div></div></a>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 14px">
+<div style="border-radius: 14px; background: {{p.panel}}; box-shadow: 0 0 0 1px {{p.line}}; overflow: hidden"><img src="/_blob/73efc3937e6842b951db823612245790" alt="Character portrait" style="width: 100%; height: 330px; object-fit: cover; object-position: top; display: block"><div style="padding: 10px 12px; display: flex; flex-direction: column; gap: 6px"><span style="line-height: 1.45">Character sheets should feel like this: loose hatching, one orange detail.</span><div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: {{p.muted}}">Uploaded<span style="margin-left: auto; width: 28px; height: 16px; border-radius: 8px; background: {{p.line}}; position: relative"><span style="position: absolute; left: 2px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: #FFF"></span></span></div></div></div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 14px">
+<a href="#" style="border-radius: 14px; background: {{p.panel}}; box-shadow: 0 0 0 1px {{p.line}}; overflow: hidden; color: inherit; text-decoration: none; display: flex; flex-direction: column"><div style="height: 180px; display: grid; grid-template-columns: 1fr 1fr; gap: 2px; background: {{p.line}}"><div style="background: #2E2A22; display: flex; align-items: flex-end; padding: 10px; color: #E9D9B8; font-weight: 800; font-size: 20px; letter-spacing: 0.08em">HOTEL</div><div style="background: #3A3226; display: flex; align-items: center; justify-content: center; color: #E86808; font-family: Georgia, serif; font-size: 34px">✦</div></div><div style="padding: 10px 12px; display: flex; flex-direction: column; gap: 6px"><b style="font-weight: 600">Art Deco signage, 1930s</b><span style="font-size: 12px; color: {{p.muted}}; line-height: 1.45">Board with 48 pins · lettering for street scenes</span><div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: {{p.muted}}"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M5 7 7 5M4.5 5.5 3 7a1.8 1.8 0 0 0 2.5 2.5L7 8M7.5 6.5 9 5a1.8 1.8 0 0 0-2.5-2.5L5 4"></path></svg>pinterest.com<span style="margin-left: auto; width: 28px; height: 16px; border-radius: 8px; background: {{p.line}}; position: relative"><span style="position: absolute; left: 2px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: #FFF"></span></span></div></div></a>
+<div style="border-radius: 14px; background: {{p.panel}}; box-shadow: 0 0 0 1px {{p.line}}; overflow: hidden"><img src="/_blob/7fbfc020c78d1bfc5408657c745c77e6" alt="Rain at night" style="width: 100%; height: 160px; object-fit: cover; object-position: center 70%; display: block; filter: grayscale(0.4)"><div style="padding: 10px 12px; display: flex; flex-direction: column; gap: 6px"><span style="line-height: 1.45">Rain overlay: thin, diagonal, never covering faces.</span><div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: {{p.muted}}">From Reel v6<span style="margin-left: auto; width: 28px; height: 16px; border-radius: 8px; background: {{p.line}}; position: relative"><span style="position: absolute; left: 2px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: #FFF"></span></span></div></div></div>
+<div style="border-radius: 14px; border: 1.5px dashed {{p.line}}; height: 120px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; color: {{p.muted}}"><b style="color: {{p.text}}; font-weight: 600">Add a note</b><span style="font-size: 12px">Words for the agent, no image needed</span></div>
+</div>
+
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const light = { bg: '#F5F5F4', panel: '#FFFFFF', line: '#E5E5E3', line2: '#EFEFED', text: '#171717', muted: '#6B6B6B', faint: '#A3A3A3', chipBg: '#F0F0EE', field: '#F2F2F1', dot: '#DEDEDB', ink: '#171717', inkText: '#FFFFFF', okBg: '#E4F3EA', okText: '#2E7A4C', warnBg: '#FFF5EF', warnBorder: '#FFD3C0', warnText: '#D9480F', sel: '#FFF1EA', shadow: 'rgba(0,0,0,0.08)', suffix: '' };
+    const night = { bg: '#0F0F0F', panel: '#171717', line: '#2A2A2A', line2: '#212121', text: '#EDEDED', muted: '#9C9C9C', faint: '#6B6B6B', chipBg: '#242424', field: '#222222', dot: '#242424', ink: '#EDEDED', inkText: '#0F0F0F', okBg: '#132A1D', okText: '#6FCF97', warnBg: '#231711', warnBorder: '#55301E', warnText: '#FF8A5C', sel: '#2A1A12', shadow: 'rgba(0,0,0,0.5)', suffix: 'Dark' };
+    return { p: dark ? night : light };
+  }
+}
+</script>
+</body>
+</html>

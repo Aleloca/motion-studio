@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Project creatives</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+body{margin:0}
+a{color:#E8501A}a:hover{color:#B93E12}
+</style>
+</helmet>
+<div style="width: 1440px; height: 900px; box-sizing: border-box; background: {{p.bg}}; color: {{p.text}}; font-family: 'Schibsted Grotesk', ui-sans-serif, system-ui, sans-serif; font-size: 13px; display: flex; flex-direction: column; overflow: hidden">
+
+<div style="height: 52px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 14px; background: {{p.panel}}; border-bottom: 1px solid {{p.line}}">
+<div style="width: 26px; height: 26px; border-radius: 7px; background: {{p.ink}}; display: flex; align-items: center; justify-content: center"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 2.5v7l6-3.5-6-3.5Z" fill="#FF5A1F"></path></svg></div>
+<button type="button" style="display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px 0 6px; border-radius: 8px; border: 0; background: transparent; color: {{p.text}}; font: inherit; font-weight: 600"><span style="width: 20px; height: 20px; border-radius: 5px; background: #1B1913; color: #FBE8C3; font-family: Georgia, serif; font-size: 9px; font-weight: 700; display: flex; align-items: center; justify-content: center">HS</span>Half Story<svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="{{p.faint}}" stroke-width="1.4"><path d="M3.5 4.5 6 7l2.5-2.5"></path></svg></button>
+<nav aria-label="Project sections" style="display: flex; gap: 2px; margin-left: 4px">
+<a href="#" style="height: 32px; display: flex; align-items: center; padding: 0 12px; border-radius: 8px; background: {{p.field}}; color: {{p.text}}; font-weight: 600; text-decoration: none">Creatives</a>
+<a href="#" style="height: 32px; display: flex; align-items: center; padding: 0 12px; border-radius: 8px; color: {{p.muted}}; text-decoration: none">Brand</a>
+<a href="#" style="height: 32px; display: flex; align-items: center; padding: 0 12px; border-radius: 8px; color: {{p.muted}}; text-decoration: none">Assets</a>
+<a href="#" style="height: 32px; display: flex; align-items: center; padding: 0 12px; border-radius: 8px; color: {{p.muted}}; text-decoration: none">References</a>
+<a href="#" style="height: 32px; display: flex; align-items: center; padding: 0 12px; border-radius: 8px; color: {{p.muted}}; text-decoration: none">Settings</a>
+</nav>
+<div style="flex: 1"></div>
+<button type="button" style="display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: 8px; border: 0; background: transparent; color: {{p.muted}}; font: inherit"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke-width="2"><circle cx="8" cy="8" r="5.5" stroke="{{p.line}}"></circle><path d="M8 2.5a5.5 5.5 0 0 1 5.5 5.5" stroke="#FF5A1F" stroke-linecap="round"></path></svg>1 running</button>
+<button type="button" aria-label="Approvals, 1 waiting" style="position: relative; width: 32px; height: 32px; border-radius: 8px; border: 0; background: transparent; color: {{p.muted}}; display: flex; align-items: center; justify-content: center"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M4 11V7a4 4 0 0 1 8 0v4l1 1.5H3L4 11ZM6.5 14h3"></path></svg><span style="position: absolute; right: 4px; top: 4px; min-width: 14px; height: 14px; border-radius: 7px; background: #FF5A1F; color: #FFFFFF; font-size: 9px; font-weight: 700; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 2px {{p.panel}}">1</span></button>
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: {{p.muted}}">38.2k tokens</span>
+<span style="width: 28px; height: 28px; border-radius: 50%; background: #FF5A1F; color: #FFFFFF; font-weight: 700; font-size: 11px; display: flex; align-items: center; justify-content: center">AL</span>
+</div>
+
+<div style="flex: 1; min-height: 0; overflow: hidden; padding: 28px 0">
+<div style="width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px">
+
+<div style="display: flex; align-items: center; gap: 12px">
+<h1 style="margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.015em">Creatives</h1>
+<div role="tablist" aria-label="Filter" style="display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: {{p.field}}; margin-left: 8px">
+<button type="button" role="tab" aria-selected="true" style="height: 28px; padding: 0 12px; border-radius: 7px; border: 0; background: {{p.panel}}; color: {{p.text}}; font: inherit; font-weight: 600; box-shadow: 0 1px 2px {{p.shadow}}">All <span style="color: {{p.faint}}; font-weight: 400">5</span></button>
+<button type="button" role="tab" aria-selected="false" style="height: 28px; padding: 0 12px; border-radius: 7px; border: 0; background: transparent; color: {{p.muted}}; font: inherit">Needs you <span style="display: inline-flex; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: #FF5A1F; color: #FFFFFF; font-size: 10px; font-weight: 700; align-items: center; justify-content: center">1</span></button>
+<button type="button" role="tab" aria-selected="false" style="height: 28px; padding: 0 12px; border-radius: 7px; border: 0; background: transparent; color: {{p.muted}}; font: inherit">In progress <span style="color: {{p.faint}}">1</span></button>
+<button type="button" role="tab" aria-selected="false" style="height: 28px; padding: 0 12px; border-radius: 7px; border: 0; background: transparent; color: {{p.muted}}; font: inherit">Ready <span style="color: {{p.faint}}">2</span></button>
+<button type="button" role="tab" aria-selected="false" style="height: 28px; padding: 0 12px; border-radius: 7px; border: 0; background: transparent; color: {{p.muted}}; font: inherit">Drafts <span style="color: {{p.faint}}">1</span></button>
+</div>
+<div style="flex: 1"></div>
+<div style="width: 220px; height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-radius: 8px; background: {{p.panel}}; box-shadow: inset 0 0 0 1px {{p.line}}; color: {{p.faint}}"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="7" cy="7" r="5"></circle><path d="m11 11 3.5 3.5"></path></svg>Search creatives</div>
+<button type="button" style="display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px; border-radius: 8px; border: 0; background: {{p.ink}}; color: {{p.inkText}}; font: inherit; font-weight: 600"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3v10M3 8h10"></path></svg>New creative</button>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px">
+
+<a href="#" style="display: flex; flex-direction: column; border-radius: 14px; background: {{p.panel}}; box-shadow: 0 0 0 1.5px #FF5A1F, 0 12px 30px {{p.shadow}}; overflow: hidden; color: inherit; text-decoration: none">
+<div style="position: relative; height: 210px; background-color: {{p.bg}}; background-image: radial-gradient({{p.dot}} 1px, transparent 1px); background-size: 14px 14px; display: flex; align-items: center; justify-content: center; gap: 10px">
+<div style="width: 92px; height: 164px; border-radius: 3px; overflow: hidden; box-shadow: 0 6px 16px {{p.shadow}}"><img src="/_blob/f94b610c0a2c2130f09768432b7e5a9c" alt="" style="width: 100%; height: 100%; object-fit: cover; display: block"></div>
+<div style="width: 120px; height: 120px; border-radius: 3px; overflow: hidden; box-shadow: 0 6px 16px {{p.shadow}}"><img src="/_blob/670e246698e20ffaa1efc5ef38d39cc7" alt="" style="width: 100%; height: 100%; object-fit: cover; display: block"></div>
+<div style="display: flex; flex-direction: column; gap: 6px"><div style="width: 44px; height: 78px; border-radius: 3px; overflow: hidden; opacity: 0.85"><img src="/_blob/f94b610c0a2c2130f09768432b7e5a9c" alt="" style="width: 100%; height: 100%; object-fit: cover; display: block"></div><span style="font-size: 10px; color: {{p.faint}}; text-align: center">+2 linked</span></div>
+</div>
+<div style="padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px; border-top: 1px solid {{p.line2}}">
+<div style="display: flex; align-items: center; gap: 8px"><b style="font-size: 14px; font-weight: 700">A crime a week</b><span style="margin-left: auto; font-size: 12px; color: {{p.faint}}">5 min ago</span></div>
+<div style="display: flex; gap: 6px; flex-wrap: wrap">
+<span style="display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 7px 0 4px; border-radius: 6px; background: {{p.field}}; font-size: 11px"><span style="width: 14px; height: 14px; border-radius: 3px; background: #C13584; color: #FFF; font-size: 8px; font-weight: 700; display: flex; align-items: center; justify-content: center">IG</span>Reel ★ v5</span>
+<span style="display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 7px 0 4px; border-radius: 6px; background: {{p.field}}; font-size: 11px"><span style="width: 14px; height: 14px; border-radius: 3px; background: #C13584; color: #FFF; font-size: 8px; font-weight: 700; display: flex; align-items: center; justify-content: center">IG</span>Image ★ v2</span>
+<span style="display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 7px 0 4px; border-radius: 6px; background: {{p.field}}; font-size: 11px"><span style="width: 14px; height: 14px; border-radius: 3px; background: #111111; color: #FFF; font-size: 8px; font-weight: 700; display: flex; align-items: center; justify-content: center">TT</span>TikTok</span>
+<span style="display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 7px 0 4px; border-radius: 6px; background: {{p.field}}; font-size: 11px"><span style="width: 14px; height: 14px; border-radius: 3px; background: #E62117; color: #FFF; font-size: 8px; font-weight: 700; display: flex; align-items: center; justify-content: center">YT</span>Shorts</span>
+</div>
+<div style="display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 10px; border-radius: 10px; background: {{p.warnBg}}; box-shadow: inset 0 0 0 1px {{p.warnBorder}}"><span style="width: 7px; height: 7px; border-radius: 50%; background: #FF5A1F"></span><span style="font-size: 12px"><b>Render the reel again?</b> <span style="color: {{p.muted}}">· 3:48 left</span></span><span style="margin-left: auto; height: 26px; padding: 0 10px; border-radius: 7px; background: {{p.ink}}; color: {{p.inkText}}; font-size: 12px; font-weight: 600; display: flex; align-items: center">Review</span></div>
+</div>
+</a>
+
+<a href="#" style="display: flex; flex-direction: column; border-radius: 14px; background: {{p.panel}}; box-shadow: 0 0 0 1px {{p.line}}; overflow: hidden; color: inherit; text-decoration: none">
+<div style="position: relative; height: 210px; background-color: {{p.bg}}; background-image: radial-gradient({{p.dot}} 1px, transparent 1px); background-size: 14px 14px; display: flex; align-items: center; justify-content: center">
+<div style="position: relative; width: 92px; height: 164px; border-radius: 3px; overflow: hidden; box-shadow: 0 6px 16px {{p.shadow}}"><img src="/_blob/5679df1e240468bacd50a425bf84116c" alt="" style="width: 100%; height: 100%; object-fit: cover; display: block; filter: saturate(0.6) brightness(0.9)"><span style="position: absolute; inset: 0; background: linear-gradient(100deg, transparent 30%, rgba(255,255,255,0.28) 50%, transparent 70%)"></span></div>
+</div>
+<div style="padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px; border-top: 1px solid {{p.line2}}">
+<div style="display: flex; align-items: center; gap: 8px"><b style="font-size: 14px; font-weight: 700">Case 092 teaser</b><span style="margin-left: auto; font-size: 12px; color: {{p.faint}}">Started 2 min ago</span></div>
+<div style="display: flex; gap: 6px"><span style="display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 7px 0 4px; border-radius: 6px; background: {{p.field}}; font-size: 11px"><span style="width: 14px; height: 14px; border-radius: 3px; background: #C13584; color: #FFF; font-size: 8px; font-weight: 700; display: flex; align-items: center; justify-content: center">IG</span>Reel · first version</span></div>
+<div style="display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 10px; background: {{p.field}}"><span style="display: flex; justify-content: space-between; font-size: 12px"><span>Rendering 210 frames</span><span style="font-family: 'JetBrains Mono', monospace; color: {{p.muted}}">62% · ~1 min</span></span><span style="height: 3px; border-radius: 2px; background: {{p.line}}"><span style="display: block; width: 62%; height: 3px; border-radius: 2px; background: #FF5A1F"></span></span></div>
+</div>
+</a>
+
+<a href="#" style="display: flex; flex-direction: column; border-radius: 14px; background: {{p.panel}}; box-shadow: 0 0 0 1px {{p.line}}; overflow: hidden; color: inherit; text-decoration: none">
+<div style="position: relative; height: 210px; background-color: {{p.bg}}; background-image: radial-gradient({{p.dot}} 1px, transparent 1px); background-size: 14px 14px; display: flex; align-items: center; justify-content: center">
+<div style="width: 164px; height: 164px; border-radius: 3px; overflow: hidden; box-shadow: 0 6px 16px {{p.shadow}}"><img src="/_blob/670e246698e20ffaa1efc5ef38d39cc7" alt="" style="width: 100%; height: 100%; object-fit: cover; display: block"></div>
+</div>
+<div style="padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px; border-top: 1px solid {{p.line2}}">
+<div style="display: flex; align-items: center; gap: 8px"><b style="font-size: 14px; font-weight: 700">Weekly case post</b><span style="margin-left: auto; font-size: 12px; color: {{p.faint}}">2 h ago</span></div>
+<div style="display: flex; gap: 6px"><span style="display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 7px 0 4px; border-radius: 6px; background: {{p.field}}; font-size: 11px"><span style="width: 14px; height: 14px; border-radius: 3px; background: #C13584; color: #FFF; font-size: 8px; font-weight: 700; display: flex; align-items: center; justify-content: center">IG</span>Image ★ v1</span><span style="display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 7px 0 4px; border-radius: 6px; background: {{p.field}}; font-size: 11px"><span style="width: 14px; height: 14px; border-radius: 3px; background: #0A66C2; color: #FFF; font-size: 8px; font-weight: 700; display: flex; align-items: center; justify-content: center">in</span>Post ★ v1</span></div>
+<div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: {{p.okText}}"><span style="width: 7px; height: 7px; border-radius: 50%; background: {{p.okText}}"></span>Ready · exported to ~/Desktop/Half Story</div>
+</div>
+</a>
+
+<a href="#" style="display: flex; flex-direction: column; border-radius: 14px; background: {{p.panel}}; box-shadow: 0 0 0 1px {{p.line}}; overflow: hidden; color: inherit; text-decoration: none">
+<div style="position: relative; height: 210px; background-color: {{p.bg}}; background-image: radial-gradient({{p.dot}} 1px, transparent 1px); background-size: 14px 14px; display: flex; align-items: center; justify-content: center">
+<div style="position: relative; width: 92px; height: 164px; border-radius: 3px; overflow: hidden; box-shadow: 0 6px 16px {{p.shadow}}"><img src="/_blob/289a006c511d7cf6520be2d4cd1fb648" alt="" style="width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0.5"><span style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center"><span style="width: 36px; height: 36px; border-radius: 50%; background: {{p.panel}}; color: {{p.warnText}}; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px {{p.shadow}}"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 2 14.5 13.5h-13L8 2Z"></path><path d="M8 6.5v3M8 11.5v.5"></path></svg></span></span></div>
+</div>
+<div style="padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px; border-top: 1px solid {{p.line2}}">
+<div style="display: flex; align-items: center; gap: 8px"><b style="font-size: 14px; font-weight: 700">Calder at night loop</b><span style="margin-left: auto; font-size: 12px; color: {{p.faint}}">Yesterday</span></div>
+<div style="display: flex; gap: 6px"><span style="display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 7px 0 4px; border-radius: 6px; background: {{p.field}}; font-size: 11px"><span style="width: 14px; height: 14px; border-radius: 3px; background: #111111; color: #FFF; font-size: 8px; font-weight: 700; display: flex; align-items: center; justify-content: center">TT</span>Video · v1 failed</span></div>
+<div style="display: flex; align-items: center; gap: 8px"><span style="font-size: 12px; color: {{p.warnText}}">The video came out 9 s long; TikTok expects 7 s</span><span style="margin-left: auto; height: 26px; padding: 0 10px; border-radius: 7px; box-shadow: inset 0 0 0 1px {{p.line}}; font-size: 12px; font-weight: 600; display: flex; align-items: center">Try again</span></div>
+</div>
+</a>
+
+<a href="#" style="display: flex; flex-direction: column; border-radius: 14px; background: {{p.panel}}; box-shadow: 0 0 0 1px {{p.line}}; overflow: hidden; color: inherit; text-decoration: none">
+<div style="position: relative; height: 210px; background-color: {{p.bg}}; background-image: radial-gradient({{p.dot}} 1px, transparent 1px); background-size: 14px 14px; display: flex; align-items: center; justify-content: center; gap: 10px">
+<div style="width: 74px; height: 160px; border-radius: 12px; border: 1.5px dashed {{p.line}}; display: flex; align-items: center; justify-content: center; font-size: 10px; color: {{p.faint}}">6.9″</div>
+<div style="width: 74px; height: 160px; border-radius: 12px; border: 1.5px dashed {{p.line}}; display: flex; align-items: center; justify-content: center; font-size: 10px; color: {{p.faint}}">6.5″</div>
+<div style="width: 112px; height: 150px; border-radius: 10px; border: 1.5px dashed {{p.line}}; display: flex; align-items: center; justify-content: center; font-size: 10px; color: {{p.faint}}">iPad 13″</div>
+</div>
+<div style="padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px; border-top: 1px solid {{p.line2}}">
+<div style="display: flex; align-items: center; gap: 8px"><b style="font-size: 14px; font-weight: 700">App Store screenshots</b><span style="margin-left: auto; font-size: 12px; color: {{p.faint}}">Draft</span></div>
+<div style="display: flex; gap: 6px"><span style="display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 7px 0 4px; border-radius: 6px; background: {{p.field}}; font-size: 11px"><span style="width: 14px; height: 14px; border-radius: 3px; background: #171717; color: #FFF; font-size: 8px; font-weight: 700; display: flex; align-items: center; justify-content: center">A</span>App Store · 3 screenshots</span></div>
+<div style="display: flex; align-items: center; gap: 8px"><span style="font-size: 12px; color: {{p.muted}}">Brief saved · nothing generated yet</span><span style="margin-left: auto; height: 26px; padding: 0 10px; border-radius: 7px; background: {{p.ink}}; color: {{p.inkText}}; font-size: 12px; font-weight: 600; display: flex; align-items: center">Generate</span></div>
+</div>
+</a>
+
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const light = { bg: '#F5F5F4', panel: '#FFFFFF', line: '#E5E5E3', line2: '#EFEFED', text: '#171717', muted: '#6B6B6B', faint: '#A3A3A3', chipBg: '#F0F0EE', field: '#F2F2F1', dot: '#DEDEDB', ink: '#171717', inkText: '#FFFFFF', okBg: '#E4F3EA', okText: '#2E7A4C', warnBg: '#FFF5EF', warnBorder: '#FFD3C0', warnText: '#D9480F', sel: '#FFF1EA', shadow: 'rgba(0,0,0,0.08)', suffix: '' };
+    const night = { bg: '#0F0F0F', panel: '#171717', line: '#2A2A2A', line2: '#212121', text: '#EDEDED', muted: '#9C9C9C', faint: '#6B6B6B', chipBg: '#242424', field: '#222222', dot: '#242424', ink: '#EDEDED', inkText: '#0F0F0F', okBg: '#132A1D', okText: '#6FCF97', warnBg: '#231711', warnBorder: '#55301E', warnText: '#FF8A5C', sel: '#2A1A12', shadow: 'rgba(0,0,0,0.5)', suffix: 'Dark' };
+    return { p: dark ? night : light };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>App settings</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+body{margin:0}
+a{color:#E8501A}a:hover{color:#B93E12}
+</style>
+</helmet>
+<div style="width: 1440px; height: 900px; box-sizing: border-box; background: {{p.bg}}; color: {{p.text}}; font-family: 'Schibsted Grotesk', ui-sans-serif, system-ui, sans-serif; font-size: 13px; display: flex; flex-direction: column; overflow: hidden">
+
+<div style="height: 52px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 14px; background: {{p.panel}}; border-bottom: 1px solid {{p.line}}">
+<div style="width: 26px; height: 26px; border-radius: 7px; background: {{p.ink}}; display: flex; align-items: center; justify-content: center"><svg width="12" height="12" viewBox="0 0 12 12"><path d="M3 2.5v7l6-3.5-6-3.5Z" fill="#FF5A1F"></path></svg></div>
+<a href="#" style="display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 6px; border-radius: 8px; background: {{p.field}}; color: {{p.text}}; text-decoration: none"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 3.5 5.5 8l4.5 4.5"></path></svg>Projects</a>
+<b style="font-weight: 600">Settings</b>
+<div style="flex: 1"></div>
+<span style="width: 28px; height: 28px; border-radius: 50%; background: #FF5A1F; color: #FFFFFF; font-weight: 700; font-size: 11px; display: flex; align-items: center; justify-content: center">AL</span>
+</div>
+
+<div style="flex: 1; min-height: 0; display: grid; grid-template-columns: 260px minmax(0, 1fr)">
+<nav aria-label="Settings" style="border-right: 1px solid {{p.line}}; padding: 24px 14px; display: flex; flex-direction: column; gap: 2px">
+<span style="padding: 0 10px 10px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: {{p.muted}}">Motion Studio</span>
+<a href="#" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 8px; background: {{p.field}}; color: {{p.text}}; font-weight: 600; text-decoration: none">General</a>
+<a href="#" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 8px; color: {{p.muted}}; text-decoration: none">System check<span style="margin-left: auto; width: 7px; height: 7px; border-radius: 50%; background: {{p.okText}}"></span></a>
+<a href="#" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 8px; color: {{p.muted}}; text-decoration: none">Paid services<span style="margin-left: auto; font-size: 11px; color: {{p.faint}}">2 of 3</span></a>
+<a href="#" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 8px; color: {{p.muted}}; text-decoration: none">Usage</a>
+<a href="#" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 8px; color: {{p.muted}}; text-decoration: none">Notifications</a>
+<a href="#" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 8px; color: {{p.muted}}; text-decoration: none">Workspace</a>
+<a href="#" style="display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 8px; color: {{p.muted}}; text-decoration: none">Updates<span style="margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: {{p.faint}}">0.6.0</span></a>
+</nav>
+
+<main style="min-width: 0; padding: 28px 40px; display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 18px; align-content: start; overflow: hidden">
+
+<div style="display: flex; flex-direction: column; gap: 18px">
+<div style="display: flex; flex-direction: column; gap: 4px"><h1 style="margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.015em">General</h1><span style="color: {{p.muted}}">Applies to every project on this Mac.</span></div>
+
+<section aria-label="Appearance" style="border-radius: 14px; background: {{p.panel}}; box-shadow: 0 0 0 1px {{p.line}}">
+<div style="display: flex; align-items: center; gap: 16px; padding: 14px 18px; border-bottom: 1px solid {{p.line2}}"><div style="flex: 1; display: flex; flex-direction: column; gap: 3px"><b style="font-weight: 600">Language</b><span style="color: {{p.muted}}">Also the language Claude answers in and writes guidelines with.</span></div><button type="button" style="display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: 8px; border: 0; background: {{p.field}}; color: {{p.text}}; font: inherit">System · English<svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3.5 4.5 6 7l2.5-2.5"></path></svg></button></div>
+<div style="display: flex; align-items: center; gap: 16px; padding: 14px 18px"><div style="flex: 1; display: flex; flex-direction: column; gap: 3px"><b style="font-weight: 600">Theme</b><span style="color: {{p.muted}}">Follows macOS unless you pick one.</span></div>
+<div style="display: flex; gap: 8px">
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 64px; height: 42px; border-radius: 8px; overflow: hidden; display: flex; box-shadow: 0 0 0 2px #FF5A1F"><span style="flex: 1; background: #F5F5F4"></span><span style="flex: 1; background: #0F0F0F"></span></span><span style="font-size: 12px; font-weight: 600">System</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 64px; height: 42px; border-radius: 8px; background: #F5F5F4; box-shadow: 0 0 0 1px {{p.line}}"></span><span style="font-size: 12px; color: {{p.muted}}">Light</span></div>
+<div style="display: flex; flex-direction: column; align-items: center; gap: 6px"><span style="width: 64px; height: 42px; border-radius: 8px; background: #0F0F0F; box-shadow: 0 0 0 1px {{p.line}}"></span><span style="font-size: 12px; color: {{p.muted}}">Dark</span></div>
+</div></div>
+</section>
+
+<section aria-label="Paid services" style="border-radius: 14px; background: {{p.panel}}; box-shadow: 0 0 0 1px {{p.line}}">
+<div style="display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid {{p.line2}}"><b style="font-weight: 600">Paid services</b><span style="font-size: 12px; color: {{p.faint}}">Keys are stored in the macOS Keychain and never shown to the agent</span></div>
+<div style="display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-bottom: 1px solid {{p.line2}}"><span style="width: 32px; height: 32px; border-radius: 8px; background: #111111; color: #FFFFFF; font-weight: 700; font-size: 11px; display: flex; align-items: center; justify-content: center">AI</span><div style="flex: 1; display: flex; flex-direction: column; gap: 2px"><b style="font-weight: 600">OpenAI · images and voice-over</b><span style="font-size: 12px; color: {{p.muted}}">gpt-image-2 · tts · key ending <span style="font-family: 'JetBrains Mono', monospace">…3fA2</span></span></div><span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: {{p.okText}}"><span style="width: 7px; height: 7px; border-radius: 50%; background: {{p.okText}}"></span>Working</span><button type="button" style="height: 28px; padding: 0 10px; border-radius: 7px; border: 0; background: {{p.field}}; color: {{p.text}}; font: inherit; font-size: 12px">Replace</button></div>
+<div style="display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-bottom: 1px solid {{p.line2}}"><span style="width: 32px; height: 32px; border-radius: 8px; background: #05A081; color: #FFFFFF; font-weight: 700; font-size: 11px; display: flex; align-items: center; justify-content: center">Px</span><div style="flex: 1; display: flex; flex-direction: column; gap: 2px"><b style="font-weight: 600">Pexels · stock footage</b><span style="font-size: 12px; color: {{p.muted}}">Free with attribution · key ending <span style="font-family: 'JetBrains Mono', monospace">…9k1Q</span></span></div><span style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: {{p.okText}}"><span style="width: 7px; height: 7px; border-radius: 50%; background: {{p.okText}}"></span>Working</span><button type="button" style="height: 28px; padding: 0 10px; border-radius: 7px; border: 0; background: {{p.field}}; color: {{p.text}}; font: inherit; font-size: 12px">Replace</button></div>
+<div style="display: flex; align-items: center; gap: 12px; padding: 12px 18px"><span style="width: 32px; height: 32px; border-radius: 8px; background: {{p.field}}; color: {{p.muted}}; font-weight: 700; font-size: 11px; display: flex; align-items: center; justify-content: center">11</span><div style="flex: 1; display: flex; flex-direction: column; gap: 2px"><b style="font-weight: 600">ElevenLabs · premium voices</b><span style="font-size: 12px; color: {{p.muted}}">Not connected</span></div><button type="button" style="height: 28px; padding: 0 12px; border-radius: 7px; border: 0; background: {{p.ink}}; color: {{p.inkText}}; font: inherit; font-size: 12px; font-weight: 600">Add key</button></div>
+</section>
+
+<section aria-label="Notifications" style="border-radius: 14px; background: {{p.panel}}; box-shadow: 0 0 0 1px {{p.line}}">
+<div style="display: flex; align-items: center; gap: 16px; padding: 14px 18px; border-bottom: 1px solid {{p.line2}}"><div style="flex: 1; display: flex; flex-direction: column; gap: 3px"><b style="font-weight: 600">When the agent needs your OK</b><span style="color: {{p.muted}}">Banner, Dock badge and a soft sound, even when the window is open.</span></div><span style="width: 36px; height: 20px; border-radius: 10px; background: #FF5A1F; position: relative; flex: none"><span style="position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #FFFFFF"></span></span></div>
+<div style="display: flex; align-items: center; gap: 16px; padding: 14px 18px"><div style="flex: 1; display: flex; flex-direction: column; gap: 3px"><b style="font-weight: 600">When a creative is ready</b><span style="color: {{p.muted}}">Only when Motion Studio is in the background.</span></div><span style="width: 36px; height: 20px; border-radius: 10px; background: #FF5A1F; position: relative; flex: none"><span style="position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #FFFFFF"></span></span></div>
+</section>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 18px; padding-top: 50px">
+<section aria-label="Usage this week" style="border-radius: 14px; background: {{p.panel}}; box-shadow: 0 0 0 1px {{p.line}}; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px">
+<div style="display: flex; align-items: baseline; gap: 8px"><b style="font-weight: 600">Usage this week</b><span style="margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: {{p.muted}}">412k tokens</span></div>
+<div style="height: 120px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; align-items: end; padding-top: 6px; border-bottom: 1px solid {{p.line2}}">
+<div style="display: flex; flex-direction: column; justify-content: flex-end; height: 100%"><span style="height: 18%; border-radius: 4px 4px 0 0; background: {{p.bar}}"></span></div>
+<div style="display: flex; flex-direction: column; justify-content: flex-end; height: 100%"><span style="height: 9%; border-radius: 4px 4px 0 0; background: {{p.bar}}"></span></div>
+<div style="display: flex; flex-direction: column; justify-content: flex-end; height: 100%"><span style="height: 34%; border-radius: 4px 4px 0 0; background: {{p.bar}}"></span></div>
+<div style="display: flex; flex-direction: column; justify-content: flex-end; height: 100%"><span style="height: 22%; border-radius: 4px 4px 0 0; background: {{p.bar}}"></span></div>
+<div style="display: flex; flex-direction: column; justify-content: flex-end; height: 100%"><span style="height: 12%; border-radius: 4px 4px 0 0; background: {{p.bar}}"></span></div>
+<div style="display: flex; flex-direction: column; justify-content: flex-end; height: 100%"><span style="height: 55%; border-radius: 4px 4px 0 0; background: {{p.bar}}"></span></div>
+<div style="display: flex; flex-direction: column; justify-content: flex-end; height: 100%; position: relative"><span style="height: 100%; border-radius: 4px 4px 0 0; background: #FF5A1F"></span><span style="position: absolute; top: -18px; left: 50%; transform: translateX(-50%); font-family: 'JetBrains Mono', monospace; font-size: 10px; color: {{p.text}}">164k</span></div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; font-size: 11px; color: {{p.faint}}; text-align: center; margin-top: -6px"><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span><span>Mon</span><span>Tue</span><span style="color: {{p.text}}; font-weight: 600">Today</span></div>
+<div style="display: flex; flex-direction: column; gap: 6px; font-size: 12px">
+<div style="display: flex; align-items: center; gap: 8px"><span style="width: 8px; height: 8px; border-radius: 2px; background: #FF5A1F"></span>Half Story<span style="margin-left: auto; font-family: 'JetBrains Mono', monospace; color: {{p.muted}}">281k</span></div>
+<div style="display: flex; align-items: center; gap: 8px"><span style="width: 8px; height: 8px; border-radius: 2px; background: {{p.bar}}"></span>Northwind Coffee<span style="margin-left: auto; font-family: 'JetBrains Mono', monospace; color: {{p.muted}}">131k</span></div>
+</div>
+<div style="padding: 10px 12px; border-radius: 10px; background: {{p.field}}; font-size: 12px; line-height: 1.5; color: {{p.muted}}">You're on a Claude subscription, so this counts toward your plan. At API prices it would be about <b style="color: {{p.text}}">$4.10</b>.</div>
+</section>
+
+<section aria-label="System check" style="border-radius: 14px; background: {{p.panel}}; box-shadow: 0 0 0 1px {{p.line}}; padding: 14px 18px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; align-items: center; gap: 8px"><span style="width: 18px; height: 18px; border-radius: 50%; background: {{p.okBg}}; color: {{p.okText}}; display: flex; align-items: center; justify-content: center"><svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="m2.5 6.5 2.3 2.3L9.5 3.5"></path></svg></span><b style="font-weight: 600">Everything works</b><span style="font-size: 12px; color: {{p.faint}}">checked 2 min ago</span><a href="#" style="margin-left: auto; font-size: 12px">Check again</a></div>
+<span style="font-size: 12px; color: {{p.muted}}">Claude Code 2.1.293 · sandbox on · FFmpeg 7.1 · render kit installed</span>
+</section>
+</div>
+</main>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const dark = this.props.dark ?? false;
+    const light = { bg: '#F5F5F4', panel: '#FFFFFF', line: '#E5E5E3', line2: '#EFEFED', text: '#171717', muted: '#6B6B6B', faint: '#A3A3A3', chipBg: '#F0F0EE', field: '#F2F2F1', dot: '#DEDEDB', ink: '#171717', inkText: '#FFFFFF', okBg: '#E4F3EA', okText: '#2E7A4C', warnBg: '#FFF5EF', warnBorder: '#FFD3C0', warnText: '#D9480F', sel: '#FFF1EA', bar: '#DADAD7', shadow: 'rgba(0,0,0,0.08)', suffix: '' };
+    const night = { bg: '#0F0F0F', panel: '#171717', line: '#2A2A2A', line2: '#212121', text: '#EDEDED', muted: '#9C9C9C', faint: '#6B6B6B', chipBg: '#242424', field: '#222222', dot: '#242424', ink: '#EDEDED', inkText: '#0F0F0F', okBg: '#132A1D', okText: '#6FCF97', warnBg: '#231711', warnBorder: '#55301E', warnText: '#FF8A5C', sel: '#2A1A12', bar: '#3A3A3A', shadow: 'rgba(0,0,0,0.5)', suffix: 'Dark' };
+    return { p: dark ? night : light };
+  }
+}
+</script>
+</body>
+</html>
