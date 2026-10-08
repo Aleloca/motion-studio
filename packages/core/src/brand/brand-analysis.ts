@@ -1,6 +1,6 @@
 import { appendFile, lstat, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
-import { brandProposalSchema, issueText, messages, relativeFileSchema, webUrlSchema, type AssetEntry, type Locale, type BrandKit, type BrandProposal, type JobSummary, type ServerMessage } from '@motion-studio/shared';
+import { brandProposalSchema, issuesText, messages, relativeFileSchema, webUrlSchema, type AssetEntry, type Locale, type BrandKit, type BrandProposal, type JobSummary, type ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import type { Git } from '../git.ts';
@@ -179,7 +179,7 @@ export class BrandService {
       };
       // Validated before anything is superseded: an invalid proposal leaves the open one in place.
       const valid = brandProposalSchema.safeParse(proposal);
-      if (!valid.success) throw new Error(t().errors.proposalInvalid({ detail: valid.error.issues.map((i) => `${i.path.join('.') || t().errors.rootPath}: ${issueText(i, currentLocale())}`).join('; ') }));
+      if (!valid.success) throw new Error(t().errors.proposalInvalid({ detail: issuesText(valid.error, currentLocale(), t().errors.rootPath) }));
       // Under the apply lock: a new proposal supersedes the open ones (they would diff against an outdated kit).
       await this.locks.run(`apply:${ref.projectDir}`, async () => {
         for (const old of await store.listProposals()) if (old.status === 'open' && old.id !== id) await store.writeProposal({ ...old, status: 'discarded' });

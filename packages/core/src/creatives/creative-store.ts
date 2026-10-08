@@ -3,7 +3,7 @@ import { basename, join } from 'node:path';
 import {
   creativeFileSchema, versionsFileSchema,
   type Brief, type ConversationEntry, type CreativeFile, type CreativeListItem, type VersionEntry,
-  issueText,
+  issuesText,
 } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
@@ -15,9 +15,6 @@ export const CREATIVE_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const pad2 = (n: number) => String(n).padStart(2, '0');
 /** yyyy-mm-dd in the user's local time zone (a creative made at 23:30 belongs to that day). */
 const localDay = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-
-const issues = (e: { issues: Array<{ path: PropertyKey[]; message: string }> }) =>
-  e.issues.map((i) => `${i.path.map(String).join('.')}: ${issueText(i, currentLocale())}`).join('; ');
 
 export class CreativeStore {
   private readonly root: string;
@@ -38,7 +35,7 @@ export class CreativeStore {
     const parsed = creativeFileSchema.safeParse({
       schemaVersion: 1, title: input.title, brief: input.brief, status: 'draft', error: null, createdAt: at, updatedAt: at, resumeFrom: null,
     });
-    if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidBrief({ detail: issues(parsed.error) }));
+    if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidBrief({ detail: issuesText(parsed.error, currentLocale()) }));
     const creative = parsed.data;
     await mkdir(this.root, { recursive: true });
     const slug = await this.lock.run('create', async () => {
@@ -97,7 +94,7 @@ export class CreativeStore {
       const nowIso = new Date().toISOString();
       const updatedAt = nowIso > current.updatedAt ? nowIso : new Date(Date.parse(current.updatedAt) + 1).toISOString();
       const parsed = creativeFileSchema.safeParse({ ...current, ...patch, updatedAt });
-      if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidCreative({ detail: issues(parsed.error) }));
+      if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidCreative({ detail: issuesText(parsed.error, currentLocale()) }));
       await writeJsonFileAtomic(this.file(slug, 'creative.json'), parsed.data);
       return parsed.data;
     });

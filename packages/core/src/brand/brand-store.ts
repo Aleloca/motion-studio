@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  brandKitIssues, issueText, type IssueLike, brandKitSchema, brandProposalSchema, brandSourcesFileSchema, brandSourceSchema, EMPTY_BRAND_KIT,
+  brandKitIssues, issuesText, brandKitSchema, brandProposalSchema, brandSourcesFileSchema, brandSourceSchema, EMPTY_BRAND_KIT,
   type BrandKit, type BrandProposal, type BrandSource,
 } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
@@ -10,7 +10,6 @@ import { WorkspaceError } from '../workspace-store.ts';
 import { currentLocale, t } from '../i18n.ts';
 
 const PROPOSAL_RE = /^p-\d{8}-\d{6}(-\d+)?$/;
-const issues = (e: { issues: IssueLike[] }) => e.issues.map((i) => `${(i.path ?? []).map(String).join('.')}: ${issueText(i, currentLocale())}`).join('; ');
 
 function isPrivateIPv4Octets(a: number, b: number, c: number, d: number): boolean {
   // 0.0.0.0/8 (this network)
@@ -175,7 +174,7 @@ export class BrandStore {
         id: `s-${n}`, kind: input.kind, url: input.kind === 'website' ? input.url.trim() : null,
         file: input.kind === 'image' ? input.file : null, addedAt: new Date().toISOString(), lastAnalyzedAt: null,
       });
-      if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidSource({ detail: issues(parsed.error) }));
+      if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidSource({ detail: issuesText(parsed.error, currentLocale()) }));
       const s = parsed.data;
       if (sources.some((x) => (s.url && x.url === s.url) || (s.file && x.file === s.file))) throw new WorkspaceError(409, t().errors.sourceExists);
       await this.writeSourcesUnlocked({ schemaVersion: 1, sources: [...sources, s] });
@@ -260,7 +259,7 @@ export class BrandStore {
 
   writeProposal(p: BrandProposal): Promise<void> {
     const parsed = brandProposalSchema.safeParse(p);
-    if (!parsed.success) return Promise.reject(new Error(t().errors.proposalInvalid({ detail: issues(parsed.error) })));
+    if (!parsed.success) return Promise.reject(new Error(t().errors.proposalInvalid({ detail: issuesText(parsed.error, currentLocale()) })));
     return fileLock.run(join(this.proposalDir(p.id), 'proposal.json'), () => writeJsonFileAtomic(join(this.proposalDir(p.id), 'proposal.json'), parsed.data));
   }
 

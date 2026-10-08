@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { appConfigSchema } from '../src/schemas.ts';
 import { LOCALES, isLocale, languageName, messages, resolveLocale } from '../src/i18n/index.ts';
@@ -47,6 +50,19 @@ describe('catalogs', () => {
   it('names the languages', () => {
     expect(languageName('en')).toBe('English');
     expect(languageName('it')).toBe('Italian');
+  });
+});
+
+describe('issue codes', () => {
+  it('every issue.<key> used by the shared schemas has a text in every catalog', () => {
+    const src = fileURLToPath(new URL('../src', import.meta.url));
+    const files = readdirSync(src, { recursive: true, encoding: 'utf8' }).filter((f) => f.endsWith('.ts'));
+    const codes = new Set(files.flatMap((f) => [...readFileSync(join(src, f), 'utf8').matchAll(/['"`]issue\.(\w+)/g)].map((m) => m[1]!)));
+    expect(codes.size).toBeGreaterThan(20);
+    for (const l of LOCALES) {
+      const issues = messages(l).issues as Record<string, unknown>;
+      expect([...codes].filter((c) => typeof issues[c] !== 'string'), l).toEqual([]);
+    }
   });
 });
 
