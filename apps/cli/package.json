@@ -1,21 +1,40 @@
 {
-  "name": "motion-studio",
-  "version": "0.1.0",
+  "name": "motion-studio-app",
+  "version": "0.5.0",
   "description": "Motion Studio: crea video in motion graphics e immagini con il tuo agente di coding locale",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Aleloca/motion-studio.git",
+    "directory": "apps/cli"
+  },
+  "homepage": "https://github.com/Aleloca/motion-studio#readme",
+  "bugs": {
+    "url": "https://github.com/Aleloca/motion-studio/issues"
+  },
+  "keywords": [
+    "motion graphics",
+    "video",
+    "claude code",
+    "ai",
+    "remotion"
+  ],
   "type": "module",
   "bin": {
     "motion-studio": "dist/main.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=22"
   },
   "scripts": {
     "build": "tsup && node -e \"require('node:fs').cpSync('../../packages/web/dist','dist/web',{recursive:true})\" && node -e \"require('node:fs').copyFileSync('../../packages/mcp-studio/src/server.mjs','dist/mcp-studio.mjs')\"",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "prepack": "pnpm run build && node -e \"const f=require('node:fs');for(const n of ['README.md','LICENSE'])f.copyFileSync('../../'+n,n)\""
   },
   "dependencies": {
     "@fastify/multipart": "^9.4.0",

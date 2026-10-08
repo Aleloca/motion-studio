@@ -5,3 +5,6 @@ coverage/
 .DS_Store
 apps/desktop/release/
 apps/desktop/resources/
+apps/cli/*.tgz
+apps/cli/README.md
+apps/cli/LICENSE

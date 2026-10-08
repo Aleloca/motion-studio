@@ -5,8 +5,9 @@ import { startServer } from '@motion-studio/core';
 import { parseCliArgs } from './args.ts';
 import { NOT_RUNNING, runningUrl } from './print-url.ts';
 
-const HELP = `Uso: motion-studio [--port 4317] [--no-open]
-       motion-studio --print-url
+const HELP = `Uso: npx motion-studio-app [--port 4317] [--no-open]
+       npx motion-studio-app --print-url
+(se installato: motion-studio [--port 4317] [--no-open])
 
 Avvia Motion Studio in locale e apre il browser.
 --print-url mostra l'indirizzo (con il codice di accesso) del Motion Studio già avviato.

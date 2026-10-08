@@ -23,7 +23,7 @@ Opzioni del launcher (dopo il nome dello script, es. `pnpm motion-studio --port 
 
 L'indirizzo stampato all'avvio contiene un codice di accesso (`#t=…`): apri Motion Studio da quel link. Il browser lo ricorda; se l'interfaccia chiede di riaprirla dal link del terminale, usa `--print-url`.
 
-> Il pacchetto non è ancora pubblicato su npm: `npx motion-studio` non funziona ancora, usa `pnpm motion-studio` dal repository.
+> Dal pacchetto npm: `npx motion-studio-app` (il comando installato si chiama `motion-studio`). Finché il pacchetto non è pubblicato su npm, usa `pnpm motion-studio` dal repository.
 
 ## Come funziona una creatività
 1. In un progetto apri **Creatività → + Nuova creatività**, descrivi cosa vuoi, scegli canali e formati e premi **Genera**.
