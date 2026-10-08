@@ -184,6 +184,9 @@ Legenda impatto: 🟢 basso · 🟡 medio · 🔴 alto (sicurezza o prodotto).
 
 78. 🟡 **Nessun permesso "Sempre" su un'intera cartella di primo livello** (`/Users`, `/home`, `/Volumes`, `/opt`…). Il primo giro della CI su Linux ha mostrato che `/Users/**` e `/home/**` passavano, perché venivano rifiutate solo le cartelle che contengono la home. Ora la regola vale su ogni sistema.
 
+### Revisione con te (2026-10-08)
+- **64 cambiata:** il pacchetto npm ora si chiama `@motion-studio/cli` e si avvia con `npx @motion-studio/cli`; il comando installato resta `motion-studio`. Per pubblicarlo devi creare su npm l'organizzazione gratuita `motion-studio`.
+
 ### Esito della fase 5
 - L'app impacchettata (arm64, non firmata, 311 MB) è stata avviata in modo da simulare il Finder. Trova `claude` e tutte le dipendenze tramite la shell di login, e il Doctor dà tutto OK. Il pacchetto include i binari del portachiavi per arm64 e x64.
 - Il pacchetto npm, installato dal tarball, si avvia. L'export reale produce i file nominati per canale. Una seconda istanza rimanda alla prima.

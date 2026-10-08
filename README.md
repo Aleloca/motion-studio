@@ -12,7 +12,7 @@ App locale e open-source per creare video in motion graphics e immagini usando i
 - macOS: clic destro sull'app, poi **Apri** (e conferma); un doppio clic normale viene bloccato da Gatekeeper.
 - Gli aggiornamenti automatici dell'app (controllo all'avvio, installazione al riavvio) richiedono build **firmate** su macOS; con una build non firmata aggiorna scaricando a mano la nuova versione.
 
-**Da npm.** `npx motion-studio-app` (il comando installato si chiama `motion-studio`), quando sarà pubblicato. Finché non lo è, usa i sorgenti.
+**Da npm.** `npx @motion-studio/cli` (il comando installato si chiama `motion-studio`), quando sarà pubblicato. Per pubblicarlo serve l'organizzazione npm `motion-studio`. Finché non lo è, usa i sorgenti.
 
 **Dai sorgenti.**
 ```bash
@@ -107,7 +107,7 @@ Variabili utili:
 Per contribuire vedi [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Rilascio
-Per i maintainer. Allinea la versione in `apps/desktop/package.json` e `apps/cli/package.json`, poi crea e pubblica il tag `vX.Y.Z` corrispondente: ogni job del workflow `.github/workflows/release.yml` si ferma subito se il tag non coincide con entrambe le versioni. Il workflow costruisce l'app desktop su macOS (`arm64` e `x64`), Windows e Linux e crea una **bozza** di release su GitHub con gli installer (da pubblicare a mano); in parallelo, se `NPM_TOKEN` è presente, pubblica `motion-studio-app` su npm (un errore in una build desktop non lo blocca). La CI (`ci.yml`) esegue i test a ogni push su `main` e sulle pull request.
+Per i maintainer. Allinea la versione in `apps/desktop/package.json` e `apps/cli/package.json`, poi crea e pubblica il tag `vX.Y.Z` corrispondente: ogni job del workflow `.github/workflows/release.yml` si ferma subito se il tag non coincide con entrambe le versioni. Il workflow costruisce l'app desktop su macOS (`arm64` e `x64`), Windows e Linux e crea una **bozza** di release su GitHub con gli installer (da pubblicare a mano); in parallelo, se `NPM_TOKEN` è presente, pubblica `@motion-studio/cli` su npm (un errore in una build desktop non lo blocca). La CI (`ci.yml`) esegue i test a ogni push su `main` e sulle pull request.
 
 Segreti del repository usati dal workflow (tutti facoltativi: senza, la build è non firmata o l'npm viene saltato):
 - macOS (firma e notarizzazione): `MAC_CERT_P12_BASE64`, `MAC_CERT_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`. Senza `MAC_CERT_P12_BASE64` la firma è disattivata; la notarizzazione parte solo se ci sono il certificato (`MAC_CERT_P12_BASE64`) e tutti e tre i segreti `APPLE_*`, altrimenti è disattivata esplicitamente.

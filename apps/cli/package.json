@@ -1,5 +1,5 @@
 {
-  "name": "motion-studio-app",
+  "name": "@motion-studio/cli",
   "version": "0.5.0",
   "description": "Motion Studio: crea video in motion graphics e immagini con il tuo agente di coding locale",
   "license": "MIT",

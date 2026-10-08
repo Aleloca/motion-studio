@@ -7,7 +7,7 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "pnpm -r typecheck",
-    "build": "pnpm --filter @motion-studio/web build && pnpm --filter motion-studio-app build",
+    "build": "pnpm --filter @motion-studio/web build && pnpm --filter @motion-studio/cli build",
     "dev": "pnpm --parallel --filter @motion-studio/core --filter @motion-studio/web dev",
     "motion-studio": "pnpm build && node apps/cli/dist/main.js"
   },

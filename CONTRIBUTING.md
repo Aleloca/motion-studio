@@ -19,7 +19,7 @@ Un singolo file: `npx vitest run packages/core/test/export.test.ts`. I test che 
 - `packages/core` — il server Fastify e tutta la logica: progetti e creatività, agente (runner, launcher, policy, sandbox), approvazioni, bridge MCP, provider, esportazione.
 - `packages/web` — l'interfaccia (React + Vite).
 - `packages/mcp-studio` — il server MCP `studio` (stdio) che l'agente usa per parlare con il core.
-- `apps/cli` — il pacchetto npm `motion-studio-app` (bundle con tsup che include la web app).
+- `apps/cli` — il pacchetto npm `@motion-studio/cli` (bundle con tsup che include la web app).
 - `apps/desktop` — l'app Electron, che esegue il core nello stesso processo.
 
 Altre guide: [contratto di output](docs/output-contract.md), [provider](docs/providers.md), [backend dell'agente](docs/agent-backends.md); il design è in `docs/superpowers/specs/`.

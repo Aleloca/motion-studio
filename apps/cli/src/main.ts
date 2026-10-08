@@ -5,8 +5,8 @@ import { AlreadyRunningError, startServer } from '@motion-studio/core';
 import { parseCliArgs } from './args.ts';
 import { alreadyRunningMessage, NOT_RUNNING, runningUrl } from './print-url.ts';
 
-const HELP = `Uso: npx motion-studio-app [--port 4317] [--no-open]
-       npx motion-studio-app --print-url
+const HELP = `Uso: npx @motion-studio/cli [--port 4317] [--no-open]
+       npx @motion-studio/cli --print-url
 (se installato: motion-studio [--port 4317] [--no-open])
 
 Avvia Motion Studio in locale e apre il browser.

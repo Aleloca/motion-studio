@@ -111,7 +111,7 @@ jobs:
         if: env.NPM_TOKEN != ''
       - run: pnpm build
         if: env.NPM_TOKEN != ''
-      - run: pnpm --filter motion-studio-app publish --access public --no-git-checks
+      - run: pnpm --filter @motion-studio/cli publish --access public --no-git-checks
         if: env.NPM_TOKEN != ''
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
