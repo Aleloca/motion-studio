@@ -67,7 +67,7 @@ export function SettingsPage({ settings, checks, language, systemLocale, onLangu
         <h2 style={{ margin: 0, fontSize: 17 }}>{s.providerKeys}</h2>
         <p className="muted" style={{ margin: 0, fontSize: 13 }}>{s.keysNote}</p>
         {PROVIDERS.map(([id, label, env]) => (
-          <KeyRow key={id} id={id} label={label} env={env} status={secrets.find((s) => s.provider === id)} onChange={(s) => setSecrets((all) => all.map((x) => (x.provider === s.provider ? s : x)))} />
+          <KeyRow key={id} id={id} label={label} env={env} status={secrets.find((x) => x.provider === id)} onChange={(next) => setSecrets((all) => all.map((x) => (x.provider === next.provider ? next : x)))} />
         ))}
         <div className="row" style={{ gap: 8 }}><strong style={{ width: 110 }}>Google Fonts</strong><span className="muted">{s.noKeyNeeded}</span></div>
         <label className="row" style={{ gap: 6 }}>

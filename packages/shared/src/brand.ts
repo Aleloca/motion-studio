@@ -65,7 +65,7 @@ export const brandKitSchema = z.object({
 }).refine((k) => [k.colors, k.fonts, k.logos, k.dos, k.donts].every(uniqueIds), { message: 'issue.duplicateIds' });
 export type BrandKit = z.infer<typeof brandKitSchema>;
 
-/** Brand kit validation issues in `locale`, naming the item ("colore 2: hex non valido (usa #RRGGBB)"). */
+/** Brand kit validation issues in `locale`, naming the item ("color 2: invalid hex (use #RRGGBB)"). */
 export function brandKitIssues(error: { issues: IssueLike[] }, locale: Locale): string {
   const labels = messages(locale).brandFields as Record<string, string>;
   return error.issues.map((i) => {
