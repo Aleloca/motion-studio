@@ -3,16 +3,10 @@ import { createContext, useContext, useEffect, type ReactNode } from 'react';
 
 /** Language used outside a provider and before the first snapshot: the browser's preferred languages. */
 const systemLocale = (): Locale => resolveLocale('system', typeof navigator === 'undefined' ? [] : navigator.languages);
-let fallback: Locale = systemLocale();
 export interface LanguageState { locale: Locale; setting: LanguageSetting }
 
 /** The language of the mounted provider, for code that runs outside React (API error texts). */
 let active: Locale | null = null;
-
-/** Test hook: the language components use when rendered without a provider. */
-export function setFallbackLocale(locale: Locale): void {
-  fallback = locale;
-}
 
 const LocaleContext = createContext<Locale | null>(null);
 
@@ -20,12 +14,14 @@ export function I18nProvider({ locale, children }: { locale: Locale; children: R
   active = locale;
   useEffect(() => {
     document.documentElement.lang = locale;
+    active = locale;
+    return () => { active = null; };
   }, [locale]);
   return <LocaleContext.Provider value={locale}>{children}</LocaleContext.Provider>;
 }
 
 export function useLocale(): Locale {
-  return useContext(LocaleContext) ?? fallback;
+  return useContext(LocaleContext) ?? systemLocale();
 }
 
 export function useT(): Messages {
@@ -34,7 +30,7 @@ export function useT(): Messages {
 
 /** Messages for code outside components. Prefer `useT`. */
 export function currentMessages(): Messages {
-  return messages(active ?? fallback);
+  return messages(active ?? systemLocale());
 }
 
 /** The browser's own language (used for the "System (…)" label). */

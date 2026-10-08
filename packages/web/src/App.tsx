@@ -9,7 +9,7 @@ import { NewCreative } from './screens/NewCreative.tsx';
 import { ProjectList } from './screens/ProjectList.tsx';
 import { SettingsPage } from './screens/SettingsPage.tsx';
 import { ProjectPage } from './screens/ProjectPage.tsx';
-import { detectedLocale, I18nProvider, type LanguageState } from './i18n.tsx';
+import { detectedLocale, I18nProvider, useT, type LanguageState } from './i18n.tsx';
 import { href, parseRoute } from './routes.ts';
 import { usePairingNeeded } from './uiToken.ts';
 import type { EventsState } from './eventsReducer.ts';
@@ -41,6 +41,7 @@ export function App() {
 }
 
 function AppBody({ live, language, onLanguage }: { live: EventsState; language: LanguageSetting; onLanguage(next: LanguageState): void }) {
+  const t = useT();
   const [checks, setChecks] = useState<DoctorCheck[] | null>(null);
   const [ws, setWs] = useState<WorkspaceInfo | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -56,11 +57,11 @@ function AppBody({ live, language, onLanguage }: { live: EventsState; language: 
       notified.current.add(a.id);
       try {
         if (typeof Notification !== 'undefined' && document.visibilityState === 'hidden' && Notification.permission === 'granted') {
-          new Notification('Motion Studio: serve la tua approvazione', { body: a.title });
+          new Notification(t.web.app.approvalNotificationTitle, { body: a.title });
         }
       } catch { /* some browsers only allow notifications from a service worker */ }
     }
-  }, [live.approvals]);
+  }, [live.approvals, t]);
 
   const refresh = useCallback(() => {
     setChecks(null);
@@ -82,8 +83,8 @@ function AppBody({ live, language, onLanguage }: { live: EventsState; language: 
     return (
       <main className="page stack" style={{ maxWidth: 640 }}>
         <h1 style={{ margin: 0, fontSize: 24 }}>Motion Studio</h1>
-        <p role="alert" style={{ margin: 0 }}>Apri Motion Studio dal link mostrato nel terminale</p>
-        <p className="muted" style={{ margin: 0 }}>Per vederlo di nuovo esegui <span className="mono">motion-studio --print-url</span>.</p>
+        <p role="alert" style={{ margin: 0 }}>{t.pairing.openFromLink}</p>
+        <p className="muted" style={{ margin: 0 }}>{t.web.app.pairingHintBefore}<span className="mono">motion-studio --print-url</span>{t.web.app.pairingHintAfter}</p>
       </main>
     );
   }
@@ -101,7 +102,7 @@ function AppBody({ live, language, onLanguage }: { live: EventsState; language: 
       applyTheme(next.theme);
       setWs((prev) => (prev ? { ...prev, settings: next } : prev));
     } catch (e) {
-      setSettingsError(`Impossibile salvare le impostazioni: ${e instanceof Error ? e.message : String(e)}`);
+      setSettingsError(t.web.app.settingsSaveFailed({ detail: e instanceof Error ? e.message : String(e) }));
     }
   };
   const running = Object.values(live.jobs).filter((j) => j.state === 'running').length;
@@ -115,11 +116,11 @@ function AppBody({ live, language, onLanguage }: { live: EventsState; language: 
         <span className="muted mono">{ws.path}</span>
         <div style={{ flex: 1 }} />
         <ApprovalsIndicator approvals={Object.values(live.approvals)} />
-        <span className="muted">{running} in lavorazione · {queued} in coda</span>
-        <a href={href.settings()} style={{ color: 'inherit' }}>Impostazioni</a>
+        <span className="muted">{t.web.app.activity({ running, queued })}</span>
+        <a href={href.settings()} style={{ color: 'inherit' }}>{t.web.app.settings}</a>
         <label className="row" style={{ gap: 6 }}>
           <input type="checkbox" checked={settings.expertMode} onChange={(e) => void update({ expertMode: e.target.checked })} style={{ width: 16, height: 16 }} />
-          Modalità esperto
+          {t.web.app.expertMode}
         </label>
         <ThemeToggle value={settings.theme} onChange={(theme) => void update({ theme })} />
       </header>

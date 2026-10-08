@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '../api.ts';
 import { ApprovalCard } from '../components/ApprovalCard.tsx';
 import { AgentConsole } from '../components/AgentConsole.tsx';
+import { useT } from '../i18n.tsx';
 import { sessionIdOf, type EventsState } from '../eventsReducer.ts';
 import { href, type ProjectTab } from '../routes.ts';
 import { AssetsPage } from './AssetsPage.tsx';
@@ -10,9 +11,10 @@ import { CreativeList } from './CreativeList.tsx';
 import { ReferencesPage } from './ReferencesPage.tsx';
 import { ProjectSettings } from './ProjectSettings.tsx';
 
-const TABS: Array<[ProjectTab, string]> = [['creatives', 'Creatività'], ['brand', 'Brand'], ['assets', 'Asset'], ['references', 'Riferimenti'], ['settings', 'Impostazioni'], ['console', 'Console agente']];
+const TABS: ProjectTab[] = ['creatives', 'brand', 'assets', 'references', 'settings', 'console'];
 
 function ProjectConsole({ slug, jobKey, live, expert }: { slug: string; jobKey: string | null; live: EventsState; expert: boolean }) {
+  const t = useT();
   const [prompt, setPrompt] = useState('');
   const [jobId, setJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -31,7 +33,7 @@ function ProjectConsole({ slug, jobKey, live, expert }: { slug: string; jobKey: 
   const sessionId = job?.sessionId ?? sessionIdOf(events);
 
   const cancel = (id: string) => {
-    api.cancelJob(id).catch((e: unknown) => setError(`Impossibile annullare: ${e instanceof Error ? e.message : String(e)}`));
+    api.cancelJob(id).catch((e: unknown) => setError(t.web.project.cancelFailed({ detail: e instanceof Error ? e.message : String(e) })));
   };
 
   const send = async () => {
@@ -46,12 +48,12 @@ function ProjectConsole({ slug, jobKey, live, expert }: { slug: string; jobKey: 
   return (
     <div className="stack">
       <form className="card stack" onSubmit={(e) => { e.preventDefault(); void send(); }}>
-        <label htmlFor="prompt"><strong>Chiedi all'agente</strong> <span className="muted">(sessione di prova nella cartella del progetto)</span></label>
-        <textarea id="prompt" rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Es. elenca i file del progetto" />
+        <label htmlFor="prompt"><strong>{t.web.project.askAgent}</strong> <span className="muted">{t.web.project.askAgentHint}</span></label>
+        <textarea id="prompt" rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder={t.web.project.promptPlaceholder} />
         <div className="row">
-          {sessionId && <span className="muted mono">sessione {sessionId}</span>}
+          {sessionId && <span className="muted mono">{t.web.project.session({ id: sessionId })}</span>}
           <div style={{ flex: 1 }} />
-          <button type="submit" className="primary" disabled={busy || !prompt.trim()}>Invia</button>
+          <button type="submit" className="primary" disabled={busy || !prompt.trim()}>{t.web.common.send}</button>
         </div>
         {error && <p role="alert" className="error" style={{ margin: 0 }}>{error}</p>}
       </form>
@@ -62,6 +64,7 @@ function ProjectConsole({ slug, jobKey, live, expert }: { slug: string; jobKey: 
 }
 
 export function ProjectPage({ slug, tab, live, expert }: { slug: string; tab: ProjectTab; live: EventsState; expert: boolean }) {
+  const t = useT();
   const [name, setName] = useState<string>(slug);
   const [jobKey, setJobKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -71,18 +74,18 @@ export function ProjectPage({ slug, tab, live, expert }: { slug: string; tab: Pr
     setError(null);
     api.getProject(slug)
       .then((r) => { if (alive) { setName(r.project.name); setJobKey(r.jobKey); } })
-      .catch((e: unknown) => { if (alive) setError(`Impossibile caricare il progetto: ${e instanceof Error ? e.message : String(e)}`); });
+      .catch((e: unknown) => { if (alive) setError(t.web.project.loadFailed({ detail: e instanceof Error ? e.message : String(e) })); });
     return () => { alive = false; };
-  }, [slug, projectTick]);
+  }, [slug, projectTick, t]);
   const waiting = useMemo(() => new Set(Object.values(live.approvals).flatMap((a) => (a.projectSlug === slug && a.creativeSlug ? [a.creativeSlug] : []))), [live.approvals, slug]);
   const tick = Object.entries(live.creativeTicks).filter(([k]) => k.startsWith(`${slug}/`)).reduce((a, [, v]) => a + v, 0);
   return (
     <main className="page stack">
-      <a href={href.projects()} className="muted">← Progetti</a>
+      <a href={href.projects()} className="muted">{t.web.project.back}</a>
       <h1 style={{ margin: 0, fontSize: 24 }}>{name}</h1>
       {error && <p role="alert" className="error" style={{ margin: 0 }}>{error}</p>}
-      <nav className="tabs" aria-label="Sezioni progetto">
-        {TABS.map(([t, label]) => <a key={t} href={href.project(slug, t)} aria-current={tab === t ? 'page' : undefined}>{label}</a>)}
+      <nav className="tabs" aria-label={t.web.project.sections}>
+        {TABS.map((id) => <a key={id} href={href.project(slug, id)} aria-current={tab === id ? 'page' : undefined}>{t.web.project.tabs[id]}</a>)}
       </nav>
       {tab === 'creatives' && <CreativeList slug={slug} tick={tick} waiting={waiting} />}
       {tab === 'settings' && <ProjectSettings key={slug} slug={slug} tick={projectTick} />}

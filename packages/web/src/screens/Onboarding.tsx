@@ -1,13 +1,14 @@
-import type { DoctorCheck, WorkspaceProblem } from '@motion-studio/shared';
+import type { DoctorCheck, Messages, WorkspaceProblem } from '@motion-studio/shared';
 import { useEffect, useState } from 'react';
 import { api, ApiError } from '../api.ts';
 import { desktop } from '../desktop.ts';
+import { useT } from '../i18n.tsx';
 
-function workspaceProblemText(problem: WorkspaceProblem, path: string | null): string {
+function workspaceProblemText(problem: WorkspaceProblem, path: string | null, t: Messages): string {
   const where = path ?? '';
   switch (problem.code) {
-    case 'not-found': return `Cartella non trovata: ${where}, scegline un'altra`;
-    case 'invalid': return `Contenuto non valido in ${where}: ${problem.message}`;
+    case 'not-found': return t.web.onboarding.workspaceNotFound({ path: where });
+    case 'invalid': return t.web.onboarding.workspaceInvalid({ path: where, detail: problem.message });
     case 'not-writable': return problem.message;
   }
 }
@@ -20,6 +21,8 @@ export function Onboarding({ checks, workspacePath, workspaceError, error: loadE
   onRecheck: () => void;
   onWorkspaceSet: () => void;
 }) {
+  const t = useT();
+  const o = t.web.onboarding;
   const [path, setPath] = useState(workspacePath ?? '');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -35,20 +38,20 @@ export function Onboarding({ checks, workspacePath, workspaceError, error: loadE
 
   const bridge = desktop();
   const choose = async () => {
-    try { const picked = await bridge?.pickFolder('Scegli la cartella di lavoro', path.trim() || undefined); if (picked) setPath(picked); }
+    try { const picked = await bridge?.pickFolder(o.pickFolderTitle, path.trim() || undefined); if (picked) setPath(picked); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
 
   return (
     <main className="page stack" style={{ maxWidth: 720 }}>
-      <h1 style={{ margin: 0, fontSize: 28 }}>Benvenuto in Motion Studio</h1>
-      <section className="card stack" aria-label="Controllo ambiente">
-        <div className="row"><strong>Controllo ambiente</strong><div style={{ flex: 1 }} /><button type="button" onClick={onRecheck}>Ricontrolla</button></div>
-        {loadError && <p role="alert" className="error" style={{ margin: 0 }}>Impossibile contattare il server di Motion Studio: {loadError}</p>}
-        {!checks && !loadError && <p className="muted">Controllo in corso…</p>}
+      <h1 style={{ margin: 0, fontSize: 28 }}>{o.welcome}</h1>
+      <section className="card stack" aria-label={o.environmentCheck}>
+        <div className="row"><strong>{o.environmentCheck}</strong><div style={{ flex: 1 }} /><button type="button" onClick={onRecheck}>{o.recheck}</button></div>
+        {loadError && <p role="alert" className="error" style={{ margin: 0 }}>{o.serverUnreachable({ detail: loadError })}</p>}
+        {!checks && !loadError && <p className="muted">{o.checking}</p>}
         {checks?.map((c) => (
           <div key={c.id} className="row" style={{ alignItems: 'flex-start' }}>
-            <span className={`badge ${c.ok ? 'ok' : c.required ? 'err' : ''}`}>{c.ok ? 'OK' : c.required ? 'Manca' : 'Consigliato'}</span>
+            <span className={`badge ${c.ok ? 'ok' : c.required ? 'err' : ''}`}>{c.ok ? o.ok : c.required ? o.missing : o.recommended}</span>
             <div className="stack" style={{ gap: 2, flex: 1 }}>
               <span><strong>{c.label}</strong>{c.version ? <span className="muted"> · {c.version}</span> : null} — {c.message}</span>
               {c.fix && <code className="mono">{c.fix}</code>}
@@ -56,18 +59,18 @@ export function Onboarding({ checks, workspacePath, workspaceError, error: loadE
           </div>
         ))}
       </section>
-      <section className="card stack" aria-label="Workspace">
-        <label htmlFor="ws-path"><strong>Cartella di lavoro</strong></label>
-        <p className="muted" style={{ margin: 0 }}>Qui Motion Studio salva tutti i progetti. Se non esiste, viene creata.</p>
+      <section className="card stack" aria-label={o.workspace}>
+        <label htmlFor="ws-path"><strong>{o.workingFolder}</strong></label>
+        <p className="muted" style={{ margin: 0 }}>{o.workingFolderHelp}</p>
         <div className="row" style={{ gap: 8 }}>
-          <input id="ws-path" value={path} onChange={(e) => setPath(e.target.value)} placeholder="/Users/tuonome/MotionStudio" style={{ flex: '1 1 240px', width: 'auto' }} />
-          {bridge && <button type="button" disabled={busy} onClick={choose}>Scegli cartella…</button>}
+          <input id="ws-path" value={path} onChange={(e) => setPath(e.target.value)} placeholder={o.pathPlaceholder} style={{ flex: '1 1 240px', width: 'auto' }} />
+          {bridge && <button type="button" disabled={busy} onClick={choose}>{t.web.common.chooseFolder}</button>}
         </div>
         {workspaceError && !error && (
-          <p role="alert" className="error" style={{ margin: 0 }}>{workspaceProblemText(workspaceError, workspacePath)}</p>
+          <p role="alert" className="error" style={{ margin: 0 }}>{workspaceProblemText(workspaceError, workspacePath, t)}</p>
         )}
         {error && <p role="alert" className="error" style={{ margin: 0 }}>{error}</p>}
-        <div className="row"><button type="button" className="primary" disabled={busy || !path.trim()} onClick={save}>Usa questa cartella</button></div>
+        <div className="row"><button type="button" className="primary" disabled={busy || !path.trim()} onClick={save}>{o.useFolder}</button></div>
       </section>
     </main>
   );
