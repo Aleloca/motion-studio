@@ -1,7 +1,7 @@
 import type { ServerMessage } from '@motion-studio/shared';
 import { useEffect, useReducer } from 'react';
 import { eventsReducer, initialEventsState, type EventsState } from './eventsReducer.ts';
-import { uiToken } from './uiToken.ts';
+import { onUiTokenChange, pairingNeeded, uiToken } from './uiToken.ts';
 
 export function useServerEvents(): EventsState {
   const [state, dispatch] = useReducer(eventsReducer, initialEventsState);
@@ -12,18 +12,28 @@ export function useServerEvents(): EventsState {
     const connect = () => {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       const token = uiToken();
-      ws = new WebSocket(`${proto}://${location.host}/api/events${token ? `?t=${encodeURIComponent(token)}` : ''}`);
-      ws.onmessage = (e) => {
+      const socket = new WebSocket(`${proto}://${location.host}/api/events${token ? `?t=${encodeURIComponent(token)}` : ''}`);
+      ws = socket;
+      socket.onmessage = (e) => {
         let msg: ServerMessage;
         try { msg = JSON.parse(String(e.data)) as ServerMessage; } catch { return; } // ignore malformed frames
         dispatch(msg);
       };
       // An error is followed by 'close' (which reconnects); closing explicitly covers sockets stuck after an error.
-      ws.onerror = () => ws?.close();
-      ws.onclose = () => { if (!stopped) retry = setTimeout(connect, 1000); };
+      socket.onerror = () => socket.close();
+      // Without a valid token retrying is pointless: a new token (pasted link) reconnects instead.
+      socket.onclose = () => { if (!stopped && ws === socket && !pairingNeeded()) retry = setTimeout(connect, 1000); };
     };
     connect();
-    return () => { stopped = true; clearTimeout(retry); ws?.close(); };
+    const off = onUiTokenChange(() => {
+      if (stopped) return;
+      clearTimeout(retry);
+      const old = ws;
+      ws = null;
+      old?.close();
+      connect();
+    });
+    return () => { stopped = true; off(); clearTimeout(retry); ws?.close(); };
   }, []);
   return state;
 }

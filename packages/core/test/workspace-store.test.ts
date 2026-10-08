@@ -153,3 +153,21 @@ describe('updateProject', () => {
     expect((await ws.updateProject(slug, { linkedCodebases: [{ path: join(base, 'link') }] }).catch((e) => e)).status).toBe(400);
   });
 });
+
+describe('stored domains', () => {
+  it('loads a workspace whose settings hold an invalid domain, without rewriting the file, and keeps writes strict', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ms-ws-dom-'));
+    const ws = await WorkspaceStore.open(root, new Git());
+    const file = join(root, '.studio', 'settings.json');
+    const raw = JSON.stringify({ schemaVersion: 1, extraAllowedDomains: ['api.acme.io', 'printer.local'] });
+    await writeFile(file, raw);
+    const settings = await ws.readSettings();
+    expect(settings.extraAllowedDomains).toEqual(['api.acme.io']);
+    expect(settings.droppedDomains).toEqual(['printer.local']);
+    expect(await readFile(file, 'utf8')).toBe(raw);
+    await expect(ws.updateSettings({ extraAllowedDomains: ['printer.local'] })).rejects.toMatchObject({ status: 400 });
+    const next = await ws.updateSettings({ expertMode: true });
+    expect(next).not.toHaveProperty('droppedDomains');
+    expect(JSON.parse(await readFile(file, 'utf8'))).not.toHaveProperty('droppedDomains');
+  });
+});

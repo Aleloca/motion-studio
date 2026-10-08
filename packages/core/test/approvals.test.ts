@@ -116,6 +116,11 @@ describe('always rules never reach .studio or the workspace root', () => {
     ['Write', { file_path: '/Users/me/Motion Studio/acme/.studio/x/a.json' }, null],
     ['Write', { file_path: '/tmp/other/.STUDIO/a' }, null],
     ['Read', { file_path: '/tmp/other/.studio/a' }, null],
+    ['Write', { file_path: '/tmp/repo/.git/hooks/pre-commit' }, null],
+    ['Write', { file_path: '/tmp/repo/.GIT/config' }, null],
+    ['Write', { file_path: '/tmp/repo/.claude/settings.json' }, null],
+    ['Write', { file_path: '/tmp/repo/.Claude/x/a' }, null],
+    ['Write', { file_path: '/tmp/repo/.github/a.yml' }, 'Edit(//tmp/repo/.github/**)'],
     ['Write', { file_path: '/Users/me/Motion Studio/a.json' }, null],
     ['Write', { file_path: '/Users/me/motion studio/a.json' }, null],
     ['Write', { file_path: '/Users/me/Motion Studio/acme/out/a.png' }, 'Edit(//Users/me/Motion Studio/acme/out/**)'],
@@ -123,6 +128,8 @@ describe('always rules never reach .studio or the workspace root', () => {
   ])('%s %j → %s', (tool, inp, expected) => { expect(ruleFor(tool, inp, env)?.rule ?? null).toBe(expected); });
   it('isAllowedRule refuses them too, with or without the workspace root', () => {
     expect(isAllowedRule('Edit(//tmp/p/.studio/**)')).toBe(false);
+    expect(isAllowedRule('Edit(//tmp/p/.git/**)')).toBe(false);
+    expect(isAllowedRule('Edit(//tmp/p/.claude/hooks/**)')).toBe(false);
     expect(isAllowedRule('Edit(//Users/me/Motion Studio/**)', env)).toBe(false);
     expect(isAllowedRule('Edit(//tmp/p/out/**)')).toBe(true);
   });

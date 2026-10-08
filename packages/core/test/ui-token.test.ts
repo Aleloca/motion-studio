@@ -74,7 +74,7 @@ describe('UI token on the API', () => {
       { method: 'GET' as const, url: '/api/nope' },
     ];
     for (const c of calls) {
-      for (const headers of [{}, H('cd'.repeat(32)), H('short')]) {
+      for (const headers of [{}, H('cd'.repeat(32)), H('short'), H('é'.repeat(64)), H('AB'.repeat(32))]) {
         const r = await app.inject({ ...c, headers });
         expect(r.statusCode, `${c.method} ${c.url}`).toBe(401);
         expect(r.json()).toEqual({ code: 'ui-token', error: 'Apri Motion Studio dal link mostrato nel terminale' });
@@ -111,7 +111,7 @@ describe('UI token on the API', () => {
   it('requires ?t= on the events WebSocket', async () => {
     const address = await app.listen({ port: 0, host: '127.0.0.1' });
     const url = `${address.replace('http', 'ws')}/api/events`;
-    for (const bad of [url, `${url}?t=${'cd'.repeat(32)}`]) {
+    for (const bad of [url, `${url}?t=${'cd'.repeat(32)}`, `${url}?t=${encodeURIComponent('é'.repeat(64))}`]) {
       const status = await new Promise<number | string>((resolve) => {
         const ws = new WebSocket(bad);
         ws.on('unexpected-response', (_req, res) => { resolve(res.statusCode ?? 0); ws.terminate(); });

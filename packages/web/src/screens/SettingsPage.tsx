@@ -1,4 +1,4 @@
-import type { DoctorCheck, ProviderId, SecretStatus, WorkspaceSettings } from '@motion-studio/shared';
+import type { DoctorCheck, ProviderId, SecretStatus, WorkspaceSettings, WorkspaceSettingsView } from '@motion-studio/shared';
 import { useEffect, useState } from 'react';
 import { api } from '../api.ts';
 
@@ -23,7 +23,7 @@ function KeyRow({ id, label, env, status, onChange }: { id: ProviderId; label: s
   );
 }
 
-export function SettingsPage({ settings, checks, onSaved }: { settings: WorkspaceSettings; checks: DoctorCheck[] | null; onSaved(next: WorkspaceSettings): void }) {
+export function SettingsPage({ settings, checks, onSaved }: { settings: WorkspaceSettingsView; checks: DoctorCheck[] | null; onSaved(next: WorkspaceSettings): void }) {
   const [secrets, setSecrets] = useState<SecretStatus[]>([]);
   const [domain, setDomain] = useState('');
   const [model, setModel] = useState(settings.model ?? '');
@@ -61,6 +61,7 @@ export function SettingsPage({ settings, checks, onSaved }: { settings: Workspac
       <section className="card stack" aria-label="Rete">
         <h2 style={{ margin: 0, fontSize: 17 }}>Rete consentita all'agente</h2>
         <p className="muted" style={{ margin: 0, fontSize: 13 }}>Sempre consentiti: registri di pacchetti (npm, PyPI), GitHub, CDN e Google Fonts.</p>
+        {settings.droppedDomains?.length ? <p role="status" className="warn" style={{ margin: 0 }}>Domini ignorati perché non validi: {settings.droppedDomains.join(', ')}</p> : null}
         {settings.extraAllowedDomains.map((d) => (
           <div key={d} className="row" style={{ gap: 8 }}>
             <span className="mono" style={{ flex: 1 }}>{d}</span>

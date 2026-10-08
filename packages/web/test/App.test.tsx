@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../src/api.ts';
 import { App } from '../src/App.tsx';
-import { markPairingNeeded, resetUiTokenForTests } from '../src/uiToken.ts';
+import { captureUiToken, markPairingNeeded, resetUiTokenForTests } from '../src/uiToken.ts';
 
 vi.mock('../src/api.ts', () => ({
   ApiError: class extends Error {},
@@ -72,6 +72,13 @@ describe('App pairing and notifications', () => {
     act(() => markPairingNeeded());
     expect(await screen.findByText('Apri Motion Studio dal link mostrato nel terminale')).toBeTruthy();
     expect(screen.queryByLabelText('Modalità esperto')).toBeNull();
+    const loads = vi.mocked(api.getWorkspace).mock.calls.length;
+    history.replaceState(null, '', `/#t=${'ef'.repeat(32)}`);
+    act(() => { captureUiToken(); });
+    expect(await screen.findByLabelText('Modalità esperto')).toBeTruthy();
+    expect(vi.mocked(api.getWorkspace).mock.calls.length).toBeGreaterThan(loads);
+    localStorage.clear();
+    history.replaceState(null, '', '/');
   });
   it('survives a Notification constructor that throws', async () => {
     let sockets: FakeEventsSocket[] = [];

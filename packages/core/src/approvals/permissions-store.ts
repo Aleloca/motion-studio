@@ -16,6 +16,8 @@ const SYSTEM_DIRS = ['/etc', '/private', '/usr', '/bin', '/sbin', '/System', '/L
 const SHELL_CONTROL = /[;&|`$<>\n\r(){}]/;
 const PROVIDER_RULES = new Set(['provider:openai-images', 'provider:tts-openai', 'provider:tts-elevenlabs']);
 const STUDIO_RULES = new Set(['mcp__studio__report_progress']);
+/** Folders that configure Motion Studio, git or the agent (compared in lower case on case-insensitive volumes). */
+const PROTECTED_SEGMENTS = new Set(['.studio', '.git', '.claude']);
 const MAX_RULE = 500;
 const MAX_LABEL = 300;
 export const MAX_PERMISSIONS = 200;
@@ -37,8 +39,8 @@ function safeDir(dir: string, env: RuleEnv): string | null {
   const ci = (env.platform ?? process.platform) === 'darwin';
   if (!dir.startsWith('/') || dir === '/') return null;
   if (isInside(home, dir, ci)) return null; // home itself or an ancestor of it
-  // A project's permissions live in .studio: no rule may ever reach one, nor the workspace holding the projects.
-  if (dir.split('/').some((seg) => (ci ? seg.toLowerCase() : seg) === '.studio')) return null;
+  // .studio holds a project's permissions, .git its hooks, .claude the agent's settings: no rule may ever reach one, nor the workspace holding the projects.
+  if (dir.split('/').some((seg) => PROTECTED_SEGMENTS.has(ci ? seg.toLowerCase() : seg))) return null;
   if (env.workspaceRoot && isInside(resolve(env.workspaceRoot), dir, ci)) return null;
   const { dirs, files } = sensitiveHomeEntries(home);
   const configDir = resolve(env.configDir ?? defaultConfigDir());

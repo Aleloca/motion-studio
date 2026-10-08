@@ -55,7 +55,8 @@ export async function loadOrCreateUiToken(configDir: string): Promise<string> {
 
 /** Constant-time comparison of a presented token with the expected one. */
 export function tokenMatches(presented: unknown, expected: string): boolean {
-  if (typeof presented !== 'string' || presented.length !== expected.length) return false;
+  // Hex only: a non-ASCII value of the same length has a different byte length (timingSafeEqual would throw).
+  if (typeof presented !== 'string' || !TOKEN_RE.test(presented) || presented.length !== expected.length) return false;
   return timingSafeEqual(Buffer.from(presented), Buffer.from(expected));
 }
 

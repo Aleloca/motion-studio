@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../src/api.ts';
-import { captureUiToken, pairingNeeded, resetUiTokenForTests, uiToken } from '../src/uiToken.ts';
+import { captureUiToken, listenForUiToken, markPairingNeeded, onUiTokenChange, pairingNeeded, resetUiTokenForTests, uiToken } from '../src/uiToken.ts';
 
 const TOKEN = 'ab'.repeat(32);
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); resetUiTokenForTests(); history.replaceState(null, '', '/'); });
@@ -45,5 +45,20 @@ describe('UI token', () => {
     expect(pairingNeeded()).toBe(false);
     await expect(api.getWorkspace()).rejects.toThrow();
     expect(pairingNeeded()).toBe(true);
+  });
+  it('takes a link pasted into an open tab: stores the token, strips it and ends the pairing request', () => {
+    const off = listenForUiToken();
+    const changed = vi.fn();
+    const offChange = onUiTokenChange(changed);
+    try {
+      markPairingNeeded();
+      location.hash = `#t=${'ef'.repeat(32)}`;
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+      expect(uiToken()).toBe('ef'.repeat(32));
+      expect(localStorage.getItem('motion-studio-ui-token')).toBe('ef'.repeat(32));
+      expect(location.hash).toBe('#/');
+      expect(pairingNeeded()).toBe(false);
+      expect(changed).toHaveBeenCalledTimes(1);
+    } finally { off(); offChange(); }
   });
 });

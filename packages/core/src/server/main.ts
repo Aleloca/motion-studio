@@ -11,6 +11,7 @@ import { execCommand } from '../exec.ts';
 import { Git } from '../git.ts';
 import { createFfmpegTools } from '../media/media-tools.ts';
 import { KeyringVault } from '../secrets/vault.ts';
+import { WorkspaceError } from '../workspace-store.ts';
 import { buildServer } from './app.ts';
 import { loadOrCreateUiToken, removeServerInfo, uiUrl, writeServerInfo } from './ui-token.ts';
 
@@ -19,7 +20,11 @@ const DEV_MCP_SERVER = fileURLToPath(new URL('../../../mcp-studio/src/server.mjs
 
 /** Shows a folder to the user: selected in the Finder on macOS (never "opened" as an app bundle), opened elsewhere. */
 async function revealFolder(p: string): Promise<void> {
-  if (process.platform === 'darwin') { await execCommand('open', ['-R', p]); return; }
+  if (process.platform === 'darwin') {
+    const r = await execCommand('open', ['-R', p]);
+    if (r.code !== 0) throw new WorkspaceError(500, 'Impossibile mostrare la cartella degli output nel Finder');
+    return;
+  }
   await open(p);
 }
 

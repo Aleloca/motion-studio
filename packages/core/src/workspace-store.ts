@@ -4,11 +4,13 @@ import { isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
   type WorkspaceProblemCode,
   projectFileSchema,
+  storedWorkspaceSettingsSchema,
   workspaceSettingsSchema,
   type ProjectFile,
   type LinkedCodebase,
   type ProjectListItem,
   type WorkspaceSettings,
+  type WorkspaceSettingsView,
 } from '@motion-studio/shared';
 import type { Git } from './git.ts';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from './json-file.ts';
@@ -115,12 +117,14 @@ export class WorkspaceStore {
 
   private settingsPath() { return join(this.root, '.studio', 'settings.json'); }
 
-  readSettings(): Promise<WorkspaceSettings> {
-    return readJsonFile(this.settingsPath(), workspaceSettingsSchema);
+  /** Never rewrites the file: invalid stored domains are skipped and listed in `droppedDomains`. */
+  readSettings(): Promise<WorkspaceSettingsView> {
+    return readJsonFile<WorkspaceSettingsView>(this.settingsPath(), storedWorkspaceSettingsSchema);
   }
 
   async updateSettings(patch: Partial<Omit<WorkspaceSettings, 'schemaVersion'>>): Promise<WorkspaceSettings> {
-    const parsed = workspaceSettingsSchema.safeParse({ ...(await this.readSettings()), ...patch, schemaVersion: 1 });
+    const { droppedDomains: _dropped, ...current } = await this.readSettings();
+    const parsed = workspaceSettingsSchema.safeParse({ ...current, ...patch, schemaVersion: 1 });
     if (!parsed.success) throw new WorkspaceError(400, `Impostazioni non valide: ${parsed.error.issues.map((i) => i.path.join('.')).join(', ')}`);
     await writeJsonFileAtomic(this.settingsPath(), parsed.data);
     return parsed.data;

@@ -32,6 +32,8 @@ export type Snapshot = { value: string } | { unavailable: 'not-git' | 'failed' }
 export interface HashedRun { code: number; hash: string; stderr: string; timedOut: boolean }
 export type HashedExec = (args: string[]) => Promise<HashedRun>;
 
+/** Hooks and an fsmonitor command configured in a linked repository must never run from Motion Studio. */
+const GIT_SAFE = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
 // Stable, untranslated git output whatever the user's locale.
 const GIT_ENV = () => ({ ...process.env, LC_ALL: 'C' });
 
@@ -41,7 +43,7 @@ export const gitHashed = (path: string, timeoutMs = 30_000): HashedExec => (args
   let stderr = '';
   let timedOut = false;
   let settled = false;
-  const child = spawn('git', ['-C', path, ...args], { stdio: ['ignore', 'pipe', 'pipe'], env: GIT_ENV() });
+  const child = spawn('git', [...GIT_SAFE, '-C', path, ...args], { stdio: ['ignore', 'pipe', 'pipe'], env: GIT_ENV() });
   const done = (code: number) => { if (!settled) { settled = true; clearTimeout(timer); resolve({ code, hash: hash.digest('hex'), stderr, timedOut }); } };
   const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
   child.stdout.on('data', (d: Buffer) => hash.update(d));
@@ -60,8 +62,8 @@ export const untrackedContentHash = (path: string, timeoutMs = 30_000) => (): Pr
   let timedOut = false;
   let settled = false;
   const codes: Array<number | null> = [];
-  const list = spawn('git', ['-C', path, 'ls-files', '-o', '--exclude-standard', '-z', '--', '.'], { stdio: ['ignore', 'pipe', 'pipe'], env: GIT_ENV() });
-  const hasher = spawn('git', ['-C', path, 'hash-object', '--stdin-paths'], { stdio: ['pipe', 'pipe', 'pipe'], env: GIT_ENV() });
+  const list = spawn('git', [...GIT_SAFE, '-C', path, 'ls-files', '-o', '--exclude-standard', '-z', '--', '.'], { stdio: ['ignore', 'pipe', 'pipe'], env: GIT_ENV() });
+  const hasher = spawn('git', [...GIT_SAFE, '-C', path, 'hash-object', '--stdin-paths'], { stdio: ['pipe', 'pipe', 'pipe'], env: GIT_ENV() });
   const finish = (code: number) => { if (!settled) { settled = true; clearTimeout(timer); resolve({ code, hash: hash.digest('hex'), stderr, timedOut }); } };
   const timer = setTimeout(() => { timedOut = true; list.kill('SIGKILL'); hasher.kill('SIGKILL'); }, timeoutMs);
   const onClose = (code: number | null) => { codes.push(code); if (codes.length === 2) finish(codes.every((c) => c === 0) ? 0 : 1); };

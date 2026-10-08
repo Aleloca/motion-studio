@@ -59,4 +59,8 @@ describe('SettingsPage', () => {
     expect(screen.queryByText(active)).toBeNull();
     expect(screen.getByText('Isolamento disattivato nelle Impostazioni')).toBeTruthy();
   });
+  it('lists the stored domains that were ignored because invalid', () => {
+    render(<SettingsPage settings={{ ...settings, droppedDomains: ['printer.local', '*.co.uk'] }} checks={checks} onSaved={() => {}} />);
+    expect(screen.getByText('Domini ignorati perché non validi: printer.local, *.co.uk')).toBeTruthy();
+  });
 });

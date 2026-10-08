@@ -1,4 +1,4 @@
-import type { ProjectFile, WorkspaceSettings } from './schemas.ts';
+import type { ProjectFile, WorkspaceSettings, WorkspaceSettingsView } from './schemas.ts';
 
 /** Agent-neutral event stream produced by any AgentRunner. */
 export type AgentEvent =
@@ -79,7 +79,7 @@ export interface WorkspaceProblem { code: WorkspaceProblemCode; message: string 
 /** GET /api/workspace: `error` explains why a configured workspace is not usable (path is then the configured one). */
 export interface WorkspaceInfo {
   path: string | null;
-  settings: WorkspaceSettings | null;
+  settings: WorkspaceSettingsView | null;
   error: WorkspaceProblem | null;
 }
 

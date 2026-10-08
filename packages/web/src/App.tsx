@@ -54,6 +54,12 @@ export function App() {
     api.getWorkspace().then((w) => { setWs(w); if (w.settings) applyTheme(w.settings.theme); }).catch(fail);
   }, []);
   useEffect(refresh, [refresh]);
+  // Paired again (a new link was pasted): reload what failed while the token was refused.
+  const wasPairing = useRef(pairing);
+  useEffect(() => {
+    if (wasPairing.current && !pairing) refresh();
+    wasPairing.current = pairing;
+  }, [pairing, refresh]);
 
   const blocking = checks?.some((c) => c.required && !c.ok) ?? true;
   if (pairing) {

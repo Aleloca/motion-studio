@@ -35,6 +35,25 @@ export const workspaceSettingsSchema = z.object({
 });
 export type WorkspaceSettings = z.infer<typeof workspaceSettingsSchema>;
 
+/**
+ * Reading the settings file: a domain typed by hand that is no longer valid (e.g. `printer.local`) is left out, one by
+ * one, and reported in `droppedDomains` instead of making the whole workspace unreadable. Writes use the strict schema.
+ */
+export const storedWorkspaceSettingsSchema = workspaceSettingsSchema
+  .extend({ extraAllowedDomains: z.array(z.unknown()).max(100).default([]) })
+  .transform(({ extraAllowedDomains, ...rest }) => {
+    const kept: string[] = [];
+    const dropped: string[] = [];
+    for (const d of extraAllowedDomains) {
+      const r = domainSchema.safeParse(d);
+      if (!r.success) dropped.push(typeof d === 'string' ? d : JSON.stringify(d));
+      else if (!kept.includes(r.data)) kept.push(r.data);
+    }
+    return { ...rest, extraAllowedDomains: kept, ...(dropped.length ? { droppedDomains: dropped } : {}) };
+  });
+/** Settings as read from disk (and returned by GET /api/workspace). */
+export type WorkspaceSettingsView = WorkspaceSettings & { droppedDomains?: string[] };
+
 export const linkedCodebaseSchema = z.object({
   path: z.string().min(1),
   note: z.string().optional(),
