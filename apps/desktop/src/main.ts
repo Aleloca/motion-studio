@@ -1,9 +1,10 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, session, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, session, shell, type IpcMainInvokeEvent } from 'electron';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveLoginShellPath, startServer } from '@motion-studio/core';
 import { absolutePathArg, pickFolderArgs, tokenFromAppUrl } from './helpers.ts';
+import { setupUpdates } from './updater.ts';
 import { externalUrlAllowed, isAppUrl, windowOptions } from './window.ts';
 
 const REPO_URL = 'https://github.com/Aleloca/motion-studio';
@@ -50,14 +51,14 @@ async function smoke(mode: string) {
   } finally { await server.close(); await rm(configDir, { recursive: true, force: true }); }
 }
 
-function buildMenu() {
+function buildMenu(restart?: () => void) {
   const mac = process.platform === 'darwin';
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     ...(mac ? [{ role: 'appMenu' as const }] : []),
     { label: 'Modifica', submenu: [{ role: 'undo', label: 'Annulla' }, { role: 'redo', label: 'Ripeti' }, { type: 'separator' }, { role: 'cut', label: 'Taglia' }, { role: 'copy', label: 'Copia' }, { role: 'paste', label: 'Incolla' }, { role: 'selectAll', label: 'Seleziona tutto' }] },
     { label: 'Vista', submenu: [{ role: 'reload', label: 'Ricarica' }, { role: 'togglefullscreen', label: 'Schermo intero' }, { type: 'separator' }, { role: 'resetZoom', label: 'Zoom predefinito' }, { role: 'zoomIn', label: 'Ingrandisci' }, { role: 'zoomOut', label: 'Riduci' }] },
     { label: 'Finestra', submenu: [{ role: 'minimize', label: 'Riduci a icona' }, { role: 'close', label: 'Chiudi' }] },
-    { label: 'Aiuto', submenu: [{ label: 'Motion Studio su GitHub', click: () => void shell.openExternal(REPO_URL) }] },
+    { label: 'Aiuto', submenu: [{ label: 'Riavvia per aggiornare', enabled: !!restart, click: () => restart?.() }, { type: 'separator' }, { label: 'Motion Studio su GitHub', click: () => void shell.openExternal(REPO_URL) }] },
   ]));
 }
 
@@ -95,6 +96,19 @@ async function run() {
   app.on('window-all-closed', () => app.quit());
 
   buildMenu();
+  if (app.isPackaged) {
+    // Lazy: dev and smoke runs never load electron-updater.
+    const { autoUpdater } = await import('electron-updater');
+    setupUpdates({
+      updater: autoUpdater, isPackaged: app.isPackaged, log: (m) => console.log(m),
+      notify: (message, onRestart) => {
+        buildMenu(onRestart);
+        const n = new Notification({ title: 'Motion Studio', body: message });
+        n.on('click', onRestart);
+        n.show();
+      },
+    });
+  }
   win.once('ready-to-show', () => win.show());
   win.webContents.setWindowOpenHandler(({ url }) => { if (externalUrlAllowed(url)) void shell.openExternal(url); return { action: 'deny' }; });
   const guard = (e: { preventDefault: () => void }, url: string) => { if (!isAppUrl(url, origin)) e.preventDefault(); };
