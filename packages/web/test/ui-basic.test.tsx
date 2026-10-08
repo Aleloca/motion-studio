@@ -493,22 +493,32 @@ describe('Markdown', () => {
     expect(container.querySelectorAll('a')).toHaveLength(2);
     onlyHttpLinks(container);
   });
-  it('renders 20 KB adversarial lines in linear time', () => {
+  it('parses 20 KB adversarial lines with linear work', () => {
     const lines = [
       '**a `c` '.repeat(2500), '**a '.repeat(5000), '['.repeat(20000), '[a]('.repeat(5000), '*a '.repeat(6700),
       '_a '.repeat(6700), '`'.repeat(20000), 'https://'.repeat(2500), '**['.repeat(6700), '[a](https://x '.repeat(1400),
     ];
-    // Markdown has no hooks: calling it measures parsing and element creation without jsdom's DOM cost, which is noisy
-    // under the parallel full run (the old parser took ~16 s on the first line).
-    for (const text of lines) {
-      const t0 = performance.now();
-      Markdown({ text });
-      expect(performance.now() - t0, text.slice(0, 12)).toBeLessThan(200);
-    }
-    // And a real DOM render of the worst case stays fast too.
-    const t0 = performance.now();
-    render(<Markdown text={lines[0]!} />);
-    expect(performance.now() - t0).toBeLessThan(1500);
+    // Deterministic work count instead of wall-clock time (which flaked under the parallel full run): every regex
+    // exec — including those behind split/replace/test — adds the characters it scanned. The current parser does
+    // ≤ ~11 units per character on these lines; the old one (which re-searched the whole remaining text with every
+    // rule after each match) did ~700–1,300 per character on 4 KB cuts of lines 1, 9 and 10 and grows with the length.
+    const K = 20;
+    const exec = RegExp.prototype.exec;
+    let work = 0;
+    RegExp.prototype.exec = function (this: RegExp, s: string) {
+      const start = this.global || this.sticky ? this.lastIndex : 0;
+      const m = exec.call(this, s);
+      // A sticky exec (used by split) only looks at its position; others scan from `start` to the match end.
+      work += this.sticky ? (m ? m[0].length : 0) + 1 : Math.max(1, (m ? m.index + m[0].length : String(s).length) - start);
+      return m;
+    } as typeof exec;
+    try {
+      for (const text of lines) {
+        work = 0;
+        Markdown({ text });
+        expect(work, text.slice(0, 12)).toBeLessThanOrEqual(K * text.length);
+      }
+    } finally { RegExp.prototype.exec = exec; }
   });
   it('does not treat snake_case as italic', () => {
     const { container } = render(<Markdown text={'use some_file_name here'} />);
