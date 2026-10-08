@@ -16,8 +16,10 @@ function normalizePosixLocale(value: string | undefined): string | null {
 
 /** The user's preferred languages, most specific first: LC_ALL, LC_MESSAGES, LANG, then the runtime's own locale. */
 export function detectSystemLocales(env: Record<string, string | undefined> = process.env): string[] {
-  const found = [env.LC_ALL, env.LC_MESSAGES, env.LANG].map(normalizePosixLocale).filter((l): l is string => l !== null);
-  return [...found, Intl.DateTimeFormat().resolvedOptions().locale];
+  // POSIX precedence: the first variable that is set decides (a "C" there means no preference), the others are ignored.
+  const first = [env.LC_ALL, env.LC_MESSAGES, env.LANG].find((v) => v !== undefined && v.trim() !== '');
+  const found = normalizePosixLocale(first);
+  return [...(found ? [found] : []), Intl.DateTimeFormat().resolvedOptions().locale];
 }
 
 /** The language setting and the locale it resolves to; applying a change switches the process-wide locale and tells subscribers. */
@@ -34,7 +36,10 @@ export class LanguageController {
   set(setting: LanguageSetting): void {
     this.current_ = setting;
     this.apply();
-    for (const cb of this.listeners) cb(this.locale, setting);
+    // One failing subscriber must not abort the switch nor the others.
+    for (const cb of this.listeners) {
+      try { cb(this.locale, setting); } catch (err) { console.error('language listener failed:', err); }
+    }
   }
 
   onChange(cb: (locale: Locale, setting: LanguageSetting) => void): () => void {

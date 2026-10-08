@@ -32,6 +32,7 @@ import { registerBrandRoutes } from './brand-routes.ts';
 import { EventHub } from './event-hub.ts';
 import { registerLibraryRoutes } from './library-routes.ts';
 import { registerProjectRoutes } from './project-routes.ts';
+import { KeyedMutex } from '../keyed-mutex.ts';
 import { tokenMatches } from './ui-token.ts';
 import { LanguageController, t } from '../i18n.ts';
 
@@ -126,6 +127,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   const appConfig = await deps.appConfig.read();
   const language = deps.language ?? new LanguageController(appConfig.language, []);
+  // Without startServer, an explicit saved language is applied here ('system' keeps the current locale: no system languages known).
+  if (!deps.language && appConfig.language !== 'system') language.apply();
+  const languageLock = new KeyedMutex();
   const configured = appConfig.workspacePath;
   if (configured) {
     try {
@@ -260,10 +264,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.put<{ Body: { language?: unknown } }>('/api/settings/language', async (req, reply) => {
     const value = req.body?.language;
     if (value !== 'system' && value !== 'en' && value !== 'it') return reply.status(400).send({ error: t().errors.invalidLanguage });
-    await deps.appConfig.setLanguage(value);
-    language.set(value);
-    hub.broadcast({ type: 'locale', locale: language.locale, setting: value });
-    return languageState();
+    // Serialized so the file and the in-memory setting end up with the same (last) value.
+    return languageLock.run('language', async () => {
+      await deps.appConfig.setLanguage(value);
+      language.set(value);
+      hub.broadcast({ type: 'locale', locale: language.locale, setting: value });
+      return languageState();
+    });
   });
 
   app.get('/api/projects', async () => requireWorkspace().listProjects());

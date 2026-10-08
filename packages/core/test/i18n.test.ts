@@ -1,7 +1,7 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import type { ServerMessage } from '@motion-studio/shared';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
@@ -27,8 +27,12 @@ describe('detectSystemLocales', () => {
   const intl = () => Intl.DateTimeFormat().resolvedOptions().locale;
   it('normalises POSIX variables, ignores C/POSIX, then falls back to Intl', () => {
     expect(detectSystemLocales({ LANG: 'it_IT.UTF-8' })).toEqual(['it-IT', intl()]);
-    expect(detectSystemLocales({ LC_ALL: 'de_DE.UTF-8', LC_MESSAGES: 'C', LANG: 'it_IT.UTF-8' })).toEqual(['de-DE', 'it-IT', intl()]);
-    expect(detectSystemLocales({ LC_ALL: 'POSIX', LANG: 'C' })).toEqual([intl()]);
+    expect(detectSystemLocales({ LC_ALL: 'de_DE.UTF-8', LANG: 'it_IT.UTF-8' })).toEqual(['de-DE', intl()]);
+    expect(detectSystemLocales({ LC_MESSAGES: 'fr_FR', LANG: 'it_IT.UTF-8' })).toEqual(['fr-FR', intl()]);
+    expect(detectSystemLocales({ LC_ALL: '', LANG: 'it_IT.UTF-8' })).toEqual(['it-IT', intl()]);
+    expect(detectSystemLocales({ LC_ALL: 'POSIX', LANG: 'it_IT.UTF-8' })).toEqual([intl()]);
+    expect(detectSystemLocales({ LANG: 'it_IT.UTF-8@euro' })).toEqual(['it-IT', intl()]);
+    expect(detectSystemLocales({ LANG: 'C.UTF-8' })).toEqual([intl()]);
     expect(detectSystemLocales({})).toEqual([intl()]);
   });
 });
@@ -71,6 +75,42 @@ describe('language routes', () => {
     expect((await app.inject({ method: 'PUT', url: '/api/settings/language', payload: { language: 'it' } })).statusCode).toBe(401);
     expect((await app.inject({ method: 'PUT', url: '/api/settings/language', headers, payload: { language: 'de' } })).statusCode).toBe(400);
     expect((await app.inject({ method: 'PUT', url: '/api/settings/language', headers, payload: {} })).statusCode).toBe(400);
+    expect(currentLocale()).toBe('en');
+  });
+  it('survives a throwing subscriber: 200, switched, broadcast; unsubscribe stops callbacks', async () => {
+    const address = await app.listen({ port: 0, host: '127.0.0.1' });
+    const ws = new WebSocket(`${address.replace('http', 'ws')}/api/events?t=${TOKEN}`);
+    const messages: ServerMessage[] = [];
+    ws.on('message', (d) => messages.push(JSON.parse(String(d))));
+    await new Promise((r) => ws.once('open', r));
+    const seen: string[] = [];
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+    language.onChange(() => { throw new Error('boom'); });
+    const off = language.onChange((l) => seen.push(l));
+    const res = await app.inject({ method: 'PUT', url: '/api/settings/language', headers, payload: { language: 'it' } });
+    expect(res.statusCode).toBe(200);
+    expect(currentLocale()).toBe('it');
+    expect(seen).toEqual(['it']);
+    for (let i = 0; i < 100 && !messages.some((m) => m.type === 'locale'); i++) await new Promise((r) => setTimeout(r, 20));
+    expect(messages).toContainEqual({ type: 'locale', locale: 'it', setting: 'it' });
+    off();
+    await app.inject({ method: 'PUT', url: '/api/settings/language', headers, payload: { language: 'en' } });
+    expect(seen).toEqual(['it']);
+    expect(quiet).toHaveBeenCalledTimes(2);
+    quiet.mockRestore();
+    ws.close();
+  });
+  it('answers 400 with the catalog text', async () => {
+    const res = await app.inject({ method: 'PUT', url: '/api/settings/language', headers, payload: { language: 'de' } });
+    expect(res.json()).toEqual({ error: t().errors.invalidLanguage });
+  });
+  it('does not rewrite a corrupt config nor switch the language', async () => {
+    const file = join(base, 'config', 'config.json');
+    await mkdir(join(base, 'config'), { recursive: true });
+    await writeFile(file, '{ nope');
+    const res = await app.inject({ method: 'PUT', url: '/api/settings/language', headers, payload: { language: 'it' } });
+    expect(res.statusCode).toBe(422);
+    expect(await readFile(file, 'utf8')).toBe('{ nope');
     expect(currentLocale()).toBe('en');
   });
   it('saves, switches the core language and broadcasts', async () => {
@@ -125,5 +165,17 @@ describe('startServer language', () => {
       expect(seen).toEqual(['it']);
       expect(s.locale()).toBe('it');
     } finally { await s.close(); await rm(configDir, { recursive: true, force: true }); }
+  });
+});
+
+describe('buildServer default language', () => {
+  it('applies a saved explicit language so the snapshot is right', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'ms-lang-'));
+    await new AppConfigStore(join(base, 'config')).setLanguage('en');
+    setLocale('it');
+    const app = await buildServer({ uiToken: null, appConfig: new AppConfigStore(join(base, 'config')), git: new Git(), runner: new ClaudeCodeRunner(['true']), doctor: async () => [] });
+    try {
+      expect((await app.inject('/api/settings/language')).json()).toEqual({ locale: 'en', languageSetting: 'en' });
+    } finally { await app.close(); await rm(base, { recursive: true, force: true }); }
   });
 });
