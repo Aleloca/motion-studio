@@ -11,7 +11,12 @@ const brokenMessage = (r: CommandResult) => {
   return `Installato ma non risponde correttamente${detail ? `: ${detail}` : ''}`;
 };
 
-export async function runDoctor(opts: { exec: CommandExec; claudeCommand: string[]; nodeVersion?: string; sandbox?: () => Promise<SandboxSupport> }): Promise<DoctorCheck[]> {
+/** Where the process PATH came from (desktop only: an app started from the Finder has to read it from the login shell). */
+export interface ShellPathOrigin { source: 'login-shell' | 'fallback'; error?: string }
+
+export async function runDoctor(opts: {
+  exec: CommandExec; claudeCommand: string[]; nodeVersion?: string; sandbox?: () => Promise<SandboxSupport>; shellPath?: ShellPathOrigin;
+}): Promise<DoctorCheck[]> {
   const { exec } = opts;
   const [claudeBin, ...claudePrefix] = opts.claudeCommand;
   if (!claudeBin) throw new Error('claudeCommand vuoto');
@@ -67,6 +72,15 @@ export async function runDoctor(opts: { exec: CommandExec; claudeCommand: string
       : s.available
       ? { id: 'sandbox', label: 'Sandbox dell\'agente', required: false, ok: true, message: 'Disponibile: l\'agente lavora isolato nella cartella del progetto' }
       : { id: 'sandbox', label: 'Sandbox dell\'agente', required: false, ok: false, message: s.reason, fix: 'Senza sandbox Motion Studio usa permessi più ristretti; vedi il README' });
+  }
+  if (opts.shellPath) {
+    const ok = opts.shellPath.source === 'login-shell';
+    checks.push(ok
+      ? { id: 'shell-path', label: 'PATH della shell di login', required: false, ok, message: 'PATH caricato dalla shell di login' }
+      : {
+        id: 'shell-path', label: 'PATH della shell di login', required: false, ok, message: `PATH di riserva: ${opts.shellPath.error ?? 'motivo sconosciuto'}`,
+        fix: 'Se mancano programmi, avvia Motion Studio dal terminale o controlla i file di avvio della shell',
+      });
   }
   return checks;
 }

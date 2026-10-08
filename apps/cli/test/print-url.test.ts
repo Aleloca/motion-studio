@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadOrCreateUiToken } from '@motion-studio/core';
-import { answersHealth, NOT_RUNNING, runningUrl } from '../src/print-url.ts';
+import { alreadyRunningMessage, answersHealth, NOT_RUNNING, runningUrl } from '../src/print-url.ts';
 
 const dirs: string[] = [];
 afterEach(async () => { for (const d of dirs.splice(0)) await rm(d, { recursive: true, force: true }); });
@@ -62,5 +62,8 @@ describe('motion-studio --print-url', () => {
     const { dir } = await configWith({ port: 4318, pid: 999_999, startedAt: new Date().toISOString() });
     expect(await runningUrl(dir, () => false, async () => true)).toBeNull();
     expect(NOT_RUNNING).toBe('Motion Studio non è in esecuzione: avvialo con motion-studio');
+  });
+  it('tells where the already running instance is, with the same address --print-url prints', () => {
+    expect(alreadyRunningMessage('http://127.0.0.1:4318/#t=abc')).toBe('Motion Studio è già avviato: http://127.0.0.1:4318/#t=abc');
   });
 });

@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { CommandExec } from './exec.ts';
 
 const MAX_OUTPUT = 64 * 1024;
@@ -42,6 +44,14 @@ export const spawnBounded: CommandExec = (cmd, args, opts = {}) =>
 
 const merge = (...parts: string[]) => [...new Set(parts.join(':').split(':').filter(Boolean))].join(':');
 
+const PROBE = `/bin/sh -c 'printf "__MS_PATH__%s__MS_END__" "$PATH"'`;
+
+/** Where `claude`, Homebrew and npm/volta globals usually live: appended when the login shell cannot be read. */
+const fallbackDirs = (home: string) => [
+  join(home, '.local', 'bin'), join(home, '.claude', 'local'), join(home, '.npm-global', 'bin'), join(home, '.volta', 'bin'),
+  '/opt/homebrew/bin', '/usr/local/bin',
+];
+
 export interface LoginShellPath { path: string; source: 'login-shell' | 'fallback'; error?: string }
 
 /**
@@ -49,15 +59,16 @@ export interface LoginShellPath { path: string; source: 'login-shell' | 'fallbac
  * that misses Homebrew and npm-global (where `claude` lives). Never throws nor hangs: on any failure a safe fallback is returned.
  */
 export async function resolveLoginShellPath(
-  opts: { shell?: string; timeoutMs?: number; exec?: CommandExec; platform?: NodeJS.Platform; current?: string } = {},
+  opts: { shell?: string; timeoutMs?: number; exec?: CommandExec; platform?: NodeJS.Platform; current?: string; home?: string } = {},
 ): Promise<LoginShellPath> {
   const platform = opts.platform ?? process.platform;
   const current = opts.current ?? process.env.PATH ?? '';
   if (platform === 'win32') return { path: current, source: 'fallback' };
   const exec = opts.exec ?? spawnBounded;
   const shell = opts.shell ?? process.env.SHELL ?? '/bin/zsh';
-  const r = await exec(shell, ['-ilc', 'printf "__MS_PATH__%s__MS_END__" "$PATH"'], { timeoutMs: opts.timeoutMs ?? 5000 });
+  // Printed by /bin/sh: in a non-POSIX login shell (fish) "$PATH" is a space-joined list, the exported one is colon-joined.
+  const r = await exec(shell, ['-ilc', PROBE], { timeoutMs: opts.timeoutMs ?? 5000 });
   const found = r.code === 0 ? r.stdout.match(/__MS_PATH__([\s\S]*?)__MS_END__/)?.[1]?.trim() : undefined;
   if (found) return { path: merge(found, current), source: 'login-shell' };
-  return { path: merge(current, '/opt/homebrew/bin', '/usr/local/bin'), source: 'fallback', error: r.code === 0 ? 'marcatore non trovato' : r.stderr.trim() || `codice ${r.code}` };
+  return { path: merge(current, ...fallbackDirs(opts.home ?? homedir())), source: 'fallback', error: r.code === 0 ? 'marcatore non trovato' : r.stderr.trim() || `codice ${r.code}` };
 }

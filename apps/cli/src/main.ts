@@ -1,9 +1,9 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import open from 'open';
-import { startServer } from '@motion-studio/core';
+import { AlreadyRunningError, startServer } from '@motion-studio/core';
 import { parseCliArgs } from './args.ts';
-import { NOT_RUNNING, runningUrl } from './print-url.ts';
+import { alreadyRunningMessage, NOT_RUNNING, runningUrl } from './print-url.ts';
 
 const HELP = `Uso: npx motion-studio-app [--port 4317] [--no-open]
        npx motion-studio-app --print-url
@@ -50,6 +50,8 @@ async function main() {
       }
     }
   } catch (e) {
+    // Another instance already serves this config folder: show its address instead of starting a second core.
+    if (e instanceof AlreadyRunningError) { console.log(alreadyRunningMessage(e.alreadyRunning.appUrl)); process.exit(0); }
     const err = e as NodeJS.ErrnoException;
     console.error(err.code === 'EADDRINUSE' ? `La porta ${args.port} è già in uso: riprova con --port <altra>` : err.message);
     process.exit(1);

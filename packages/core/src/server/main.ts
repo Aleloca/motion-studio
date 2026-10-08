@@ -7,13 +7,14 @@ import { ClaudeCodeRunner, claudeCommandFromEnv } from '../agent/claude-code-run
 import { cachedSandboxDetection } from '../agent/sandbox.ts';
 import { AppConfigStore, defaultConfigDir } from '../app-config.ts';
 import { AgentBridge } from '../bridge/bridge.ts';
-import { runDoctor } from '../doctor.ts';
+import { runDoctor, type ShellPathOrigin } from '../doctor.ts';
 import { execCommand } from '../exec.ts';
 import { Git } from '../git.ts';
 import { createFfmpegTools } from '../media/media-tools.ts';
 import { KeyringVault, type SecretsVault } from '../secrets/vault.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import { buildServer } from './app.ts';
+import { findRunningInstance, type RunningInstance } from './running-instance.ts';
 import { loadOrCreateUiToken, removeServerInfo, uiUrl, writeServerInfo } from './ui-token.ts';
 
 /** The `studio` MCP server in the source tree (dev); packaged builds pass their own path. */
@@ -39,6 +40,14 @@ async function listenAuto(app: FastifyInstance, host: string): Promise<string> {
   }
 }
 
+/** Thrown by startServer when another live Motion Studio already serves the same config folder: open its address instead. */
+export class AlreadyRunningError extends Error {
+  constructor(readonly alreadyRunning: RunningInstance) {
+    super(`Motion Studio è già avviato (porta ${alreadyRunning.port})`);
+    this.name = 'AlreadyRunningError';
+  }
+}
+
 export async function startServer(opts: {
   /** 'auto': 4318, or a free port when busy. Default 4317. */
   port?: number | 'auto'; host?: string; configDir?: string; webDir?: string; claudeCommand?: string[]; mcpServerPath?: string;
@@ -46,10 +55,17 @@ export async function startServer(opts: {
   mcpEnv?: Record<string, string>;
   /** Defaults to the OS keychain. */
   vault?: SecretsVault;
+  /** Where PATH came from (desktop): adds the optional `shell-path` Doctor check. */
+  shellPath?: ShellPathOrigin;
+  /** How long a live instance recorded in run/server.json gets to answer /api/health. Default 3 s. */
+  healthTimeoutMs?: number;
 } = {}) {
   const claudeCommand = opts.claudeCommand ?? claudeCommandFromEnv();
   const configDir = opts.configDir ?? defaultConfigDir();
-  // Leftovers (config and token files) of a run that was killed with the app; no job is alive at boot.
+  // One running instance per config folder: two cores would share workspace, jobs and run/ files.
+  const running = await findRunningInstance(configDir, { healthTimeoutMs: opts.healthTimeoutMs });
+  if (running) throw new AlreadyRunningError(running);
+  // Leftovers (config and token files) of a run that was killed with the app; no other instance is alive here.
   await sweepRunDir(configDir).catch(() => {});
   const bridge = new AgentBridge();
   const mcpServerPath = opts.mcpServerPath ?? DEV_MCP_SERVER;
@@ -65,7 +81,7 @@ export async function startServer(opts: {
     git: new Git(),
     runner: new ClaudeCodeRunner(claudeCommand),
     bridge, mcpCommand, sandbox, ...(opts.mcpEnv ? { mcpEnv: opts.mcpEnv } : {}),
-    doctor: (extra) => runDoctor({ exec: execCommand, claudeCommand, sandbox: extra.sandbox }),
+    doctor: (extra) => runDoctor({ exec: execCommand, claudeCommand, sandbox: extra.sandbox, ...(opts.shellPath ? { shellPath: opts.shellPath } : {}) }),
     webDir: opts.webDir,
     vault: opts.vault ?? new KeyringVault(),
     media: await createFfmpegTools(),
@@ -81,6 +97,7 @@ export async function startServer(opts: {
     url, port,
     /** The address to open: it carries the UI token in the fragment. */
     appUrl: uiUrl(port, uiToken),
-    close: async () => { await app.close(); await removeServerInfo(configDir); },
+    // server.json is removed only when it is still this process's.
+    close: async () => { await app.close(); await removeServerInfo(configDir, process.pid); },
   };
 }

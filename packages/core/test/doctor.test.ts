@@ -92,4 +92,17 @@ describe('runDoctor', () => {
     const checks = await runDoctor({ exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', sandbox: async () => ({ available: false, reason: 'manca bubblewrap' }) });
     expect(checks.at(-1)).toMatchObject({ id: 'sandbox', ok: false, required: false, message: 'manca bubblewrap' });
   });
+  it('reports where PATH came from only when told (desktop)', async () => {
+    const base = { exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0' };
+    expect((await runDoctor(base)).some((c) => c.id === 'shell-path')).toBe(false);
+    expect((await runDoctor({ ...base, shellPath: { source: 'login-shell' } })).find((c) => c.id === 'shell-path')).toEqual({
+      id: 'shell-path', label: 'PATH della shell di login', required: false, ok: true, message: 'PATH caricato dalla shell di login',
+    });
+    const fallback = await runDoctor({ ...base, shellPath: { source: 'fallback', error: 'timeout dopo 15 s' } });
+    expect(fallback.find((c) => c.id === 'shell-path')).toEqual({
+      id: 'shell-path', label: 'PATH della shell di login', required: false, ok: false, message: 'PATH di riserva: timeout dopo 15 s',
+      fix: 'Se mancano programmi, avvia Motion Studio dal terminale o controlla i file di avvio della shell',
+    });
+    expect(hasBlockingFailure(fallback)).toBe(false);
+  });
 });

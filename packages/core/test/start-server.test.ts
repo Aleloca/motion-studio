@@ -1,12 +1,15 @@
-import { createServer } from 'node:net';
+import { spawnSync } from 'node:child_process';
+import { createServer as createHttpServer } from 'node:http';
+import { createServer, type AddressInfo, type Server } from 'node:net';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { MemoryVault } from '../src/secrets/vault.ts';
-import { startServer } from '../src/server/main.ts';
+import { AlreadyRunningError, startServer } from '../src/server/main.ts';
+import { loadOrCreateUiToken, readServerInfo } from '../src/server/ui-token.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 
@@ -69,5 +72,91 @@ describe('startServer port auto', () => {
       await s.close();
       await rm(base, { recursive: true, force: true });
     }
+  });
+});
+
+describe('startServer doctor', () => {
+  it('adds the shell-path check only when the caller says where PATH came from', async () => {
+    const configDir = await mkdtemp(join(tmpdir(), 'ms-ss-'));
+    const s = await startServer({ port: 0, configDir, claudeCommand: ['true'], vault: new MemoryVault(), shellPath: { source: 'fallback', error: 'codice 1' } });
+    try {
+      const token = (await readFile(join(configDir, 'ui-token'), 'utf8')).trim();
+      const checks = await (await fetch(`${s.url}/api/doctor`, { headers: { 'x-motion-studio-ui': token } })).json() as { id: string; ok: boolean; message: string }[];
+      expect(checks.find((c) => c.id === 'shell-path')).toMatchObject({ ok: false, message: 'PATH di riserva: codice 1' });
+    } finally {
+      await s.close();
+      await rm(configDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('startServer single instance per config dir', () => {
+  const listen = async (srv: Server | ReturnType<typeof createHttpServer>) => {
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
+    return (srv.address() as AddressInfo).port;
+  };
+  /** A config dir whose run/ holds another instance's server.json and a leftover agent config. */
+  const configWith = async (info: { port: number; pid: number }) => {
+    const configDir = await mkdtemp(join(tmpdir(), 'ms-ss-'));
+    const token = await loadOrCreateUiToken(configDir);
+    await mkdir(join(configDir, 'run'), { mode: 0o700 });
+    await writeFile(join(configDir, 'run', 'server.json'), JSON.stringify({ ...info, startedAt: new Date().toISOString() }), { mode: 0o600 });
+    await writeFile(join(configDir, 'run', 'old.mcp.json'), '{}', { mode: 0o600 });
+    return { configDir, token };
+  };
+  const deadPid = () => spawnSync(process.execPath, ['-e', '']).pid!;
+
+  it('does not start when another live instance answers: returns its address and leaves run/ alone', async () => {
+    const other = createHttpServer((req, res) => { res.setHeader('content-type', 'application/json'); res.end(req.url === '/api/health' ? '{"ok":true}' : '{}'); });
+    const port = await listen(other);
+    const { configDir, token } = await configWith({ port, pid: process.ppid });
+    try {
+      const err = await startServer({ port: 0, configDir, claudeCommand: ['true'], vault: new MemoryVault() }).then(async (s) => { await s.close(); return null; }, (e) => e);
+      expect(err).toBeInstanceOf(AlreadyRunningError);
+      expect(err.alreadyRunning).toEqual({ port, appUrl: `http://127.0.0.1:${port}/#t=${token}` });
+      expect(existsSync(join(configDir, 'run', 'old.mcp.json'))).toBe(true);
+      expect((await readServerInfo(configDir))?.pid).toBe(process.ppid);
+    } finally {
+      other.close();
+      await rm(configDir, { recursive: true, force: true });
+    }
+  });
+  it('starts and sweeps run/ when the recorded pid is dead', async () => {
+    const { configDir } = await configWith({ port: 1, pid: deadPid() });
+    const s = await startServer({ port: 0, configDir, claudeCommand: ['true'], vault: new MemoryVault() });
+    try {
+      expect(existsSync(join(configDir, 'run', 'old.mcp.json'))).toBe(false);
+      expect((await readServerInfo(configDir))?.pid).toBe(process.pid);
+    } finally {
+      await s.close();
+      await rm(configDir, { recursive: true, force: true });
+    }
+  });
+  it('treats a live pid whose port stays silent as dead (bounded wait)', async () => {
+    const silent = createServer(() => { /* accepts, never answers */ });
+    const port = await listen(silent);
+    const { configDir } = await configWith({ port, pid: process.ppid });
+    const t0 = Date.now();
+    const s = await startServer({ port: 0, configDir, claudeCommand: ['true'], vault: new MemoryVault(), healthTimeoutMs: 200 });
+    try {
+      expect(Date.now() - t0).toBeLessThan(2500);
+      expect(existsSync(join(configDir, 'run', 'old.mcp.json'))).toBe(false);
+      expect((await readServerInfo(configDir))?.pid).toBe(process.pid);
+    } finally {
+      await s.close();
+      silent.close();
+      await rm(configDir, { recursive: true, force: true });
+    }
+  });
+  it('close() leaves another instance\'s server.json in place', async () => {
+    const configDir = await mkdtemp(join(tmpdir(), 'ms-ss-'));
+    const s = await startServer({ port: 0, configDir, claudeCommand: ['true'], vault: new MemoryVault() });
+    try {
+      await writeFile(join(configDir, 'run', 'server.json'), JSON.stringify({ port: 1, pid: process.ppid, startedAt: new Date().toISOString() }), { mode: 0o600 });
+    } finally {
+      await s.close();
+    }
+    expect((await readServerInfo(configDir))?.pid).toBe(process.ppid);
+    await rm(configDir, { recursive: true, force: true });
   });
 });

@@ -60,7 +60,7 @@ export type ServerMessage =
   | { type: 'project'; project: string };
 
 export interface DoctorCheck {
-  id: 'node' | 'git' | 'ffmpeg' | 'claude' | 'claude-auth' | 'sandbox';
+  id: 'node' | 'git' | 'ffmpeg' | 'claude' | 'claude-auth' | 'sandbox' | 'shell-path';
   label: string;
   ok: boolean;
   required: boolean;

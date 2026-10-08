@@ -12,10 +12,23 @@ describe('resolveLoginShellPath', () => {
     const r = await resolveLoginShellPath({ platform: 'darwin', current: '/usr/bin:/bin', exec: out('Welcome!\n__MS_PATH__/opt/homebrew/bin:/usr/bin:/Users/me/.npm-global/bin__MS_END__') });
     expect(r).toEqual({ path: '/opt/homebrew/bin:/usr/bin:/Users/me/.npm-global/bin:/bin', source: 'login-shell' });
   });
-  it('falls back when the shell fails', async () => {
-    const r = await resolveLoginShellPath({ platform: 'darwin', current: '/usr/bin', exec: out('', 1) });
+  it('falls back when the shell fails, adding the usual install folders after the current PATH (deduped)', async () => {
+    const r = await resolveLoginShellPath({ platform: 'darwin', current: '/usr/bin:/usr/local/bin', home: '/Users/me', exec: out('', 1) });
     expect(r.source).toBe('fallback');
-    expect(r.path).toBe('/usr/bin:/opt/homebrew/bin:/usr/local/bin');
+    expect(r.path).toBe('/usr/bin:/usr/local/bin:/Users/me/.local/bin:/Users/me/.claude/local:/Users/me/.npm-global/bin:/Users/me/.volta/bin:/opt/homebrew/bin');
+  });
+  it('probes PATH through /bin/sh so a non-POSIX login shell (fish) still prints it colon-joined', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-sp-'));
+    try {
+      // Like fish: its own "$PATH" is a list joined by spaces; only a POSIX child sees the exported, colon-joined PATH.
+      const fish = join(dir, 'fake-fish');
+      await writeFile(fish, `#!/bin/sh\n[ "$1" = -ilc ] || exit 9\ncase "$2" in\n  "/bin/sh -c "*) exec /bin/sh -c "$2" ;;\n  *) printf '__MS_PATH__%s__MS_END__' "$(printf %s "$PATH" | tr : ' ')" ;;\nesac\n`, { mode: 0o755 });
+      const r = await resolveLoginShellPath({ platform: 'darwin', current: '/nowhere', shell: fish, timeoutMs: 5000, exec: spawnBounded });
+      expect(r.source).toBe('login-shell');
+      expect(r.path).toBe([...new Set([...process.env.PATH!.split(':'), '/nowhere'].filter(Boolean))].join(':'));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
   it('does nothing on Windows', async () => {
     expect(await resolveLoginShellPath({ platform: 'win32', current: 'C:\\x', exec: out('x') })).toEqual({ path: 'C:\\x', source: 'fallback' });
