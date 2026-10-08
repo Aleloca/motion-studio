@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BRAND_KIT_LIMITS, brandColorSchema, DEFAULT_FORMATS, EMPTY_BRAND_KIT, type ApprovalRequest, type VersionEntry } from '@motion-studio/shared';
+import { BRAND_KIT_LIMITS, messages, brandColorSchema, DEFAULT_FORMATS, EMPTY_BRAND_KIT, type ApprovalRequest, type VersionEntry } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { ApprovalBroker } from '../src/approvals/broker.ts';
@@ -130,5 +130,13 @@ describe('English messages', () => {
     await expect(new FormatCatalog(root).save(dup)).rejects.toMatchObject({ message: 'Invalid format catalog: presets: duplicate preset ids' });
     setLocale('it');
     await expect(new FormatCatalog(root).save(dup)).rejects.toMatchObject({ message: 'Catalogo formati non valido: presets: id dei preset duplicati' });
+  });
+  it('uses singular forms for a count of one', () => {
+    const j = messages('en').jobs;
+    expect(j.uploadAssetsCommit({ count: 1 })).toBe('Upload 1 asset');
+    expect(j.uploadReferencesCommit({ count: 3 })).toBe('Upload 3 references');
+    expect(j.removedUnsaved({ count: 1 })).toBe('Removed 1 file not saved in a version');
+    expect(j.checkingOutputs({ count: 1, attempt: 2, max: 3 })).toBe('Output check: 1 problem. Asking for a fix (attempt 2 of 3).');
+    expect(messages('it').jobs.uploadAssetsCommit({ count: 1 })).toBe('Carica 1 asset');
   });
 });

@@ -28,7 +28,8 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
       const raw = a.input ?? a.tool_input;
       if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { behavior: 'deny', message: t().approvals.invalidRequest };
       const input = raw as Record<string, unknown>;
-      const toolName = typeof a.tool_name === 'string' ? a.tool_name : t().approvals.unknownTool;
+      // 'unknown' is a stable identifier (it reaches the broker and rules); the localized word is only for display.
+      const toolName = typeof a.tool_name === 'string' ? a.tool_name : 'unknown';
       // Provider confirmations and Motion Studio's own tools never go through the agent's permission prompts.
       if (toolName.startsWith('provider:') || toolName.startsWith(`mcp__${MCP_SERVER}__`)) return { behavior: 'deny', message: t().approvals.invalidRequest };
       const { decision } = await ctx.approvals.request({ jobId: c.jobId, projectSlug: c.projectSlug, projectDir: c.projectDir, creativeSlug: c.creativeSlug, kind: 'tool', toolName, input });

@@ -28,6 +28,8 @@ export type FormatsFile = z.infer<typeof formatsFileSchema>;
 /**
  * Display name of a preset. The id is the stable key: a built-in preset whose stored name is still one of the shipped
  * names (any language) is shown in `locale`; a name the user edited, or a custom preset, is shown as stored.
+ * A shipped preset the user renamed to some other text is a custom name on purpose and keeps its stored text; one renamed
+ * back to a shipped name follows the language again.
  */
 export function formatName(preset: Pick<FormatPreset, 'id' | 'name'>, locale: Locale): string {
   const names = (l: Locale) => messages(l).formats as Record<string, string>;

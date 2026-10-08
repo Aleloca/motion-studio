@@ -28,9 +28,12 @@ describe('DEFAULT_FORMATS', () => {
 describe('format and channel names', () => {
   it('has a catalog entry for every default preset and channel, in both languages', () => {
     for (const locale of ['en', 'it'] as const) {
+      const m = messages(locale);
       for (const f of DEFAULT_FORMATS) {
-        expect(Object.hasOwn(messages(locale).formats, f.id), `${locale} formats.${f.id}`).toBe(true);
-        expect(channelName(f.channel, locale), `${locale} channel ${f.channel}`).toBeTruthy();
+        expect(Object.hasOwn(m.formats, f.id), `${locale} formats.${f.id}`).toBe(true);
+        const key = f.channel.replace(/^./, (c) => c.toLowerCase()).replace(/\s+(\w)/g, (_, c: string) => c.toUpperCase());
+        expect(Object.hasOwn(m.channels, key), `${locale} channels.${key}`).toBe(true);
+        expect(channelName(f.channel, locale)).toBe((m.channels as Record<string, string>)[key]);
       }
     }
     expect(Object.keys(messages('en').formats).sort()).toEqual(DEFAULT_FORMATS.map((f) => f.id).sort());

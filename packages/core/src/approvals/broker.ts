@@ -16,7 +16,7 @@ export function describeRequest(toolName: string, input: unknown): { title: stri
   if (['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(toolName)) return { title: a.editOutside, detail: s(i.file_path) };
   if (toolName === 'Read') return { title: a.readOutside, detail: s(i.file_path) };
   if (toolName === 'WebFetch') return { title: a.openPage, detail: s(i.url) };
-  return { title: a.useTool({ tool: toolName }), detail: JSON.stringify(input ?? {}).slice(0, 500) };
+  return { title: a.useTool({ tool: toolName === 'unknown' ? a.unknownTool : toolName }), detail: JSON.stringify(input ?? {}).slice(0, 500) };
 }
 
 interface Pending { request: ApprovalRequest; alwaysLabel: string; projectDir: string; resolve(o: ApprovalOutcome): void; timer: NodeJS.Timeout }
