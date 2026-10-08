@@ -118,7 +118,7 @@ export function pinnedResolver(lookup: LookupFn = defaultLookup, isBlocked: (ip:
  */
 export const nodeTransport: Transport = (url, init, resolve) => new Promise<Response>((ok, fail) => {
   // GET/HEAD only: a body would need its own streaming and size rules, and is never sent to outside URLs.
-  if (init.body != null) { fail(new Error('nodeTransport: richieste con corpo non supportate')); return; }
+  if (init.body != null) { fail(new Error('nodeTransport: requests with a body are not supported')); return; }
   const headers: Record<string, string> = {};
   new Headers(init.headers).forEach((v, k) => { headers[k] = v; });
   headers['user-agent'] ??= 'MotionStudio';

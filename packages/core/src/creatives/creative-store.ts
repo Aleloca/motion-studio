@@ -154,7 +154,7 @@ export class CreativeStore {
         recovered.push(item.slug);
       } catch (err) {
         // One broken creative must not stop the others from being recovered.
-        console.warn(`Motion Studio: recupero non riuscito per la creatività ${basename(this.projectDir)}/${item.slug}: ${(err as Error).message}`);
+        console.warn(`Motion Studio: recovery failed for creative ${basename(this.projectDir)}/${item.slug}: ${(err as Error).message}`);
       }
     }
     return recovered;

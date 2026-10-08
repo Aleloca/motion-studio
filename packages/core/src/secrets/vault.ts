@@ -57,7 +57,7 @@ export class KeyringVault extends BaseVault {
   }
   protected async read(p: ProviderId) {
     try { return (await (await this.entry(p)).getPassword()) ?? null; }
-    catch (e) { if (!this.warned) { this.warned = true; console.warn(`Portachiavi non disponibile: ${(e as Error).message}`); } return null; }
+    catch (e) { if (!this.warned) { this.warned = true; console.warn(`Keychain not available: ${(e as Error).message}`); } return null; }
   }
   protected async write(p: ProviderId, v: string) {
     try { await (await this.entry(p)).setPassword(v); }

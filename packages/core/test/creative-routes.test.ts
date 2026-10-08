@@ -225,7 +225,7 @@ describe('recoverWorkspace', { timeout: 20_000 }, () => {
       warn.mockRestore();
     }
     expect(seen).toEqual(['/ws/rotto', '/ws/sano']);
-    expect(warnings).toEqual([expect.stringContaining('nel progetto rotto: permesso negato')]);
+    expect(warnings).toEqual([expect.stringContaining('in project rotto: permesso negato')]);
   });
 });
 

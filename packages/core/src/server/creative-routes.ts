@@ -44,10 +44,10 @@ export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: st
     if (!p.ok) continue;
     const dir = ws.projectDir(p.slug);
     await new CreativeStore(dir).recoverInterrupted((slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug))).catch((err: Error) => {
-      console.warn(`Motion Studio: recupero delle creatività non riuscito nel progetto ${p.slug}: ${err.message}`);
+      console.warn(`Motion Studio: creative recovery failed in project ${p.slug}: ${err.message}`);
     });
     await Promise.all([sweepProject(dir, !isJobActive(brandJobKey(ws.root, p.slug))), completeGitignore(dir)]).catch((err: Error) => {
-      console.warn(`Motion Studio: pulizia non riuscita nel progetto ${p.slug}: ${err.message}`);
+      console.warn(`Motion Studio: cleanup failed in project ${p.slug}: ${err.message}`);
     });
   }
 }
