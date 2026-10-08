@@ -417,6 +417,31 @@ export const it: Messages = {
     photoStyle: 'stile fotografico',
   },
   web: {
+    theme: { aria: 'Tema', system: 'Sistema', light: 'Chiaro', dark: 'Scuro' },
+    codebase: {
+      needAbsolute: 'Indica un percorso assoluto',
+      alreadyLinked: 'Cartella già collegata',
+      pickTitle: 'Scegli la cartella da collegare',
+      hint: "Le cartelle collegate sono in sola lettura. L'agente può leggerle; gli strumenti di modifica sono bloccati e le modifiche nei repository git vengono segnalate.",
+      notFound: 'Non trovata',
+      noteFor: (p) => `Nota per ${p.path}`,
+      remove: (p) => `Rimuovi ${p.path}`,
+      pathAria: 'Percorso assoluto della cartella',
+      pathPlaceholder: '/Users/tuonome/dev/app',
+      noteAria: 'Nota (facoltativa)',
+      notePlaceholder: 'Es. app iOS, schermate in /Screens',
+      link: 'Collega',
+    },
+    permissions: {
+      title: 'Permessi sempre consentiti',
+      empty: "Nessun permesso salvato: le richieste dell'agente arrivano come approvazioni.",
+      revoke: 'Revoca',
+      revokeLabel: (p) => `Revoca ${p.label}`,
+    },
+    console: {
+      aria: "Attività dell'agente",
+      usageLimit: (p) => `Limite di utilizzo: ${p.status}`,
+    },
     approvalUi: {
       alreadyHandled: 'Richiesta già gestita',
       expiresAt: (p) => `Scade alle ${p.time}`,

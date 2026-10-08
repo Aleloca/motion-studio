@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useT } from '../i18n.tsx';
 
-/** A destructive action asked twice: the first click arms it ("Conferma eliminazione") for 5 seconds. */
+/** A destructive action asked twice: the first click arms it ("Confirm delete") for 5 seconds. */
 export function ConfirmButton({ label, confirmLabel, ariaLabel, confirmAriaLabel, onConfirm }: {
   label: string; confirmLabel?: string; ariaLabel?: string; confirmAriaLabel?: string; onConfirm(): void;
 }) {

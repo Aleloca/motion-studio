@@ -419,6 +419,31 @@ export const en = {
     photoStyle: 'photo style',
   },
   web: {
+    theme: { aria: 'Theme', system: 'System', light: 'Light', dark: 'Dark' },
+    codebase: {
+      needAbsolute: 'Enter an absolute path',
+      alreadyLinked: 'Folder already linked',
+      pickTitle: 'Choose the folder to link',
+      hint: 'Linked folders are read-only. The agent can read them; editing tools are blocked and changes in git repositories are reported.',
+      notFound: 'Not found',
+      noteFor: (p: { path: string }) => `Note for ${p.path}`,
+      remove: (p: { path: string }) => `Remove ${p.path}`,
+      pathAria: 'Absolute folder path',
+      pathPlaceholder: '/Users/yourname/dev/app',
+      noteAria: 'Note (optional)',
+      notePlaceholder: 'E.g. iOS app, screens in /Screens',
+      link: 'Link',
+    },
+    permissions: {
+      title: 'Always-allowed permissions',
+      empty: 'No saved permissions. Agent requests arrive as approvals.',
+      revoke: 'Revoke',
+      revokeLabel: (p: { label: string }) => `Revoke ${p.label}`,
+    },
+    console: {
+      aria: 'Agent activity',
+      usageLimit: (p: { status: string }) => `Usage limit: ${p.status}`,
+    },
     approvalUi: {
       alreadyHandled: 'Request already handled',
       expiresAt: (p: { time: string }) => `Expires at ${p.time}`,
