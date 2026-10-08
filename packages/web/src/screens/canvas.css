@@ -121,7 +121,7 @@
   display: flex; align-items: center; background: var(--panel); box-shadow: 0 0 0 1px var(--line), 0 6px 16px var(--shadow); font-size: 12px; font-weight: 500; white-space: nowrap;
 }
 .ms-cv-legend {
-  position: absolute; left: 16px; bottom: 20px; z-index: 5; width: 260px; max-width: calc(100% - 32px); padding: 12px; border-radius: 10px;
+  position: absolute; left: 16px; bottom: 76px; z-index: 5; width: 260px; max-width: calc(100% - 32px); padding: 12px; border-radius: 10px;
   display: flex; flex-direction: column; gap: 4px; background: var(--panel); box-shadow: 0 0 0 1px var(--line), 0 10px 30px var(--shadow); font-size: 12px; line-height: 1.45;
 }
 .ms-cv-legend span { color: var(--muted); }
@@ -280,6 +280,6 @@
 @media (max-width: 760px) {
   .ms-cv { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(420px, 62vh) auto; height: auto; min-height: 100%; }
   .ms-cv-panel { border-left: 0; border-top: 1px solid var(--line); min-height: 420px; }
-  .ms-cv-legend { width: auto; right: 16px; bottom: 76px; }
+  .ms-cv-legend { width: auto; right: 16px; }
 }
 @media (prefers-reduced-motion: reduce) { .ms-cv-open, .ms-cv-pin, .ms-cv-frame { transition: none; } }

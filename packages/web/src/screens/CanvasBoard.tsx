@@ -147,13 +147,22 @@ function PinBubble({ draft, number, video, onText, onCommit, onCancel, onDelete 
     const el = field.current;
     if (el) { el.focus({ preventScroll: true }); el.setSelectionRange(el.value.length, el.value.length); }
   }, [opened]);
+  // The card opens to the right of the marker, or to its left when the canvas has no room there.
+  const [left, setLeft] = useState(draft.x > 0.55);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const box = el?.closest('.ms-cv-viewport')?.getBoundingClientRect();
+    const marker = el?.parentElement?.getBoundingClientRect();
+    if (!el || !box || !marker || !box.width) return;
+    const at = marker.left + draft.x * marker.width;
+    const room = box.right - at;
+    setLeft(room < el.offsetWidth + 40 && at - box.left > room);
+  }, [draft.x, draft.format]);
   const empty = !draft.text.trim();
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onCancel(); return; }
     if (isSubmitChord(e.nativeEvent) && !e.repeat) { e.preventDefault(); if (!empty) onCommit(); }
   };
-  // Near the right edge the card opens to the left of the marker.
-  const left = draft.x > 0.55;
   return (
     <>
       {draft.index === null ? <span className="ms-cv-pin ms-draft" style={{ left: `${draft.x * 100}%`, top: `${draft.y * 100}%` }} aria-hidden="true">{number}</span> : null}
@@ -162,7 +171,7 @@ function PinBubble({ draft, number, video, onText, onCommit, onCancel, onDelete 
         <Textarea ref={field} rows={3} maxLength={2000} aria-label={c.field} placeholder={c.placeholder} value={draft.text}
           onChange={(e) => onText(e.target.value)} onKeyDown={onKeyDown} />
         <div className="ms-cv-bubble-foot">
-          {video ? <span className="ms-cv-bubble-time">{c.atStart}</span> : null}
+          {video ? <span className="ms-cv-bubble-time" title={c.atStartHint}>{c.atStart}</span> : null}
           <span className="ms-grow" />
           {draft.index !== null ? (
             <Button size="sm" variant="ghost" icon aria-label={c.remove} title={c.remove} onClick={onDelete}><Icon name="trash" size={13} /></Button>
