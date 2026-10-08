@@ -3,6 +3,7 @@ import { constants } from 'node:fs';
 import { lstat, open, readFile, realpath, rename, rm, stat, unlink, writeFile, type FileHandle } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 import { fileLock } from '../file-locks.ts';
+import { t } from '../i18n.ts';
 
 /** The project's live metadata: brand jobs' agents work on copies and must never write these. */
 export const GUARDED_FILES = ['brand/brand-kit.json', 'brand/guidelines.md', 'brand/sources.json', 'assets/assets.json', 'references/references.json'] as const;
@@ -83,15 +84,20 @@ export async function restoreGuarded(snapshot: GuardSnapshot, projectDir: string
   return notes;
 }
 
+/** Why a file written by the agent was not read; `skipText` gives the user-facing wording. */
+export type SkipReason = 'not-regular' | 'unreadable' | 'linked' | 'too-large' | 'outside';
+const SKIP_KEYS = { 'not-regular': 'skipNotRegular', unreadable: 'skipUnreadable', linked: 'skipLinked', 'too-large': 'skipTooLarge', outside: 'skipOutside' } as const;
+export const skipText = (r: SkipReason): string => t().errors[SKIP_KEYS[r]];
+
 export const MAX_AGENT_FILE_BYTES = 1024 * 1024;
-export type AgentFile = { text: string } | { skipped: string } | null;
+export type AgentFile = { text: string } | { skipped: SkipReason } | null;
 
 /** A file the agent wrote: only a regular file (no symlink) up to the size limit is read; null when missing. */
 export async function readAgentFile(path: string, maxBytes = MAX_AGENT_FILE_BYTES): Promise<AgentFile> {
   const info = await lstat(path).catch(() => null);
   if (!info) return null;
-  if (!info.isFile()) return { skipped: 'non è un file regolare' };
-  if (info.size > maxBytes) return { skipped: 'file troppo grande' };
+  if (!info.isFile()) return { skipped: 'not-regular' };
+  if (info.size > maxBytes) return { skipped: 'too-large' };
   return { text: await readFile(path, 'utf8') };
 }
 
@@ -106,19 +112,19 @@ export async function readConfinedFile(projectDir: string, rel: string, maxBytes
   try {
     fh = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (e) {
-    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? null : { skipped: 'non leggibile' };
+    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? null : { skipped: 'unreadable' };
   }
   try {
     const info = await fh.stat();
-    if (!info.isFile()) return { skipped: 'non è un file regolare' };
+    if (!info.isFile()) return { skipped: 'not-regular' };
     // A hard link made by the agent can point at any file of the user's on the same volume.
-    if (info.nlink > 1) return { skipped: 'file collegato non consentito' };
-    if (info.size > maxBytes) return { skipped: 'file troppo grande' };
+    if (info.nlink > 1) return { skipped: 'linked' };
+    if (info.size > maxBytes) return { skipped: 'too-large' };
     // A symlinked parent folder could lead out of the project: the opened file must be the one under the project's real path.
     const [real, realProject] = await Promise.all([realpath(abs).catch(() => null), realpath(projectDir).catch(() => null)]);
-    if (!real || !realProject || !real.startsWith(realProject + sep)) return { skipped: 'fuori dal progetto' };
+    if (!real || !realProject || !real.startsWith(realProject + sep)) return { skipped: 'outside' };
     const check = await stat(real).catch(() => null);
-    if (!check || check.ino !== info.ino || check.dev !== info.dev) return { skipped: 'fuori dal progetto' };
+    if (!check || check.ino !== info.ino || check.dev !== info.dev) return { skipped: 'outside' };
     // Bounded read: the file may grow after the size check.
     const buf = Buffer.alloc(maxBytes + 1);
     let total = 0;
@@ -126,7 +132,7 @@ export async function readConfinedFile(projectDir: string, rel: string, maxBytes
       const { bytesRead } = await fh.read(buf, total, buf.length - total, total);
       if (bytesRead === 0) break;
       total += bytesRead;
-      if (total > maxBytes) return { skipped: 'file troppo grande' };
+      if (total > maxBytes) return { skipped: 'too-large' };
     }
     return { text: buf.subarray(0, total).toString('utf8') };
   } finally {
@@ -137,24 +143,24 @@ export async function readConfinedFile(projectDir: string, rel: string, maxBytes
 export const MAX_AGENT_BYTES = 50 * 1024 * 1024;
 
 /** Same checks as readConfinedFile, for binary files (e.g. reference images): the bytes, or `{ skipped }` / null when missing. */
-export async function readConfinedBytes(projectDir: string, rel: string, maxBytes = MAX_AGENT_BYTES): Promise<{ bytes: Buffer } | { skipped: string } | null> {
+export async function readConfinedBytes(projectDir: string, rel: string, maxBytes = MAX_AGENT_BYTES): Promise<{ bytes: Buffer } | { skipped: SkipReason } | null> {
   const abs = absOf(projectDir, rel);
   let fh: FileHandle;
   try {
     fh = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (e) {
-    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? null : { skipped: 'non leggibile' };
+    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? null : { skipped: 'unreadable' };
   }
   try {
     const info = await fh.stat();
-    if (!info.isFile()) return { skipped: 'non è un file regolare' };
+    if (!info.isFile()) return { skipped: 'not-regular' };
     // A hard link made by the agent can point at any file of the user's on the same volume.
-    if (info.nlink > 1) return { skipped: 'file collegato non consentito' };
-    if (info.size > maxBytes) return { skipped: 'file troppo grande' };
+    if (info.nlink > 1) return { skipped: 'linked' };
+    if (info.size > maxBytes) return { skipped: 'too-large' };
     const [real, realProject] = await Promise.all([realpath(abs).catch(() => null), realpath(projectDir).catch(() => null)]);
-    if (!real || !realProject || !real.startsWith(realProject + sep)) return { skipped: 'fuori dal progetto' };
+    if (!real || !realProject || !real.startsWith(realProject + sep)) return { skipped: 'outside' };
     const check = await stat(real).catch(() => null);
-    if (!check || check.ino !== info.ino || check.dev !== info.dev) return { skipped: 'fuori dal progetto' };
+    if (!check || check.ino !== info.ino || check.dev !== info.dev) return { skipped: 'outside' };
     const chunks: Buffer[] = [];
     let total = 0;
     for (;;) {
@@ -162,7 +168,7 @@ export async function readConfinedBytes(projectDir: string, rel: string, maxByte
       const { bytesRead } = await fh.read(buf, 0, buf.length, total);
       if (bytesRead === 0) break;
       total += bytesRead;
-      if (total > maxBytes) return { skipped: 'file troppo grande' };
+      if (total > maxBytes) return { skipped: 'too-large' };
       chunks.push(buf.subarray(0, bytesRead));
     }
     return { bytes: Buffer.concat(chunks) };

@@ -8,6 +8,7 @@ import { escapeGlob } from '../codebases.ts';
 import { fileLock } from '../file-locks.ts';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import { WorkspaceError } from '../workspace-store.ts';
+import { t } from '../i18n.ts';
 
 /** Commands that may be granted "always": media/file tools whose arguments cannot run other programs. Exact, case-sensitive. */
 const SAFE_ALWAYS = new Set(['ls', 'mkdir', 'ffprobe', 'cwebp', 'gifsicle', 'optipng', 'pngquant', 'rsvg-convert']);
@@ -127,13 +128,13 @@ export class PermissionsStore {
   }
   async has(rule: string) { return (await this.list()).some((r) => r.rule === rule); }
   async add(rule: string, label: string): Promise<void> {
-    if (!isAllowedRule(rule)) throw new WorkspaceError(400, 'Regola di permesso non valida');
+    if (!isAllowedRule(rule)) throw new WorkspaceError(400, t().errors.invalidRule);
     await fileLock.run(this.file, async () => {
       const allow = await this.list();
       if (allow.some((r) => r.rule === rule)) return;
-      if (allow.length >= MAX_PERMISSIONS) throw new WorkspaceError(409, 'Troppi permessi salvati: revocane qualcuno nelle impostazioni del progetto');
+      if (allow.length >= MAX_PERMISSIONS) throw new WorkspaceError(409, t().errors.tooManyPermissions);
       const next = permissionsFileSchema.safeParse({ schemaVersion: 1, allow: [...allow, { rule, label: label.slice(0, MAX_LABEL), addedAt: new Date().toISOString() }] });
-      if (!next.success) throw new WorkspaceError(400, 'Permesso non valido');
+      if (!next.success) throw new WorkspaceError(400, t().errors.invalidPermission);
       await writeJsonFileAtomic(this.file, next.data);
       fileLock.noteWrite(this.file);
     });
@@ -141,7 +142,7 @@ export class PermissionsStore {
   remove(rule: string): Promise<void> {
     return fileLock.run(this.file, async () => {
       const allow = await this.list();
-      if (!allow.some((r) => r.rule === rule)) throw new WorkspaceError(404, 'Permesso non trovato');
+      if (!allow.some((r) => r.rule === rule)) throw new WorkspaceError(404, t().errors.permissionNotFound);
       await writeJsonFileAtomic(this.file, { schemaVersion: 1, allow: allow.filter((r) => r.rule !== rule) });
       fileLock.noteWrite(this.file);
     });

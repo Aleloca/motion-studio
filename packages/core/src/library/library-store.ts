@@ -8,6 +8,7 @@ import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.t
 import { fileLock } from '../file-locks.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { WorkspaceError } from '../workspace-store.ts';
+import { t } from '../i18n.ts';
 
 export type LibraryKind = 'assets' | 'references';
 const now = () => new Date().toISOString();
@@ -25,8 +26,8 @@ export class LibraryStore {
   metadataPath(kind: LibraryKind) { return join(this.dir(kind), metadataFileOf(kind)); }
 
   resolve(kind: LibraryKind, file: string): string {
-    if (!relativeFileSchema.safeParse(file).success) throw new WorkspaceError(400, `Percorso non valido: ${file}`);
-    if (isReservedName(kind, file)) throw new WorkspaceError(400, `File riservato: ${file}`);
+    if (!relativeFileSchema.safeParse(file).success) throw new WorkspaceError(400, t().errors.invalidPath({ file }));
+    if (isReservedName(kind, file)) throw new WorkspaceError(400, t().errors.reservedFile({ file }));
     return join(this.dir(kind), ...file.split('/'));
   }
 
@@ -36,15 +37,15 @@ export class LibraryStore {
   private async mustBeFile(kind: LibraryKind, file: string): Promise<string> {
     const abs = this.resolve(kind, file);
     const info = await lstat(abs).catch(() => null);
-    if (!info?.isFile()) throw new WorkspaceError(400, `File non trovato o non valido: ${kind}/${file}`);
+    if (!info?.isFile()) throw new WorkspaceError(400, t().errors.fileNotValid({ kind, file }));
 
     // Confine: check that the real path is inside the library directory
     const libDir = this.dir(kind);
     const realAbs = await realpath(abs).catch(() => null);
     const realLib = await realpath(libDir).catch(() => libDir);
-    if (!realAbs) throw new WorkspaceError(400, `File non accessibile: ${kind}/${file}`);
+    if (!realAbs) throw new WorkspaceError(400, t().errors.fileInaccessible({ kind, file }));
     if (!realAbs.startsWith(realLib + sep) && realAbs !== realLib) {
-      throw new WorkspaceError(400, `File al di fuori della cartella: ${kind}/${file}`);
+      throw new WorkspaceError(400, t().errors.fileOutsideFolder({ kind, file }));
     }
 
     return abs;
@@ -67,14 +68,14 @@ export class LibraryStore {
     if (!info) { await mkdir(dir, { recursive: true }); info = await lstat(dir).catch(() => null); }
     const [real, realProject] = await Promise.all([realpath(dir).catch(() => null), realpath(this.projectDir).catch(() => null)]);
     if (!info || info.isSymbolicLink() || !info.isDirectory() || !real || !realProject || !real.startsWith(realProject + sep)) {
-      throw new WorkspaceError(400, `Cartella ${kind} non valida: è un collegamento o è fuori dal progetto`);
+      throw new WorkspaceError(400, t().errors.folderInvalid({ kind }));
     }
   }
 
   private async writeAssets(assets: AssetEntry[]): Promise<void> {
     const data = { schemaVersion: 1, assets };
     const parsed = assetsFileSchema.safeParse(data);
-    if (!parsed.success) throw new WorkspaceError(400, 'Metadati degli asset non validi');
+    if (!parsed.success) throw new WorkspaceError(400, t().errors.assetsMetaInvalid);
     await this.assertMetadataDir('assets');
     await writeJsonFileAtomic(this.metadataPath('assets'), parsed.data);
     fileLock.noteWrite(this.metadataPath('assets'));
@@ -83,7 +84,7 @@ export class LibraryStore {
   private async writeReferences(references: ReferenceEntry[]): Promise<void> {
     const data = { schemaVersion: 1, references };
     const parsed = referencesFileSchema.safeParse(data);
-    if (!parsed.success) throw new WorkspaceError(400, 'Metadati dei riferimenti non validi');
+    if (!parsed.success) throw new WorkspaceError(400, t().errors.referencesMetaInvalid);
     await this.assertMetadataDir('references');
     await writeJsonFileAtomic(this.metadataPath('references'), parsed.data);
     fileLock.noteWrite(this.metadataPath('references'));
@@ -116,7 +117,7 @@ export class LibraryStore {
     return this.lock.run('assets', async () => {
       const assets = await this.listAssets();
       const i = assets.findIndex((a) => a.file === file);
-      if (i < 0) throw new WorkspaceError(404, `Asset ${file} non trovato`);
+      if (i < 0) throw new WorkspaceError(404, t().errors.assetNotFound({ file }));
       const next = { ...assets[i]!, ...(patch.description !== undefined ? { description: patch.description } : {}), ...(patch.tags ? { tags: patch.tags } : {}) };
       const updated = assets.map((a, k) => (k === i ? next : a));
       await this.writeAssets(updated);
@@ -130,7 +131,7 @@ export class LibraryStore {
       this.resolve('assets', file);
 
       const assets = await this.listAssets();
-      if (!assets.some((a) => a.file === file)) throw new WorkspaceError(404, `Asset ${file} non trovato`);
+      if (!assets.some((a) => a.file === file)) throw new WorkspaceError(404, t().errors.assetNotFound({ file }));
       // Write metadata first
       await this.writeAssets(assets.filter((a) => a.file !== file));
       // Then delete the file (only if inside the directory)
@@ -163,7 +164,7 @@ export class LibraryStore {
     return this.lock.run('references', async () => {
       const refs = await this.listReferences();
       const i = refs.findIndex((r) => r.file === file);
-      if (i < 0) throw new WorkspaceError(404, `Riferimento ${file} non trovato`);
+      if (i < 0) throw new WorkspaceError(404, t().errors.referenceNotFound({ file }));
       const updated = refs.map((r, k) => (k === i ? { ...r, ...patch } : r));
       await this.writeReferences(updated);
       return updated[i]!;
@@ -176,7 +177,7 @@ export class LibraryStore {
       this.resolve('references', file);
 
       const refs = await this.listReferences();
-      if (!refs.some((r) => r.file === file)) throw new WorkspaceError(404, `Riferimento ${file} non trovato`);
+      if (!refs.some((r) => r.file === file)) throw new WorkspaceError(404, t().errors.referenceNotFound({ file }));
       // Write metadata first
       await this.writeReferences(refs.filter((r) => r.file !== file));
       // Then delete the file (only if inside the directory)

@@ -1,8 +1,8 @@
 import { resolve } from 'node:path';
 import { execCommand, type CommandExec } from './exec.ts';
 import { KeyedMutex } from './keyed-mutex.ts';
+import { t } from './i18n.ts';
 
-const NOT_FOUND = 'git non trovato: installalo per usare Motion Studio';
 const IDENTITY = ['-c', 'user.name=Motion Studio', '-c', 'user.email=motion-studio@localhost'];
 /** The agent can write inside the project: hooks and an fsmonitor command planted in the repo must never run. */
 const HARDENED = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
@@ -40,10 +40,10 @@ export class Git {
    */
   restorePath(dir: string, commit: string, relPath: string): Promise<number> {
     return this.lock.run(resolve(dir), async () => {
-      if (!/^[0-9a-f]{7,40}$/.test(commit)) throw new Error(`Versione non trovata nel repository: ${commit}`);
+      if (!/^[0-9a-f]{7,40}$/.test(commit)) throw new Error(t().errors.commitNotFound({ commit }));
       const check = await this.exec('git', [...HARDENED, 'cat-file', '-e', `${commit}^{commit}`], { cwd: dir });
-      if (check.notFound) throw new Error(NOT_FOUND);
-      if (check.code !== 0) throw new Error(`Versione non trovata nel repository: ${commit}`);
+      if (check.notFound) throw new Error(t().errors.gitNotFound);
+      if (check.code !== 0) throw new Error(t().errors.commitNotFound({ commit }));
       const spec = `:(literal)${relPath}`;
       await this.must(dir, ['restore', `--source=${commit}`, '--staged', '--worktree', '--', spec]);
       const pending = (await this.must(dir, ['clean', '-n', '-d', '--', spec])).split('\n').filter((l) => l.trim() !== '').length;
@@ -54,8 +54,8 @@ export class Git {
 
   private async must(cwd: string, args: string[]): Promise<string> {
     const r = await this.exec('git', [...HARDENED, ...args], { cwd });
-    if (r.notFound) throw new Error(NOT_FOUND);
-    if (r.code !== 0) throw new Error(`git ${subcommand(args)} fallito: ${r.stderr.trim()}`);
+    if (r.notFound) throw new Error(t().errors.gitNotFound);
+    if (r.code !== 0) throw new Error(t().errors.gitFailed({ command: subcommand(args), detail: r.stderr.trim() }));
     return r.stdout;
   }
 }

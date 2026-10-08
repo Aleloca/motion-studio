@@ -1,5 +1,6 @@
 import { PROVIDER_IDS, type ProviderId, type SecretStatus } from '@motion-studio/shared';
 import { WorkspaceError } from '../workspace-store.ts';
+import { t } from '../i18n.ts';
 
 export const PROVIDER_ENV: Record<ProviderId, string> = { openai: 'OPENAI_API_KEY', elevenlabs: 'ELEVENLABS_API_KEY', pexels: 'PEXELS_API_KEY', unsplash: 'UNSPLASH_ACCESS_KEY' };
 
@@ -12,7 +13,7 @@ export interface SecretsVault {
 
 export function cleanSecret(value: string): string {
   const v = typeof value === 'string' ? value.trim() : '';
-  if (!v || v.length > 500 || /[\x00-\x1f\x7f]/.test(v)) throw new WorkspaceError(400, 'Chiave non valida: incolla la chiave del provider su una sola riga');
+  if (!v || v.length > 500 || /[\x00-\x1f\x7f]/.test(v)) throw new WorkspaceError(400, t().errors.invalidKey);
   return v;
 }
 
@@ -60,7 +61,7 @@ export class KeyringVault extends BaseVault {
   }
   protected async write(p: ProviderId, v: string) {
     try { await (await this.entry(p)).setPassword(v); }
-    catch (e) { throw new WorkspaceError(500, `Portachiavi del sistema non disponibile: ${(e as Error).message}`); }
+    catch (e) { throw new WorkspaceError(500, t().errors.keychainUnavailable({ detail: (e as Error).message })); }
   }
   protected async remove(p: ProviderId) {
     try { await (await this.entry(p)).deletePassword(); } catch { /* already absent */ }

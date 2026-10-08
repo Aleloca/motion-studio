@@ -177,8 +177,8 @@ describe('bridge hardening (final wave)', () => {
     await writeFile(join(outside, 'secret.txt'), 'segreto');
     await link(join(outside, 'secret.txt'), join(projectDir, 'brand', 'guidelines.md'));
     await link(join(outside, 'secret.txt'), join(projectDir, 'ref.png'));
-    expect(await readConfinedFile(projectDir, 'brand/guidelines.md')).toEqual({ skipped: 'file collegato non consentito' });
-    expect(await readConfinedBytes(projectDir, 'ref.png')).toEqual({ skipped: 'file collegato non consentito' });
+    expect(await readConfinedFile(projectDir, 'brand/guidelines.md')).toEqual({ skipped: 'linked' });
+    expect(await readConfinedBytes(projectDir, 'ref.png')).toEqual({ skipped: 'linked' });
     expect((await call('read_brand_kit', {})).json().guidelines).toBe('');
     await rm(outside, { recursive: true, force: true });
   });

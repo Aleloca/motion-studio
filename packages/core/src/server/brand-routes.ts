@@ -8,6 +8,7 @@ import { JsonFileError } from '../json-file.ts';
 import { LibraryStore } from '../library/library-store.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
+import { t } from '../i18n.ts';
 
 export interface BrandRoutesContext { requireWorkspace: () => WorkspaceStore; brand: BrandService; media: MediaTools; git: Git; broadcast: (m: ServerMessage) => void }
 
@@ -17,7 +18,7 @@ const sourceBody = z.union([
 ]);
 const applyBody = z.object({ acceptedIds: z.array(z.string()).max(500), applyGuidelines: z.boolean() });
 const analyzeBody = z.object({ sourceIds: z.array(z.string()).optional() });
-const parse = <T>(s: z.ZodType<T>, b: unknown): T => { const r = s.safeParse(b ?? {}); if (!r.success) throw new WorkspaceError(400, 'Richiesta non valida'); return r.data; };
+const parse = <T>(s: z.ZodType<T>, b: unknown): T => { const r = s.safeParse(b ?? {}); if (!r.success) throw new WorkspaceError(400, t().errors.invalidRequest); return r.data; };
 
 export function registerBrandRoutes(app: FastifyInstance, ctx: BrandRoutesContext) {
   const project = async (slug: string) => {
@@ -48,7 +49,7 @@ export function registerBrandRoutes(app: FastifyInstance, ctx: BrandRoutesContex
   });
 
   app.put<{ Params: { slug: string }; Body: { text?: unknown } }>('/api/projects/:slug/brand/guidelines', async (req) => {
-    if (typeof req.body?.text !== 'string') throw new WorkspaceError(400, 'Testo mancante');
+    if (typeof req.body?.text !== 'string') throw new WorkspaceError(400, t().errors.textMissing);
     const { store, projectDir } = await project(req.params.slug);
     await store.writeGuidelines(req.body.text);
     await done(projectDir, req.params.slug, 'Linee guida aggiornate');
@@ -59,7 +60,7 @@ export function registerBrandRoutes(app: FastifyInstance, ctx: BrandRoutesContex
     const body = parse(sourceBody, req.body);
     const { store, projectDir } = await project(req.params.slug);
     if (body.kind === 'image') {
-      if (!body.file.startsWith('references/')) throw new WorkspaceError(400, 'L\'immagine deve essere un riferimento del progetto');
+      if (!body.file.startsWith('references/')) throw new WorkspaceError(400, t().errors.imageMustBeReference);
       await new LibraryStore(projectDir, ctx.media).existingFile('references', body.file.slice('references/'.length));
     }
     const source = await store.addSource(body);

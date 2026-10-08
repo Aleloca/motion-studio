@@ -3,7 +3,7 @@ import { join, relative } from 'node:path';
 import { EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Pin, type ServerMessage, type VersionEntry } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { BrandStore } from '../brand/brand-store.ts';
-import { assertCodebasesOutside, checkCodebases, codebaseOverlaps, CODEBASE_OVERLAP, codebaseSnapshot, normalizeCodebaseList } from '../codebases.ts';
+import { assertCodebasesOutside, checkCodebases, codebaseOverlaps, codebaseOverlapMessage, codebaseSnapshot, normalizeCodebaseList } from '../codebases.ts';
 import { readJsonFile } from '../json-file.ts';
 import { LibraryStore } from '../library/library-store.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
@@ -17,6 +17,7 @@ import { WorkspaceError } from '../workspace-store.ts';
 import { CreativeStore } from './creative-store.ts';
 import { validateOutputs } from './output-contract.ts';
 import { buildCreativePrompt, type CreativeContext, type PromptKind } from './prompt.ts';
+import { t } from '../i18n.ts';
 
 export interface CreativeTurnDeps {
   queue: JobQueue; launcher: AgentLauncher; git: Git; media: MediaTools; vault: SecretsVault;
@@ -62,7 +63,7 @@ export class CreativeTurnService {
   async updateBrief(ref: CreativeRef, patch: { title?: string; brief?: Brief; linkedCodebases?: LinkedCodebase[] }): Promise<CreativeFile> {
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     return this.locks.run(key, async () => {
-      if (this.isActive(key)) throw new WorkspaceError(409, 'Attendi la fine della generazione in corso prima di modificare il brief');
+      if (this.isActive(key)) throw new WorkspaceError(409, t().errors.waitBeforeBrief);
       const store = new CreativeStore(ref.projectDir);
       const linkedCodebases = patch.linkedCodebases ? normalizeCodebaseList(patch.linkedCodebases) : null;
       if (linkedCodebases) await assertCodebasesOutside(linkedCodebases, [ref.projectDir, ref.root]);
@@ -81,7 +82,7 @@ export class CreativeTurnService {
     const before = await store.get(ref.creativeSlug);
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     // Same check the queue does, but before touching the creative's files.
-    if (this.isActive(key)) throw new WorkspaceError(409, 'Una generazione è già in corso per questa creatività');
+    if (this.isActive(key)) throw new WorkspaceError(409, t().errors.generationRunning);
     if (message) await store.appendConversation(ref.creativeSlug, { type: 'user', at: now(), text: message.text, pins: message.pins, attachments: [] });
     await store.update(ref.creativeSlug, { status: 'working', error: null });
     this.changed(ref);
@@ -108,12 +109,12 @@ export class CreativeTurnService {
   private async restoreLocked(ref: CreativeRef, n: number): Promise<CreativeFile> {
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     if (this.isActive(key)) {
-      throw new WorkspaceError(409, 'Attendi la fine della generazione in corso prima di ripartire da una versione');
+      throw new WorkspaceError(409, t().errors.waitBeforeRestart);
     }
     const store = new CreativeStore(ref.projectDir);
     const version = (await store.readVersions(ref.creativeSlug)).find((v) => v.n === n);
-    if (!version) throw new WorkspaceError(404, `Versione ${n} non trovata`);
-    if (!version.commit || !version.sessionId) throw new WorkspaceError(409, `La versione ${n} non può essere ripristinata (manca commit o sessione)`);
+    if (!version) throw new WorkspaceError(404, t().errors.versionNNotFound({ n }));
+    if (!version.commit || !version.sessionId) throw new WorkspaceError(409, t().errors.versionNotRestorable({ n }));
     const removed = await this.deps.git.restorePath(ref.projectDir, version.commit, relative(ref.projectDir, store.workDir(ref.creativeSlug)));
     const updated = await store.update(ref.creativeSlug, { resumeFrom: { version: n, sessionId: version.sessionId } });
     if (removed > 0) {
@@ -258,7 +259,7 @@ export class CreativeTurnService {
     for (const c of [...project.linkedCodebases, ...creativeCodebases]) {
       try {
         const [n] = normalizeCodebaseList([c]);
-        if (n && await codebaseOverlaps(n.path, [ref.projectDir, ref.root])) await note(`Codebase ignorata (${n.path}): ${CODEBASE_OVERLAP}`);
+        if (n && await codebaseOverlaps(n.path, [ref.projectDir, ref.root])) await note(`Codebase ignorata (${n.path}): ${codebaseOverlapMessage()}`);
         else if (n) normalized.push(n);
       } catch (e) { await note(`Codebase ignorata (${c.path}): ${(e as Error).message}`); }
     }

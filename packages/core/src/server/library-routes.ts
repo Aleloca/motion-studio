@@ -12,6 +12,7 @@ import { saveUploads } from '../library/upload.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import { sendConfinedFile } from './serve-file.ts';
+import { t } from '../i18n.ts';
 
 export interface LibraryRoutesContext { requireWorkspace: () => WorkspaceStore; brand: BrandService; media: MediaTools; git: Git; broadcast: (m: ServerMessage) => void }
 
@@ -19,7 +20,7 @@ const assetPatch = z.object({ description: z.string().max(2000).optional(), tags
 const refPatch = z.object({ note: z.string().max(2000).optional(), useForBrand: z.boolean().optional() });
 const filesBody = z.object({ files: z.array(z.string()).min(1).max(500) });
 const describeBody = z.object({ files: z.array(z.string()).max(500).optional() });
-const parse = <T>(s: z.ZodType<T>, b: unknown): T => { const r = s.safeParse(b ?? {}); if (!r.success) throw new WorkspaceError(400, 'Richiesta non valida'); return r.data; };
+const parse = <T>(s: z.ZodType<T>, b: unknown): T => { const r = s.safeParse(b ?? {}); if (!r.success) throw new WorkspaceError(400, t().errors.invalidRequest); return r.data; };
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesContext) {

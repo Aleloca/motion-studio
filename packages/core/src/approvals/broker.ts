@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 import type { ApprovalDecision, ApprovalKind, ApprovalRequest, ServerMessage } from '@motion-studio/shared';
 import { WorkspaceError } from '../workspace-store.ts';
 import { PermissionsStore, ruleFor } from './permissions-store.ts';
+import { t } from '../i18n.ts';
 
 export interface ApprovalInput { jobId: string; projectSlug: string; projectDir: string; creativeSlug: string | null; kind: ApprovalKind; toolName: string; input: unknown; title?: string; detail?: string }
 export interface ApprovalOutcome { decision: ApprovalDecision | 'expired' | 'cancelled' }
@@ -49,7 +50,7 @@ export class ApprovalBroker {
 
   async decide(id: string, decision: ApprovalDecision): Promise<ApprovalRequest> {
     const item = this.items.get(id);
-    if (!item) throw new WorkspaceError(404, 'Richiesta di approvazione non trovata o già gestita');
+    if (!item) throw new WorkspaceError(404, t().errors.approvalNotFound);
     // Claim the request synchronously, before any await: a concurrent decide() gets 404.
     this.items.delete(id);
     clearTimeout(item.timer);

@@ -6,6 +6,7 @@ import { readConfinedFile } from '../brand/agent-guard.ts';
 import { ProviderError } from '../providers/http.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import type { AgentBridge, BridgeContext } from './bridge.ts';
+import { t } from '../i18n.ts';
 
 export type BridgeHandler = (ctx: BridgeContext, args: Record<string, unknown>) => Promise<unknown>;
 export interface BridgeRoutesContext { bridge: AgentBridge; approvals: ApprovalBroker; extraTools?: Record<string, BridgeHandler> }
@@ -41,12 +42,12 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
     },
     report_progress: async (c, a) => {
       const text = typeof a.message === 'string' ? cleanProgress(a.message) : '';
-      if (!text || text.length > 300) throw new WorkspaceError(400, 'Messaggio di avanzamento non valido (1-300 caratteri)');
+      if (!text || text.length > 300) throw new WorkspaceError(400, t().errors.invalidProgress);
       c.emit({ kind: 'progress', text });
       return { ok: true };
     },
     validate_output: async (c) => {
-      if (!c.validate) throw new WorkspaceError(400, 'Validazione disponibile solo nelle creatività');
+      if (!c.validate) throw new WorkspaceError(400, t().errors.validateOnlyCreatives);
       return c.validate();
     },
     // The core is not sandboxed: never follow the agent's symlinks, never read special or huge files.

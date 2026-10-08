@@ -13,6 +13,7 @@ import type { MediaTools } from '../media/media-tools.ts';
 import { completeGitignore, sweepProject } from '../project-maintenance.ts';
 import { expandHome, WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import { sendConfinedFile } from './serve-file.ts';
+import { t } from '../i18n.ts';
 
 export interface CreativeRoutesContext {
   requireWorkspace: () => WorkspaceStore;
@@ -30,7 +31,7 @@ const editBody = z.object({ title: z.string().optional(), brief: briefSchema.opt
 
 function parse<T>(schema: z.ZodType<T>, body: unknown): T {
   const r = schema.safeParse(body ?? {});
-  if (!r.success) throw new WorkspaceError(400, `Richiesta non valida: ${r.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  if (!r.success) throw new WorkspaceError(400, t().errors.invalidRequestDetail({ detail: r.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') }));
   return r.data;
 }
 
@@ -132,7 +133,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const creativeDir = ref.store.dir(ref.creativeSlug);
     const ok = dir !== null && (await realFolder(dirname(dir))) && (await realFolder(dir))
       && isInsideDir(await realpath(dir).catch(() => ''), await realpath(creativeDir).catch(() => null));
-    if (!ok) throw new WorkspaceError(404, 'Cartella degli output non trovata');
+    if (!ok) throw new WorkspaceError(404, t().errors.outputsFolderNotFound);
     await ctx.openPath(dir);
     return { ok: true };
   });
@@ -140,7 +141,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   app.post<{ Params: { slug: string; c: string; n: string }; Body: { destination?: unknown } }>('/api/projects/:slug/creatives/:c/versions/:n/export', async (req) => {
     const ref = await refOf(req.params.slug, req.params.c);
     const version = (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === Number(req.params.n));
-    if (!version) throw new WorkspaceError(404, 'Versione non trovata');
+    if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
     const destination = typeof req.body?.destination === 'string' ? expandHome(req.body.destination.trim()) : '';
     return exportVersion({ creativeDir: ref.store.dir(ref.creativeSlug), version, destination, slug: ref.creativeSlug, forbiddenRoot: ref.root });
   });

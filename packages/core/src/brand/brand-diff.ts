@@ -1,5 +1,6 @@
 import { brandKitIssues, brandKitSchema, type BrandChange, type BrandField, type BrandKit } from '@motion-studio/shared';
 import { WorkspaceError } from '../workspace-store.ts';
+import { t } from '../i18n.ts';
 
 type ListField = 'colors' | 'fonts' | 'logos' | 'dos' | 'donts';
 type ScalarField = 'tone' | 'photoStyle';
@@ -60,6 +61,6 @@ export function applyBrandChanges(current: BrandKit, changes: BrandChange[], acc
     next[c.field] = arr;
   }
   const parsed = brandKitSchema.safeParse(next);
-  if (!parsed.success) throw new WorkspaceError(400, `Brand kit risultante non valido: ${brandKitIssues(parsed.error)}`);
+  if (!parsed.success) throw new WorkspaceError(400, t().errors.resultingBrandKitInvalid({ detail: brandKitIssues(parsed.error) }));
   return parsed.data;
 }

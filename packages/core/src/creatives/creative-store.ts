@@ -7,6 +7,7 @@ import {
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 import { slugify, WorkspaceError } from '../workspace-store.ts';
+import { t } from '../i18n.ts';
 
 export const CREATIVE_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
 
@@ -24,7 +25,7 @@ export class CreativeStore {
   constructor(private readonly projectDir: string) { this.root = join(projectDir, 'creatives'); }
 
   dir(slug: string): string {
-    if (!CREATIVE_SLUG_RE.test(slug)) throw new WorkspaceError(400, `Identificativo creatività non valido: ${slug}`);
+    if (!CREATIVE_SLUG_RE.test(slug)) throw new WorkspaceError(400, t().errors.invalidCreativeId({ slug }));
     return join(this.root, slug);
   }
   workDir(slug: string) { return join(this.dir(slug), 'work'); }
@@ -36,7 +37,7 @@ export class CreativeStore {
     const parsed = creativeFileSchema.safeParse({
       schemaVersion: 1, title: input.title, brief: input.brief, status: 'draft', error: null, createdAt: at, updatedAt: at, resumeFrom: null,
     });
-    if (!parsed.success) throw new WorkspaceError(400, `Brief non valido: ${issues(parsed.error)}`);
+    if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidBrief({ detail: issues(parsed.error) }));
     const creative = parsed.data;
     await mkdir(this.root, { recursive: true });
     const slug = await this.lock.run('create', async () => {
@@ -84,7 +85,7 @@ export class CreativeStore {
     try {
       return await readJsonFile(this.file(slug, 'creative.json'), creativeFileSchema);
     } catch (err) {
-      if (err instanceof JsonFileError && err.reason === 'missing') throw new WorkspaceError(404, `Creatività ${slug} non trovata`);
+      if (err instanceof JsonFileError && err.reason === 'missing') throw new WorkspaceError(404, t().errors.creativeNotFound({ slug }));
       throw err;
     }
   }
@@ -95,7 +96,7 @@ export class CreativeStore {
       const nowIso = new Date().toISOString();
       const updatedAt = nowIso > current.updatedAt ? nowIso : new Date(Date.parse(current.updatedAt) + 1).toISOString();
       const parsed = creativeFileSchema.safeParse({ ...current, ...patch, updatedAt });
-      if (!parsed.success) throw new WorkspaceError(400, `Creatività non valida: ${issues(parsed.error)}`);
+      if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidCreative({ detail: issues(parsed.error) }));
       await writeJsonFileAtomic(this.file(slug, 'creative.json'), parsed.data);
       return parsed.data;
     });

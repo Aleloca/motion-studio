@@ -4,7 +4,7 @@ import { stat } from 'node:fs/promises';
 import type { LinkedCodebase } from '@motion-studio/shared';
 
 // Defined next to WorkspaceStore (which needs it) to avoid an import cycle.
-export { assertCodebasesOutside, CODEBASE_OVERLAP, codebaseOverlaps, normalizeCodebasePath, normalizeCodebaseList } from './workspace-store.ts';
+export { assertCodebasesOutside, codebaseOverlapMessage, codebaseOverlaps, normalizeCodebasePath, normalizeCodebaseList } from './workspace-store.ts';
 
 export interface CodebaseCheck { path: string; note?: string; exists: boolean }
 

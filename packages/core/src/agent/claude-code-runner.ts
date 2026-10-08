@@ -3,6 +3,7 @@ import { statSync } from 'node:fs';
 import type { AgentEvent } from '@motion-studio/shared';
 import { LineSplitter, parseClaudeLine } from './claude-stream-parser.ts';
 import type { AgentRun, AgentRunner, AgentRunResult, AgentTurnRequest } from './runner.ts';
+import { t } from '../i18n.ts';
 
 export function buildClaudeArgs(req: AgentTurnRequest): string[] {
   const args = [
@@ -34,10 +35,10 @@ export function claudeCommandFromEnv(): string[] {
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    throw new Error(`MOTION_STUDIO_CLAUDE_COMMAND non è JSON valido (${(err as Error).message}): usa un array JSON di stringhe`);
+    throw new Error(t().errors.claudeCommandInvalidJson({ detail: (err as Error).message }));
   }
   if (!Array.isArray(parsed) || parsed.length === 0 || !parsed.every((p) => typeof p === 'string')) {
-    throw new Error('MOTION_STUDIO_CLAUDE_COMMAND deve essere un array JSON di stringhe');
+    throw new Error(t().errors.claudeCommandNotArray);
   }
   return parsed;
 }
@@ -59,7 +60,7 @@ export class ClaudeCodeRunner implements AgentRunner {
 
   start(req: AgentTurnRequest, onEvent: (e: AgentEvent) => void): AgentRun {
     const [bin, ...prefix] = this.claudeCommand;
-    if (!bin) throw new Error('claudeCommand vuoto');
+    if (!bin) throw new Error(t().errors.claudeCommandEmpty);
     let cwdIsDir = false;
     try { cwdIsDir = statSync(req.cwd).isDirectory(); } catch { /* reported below */ }
     if (!cwdIsDir) {

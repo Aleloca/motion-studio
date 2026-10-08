@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { z } from 'zod';
+import { t } from './i18n.ts';
 
 export type JsonFileErrorReason = 'missing' | 'invalid-json' | 'schema';
 
@@ -17,21 +18,21 @@ export async function readJsonFile<T>(path: string, schema: z.ZodType<T>): Promi
   try {
     raw = await readFile(path, 'utf8');
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ENOENT') throw new JsonFileError(path, 'missing', 'file non trovato');
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') throw new JsonFileError(path, 'missing', t().errors.fileNotFound);
     throw e;
   }
   let data: unknown;
   try {
     data = JSON.parse(raw);
   } catch (e) {
-    throw new JsonFileError(path, 'invalid-json', `JSON non valido (${(e as Error).message})`);
+    throw new JsonFileError(path, 'invalid-json', t().errors.invalidJson({ detail: (e as Error).message }));
   }
   const parsed = schema.safeParse(data);
   if (!parsed.success) {
     const detail = parsed.error.issues
-      .map((i) => `${i.path.join('.') || '(radice)'}: ${i.message}`)
+      .map((i) => `${i.path.join('.') || t().errors.rootPath}: ${i.message}`)
       .join('; ');
-    throw new JsonFileError(path, 'schema', `contenuto non valido — ${detail}`);
+    throw new JsonFileError(path, 'schema', t().errors.invalidContent({ detail }));
   }
   return parsed.data;
 }

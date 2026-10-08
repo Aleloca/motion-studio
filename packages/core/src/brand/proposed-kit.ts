@@ -1,5 +1,6 @@
 import { BRAND_FIELD_LABELS, BRAND_KIT_LIMITS, brandColorSchema, brandFontSchema, brandKitIssues, brandKitSchema, brandLogoSchema, brandNoteSchema, type BrandKit, type SourceRef } from '@motion-studio/shared';
 import type { z } from 'zod';
+import { t } from '../i18n.ts';
 
 type ListField = keyof typeof BRAND_KIT_LIMITS;
 type NoteField = 'tone' | 'photoStyle';
@@ -56,7 +57,7 @@ const own = (o: Record<string, unknown>, key: string) => (Object.hasOwn(o, key) 
  * Throws only when the file is not a kit at all.
  */
 export function parseProposedKit(json: unknown, current: BrandKit, source: SourceRef): { kit: BrandKit; dropped: string[] } {
-  if (!isObject(json)) throw new Error('Proposta non valida: brand-kit.json non contiene un oggetto JSON');
+  if (!isObject(json)) throw new Error(t().errors.proposalNotObject);
   const dropped: string[] = [];
   const kit: BrandKit = { schemaVersion: 1, colors: [], fonts: [], logos: [], tone: null, dos: [], donts: [], photoStyle: null };
 
@@ -104,6 +105,6 @@ export function parseProposedKit(json: unknown, current: BrandKit, source: Sourc
   }
 
   const whole = brandKitSchema.safeParse(kit);
-  if (!whole.success) throw new Error(`Proposta non valida: ${brandKitIssues(whole.error)}`);
+  if (!whole.success) throw new Error(t().errors.proposalInvalid({ detail: brandKitIssues(whole.error) }));
   return { kit: whole.data, dropped };
 }

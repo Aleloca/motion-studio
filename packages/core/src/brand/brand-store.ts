@@ -7,6 +7,7 @@ import {
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import { fileLock } from '../file-locks.ts';
 import { WorkspaceError } from '../workspace-store.ts';
+import { t } from '../i18n.ts';
 
 const PROPOSAL_RE = /^p-\d{8}-\d{6}(-\d+)?$/;
 const issues = (e: { issues: Array<{ path: PropertyKey[]; message: string }> }) => e.issues.map((i) => `${i.path.map(String).join('.')}: ${i.message}`).join('; ');
@@ -129,7 +130,7 @@ export class BrandStore {
   private async writeKitUnlocked(kit: unknown): Promise<BrandKit> {
     {
       const parsed = brandKitSchema.safeParse(kit);
-      if (!parsed.success) throw new WorkspaceError(400, `Brand kit non valido: ${brandKitIssues(parsed.error)}`);
+      if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidBrandKit({ detail: brandKitIssues(parsed.error) }));
       await writeJsonFileAtomic(this.path('brand-kit.json'), parsed.data);
       fileLock.noteWrite(this.path('brand-kit.json'));
       return parsed.data;
@@ -141,7 +142,7 @@ export class BrandStore {
   }
 
   writeGuidelines(text: string): Promise<void> {
-    if (text.length > 200_000) throw new WorkspaceError(400, 'Linee guida troppo lunghe (massimo 200.000 caratteri)');
+    if (text.length > 200_000) throw new WorkspaceError(400, t().errors.guidelinesTooLong);
     return this.lock.run('guidelines.md', async () => {
       await mkdir(this.dir, { recursive: true });
       await writeFile(this.path('guidelines.md'), text);
@@ -165,18 +166,18 @@ export class BrandStore {
         try {
           url = new URL(input.url.trim());
         } catch {
-          throw new WorkspaceError(400, `Sorgente non valida: URL non valido`);
+          throw new WorkspaceError(400, t().errors.invalidSourceUrl);
         }
-        if (isPrivateHost(url.hostname)) throw new WorkspaceError(400, 'Indirizzo locale o privato non ammesso come sorgente');
+        if (isPrivateHost(url.hostname)) throw new WorkspaceError(400, t().errors.privateSourceUrl);
       }
 
       const parsed = brandSourceSchema.safeParse({
         id: `s-${n}`, kind: input.kind, url: input.kind === 'website' ? input.url.trim() : null,
         file: input.kind === 'image' ? input.file : null, addedAt: new Date().toISOString(), lastAnalyzedAt: null,
       });
-      if (!parsed.success) throw new WorkspaceError(400, `Sorgente non valida: ${issues(parsed.error)}`);
+      if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidSource({ detail: issues(parsed.error) }));
       const s = parsed.data;
-      if (sources.some((x) => (s.url && x.url === s.url) || (s.file && x.file === s.file))) throw new WorkspaceError(409, 'Sorgente già presente');
+      if (sources.some((x) => (s.url && x.url === s.url) || (s.file && x.file === s.file))) throw new WorkspaceError(409, t().errors.sourceExists);
       await this.writeSourcesUnlocked({ schemaVersion: 1, sources: [...sources, s] });
       return s;
     });
@@ -185,7 +186,7 @@ export class BrandStore {
   removeSource(id: string): Promise<void> {
     return this.lock.run('sources.json', async () => {
       const sources = await this.readSources();
-      if (!sources.some((s) => s.id === id)) throw new WorkspaceError(404, `Sorgente ${id} non trovata`);
+      if (!sources.some((s) => s.id === id)) throw new WorkspaceError(404, t().errors.sourceNotFound({ id }));
       await this.writeSourcesUnlocked({ schemaVersion: 1, sources: sources.filter((s) => s.id !== id) });
     });
   }
@@ -248,18 +249,18 @@ export class BrandStore {
   }
 
   proposalDir(id: string): string {
-    if (!/^[a-z0-9][a-z0-9-]{0,80}$/.test(id)) throw new WorkspaceError(400, `Identificativo proposta non valido: ${id}`);
+    if (!/^[a-z0-9][a-z0-9-]{0,80}$/.test(id)) throw new WorkspaceError(400, t().errors.invalidProposalId({ id }));
     return join(this.dir, 'proposals', id);
   }
 
   async readProposal(id: string): Promise<BrandProposal> {
     try { return await readJsonFile(join(this.proposalDir(id), 'proposal.json'), brandProposalSchema); }
-    catch (e) { if (e instanceof JsonFileError && e.reason === 'missing') throw new WorkspaceError(404, `Proposta ${id} non trovata`); throw e; }
+    catch (e) { if (e instanceof JsonFileError && e.reason === 'missing') throw new WorkspaceError(404, t().errors.proposalNotFound({ id })); throw e; }
   }
 
   writeProposal(p: BrandProposal): Promise<void> {
     const parsed = brandProposalSchema.safeParse(p);
-    if (!parsed.success) return Promise.reject(new Error(`Proposta non valida: ${issues(parsed.error)}`));
+    if (!parsed.success) return Promise.reject(new Error(t().errors.proposalInvalid({ detail: issues(parsed.error) })));
     return fileLock.run(join(this.proposalDir(p.id), 'proposal.json'), () => writeJsonFileAtomic(join(this.proposalDir(p.id), 'proposal.json'), parsed.data));
   }
 

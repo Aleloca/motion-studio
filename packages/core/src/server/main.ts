@@ -9,7 +9,7 @@ import { cachedSandboxDetection } from '../agent/sandbox.ts';
 import { AppConfigStore, defaultConfigDir } from '../app-config.ts';
 import { AgentBridge } from '../bridge/bridge.ts';
 import { runDoctor, type ShellPathOrigin } from '../doctor.ts';
-import { LanguageController, detectSystemLocales } from '../i18n.ts';
+import { LanguageController, detectSystemLocales, t } from '../i18n.ts';
 import { execCommand } from '../exec.ts';
 import { Git } from '../git.ts';
 import { createFfmpegTools } from '../media/media-tools.ts';
@@ -27,7 +27,7 @@ const DEV_MCP_SERVER = fileURLToPath(new URL('../../../mcp-studio/src/server.mjs
 async function revealFolder(p: string): Promise<void> {
   if (process.platform === 'darwin') {
     const r = await execCommand('open', ['-R', p]);
-    if (r.code !== 0) throw new WorkspaceError(500, 'Impossibile mostrare la cartella degli output nel Finder');
+    if (r.code !== 0) throw new WorkspaceError(500, t().errors.revealFailed);
     return;
   }
   await open(p);
@@ -46,7 +46,7 @@ async function listenAuto(app: FastifyInstance, host: string): Promise<string> {
 /** Thrown by startServer when another live Motion Studio already serves the same config folder: open its address instead. */
 export class AlreadyRunningError extends Error {
   constructor(readonly alreadyRunning: RunningInstance) {
-    super(`Motion Studio è già avviato (porta ${alreadyRunning.port})`);
+    super(t().errors.alreadyRunning({ port: alreadyRunning.port }));
     this.name = 'AlreadyRunningError';
   }
 }
@@ -80,7 +80,7 @@ export async function startServer(opts: StartServerOptions = {}) {
   }
 }
 
-const BOOT_BUSY = 'Un altro Motion Studio si sta avviando con la stessa configurazione: riprova tra poco';
+
 
 /** Takes the boot lock and confirms no other instance runs; throws AlreadyRunningError when one does. */
 async function lockAndCheck(configDir: string, opts: StartServerOptions): Promise<BootLock> {
@@ -93,7 +93,7 @@ async function lockAndCheck(configDir: string, opts: StartServerOptions): Promis
     // The other boot has likely started by now.
     await check();
     lock = await acquireBootLock(configDir, { waitMs: 0 });
-    if (lock === 'waited') throw new Error(BOOT_BUSY);
+    if (lock === 'waited') throw new Error(t().errors.bootBusy);
   }
   try {
     await check();

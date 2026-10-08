@@ -16,6 +16,7 @@ import type { Git } from './git.ts';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from './json-file.ts';
 import { KeyedMutex } from './keyed-mutex.ts';
 import { CLAUDE_MD, CONTEXT_MD, GITIGNORE, PROJECT_DIRS } from './project-template.ts';
+import { t } from './i18n.ts';
 
 export class WorkspaceError extends Error {
   constructor(public readonly status: 400 | 404 | 409 | 413 | 422 | 500, message: string, public readonly code?: WorkspaceProblemCode) {
@@ -33,10 +34,10 @@ export function expandHome(path: string): string {
 
 export function normalizeCodebasePath(p: string): string {
   const s = normalize(expandHome(p.trim()));
-  if (!isAbsolute(s)) throw new WorkspaceError(400, `La cartella collegata deve essere un percorso assoluto: ${p}`);
+  if (!isAbsolute(s)) throw new WorkspaceError(400, t().errors.codebaseNotAbsolute({ path: p }));
   const stripped = s.replace(/\/+$/, '');
-  if (!stripped) throw new WorkspaceError(400, 'Non puoi collegare la radice del disco');
-  if (stripped === homedir().replace(/\/+$/, '')) throw new WorkspaceError(400, "Collega una cartella specifica, non l'intera home");
+  if (!stripped) throw new WorkspaceError(400, t().errors.codebaseDiskRoot);
+  if (stripped === homedir().replace(/\/+$/, '')) throw new WorkspaceError(400, t().errors.codebaseHome);
   return stripped;
 }
 
@@ -53,7 +54,7 @@ export function normalizeCodebaseList(list: LinkedCodebase[]): LinkedCodebase[] 
   return out;
 }
 
-export const CODEBASE_OVERLAP = 'La cartella collegata non può contenere il progetto né trovarsi al suo interno';
+export const codebaseOverlapMessage = (): string => t().errors.codebaseOverlap;
 
 const isWithin = (inner: string, outer: string) => inner === outer || inner.startsWith(outer.endsWith(sep) ? outer : outer + sep);
 /** The normalised path, plus its real path when it exists and differs (symlinks). */
@@ -74,7 +75,7 @@ export async function codebaseOverlaps(path: string, protectedDirs: string[]): P
 
 /** Refuses (400) linked folders overlapping the project or the workspace: they would hand the project to --add-dir. */
 export async function assertCodebasesOutside(list: LinkedCodebase[], protectedDirs: string[]): Promise<void> {
-  for (const c of list) if (await codebaseOverlaps(c.path, protectedDirs)) throw new WorkspaceError(400, CODEBASE_OVERLAP);
+  for (const c of list) if (await codebaseOverlaps(c.path, protectedDirs)) throw new WorkspaceError(400, codebaseOverlapMessage());
 }
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -99,13 +100,13 @@ export class WorkspaceStore {
   /** `create: false` (used at startup) refuses to recreate a workspace folder that disappeared. */
   static async open(root: string, git: Git, opts: { create?: boolean } = {}): Promise<WorkspaceStore> {
     const info = await stat(root).catch(() => null);
-    if (info && !info.isDirectory()) throw new WorkspaceError(400, `Il percorso ${root} è un file, non una cartella`, 'not-found');
-    if (!info && opts.create === false) throw new WorkspaceError(404, `Cartella del workspace non trovata: ${root}`, 'not-found');
+    if (info && !info.isDirectory()) throw new WorkspaceError(400, t().errors.pathIsFile({ path: root }), 'not-found');
+    if (!info && opts.create === false) throw new WorkspaceError(404, t().errors.workspaceNotFound({ path: root }), 'not-found');
     try {
       await mkdir(join(root, '.studio'), { recursive: true });
       await access(root, constants.W_OK);
     } catch {
-      throw new WorkspaceError(400, `Impossibile scrivere nella cartella ${root}: controlla i permessi`, 'not-writable');
+      throw new WorkspaceError(400, t().errors.notWritable({ path: root }), 'not-writable');
     }
     const store = new WorkspaceStore(root, git);
     const settingsPath = store.settingsPath();
@@ -125,13 +126,13 @@ export class WorkspaceStore {
   async updateSettings(patch: Partial<Omit<WorkspaceSettings, 'schemaVersion'>>): Promise<WorkspaceSettings> {
     const { droppedDomains: _dropped, ...current } = await this.readSettings();
     const parsed = workspaceSettingsSchema.safeParse({ ...current, ...patch, schemaVersion: 1 });
-    if (!parsed.success) throw new WorkspaceError(400, `Impostazioni non valide: ${parsed.error.issues.map((i) => i.path.join('.')).join(', ')}`);
+    if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidSettings({ fields: parsed.error.issues.map((i) => i.path.join('.')).join(', ') }));
     await writeJsonFileAtomic(this.settingsPath(), parsed.data);
     return parsed.data;
   }
 
   projectDir(slug: string): string {
-    if (!SLUG_RE.test(slug)) throw new WorkspaceError(400, `Identificativo progetto non valido: ${slug}`);
+    if (!SLUG_RE.test(slug)) throw new WorkspaceError(400, t().errors.invalidProjectId({ slug }));
     return join(this.root, slug);
   }
 
@@ -155,14 +156,14 @@ export class WorkspaceStore {
     try {
       return await readJsonFile(join(dir, 'project.json'), projectFileSchema);
     } catch (err) {
-      if (err instanceof JsonFileError && err.reason === 'missing') throw new WorkspaceError(404, `Progetto ${slug} non trovato`);
+      if (err instanceof JsonFileError && err.reason === 'missing') throw new WorkspaceError(404, t().errors.projectNotFound({ slug }));
       throw err;
     }
   }
 
   async createProject(input: { name: string; description?: string }): Promise<{ slug: string; project: ProjectFile }> {
     const name = input.name.trim();
-    if (!name) throw new WorkspaceError(400, 'Il nome del progetto è obbligatorio');
+    if (!name) throw new WorkspaceError(400, t().errors.projectNameRequired);
     const { slug, dir } = await this.createLock.run('create', async () => {
       const base = slugify(name);
       for (let n = 1; ; n++) {
@@ -206,7 +207,7 @@ export class WorkspaceStore {
         : current.linkedCodebases;
       if (patch.linkedCodebases) await assertCodebasesOutside(linkedCodebases, [this.projectDir(slug), this.root]);
       const parsed = projectFileSchema.safeParse({ ...current, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)), linkedCodebases, updatedAt: new Date().toISOString() });
-      if (!parsed.success) throw new WorkspaceError(400, `Progetto non valido: ${parsed.error.issues.map((i) => i.path.join('.')).join(', ')}`);
+      if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidProject({ fields: parsed.error.issues.map((i) => i.path.join('.')).join(', ') }));
       const dir = this.projectDir(slug);
       await writeJsonFileAtomic(join(dir, 'project.json'), parsed.data);
       await this.git.commitAll(dir, 'Progetto aggiornato');

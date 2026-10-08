@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { DEFAULT_FORMATS, formatsFileSchema, type FormatPreset } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import { WorkspaceError } from '../workspace-store.ts';
+import { t } from '../i18n.ts';
 
 export interface CatalogState { presets: FormatPreset[]; error: string | null; path: string }
 
@@ -27,7 +28,7 @@ export class FormatCatalog {
   async save(presets: FormatPreset[]): Promise<CatalogState> {
     const parsed = formatsFileSchema.safeParse({ schemaVersion: 1, presets });
     if (!parsed.success) {
-      throw new WorkspaceError(400, `Catalogo formati non valido: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+      throw new WorkspaceError(400, t().errors.formatCatalogInvalid({ detail: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') }));
     }
     return this.write(parsed.data.presets);
   }

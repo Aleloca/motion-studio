@@ -144,7 +144,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   }
 
   const requireWorkspace = () => {
-    if (!workspace) throw new WorkspaceError(409, 'Nessun workspace configurato: scegli una cartella di lavoro');
+    if (!workspace) throw new WorkspaceError(409, t().errors.noWorkspace);
     return workspace;
   };
 
@@ -240,7 +240,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.put<{ Body: { path?: unknown } }>('/api/workspace', async (req) => {
     const raw = req.body?.path;
     const path = typeof raw === 'string' ? expandHome(raw.trim()) : '';
-    if (!isAbsolute(path)) throw new WorkspaceError(400, 'Indica un percorso assoluto per il workspace');
+    if (!isAbsolute(path)) throw new WorkspaceError(400, t().errors.workspacePathAbsolute);
     const ws = await WorkspaceStore.open(path, deps.git);
     const settings = await ws.readSettings(); // corrupt settings → 422 before the choice is persisted
     await deps.appConfig.setWorkspacePath(path);
@@ -295,10 +295,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       const { slug } = req.params;
       const project = await ws.getProject(slug);
       const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
-      if (!prompt) throw new WorkspaceError(400, 'Scrivi una richiesta per l\'agente');
+      if (!prompt) throw new WorkspaceError(400, t().errors.promptRequired);
       const rawSession = req.body?.resumeSessionId;
       if (rawSession != null && (typeof rawSession !== 'string' || !SESSION_ID_RE.test(rawSession))) {
-        throw new WorkspaceError(400, 'Identificativo della sessione non valido');
+        throw new WorkspaceError(400, t().errors.invalidSessionId);
       }
       const resumeSessionId = rawSession ?? undefined;
       const settings = await ws.readSettings();
@@ -320,7 +320,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
           signal.addEventListener('abort', () => run.cancel(), { once: true });
           if (signal.aborted) run.cancel(); // cancelled while the turn was being prepared
           const result = await run.done;
-          if (result.status === 'failed') throw new Error(result.error ?? 'Turno non riuscito');
+          if (result.status === 'failed') throw new Error(result.error ?? t().errors.turnFailed);
           // A cancel that arrived after an ok result yields 'succeeded' from the runner: keep it.
           return result.status === 'cancelled' ? 'cancelled' : undefined;
         },

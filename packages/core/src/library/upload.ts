@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises';
 import type {} from '@fastify/multipart';
 import type { FastifyRequest } from 'fastify';
 import { WorkspaceError } from '../workspace-store.ts';
+import { t } from '../i18n.ts';
 
 export const UPLOAD_LIMITS = { fileSize: 200 * 1024 * 1024, files: 50 };
 
@@ -74,7 +75,7 @@ export async function saveUploads(req: FastifyRequest, targetDir: string): Promi
     for await (const part of req.files()) {
       tmp = join(targetDir, `.${randomBytes(6).toString('hex')}.part`);
       await pipeline(part.file, createWriteStream(tmp, { flags: 'wx' }));
-      if (part.file.truncated) throw new WorkspaceError(413, `File troppo grande: ${part.filename}`);
+      if (part.file.truncated) throw new WorkspaceError(413, t().errors.fileTooLarge({ name: part.filename }));
       const name = await claimName(targetDir, tmp, sanitizeFileName(part.filename));
       saved.push(name);
       await rm(tmp, { force: true });
@@ -85,9 +86,9 @@ export async function saveUploads(req: FastifyRequest, targetDir: string): Promi
     await Promise.all(saved.map((n) => rm(join(targetDir, n), { force: true })));
     if (err instanceof WorkspaceError) throw err;
     const code = (err as { code?: string }).code;
-    if (code === 'FST_FILES_LIMIT' || code === 'FST_REQ_FILE_TOO_LARGE') throw new WorkspaceError(413, 'Troppi file o file troppo grandi in un solo caricamento');
+    if (code === 'FST_FILES_LIMIT' || code === 'FST_REQ_FILE_TOO_LARGE') throw new WorkspaceError(413, t().errors.uploadTooLarge);
     throw err;
   }
-  if (saved.length === 0) throw new WorkspaceError(400, 'Nessun file ricevuto');
+  if (saved.length === 0) throw new WorkspaceError(400, t().errors.noFileReceived);
   return saved;
 }
