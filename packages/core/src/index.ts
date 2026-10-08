@@ -43,3 +43,5 @@ export * from './providers/http.ts';
 export * from './providers/files.ts';
 export * from './providers/openai-images.ts';
 export * from './providers/tts.ts';
+export * from './providers/stock.ts';
+export * from './providers/google-fonts.ts';
