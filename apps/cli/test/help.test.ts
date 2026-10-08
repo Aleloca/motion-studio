@@ -7,7 +7,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const run = promisify(execFile);
 const root = join(import.meta.dirname, '..', '..', '..');
-const tsx = join(root, 'node_modules', '.bin', 'tsx');
+// The cli package's own tsx: a clean install (CI) has no hoisted copy at the repository root.
+const tsx = join(root, 'apps', 'cli', 'node_modules', '.bin', 'tsx');
 const main = join(root, 'apps', 'cli', 'src', 'main.ts');
 let configDir: string;
 beforeAll(async () => { configDir = await mkdtemp(join(tmpdir(), 'ms-cli-help-')); });
