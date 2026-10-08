@@ -103,3 +103,6 @@ input.ms-palette-input::placeholder { color: var(--faint); }
   .ms-topbar-center { flex: 0 0 auto; }
 }
 .ms-app.ms-bare { grid-template-rows: minmax(0, 1fr); }
+
+/* Slots the creative page fills (barSlots.ts): its title and state after the breadcrumb, version menu and Export at the end. */
+.ms-bar-slot { display: contents; }

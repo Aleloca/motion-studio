@@ -2,7 +2,7 @@ import type { AgentEvent, ApprovalRequest, ConversationEntry, JobSummary, Pin } 
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { api, ApiError } from '../api.ts';
 import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
-import { enter } from '../motion/index.ts';
+import { enter, isSubmitChord } from '../motion/index.ts';
 import { isMac } from '../shell/ShellContext.tsx';
 import { Button, Empty, Icon, Markdown, Textarea, Typing, cx } from '../ui/index.ts';
 import { ApprovalCard } from './ApprovalCard.tsx';
@@ -40,6 +40,8 @@ export interface ConversationProps {
   /** Pending comments (pins) sent with the next message. */
   pins?: Pin[];
   onRemovePin?(index: number): void;
+  /** Reopens a pending comment for editing (its chip is then a button). */
+  onEditPin?(index: number): void;
   /** Display name of a format id for the comment chips. */
   formatName?(id: string): string;
   /** No version yet: the composer offers Generate (an empty turn). */
@@ -110,7 +112,7 @@ function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], r
  * only in "Activity details", the job's approvals in the flow, typing dots while the agent works (T9), and the
  * composer with the pending comment chips and ⌘↵.
  */
-export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, formatName, canGenerate, onSent, onSelectVersion, snapshots }: ConversationProps) {
+export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, onSelectVersion, snapshots }: ConversationProps) {
   const t = useT();
   const c = t.web.chat;
   const working = active(job);
@@ -196,7 +198,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
           </Row>
         ))}
       </ol>
-      <Composer slug={slug} creative={creative} job={working ? job : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} />
+      <Composer slug={slug} creative={creative} job={working ? job : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} onEditPin={onEditPin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} />
     </div>
   );
 }
@@ -229,6 +231,16 @@ function pinText(p: Pin, n: number, formatName: ((id: string) => string) | undef
   return `${base} ${t.web.conversation.atSeconds({ time: formatNumber(locale, p.timeSec, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) })}`;
 }
 
+/** A comment chip's text: number, format and time, then the comment's own words (ellipsized). */
+function PinLabel({ pin, text }: { pin: Pin; text: string }) {
+  return (
+    <span className="ms-pin-label">
+      <span className="ms-pin-ref">{text}</span>
+      {pin.note ? <span className="ms-pin-note">{pin.note}</span> : null}
+    </span>
+  );
+}
+
 function ItemView({ item, formatName, onToggleFold, onSelectVersion, onGone }: {
   item: Item; formatName?(id: string): string; onToggleFold(jobId: string): void; onSelectVersion?(n: number): void; onGone(id: string): void;
 }) {
@@ -244,7 +256,7 @@ function ItemView({ item, formatName, onToggleFold, onSelectVersion, onGone }: {
             <span className="ms-msg-meta"><b>{c.you}</b>·<When at={item.at} /></span>
             {item.text && <div className="ms-msg-bubble">{item.text}</div>}
             {item.pins.length > 0 && (
-              <div className="ms-msg-pins">{item.pins.map((p, k) => <span key={k} className="ms-chip"><Icon name="comment" size={11} />{pinText(p, k + 1, formatName, t, locale)}</span>)}</div>
+              <div className="ms-msg-pins">{item.pins.map((p, k) => <span key={k} className="ms-chip" title={p.note || undefined}><Icon name="comment" size={11} /><PinLabel pin={p} text={pinText(p, k + 1, formatName, t, locale)} /></span>)}</div>
             )}
           </div>
         </article>
@@ -346,8 +358,8 @@ function Details({ events }: { events: AgentEvent[] }) {
 /** Longest wait for the job a send started before the composer unlocks anyway. */
 export const AWAIT_JOB_MS = 10_000;
 
-function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemovePin, formatName, canGenerate, onSent }: {
-  slug: string; creative: string; job: JobSummary | undefined; latestJobId: string | undefined; snapshots: number | undefined; pins: Pin[]; onRemovePin?(i: number): void; formatName?(id: string): string; canGenerate?: boolean; onSent?(): void;
+function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemovePin, onEditPin, formatName, canGenerate, onSent }: {
+  slug: string; creative: string; job: JobSummary | undefined; latestJobId: string | undefined; snapshots: number | undefined; pins: Pin[]; onRemovePin?(i: number): void; onEditPin?(i: number): void; formatName?(id: string): string; canGenerate?: boolean; onSent?(): void;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -399,7 +411,8 @@ function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemoveP
   };
   const submit = () => { if (canSend) void send({ text: text.trim(), pins }); };
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); }
+    // The app-wide submit chord: ⌘↵ on macOS, Ctrl+↵ elsewhere (a held key does not send twice).
+    if (isSubmitChord(e.nativeEvent) && !e.repeat) { e.preventDefault(); submit(); }
   };
   const cancel = () => { if (job) api.cancelJob(job.id).catch(() => setError(c.cancelFailed)); };
 
@@ -410,7 +423,12 @@ function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemoveP
           <div className="ms-composer-pins">
             {pins.map((p, k) => (
               <span key={k} className="ms-chip ms-on ms-composer-pin">
-                <Icon name="comment" size={11} />{pinText(p, k + 1, formatName, t, locale)}
+                {onEditPin ? (
+                  <button type="button" className="ms-pin-edit" title={p.note || undefined}
+                    aria-label={`${t.web.conversation.editComment({ n: k + 1 })} · ${p.note || pinText(p, k + 1, formatName, t, locale)}`} onClick={() => onEditPin(k)}>
+                    <Icon name="comment" size={11} /><PinLabel pin={p} text={pinText(p, k + 1, formatName, t, locale)} />
+                  </button>
+                ) : <><Icon name="comment" size={11} /><PinLabel pin={p} text={pinText(p, k + 1, formatName, t, locale)} /></>}
                 <button type="button" className="ms-x" aria-label={t.web.conversation.removeComment({ n: k + 1 })} onClick={() => onRemovePin?.(k)}><Icon name="close" size={10} /></button>
               </span>
             ))}

@@ -1,9 +1,10 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useT } from '../i18n.tsx';
 import { D, enter, pop } from '../motion/index.ts';
-import { href, type ProjectTab, type Route } from '../routes.ts';
+import { href, routeKey, type ProjectTab, type Route } from '../routes.ts';
 import { Button, Icon, NavItem, Popover, Spinner, cx, initials } from '../ui/index.ts';
 import { ActivityCenter } from './ActivityCenter.tsx';
+import { setBarSlot, useBarSlots } from './barSlots.ts';
 import { ProjectSwitcher } from './ProjectSwitcher.tsx';
 import { go, isMac, useShell } from './ShellContext.tsx';
 
@@ -151,22 +152,33 @@ export function ProjectTop({ slug, tab }: { slug: string; tab: ProjectTab }) {
   );
 }
 
-/** Creative / editor bar: back, breadcrumb, bell, avatar (+ a slot for the creative's own actions). */
-export function CreativeTop({ back, crumbs, right }: { back: { label: string; hash: string }; crumbs: ReactNode[]; right?: ReactNode }) {
+// Stable ref callbacks: a new function each render would empty and refill the slots (and re-render the bar) every time.
+const titleSlotRef = (el: HTMLElement | null) => setBarSlot('title', el);
+const endSlotRef = (el: HTMLElement | null) => setBarSlot('end', el);
+
+/**
+ * Creative / editor bar: back, breadcrumb, bell, avatar. With `slots`, the page of the route fills the title slot
+ * (after the breadcrumb: editable title and state) and the end slot (version menu, Export); `claimed` says it did, so
+ * the last crumb is the page's own title and not the bar's.
+ */
+export function CreativeTop({ back, crumbs, right, slots, claimed }: { back: { label: string; hash: string }; crumbs: ReactNode[]; right?: ReactNode; slots?: boolean; claimed?: boolean }) {
   const t = useT();
+  const current = (i: number) => i === crumbs.length - 1 && !claimed;
   return (
     <>
       <Button className="ms-back" onClick={() => go(back.hash)}><Icon name="back" size={16} strokeWidth={1.5} />{back.label}</Button>
       <nav className="ms-crumbs" aria-label={t.web.shell.breadcrumb}>
         {crumbs.map((c, i) => (
-          <span key={i} className={cx('ms-crumb', i === crumbs.length - 1 && 'ms-last')}>
+          <span key={i} className={cx('ms-crumb', current(i) && 'ms-last')}>
             {i > 0 ? <span className="ms-faint" aria-hidden="true">/</span> : null}
-            {i === crumbs.length - 1 ? <b aria-current="page">{c}</b> : <span>{c}</span>}
+            {current(i) ? <b aria-current="page">{c}</b> : <span>{c}</span>}
           </span>
         ))}
+        {slots ? <span className="ms-bar-slot ms-bar-title" ref={titleSlotRef} /> : null}
       </nav>
       <div className="ms-grow" />
       {right}
+      {slots ? <span className="ms-bar-slot ms-bar-end" ref={endSlotRef} /> : null}
       <Status running={false} />
     </>
   );
@@ -185,6 +197,7 @@ function barKey(r: Route): string {
 export function TopBar() {
   const t = useT();
   const { route: r, catalog } = useShell();
+  const { owner } = useBarSlots();
   const ref = useRef<HTMLElement>(null);
   const key = barKey(r);
   const prev = useRef(key);
@@ -204,9 +217,13 @@ export function TopBar() {
     case 'new-creative':
       content = <CreativeTop back={{ label: t.web.shell.backCreatives, hash: href.project(r.slug) }} crumbs={[projectName(r.slug), t.web.shell.newCreative]} />;
       break;
-    case 'creative':
-      content = <CreativeTop back={{ label: t.web.shell.backCreatives, hash: href.project(r.slug) }} crumbs={[projectName(r.slug), creativeTitle(r.slug, r.creative)]} />;
+    case 'creative': {
+      // The creative page puts its editable title in the bar; until it does, the crumb shows the known title.
+      const claimed = owner === routeKey(r);
+      content = <CreativeTop back={{ label: t.web.shell.backCreatives, hash: href.project(r.slug) }} slots claimed={claimed}
+        crumbs={claimed ? [projectName(r.slug)] : [projectName(r.slug), creativeTitle(r.slug, r.creative)]} />;
       break;
+    }
     case 'format':
       content = <CreativeTop back={{ label: t.web.shell.backAllFormats, hash: href.creative(r.slug, r.creative) }} crumbs={[projectName(r.slug), creativeTitle(r.slug, r.creative), <span className="ms-mono">{r.format}</span>]} />;
       break;

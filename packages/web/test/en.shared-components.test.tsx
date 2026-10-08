@@ -13,7 +13,6 @@ const { AgentConsole } = await import('../src/components/AgentConsole.tsx');
 const { UploadZone } = await import('../src/components/UploadZone.tsx');
 const { ConfirmButton } = await import('../src/components/ConfirmButton.tsx');
 const { SourceBadge } = await import('../src/components/SourceBadge.tsx');
-const { StatusBadge } = await import('../src/components/StatusBadge.tsx');
 const en = (node: React.ReactNode) => render(<I18nProvider locale="en">{node}</I18nProvider>);
 
 describe('shared components in English', () => {
@@ -44,11 +43,10 @@ describe('shared components in English', () => {
     rerender(<I18nProvider locale="en"><AgentConsole job={job} events={events} expert onCancel={() => {}} /></I18nProvider>);
     expect(screen.getByText(/ok · \$0\.0123/)).toBeTruthy();
   });
-  it('labels upload, confirm, source and status controls', async () => {
-    en(<><UploadZone label="Upload" onFiles={async () => {}} /><ConfirmButton label="Delete" onConfirm={() => {}} /><SourceBadge source={{ kind: 'manual', ref: null }} /><StatusBadge status="draft" waiting /></>);
+  it('labels upload, confirm and source controls', async () => {
+    en(<><UploadZone label="Upload" onFiles={async () => {}} /><ConfirmButton label="Delete" onConfirm={() => {}} /><SourceBadge source={{ kind: 'manual', ref: null }} /></>);
     expect(screen.getByText(/Drop files here/)).toBeTruthy();
     expect(screen.getByText('Manual')).toBeTruthy();
-    expect(screen.getByText('Awaiting approval')).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
     expect(screen.getByRole('button', { name: 'Confirm delete' })).toBeTruthy();
   });

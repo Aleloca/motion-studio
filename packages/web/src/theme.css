@@ -16,6 +16,9 @@
   --onAccent: #FFFFFF; --onAccentStrong: #171717;
   /* Theme-invariant terminal illustration (Pairing): a terminal is dark in both themes. */
   --term: #141414; --termBar: #1E1E1E; --termDot: #3A3A3A; --termDim: #8A8A8A; --termText: #CFCFCF; --termLink: #FF8A5C;
+  /* Canvas (Canvas boards): the floating tool bar is dark in both themes; labels over media sit on a light or dark veil. */
+  --toolbar: #171717; --toolbarLine: #171717; --onToolbar: #FFFFFF; --toolbarSep: #3A3A3A;
+  --onMedia: rgba(255, 255, 255, .94); --onMediaText: #171717; --mediaScrim: rgba(0, 0, 0, .65); --onMediaScrim: #FFFFFF;
   color-scheme: light;
 
   /* Legacy aliases for the screens not yet redesigned; Task 16 removes them. */
@@ -33,6 +36,7 @@
     --ok: #6FCF97; --okBg: #132A1D; --warn: #FF8A5C; --warnBg: #231711; --warnLine: #55301E;
     --scrim: rgba(0, 0, 0, .6); --shadow: rgba(0, 0, 0, .5); --shadowLg: rgba(0, 0, 0, .7); --bar: #3A3A3A;
     --accentText: #FF8A5C;
+    --toolbar: #232323; --toolbarLine: #333333;
     color-scheme: dark;
   }
 }
@@ -43,6 +47,7 @@
   --ok: #6FCF97; --okBg: #132A1D; --warn: #FF8A5C; --warnBg: #231711; --warnLine: #55301E;
   --scrim: rgba(0, 0, 0, .6); --shadow: rgba(0, 0, 0, .5); --shadowLg: rgba(0, 0, 0, .7); --bar: #3A3A3A;
   --accentText: #FF8A5C;
+  --toolbar: #232323; --toolbarLine: #333333;
   color-scheme: dark;
 }
 
@@ -61,9 +66,6 @@ button { min-height: 36px; padding: 0 14px; border-radius: 8px; border: 1px soli
 button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 700; }
 button.danger { color: var(--danger); border-color: var(--danger); font-weight: 700; }
 button:disabled { opacity: 0.55; cursor: not-allowed; }
-/* FormatBoard: a whole frame is the button that opens the focus view. */
-button.frame-open { all: unset; cursor: pointer; display: flex; flex-direction: column; gap: 6px; border-radius: 6px; }
-button.frame-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 input, textarea { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
 .muted { color: var(--muted); }

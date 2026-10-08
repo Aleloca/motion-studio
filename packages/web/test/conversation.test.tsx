@@ -15,6 +15,12 @@ const { Conversation, mergeJobEvents } = await import('../src/components/Convers
 const { ActivityCenter } = await import('../src/shell/ActivityCenter.tsx');
 const { initialEventsState } = await import('../src/eventsReducer.ts');
 
+// ⌘↵ is the macOS chord (isSubmitChord): these tests run on a Mac platform unless they say otherwise.
+let platform: ReturnType<typeof vi.spyOn> | null = null;
+const onPlatform = (name: 'MacIntel' | 'Win32') => { platform?.mockRestore(); platform = vi.spyOn(navigator, 'platform', 'get').mockReturnValue(name); };
+beforeEach(() => onPlatform('MacIntel'));
+afterEach(() => { platform?.mockRestore(); platform = null; });
+
 // Controllable Web Animations: each animate() returns a fake whose `finished` settles only when the test says so.
 class FakeAnim {
   cancelled = false;
@@ -168,11 +174,15 @@ describe('Conversation', () => {
     expect((box as HTMLTextAreaElement).value).toBe('');
   });
 
-  it('Ctrl+Enter sends too; plain Enter does not', async () => {
+  it('Ctrl+Enter sends off macOS (not on a Mac); plain Enter never does', async () => {
     render(view({ entries: [] }));
     const box = screen.getByLabelText('Request a change');
     await userEvent.type(box, 'Hi');
     fireEvent.keyDown(box, { key: 'Enter' });
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
+    expect(api.sendCreativeTurn).not.toHaveBeenCalled();
+    onPlatform('Win32');
+    fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
     expect(api.sendCreativeTurn).not.toHaveBeenCalled();
     fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
     await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'c1', { text: 'Hi', pins: [] }));

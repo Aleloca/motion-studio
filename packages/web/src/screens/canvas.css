@@ -1,0 +1,285 @@
+/* Creative · canvas (spec §6.2 #6), ported from the prototype's CanvasView and the Canvas boards (light + dark). */
+.ms-cv { height: 100%; min-height: 0; display: grid; grid-template-columns: 252px minmax(0, 1fr) 368px; background: var(--bg); color: var(--text); }
+.ms-cv .ms-grow { flex: 1; }
+.ms-cv-state { height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.ms-cv-state .ms-empty { max-width: 460px; }
+.ms-cap { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+
+/* Side columns. */
+.ms-cv-side { min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--panel); }
+.ms-cv-formats { border-right: 1px solid var(--line); padding: 12px 10px; gap: 4px; overflow: auto; }
+.ms-cv-formats-head { display: flex; align-items: baseline; justify-content: space-between; padding: 0 6px 6px; }
+.ms-cv-formats-head span { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.ms-cv-group { display: flex; flex-direction: column; gap: 2px; }
+.ms-cv-group-head { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 6px; font-weight: 500; min-width: 0; }
+.ms-cv-fmt { padding-left: 30px; height: 30px; }
+.ms-cv-fmt.ms-on { background: var(--sel); color: var(--text); transition: background var(--d-m) var(--e-std); }
+.ms-cv-fmt .ms-navitem-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-cv-fmt-side { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--faint); flex: none; }
+.ms-cv-panel { border-left: 1px solid var(--line); }
+.ms-cv-panel > .ms-tabs { flex: none; }
+.ms-cv-panel > .ms-conv, .ms-cv-panel > section, .ms-cv-panel > div:not(.ms-tabs) { flex: 1; min-height: 0; }
+.ms-cv-brief-wrap[hidden] { display: none; }
+.ms-cv-brief-wrap { display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+
+/* Canvas. */
+.ms-cv-main { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
+  background-color: var(--bg); background-image: radial-gradient(var(--dot) 1px, transparent 1px); background-size: 20px 20px; }
+.ms-cv-notes { position: relative; z-index: 3; display: flex; flex-direction: column; gap: 8px; padding: 12px 16px 0; flex: none; }
+.ms-cv-note {
+  margin: 0; padding: 10px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.45; overflow-wrap: anywhere;
+  background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); color: var(--text);
+}
+.ms-cv-note.ms-err { color: var(--warn); }
+.ms-cv-note.ms-info { background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
+.ms-cv-note ul { margin: 4px 0 0; padding-left: 18px; }
+.ms-cv-viewport { position: relative; flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.ms-cv-viewport.ms-tool-comment { cursor: crosshair; }
+.ms-cv-viewport.ms-tool-hand { cursor: grab; }
+.ms-cv-viewport.ms-grabbing { cursor: grabbing; user-select: none; }
+.ms-cv-world { display: flex; align-items: flex-start; gap: 40px; padding: 40px 60px 140px; width: max-content; }
+.ms-cv-stack { display: flex; flex-direction: column; gap: 44px; }
+
+/* Boards. */
+.ms-cv-board { display: flex; flex-direction: column; gap: 8px; }
+.ms-cv-board-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--muted); min-height: 22px; }
+.ms-cv-board-name { color: var(--text); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-cv-board-meta { font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap; }
+.ms-cv-board-head .ms-pill { height: 20px; }
+.ms-cv-frame-wrap { position: relative; flex: none; }
+.ms-cv-frame {
+  position: absolute; inset: 0; border-radius: 4px; overflow: hidden; background: var(--field);
+  box-shadow: 0 8px 24px var(--shadow); transition: box-shadow var(--d-m) var(--e-std);
+}
+.ms-cv-board.ms-on .ms-cv-frame { box-shadow: 0 0 0 2px var(--accent), 0 16px 40px var(--shadow); }
+.ms-cv-frame.ms-empty-frame { background: transparent; box-shadow: none; border: 1.5px dashed var(--line); border-radius: 10px; }
+.ms-cv-board.ms-on .ms-cv-frame.ms-empty-frame { border-color: var(--accent); box-shadow: none; }
+.ms-cv-frame img, .ms-cv-frame video { width: 100%; height: 100%; object-fit: cover; display: block; user-select: none; }
+.ms-cv-frame-note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 12px; text-align: center; font-size: 12px; color: var(--faint); overflow-wrap: anywhere; }
+.ms-cv-frame .ms-shimmer { z-index: 1; }
+
+/* "Open editor": over the frame on hover or keyboard focus (prototype). */
+.ms-cv-open {
+  position: absolute; left: 50%; top: 50%; z-index: 2; transform: translate(-50%, -50%); display: inline-flex; align-items: center; gap: 8px;
+  height: 36px; min-height: 0; padding: 0 16px; margin: 0; border: 0; border-radius: 999px; background: var(--onMedia); color: var(--onMediaText);
+  font: inherit; font-weight: 700; white-space: nowrap; cursor: pointer; box-shadow: 0 8px 24px var(--shadowLg);
+  opacity: 0; transition: opacity var(--d-s) var(--e-std);
+}
+.ms-cv-frame:hover .ms-cv-open, .ms-cv-open:focus-visible { opacity: 1; }
+.ms-cv-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Comment mode: the whole frame takes the click. */
+.ms-cv-hit { position: absolute; inset: 0; z-index: 3; width: 100%; height: 100%; min-height: 0; padding: 0; margin: 0; border: 0; border-radius: 0; background: transparent; cursor: crosshair; }
+.ms-cv-hit:focus-visible { outline: 2px dashed var(--accent); outline-offset: -2px; }
+
+/* Safe zones (point 37): tinted bands with what covers them. */
+.ms-cv-safe { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.ms-cv-safe i { background: color-mix(in srgb, var(--accent) 18%, transparent); display: flex; align-items: flex-end; }
+.ms-cv-safe-top { left: 0; right: 0; top: 0; border-bottom: 1px dashed color-mix(in srgb, var(--accent) 80%, transparent); }
+.ms-cv-safe-bottom { left: 0; right: 0; bottom: 0; align-items: flex-start !important; border-top: 1px dashed color-mix(in srgb, var(--accent) 80%, transparent); }
+.ms-cv-safe-left { left: 0; border-right: 1px dashed color-mix(in srgb, var(--accent) 60%, transparent); }
+.ms-cv-safe-right { right: 0; border-left: 1px dashed color-mix(in srgb, var(--accent) 60%, transparent); }
+.ms-cv-safe em {
+  font-style: normal; margin: 6px; padding: 2px 6px; border-radius: 4px; background: var(--mediaScrim); color: var(--onMediaScrim);
+  font-size: 10px; line-height: 1.4; max-width: calc(100% - 12px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Comment markers and the bubble (point 40). */
+.ms-cv-pin {
+  position: absolute; z-index: 4; width: 24px; height: 24px; min-height: 0; padding: 0; margin: 0; border: 0;
+  transform: translate(-2px, -22px); border-radius: 12px 12px 12px 3px; background: var(--accent); color: var(--onAccentStrong);
+  font: inherit; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; cursor: pointer;
+  box-shadow: 0 4px 10px color-mix(in srgb, var(--accent) 40%, transparent); transition: transform var(--d-s) var(--e-spring);
+}
+.ms-cv-pin:hover, .ms-cv-pin.ms-on { transform: translate(-2px, -22px) scale(1.12); }
+.ms-cv-pin:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.ms-cv-pin.ms-draft { pointer-events: none; }
+.ms-cv-bubble {
+  position: absolute; z-index: 6; width: 260px; display: flex; flex-direction: column; gap: 8px; padding: 10px;
+  transform: translate(30px, -26px); transform-origin: 0 0; border-radius: 10px; background: var(--panel); cursor: auto;
+  box-shadow: 0 0 0 1px var(--line), 0 12px 30px var(--shadowLg);
+}
+.ms-cv-bubble.ms-left { transform: translate(calc(-100% - 10px), -26px); transform-origin: 100% 0; }
+.ms-cv-bubble .ms-textarea { font-size: 12.5px; min-height: 64px; }
+.ms-cv-bubble-foot { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ms-cv-bubble-time { font-size: 11px; color: var(--faint); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Generation (T10): thin bar and the agent's latest step under the first board. */
+.ms-cv-gen { display: flex; flex-direction: column; gap: 6px; max-width: 320px; }
+.ms-cv-gen-step { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Nothing generated yet. */
+.ms-cv-nothing { position: absolute; inset: 0; z-index: 4; display: flex; align-items: center; justify-content: center; padding: 24px; pointer-events: none; }
+.ms-cv-nothing-card { pointer-events: auto; width: 420px; max-width: 100%; padding: 24px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; box-shadow: 0 0 0 1px var(--line), 0 18px 40px var(--shadow); }
+.ms-cv-nothing-card b { font-size: 17px; }
+.ms-cv-nothing-card p { margin: 0 0 4px; color: var(--muted); line-height: 1.5; text-wrap: pretty; }
+.ms-cv-nothing-icon { width: 36px; height: 36px; border-radius: 10px; background: var(--field); display: flex; align-items: center; justify-content: center; }
+
+/* Floating hint, legend and tool bar. */
+.ms-cv-hint {
+  position: absolute; left: 50%; top: 14px; z-index: 5; transform: translateX(-50%); height: 30px; padding: 0 12px; border-radius: 999px;
+  display: flex; align-items: center; background: var(--panel); box-shadow: 0 0 0 1px var(--line), 0 6px 16px var(--shadow); font-size: 12px; font-weight: 500; white-space: nowrap;
+}
+.ms-cv-legend {
+  position: absolute; left: 16px; bottom: 20px; z-index: 5; width: 260px; max-width: calc(100% - 32px); padding: 12px; border-radius: 10px;
+  display: flex; flex-direction: column; gap: 4px; background: var(--panel); box-shadow: 0 0 0 1px var(--line), 0 10px 30px var(--shadow); font-size: 12px; line-height: 1.45;
+}
+.ms-cv-legend span { color: var(--muted); }
+.ms-cv-legend-keys { display: flex; align-items: center; gap: 6px; }
+.ms-cv-legend-keys i { flex: none; width: 14px; height: 10px; border-radius: 2px; background: color-mix(in srgb, var(--accent) 18%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 70%, transparent); }
+.ms-cv-toolbar {
+  position: absolute; left: 50%; bottom: 20px; z-index: 5; transform: translateX(-50%); display: flex; align-items: center; gap: 4px; padding: 6px;
+  border-radius: 12px; background: var(--toolbar); border: 1px solid var(--toolbarLine); box-shadow: 0 10px 30px var(--shadowLg); color: var(--onToolbar);
+}
+.ms-cv-tool {
+  width: 34px; height: 34px; min-height: 0; padding: 0; margin: 0; border: 0; border-radius: 8px; background: transparent; color: var(--onToolbar);
+  display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background var(--d-s) var(--e-std);
+}
+.ms-cv-tool:hover { background: color-mix(in srgb, var(--onToolbar) 10%, transparent); }
+.ms-cv-tool.ms-on { background: var(--accent); color: var(--onAccentStrong); }
+.ms-cv-tool.ms-sm { width: 28px; height: 28px; }
+.ms-cv-tool:disabled { opacity: .4; cursor: default; background: transparent; }
+.ms-cv-tool:focus-visible, .ms-cv-zoom:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ms-cv-tool-sep { width: 1px; height: 20px; margin: 0 4px; background: var(--toolbarSep); }
+.ms-cv-zoom { min-width: 48px; height: 28px; min-height: 0; padding: 0 4px; margin: 0; border: 0; border-radius: 6px; background: transparent; color: var(--onToolbar); font-family: var(--mono); font-size: 12px; text-align: center; cursor: pointer; font-variant-numeric: tabular-nums; }
+.ms-cv-safe-toggle { display: inline-flex; align-items: center; gap: 8px; padding: 0 8px 0 4px; font-size: 12px; white-space: nowrap; }
+
+/* Bar (portalled into the shell's creative bar). */
+.ms-cv-crumb { flex: 0 1 auto; min-width: 0; }
+.ms-cv-title {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; height: 28px; min-height: 0; padding: 0 6px; margin: 0 -6px 0 0;
+  border: 0; border-radius: 6px; background: transparent; color: var(--text); font: inherit; cursor: text;
+}
+.ms-cv-title b { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-cv-title svg { flex: none; color: var(--faint); opacity: 0; transition: opacity var(--d-s) var(--e-std); }
+.ms-cv-title:hover { background: var(--field); }
+.ms-cv-title:hover svg, .ms-cv-title:focus-visible svg { opacity: 1; }
+.ms-cv-title-input.ms-input { height: 28px; width: 280px; max-width: 40vw; padding: 0 8px; font-weight: 600; }
+.ms-cv-state-pill { flex: none; margin-left: 2px; }
+.ms-cv-vbtn { gap: 6px; font-variant-numeric: tabular-nums; }
+.ms-cv-vbtn svg { transition: transform var(--d-s) var(--e-std); }
+.ms-cv-vbtn.ms-open svg { transform: rotate(180deg); }
+
+/* Version history popover. */
+.ms-vmenu { display: flex; flex-direction: column; }
+.ms-vmenu-head { display: flex; align-items: baseline; justify-content: space-between; padding: 4px 8px 8px; }
+.ms-vmenu-count { font-size: 11px; color: var(--faint); }
+.ms-vmenu-list { display: flex; flex-direction: column; gap: 2px; max-height: 360px; overflow: auto; }
+.ms-vmenu-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 0; padding: 6px 8px; margin: 0; border: 0; border-radius: 8px;
+  background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: background var(--d-m) var(--e-std);
+}
+.ms-vmenu-row:hover { background: var(--field); }
+.ms-vmenu-row.ms-on { background: var(--sel); }
+.ms-vmenu-thumb { width: 36px; height: 36px; flex: none; border-radius: 4px; overflow: hidden; background: var(--field); display: flex; align-items: center; justify-content: center; color: var(--faint); }
+.ms-vmenu-thumb img, .ms-vmenu-thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ms-vmenu-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.ms-vmenu-line { display: flex; align-items: center; gap: 6px; }
+.ms-vmenu-line .ms-pill { height: 18px; font-size: 10px; }
+.ms-vmenu-when { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.ms-vmenu-note { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-vmenu-explain { margin: 6px 8px 0; font-size: 11.5px; line-height: 1.45; color: var(--muted); text-wrap: pretty; }
+.ms-vmenu-foot { display: flex; gap: 6px; padding: 8px 4px 2px; margin-top: 6px; border-top: 1px solid var(--line2); }
+
+/* Panel tabs. */
+.ms-cv-tabbody { flex: 1; min-height: 0; overflow: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.ms-cv-tabempty { justify-content: center; }
+.ms-cv-cgroup { display: flex; flex-direction: column; gap: 8px; }
+.ms-cv-cgroup + .ms-cv-cgroup { margin-top: 8px; }
+.ms-cv-comment { padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+.ms-cv-comment-head { display: flex; align-items: center; gap: 8px; font-size: 11px; min-width: 0; }
+.ms-cv-comment-head .ms-pill { height: 20px; flex: none; }
+.ms-cv-comment-where { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-cv-comment-at { margin-left: auto; color: var(--faint); font-family: var(--mono); font-size: 10.5px; flex: none; }
+.ms-cv-comment-text { line-height: 1.5; overflow-wrap: anywhere; }
+.ms-cv-brief { gap: 14px; }
+.ms-cv-brief-row { display: flex; flex-direction: column; gap: 4px; }
+.ms-cv-brief-value { line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+.ms-cv-brief-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.ms-cv-brief-tags .ms-tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-cv-brief-edit-btn, .ms-cv-brief-back { align-self: flex-start; }
+.ms-cv-brief-edit { padding: 8px 0 0; gap: 0; }
+.ms-cv-brief-edit .ms-cv-brief-back { margin-left: 10px; }
+
+/* Compare (modal). */
+.ms-cmp { display: flex; align-items: stretch; min-height: 0; max-height: min(720px, 90vh); }
+.ms-cmp-stage { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 24px; overflow: auto;
+  background-color: var(--bg); background-image: radial-gradient(var(--dot) 1px, transparent 1px); background-size: 20px 20px; }
+.ms-cmp-frame { position: relative; flex: none; border-radius: 4px; overflow: hidden; box-shadow: 0 16px 40px var(--shadow); cursor: ew-resize; touch-action: none; user-select: none; background: var(--field); }
+.ms-cmp-layer { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.ms-cmp-layer img, .ms-cmp-layer video { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+.ms-cmp-none { font-size: 12px; color: var(--faint); padding: 12px; text-align: center; }
+.ms-cmp-left { background: var(--field); }
+.ms-cmp-divider { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--onMedia); box-shadow: 0 0 8px var(--mediaScrim); outline: none; }
+.ms-cmp-knob {
+  position: absolute; top: 50%; left: -13px; width: 28px; height: 28px; margin-top: -14px; border-radius: 50%; background: var(--onMedia); color: var(--onMediaText);
+  display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px var(--mediaScrim);
+}
+.ms-cmp-knob svg:first-child { transform: rotate(90deg); margin-right: -4px; }
+.ms-cmp-knob svg:last-child { transform: rotate(-90deg); margin-left: -4px; }
+.ms-cmp-divider:focus-visible .ms-cmp-knob { box-shadow: 0 0 0 2px var(--accent), 0 2px 8px var(--mediaScrim); }
+.ms-cmp-tag { position: absolute; top: 8px; padding: 2px 8px; border-radius: 999px; background: var(--mediaScrim); color: var(--onMediaScrim); font-size: 11px; font-weight: 600; }
+.ms-cmp-tag-l { left: 8px; }
+.ms-cmp-tag-r { right: 8px; }
+.ms-cmp-side-col { width: 280px; flex: none; display: flex; flex-direction: column; border-left: 1px solid var(--line2); overflow: auto; }
+.ms-cmp-head { display: flex; align-items: center; gap: 8px; padding: 14px 16px; border-bottom: 1px solid var(--line2); min-width: 0; }
+.ms-cmp-head b { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ms-cmp-side { display: flex; flex-direction: column; gap: 6px; padding: 12px 16px; }
+.ms-cmp-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.ms-cmp-chips .ms-chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-cmp-note { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+@media (max-width: 760px) { .ms-cmp { flex-direction: column; max-height: none; } .ms-cmp-side-col { width: auto; border-left: 0; border-top: 1px solid var(--line2); } }
+
+/* Export (modal). */
+.ms-exp { display: flex; flex-direction: column; min-height: 0; max-height: min(760px, 90vh); }
+.ms-exp-head { display: flex; align-items: flex-start; gap: 12px; padding: 18px 22px; border-bottom: 1px solid var(--line2); }
+.ms-exp-titles { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.ms-exp-titles h2 { margin: 0; font-size: 18px; letter-spacing: -.01em; overflow-wrap: anywhere; text-wrap: balance; }
+.ms-exp-sub { color: var(--muted); }
+.ms-exp-rows { padding: 8px 12px; overflow: auto; min-height: 0; }
+.ms-exp-row {
+  display: grid; grid-template-columns: 28px 52px minmax(0, 1fr) 72px; gap: 0 12px; align-items: center; padding: 8px 10px; border-radius: 10px;
+  transition: opacity var(--d-s) var(--e-std), background var(--d-m) var(--e-std);
+}
+.ms-exp-row:not(.ms-exp-cols):hover { background: var(--field); }
+.ms-exp-row.ms-off { opacity: .5; }
+.ms-exp-thumb { border-radius: 4px; overflow: hidden; background: var(--field); justify-self: center; }
+.ms-exp-thumb.ms-wide { width: 52px; height: 30px; }
+.ms-exp-thumb.ms-square { width: 44px; height: 44px; }
+.ms-exp-thumb.ms-tall { width: 30px; height: 52px; }
+.ms-exp-thumb img, .ms-exp-thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ms-exp-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ms-exp-label { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ms-exp-label b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-exp-file { font-family: var(--mono); font-size: 11px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-exp-ver { justify-self: start; height: 26px; padding: 0 10px; border-radius: 7px; background: var(--panel); box-shadow: 0 0 0 1px var(--line); font-weight: 600; display: inline-flex; align-items: center; font-variant-numeric: tabular-nums; }
+.ms-exp-empty { margin: 0; padding: 24px 22px; color: var(--muted); }
+.ms-exp-dest { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 10px; align-items: center; padding: 14px 22px; border-top: 1px solid var(--line2); }
+.ms-exp-dest-label { font-weight: 600; }
+.ms-exp-dest-field { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ms-exp-dest-field .ms-input { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; }
+.ms-exp-folder { flex: 1; min-width: 0; height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-radius: 8px; background: var(--field); color: var(--muted); }
+.ms-exp-path { font-family: var(--mono); font-size: 12px; color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+.ms-exp-folder .ms-exp-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-exp-path.ms-faint { color: var(--faint); font-family: var(--sans); }
+.ms-exp-last { margin-left: auto; font-size: 11px; color: var(--faint); flex: none; }
+.ms-exp-foot { display: flex; align-items: center; gap: 12px; padding: 14px 22px; border-top: 1px solid var(--line2); background: var(--bg); border-radius: 0 0 14px 14px; flex-wrap: wrap; }
+.ms-exp-summary, .ms-exp-progress { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 180px; }
+.ms-exp-note { font-size: 12px; color: var(--muted); }
+.ms-exp-error { margin: 0; font-size: 12px; color: var(--warn); overflow-wrap: anywhere; }
+.ms-exp-done { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 34px 22px; text-align: center; min-width: 0; }
+.ms-exp-done b { font-size: 17px; }
+.ms-exp-done-mark { width: 54px; height: 54px; border-radius: 50%; background: var(--okBg); color: var(--ok); display: flex; align-items: center; justify-content: center; }
+.ms-exp-skipped { font-size: 12px; color: var(--warn); overflow-wrap: anywhere; }
+.ms-exp-done-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; justify-content: center; }
+@media (max-width: 640px) { .ms-exp-dest { grid-template-columns: 1fr; } .ms-exp-row { grid-template-columns: 28px 44px minmax(0, 1fr); } .ms-exp-ver { display: none; } }
+
+/* Narrow windows: the formats column folds first, then the panel goes under the canvas. */
+@media (max-width: 1180px) { .ms-cv { grid-template-columns: 200px minmax(0, 1fr) 340px; } }
+@media (max-width: 980px) { .ms-cv { grid-template-columns: minmax(0, 1fr) 340px; } .ms-cv-formats { display: none; } }
+@media (max-width: 760px) {
+  .ms-cv { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(420px, 62vh) auto; height: auto; min-height: 100%; }
+  .ms-cv-panel { border-left: 0; border-top: 1px solid var(--line); min-height: 420px; }
+  .ms-cv-legend { width: auto; right: 16px; bottom: 76px; }
+}
+@media (prefers-reduced-motion: reduce) { .ms-cv-open, .ms-cv-pin, .ms-cv-frame { transition: none; } }

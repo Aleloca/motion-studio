@@ -6,7 +6,7 @@ import { PageHost } from './motion/index.ts';
 import { depthOf, href, parseRoute, projectOf, routeKey, type Route } from './routes.ts';
 import { AssetsPage } from './screens/AssetsPage.tsx';
 import { BrandPage } from './screens/BrandPage.tsx';
-import { CreativePage } from './screens/CreativePage.tsx';
+import { CreativeCanvas } from './screens/CreativeCanvas.tsx';
 import { NewCreative } from './screens/NewCreative.tsx';
 import { Pairing } from './screens/Pairing.tsx';
 import { ProjectConsole } from './screens/ProjectConsole.tsx';
@@ -221,8 +221,9 @@ function AppShell({ route, live, settings, checks, activity, setActivity, langua
       case 'projects': return <Projects live={live} />;
       case 'project': return <ProjectHost route={r} live={live} expert={expert} />;
       case 'new-creative': return <NewCreative key={r.slug} slug={r.slug} />;
-      // The format view (Task 13) opens on the creative until then.
-      case 'creative': case 'format': return <CreativePage key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} />;
+      case 'creative': return <CreativeCanvas key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} />;
+      // Until the format view (Task 13): the canvas with that format in the focus view.
+      case 'format': return <CreativeCanvas key={`${r.slug}/${r.creative}/${r.format}`} slug={r.slug} creative={r.creative} focus={r.format} live={live} />;
       // Every section maps to the current settings page until the new one (Task 15).
       case 'settings': return settings ? <SettingsPage settings={settings} checks={checks} language={language} systemLocale={systemLocale} onLanguage={onLanguage} onSaved={onSettings} /> : null;
       // The setup: a full page without the bar, at depth 0.

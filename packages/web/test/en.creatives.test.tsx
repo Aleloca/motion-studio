@@ -15,7 +15,7 @@ const api = {
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { ConversationPanel } = await import('../src/components/ConversationPanel.tsx');
-const { FormatBoard } = await import('../src/components/FormatBoard.tsx');
+const { CanvasBoard } = await import('../src/screens/CanvasBoard.tsx');
 const { FocusView } = await import('../src/components/FocusView.tsx');
 const en = (node: React.ReactNode) => render(<I18nProvider locale="en">{node}</I18nProvider>);
 
@@ -43,10 +43,18 @@ describe('creatives in English', () => {
   it('labels frames and the focus view with English channel and format names', async () => {
     const banner = DEFAULT_FORMATS.find((f) => f.id === 'instagram-post-1x1')!;
     const version = { n: 1, commit: 'c', sessionId: 's', status: 'complete' as const, createdAt: at, request: 'r', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: null };
-    const onOpen = vi.fn();
-    en(<FormatBoard presets={DEFAULT_FORMATS} formats={[banner.id]} version={version} compare={null} fileUrl={() => ''} pins={[]} showSafeZone={false} onOpen={onOpen} />);
-    expect(screen.getByRole('button', { name: 'Instagram · Post 1:1 — open' })).toBeTruthy();
+    const noop = () => {};
+    const board = (n: number, withOutput: boolean) => (
+      <CanvasBoard slug="acme" creative="c1" n={n} tool="select" selected={false} working={false} safe={false} pins={[]} draft={null} nextNumber={1}
+        board={{ id: banner.id, preset: banner, out: withOutput ? { format: banner.id, file: 'a.png', width: 1080, height: 1080, durationSec: null, verified: true, preview: null } : null }}
+        onSelect={noop} onOpen={noop} onPlace={noop} onEditPin={noop} onDraftText={noop} onDraftCommit={noop} onDraftCancel={noop} onDraftDelete={noop} />
+    );
+    const { unmount } = en(board(version.n, false));
     expect(screen.getByText('Missing in v1')).toBeTruthy();
+    unmount();
+    const second = en(board(version.n, true));
+    expect(screen.getByRole('button', { name: 'Open the editor for Instagram · Post 1:1' })).toBeTruthy();
+    second.unmount();
     en(<FocusView preset={banner} src="/f/a.png" compareSrc={null} versionN={1} compareN={null} verified={false} pins={[]} onAddPin={() => {}} onClose={() => {}} />);
     expect(screen.getByRole('dialog', { name: 'Instagram · Post 1:1' })).toBeTruthy();
     expect(screen.getByText('unverified')).toBeTruthy();
