@@ -4,9 +4,14 @@ import { cx } from './cx.ts';
 // Safe Markdown subset for agent and user text (spec point 32): **bold**, *italic* / _italic_, `code`, bullet lists,
 // [label](https://…) and bare http(s) URLs. Everything else, HTML included, stays text: React escapes it and no
 // dangerouslySetInnerHTML is used anywhere.
+//
+// Linear time on hostile input: every pattern's body stops at the next delimiter of its kind (bold cannot contain
+// "**", a link label cannot contain "[" or "]", a URL in parentheses cannot contain "(" or "["), so a failed attempt
+// from an opener scans only up to the next opener; and `inline` remembers each rule's next match, re-running a rule
+// only once the text before that match has been consumed.
 
 /** `m[0]` is the whole match, then the capture groups. `trimEnd`: drop sentence punctuation from the end of the match. */
-type Rule = { re: RegExp; trimEnd?: boolean; render: (m: [string, ...string[]], key: string, links: boolean) => ReactNode };
+type Rule = { /** global: searched from `lastIndex` */ re: RegExp; trimEnd?: boolean; render: (m: [string, ...string[]], key: string, links: boolean) => ReactNode };
 
 const SAFE_URL = /^https?:\/\/[^\s]+$/i;
 const TRAILING = /[.,;:!?'"]+$/;
@@ -28,19 +33,19 @@ const ExternalLink = ({ href, children }: { href: string; children: ReactNode })
 );
 
 const RULES: Rule[] = [
-  { re: /`([^`\n]+)`/, render: (m, key) => <code key={key}>{m[1]}</code> },
-  { re: /\*\*(?=\S)([^\n]+?)(?<=\S)\*\*/, render: (m, key, links) => <strong key={key}>{inline(m[1]!, key, links)}</strong> },
-  { re: /\*(?=[^\s*])([^*\n]+?)(?<=\S)\*/, render: (m, key, links) => <em key={key}>{inline(m[1]!, key, links)}</em> },
-  { re: /(?<![\p{L}\p{N}_])_(?=[^\s_])([^_\n]+?)(?<=\S)_(?![\p{L}\p{N}_])/u, render: (m, key, links) => <em key={key}>{inline(m[1]!, key, links)}</em> },
+  { re: /`([^`\n]+)`/g, render: (m, key) => <code key={key}>{m[1]}</code> },
+  { re: /\*\*(?=\S)((?:[^*\n]|\*(?!\*))+?)(?<=\S)\*\*/g, render: (m, key, links) => <strong key={key}>{inline(m[1]!, key, links)}</strong> },
+  { re: /\*(?=[^\s*])([^*\n]+?)(?<=\S)\*/g, render: (m, key, links) => <em key={key}>{inline(m[1]!, key, links)}</em> },
+  { re: /(?<![\p{L}\p{N}_])_(?=[^\s_])([^_\n]+?)(?<=\S)_(?![\p{L}\p{N}_])/gu, render: (m, key, links) => <em key={key}>{inline(m[1]!, key, links)}</em> },
   {
-    re: /\[([^\]\n]+)\]\(([^)\s]+)\)/,
+    re: /\[([^[\]\n]+)\]\(([^()[\]\s]+)\)/g,
     render: (m, key, links) => {
       const href = links ? safeHref(m[2]!) : null;
       return href ? <ExternalLink key={key} href={href}>{inline(m[1]!, key, false)}</ExternalLink> : m[0];
     },
   },
   {
-    re: /https?:\/\/[^\s<>()[\]]+/,
+    re: /https?:\/\/[^\s<>()[\]]+/g,
     trimEnd: true,
     render: (m, key, links) => {
       const href = links ? safeHref(m[0]) : null;
@@ -52,21 +57,29 @@ const RULES: Rule[] = [
 /** Inline spans of one line or list item. `links` is false inside a link label (no nested anchors). */
 function inline(text: string, keyPrefix: string, links = true): ReactNode[] {
   const out: ReactNode[] = [];
-  let rest = text;
+  // Next match of each rule at or after `pos`; undefined = not searched yet, null = none left in the text.
+  const next: (RegExpExecArray | null | undefined)[] = RULES.map(() => undefined);
+  let pos = 0;
   let n = 0;
-  while (rest) {
-    let best: { m: RegExpExecArray; rule: Rule } | null = null;
-    for (const rule of RULES) {
-      const m = rule.re.exec(rest);
-      if (m && (!best || m.index < best.m.index)) best = { m, rule };
-    }
-    if (!best) { out.push(rest); break; }
-    const { rule, m: found } = best;
+  while (pos < text.length) {
+    let best = -1;
+    RULES.forEach((rule, i) => {
+      let m = next[i];
+      if (m === undefined || (m !== null && m.index < pos)) {
+        rule.re.lastIndex = pos;
+        m = rule.re.exec(text);
+        next[i] = m;
+      }
+      if (m && (best < 0 || m.index < next[best]!.index)) best = i;
+    });
+    const found = best < 0 ? null : next[best]!;
+    if (!found) { out.push(text.slice(pos)); break; }
+    const rule = RULES[best]!;
     // A bare URL does not swallow the punctuation that ends the sentence.
     const whole = rule.trimEnd ? found[0].replace(TRAILING, '') : found[0];
-    if (found.index > 0) out.push(rest.slice(0, found.index));
+    if (found.index > pos) out.push(text.slice(pos, found.index));
     out.push(rule.render([whole, ...found.slice(1)], `${keyPrefix}.${n++}`, links));
-    rest = rest.slice(found.index + whole.length);
+    pos = found.index + whole.length;
   }
   return out;
 }

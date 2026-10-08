@@ -11,7 +11,7 @@ export function Toggle({ on, onChange, label, size = 'md', disabled, className }
       aria-checked={on}
       aria-label={label}
       disabled={disabled}
-      className={cx('ms-toggle', on && 'on', size === 'sm' && 'sm', className)}
+      className={cx('ms-toggle', on && 'ms-on', size === 'sm' && 'ms-sm', className)}
       // Toggles often sit inside clickable cards: the switch must not also open the card.
       onClick={(e) => { e.stopPropagation(); onChange(!on); }}
     >

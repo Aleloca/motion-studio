@@ -31,7 +31,7 @@ export function Tabs<V extends string>({ tabs, value, onChange, label, variant =
   };
 
   return (
-    <div role="tablist" aria-label={label} className={cx('ms-tabs', variant, className)}>
+    <div role="tablist" aria-label={label} className={cx('ms-tabs', `ms-${variant}`, className)}>
       {tabs.map((t, i) => {
         const on = t.value === value;
         return (
@@ -43,12 +43,12 @@ export function Tabs<V extends string>({ tabs, value, onChange, label, variant =
             aria-selected={on}
             aria-controls={t.controls}
             tabIndex={i === current ? 0 : -1}
-            className={cx('ms-tab', on && 'on')}
+            className={cx('ms-tab', on && 'ms-on')}
             onClick={() => { if (!on) onChange(t.value); }}
             onKeyDown={(e) => onKeyDown(e, i)}
           >
             {t.label}
-            {t.count !== undefined ? <span className="ms-tag n">{t.count}</span> : null}
+            {t.count !== undefined ? <span className="ms-tag ms-n">{t.count}</span> : null}
           </button>
         );
       })}

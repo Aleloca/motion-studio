@@ -42,13 +42,13 @@ export function Segmented<V extends string>({ options, value, onChange, label, c
             role="radio"
             aria-checked={on}
             tabIndex={i === current ? 0 : -1}
-            className={cx(on && 'on')}
+            className={cx(on && 'ms-on')}
             onClick={() => { if (!on) onChange(o.value); }}
             onKeyDown={(e) => onKeyDown(e, i)}
           >
             {o.icon ? <Icon name={o.icon} size={13} /> : null}
             <span>{o.label}</span>
-            {o.count !== undefined ? <span className="n">{o.count}</span> : null}
+            {o.count !== undefined ? <span className="ms-n">{o.count}</span> : null}
           </button>
         );
       })}

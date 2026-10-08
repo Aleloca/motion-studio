@@ -58,11 +58,13 @@ I casi sono elencati nella §6.
 | `--dot` (griglia del canvas) | `#DEDEDB` | `#262626` |
 | `--ink` / `--inkText` (azione primaria) | `#171717` / `#FFFFFF` | `#EDEDED` / `#0F0F0F` |
 | `--accent` | `#FF5A1F` | `#FF5A1F` |
-| `--accentText` | `#E8501A` | `#FF8A5C` |
+| `--accentText` | `#C2410C` | `#FF8A5C` |
 | `--sel` (selezione tenue) | `#FFF1EA` | `#2A1A12` |
 | `--ok` / `--okBg` | `#2E7A4C` / `#E4F3EA` | `#6FCF97` / `#132A1D` |
 | `--warn` / `--warnBg` / `--warnLine` | `#D9480F` / `#FFF5EF` / `#FFD3C0` | `#FF8A5C` / `#231711` / `#55301E` |
 | `--scrim` | `rgba(23,23,23,.32)` | `rgba(0,0,0,.6)` |
+
+`--accentText` chiaro portato da #E8501A a #C2410C per il contrasto AA del testo (≈5,2:1 su bianco).
 
 I grigi sono **neutri** (richiesta esplicita dell'utente: niente dominanti blu o viola). L'accento arancione si usa per selezione, azioni importanti, stati che richiedono l'utente e indicatori di avanzamento. L'azione primaria standard è `--ink` (nero o bianco); l'arancione pieno è riservato a **Generate** e **Send**.
 

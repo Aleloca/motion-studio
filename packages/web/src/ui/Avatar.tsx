@@ -11,7 +11,7 @@ export function initials(name: string): string {
 
 /** Round orange avatar with initials; a button (named by `label`) when clickable. */
 export function Avatar({ name, size = 28, onClick, label, className }: AvatarProps) {
-  const cls = cx('ms-avatar', size !== 28 && `s${size}`, className);
+  const cls = cx('ms-avatar', size !== 28 && `ms-s${size}`, className);
   if (onClick) return <button type="button" className={cls} aria-label={label ?? name} onClick={onClick}>{initials(name)}</button>;
   return <span className={cls} role="img" aria-label={name}>{initials(name)}</span>;
 }

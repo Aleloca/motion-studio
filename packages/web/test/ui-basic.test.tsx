@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { useState, type ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -20,9 +22,28 @@ describe('Icon', () => {
     expect(svg.getAttribute('stroke-width')).toBe('1.4');
     expect(svg.querySelector('path')!.getAttribute('d')).toBe(ICONS.search);
   });
-  it('ports the whole prototype set', () => {
-    expect(Object.keys(ICONS).length).toBeGreaterThanOrEqual(45);
-    for (const d of Object.values(ICONS)) expect(d.length).toBeGreaterThan(0);
+  it('ports the prototype set exactly, plus the redesign additions', () => {
+    const lib = readFileSync(resolve(import.meta.dirname, '../../../docs/design/redesign-prototype/lib.js'), 'utf8');
+    const block = lib.slice(lib.indexOf('const P = {'), lib.indexOf('};', lib.indexOf('const P = {')));
+    const proto = Object.fromEntries([...block.matchAll(/(\w+): '([^']*)'/g)].map((m) => [m[1]!, m[2]!]));
+    expect(Object.keys(proto)).toEqual([
+      'play', 'back', 'chevron', 'plus', 'close', 'check', 'search', 'bell', 'gear', 'folder', 'upload', 'download', 'link',
+      'globe', 'video', 'image', 'comment', 'hand', 'cursor', 'text', 'crop', 'drop', 'eye', 'lock', 'refresh', 'trash',
+      'more', 'shield', 'code', 'sparkle', 'chart', 'grid', 'list', 'star', 'alignL', 'alignC', 'alignR', 'warn', 'clock',
+      'terminal', 'key',
+    ]);
+    for (const [name, d] of Object.entries(proto)) expect(ICONS[name as keyof typeof ICONS], name).toBe(d);
+    const extra = Object.keys(ICONS).filter((k) => !(k in proto));
+    expect(extra).toEqual(['forward', 'menu', 'minus', 'external', 'copy', 'edit', 'pin', 'user']);
+  });
+  it('supports the prototype fill and stroke-width options, colour from currentColor', () => {
+    const { container } = render(<Icon name="play" fill strokeWidth={2} />);
+    const svg = container.querySelector('svg')!;
+    expect(svg.getAttribute('fill')).toBe('currentColor');
+    expect(svg.getAttribute('stroke')).toBe('currentColor');
+    expect(svg.getAttribute('stroke-width')).toBe('2');
+    const { container: plain } = render(<Icon name="play" />);
+    expect(plain.querySelector('svg')!.getAttribute('fill')).toBe('none');
   });
 });
 
@@ -320,7 +341,7 @@ describe('NavItem', () => {
     const b = screen.getByRole('button', { name: /Settings/ });
     expect(b.getAttribute('aria-current')).toBe('page');
     expect(container.querySelector('svg')).not.toBeNull();
-    expect(b.querySelector('.n')!.textContent).toBe('3');
+    expect(b.querySelector('.ms-n')!.textContent).toBe('3');
     fireEvent.click(b);
     expect(onClick).toHaveBeenCalled();
   });
@@ -341,6 +362,74 @@ describe('Tabs', () => {
     expect(onChange).toHaveBeenLastCalledWith('brief');
     fireEvent.click(all[2]!);
     expect(onChange).toHaveBeenLastCalledWith('brief');
+  });
+  it('moves focus and roves the tab index with the selection', () => {
+    function Harness() {
+      const [v, setV] = useState('chat');
+      return <Tabs tabs={tabs} value={v} onChange={setV} label="Panel" />;
+    }
+    render(<Harness />);
+    const all = screen.getAllByRole('tab');
+    expect(all.map((t) => t.tabIndex)).toEqual([0, -1, -1]);
+    all[0]!.focus();
+    fireEvent.keyDown(all[0]!, { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(all[1]);
+    expect(all.map((t) => t.tabIndex)).toEqual([-1, 0, -1]);
+    expect(all[1]!.getAttribute('aria-selected')).toBe('true');
+    fireEvent.keyDown(all[1]!, { key: 'ArrowLeft' });
+    fireEvent.keyDown(all[0]!, { key: 'ArrowLeft' });
+    expect(document.activeElement).toBe(all[2]);
+    expect(all.map((t) => t.tabIndex)).toEqual([-1, -1, 0]);
+    fireEvent.keyDown(all[2]!, { key: 'Home' });
+    expect(document.activeElement).toBe(all[0]);
+  });
+});
+
+describe('class names', () => {
+  it('every class a ui/ component emits is ms- prefixed (no collision with legacy global classes)', () => {
+    const noop = () => {};
+    const { container } = en(
+      <div>
+        {(['default', 'ink', 'accent', 'ghost', 'outline', 'danger'] as const).map((v) => (['sm', 'md', 'lg'] as const).map((s) => <Button key={v + s} variant={v} size={s} icon loading={s === 'lg'} aria-label="b">x</Button>))}
+        {CHANNELS.map((c) => <ChannelMark key={c} channel={c} size={20} />)}
+        <Field prefix="X"><input /></Field><Input /><Textarea />
+        <Toggle on size="sm" onChange={noop} label="t" /><Check on onChange={noop} label="c" />
+        <Segmented options={[{ value: 'a', label: 'A', icon: 'grid', count: 1 }, { value: 'b', label: 'B' }]} value="a" onChange={noop} label="s" />
+        <Chip on onClick={noop} icon="link">c</Chip><Chip>c</Chip><Tag mono>t</Tag>
+        {(['ok', 'warn', 'neutral', 'accent'] as const).map((tone) => <Pill key={tone} tone={tone} dot>p</Pill>)}<Pill spinner>p</Pill>
+        <VersionBadge n={1} star onClick={noop} /><VersionBadge n={2} /><Spinner /><Typing /><ProgressBar value={3} />
+        <CountdownRing createdAt={Date.now()} ttlSec={60} /><Avatar name="A B" size={32} onClick={noop} /><Avatar name="C" size={26} />
+        <Empty action={<span />} sub="s" /><Card hoverable /><NavItem on icon="gear" count={2}>n</NavItem>
+        <Tabs tabs={[{ value: 'a', label: 'A', count: 1 }]} value="a" onChange={noop} label="t" variant="bar" />
+        <Tabs tabs={[{ value: 'a', label: 'A' }]} value="a" onChange={noop} label="t" />
+        <Markdown text={'**b** *i* `c` [l](https://x.y)\n\n- li'} />
+      </div>,
+    );
+    const tokens = new Set<string>();
+    for (const el of container.querySelectorAll('[class]')) for (const c of (el.getAttribute('class') ?? '').split(/\s+/)) if (c) tokens.add(c);
+    expect([...tokens].filter((c) => !c.startsWith('ms-'))).toEqual([]);
+  });
+});
+
+describe('accent contrast', () => {
+  const ui = readFileSync(resolve(import.meta.dirname, '../src/ui/ui.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const theme = readFileSync(resolve(import.meta.dirname, '../src/theme.css'), 'utf8');
+  it('allows white text on the accent only on the accent button and the avatar', () => {
+    const rules = [...ui.matchAll(/([^{}]+)\{([^}]*)\}/g)].map((m) => ({ sel: m[1]!.trim(), body: m[2]! }));
+    const onAccent = rules.filter((r) => /background:\s*var\(--accent\)/.test(r.body) && /(^|;)\s*color:/.test(r.body));
+    expect(onAccent.length).toBeGreaterThan(0);
+    for (const r of onAccent) {
+      const color = /(?:^|;)\s*color:\s*([^;]+)/.exec(r.body)![1]!.trim();
+      if (color === 'var(--onAccent)') expect(['.ms-btn.ms-accent', '.ms-avatar'], r.sel).toContain(r.sel);
+      else expect(color, r.sel).toBe('var(--onAccentStrong)');
+    }
+    expect(ui).toMatch(/\.ms-count \{[^}]*color: var\(--onAccentStrong\); font-size: 11px; font-weight: 700;/);
+  });
+  it('keeps --onAccentStrong #171717 in every theme and uses the AA light --accentText', () => {
+    expect(theme).toContain('--onAccentStrong: #171717;');
+    expect(theme.match(/--onAccentStrong:/g)).toHaveLength(1);
+    expect(theme).toContain('--accentText: #C2410C;');
+    expect(theme).not.toMatch(/E8501A/i);
   });
 });
 
@@ -379,6 +468,47 @@ describe('Markdown', () => {
     const { container } = render(<Markdown text={'[x](javascript:alert(1)) [y](data:text/html,hi) [z](//evil.com)'} />);
     expect(container.querySelector('a')).toBeNull();
     expect(container.textContent).toContain('x');
+  });
+  const onlyHttpLinks = (root: Element) => {
+    for (const a of root.querySelectorAll('a')) expect(a.getAttribute('href') ?? '').toMatch(/^https?:\/\//);
+  };
+  it('refuses obfuscated and non-http schemes', () => {
+    const cases = [
+      '[x](JaVaScRiPt:alert(1))', '[x](javascript:alert)', '[x](JaVaScRiPt:alert)', '[x](&#106;avascript:alert(1))',
+      'javascript:alert(1)', 'data:text/html,<script>alert(1)</script>', '[x](data:text/html,hi)', '[x](vbscript:x)',
+      '[x](//evil.com)', '[x](https:evil)',
+    ];
+    for (const text of cases) {
+      const { container, unmount } = render(<Markdown text={text} />);
+      expect(container.querySelector('a'), text).toBeNull();
+      expect(container.querySelector('script'), text).toBeNull();
+      unmount();
+    }
+  });
+  it('renders a link nested inside bold, and only http(s) anchors', () => {
+    const { container } = render(<Markdown text={'**see [docs](https://example.com/d) and [bad](javascript:x)** and *[i](http://a.b)*'} />);
+    const strong = container.querySelector('strong')!;
+    expect(strong.querySelector('a')!.getAttribute('href')).toBe('https://example.com/d');
+    expect(container.querySelector('em a')!.getAttribute('href')).toBe('http://a.b');
+    expect(container.querySelectorAll('a')).toHaveLength(2);
+    onlyHttpLinks(container);
+  });
+  it('renders 20 KB adversarial lines in linear time', () => {
+    const lines = [
+      '**a `c` '.repeat(2500), '**a '.repeat(5000), '['.repeat(20000), '[a]('.repeat(5000), '*a '.repeat(6700),
+      '_a '.repeat(6700), '`'.repeat(20000), 'https://'.repeat(2500), '**['.repeat(6700), '[a](https://x '.repeat(1400),
+    ];
+    // Markdown has no hooks: calling it measures parsing and element creation without jsdom's DOM cost, which is noisy
+    // under the parallel full run (the old parser took ~16 s on the first line).
+    for (const text of lines) {
+      const t0 = performance.now();
+      Markdown({ text });
+      expect(performance.now() - t0, text.slice(0, 12)).toBeLessThan(200);
+    }
+    // And a real DOM render of the worst case stays fast too.
+    const t0 = performance.now();
+    render(<Markdown text={lines[0]!} />);
+    expect(performance.now() - t0).toBeLessThan(1500);
   });
   it('does not treat snake_case as italic', () => {
     const { container } = render(<Markdown text={'use some_file_name here'} />);

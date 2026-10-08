@@ -8,5 +8,5 @@ export interface CardProps extends ComponentPropsWithRef<'div'> {
 
 /** Panel with a 1 px hairline and 14 px radius. */
 export function Card({ hoverable, className, ...rest }: CardProps) {
-  return <div {...rest} className={cx('ms-card', hoverable && 'hov', className)} />;
+  return <div {...rest} className={cx('ms-card', hoverable && 'ms-hov', className)} />;
 }

@@ -23,6 +23,9 @@ export const CHANNEL_COLORS: Readonly<Record<Channel, string>> = {
   web: '#525252',
 };
 
+/** Glyph colour on every brand tile (data, like the tile colours). */
+export const CHANNEL_GLYPH_COLOR = '#FFFFFF';
+
 /**
  * LinkedIn is not in Simple Icons any more (removed at the brand's request), so its "in" glyph is drawn here in the
  * same 24×24 box as the other marks.
@@ -53,7 +56,7 @@ export function ChannelMark({ channel, size = 16, className }: ChannelMarkProps)
   };
   const glyph = size === 20 ? 12 : 10;
   return (
-    <span className={cx('ms-ch', size === 20 && 'lg', className)} style={{ background: CHANNEL_COLORS[channel] }} role="img" aria-label={names[channel]}>
+    <span className={cx('ms-ch', size === 20 && 'ms-lg', className)} style={{ background: CHANNEL_COLORS[channel], color: CHANNEL_GLYPH_COLOR }} role="img" aria-label={names[channel]}>
       {channel === 'web' ? (
         <svg width={glyph} height={glyph} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d={ICONS.globe} /></svg>
       ) : (

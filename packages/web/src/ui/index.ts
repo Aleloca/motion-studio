@@ -3,7 +3,7 @@ export { cx } from './cx.ts';
 export { ICONS, type IconName } from './icons.ts';
 export { Icon, type IconProps } from './Icon.tsx';
 export { Button, type ButtonProps, type ButtonSize, type ButtonVariant } from './Button.tsx';
-export { CHANNELS, CHANNEL_COLORS, ChannelMark, type Channel, type ChannelMarkProps } from './ChannelMark.tsx';
+export { CHANNELS, CHANNEL_COLORS, CHANNEL_GLYPH_COLOR, ChannelMark, type Channel, type ChannelMarkProps } from './ChannelMark.tsx';
 export { Field, type FieldProps } from './Field.tsx';
 export { Input, Textarea } from './Input.tsx';
 export { Toggle, type ToggleProps } from './Toggle.tsx';

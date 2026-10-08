@@ -6,7 +6,8 @@
 
 /* ---------------------------------------------------------------------------------------------------------------
    Base components (Task 3). Ported from docs/design/redesign-prototype/styles.css with an `ms-` prefix, so they do
-   not clash with the legacy global classes in theme.css (.card, .chip, .tabs…). Every button-based control resets
+   not clash with the legacy global classes in theme.css (.card, .chip, .tabs, .warn, .mono, button.danger…). Modifier
+   classes are prefixed too (.ms-btn.ms-danger, .ms-pill.ms-warn…): every class a ui/ component emits starts with ms-. Every button-based control resets
    the legacy `button`/`input` element rules (min-height, padding, border) explicitly.
    --------------------------------------------------------------------------------------------------------------- */
 
@@ -20,36 +21,38 @@
 }
 .ms-btn:hover { background: color-mix(in srgb, var(--field) 70%, var(--line)); }
 .ms-btn:active { transform: scale(.97); }
-.ms-btn.ink { background: var(--ink); color: var(--inkText); font-weight: 600; }
-.ms-btn.ink:hover { background: color-mix(in srgb, var(--ink) 88%, var(--bg)); }
-.ms-btn.accent { background: var(--accent); color: var(--onAccent); font-weight: 700; box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 30%, transparent); }
-.ms-btn.accent:hover { background: color-mix(in srgb, var(--accent) 92%, var(--ink)); }
-.ms-btn.ghost { background: transparent; color: var(--muted); }
-.ms-btn.ghost:hover { background: var(--field); color: var(--text); }
-.ms-btn.outline { background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
-.ms-btn.outline:hover { box-shadow: inset 0 0 0 1px var(--faint); }
-.ms-btn.danger { color: var(--warn); }
-.ms-btn.danger:hover { background: var(--warnBg); }
-.ms-btn.sm { height: 28px; padding: 0 10px; font-size: 12px; border-radius: 7px; }
-.ms-btn.lg { height: 38px; padding: 0 16px; border-radius: 9px; }
-.ms-btn.icon { width: 32px; padding: 0; }
-.ms-btn.icon.sm { width: 28px; }
-.ms-btn.icon.lg { width: 38px; }
+.ms-btn.ms-ink { background: var(--ink); color: var(--inkText); font-weight: 600; }
+.ms-btn.ms-ink:hover { background: color-mix(in srgb, var(--ink) 88%, var(--bg)); }
+.ms-btn.ms-accent { background: var(--accent); color: var(--onAccent); font-weight: 700; box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 30%, transparent); }
+.ms-btn.ms-accent:hover { background: color-mix(in srgb, var(--accent) 92%, var(--ink)); }
+.ms-btn.ms-ghost { background: transparent; color: var(--muted); }
+.ms-btn.ms-ghost:hover { background: var(--field); color: var(--text); }
+.ms-btn.ms-outline { background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
+.ms-btn.ms-outline:hover { box-shadow: inset 0 0 0 1px var(--faint); }
+.ms-btn.ms-danger { color: var(--warn); }
+.ms-btn.ms-danger:hover { background: var(--warnBg); }
+.ms-btn.ms-sm { height: 28px; padding: 0 10px; font-size: 12px; border-radius: 7px; }
+/* White on the accent only passes as 13px/700 text: the accent button keeps 13px at every size. */
+.ms-btn.ms-accent.ms-sm { font-size: 13px; }
+.ms-btn.ms-lg { height: 38px; padding: 0 16px; border-radius: 9px; }
+.ms-btn.ms-icon { width: 32px; padding: 0; }
+.ms-btn.ms-icon.ms-sm { width: 28px; }
+.ms-btn.ms-icon.ms-lg { width: 38px; }
 .ms-btn:disabled { opacity: .45; cursor: default; pointer-events: none; }
-.ms-btn.busy { opacity: .85; }
+.ms-btn.ms-busy { opacity: .85; }
 
 /* Icon set and spinner. */
 .ms-spinner { display: inline-flex; align-items: center; justify-content: center; }
 .ms-spin { animation: ms-spin 1s linear infinite; transform-origin: 50% 50%; flex: none; }
 .ms-spin-track { stroke: var(--line); }
 .ms-spin-arc { stroke: var(--accent); }
-.ms-btn.accent .ms-spin-track, .ms-btn.ink .ms-spin-track { stroke: currentColor; opacity: .3; }
-.ms-btn.accent .ms-spin-arc, .ms-btn.ink .ms-spin-arc { stroke: currentColor; }
+.ms-btn.ms-accent .ms-spin-track, .ms-btn.ms-ink .ms-spin-track { stroke: currentColor; opacity: .3; }
+.ms-btn.ms-accent .ms-spin-arc, .ms-btn.ms-ink .ms-spin-arc { stroke: currentColor; }
 @keyframes ms-spin { to { transform: rotate(360deg); } }
 
 /* Channel marks: white Simple Icons glyph on the brand tile. */
-.ms-ch { width: 16px; height: 16px; border-radius: 4px; color: var(--onAccent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 10%, transparent); display: inline-flex; align-items: center; justify-content: center; flex: none; }
-.ms-ch.lg { width: 20px; height: 20px; border-radius: 5px; }
+.ms-ch { width: 16px; height: 16px; border-radius: 4px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 10%, transparent); display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.ms-ch.ms-lg { width: 20px; height: 20px; border-radius: 5px; }
 
 /* Inspector field: 28 px with an inner mono label. */
 .ms-field { height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: 6px; background: var(--field); font-size: 12px; min-width: 0; transition: box-shadow var(--d-s) var(--e-std); }
@@ -73,50 +76,50 @@
 .ms-toggle { width: 36px; height: 20px; min-height: 0; border-radius: 10px; background: var(--line); position: relative; border: 0; padding: 0; margin: 0; flex: none; cursor: pointer; transition: background var(--d-s) var(--e-std); }
 .ms-toggle:hover { background: color-mix(in srgb, var(--line) 75%, var(--faint)); }
 .ms-toggle i { position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--onAccent); box-shadow: 0 1px 2px var(--shadowLg); transition: transform var(--d-s) var(--e-spring); }
-.ms-toggle.on, .ms-toggle.on:hover { background: var(--accent); }
-.ms-toggle.on i { transform: translateX(16px); }
+.ms-toggle.ms-on, .ms-toggle.ms-on:hover { background: var(--accent); }
+.ms-toggle.ms-on i { transform: translateX(16px); }
 .ms-toggle:active i { width: 18px; }
-.ms-toggle.on:active i { transform: translateX(14px); }
-.ms-toggle.sm { width: 28px; height: 16px; border-radius: 8px; }
-.ms-toggle.sm i { width: 12px; height: 12px; }
-.ms-toggle.sm.on i { transform: translateX(12px); }
-.ms-toggle.sm:active i { width: 14px; }
-.ms-toggle.sm.on:active i { transform: translateX(10px); }
+.ms-toggle.ms-on:active i { transform: translateX(14px); }
+.ms-toggle.ms-sm { width: 28px; height: 16px; border-radius: 8px; }
+.ms-toggle.ms-sm i { width: 12px; height: 12px; }
+.ms-toggle.ms-sm.ms-on i { transform: translateX(12px); }
+.ms-toggle.ms-sm:active i { width: 14px; }
+.ms-toggle.ms-sm.ms-on:active i { transform: translateX(10px); }
 .ms-toggle:disabled, .ms-check:disabled { opacity: .45; cursor: default; }
 
 /* Check (T16): fill in `s`, tick springs in (a transition, so already-checked boxes do not animate on mount). */
 .ms-check { width: 18px; height: 18px; min-height: 0; border-radius: 5px; display: inline-flex; align-items: center; justify-content: center; flex: none; box-shadow: inset 0 0 0 1.5px var(--faint); background: transparent; color: var(--onAccent); border: 0; padding: 0; margin: 0; cursor: pointer; transition: background var(--d-s) var(--e-std), box-shadow var(--d-s) var(--e-std); }
 .ms-check:hover { box-shadow: inset 0 0 0 1.5px var(--muted); }
-.ms-check.on, .ms-check.on:hover { background: var(--accent); box-shadow: none; }
+.ms-check.ms-on, .ms-check.ms-on:hover { background: var(--accent); box-shadow: none; }
 .ms-check svg { transform: scale(.4); opacity: 0; transition: transform var(--d-s) var(--e-spring), opacity var(--d-xs) var(--e-std); }
-.ms-check.on svg { transform: none; opacity: 1; }
+.ms-check.ms-on svg { transform: none; opacity: 1; }
 
 /* Segmented control. */
 .ms-seg { display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: var(--field); min-width: 0; }
 .ms-seg button { height: 28px; min-height: 0; padding: 0 12px; margin: 0; border-radius: 7px; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 13px; display: flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; cursor: pointer; transition: background var(--d-s) var(--e-std), color var(--d-s) var(--e-std), box-shadow var(--d-s) var(--e-std); }
 .ms-seg button:hover { color: var(--text); }
-.ms-seg button.on { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px var(--shadow), 0 0 0 1px var(--line2); }
-.ms-seg .n { color: var(--faint); font-weight: 400; font-variant-numeric: tabular-nums; }
+.ms-seg button.ms-on { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px var(--shadow), 0 0 0 1px var(--line2); }
+.ms-seg .ms-n { color: var(--faint); font-weight: 400; font-variant-numeric: tabular-nums; }
 
 /* Chips, tags, pills, badges. */
 .ms-chip { height: 24px; min-height: 0; padding: 0 9px; margin: 0; border-radius: 999px; border: 0; box-shadow: inset 0 0 0 1px var(--line); font: inherit; font-size: 12px; display: inline-flex; align-items: center; gap: 5px; background: transparent; color: var(--text); white-space: nowrap; max-width: 100%; transition: background var(--d-s) var(--e-std), box-shadow var(--d-s) var(--e-std); }
 button.ms-chip { cursor: pointer; }
 button.ms-chip:hover { box-shadow: inset 0 0 0 1px var(--faint); }
-.ms-chip.on, button.ms-chip.on:hover { background: var(--sel); box-shadow: inset 0 0 0 1px var(--accent); }
+.ms-chip.ms-on, button.ms-chip.ms-on:hover { background: var(--sel); box-shadow: inset 0 0 0 1px var(--accent); }
 .ms-tag { height: 20px; padding: 0 7px; border-radius: 5px; background: var(--field); color: var(--text); font-size: 11px; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; flex: none; font-variant-numeric: tabular-nums; }
-.ms-tag.mono { font-family: var(--mono); }
-.ms-pill { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; flex: none; }
-.ms-pill.ok { background: var(--okBg); color: var(--ok); }
-.ms-pill.warn { background: var(--warnBg); color: var(--warn); }
-.ms-pill.neutral { background: var(--field); color: var(--muted); }
-.ms-pill.accent { background: var(--sel); color: var(--accentText); }
-.ms-pill.warn .ms-dot { color: var(--accent); }
+.ms-tag.ms-mono { font-family: var(--mono); }
+.ms-pill { border: 0; display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; flex: none; }
+.ms-pill.ms-ok { background: var(--okBg); color: var(--ok); }
+.ms-pill.ms-warn { background: var(--warnBg); color: var(--warn); }
+.ms-pill.ms-neutral { background: var(--field); color: var(--muted); }
+.ms-pill.ms-accent { background: var(--sel); color: var(--accentText); }
+.ms-pill.ms-warn .ms-dot { color: var(--accent); }
 .ms-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
 .ms-vbadge { display: inline-flex; align-items: center; gap: 4px; height: 20px; min-height: 0; padding: 0 7px; margin: 0; border-radius: 999px; background: var(--field); font: inherit; font-size: 11px; font-weight: 600; border: 0; color: var(--text); white-space: nowrap; font-variant-numeric: tabular-nums; flex: none; }
-.ms-vbadge.star { color: var(--accentText); background: var(--sel); }
+.ms-vbadge.ms-star { color: var(--accentText); background: var(--sel); }
 button.ms-vbadge { cursor: pointer; transition: box-shadow var(--d-s) var(--e-std); }
 button.ms-vbadge:hover { box-shadow: inset 0 0 0 1px var(--line); }
-.ms-count { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: var(--onAccent); font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; }
+.ms-count { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: var(--onAccentStrong); font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; }
 
 /* Typing dots (T9). */
 .ms-typing { display: inline-flex; gap: 3px; align-items: center; height: 12px; }
@@ -137,8 +140,8 @@ button.ms-vbadge:hover { box-shadow: inset 0 0 0 1px var(--line); }
 
 /* Avatar. */
 .ms-avatar { width: 28px; height: 28px; min-height: 0; padding: 0; margin: 0; border-radius: 50%; background: var(--accent); color: var(--onAccent); font: inherit; font-weight: 700; font-size: 11px; letter-spacing: .02em; display: inline-flex; align-items: center; justify-content: center; flex: none; border: 0; user-select: none; }
-.ms-avatar.s26 { width: 26px; height: 26px; }
-.ms-avatar.s32 { width: 32px; height: 32px; font-size: 12px; }
+.ms-avatar.ms-s26 { width: 26px; height: 26px; }
+.ms-avatar.ms-s32 { width: 32px; height: 32px; font-size: 12px; }
 button.ms-avatar { cursor: pointer; transition: box-shadow var(--d-s) var(--e-std), transform var(--d-xs) var(--e-std); }
 button.ms-avatar:hover { box-shadow: 0 0 0 3px var(--sel); }
 button.ms-avatar:active { transform: scale(.95); }
@@ -152,29 +155,29 @@ button.ms-avatar:active { transform: scale(.95); }
 
 /* Card. */
 .ms-card { background: var(--panel); border-radius: 14px; box-shadow: 0 0 0 1px var(--line); min-width: 0; }
-.ms-card.hov { cursor: pointer; transition: box-shadow var(--d-s) var(--e-std), transform var(--d-s) var(--e-std); }
-.ms-card.hov:hover { box-shadow: 0 0 0 1px var(--faint), 0 12px 30px var(--shadow); transform: translateY(-2px); }
-.ms-card.hov:active { transform: translateY(0) scale(.995); }
+.ms-card.ms-hov { cursor: pointer; transition: box-shadow var(--d-s) var(--e-std), transform var(--d-s) var(--e-std); }
+.ms-card.ms-hov:hover { box-shadow: 0 0 0 1px var(--faint), 0 12px 30px var(--shadow); transform: translateY(-2px); }
+.ms-card.ms-hov:active { transform: translateY(0) scale(.995); }
 
 /* Navigation item. */
 .ms-navitem { display: flex; align-items: center; gap: 10px; height: 32px; min-height: 0; padding: 0 10px; margin: 0; border-radius: 7px; color: var(--muted); border: 0; background: transparent; font: inherit; font-size: 13px; width: 100%; text-align: left; cursor: pointer; transition: background var(--d-s) var(--e-std), color var(--d-s) var(--e-std); }
 .ms-navitem:hover { background: var(--field); color: var(--text); }
-.ms-navitem.on { background: var(--field); color: var(--text); font-weight: 600; }
+.ms-navitem.ms-on { background: var(--field); color: var(--text); font-weight: 600; }
 .ms-navitem svg { flex: none; }
 .ms-navitem-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ms-navitem .n { margin-left: auto; font-size: 11px; color: var(--faint); font-weight: 400; font-variant-numeric: tabular-nums; }
+.ms-navitem .ms-n { margin-left: auto; font-size: 11px; color: var(--faint); font-weight: 400; font-variant-numeric: tabular-nums; }
 
 /* Tabs: `panel` underlined (side panels), `bar` rounded (top bar). */
 .ms-tabs { display: flex; gap: 2px; min-width: 0; }
-.ms-tabs.panel { padding: 8px 8px 0; border-bottom: 1px solid var(--line2); }
+.ms-tabs.ms-panel { padding: 8px 8px 0; border-bottom: 1px solid var(--line2); }
 .ms-tab { display: inline-flex; align-items: center; gap: 6px; min-height: 0; margin: 0; border: 0; border-radius: 0; background: transparent; color: var(--muted); font: inherit; white-space: nowrap; cursor: pointer; }
-.ms-tabs.panel .ms-tab { height: 30px; padding: 0 10px; font-size: 12px; box-shadow: inset 0 0 0 transparent; transition: box-shadow var(--d-s) var(--e-std), color var(--d-s) var(--e-std); }
-.ms-tabs.panel .ms-tab:hover { color: var(--text); }
-.ms-tabs.panel .ms-tab.on { font-weight: 600; color: var(--text); box-shadow: inset 0 -2px 0 var(--text); }
-.ms-tabs.bar .ms-tab { height: 32px; padding: 0 12px; border-radius: 8px; font-size: 13px; transition: background var(--d-s) var(--e-std), color var(--d-s) var(--e-std); }
-.ms-tabs.bar .ms-tab:hover { color: var(--text); background: var(--field); }
-.ms-tabs.bar .ms-tab.on { background: var(--field); color: var(--text); font-weight: 600; }
-.ms-tab .ms-tag.n { height: 16px; padding: 0 5px; font-size: 10px; font-weight: 600; }
+.ms-tabs.ms-panel .ms-tab { height: 30px; padding: 0 10px; font-size: 12px; box-shadow: inset 0 0 0 transparent; transition: box-shadow var(--d-s) var(--e-std), color var(--d-s) var(--e-std); }
+.ms-tabs.ms-panel .ms-tab:hover { color: var(--text); }
+.ms-tabs.ms-panel .ms-tab.ms-on { font-weight: 600; color: var(--text); box-shadow: inset 0 -2px 0 var(--text); }
+.ms-tabs.ms-bar .ms-tab { height: 32px; padding: 0 12px; border-radius: 8px; font-size: 13px; transition: background var(--d-s) var(--e-std), color var(--d-s) var(--e-std); }
+.ms-tabs.ms-bar .ms-tab:hover { color: var(--text); background: var(--field); }
+.ms-tabs.ms-bar .ms-tab.ms-on { background: var(--field); color: var(--text); font-weight: 600; }
+.ms-tab .ms-tag.ms-n { height: 16px; padding: 0 5px; font-size: 10px; font-weight: 600; }
 
 /* Markdown. */
 .ms-md { overflow-wrap: anywhere; }

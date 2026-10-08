@@ -8,7 +8,7 @@ export function VersionBadge({ n, star, onClick, className }: VersionBadgeProps)
   const t = useT();
   const name = star ? t.web.ui.chosenVersion({ n }) : t.web.ui.version({ n });
   const text = `${star ? '★ ' : ''}v${n}`;
-  const cls = cx('ms-vbadge', star && 'star', className);
+  const cls = cx('ms-vbadge', star && 'ms-star', className);
   if (onClick) return <button type="button" className={cls} aria-label={name} onClick={onClick}>{text}</button>;
   return <span className={cls} aria-label={name} role="img">{text}</span>;
 }

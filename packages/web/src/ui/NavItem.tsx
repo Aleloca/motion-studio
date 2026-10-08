@@ -12,10 +12,10 @@ export interface NavItemProps extends ComponentPropsWithRef<'button'> {
 /** Side-navigation row: icon, label and an optional count; the current one carries aria-current="page". */
 export function NavItem({ on, icon, count, className, children, type = 'button', ...rest }: NavItemProps) {
   return (
-    <button {...rest} type={type} aria-current={on ? 'page' : undefined} className={cx('ms-navitem', on && 'on', className)}>
+    <button {...rest} type={type} aria-current={on ? 'page' : undefined} className={cx('ms-navitem', on && 'ms-on', className)}>
       {icon ? <Icon name={icon} /> : null}
       <span className="ms-navitem-label">{children}</span>
-      {count !== undefined ? <span className="n">{count}</span> : null}
+      {count !== undefined ? <span className="ms-n">{count}</span> : null}
     </button>
   );
 }
