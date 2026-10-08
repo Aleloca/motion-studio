@@ -121,7 +121,7 @@ export const en = {
     alreadyRunning: (p: { port: number }) => `Motion Studio is already running (port ${p.port})`,
     bootBusy: 'Another Motion Studio is starting with the same configuration: try again shortly',
     formatCatalogInvalid: (p: { detail: string }) => `Invalid format catalog: ${p.detail}`,
-    invalidLanguage: 'Choose System, English or Italian',
+    invalidLanguage: 'Choose a language from the list.',
   },
   brand: {
     droppedKeepFailed: (p: { name: string; limit: number }) => `${p.name}: the current version was not kept (too many entries, maximum ${p.limit})`,

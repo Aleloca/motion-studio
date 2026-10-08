@@ -5,7 +5,7 @@ import fastifyMultipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { workspaceSettingsSchema, type DoctorCheck, type LinkedCodebase, type ProjectDetail, type ServerMessage, type WorkspaceInfo, type WorkspaceProblem, type WorkspaceSettings } from '@motion-studio/shared';
+import { isLocale, workspaceSettingsSchema, type DoctorCheck, type LinkedCodebase, type ProjectDetail, type ServerMessage, type WorkspaceInfo, type WorkspaceProblem, type WorkspaceSettings } from '@motion-studio/shared';
 import { BrandService } from '../brand/brand-analysis.ts';
 import { UPLOAD_LIMITS } from '../library/upload.ts';
 import { CreativeTurnService } from '../creatives/creative-turns.ts';
@@ -264,7 +264,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.get('/api/settings/language', async () => languageState());
   app.put<{ Body: { language?: unknown } }>('/api/settings/language', async (req, reply) => {
     const value = req.body?.language;
-    if (value !== 'system' && value !== 'en' && value !== 'it') return reply.status(400).send({ error: t().errors.invalidLanguage });
+    if (value !== 'system' && !isLocale(value)) return reply.status(400).send({ error: t().errors.invalidLanguage });
     // Serialized so the file and the in-memory setting end up with the same (last) value.
     return languageLock.run('language', async () => {
       await deps.appConfig.setLanguage(value);

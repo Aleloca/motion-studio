@@ -52,8 +52,8 @@ Texts already saved in a user's project (validation problems in `versions.json`,
 
 ### Adding a language
 1. Copy `packages/shared/src/i18n/en.ts` to `packages/shared/src/i18n/<code>.ts` (for example `fr.ts`) type it as `Messages` (`export const fr: Messages = …`, as `it.ts` does) and translate every value. Keep the keys and the placeholders (`p.name`) exactly as they are.
-2. In `packages/shared/src/i18n/index.ts`: extend the `Locale` type, add the code to `LOCALES`, register the catalog in `CATALOGS`, make `resolveLocale` return the new code when the first preferred system language starts with it, and add its English name to `languageName` (it is the language the agent is asked to reply in, e.g. `French`).
-3. Add the language's own name (for example `Français`) to `web.settings.languageNames` in `en.ts`, then in every other catalog (the type checker lists the ones you miss), and accept the code where the setting is validated: the `language` enum in `packages/shared/src/schemas.ts` and the check in `packages/core/src/server/app.ts`. The selector in **Settings → Language** is built from `LOCALES`, so it lists the new language by itself.
+2. In `packages/shared/src/i18n/index.ts`: add the code to `LOCALES` (the `Locale` type, `isLocale`, the `language` setting enum, the server-side validation and the system-language resolution all derive from it), register the catalog in `CATALOGS` and add the language's English name to `LANGUAGE_NAMES` (it is the language the agent is asked to reply in, e.g. `French`). The type checker flags a missing entry in either table.
+3. Add the language's own name (for example `Français`) to `web.settings.languageNames` in `en.ts`, then in every other catalog (the type checker lists the ones you miss). The selector in **Settings → Language** is built from `LOCALES`, so it lists the new language by itself.
 4. Run `pnpm typecheck`: it lists every key that is missing from the new catalog. Then run `pnpm test` and `pnpm check:i18n`.
 
 ## Releases

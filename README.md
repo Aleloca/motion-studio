@@ -9,7 +9,7 @@ A local, open-source app for creating motion-graphics videos and images with you
 > The full design is in `docs/superpowers/specs/`. Developer guides: [CONTRIBUTING.md](CONTRIBUTING.md), [output contract](docs/output-contract.md), [providers](docs/providers.md), [agent backends](docs/agent-backends.md).
 
 ## Language
-Motion Studio is available in English and Italian. On first launch it uses your system language (Italian if your first preferred language is Italian, English otherwise). Change it in **Settings → Language** (System / English / Italiano): the interface, the desktop menus and the messages of the terminal launcher switch language, and the agent replies, and writes the texts meant for you, in the chosen language. To add another language, see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-language).
+Motion Studio is available in English and Italian. On first launch it uses your system language: the first of your preferred languages that Motion Studio supports, English if none is. Change it in **Settings → Language** (System / English / Italiano): the interface, the desktop menus and the messages of the terminal launcher switch language, and the agent replies, and writes the texts meant for you, in the chosen language. When the desktop app attaches to a Motion Studio that is already running, its native menu keeps the language it started with; the interface follows the change live. To add another language, see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-language).
 
 Texts saved in the past (validation problems in a version, conversation messages, brand guidelines) are not translated; only new texts use the current language.
 

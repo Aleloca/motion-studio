@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { messages, type Locale } from './i18n/index.ts';
+import { LOCALES, messages, type Locale } from './i18n/index.ts';
 
 export type FormatKind = 'video' | 'image';
 
@@ -34,7 +34,7 @@ export type FormatsFile = z.infer<typeof formatsFileSchema>;
 export function formatName(preset: Pick<FormatPreset, 'id' | 'name'>, locale: Locale): string {
   const names = (l: Locale) => messages(l).formats as Record<string, string>;
   if (!Object.hasOwn(names(locale), preset.id)) return preset.name;
-  return names('en')[preset.id] === preset.name || names('it')[preset.id] === preset.name ? names(locale)[preset.id]! : preset.name;
+  return LOCALES.some((l) => names(l)[preset.id] === preset.name) ? names(locale)[preset.id]! : preset.name;
 }
 
 /** `Instagram` → `channels.instagram`, `App Store` → `channels.appStore`; unknown channels are shown as stored. */

@@ -1,6 +1,6 @@
 import { languageName, messages, resolveLocale, type LanguageSetting, type Locale, type Messages } from '@motion-studio/shared';
 
-export { resolveLocale } from '@motion-studio/shared';
+export { isLocale, resolveLocale } from '@motion-studio/shared';
 
 let current: Locale = 'en';
 

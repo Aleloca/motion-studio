@@ -1,5 +1,5 @@
 import { isAbsolute, join } from 'node:path';
-import type { currentLocale, LoginShellPath, t } from '@motion-studio/core';
+import { isLocale, type currentLocale, type LoginShellPath, type t } from '@motion-studio/core';
 
 type Locale = ReturnType<typeof currentLocale>;
 type Messages = ReturnType<typeof t>;
@@ -88,6 +88,6 @@ export async function attachedLocale(opts: { origin: string; token: string | nul
     const res = await (opts.fetchFn ?? fetch)(`${opts.origin}/api/settings/language`, { headers: { 'x-motion-studio-ui': opts.token ?? '' }, signal: AbortSignal.timeout(2000) });
     if (!res.ok) return opts.fallback;
     const { locale } = (await res.json()) as { locale?: unknown };
-    return locale === 'en' || locale === 'it' ? locale : opts.fallback;
+    return isLocale(locale) ? locale : opts.fallback;
   } catch { return opts.fallback; }
 }

@@ -119,7 +119,7 @@ export const it: Messages = {
     alreadyRunning: (p) => `Motion Studio è già avviato (porta ${p.port})`,
     bootBusy: 'Un altro Motion Studio si sta avviando con la stessa configurazione: riprova tra poco',
     formatCatalogInvalid: (p) => `Catalogo formati non valido: ${p.detail}`,
-    invalidLanguage: 'Scegli Sistema, Inglese o Italiano',
+    invalidLanguage: 'Scegli una lingua dall\'elenco.',
   },
   brand: {
     droppedKeepFailed: (p) => `${p.name}: versione attuale non mantenuta (troppe voci, massimo ${p.limit})`,

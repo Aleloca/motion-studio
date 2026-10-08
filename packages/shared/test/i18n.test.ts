@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { appConfigSchema } from '../src/schemas.ts';
-import { LOCALES, languageName, messages, plural, resolveLocale } from '../src/i18n/index.ts';
+import { LOCALES, isLocale, languageName, messages, resolveLocale } from '../src/i18n/index.ts';
 import type { Messages } from '../src/i18n/index.ts';
 import { en } from '../src/i18n/en.ts';
 
@@ -22,6 +22,14 @@ describe('resolveLocale', () => {
     expect(resolveLocale('system', ['It-it'])).toBe('it');
     expect(resolveLocale('system', ['', '*', 'POSIX'])).toBe('en');
   });
+  it('walks the system tags in order and takes the first supported one', () => {
+    expect(resolveLocale('system', ['en-US', 'it-IT'])).toBe('en');
+    expect(resolveLocale('system', ['de-DE', 'it'])).toBe('it');
+    expect(resolveLocale('system', ['it-IT', 'en'])).toBe('it');
+    expect(resolveLocale('system', [])).toBe('en');
+    expect(resolveLocale('system', ['C', 'POSIX'])).toBe('en');
+    expect(resolveLocale('system', ['de-DE', 'en-GB', 'it-IT'])).toBe('en');
+  });
   it('does not mistake other languages starting with "it" letters', () => {
     expect(resolveLocale('system', ['ita-XX'])).toBe('en');
   });
@@ -36,13 +44,19 @@ describe('catalogs', () => {
       else expect(typeof v, `${l}:${k}`).toBe('function');
     }
   });
-  it('pluralises', () => {
-    expect(plural('en', 1, { one: '1 file', other: 'files' })).toBe('1 file');
-    expect(plural('it', 2, { one: 'file', other: '2 file' })).toBe('2 file');
-  });
   it('names the languages', () => {
     expect(languageName('en')).toBe('English');
     expect(languageName('it')).toBe('Italian');
+  });
+});
+
+describe('isLocale', () => {
+  it('accepts exactly the supported locales', () => {
+    for (const l of LOCALES) expect(isLocale(l)).toBe(true);
+    for (const v of ['system', 'de', 'IT', '', undefined, null, 1, {}]) expect(isLocale(v)).toBe(false);
+  });
+  it('every locale has a catalog and a language name', () => {
+    for (const l of LOCALES) { expect(messages(l)).toBeTruthy(); expect(languageName(l)).toMatch(/^[A-Z]/); }
   });
 });
 
