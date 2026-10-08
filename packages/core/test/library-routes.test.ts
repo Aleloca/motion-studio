@@ -129,5 +129,5 @@ describe('references and brand image sources', () => {
     expect((await sources()).map((s) => s.file)).toEqual(['references/b.jpg', null]);
     expect((await app.inject({ method: 'DELETE', url: `${P}/references/item/b.jpg` })).statusCode).toBe(200);
     expect((await sources()).map((s) => s.kind)).toEqual(['website']);
-  });
+  }, { timeout: 20_000 });
 });

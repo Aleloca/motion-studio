@@ -79,7 +79,7 @@ describe('startServer port auto', () => {
 describe('startServer doctor', () => {
   it('adds the shell-path check only when the caller says where PATH came from', async () => {
     const configDir = await mkdtemp(join(tmpdir(), 'ms-ss-'));
-    const s = await startServer({ port: 0, configDir, claudeCommand: ['true'], vault: new MemoryVault(), shellPath: { source: 'fallback', error: 'codice 1' } });
+    const s = await startServer({ port: 0, configDir, claudeCommand: ['true'], vault: new MemoryVault(), shellPath: { source: 'fallback', error: 'codice 1' }, systemLocales: ['it-IT'] });
     try {
       const token = (await readFile(join(configDir, 'ui-token'), 'utf8')).trim();
       const checks = await (await fetch(`${s.url}/api/doctor`, { headers: { 'x-motion-studio-ui': token } })).json() as { id: string; ok: boolean; message: string }[];
