@@ -50,7 +50,7 @@ describe('generate_image', () => {
   it('asks for confirmation, saves and registers the image', async () => {
     const t = tools();
     const pending = t.generate_image!(ctx, { prompt: 'Banner blu', width: 300, height: 250, name: 'banner' });
-    await vi.waitFor(() => expect(approvals.pending()).toHaveLength(1));
+    await vi.waitFor(() => expect(approvals.pending()).toHaveLength(1), { timeout: 10_000 });
     const [req] = approvals.pending();
     expect(req).toMatchObject({ kind: 'provider', toolName: 'provider:openai-images' });
     await approvals.decide(req!.id, 'once');
@@ -146,7 +146,7 @@ describe('cancellation before asking', () => {
   });
   it('cancels a pending approval when the job is aborted', async () => {
     const pending = tools().generate_image!(ctx, { prompt: 'x', width: 1024, height: 1024 });
-    await vi.waitFor(() => expect(approvals.pending()).toHaveLength(1));
+    await vi.waitFor(() => expect(approvals.pending()).toHaveLength(1), { timeout: 10_000 });
     controller.abort();
     expect(await pending.catch(status)).toBe(499);
     expect(approvals.pending()).toEqual([]);

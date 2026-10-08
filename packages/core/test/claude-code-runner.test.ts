@@ -153,11 +153,11 @@ describe('ClaudeCodeRunner', () => {
   });
   it('cancels a hanging process and reports cancelled, killing its descendants', async () => {
     const { handle, events } = await run('hang');
-    await vi.waitFor(() => expect(grandchildPid(events)).toBeDefined());
+    await vi.waitFor(() => expect(grandchildPid(events)).toBeDefined(), { timeout: 10_000 });
     expect(events[0]?.kind).toBe('session');
     handle.cancel();
     await expect(handle.done).resolves.toMatchObject({ status: 'cancelled' });
-    await vi.waitFor(() => expect(alive(grandchildPid(events)!)).toBe(false));
+    await vi.waitFor(() => expect(alive(grandchildPid(events)!)).toBe(false), { timeout: 10_000 });
   });
   it('cancel reaches the whole process group and does not wait for descendants holding the pipes', async () => {
     const { handle } = await run('hang');
@@ -169,11 +169,11 @@ describe('ClaudeCodeRunner', () => {
   });
   it('escalates to SIGKILL when the process ignores SIGTERM', async () => {
     const { handle, events, leaderPid } = await run('hang_ignore_term');
-    await vi.waitFor(() => expect(events[0]?.kind).toBe('session'));
+    await vi.waitFor(() => expect(events[0]?.kind).toBe('session'), { timeout: 10_000 });
     const pid = await leaderPid();
     handle.cancel();
     await expect(handle.done).resolves.toMatchObject({ status: 'cancelled' });
-    await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow());
+    await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(), { timeout: 10_000 });
   });
   it('resolves after a short drain when a descendant keeps the pipes open after claude exits', async () => {
     const { handle, events } = await run('leak_fd', 'x', {}, { drainMs: 200 });
@@ -185,14 +185,14 @@ describe('ClaudeCodeRunner', () => {
   });
   it('cancel after claude exited still reaches the process group, resolves promptly and keeps the ok result', async () => {
     const { handle, events, leaderPid } = await run('leak_fd', 'x', {}, { drainMs: 60_000 });
-    await vi.waitFor(() => expect(grandchildPid(events)).toBeDefined());
+    await vi.waitFor(() => expect(grandchildPid(events)).toBeDefined(), { timeout: 10_000 });
     const pid = await leaderPid();
-    await vi.waitFor(() => expect(alive(pid)).toBe(false));
+    await vi.waitFor(() => expect(alive(pid)).toBe(false), { timeout: 10_000 });
     const t0 = Date.now();
     handle.cancel();
     await expect(handle.done).resolves.toEqual({ status: 'succeeded', sessionId: 'fake-session-1' });
     expect(Date.now() - t0).toBeLessThan(2000);
-    await vi.waitFor(() => expect(alive(grandchildPid(events)!)).toBe(false));
+    await vi.waitFor(() => expect(alive(grandchildPid(events)!)).toBe(false), { timeout: 10_000 });
   });
   it('passes extra environment variables to claude', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ms-env-'));

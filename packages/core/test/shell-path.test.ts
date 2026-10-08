@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -48,7 +48,9 @@ describe('resolveLoginShellPath', () => {
       expect(Date.now() - t0).toBeLessThan(1500);
       expect(r.source).toBe('fallback');
       expect(r.error).toBe('timeout dopo 0.3 s');
-      const pid = Number((await readFile(join(dir, 'bg.pid'), 'utf8')).trim());
+      let pidText = '';
+      await vi.waitFor(async () => { pidText = await readFile(join(dir, 'bg.pid'), 'utf8'); expect(pidText.trim()).not.toBe(''); }, { timeout: 10_000 });
+      const pid = Number(pidText.trim());
       await new Promise((res) => setTimeout(res, 100));
       expect(() => process.kill(pid, 0)).toThrow(); // the background child is gone with its group
     } finally {

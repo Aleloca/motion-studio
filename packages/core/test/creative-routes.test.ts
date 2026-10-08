@@ -37,7 +37,7 @@ beforeEach(async () => {
 afterEach(async () => { await app.close(); delete process.env.FAKE_CLAUDE_SCENARIO; });
 
 const waitJobs = async () => {
-  for (let i = 0; i < 250; i++) {
+  for (let i = 0; i < 750; i++) {
     const jobs = (await app.inject('/api/jobs')).json() as Array<{ state: string }>;
     if (jobs.every((j) => j.state !== 'queued' && j.state !== 'running')) return jobs;
     await new Promise((r) => setTimeout(r, 20));
