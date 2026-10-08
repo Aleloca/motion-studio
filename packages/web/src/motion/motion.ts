@@ -38,18 +38,20 @@ export interface EnterOptions {
   scale?: number;
   delay?: number;
   ms?: number;
+  /** Curve; defaults to `out`. Popovers use `spring` (T5), the modal scrim `std` (T6). */
+  ease?: string;
 }
 
 export function enter(el: Element | null, o: EnterOptions = {}): Promise<void> {
   if (!el) return Promise.resolve();
-  const { x = 0, y = 8, scale = 1, delay = 0, ms = D.m } = o;
+  const { x = 0, y = 8, scale = 1, delay = 0, ms = D.m, ease = E.out } = o;
   // A new entrance must win over any lingering exit (fill: forwards) on the same element.
   if (typeof el.getAnimations === 'function') el.getAnimations().forEach((a) => a.cancel());
   return anim(
     el,
     [{ opacity: 0, transform: `translate(${x}px,${y}px) scale(${scale})` }, { opacity: 1, transform: 'none' }],
     ms,
-    E.out,
+    ease,
     delay,
   ).then(() => undefined);
 }

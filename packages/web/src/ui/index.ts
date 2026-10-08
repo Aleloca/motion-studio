@@ -23,3 +23,8 @@ export { Card, type CardProps } from './Card.tsx';
 export { NavItem, type NavItemProps } from './NavItem.tsx';
 export { Tabs, type TabItem, type TabsProps } from './Tabs.tsx';
 export { Markdown, safeHref, type MarkdownProps } from './Markdown.tsx';
+export { Popover, type PopoverPlacement, type PopoverProps } from './Popover.tsx';
+export { Select, type SelectOption, type SelectProps } from './Select.tsx';
+export { Modal, type ModalProps } from './Modal.tsx';
+export { Toasts } from './Toasts.tsx';
+export { toast, TOAST_MAX, TOAST_MS, type ToastAction, type ToastOptions, type ToastTone } from './toast.tsx';

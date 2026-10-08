@@ -51,6 +51,15 @@ describe('motion helpers', () => {
     expect(E.spring).toBe('cubic-bezier(.34,1.56,.64,1)');
   });
 
+  it('enter takes an optional curve (spring for popovers), out by default', () => {
+    const el = document.createElement('div');
+    void enter(el, { ease: E.spring, ms: D.s });
+    void enter(el);
+    expect(call(0).opts.easing).toBe(E.spring);
+    expect(call(0).opts.duration).toBe(D.s);
+    expect(call(1).opts.easing).toBe(E.out);
+  });
+
   it('enter cancels existing animations on the element first', () => {
     const el = document.createElement('div');
     void exit(el);
