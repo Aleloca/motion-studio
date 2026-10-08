@@ -38,6 +38,7 @@ function Detail({ slug, asset, onChanged, onClose }: { slug: string; asset: Asse
       </div>
       <strong className="mono" style={{ overflowWrap: 'anywhere' }}>{asset.file}</strong>
       <span className="muted" style={{ fontSize: 13 }}>{ORIGIN[asset.origin]} · aggiunto il {new Date(asset.addedAt).toLocaleDateString('it-IT')}{asset.width ? ` · ${asset.width}×${asset.height}` : ''}</span>
+      {asset.attribution && <span style={{ fontSize: 13 }}>Attribuzione: {asset.attribution}</span>}
       {asset.sourceUrl && <a href={asset.sourceUrl} target="_blank" rel="noreferrer" style={{ overflowWrap: 'anywhere' }}>{asset.sourceUrl}</a>}
       <label htmlFor="ad-desc">Descrizione</label>
       <textarea id="ad-desc" rows={3} value={description} onChange={(e) => setEdit((x) => ({ ...x, description: e.target.value }))} />
@@ -111,7 +112,7 @@ export function AssetsPage({ slug, live }: { slug: string; live: EventsState }) 
       <div className="row" style={{ alignItems: 'flex-start', gap: 16 }}>
         <div style={{ flex: '999 1 480px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
           {visible.map((a) => (
-            <button key={a.file} type="button" aria-label={`Apri ${a.file}`} onClick={() => setSelected(a.file)} className="card stack"
+            <button key={a.file} type="button" aria-label={`Apri ${a.file}`} title={a.attribution ?? undefined} onClick={() => setSelected(a.file)} className="card stack"
               style={{ padding: 8, gap: 6, textAlign: 'left', borderColor: selected === a.file ? 'var(--accent)' : undefined }}>
               <span className="dots" style={{ height: 110, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                 <AssetPreview url={api.projectFileUrl(slug, `assets/${a.file}`)} kind={a.kind} name={a.file} />

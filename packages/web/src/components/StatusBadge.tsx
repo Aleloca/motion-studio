@@ -5,6 +5,7 @@ export const STATUS_LABEL: Record<CreativeStatus, string> = {
 };
 const CLASS: Record<CreativeStatus, string> = { draft: '', working: 'run', ready: 'ok', incomplete: 'warn-badge', error: 'err', interrupted: 'warn-badge' };
 
-export function StatusBadge({ status }: { status: CreativeStatus }) {
+export function StatusBadge({ status, waiting }: { status: CreativeStatus; waiting?: boolean }) {
+  if (waiting) return <span className="badge warn-badge">In attesa di approvazione</span>;
   return <span className={`badge ${CLASS[status]}`}>{STATUS_LABEL[status]}</span>;
 }

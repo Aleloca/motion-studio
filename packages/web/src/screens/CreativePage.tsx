@@ -36,6 +36,7 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
   const version = versions.find((v) => v.n === selected) ?? latest;
   const compare = compareN !== null && compareN !== version?.n ? versions.find((v) => v.n === compareN) ?? null : null;
   useEffect(() => { if (compareN !== null && compareN === version?.n) setCompareN(null); }, [compareN, version?.n]);
+  const myApprovals = useMemo(() => Object.values(live.approvals).filter((a) => a.creativeSlug === creative && a.projectSlug === slug), [live.approvals, creative, slug]);
   const job = useMemo(() => Object.values(live.jobs).find((j) => j.key === detail?.jobKey && (j.state === 'queued' || j.state === 'running'))
     ?? Object.values(live.jobs).filter((j) => j.key === detail?.jobKey).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0], [live.jobs, detail?.jobKey]);
   const fileUrl = (n: number, file: string) => api.fileUrl(slug, creative, `outputs/v${n}/${file}`);
@@ -52,7 +53,7 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
       <header className="topbar" style={{ position: 'static' }}>
         <a href={href.project(slug)} className="muted">← Creatività</a>
         <strong>{c.title}</strong>
-        <StatusBadge status={c.status} />
+        <StatusBadge status={c.status} waiting={myApprovals.length > 0} />
         <div style={{ flex: 1 }} />
         {versions.length > 0 && (
           <div role="radiogroup" aria-label="Versione" className="row" style={{ gap: 4 }}>
@@ -93,7 +94,7 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
           <FormatBoard presets={presets} formats={presetsLoaded && !presetsFailure ? c.brief.formats : []} version={version ?? null} compare={compare} fileUrl={fileUrl} pins={pins} showSafeZone={safeZone} onOpen={setFocus} />
         </main>
         <div style={{ flex: '1 1 360px', maxWidth: 440, minWidth: 0, display: 'flex' }}>
-          <ConversationPanel slug={slug} detail={detail} conversation={conversation} presets={presets} job={job} liveEvents={job ? live.events[job.id] ?? [] : []}
+          <ConversationPanel slug={slug} detail={detail} conversation={conversation} presets={presets} job={job} approvals={myApprovals} liveEvents={job ? live.events[job.id] ?? [] : []}
             expert={expert} pins={pins} onRemovePin={(i) => setPins((p) => p.filter((_, k) => k !== i))} onSent={() => { setPins([]); setUserPicked(false); }}
             onSelectVersion={pick} onChanged={reload} />
         </div>

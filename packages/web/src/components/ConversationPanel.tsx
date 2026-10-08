@@ -1,6 +1,7 @@
-import type { AgentEvent, Brief, ConversationEntry, CreativeDetail, FormatPreset, JobSummary, LinkedCodebase, Pin } from '@motion-studio/shared';
+import type { AgentEvent, ApprovalRequest, Brief, ConversationEntry, CreativeDetail, FormatPreset, JobSummary, LinkedCodebase, Pin } from '@motion-studio/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.ts';
+import { ApprovalCard } from './ApprovalCard.tsx';
 import { ExpertLine } from './AgentConsole.tsx';
 import { CodebaseList } from './CodebaseList.tsx';
 import { FormatPicker } from './FormatPicker.tsx';
@@ -8,7 +9,7 @@ import { FormatPicker } from './FormatPicker.tsx';
 export interface ConversationPanelProps {
   slug: string; detail: CreativeDetail; conversation: ConversationEntry[]; presets: FormatPreset[];
   job: JobSummary | undefined; liveEvents: AgentEvent[]; expert: boolean;
-  pins: Pin[]; onRemovePin(index: number): void; onSent(): void; onSelectVersion(n: number): void; onChanged(): void;
+  approvals: ApprovalRequest[]; pins: Pin[]; onRemovePin(index: number): void; onSent(): void; onSelectVersion(n: number): void; onChanged(): void;
 }
 
 type Tab = 'chat' | 'brief' | 'expert';
@@ -83,6 +84,7 @@ export function ConversationPanel(props: ConversationPanelProps) {
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const active = job && (job.state === 'queued' || job.state === 'running') ? job : undefined;
+  const jobApprovals = active ? props.approvals.filter((a) => a.jobId === active.id) : [];
   const persistedAgent = (e: ConversationEntry) => e.type === 'agent' && e.jobId !== active?.id;
   const activeEvents = useMemo(() => (active
     ? mergeJobEvents(conversation.flatMap((e) => (e.type === 'agent' && e.jobId === active.id ? [e.event] : [])), liveEvents)
@@ -134,8 +136,10 @@ export function ConversationPanel(props: ConversationPanelProps) {
           })}
           {active && (
             <div className="card stack" style={{ padding: 12, gap: 6, background: 'var(--surface-2)' }}>
-              <div className="row"><span className="badge run">{active.state === 'queued' ? 'In coda' : 'In lavorazione'}</span><div style={{ flex: 1 }} /><button type="button" onClick={() => void api.cancelJob(active.id).catch((e: unknown) => setError(message(e)))}>Annulla</button></div>
+              <div className="row"><span className={`badge ${jobApprovals.length > 0 ? 'warn-badge' : 'run'}`}>{jobApprovals.length > 0 ? 'In attesa della tua approvazione' : active.state === 'queued' ? 'In coda' : 'In lavorazione'}</span><div style={{ flex: 1 }} /><button type="button" onClick={() => void api.cancelJob(active.id).catch((e: unknown) => setError(message(e)))}>Annulla</button></div>
+              {jobApprovals.map((a) => <ApprovalCard key={a.id} approval={a} />)}
               {activeEvents.filter((e) => e.kind === 'text').map((e, k) => <p key={k} style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{e.kind === 'text' ? e.text : ''}</p>)}
+              {activeEvents.filter((e) => e.kind === 'progress').slice(-5).map((e, k) => <span key={k} className="muted" style={{ fontSize: 13 }}>→ {e.kind === 'progress' ? e.text : ''}</span>)}
               {activeEvents.filter((e) => e.kind === 'tool_use').slice(-5).map((e, k) => <span key={k} className="muted" style={{ fontSize: 13 }}>Usa lo strumento {e.kind === 'tool_use' ? e.name : ''}</span>)}
             </div>
           )}

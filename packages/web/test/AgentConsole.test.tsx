@@ -39,4 +39,8 @@ describe('AgentConsole', () => {
     render(<AgentConsole job={job('failed', 'claude è terminato con codice 2')} events={[]} expert={false} onCancel={() => {}} />);
     expect(screen.getByRole('alert').textContent).toContain('claude è terminato con codice 2');
   });
+  it('shows progress events in simple mode', () => {
+    render(<AgentConsole job={job('running')} events={[{ kind: 'progress', text: 'Rendering 9:16' }]} expert={false} onCancel={() => {}} />);
+    expect(screen.getByText('→ Rendering 9:16')).toBeTruthy();
+  });
 });

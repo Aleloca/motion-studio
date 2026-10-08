@@ -8,6 +8,7 @@ const STATE_CLASS: Record<JobSummary['state'], string> = { queued: 'run', runnin
 function SimpleLine({ e }: { e: AgentEvent }) {
   if (e.kind === 'text') return <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{e.text}</p>;
   if (e.kind === 'tool_use') return <p className="muted" style={{ margin: 0 }}>Usa lo strumento {e.name}</p>;
+  if (e.kind === 'progress') return <p className="muted" style={{ margin: 0 }}>→ {e.text}</p>;
   if (e.kind === 'rate_limit' && e.status !== 'allowed') return <p className="warn" style={{ margin: 0 }}>Limite di utilizzo: {e.status}</p>;
   return null;
 }
@@ -21,6 +22,7 @@ export function ExpertLine({ e }: { e: AgentEvent }) {
     case 'tool_result': return <div>{tag(e.isError ? 'result ✗' : 'result')}<span style={{ whiteSpace: 'pre-wrap' }}>{e.content}</span></div>;
     case 'stderr': return <div>{tag('stderr')}<span className="error">{e.text}</span></div>;
     case 'parse_error': return <div>{tag('parse')}<span className="error">{e.line}</span></div>;
+    case 'progress': return <div>{tag('progress')}{e.text}</div>;
     case 'rate_limit': return <div>{tag('limit')}{e.status}</div>;
     case 'result': return <div>{tag('done')}{e.ok ? 'ok' : e.error}{e.costUsd !== undefined ? ` · $${e.costUsd.toFixed(4)}` : ''}</div>;
   }

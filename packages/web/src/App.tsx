@@ -1,6 +1,7 @@
 import type { DoctorCheck, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api.ts';
+import { ApprovalsIndicator } from './components/ApprovalsIndicator.tsx';
 import { applyTheme, ThemeToggle } from './components/ThemeToggle.tsx';
 import { Onboarding } from './screens/Onboarding.tsx';
 import { CreativePage } from './screens/CreativePage.tsx';
@@ -28,6 +29,16 @@ export function App() {
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const live = useServerEvents();
   const route = useHashRoute();
+  const notified = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const a of Object.values(live.approvals)) {
+      if (notified.current.has(a.id)) continue;
+      notified.current.add(a.id);
+      if (typeof Notification !== 'undefined' && document.visibilityState === 'hidden' && Notification.permission === 'granted') {
+        new Notification('Motion Studio: serve la tua approvazione', { body: a.title });
+      }
+    }
+  }, [live.approvals]);
 
   const refresh = useCallback(() => {
     setChecks(null);
@@ -66,6 +77,7 @@ export function App() {
         <a href="#/" style={{ fontWeight: 800, color: 'inherit', textDecoration: 'none' }}>Motion Studio</a>
         <span className="muted mono">{ws.path}</span>
         <div style={{ flex: 1 }} />
+        <ApprovalsIndicator approvals={Object.values(live.approvals)} />
         <span className="muted">{running} in lavorazione · {queued} in coda</span>
         <a href={href.settings()} style={{ color: 'inherit' }}>Impostazioni</a>
         <label className="row" style={{ gap: 6 }}>

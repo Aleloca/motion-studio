@@ -27,7 +27,7 @@ const conversation: ConversationEntry[] = [
 ];
 const running: JobSummary = { id: 'j1', key: 'creative:k', label: 'x', state: 'running', createdAt: at };
 const base = {
-  slug: 'acme', presets: DEFAULT_FORMATS, liveEvents: [], expert: false, pins: [],
+  slug: 'acme', approvals: [], presets: DEFAULT_FORMATS, liveEvents: [], expert: false, pins: [],
   onRemovePin: vi.fn(), onSent: vi.fn(), onSelectVersion: vi.fn(), onChanged: vi.fn(),
 };
 
@@ -156,5 +156,11 @@ describe('mergeJobEvents', () => {
     expect(mergeJobEvents([ev('a')], [ev('b')])).toEqual([ev('a'), ev('b')]);
     expect(mergeJobEvents([], [ev('b')])).toEqual([ev('b')]);
     expect(mergeJobEvents([ev('a')], [])).toEqual([ev('a')]);
+  });
+  it('shows pending approvals of the running job', () => {
+    const approval = { id: 'a1', jobId: 'j1', projectSlug: 'acme', creativeSlug: 'c1', kind: 'tool' as const, title: 'Eseguire un comando', detail: 'brew install ffmpeg', toolName: 'Bash', alwaysRule: null, createdAt: 'x', expiresAt: '2026-10-08T10:10:00.000Z' };
+    render(<ConversationPanel {...base} detail={detail()} conversation={[]} job={running} approvals={[approval]} />);
+    expect(screen.getByText('In attesa della tua approvazione')).toBeTruthy();
+    expect(screen.getByRole('group', { name: 'Eseguire un comando' })).toBeTruthy();
   });
 });

@@ -5,7 +5,7 @@ import { MediaThumb } from '../components/MediaThumb.tsx';
 import { STATUS_LABEL, StatusBadge } from '../components/StatusBadge.tsx';
 import { href } from '../routes.ts';
 
-export function CreativeList({ slug, tick }: { slug: string; tick: number }) {
+export function CreativeList({ slug, tick, waiting }: { slug: string; tick: number; waiting?: ReadonlySet<string> }) {
   const [items, setItems] = useState<CreativeListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<CreativeStatus | 'all'>('all');
@@ -39,7 +39,7 @@ export function CreativeList({ slug, tick }: { slug: string; tick: number }) {
             <div className="dots" style={{ aspectRatio: '16 / 10', borderRadius: 10, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {it.cover ? <MediaThumb src={api.fileUrl(slug, it.slug, it.cover)} alt={it.title} /> : <span className="muted">Nessun output</span>}
             </div>
-            <div className="row" style={{ gap: 8 }}><strong style={{ flex: 1 }}>{it.title}</strong><StatusBadge status={it.status} /></div>
+            <div className="row" style={{ gap: 8 }}><strong style={{ flex: 1 }}>{it.title}</strong><StatusBadge status={it.status} waiting={waiting?.has(it.slug)} /></div>
             <span className="muted" style={{ fontSize: 13 }}>{it.formats.length} formati · {it.versions} versioni</span>
             <span className="muted" style={{ fontSize: 12 }}>Aggiornata {new Date(it.updatedAt).toLocaleDateString('it-IT')}</span>
           </a>

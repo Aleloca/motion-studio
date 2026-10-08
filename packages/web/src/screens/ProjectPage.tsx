@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '../api.ts';
+import { ApprovalCard } from '../components/ApprovalCard.tsx';
 import { AgentConsole } from '../components/AgentConsole.tsx';
 import { sessionIdOf, type EventsState } from '../eventsReducer.ts';
 import { href, type ProjectTab } from '../routes.ts';
@@ -25,6 +26,7 @@ function ProjectConsole({ slug, jobKey, live, expert }: { slug: string; jobKey: 
 
   const job = jobId ? live.jobs[jobId] : undefined;
   const events = useMemo(() => (jobId ? live.events[jobId] ?? [] : []), [jobId, live.events]);
+  const approvals = jobId ? Object.values(live.approvals).filter((a) => a.jobId === jobId) : [];
   const busy = job?.state === 'queued' || job?.state === 'running';
   const sessionId = job?.sessionId ?? sessionIdOf(events);
 
@@ -53,6 +55,7 @@ function ProjectConsole({ slug, jobKey, live, expert }: { slug: string; jobKey: 
         </div>
         {error && <p role="alert" className="error" style={{ margin: 0 }}>{error}</p>}
       </form>
+      {approvals.map((a) => <ApprovalCard key={a.id} approval={a} />)}
       {jobId && <AgentConsole job={job} events={events} expert={expert} onCancel={() => cancel(jobId)} />}
     </div>
   );
@@ -71,6 +74,7 @@ export function ProjectPage({ slug, tab, live, expert }: { slug: string; tab: Pr
       .catch((e: unknown) => { if (alive) setError(`Impossibile caricare il progetto: ${e instanceof Error ? e.message : String(e)}`); });
     return () => { alive = false; };
   }, [slug, projectTick]);
+  const waiting = useMemo(() => new Set(Object.values(live.approvals).flatMap((a) => (a.projectSlug === slug && a.creativeSlug ? [a.creativeSlug] : []))), [live.approvals, slug]);
   const tick = Object.entries(live.creativeTicks).filter(([k]) => k.startsWith(`${slug}/`)).reduce((a, [, v]) => a + v, 0);
   return (
     <main className="page stack">
@@ -80,7 +84,7 @@ export function ProjectPage({ slug, tab, live, expert }: { slug: string; tab: Pr
       <nav className="tabs" aria-label="Sezioni progetto">
         {TABS.map(([t, label]) => <a key={t} href={href.project(slug, t)} aria-current={tab === t ? 'page' : undefined}>{label}</a>)}
       </nav>
-      {tab === 'creatives' && <CreativeList slug={slug} tick={tick} />}
+      {tab === 'creatives' && <CreativeList slug={slug} tick={tick} waiting={waiting} />}
       {tab === 'settings' && <ProjectSettings key={slug} slug={slug} tick={projectTick} />}
       {tab === 'console' && <ProjectConsole slug={slug} jobKey={jobKey} live={live} expert={expert} />}
       {tab === 'brand' && <BrandPage key={slug} slug={slug} live={live} />}

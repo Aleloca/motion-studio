@@ -1,6 +1,7 @@
 import type { AssetEntry, BrandKit, BrandNote } from '@motion-studio/shared';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api.ts';
+import { ApprovalCard } from '../components/ApprovalCard.tsx';
 import { MediaThumb } from '../components/MediaThumb.tsx';
 import { ProposalReview } from '../components/ProposalReview.tsx';
 import { SourceBadge } from '../components/SourceBadge.tsx';
@@ -190,6 +191,7 @@ export function BrandPage({ slug, live }: { slug: string; live: EventsState }) {
           <button type="submit" disabled={!url.trim()}>Aggiungi sito</button>
         </form>
         <p className="muted" style={{ margin: 0, fontSize: 13 }}>Le immagini si aggiungono dalla scheda Riferimenti, spuntando "Usa per l'analisi brand".</p>
+        {job && Object.values(live.approvals).filter((a) => a.jobId === job.id).map((a) => <ApprovalCard key={a.id} approval={a} />)}
         <div className="row">
           {running && <><span className="badge run">{brandJobRunningText(job!)}</span><button type="button" onClick={() => void api.cancelJob(job!.id).catch((e: unknown) => setActionError(msg(e)))}>Annulla</button></>}
           {failure && <span className="error">{failure}</span>}
