@@ -5,6 +5,7 @@ describe('parseRoute', () => {
   it.each([
     ['', { name: 'projects' }],
     ['#/', { name: 'projects' }],
+    ['#/settings', { name: 'settings' }],
     ['#/p/acme', { name: 'project', slug: 'acme', tab: 'creatives' }],
     ['#/p/acme/console', { name: 'project', slug: 'acme', tab: 'console' }],
     ['#/p/acme/new', { name: 'new-creative', slug: 'acme' }],

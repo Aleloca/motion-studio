@@ -8,6 +8,8 @@ const api = {
   getProject: vi.fn(),
   getCodebases: vi.fn(async () => []),
   updateProject: vi.fn(async () => ({})),
+  getPermissions: vi.fn(async () => []),
+  deletePermission: vi.fn(async () => ({ ok: true })),
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { ProjectSettings } = await import('../src/screens/ProjectSettings.tsx');

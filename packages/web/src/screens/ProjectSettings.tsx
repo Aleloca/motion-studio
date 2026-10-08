@@ -1,6 +1,7 @@
 import type { LinkedCodebase } from '@motion-studio/shared';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.ts';
+import { PermissionsList } from '../components/PermissionsList.tsx';
 import { CodebaseList } from '../components/CodebaseList.tsx';
 import { useProjectData } from '../useProjectData.ts';
 
@@ -25,6 +26,7 @@ export function ProjectSettings({ slug, tick }: { slug: string; tick: number }) 
   if (error) return <p role="alert" className="error">{error}</p>;
   if (!data) return <p className="muted">Caricamento…</p>;
   return (
+    <div className="stack">
     <form className="card stack" onSubmit={(e) => { e.preventDefault(); void save(); }} style={{ maxWidth: 820 }}>
       <label htmlFor="ps-name"><strong>Nome</strong></label>
       <input id="ps-name" value={name} onChange={(e) => setName(e.target.value)} />
@@ -35,5 +37,7 @@ export function ProjectSettings({ slug, tick }: { slug: string; tick: number }) 
       {status && !status.ok && <p role="alert" className="error" style={{ margin: 0 }}>{status.text}</p>}
       <div className="row"><div style={{ flex: 1 }} />{status?.ok && <span role="status" className="muted">{status.text}</span>}<button type="submit" className="primary">Salva</button></div>
     </form>
+    <PermissionsList slug={slug} />
+    </div>
   );
 }

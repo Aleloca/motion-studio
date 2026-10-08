@@ -6,8 +6,9 @@ import { Onboarding } from './screens/Onboarding.tsx';
 import { CreativePage } from './screens/CreativePage.tsx';
 import { NewCreative } from './screens/NewCreative.tsx';
 import { ProjectList } from './screens/ProjectList.tsx';
+import { SettingsPage } from './screens/SettingsPage.tsx';
 import { ProjectPage } from './screens/ProjectPage.tsx';
-import { parseRoute } from './routes.ts';
+import { href, parseRoute } from './routes.ts';
 import { useServerEvents } from './useServerEvents.ts';
 
 function useHashRoute(): string {
@@ -66,6 +67,7 @@ export function App() {
         <span className="muted mono">{ws.path}</span>
         <div style={{ flex: 1 }} />
         <span className="muted">{running} in lavorazione · {queued} in coda</span>
+        <a href={href.settings()} style={{ color: 'inherit' }}>Impostazioni</a>
         <label className="row" style={{ gap: 6 }}>
           <input type="checkbox" checked={settings.expertMode} onChange={(e) => void update({ expertMode: e.target.checked })} style={{ width: 16, height: 16 }} />
           Modalità esperto
@@ -77,6 +79,7 @@ export function App() {
       {r.name === 'new-creative' && <NewCreative key={r.slug} slug={r.slug} />}
       {r.name === 'creative' && <CreativePage key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} expert={settings.expertMode} />}
       {r.name === 'projects' && <ProjectList />}
+      {r.name === 'settings' && <SettingsPage settings={settings} checks={checks} onSaved={(next) => { applyTheme(next.theme); setWs((prev) => (prev ? { ...prev, settings: next } : prev)); }} />}
     </>
   );
 }

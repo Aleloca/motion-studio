@@ -1,4 +1,4 @@
-import type { AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectListItem, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
+import type { ApprovalDecision, ApprovalRequest, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, PermissionsFile, ProjectListItem, SecretStatus, ProviderId, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
 
 export class ApiError extends Error {
   constructor(public readonly status: number, message: string) { super(message); this.name = 'ApiError'; }
@@ -36,6 +36,13 @@ export const api = {
   getWorkspace: () => request<WorkspaceInfo>('GET', '/api/workspace'),
   setWorkspace: (path: string) => request<{ path: string; settings: WorkspaceSettings }>('PUT', '/api/workspace', { path }),
   updateSettings: (patch: Partial<WorkspaceSettings>) => request<WorkspaceSettings>('PUT', '/api/settings', patch),
+  getSecrets: () => request<SecretStatus[]>('GET', '/api/secrets'),
+  setSecret: (provider: ProviderId, value: string) => request<SecretStatus>('PUT', `/api/secrets/${provider}`, { value }),
+  deleteSecret: (provider: ProviderId) => request<SecretStatus>('DELETE', `/api/secrets/${provider}`),
+  getApprovals: () => request<ApprovalRequest[]>('GET', '/api/approvals'),
+  decideApproval: (id: string, decision: ApprovalDecision) => request<unknown>('POST', `/api/approvals/${encodeURIComponent(id)}`, { decision }),
+  getPermissions: (slug: string) => request<PermissionsFile['allow']>('GET', `${p(slug)}/permissions`),
+  deletePermission: (slug: string, rule: string) => request<{ ok: true }>('DELETE', `${p(slug)}/permissions`, { rule }),
   listProjects: () => request<ProjectListItem[]>('GET', '/api/projects'),
   createProject: (name: string, description?: string) =>
     request<{ slug: string; project: ProjectFile }>('POST', '/api/projects', { name, description }),
