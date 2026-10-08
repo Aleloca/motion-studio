@@ -1,0 +1,25 @@
+// Base UI components (spec §4.3). Styles live in ui.css; tokens in ../theme.css.
+export { cx } from './cx.ts';
+export { ICONS, type IconName } from './icons.ts';
+export { Icon, type IconProps } from './Icon.tsx';
+export { Button, type ButtonProps, type ButtonSize, type ButtonVariant } from './Button.tsx';
+export { CHANNELS, CHANNEL_COLORS, ChannelMark, type Channel, type ChannelMarkProps } from './ChannelMark.tsx';
+export { Field, type FieldProps } from './Field.tsx';
+export { Input, Textarea } from './Input.tsx';
+export { Toggle, type ToggleProps } from './Toggle.tsx';
+export { Check, type CheckProps } from './Check.tsx';
+export { Segmented, type SegmentedOption, type SegmentedProps } from './Segmented.tsx';
+export { Chip, type ChipProps } from './Chip.tsx';
+export { Tag, type TagProps } from './Tag.tsx';
+export { Pill, type PillProps, type PillTone } from './Pill.tsx';
+export { VersionBadge, type VersionBadgeProps } from './VersionBadge.tsx';
+export { Spinner, type SpinnerProps } from './Spinner.tsx';
+export { Typing } from './Typing.tsx';
+export { ProgressBar, type ProgressBarProps } from './ProgressBar.tsx';
+export { CountdownRing, type CountdownRingProps } from './CountdownRing.tsx';
+export { Avatar, initials, type AvatarProps } from './Avatar.tsx';
+export { Empty, type EmptyProps } from './Empty.tsx';
+export { Card, type CardProps } from './Card.tsx';
+export { NavItem, type NavItemProps } from './NavItem.tsx';
+export { Tabs, type TabItem, type TabsProps } from './Tabs.tsx';
+export { Markdown, safeHref, type MarkdownProps } from './Markdown.tsx';
