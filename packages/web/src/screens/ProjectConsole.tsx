@@ -19,6 +19,7 @@ export function ProjectConsole({ slug, live, expert }: { slug: string; live: Eve
 
   useEffect(() => {
     let alive = true;
+    setError(null);
     api.getProject(slug)
       .then((r) => { if (alive) setJobKey(r.jobKey); })
       .catch((e: unknown) => { if (alive) setError(t.web.project.loadFailed({ detail: e instanceof Error ? e.message : String(e) })); });

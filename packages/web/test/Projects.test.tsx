@@ -17,7 +17,7 @@ const api = {
   fileUrl: (s: string, c: string, rel: string) => `/files/${s}/${c}/${rel}`,
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
-const { Projects } = await import('../src/screens/Projects.tsx');
+const { Projects, hex6, luminance } = await import('../src/screens/Projects.tsx');
 
 const at = '2026-10-08T10:00:00.000Z';
 const project = (slug: string, name: string, updatedAt = at): ProjectListItem =>
@@ -121,6 +121,63 @@ describe('Projects · cards', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('server down');
     await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(await screen.findByText('Half Story', { selector: '.ms-pcard-name' })).toBeTruthy();
+  });
+});
+
+describe('Projects · card data', () => {
+  const covered = (slug: string) => [{ ok: true, slug, title: slug, status: 'ready', formats: [], versions: 1, updatedAt: at, cover: `outputs/v1/${slug}.png` }];
+
+  it('drops a stale creatives response that arrives after a newer one', async () => {
+    api.listProjects.mockResolvedValue([project('hs', 'Half Story')]);
+    let resolveOld!: (v: unknown) => void;
+    api.listCreatives
+      .mockImplementationOnce(() => new Promise((r) => { resolveOld = r; }) as never)
+      .mockImplementationOnce(async () => covered('newer') as never);
+    const { rerender } = en(<Projects live={live()} />);
+    const card = (await screen.findByText('Half Story', { selector: '.ms-pcard-name' })).closest('a')!;
+    rerender(<I18nProvider locale="en"><Projects live={live({ creativeTicks: { 'hs/newer': 1 } })} /></I18nProvider>);
+    await waitFor(() => expect(card.querySelector('.ms-pcover img')?.getAttribute('src')).toBe('/files/hs/newer/outputs/v1/newer.png'));
+    await act(async () => { resolveOld(covered('older')); });
+    expect([...card.querySelectorAll('.ms-pcover img')].map((i) => i.getAttribute('src'))).toEqual(['/files/hs/newer/outputs/v1/newer.png']);
+  });
+
+  it('reloads the brand on project ticks only, and keeps the name fallback while a reload is pending', async () => {
+    api.listProjects.mockResolvedValue([project('nw', 'Northwind Coffee')]);
+    const { rerender } = en(<Projects live={live()} />);
+    const card = (await screen.findByText('Northwind Coffee', { selector: '.ms-pcard-name' })).closest('a')!;
+    await waitFor(() => expect(card.querySelector('.ms-pcover-word')).toBeTruthy());
+    expect(api.getBrand).toHaveBeenCalledTimes(1);
+    // A creative change reloads the creatives only (and that round never answers).
+    api.listCreatives.mockImplementation(() => new Promise(() => {}) as never);
+    rerender(<I18nProvider locale="en"><Projects live={live({ creativeTicks: { 'nw/x': 1 } })} /></I18nProvider>);
+    await waitFor(() => expect(api.listCreatives).toHaveBeenCalledTimes(2));
+    expect(api.getBrand).toHaveBeenCalledTimes(1);
+    expect(api.listAssets).toHaveBeenCalledTimes(1);
+    expect(card.querySelector('.ms-pcover-word')?.textContent).toBe('Northwind Coffee');
+    rerender(<I18nProvider locale="en"><Projects live={live({ creativeTicks: { 'nw/x': 1 }, projectTicks: { nw: 1 } })} /></I18nProvider>);
+    await waitFor(() => expect(api.getBrand).toHaveBeenCalledTimes(2));
+    expect(api.listAssets).toHaveBeenCalledTimes(2);
+    expect(api.listCreatives).toHaveBeenCalledTimes(2);
+  });
+
+  it('sorts Last edited by the latest activity the card shows (project or creatives)', async () => {
+    api.listProjects.mockResolvedValue([project('new', 'Newer project', '2026-10-08T09:00:00.000Z'), project('old', 'Older project', '2026-10-01T09:00:00.000Z')]);
+    api.listCreatives.mockImplementation((async (slug: string) => (slug === 'old'
+      ? [{ ok: true, slug: 'c', title: 'C', status: 'ready', formats: [], versions: 1, updatedAt: '2026-10-08T11:00:00.000Z', cover: null }]
+      : [])) as never);
+    en(<Projects live={live()} />);
+    const names = () => [...document.querySelectorAll('.ms-pcard-name')].map((n) => n.textContent);
+    await waitFor(() => expect(names()).toEqual(['Older project', 'Newer project']));
+  });
+
+  it('reads 3-, 6- and 8-digit hex colours and rejects the rest', () => {
+    expect(hex6('#abc')).toBe('#aabbcc');
+    expect(hex6('#1B1913')).toBe('#1B1913');
+    expect(hex6('#1B1913FF')).toBe('#1B1913');
+    expect(hex6('red')).toBeNull();
+    expect(luminance('#fff')).toBeCloseTo(1, 5);
+    expect(luminance('#FFFFFF80')).toBeCloseTo(1, 5);
+    expect(luminance('nope')).toBe(0);
   });
 });
 

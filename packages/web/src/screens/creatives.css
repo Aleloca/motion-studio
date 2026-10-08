@@ -3,7 +3,9 @@
 .ms-creatives .ms-grow { flex: 1; }
 .ms-creatives-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
 .ms-creatives-head h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.015em; }
-.ms-creatives-seg { margin-left: 8px; overflow-x: auto; scrollbar-width: none; }
+.ms-creatives-seg { margin-left: 8px; flex-wrap: wrap; }
+/* Narrow: the segments wrap onto a second row (no hidden horizontal scroll). */
+@media (max-width: 760px) { .ms-creatives-seg { margin-left: 0; order: 3; width: 100%; } .ms-creatives-seg button { flex: 1 0 auto; } }
 
 /* Search field (prototype .search): panel with a hairline, the icon inside. */
 .ms-csearch {
@@ -28,26 +30,26 @@
 
 /* Card. */
 .ms-ccard { position: relative; display: flex; flex-direction: column; overflow: hidden; transition: box-shadow var(--d-m) var(--e-std), transform var(--d-s) var(--e-std); }
-.ms-ccard:not(.ms-broken):not(.ms-skel):hover { box-shadow: 0 0 0 1px var(--faint), 0 12px 30px var(--shadow); transform: translateY(-2px); }
-/* Needs you: the accent ring stays on hover (T13: selection-like emphasis with an m transition). */
-.ms-ccard.ms-needs, .ms-ccard.ms-needs:hover { box-shadow: 0 0 0 1.5px var(--accent), 0 12px 30px var(--shadow); }
-.ms-ccard:focus-within { box-shadow: 0 0 0 1px var(--faint), 0 12px 30px var(--shadow); }
+.ms-ccard:not(.ms-broken):not(.ms-cskel):hover, .ms-ccard:focus-within { box-shadow: 0 0 0 1px var(--faint), 0 12px 30px var(--shadow); }
+.ms-ccard:not(.ms-broken):not(.ms-cskel):hover { transform: translateY(-2px); }
+/* Needs you: the accent ring stays on hover and focus (T13: selection-like emphasis with an m transition). Last, so it wins. */
+.ms-ccard.ms-needs, .ms-ccard.ms-needs:hover, .ms-ccard.ms-needs:focus-within { box-shadow: 0 0 0 1.5px var(--accent), 0 12px 30px var(--shadow); }
 
 .ms-ccard-stage {
   position: relative; height: 210px; display: flex; align-items: center; justify-content: center; gap: 10px; flex: none;
   background-color: var(--bg); background-image: radial-gradient(var(--dot) 1px, transparent 1px); background-size: 14px 14px;
 }
-.ms-frame { position: relative; flex: none; border-radius: 3px; overflow: hidden; transition: width var(--d-m) var(--e-std), height var(--d-m) var(--e-std); }
-.ms-frame-out { box-shadow: 0 6px 16px var(--shadow); background: var(--field); }
-.ms-frame-out img, .ms-frame-out video { width: 100%; height: 100%; object-fit: cover; display: block; }
-.ms-st-running .ms-frame-out img, .ms-st-running .ms-frame-out video { filter: saturate(.6) brightness(.9); }
-.ms-st-failed .ms-frame-out img, .ms-st-failed .ms-frame-out video,
-.ms-st-interrupted .ms-frame-out img, .ms-st-interrupted .ms-frame-out video { opacity: .5; }
-.ms-frame-empty {
+.ms-ccard-frame { position: relative; flex: none; border-radius: 3px; overflow: hidden; transition: width var(--d-m) var(--e-std), height var(--d-m) var(--e-std); }
+.ms-ccard-frame-out { box-shadow: 0 6px 16px var(--shadow); background: var(--field); }
+.ms-ccard-frame-out img, .ms-ccard-frame-out video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ms-st-running .ms-ccard-frame-out img, .ms-st-running .ms-ccard-frame-out video { filter: saturate(.6) brightness(.9); }
+.ms-st-failed .ms-ccard-frame-out img, .ms-st-failed .ms-ccard-frame-out video,
+.ms-st-interrupted .ms-ccard-frame-out img, .ms-st-interrupted .ms-ccard-frame-out video { opacity: .5; }
+.ms-ccard-frame-empty {
   border-radius: 10px; border: 1.5px dashed var(--line); display: flex; align-items: center; justify-content: center;
   font-size: 10px; color: var(--faint); font-variant-numeric: tabular-nums;
 }
-.ms-frame-warn {
+.ms-ccard-frame-warn {
   position: absolute; inset: 0; margin: auto; width: 36px; height: 36px; border-radius: 50%; background: var(--panel); color: var(--warn);
   display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px var(--shadow);
 }
@@ -76,8 +78,9 @@
 .ms-ccard-error { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 
 .ms-ccard-tags { display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
-.ms-ftag { height: 22px; padding: 0 7px 0 4px; gap: 5px; max-width: 100%; }
-.ms-ftag-name { overflow: hidden; text-overflow: ellipsis; }
+.ms-tag.ms-ftag { height: 22px; padding: 0 7px 0 4px; gap: 5px; max-width: 100%; min-width: 0; flex: 0 1 auto; }
+.ms-tag.ms-ftag .ms-ch { flex: none; }
+.ms-ftag-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .ms-cc-needs { display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 10px; border-radius: 10px; background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); min-width: 0; }
 .ms-cc-needs .ms-dot { color: var(--accent); }
@@ -97,11 +100,11 @@
 .ms-cc-act { margin-left: auto; flex: none; }
 
 /* Loading placeholders. */
-.ms-skel .ms-ccard-body i { display: block; height: 10px; border-radius: 5px; background: var(--field); }
-.ms-skel .ms-ccard-body i:first-child { width: 55%; height: 12px; }
-.ms-skel .ms-ccard-body i:last-child { width: 35%; }
-.ms-skel { animation: ms-skel 1.4s var(--e-std) infinite alternate; }
-@keyframes ms-skel { from { opacity: 1; } to { opacity: .55; } }
+.ms-cskel .ms-ccard-body i { display: block; height: 10px; border-radius: 5px; background: var(--field); }
+.ms-cskel .ms-ccard-body i:first-child { width: 55%; height: 12px; }
+.ms-cskel .ms-ccard-body i:last-child { width: 35%; }
+.ms-cskel { animation: ms-cskel 1.4s var(--e-std) infinite alternate; }
+@keyframes ms-cskel { from { opacity: 1; } to { opacity: .55; } }
 
 /* Empty project: one designed card over the dot grid (prototype). */
 .ms-creatives-empty { width: auto; max-width: none; margin: 0; min-height: 100%; padding: 24px; align-items: center; justify-content: center;

@@ -1,7 +1,7 @@
 import type { ApprovalRequest, DoctorCheck, LanguageSetting, Locale, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { api } from './api.ts';
-import { detectedLocale, I18nProvider, useLocale, type LanguageState } from './i18n.tsx';
+import { detectedLocale, I18nProvider, useLocale, useT, type LanguageState } from './i18n.tsx';
 import { PageHost } from './motion/index.ts';
 import { depthOf, href, parseRoute, projectOf, routeKey, type Route } from './routes.ts';
 import { AssetsPage } from './screens/AssetsPage.tsx';
@@ -252,13 +252,32 @@ function ProjectHost({ route, live, expert }: { route: Extract<Route, { name: 'p
 }
 
 function ProjectTabPage({ route: { slug, tab }, live, expert }: { route: Extract<Route, { name: 'project' }>; live: EventsState; expert: boolean }) {
-  const legacy = (page: ReactNode) => <main className="page stack">{page}</main>;
+  const tick = live.projectTicks[slug] ?? 0;
   switch (tab) {
     case 'creatives': return <ProjectCreatives key={slug} slug={slug} live={live} />;
-    case 'brand': return legacy(<BrandPage key={slug} slug={slug} live={live} />);
-    case 'assets': return legacy(<AssetsPage key={slug} slug={slug} live={live} />);
-    case 'references': return legacy(<ReferencesPage key={slug} slug={slug} live={live} />);
-    case 'settings': return legacy(<ProjectSettings key={slug} slug={slug} tick={live.projectTicks[slug] ?? 0} />);
+    case 'brand': return <LegacyTab slug={slug} tick={tick}><BrandPage key={slug} slug={slug} live={live} /></LegacyTab>;
+    case 'assets': return <LegacyTab slug={slug} tick={tick}><AssetsPage key={slug} slug={slug} live={live} /></LegacyTab>;
+    case 'references': return <LegacyTab slug={slug} tick={tick}><ReferencesPage key={slug} slug={slug} live={live} /></LegacyTab>;
+    case 'settings': return <LegacyTab slug={slug} tick={tick}><ProjectSettings key={slug} slug={slug} tick={tick} /></LegacyTab>;
     case 'console': return <ProjectConsole key={slug} slug={slug} live={live} expert={expert} />;
   }
+}
+
+/** The page frame the old ProjectPage gave its tabs, with its "can't load the project" alert above (Tasks 11–15 replace them). */
+function LegacyTab({ slug, tick, children }: { slug: string; tick: number; children: ReactNode }) {
+  const t = useT();
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setError(null);
+    Promise.resolve().then(() => api.getProject(slug))
+      .catch((e: unknown) => { if (alive) setError(t.web.project.loadFailed({ detail: e instanceof Error ? e.message : String(e) })); });
+    return () => { alive = false; };
+  }, [slug, tick, t]);
+  return (
+    <main className="page stack">
+      {error ? <p role="alert" className="error" style={{ margin: 0 }}>{error}</p> : null}
+      {children}
+    </main>
+  );
 }

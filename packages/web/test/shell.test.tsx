@@ -455,6 +455,13 @@ describe('project bar', () => {
     expect(screen.queryByText('Ancora nessuna creatività')).toBeNull();
   });
 
+  it('explains above an older tab when the project cannot be loaded', async () => {
+    history.replaceState(null, '', '/#/p/acme/brand');
+    vi.mocked(api.getProject).mockRejectedValue(new Error('Progetto non trovato'));
+    await startApp();
+    expect((await screen.findByText(/Impossibile caricare il progetto/)).textContent).toBe('Impossibile caricare il progetto: Progetto non trovato');
+  });
+
   it('opens the account menu with Settings, System check and Replay setup', async () => {
     await startApp();
     await userEvent.click(screen.getByRole('button', { name: 'Menu account' }));

@@ -99,9 +99,9 @@ a.ms-pcard:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px
 .ms-pcard.ms-broken .ms-pcard-row { flex-wrap: wrap; }
 
 /* Loading placeholders. */
-.ms-pcard.ms-skel { animation: ms-pskel 1.4s var(--e-std) infinite alternate; }
-.ms-pcard.ms-skel .ms-pcard-body i { display: block; height: 10px; border-radius: 5px; background: var(--field); width: 35%; }
-.ms-pcard.ms-skel .ms-pcard-body i:first-child { width: 55%; height: 12px; }
+.ms-pcard.ms-pskel { animation: ms-pskel 1.4s var(--e-std) infinite alternate; }
+.ms-pcard.ms-pskel .ms-pcard-body i { display: block; height: 10px; border-radius: 5px; background: var(--field); width: 35%; }
+.ms-pcard.ms-pskel .ms-pcard-body i:first-child { width: 55%; height: 12px; }
 @keyframes ms-pskel { from { opacity: 1; } to { opacity: .55; } }
 
 /* Start a new project (dashed card with the inline form). */

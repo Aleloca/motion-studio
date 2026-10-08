@@ -21,10 +21,19 @@ const CASCADE_MS = 40;
 type Sort = 'recent' | 'name';
 type Readable = Extract<ProjectListItem, { ok: true }>;
 
-/** Relative luminance of #RRGGBB (WCAG). */
-function luminance(hex: string): number {
+/** #RGB / #RRGGBB / #RRGGBBAA (alpha ignored) → #RRGGBB; null for anything else. */
+export function hex6(hex: string): string | null {
+  const h = hex.trim().replace(/^#/, '');
+  if (/^[0-9a-f]{3}$/i.test(h)) return `#${[...h].map((c) => c + c).join('')}`;
+  if (/^[0-9a-f]{6}([0-9a-f]{2})?$/i.test(h)) return `#${h.slice(0, 6)}`;
+  return null;
+}
+
+/** Relative luminance (WCAG) of a hex colour; an unreadable value counts as black. */
+export function luminance(hex: string): number {
+  const h = hex6(hex) ?? '#000000';
   const [r, g, b] = [1, 3, 5].map((i) => {
-    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    const c = parseInt(h.slice(i, i + 2), 16) / 255;
     return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
   });
   return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
@@ -32,7 +41,8 @@ function luminance(hex: string): number {
 const contrast = (a: string, b: string) => { const [x, y] = [luminance(a), luminance(b)].sort((m, n) => n - m); return (x! + 0.05) / (y! + 0.05); };
 
 /** The brand's own colours for a cover without images: its background colour (or the lightest) and the colour that reads best on it. */
-function paletteFace(colors: BrandOverview['kit']['colors']): { bg: string; fg: string } | null {
+function paletteFace(all: BrandOverview['kit']['colors']): { bg: string; fg: string } | null {
+  const colors = all.filter((c) => hex6(c.hex));
   if (colors.length < 2) return null;
   const bg = colors.find((c) => c.role === 'background')?.hex ?? [...colors].sort((a, b) => luminance(b.hex) - luminance(a.hex))[0]!.hex;
   const fg = colors.filter((c) => c.hex !== bg).sort((a, b) => contrast(b.hex, bg) - contrast(a.hex, bg))[0]!.hex;
@@ -58,6 +68,9 @@ export function Projects({ live }: { live: EventsState }) {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set());
+  // Latest activity of each project as its card shows it (project or creatives): what "Last edited" sorts by.
+  const [activity, setActivity] = useState<Readonly<Record<string, string>>>({});
+  const onActivity = useCallback((slug: string, iso: string) => setActivity((a) => (a[slug] === iso ? a : { ...a, [slug]: iso })), []);
   const field = useRef<HTMLInputElement>(null);
 
   const focusNew = useCallback(() => { field.current?.focus(); void flash(field.current); }, []);
@@ -89,8 +102,8 @@ export function Projects({ live }: { live: EventsState }) {
     const key = (i: ProjectListItem) => (i.ok ? i.project.name : i.slug);
     return sort === 'name'
       ? list.sort((a, b) => key(a).localeCompare(key(b)))
-      : list.sort((a, b) => (b.ok ? b.project.updatedAt : '').localeCompare(a.ok ? a.project.updatedAt : ''));
-  }, [items, sort]);
+      : list.sort((a, b) => lastEdited(b, activity).localeCompare(lastEdited(a, activity)));
+  }, [items, sort, activity]);
 
   const create = async () => {
     const text = name.trim();
@@ -159,11 +172,11 @@ export function Projects({ live }: { live: EventsState }) {
           {!loaded && !error ? (
             <>
               <span className="ms-sr" role="status">{p.loading}</span>
-              {[0, 1].map((i) => <div key={i} className="ms-card ms-pcard ms-skel" aria-hidden="true"><div className="ms-pcover" /><div className="ms-pcard-body"><i /><i /></div></div>)}
+              {[0, 1].map((i) => <div key={i} className="ms-card ms-pcard ms-pskel" aria-hidden="true"><div className="ms-pcover" /><div className="ms-pcard-body"><i /><i /></div></div>)}
             </>
           ) : null}
           {sorted.map((it, i) => it.ok
-            ? <ProjectCard key={it.slug} item={it} live={live} waiting={waiting(it.slug)} fresh={fresh.has(it.slug)} index={i} />
+            ? <ProjectCard key={it.slug} item={it} live={live} waiting={waiting(it.slug)} fresh={fresh.has(it.slug)} index={i} onActivity={onActivity} />
             : (
               <div key={it.slug} className="ms-card ms-pcard ms-broken" data-enter data-delay={i * CASCADE_MS}>
                 <div className="ms-pcard-body">
@@ -234,42 +247,59 @@ function Cover({ src }: { src: string }) {
   return VIDEO.test(src) ? <video src={src} muted preload="metadata" aria-hidden="true" /> : <img src={src} alt="" />;
 }
 
-interface CardData { creatives: CreativeListItem[] | null; brand: BrandOverview | null; assets: number | null }
+const later = (a: string, b: string) => (a.localeCompare(b) >= 0 ? a : b);
+function lastEdited(item: ProjectListItem, activity: Readonly<Record<string, string>>): string {
+  if (!item.ok) return '';
+  const seen = activity[item.slug];
+  return seen ? later(seen, item.project.updatedAt) : item.project.updatedAt;
+}
 
-function ProjectCard({ item, live, waiting, fresh, index }: { item: Readable; live: EventsState; waiting: number; fresh: boolean; index: number }) {
+/** A source of the card: `done` once a load answered (success or failure); data stays on screen while reloading. */
+interface Source<T> { value: T | null; done: boolean }
+const NONE = { value: null, done: false };
+
+/** Loads `call` on every change of `deps`; a response for older deps is dropped. */
+function useSource<T>(call: () => Promise<T>, deps: unknown[]): Source<T> {
+  const [src, setSrc] = useState<Source<T>>(NONE);
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve().then(call)
+      .then((value) => { if (alive) setSrc({ value, done: true }); })
+      .catch(() => { if (alive) setSrc((s) => ({ ...s, done: true })); });
+    return () => { alive = false; };
+  }, deps); // eslint-disable-line react-hooks/exhaustive-deps
+  return src;
+}
+
+interface CardProps { item: Readable; live: EventsState; waiting: number; fresh: boolean; index: number; onActivity(slug: string, iso: string): void }
+
+function ProjectCard({ item, live, waiting, fresh, index, onActivity }: CardProps) {
   const t = useT();
   const p = t.web.projects;
   const locale = useLocale();
   const { slug, project } = item;
   const ref = useRef<HTMLAnchorElement>(null);
-  const [data, setData] = useState<CardData>({ creatives: null, brand: null, assets: null });
-  const [done, setDone] = useState(0);
-  const tick = (live.projectTicks[slug] ?? 0) + Object.entries(live.creativeTicks).filter(([k]) => k.startsWith(`${slug}/`)).reduce((a, [, v]) => a + v, 0);
+  // Creatives follow their own ticks; the brand and the library follow the project's.
+  const creativeTick = Object.entries(live.creativeTicks).filter(([k]) => k.startsWith(`${slug}/`)).reduce((a, [, v]) => a + v, 0);
+  const projectTick = live.projectTicks[slug] ?? 0;
+  const creatives = useSource(() => api.listCreatives(slug), [slug, creativeTick]);
+  const brand = useSource(() => api.getBrand(slug), [slug, projectTick]);
+  const assets = useSource(() => api.listAssets(slug).then((r) => r.assets.length), [slug, projectTick]);
 
   // T14: a project created inline enters with scale(.96) from 16 px.
   useLayoutEffect(() => { if (fresh) void enter(ref.current, { y: 16, scale: 0.96 }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    let alive = true;
-    const settle = () => { if (alive) setDone((n) => n + 1); };
-    const load = <T,>(call: () => Promise<T>, put: (v: T) => Partial<CardData>) => Promise.resolve().then(call)
-      .then((v) => { if (alive) setData((d) => ({ ...d, ...put(v) })); })
-      .catch(() => { /* the card shows what it has */ })
-      .finally(settle);
-    void load(() => api.listCreatives(slug), (creatives) => ({ creatives }));
-    void load(() => api.getBrand(slug), (brand) => ({ brand }));
-    void load(() => api.listAssets(slug), (r) => ({ assets: r.assets.length }));
-    return () => { alive = false; };
-  }, [slug, tick]);
 
-  const readable = (data.creatives ?? []).flatMap((c) => (c.ok ? [c] : []));
+  const readable = (creatives.value ?? []).flatMap((c) => (c.ok ? [c] : []));
   const covers = readable.filter((c) => c.cover).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, COVERS);
-  const colors = data.brand?.kit.colors ?? [];
-  const fonts = data.brand?.kit.fonts.length ?? 0;
+  const colors = (brand.value?.kit.colors ?? []).filter((c) => hex6(c.hex));
+  const fonts = brand.value?.kit.fonts.length ?? 0;
   const face = paletteFace(colors);
-  const site = siteOf(data.brand, project);
-  const updated = [project.updatedAt, ...readable.map((c) => c.updatedAt)].sort().at(-1)!;
+  const site = siteOf(brand.value, project);
+  const updated = readable.reduce((a, c) => later(a, c.updatedAt), project.updatedAt);
+  useEffect(() => { onActivity(slug, updated); }, [onActivity, slug, updated]);
   // The name stands in for the cover only once we know there is no cover (no flash of the word before the images).
-  const settled = done >= 3;
+  const settled = creatives.done && brand.done;
+  const data = { creatives: creatives.value, assets: assets.value };
 
   return (
     <a

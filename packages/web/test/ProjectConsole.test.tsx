@@ -48,4 +48,11 @@ describe('ProjectConsole after a reload', () => {
     render(<ProjectConsole slug="acme" expert={false} live={live({})} />);
     expect((await screen.findByRole('alert')).textContent).toBe('Impossibile caricare il progetto: Progetto non trovato');
   });
+  it('clears the load error when the project loads again', async () => {
+    vi.mocked(api.getProject).mockRejectedValueOnce(new Error('Progetto non trovato')).mockResolvedValue({ slug: 'acme', project, jobKey: 'project:/w:acme' });
+    const { rerender } = render(<ProjectConsole slug="acme" expert={false} live={live({})} />);
+    await screen.findByRole('alert');
+    rerender(<ProjectConsole slug="acme" expert={false} live={{ ...live({}), projectTicks: { acme: 1 } }} />);
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  });
 });

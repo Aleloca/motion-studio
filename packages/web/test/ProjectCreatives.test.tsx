@@ -9,6 +9,7 @@ const api = {
   listCreatives: vi.fn(),
   getFormats: vi.fn(async () => ({ presets: DEFAULT_FORMATS, error: null, path: '/x' })),
   getCreative: vi.fn(),
+  getConversation: vi.fn(async () => []),
   sendCreativeTurn: vi.fn(),
   fileUrl: (s: string, c: string, rel: string) => `/files/${s}/${c}/${rel}`,
 };
@@ -131,9 +132,55 @@ describe('ProjectCreatives cards', () => {
       return c;
     });
     expect(api.getCreative).toHaveBeenCalledWith('acme', 'loop');
+    api.getConversation.mockResolvedValue([]);
     await userEvent.click(within(loop).getByRole('button', { name: 'Try again' }));
-    // An empty turn: the core resumes with its own retry wording (the brief, or "Regenerate all formats…").
+    // A failed first generation (no user turn): an empty turn, the core starts again from the brief.
+    expect(api.getConversation).toHaveBeenCalledWith('acme', 'loop');
     expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'loop', {});
+  });
+
+  it('tries again with the user turn that failed (text and pins)', async () => {
+    api.listCreatives.mockResolvedValue(LIST);
+    api.getCreative.mockResolvedValue({ slug: 'loop', jobKey: 'k', versions: [], creative: { title: 'Calder at night loop', status: 'error', error: 'Render failed' } });
+    const pins = [{ format: 'tiktok-9x16', x: 0.5, y: 0.2, timeSec: 1.5, note: 'here' }];
+    api.getConversation.mockResolvedValue([
+      { type: 'user', at, text: 'First idea', pins: [], attachments: [] },
+      { type: 'version', at, n: 1, status: 'complete' },
+      { type: 'user', at, text: 'Make the logo bigger', pins, attachments: [] },
+      { type: 'system', at, level: 'error', text: 'Generation failed' },
+    ] as never);
+    api.sendCreativeTurn.mockResolvedValue({ ...runningJob, id: 'j9', key: 'creative:/w:acme:loop' });
+    en(<ProjectCreatives slug="acme" live={live()} />);
+    const loop = await waitFor(() => { const c = card('Calder at night loop'); within(c).getByText('Render failed'); return c; });
+    await userEvent.click(within(loop).getByRole('button', { name: 'Try again' }));
+    expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'loop', { text: 'Make the logo bigger', pins });
+  });
+
+  it('retries a failed regeneration without a message as an empty turn', async () => {
+    api.listCreatives.mockResolvedValue(LIST);
+    api.getCreative.mockResolvedValue({ slug: 'loop', jobKey: 'k', versions: [], creative: { title: 'Calder at night loop', status: 'error', error: 'Render failed' } });
+    api.getConversation.mockResolvedValue([
+      { type: 'user', at, text: 'First idea', pins: [], attachments: [] },
+      { type: 'version', at, n: 1, status: 'complete' },
+      { type: 'system', at, level: 'error', text: 'Generation failed' },
+    ] as never);
+    en(<ProjectCreatives slug="acme" live={live()} />);
+    const loop = await waitFor(() => { const c = card('Calder at night loop'); within(c).getByText('Render failed'); return c; });
+    await userEvent.click(within(loop).getByRole('button', { name: 'Try again' }));
+    expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'loop', {});
+  });
+
+  it('does not open the creative when Generate returns after the page is gone', async () => {
+    api.listCreatives.mockResolvedValue(LIST);
+    let resolve!: (v: unknown) => void;
+    api.sendCreativeTurn.mockImplementation(() => new Promise((r) => { resolve = r; }) as never);
+    const { unmount } = en(<ProjectCreatives slug="acme" live={live()} />);
+    await screen.findByText('App Store screenshots');
+    await userEvent.click(within(card('App Store screenshots')).getByRole('button', { name: /Generate/ }));
+    unmount();
+    history.replaceState(null, '', '/#/settings');
+    await act(async () => { resolve(runningJob); });
+    expect(location.hash).toBe('#/settings');
   });
 
   it('generates a draft with the accent Generate and opens it', async () => {
@@ -156,7 +203,7 @@ describe('ProjectCreatives cards', () => {
     await screen.findByText('App Store screenshots');
     // The catalog arrives after the list: wait for the proportions.
     const frames = await waitFor(() => {
-      const f = [...card('App Store screenshots').querySelectorAll<HTMLElement>('.ms-frame')];
+      const f = [...card('App Store screenshots').querySelectorAll<HTMLElement>('.ms-ccard-frame')];
       expect(f).toHaveLength(2);
       expect(f[1]!.style.width).toBe(f[1]!.style.height);
       return f;
@@ -173,6 +220,44 @@ describe('ProjectCreatives cards', () => {
     en(<ProjectCreatives slug="acme" live={live()} />);
     await screen.findByText('Weekly case post');
     expect(screen.getByRole('link', { name: 'Weekly case post' }).getAttribute('href')).toBe('#/p/acme/c/weekly');
+  });
+});
+
+describe('ProjectCreatives live list', () => {
+  it('ignores a stale response that arrives after a newer one', async () => {
+    let resolveOld!: (v: unknown) => void;
+    api.listCreatives
+      .mockImplementationOnce(() => new Promise((r) => { resolveOld = r; }) as never)
+      .mockImplementationOnce(async () => [item('n', 'Newer', 'draft', { versions: 0, cover: null })]);
+    const { rerender } = en(<ProjectCreatives slug="acme" live={live()} />);
+    rerender(<I18nProvider locale="en"><ProjectCreatives slug="acme" live={live({ creativeTicks: { 'acme/n': 1 } })} /></I18nProvider>);
+    await screen.findByText('Newer');
+    await act(async () => { resolveOld([item('o', 'Older', 'draft', { versions: 0, cover: null })]); });
+    expect(screen.queryByText('Older')).toBeNull();
+    expect(screen.getByText('Newer')).toBeTruthy();
+  });
+
+  it('brings in a creative that appears while the page is open with scale(.96) (T14)', async () => {
+    const entries: Array<{ el: Element; frames: Keyframe[] }> = [];
+    const orig = Element.prototype.animate;
+    Element.prototype.animate = function (this: Element, frames: Keyframe[]) {
+      entries.push({ el: this, frames });
+      return { finished: Promise.resolve(), cancel() {} } as unknown as Animation;
+    } as never;
+    try {
+      api.listCreatives.mockResolvedValue([item('weekly', 'Weekly case post', 'ready')]);
+      const { rerender } = en(<ProjectCreatives slug="acme" live={live()} />);
+      await screen.findByText('Weekly case post');
+      const scaled = (el: Element) => entries.filter((e) => e.el === el && String(e.frames[0]?.transform).includes('scale(0.96)'));
+      expect(scaled(card('Weekly case post'))).toHaveLength(0);
+      api.listCreatives.mockResolvedValue([item('fresh', 'Fresh one', 'draft', { versions: 0, cover: null }), item('weekly', 'Weekly case post', 'ready')]);
+      await act(async () => {
+        rerender(<I18nProvider locale="en"><ProjectCreatives slug="acme" live={live({ creativeTicks: { 'acme/fresh': 1 } })} /></I18nProvider>);
+      });
+      await screen.findByText('Fresh one');
+      expect(scaled(card('Fresh one'))).toHaveLength(1);
+      expect(scaled(card('Weekly case post'))).toHaveLength(0);
+    } finally { Element.prototype.animate = orig; }
   });
 });
 

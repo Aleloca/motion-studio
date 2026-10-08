@@ -7,7 +7,7 @@ import { enter, useEnter } from '../motion/index.ts';
 import { href } from '../routes.ts';
 import { go } from '../shell/ShellContext.tsx';
 import { Button, ChannelMark, CountdownRing, Empty, Icon, Pill, Segmented, Tag, cx, toast } from '../ui/index.ts';
-import { CREATIVE_FILTERS, channelOf, frames, liveCreative, matches, type CreativeFilter, type LiveCreative } from './creativeState.ts';
+import { CREATIVE_FILTERS, channelOf, frames, liveCreative, matches, retryTurn, type CreativeFilter, type LiveCreative } from './creativeState.ts';
 import './creatives.css';
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -122,7 +122,7 @@ export function ProjectCreatives({ slug, live }: { slug: string; live: EventsSta
       {!loaded && !error ? (
         <div className="ms-creatives-grid" aria-busy="true">
           <span className="ms-sr" role="status">{c.loading}</span>
-          {[0, 1, 2].map((i) => <div key={i} className="ms-card ms-ccard ms-skel" aria-hidden="true"><div className="ms-ccard-stage" /><div className="ms-ccard-body"><i /><i /></div></div>)}
+          {[0, 1, 2].map((i) => <div key={i} className="ms-card ms-ccard ms-cskel" aria-hidden="true"><div className="ms-ccard-stage" /><div className="ms-ccard-body"><i /><i /></div></div>)}
         </div>
       ) : null}
 
@@ -177,14 +177,19 @@ function CreativeCard({ slug, c, info, presets, index, fresh }: CardProps) {
   }, [state, slug, c.slug, c.updatedAt]);
 
   const open = href.creative(slug, c.slug);
-  // An empty turn: the core starts again with its own wording (the brief on a first generation, otherwise
-  // "Regenerate all formats…"), resuming the agent session, exactly as "Save and regenerate".
+  // The page may be gone when a request returns: never pull the user back to the creative then.
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  // Generate: an empty turn, the core generates from the brief. Try again: the failed user turn again (text and
+  // pins, read from the conversation), or an empty turn when the failure was a generation without a message.
   const start = async (then: 'stay' | 'open', fail: (p: { detail: string }) => string) => {
     setBusy(true);
     try {
-      await api.sendCreativeTurn(slug, c.slug, {});
-      if (then === 'open') go(open);
+      const body = then === 'stay' ? retryTurn(await api.getConversation(slug, c.slug)) : {};
+      await api.sendCreativeTurn(slug, c.slug, body);
+      if (then === 'open' && mounted.current) go(open);
     } catch (e) {
+      if (!mounted.current) return;
       setBusy(false);
       toast.show(fail({ detail: message(e) }), { tone: 'neutral' });
     }
@@ -273,12 +278,12 @@ function Previews({ slug, c, presets, state }: { slug: string; c: CreativeSummar
     };
     return (
       <>
-        <div className="ms-frame ms-frame-out" style={{ width: Math.round(h * aspect), height: Math.round(h) }}>
+        <div className="ms-ccard-frame ms-ccard-frame-out" style={{ width: Math.round(h * aspect), height: Math.round(h) }}>
           {VIDEO.test(c.cover)
             ? <video src={src} muted preload="metadata" aria-hidden="true" onLoadedMetadata={onLoad} />
             : <img src={src} alt="" onLoad={onLoad} />}
           {state === 'running' ? <span className="ms-shimmer" aria-hidden="true" /> : null}
-          {state === 'failed' || state === 'interrupted' ? <span className="ms-frame-warn" aria-hidden="true"><Icon name="warn" size={16} strokeWidth={1.6} /></span> : null}
+          {state === 'failed' || state === 'interrupted' ? <span className="ms-ccard-frame-warn" aria-hidden="true"><Icon name="warn" size={16} strokeWidth={1.6} /></span> : null}
         </div>
         {c.formats.length > 1 ? <span className="ms-stage-more">{s.moreFormats({ n: c.formats.length - 1 })}</span> : null}
       </>
@@ -288,7 +293,7 @@ function Previews({ slug, c, presets, state }: { slug: string; c: CreativeSummar
   return (
     <>
       {list.map((f) => (
-        <div key={f.id} className={cx('ms-frame', 'ms-frame-empty', state === 'running' && 'ms-frame-busy')} style={{ width: f.width, height: f.height }}>
+        <div key={f.id} className={cx('ms-ccard-frame', 'ms-ccard-frame-empty', state === 'running' && 'ms-ccard-frame-busy')} style={{ width: f.width, height: f.height }}>
           {f.preset ? ratio(f.preset) : null}
           {state === 'running' ? <span className="ms-shimmer" aria-hidden="true" /> : null}
         </div>

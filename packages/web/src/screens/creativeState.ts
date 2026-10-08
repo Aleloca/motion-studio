@@ -1,4 +1,4 @@
-import type { AgentEvent, ApprovalRequest, CreativeSummary, FormatPreset, JobSummary } from '@motion-studio/shared';
+import type { AgentEvent, ApprovalRequest, ConversationEntry, CreativeSummary, FormatPreset, JobSummary, Pin } from '@motion-studio/shared';
 import type { EventsState } from '../eventsReducer.ts';
 import { CHANNELS, type Channel } from '../ui/index.ts';
 
@@ -86,4 +86,18 @@ export function frames(formats: string[], presets: FormatPreset[], o: { height: 
   const room = o.maxWidth - o.gap * (aspects.length - 1);
   const h = Math.min(o.height, room / sum);
   return aspects.map(({ id, preset, a }) => ({ id, preset, width: Math.round(h * a), height: Math.round(h) }));
+}
+
+/**
+ * What "Try again" sends after a failure: the user's turn that failed (text and pins), when the failure followed one,
+ * i.e. the last user message comes after the last version. Otherwise (a failed first generation, or a failed
+ * regenerate without a message) an empty turn, so the core starts again from the brief / its own retry wording.
+ */
+export function retryTurn(entries: ConversationEntry[]): { text?: string; pins?: Pin[] } {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i]!;
+    if (e.type === 'version') return {};
+    if (e.type === 'user') return { text: e.text, ...(e.pins.length ? { pins: e.pins } : {}) };
+  }
+  return {};
 }
