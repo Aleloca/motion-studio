@@ -31,14 +31,14 @@ export const creativeJobKey = (root: string, projectSlug: string, creativeSlug: 
 /** The render command comes from an agent-written manifest: single line, bounded, no control chars. */
 const sanitizeCommand = (cmd: string): string => cmd.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300);
 
-function addFormatsRequest(formats: string[], latest: VersionEntry | undefined): string | undefined {
-  if (!latest) return undefined;
-  const present = new Set(latest.outputs.map((o) => o.format));
+function addFormatsRequest(formats: string[], base: VersionEntry | undefined): string | undefined {
+  if (!base) return undefined;
+  const present = new Set(base.outputs.map((o) => o.format));
   const added = formats.filter((f) => !present.has(f));
   if (added.length === 0) return undefined;
-  const command = latest.renderCommand ? sanitizeCommand(latest.renderCommand) : '';
-  return `Aggiungi i formati ${added.join(', ')} riusando i sorgenti esistenti in work/ e lo stesso stile della versione ${latest.n}.`
-    + (command ? ` Il comando di render della versione ${latest.n} era: ${command}.` : '')
+  const command = base.renderCommand ? sanitizeCommand(base.renderCommand) : '';
+  return `Aggiungi i formati ${added.join(', ')} riusando i sorgenti esistenti in work/ e lo stesso stile della versione ${base.n}.`
+    + (command ? ` Il comando di render della versione ${base.n} era: ${command}.` : '')
     + ' Riconsegna tutti i formati richiesti.';
 }
 
@@ -138,10 +138,10 @@ export class CreativeTurnService {
       await this.clearStaleOutputs(store, slug, n, versions);
       const presets = await this.deps.presets();
       const model = (await this.deps.model()) ?? undefined;
-      // Pins refer to the version on screen: the one being resumed from, else the latest.
+      // Pins and the add-formats base refer to the version on screen: the one being resumed from, else the latest.
       const pinSource = creative.resumeFrom ? versions.find((v) => v.n === creative.resumeFrom!.version) : latest;
       const attachments = await this.extractPinFrames(ref, store, message?.pins ?? [], pinSource, n);
-      const request = message?.text || (message?.pins.length ? PINS_ONLY : versions.length === 0 ? undefined : (addFormatsRequest(creative.brief.formats, latest) ?? REGENERATE));
+      const request = message?.text || (message?.pins.length ? PINS_ONLY : versions.length === 0 ? undefined : (addFormatsRequest(creative.brief.formats, pinSource) ?? REGENERATE));
 
       const { context, existing } = await this.buildContext(ref, store, creative.linkedCodebases);
       const uncheckable = new Set<string>();
