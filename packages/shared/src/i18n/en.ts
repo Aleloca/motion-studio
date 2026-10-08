@@ -196,4 +196,17 @@ export const en = {
     durationOverMax: (p: { file: string; duration: string; max: number }) => `${p.file}: duration ${p.duration}s exceeds the maximum of ${p.max}s`,
     durationOffTarget: (p: { file: string; duration: string; target: number }) => `${p.file}: duration ${p.duration}s, about ${p.target}s requested`,
   },
+  export: {
+    absoluteDestination: 'Choose a destination folder (absolute path)',
+    outsideWorkspace: 'Choose a folder outside the Motion Studio workspace',
+    destinationIsFile: 'The destination is a file, not a folder',
+    cannotWrite: (p: { path: string }) => `Cannot write to ${p.path}`,
+    interrupted: (p: { reason: string; count: number; path: string }) => `Export interrupted: ${p.reason}. Files already copied: ${p.count} in ${p.path}`,
+    nothingToExport: (p: { n: number }) => `No outputs to export for v${p.n}`,
+    diskFull: 'disk space is full',
+    permissionDenied: 'permission denied',
+    quotaExceeded: 'space quota exceeded',
+    nameTooLong: 'file name too long',
+    writeError: 'write error',
+  },
 } as const satisfies Catalog;

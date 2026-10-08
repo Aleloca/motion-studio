@@ -194,4 +194,17 @@ export const it: Messages = {
     durationOverMax: (p) => `${p.file}: durata ${p.duration}s oltre il massimo di ${p.max}s`,
     durationOffTarget: (p) => `${p.file}: durata ${p.duration}s, richiesta circa ${p.target}s`,
   },
+  export: {
+    absoluteDestination: 'Scegli una cartella di destinazione (percorso assoluto)',
+    outsideWorkspace: 'Scegli una cartella fuori dal workspace di Motion Studio',
+    destinationIsFile: 'La destinazione è un file, non una cartella',
+    cannotWrite: (p) => `Impossibile scrivere nella cartella ${p.path}`,
+    interrupted: (p) => `Esportazione interrotta: ${p.reason}. File già copiati: ${p.count} in ${p.path}`,
+    nothingToExport: (p) => `Nessun output da esportare per v${p.n}`,
+    diskFull: 'spazio su disco esaurito',
+    permissionDenied: 'permesso negato',
+    quotaExceeded: 'quota di spazio esaurita',
+    nameTooLong: 'nome del file troppo lungo',
+    writeError: 'errore di scrittura',
+  },
 };

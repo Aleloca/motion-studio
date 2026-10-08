@@ -2,6 +2,7 @@ import { access, constants, copyFile, lstat, mkdir, realpath, rm, stat } from 'n
 import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path';
 import type { VersionEntry } from '@motion-studio/shared';
 import { WorkspaceError } from '../workspace-store.ts';
+import { t } from '../i18n.ts';
 
 export interface ExportResult { destination: string; files: Array<{ from: string; to: string }>; skipped: string[] }
 
@@ -32,11 +33,11 @@ async function copyUnique(copy: CopyFn, from: string, dir: string, stem: string,
 
 function reasonOf(e: unknown): string {
   switch ((e as NodeJS.ErrnoException).code) {
-    case 'ENOSPC': return 'spazio su disco esaurito';
-    case 'EACCES': case 'EPERM': case 'EROFS': return 'permesso negato';
-    case 'EDQUOT': return 'quota di spazio esaurita';
-    case 'ENAMETOOLONG': return 'nome del file troppo lungo';
-    default: return 'errore di scrittura';
+    case 'ENOSPC': return t().export.diskFull;
+    case 'EACCES': case 'EPERM': case 'EROFS': return t().export.permissionDenied;
+    case 'EDQUOT': return t().export.quotaExceeded;
+    case 'ENAMETOOLONG': return t().export.nameTooLong;
+    default: return t().export.writeError;
   }
 }
 
@@ -61,16 +62,16 @@ async function resolveLoose(p: string): Promise<string> {
  */
 export async function exportVersion(opts: { creativeDir: string; version: VersionEntry; destination: string; slug: string; forbiddenRoot?: string; copy?: CopyFn }): Promise<ExportResult> {
   const dest = opts.destination.trim();
-  if (!isAbsolute(dest)) throw new WorkspaceError(400, 'Scegli una cartella di destinazione (percorso assoluto)');
+  if (!isAbsolute(dest)) throw new WorkspaceError(400, t().export.absoluteDestination);
   if (opts.forbiddenRoot) {
     const root = await resolveLoose(opts.forbiddenRoot);
-    if (isInside(await resolveLoose(dest), root)) throw new WorkspaceError(400, 'Scegli una cartella fuori dal workspace di Motion Studio');
+    if (isInside(await resolveLoose(dest), root)) throw new WorkspaceError(400, t().export.outsideWorkspace);
   }
   const info = await lstat(dest).catch(() => null);
-  if (info && !info.isDirectory() && !info.isSymbolicLink()) throw new WorkspaceError(400, 'La destinazione è un file, non una cartella');
+  if (info && !info.isDirectory() && !info.isSymbolicLink()) throw new WorkspaceError(400, t().export.destinationIsFile);
   try { await mkdir(dest, { recursive: true }); await access(dest, constants.W_OK); }
-  catch { throw new WorkspaceError(400, `Impossibile scrivere nella cartella ${dest}`); }
-  if (!(await stat(dest)).isDirectory()) throw new WorkspaceError(400, 'La destinazione è un file, non una cartella');
+  catch { throw new WorkspaceError(400, t().export.cannotWrite({ path: dest })); }
+  if (!(await stat(dest)).isDirectory()) throw new WorkspaceError(400, t().export.destinationIsFile);
   const n = opts.version.n;
   const outDir = join(opts.creativeDir, 'outputs', `v${n}`);
   const realOutDir = await realpath(outDir).catch(() => null);
@@ -95,9 +96,9 @@ export async function exportVersion(opts: { creativeDir: string; version: Versio
     } catch (e) {
       const target = (e as { target?: string }).target;
       if (target) await rm(target, { force: true }).catch(() => undefined);
-      throw new WorkspaceError(500, `Esportazione interrotta: ${reasonOf(e)}. File già copiati: ${files.length} in ${dest}`);
+      throw new WorkspaceError(500, t().export.interrupted({ reason: reasonOf(e), count: files.length, path: dest }));
     }
   }
-  if (!files.length) throw new WorkspaceError(404, `Nessun output da esportare per v${n}`);
+  if (!files.length) throw new WorkspaceError(404, t().export.nothingToExport({ n }));
   return { destination: dest, files, skipped };
 }

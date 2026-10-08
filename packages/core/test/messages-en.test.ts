@@ -1,10 +1,11 @@
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { ApprovalRequest } from '@motion-studio/shared';
+import type { ApprovalRequest, VersionEntry } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ApprovalBroker } from '../src/approvals/broker.ts';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { exportVersion } from '../src/creatives/export.ts';
 import { validateOutputs } from '../src/creatives/output-contract.ts';
 import { NoMediaTools } from '../src/media/media-tools.ts';
 import { runDoctor } from '../src/doctor.ts';
@@ -46,5 +47,9 @@ describe('English messages', () => {
     const r = await validateOutputs({ dir, requested: ['ghost'], presets: [], durationSec: null, media: NoMediaTools });
     expect(r.problems).toEqual(['Unknown preset: ghost (not in the format catalog)']);
     expect(r.unknownPresets).toEqual(['ghost']);
+  });
+  it('words export refusals in English', async () => {
+    const version: VersionEntry = { n: 1, commit: null, sessionId: null, status: 'complete', createdAt: 'x', request: '', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: null };
+    await expect(exportVersion({ creativeDir: '/nowhere', version, destination: 'relative/dir', slug: 'c' })).rejects.toMatchObject({ status: 400, message: 'Choose a destination folder (absolute path)' });
   });
 });
