@@ -1,9 +1,12 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { existsSync, readFileSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { workspaceSettingsSchema } from '@motion-studio/shared';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
+import { AgentLauncher } from '../src/agent/launcher.ts';
 import type { AgentRunner } from '../src/agent/runner.ts';
 import { ApprovalBroker } from '../src/approvals/broker.ts';
 import { PermissionsStore } from '../src/approvals/permissions-store.ts';
@@ -35,8 +38,8 @@ async function launch(over: Parameters<typeof testLauncher>[1], kind: 'creative'
   const launcher = testLauncher(new ClaudeCodeRunner([process.execPath, FAKE]), over);
   const run = await launcher.start({ kind, jobId: 'j1', projectSlug: 'acme', projectDir: dir, codebases: [], request: { prompt: 'ciao' }, onEvent: () => {} });
   await run.done;
-  const { args, env, mcpTimeout } = JSON.parse(await readFile(argsFile, 'utf8'));
-  return { args: args as string[], env, mcpTimeout, launcher, projectDir: dir };
+  const { args, env, mcpTimeout, mcpConfigFile } = JSON.parse(await readFile(argsFile, 'utf8'));
+  return { args: args as string[], env, mcpTimeout, mcpConfigFile: mcpConfigFile as { path: string; mode: number | null; content: string | null } | null, launcher, projectDir: dir };
 }
 
 const studioRules = (dir: string) => ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].map((t) => `${t}(/${escapeGlob(join(dir, '.studio'))}/**)`);
@@ -59,15 +62,22 @@ describe('AgentLauncher', () => {
     const { args } = await launch({ sandbox: async () => ({ available: true, reason: 'ok' }), settings: { sandboxMode: 'off' } });
     expect(args).not.toContain('--settings');
   });
-  it('with a bridge origin wires the MCP server, the prompt tool, the env and frees the token at the end', { timeout: 20_000 }, async () => {
+  it('with a bridge origin wires the MCP server through a private file, the prompt tool, the env and frees the token at the end', { timeout: 20_000 }, async () => {
     const bridge = new AgentBridge();
     bridge.setOrigin('http://127.0.0.1:4317');
-    const { args, env, mcpTimeout } = await launch({ bridge, mcpCommand: ['node', '/x/server.mjs'] });
-    const cfg = JSON.parse(args[args.indexOf('--mcp-config') + 1]!);
+    const configDir = await newProject();
+    const { args, env, mcpTimeout, mcpConfigFile } = await launch({ bridge, mcpCommand: ['node', '/x/server.mjs'], configDir });
+    expect(args).toContain('--strict-mcp-config');
+    const path = args[args.indexOf('--mcp-config') + 1]!;
+    expect(path.startsWith(join(configDir, 'run') + '/')).toBe(true);
+    expect(path).toMatch(/\.mcp\.json$/);
+    expect(mcpConfigFile).toMatchObject({ path, mode: 0o600 });
+    const cfg = JSON.parse(mcpConfigFile!.content!);
     expect(cfg.mcpServers.studio).toMatchObject({ type: 'stdio', command: 'node', args: ['/x/server.mjs'] });
     expect(cfg.mcpServers.studio.env.MOTION_STUDIO_BRIDGE_URL).toBe('http://127.0.0.1:4317');
     const token = cfg.mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN as string;
     expect(token).toMatch(/^[0-9a-f]{64}$/);
+    expect(args.some((a) => a.includes(token))).toBe(false); // never visible in the process list
     expect(cfg.mcpServers.studio.env.MOTION_STUDIO_TOOLS).toContain('validate_output');
     expect(args[args.indexOf('--permission-prompt-tool') + 1]).toBe('mcp__studio__approve');
     expect(args).not.toContain('--permission-prompts');
@@ -75,12 +85,14 @@ describe('AgentLauncher', () => {
     expect(env).toBe(null); // MS_TEST_ENV unset
     expect(mcpTimeout).toBe('900000');
     expect(bridge.resolve(token)).toBeNull();
+    expect(existsSync(path)).toBe(false);
+    expect((await stat(join(configDir, 'run'))).mode & 0o777).toBe(0o700);
   });
   it('only exposes the MCP tools of the job kind', { timeout: 20_000 }, async () => {
     const bridge = new AgentBridge();
     bridge.setOrigin('http://127.0.0.1:4317');
-    const { args } = await launch({ bridge, mcpCommand: ['node', '/x/server.mjs'] }, 'describe');
-    const cfg = JSON.parse(args[args.indexOf('--mcp-config') + 1]!);
+    const { mcpConfigFile, args } = await launch({ bridge, mcpCommand: ['node', '/x/server.mjs'] }, 'describe');
+    const cfg = JSON.parse(mcpConfigFile!.content!);
     expect(cfg.mcpServers.studio.env.MOTION_STUDIO_TOOLS).toBe('report_progress');
     expect(args).not.toContain('mcp__studio__read_brand_kit');
   });
@@ -132,6 +144,57 @@ describe('AgentLauncher', () => {
     finish({ status: 'succeeded' });
     await run.done;
     await expect(late).resolves.toEqual({ decision: 'cancelled' });
+  });
+  it('revokes the token and removes the MCP config file as soon as the run is cancelled', async () => {
+    const bridge = new AgentBridge();
+    bridge.setOrigin('http://127.0.0.1:4317');
+    let configPath = '';
+    let runnerCancelled = false;
+    let tokenAtRunnerCancel: unknown = 'unset';
+    let token = '';
+    const runner: AgentRunner = { start: (req) => {
+      configPath = req.mcpConfigPath!;
+      token = JSON.parse(readFileSync(configPath, 'utf8')).mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN;
+      return { done: new Promise(() => {}), cancel: () => { runnerCancelled = true; tokenAtRunnerCancel = bridge.resolve(token); } };
+    } };
+    const projectDir = await newProject();
+    const launcher = testLauncher(runner, { bridge, mcpCommand: ['node', '/x/server.mjs'] });
+    const run = await launcher.start({ kind: 'creative', jobId: 'j7', projectSlug: 'acme', projectDir, request: { prompt: 'x' }, onEvent: () => {} });
+    expect(bridge.resolve(token)).not.toBeNull();
+    run.cancel();
+    expect(bridge.resolve(token)).toBeNull();
+    expect(runnerCancelled).toBe(true);
+    expect(tokenAtRunnerCancel).toBeNull(); // revoked before the runner is told
+    await vi.waitFor(() => expect(existsSync(configPath)).toBe(false));
+  });
+  it('frees the token and the MCP config file when the runner fails to start', async () => {
+    const bridge = new AgentBridge();
+    bridge.setOrigin('http://127.0.0.1:4317');
+    let configPath = '';
+    let token = '';
+    const runner: AgentRunner = { start: (req) => {
+      configPath = req.mcpConfigPath!;
+      token = JSON.parse(readFileSync(configPath, 'utf8')).mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN;
+      throw new Error('claudeCommand vuoto');
+    } };
+    const projectDir = await newProject();
+    const launcher = testLauncher(runner, { bridge, mcpCommand: ['node', '/x/server.mjs'] });
+    await expect(launcher.start({ kind: 'creative', jobId: 'j8', projectSlug: 'acme', projectDir, request: { prompt: 'x' }, onEvent: () => {} })).rejects.toThrow('claudeCommand vuoto');
+    expect(token).toMatch(/^[0-9a-f]{64}$/);
+    expect(bridge.resolve(token)).toBeNull();
+    expect(existsSync(configPath)).toBe(false);
+  });
+  it('reads the settings once per start', { timeout: 20_000 }, async () => {
+    let reads = 0;
+    const projectDir = await newProject();
+    process.env.FAKE_CLAUDE_ARGS_FILE = join(projectDir, 'args.json');
+    const launcher = new AgentLauncher({
+      runner: new ClaudeCodeRunner([process.execPath, FAKE]), bridge: new AgentBridge(), approvals: new ApprovalBroker({ broadcast: () => {} }),
+      sandbox: async () => ({ available: true, reason: '' }), configDir: projectDir, mcpCommand: null,
+      settings: async () => { reads++; return workspaceSettingsSchema.parse({ schemaVersion: 1 }); },
+    });
+    await (await launcher.start({ kind: 'describe', jobId: 'j6', projectSlug: 'acme', projectDir, request: { prompt: 'x' }, onEvent: () => {} })).done;
+    expect(reads).toBe(1);
   });
   it('sandboxActive follows the settings and the system support', async () => {
     const runner: AgentRunner = { start: () => { throw new Error('unused'); } };

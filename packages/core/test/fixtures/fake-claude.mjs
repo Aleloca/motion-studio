@@ -4,12 +4,15 @@
 // FAKE_CLAUDE_SYMLINK_BRAND=<dir>: describe turns move brand/ to <dir>, tamper the kit there and leave a symlink.
 // FAKE_CLAUDE_WAIT_FILE=<path>: brand/describe turns wait for that file to exist before finishing.
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 
 const args = process.argv.slice(2);
-if (process.env.FAKE_CLAUDE_ARGS_FILE) writeFileSync(process.env.FAKE_CLAUDE_ARGS_FILE, JSON.stringify({ args, cwd: process.cwd(), pid: process.pid, env: process.env.MS_TEST_ENV ?? null, mcpTimeout: process.env.MCP_TOOL_TIMEOUT ?? null }));
+// The MCP config file as claude sees it at startup (mode and contents), when one is passed.
+const mcpConfigAt = process.argv.indexOf('--mcp-config');
+const mcpConfigFile = mcpConfigAt >= 0 ? (() => { const p = process.argv[mcpConfigAt + 1]; try { return { path: p, mode: statSync(p).mode & 0o777, content: readFileSync(p, 'utf8') }; } catch { return { path: p, mode: null, content: null }; } })() : null;
+if (process.env.FAKE_CLAUDE_ARGS_FILE) writeFileSync(process.env.FAKE_CLAUDE_ARGS_FILE, JSON.stringify({ args, cwd: process.cwd(), pid: process.pid, env: process.env.MS_TEST_ENV ?? null, mcpTimeout: process.env.MCP_TOOL_TIMEOUT ?? null, mcpConfigFile }));
 if (args[0] === '--version') { console.log('9.9.9 (Claude Code)'); process.exit(0); }
 if (args[0] === 'auth' && args[1] === 'status') {
   const loggedIn = process.env.FAKE_CLAUDE_LOGGED_IN !== '0';

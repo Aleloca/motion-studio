@@ -56,18 +56,18 @@ describe('buildClaudeArgs', () => {
       '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
       '--permission-mode', 'acceptEdits', '--permission-prompts', 'none',
     ]);
-    expect(buildClaudeArgs({ cwd: '/x', prompt: 'p', resumeSessionId: 's1', addDirs: ['/a b', '/c'], model: 'sonnet', settings: { a: 1 }, mcpConfig: { mcpServers: {} } })).toEqual([
+    expect(buildClaudeArgs({ cwd: '/x', prompt: 'p', resumeSessionId: 's1', addDirs: ['/a b', '/c'], model: 'sonnet', settings: { a: 1 }, mcpConfigPath: '/cfg/run/j1.mcp.json' })).toEqual([
       '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
       '--permission-mode', 'acceptEdits', '--permission-prompts', 'none',
       '--resume', 's1', '--add-dir', '/a b', '--add-dir', '/c', '--model', 'sonnet',
-      '--settings', '{"a":1}', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
+      '--settings', '{"a":1}', '--strict-mcp-config', '--mcp-config', '/cfg/run/j1.mcp.json',
     ]);
   });
-  it('passes settings, inline MCP config and the permission prompt tool', () => {
-    const args = buildClaudeArgs({ cwd: '/x', prompt: 'p', settings: { sandbox: { enabled: true } }, mcpConfig: { mcpServers: {} }, permissionPromptTool: 'mcp__studio__approve' });
+  it('passes settings, the MCP config file (never inline JSON) and the permission prompt tool', () => {
+    const args = buildClaudeArgs({ cwd: '/x', prompt: 'p', settings: { sandbox: { enabled: true } }, mcpConfigPath: '/cfg/run/j1.mcp.json', permissionPromptTool: 'mcp__studio__approve' });
     expect(args).toContain('--strict-mcp-config');
     expect(args[args.indexOf('--settings') + 1]).toBe('{"sandbox":{"enabled":true}}');
-    expect(args[args.indexOf('--mcp-config') + 1]).toBe('{"mcpServers":{}}');
+    expect(args[args.indexOf('--mcp-config') + 1]).toBe('/cfg/run/j1.mcp.json');
     expect(args[args.indexOf('--permission-prompt-tool') + 1]).toBe('mcp__studio__approve');
     expect(args).not.toContain('--permission-prompts');
   });

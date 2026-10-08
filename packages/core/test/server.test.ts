@@ -18,7 +18,7 @@ let base: string;
 
 beforeEach(async () => {
   base = await mkdtemp(join(tmpdir(), 'ms-srv-'));
-  app = await buildServer({
+  app = await buildServer({ sandbox: async () => ({ available: false, reason: 'test' }),
     appConfig: new AppConfigStore(join(base, 'config')),
     git: new Git(),
     runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),
@@ -27,7 +27,7 @@ beforeEach(async () => {
 });
 afterEach(async () => { await app.close(); delete process.env.FAKE_CLAUDE_SCENARIO; delete process.env.FAKE_CLAUDE_ARGS_FILE; });
 
-const buildWith = (opts: Partial<Parameters<typeof buildServer>[0]> = {}) => buildServer({
+const buildWith = (opts: Partial<Parameters<typeof buildServer>[0]> = {}) => buildServer({ sandbox: async () => ({ available: false, reason: 'test' }),
   appConfig: new AppConfigStore(join(base, 'config')),
   git: new Git(),
   runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),

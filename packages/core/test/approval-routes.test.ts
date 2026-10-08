@@ -16,7 +16,7 @@ let base: string;
 beforeEach(async () => {
   base = await mkdtemp(join(tmpdir(), 'ms-ar-'));
   broker = new ApprovalBroker({ broadcast: () => {} });
-  app = await buildServer({ appConfig: new AppConfigStore(join(base, 'c')), git: new Git(), doctor: async () => [], runner: new ClaudeCodeRunner(['true']), approvals: broker });
+  app = await buildServer({ sandbox: async () => ({ available: false, reason: 'test' }), appConfig: new AppConfigStore(join(base, 'c')), git: new Git(), doctor: async () => [], runner: new ClaudeCodeRunner(['true']), approvals: broker });
   await app.inject({ method: 'PUT', url: '/api/workspace', payload: { path: join(base, 'ws') } });
   await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' } });
 });
@@ -48,6 +48,6 @@ describe('approvals API', () => {
     ws.close();
     await app.close();
     expect(await pending).toEqual({ decision: 'cancelled' });
-    app = await buildServer({ appConfig: new AppConfigStore(join(base, 'c2')), git: new Git(), doctor: async () => [], runner: new ClaudeCodeRunner(['true']) });
+    app = await buildServer({ sandbox: async () => ({ available: false, reason: 'test' }), appConfig: new AppConfigStore(join(base, 'c2')), git: new Git(), doctor: async () => [], runner: new ClaudeCodeRunner(['true']) });
   });
 });

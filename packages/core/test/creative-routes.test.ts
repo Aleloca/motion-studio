@@ -18,7 +18,7 @@ let app: FastifyInstance;
 let base: string;
 let opened: string[];
 
-const build = () => buildServer({
+const build = () => buildServer({ sandbox: async () => ({ available: false, reason: 'test' }),
   appConfig: new AppConfigStore(join(base, 'config')),
   git: new Git(),
   runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),

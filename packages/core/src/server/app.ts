@@ -13,7 +13,7 @@ import { FormatCatalog } from '../formats/format-catalog.ts';
 import { NoMediaTools, type MediaTools } from '../media/media-tools.ts';
 import { AgentLauncher } from '../agent/launcher.ts';
 import type { AgentRunner } from '../agent/runner.ts';
-import { detectSandbox, type SandboxSupport } from '../agent/sandbox.ts';
+import { cachedSandboxDetection, type SandboxSupport } from '../agent/sandbox.ts';
 import { defaultConfigDir, type AppConfigStore } from '../app-config.ts';
 import { AgentBridge } from '../bridge/bridge.ts';
 import { registerBridgeRoutes } from '../bridge/bridge-routes.ts';
@@ -49,12 +49,6 @@ export interface ServerDeps {
   configDir?: string;
   /** Sandbox support of the system; defaults to a cached detectSandbox(). */
   sandbox?: () => Promise<SandboxSupport>;
-}
-
-/** Runs `fn` once and keeps its promise (a rejection is not cached). */
-function memo<T>(fn: () => Promise<T>): () => Promise<T> {
-  let p: Promise<T> | null = null;
-  return () => (p ??= fn().catch((err) => { p = null; throw err; }));
 }
 
 const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?$/i;
@@ -126,7 +120,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return workspace;
   };
 
-  const sandbox = deps.sandbox ?? memo(() => detectSandbox());
+  const sandbox = deps.sandbox ?? cachedSandboxDetection();
   const bridge = deps.bridge ?? new AgentBridge();
   const launcher = new AgentLauncher({
     runner: deps.runner, bridge, approvals, sandbox,

@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import open from 'open';
 import { ClaudeCodeRunner, claudeCommandFromEnv } from '../agent/claude-code-runner.ts';
-import { detectSandbox, type SandboxSupport } from '../agent/sandbox.ts';
+import { cachedSandboxDetection } from '../agent/sandbox.ts';
 import { AppConfigStore, defaultConfigDir } from '../app-config.ts';
 import { AgentBridge } from '../bridge/bridge.ts';
 import { runDoctor } from '../doctor.ts';
@@ -22,8 +22,8 @@ export async function startServer(opts: { port?: number; host?: string; configDi
   const mcpServerPath = opts.mcpServerPath ?? DEV_MCP_SERVER;
   // Without the server file the agent runs as in phase 3 (anything that would prompt is denied) instead of failing to start.
   const mcpCommand = existsSync(mcpServerPath) ? [process.execPath, mcpServerPath] : null;
-  let detected: Promise<SandboxSupport> | null = null;
-  const sandbox = () => (detected ??= detectSandbox());
+  // One detection shared by the agent launcher and the Doctor.
+  const sandbox = cachedSandboxDetection();
   const app = await buildServer({
     appConfig: new AppConfigStore(configDir),
     configDir,

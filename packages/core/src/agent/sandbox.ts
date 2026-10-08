@@ -37,3 +37,9 @@ export async function detectSandbox(opts: { platform?: NodeJS.Platform; exec?: C
   }
   return { available: false, reason: platform === 'win32' ? 'La sandbox di Claude Code non è disponibile su Windows' : `La sandbox non è supportata su ${platform}` };
 }
+
+/** detectSandbox() run once and shared (a rejection is not kept, so a later call retries). */
+export function cachedSandboxDetection(detect: () => Promise<SandboxSupport> = () => detectSandbox()): () => Promise<SandboxSupport> {
+  let p: Promise<SandboxSupport> | null = null;
+  return () => (p ??= detect().catch((err) => { p = null; throw err; }));
+}

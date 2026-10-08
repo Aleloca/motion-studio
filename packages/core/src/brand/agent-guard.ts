@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
-import { lstat, readFile, realpath, rename, rm, unlink, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { lstat, open, readFile, realpath, rename, rm, stat, unlink, writeFile, type FileHandle } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 import { fileLock } from '../file-locks.ts';
 
@@ -92,4 +93,41 @@ export async function readAgentFile(path: string, maxBytes = MAX_AGENT_FILE_BYTE
   if (!info.isFile()) return { skipped: 'non è un file regolare' };
   if (info.size > maxBytes) return { skipped: 'file troppo grande' };
   return { text: await readFile(path, 'utf8') };
+}
+
+/**
+ * Reads a project file on behalf of the agent from the (unsandboxed) core: never through a symlink, only a regular file
+ * whose real path stays inside the project, up to `maxBytes`. Opened non-blocking so a FIFO cannot hang the core.
+ * null when missing; `{ skipped }` when refused.
+ */
+export async function readConfinedFile(projectDir: string, rel: string, maxBytes = MAX_AGENT_FILE_BYTES): Promise<AgentFile> {
+  const abs = absOf(projectDir, rel);
+  let fh: FileHandle;
+  try {
+    fh = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? null : { skipped: 'non leggibile' };
+  }
+  try {
+    const info = await fh.stat();
+    if (!info.isFile()) return { skipped: 'non è un file regolare' };
+    if (info.size > maxBytes) return { skipped: 'file troppo grande' };
+    // A symlinked parent folder could lead out of the project: the opened file must be the one under the project's real path.
+    const [real, realProject] = await Promise.all([realpath(abs).catch(() => null), realpath(projectDir).catch(() => null)]);
+    if (!real || !realProject || !real.startsWith(realProject + sep)) return { skipped: 'fuori dal progetto' };
+    const check = await stat(real).catch(() => null);
+    if (!check || check.ino !== info.ino || check.dev !== info.dev) return { skipped: 'fuori dal progetto' };
+    // Bounded read: the file may grow after the size check.
+    const buf = Buffer.alloc(maxBytes + 1);
+    let total = 0;
+    for (;;) {
+      const { bytesRead } = await fh.read(buf, total, buf.length - total, total);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+      if (total > maxBytes) return { skipped: 'file troppo grande' };
+    }
+    return { text: buf.subarray(0, total).toString('utf8') };
+  } finally {
+    await fh.close().catch(() => {});
+  }
 }

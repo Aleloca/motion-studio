@@ -19,7 +19,7 @@ export function buildClaudeArgs(req: AgentTurnRequest): string[] {
   for (const d of req.addDirs ?? []) args.push('--add-dir', d);
   if (req.model) args.push('--model', req.model);
   if (req.settings) args.push('--settings', JSON.stringify(req.settings));
-  if (req.mcpConfig) args.push('--strict-mcp-config', '--mcp-config', JSON.stringify(req.mcpConfig));
+  if (req.mcpConfigPath) args.push('--strict-mcp-config', '--mcp-config', req.mcpConfigPath);
   // Both rule flags are variadic: deny first, allow last, so each group is ended by the next flag and cannot swallow others.
   if (req.disallowedTools?.length) args.push('--disallowedTools', ...req.disallowedTools);
   // Variadic flag: kept last so it cannot swallow other flags (the prompt travels on stdin, there are no positionals).

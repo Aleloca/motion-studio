@@ -1,4 +1,5 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -49,6 +50,17 @@ describe('bridge', () => {
     expect((await call('report_progress', { message: '' })).statusCode).toBe(400);
     expect((await call('report_progress', { message: 'x'.repeat(301) })).statusCode).toBe(400);
     expect((await call('report_progress', {})).statusCode).toBe(400);
+    expect((await call('report_progress', { message: '\u202E\u0007 \n\t' })).statusCode).toBe(400);
+  });
+  it('strips control and bidi characters from progress and collapses whitespace', async () => {
+    await call('report_progress', { message: '  Render\u001b[31m\n\n 9:16 \u202Egnp.exe\u2066x\u2069  ' });
+    expect(events).toEqual([{ kind: 'progress', text: 'Render[31m 9:16 gnp.exex' }]);
+  });
+  it('denies a permission prompt whose input is not an object', async () => {
+    for (const input of ['rm -rf /', [1], null, 3]) {
+      expect((await call('approve', { tool_name: 'Bash', input, tool_use_id: 't' })).json()).toEqual({ behavior: 'deny', message: 'Richiesta non valida.' });
+    }
+    expect(approvals.pending()).toEqual([]);
   });
   it('asks the user and answers the permission prompt', async () => {
     const pending = call('approve', { tool_name: 'Bash', input: { command: 'brew install ffmpeg' }, tool_use_id: 't1' });
@@ -85,8 +97,45 @@ describe('bridge', () => {
   it('reports a corrupt kit without failing', async () => {
     await writeFile(join(projectDir, 'brand', 'brand-kit.json'), '{oops');
     const body = (await call('read_brand_kit', {})).json();
-    expect(body.kit).toBeNull();
-    expect(typeof body.error).toBe('string');
+    expect(body).toMatchObject({ kit: null, error: 'Brand kit non leggibile' });
+  });
+  it('never follows symlinks out of the project when reading the brand kit', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'ms-out-'));
+    await writeFile(join(outside, 'secret'), '{"SEGRETO": "id_rsa"');
+    await rm(join(projectDir, 'brand', 'guidelines.md'), { force: true });
+    await symlink(join(outside, 'secret'), join(projectDir, 'brand', 'guidelines.md'));
+    await rm(join(projectDir, 'brand', 'brand-kit.json'));
+    await symlink(join(outside, 'secret'), join(projectDir, 'brand', 'brand-kit.json'));
+    const res = await call('read_brand_kit', {});
+    expect(res.statusCode).toBe(200);
+    expect(res.body).not.toContain('SEGRETO');
+    expect(res.json()).toMatchObject({ kit: null, guidelines: '', error: 'Brand kit non leggibile' });
+    await rm(outside, { recursive: true, force: true });
+  });
+  it('never reads through a brand folder symlinked out of the project', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'ms-out-'));
+    await writeFile(join(outside, 'guidelines.md'), 'SEGRETO');
+    await writeFile(join(outside, 'brand-kit.json'), JSON.stringify({ schemaVersion: 1, tone: 'SEGRETO' }));
+    await rm(join(projectDir, 'brand'), { recursive: true, force: true });
+    await symlink(outside, join(projectDir, 'brand'));
+    const res = await call('read_brand_kit', {});
+    expect(res.body).not.toContain('SEGRETO');
+    expect(res.json()).toMatchObject({ kit: null, guidelines: '' });
+    await rm(outside, { recursive: true, force: true });
+  });
+  it('does not hang on a FIFO nor read oversized files', { timeout: 10_000 }, async () => {
+    await rm(join(projectDir, 'brand', 'brand-kit.json'));
+    execFileSync('mkfifo', [join(projectDir, 'brand', 'brand-kit.json')]);
+    await writeFile(join(projectDir, 'brand', 'guidelines.md'), 'x'.repeat(1024 * 1024 + 1));
+    const res = await call('read_brand_kit', {});
+    expect(res.json()).toMatchObject({ kit: null, guidelines: '', error: 'Brand kit non leggibile' });
+  });
+  it('returns the empty kit when there is none, and the guidelines truncated', async () => {
+    await rm(join(projectDir, 'brand', 'brand-kit.json'));
+    await writeFile(join(projectDir, 'brand', 'guidelines.md'), 'g'.repeat(60_000));
+    const body = (await call('read_brand_kit', {})).json();
+    expect(body.kit).toMatchObject({ schemaVersion: 1, colors: [] });
+    expect(body.guidelines).toHaveLength(50_000);
   });
   it('refuses tools that are not part of the job kind', async () => {
     const describeToken = bridge.register({ jobId: 'j2', kind: 'describe', projectSlug: 'acme', projectDir, creativeSlug: null, emit: () => {} });

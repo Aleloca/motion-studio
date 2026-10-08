@@ -1,7 +1,8 @@
 import type { FastifyInstance } from 'fastify';
+import { EMPTY_BRAND_KIT, brandKitSchema } from '@motion-studio/shared';
 import { MCP_TOOLS } from '../agent/launcher.ts';
 import type { ApprovalBroker } from '../approvals/broker.ts';
-import { BrandStore } from '../brand/brand-store.ts';
+import { readConfinedFile } from '../brand/agent-guard.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import type { AgentBridge, BridgeContext } from './bridge.ts';
 
@@ -15,11 +16,20 @@ const DENY_MESSAGES = {
 } as const;
 const MAX_GUIDELINES = 50_000;
 
+/** Progress shown in the UI: no control or bidi characters (they could disguise the text), single spaces. */
+export const cleanProgress = (text: string) => text
+  .replace(/[\t\n\v\f\r]/g, ' ')
+  .replace(/[\p{Cc}\u202A-\u202E\u2066-\u2069]/gu, '')
+  .replace(/\s+/g, ' ')
+  .trim();
+
 /** Calls from the `studio` MCP server: one per tool, authenticated by the job's bridge token. */
 export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesContext) {
   const tools: Record<string, BridgeHandler> = {
     approve: async (c, a) => {
-      const input = (a.input ?? a.tool_input ?? {}) as Record<string, unknown>;
+      const raw = a.input ?? a.tool_input;
+      if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { behavior: 'deny', message: 'Richiesta non valida.' };
+      const input = raw as Record<string, unknown>;
       const toolName = typeof a.tool_name === 'string' ? a.tool_name : 'sconosciuto';
       const { decision } = await ctx.approvals.request({ jobId: c.jobId, projectSlug: c.projectSlug, projectDir: c.projectDir, creativeSlug: c.creativeSlug, kind: 'tool', toolName, input });
       return decision === 'once' || decision === 'always'
@@ -27,7 +37,7 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
         : { behavior: 'deny', message: DENY_MESSAGES[decision] };
     },
     report_progress: async (c, a) => {
-      const text = typeof a.message === 'string' ? a.message.trim() : '';
+      const text = typeof a.message === 'string' ? cleanProgress(a.message) : '';
       if (!text || text.length > 300) throw new WorkspaceError(400, 'Messaggio di avanzamento non valido (1-300 caratteri)');
       c.emit({ kind: 'progress', text });
       return { ok: true };
@@ -36,11 +46,19 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
       if (!c.validate) throw new WorkspaceError(400, 'Validazione disponibile solo nelle creatività');
       return c.validate();
     },
+    // The core is not sandboxed: never follow the agent's symlinks, never read special or huge files.
     read_brand_kit: async (c) => {
-      const store = new BrandStore(c.projectDir);
-      const guidelines = (await store.readGuidelines().catch(() => '')).slice(0, MAX_GUIDELINES);
-      try { return { kit: await store.readKit(), guidelines }; }
-      catch (e) { return { kit: null, guidelines, error: (e as Error).message }; }
+      const g = await readConfinedFile(c.projectDir, 'brand/guidelines.md');
+      const guidelines = g && 'text' in g ? g.text.slice(0, MAX_GUIDELINES) : '';
+      const k = await readConfinedFile(c.projectDir, 'brand/brand-kit.json');
+      if (k === null) return { kit: EMPTY_BRAND_KIT, guidelines };
+      if ('text' in k) {
+        let json: unknown = undefined;
+        try { json = JSON.parse(k.text); } catch { /* reported below, without the parser's message */ }
+        const parsed = brandKitSchema.safeParse(json);
+        if (parsed.success) return { kit: parsed.data, guidelines };
+      }
+      return { kit: null, guidelines, error: 'Brand kit non leggibile' };
     },
     ...ctx.extraTools,
   };

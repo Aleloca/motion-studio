@@ -19,7 +19,7 @@ const manual = { kind: 'manual', ref: null };
 beforeEach(async () => {
   base = await mkdtemp(join(tmpdir(), 'ms-br-'));
   process.env.FAKE_CLAUDE_SCENARIO = 'brand';
-  app = await buildServer({ appConfig: new AppConfigStore(join(base, 'config')), git: new Git(), doctor: async () => [],
+  app = await buildServer({ sandbox: async () => ({ available: false, reason: 'test' }), appConfig: new AppConfigStore(join(base, 'config')), git: new Git(), doctor: async () => [],
     runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }) });
   await app.inject({ method: 'PUT', url: '/api/workspace', payload: { path: join(base, 'ws') } });
   await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' } });

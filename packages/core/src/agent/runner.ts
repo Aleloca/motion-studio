@@ -10,8 +10,8 @@ export interface AgentTurnRequest {
   model?: string;
   /** Claude Code settings for this turn (e.g. the sandbox), passed as --settings <json>. */
   settings?: Record<string, unknown>;
-  /** Inline MCP configuration ({ mcpServers: … }), passed with --strict-mcp-config. */
-  mcpConfig?: Record<string, unknown>;
+  /** Path of a private MCP configuration file ({ mcpServers: … }), passed with --strict-mcp-config. Never inline: it holds secrets. */
+  mcpConfigPath?: string;
   /** MCP tool that answers permission prompts (replaces `--permission-prompts none`). */
   permissionPromptTool?: string;
   /** Extra environment variables for the agent process. */

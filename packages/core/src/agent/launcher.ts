@@ -1,4 +1,5 @@
-import { realpath } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { chmod, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentEvent, WorkspaceSettings } from '@motion-studio/shared';
@@ -41,13 +42,16 @@ export class AgentLauncher {
   constructor(private readonly deps: LauncherDeps) {}
 
   async sandboxActive(): Promise<boolean> {
-    const s = await this.deps.settings();
-    return s.sandboxMode === 'auto' && (await this.deps.sandbox()).available;
+    return this.activeWith(await this.deps.settings());
+  }
+
+  private async activeWith(settings: WorkspaceSettings): Promise<boolean> {
+    return settings.sandboxMode === 'auto' && (await this.deps.sandbox()).available;
   }
 
   async start(i: LaunchInput): Promise<AgentRun> {
     const settings = await this.deps.settings();
-    const sandbox = await this.sandboxActive();
+    const sandbox = await this.activeWith(settings);
     const home = this.deps.home ?? homedir();
     const { configDir, bridge, mcpCommand, approvals } = this.deps;
     // The file is agent-reachable in the fallback mode: only rules that "Sempre" could have produced are honoured;
@@ -64,41 +68,60 @@ export class AgentLauncher {
       extraDomains: settings.extraAllowedDomains, projectAllowRules: rules,
       mcpTools: mcpOn ? MCP_TOOLS[i.kind].map((t) => `mcp__${MCP_SERVER}__${t}`) : [],
     });
+
     let token: string | null = null;
-    let mcp: Pick<AgentTurnRequest, 'mcpConfig' | 'permissionPromptTool'> = {};
-    if (mcpOn && mcpCommand) {
-      token = bridge.register({
-        jobId: i.jobId, kind: i.kind, projectSlug: i.projectSlug, projectDir: i.projectDir, creativeSlug: i.creativeSlug ?? null,
-        emit: i.onEvent, ...(i.validate ? { validate: i.validate } : {}),
-      });
-      mcp = {
-        mcpConfig: {
+    let configFile: string | null = null;
+    let released = false;
+    // Token first (synchronously), then the job's pending approvals (on every call), then the config file.
+    const release = async () => {
+      const first = !released;
+      released = true;
+      if (first && token) bridge.unregister(token);
+      approvals.cancelJob(i.jobId);
+      if (first && configFile) await rm(configFile, { force: true }).catch(() => {});
+    };
+    let mcp: Pick<AgentTurnRequest, 'mcpConfigPath' | 'permissionPromptTool'> = {};
+    try {
+      if (mcpOn && mcpCommand) {
+        token = bridge.register({
+          jobId: i.jobId, kind: i.kind, projectSlug: i.projectSlug, projectDir: i.projectDir, creativeSlug: i.creativeSlug ?? null,
+          emit: i.onEvent, ...(i.validate ? { validate: i.validate } : {}),
+        });
+        const config = {
           mcpServers: {
             [MCP_SERVER]: {
               type: 'stdio', command: mcpCommand[0], args: mcpCommand.slice(1),
               env: { MOTION_STUDIO_BRIDGE_URL: bridge.origin!, MOTION_STUDIO_BRIDGE_TOKEN: token, MOTION_STUDIO_TOOLS: MCP_TOOLS[i.kind].join(',') },
             },
           },
-        },
-        permissionPromptTool: `mcp__${MCP_SERVER}__approve`,
-      };
-    }
-    const cleanup = () => { if (token) bridge.unregister(token); approvals.cancelJob(i.jobId); };
-    let run: AgentRun;
-    try {
-      run = this.deps.runner.start({
+        };
+        // The token travels in a private file (the config folder is denied to the agent), never in argv where `ps` shows it.
+        configFile = await writeMcpConfig(configDir, i.jobId, config);
+        mcp = { mcpConfigPath: configFile, permissionPromptTool: `mcp__${MCP_SERVER}__approve` };
+      }
+      const run = this.deps.runner.start({
         cwd: i.projectDir, ...i.request,
         addDirs: policy.addDirs, allowedTools: policy.allowedTools, disallowedTools: policy.disallowedTools,
         ...(policy.settings ? { settings: policy.settings } : {}), ...mcp,
         env: { MCP_TOOL_TIMEOUT: '900000' },
       }, i.onEvent);
+      return {
+        done: run.done.finally(release),
+        // Revoked before the process is told to stop: it may keep calling the bridge until it exits.
+        cancel: () => { void release(); run.cancel(); },
+      };
     } catch (err) {
-      cleanup();
+      await release();
       throw err;
     }
-    return {
-      done: run.done.finally(cleanup),
-      cancel: () => { approvals.cancelJob(i.jobId); run.cancel(); },
-    };
   }
+}
+
+async function writeMcpConfig(configDir: string, jobId: string, config: unknown): Promise<string> {
+  const dir = join(configDir, 'run');
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  await chmod(dir, 0o700);
+  const file = join(dir, `${jobId.replace(/[^A-Za-z0-9-]/g, '_')}-${randomBytes(8).toString('hex')}.mcp.json`);
+  await writeFile(file, JSON.stringify(config), { mode: 0o600, flag: 'wx' });
+  return file;
 }
