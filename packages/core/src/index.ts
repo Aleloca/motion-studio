@@ -34,3 +34,5 @@ export * from './agent/sandbox.ts';
 export * from './agent/policy.ts';
 export * from './secrets/vault.ts';
 export * from './server/settings-routes.ts';
+export * from './approvals/permissions-store.ts';
+export * from './approvals/broker.ts';

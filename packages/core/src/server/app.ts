@@ -17,6 +17,7 @@ import type { Git } from '../git.ts';
 import { JobConflictError, JobQueue } from '../jobs/job-queue.ts';
 import { JsonFileError } from '../json-file.ts';
 import { MemoryVault, type SecretsVault } from '../secrets/vault.ts';
+import { ApprovalBroker } from '../approvals/broker.ts';
 import { registerSettingsRoutes } from './settings-routes.ts';
 import { expandHome, WorkspaceError, WorkspaceStore } from '../workspace-store.ts';
 import { recoverWorkspace, registerCreativeRoutes } from './creative-routes.ts';
@@ -34,6 +35,7 @@ export interface ServerDeps {
   media?: MediaTools;
   openPath?: (path: string) => Promise<void>;
   vault?: SecretsVault;
+  approvals?: ApprovalBroker;
 }
 
 const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?$/i;
@@ -67,6 +69,7 @@ const projectJobKey = (root: string, slug: string) => `project:${root}:${slug}`;
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   const hub = new EventHub();
+  const approvals = deps.approvals ?? new ApprovalBroker({ broadcast: (m) => hub.broadcast(m) });
   const queue = new JobQueue({ concurrency: 2, onUpdate: (job) => hub.broadcast({ type: 'job', job }) });
   const media = deps.media ?? NoMediaTools;
   const isJobActive = (key: string) => queue.list().some((j) => j.key === key && (j.state === 'queued' || j.state === 'running'));
@@ -130,6 +133,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // preClose, registered before the websocket plugin's own preClose, so clients still
   // receive the final 'cancelled' job updates before their sockets are closed.
   app.addHook('preClose', async () => {
+    approvals.cancelAll();
     for (const j of queue.list()) queue.cancel(j.id);
     await queue.whenIdle();
   });
@@ -236,7 +240,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   app.get('/api/events', { websocket: true }, (socket) => {
     hub.add(socket);
-    hub.send(socket, { type: 'snapshot', jobs: queue.list(), approvals: [] });
+    hub.send(socket, { type: 'snapshot', jobs: queue.list(), approvals: approvals.pending() });
   });
 
   registerCreativeRoutes(app, { requireWorkspace, turns, media, openPath: deps.openPath ?? (async () => {}), isJobActive });
@@ -246,7 +250,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   registerLibraryRoutes(app, routeCtx);
   registerProjectRoutes(app, { requireWorkspace, jobKeyOf: projectJobKey, broadcast: (m) => hub.broadcast(m) });
 
-  registerSettingsRoutes(app, { vault: deps.vault ?? new MemoryVault() });
+  registerSettingsRoutes(app, { vault: deps.vault ?? new MemoryVault(), approvals, requireWorkspace });
 
   const serveWeb = Boolean(deps.webDir && (await stat(deps.webDir).catch(() => null))?.isDirectory());
   // Always registered: it provides reply.sendFile to the creative file route; it serves the web build only when present.
