@@ -4,7 +4,7 @@ import { relativeFileSchema, type ServerMessage, type WorkspaceSettings } from '
 import { MCP_TOOLS } from '../agent/launcher.ts';
 import type { ApprovalBroker } from '../approvals/broker.ts';
 import { isAllowedRule, PermissionsStore } from '../approvals/permissions-store.ts';
-import { readConfinedBytes } from '../brand/agent-guard.ts';
+import { MAX_AGENT_BYTES, readConfinedBytes } from '../brand/agent-guard.ts';
 import { LibraryStore } from '../library/library-store.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { saveGeneratedFile } from '../providers/files.ts';
@@ -24,7 +24,13 @@ export interface ProviderToolsDeps {
 
 const LABEL = { openai: 'OpenAI', elevenlabs: 'ElevenLabs', pexels: 'Pexels', unsplash: 'Unsplash' } as const;
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp']);
-const MAX_REFERENCE_BYTES = 50 * 1024 * 1024;
+const VOICE = /^[A-Za-z0-9_-]{1,64}$/;
+const oneOf = <T extends string>(v: unknown, allowed: readonly T[], label: string): T | undefined => {
+  if (v === undefined || v === null || v === '') return undefined;
+  if (typeof v === 'string' && (allowed as readonly string[]).includes(v)) return v as T;
+  throw new ProviderError(400, `${label} non valido`);
+};
+const stockProvider = (v: unknown): StockProvider => oneOf(v, ['pexels', 'unsplash'] as const, 'Provider') ?? 'pexels';
 const CANCELLED = 'Il lavoro è stato annullato.';
 const s = (v: unknown, max = 4000) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 const slug = (t: string) => t.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'file';
@@ -49,7 +55,14 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
     if (!(await deps.settings()).confirmPaidProviders) return;
     // A stored rule counts only when it is one "Sempre" could have produced; an unreadable store means ask.
     if (isAllowedRule(rule) && await new PermissionsStore(c.projectDir).has(rule).catch(() => false)) return;
-    const { decision } = await deps.approvals.request({ jobId: c.jobId, projectSlug: c.projectSlug, projectDir: c.projectDir, creativeSlug: c.creativeSlug, kind: 'provider', toolName: rule, input: {}, title, detail });
+    // No await between the check and the request: a cancelled job must never leave a prompt behind.
+    alive(c);
+    const pending = deps.approvals.request({ jobId: c.jobId, projectSlug: c.projectSlug, projectDir: c.projectDir, creativeSlug: c.creativeSlug, kind: 'provider', toolName: rule, input: {}, title, detail });
+    const onAbort = () => deps.approvals.cancelJob(c.jobId);
+    c.signal.addEventListener('abort', onAbort, { once: true });
+    let decision: Awaited<typeof pending>['decision'];
+    try { ({ decision } = await pending); } finally { c.signal.removeEventListener('abort', onAbort); }
+    alive(c);
     if (decision !== 'once' && decision !== 'always') throw new ProviderError(403, "L'utente non ha approvato l'uso del provider");
   };
   const removeFiles = (c: BridgeContext, files: string[]) =>
@@ -64,25 +77,39 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
     }
     deps.broadcast({ type: 'library', project: c.projectSlug });
   };
+  const readReferences = async (c: BridgeContext, raw: unknown) => {
+    if (!Array.isArray(raw)) return [];
+    const out: Array<{ name: string; bytes: Buffer }> = [];
+    let total = 0;
+    for (const r of raw.slice(0, 16)) {
+      const ref = await reference(c, String(r));
+      total += ref.bytes.length;
+      if (total > MAX_AGENT_BYTES) throw new ProviderError(400, 'Riferimenti troppo grandi');
+      out.push(ref);
+    }
+    return out;
+  };
   const reference = async (c: BridgeContext, rel: string) => {
     const bad = () => new ProviderError(400, `Riferimento non valido: ${rel}`);
     if (!relativeFileSchema.safeParse(rel).success || !IMAGE_EXT.has(extname(rel).toLowerCase())) throw bad();
-    const read = await readConfinedBytes(c.projectDir, rel, MAX_REFERENCE_BYTES);
+    const read = await readConfinedBytes(c.projectDir, rel, MAX_AGENT_BYTES);
     if (!read || 'skipped' in read) throw bad();
     return { name: rel.split('/').pop()!, bytes: read.bytes };
   };
 
-  return {
+  const handlers: Record<string, BridgeHandler> = {
     generate_image: async (c, a) => {
       allowed(c, 'generate_image');
       const prompt = s(a.prompt, 32_000);
       if (!prompt) throw new ProviderError(400, "Descrivi l'immagine da generare");
       const apiKey = await keyOf('openai');
       const size = normalizeImageSize(Number(a.width), Number(a.height));
-      const refs = Array.isArray(a.references) ? await Promise.all(a.references.slice(0, 16).map((r) => reference(c, String(r)))) : [];
+      const quality = oneOf(a.quality, ['low', 'medium', 'high', 'auto'] as const, 'Qualità');
+      const background = oneOf(a.background, ['transparent', 'opaque', 'auto'] as const, 'Sfondo');
+      const refs = await readReferences(c, a.references);
       await confirmPaid(c, 'provider:openai-images', "Generare un'immagine con gpt-image-2", `${size.width}×${size.height}${refs.length ? `, ${refs.length} riferimenti` : ''}: ${prompt.slice(0, 300)}`);
       alive(c);
-      const img = await generateImage({ ...httpFor(c), apiKey }, { prompt, width: size.width, height: size.height, quality: a.quality as never, background: a.background as never, references: refs });
+      const img = await generateImage({ ...httpFor(c), apiKey }, { prompt, width: size.width, height: size.height, quality, background, references: refs });
       alive(c);
       const file = await saveGeneratedFile(c.projectDir, 'generated', `${s(a.name, 60) || slug(prompt)}.png`, img.bytes);
       await register(c, [file], (f) => ({ file: f, origin: 'generated', description: prompt.slice(0, 2000), tags: ['gpt-image-2'] }));
@@ -93,13 +120,15 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       allowed(c, 'tts');
       const text = s(a.text, 5000);
       if (!text) throw new ProviderError(400, 'Scrivi il testo da leggere');
-      const requested = a.provider === 'openai' || a.provider === 'elevenlabs' ? a.provider : null;
+      const requested = oneOf(a.provider, ['openai', 'elevenlabs'] as const, 'Provider') ?? null;
+      const voice = s(a.voice, 100) || undefined;
+      if (voice !== undefined && !VOICE.test(voice)) throw new ProviderError(400, 'Voce non valida');
       const provider = requested ?? ((await deps.vault.get('openai')) ? 'openai' : (await deps.vault.get('elevenlabs')) ? 'elevenlabs' : 'openai');
       const apiKey = await keyOf(provider);
       const format = a.format === 'wav' ? 'wav' : 'mp3';
       await confirmPaid(c, `provider:tts-${provider}`, `Generare una voce con ${LABEL[provider]}`, text.slice(0, 300));
       alive(c);
-      const req = { text, voice: s(a.voice, 100) || undefined, instructions: s(a.instructions, 1000) || undefined, format } as const;
+      const req = { text, voice, instructions: s(a.instructions, 1000) || undefined, format } as const;
       const http = { ...httpFor(c), apiKey };
       const out = provider === 'openai' ? await openaiSpeech(http, req) : await elevenlabsSpeech(http, req);
       alive(c);
@@ -109,15 +138,16 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
     },
     stock_search: async (c, a) => {
       allowed(c, 'stock_search');
-      const provider = (a.provider === 'unsplash' ? 'unsplash' : 'pexels') as StockProvider;
+      const provider = stockProvider(a.provider);
       const query = s(a.query, 200);
       if (!query) throw new ProviderError(400, 'Indica cosa cercare');
-      const results = await stockSearch({ ...httpFor(c), apiKey: await keyOf(provider) }, { provider, query, kind: a.kind === 'video' ? 'video' : 'photo', orientation: a.orientation as never, limit: Number(a.limit) || 10 });
+      const orientation = oneOf(a.orientation, ['landscape', 'portrait', 'square'] as const, 'Orientamento');
+      const results = await stockSearch({ ...httpFor(c), apiKey: await keyOf(provider) }, { provider, query, kind: a.kind === 'video' ? 'video' : 'photo', orientation, limit: Number(a.limit) || 10 });
       return { results };
     },
     stock_download: async (c, a) => {
       allowed(c, 'stock_download');
-      const provider = (a.provider === 'unsplash' ? 'unsplash' : 'pexels') as StockProvider;
+      const provider = stockProvider(a.provider);
       const id = s(a.id, 64);
       const d = await stockDownload({ ...httpFor(c), apiKey: await keyOf(provider) }, { provider, id, kind: a.kind === 'video' ? 'video' : 'photo' });
       alive(c);
@@ -142,6 +172,14 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       return { files: files.map((f) => `assets/${f}`), license: 'Google Fonts: licenza OFL o Apache 2.0, uso commerciale consentito' };
     },
   };
+  // Once the job is cancelled, whatever failed is reported as the cancellation.
+  return Object.fromEntries(Object.entries(handlers).map(([name, h]) => [name, (async (c, a) => {
+    try { return await h(c, a); }
+    catch (e) {
+      if (c.signal.aborted) throw new ProviderError(499, CANCELLED);
+      throw e;
+    }
+  }) as BridgeHandler]));
 }
 
 export async function availableTools(vault: SecretsVault): Promise<string[]> {

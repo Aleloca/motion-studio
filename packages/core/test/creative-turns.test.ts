@@ -1,4 +1,3 @@
-import { MemoryVault } from '../src/secrets/vault.ts';
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,6 +16,7 @@ import { JobQueue } from '../src/jobs/job-queue.ts';
 import { NoMediaTools, type MediaTools } from '../src/media/media-tools.ts';
 import { CONTEXT_MD } from '../src/project-template.ts';
 import { WorkspaceStore } from '../src/workspace-store.ts';
+import { MemoryVault } from '../src/secrets/vault.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const brief: Brief = { goal: 'Lancio app', message: '', formats: ['instagram-post-1x1', 'web-banner-300x250'], durationSec: 10, assets: [], notes: '' };
