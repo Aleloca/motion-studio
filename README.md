@@ -1,16 +1,20 @@
 # Motion Studio
 
-App locale e open-source per creare video in motion graphics e immagini usando il tuo agente di coding (inizialmente **Claude Code**). Tutto resta sul tuo computer: i progetti sono cartelle con file JSON/Markdown versionate con git.
+App locale e open-source per creare video in motion graphics e immagini usando il tuo agente di coding (inizialmente **Claude Code**). Descrivi cosa vuoi, scegli canali e formati: l'agente produce una ricomposizione dedicata per ogni formato. Tutto resta sul tuo computer: i progetti sono cartelle con file JSON/Markdown versionate con git.
 
-> Stato: fase 4 (sandbox, strumenti MCP, provider e approvazioni). Vedi `docs/superpowers/specs/` per il design completo.
+<!-- screenshot: aggiungere -->
 
-## Requisiti
-- Node.js 22+
-- Git
-- [Claude Code](https://docs.claude.com/claude-code) installato e autenticato (`claude auth login`)
-- FFmpeg (consigliato)
+> Il design completo è in `docs/superpowers/specs/`. Guide per chi sviluppa: [CONTRIBUTING.md](CONTRIBUTING.md), [contratto di output](docs/output-contract.md), [provider](docs/providers.md), [backend dell'agente](docs/agent-backends.md).
 
-## Avvio
+## Installazione
+
+**App desktop (Electron).** Scarica l'installer dalla pagina *Releases* di GitHub del progetto, quando sarà pubblicato. Le build non firmate (quelle senza i certificati dei maintainer) richiedono un passaggio in più la prima volta:
+- macOS: clic destro sull'app, poi **Apri** (e conferma); un doppio clic normale viene bloccato da Gatekeeper.
+- Gli aggiornamenti automatici dell'app (controllo all'avvio, installazione al riavvio) richiedono build **firmate** su macOS; con una build non firmata aggiorna scaricando a mano la nuova versione.
+
+**Da npm.** `npx motion-studio-app` (il comando installato si chiama `motion-studio`), quando sarà pubblicato. Finché non lo è, usa i sorgenti.
+
+**Dai sorgenti.**
 ```bash
 pnpm install
 pnpm motion-studio        # build + avvio su http://127.0.0.1:4317 e apertura del browser
@@ -21,17 +25,27 @@ Opzioni del launcher (dopo il nome dello script, es. `pnpm motion-studio --port 
 - `--no-open` — non aprire il browser (se l'apertura non riesce, il launcher stampa l'indirizzo da aprire a mano).
 - `--print-url` — stampa l'indirizzo del Motion Studio già avviato, senza avviarne un altro (utile se hai chiuso la scheda).
 
-L'indirizzo stampato all'avvio contiene un codice di accesso (`#t=…`): apri Motion Studio da quel link. Il browser lo ricorda; se l'interfaccia chiede di riaprirla dal link del terminale, usa `--print-url`.
+L'indirizzo stampato all'avvio contiene un codice di accesso (`#t=…`): apri Motion Studio da quel link. Il browser lo ricorda; se l'interfaccia chiede di riaprirla dal link del terminale, usa `--print-url`. L'app desktop apre da sola la propria finestra.
 
-> Dal pacchetto npm: `npx motion-studio-app` (il comando installato si chiama `motion-studio`). Finché il pacchetto non è pubblicato su npm, usa `pnpm motion-studio` dal repository.
+## Requisiti
+- [Claude Code](https://docs.claude.com/claude-code) installato e autenticato (`claude auth login`)
+- Git
+- FFmpeg (consigliato: senza, gli output risultano "non verificati")
+- Node.js 22+ per `npx` e per i sorgenti (non serve per l'app desktop)
 
-## Come funziona una creatività
+## Come funziona
 1. In un progetto apri **Creatività → + Nuova creatività**, descrivi cosa vuoi, scegli canali e formati e premi **Genera**.
-2. L'agente lavora in `creatives/<data-titolo>/work/` e consegna in `outputs/vN/` un file per formato più `manifest.json`.
-3. Motion Studio controlla gli output (presenza, risoluzione, durata; con ffmpeg/ffprobe installati li verifica davvero): se qualcosa non torna chiede all'agente di correggere, fino a 3 tentativi; poi salva la versione, anche se incompleta.
+2. L'agente lavora in `creatives/<data-titolo>/work/` e consegna in `outputs/vN/` un file per formato più `manifest.json` ([contratto completo](docs/output-contract.md)).
+3. Motion Studio controlla gli output (presenza, risoluzione, durata; con ffmpeg/ffprobe installati li verifica davvero): se qualcosa non torna chiede all'agente di correggere, fino a 3 tentativi in totale; poi salva la versione, anche se incompleta.
 4. Ogni versione è un commit git del progetto. Dalla pagina della creatività puoi aprire un formato, aggiungere commenti su un punto/istante, chiedere modifiche, confrontare versioni e ripartire da una versione precedente.
 
-Limiti attuali: la rigenerazione col comando del manifest (quando cambiano solo i formati) non è ancora disponibile, quindi Motion Studio chiede sempre all'agente; app desktop, export in cartella scelta e pacchetti firmati arrivano nella fase 5.
+### Esporta
+Dalla pagina della creatività, **Esporta…** copia gli output di una versione in una cartella a tua scelta (nell'app desktop c'è anche **Scegli cartella…**). I file si chiamano `<slug>-<formato>-vN.<estensione>` (es. `lancio-instagram-reel-9x16-v2.mp4`); non sovrascrive mai nulla (se il nome esiste aggiunge `-2`, `-3`…) e rifiuta destinazioni dentro il workspace di Motion Studio. Gli output non esportabili (file mancante o non regolare) vengono saltati e l'interfaccia li elenca.
+
+### Aggiungere formati
+Se in una creatività già generata aggiungi formati al brief e premi di nuovo **Genera**, Motion Studio chiede all'agente di aggiungere solo i formati mancanti riusando i sorgenti già presenti in `work/` e lo stesso stile della versione precedente; nella richiesta include il comando di render registrato nel manifest (`renderCommand`), se c'è. È l'agente a eseguirlo e ad adattarlo: Motion Studio non lancia il comando da solo, e ogni formato nuovo è comunque una ricomposizione.
+
+Limiti attuali: la rigenerazione dei soli formati è quindi guidata dall'agente, non un render automatico del comando del manifest; le build desktop firmate dipendono dai certificati dei maintainer (vedi Rilascio).
 
 ## Sicurezza
 - **Sandbox dell'agente** (macOS; Linux con `bubblewrap` e `socat`): ogni lavoro dell'agente gira isolato. Può scrivere solo nella cartella del progetto, non può leggere cartelle sensibili (`~/.ssh`, credenziali cloud, portachiavi, configurazione di Motion Studio). La rete dipende dal lavoro: creatività e console usano solo registri di pacchetti, CDN e i domini che aggiungi in **Impostazioni → Rete**; l'analisi brand non ha rete nella sandbox: legge le pagine con `WebFetch` e scarica loghi e font solo con lo strumento `download_file` di Motion Studio, che blocca gli indirizzi privati o locali (controllati sull'IP risolto, a ogni redirect); la descrizione degli asset non ha rete. La sandbox non ripiega sull'esecuzione libera: se non riesce ad avviarsi i comandi non partono, e l'agente non può chiedere di eseguire un comando fuori da essa.
@@ -66,18 +80,37 @@ Consiglio generale: analizza solo siti di cui ti fidi.
 
 ## Limiti attuali dell'agente
 - **Console del progetto:** con la sandbox attiva i comandi girano isolati; fuori dalla sandbox l'agente può modificare i file del progetto, ma le richieste che richiedono un'approvazione compaiono nell'interfaccia (vedi Sicurezza).
+- **Provider di immagini, voce e stock:** sono descritti in [docs/providers.md](docs/providers.md) ma non sono stati verificati dal vivo con chiavi reali (i test usano risposte simulate).
 
 ## Sviluppo
 ```bash
+pnpm install
 pnpm dev                  # core (tsx watch, porta 4317) + web (Vite, porta 5173 con proxy /api); il core stampa il link con il codice di accesso
 pnpm test                 # tutti i test (usano un finto `claude`, nessun consumo di quota)
 npx vitest run packages/core/test/server.test.ts   # un singolo file (dalla radice del repository)
 pnpm typecheck
+pnpm build                # web + bundle del pacchetto npm (apps/cli/dist)
+pnpm motion-studio        # build + avvio del pacchetto locale
+
+pnpm --filter motion-studio-desktop dev        # app Electron in sviluppo (prima: `pnpm --filter @motion-studio/web build && pnpm --filter motion-studio-desktop build`)
+pnpm --filter motion-studio-desktop smoke      # avvio di prova dell'app con una configurazione temporanea
+pnpm --filter motion-studio-desktop dist:mac   # installer locale (dist:win, dist:linux; senza argomento: la piattaforma corrente)
 ```
 
 Variabili utili:
 - `MOTION_STUDIO_CONFIG_DIR` — dove salvare la config dell'app (percorso del workspace).
 - `MOTION_STUDIO_CLAUDE_COMMAND` — comando dell'agente come array JSON, es. `["node","/percorso/fake-claude.mjs"]`.
+
+Per contribuire vedi [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Rilascio
+Per i maintainer. Crea e pubblica un tag `vX.Y.Z` (allinea prima le versioni nei `package.json`): il workflow `.github/workflows/release.yml` costruisce l'app desktop su macOS, Windows e Linux e crea una **bozza** di release su GitHub con gli installer (da pubblicare a mano); poi, se `NPM_TOKEN` è presente, pubblica `motion-studio-app` su npm. La CI (`ci.yml`) esegue i test a ogni push su `main` e sulle pull request.
+
+Segreti del repository usati dal workflow (tutti facoltativi: senza, la build è non firmata o l'npm viene saltato):
+- macOS (firma e notarizzazione): `MAC_CERT_P12_BASE64`, `MAC_CERT_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`. Senza `MAC_CERT_P12_BASE64` la firma è disattivata.
+- Windows: `WIN_CERT_PFX_BASE64`, `WIN_CERT_PASSWORD`.
+- npm: `NPM_TOKEN`.
+- `GITHUB_TOKEN` è fornito da GitHub Actions.
 
 ## Licenza
 MIT
