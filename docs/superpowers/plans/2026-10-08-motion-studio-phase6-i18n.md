@@ -14,7 +14,7 @@
 
 - Tutti i vincoli delle fasi 1–5 restano validi (sandbox, approvazioni, token UI, chiavi solo nel core, `.git`/`.claude`/`CLAUDE.md`/`.studio` protetti, una sola istanza, smoke test solo con cartelle temporanee).
 - Lingue supportate: `en` (predefinita e di riserva) e `it`. Tipo: `export type Locale = 'en' | 'it'`.
-- Risoluzione della lingua di sistema: la prima lingua preferita che inizia con `it` → `it`; altrimenti `en`.
+- Risoluzione della lingua di sistema: la prima lingua preferita (nell'ordine del sistema) che è supportata (`en` o `it`); altrimenti `en`. Esempi: `["en-US","it-IT"]` → `en`, `["de-DE","it"]` → `it` (decisione approvata nella fase di fix finale).
 - Copy inglese: frasi brevi e dirette, voce attiva, nomi che l'utente riconosce. Gli errori dicono cosa è successo e come rimediare, senza scuse. Stesso registro dell'italiano attuale. I testi italiani esistenti diventano il catalogo `it` **senza cambiarli**.
 - Nessuna stringa visibile all'utente scritta direttamente nel codice di `packages/web/src`, `packages/core/src` (messaggi restituiti alla UI), `apps/desktop/src`, `apps/cli/src`: sempre `t('chiave')` o la funzione del catalogo. I commenti nel codice restano in inglese, come oggi.
 - I dati già salvati restano come sono: testi scritti in passato (problemi di validazione in `versions.json`, messaggi della conversazione, linee guida) non vengono tradotti. Solo i nuovi testi usano la lingua corrente.
