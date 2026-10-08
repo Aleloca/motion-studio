@@ -17,6 +17,7 @@ import { cachedSandboxDetection, type SandboxSupport } from '../agent/sandbox.ts
 import { defaultConfigDir, type AppConfigStore } from '../app-config.ts';
 import { AgentBridge } from '../bridge/bridge.ts';
 import { registerBridgeRoutes } from '../bridge/bridge-routes.ts';
+import { downloadTool } from '../bridge/download-tool.ts';
 import { providerTools } from '../bridge/provider-tools.ts';
 import { checkCodebases, codebaseOverlaps, normalizeCodebaseList } from '../codebases.ts';
 import type { Git } from '../git.ts';
@@ -285,7 +286,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   registerBridgeRoutes(app, {
     bridge, approvals,
-    extraTools: providerTools({ vault, approvals, media, settings: () => requireWorkspace().readSettings(), broadcast: (m) => hub.broadcast(m) }),
+    extraTools: {
+      ...providerTools({ vault, approvals, media, settings: () => requireWorkspace().readSettings(), broadcast: (m) => hub.broadcast(m) }),
+      download_file: downloadTool({ media, broadcast: (m) => hub.broadcast(m) }),
+    },
   });
   registerSettingsRoutes(app, { vault, approvals, requireWorkspace });
 

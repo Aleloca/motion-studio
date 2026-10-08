@@ -15,7 +15,7 @@ export const MCP_SERVER = 'studio';
 export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
   creative: ['report_progress', 'validate_output', 'read_brand_kit', 'generate_image', 'tts', 'stock_search', 'stock_download', 'fonts_fetch'],
   console: ['report_progress', 'read_brand_kit', 'generate_image', 'tts', 'stock_search', 'stock_download', 'fonts_fetch'],
-  'brand-analysis': ['report_progress', 'read_brand_kit', 'fonts_fetch'],
+  'brand-analysis': ['report_progress', 'read_brand_kit', 'fonts_fetch', 'download_file'],
   describe: ['report_progress'],
 };
 

@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { testLauncher } from './helpers/launcher.ts';
 import { BrandService, type ProjectRef } from '../src/brand/brand-analysis.ts';
+import { buildBrandPrompt } from '../src/brand/brand-prompt.ts';
 import { BrandStore } from '../src/brand/brand-store.ts';
 import { execCommand } from '../src/exec.ts';
 import { Git } from '../src/git.ts';
@@ -46,6 +47,21 @@ const listAfter = (args: string[], flag: string) => { const i = args.indexOf(fla
 const GUARDED = ['brand/brand-kit.json', 'brand/guidelines.md', 'brand/sources.json', 'assets/assets.json', 'references/references.json'];
 const done = async (id: string) => { await queue.whenIdle(); return queue.list().find((j) => j.id === id)!; };
 
+describe('buildBrandPrompt', () => {
+  const block = { proposalDir: 'p', kitFile: 'p/brand-kit.json', guidelinesFile: 'p/guidelines.md', assetsListFile: 'p/assets.json', summaryFile: 'p/summary.md', sources: [{ id: 's-1', kind: 'website' as const, url: 'https://acme.example', file: null }] };
+  it('tells the agent to read pages with WebFetch and download files only with download_file', () => {
+    const p = buildBrandPrompt(block);
+    expect(p).toContain('WebFetch');
+    expect(p).toMatch(/SOLO con lo strumento Motion Studio download_file/);
+    expect(p).toContain('assets/brand/');
+    expect(p).toContain('assets/fonts/');
+    expect(p).toMatch(/registra/);
+    expect(p).toMatch(/solo i file che hai davvero scaricato/);
+    expect(p).toMatch(/se lo strumento download_file non è disponibile/i);
+    expect(p).not.toMatch(/curl/);
+  });
+});
+
 describe('analyze', () => {
   it('produces an open proposal, registers downloaded assets and never touches the kit', T, async () => {
     const job = await service.analyze(ref);
@@ -67,6 +83,19 @@ describe('analyze', () => {
     expect(messages.some((m) => m.type === 'brand')).toBe(true);
     const log = await execCommand('git', ['log', '-1', '--format=%s'], { cwd: ref.projectDir });
     expect(log.stdout.trim()).toBe(`Analisi brand ${p!.id}`);
+  });
+  it('keeps a file already registered by download_file once, with its original source, taking the listed description', T, async () => {
+    const lib = new LibraryStore(ref.projectDir, NoMediaTools);
+    await mkdir(join(ref.projectDir, 'assets', 'brand'), { recursive: true });
+    await writeFile(join(ref.projectDir, 'assets', 'brand', 'logo.svg'), '<svg/>');
+    await lib.registerAssets([{ file: 'brand/logo.svg', origin: 'website', sourceUrl: 'https://cdn.acme.example/original-logo.svg', description: '', tags: ['brand'] }]);
+    const job = await done((await service.analyze(ref)).id);
+    expect(job.state).toBe('succeeded');
+    const [p] = await brand.listProposals();
+    expect(p!.assetsAdded).toContain('brand/logo.svg');
+    expect(p!.summary).not.toContain('brand/logo.svg (non registrato)');
+    const logos = (await lib.listAssets()).filter((a) => a.file === 'brand/logo.svg');
+    expect(logos).toEqual([expect.objectContaining({ origin: 'website', sourceUrl: 'https://cdn.acme.example/original-logo.svg', description: 'Logo principale', tags: ['logo'] })]);
   });
   it('fails cleanly on an invalid proposed kit and leaves no proposal', T, async () => {
     process.env.FAKE_CLAUDE_SCENARIO = 'brand_invalid';

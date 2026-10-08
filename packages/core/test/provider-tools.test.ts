@@ -18,6 +18,7 @@ let approvals: ApprovalBroker;
 let controller: AbortController;
 let sent: string[];
 const png = Buffer.from('png-bytes');
+const publicLookup = async () => [{ address: '93.184.216.34', family: 4 as const }];
 const fakeFetch = (async (url: string) => {
   sent.push(url);
   if (url.includes('/images/')) return new Response(JSON.stringify({ data: [{ b64_json: png.toString('base64') }] }), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -40,7 +41,7 @@ beforeEach(async () => {
   ctx = { jobId: 'j1', kind: 'creative', projectSlug: 'acme', projectDir, creativeSlug: 'c1', emit: () => {}, signal: controller.signal };
 });
 const tools = (settings = {}, env: Record<string, string> = { OPENAI_API_KEY: 'sk-test' }, fetchImpl: typeof fetch = fakeFetch) => providerTools({
-  vault: new MemoryVault(env), approvals, media: NoMediaTools, fetch: fetchImpl, broadcast: (m) => messages.push(m),
+  vault: new MemoryVault(env), approvals, media: NoMediaTools, fetch: fetchImpl, lookup: publicLookup, broadcast: (m) => messages.push(m),
   settings: async () => workspaceSettingsSchema.parse({ schemaVersion: 1, ...settings }),
 });
 const status = (e: unknown) => (e as { status?: number }).status;
@@ -133,7 +134,7 @@ describe('availableTools', () => {
 describe('cancellation before asking', () => {
   it('never creates an approval when the job is cancelled while settings are read', async () => {
     const t = providerTools({
-      vault: new MemoryVault({ OPENAI_API_KEY: 'sk' }), approvals, media: NoMediaTools, fetch: fakeFetch, broadcast: () => {},
+      vault: new MemoryVault({ OPENAI_API_KEY: 'sk' }), approvals, media: NoMediaTools, fetch: fakeFetch, lookup: publicLookup, broadcast: () => {},
       settings: async () => { await new Promise((r) => setTimeout(r, 30)); return workspaceSettingsSchema.parse({ schemaVersion: 1 }); },
     });
     const pending = t.generate_image!(ctx, { prompt: 'x', width: 1024, height: 1024 });

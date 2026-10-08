@@ -209,9 +209,15 @@ export class BrandService {
       catch (e) { if (!(e instanceof WorkspaceError)) throw e; dropped.push(`${a.file} (non registrato)`); }
     }
     const appeared = (await library.unregisteredAssets()).filter((f) => !before.has(f) && !existingListed.some((a) => a.file === f));
+    // Files download_file already registered keep their origin and source URL; the list only adds description and tags.
+    const known = new Map((await library.listAssets()).map((a) => [a.file, a]));
     const registered: AssetEntry[] = [];
     for (const item of [
-      ...existingListed.map((a) => ({ file: a.file, origin: 'website' as const, sourceUrl: a.sourceUrl ?? null, description: a.description, tags: a.tags })),
+      ...existingListed.map((a) => {
+        const k = known.get(a.file);
+        return k ? { file: a.file, origin: k.origin, sourceUrl: k.sourceUrl, description: a.description, tags: a.tags }
+          : { file: a.file, origin: 'website' as const, sourceUrl: a.sourceUrl ?? null, description: a.description, tags: a.tags };
+      }),
       ...appeared.map((file) => ({ file, origin: 'website' as const, sourceUrl: null })),
     ]) {
       // The store confines paths; one unusable entry (e.g. a symlink out of assets/) must not sink the whole proposal.

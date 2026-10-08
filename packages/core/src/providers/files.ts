@@ -4,7 +4,7 @@ import { join, sep } from 'node:path';
 import { claimName, sanitizeFileName } from '../library/upload.ts';
 import { ProviderError } from './http.ts';
 
-export type GeneratedDir = 'generated' | 'audio' | 'stock' | 'fonts';
+export type GeneratedDir = 'generated' | 'audio' | 'stock' | 'fonts' | 'brand';
 
 const INVALID = 'Cartella degli asset non valida';
 

@@ -100,6 +100,11 @@ describe('AgentLauncher', () => {
     const cfg = JSON.parse(mcpConfigFile!.content!);
     expect(cfg.mcpServers.studio.env.MOTION_STUDIO_TOOLS).toBe('report_progress');
     expect(args).not.toContain('mcp__studio__read_brand_kit');
+    const brand = await launch({ bridge, mcpCommand: ['node', '/x/server.mjs'] }, 'brand-analysis');
+    expect(JSON.parse(brand.mcpConfigFile!.content!).mcpServers.studio.env.MOTION_STUDIO_TOOLS).toBe('report_progress,read_brand_kit,fonts_fetch,download_file');
+    expect(brand.args).toContain('mcp__studio__download_file');
+    const creative = await launch({ bridge, mcpCommand: ['node', '/x/server.mjs'] }, 'creative');
+    expect(creative.args).not.toContain('mcp__studio__download_file');
   });
   it('protects .studio (and its real path) from edits for every job kind, sandbox or not', { timeout: 20_000 }, async () => {
     const real = await newProject();

@@ -10,6 +10,7 @@ import type { MediaTools } from '../media/media-tools.ts';
 import { saveGeneratedFile } from '../providers/files.ts';
 import { fetchGoogleFont } from '../providers/google-fonts.ts';
 import { ProviderError } from '../providers/http.ts';
+import { fetchTransport, nodeTransport, type LookupFn, type Transport } from '../providers/safe-fetch.ts';
 import { generateImage, normalizeImageSize } from '../providers/openai-images.ts';
 import { stockDownload, stockSearch, type StockProvider } from '../providers/stock.ts';
 import { elevenlabsSpeech, openaiSpeech } from '../providers/tts.ts';
@@ -20,6 +21,20 @@ import type { BridgeHandler } from './bridge-routes.ts';
 export interface ProviderToolsDeps {
   vault: SecretsVault; approvals: ApprovalBroker; media: MediaTools;
   settings: () => Promise<WorkspaceSettings>; fetch?: typeof fetch; broadcast: (m: ServerMessage) => void;
+  /** Downloads of provider-supplied URLs; default: over the injected fetch when there is one, else the pinned-DNS node transport. */
+  transport?: Transport; lookup?: LookupFn;
+}
+
+/** Network access of one job: every request (API call or download) also stops when the job is cancelled. */
+export function jobHttp(deps: { fetch?: typeof fetch; transport?: Transport; lookup?: LookupFn }, c: BridgeContext) {
+  const withJob = (init: RequestInit): RequestInit => ({ ...init, signal: init.signal ? AbortSignal.any([init.signal, c.signal]) : c.signal });
+  const baseFetch = deps.fetch ?? globalThis.fetch;
+  const baseTransport = deps.transport ?? (deps.fetch ? fetchTransport(deps.fetch) : nodeTransport);
+  return {
+    fetch: ((url: string | URL | Request, init: RequestInit = {}) => baseFetch(url, withJob(init))) as typeof fetch,
+    transport: ((url, init, resolve) => baseTransport(url, withJob(init), resolve)) as Transport,
+    lookup: deps.lookup,
+  };
 }
 
 const LABEL = { openai: 'OpenAI', elevenlabs: 'ElevenLabs', pexels: 'Pexels', unsplash: 'Unsplash' } as const;
@@ -36,12 +51,7 @@ const s = (v: unknown, max = 4000) => (typeof v === 'string' ? v.trim().slice(0,
 const slug = (t: string) => t.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'file';
 
 export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHandler> {
-  const baseFetch = deps.fetch ?? globalThis.fetch;
-  /** Every request of a job also stops when the job is cancelled. */
-  const httpFor = (c: BridgeContext) => ({
-    fetch: ((url: string | URL | Request, init: RequestInit = {}) =>
-      baseFetch(url, { ...init, signal: init.signal ? AbortSignal.any([init.signal, c.signal]) : c.signal })) as typeof fetch,
-  });
+  const httpFor = (c: BridgeContext) => jobHttp(deps, c);
   const allowed = (c: BridgeContext, tool: string) => {
     if (!MCP_TOOLS[c.kind].includes(tool)) throw new ProviderError(403, 'Strumento non disponibile in questo lavoro');
   };

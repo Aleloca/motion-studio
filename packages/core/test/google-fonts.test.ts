@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { fetchGoogleFont, parseFontCss } from '../src/providers/google-fonts.ts';
+import { fetchTransport, type LookupFn } from '../src/providers/safe-fetch.ts';
+
+const publicLookup: LookupFn = async () => [{ address: '142.250.180.3', family: 4 }];
+const net = (f: typeof fetch, lookup: LookupFn = publicLookup) => ({ fetch: f, transport: fetchTransport(f), lookup });
 
 const CSS = `@font-face {
   font-family: 'Manrope';
@@ -34,14 +38,14 @@ describe('fetchGoogleFont', () => {
       }
       return new Response(new Uint8Array([1]), { status: 200, headers: { 'content-type': 'font/ttf' } });
     }) as unknown as typeof fetch;
-    const files = await fetchGoogleFont({ fetch: fetchImpl }, { family: 'Source Sans 3', weights: [400, 700], italic: false });
+    const files = await fetchGoogleFont({ ...net(fetchImpl) }, { family: 'Source Sans 3', weights: [400, 700], italic: false });
     expect(urls[0]).toBe('https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;700');
     expect(files.map((f) => [f.weight, f.ext])).toEqual([[400, 'ttf'], [700, 'ttf']]);
   });
   it('validates the family and maps unknown fonts', async () => {
     const fetchImpl = (async () => new Response('bad', { status: 400 })) as unknown as typeof fetch;
-    expect((await fetchGoogleFont({ fetch: fetchImpl }, { family: 'Bad;Name', weights: [400], italic: false }).catch((e) => e)).status).toBe(400);
-    expect((await fetchGoogleFont({ fetch: fetchImpl }, { family: 'Nope Font', weights: [400], italic: false }).catch((e) => e)).message).toBe('Font "Nope Font" non trovato su Google Fonts');
+    expect((await fetchGoogleFont({ ...net(fetchImpl) }, { family: 'Bad;Name', weights: [400], italic: false }).catch((e) => e)).status).toBe(400);
+    expect((await fetchGoogleFont({ ...net(fetchImpl) }, { family: 'Nope Font', weights: [400], italic: false }).catch((e) => e)).message).toBe('Font "Nope Font" non trovato su Google Fonts');
   });
   it('follows a redirect to another https host but refuses one to a private host', async () => {
     const make = (target: string) => (async (url: string, init: RequestInit = {}) => {
@@ -50,10 +54,21 @@ describe('fetchGoogleFont', () => {
       expect(init.redirect).toBe('manual');
       return new Response(new Uint8Array([1]), { status: 200 });
     }) as unknown as typeof fetch;
-    const ok = await fetchGoogleFont({ fetch: make('https://fonts.example/moved.ttf') }, { family: 'Manrope', weights: [400], italic: false });
+    const ok = await fetchGoogleFont({ ...net(make('https://fonts.example/moved.ttf')) }, { family: 'Manrope', weights: [400], italic: false });
     expect(ok).toHaveLength(1);
-    const e = await fetchGoogleFont({ fetch: make('https://127.0.0.1/moved.ttf') }, { family: 'Manrope', weights: [400], italic: false }).catch((x) => x);
+    const e = await fetchGoogleFont({ ...net(make('https://127.0.0.1/moved.ttf')) }, { family: 'Manrope', weights: [400], italic: false }).catch((x) => x);
     expect(e.message).toBe('Risposta non valida da Google Fonts');
+  });
+  it('refuses a font host that resolves to a private address', async () => {
+    const urls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      urls.push(url);
+      return url.startsWith('https://fonts.googleapis.com/') ? new Response(CSS, { status: 200 }) : new Response(new Uint8Array([1]), { status: 200 });
+    }) as unknown as typeof fetch;
+    const lookup: LookupFn = async (host) => [{ address: host === 'fonts.gstatic.com' ? '10.0.0.1' : '142.250.180.3', family: 4 }];
+    const e = await fetchGoogleFont({ ...net(fetchImpl, lookup) }, { family: 'Manrope', weights: [400], italic: false }).catch((x) => x);
+    expect(e.message).toBe('Risposta non valida da Google Fonts');
+    expect(urls).toHaveLength(1);
   });
   it('downloads one file per weight/style even when the css lists many unicode-range subsets', async () => {
     const block = (w: number, n: string) => `@font-face { font-style: normal; font-weight: ${w}; src: url(https://fonts.gstatic.com/s/x/${n}.woff2) format('woff2'); }`;
@@ -63,12 +78,12 @@ describe('fetchGoogleFont', () => {
       urls.push(url);
       return url.startsWith('https://fonts.googleapis.com/') ? new Response(css, { status: 200 }) : new Response(new Uint8Array([1]), { status: 200 });
     }) as unknown as typeof fetch;
-    const files = await fetchGoogleFont({ fetch: fetchImpl }, { family: 'Manrope', weights: [400, 700], italic: false });
+    const files = await fetchGoogleFont({ ...net(fetchImpl) }, { family: 'Manrope', weights: [400, 700], italic: false });
     expect(files.map((f) => f.weight)).toEqual([400, 700]);
     expect(urls.slice(1)).toEqual(['https://fonts.gstatic.com/s/x/a.woff2', 'https://fonts.gstatic.com/s/x/d.woff2']);
   });
   it('maps only a real Google 400 to "non trovato"; other failures keep their own message', async () => {
-    const run = (f: typeof fetch) => fetchGoogleFont({ fetch: f }, { family: 'Manrope', weights: [400], italic: false }).catch((e) => e);
+    const run = (f: typeof fetch) => fetchGoogleFont({ ...net(f) }, { family: 'Manrope', weights: [400], italic: false }).catch((e) => e);
     expect((await run((async () => new Response('x', { status: 400 })) as unknown as typeof fetch)).status).toBe(404);
     const down = await run((async () => { throw new Error('ECONNREFUSED'); }) as unknown as typeof fetch);
     expect(down.status).toBe(502);

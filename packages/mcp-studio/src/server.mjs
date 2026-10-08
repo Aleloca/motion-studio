@@ -29,6 +29,7 @@ const TOOLS = [
   { name: 'stock_search', description: 'Cerca foto o video su Pexels o Unsplash.', inputSchema: { type: 'object', properties: { provider: { enum: ['pexels', 'unsplash'] }, query: str('Ricerca (in inglese funziona meglio)'), kind: { enum: ['photo', 'video'] }, orientation: { enum: ['landscape', 'portrait', 'square'] }, limit: { type: 'integer', minimum: 1, maximum: 20 } }, required: ['provider', 'query'] } },
   { name: 'stock_download', description: "Scarica un risultato di stock negli asset del progetto, con l'attribuzione richiesta.", inputSchema: { type: 'object', properties: { provider: { enum: ['pexels', 'unsplash'] }, id: str('Id del risultato'), kind: { enum: ['photo', 'video'] } }, required: ['provider', 'id'] } },
   { name: 'fonts_fetch', description: 'Scarica un font da Google Fonts negli asset del progetto.', inputSchema: { type: 'object', properties: { family: str('Famiglia, es. "Manrope"'), weights: { type: 'array', items: { type: 'integer' } }, italic: { type: 'boolean' } }, required: ['family'] } },
+  { name: 'download_file', description: "Scarica un file (logo, immagine o font) da un sito negli asset del progetto: indica l'URL e la destinazione in assets/brand/ o assets/fonts/", inputSchema: { type: 'object', properties: { url: str('URL http(s) del file da scaricare'), dest: str('Destinazione, es. "assets/brand/logo.svg" o "assets/fonts/Inter-400.woff2"') }, required: ['url', 'dest'] } },
 ];
 
 const send = (m) => process.stdout.write(`${JSON.stringify(m)}\n`);

@@ -60,6 +60,19 @@ describe('mcp-studio server', () => {
     const names = (await rpc(2, 'tools/list')).result.tools.map((t: { name: string }) => t.name);
     expect(names).toEqual(['approve', 'report_progress', 'validate_output']);
   });
+  it('lists download_file for brand analysis with url and dest required', async () => {
+    child.kill();
+    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,read_brand_kit,fonts_fetch,download_file' });
+    const tools = (await rpc(3, 'tools/list')).result.tools as Array<{ name: string; description: string; inputSchema: { required: string[]; properties: Record<string, { type: string }> } }>;
+    const dl = tools.find((t) => t.name === 'download_file')!;
+    expect(dl.description).toBe("Scarica un file (logo, immagine o font) da un sito negli asset del progetto: indica l'URL e la destinazione in assets/brand/ o assets/fonts/");
+    expect(dl.inputSchema.required).toEqual(['url', 'dest']);
+    expect(dl.inputSchema.properties.url!.type).toBe('string');
+    expect(dl.inputSchema.properties.dest!.type).toBe('string');
+    const res = await rpc(4, 'tools/call', { name: 'download_file', arguments: { url: 'https://acme.example/logo.svg', dest: 'assets/brand/logo.svg' } });
+    expect(res.result.isError).toBeUndefined();
+    expect(calls.at(-1)).toMatchObject({ url: '/api/bridge/download_file', body: { url: 'https://acme.example/logo.svg', dest: 'assets/brand/logo.svg' } });
+  });
   it('forwards calls with the token and maps errors', async () => {
     await rpc(1, 'initialize', { protocolVersion: '2025-06-18' });
     const ok = await rpc(2, 'tools/call', { name: 'report_progress', arguments: { message: 'ciao' } });

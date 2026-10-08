@@ -1,9 +1,14 @@
 import { redact } from '../secrets/vault.ts';
+import type { LookupFn, Transport } from './safe-fetch.ts';
 
 export class ProviderError extends Error {
   constructor(public readonly status: number, message: string, public readonly upstreamStatus?: number) { super(message); this.name = 'ProviderError'; }
 }
-export interface HttpDeps { fetch: typeof fetch; timeoutMs?: number }
+export interface HttpDeps {
+  fetch: typeof fetch; timeoutMs?: number;
+  /** Downloads of outside URLs (see safe-fetch.ts); default: node transport with pinned DNS and real lookup. */
+  transport?: Transport; lookup?: LookupFn;
+}
 interface Opts { provider: string; secrets: string[] }
 
 const ERROR_BODY_MAX = 64 * 1024;

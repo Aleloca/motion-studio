@@ -1,14 +1,8 @@
 import { isPrivateHost } from '../brand/brand-store.ts';
 import { ProviderError, requestBytes, type HttpDeps } from './http.ts';
+import { BlockedUrlError, safeFetch } from './safe-fetch.ts';
 
-const MAX_REDIRECTS = 3;
-const CREDENTIAL_HEADERS = ['authorization', 'proxy-authorization', 'cookie', 'xi-api-key', 'x-api-key', 'api-key'];
-
-function withoutCredentials(init: RequestInit): RequestInit {
-  const headers = new Headers(init.headers);
-  for (const h of CREDENTIAL_HEADERS) headers.delete(h);
-  return { ...init, headers };
-}
+const PROVIDER_MAX_REDIRECTS = 3;
 
 /** Parses a provider-supplied URL; only https URLs whose host is not a private/loopback/link-local literal pass. */
 export function safeHttpsUrl(raw: string | undefined, provider: string): URL {
@@ -19,36 +13,38 @@ export function safeHttpsUrl(raw: string | undefined, provider: string): URL {
 }
 
 /**
- * Downloads a provider-supplied URL: validates it, follows at most 3 redirects by hand (each Location re-validated,
- * relative ones resolved against the current URL), and delegates body reading, limits and error mapping to requestBytes.
+ * Downloads an outside URL through safeFetch (resolved addresses checked on every hop, redirects followed by hand)
+ * and delegates body reading, limits and error mapping to requestBytes. A refused target surfaces as BlockedUrlError.
  */
+export async function downloadBytes(
+  deps: HttpDeps, url: string, init: RequestInit,
+  o: { provider: string; secrets: string[]; maxBytes: number; allowHttp?: boolean; maxRedirects?: number },
+): Promise<{ bytes: Buffer; contentType: string }> {
+  let rejected: ProviderError | undefined;
+  const follow = (async (u: string, i: RequestInit = {}) => {
+    try {
+      return await safeFetch({ transport: deps.transport, lookup: deps.lookup, maxRedirects: o.maxRedirects }, u, i, { provider: o.provider, allowHttp: o.allowHttp });
+    } catch (e) {
+      if (e instanceof ProviderError) rejected = e;
+      throw e;
+    }
+  }) as typeof fetch;
+  try {
+    return await requestBytes({ ...deps, fetch: follow }, url, init, o);
+  } catch (e) {
+    throw rejected ?? e;
+  }
+}
+
+/** Downloads a provider-supplied https URL; a refused target is reported as an invalid provider response. */
 export async function safeDownload(
   deps: HttpDeps, raw: string, init: RequestInit, o: { provider: string; secrets: string[]; maxBytes: number },
 ): Promise<{ bytes: Buffer; contentType: string }> {
   const first = safeHttpsUrl(raw, o.provider);
-  let rejected: ProviderError | undefined;
-  const follow = (async (_url: string, i: RequestInit = {}) => {
-    let current = first;
-    let req = i;
-    for (let hop = 0; ; hop++) {
-      const res = await deps.fetch(current.href, { ...req, redirect: 'manual' });
-      if (res.status < 300 || res.status >= 400) return res;
-      await res.body?.cancel().catch(() => {});
-      const loc = res.headers.get('location');
-      try {
-        if (hop >= MAX_REDIRECTS || !loc) throw new ProviderError(502, `Risposta non valida da ${o.provider}`);
-        const next = safeHttpsUrl(new URL(loc, current).href, o.provider);
-        if (next.origin !== current.origin) req = withoutCredentials(req);
-        current = next;
-      } catch (e) {
-        rejected = e instanceof ProviderError ? e : new ProviderError(502, `Risposta non valida da ${o.provider}`);
-        throw rejected;
-      }
-    }
-  }) as typeof fetch;
   try {
-    return await requestBytes({ ...deps, fetch: follow }, first.href, init, o);
+    return await downloadBytes(deps, first.href, init, { ...o, maxRedirects: PROVIDER_MAX_REDIRECTS });
   } catch (e) {
-    throw rejected ?? e;
+    if (e instanceof BlockedUrlError) throw new ProviderError(502, `Risposta non valida da ${o.provider}`);
+    throw e;
   }
 }
