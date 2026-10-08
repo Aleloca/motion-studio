@@ -14,7 +14,7 @@ describe('JobQueue', () => {
   it('respects the concurrency limit', async () => {
     const q = new JobQueue({ concurrency: 2 });
     const ds = [deferred(), deferred(), deferred()];
-    const jobs = ds.map((d, i) => q.enqueue({ key: `k${i}`, label: `j${i}`, run: () => d.promise }));
+    const jobs = ds.map((d, i) => q.enqueue({ key: `k${i}`, kind: 'creative', label: `j${i}`, run: () => d.promise }));
     await tick();
     expect(q.list().filter((j) => j.state === 'running')).toHaveLength(2);
     ds[0]!.resolve();
@@ -26,18 +26,18 @@ describe('JobQueue', () => {
   });
   it('rejects a second active job with the same key', () => {
     const q = new JobQueue({ concurrency: 1 });
-    q.enqueue({ key: 'same', label: 'a', run: () => deferred().promise });
-    expect(() => q.enqueue({ key: 'same', label: 'b', run: async () => {} })).toThrow(JobConflictError);
+    q.enqueue({ key: 'same', kind: 'creative', label: 'a', run: () => deferred().promise });
+    expect(() => q.enqueue({ key: 'same', kind: 'creative', label: 'b', run: async () => {} })).toThrow(JobConflictError);
   });
   it('allows the same key again after the first finishes', async () => {
     const q = new JobQueue({ concurrency: 1 });
-    q.enqueue({ key: 'k', label: 'a', run: async () => {} });
+    q.enqueue({ key: 'k', kind: 'creative', label: 'a', run: async () => {} });
     await q.whenIdle();
-    expect(() => q.enqueue({ key: 'k', label: 'b', run: async () => {} })).not.toThrow();
+    expect(() => q.enqueue({ key: 'k', kind: 'creative', label: 'b', run: async () => {} })).not.toThrow();
   });
   it('marks failures with the error message', async () => {
     const q = new JobQueue({ concurrency: 1 });
-    const job = q.enqueue({ key: 'k', label: 'a', run: async () => { throw new Error('nope'); } });
+    const job = q.enqueue({ key: 'k', kind: 'creative', label: 'a', run: async () => { throw new Error('nope'); } });
     await q.whenIdle();
     expect(q.list().find((j) => j.id === job.id)).toMatchObject({ state: 'failed', error: 'nope' });
   });
@@ -45,10 +45,10 @@ describe('JobQueue', () => {
     const q = new JobQueue({ concurrency: 1 });
     let ran = false;
     const running = q.enqueue({
-      key: 'a', label: 'a',
+      key: 'a', kind: 'creative', label: 'a',
       run: (signal) => new Promise<void>((_, rej) => signal.addEventListener('abort', () => rej(new Error('aborted')))),
     });
-    const queued = q.enqueue({ key: 'b', label: 'b', run: async () => { ran = true; } });
+    const queued = q.enqueue({ key: 'b', kind: 'creative', label: 'b', run: async () => { ran = true; } });
     await tick();
     expect(q.cancel(queued.id)).toBe(true);
     expect(q.cancel(running.id)).toBe(true);
@@ -60,15 +60,15 @@ describe('JobQueue', () => {
   it('reports every state change through onUpdate', async () => {
     const updates: JobSummary[] = [];
     const q = new JobQueue({ concurrency: 1, onUpdate: (j) => updates.push(j) });
-    q.enqueue({ key: 'k', label: 'a', run: async () => {} });
+    q.enqueue({ key: 'k', kind: 'creative', label: 'a', run: async () => {} });
     await q.whenIdle();
     expect(updates.map((u) => u.state)).toEqual(['queued', 'running', 'succeeded']);
   });
   it('starts waiting jobs when concurrency is raised', async () => {
     const q = new JobQueue({ concurrency: 1 });
     const d1 = deferred(); const d2 = deferred();
-    q.enqueue({ key: 'a', label: 'a', run: () => d1.promise });
-    q.enqueue({ key: 'b', label: 'b', run: () => d2.promise });
+    q.enqueue({ key: 'a', kind: 'creative', label: 'a', run: () => d1.promise });
+    q.enqueue({ key: 'b', kind: 'creative', label: 'b', run: () => d2.promise });
     await tick();
     q.setConcurrency(2);
     await tick();
@@ -78,13 +78,13 @@ describe('JobQueue', () => {
   });
   it('handles a non-async run that throws synchronously', async () => {
     const q = new JobQueue({ concurrency: 1 });
-    const job = q.enqueue({ key: 'k', label: 'a', run: () => { throw new Error('sync error'); } });
+    const job = q.enqueue({ key: 'k', kind: 'creative', label: 'a', run: () => { throw new Error('sync error'); } });
     await q.whenIdle();
     expect(q.list().find((j) => j.id === job.id)).toMatchObject({ state: 'failed', error: 'sync error' });
   });
   it('handles a run that rejects with a non-Error value', async () => {
     const q = new JobQueue({ concurrency: 1 });
-    const job = q.enqueue({ key: 'k', label: 'a', run: async () => { throw 'string error'; } });
+    const job = q.enqueue({ key: 'k', kind: 'creative', label: 'a', run: async () => { throw 'string error'; } });
     await q.whenIdle();
     expect(q.list().find((j) => j.id === job.id)).toMatchObject({ state: 'failed', error: 'string error' });
   });
@@ -94,7 +94,7 @@ describe('JobQueue', () => {
       updates.push(j);
       if (j.state === 'running') throw new Error('listener error');
     } });
-    const job = q.enqueue({ key: 'k', label: 'a', run: async () => {} });
+    const job = q.enqueue({ key: 'k', kind: 'creative', label: 'a', run: async () => {} });
     await q.whenIdle();
     expect(q.list().find((j) => j.id === job.id)).toMatchObject({ state: 'succeeded' });
     expect(updates.length).toBeGreaterThanOrEqual(3);
@@ -102,7 +102,7 @@ describe('JobQueue', () => {
   it('a run that resolves normally succeeds even if the abort arrived after the work finished', async () => {
     const q = new JobQueue({ concurrency: 1 });
     const d = deferred();
-    const job = q.enqueue({ key: 'k', label: 'a', run: () => d.promise });
+    const job = q.enqueue({ key: 'k', kind: 'creative', label: 'a', run: () => d.promise });
     await tick();
     q.cancel(job.id);
     d.resolve();
@@ -112,7 +112,7 @@ describe('JobQueue', () => {
   it('a run can resolve to "cancelled" to report an explicit cancellation', async () => {
     const q = new JobQueue({ concurrency: 1 });
     const job = q.enqueue({
-      key: 'k', label: 'a',
+      key: 'k', kind: 'creative', label: 'a',
       run: (signal) => new Promise<'cancelled'>((res) => signal.addEventListener('abort', () => res('cancelled'))),
     });
     await tick();
@@ -124,7 +124,7 @@ describe('JobQueue', () => {
     const running = (q: JobQueue) => q.list().filter((j) => j.state === 'running').length;
     const q = new JobQueue({ concurrency: 2 });
     const ds = Array.from({ length: 10 }, () => deferred());
-    ds.forEach((d, i) => q.enqueue({ key: `k${i}`, label: `${i}`, run: () => d.promise }));
+    ds.forEach((d, i) => q.enqueue({ key: `k${i}`, kind: 'creative', label: `${i}`, run: () => d.promise }));
     await tick();
     expect(running(q)).toBe(2);
     q.setConcurrency(Number.NaN);
@@ -137,7 +137,7 @@ describe('JobQueue', () => {
     await q.whenIdle();
     const q2 = new JobQueue({ concurrency: 0 });
     const d2 = deferred();
-    q2.enqueue({ key: 'x', label: 'x', run: () => d2.promise });
+    q2.enqueue({ key: 'x', kind: 'creative', label: 'x', run: () => d2.promise });
     await tick();
     expect(running(q2)).toBe(1);
     d2.resolve();
@@ -147,7 +147,7 @@ describe('JobQueue', () => {
     const updates: JobSummary[] = [];
     const q = new JobQueue({ concurrency: 1, onUpdate: (j) => updates.push(j) });
     const d = deferred();
-    const job = q.enqueue({ key: 'k', label: 'a', run: () => d.promise });
+    const job = q.enqueue({ key: 'k', kind: 'creative', label: 'a', run: () => d.promise });
     await tick();
     q.patch(job.id, { sessionId: 's1' });
     q.patch(job.id, { sessionId: 's1' });
@@ -160,9 +160,9 @@ describe('JobQueue', () => {
     const q = new JobQueue({ concurrency: 1 });
     const calls: string[] = [];
     const block = deferred();
-    const running = q.enqueue({ key: 'a', label: 'a', run: (signal) => new Promise<'cancelled'>((res) => signal.addEventListener('abort', () => res('cancelled'))), onCancelledBeforeStart: () => { calls.push('running'); } });
-    const queued = q.enqueue({ key: 'b', label: 'b', run: () => block.promise, onCancelledBeforeStart: () => { calls.push('queued'); throw new Error('hook'); } });
-    const queued2 = q.enqueue({ key: 'c', label: 'c', run: () => block.promise, onCancelledBeforeStart: async () => { calls.push('queued2'); throw new Error('hook'); } });
+    const running = q.enqueue({ key: 'a', kind: 'creative', label: 'a', run: (signal) => new Promise<'cancelled'>((res) => signal.addEventListener('abort', () => res('cancelled'))), onCancelledBeforeStart: () => { calls.push('running'); } });
+    const queued = q.enqueue({ key: 'b', kind: 'creative', label: 'b', run: () => block.promise, onCancelledBeforeStart: () => { calls.push('queued'); throw new Error('hook'); } });
+    const queued2 = q.enqueue({ key: 'c', kind: 'creative', label: 'c', run: () => block.promise, onCancelledBeforeStart: async () => { calls.push('queued2'); throw new Error('hook'); } });
     await tick();
     q.cancel(queued.id); q.cancel(queued2.id); q.cancel(running.id);
     await q.whenIdle();
@@ -175,7 +175,7 @@ describe('JobFailedError', () => {
   it('marks the job failed even when the signal was aborted', async () => {
     const q = new JobQueue({ concurrency: 1 });
     const job = q.enqueue({
-      key: 'a', label: 'a',
+      key: 'a', kind: 'creative', label: 'a',
       run: (signal) => new Promise<void>((_, rej) => signal.addEventListener('abort', () => rej(new JobFailedError('commit fallito')))),
     });
     await new Promise((r) => setTimeout(r, 0));

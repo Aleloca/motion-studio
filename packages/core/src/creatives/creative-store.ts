@@ -145,10 +145,10 @@ export class CreativeStore {
     for (const item of await this.list()) {
       if (!item.ok || item.status !== 'working' || isActive(item.slug)) continue;
       try {
-        await this.update(item.slug, { status: 'interrupted', error: 'Il lavoro è stato interrotto (app chiusa durante la generazione).' });
+        await this.update(item.slug, { status: 'interrupted', error: t().jobs.interruptedError });
         await this.appendConversation(item.slug, {
           type: 'system', at: new Date().toISOString(), level: 'error',
-          text: 'Lavoro interrotto: Motion Studio è stato chiuso durante la generazione. Invia un messaggio per riprendere.',
+          text: t().jobs.interruptedNote,
         });
         recovered.push(item.slug);
       } catch (err) {

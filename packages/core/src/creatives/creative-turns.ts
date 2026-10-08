@@ -71,7 +71,7 @@ export class CreativeTurnService {
         ...(patch.brief ? { brief: patch.brief } : {}),
         ...(linkedCodebases ? { linkedCodebases } : {}),
       });
-      await this.commitState(ref, `${updated.title}: brief aggiornato`);
+      await this.commitState(ref, t().jobs.briefUpdatedCommit({ title: updated.title }));
       return updated;
     });
   }
@@ -87,7 +87,8 @@ export class CreativeTurnService {
     this.changed(ref);
     return this.deps.queue.enqueue({
       key,
-      label: `Creatività · ${before.title}`,
+      kind: 'creative',
+      label: t().jobs.creativeLabel({ title: before.title }),
       run: (signal, jobId) => this.run(ref, store, before.status, message, signal, jobId),
       onCancelledBeforeStart: () => this.locks.run(key, async () => {
         // A new start() may have won the lock after the cancel: the creative belongs to that job now.
@@ -117,10 +118,10 @@ export class CreativeTurnService {
     const removed = await this.deps.git.restorePath(ref.projectDir, version.commit, relative(ref.projectDir, store.workDir(ref.creativeSlug)));
     const updated = await store.update(ref.creativeSlug, { resumeFrom: { version: n, sessionId: version.sessionId } });
     if (removed > 0) {
-      await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: `Rimossi ${removed} file non salvati in una versione` });
+      await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: t().jobs.removedUnsaved({ count: removed }) });
     }
-    await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: `Ripartenza dalla versione ${n}: il prossimo messaggio lavora su quella base.` });
-    await this.commitState(ref, `${updated.title}: ripartenza da v${n}`);
+    await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: t().jobs.restartedFrom({ n }) });
+    await this.commitState(ref, t().jobs.restartCommit({ title: updated.title, n }));
     this.changed(ref);
     return updated;
   }
@@ -166,9 +167,7 @@ export class CreativeTurnService {
           const snap = snapshotsBefore[k]!;
           if ('value' in snap || uncheckable.has(p)) continue;
           uncheckable.add(p);
-          const text = snap.unavailable === 'not-git'
-            ? `Codebase ${p} non controllabile (non è un repository git): eventuali modifiche non verrebbero rilevate`
-            : `Codebase ${p}: controllo delle modifiche non riuscito, eventuali modifiche non verrebbero rilevate`;
+          const text = snap.unavailable === 'not-git' ? t().jobs.codebaseNotRepo({ path: p }) : t().jobs.codebaseCheckFailed({ path: p });
           await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text });
         }
         const run = await this.deps.launcher.start({
@@ -196,11 +195,11 @@ export class CreativeTurnService {
           // A repo that appears during the turn (git init) counts as a change too.
           const changed = 'value' in b ? 'value' in a && a.value !== b.value : 'value' in a;
           if (changed) {
-            await store.appendConversation(slug, { type: 'system', at: now(), level: 'error', text: `Attenzione: la codebase ${p} risulta modificata durante il turno. Controlla le modifiche.` });
+            await store.appendConversation(slug, { type: 'system', at: now(), level: 'error', text: t().jobs.codebaseChanged({ path: p }) });
           }
         }
         if (outcome.status === 'cancelled') return await this.cancelled(ref, store, previous, versions.length > 0);
-        if (outcome.status === 'failed') throw new AgentFailure(outcome.error ?? 'Turno non riuscito');
+        if (outcome.status === 'failed') throw new AgentFailure(outcome.error ?? t().errors.turnFailed);
         resumeSessionId = outcome.sessionId ?? resumeSessionId;
         forkSession = false;
 
@@ -208,7 +207,7 @@ export class CreativeTurnService {
         problems = result.problems;
         // A preset missing from the catalog cannot be fixed by the agent: retrying would only waste turns.
         if (problems.length === result.unknownPresets.length || attempt === this.maxAttempts) break;
-        await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: `Controllo output: ${problems.length} problemi. Chiedo una correzione (tentativo ${attempt + 1} di ${this.maxAttempts}).` });
+        await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: t().jobs.checkingOutputs({ count: problems.length, attempt: attempt + 1, max: this.maxAttempts }) });
         this.changed(ref);
         kind = 'fix';
       }
@@ -218,23 +217,23 @@ export class CreativeTurnService {
       const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${n}`);
       await store.appendVersion(slug, {
         n, commit, sessionId: resumeSessionId ?? null, status, createdAt: now(),
-        request: request ?? 'Generazione dal brief',
+        request: request ?? t().jobs.requestFromBrief,
         outputs: result?.outputs ?? [], problems, tools: result?.tools ?? [], renderCommand: result?.renderCommand ?? null,
         basedOn: creative.resumeFrom?.version ?? latest?.n ?? null,
       });
       await store.appendConversation(slug, { type: 'version', at: now(), n, status });
       await store.update(slug, { status: status === 'complete' ? 'ready' : 'incomplete', error: null, resumeFrom: null });
       if (signal.aborted) {
-        await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: `Annullamento arrivato a lavoro quasi concluso: la versione v${n} è stata salvata.` });
+        await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: t().jobs.lateCancel({ n }) });
       }
-      await this.commitState(ref, `${creative.title}: v${n} · stato`);
+      await this.commitState(ref, t().jobs.versionStateCommit({ title: creative.title, n }));
       this.changed(ref);
     } catch (err) {
       if (signal.aborted && !finalizing) return await this.cancelled(ref, store, previous, (await store.readVersions(slug)).length > 0);
       const text = err instanceof Error ? err.message : String(err);
       await store.update(slug, { status: 'error', error: text }).catch(() => {});
-      await store.appendConversation(slug, { type: 'system', at: now(), level: 'error', text: `Generazione non riuscita: ${text}` }).catch(() => {});
-      await this.commitState(ref, `${await this.titleOf(store, slug)}: stato`);
+      await store.appendConversation(slug, { type: 'system', at: now(), level: 'error', text: t().jobs.generationFailed({ text }) }).catch(() => {});
+      await this.commitState(ref, t().jobs.stateCommit({ title: await this.titleOf(store, slug) }));
       this.changed(ref);
       // After a late abort the queue would read a plain rejection as a cancel: this failure is real.
       throw finalizing ? new JobFailedError(text) : err;
@@ -246,24 +245,24 @@ export class CreativeTurnService {
     const brand = new BrandStore(ref.projectDir);
     const library = new LibraryStore(ref.projectDir, this.deps.media);
     let kit = EMPTY_BRAND_KIT;
-    try { kit = await brand.readKit(); } catch (e) { await note(`Brand kit non leggibile: ${(e as Error).message}`); }
+    try { kit = await brand.readKit(); } catch (e) { await note(t().jobs.brandKitUnreadable({ detail: (e as Error).message })); }
     let hasGuidelines = false;
-    try { hasGuidelines = (await brand.readGuidelines()).trim() !== ''; } catch (e) { await note(`Linee guida non leggibili: ${(e as Error).message}`); }
+    try { hasGuidelines = (await brand.readGuidelines()).trim() !== ''; } catch (e) { await note(t().jobs.guidelinesUnreadable({ detail: (e as Error).message })); }
     let assets = 0;
-    try { assets = (await library.listAssets()).length; } catch (e) { await note(`Elenco asset non leggibile: ${(e as Error).message}`); }
+    try { assets = (await library.listAssets()).length; } catch (e) { await note(t().jobs.assetListUnreadable({ detail: (e as Error).message })); }
     let references = 0;
-    try { references = (await library.listReferences()).length; } catch (e) { await note(`Elenco riferimenti non leggibile: ${(e as Error).message}`); }
+    try { references = (await library.listReferences()).length; } catch (e) { await note(t().jobs.referenceListUnreadable({ detail: (e as Error).message })); }
     const project = await readJsonFile(join(ref.projectDir, 'project.json'), projectFileSchema);
     const normalized: LinkedCodebase[] = [];
     for (const c of [...project.linkedCodebases, ...creativeCodebases]) {
       try {
         const [n] = normalizeCodebaseList([c]);
-        if (n && await codebaseOverlaps(n.path, [ref.projectDir, ref.root])) await note(`Codebase ignorata (${n.path}): ${codebaseOverlapMessage()}`);
+        if (n && await codebaseOverlaps(n.path, [ref.projectDir, ref.root])) await note(t().jobs.codebaseIgnored({ path: n.path, reason: codebaseOverlapMessage() }));
         else if (n) normalized.push(n);
-      } catch (e) { await note(`Codebase ignorata (${c.path}): ${(e as Error).message}`); }
+      } catch (e) { await note(t().jobs.codebaseIgnored({ path: c.path, reason: (e as Error).message })); }
     }
     const checks = await checkCodebases(normalizeCodebaseList(normalized));
-    for (const c of checks.filter((x) => !x.exists)) await note(`Codebase non trovata, ignorata in questo turno: ${c.path}`);
+    for (const c of checks.filter((x) => !x.exists)) await note(t().jobs.codebaseMissing({ path: c.path }));
     const existing = checks.filter((c) => c.exists);
     return {
       context: { kit, hasGuidelines, assets, references, codebases: existing.map(({ path, note: n }) => ({ path, ...(n ? { note: n } : {}) })), missingCodebases: checks.filter((c) => !c.exists).map((c) => c.path), tools: this.deps.launcher.mcpActive() ? await availableTools(this.deps.vault) : [] },
@@ -275,8 +274,8 @@ export class CreativeTurnService {
     const restored: CreativeStatus = previous === 'ready' || previous === 'incomplete' || previous === 'draft'
       ? previous : hasVersions ? 'ready' : 'draft';
     await store.update(ref.creativeSlug, { status: restored, error: null });
-    await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: 'Generazione annullata.' });
-    await this.commitState(ref, `${await this.titleOf(store, ref.creativeSlug)}: stato`);
+    await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: t().jobs.cancelledNote });
+    await this.commitState(ref, t().jobs.stateCommit({ title: await this.titleOf(store, ref.creativeSlug) }));
     this.changed(ref);
     return 'cancelled';
   }

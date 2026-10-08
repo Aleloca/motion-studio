@@ -2,6 +2,10 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ApprovalRequest, VersionEntry } from '@motion-studio/shared';
+import { fileURLToPath } from 'node:url';
+import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
+import { AppConfigStore } from '../src/app-config.ts';
+import { buildServer } from '../src/server/app.ts';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ApprovalBroker } from '../src/approvals/broker.ts';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -51,5 +55,19 @@ describe('English messages', () => {
   it('words export refusals in English', async () => {
     const version: VersionEntry = { n: 1, commit: null, sessionId: null, status: 'complete', createdAt: 'x', request: '', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: null };
     await expect(exportVersion({ creativeDir: '/nowhere', version, destination: 'relative/dir', slug: 'c' })).rejects.toMatchObject({ status: 400, message: 'Choose a destination folder (absolute path)' });
+  });
+  it('labels a started turn in English and tags it with a stable kind', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'ms-en-'));
+    const app = await buildServer({ uiToken: null, sandbox: async () => ({ available: false, reason: 'test' }), appConfig: new AppConfigStore(join(base, 'config')), git: new Git(), doctor: async () => [],
+      runner: new ClaudeCodeRunner([process.execPath, fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url))], { killGraceMs: 200 }) });
+    try {
+      await app.inject({ method: 'PUT', url: '/api/workspace', payload: { path: join(base, 'ws') } });
+      await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' } });
+      const res = await app.inject({ method: 'POST', url: '/api/projects/acme/turns', payload: { prompt: 'hello' } });
+      expect(res.statusCode).toBe(202);
+      expect(res.json()).toMatchObject({ kind: 'console', label: 'Turn · Acme' });
+    } finally {
+      await app.close();
+    }
   });
 });

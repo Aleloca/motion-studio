@@ -65,7 +65,7 @@ export class BrandService {
       const all = await store.readSources();
       const sources = sourceIds ? all.filter((s) => sourceIds.includes(s.id)) : all;
       if (sources.length === 0) throw new WorkspaceError(400, t().errors.addSourceFirst);
-      return this.deps.queue.enqueue({ key, label: 'Analisi brand', run: (signal, jobId) => this.runAnalysis(ref, store, sources, signal, jobId) });
+      return this.deps.queue.enqueue({ key, kind: 'brand-analysis', label: t().jobs.brandAnalysisLabel, run: (signal, jobId) => this.runAnalysis(ref, store, sources, signal, jobId) });
     });
   }
 
@@ -239,7 +239,7 @@ export class BrandService {
       const targets = files ? assets.filter((a) => files.includes(a.file)) : assets.filter((a) => a.description.trim() === '');
       if (targets.length === 0) throw new WorkspaceError(400, t().errors.noAssetsToDescribe);
       return this.deps.queue.enqueue({
-        key, label: 'Descrizione asset',
+        key, kind: 'asset-description', label: t().jobs.assetDescriptionLabel,
         run: async (signal, jobId) => {
           const outRel = `assets/.describe/${jobId}.json`;
           const outAbs = join(ref.projectDir, 'assets', '.describe', `${jobId}.json`);

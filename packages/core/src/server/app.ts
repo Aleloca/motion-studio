@@ -305,7 +305,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       const projectDir = ws.projectDir(slug);
       const job = queue.enqueue({
         key: projectJobKey(ws.root, slug),
-        label: `Turno · ${project.name}`,
+        kind: 'console',
+        label: t().jobs.turnLabel({ name: project.name }),
         run: async (signal, jobId) => {
           const run = await launcher.start({
             kind: 'console', jobId, projectSlug: slug, projectDir,

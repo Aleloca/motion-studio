@@ -54,7 +54,7 @@ describe('BrandPage', () => {
   });
   it('shows progress for a running analysis and disables a corrupt kit', async () => {
     overview = { ...overview, kitError: 'brand-kit.json: JSON non valido' };
-    render(<BrandPage slug="acme" live={{ ...live, jobs: { j1: { id: 'j1', key: 'brand:k', label: 'Analisi brand', state: 'running', createdAt: '2026-10-07T10:00:00.000Z' } } }} />);
+    render(<BrandPage slug="acme" live={{ ...live, jobs: { j1: { id: 'j1', key: 'brand:k', kind: 'brand-analysis', label: 'Analisi brand', state: 'running', createdAt: '2026-10-07T10:00:00.000Z' } } }} />);
     await waitFor(() => screen.getByText('Analisi in corso…'));
     expect(screen.getByRole('alert').textContent).toContain('non è leggibile');
     expect((screen.getByRole('button', { name: 'Analizza brand' }) as HTMLButtonElement).disabled).toBe(true);
@@ -92,7 +92,7 @@ describe('BrandPage', () => {
   });
 });
 
-const bjob = (over: Partial<JobSummary>): JobSummary => ({ id: 'j1', key: 'brand:k', label: 'Analisi brand', state: 'running', createdAt: '2026-10-07T10:00:00.000Z', ...over });
+const bjob = (over: Partial<JobSummary>): JobSummary => ({ id: 'j1', key: 'brand:k', kind: 'brand-analysis', label: 'Analisi brand', state: 'running', createdAt: '2026-10-07T10:00:00.000Z', ...over });
 const proposal = (createdAt: string) => ({ schemaVersion: 1 as const, id: 'p-1', createdAt, sourceIds: [], status: 'applied' as const, summary: '', changes: [], guidelines: null, assetsAdded: [] });
 
 describe('BrandPage (final review)', () => {
@@ -106,7 +106,7 @@ describe('BrandPage (final review)', () => {
     expect((screen.getByLabelText('Sfondo logo 1') as HTMLSelectElement).selectedOptions[0]!.textContent).toBe('Scuro');
   });
   it('names a running describe job as such', async () => {
-    render(<BrandPage slug="acme" live={{ ...live, jobs: { j1: bjob({ label: 'Descrizione asset' }) } }} />);
+    render(<BrandPage slug="acme" live={{ ...live, jobs: { j1: bjob({ kind: 'asset-description', label: 'Descrizione asset' }) } }} />);
     await screen.findByText('Descrizione in corso…');
     expect(screen.queryByText('Analisi in corso…')).toBeNull();
   });
@@ -121,7 +121,7 @@ describe('BrandPage (final review)', () => {
     expect(screen.queryByText(/Analisi non riuscita/)).toBeNull();
   });
   it('reports a failed describe job as a description failure', async () => {
-    render(<BrandPage slug="acme" live={{ ...live, jobs: { j1: bjob({ label: 'Descrizione asset', state: 'failed', error: 'boom' }) } }} />);
+    render(<BrandPage slug="acme" live={{ ...live, jobs: { j1: bjob({ kind: 'asset-description', label: 'Descrizione asset', state: 'failed', error: 'boom' }) } }} />);
     await screen.findByText('Descrizione non riuscita: boom');
     expect(screen.queryByText(/Analisi non riuscita/)).toBeNull();
   });

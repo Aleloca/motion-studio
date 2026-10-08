@@ -92,7 +92,7 @@ describe('AssetsPage', () => {
   });
 });
 
-const job = (over: Partial<JobSummary>): JobSummary => ({ id: 'j1', key: 'brand:k', label: 'Descrizione asset', state: 'running', createdAt: at, ...over });
+const job = (over: Partial<JobSummary>): JobSummary => ({ id: 'j1', key: 'brand:k', kind: 'asset-description', label: 'Descrizione asset', state: 'running', createdAt: at, ...over });
 
 describe('AssetsPage (final review)', () => {
   afterEach(() => vi.useRealTimers());
@@ -102,10 +102,16 @@ describe('AssetsPage (final review)', () => {
     const kinds = within(screen.getByLabelText('Tipo')).getAllByRole('option').map((o) => o.textContent);
     expect(kinds).toEqual(['Tutti', 'Immagine', 'SVG', 'Video', 'Font', 'Audio', 'Altro']);
   });
+  it('tells analysis from description by the job kind, whatever language the label is in', async () => {
+    const { rerender } = render(<AssetsPage slug="acme" live={{ ...live, jobs: { j1: job({ kind: 'asset-description', label: 'Asset description' }) } }} />);
+    await screen.findByText('Descrizione in corso…');
+    rerender(<AssetsPage slug="acme" live={{ ...live, jobs: { j1: job({ kind: 'brand-analysis', label: 'Asset description' }) } }} />);
+    await screen.findByText('Analisi in corso…');
+  });
   it('names the running brand job by its kind', async () => {
     const { rerender } = render(<AssetsPage slug="acme" live={{ ...live, jobs: { j1: job({}) } }} />);
     await screen.findByText('Descrizione in corso…');
-    rerender(<AssetsPage slug="acme" live={{ ...live, jobs: { j1: job({ label: 'Analisi brand' }) } }} />);
+    rerender(<AssetsPage slug="acme" live={{ ...live, jobs: { j1: job({ kind: 'brand-analysis', label: 'Analisi brand' }) } }} />);
     await screen.findByText('Analisi in corso…');
     expect(screen.queryByText('Descrizione in corso…')).toBeNull();
     rerender(<AssetsPage slug="acme" live={{ ...live, jobs: { j1: job({ state: 'failed', error: 'boom' }) } }} />);
@@ -115,7 +121,7 @@ describe('AssetsPage (final review)', () => {
   });
   it('disables the describe button when the job key is unknown and a brand job runs, and surfaces a 409', async () => {
     api.getBrand.mockRejectedValueOnce(new Error('brand-kit.json rotto'));
-    const { rerender } = render(<AssetsPage slug="acme" live={{ ...live, jobs: { j1: job({ key: 'brand:/w:acme', label: 'Analisi brand' }) } }} />);
+    const { rerender } = render(<AssetsPage slug="acme" live={{ ...live, jobs: { j1: job({ key: 'brand:/w:acme', kind: 'brand-analysis', label: 'Analisi brand' }) } }} />);
     await screen.findByRole('button', { name: 'Apri logo.svg' });
     expect((screen.getByRole('button', { name: "Descrivi con l'agente" }) as HTMLButtonElement).disabled).toBe(true);
     api.describeAssets.mockRejectedValueOnce(new Error("Un'analisi del brand o una descrizione degli asset è già in corso per questo progetto"));

@@ -25,7 +25,7 @@ const conversation: ConversationEntry[] = [
   { type: 'version', at, n: 1, status: 'complete' },
   { type: 'system', at, level: 'error', text: 'Generazione non riuscita: boom' },
 ];
-const running: JobSummary = { id: 'j1', key: 'creative:k', label: 'x', state: 'running', createdAt: at };
+const running: JobSummary = { id: 'j1', key: 'creative:k', kind: 'creative', label: 'x', state: 'running', createdAt: at };
 const base = {
   slug: 'acme', approvals: [], presets: DEFAULT_FORMATS, liveEvents: [], expert: false, pins: [],
   onRemovePin: vi.fn(), onSent: vi.fn(), onSelectVersion: vi.fn(), onChanged: vi.fn(),

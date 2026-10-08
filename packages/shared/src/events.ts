@@ -15,9 +15,14 @@ export type AgentEvent =
 
 export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
+/** What a job does: logic and the UI branch on this, never on the (localized) label. */
+export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console';
+
 export interface JobSummary {
   id: string;
   key: string;
+  kind: JobKind;
+  /** Display text in the language current when the job was created. */
   label: string;
   state: JobState;
   createdAt: string;
@@ -33,7 +38,7 @@ export interface JobSummary {
 export type ApprovalKind = 'tool' | 'provider';
 export interface ApprovalRequest {
   id: string; jobId: string; projectSlug: string; creativeSlug: string | null; kind: ApprovalKind;
-  /** Italian title, e.g. "Scrivere un file fuori dal progetto". */
+  /** Display title in the language current when the request was created, e.g. "Edit a file outside the project". Logic uses `kind`/`toolName`, never this text. */
   title: string;
   /** The command / path / provider summary, plain text. */
   detail: string;

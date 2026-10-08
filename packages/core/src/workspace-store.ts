@@ -190,7 +190,7 @@ export class WorkspaceStore {
       await writeFile(join(dir, '.gitignore'), GITIGNORE);
       await writeJsonFileAtomic(join(dir, 'project.json'), project);
       await this.git.init(dir);
-      await this.git.commitAll(dir, `Crea progetto ${name}`);
+      await this.git.commitAll(dir, t().jobs.createProjectCommit({ name }));
     } catch (err) {
       // Only the folder created above: never leave a half-built project behind.
       await rm(dir, { recursive: true, force: true }).catch(() => {});

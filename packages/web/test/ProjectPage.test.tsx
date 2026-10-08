@@ -11,7 +11,7 @@ vi.mock('../src/api.ts', () => ({
 }));
 
 const project = { schemaVersion: 1 as const, name: 'Acme', description: '', createdAt: '2026-10-07T10:00:00.000Z', updatedAt: '2026-10-07T10:00:00.000Z', linkedCodebases: [] };
-const job = (over: Partial<JobSummary>): JobSummary => ({ id: 'j1', key: 'project:/w:acme', label: 'Turno · Acme', state: 'running', createdAt: '2026-10-07T10:00:00.000Z', ...over });
+const job = (over: Partial<JobSummary>): JobSummary => ({ id: 'j1', key: 'project:/w:acme', kind: 'console', label: 'Turno · Acme', state: 'running', createdAt: '2026-10-07T10:00:00.000Z', ...over });
 
 describe('ProjectPage after a reload', () => {
   afterEach(() => vi.clearAllMocks());

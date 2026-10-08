@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import type { JobSummary } from '@motion-studio/shared';
+import type { JobKind, JobSummary } from '@motion-studio/shared';
+import { t } from '../i18n.ts';
 
 export class JobConflictError extends Error {
   constructor(key: string) {
-    super(`C'è già un lavoro attivo per ${key}`);
+    super(t().jobs.conflict({ key }));
     this.name = 'JobConflictError';
   }
 }
@@ -18,6 +19,7 @@ export class JobFailedError extends Error {
 
 export interface JobSpec {
   key: string;
+  kind: JobKind;
   label: string;
   /**
    * Outcome contract: resolving means the work completed ('succeeded'), even if an abort arrived late;
@@ -57,7 +59,7 @@ export class JobQueue {
     const entry: Entry = {
       spec,
       controller: new AbortController(),
-      summary: { id: randomUUID(), key: spec.key, label: spec.label, state: 'queued', createdAt: new Date().toISOString() },
+      summary: { id: randomUUID(), key: spec.key, kind: spec.kind, label: spec.label, state: 'queued', createdAt: new Date().toISOString() },
     };
     this.entries.unshift(entry);
     this.trim();

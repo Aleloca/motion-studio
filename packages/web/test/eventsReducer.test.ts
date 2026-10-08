@@ -2,7 +2,7 @@ import type { JobSummary } from '@motion-studio/shared';
 import { describe, expect, it } from 'vitest';
 import { eventsReducer, initialEventsState, sessionIdOf } from '../src/eventsReducer.ts';
 
-const job = (id: string, state: JobSummary['state']): JobSummary => ({ id, key: 'k', label: 'l', state, createdAt: '2026-10-07T10:00:00.000Z' });
+const job = (id: string, state: JobSummary['state']): JobSummary => ({ id, key: 'k', kind: 'creative', label: 'l', state, createdAt: '2026-10-07T10:00:00.000Z' });
 
 describe('eventsReducer', () => {
   it('replaces jobs on snapshot and keeps events', () => {

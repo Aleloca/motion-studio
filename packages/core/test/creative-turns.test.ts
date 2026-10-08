@@ -229,7 +229,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
     });
     let release!: () => void;
-    q1.enqueue({ key: 'blocker', label: 'blocker', run: () => new Promise<void>((r) => { release = r; }) });
+    q1.enqueue({ key: 'blocker', kind: 'creative', label: 'blocker', run: () => new Promise<void>((r) => { release = r; }) });
     const job = await svc.start(ref);
     expect((await store.get(ref.creativeSlug)).status).toBe('working');
     q1.cancel(job.id);
@@ -284,7 +284,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
     });
     let release!: () => void;
-    q1.enqueue({ key: 'blocker', label: 'blocker', run: () => new Promise<void>((r) => { release = r; }) });
+    q1.enqueue({ key: 'blocker', kind: 'creative', label: 'blocker', run: () => new Promise<void>((r) => { release = r; }) });
     const first = await svc.start(ref);
     q1.cancel(first.id);
     const second = svc.start(ref);

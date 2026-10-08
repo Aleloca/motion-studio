@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { AgentConsole } from '../src/components/AgentConsole.tsx';
 
-const job = (state: JobSummary['state'], error?: string): JobSummary => ({ id: 'j', key: 'k', label: 'Turno · Acme', state, createdAt: '2026-10-07T10:00:00.000Z', error });
+const job = (state: JobSummary['state'], error?: string): JobSummary => ({ id: 'j', key: 'k', kind: 'console', label: 'Turno · Acme', state, createdAt: '2026-10-07T10:00:00.000Z', error });
 const events: AgentEvent[] = [
   { kind: 'session', sessionId: 's1' },
   { kind: 'text', text: 'Creo la scena.' },

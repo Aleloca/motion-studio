@@ -78,7 +78,7 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
   app.patch<{ Params: { slug: string; '*': string } }>('/api/projects/:slug/assets/item/*', async (req) => {
     const { lib, projectDir } = await project(req.params.slug);
     const entry = await lib.updateAsset(req.params['*'], parse(assetPatch, req.body));
-    await done(projectDir, req.params.slug, `Aggiorna asset ${entry.file}`);
+    await done(projectDir, req.params.slug, t().jobs.updateAssetCommit({ file: entry.file }));
     return entry;
   });
 
@@ -108,7 +108,7 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
     const { lib, projectDir } = await project(req.params.slug);
     const entry = await lib.updateReference(req.params['*'], parse(refPatch, req.body));
     const dropped = entry.useForBrand ? false : await dropImageSource(projectDir, entry.file);
-    await done(projectDir, req.params.slug, `Aggiorna riferimento ${entry.file}`, dropped);
+    await done(projectDir, req.params.slug, t().jobs.updateReferenceCommit({ file: entry.file }), dropped);
     return entry;
   });
 
