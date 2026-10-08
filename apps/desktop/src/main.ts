@@ -1,14 +1,22 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, session, shell, type IpcMainInvokeEvent } from 'electron';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resolveLoginShellPath, startServer } from '@motion-studio/core';
-import { absolutePathArg, pickFolderArgs, tokenFromAppUrl } from './helpers.ts';
+import { AlreadyRunningError, resolveLoginShellPath, startServer } from '@motion-studio/core';
+import { absolutePathArg, focusOnReady, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, userDataDir } from './helpers.ts';
 import { setupUpdates } from './updater.ts';
 import { externalUrlAllowed, isAppUrl, windowOptions } from './window.ts';
 
 const REPO_URL = 'https://github.com/Aleloca/motion-studio';
 const smokeArg = process.argv.find((a) => a === '--smoke-test' || a.startsWith('--smoke-test='));
+
+// Electron's data folder, set before anything reads it (the single-instance lock lives there too): a throwaway one for a smoke
+// run, removed on exit; otherwise a folder of its own beside (never inside) the Motion Studio config folder.
+const smokeUserData = smokeArg ? mkdtempSync(join(tmpdir(), 'motion-studio-smoke-electron-')) : null;
+const removeSmokeUserData = () => { if (smokeUserData) rmSync(smokeUserData, { recursive: true, force: true }); };
+process.on('exit', removeSmokeUserData);
+app.setPath('userData', smokeUserData ?? userDataDir(app.getPath('appData')));
 
 /** Dev: the source tree (dist/main.cjs is two levels under apps/desktop). Packaged: extraResources. */
 function resourcePaths() {
@@ -21,10 +29,22 @@ function resourcePaths() {
 }
 
 async function boot(configDir?: string) {
-  const shellPath = await resolveLoginShellPath();
+  const shellPath = await resolveLoginShellPath(loginShellOptions());
   process.env.PATH = shellPath.path;
   console.log(`PATH source: ${shellPath.source}`);
-  return startServer({ port: 'auto', ...(configDir ? { configDir } : {}), ...resourcePaths(), mcpEnv: { ELECTRON_RUN_AS_NODE: '1' } });
+  return startServer(serverOptions({ resources: resourcePaths(), shellPath, ...(configDir ? { configDir } : {}) }));
+}
+
+/** Our own core, or the address of the Motion Studio (desktop or CLI) already serving the same config folder. */
+async function bootOrAttach(): Promise<{ url: string; appUrl: string; close: () => Promise<void> }> {
+  try {
+    return await boot();
+  } catch (err) {
+    if (!(err instanceof AlreadyRunningError)) throw err;
+    const { port, appUrl } = err.alreadyRunning;
+    console.log(`Motion Studio è già avviato (porta ${port})`);
+    return { url: new URL(appUrl).origin, appUrl, close: async () => {} };
+  }
 }
 
 /** The smoke output never contains the token. */
@@ -62,8 +82,10 @@ function buildMenu(restart?: () => void) {
   ]));
 }
 
+const focus = focusOnReady();
+
 async function run() {
-  const server = await boot();
+  const server = await bootOrAttach();
   const origin = new URL(server.url).origin;
   let closing = false;
   const win = new BrowserWindow(windowOptions(join(__dirname, 'preload.cjs'), nativeTheme.shouldUseDarkColors));
@@ -109,7 +131,7 @@ async function run() {
       },
     });
   }
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => { win.show(); focus.ready(win); });
   win.webContents.setWindowOpenHandler(({ url }) => { if (externalUrlAllowed(url)) void shell.openExternal(url); return { action: 'deny' }; });
   const guard = (e: { preventDefault: () => void }, url: string) => { if (!isAppUrl(url, origin)) e.preventDefault(); };
   win.webContents.on('will-navigate', (e, url) => guard(e, url));
@@ -120,12 +142,13 @@ async function run() {
 
 if (smokeArg) {
   void app.whenReady().then(() => smoke(smokeArg.split('=')[1] ?? 'health')).then(
-    () => app.exit(0),
-    (err) => { console.error(`SMOKE_FAIL ${(err as Error).message}`); app.exit(1); },
+    () => { removeSmokeUserData(); app.exit(0); },
+    (err) => { console.error(`SMOKE_FAIL ${(err as Error).message}`); removeSmokeUserData(); app.exit(1); },
   );
 } else if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => { const w = BrowserWindow.getAllWindows()[0]; if (w) { if (w.isMinimized()) w.restore(); w.focus(); } });
+  // A launch during boot (no window yet, or not shown) is remembered and served on ready-to-show.
+  app.on('second-instance', () => focus.request());
   void app.whenReady().then(run).catch((err) => { dialog.showErrorBox('Motion Studio', String((err as Error).message ?? err)); app.exit(1); });
 }

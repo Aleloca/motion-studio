@@ -1,4 +1,5 @@
-import { isAbsolute } from 'node:path';
+import { isAbsolute, join } from 'node:path';
+import type { LoginShellPath } from '@motion-studio/core';
 
 /** The UI token travels only in the URL fragment (`#t=<token>`). */
 export function tokenFromAppUrl(appUrl: string): string | null {
@@ -17,4 +18,38 @@ export function pickFolderArgs(arg: unknown): { title: string; defaultPath?: str
 /** Validated payload of `ms:reveal`: an absolute path, nothing else. */
 export function absolutePathArg(arg: unknown): string | null {
   return typeof arg === 'string' && arg !== '' && !arg.includes('\0') && isAbsolute(arg) ? arg : null;
+}
+
+/** A slow rc file (nvm, conda…) is common on real Macs: 15 s before falling back to the fixed folders. */
+export const loginShellOptions = () => ({ timeoutMs: 15_000 });
+
+/** startServer options of the desktop app: port 4318 (or a free one), bundled UI and MCP server, PATH origin for the Doctor. */
+export function serverOptions(opts: { resources: { webDir: string; mcpServerPath: string }; configDir?: string; shellPath: LoginShellPath }) {
+  const { source, error } = opts.shellPath;
+  return {
+    port: 'auto' as const,
+    ...(opts.configDir ? { configDir: opts.configDir } : {}),
+    ...opts.resources,
+    mcpEnv: { ELECTRON_RUN_AS_NODE: '1' },
+    shellPath: error === undefined ? { source } : { source, error },
+  };
+}
+
+/** Electron's own data (cache, local storage, single-instance lock): beside, never inside, the Motion Studio config folder. */
+export const userDataDir = (appData: string) => join(appData, 'Motion Studio Electron');
+
+export interface FocusableWindow { isMinimized(): boolean; restore(): void; focus(): void }
+
+/** Focus requests from a second launch: served at once when the window is ready, else remembered until it is. */
+export function focusOnReady() {
+  let win: FocusableWindow | null = null;
+  let pending = false;
+  const focus = (w: FocusableWindow) => { if (w.isMinimized()) w.restore(); w.focus(); };
+  return {
+    request() { if (win) focus(win); else pending = true; },
+    ready(w: FocusableWindow) {
+      win = w;
+      if (pending) { pending = false; focus(w); }
+    },
+  };
 }
