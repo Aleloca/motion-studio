@@ -186,6 +186,8 @@ Legenda impatto: 🟢 basso · 🟡 medio · 🔴 alto (sicurezza o prodotto).
 
 ### Revisione con te (2026-10-08)
 - **64 cambiata:** il pacchetto npm ora si chiama `@motion-studio/cli` e si avvia con `npx @motion-studio/cli`; il comando installato resta `motion-studio`. Per pubblicarlo devi creare su npm l'organizzazione gratuita `motion-studio`.
+- **17 cambiata:** inglese come lingua primaria, italiano come seconda; al primo avvio vale la lingua del sistema, poi si cambia nelle Impostazioni; l'agente risponde nella lingua scelta. Piano: fase 6 (`docs/superpowers/plans/2026-10-08-motion-studio-phase6-i18n.md`).
+- **10 confermata dopo il chiarimento:** riguarda solo i font dell'interfaccia, già inclusi nell'app; i font dei brand arrivano da Google Fonts in automatico.
 
 ### Esito della fase 5
 - L'app impacchettata (arm64, non firmata, 311 MB) è stata avviata in modo da simulare il Finder. Trova `claude` e tutte le dipendenze tramite la shell di login, e il Doctor dà tutto OK. Il pacchetto include i binari del portachiavi per arm64 e x64.
