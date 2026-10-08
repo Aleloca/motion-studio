@@ -217,6 +217,8 @@ export const it: Messages = {
     cannotWrite: (p) => `Impossibile scrivere nella cartella ${p.path}`,
     interrupted: (p) => `Esportazione interrotta: ${p.reason}. File già copiati: ${p.count} in ${p.path}`,
     nothingToExport: (p) => `Nessun output da esportare per v${p.n}`,
+    invalidFormats: 'Scegli almeno un formato da esportare',
+    formatsNotInVersion: (p) => `Formati non disponibili in questa versione: ${p.list}`,
     diskFull: 'spazio su disco esaurito',
     permissionDenied: 'permesso negato',
     quotaExceeded: 'quota di spazio esaurita',

@@ -260,6 +260,9 @@ describe('creative export', { timeout: 20_000 }, () => {
     expect((await readdir(dest)).length).toBe(2);
     expect((await app.inject({ method: 'POST', url: url(9), payload: { destination: dest } })).statusCode).toBe(404);
     expect((await app.inject({ method: 'POST', url: url(1), payload: {} })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'POST', url: url(1), payload: { destination: dest, formats: [] } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'POST', url: url(1), payload: { destination: dest, formats: ['nope'] } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'POST', url: url(1), payload: { destination: dest, formats: 'x' } })).statusCode).toBe(400);
     const inside = await app.inject({ method: 'POST', url: url(1), payload: { destination: join(base, 'ws', 'acme', 'out') } });
     expect(inside.statusCode).toBe(400);
     expect(inside.json().error).toBe('Scegli una cartella fuori dal workspace di Motion Studio');

@@ -33,6 +33,34 @@ describe('exportVersion', () => {
     expect((await readdir(dest)).length).toBe(4);
     expect(await readFile(join(dest, 'lancio-web-banner-300x250-v2.png'), 'utf8')).toBe('png');
   });
+  it('exports only the selected formats, de-duplicated', async () => {
+    const r = await exportVersion({ creativeDir, version, destination: dest, slug: 'x', formats: ['web-banner-300x250', 'web-banner-300x250'] });
+    expect(r.files.map((f) => f.to.split('/').pop())).toEqual(['x-web-banner-300x250-v2.png']);
+  });
+  it('rejects unknown, absent and empty format selections with 400', async () => {
+    for (const formats of [['instagram-post-1x1'], ['nope'], []]) {
+      const e = await exportVersion({ creativeDir, version, destination: dest, slug: 'x', formats }).catch((x) => x);
+      expect(e.status).toBe(400);
+    }
+    expect(await readdir(base)).toEqual(['creative']);
+  });
+  it('names files from the creative title slug, limited to 40 characters', async () => {
+    const v3 = { ...version, n: 3 };
+    await mkdir(join(creativeDir, 'outputs', 'v3'), { recursive: true });
+    await writeFile(join(creativeDir, 'outputs', 'v3', 'instagram-reel-9x16.mp4'), 'video');
+    const r = await exportVersion({ creativeDir, version: { ...v3, outputs: [version.outputs[0]!] }, destination: dest, slug: 'folder', title: 'A crime a week' });
+    expect(r.files[0]!.to.split('/').pop()).toBe('a-crime-a-week-instagram-reel-9x16-v3.mp4');
+    const long = await exportVersion({ creativeDir, version: { ...v3, outputs: [version.outputs[0]!] }, destination: dest, slug: 'folder', title: `${'abcd '.repeat(12)}end` });
+    const name = long.files[0]!.to.split('/').pop()!;
+    expect(name.startsWith('abcd-'.repeat(8).slice(0, 39))).toBe(true);
+    expect(name).not.toContain('--');
+    expect(name.endsWith('-instagram-reel-9x16-v3.mp4')).toBe(true);
+    expect(name.length).toBeLessThanOrEqual(40 + '-instagram-reel-9x16-v3.mp4'.length);
+  });
+  it('falls back to the folder slug when the title has no usable characters', async () => {
+    const r = await exportVersion({ creativeDir, version, destination: dest, slug: 'folder', title: '  !!! ' });
+    expect(r.files[0]!.to.split('/').pop()).toBe('folder-instagram-reel-9x16-v2.mp4');
+  });
   it('rejects relative destinations and files', async () => {
     expect((await exportVersion({ creativeDir, version, destination: 'rel/dir', slug: 'x' }).catch((e) => e)).status).toBe(400);
     await writeFile(dest, 'x');

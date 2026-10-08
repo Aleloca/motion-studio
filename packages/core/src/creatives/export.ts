@@ -1,7 +1,7 @@
 import { access, constants, copyFile, lstat, mkdir, realpath, rm, stat } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path';
 import type { VersionEntry } from '@motion-studio/shared';
-import { WorkspaceError } from '../workspace-store.ts';
+import { slugify, WorkspaceError } from '../workspace-store.ts';
 import { t } from '../i18n.ts';
 
 export interface ExportResult { destination: string; files: Array<{ from: string; to: string }>; skipped: string[] }
@@ -16,6 +16,13 @@ const isInside = (p: string, base: string) => {
 
 /** A file-name segment: only [A-Za-z0-9._-], no leading dots. */
 const safeSegment = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '') || '_';
+
+/** File-name base from the creative title: slug cut to 40 characters, null when the title has no usable characters. */
+function titleBase(title: string | undefined): string | null {
+  if (!title || !/[a-z0-9]/.test(title.normalize('NFKD').toLowerCase())) return null;
+  const s = slugify(title).slice(0, 40).replace(/-+$/, '');
+  return s || null;
+}
 
 type CopyFn = (from: string, to: string, mode: number) => Promise<void>;
 
@@ -60,7 +67,14 @@ async function resolveLoose(p: string): Promise<string> {
  * Copies the outputs of a version into `destination` using channel names (`<slug>-<format>-v<n>.<ext>`), never overwriting.
  * `forbiddenRoot`: destinations inside it are refused (exports are meant for delivery outside the workspace).
  */
-export async function exportVersion(opts: { creativeDir: string; version: VersionEntry; destination: string; slug: string; forbiddenRoot?: string; copy?: CopyFn }): Promise<ExportResult> {
+export async function exportVersion(opts: { creativeDir: string; version: VersionEntry; destination: string; slug: string; title?: string; formats?: string[]; forbiddenRoot?: string; copy?: CopyFn }): Promise<ExportResult> {
+  const wanted = opts.formats === undefined ? null : new Set(opts.formats);
+  if (wanted) {
+    if (!wanted.size) throw new WorkspaceError(400, t().export.invalidFormats);
+    const present = new Set(opts.version.outputs.map((o) => o.format));
+    const missing = [...wanted].filter((f) => !present.has(f));
+    if (missing.length) throw new WorkspaceError(400, t().export.formatsNotInVersion({ list: missing.join(', ') }));
+  }
   const dest = opts.destination.trim();
   if (!isAbsolute(dest)) throw new WorkspaceError(400, t().export.absoluteDestination);
   if (opts.forbiddenRoot) {
@@ -79,9 +93,10 @@ export async function exportVersion(opts: { creativeDir: string; version: Versio
   const files: ExportResult['files'] = [];
   const skipped: string[] = [];
   const copy = opts.copy ?? ((f, t, m) => copyFile(f, t, m));
-  const slug = safeSegment(opts.slug);
+  const slug = safeSegment(titleBase(opts.title) ?? opts.slug);
   const canRead = Boolean(realOutDir && realCreative && isInside(realOutDir, join(realCreative, 'outputs')));
   for (const o of opts.version.outputs) {
+    if (wanted && !wanted.has(o.format)) continue;
     if (!canRead || !realOutDir) { skipped.push(o.file); continue; }
     if (!o.file || o.file === '.' || o.file === '..' || o.file !== basename(o.file) || o.file.includes('\\') || o.file.includes('/')) { skipped.push(o.file); continue; }
     const from = join(outDir, o.file);

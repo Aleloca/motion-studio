@@ -219,6 +219,8 @@ export const en = {
     cannotWrite: (p: { path: string }) => `Cannot write to ${p.path}`,
     interrupted: (p: { reason: string; count: number; path: string }) => `Export interrupted: ${p.reason}. Files already copied: ${p.count} in ${p.path}`,
     nothingToExport: (p: { n: number }) => `No outputs to export for v${p.n}`,
+    invalidFormats: 'Choose at least one format to export',
+    formatsNotInVersion: (p: { list: string }) => `Formats not available in this version: ${p.list}`,
     diskFull: 'disk space is full',
     permissionDenied: 'permission denied',
     quotaExceeded: 'space quota exceeded',

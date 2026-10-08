@@ -157,12 +157,15 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     return { ok: true };
   });
 
-  app.post<{ Params: { slug: string; c: string; n: string }; Body: { destination?: unknown } }>('/api/projects/:slug/creatives/:c/versions/:n/export', async (req) => {
+  app.post<{ Params: { slug: string; c: string; n: string }; Body: { destination?: unknown; formats?: unknown } }>('/api/projects/:slug/creatives/:c/versions/:n/export', async (req) => {
     const ref = await refOf(req.params.slug, req.params.c);
     const version = (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === Number(req.params.n));
     if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
     const destination = typeof req.body?.destination === 'string' ? expandHome(req.body.destination.trim()) : '';
-    return exportVersion({ creativeDir: ref.store.dir(ref.creativeSlug), version, destination, slug: ref.creativeSlug, forbiddenRoot: ref.root });
+    const rawFormats = req.body?.formats;
+    if (rawFormats !== undefined && (!Array.isArray(rawFormats) || !rawFormats.length || !rawFormats.every((f) => typeof f === 'string'))) throw new WorkspaceError(400, t().export.invalidFormats);
+    const creative = await ref.store.get(ref.creativeSlug);
+    return exportVersion({ creativeDir: ref.store.dir(ref.creativeSlug), version, destination, slug: ref.creativeSlug, title: creative.title, formats: rawFormats as string[] | undefined, forbiddenRoot: ref.root });
   });
 
   app.get<{ Params: { slug: string; c: string; '*': string } }>('/api/projects/:slug/creatives/:c/files/*', async (req, reply) => {
