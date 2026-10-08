@@ -40,10 +40,12 @@ describe('format and channel names', () => {
   });
   it('shows a shipped name in the requested language, keyed by the stable id', () => {
     const image = DEFAULT_FORMATS.find((f) => f.id === 'instagram-image-1x1')!;
-    expect(image.name).toBe('Immagine 1:1');
+    expect(image.name).toBe('Image 1:1');
     expect(formatName(image, 'en')).toBe('Image 1:1');
     expect(formatName(image, 'it')).toBe('Immagine 1:1');
-    expect(formatName({ id: 'instagram-image-1x1', name: 'Image 1:1' }, 'it')).toBe('Immagine 1:1');
+    // Workspaces created before the English seed keep the Italian stored name: still shown in the requested language.
+    expect(formatName({ id: 'instagram-image-1x1', name: 'Immagine 1:1' }, 'en')).toBe('Image 1:1');
+    expect(formatName({ id: 'instagram-image-1x1', name: 'Immagine 1:1' }, 'it')).toBe('Immagine 1:1');
     expect(formatLabel(DEFAULT_FORMATS.find((f) => f.id === 'appstore-icon')!, 'en')).toBe('App Store · Icon');
   });
   it('keeps names the user edited and custom presets as stored', () => {

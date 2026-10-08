@@ -40,4 +40,29 @@ describe('check-i18n', () => {
     expect(run('c.ts', src).code).toBe(0);
     expect(run('i.ts', "export const l = 'Italiano è'; // i18n-ignore language endonym\n").code).toBe(0);
   });
+
+  it('is not confused by a regex literal holding a quote', () => {
+    const bad = run('r.ts', "const q = /'/g; export const m = 'Cartella non trovata';\n");
+    expect(bad.code).toBe(1);
+    expect(bad.out).toContain('r.ts:1');
+    expect(bad.out).toContain('"Cartella non trovata"');
+    expect(run('r2.ts', "const q = /\"|'/g;\nexport const m = 'Folder not found';\n").code).toBe(0);
+  });
+
+  it('flags single common UI words in JSX text and attributes', () => {
+    expect(run('w.tsx', 'export const C = () => <p>Apri</p>;\n').code).toBe(1);
+    expect(run('w2.tsx', 'export const C = () => <button aria-label="Chiudi">x</button>;\n').code).toBe(1);
+    const words = ['Modifica', 'Aggiungi', 'Rimuovi', 'Indietro', 'Lingua', 'Versione', 'Formati', 'Riprova', 'Caricamento', 'Conferma', 'Esporta'];
+    const many = run('u.ts', words.map((w, i) => `export const m${i} = '${w}';\n`).join(''));
+    expect(many.code).toBe(1);
+    words.forEach((w, i) => expect(many.out, w).toContain(`u.ts:${i + 1}: Italian word "${w}"`));
+    expect(run('w3.tsx', 'export const C = () => <p title="Open">Close the dialog and go back</p>;\n').code).toBe(0);
+  });
+
+  it('still needs two weak words, and supports i18n-ignore in JSX', () => {
+    expect(run('p.ts', "export const m = 'lo dico per te';\n").code).toBe(1);
+    expect(run('p2.ts', "export const m = 'lo so che';\n").code).toBe(1);
+    expect(run('p3.ts', "export const m = 'one per format';\n").code).toBe(0);
+    expect(run('ji.tsx', 'export const C = () => <p>Italiano {/* i18n-ignore endonym */}</p>;\n').code).toBe(0);
+  });
 });

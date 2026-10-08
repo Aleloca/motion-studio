@@ -1,17 +1,22 @@
 #!/usr/bin/env node
 // Flags Italian text left in source code outside the i18n catalogs.
-// Scans string literals, template literals and JSX text of production sources and reports
-// strings with Italian accented letters or frequent Italian whole words.
+// Parses production sources with the TypeScript compiler and reports string literals, template literal parts,
+// JSX text and JSX attribute values with Italian accented letters or frequent Italian whole words.
 // Real exceptions: add `// i18n-ignore <reason>` on the same line (or `{/* i18n-ignore <reason> */}` in JSX).
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 const ACCENTED = /[àèéìòùÀÈÉÌÒÙ]/;
 const WORDS = [
   'il', 'della', 'delle', 'dei', 'non', 'una', 'uno', 'nella', 'nelle', 'nel', 'sono',
   'errore', 'errori', 'cartella', 'progetto', 'progetti', 'creatività', 'nessun', 'nessuna', 'questo', 'questa',
   'puoi', 'devi', 'trovato', 'trovata', 'impostazioni', 'scegli', 'salva', 'annulla', 'elimina', 'con',
+  // Common UI words: one of them alone is enough.
+  'apri', 'chiudi', 'modifica', 'aggiungi', 'rimuovi', 'indietro', 'lingua', 'versione', 'versioni', 'formati',
+  'riprova', 'caricamento', 'conferma', 'esporta', 'nuovo', 'nuova', 'cerca', 'carica', 'scarica', 'invia',
+  'aggiorna', 'copia', 'avvia', 'esci', 'immagine', 'immagini', 'anteprima', 'descrizione', 'benvenuto', 'attendi',
 ];
 // Also English words ("one per format"): flagged only together with another Italian signal.
 const WEAK_WORDS = ['per', 'lo', 'gli', 'che'];
@@ -32,94 +37,32 @@ export function italianReason(text) {
   return null;
 }
 
-/** Extracts text fragments with their starting line: strings, template literal parts, JSX text. */
+/** Extracts text fragments with their starting line: string literals (JSX attribute values included), template literal parts, JSX text. */
 export function extractFragments(source, { jsx = false } = {}) {
+  const sf = ts.createSourceFile(jsx ? 'source.tsx' : 'source.ts', source, ts.ScriptTarget.Latest, true, jsx ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
   const out = [];
-  const n = source.length;
-  let i = 0;
-  let line = 1;
-  const stack = []; // template literal nesting: 'tpl' markers and brace depths
-  const braceDepth = [];
-
-  const readString = (quote) => {
-    const startLine = line;
-    let text = '';
-    i++;
-    while (i < n && source[i] !== quote) {
-      if (source[i] === '\\') { text += source[i + 1] ?? ''; i += 2; continue; }
-      if (source[i] === '\n') { line++; break; }
-      text += source[i++];
+  const lineOf = (pos) => sf.getLineAndCharacterOfPosition(pos).line + 1;
+  const visit = (node) => {
+    switch (node.kind) {
+      case ts.SyntaxKind.StringLiteral:
+      case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
+      case ts.SyntaxKind.TemplateHead:
+      case ts.SyntaxKind.TemplateMiddle:
+      case ts.SyntaxKind.TemplateTail:
+        out.push({ text: node.text, line: lineOf(node.getStart(sf)) });
+        break;
+      case ts.SyntaxKind.JsxText: {
+        const raw = sf.text.slice(node.pos, node.end);
+        const text = raw.trim();
+        if (text) out.push({ text, line: lineOf(node.pos + (raw.length - raw.trimStart().length)) });
+        break;
+      }
+      default:
+        break;
     }
-    i++;
-    out.push({ text, line: startLine });
+    ts.forEachChild(node, visit);
   };
-
-  const readTemplate = () => {
-    // Called after the opening backtick or after a closing `}` of an expression.
-    let text = '';
-    let startLine = line;
-    while (i < n) {
-      const c = source[i];
-      if (c === '\\') { text += source[i + 1] ?? ''; i += 2; continue; }
-      if (c === '`') { i++; out.push({ text, line: startLine }); return false; }
-      if (c === '$' && source[i + 1] === '{') {
-        i += 2;
-        out.push({ text, line: startLine });
-        return true; // inside an expression
-      }
-      if (c === '\n') line++;
-      text += c;
-      i++;
-    }
-    out.push({ text, line: startLine });
-    return false;
-  };
-
-  while (i < n) {
-    const c = source[i];
-    if (c === '\n') { line++; i++; continue; }
-    if (c === '/' && source[i + 1] === '/') { while (i < n && source[i] !== '\n') i++; continue; }
-    if (c === '/' && source[i + 1] === '*') {
-      i += 2;
-      while (i < n && !(source[i] === '*' && source[i + 1] === '/')) { if (source[i] === '\n') line++; i++; }
-      i += 2;
-      continue;
-    }
-    if (c === '"' || c === "'") { readString(c); continue; }
-    if (c === '`') {
-      i++;
-      if (readTemplate()) { stack.push(braceDepth.length); braceDepth.push(0); }
-      continue;
-    }
-    if (c === '{' && braceDepth.length) { braceDepth[braceDepth.length - 1]++; i++; continue; }
-    if (c === '}' && braceDepth.length) {
-      if (braceDepth[braceDepth.length - 1] === 0) {
-        braceDepth.pop();
-        stack.pop();
-        i++;
-        if (readTemplate()) { stack.push(braceDepth.length); braceDepth.push(0); }
-        continue;
-      }
-      braceDepth[braceDepth.length - 1]--;
-      i++;
-      continue;
-    }
-    if (jsx && c === '>' && source[i - 1] !== '=' && source[i - 1] !== '-') {
-      // JSX text: from '>' up to the next '<' or '{', when it holds no code punctuation.
-      let j = i + 1;
-      while (j < n && source[j] !== '<' && source[j] !== '{' && source[j] !== '>') j++;
-      const chunk = source.slice(i + 1, j);
-      if (source[j] === '<' || source[j] === '{') {
-        const trimmed = chunk.trim();
-        if (trimmed && /\p{L}/u.test(trimmed) && !/[;=()[\]]/.test(trimmed)) {
-          const lead = chunk.length - chunk.trimStart().length;
-          const before = source.slice(i + 1, i + 1 + lead);
-          out.push({ text: trimmed, line: line + (before.match(/\n/g)?.length ?? 0) });
-        }
-      }
-    }
-    i++;
-  }
+  visit(sf);
   return out;
 }
 
