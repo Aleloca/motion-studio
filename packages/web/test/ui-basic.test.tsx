@@ -277,6 +277,12 @@ describe('ProgressBar', () => {
     rerender(<I18nProvider locale="en"><ProgressBar value={140} label="Export" /></I18nProvider>);
     expect(screen.getByRole('progressbar', { name: 'Export' }).getAttribute('aria-valuenow')).toBe('100');
   });
+  it('has its own class, not the Tabs "bar" variant (which would squash the project bar tabs to 3 px)', () => {
+    en(<ProgressBar value={10} />);
+    expect(screen.getByRole('progressbar').className).toBe('ms-progress');
+    const css = readFileSync(resolve(import.meta.dirname, '../src/ui/ui.css'), 'utf8');
+    expect(css).not.toMatch(/(^|\})\s*\.ms-bar\s*[{,]/m);
+  });
 });
 
 describe('CountdownRing', () => {

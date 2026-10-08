@@ -8,7 +8,7 @@ export function ProgressBar({ value, label, className }: ProgressBarProps) {
   const t = useT();
   const v = Math.round(Math.min(100, Math.max(0, Number.isFinite(value) ? value : 0)));
   return (
-    <div className={cx('ms-bar', className)} role="progressbar" aria-label={label ?? t.web.ui.progress} aria-valuemin={0} aria-valuemax={100} aria-valuenow={v}>
+    <div className={cx('ms-progress', className)} role="progressbar" aria-label={label ?? t.web.ui.progress} aria-valuemin={0} aria-valuemax={100} aria-valuenow={v}>
       <i style={{ width: `${v}%` }} />
     </div>
   );
