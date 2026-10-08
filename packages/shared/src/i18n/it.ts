@@ -441,6 +441,9 @@ Avvia Motion Studio in locale e apre il browser.
 --print-url mostra l'indirizzo (con il codice di accesso) del Motion Studio già avviato.
 Variabili: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (array JSON)`,
     invalidPort: (p) => `Porta non valida: ${p.value}`,
+    unknownOption: (p) => `Opzione sconosciuta: ${p.option}`,
+    invalidOptionValue: (p) => `Valore non valido per ${p.option}`,
+    unexpectedArgument: (p) => `Argomento inatteso: ${p.arg}`,
     notRunning: 'Motion Studio non è in esecuzione: avvialo con motion-studio',
     alreadyRunning: (p) => `Motion Studio è già avviato: ${p.url}`,
     running: (p) => `Motion Studio è attivo su ${p.url}`,

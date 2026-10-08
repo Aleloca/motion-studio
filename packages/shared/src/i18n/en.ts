@@ -443,6 +443,9 @@ Starts Motion Studio locally and opens the browser.
 --print-url shows the address (with the access code) of the Motion Studio that is already running.
 Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
     invalidPort: (p: { value: string }) => `Invalid port: ${p.value}`,
+    unknownOption: (p: { option: string }) => `Unknown option: ${p.option}`,
+    invalidOptionValue: (p: { option: string }) => `Invalid value for ${p.option}`,
+    unexpectedArgument: (p: { arg: string }) => `Unexpected argument: ${p.arg}`,
     notRunning: 'Motion Studio is not running: start it with motion-studio',
     alreadyRunning: (p: { url: string }) => `Motion Studio is already running: ${p.url}`,
     running: (p: { url: string }) => `Motion Studio is running at ${p.url}`,
