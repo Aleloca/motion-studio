@@ -1,6 +1,6 @@
-import { BRAND_FIELD_LABELS, BRAND_KIT_LIMITS, brandColorSchema, brandFontSchema, brandKitIssues, brandKitSchema, brandLogoSchema, brandNoteSchema, type BrandKit, type SourceRef } from '@motion-studio/shared';
+import { BRAND_KIT_LIMITS, issueText, messages, brandColorSchema, brandFontSchema, brandKitIssues, brandKitSchema, brandLogoSchema, brandNoteSchema, type BrandKit, type SourceRef } from '@motion-studio/shared';
 import type { z } from 'zod';
-import { t } from '../i18n.ts';
+import { currentLocale, t } from '../i18n.ts';
 
 type ListField = keyof typeof BRAND_KIT_LIMITS;
 type NoteField = 'tone' | 'photoStyle';
@@ -35,20 +35,8 @@ const itemName = (raw: unknown, index: number): string => {
   if (isObject(raw)) for (const k of ['name', 'family', 'id', 'file']) { const v = raw[k]; if (typeof v === 'string' && v.trim()) return `«${v.trim().slice(0, 60)}»`; }
   return String(index + 1);
 };
-/** Italian messages for a missing or mistyped field, where zod has only its generic English one. */
-const FIELD_ISSUES: Record<string, string> = {
-  id: 'identificativo non valido (minuscole, cifre e trattini)', name: 'nome obbligatorio', hex: 'hex non valido (usa #RRGGBB)',
-  role: 'ruolo non valido', family: 'famiglia obbligatoria', weights: 'pesi non validi (numeri interi da 100 a 900)',
-  file: 'file non valido', variant: 'variante non valida', background: 'sfondo non valido', text: 'testo obbligatorio', source: 'fonte non valida',
-};
-const ZOD_DEFAULT = /^Invalid input/;
-const issueText = (i: z.core.$ZodIssue) => {
-  if (i.code !== 'invalid_type' || !ZOD_DEFAULT.test(i.message)) return i.message;
-  const key = i.path[0];
-  return (typeof key === 'string' && Object.hasOwn(FIELD_ISSUES, key) ? FIELD_ISSUES[key] : undefined) ?? 'valore mancante o non valido';
-};
-/** Italian issues of one item, deduplicated ("ruolo non valido, pesi non validi …"). */
-const itemIssues = (error: z.ZodError) => [...new Set(error.issues.map(issueText))].join(', ');
+/** Issues of one item in the current language, deduplicated ("ruolo non valido, pesi non validi …"); a missing or mistyped field is worded by its name. */
+const itemIssues = (error: z.ZodError) => [...new Set(error.issues.map((i) => issueText(i, currentLocale(), { fieldHints: true })))].join(', ');
 const own = (o: Record<string, unknown>, key: string) => (Object.hasOwn(o, key) ? o[key] : undefined);
 
 /**
@@ -62,7 +50,7 @@ export function parseProposedKit(json: unknown, current: BrandKit, source: Sourc
   const kit: BrandKit = { schemaVersion: 1, colors: [], fonts: [], logos: [], tone: null, dos: [], donts: [], photoStyle: null };
 
   for (const field of Object.keys(BRAND_KIT_LIMITS) as ListField[]) {
-    const label = BRAND_FIELD_LABELS[field]!;
+    const label = (messages(currentLocale()).brandFields as Record<string, string>)[field]!;
     const raw = own(json, field);
     const currentItems = current[field] as Array<{ id: string }>;
     const out: Array<{ id: string }> = [];
@@ -72,13 +60,13 @@ export function parseProposedKit(json: unknown, current: BrandKit, source: Sourc
       const id = isObject(rawItem) && typeof rawItem.id === 'string' ? rawItem.id : null;
       const kept = id !== null && !ids.has(id) ? currentItems.find((c) => c.id === id) : undefined;
       if (!kept) return;
-      if (out.length >= limit) { dropped.push(`${name}: versione attuale non mantenuta (troppe voci, massimo ${limit})`); return; }
+      if (out.length >= limit) { dropped.push(t().brand.droppedKeepFailed({ name, limit })); return; }
       out.push(kept); ids.add(kept.id);
     };
     // Only an explicit list (even empty) replaces the current items: an omitted key keeps them.
     if (raw === undefined) out.push(...currentItems);
     else if (!Array.isArray(raw)) {
-      dropped.push(`${label}: elenco non valido`);
+      dropped.push(t().brand.droppedNotList({ label }));
       out.push(...currentItems);
     } else {
       raw.forEach((rawItem, index) => {
@@ -86,8 +74,8 @@ export function parseProposedKit(json: unknown, current: BrandKit, source: Sourc
         const parsed = ITEM_SCHEMAS[field].safeParse(coerce(field, rawItem, source, ids));
         if (!parsed.success) { dropped.push(`${name}: ${itemIssues(parsed.error)}`); fallback(rawItem, name); return; }
         const item = parsed.data as { id: string };
-        if (ids.has(item.id)) { dropped.push(`${name}: id duplicato`); return; }
-        if (out.length >= limit) { dropped.push(`${name}: troppe voci (massimo ${limit})`); return; }
+        if (ids.has(item.id)) { dropped.push(t().brand.droppedDuplicateId({ name })); return; }
+        if (out.length >= limit) { dropped.push(t().brand.droppedTooMany({ name, limit })); return; }
         out.push(item); ids.add(item.id);
       });
     }
@@ -101,10 +89,10 @@ export function parseProposedKit(json: unknown, current: BrandKit, source: Sourc
     if (raw === null) continue;
     const parsed = brandNoteSchema.safeParse(coerce(field, raw, source, new Set()));
     if (parsed.success) kit[field] = parsed.data;
-    else { dropped.push(`${BRAND_FIELD_LABELS[field]}: ${itemIssues(parsed.error)}`); kit[field] = current[field]; }
+    else { dropped.push(`${(messages(currentLocale()).brandFields as Record<string, string>)[field]}: ${itemIssues(parsed.error)}`); kit[field] = current[field]; }
   }
 
   const whole = brandKitSchema.safeParse(kit);
-  if (!whole.success) throw new Error(t().errors.proposalInvalid({ detail: brandKitIssues(whole.error) }));
+  if (!whole.success) throw new Error(t().errors.proposalInvalid({ detail: brandKitIssues(whole.error, currentLocale()) }));
   return { kit: whole.data, dropped };
 }

@@ -1,16 +1,16 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  brandKitIssues, brandKitSchema, brandProposalSchema, brandSourcesFileSchema, brandSourceSchema, EMPTY_BRAND_KIT,
+  brandKitIssues, issueText, type IssueLike, brandKitSchema, brandProposalSchema, brandSourcesFileSchema, brandSourceSchema, EMPTY_BRAND_KIT,
   type BrandKit, type BrandProposal, type BrandSource,
 } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import { fileLock } from '../file-locks.ts';
 import { WorkspaceError } from '../workspace-store.ts';
-import { t } from '../i18n.ts';
+import { currentLocale, t } from '../i18n.ts';
 
 const PROPOSAL_RE = /^p-\d{8}-\d{6}(-\d+)?$/;
-const issues = (e: { issues: Array<{ path: PropertyKey[]; message: string }> }) => e.issues.map((i) => `${i.path.map(String).join('.')}: ${i.message}`).join('; ');
+const issues = (e: { issues: IssueLike[] }) => e.issues.map((i) => `${(i.path ?? []).map(String).join('.')}: ${issueText(i, currentLocale())}`).join('; ');
 
 function isPrivateIPv4Octets(a: number, b: number, c: number, d: number): boolean {
   // 0.0.0.0/8 (this network)
@@ -130,7 +130,7 @@ export class BrandStore {
   private async writeKitUnlocked(kit: unknown): Promise<BrandKit> {
     {
       const parsed = brandKitSchema.safeParse(kit);
-      if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidBrandKit({ detail: brandKitIssues(parsed.error) }));
+      if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidBrandKit({ detail: brandKitIssues(parsed.error, currentLocale()) }));
       await writeJsonFileAtomic(this.path('brand-kit.json'), parsed.data);
       fileLock.noteWrite(this.path('brand-kit.json'));
       return parsed.data;

@@ -3,11 +3,12 @@ import { basename, join } from 'node:path';
 import {
   creativeFileSchema, versionsFileSchema,
   type Brief, type ConversationEntry, type CreativeFile, type CreativeListItem, type VersionEntry,
+  issueText,
 } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 import { slugify, WorkspaceError } from '../workspace-store.ts';
-import { t } from '../i18n.ts';
+import { currentLocale, t } from '../i18n.ts';
 
 export const CREATIVE_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
 
@@ -16,7 +17,7 @@ const pad2 = (n: number) => String(n).padStart(2, '0');
 const localDay = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
 const issues = (e: { issues: Array<{ path: PropertyKey[]; message: string }> }) =>
-  e.issues.map((i) => `${i.path.map(String).join('.')}: ${i.message}`).join('; ');
+  e.issues.map((i) => `${i.path.map(String).join('.')}: ${issueText(i, currentLocale())}`).join('; ');
 
 export class CreativeStore {
   private readonly root: string;

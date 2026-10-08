@@ -1,6 +1,6 @@
 import { appendFile, lstat, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
-import { brandProposalSchema, relativeFileSchema, webUrlSchema, type AssetEntry, type BrandKit, type BrandProposal, type JobSummary, type ServerMessage } from '@motion-studio/shared';
+import { brandProposalSchema, issueText, relativeFileSchema, webUrlSchema, type AssetEntry, type BrandKit, type BrandProposal, type JobSummary, type ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import type { Git } from '../git.ts';
@@ -14,7 +14,7 @@ import { applyBrandChanges, diffBrandKits } from './brand-diff.ts';
 import { buildBrandPrompt, buildDescribePrompt } from './brand-prompt.ts';
 import { BrandStore } from './brand-store.ts';
 import { parseProposedKit } from './proposed-kit.ts';
-import { t } from '../i18n.ts';
+import { currentLocale, t } from '../i18n.ts';
 
 export interface ProjectRef { root: string; projectSlug: string; projectDir: string }
 export const brandJobKey = (root: string, slug: string) => `brand:${root}:${slug}`;
@@ -174,7 +174,7 @@ export class BrandService {
       };
       // Validated before anything is superseded: an invalid proposal leaves the open one in place.
       const valid = brandProposalSchema.safeParse(proposal);
-      if (!valid.success) throw new Error(t().errors.proposalInvalid({ detail: valid.error.issues.map((i) => `${i.path.join('.') || t().errors.rootPath}: ${i.message}`).join('; ') }));
+      if (!valid.success) throw new Error(t().errors.proposalInvalid({ detail: valid.error.issues.map((i) => `${i.path.join('.') || t().errors.rootPath}: ${issueText(i, currentLocale())}`).join('; ') }));
       // Under the apply lock: a new proposal supersedes the open ones (they would diff against an outdated kit).
       await this.locks.run(`apply:${ref.projectDir}`, async () => {
         for (const old of await store.listProposals()) if (old.status === 'open' && old.id !== id) await store.writeProposal({ ...old, status: 'discarded' });

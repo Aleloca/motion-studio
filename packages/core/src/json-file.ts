@@ -2,7 +2,8 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { z } from 'zod';
-import { t } from './i18n.ts';
+import { currentLocale, t } from './i18n.ts';
+import { issueText } from '@motion-studio/shared';
 
 export type JsonFileErrorReason = 'missing' | 'invalid-json' | 'schema';
 
@@ -30,7 +31,7 @@ export async function readJsonFile<T>(path: string, schema: z.ZodType<T>): Promi
   const parsed = schema.safeParse(data);
   if (!parsed.success) {
     const detail = parsed.error.issues
-      .map((i) => `${i.path.join('.') || t().errors.rootPath}: ${i.message}`)
+      .map((i) => `${i.path.join('.') || t().errors.rootPath}: ${issueText(i, currentLocale())}`)
       .join('; ');
     throw new JsonFileError(path, 'schema', t().errors.invalidContent({ detail }));
   }

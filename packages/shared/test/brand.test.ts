@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { brandKitIssues, brandKitSchema, brandSourceSchema, brandSourcesFileSchema, sourceRefSchema, EMPTY_BRAND_KIT } from '../src/index.ts';
+import { brandColorSchema, brandKitIssues, issueText, brandKitSchema, brandSourceSchema, brandSourcesFileSchema, sourceRefSchema, EMPTY_BRAND_KIT } from '../src/index.ts';
 
 const manual = { kind: 'manual', ref: null } as const;
 
@@ -57,8 +57,8 @@ describe('brandSourcesFileSchema', () => {
   });
 });
 
-describe('brandKitIssues (Italian messages)', () => {
-  const issues = (kit: unknown) => { const r = brandKitSchema.safeParse(kit); if (r.success) throw new Error('valid'); return brandKitIssues(r.error); };
+describe('brandKitIssues', () => {
+  const issues = (kit: unknown, locale: 'en' | 'it' = 'it') => { const r = brandKitSchema.safeParse(kit); if (r.success) throw new Error('valid'); return brandKitIssues(r.error, locale); };
   it('names the field and the item in Italian', () => {
     const c = { id: 'a', name: 'A', hex: '#123456', role: 'other', source: manual };
     expect(issues({ schemaVersion: 1, colors: [c, { ...c, id: 'b', hex: 'blu' }] })).toBe('colore 2: hex non valido (usa #RRGGBB)');
@@ -69,7 +69,20 @@ describe('brandKitIssues (Italian messages)', () => {
     expect(issues({ schemaVersion: 1, dos: [{ id: 'd', text: ' ', source: manual }] })).toBe('cosa da fare 1: testo obbligatorio');
     expect(issues({ schemaVersion: 1, colors: [c, c] })).toBe('id duplicati');
   });
-  it('has no English source messages', () => {
-    expect(sourceRefSchema.safeParse({ kind: 'manual', ref: 'x' }).error!.issues[0]!.message).toBe('le fonti manuali devono avere ref: null');
+  it('names the field and the item in English', () => {
+    const c = { id: 'a', name: 'A', hex: '#123456', role: 'other', source: manual };
+    expect(issues({ schemaVersion: 1, colors: [c, { ...c, id: 'b', hex: 'blu' }] }, 'en')).toBe('color 2: invalid hex (use #RRGGBB)');
+    expect(issues({ schemaVersion: 1, dos: [{ id: 'd', text: ' ', source: manual }] }, 'en')).toBe('thing to do 1: text is required');
+    expect(issues({ schemaVersion: 1, colors: [c, c] }, 'en')).toBe('duplicate ids');
+  });
+  it('carries codes, not prose, in the schemas', () => {
+    expect(sourceRefSchema.safeParse({ kind: 'manual', ref: 'x' }).error!.issues[0]!.message).toBe('issue.manualRef');
+  });
+  it('words a missing field by its name only when asked', () => {
+    const r = brandColorSchema.safeParse({ id: 'a', hex: '#123456', role: 'other', source: manual });
+    const issue = r.error!.issues[0]!;
+    expect(issueText(issue, 'it', { fieldHints: true })).toBe('nome obbligatorio');
+    expect(issueText(issue, 'en', { fieldHints: true })).toBe('name is required');
+    expect(issueText(issue, 'en')).toMatch(/^Invalid input/);
   });
 });

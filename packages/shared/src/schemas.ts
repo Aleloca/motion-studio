@@ -7,7 +7,7 @@ export const appConfigSchema = z.object({
 });
 export type AppConfig = z.infer<typeof appConfigSchema>;
 
-const DOMAIN_ERROR = 'dominio non valido (es. api.esempio.it o *.esempio.it)';
+const DOMAIN_ERROR = 'issue.domain';
 /** Local-only names: never a network allowance for the agent. */
 const LOCAL_SUFFIXES = ['localhost', 'local', 'internal', 'home.arpa'];
 /** Two-label public suffixes: `*.co.uk` would open a whole country's sites. */

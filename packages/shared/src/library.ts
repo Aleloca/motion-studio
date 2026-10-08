@@ -2,10 +2,10 @@ import { z } from 'zod';
 
 export const relativeFileSchema = z.string().min(1).max(300).refine(
   (f) => !f.startsWith('/') && !f.includes('\\') && !f.split('/').some((s) => s === '..' || s === '.' || s === '') && !f.includes('\0'),
-  'percorso non valido (deve essere relativo, senza ".." o "\\")',
+  'issue.relativePath',
 );
 
-export const webUrlSchema = z.string().url().refine((u) => /^https?:\/\//i.test(u), 'solo indirizzi http(s)');
+export const webUrlSchema = z.string().url().refine((u) => /^https?:\/\//i.test(u), 'issue.httpOnly');
 
 export type AssetKind = 'image' | 'video' | 'svg' | 'font' | 'audio' | 'other';
 export type AssetOrigin = 'upload' | 'website' | 'generated' | 'stock';
@@ -37,7 +37,7 @@ export type AssetEntry = z.infer<typeof assetEntrySchema>;
 const uniqueFiles = <T extends { file: string }>(items: T[]) => new Set(items.map((i) => i.file)).size === items.length;
 
 export const assetsFileSchema = z.object({ schemaVersion: z.literal(1), assets: z.array(assetEntrySchema).default([]) })
-  .refine((f) => uniqueFiles(f.assets), { message: 'file duplicati', path: ['assets'] });
+  .refine((f) => uniqueFiles(f.assets), { message: 'issue.duplicateFiles', path: ['assets'] });
 export type AssetsFile = z.infer<typeof assetsFileSchema>;
 
 export const referenceEntrySchema = z.object({
@@ -45,5 +45,5 @@ export const referenceEntrySchema = z.object({
 });
 export type ReferenceEntry = z.infer<typeof referenceEntrySchema>;
 export const referencesFileSchema = z.object({ schemaVersion: z.literal(1), references: z.array(referenceEntrySchema).default([]) })
-  .refine((f) => uniqueFiles(f.references), { message: 'file duplicati', path: ['references'] });
+  .refine((f) => uniqueFiles(f.references), { message: 'issue.duplicateFiles', path: ['references'] });
 export type ReferencesFile = z.infer<typeof referencesFileSchema>;

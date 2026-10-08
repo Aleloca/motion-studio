@@ -1,23 +1,24 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DEFAULT_FORMATS, type ApprovalRequest, type VersionEntry } from '@motion-studio/shared';
 import { fileURLToPath } from 'node:url';
-import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
-import { AppConfigStore } from '../src/app-config.ts';
-import { buildServer } from '../src/server/app.ts';
-import { requestJson } from '../src/providers/http.ts';
-import { stockSearch } from '../src/providers/stock.ts';
+import { BRAND_KIT_LIMITS, brandColorSchema, DEFAULT_FORMATS, EMPTY_BRAND_KIT, type ApprovalRequest, type VersionEntry } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { ApprovalBroker } from '../src/approvals/broker.ts';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { AppConfigStore } from '../src/app-config.ts';
+import { parseProposedKit } from '../src/brand/proposed-kit.ts';
 import { exportVersion } from '../src/creatives/export.ts';
 import { validateOutputs } from '../src/creatives/output-contract.ts';
-import { NoMediaTools } from '../src/media/media-tools.ts';
 import { runDoctor } from '../src/doctor.ts';
 import type { CommandExec } from '../src/exec.ts';
+import { FormatCatalog } from '../src/formats/format-catalog.ts';
 import { Git } from '../src/git.ts';
 import { setLocale } from '../src/i18n.ts';
+import { NoMediaTools } from '../src/media/media-tools.ts';
+import { requestJson } from '../src/providers/http.ts';
+import { stockSearch } from '../src/providers/stock.ts';
+import { buildServer } from '../src/server/app.ts';
 import { WorkspaceStore } from '../src/workspace-store.ts';
 
 // The setup file starts every test in Italian; these tests check what the core says in English.
@@ -105,5 +106,29 @@ describe('English messages', () => {
     setLocale('it');
     await expect(requestJson({ fetch: denied }, 'https://api.example/x', {}, { provider: 'OpenAI', secrets: ['sk-x'] }))
       .rejects.toMatchObject({ message: 'Chiave OpenAI non valida o senza permessi' });
+  });
+  it('words brand issues and dropped lines in English, with the same data in Italian', async () => {
+    const SRC = { kind: 'website' as const, ref: 'https://acme.example' };
+    const color = (id: string, over = {}) => ({ id, name: id, hex: '#112233', role: 'primary', source: SRC, ...over });
+    // a hex issue and a duplicate id, as dropped lines
+    const proposal = { colors: [color('a'), color('a', { name: 'Other' }), color('b', { hex: 'blu' }), color('c', { name: undefined })] };
+    expect(parseProposedKit(proposal, EMPTY_BRAND_KIT, SRC).dropped).toEqual([
+      'color «Other»: duplicate id', 'color «b»: invalid hex (use #RRGGBB)', 'color «c»: name is required',
+    ]);
+    const tooMany = Array.from({ length: BRAND_KIT_LIMITS.colors + 1 }, (_, i) => color(`c-${i}`));
+    expect(parseProposedKit({ colors: tooMany }, EMPTY_BRAND_KIT, SRC).dropped).toEqual([`color «c-${BRAND_KIT_LIMITS.colors}»: too many entries (maximum ${BRAND_KIT_LIMITS.colors})`]);
+    expect(parseProposedKit({ colors: 'x' }, EMPTY_BRAND_KIT, SRC).dropped).toEqual(['color: invalid list']);
+    setLocale('it');
+    expect(parseProposedKit(proposal, EMPTY_BRAND_KIT, SRC).dropped).toEqual([
+      'colore «Other»: id duplicato', 'colore «b»: hex non valido (usa #RRGGBB)', 'colore «c»: nome obbligatorio',
+    ]);
+    expect(brandColorSchema.safeParse(color('z', { hex: 'x' })).error!.issues[0]!.message).toBe('issue.hex');
+  });
+  it('words a duplicate-id refine in English', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ms-en-'));
+    const dup = [DEFAULT_FORMATS[0]!, DEFAULT_FORMATS[0]!];
+    await expect(new FormatCatalog(root).save(dup)).rejects.toMatchObject({ message: 'Invalid format catalog: presets: duplicate preset ids' });
+    setLocale('it');
+    await expect(new FormatCatalog(root).save(dup)).rejects.toMatchObject({ message: 'Catalogo formati non valido: presets: id dei preset duplicati' });
   });
 });

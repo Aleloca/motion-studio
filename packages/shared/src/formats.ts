@@ -22,7 +22,7 @@ export type FormatPreset = z.infer<typeof formatPresetSchema>;
 export const formatsFileSchema = z.object({
   schemaVersion: z.literal(1),
   presets: z.array(formatPresetSchema).min(1),
-}).refine((f) => new Set(f.presets.map((p) => p.id)).size === f.presets.length, { message: 'id dei preset duplicati', path: ['presets'] });
+}).refine((f) => new Set(f.presets.map((p) => p.id)).size === f.presets.length, { message: 'issue.duplicatePresetIds', path: ['presets'] });
 export type FormatsFile = z.infer<typeof formatsFileSchema>;
 
 /**

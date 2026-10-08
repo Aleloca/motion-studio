@@ -1,7 +1,7 @@
 import { lstat, realpath } from 'node:fs/promises';
 import { dirname, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { briefSchema, linkedCodebaseSchema, pinSchema, type CreativeDetail } from '@motion-studio/shared';
+import { briefSchema, issueText, linkedCodebaseSchema, pinSchema, type CreativeDetail } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -13,7 +13,7 @@ import type { MediaTools } from '../media/media-tools.ts';
 import { completeGitignore, sweepProject } from '../project-maintenance.ts';
 import { expandHome, WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import { sendConfinedFile } from './serve-file.ts';
-import { t } from '../i18n.ts';
+import { currentLocale, t } from '../i18n.ts';
 
 export interface CreativeRoutesContext {
   requireWorkspace: () => WorkspaceStore;
@@ -31,7 +31,7 @@ const editBody = z.object({ title: z.string().optional(), brief: briefSchema.opt
 
 function parse<T>(schema: z.ZodType<T>, body: unknown): T {
   const r = schema.safeParse(body ?? {});
-  if (!r.success) throw new WorkspaceError(400, t().errors.invalidRequestDetail({ detail: r.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') }));
+  if (!r.success) throw new WorkspaceError(400, t().errors.invalidRequestDetail({ detail: r.error.issues.map((i) => `${i.path.join('.')}: ${issueText(i, currentLocale())}`).join('; ') }));
   return r.data;
 }
 

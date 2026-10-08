@@ -57,7 +57,7 @@ export const manifestSchema = z.object({
   schemaVersion: z.literal(1),
   files: z.array(z.object({
     format: z.string().min(1),
-    file: z.string().regex(FILE_NAME).refine((f) => f !== '.' && f !== '..', 'nome file non valido'),
+    file: z.string().regex(FILE_NAME).refine((f) => f !== '.' && f !== '..', 'issue.fileName'),
     width: z.number().int().positive(),
     height: z.number().int().positive(),
     durationSec: z.number().positive().nullish(),

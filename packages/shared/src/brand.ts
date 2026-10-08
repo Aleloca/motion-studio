@@ -1,50 +1,52 @@
 import { z } from 'zod';
+import { messages, type Locale } from './i18n/index.ts';
+import { issueText, type IssueLike } from './issues.ts';
 import { relativeFileSchema, webUrlSchema } from './library.ts';
 
-const id = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/, 'identificativo non valido (minuscole, cifre e trattini)');
+const id = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/, 'issue.id');
 
 export const sourceRefSchema = z.object({ kind: z.enum(['manual', 'website', 'image']), ref: z.string().nullable() })
   .superRefine((s, ctx) => {
     if (s.kind === 'manual' && s.ref !== null) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'le fonti manuali devono avere ref: null', path: ['ref'] });
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'issue.manualRef', path: ['ref'] });
     }
     if (s.kind === 'website') {
       if (s.ref === null) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'le fonti da sito richiedono un indirizzo http(s) come ref', path: ['ref'] });
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'issue.websiteRefRequired', path: ['ref'] });
       } else {
         const urlResult = webUrlSchema.safeParse(s.ref);
-        if (!urlResult.success) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'le fonti da sito devono avere un indirizzo http(s) come ref', path: ['ref'] });
+        if (!urlResult.success) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'issue.websiteRefInvalid', path: ['ref'] });
       }
     }
     if (s.kind === 'image') {
       if (s.ref === null) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'le fonti da immagine richiedono un percorso relativo come ref', path: ['ref'] });
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'issue.imageRefRequired', path: ['ref'] });
       } else {
         const fileResult = relativeFileSchema.safeParse(s.ref);
-        if (!fileResult.success) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'le fonti da immagine devono avere un percorso relativo come ref', path: ['ref'] });
+        if (!fileResult.success) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'issue.imageRefInvalid', path: ['ref'] });
       }
     }
   });
 export type SourceKind = 'manual' | 'website' | 'image';
 export type SourceRef = z.infer<typeof sourceRefSchema>;
 
-const WEIGHTS = 'pesi non validi (numeri interi da 100 a 900)';
+const WEIGHTS = 'issue.weights';
 export const brandColorSchema = z.object({
-  id, name: z.string().trim().min(1, 'nome obbligatorio').max(60, 'nome troppo lungo (massimo 60 caratteri)'),
-  hex: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'hex non valido (usa #RRGGBB)').transform((h) => h.toUpperCase()),
-  role: z.enum(['primary', 'secondary', 'accent', 'background', 'text', 'other'], { message: 'ruolo non valido' }), source: sourceRefSchema,
+  id, name: z.string().trim().min(1, 'issue.nameRequired').max(60, 'issue.nameTooLong'),
+  hex: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'issue.hex').transform((h) => h.toUpperCase()),
+  role: z.enum(['primary', 'secondary', 'accent', 'background', 'text', 'other'], { message: 'issue.role' }), source: sourceRefSchema,
 });
 export const brandFontSchema = z.object({
-  id, family: z.string().trim().min(1, 'famiglia obbligatoria').max(80, 'famiglia troppo lunga (massimo 80 caratteri)'),
-  role: z.enum(['heading', 'body', 'accent', 'other'], { message: 'ruolo non valido' }),
-  weights: z.array(z.number({ message: WEIGHTS }).int(WEIGHTS).min(100, WEIGHTS).max(900, WEIGHTS)).max(9, 'al massimo 9 pesi'),
+  id, family: z.string().trim().min(1, 'issue.familyRequired').max(80, 'issue.familyTooLong'),
+  role: z.enum(['heading', 'body', 'accent', 'other'], { message: 'issue.role' }),
+  weights: z.array(z.number({ message: WEIGHTS }).int(WEIGHTS).min(100, WEIGHTS).max(900, WEIGHTS)).max(9, 'issue.maxWeights'),
   file: relativeFileSchema.nullable(), source: sourceRefSchema,
 });
 export const brandLogoSchema = z.object({
-  id, file: relativeFileSchema, variant: z.enum(['primary', 'secondary', 'mono', 'icon', 'other'], { message: 'variante non valida' }),
-  background: z.enum(['light', 'dark', 'any'], { message: 'sfondo non valido' }), source: sourceRefSchema,
+  id, file: relativeFileSchema, variant: z.enum(['primary', 'secondary', 'mono', 'icon', 'other'], { message: 'issue.variant' }),
+  background: z.enum(['light', 'dark', 'any'], { message: 'issue.background' }), source: sourceRefSchema,
 });
-export const brandNoteSchema = z.object({ id, text: z.string().trim().min(1, 'testo obbligatorio').max(2000, 'testo troppo lungo (massimo 2000 caratteri)'), source: sourceRefSchema });
+export const brandNoteSchema = z.object({ id, text: z.string().trim().min(1, 'issue.textRequired').max(2000, 'issue.textTooLong'), source: sourceRefSchema });
 
 /** Maximum number of items per list in a brand kit. */
 export const BRAND_KIT_LIMITS = { colors: 40, fonts: 20, logos: 30, dos: 50, donts: 50 } as const;
@@ -60,19 +62,18 @@ export const brandKitSchema = z.object({
   dos: z.array(brandNoteSchema).max(BRAND_KIT_LIMITS.dos).default([]),
   donts: z.array(brandNoteSchema).max(BRAND_KIT_LIMITS.donts).default([]),
   photoStyle: brandNoteSchema.nullable().default(null),
-}).refine((k) => [k.colors, k.fonts, k.logos, k.dos, k.donts].every(uniqueIds), { message: 'id duplicati' });
+}).refine((k) => [k.colors, k.fonts, k.logos, k.dos, k.donts].every(uniqueIds), { message: 'issue.duplicateIds' });
 export type BrandKit = z.infer<typeof brandKitSchema>;
 
-export const BRAND_FIELD_LABELS: Record<string, string> = {
-  colors: 'colore', fonts: 'font', logos: 'logo', dos: 'cosa da fare', donts: 'cosa da evitare', tone: 'tono di voce', photoStyle: 'stile fotografico',
-};
-/** Brand kit validation issues in Italian, naming the item ("colore 2: hex non valido (usa #RRGGBB)"). */
-export function brandKitIssues(error: { issues: Array<{ path: PropertyKey[]; message: string }> }): string {
+/** Brand kit validation issues in `locale`, naming the item ("colore 2: hex non valido (usa #RRGGBB)"). */
+export function brandKitIssues(error: { issues: IssueLike[] }, locale: Locale): string {
+  const labels = messages(locale).brandFields as Record<string, string>;
   return error.issues.map((i) => {
-    const [field, index] = i.path;
-    const label = typeof field === 'string' ? BRAND_FIELD_LABELS[field] : undefined;
-    if (!label) return i.message;
-    return `${typeof index === 'number' ? `${label} ${index + 1}` : label}: ${i.message}`;
+    const [field, index] = i.path ?? [];
+    const label = typeof field === 'string' && Object.hasOwn(labels, field) ? labels[field] : undefined;
+    const text = issueText(i, locale);
+    if (!label) return text;
+    return `${typeof index === 'number' ? `${label} ${index + 1}` : label}: ${text}`;
   }).join('; ');
 }
 export type BrandColor = BrandKit['colors'][number];
@@ -86,17 +87,17 @@ export const brandSourceSchema = z.object({
   addedAt: z.iso.datetime(), lastAnalyzedAt: z.iso.datetime().nullable(),
 }).superRefine((s, ctx) => {
   if (s.kind === 'website') {
-    if (s.url === null) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'le sorgenti da sito richiedono un indirizzo', path: ['url'] });
-    if (s.file !== null) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'le sorgenti da sito devono avere file: null', path: ['file'] });
+    if (s.url === null) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'issue.siteSourceUrl', path: ['url'] });
+    if (s.file !== null) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'issue.siteSourceFile', path: ['file'] });
   }
   if (s.kind === 'image') {
-    if (s.file === null) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'le sorgenti immagine richiedono un file', path: ['file'] });
-    if (s.url !== null) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'le sorgenti immagine devono avere url: null', path: ['url'] });
+    if (s.file === null) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'issue.imageSourceFile', path: ['file'] });
+    if (s.url !== null) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'issue.imageSourceUrl', path: ['url'] });
   }
 });
 export type BrandSource = z.infer<typeof brandSourceSchema>;
 export const brandSourcesFileSchema = z.object({ schemaVersion: z.literal(1), sources: z.array(brandSourceSchema).default([]) })
-  .refine((f) => uniqueIds(f.sources), { message: 'id delle sorgenti duplicati', path: ['sources'] });
+  .refine((f) => uniqueIds(f.sources), { message: 'issue.duplicateSourceIds', path: ['sources'] });
 export type BrandSourcesFile = z.infer<typeof brandSourcesFileSchema>;
 
 export const brandFieldSchema = z.enum(['colors', 'fonts', 'logos', 'dos', 'donts', 'tone', 'photoStyle']);
