@@ -89,7 +89,7 @@ export function slugify(name: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 50)
     .replace(/-+$/g, '');
-  return s || 'progetto'; // i18n-ignore stored default folder slug, kept for compatibility with existing workspaces
+  return s || 'project';
 }
 
 export class WorkspaceStore {

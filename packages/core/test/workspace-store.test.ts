@@ -13,8 +13,8 @@ describe('slugify', () => {
   it('normalizes accents, spaces and symbols', () => {
     expect(slugify('  Lumen Caffè — Primavera 2026! ')).toBe('lumen-caffe-primavera-2026');
   });
-  it('falls back to "progetto" for names without letters or digits', () => {
-    expect(slugify('***')).toBe('progetto');
+  it('falls back to "project" for names without letters or digits', () => {
+    expect(slugify('***')).toBe('project');
   });
 });
 
