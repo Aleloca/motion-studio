@@ -10,7 +10,7 @@ import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.t
 import { WorkspaceError } from '../workspace-store.ts';
 
 /** Commands that may be granted "always": media/file tools whose arguments cannot run other programs. Exact, case-sensitive. */
-const SAFE_ALWAYS = new Set(['ffmpeg', 'ffprobe', 'magick', 'convert', 'rsvg-convert', 'cwebp', 'gifsicle', 'optipng', 'pngquant', 'mkdir', 'cp', 'mv', 'ls', 'unzip', 'tar']);
+const SAFE_ALWAYS = new Set(['ls', 'mkdir', 'ffprobe', 'cwebp', 'gifsicle', 'optipng', 'pngquant', 'rsvg-convert']);
 /** Ordered by how a system folder may be granted: never the folder itself nor anything inside it. */
 const SYSTEM_DIRS = ['/etc', '/private', '/usr', '/bin', '/sbin', '/System', '/Library', '/Applications'];
 const SHELL_CONTROL = /[;&|`$<>\n\r(){}]/;

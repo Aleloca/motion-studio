@@ -55,8 +55,15 @@ describe('ruleFor hardening', () => {
     ['Bash', { command: './run.sh' }, null],
     ['Bash', { command: 'git status' }, null],
     ['Bash', { command: 'brew upgrade' }, null],
-    ['Bash', { command: 'ffmpeg -i a b' }, 'Bash(ffmpeg:*)'],
-    ['Bash', { command: 'ffmpeg -i a b; rm -rf x' }, null],
+    ['Bash', { command: 'ffprobe -i a' }, 'Bash(ffprobe:*)'],
+    ['Bash', { command: 'ffprobe -i a; rm -rf x' }, null],
+    ['Bash', { command: 'ffmpeg -i a b' }, null],
+    ['Bash', { command: 'tar xf a --use-compress-program=x' }, null],
+    ['Bash', { command: 'magick a b' }, null],
+    ['Bash', { command: 'convert a b' }, null],
+    ['Bash', { command: 'cp x ~/.zshrc' }, null],
+    ['Bash', { command: 'mv x y' }, null],
+    ['Bash', { command: 'unzip a.zip' }, null],
     ['Bash', { command: 'ls $(rm x)' }, null],
     ['Read', { file_path: '/etc/passwd' }, null],
     ['Write', { file_path: '/Applications/X.app/a' }, null],
@@ -77,7 +84,7 @@ describe('ruleFor hardening', () => {
 
 describe('isAllowedRule', () => {
   it('accepts what ruleFor produces', () => {
-    for (const [t, i] of [['Bash', { command: 'ls -la' }], ['Bash', { command: 'tar xf a.tar' }], ['Bash', { command: 'brew install x' }], ['Write', { file_path: '/Users/me/Desktop/out [1]/a.png' }],
+    for (const [t, i] of [['Bash', { command: 'ls -la' }], ['Bash', { command: 'pngquant a.png' }], ['Bash', { command: 'brew install x' }], ['Write', { file_path: '/Users/me/Desktop/out [1]/a.png' }],
       ['Read', { file_path: '/tmp/a/b.txt' }], ['WebFetch', { url: 'https://www.python.org/' }], ['provider:tts-openai', {}], ['provider:openai-images', {}], ['mcp__studio__report_progress', {}]] as const) {
       const r = ruleFor(t, i);
       expect(r, t).not.toBeNull();
@@ -86,7 +93,7 @@ describe('isAllowedRule', () => {
   });
   it.each([
     'Bash(*)', 'Bash(:*)', 'Bash(sudo:*)', 'Bash(env:*)', 'Bash(.:*)', 'Bash(node:*)', 'Bash(node -e:*)', 'Bash(brew:*)', 'Bash(git status:*)',
-    'Bash(Bash:*)', 'Bash(SH:*)', 'Bash(python3.12:*)', 'Bash(npm run:*)', 'Bash(ffmpeg -i:*)', 'Bash(FFMPEG:*)',
+    'Bash(Bash:*)', 'Bash(tar:*)', 'Bash(magick:*)', 'Bash(convert:*)', 'Bash(cp:*)', 'Bash(mv:*)', 'Bash(unzip:*)', 'Bash(ffmpeg:*)', 'Bash(SH:*)', 'Bash(python3.12:*)', 'Bash(npm run:*)', 'Bash(ffmpeg -i:*)', 'Bash(FFMPEG:*)',
     'WebFetch(domain:*)', 'WebFetch(domain:*.com)', 'WebFetch(domain:2130706433)', 'WebFetch(domain:0x7f000001)', 'WebFetch(domain:127.1)',
     'WebFetch(domain:example.com:8080)', 'WebFetch(domain:Example.com)', 'WebFetch(domain:com)',
     'Edit(//tmp/a\\x/**)', 'Edit(//tmp/a\nb/**)', 'Edit(//etc/**)', 'Edit(//Applications/Foo/**)', 'Edit(//tmp/a*/**)',
