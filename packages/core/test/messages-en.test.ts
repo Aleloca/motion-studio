@@ -80,4 +80,18 @@ describe('English messages', () => {
     expect((await validateOutputs({ dir, requested: ['instagram-image-1x1'], presets: DEFAULT_FORMATS, durationSec: null, media: NoMediaTools })).problems)
       .toEqual(['Manca il formato Instagram · Immagine 1:1 (instagram-image-1x1)']);
   });
+  it('words the 401 pairing answer in English, keeping the stable code', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'ms-en-'));
+    const app = await buildServer({ uiToken: 'a'.repeat(64), sandbox: async () => ({ available: false, reason: 'test' }), appConfig: new AppConfigStore(join(base, 'config')), git: new Git(), doctor: async () => [],
+      runner: new ClaudeCodeRunner([process.execPath, fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url))], { killGraceMs: 200 }) });
+    try {
+      const res = await app.inject('/api/workspace');
+      expect(res.statusCode).toBe(401);
+      expect(res.json()).toEqual({ code: 'ui-token', error: 'Open Motion Studio from the link shown in the terminal' });
+      const missing = await app.inject({ url: '/api/nope', headers: { 'x-motion-studio-ui': 'a'.repeat(64) } });
+      expect(missing.json()).toEqual({ error: 'Not found' });
+    } finally {
+      await app.close();
+    }
+  });
 });

@@ -71,7 +71,8 @@ const UI_TOKEN_EXEMPT: Record<string, ReadonlySet<string>> = {
   HEAD: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/projects/:slug/creatives/:c/files/*']),
   POST: new Set(['/api/bridge/:tool']),
 };
-const UI_TOKEN_ERROR = { code: 'ui-token', error: 'Apri Motion Studio dal link mostrato nel terminale' };
+/** `code` is what the UI branches on; `error` is display text in the current language. */
+const uiTokenError = () => ({ code: 'ui-token', error: t().pairing.openFromLink });
 
 const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?$/i;
 const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
@@ -196,7 +197,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     if (!isLoopbackHost(req.headers.host) || (origin !== undefined && !isLoopbackOrigin(origin))) {
       // A rejected WebSocket upgrade leaves the raw socket open (nobody owns it any more): close it once the 403 is flushed.
       if (req.raw.headers.upgrade) reply.raw.once('finish', () => req.raw.socket.destroy());
-      return reply.status(403).send({ error: 'Richiesta non consentita: origine non locale' });
+      return reply.status(403).send({ error: t().errors.nonLocalOrigin });
     }
     // Defence against stray local requests (other sites' scripts cannot read it, and agents without sandbox do not know it).
     const token = deps.uiToken;
@@ -209,7 +210,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       : req.headers['x-motion-studio-ui'];
     if (!tokenMatches(presented, token)) {
       if (req.raw.headers.upgrade) reply.raw.once('finish', () => req.raw.socket.destroy());
-      return reply.status(401).send(UI_TOKEN_ERROR);
+      return reply.status(401).send(uiTokenError());
     }
   });
 
@@ -360,7 +361,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // A single handler (Fastify allows one per context): unknown API routes always get a JSON 404,
   // other paths fall back to the SPA when the web build is available.
   app.setNotFoundHandler((req, reply) =>
-    !serveWeb || req.url.startsWith('/api/') ? reply.status(404).send({ error: 'Non trovato' }) : reply.sendFile('index.html'),
+    !serveWeb || req.url.startsWith('/api/') ? reply.status(404).send({ error: t().errors.notFound }) : reply.sendFile('index.html'),
   );
 
   return app;

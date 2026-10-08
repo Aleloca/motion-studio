@@ -1,11 +1,12 @@
 import { lstat, realpath } from 'node:fs/promises';
 import { isAbsolute, join, normalize, sep } from 'node:path';
 import type { FastifyReply } from 'fastify';
+import { t } from '../i18n.ts';
 
 export async function sendConfinedFile(reply: FastifyReply, base: string, relRaw: string, prefixes: string[]): Promise<FastifyReply> {
   const rel = normalize(relRaw || '.');
   const allowed = prefixes.map((p) => p.split('/').join(sep));
-  const notFound = () => reply.status(404).send({ error: 'File non trovato' });
+  const notFound = () => reply.status(404).send({ error: t().errors.fileNotFoundShort });
   if (isAbsolute(rel) || rel.split(sep).includes('..') || !allowed.some((p) => rel.startsWith(p))) return notFound();
   const info = await lstat(join(base, rel)).catch(() => null);
   if (!info?.isFile()) return notFound();

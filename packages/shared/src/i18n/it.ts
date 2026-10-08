@@ -9,6 +9,17 @@ export const it: Messages = {
     items: (p) => (p.count === 1 ? '1 elemento' : `${p.count} elementi`),
   },
   errors: {
+    toolUnavailable: 'Strumento non disponibile in questo lavoro',
+    notFound: 'Non trovato',
+    fileNotFoundShort: 'File non trovato',
+    nonLocalOrigin: 'Richiesta non consentita: origine non locale',
+    kitUnreadable: 'Brand kit non leggibile',
+    invalidBridgeAccess: 'Accesso al bridge non valido',
+    internalError: 'Errore interno di Motion Studio',
+    unknownTool: (p) => `Strumento sconosciuto: ${p.tool}`,
+    markerNotFound: 'marcatore non trovato',
+    exitCode: (p) => `codice ${p.code}`,
+    timedOut: (p) => `timeout dopo ${p.seconds} s`,
     formatCatalogFallback: (p) => `${p.detail}. Uso il catalogo predefinito.`,
     jobCancelled: 'Il lavoro è stato annullato.',
     invalidProgress: 'Messaggio di avanzamento non valido (1-300 caratteri)',
@@ -299,5 +310,8 @@ export const it: Messages = {
     web: 'Web',
     appStore: 'App Store',
     playStore: 'Play Store',
+  },
+  pairing: {
+    openFromLink: 'Apri Motion Studio dal link mostrato nel terminale',
   },
 };

@@ -58,24 +58,24 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
         const parsed = brandKitSchema.safeParse(json);
         if (parsed.success) return { kit: parsed.data, guidelines };
       }
-      return { kit: null, guidelines, error: 'Brand kit non leggibile' };
+      return { kit: null, guidelines, error: t().errors.kitUnreadable };
     },
     ...ctx.extraTools,
   };
 
   app.post<{ Params: { tool: string } }>('/api/bridge/:tool', async (req, reply) => {
     const c = ctx.bridge.resolve(req.headers['x-motion-studio-bridge'] as string | undefined);
-    if (!c) return reply.status(401).send({ error: 'Accesso al bridge non valido' });
+    if (!c) return reply.status(401).send({ error: t().errors.invalidBridgeAccess });
     const { tool } = req.params;
     const handler = Object.hasOwn(tools, tool) ? tools[tool] : undefined;
-    if (!handler) return reply.status(404).send({ error: `Strumento sconosciuto: ${tool}` });
+    if (!handler) return reply.status(404).send({ error: t().errors.unknownTool({ tool }) });
     // Defence in depth for a leaked token: a job only reaches the tools of its kind.
-    if (tool !== 'approve' && !MCP_TOOLS[c.kind].includes(tool)) return reply.status(403).send({ error: 'Strumento non disponibile in questo lavoro' });
+    if (tool !== 'approve' && !MCP_TOOLS[c.kind].includes(tool)) return reply.status(403).send({ error: t().errors.toolUnavailable });
     try {
       return await handler(c, (req.body ?? {}) as Record<string, unknown>);
     } catch (err) {
       if (err instanceof WorkspaceError || err instanceof ProviderError) return reply.status(err.status).send({ error: err.message });
-      return reply.status(500).send({ error: 'Errore interno di Motion Studio' });
+      return reply.status(500).send({ error: t().errors.internalError });
     }
   });
 }

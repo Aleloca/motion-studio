@@ -124,7 +124,7 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
     const { projectDir } = await project(req.params.slug);
     const rel = posix.normalize(req.params['*'] ?? '.');
     const lower = rel.toLowerCase();
-    if (lower === 'assets/assets.json' || lower === 'references/references.json') return reply.status(404).send({ error: 'File non trovato' });
+    if (lower === 'assets/assets.json' || lower === 'references/references.json') return reply.status(404).send({ error: t().errors.fileNotFoundShort });
     return sendConfinedFile(reply, projectDir, req.params['*'] ?? '', ['assets/', 'references/']);
   });
 }

@@ -11,6 +11,17 @@ export const en = {
     items: (p: { count: number }) => (p.count === 1 ? '1 item' : `${p.count} items`),
   },
   errors: {
+    toolUnavailable: 'Tool not available in this job',
+    notFound: 'Not found',
+    fileNotFoundShort: 'File not found',
+    nonLocalOrigin: 'Request not allowed: non-local origin',
+    kitUnreadable: 'Brand kit unreadable',
+    invalidBridgeAccess: 'Invalid bridge access',
+    internalError: 'Internal Motion Studio error',
+    unknownTool: (p: { tool: string }) => `Unknown tool: ${p.tool}`,
+    markerNotFound: 'marker not found',
+    exitCode: (p: { code: number }) => `code ${p.code}`,
+    timedOut: (p: { seconds: number }) => `timed out after ${p.seconds} s`,
     formatCatalogFallback: (p: { detail: string }) => `${p.detail}. Using the default catalog.`,
     jobCancelled: 'The job was cancelled.',
     invalidProgress: 'Invalid progress message (1-300 characters)',
@@ -301,5 +312,8 @@ export const en = {
     web: 'Web',
     appStore: 'App Store',
     playStore: 'Play Store',
+  },
+  pairing: {
+    openFromLink: 'Open Motion Studio from the link shown in the terminal',
   },
 } as const satisfies Catalog;

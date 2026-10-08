@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { CommandExec } from './exec.ts';
+import { t } from './i18n.ts';
 
 const MAX_OUTPUT = 64 * 1024;
 
@@ -26,7 +27,7 @@ export const spawnBounded: CommandExec = (cmd, args, opts = {}) =>
       child?.stderr?.destroy();
       resolve({ code: r.code, stdout: out, stderr: r.stderr ?? err.slice(0, 500), notFound: false });
     };
-    const timeoutMsg = `timeout dopo ${Math.round(timeoutMs / 100) / 10} s`;
+    const timeoutMsg = t().errors.timedOut({ seconds: Math.round(timeoutMs / 100) / 10 });
     const timer = setTimeout(() => finish({ code: -1, stderr: timeoutMsg }), timeoutMs);
     // Last-resort bound, independent of the child's events.
     const hard = setTimeout(() => finish({ code: -1, stderr: timeoutMsg }), timeoutMs + 500);
@@ -70,5 +71,5 @@ export async function resolveLoginShellPath(
   const r = await exec(shell, ['-ilc', PROBE], { timeoutMs: opts.timeoutMs ?? 5000 });
   const found = r.code === 0 ? r.stdout.match(/__MS_PATH__([\s\S]*?)__MS_END__/)?.[1]?.trim() : undefined;
   if (found) return { path: merge(found, current), source: 'login-shell' };
-  return { path: merge(current, ...fallbackDirs(opts.home ?? homedir())), source: 'fallback', error: r.code === 0 ? 'marcatore non trovato' : r.stderr.trim() || `codice ${r.code}` };
+  return { path: merge(current, ...fallbackDirs(opts.home ?? homedir())), source: 'fallback', error: r.code === 0 ? t().errors.markerNotFound : r.stderr.trim() || t().errors.exitCode({ code: r.code }) };
 }
