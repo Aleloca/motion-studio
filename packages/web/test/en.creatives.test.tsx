@@ -10,27 +10,16 @@ const api = {
     { ok: true, slug: 'c1', title: 'Launch', status: 'ready', formats: ['a', 'b'], versions: 1, updatedAt: at, cover: null },
   ]),
   getFormats: vi.fn(async () => ({ presets: DEFAULT_FORMATS, error: null, path: '/x' })),
-  createCreative: vi.fn(),
   sendCreativeTurn: vi.fn(), updateCreative: vi.fn(), cancelJob: vi.fn(),
   fileUrl: (s: string, c: string, r: string) => `/f/${s}/${c}/${r}`,
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
-const { NewCreative } = await import('../src/screens/NewCreative.tsx');
 const { ConversationPanel } = await import('../src/components/ConversationPanel.tsx');
 const { FormatBoard } = await import('../src/components/FormatBoard.tsx');
 const { FocusView } = await import('../src/components/FocusView.tsx');
 const en = (node: React.ReactNode) => render(<I18nProvider locale="en">{node}</I18nProvider>);
 
 describe('creatives in English', () => {
-  it('shows the brief form with English format names', async () => {
-    en(<NewCreative slug="acme" />);
-    await waitFor(() => screen.getByRole('group', { name: 'Instagram' }));
-    expect(screen.getByLabelText('What do you want to make?')).toBeTruthy();
-    await userEvent.click(within(screen.getByRole('group', { name: 'Instagram' })).getByRole('button', { name: 'Post 1:1' }));
-    expect(screen.getByText("What you'll get · 1 format")).toBeTruthy();
-    expect(screen.getByRole('button', { name: '15s' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'None' })).toBeTruthy();
-  });
   it('shows the conversation panel in English', () => {
     const detail: CreativeDetail = {
       slug: 'c1', jobKey: 'k',

@@ -14,10 +14,12 @@ export interface SegmentedProps<V extends string> {
   /** Accessible name of the group. */
   label: string;
   className?: string;
+  /** Turns every option off (e.g. a setting that does not apply right now); the value stays visible. */
+  disabled?: boolean;
 }
 
 /** Segmented control (role="radiogroup"): replaces radios and small selects; arrows move and select, wrapping. */
-export function Segmented<V extends string>({ options, value, onChange, label, className }: SegmentedProps<V>) {
+export function Segmented<V extends string>({ options, value, onChange, label, className, disabled }: SegmentedProps<V>) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const current = Math.max(0, options.findIndex((o) => o.value === value));
 
@@ -32,7 +34,7 @@ export function Segmented<V extends string>({ options, value, onChange, label, c
   };
 
   return (
-    <div role="radiogroup" aria-label={label} className={cx('ms-seg', className)}>
+    <div role="radiogroup" aria-label={label} aria-disabled={disabled || undefined} className={cx('ms-seg', className)}>
       {options.map((o, i) => {
         const on = o.value === value;
         return (
@@ -43,6 +45,7 @@ export function Segmented<V extends string>({ options, value, onChange, label, c
             role="radio"
             aria-checked={on}
             tabIndex={i === current ? 0 : -1}
+            disabled={disabled}
             className={cx(on && 'ms-on')}
             onClick={() => { if (!on) onChange(o.value); }}
             onKeyDown={(e) => onKeyDown(e, i)}

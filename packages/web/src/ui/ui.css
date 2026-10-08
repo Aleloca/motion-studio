@@ -98,6 +98,9 @@
 .ms-seg { display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: var(--field); min-width: 0; }
 .ms-seg button { height: 28px; min-height: 0; padding: 0 12px; margin: 0; border-radius: 7px; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 13px; display: flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; cursor: pointer; transition: background var(--d-s) var(--e-std), color var(--d-s) var(--e-std), box-shadow var(--d-s) var(--e-std); }
 .ms-seg button:hover { color: var(--text); }
+.ms-seg button:disabled { cursor: default; }
+.ms-seg button:disabled:hover { color: var(--muted); }
+.ms-seg button.ms-on:disabled:hover { color: var(--text); }
 .ms-seg button.ms-on { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px var(--shadow), 0 0 0 1px var(--line2); }
 .ms-seg .ms-n { color: var(--faint); font-weight: 400; font-variant-numeric: tabular-nums; }
 /* A count that needs the user: the orange badge (text in --onAccentStrong for AA). */

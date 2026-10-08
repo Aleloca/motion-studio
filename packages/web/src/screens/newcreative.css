@@ -1,0 +1,185 @@
+/* New creative (spec §6.2 #5), ported from the prototype's NewCreativePage / Tile and the NewCreative boards. */
+.ms-nc { position: absolute; inset: 0; display: grid; grid-template-rows: minmax(0, 1fr) 64px; color: var(--text); background: var(--bg); overflow-wrap: anywhere; }
+.ms-nc-body { min-height: 0; display: grid; grid-template-columns: clamp(380px, 38vw, 540px) minmax(0, 1fr); }
+.ms-nc .ms-grow { flex: 1; min-width: 0; }
+.ms-nc-faint { color: var(--faint); font-weight: 400; }
+.ms-nc-muted { color: var(--muted); }
+.ms-nc-small { font-size: 12px; }
+.ms-nc-ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-nc-wrap { overflow-wrap: anywhere; }
+
+/* Left column: the brief. */
+.ms-nc-left {
+  min-width: 0; overflow: auto; padding: 26px 28px; display: flex; flex-direction: column; gap: 22px;
+  background: var(--panel); border-right: 1px solid var(--line);
+}
+.ms-nc-sec { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ms-nc-brief { gap: 10px; }
+.ms-nc-q { font-size: 20px; font-weight: 700; letter-spacing: -.015em; }
+.ms-nc-lbl { font-size: 12px; font-weight: 600; }
+.ms-nc-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; min-width: 0; }
+.ms-nc-goalbox {
+  display: flex; flex-direction: column; gap: 10px; padding: 14px 14px 10px; border-radius: 14px; background: var(--field);
+  box-shadow: inset 0 0 0 1px var(--line); transition: box-shadow var(--d-s) var(--e-std);
+}
+.ms-nc-goalbox:focus-within { box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent); }
+.ms-nc-goalbox.ms-invalid { box-shadow: inset 0 0 0 1px var(--warn), 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent); }
+.ms-nc-goalbox textarea {
+  resize: none; border: 0; outline: none; background: transparent; color: var(--text); font: inherit; font-size: 15px; line-height: 1.5;
+  padding: 0; margin: 0; min-height: 0; width: 100%; overflow-wrap: anywhere;
+}
+.ms-nc-goalbox textarea::placeholder { color: var(--faint); }
+.ms-nc-goalbar { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ms-nc-kit { height: 26px; padding: 0 9px 0 4px; border-radius: 7px; background: var(--panel); box-shadow: 0 0 0 1px var(--line); gap: 6px; }
+.ms-nc-mono { width: 18px; height: 18px; border-radius: 4px; background: var(--ink); color: var(--inkText); font-size: 8px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.ms-nc-count { margin-left: auto; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ms-nc-err { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--warn); }
+.ms-nc-err svg, .ms-nc-note svg { flex: none; }
+.ms-nc-note { margin: 0; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.ms-nc-title { margin: 0; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ms-nc-title b { color: var(--text); font-weight: 600; }
+.ms-nc-try { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; }
+.ms-nc-try .ms-chip { height: 26px; padding: 0 10px; color: var(--muted); }
+.ms-nc-try .ms-chip:hover { color: var(--text); }
+.ms-nc-msg { font-size: 14px; height: 38px; }
+
+/* Video length: off without video formats. */
+.ms-nc-off .ms-nc-len { opacity: .5; }
+.ms-nc-len { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.ms-nc-len button { padding: 0 6px; height: 30px; overflow: hidden; text-overflow: ellipsis; }
+.ms-nc-custom { width: 160px; }
+
+/* Assets. */
+.ms-nc-browse { color: var(--accentText); }
+.ms-nc-assets { display: flex; flex-wrap: wrap; gap: 8px; }
+.ms-nc-asset-item { display: contents; }
+.ms-nc-asset {
+  position: relative; width: 72px; height: 72px; flex: none; padding: 0; margin: 0; border: 0; border-radius: 8px; overflow: hidden;
+  background: var(--field); color: var(--muted); cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: box-shadow var(--d-m) var(--e-std), transform var(--d-s) var(--e-std);
+}
+.ms-nc-asset.ms-on { box-shadow: 0 0 0 2px var(--accent); }
+.ms-nc-asset:active { transform: scale(.97); }
+.ms-nc-asset:focus-visible, .ms-nc-pick:focus-visible, .ms-nc-tile:focus-visible, .ms-nc-disclose:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ms-nc-add { background: transparent; border: 1.5px dashed var(--line); }
+.ms-nc-add:hover { color: var(--text); border-color: var(--faint); }
+.ms-nc-face { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Logos and other vectors are shown whole, not cropped. */
+.ms-nc-face-svg { object-fit: contain; padding: 8px; }
+.ms-nc-face-svg.ms-sm { padding: 1px; }
+.ms-nc-face.ms-sm { width: 18px; height: 18px; border-radius: 4px; flex: none; }
+.ms-nc-face-file {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 6px; background: var(--field); color: var(--muted);
+  font-size: 9px; font-weight: 600; line-height: 1.2; text-align: center; overflow: hidden;
+}
+.ms-nc-face-file > span { max-width: 100%; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.ms-nc-face-file.ms-sm { padding: 0; }
+.ms-nc-tick {
+  position: absolute; right: 4px; top: 4px; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); color: var(--onAccent);
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* Brand. */
+.ms-nc-brand { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 12px; box-shadow: inset 0 0 0 1px var(--line2); min-width: 0; }
+.ms-nc-swatches { display: flex; flex: none; }
+.ms-nc-swatches span { width: 22px; height: 22px; border-radius: 50%; box-shadow: 0 0 0 2px var(--panel); }
+.ms-nc-swatches span + span { margin-left: -6px; }
+.ms-nc-brand-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.ms-nc-brand-text b { font-weight: 600; overflow-wrap: anywhere; }
+.ms-nc-brand-text span { font-size: 12px; color: var(--muted); }
+.ms-nc-brand-icon { width: 30px; height: 30px; flex: none; border-radius: 8px; background: var(--field); color: var(--muted); display: flex; align-items: center; justify-content: center; }
+.ms-nc-brand .ms-toggle:disabled { cursor: default; }
+
+/* More options. */
+.ms-nc-options { gap: 10px; }
+.ms-nc-disclose { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 0; margin: 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; border-radius: 6px; }
+.ms-nc-disclose:hover { color: var(--text); }
+.ms-nc-options-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+
+/* Right column: the format board on the dot grid. */
+.ms-nc-right {
+  min-width: 0; overflow: auto; padding: 26px 32px; display: flex; flex-direction: column; gap: 18px;
+  background-color: var(--bg); background-image: radial-gradient(var(--dot) 1px, transparent 1px); background-size: 20px 20px;
+}
+.ms-nc-boardhead { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; border-radius: 10px; min-width: 0; }
+.ms-nc-boardhead h2 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -.015em; min-width: 0; }
+.ms-nc-kind { background: var(--panel); box-shadow: 0 0 0 1px var(--line); }
+.ms-nc-kind button { height: 26px; padding: 0 10px; font-size: 12px; }
+.ms-nc-kind button.ms-on { background: var(--field); box-shadow: none; }
+.ms-nc-search {
+  width: 200px; max-width: 100%; height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-radius: 8px;
+  background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); color: var(--faint); transition: box-shadow var(--d-s) var(--e-std);
+}
+.ms-nc-search:focus-within { box-shadow: inset 0 0 0 1px var(--accent); }
+.ms-nc-search svg { flex: none; }
+.ms-nc-search input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: transparent; color: var(--text); font: inherit; font-size: 13px; padding: 0; margin: 0; }
+.ms-nc-search input::placeholder { color: var(--faint); }
+.ms-nc-search input::-webkit-search-cancel-button { display: none; }
+.ms-nc-alert {
+  margin: 0; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--warnBg);
+  box-shadow: inset 0 0 0 1px var(--warnLine); overflow-wrap: anywhere;
+}
+.ms-nc-alert > svg { color: var(--warn); flex: none; }
+.ms-nc-alert > span { flex: 1; min-width: 0; }
+
+.ms-nc-group { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ms-nc-ghead { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ms-nc-ghead b { font-weight: 600; }
+.ms-nc-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; }
+/* Six across when the board is wide enough (the board's width, not the window's: the brief column takes its share). */
+.ms-nc-right { container-type: inline-size; }
+@container (min-width: 790px) { .ms-nc-tiles { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+.ms-nc-tile {
+  position: relative; height: 112px; min-width: 0; padding: 10px; margin: 0; border: 0; border-radius: 12px; text-align: left;
+  display: flex; flex-direction: column; justify-content: space-between; background: var(--panel); color: var(--text); font: inherit; cursor: pointer;
+  box-shadow: 0 0 0 1px var(--line); transition: box-shadow var(--d-m) var(--e-std);
+}
+.ms-nc-tile:hover { box-shadow: 0 0 0 1px var(--faint); }
+.ms-nc-tile.ms-on, .ms-nc-tile.ms-on:hover { box-shadow: 0 0 0 2px var(--accent); }
+.ms-nc-tile-top { height: 50px; display: flex; align-items: center; gap: 6px; }
+.ms-nc-frame {
+  flex: none; border-radius: 4px; background: var(--field); box-shadow: inset 0 0 0 1.5px var(--line); color: var(--faint);
+  display: flex; align-items: center; justify-content: center; transition: background var(--d-m) var(--e-std), box-shadow var(--d-m) var(--e-std), color var(--d-m) var(--e-std);
+}
+.ms-nc-tile.ms-on .ms-nc-frame { background: var(--sel); box-shadow: inset 0 0 0 1.5px var(--accent); color: var(--accentText); }
+.ms-nc-link { color: var(--faint); display: inline-flex; cursor: help; }
+.ms-nc-tile-text { display: flex; flex-direction: column; min-width: 0; }
+.ms-nc-tile-text b { font-weight: 600; }
+.ms-nc-tile-meta { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
+.ms-nc-tile .ms-nc-tick { right: 8px; top: 8px; }
+.ms-nc-skel { cursor: default; box-shadow: 0 0 0 1px var(--line2); background: var(--panel); }
+
+.ms-nc-more { display: flex; flex-direction: column; gap: 10px; }
+.ms-nc-more-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.ms-nc-chbtn { height: 34px; padding: 0 12px 0 8px; gap: 8px; max-width: 100%; background: var(--panel); }
+
+/* Summary bar. */
+.ms-nc-foot { display: flex; align-items: center; gap: 14px; padding: 0 20px; background: var(--panel); border-top: 1px solid var(--line); min-width: 0; }
+.ms-nc-frames { display: flex; align-items: center; gap: 6px; flex: none; }
+.ms-nc-frames span { border-radius: 3px; background: var(--sel); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.ms-nc-sum { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ms-nc-sum b { font-weight: 600; }
+.ms-nc-sum > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-nc-warn { color: var(--warn); }
+.ms-nc-ferr { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--warn); }
+.ms-nc-ferr svg { flex: none; }
+.ms-nc-foot .ms-btn { flex: none; }
+.ms-nc-kbd { font-family: var(--mono); font-size: 11px; opacity: .8; margin-left: 2px; }
+
+/* Asset picker (popover). */
+.ms-nc-picker { display: flex; flex-direction: column; gap: 8px; padding: 4px; min-width: 0; }
+.ms-nc-cap { display: block; padding: 4px 6px 0; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.ms-nc-pick-state { display: flex; align-items: center; gap: 8px; padding: 12px 6px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.ms-nc-pick-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; max-height: 320px; overflow: auto; padding: 2px; }
+.ms-nc-pick {
+  position: relative; height: 74px; padding: 0; margin: 0; border: 0; border-radius: 8px; overflow: hidden; background: var(--field); cursor: pointer;
+  transition: box-shadow var(--d-m) var(--e-std);
+}
+.ms-nc-pick:hover { box-shadow: 0 0 0 1px var(--faint); }
+.ms-nc-pick.ms-on, .ms-nc-pick.ms-on:hover { box-shadow: 0 0 0 2px var(--accent); }
+
+@media (max-width: 860px) {
+  .ms-nc-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; overflow: auto; }
+  .ms-nc-left { overflow: visible; border-right: 0; border-bottom: 1px solid var(--line); }
+  .ms-nc-right { overflow: visible; }
+}

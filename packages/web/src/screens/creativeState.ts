@@ -64,9 +64,11 @@ export function matches(filter: CreativeFilter, state: CardState): boolean {
   }
 }
 
-/** `Instagram` → `instagram`, `App Store` → `appstore`; unknown channels get the generic web mark. */
+/** `Instagram` → `instagram`, `App Store` → `appstore`, `Play Store` → `googleplay`; unknown channels get the generic web mark. */
 export function channelOf(channel: string): Channel {
-  const id = channel.toLowerCase().replace(/[^a-z]/g, '');
+  const raw = channel.toLowerCase().replace(/[^a-z]/g, '');
+  // The catalog calls Google's store "Play Store"; its mark is Google Play.
+  const id = raw === 'playstore' ? 'googleplay' : raw;
   return (CHANNELS as readonly string[]).includes(id) ? (id as Channel) : 'web';
 }
 
