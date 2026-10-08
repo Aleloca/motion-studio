@@ -49,6 +49,8 @@ export interface ServerDeps {
   bridge?: AgentBridge;
   /** Command that starts the `studio` MCP server; null (default) runs the agent without MCP nor UI approvals. */
   mcpCommand?: string[] | null;
+  /** Extra env for the MCP server process (see LauncherDeps.mcpEnv). */
+  mcpEnv?: Record<string, string>;
   configDir?: string;
   /** Sandbox support of the system; defaults to a cached detectSandbox(). */
   sandbox?: () => Promise<SandboxSupport>;
@@ -150,6 +152,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     settings: currentSettings,
     configDir: deps.configDir ?? defaultConfigDir(),
     mcpCommand: deps.mcpCommand ?? null,
+    ...(deps.mcpEnv ? { mcpEnv: deps.mcpEnv } : {}),
   });
 
   const vault = deps.vault ?? new MemoryVault();

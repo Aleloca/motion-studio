@@ -37,6 +37,8 @@ export interface LauncherDeps {
   home?: string;
   /** e.g. [process.execPath, '/…/server.mjs']; null disables MCP and approvals. */
   mcpCommand: string[] | null;
+  /** Extra env of the MCP server process (e.g. ELECTRON_RUN_AS_NODE=1 when the command is Electron's binary). Never overrides the Motion Studio variables. */
+  mcpEnv?: Record<string, string>;
 }
 export interface LaunchInput {
   kind: AgentJobKind; jobId: string; projectSlug: string; projectDir: string; creativeSlug?: string | null;
@@ -107,7 +109,7 @@ export class AgentLauncher {
           mcpServers: {
             [MCP_SERVER]: {
               type: 'stdio', command: mcpCommand[0], args: mcpCommand.slice(1),
-              env: { MOTION_STUDIO_BRIDGE_URL: bridge.origin!, MOTION_STUDIO_BRIDGE_TOKEN_FILE: files.token, MOTION_STUDIO_TOOLS: MCP_TOOLS[i.kind].join(',') },
+              env: { ...this.deps.mcpEnv, MOTION_STUDIO_BRIDGE_URL: bridge.origin!, MOTION_STUDIO_BRIDGE_TOKEN_FILE: files.token, MOTION_STUDIO_TOOLS: MCP_TOOLS[i.kind].join(',') },
             },
           },
         };

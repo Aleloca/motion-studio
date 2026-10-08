@@ -95,6 +95,20 @@ describe('AgentLauncher', () => {
     expect(existsSync(tokenPath)).toBe(false);
     expect((await stat(join(configDir, 'run'))).mode & 0o777).toBe(0o700);
   });
+  it('passes mcpEnv to the MCP server env without letting it override the Motion Studio variables', { timeout: 20_000 }, async () => {
+    const bridge = new AgentBridge();
+    bridge.setOrigin('http://127.0.0.1:4317');
+    const { mcpConfigFile, args } = await launch({
+      bridge, mcpCommand: ['node', '/x/server.mjs'],
+      mcpEnv: { ELECTRON_RUN_AS_NODE: '1', MOTION_STUDIO_BRIDGE_TOKEN_FILE: '/evil', MOTION_STUDIO_BRIDGE_URL: 'http://evil', MOTION_STUDIO_TOOLS: 'x' },
+    });
+    const env = JSON.parse(mcpConfigFile!.content!).mcpServers.studio.env;
+    expect(env.ELECTRON_RUN_AS_NODE).toBe('1');
+    const path = args[args.indexOf('--mcp-config') + 1]!;
+    expect(env.MOTION_STUDIO_BRIDGE_TOKEN_FILE).toBe(path.replace(/\.mcp\.json$/, '.token'));
+    expect(env.MOTION_STUDIO_BRIDGE_URL).toBe('http://127.0.0.1:4317');
+    expect(env.MOTION_STUDIO_TOOLS).toContain('validate_output');
+  });
   it('only exposes the MCP tools of the job kind', { timeout: 20_000 }, async () => {
     const bridge = new AgentBridge();
     bridge.setOrigin('http://127.0.0.1:4317');
