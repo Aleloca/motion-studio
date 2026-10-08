@@ -1,6 +1,6 @@
 import { appendFile, lstat, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
-import { brandProposalSchema, issueText, relativeFileSchema, webUrlSchema, type AssetEntry, type BrandKit, type BrandProposal, type JobSummary, type ServerMessage } from '@motion-studio/shared';
+import { brandProposalSchema, issueText, messages, relativeFileSchema, webUrlSchema, type AssetEntry, type Locale, type BrandKit, type BrandProposal, type JobSummary, type ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import type { Git } from '../git.ts';
@@ -44,10 +44,11 @@ async function isFileInside(root: string, p: string): Promise<boolean> {
   return real !== null && realRoot !== null && real.startsWith(realRoot + sep);
 }
 const hidden = (file: string) => file.split('/').some((s) => s.startsWith('.'));
-const droppedText = (dropped: string[]) => {
+const droppedText = (dropped: string[], locale: Locale) => {
   if (dropped.length === 0) return '';
   const extra = dropped.length - MAX_DROPPED_SHOWN;
-  return t().brand.droppedPrefix({ list: [...dropped.slice(0, MAX_DROPPED_SHOWN), ...(extra > 0 ? [t().brand.droppedMore({ count: extra })] : [])].join('; ') });
+  const m = messages(locale).brand;
+  return m.droppedPrefix({ list: [...dropped.slice(0, MAX_DROPPED_SHOWN), ...(extra > 0 ? [m.droppedMore({ count: extra })] : [])].join('; ') });
 };
 
 export class BrandService {
@@ -71,9 +72,9 @@ export class BrandService {
 
   /**
    * Runs one agent turn with the live metadata files denied to the editing tools; whatever the outcome, files the agent
-   * still managed to change (e.g. through an interpreter) are restored. `tampered` receives one note per file the agent changed.
+   * still managed to change (e.g. through an interpreter) are restored. `tampered` receives one note per file the agent changed, in `locale`.
    */
-  private async runAgent(ref: ProjectRef, kind: 'brand-analysis' | 'describe', prompt: string, logFile: string | null, signal: AbortSignal, jobId: string, tampered: string[]): Promise<'ok' | 'cancelled'> {
+  private async runAgent(ref: ProjectRef, kind: 'brand-analysis' | 'describe', prompt: string, logFile: string | null, signal: AbortSignal, jobId: string, tampered: string[], locale: Locale): Promise<'ok' | 'cancelled'> {
     const guard = await snapshotGuarded(ref.projectDir);
     try {
       const run = await this.deps.launcher.start({
@@ -93,13 +94,15 @@ export class BrandService {
       if (outcome.status === 'failed') throw new Error(outcome.error ?? t().errors.turnFailed);
       return 'ok';
     } finally {
-      tampered.push(...(await restoreGuarded(guard, ref.projectDir)));
+      tampered.push(...(await restoreGuarded(guard, ref.projectDir, locale)));
     }
   }
 
   private async runAnalysis(ref: ProjectRef, store: BrandStore, sources: Awaited<ReturnType<BrandStore['readSources']>>, signal: AbortSignal, jobId: string): Promise<void | 'cancelled'> {
-    // The agent's language is fixed when the job starts: a setting change mid-turn does not affect it.
+    // The job's language is fixed when it starts: the prompt and every line stored in the proposal use it, whatever
+    // the setting becomes meanwhile. Errors that fail the job are shown live and use the current language.
     const locale = currentLocale();
+    const m = messages(locale);
     const library = new LibraryStore(ref.projectDir, this.deps.media);
     const id = await store.newProposalId();
     const dir = store.proposalDir(id);
@@ -119,11 +122,11 @@ export class BrandService {
         sources: sources.map((s) => ({ id: s.id, kind: s.kind, url: s.url, file: s.file })),
       };
       const tampered: string[] = [];
-      if ((await this.runAgent(ref, 'brand-analysis', buildBrandPrompt(block, locale), join(dir, 'log.jsonl'), signal, jobId, tampered)) === 'cancelled') {
+      if ((await this.runAgent(ref, 'brand-analysis', buildBrandPrompt(block, locale), join(dir, 'log.jsonl'), signal, jobId, tampered, locale)) === 'cancelled') {
         await rm(dir, { recursive: true, force: true });
         return 'cancelled';
       }
-      pendingDownloads = () => this.registerDownloads(library, join(dir, 'assets.json'), before);
+      pendingDownloads = () => this.registerDownloads(library, join(dir, 'assets.json'), before, locale);
       const dropped: string[] = [...tampered];
       const kitFile = await readAgentFile(join(dir, 'brand-kit.json'));
       if (kitFile === null || 'skipped' in kitFile) throw new Error(t().errors.proposalKitFile({ reason: kitFile ? skipText(kitFile.skipped) : t().errors.proposalMissing }));
@@ -132,15 +135,15 @@ export class BrandService {
       const firstSite = sources.find((s) => s.kind === 'website' && s.url);
       const firstImage = sources.find((s) => s.kind === 'image' && s.file);
       const defaultSource = firstSite ? { kind: 'website' as const, ref: firstSite.url } : { kind: 'image' as const, ref: firstImage?.file ?? null };
-      const parsedKit = parseProposedKit(json, currentKit, defaultSource);
+      const parsedKit = parseProposedKit(json, currentKit, defaultSource, locale);
       dropped.push(...parsedKit.dropped);
       let proposed: BrandKit = parsedKit.kit;
       // Logos and fonts must point at an existing regular file inside assets/.
       const keepFile = async (file: string | null, label: string) => {
         if (file === null) return true;
-        if (!file.startsWith('assets/')) { dropped.push(t().brand.droppedOutsideAssets({ label, file })); return false; }
+        if (!file.startsWith('assets/')) { dropped.push(m.brand.droppedOutsideAssets({ label, file })); return false; }
         if (await isFileInside(library.dir('assets'), join(ref.projectDir, ...file.split('/')))) return true;
-        dropped.push(t().brand.droppedNotFound({ label, file }));
+        dropped.push(m.brand.droppedNotFound({ label, file }));
         return false;
       };
       const logos: BrandKit['logos'] = [];
@@ -150,7 +153,7 @@ export class BrandService {
       proposed = { ...proposed, logos, fonts };
 
       pendingDownloads = null;
-      const downloads = await this.registerDownloads(library, join(dir, 'assets.json'), before);
+      const downloads = await this.registerDownloads(library, join(dir, 'assets.json'), before, locale);
       dropped.push(...downloads.dropped);
       const registered = downloads.registered;
 
@@ -158,17 +161,17 @@ export class BrandService {
       const guidelinesFile = await readAgentFile(join(dir, 'guidelines.md'));
       if (guidelinesFile && 'skipped' in guidelinesFile) {
         if (guidelinesFile.skipped === 'too-large') throw new Error(t().errors.proposedGuidelinesTooLong);
-        dropped.push(t().brand.ignoredGuidelines({ reason: skipText(guidelinesFile.skipped) }));
+        dropped.push(m.brand.ignoredGuidelines({ reason: skipText(guidelinesFile.skipped, locale) }));
       } else if (guidelinesFile) {
         if (guidelinesFile.text.length > MAX_GUIDELINES) throw new Error(t().errors.proposedGuidelinesTooLong);
         proposedGuidelines = guidelinesFile.text;
       }
       const summaryFile = await readAgentFile(join(dir, 'summary.md'));
-      if (summaryFile && 'skipped' in summaryFile) dropped.push(t().brand.ignoredSummary({ reason: skipText(summaryFile.skipped) }));
+      if (summaryFile && 'skipped' in summaryFile) dropped.push(m.brand.ignoredSummary({ reason: skipText(summaryFile.skipped, locale) }));
       const summaryText = summaryFile && 'text' in summaryFile ? summaryFile.text.slice(0, 2000).trim() : '';
       const proposal: BrandProposal = {
         schemaVersion: 1, id, createdAt: new Date().toISOString(), sourceIds: sources.map((s) => s.id), status: 'open',
-        summary: [summaryText, droppedText(dropped)].filter(Boolean).join('\n\n').slice(0, MAX_SUMMARY),
+        summary: [summaryText, droppedText(dropped, locale)].filter(Boolean).join('\n\n').slice(0, MAX_SUMMARY),
         // Against the kit the agent was given: the proposal is what the agent changed, not a revert of later manual edits.
         changes: diffBrandKits(currentKit, proposed),
         guidelines: proposedGuidelines !== currentGuidelines ? { current: currentGuidelines, proposed: proposedGuidelines } : null,
@@ -201,17 +204,18 @@ export class BrandService {
   /**
    * Registers what the agent downloaded under assets/: the files it listed (with their details) that pass the store's
    * checks, plus files that appeared during the turn without being listed. Files that existed before the turn (`before`)
-   * are left as they are and never reported as added. `dropped` explains the entries left out.
+   * are left as they are and never reported as added. `dropped` explains the entries left out, in `locale`.
    */
-  private async registerDownloads(library: LibraryStore, listFile: string, before: Set<string>): Promise<{ registered: AssetEntry[]; dropped: string[] }> {
+  private async registerDownloads(library: LibraryStore, listFile: string, before: Set<string>, locale: Locale): Promise<{ registered: AssetEntry[]; dropped: string[] }> {
     const dropped: string[] = [];
+    const m = messages(locale);
     const listedRead = await readLenient(listFile, listedAsset);
-    if (listedRead.skipped) dropped.push(t().brand.ignoredAssetList({ reason: skipText(listedRead.skipped) }));
+    if (listedRead.skipped) dropped.push(m.brand.ignoredAssetList({ reason: skipText(listedRead.skipped, locale) }));
     const existingListed: typeof listedRead.items = [];
     for (const a of listedRead.items.filter((x) => !hidden(x.file) && !before.has(x.file))) {
       // resolve() refuses reserved names (assets.json): one bad entry must not sink the proposal.
       try { if (await isFile(library.resolve('assets', a.file))) existingListed.push(a); }
-      catch (e) { if (!(e instanceof WorkspaceError)) throw e; dropped.push(t().brand.droppedNotRegistered({ file: a.file })); }
+      catch (e) { if (!(e instanceof WorkspaceError)) throw e; dropped.push(m.brand.droppedNotRegistered({ file: a.file })); }
     }
     const appeared = (await library.unregisteredAssets()).filter((f) => !before.has(f) && !existingListed.some((a) => a.file === f));
     // Files download_file already registered keep their origin and source URL; the list only adds description and tags.
@@ -227,7 +231,7 @@ export class BrandService {
     ]) {
       // The store confines paths; one unusable entry (e.g. a symlink out of assets/) must not sink the whole proposal.
       try { registered.push(...(await library.registerAssets([item]))); }
-      catch (e) { if (!(e instanceof WorkspaceError)) throw e; dropped.push(t().brand.droppedNotRegistered({ file: item.file })); }
+      catch (e) { if (!(e instanceof WorkspaceError)) throw e; dropped.push(m.brand.droppedNotRegistered({ file: item.file })); }
     }
     return { registered, dropped };
   }
@@ -251,15 +255,15 @@ export class BrandService {
             await mkdir(join(ref.projectDir, 'assets', '.describe'), { recursive: true });
             const prompt = buildDescribePrompt({ outFile: outRel, files: targets.map((t) => `assets/${t.file}`) }, locale);
             const tampered: string[] = [];
-            const outcome = await this.runAgent(ref, 'describe', prompt, null, signal, jobId, tampered).finally(() => notes.push(...tampered));
+            const outcome = await this.runAgent(ref, 'describe', prompt, null, signal, jobId, tampered, locale).finally(() => notes.push(...tampered));
             if (outcome === 'cancelled') return 'cancelled';
             const wanted = new Set(targets.map((t) => t.file));
             const described = await readLenient(outAbs, describedAsset);
-            if (described.skipped) notes.push(t().brand.ignoredDescriptions({ reason: skipText(described.skipped) }));
+            if (described.skipped) notes.push(messages(locale).brand.ignoredDescriptions({ reason: skipText(described.skipped, locale) }));
             for (const d of described.items) {
               if (!wanted.has(d.file)) continue;
               try { await library.updateAsset(d.file, { description: d.description, ...(d.tags ? { tags: d.tags } : {}) }); }
-              catch (e) { if (!(e instanceof WorkspaceError && e.status === 404)) throw e; notes.push(t().brand.assetRemovedWhileDescribing({ file: d.file })); }
+              catch (e) { if (!(e instanceof WorkspaceError && e.status === 404)) throw e; notes.push(messages(locale).brand.assetRemovedWhileDescribing({ file: d.file })); }
             }
             await this.deps.git.commitAll(ref.projectDir, t().brand.commitDescribe);
             this.changed(ref, 'library');

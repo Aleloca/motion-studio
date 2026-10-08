@@ -15,6 +15,7 @@ import { JobQueue } from '../src/jobs/job-queue.ts';
 import { LibraryStore } from '../src/library/library-store.ts';
 import { NoMediaTools } from '../src/media/media-tools.ts';
 import { WorkspaceStore } from '../src/workspace-store.ts';
+import { setLocale } from '../src/i18n.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const T = { timeout: 20_000 };
@@ -174,6 +175,45 @@ describe('analyze', () => {
     // The manual colour the agent broke is kept as it was.
     expect(p!.changes.some((c) => c.field === 'colors' && c.itemId === 'blu')).toBe(false);
     expect((await brand.readKit()).colors.map((c) => c.id)).toEqual(['blu']);
+  });
+  it('writes the discarded lines in the language the job started with, even after a switch mid-analysis', T, async () => {
+    process.env.FAKE_CLAUDE_SCENARIO = 'brand_mixed';
+    process.env.FAKE_CLAUDE_TAMPER = '1';
+    const wait = join(ref.projectDir, '..', 'go-mixed');
+    process.env.FAKE_CLAUDE_WAIT_FILE = wait;
+    setLocale('it');
+    try {
+      const { id } = await service.analyze(ref);
+      // The turn is running (the fake recorded its prompt) when the user switches to English.
+      for (let i = 0; i < 500 && !(await stat(promptFile).catch(() => null)); i++) await new Promise((r) => setTimeout(r, 20));
+      setLocale('en');
+      await writeFile(wait, '');
+      const job = await done(id);
+      expect(job.state).toBe('succeeded');
+      const [p] = await brand.listProposals();
+      expect(p!.summary).toContain('colore «Blu scuro»: ruolo non valido');
+      expect(p!.summary).toContain('cosa da evitare «gergo»: testo obbligatorio');
+      expect(p!.summary).toContain("L'agente ha provato a modificare direttamente brand/brand-kit.json: modifica annullata");
+      expect(p!.summary).not.toMatch(/invalid role|required|The agent tried/);
+    } finally { setLocale('it'); }
+  });
+  it('writes describe notes in the language the job started with', T, async () => {
+    const lib = new LibraryStore(ref.projectDir, NoMediaTools);
+    await writeFile(join(ref.projectDir, 'assets', 'foto.jpg'), 'x');
+    await lib.registerAssets([{ file: 'foto.jpg', origin: 'upload' }]);
+    process.env.FAKE_CLAUDE_TAMPER = '1';
+    const wait = join(ref.projectDir, '..', 'go-describe');
+    process.env.FAKE_CLAUDE_WAIT_FILE = wait;
+    setLocale('it');
+    try {
+      const { id } = await service.describeAssets(ref);
+      for (let i = 0; i < 500 && !(await stat(promptFile).catch(() => null)); i++) await new Promise((r) => setTimeout(r, 20));
+      setLocale('en');
+      await writeFile(wait, '');
+      const job = await done(id);
+      expect(job.state).toBe('succeeded');
+      expect(job.notes).toContain("L'agente ha provato a modificare direttamente brand/brand-kit.json: modifica annullata");
+    } finally { setLocale('it'); }
   });
   it('documents the kit format and every allowed value in the prompt', T, async () => {
     await done((await service.analyze(ref)).id);

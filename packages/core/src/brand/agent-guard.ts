@@ -3,7 +3,8 @@ import { constants } from 'node:fs';
 import { lstat, open, readFile, realpath, rename, rm, stat, unlink, writeFile, type FileHandle } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 import { fileLock } from '../file-locks.ts';
-import { t } from '../i18n.ts';
+import { messages, type Locale } from '@motion-studio/shared';
+import { currentLocale } from '../i18n.ts';
 
 /** The project's live metadata: brand jobs' agents work on copies and must never write these. */
 export const GUARDED_FILES = ['brand/brand-kit.json', 'brand/guidelines.md', 'brand/sources.json', 'assets/assets.json', 'references/references.json'] as const;
@@ -47,17 +48,17 @@ async function confinedParent(abs: string, projectDir: string): Promise<boolean>
   return real !== null && realProject !== null && real.startsWith(realProject + sep);
 }
 
-export const tamperNote = (rel: string) => t().providers.revertedEdit({ file: rel });
-export const unrestorableNote = (rel: string) => t().providers.unrestorableEdit({ file: rel });
+export const tamperNote = (rel: string, locale: Locale = currentLocale()) => messages(locale).providers.revertedEdit({ file: rel });
+export const unrestorableNote = (rel: string, locale: Locale = currentLocale()) => messages(locale).providers.unrestorableEdit({ file: rel });
 
 /**
  * Puts back the pre-turn bytes of every guarded file the agent changed (an interpreter can bypass the deny rules).
  * Under each file's lock, and only when the app did not write the file meanwhile: an app write is the user's,
  * built on what was on disk at that moment, and wins. Never writes through a folder that is no longer a real
  * directory inside the project (e.g. replaced by a symlink): that file is reported as not restorable.
- * Returns one note per changed file.
+ * Returns one note per changed file, in `locale`.
  */
-export async function restoreGuarded(snapshot: GuardSnapshot, projectDir: string): Promise<string[]> {
+export async function restoreGuarded(snapshot: GuardSnapshot, projectDir: string, locale: Locale = currentLocale()): Promise<string[]> {
   const notes: string[] = [];
   for (const g of snapshot) {
     if (g.bytes === undefined) continue;
@@ -66,7 +67,7 @@ export async function restoreGuarded(snapshot: GuardSnapshot, projectDir: string
       if (fileLock.writeCount(g.abs) !== g.writes || await sameContent(g.abs, bytes)) return;
       if (!(await confinedParent(g.abs, projectDir))) {
         // A missing folder with nothing to put back is no change at all.
-        if (bytes !== null || (await lstat(dirname(g.abs)).catch(() => null))) notes.push(unrestorableNote(g.rel));
+        if (bytes !== null || (await lstat(dirname(g.abs)).catch(() => null))) notes.push(unrestorableNote(g.rel, locale));
         return;
       }
       const info = await lstat(g.abs).catch(() => null);
@@ -78,7 +79,7 @@ export async function restoreGuarded(snapshot: GuardSnapshot, projectDir: string
         try { await writeFile(tmp, bytes, { flag: 'wx' }); await rename(tmp, g.abs); }
         catch (err) { await unlink(tmp).catch(() => {}); throw err; }
       }
-      notes.push(tamperNote(g.rel));
+      notes.push(tamperNote(g.rel, locale));
     });
   }
   return notes;
@@ -87,7 +88,7 @@ export async function restoreGuarded(snapshot: GuardSnapshot, projectDir: string
 /** Why a file written by the agent was not read; `skipText` gives the user-facing wording. */
 export type SkipReason = 'not-regular' | 'unreadable' | 'linked' | 'too-large' | 'outside';
 const SKIP_KEYS = { 'not-regular': 'skipNotRegular', unreadable: 'skipUnreadable', linked: 'skipLinked', 'too-large': 'skipTooLarge', outside: 'skipOutside' } as const;
-export const skipText = (r: SkipReason): string => t().errors[SKIP_KEYS[r]];
+export const skipText = (r: SkipReason, locale: Locale = currentLocale()): string => messages(locale).errors[SKIP_KEYS[r]];
 
 export const MAX_AGENT_FILE_BYTES = 1024 * 1024;
 export type AgentFile = { text: string } | { skipped: SkipReason } | null;
