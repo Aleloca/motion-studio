@@ -3,6 +3,7 @@ import { z } from 'zod';
 export const appConfigSchema = z.object({
   schemaVersion: z.literal(1),
   workspacePath: z.string().min(1).nullable().default(null),
+  language: z.enum(['system', 'en', 'it']).default('system'),
 });
 export type AppConfig = z.infer<typeof appConfigSchema>;
 

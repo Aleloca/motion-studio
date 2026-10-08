@@ -8,8 +8,8 @@ describe('AppConfigStore', () => {
   it('returns defaults when no config exists, then persists the workspace path', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ms-cfg-'));
     const store = new AppConfigStore(join(dir, 'nested'));
-    expect(await store.read()).toEqual({ schemaVersion: 1, workspacePath: null });
+    expect(await store.read()).toEqual({ schemaVersion: 1, workspacePath: null, language: 'system' });
     await store.setWorkspacePath('/tmp/ws');
-    expect(await new AppConfigStore(join(dir, 'nested')).read()).toEqual({ schemaVersion: 1, workspacePath: '/tmp/ws' });
+    expect(await new AppConfigStore(join(dir, 'nested')).read()).toEqual({ schemaVersion: 1, workspacePath: '/tmp/ws', language: 'system' });
   });
 });

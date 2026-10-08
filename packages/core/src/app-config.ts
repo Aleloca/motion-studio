@@ -19,7 +19,7 @@ export class AppConfigStore {
     try {
       return await readJsonFile(this.file, appConfigSchema);
     } catch (e) {
-      if (e instanceof JsonFileError && e.reason === 'missing') return { schemaVersion: 1, workspacePath: null };
+      if (e instanceof JsonFileError && e.reason === 'missing') return { schemaVersion: 1, workspacePath: null, language: 'system' };
       throw e;
     }
   }

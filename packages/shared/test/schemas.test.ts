@@ -37,6 +37,6 @@ describe('projectFileSchema', () => {
 
 describe('appConfigSchema', () => {
   it('defaults workspacePath to null', () => {
-    expect(appConfigSchema.parse({ schemaVersion: 1 })).toEqual({ schemaVersion: 1, workspacePath: null });
+    expect(appConfigSchema.parse({ schemaVersion: 1 })).toEqual({ schemaVersion: 1, workspacePath: null, language: 'system' });
   });
 });
