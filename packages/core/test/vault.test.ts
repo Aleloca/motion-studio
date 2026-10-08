@@ -18,7 +18,7 @@ describe('MemoryVault', () => {
   });
   it('rejects invalid values', async () => {
     const v = new MemoryVault({});
-    for (const bad of ['', '   ', 'a\nb', 'x'.repeat(501)]) expect((await v.set('openai', bad).catch((e) => e)).status, JSON.stringify(bad)).toBe(400);
+    for (const bad of ['', '   ', 'a\nb', 'x'.repeat(501), 'a\tb', 'a\u0000b', 'a\u001bb', 'a\u007fb']) expect((await v.set('openai', bad).catch((e) => e)).status, JSON.stringify(bad)).toBe(400);
   });
 });
 
@@ -26,5 +26,8 @@ describe('redact', () => {
   it('hides secrets in text', () => {
     expect(redact('Bearer sk-abc failed for sk-abc', ['sk-abc'])).toBe('Bearer ••• failed for •••');
     expect(redact('nothing', [])).toBe('nothing');
+  });
+  it('hides the longer secret first when one contains another', () => {
+    expect(redact('key sk-abcdef', ['sk-abc', 'sk-abcdef'])).toBe('key •••');
   });
 });

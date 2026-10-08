@@ -62,7 +62,9 @@ export async function runDoctor(opts: { exec: CommandExec; claudeCommand: string
   }
   if (opts.sandbox) {
     const s = await opts.sandbox();
-    checks.push(s.available
+    checks.push(s.disabled
+      ? { id: 'sandbox', label: 'Sandbox dell\'agente', required: false, ok: false, message: s.reason }
+      : s.available
       ? { id: 'sandbox', label: 'Sandbox dell\'agente', required: false, ok: true, message: 'Disponibile: l\'agente lavora isolato nella cartella del progetto' }
       : { id: 'sandbox', label: 'Sandbox dell\'agente', required: false, ok: false, message: s.reason, fix: 'Senza sandbox Motion Studio usa permessi più ristretti; vedi il README' });
   }

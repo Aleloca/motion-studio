@@ -1,4 +1,5 @@
-import { stat } from 'node:fs/promises';
+import { lstat, realpath } from 'node:fs/promises';
+import { dirname, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { briefSchema, linkedCodebaseSchema, pinSchema, type CreativeDetail } from '@motion-studio/shared';
 import { z } from 'zod';
@@ -19,6 +20,8 @@ export interface CreativeRoutesContext {
   openPath: (p: string) => Promise<void>;
   isJobActive: (key: string) => boolean;
 }
+
+const isInsideDir = (p: string, base: string | null) => Boolean(base && p.startsWith(base.endsWith(sep) ? base : base + sep));
 
 const turnBody = z.object({ text: z.string().max(10_000).optional(), pins: z.array(pinSchema).max(50).optional() });
 const createBody = z.object({ title: z.string(), brief: briefSchema, generate: z.boolean().optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
@@ -123,7 +126,12 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const ref = await refOf(req.params.slug, req.params.c);
     const n = Number(req.params.n);
     const dir = Number.isInteger(n) && n > 0 ? ref.store.outputsDir(ref.creativeSlug, n) : null;
-    if (!dir || !(await stat(dir).catch(() => null))?.isDirectory()) throw new WorkspaceError(404, 'Cartella degli output non trovata');
+    // The agent can replace these folders: never open (or reveal) something a link points to outside the creative.
+    const realFolder = async (p: string) => { const st = await lstat(p).catch(() => null); return Boolean(st && !st.isSymbolicLink() && st.isDirectory()); };
+    const creativeDir = ref.store.dir(ref.creativeSlug);
+    const ok = dir !== null && (await realFolder(dirname(dir))) && (await realFolder(dir))
+      && isInsideDir(await realpath(dir).catch(() => ''), await realpath(creativeDir).catch(() => null));
+    if (!ok) throw new WorkspaceError(404, 'Cartella degli output non trovata');
     await ctx.openPath(dir);
     return { ok: true };
   });

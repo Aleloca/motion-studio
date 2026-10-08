@@ -9,11 +9,12 @@ import { isAllowedRule, PermissionsStore, ruleFor } from '../src/approvals/permi
 let projectDir: string;
 let messages: ServerMessage[];
 beforeEach(async () => { projectDir = await mkdtemp(join(tmpdir(), 'ms-appr è ')); messages = []; });
-const input = (over = {}) => ({ jobId: 'j1', projectSlug: 'acme', projectDir, creativeSlug: 'c1', kind: 'tool' as const, toolName: 'Bash', input: { command: 'brew install ffmpeg' }, ...over });
+const input = (over = {}) => ({ jobId: 'j1', projectSlug: 'acme', projectDir, creativeSlug: 'c1', kind: 'tool' as const, toolName: 'Bash', input: { command: 'ls -la' }, ...over });
 
 describe('ruleFor', () => {
   it.each([
-    ['Bash', { command: 'brew install ffmpeg' }, 'Bash(brew install:*)'],
+    ['Bash', { command: 'brew install ffmpeg' }, null],
+    ['Bash', { command: 'ls -la' }, 'Bash(ls:*)'],
     ['Bash', { command: 'sudo rm -rf /' }, null],
     ['Bash', { command: 'rm -rf build' }, null],
     ['Write', { file_path: '/Users/me/Desktop/out [1]/a.png' }, 'Edit(//Users/me/Desktop/out \\[1\\]/**)'],
@@ -84,7 +85,7 @@ describe('ruleFor hardening', () => {
 
 describe('isAllowedRule', () => {
   it('accepts what ruleFor produces', () => {
-    for (const [t, i] of [['Bash', { command: 'ls -la' }], ['Bash', { command: 'pngquant a.png' }], ['Bash', { command: 'brew install x' }], ['Write', { file_path: '/Users/me/Desktop/out [1]/a.png' }],
+    for (const [t, i] of [['Bash', { command: 'ls -la' }], ['Bash', { command: 'pngquant a.png' }], ['Write', { file_path: '/Users/me/Desktop/out [1]/a.png' }],
       ['Read', { file_path: '/tmp/a/b.txt' }], ['WebFetch', { url: 'https://www.python.org/' }], ['provider:tts-openai', {}], ['provider:openai-images', {}], ['mcp__studio__report_progress', {}]] as const) {
       const r = ruleFor(t, i);
       expect(r, t).not.toBeNull();
@@ -92,7 +93,7 @@ describe('isAllowedRule', () => {
     }
   });
   it.each([
-    'Bash(*)', 'Bash(:*)', 'Bash(sudo:*)', 'Bash(env:*)', 'Bash(.:*)', 'Bash(node:*)', 'Bash(node -e:*)', 'Bash(brew:*)', 'Bash(git status:*)',
+    'Bash(*)', 'Bash(:*)', 'Bash(sudo:*)', 'Bash(env:*)', 'Bash(.:*)', 'Bash(node:*)', 'Bash(node -e:*)', 'Bash(brew:*)', 'Bash(brew install:*)', 'Bash(git status:*)',
     'Bash(Bash:*)', 'Bash(tar:*)', 'Bash(magick:*)', 'Bash(convert:*)', 'Bash(cp:*)', 'Bash(mv:*)', 'Bash(unzip:*)', 'Bash(ffmpeg:*)', 'Bash(SH:*)', 'Bash(python3.12:*)', 'Bash(npm run:*)', 'Bash(ffmpeg -i:*)', 'Bash(FFMPEG:*)',
     'WebFetch(domain:*)', 'WebFetch(domain:*.com)', 'WebFetch(domain:2130706433)', 'WebFetch(domain:0x7f000001)', 'WebFetch(domain:127.1)',
     'WebFetch(domain:example.com:8080)', 'WebFetch(domain:Example.com)', 'WebFetch(domain:com)',
@@ -105,6 +106,33 @@ describe('isAllowedRule', () => {
     expect(isAllowedRule(`Edit(/${home}/**)`)).toBe(false);
     expect(isAllowedRule(`Edit(/${home}/.ssh/**)`)).toBe(false);
     expect(isAllowedRule(`Edit(/${dirname(home)}/**)`)).toBe(false);
+  });
+});
+
+describe('always rules never reach .studio or the workspace root', () => {
+  const env = { home: '/Users/me', platform: 'darwin' as const, configDir: '/Users/me/Library/Application Support/Motion Studio', workspaceRoot: '/Users/me/Motion Studio' };
+  it.each([
+    ['Write', { file_path: '/Users/me/Motion Studio/acme/.studio/permissions.json' }, null],
+    ['Write', { file_path: '/Users/me/Motion Studio/acme/.studio/x/a.json' }, null],
+    ['Write', { file_path: '/tmp/other/.STUDIO/a' }, null],
+    ['Read', { file_path: '/tmp/other/.studio/a' }, null],
+    ['Write', { file_path: '/Users/me/Motion Studio/a.json' }, null],
+    ['Write', { file_path: '/Users/me/motion studio/a.json' }, null],
+    ['Write', { file_path: '/Users/me/Motion Studio/acme/out/a.png' }, 'Edit(//Users/me/Motion Studio/acme/out/**)'],
+    ['Write', { file_path: '/Users/me/Desktop/a.png' }, 'Edit(//Users/me/Desktop/**)'],
+  ])('%s %j → %s', (tool, inp, expected) => { expect(ruleFor(tool, inp, env)?.rule ?? null).toBe(expected); });
+  it('isAllowedRule refuses them too, with or without the workspace root', () => {
+    expect(isAllowedRule('Edit(//tmp/p/.studio/**)')).toBe(false);
+    expect(isAllowedRule('Edit(//Users/me/Motion Studio/**)', env)).toBe(false);
+    expect(isAllowedRule('Edit(//tmp/p/out/**)')).toBe(true);
+  });
+  it('the broker offers no "always" rule inside the workspace root of the request', async () => {
+    const broker = new ApprovalBroker({ broadcast: (m) => messages.push(m) });
+    const p = broker.request(input({ toolName: 'Write', input: { file_path: join(dirname(projectDir), 'x.txt') } }));
+    const req = (messages[0] as Extract<ServerMessage, { type: 'approval' }>).approval;
+    expect(req.alwaysRule).toBeNull();
+    broker.cancelAll();
+    await p;
   });
 });
 
@@ -133,11 +161,11 @@ describe('ApprovalBroker', () => {
     const broker = new ApprovalBroker({ broadcast: (m) => messages.push(m) });
     const p = broker.request(input());
     const [req] = broker.pending();
-    expect(req).toMatchObject({ projectSlug: 'acme', creativeSlug: 'c1', title: 'Eseguire un comando', alwaysRule: 'Bash(brew install:*)' });
+    expect(req).toMatchObject({ projectSlug: 'acme', creativeSlug: 'c1', title: 'Eseguire un comando', alwaysRule: 'Bash(ls:*)' });
     expect(messages[0]).toMatchObject({ type: 'approval' });
     await broker.decide(req!.id, 'always');
     expect(await p).toEqual({ decision: 'always' });
-    expect(await new PermissionsStore(projectDir).list()).toEqual([expect.objectContaining({ rule: 'Bash(brew install:*)', label: 'Comandi "brew install"' })]);
+    expect(await new PermissionsStore(projectDir).list()).toEqual([expect.objectContaining({ rule: 'Bash(ls:*)', label: 'Comandi "ls"' })]);
     expect(messages.at(-1)).toEqual({ type: 'approval_resolved', id: req!.id, decision: 'always' });
     expect((await broker.decide(req!.id, 'deny').catch((e) => e)).status).toBe(404);
   });
@@ -177,12 +205,12 @@ describe('ApprovalBroker', () => {
 describe('PermissionsStore', () => {
   it('adds without duplicates, removes and never rewrites a corrupt file', async () => {
     const s = new PermissionsStore(projectDir);
-    await s.add('Bash(brew install:*)', 'x');
-    await s.add('Bash(brew install:*)', 'x');
+    await s.add('Bash(ls:*)', 'x');
+    await s.add('Bash(ls:*)', 'x');
     expect(await s.list()).toHaveLength(1);
-    expect(await s.has('Bash(brew install:*)')).toBe(true);
-    await s.remove('Bash(brew install:*)');
-    expect((await s.remove('Bash(brew install:*)').catch((e) => e)).status).toBe(404);
+    expect(await s.has('Bash(ls:*)')).toBe(true);
+    await s.remove('Bash(ls:*)');
+    expect((await s.remove('Bash(ls:*)').catch((e) => e)).status).toBe(404);
     await mkdir(join(projectDir, '.studio'), { recursive: true });
     await writeFile(join(projectDir, '.studio', 'permissions.json'), '{bad');
     await expect(s.add('Bash(ls:*)', 'x')).rejects.toMatchObject({ reason: 'invalid-json' });

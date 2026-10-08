@@ -86,16 +86,32 @@ describe('analyze', () => {
   });
   it('keeps a file already registered by download_file once, with its original source, taking the listed description', T, async () => {
     const lib = new LibraryStore(ref.projectDir, NoMediaTools);
-    await mkdir(join(ref.projectDir, 'assets', 'brand'), { recursive: true });
-    await writeFile(join(ref.projectDir, 'assets', 'brand', 'logo.svg'), '<svg/>');
+    // download_file registers during the turn: simulated once the agent wrote its files, before it finishes.
+    const wait = join(ref.projectDir, '..', 'go-download');
+    process.env.FAKE_CLAUDE_WAIT_FILE = wait;
+    const started = await service.analyze(ref);
+    const logo = join(ref.projectDir, 'assets', 'brand', 'logo.svg');
+    for (let i = 0; i < 500 && !(await stat(logo).catch(() => null)); i++) await new Promise((r) => setTimeout(r, 20));
     await lib.registerAssets([{ file: 'brand/logo.svg', origin: 'website', sourceUrl: 'https://cdn.acme.example/original-logo.svg', description: '', tags: ['brand'] }]);
-    const job = await done((await service.analyze(ref)).id);
+    await writeFile(wait, '');
+    const job = await done(started.id);
     expect(job.state).toBe('succeeded');
     const [p] = await brand.listProposals();
     expect(p!.assetsAdded).toContain('brand/logo.svg');
     expect(p!.summary).not.toContain('brand/logo.svg (non registrato)');
     const logos = (await lib.listAssets()).filter((a) => a.file === 'brand/logo.svg');
     expect(logos).toEqual([expect.objectContaining({ origin: 'website', sourceUrl: 'https://cdn.acme.example/original-logo.svg', description: 'Logo principale', tags: ['logo'] })]);
+  });
+  it('never rewrites assets registered before the turn nor lists them as added', T, async () => {
+    const lib = new LibraryStore(ref.projectDir, NoMediaTools);
+    await mkdir(join(ref.projectDir, 'assets', 'brand'), { recursive: true });
+    await writeFile(join(ref.projectDir, 'assets', 'brand', 'logo.svg'), '<svg/>');
+    await lib.registerAssets([{ file: 'brand/logo.svg', origin: 'upload', description: 'Logo caricato', tags: ['mio'] }]);
+    const job = await done((await service.analyze(ref)).id);
+    expect(job.state).toBe('succeeded');
+    const [p] = await brand.listProposals();
+    expect(p!.assetsAdded).toEqual(['brand/unlisted.png']);
+    expect((await lib.listAssets()).find((a) => a.file === 'brand/logo.svg')).toMatchObject({ origin: 'upload', description: 'Logo caricato', tags: ['mio'], sourceUrl: null });
   });
   it('fails cleanly on an invalid proposed kit and leaves no proposal', T, async () => {
     process.env.FAKE_CLAUDE_SCENARIO = 'brand_invalid';

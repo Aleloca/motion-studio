@@ -21,7 +21,8 @@ const MAX_LABEL = 300;
 export const MAX_PERMISSIONS = 200;
 const str = (v: unknown) => (typeof v === 'string' ? v : '');
 
-export interface RuleEnv { home?: string; platform?: NodeJS.Platform; configDir?: string }
+/** workspaceRoot: the folder of the projects, when known (it can never be granted, nor an ancestor of it). */
+export interface RuleEnv { home?: string; platform?: NodeJS.Platform; configDir?: string; workspaceRoot?: string }
 
 /** True when `p` is `base` or lies inside it (case-insensitive when asked). */
 function isInside(p: string, base: string, ci: boolean): boolean {
@@ -36,6 +37,9 @@ function safeDir(dir: string, env: RuleEnv): string | null {
   const ci = (env.platform ?? process.platform) === 'darwin';
   if (!dir.startsWith('/') || dir === '/') return null;
   if (isInside(home, dir, ci)) return null; // home itself or an ancestor of it
+  // A project's permissions live in .studio: no rule may ever reach one, nor the workspace holding the projects.
+  if (dir.split('/').some((seg) => (ci ? seg.toLowerCase() : seg) === '.studio')) return null;
+  if (env.workspaceRoot && isInside(resolve(env.workspaceRoot), dir, ci)) return null;
   const { dirs, files } = sensitiveHomeEntries(home);
   const configDir = resolve(env.configDir ?? defaultConfigDir());
   if ([...dirs, ...files, configDir].some((x) => isInside(dir, x, ci) || isInside(x, dir, ci))) return null;
@@ -53,8 +57,7 @@ function dirRule(tool: 'Edit' | 'Read', filePath: string, env: RuleEnv) {
 function bashRule(command: string) {
   const cmd = command.trim();
   if (SHELL_CONTROL.test(cmd)) return null;
-  const [w, second] = cmd.split(/\s+/);
-  if (w === 'brew' && second === 'install') return { rule: 'Bash(brew install:*)', label: 'Comandi "brew install"' };
+  const [w] = cmd.split(/\s+/);
   if (w && SAFE_ALWAYS.has(w)) return { rule: `Bash(${w}:*)`, label: `Comandi "${w}"` };
   return null;
 }
@@ -94,7 +97,6 @@ const unescapeGlob = (p: string) => p.replace(/\\([\\\[\]*?{}()!+@])/g, '$1');
 export function isAllowedRule(rule: string, env: RuleEnv = {}): boolean {
   if (typeof rule !== 'string' || rule.length > MAX_RULE) return false;
   if (PROVIDER_RULES.has(rule) || STUDIO_RULES.has(rule)) return true;
-  if (rule === 'Bash(brew install:*)') return true;
   let m = /^Bash\(([a-z0-9-]+):\*\)$/.exec(rule);
   if (m) return SAFE_ALWAYS.has(m[1]!);
   m = /^(Edit|Read)\(\/\/(.+)\/\*\*\)$/.exec(rule);

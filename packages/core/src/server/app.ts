@@ -32,6 +32,7 @@ import { registerBrandRoutes } from './brand-routes.ts';
 import { EventHub } from './event-hub.ts';
 import { registerLibraryRoutes } from './library-routes.ts';
 import { registerProjectRoutes } from './project-routes.ts';
+import { tokenMatches } from './ui-token.ts';
 
 export interface ServerDeps {
   appConfig: AppConfigStore;
@@ -51,7 +52,20 @@ export interface ServerDeps {
   configDir?: string;
   /** Sandbox support of the system; defaults to a cached detectSandbox(). */
   sandbox?: () => Promise<SandboxSupport>;
+  /**
+   * Secret of the UI: required (header `x-motion-studio-ui`, or `?t=` on the events WebSocket) by every API call except
+   * health, the bridge and the served files. null disables the check (tests only); startServer always sets it.
+   */
+  uiToken: string | null;
 }
+
+/** Routes reachable without the UI token: health, the MCP bridge (it has its own token) and files shown by <img>/<video>. */
+const UI_TOKEN_EXEMPT: Record<string, ReadonlySet<string>> = {
+  GET: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/projects/:slug/creatives/:c/files/*']),
+  HEAD: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/projects/:slug/creatives/:c/files/*']),
+  POST: new Set(['/api/bridge/:tool']),
+};
+const UI_TOKEN_ERROR = { code: 'ui-token', error: 'Apri Motion Studio dal link mostrato nel terminale' };
 
 const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?$/i;
 const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
@@ -125,9 +139,15 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   const sandbox = deps.sandbox ?? cachedSandboxDetection();
   const bridge = deps.bridge ?? new AgentBridge();
+  const currentSettings = async () => (workspace ? workspace.readSettings() : workspaceSettingsSchema.parse({ schemaVersion: 1 }));
+  // What the Doctor reports is what the agent gets: the workspace setting wins over the system support.
+  const effectiveSandbox = async (): Promise<SandboxSupport> => {
+    const mode = await currentSettings().then((s) => s.sandboxMode, () => 'auto' as const);
+    return mode === 'off' ? { available: false, disabled: true, reason: 'Isolamento disattivato nelle Impostazioni' } : sandbox();
+  };
   const launcher = new AgentLauncher({
     runner: deps.runner, bridge, approvals, sandbox,
-    settings: async () => (workspace ? workspace.readSettings() : workspaceSettingsSchema.parse({ schemaVersion: 1 })),
+    settings: currentSettings,
     configDir: deps.configDir ?? defaultConfigDir(),
     mcpCommand: deps.mcpCommand ?? null,
   });
@@ -166,6 +186,19 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       if (req.raw.headers.upgrade) reply.raw.once('finish', () => req.raw.socket.destroy());
       return reply.status(403).send({ error: 'Richiesta non consentita: origine non locale' });
     }
+    // Defence against stray local requests (other sites' scripts cannot read it, and agents without sandbox do not know it).
+    const token = deps.uiToken;
+    const path = req.url.split('?')[0]!;
+    const route = req.routeOptions.url;
+    if (token === null || !(path.startsWith('/api/') || route?.startsWith('/api/'))) return;
+    if (route && UI_TOKEN_EXEMPT[req.method]?.has(route)) return;
+    const presented = route === '/api/events'
+      ? new URLSearchParams(req.url.slice(path.length + 1)).get('t')
+      : req.headers['x-motion-studio-ui'];
+    if (!tokenMatches(presented, token)) {
+      if (req.raw.headers.upgrade) reply.raw.once('finish', () => req.raw.socket.destroy());
+      return reply.status(401).send(UI_TOKEN_ERROR);
+    }
   });
 
   // preClose, registered before the websocket plugin's own preClose, so clients still
@@ -180,7 +213,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await app.register(fastifyMultipart, { limits: UPLOAD_LIMITS });
 
   app.get('/api/health', async () => ({ ok: true }));
-  app.get('/api/doctor', async () => deps.doctor({ sandbox }));
+  app.get('/api/doctor', async () => deps.doctor({ sandbox: effectiveSandbox }));
 
   app.get('/api/workspace', async (): Promise<WorkspaceInfo> => {
     if (!workspace) return { path: workspaceProblem?.path ?? null, settings: null, error: workspaceProblem?.error ?? null };

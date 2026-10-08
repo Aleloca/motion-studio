@@ -6,7 +6,22 @@ export const appConfigSchema = z.object({
 });
 export type AppConfig = z.infer<typeof appConfigSchema>;
 
-export const domainSchema = z.string().trim().toLowerCase().regex(/^(\*\.)?([a-z0-9-]+\.)+[a-z]{2,}$/, 'dominio non valido (es. api.esempio.it o *.esempio.it)');
+const DOMAIN_ERROR = 'dominio non valido (es. api.esempio.it o *.esempio.it)';
+/** Local-only names: never a network allowance for the agent. */
+const LOCAL_SUFFIXES = ['localhost', 'local', 'internal', 'home.arpa'];
+/** Two-label public suffixes: `*.co.uk` would open a whole country's sites. */
+const TWO_LEVEL_SUFFIXES = new Set(['co.uk', 'org.uk', 'com.au', 'co.jp', 'com.br', 'co.nz']);
+const LABEL_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+
+export const domainSchema = z.string().trim().toLowerCase().max(253, DOMAIN_ERROR).refine((value) => {
+  const wildcard = value.startsWith('*.');
+  const host = wildcard ? value.slice(2) : value;
+  const labels = host.split('.');
+  if (labels.length < 2 || !labels.every((l) => LABEL_RE.test(l)) || !/^[a-z]{2,}$/.test(labels.at(-1)!)) return false;
+  if (LOCAL_SUFFIXES.some((s) => host === s || host.endsWith(`.${s}`))) return false;
+  if (wildcard && TWO_LEVEL_SUFFIXES.has(host)) return false;
+  return true;
+}, DOMAIN_ERROR);
 
 export const workspaceSettingsSchema = z.object({
   schemaVersion: z.literal(1),

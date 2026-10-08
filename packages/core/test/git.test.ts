@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -55,6 +56,34 @@ describe('Git errors and locking', () => {
     const git = new Git(exec);
     await Promise.all([git.commitAll('/r/p', 'a'), git.commitAll('/r/p/', 'b'), git.commitAll('/r/x/../p', 'c')]);
     expect(maxActive).toBe(1);
+  });
+});
+
+describe('Git hardening', () => {
+  it('prefixes every git invocation with hooks and fsmonitor disabled', async () => {
+    const calls: string[][] = [];
+    const exec: CommandExec = async (_cmd, args) => {
+      calls.push(args);
+      return { code: 0, stdout: args.includes('status') ? ' M a\n' : args.includes('clean') ? '' : 'abcdef1\n', stderr: '', notFound: false };
+    };
+    const git = new Git(exec);
+    await git.init('/r');
+    await git.commitAll('/r', 'm');
+    await git.restorePath('/r', 'abcdef1', 'work');
+    expect(calls.length).toBeGreaterThan(5);
+    for (const args of calls) expect(args.slice(0, 4)).toEqual(['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false']);
+  });
+  it('never runs a hook planted in the repository', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-hook-'));
+    const marker = join(await mkdtemp(join(tmpdir(), 'ms-hook-marker-')), 'ran');
+    const git = new Git();
+    await git.init(dir);
+    for (const hook of ['pre-commit', 'commit-msg', 'post-commit']) {
+      await writeFile(join(dir, '.git', 'hooks', hook), `#!/bin/sh\ntouch "${marker}"\n`, { mode: 0o755 });
+    }
+    await writeFile(join(dir, 'a.txt'), 'x');
+    expect(await git.commitAll(dir, 'first')).toMatch(/^[0-9a-f]{40}$/);
+    expect(existsSync(marker)).toBe(false);
   });
 });
 

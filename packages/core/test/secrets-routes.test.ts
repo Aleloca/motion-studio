@@ -12,7 +12,7 @@ import { buildServer } from '../src/server/app.ts';
 let app: FastifyInstance;
 beforeEach(async () => {
   const base = await mkdtemp(join(tmpdir(), 'ms-sec-'));
-  app = await buildServer({ sandbox: async () => ({ available: false, reason: 'test' }), appConfig: new AppConfigStore(join(base, 'c')), git: new Git(), doctor: async () => [], runner: new ClaudeCodeRunner(['true']),
+  app = await buildServer({ uiToken: null, sandbox: async () => ({ available: false, reason: 'test' }), appConfig: new AppConfigStore(join(base, 'c')), git: new Git(), doctor: async () => [], runner: new ClaudeCodeRunner(['true']),
     vault: new MemoryVault({ UNSPLASH_ACCESS_KEY: 'env-key' }) });
 });
 afterEach(() => app.close());

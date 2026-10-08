@@ -12,9 +12,16 @@ import { Git } from '../git.ts';
 import { createFfmpegTools } from '../media/media-tools.ts';
 import { KeyringVault } from '../secrets/vault.ts';
 import { buildServer } from './app.ts';
+import { loadOrCreateUiToken, removeServerInfo, uiUrl, writeServerInfo } from './ui-token.ts';
 
 /** The `studio` MCP server in the source tree (dev); packaged builds pass their own path. */
 const DEV_MCP_SERVER = fileURLToPath(new URL('../../../mcp-studio/src/server.mjs', import.meta.url));
+
+/** Shows a folder to the user: selected in the Finder on macOS (never "opened" as an app bundle), opened elsewhere. */
+async function revealFolder(p: string): Promise<void> {
+  if (process.platform === 'darwin') { await execCommand('open', ['-R', p]); return; }
+  await open(p);
+}
 
 export async function startServer(opts: { port?: number; host?: string; configDir?: string; webDir?: string; claudeCommand?: string[]; mcpServerPath?: string } = {}) {
   const claudeCommand = opts.claudeCommand ?? claudeCommandFromEnv();
@@ -27,7 +34,9 @@ export async function startServer(opts: { port?: number; host?: string; configDi
   const mcpCommand = existsSync(mcpServerPath) ? [process.execPath, mcpServerPath] : null;
   // One detection shared by the agent launcher and the Doctor.
   const sandbox = cachedSandboxDetection();
+  const uiToken = await loadOrCreateUiToken(configDir);
   const app = await buildServer({
+    uiToken,
     appConfig: new AppConfigStore(configDir),
     configDir,
     git: new Git(),
@@ -37,9 +46,17 @@ export async function startServer(opts: { port?: number; host?: string; configDi
     webDir: opts.webDir,
     vault: new KeyringVault(),
     media: await createFfmpegTools(),
-    openPath: async (p) => { await open(p); },
+    openPath: revealFolder,
   });
   const url = await app.listen({ port: opts.port ?? 4317, host: opts.host ?? '127.0.0.1' });
   bridge.setOrigin(url);
-  return { url, close: () => app.close() };
+  const port = Number(new URL(url).port);
+  // For `motion-studio --print-url`; removed on a clean shutdown.
+  await writeServerInfo(configDir, { port, pid: process.pid, startedAt: new Date().toISOString() }).catch(() => {});
+  return {
+    url,
+    /** The address to open: it carries the UI token in the fragment. */
+    appUrl: uiUrl(port, uiToken),
+    close: async () => { await app.close(); await removeServerInfo(configDir); },
+  };
 }

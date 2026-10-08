@@ -1,4 +1,4 @@
-import { lstat, readdir, realpath, rm } from 'node:fs/promises';
+import { lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import {
   assetKindOf, assetsFileSchema, referencesFileSchema, relativeFileSchema,
@@ -60,10 +60,22 @@ export class LibraryStore {
     catch (e) { if (e instanceof JsonFileError && e.reason === 'missing') return []; throw e; }
   }
 
+  /** The agent can replace the library folder with a link: metadata is only written into a real folder inside the project. */
+  private async assertMetadataDir(kind: LibraryKind): Promise<void> {
+    const dir = this.dir(kind);
+    let info = await lstat(dir).catch(() => null);
+    if (!info) { await mkdir(dir, { recursive: true }); info = await lstat(dir).catch(() => null); }
+    const [real, realProject] = await Promise.all([realpath(dir).catch(() => null), realpath(this.projectDir).catch(() => null)]);
+    if (!info || info.isSymbolicLink() || !info.isDirectory() || !real || !realProject || !real.startsWith(realProject + sep)) {
+      throw new WorkspaceError(400, `Cartella ${kind} non valida: è un collegamento o è fuori dal progetto`);
+    }
+  }
+
   private async writeAssets(assets: AssetEntry[]): Promise<void> {
     const data = { schemaVersion: 1, assets };
     const parsed = assetsFileSchema.safeParse(data);
     if (!parsed.success) throw new WorkspaceError(400, 'Metadati degli asset non validi');
+    await this.assertMetadataDir('assets');
     await writeJsonFileAtomic(this.metadataPath('assets'), parsed.data);
     fileLock.noteWrite(this.metadataPath('assets'));
   }
@@ -72,6 +84,7 @@ export class LibraryStore {
     const data = { schemaVersion: 1, references };
     const parsed = referencesFileSchema.safeParse(data);
     if (!parsed.success) throw new WorkspaceError(400, 'Metadati dei riferimenti non validi');
+    await this.assertMetadataDir('references');
     await writeJsonFileAtomic(this.metadataPath('references'), parsed.data);
     fileLock.noteWrite(this.metadataPath('references'));
   }

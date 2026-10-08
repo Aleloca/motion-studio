@@ -111,6 +111,8 @@ export async function readConfinedFile(projectDir: string, rel: string, maxBytes
   try {
     const info = await fh.stat();
     if (!info.isFile()) return { skipped: 'non è un file regolare' };
+    // A hard link made by the agent can point at any file of the user's on the same volume.
+    if (info.nlink > 1) return { skipped: 'file collegato non consentito' };
     if (info.size > maxBytes) return { skipped: 'file troppo grande' };
     // A symlinked parent folder could lead out of the project: the opened file must be the one under the project's real path.
     const [real, realProject] = await Promise.all([realpath(abs).catch(() => null), realpath(projectDir).catch(() => null)]);
@@ -146,6 +148,8 @@ export async function readConfinedBytes(projectDir: string, rel: string, maxByte
   try {
     const info = await fh.stat();
     if (!info.isFile()) return { skipped: 'non è un file regolare' };
+    // A hard link made by the agent can point at any file of the user's on the same volume.
+    if (info.nlink > 1) return { skipped: 'file collegato non consentito' };
     if (info.size > maxBytes) return { skipped: 'file troppo grande' };
     const [real, realProject] = await Promise.all([realpath(abs).catch(() => null), realpath(projectDir).catch(() => null)]);
     if (!real || !realProject || !real.startsWith(realProject + sep)) return { skipped: 'fuori dal progetto' };

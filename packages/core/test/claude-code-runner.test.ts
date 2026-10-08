@@ -203,6 +203,23 @@ describe('ClaudeCodeRunner', () => {
     expect(JSON.parse(await readFile(argsFile, 'utf8')).env).toBe('ciao');
     await rm(dir, { recursive: true, force: true });
   });
+  it('removes the unsetEnv keys from the spawned environment, after merging env', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-env-'));
+    const argsFile = join(dir, 'args.json');
+    process.env.FAKE_CLAUDE_ARGS_FILE = argsFile;
+    process.env.MS_TEST_SECRET = 'inherited';
+    try {
+      const { handle } = await run('ok', 'x', { env: { MS_TEST_ENV: 'ciao', MS_TEST_OTHER: 'x' }, unsetEnv: ['MS_TEST_SECRET', 'MS_TEST_OTHER'] });
+      await handle.done;
+      const rec = JSON.parse(await readFile(argsFile, 'utf8'));
+      expect(rec.env).toBe('ciao');
+      expect(rec.envKeys).not.toContain('MS_TEST_SECRET');
+      expect(rec.envKeys).not.toContain('MS_TEST_OTHER');
+    } finally {
+      delete process.env.MS_TEST_SECRET;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
   it('survives a throwing event listener', async () => {
     const { handle } = await run('ok', 'x', {}, { onEvent: () => { throw new Error('listener boom'); } });
     await expect(handle.done).resolves.toMatchObject({ status: 'succeeded' });

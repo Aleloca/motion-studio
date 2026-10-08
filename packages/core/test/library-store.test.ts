@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -155,5 +155,31 @@ describe('references', () => {
     // Outside file should still exist
     const content = await readFile(join(tmpOutside, 'outside.jpg'), 'utf8');
     expect(content).toBe('outside');
+  });
+});
+
+describe('metadata writes stay in the project', () => {
+  it('refuses to write assets.json or references.json through a symlinked library folder', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'ms-lib-out-'));
+    const at = new Date().toISOString();
+    for (const kind of ['assets', 'references'] as const) {
+      const target = join(outside, kind);
+      await mkdir(target);
+      await writeFile(join(target, 'a.png'), 'x');
+      const meta = kind === 'assets'
+        ? { schemaVersion: 1, assets: [{ file: 'a.png', kind: 'image', origin: 'upload', sourceUrl: null, description: '', tags: [], width: null, height: null, addedAt: at }] }
+        : { schemaVersion: 1, references: [{ file: 'a.png', note: '', useForBrand: true, addedAt: at }] };
+      await writeFile(join(target, `${kind}.json`), JSON.stringify(meta));
+      await rm(join(project, kind), { recursive: true });
+      await symlink(target, join(project, kind));
+    }
+    const before = { a: await readFile(join(outside, 'assets', 'assets.json'), 'utf8'), r: await readFile(join(outside, 'references', 'references.json'), 'utf8') };
+    await expect(lib.registerAssets([{ file: 'a.png', origin: 'upload' }])).rejects.toThrow(/fuori dal progetto/);
+    await expect(lib.updateAsset('a.png', { description: 'x' })).rejects.toThrow(/fuori dal progetto/);
+    await expect(lib.registerReferences(['a.png'])).rejects.toThrow(/fuori dal progetto/);
+    await expect(lib.updateReference('a.png', { note: 'x' })).rejects.toThrow(/fuori dal progetto/);
+    expect(await readFile(join(outside, 'assets', 'assets.json'), 'utf8')).toBe(before.a);
+    expect(await readFile(join(outside, 'references', 'references.json'), 'utf8')).toBe(before.r);
+    await rm(outside, { recursive: true, force: true });
   });
 });

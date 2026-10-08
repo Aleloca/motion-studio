@@ -18,7 +18,7 @@ let base: string;
 
 beforeEach(async () => {
   base = await mkdtemp(join(tmpdir(), 'ms-srv-'));
-  app = await buildServer({ sandbox: async () => ({ available: false, reason: 'test' }),
+  app = await buildServer({ uiToken: null, sandbox: async () => ({ available: false, reason: 'test' }),
     appConfig: new AppConfigStore(join(base, 'config')),
     git: new Git(),
     runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),
@@ -27,7 +27,7 @@ beforeEach(async () => {
 });
 afterEach(async () => { await app.close(); delete process.env.FAKE_CLAUDE_SCENARIO; delete process.env.FAKE_CLAUDE_ARGS_FILE; });
 
-const buildWith = (opts: Partial<Parameters<typeof buildServer>[0]> = {}) => buildServer({ sandbox: async () => ({ available: false, reason: 'test' }),
+const buildWith = (opts: Partial<Parameters<typeof buildServer>[0]> = {}) => buildServer({ uiToken: null, sandbox: async () => ({ available: false, reason: 'test' }),
   appConfig: new AppConfigStore(join(base, 'config')),
   git: new Git(),
   runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),
@@ -127,6 +127,22 @@ describe('doctor', () => {
     const checks = (await other.inject('/api/doctor')).json() as Array<{ id: string; ok: boolean; message: string }>;
     expect(checks.find((c) => c.id === 'sandbox')).toMatchObject({ ok: false, message: 'Mancano bubblewrap e socat' });
     expect(calls).toBe(1);
+    await other.close();
+  });
+});
+
+describe('doctor and the sandbox setting', () => {
+  it('reports the sandbox as off when the workspace disabled it, whatever the system supports', async () => {
+    const exec = async () => ({ code: 0, stdout: '1.0.0', stderr: '', notFound: false });
+    const other = await buildWith({
+      doctor: (extra) => runDoctor({ exec, claudeCommand: ['claude'], sandbox: extra?.sandbox }),
+      sandbox: async () => ({ available: true, reason: 'Disponibile' }),
+    });
+    const sandboxCheck = async () => ((await other.inject('/api/doctor')).json() as Array<{ id: string; ok: boolean; message: string }>).find((c) => c.id === 'sandbox');
+    expect(await sandboxCheck()).toMatchObject({ ok: true });
+    await other.inject({ method: 'PUT', url: '/api/workspace', payload: { path: join(base, 'ws-off') } });
+    await other.inject({ method: 'PUT', url: '/api/settings', payload: { sandboxMode: 'off' } });
+    expect(await sandboxCheck()).toMatchObject({ ok: false, message: 'Isolamento disattivato nelle Impostazioni' });
     await other.close();
   });
 });

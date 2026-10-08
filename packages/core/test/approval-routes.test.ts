@@ -16,7 +16,7 @@ let base: string;
 beforeEach(async () => {
   base = await mkdtemp(join(tmpdir(), 'ms-ar-'));
   broker = new ApprovalBroker({ broadcast: () => {} });
-  app = await buildServer({ sandbox: async () => ({ available: false, reason: 'test' }), appConfig: new AppConfigStore(join(base, 'c')), git: new Git(), doctor: async () => [], runner: new ClaudeCodeRunner(['true']), approvals: broker });
+  app = await buildServer({ uiToken: null, sandbox: async () => ({ available: false, reason: 'test' }), appConfig: new AppConfigStore(join(base, 'c')), git: new Git(), doctor: async () => [], runner: new ClaudeCodeRunner(['true']), approvals: broker });
   await app.inject({ method: 'PUT', url: '/api/workspace', payload: { path: join(base, 'ws') } });
   await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' } });
 });
@@ -24,13 +24,13 @@ afterEach(() => app.close());
 
 describe('approvals API', () => {
   it('lists, decides and manages project permissions', async () => {
-    const pending = broker.request({ jobId: 'j', projectSlug: 'acme', projectDir: join(base, 'ws', 'acme'), creativeSlug: null, kind: 'tool', toolName: 'Bash', input: { command: 'brew install x' } });
+    const pending = broker.request({ jobId: 'j', projectSlug: 'acme', projectDir: join(base, 'ws', 'acme'), creativeSlug: null, kind: 'tool', toolName: 'Bash', input: { command: 'ls -la' } });
     const [req] = (await app.inject('/api/approvals')).json();
     expect((await app.inject({ method: 'POST', url: `/api/approvals/${req.id}`, payload: { decision: 'maybe' } })).statusCode).toBe(400);
     expect((await app.inject({ method: 'POST', url: `/api/approvals/${req.id}`, payload: { decision: 'always' } })).statusCode).toBe(200);
     expect(await pending).toEqual({ decision: 'always' });
-    expect((await app.inject('/api/projects/acme/permissions')).json()).toEqual([expect.objectContaining({ rule: 'Bash(brew install:*)' })]);
-    expect((await app.inject({ method: 'DELETE', url: '/api/projects/acme/permissions', payload: { rule: 'Bash(brew install:*)' } })).json()).toEqual({ ok: true });
+    expect((await app.inject('/api/projects/acme/permissions')).json()).toEqual([expect.objectContaining({ rule: 'Bash(ls:*)' })]);
+    expect((await app.inject({ method: 'DELETE', url: '/api/projects/acme/permissions', payload: { rule: 'Bash(ls:*)' } })).json()).toEqual({ ok: true });
   });
   it('reports 404 / 400 for unknown ids, unknown projects and missing rules', async () => {
     expect((await app.inject({ method: 'POST', url: '/api/approvals/nope', payload: { decision: 'once' } })).statusCode).toBe(404);
@@ -48,7 +48,7 @@ describe('approvals API', () => {
     ws.close();
     await app.close();
     expect(await pending).toEqual({ decision: 'cancelled' });
-    app = await buildServer({ sandbox: async () => ({ available: false, reason: 'test' }), appConfig: new AppConfigStore(join(base, 'c2')), git: new Git(), doctor: async () => [], runner: new ClaudeCodeRunner(['true']) });
+    app = await buildServer({ uiToken: null, sandbox: async () => ({ available: false, reason: 'test' }), appConfig: new AppConfigStore(join(base, 'c2')), git: new Git(), doctor: async () => [], runner: new ClaudeCodeRunner(['true']) });
   });
   it('does not cut a long-pending request (approvals wait for the user for minutes)', () => {
     expect(app.server.requestTimeout).toBe(0);

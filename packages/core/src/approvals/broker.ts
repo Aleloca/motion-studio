@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { dirname } from 'node:path';
 import type { ApprovalDecision, ApprovalKind, ApprovalRequest, ServerMessage } from '@motion-studio/shared';
 import { WorkspaceError } from '../workspace-store.ts';
 import { PermissionsStore, ruleFor } from './permissions-store.ts';
@@ -29,7 +30,8 @@ export class ApprovalBroker {
 
   request(input: ApprovalInput): Promise<ApprovalOutcome> {
     const described = describeRequest(input.toolName, input.input);
-    const always = ruleFor(input.toolName, input.input);
+    // Projects live directly in the workspace root.
+    const always = ruleFor(input.toolName, input.input, { workspaceRoot: dirname(input.projectDir) });
     const created = this.now();
     const request: ApprovalRequest = {
       id: randomUUID(), jobId: input.jobId, projectSlug: input.projectSlug, creativeSlug: input.creativeSlug, kind: input.kind,

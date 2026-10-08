@@ -16,6 +16,8 @@ export interface AgentTurnRequest {
   permissionPromptTool?: string;
   /** Extra environment variables for the agent process. */
   env?: Record<string, string>;
+  /** Variables removed from the agent's environment (applied after `env`): secrets the core reads must never reach the agent. */
+  unsetEnv?: string[];
   /** Permission rules the agent may use without asking (e.g. `Bash(node:*)`); omitted = only the default policy. */
   allowedTools?: string[];
   /** Permission rules that are always denied (e.g. read-only linked codebases: `Edit(//abs/path/**)`). */

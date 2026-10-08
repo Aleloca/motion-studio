@@ -108,7 +108,8 @@ export class BrandService {
       const currentGuidelines = await store.readGuidelines();
       await writeFile(join(dir, 'brand-kit.json'), JSON.stringify(currentKit, null, 2));
       await writeFile(join(dir, 'guidelines.md'), currentGuidelines);
-      const before = new Set(await library.unregisteredAssets());
+      // Every file of assets/ that existed before the turn (registered or not): the agent's list can neither rewrite nor claim them.
+      const before = new Set([...(await library.unregisteredAssets()), ...(await library.listAssets()).map((a) => a.file)]);
       const block = {
         proposalDir: rel(dir), kitFile: rel(join(dir, 'brand-kit.json')), guidelinesFile: rel(join(dir, 'guidelines.md')),
         assetsListFile: rel(join(dir, 'assets.json')), summaryFile: rel(join(dir, 'summary.md')),
@@ -196,14 +197,15 @@ export class BrandService {
 
   /**
    * Registers what the agent downloaded under assets/: the files it listed (with their details) that pass the store's
-   * checks, plus files that appeared during the turn without being listed. `dropped` explains the entries left out.
+   * checks, plus files that appeared during the turn without being listed. Files that existed before the turn (`before`)
+   * are left as they are and never reported as added. `dropped` explains the entries left out.
    */
   private async registerDownloads(library: LibraryStore, listFile: string, before: Set<string>): Promise<{ registered: AssetEntry[]; dropped: string[] }> {
     const dropped: string[] = [];
     const listedRead = await readLenient(listFile, listedAsset);
     if (listedRead.skipped) dropped.push(`assets.json della proposta (ignorato: ${listedRead.skipped})`);
     const existingListed: typeof listedRead.items = [];
-    for (const a of listedRead.items.filter((x) => !hidden(x.file))) {
+    for (const a of listedRead.items.filter((x) => !hidden(x.file) && !before.has(x.file))) {
       // resolve() refuses reserved names (assets.json): one bad entry must not sink the proposal.
       try { if (await isFile(library.resolve('assets', a.file))) existingListed.push(a); }
       catch (e) { if (!(e instanceof WorkspaceError)) throw e; dropped.push(`${a.file} (non registrato)`); }

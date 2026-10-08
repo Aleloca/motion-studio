@@ -18,7 +18,7 @@ let app: FastifyInstance;
 let base: string;
 let opened: string[];
 
-const build = () => buildServer({ sandbox: async () => ({ available: false, reason: 'test' }),
+const build = () => buildServer({ uiToken: null, sandbox: async () => ({ available: false, reason: 'test' }),
   appConfig: new AppConfigStore(join(base, 'config')),
   git: new Git(),
   runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),
@@ -108,6 +108,22 @@ describe('creatives', { timeout: 20_000 }, () => {
     expect((await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/reveal` })).json()).toEqual({ ok: true });
     expect(opened[0]).toMatch(/outputs[/\\]v1$/);
     expect((await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/9/reveal` })).statusCode).toBe(404);
+  });
+});
+
+describe('reveal safety', { timeout: 20_000 }, () => {
+  it('refuses a symlinked version folder or outputs folder', async () => {
+    const { slug } = await createCreative();
+    await waitJobs();
+    const cdir = join(base, 'ws', 'acme', 'creatives', slug);
+    const outside = await mkdtemp(join(tmpdir(), 'ms-reveal-out-'));
+    await symlink(outside, join(cdir, 'outputs', 'v5'));
+    expect((await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/5/reveal` })).statusCode).toBe(404);
+    await rm(join(cdir, 'outputs'), { recursive: true });
+    await mkdir(join(outside, 'v1'));
+    await symlink(outside, join(cdir, 'outputs'));
+    expect((await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/reveal` })).statusCode).toBe(404);
+    expect(opened).toEqual([]);
   });
 });
 

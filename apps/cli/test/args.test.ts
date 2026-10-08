@@ -3,10 +3,11 @@ import { parseCliArgs } from '../src/args.ts';
 
 describe('parseCliArgs', () => {
   it('uses defaults', () => {
-    expect(parseCliArgs([])).toEqual({ port: 4317, open: true, help: false });
+    expect(parseCliArgs([])).toEqual({ port: 4317, open: true, help: false, printUrl: false });
   });
   it('parses --port, --no-open and --help', () => {
-    expect(parseCliArgs(['--port', '5000', '--no-open'])).toEqual({ port: 5000, open: false, help: false });
+    expect(parseCliArgs(['--port', '5000', '--no-open'])).toEqual({ port: 5000, open: false, help: false, printUrl: false });
+    expect(parseCliArgs(['--print-url']).printUrl).toBe(true);
     expect(parseCliArgs(['--help']).help).toBe(true);
   });
   it('rejects an invalid port', () => {

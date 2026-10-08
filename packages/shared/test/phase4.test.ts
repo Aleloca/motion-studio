@@ -7,8 +7,14 @@ describe('phase 4 settings', () => {
   });
   it('validates and lowercases domains', () => {
     expect(workspaceSettingsSchema.parse({ schemaVersion: 1, extraAllowedDomains: ['*.Example.com', 'api.acme.io'] }).extraAllowedDomains).toEqual(['*.example.com', 'api.acme.io']);
-    for (const bad of ['*', 'http://x.com', 'x', '*.com', 'a b.com']) {
+    for (const bad of ['*', 'http://x.com', 'x', '*.com', 'a b.com',
+      'localhost', 'app.localhost', '*.localhost', 'printer.local', '*.local', 'db.internal', 'nas.home.arpa', '*.home.arpa',
+      '*.co.uk', '*.com.au', '*.co.jp', '*.com.br', '*.co.nz', '*.org.uk',
+      '-a.example.com', 'a-.example.com', `${'a'.repeat(64)}.example.com`, `${'a.'.repeat(126)}com`, 'a..com', '*.*.example.com']) {
       expect(workspaceSettingsSchema.safeParse({ schemaVersion: 1, extraAllowedDomains: [bad] }).success, bad).toBe(false);
+    }
+    for (const good of ['bbc.co.uk', '*.bbc.co.uk', 'a-b.example.com', `${'a'.repeat(63)}.example.com`, '*.example.it', 'local.example.com']) {
+      expect(workspaceSettingsSchema.safeParse({ schemaVersion: 1, extraAllowedDomains: [good] }).success, good).toBe(true);
     }
   });
 });

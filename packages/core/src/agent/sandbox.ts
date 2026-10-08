@@ -2,7 +2,8 @@ import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execCommand, type CommandExec } from '../exec.ts';
 
-export interface SandboxSupport { available: boolean; reason: string }
+/** `disabled`: the system may support it but the workspace settings turned it off. */
+export interface SandboxSupport { available: boolean; reason: string; disabled?: boolean }
 
 export const DEFAULT_ALLOWED_DOMAINS: readonly string[] = [
   'registry.npmjs.org', '*.npmjs.org', 'registry.yarnpkg.com', 'pypi.org', 'files.pythonhosted.org',

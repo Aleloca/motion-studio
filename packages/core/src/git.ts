@@ -4,6 +4,8 @@ import { KeyedMutex } from './keyed-mutex.ts';
 
 const NOT_FOUND = 'git non trovato: installalo per usare Motion Studio';
 const IDENTITY = ['-c', 'user.name=Motion Studio', '-c', 'user.email=motion-studio@localhost'];
+/** The agent can write inside the project: hooks and an fsmonitor command planted in the repo must never run. */
+const HARDENED = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
 
 /** The git subcommand, skipping `-c key=value` pairs; the rest (e.g. commit messages) is never echoed. */
 function subcommand(args: string[]): string {
@@ -39,7 +41,7 @@ export class Git {
   restorePath(dir: string, commit: string, relPath: string): Promise<number> {
     return this.lock.run(resolve(dir), async () => {
       if (!/^[0-9a-f]{7,40}$/.test(commit)) throw new Error(`Versione non trovata nel repository: ${commit}`);
-      const check = await this.exec('git', ['cat-file', '-e', `${commit}^{commit}`], { cwd: dir });
+      const check = await this.exec('git', [...HARDENED, 'cat-file', '-e', `${commit}^{commit}`], { cwd: dir });
       if (check.notFound) throw new Error(NOT_FOUND);
       if (check.code !== 0) throw new Error(`Versione non trovata nel repository: ${commit}`);
       const spec = `:(literal)${relPath}`;
@@ -51,7 +53,7 @@ export class Git {
   }
 
   private async must(cwd: string, args: string[]): Promise<string> {
-    const r = await this.exec('git', args, { cwd });
+    const r = await this.exec('git', [...HARDENED, ...args], { cwd });
     if (r.notFound) throw new Error(NOT_FOUND);
     if (r.code !== 0) throw new Error(`git ${subcommand(args)} fallito: ${r.stderr.trim()}`);
     return r.stdout;

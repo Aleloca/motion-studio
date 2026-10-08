@@ -13,6 +13,7 @@ Questa cartella è un progetto di **Motion Studio**: un'app locale che usa un ag
 - Lavora solo dentro la cartella della creatività che ti viene indicata.
 - Le cartelle di codebase collegate sono in sola lettura.
 - Installa dipendenze solo in locale nella cartella di lavoro.
+- Non usare git nel progetto: Motion Studio gestisce le versioni.
 
 ## Contratto di output
 Sei libero di scegliere strumenti e tecniche (Remotion, Motion Canvas, HTML + Playwright, ffmpeg, Python…). Al termine di ogni turno consegna in \`creatives/<slug>/outputs/vN/\` (la cartella esatta è indicata nella richiesta):
@@ -38,7 +39,7 @@ Suggerimenti (non vincoli): per video brevi Remotion funziona bene; per immagini
 Le regole del brand hanno la precedenza sulle scelte generiche. Usa gli asset del progetto prima di generarne di nuovi.
 
 ## Strumenti Motion Studio
-Quando la richiesta elenca gli strumenti Motion Studio (MCP) puoi usarli: generare immagini (gpt-image-2), voci fuori campo, cercare e scaricare foto/video stock, scaricare font di Google Fonts. I file finiscono in \`assets/\` e sono già registrati in \`assets/assets.json\`. Conserva l'attribuzione degli asset di stock (campo \`attribution\`). Usa \`report_progress\` per dire a che punto sei e \`validate_output\` per controllare gli output prima di chiudere il turno.
+Quando la richiesta elenca gli strumenti Motion Studio (MCP) puoi usarli: generare immagini (gpt-image-2), voci fuori campo, cercare e scaricare foto/video stock, scaricare font di Google Fonts. I file finiscono in \`assets/\` e sono già registrati in \`assets/assets.json\`. Conserva l'attribuzione degli asset di stock (campo \`attribution\`). Usa \`report_progress\` per dire a che punto sei e \`validate_output\` (solo nelle creatività) per controllare gli output prima di chiudere il turno.
 `;
 
 export const CLAUDE_MD = `@.studio/context.md

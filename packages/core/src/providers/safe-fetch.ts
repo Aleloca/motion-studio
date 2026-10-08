@@ -44,9 +44,11 @@ function blockedV4([a, b, c]: number[]): boolean {
     || (a === 100 && b! >= 64 && b! <= 127)
     || (a === 169 && b === 254)
     || (a === 172 && b! >= 16 && b! <= 31)
-    || (a === 192 && b === 0 && c === 0)
+    || (a === 192 && b === 0 && (c === 0 || c === 2)) // IETF protocol assignments, TEST-NET-1
     || (a === 192 && b === 168)
     || (a === 198 && (b === 18 || b === 19))
+    || (a === 198 && b === 51 && c === 100) // TEST-NET-2
+    || (a === 203 && b === 0 && c === 113) // TEST-NET-3
     || a! >= 224;
 }
 
@@ -69,7 +71,7 @@ function v6Bytes(ip: string): number[] {
   return bytes;
 }
 
-/** True for any address a download must never reach: private, loopback, link-local, CGNAT, reserved, multicast (IPv4 embedded in IPv6 included). Non-IP input is blocked. */
+/** True for any address a download must never reach: private, loopback, link-local, CGNAT, documentation/test, reserved, multicast, Teredo (IPv4 embedded in IPv6 included). Non-IP input is blocked. */
 export function isBlockedAddress(ip: string): boolean {
   const host = bare(ip);
   const v = isIP(host);
@@ -79,7 +81,12 @@ export function isBlockedAddress(ip: string): boolean {
   const zero = (from: number, to: number) => b.slice(from, to).every((x) => x === 0);
   if (zero(0, 12)) return true; // ::, ::1 and the deprecated IPv4-compatible ::a.b.c.d
   if (zero(0, 10) && b[10] === 0xff && b[11] === 0xff) return blockedV4(b.slice(12)); // ::ffff:a.b.c.d
+  if (zero(0, 8) && b[8] === 0xff && b[9] === 0xff && zero(10, 12)) return true; // ::ffff:0:a.b.c.d IPv4-translated (SIIT)
   if (b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b && zero(4, 12)) return blockedV4(b.slice(12)); // NAT64
+  if (b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b && b[4] === 0x00 && b[5] === 0x01) return true; // 64:ff9b:1::/48 local-use NAT64
+  if (b[0] === 0x01 && b[1] === 0x00 && zero(2, 8)) return true; // 100::/64 discard-only
+  if (b[0] === 0x20 && b[1] === 0x01 && b[2] === 0x00 && b[3] === 0x00) return true; // 2001::/32 Teredo
+  if (b[0] === 0x20 && b[1] === 0x01 && b[2] === 0x0d && b[3] === 0xb8) return true; // 2001:db8::/32 documentation
   if (b[0] === 0x20 && b[1] === 0x02) return blockedV4(b.slice(2, 6)); // 6to4
   if ((b[0]! & 0xfe) === 0xfc) return true; // fc00::/7
   if (b[0] === 0xfe && (b[1]! & 0x80) === 0x80) return true; // fe80::/10 link-local and fec0::/10 site-local
@@ -109,6 +116,8 @@ export function pinnedResolver(lookup: LookupFn = defaultLookup, isBlocked: (ip:
  * validated (no second DNS resolution, hence no rebinding window). TLS SNI and certificate checks use the hostname.
  */
 export const nodeTransport: Transport = (url, init, resolve) => new Promise<Response>((ok, fail) => {
+  // GET/HEAD only: a body would need its own streaming and size rules, and is never sent to outside URLs.
+  if (init.body != null) { fail(new Error('nodeTransport: richieste con corpo non supportate')); return; }
   const headers: Record<string, string> = {};
   new Headers(init.headers).forEach((v, k) => { headers[k] = v; });
   headers['user-agent'] ??= 'MotionStudio';

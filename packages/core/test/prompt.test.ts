@@ -119,6 +119,8 @@ describe('Motion Studio tools in CONTEXT_MD', () => {
   it('is explained in CONTEXT_MD', () => {
     expect(CONTEXT_MD).toContain('## Strumenti Motion Studio');
     expect(CONTEXT_MD).toContain('attribution');
+    expect(CONTEXT_MD).toContain('`validate_output` (solo nelle creatività)');
+    expect(CONTEXT_MD).toContain('Non usare git nel progetto: Motion Studio gestisce le versioni.');
   });
 });
 

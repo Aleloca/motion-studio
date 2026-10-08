@@ -20,10 +20,13 @@ describe('isBlockedAddress', () => {
     '::', '::1', 'fc00::1', 'fd12:3456::1', 'fe80::1', 'fe80::1%en0', 'febf::1', 'ff02::1', '[::1]',
     '::ffff:127.0.0.1', '::ffff:10.1.2.3', '::ffff:7f00:1', '64:ff9b::7f00:1', '64:ff9b::10.0.0.1', '2002:7f00:1::', '2002:c0a8:101::1',
     'not-an-ip', '',
+    '192.0.2.1', '198.51.100.7', '203.0.113.255', '64:ff9b:1::1', '64:ff9b:1:ffff::808:808', '::ffff:0:808:808', '::ffff:0:7f00:1',
+    '2001::1', '2001:0:4136:e378:8000:63bf:3fff:fdd2', '2001:db8::1', '2001:db8:ffff::1', '100::1', '100::ffff:ffff:ffff:ffff',
   ])('blocks %s', (ip) => expect(isBlockedAddress(ip)).toBe(true));
   it.each([
     PUBLIC, '8.8.8.8', '1.1.1.1', '100.63.255.255', '100.128.0.1', '172.15.0.1', '172.32.0.1', '192.0.1.1', '192.169.0.1', '198.17.0.1', '198.20.0.1', '223.255.255.255',
     '2606:4700::1111', '2001:4860:4860::8888', '::ffff:8.8.8.8', '64:ff9b::808:808', '2002:808:808::1',
+    '192.0.3.1', '198.51.101.1', '203.0.114.1', '2001:1::1', '2001:db9::1', '100:0:0:1::1',
   ])('allows %s', (ip) => expect(isBlockedAddress(ip)).toBe(false));
 });
 
@@ -112,6 +115,10 @@ describe('nodeTransport (real sockets, pinned DNS)', () => {
     return { seen, port: (server.address() as AddressInfo).port };
   };
 
+  it('is a GET-only transport: a body is refused', async () => {
+    const resolve = pinnedResolver(table({ 'public.example': ['8.8.8.8'] }));
+    await expect(nodeTransport(new URL('http://public.example/x'), { method: 'POST', body: 'x' }, resolve)).rejects.toThrow();
+  });
   it('refuses before connecting when the public-looking hostname resolves to loopback', async () => {
     const { seen, port } = await serve();
     const resolve = pinnedResolver(table({ 'public.example': ['127.0.0.1'] }));

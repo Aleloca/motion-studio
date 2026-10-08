@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { EMPTY_BRAND_KIT, brandKitSchema } from '@motion-studio/shared';
-import { MCP_TOOLS } from '../agent/launcher.ts';
+import { MCP_SERVER, MCP_TOOLS } from '../agent/launcher.ts';
 import type { ApprovalBroker } from '../approvals/broker.ts';
 import { readConfinedFile } from '../brand/agent-guard.ts';
 import { ProviderError } from '../providers/http.ts';
@@ -17,10 +17,10 @@ const DENY_MESSAGES = {
 } as const;
 const MAX_GUIDELINES = 50_000;
 
-/** Progress shown in the UI: no control or bidi characters (they could disguise the text), single spaces. */
+/** Progress shown in the UI: no control, zero-width or bidi characters (they could disguise the text), single spaces. */
 export const cleanProgress = (text: string) => text
   .replace(/[\t\n\v\f\r]/g, ' ')
-  .replace(/[\p{Cc}\u202A-\u202E\u2066-\u2069]/gu, '')
+  .replace(/[\p{Cc}\u200B-\u200F\u202A-\u202E\u2066-\u2069\u061C\uFEFF]/gu, '')
   .replace(/\s+/g, ' ')
   .trim();
 
@@ -32,6 +32,8 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
       if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { behavior: 'deny', message: 'Richiesta non valida.' };
       const input = raw as Record<string, unknown>;
       const toolName = typeof a.tool_name === 'string' ? a.tool_name : 'sconosciuto';
+      // Provider confirmations and Motion Studio's own tools never go through the agent's permission prompts.
+      if (toolName.startsWith('provider:') || toolName.startsWith(`mcp__${MCP_SERVER}__`)) return { behavior: 'deny', message: 'Richiesta non valida.' };
       const { decision } = await ctx.approvals.request({ jobId: c.jobId, projectSlug: c.projectSlug, projectDir: c.projectDir, creativeSlug: c.creativeSlug, kind: 'tool', toolName, input });
       return decision === 'once' || decision === 'always'
         ? { behavior: 'allow', updatedInput: input }

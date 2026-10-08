@@ -12,12 +12,13 @@ export interface SecretsVault {
 
 export function cleanSecret(value: string): string {
   const v = typeof value === 'string' ? value.trim() : '';
-  if (!v || v.length > 500 || /[\r\n]/.test(v)) throw new WorkspaceError(400, 'Chiave non valida: incolla la chiave del provider su una sola riga');
+  if (!v || v.length > 500 || /[\x00-\x1f\x7f]/.test(v)) throw new WorkspaceError(400, 'Chiave non valida: incolla la chiave del provider su una sola riga');
   return v;
 }
 
 export function redact(text: string, secrets: string[]): string {
-  return secrets.filter((s) => s.length >= 4).reduce((t, s) => t.split(s).join('•••'), text);
+  // Longest first: a secret that contains another must not be left half visible.
+  return secrets.filter((s) => s.length >= 4).sort((a, b) => b.length - a.length).reduce((t, s) => t.split(s).join('•••'), text);
 }
 
 abstract class BaseVault implements SecretsVault {

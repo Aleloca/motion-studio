@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +12,7 @@ import { ApprovalBroker } from '../src/approvals/broker.ts';
 import { PermissionsStore } from '../src/approvals/permissions-store.ts';
 import { AgentBridge } from '../src/bridge/bridge.ts';
 import { escapeGlob } from '../src/codebases.ts';
+import { PROVIDER_ENV } from '../src/secrets/vault.ts';
 import { testLauncher } from './helpers/launcher.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
@@ -30,7 +31,7 @@ async function newProject() {
 async function launch(over: Parameters<typeof testLauncher>[1], kind: 'creative' | 'brand-analysis' | 'describe' | 'console' = 'creative', projectDir?: string) {
   const dir = projectDir ?? await newProject();
   if (!projectDir) {
-    await new PermissionsStore(dir).add('Bash(brew install:*)', 'x');
+    await new PermissionsStore(dir).add('Bash(ls:*)', 'x');
     await new PermissionsStore(dir).add('provider:openai-images', 'x');
   }
   const argsFile = join(dir, 'args.json');
@@ -38,18 +39,19 @@ async function launch(over: Parameters<typeof testLauncher>[1], kind: 'creative'
   const launcher = testLauncher(new ClaudeCodeRunner([process.execPath, FAKE]), over);
   const run = await launcher.start({ kind, jobId: 'j1', projectSlug: 'acme', projectDir: dir, codebases: [], request: { prompt: 'ciao' }, onEvent: () => {} });
   await run.done;
-  const { args, env, mcpTimeout, mcpConfigFile, tokenFile } = JSON.parse(await readFile(argsFile, 'utf8'));
-  return { args: args as string[], env, mcpTimeout, tokenFile: tokenFile as { path: string; mode: number; content: string } | null, mcpConfigFile: mcpConfigFile as { path: string; mode: number | null; content: string | null } | null, launcher, projectDir: dir };
+  const { args, env, mcpTimeout, mcpConfigFile, tokenFile, envKeys } = JSON.parse(await readFile(argsFile, 'utf8'));
+  return { args: args as string[], env, mcpTimeout, envKeys: envKeys as string[], tokenFile: tokenFile as { path: string; mode: number; content: string } | null, mcpConfigFile: mcpConfigFile as { path: string; mode: number | null; content: string | null } | null, launcher, projectDir: dir };
 }
 
-const studioRules = (dir: string) => ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].map((t) => `${t}(/${escapeGlob(join(dir, '.studio'))}/**)`);
+const protectedDirRules = (dir: string, name: string) => ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].map((t) => `${t}(/${escapeGlob(join(dir, name))}/**)`);
+const studioRules = (dir: string) => protectedDirRules(dir, '.studio');
 
 describe('AgentLauncher', () => {
   it('without sandbox and MCP keeps the phase 3 behaviour plus project rules (never provider rules)', { timeout: 20_000 }, async () => {
     const { args } = await launch({});
     expect(args).toContain('--permission-prompts');
     expect(args).not.toContain('--settings');
-    expect(args).toContain('Bash(brew install:*)');
+    expect(args).toContain('Bash(ls:*)');
     expect(args).not.toContain('provider:openai-images');
     expect(args).not.toContain('--mcp-config');
   });
@@ -119,6 +121,44 @@ describe('AgentLauncher', () => {
         if (available) {
           const settings = JSON.parse(args[args.indexOf('--settings') + 1]!);
           expect(settings.sandbox.filesystem.denyWrite).toEqual(expect.arrayContaining([join(linked, '.studio'), join(realDir, '.studio')]));
+        }
+      }
+    }
+  });
+  it('never passes the provider keys or the bridge token from the environment to the agent', { timeout: 20_000 }, async () => {
+    const keys = [...Object.values(PROVIDER_ENV), 'MOTION_STUDIO_BRIDGE_TOKEN'];
+    for (const k of keys) process.env[k] = `secret-${k}`;
+    try {
+      const bridge = new AgentBridge();
+      bridge.setOrigin('http://127.0.0.1:4317');
+      const { envKeys, mcpTimeout } = await launch({ bridge, mcpCommand: ['node', '/x/server.mjs'] });
+      for (const k of keys) expect(envKeys).not.toContain(k);
+      expect(mcpTimeout).toBe('900000');
+    } finally {
+      for (const k of keys) delete process.env[k];
+    }
+  });
+  it('protects .git, .claude, CLAUDE.md, CLAUDE.local.md and .mcp.json (and their real paths) for every job kind, sandbox or not', { timeout: 30_000 }, async () => {
+    const real = await newProject();
+    const linkParent = await newProject();
+    const linked = join(linkParent, 'link');
+    await symlink(real, linked);
+    const realDir = await realpath(linked);
+    const tools = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
+    for (const kind of ['creative', 'console', 'brand-analysis', 'describe'] as const) {
+      for (const available of [false, true]) {
+        const { args } = await launch({ sandbox: async () => ({ available, reason: 'x' }) }, kind, linked);
+        for (const d of [linked, realDir]) {
+          expect(args).toEqual(expect.arrayContaining([...protectedDirRules(d, '.git'), ...protectedDirRules(d, '.claude')]));
+          for (const f of ['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json']) {
+            expect(args).toEqual(expect.arrayContaining(tools.map((t) => `${t}(/${escapeGlob(join(d, f))})`)));
+          }
+          if (available) {
+            const settings = JSON.parse(args[args.indexOf('--settings') + 1]!);
+            expect(settings.sandbox.filesystem.denyWrite).toEqual(expect.arrayContaining(
+              ['.git', '.claude', '.studio', 'CLAUDE.md', 'CLAUDE.local.md', '.mcp.json'].map((n) => join(d, n)),
+            ));
+          }
         }
       }
     }
@@ -202,8 +242,9 @@ describe('AgentLauncher', () => {
     const configDir = await newProject();
     const run = join(configDir, 'run');
     await mkdir(run, { mode: 0o700 });
-    for (const f of ['a.mcp.json', 'a.token', 'keep.txt']) await writeFile(join(run, f), 'x');
+    for (const f of ['a.mcp.json', 'a.token', 'keep.txt', 'server.json']) await writeFile(join(run, f), 'x');
     await sweepRunDir(configDir);
+    expect(existsSync(join(run, 'server.json'))).toBe(true);
     expect(existsSync(join(run, 'a.mcp.json'))).toBe(false);
     expect(existsSync(join(run, 'a.token'))).toBe(false);
     expect(existsSync(join(run, 'keep.txt'))).toBe(true);
@@ -219,6 +260,22 @@ describe('AgentLauncher', () => {
     expect(existsSync(run)).toBe(false);
     await sweepRunDir(join(configDir, 'missing')); // no folder: nothing to do
   });
+  it('replaces a run folder that is a link instead of writing or chmod-ing through it', { timeout: 20_000 }, async () => {
+    const bridge = new AgentBridge();
+    bridge.setOrigin('http://127.0.0.1:4317');
+    const configDir = await newProject();
+    const outside = await newProject();
+    await chmod(outside, 0o755);
+    await symlink(outside, join(configDir, 'run'));
+    const { mcpConfigFile } = await launch({ bridge, mcpCommand: ['node', '/x/server.mjs'], configDir });
+    expect(mcpConfigFile!.path.startsWith(join(configDir, 'run') + '/')).toBe(true);
+    const st = await lstat(join(configDir, 'run'));
+    expect(st.isSymbolicLink()).toBe(false);
+    expect(st.isDirectory()).toBe(true);
+    expect(st.mode & 0o777).toBe(0o700);
+    expect((await stat(outside)).mode & 0o777).toBe(0o755);
+    expect(await readdir(outside)).toEqual([]);
+  });
   it('reads the settings once per start', { timeout: 20_000 }, async () => {
     let reads = 0;
     const projectDir = await newProject();
@@ -230,11 +287,5 @@ describe('AgentLauncher', () => {
     });
     await (await launcher.start({ kind: 'describe', jobId: 'j6', projectSlug: 'acme', projectDir, request: { prompt: 'x' }, onEvent: () => {} })).done;
     expect(reads).toBe(1);
-  });
-  it('sandboxActive follows the settings and the system support', async () => {
-    const runner: AgentRunner = { start: () => { throw new Error('unused'); } };
-    expect(await testLauncher(runner, { sandbox: async () => ({ available: true, reason: '' }) }).sandboxActive()).toBe(true);
-    expect(await testLauncher(runner, { sandbox: async () => ({ available: true, reason: '' }), settings: { sandboxMode: 'off' } }).sandboxActive()).toBe(false);
-    expect(await testLauncher(runner).sandboxActive()).toBe(false);
   });
 });

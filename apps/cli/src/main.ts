@@ -3,10 +3,13 @@ import { fileURLToPath } from 'node:url';
 import open from 'open';
 import { startServer } from '@motion-studio/core';
 import { parseCliArgs } from './args.ts';
+import { NOT_RUNNING, runningUrl } from './print-url.ts';
 
 const HELP = `Uso: motion-studio [--port 4317] [--no-open]
+       motion-studio --print-url
 
 Avvia Motion Studio in locale e apre il browser.
+--print-url mostra l'indirizzo (con il codice di accesso) del Motion Studio già avviato.
 Variabili: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (array JSON)`;
 
 async function main() {
@@ -14,12 +17,19 @@ async function main() {
   try { args = parseCliArgs(process.argv.slice(2)); }
   catch (e) { console.error((e as Error).message); console.error(HELP); process.exit(1); }
   if (args.help) { console.log(HELP); return; }
+  if (args.printUrl) {
+    const url = await runningUrl();
+    if (!url) { console.error(NOT_RUNNING); process.exit(1); }
+    console.log(url);
+    return;
+  }
   const here = dirname(fileURLToPath(import.meta.url));
   const webDir = join(here, 'web');
   const mcpServerPath = join(here, 'mcp-studio.mjs');
   try {
-    const { url, close } = await startServer({ port: args.port, webDir, mcpServerPath });
-    console.log(`Motion Studio è attivo su ${url}`);
+    const { appUrl, close } = await startServer({ port: args.port, webDir, mcpServerPath });
+    // The address carries the UI access code: printed even with --no-open (it can be shown again with --print-url).
+    console.log(`Motion Studio è attivo su ${appUrl}`);
     // Registered before opening the browser so a stop is always handled.
     let closing = false;
     const stop = () => {
@@ -33,9 +43,9 @@ async function main() {
     for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(sig, stop);
     if (args.open) {
       try {
-        await open(url);
+        await open(appUrl);
       } catch {
-        console.log(`Apri manualmente ${url}`);
+        console.log(`Apri manualmente ${appUrl}`);
       }
     }
   } catch (e) {

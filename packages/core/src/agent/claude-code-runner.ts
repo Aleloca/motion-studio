@@ -70,7 +70,9 @@ export class ClaudeCodeRunner implements AgentRunner {
     }
     const posix = process.platform !== 'win32';
     // Own process group on POSIX so cancel can reach descendants (tool commands, MCP servers).
-    const child = spawn(bin, [...prefix, ...buildClaudeArgs(req)], { cwd: req.cwd, stdio: ['pipe', 'pipe', 'pipe'], detached: posix, env: { ...process.env, ...req.env } });
+    const env: NodeJS.ProcessEnv = { ...process.env, ...req.env };
+    for (const k of req.unsetEnv ?? []) delete env[k];
+    const child = spawn(bin, [...prefix, ...buildClaudeArgs(req)], { cwd: req.cwd, stdio: ['pipe', 'pipe', 'pipe'], detached: posix, env });
     const signal = (sig: NodeJS.Signals) => {
       try {
         // The group outlives its leader: this still reaches descendants after claude itself exited.

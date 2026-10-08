@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -9,6 +9,7 @@ import { ApprovalBroker } from '../src/approvals/broker.ts';
 import { AgentBridge } from '../src/bridge/bridge.ts';
 import { registerBridgeRoutes } from '../src/bridge/bridge-routes.ts';
 import { BrandStore } from '../src/brand/brand-store.ts';
+import { readConfinedBytes, readConfinedFile } from '../src/brand/agent-guard.ts';
 
 let app: FastifyInstance;
 let bridge: AgentBridge;
@@ -152,5 +153,33 @@ describe('bridge', () => {
     const res = await call('validate_output', {}, t);
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toBe('Validazione disponibile solo nelle creatività');
+  });
+});
+
+describe('bridge hardening (final wave)', () => {
+  it('denies permission prompts for provider or studio tools without asking the user', async () => {
+    let asked = 0;
+    const off = approvals.request;
+    approvals.request = (...a) => { asked++; return off.apply(approvals, a); };
+    for (const tool_name of ['provider:openai-images', 'mcp__studio__generate_image', 'mcp__studio__approve']) {
+      const r = await call('approve', { tool_name, input: { x: 1 } });
+      expect(r.json()).toEqual({ behavior: 'deny', message: 'Richiesta non valida.' });
+    }
+    expect(asked).toBe(0);
+    expect(approvals.pending()).toEqual([]);
+  });
+  it('strips zero-width and other invisible format characters from progress', async () => {
+    await call('report_progress', { message: 'a\u200Bb\u200Cc\u200Dd\u200Ee\u200Ff\u061Cg\uFEFFh' });
+    expect(events.at(-1)).toEqual({ kind: 'progress', text: 'abcdefgh' });
+  });
+  it('confined reads refuse hard-linked files', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'ms-hl-'));
+    await writeFile(join(outside, 'secret.txt'), 'segreto');
+    await link(join(outside, 'secret.txt'), join(projectDir, 'brand', 'guidelines.md'));
+    await link(join(outside, 'secret.txt'), join(projectDir, 'ref.png'));
+    expect(await readConfinedFile(projectDir, 'brand/guidelines.md')).toEqual({ skipped: 'file collegato non consentito' });
+    expect(await readConfinedBytes(projectDir, 'ref.png')).toEqual({ skipped: 'file collegato non consentito' });
+    expect((await call('read_brand_kit', {})).json().guidelines).toBe('');
+    await rm(outside, { recursive: true, force: true });
   });
 });
