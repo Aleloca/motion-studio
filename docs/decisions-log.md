@@ -87,3 +87,87 @@ Legenda impatto: 🟢 basso · 🟡 medio · 🔴 alto (sicurezza o prodotto).
 - Un riferimento che non è un'immagine viene mostrato come immagine rotta.
 - Applicare una proposta senza nessuna voce spuntata la segna comunque come "applicata".
 - Mancano alcuni test della UI (errori di upload, SourceBadge, editor di loghi e font).
+
+## Fase 4 — decisioni di progetto (prese prima del piano)
+
+48. 🔴 **La sandbox di Claude Code è la base della sicurezza in fase 4.** Vale per ogni turno (creatività, analisi brand, descrizione, console) su macOS e Linux. Configurazione:
+    - scritture confinate al progetto;
+    - `denyWrite` sulle codebase collegate e sui file del brand protetti;
+    - `denyRead` sulle cartelle sensibili della home (`.ssh`, `.aws`, `.gnupg`, `.config/gh`, `Library/Keychains`, …). Verificato dal vivo: anche `cat` e `python` ricevono "Operation not permitted";
+    - rete su whitelist.
+
+    La lista dei comandi pre-approvati delle fasi 2 e 3 non serve più per Bash: dentro la sandbox i comandi sono consentiti, fuori passano dalle approvazioni. Su Windows, o su Linux senza `bwrap`, la sandbox non c'è: l'app avvisa e torna al comportamento della fase 3.
+49. 🟡 **Rete per tipo di lavoro:**
+    - creatività e console: registri di pacchetti, CDN e font, più i domini che aggiungi tu;
+    - analisi brand: tutta la rete (`*`), perché loghi e immagini stanno su CDN non note. Le letture sensibili restano bloccate;
+    - descrizione asset: nessuna rete.
+
+    Le violazioni di rete non passano dalle approvazioni, perché la sandbox le nega subito: i domini si aggiungono nelle impostazioni.
+50. 🟡 **Provider a pagamento** (gpt-image-2, TTS): di default ogni chiamata chiede conferma nella UI, mostrando cosa sta per essere generato. C'è un'impostazione per disattivare la conferma.
+51. 🟡 **Le chiavi API restano nel core.** Il server MCP `studio` è un intermediario senza dipendenze: chiama il core sul loopback con un token valido solo per quel job, ed è il core a contattare i provider. La spec diceva che le chiavi passano dal core al server MCP: le teniamo invece solo nel core, che è più sicuro.
+52. 🟢 **Portachiavi**: `@napi-rs/keyring`, mantenuto e senza problemi di ABI con Electron, al posto di `keytar`, che è archiviato. Le variabili d'ambiente (`OPENAI_API_KEY`, …) hanno la precedenza.
+53. 🟢 **Asset da stock con attribuzione** (nuovo campo `attribution`, es. "Foto di X su Pexels"). Per Unsplash viene chiamato l'endpoint di tracciamento del download, come richiedono le loro regole.
+
+## Fase 4 — durante l'esecuzione
+
+54. 🔴 **L'agente potrebbe chiamare l'API locale di Motion Studio e approvarsi da solo.** La guardia Host/Origin ferma i browser, ma non un processo locale. Rischio concreto nell'analisi brand, dove la rete era aperta e c'era curl, e in modalità senza sandbox. *Scelta, in tre livelli:*
+    1. **Strutturale.** Durante l'analisi brand Bash non ha più rete (niente curl). Le pagine si leggono con WebFetch, che fa solo GET. I file si scaricano con un nuovo strumento MCP `download_file` eseguito dal core, che risolve il DNS e blocca gli IP privati e di loopback anche nei redirect. Questo chiude anche la voce 33 (DNS rebinding).
+    2. **Token della UI** per le richieste che modificano dati. Viene consegnato solo nello snapshot del WebSocket dopo il controllo dell'origine. È una difesa per la modalità senza sandbox, non una barriera assoluta.
+    3. **Verifica dal vivo** che la whitelist delle creatività blocchi `127.0.0.1` e `localhost`.
+55. 🟢 **Due decisioni concorrenti sulla stessa approvazione**: vince la prima, la seconda riceve 404.
+56. 🟢 **Il bridge accetta solo gli strumenti previsti per quel tipo di lavoro**, anche se qualcuno riuscisse a leggere il token.
+57. 🔴 **La sandbox non si apre in silenzio.** Due impostazioni predefinite di Claude Code, che il piano non conosceva, sono state cambiate:
+    - `failIfUnavailable: true` — se la sandbox non parte, i comandi falliscono invece di girare senza protezione;
+    - `allowUnsandboxedCommands: false` — l'agente non può chiedere di uscire dalla sandbox per un singolo comando.
+
+    *Costo:* un comando che funziona solo fuori dalla sandbox fallisce; l'utente può disattivare l'isolamento nelle Impostazioni.
+58. 🟡 **Regole deny sul tool Read per le cartelle sensibili.** La protezione della sandbox in lettura copre solo Bash, non lo strumento di lettura file di Claude. Valgono con e senza sandbox.
+59. 🔴 **I permessi salvati non devono essere modificabili dall'agente.** `.studio/permissions.json` sta dentro il progetto: un agente avrebbe potuto concedersi da solo nuovi permessi. *Scelta:*
+    - la cartella `.studio/` è protetta da scrittura per ogni lavoro, con la sandbox e con le regole di blocco;
+    - vengono accettate solo regole nella forma generata dall'app.
+
+    *Residuo:* senza sandbox un interprete può ancora scriverci; l'effetto massimo è saltare la conferma dei costi. È accettato e documentato. *Alternativa scartata:* firma HMAC delle regole.
+60. 🟡 **"Sempre per questo progetto" per i comandi vale solo per un elenco chiuso di comandi innocui**: `ls`, `mkdir`, `ffprobe`, ottimizzatori di immagini, `brew install`. Per tutti gli altri si può solo consentire una volta o negare. Il motivo: interpreti, `npm run`, `tar` e `cp` permettono di eseguire o scrivere qualsiasi cosa. *Costo:* più clic su "Consenti una volta". Anche le regole sui file escludono home, cartelle sensibili e cartelle di sistema.
+61. 🔴 **Le letture fatte dal core per conto dell'agente sono confinate.** `read_brand_kit` gira nel core, fuori dalla sandbox. Un agente poteva quindi creare un symlink verso `~/.ssh` al posto di `guidelines.md` e farselo leggere. Ora la lettura non segue i symlink, verifica che il file sia dentro il progetto e si ferma a 1 MB.
+62. 🟡 **Il token del bridge non compare tra gli argomenti dei processi** (`ps` lo mostrerebbe). Passa in un file con permessi 0600 dentro la cartella di configurazione, cancellato a fine lavoro e revocato subito all'annullamento.
+63. 🟢 **Download sicuri con controllo dell'IP risolto** (`safeFetch`, usato da stock, Google Fonts e `download_file`). L'indirizzo restituito dal DNS viene validato nello stesso momento della connessione, a ogni redirect. Gli IP privati, di loopback e link-local, nelle varie forme IPv4 e IPv6, sono bloccati. Chiude la voce 33 (DNS rebinding) e il residuo DNS dei provider. Non serve nessuna dipendenza aggiuntiva.
+
+## Fase 5 — decisioni di progetto
+
+64. 🟡 **Nome del pacchetto npm**: `motion-studio` è già occupato su npm. *Scelta:* il pacchetto si chiama `motion-studio-app` e il comando resta `motion-studio`, quindi si avvia con `npx motion-studio-app`. *Alternative:* uno scope `@motion-studio/cli`, che richiede di creare un'organizzazione npm, oppure `motion-studio-cli`. **Il pacchetto non viene pubblicato**: serve il tuo account npm.
+65. 🟡 **Firma, notarizzazione e release.** Servono i tuoi certificati Apple e Windows e il tuo account. *Scelta:* preparo le pipeline di GitHub Actions (CI su ogni push e release su tag `v*` con firma tramite i secrets) e verifico in locale una build non firmata con un avvio di prova automatico. **Non creo tag, non pubblico release e non pubblico su npm.**
+
+## Fase 4 — review finale
+
+66. 🔴 **Le chiavi API impostate come variabili d'ambiente arrivavano all'agente**, che le ereditava da `claude` e poteva leggerle con `env`. Ora vengono tolte dall'ambiente dell'agente e del server MCP.
+67. 🔴 **Uscita dalla sandbox tramite i file che l'app esegue o carica fuori dalla sandbox.** I casi erano tre:
+    - hook git e `core.fsmonitor`, eseguiti dai commit dell'app;
+    - `.claude/settings*.json` con hook, caricati da Claude al turno successivo;
+    - import in `CLAUDE.md`.
+
+    Ora `.git`, `.claude` e `CLAUDE.md` sono protetti in scrittura per ogni lavoro, e git viene chiamato con hook e fsmonitor disattivati.
+68. 🔴 **Token per l'interfaccia web.** Un token casuale salvato nella cartella di configurazione, che la sandbox e il tool Read non possono leggere. Viene consegnato solo nel link che il terminale stampa (`#t=…`) e poi conservato dal browser. È richiesto per tutte le API tranne health, bridge e file multimediali. Chi apre la pagina senza il link vede una pagina di abbinamento; `motion-studio --print-url` ristampa il link. *Limite dichiarato:* non protegge da un processo dello stesso utente che legge la cartella di configurazione.
+69. 🟡 **`brew install` passa a "solo una volta"** (riapre la voce 60): installare da un tap arbitrario esegue codice di terzi.
+70. 🟡 Altri fix:
+    - lo stato "Sandbox attiva" non viene più mostrato quando l'isolamento è disattivato;
+    - "Apri cartella" non segue i collegamenti simbolici e non può aprire app create dall'agente;
+    - gli hard link vengono rifiutati nelle letture del core;
+    - lo strumento `approve` rifiuta nomi che imitano i provider;
+    - il README descrive con onestà la modalità senza sandbox.
+
+### Esito dal vivo della fase 4 (claude 2.1.293)
+- Sandbox nelle creatività: v1 completa in 52s; `curl` verso `127.0.0.1` e `localhost` bloccato; scritture in `CLAUDE.md`, `.claude` e `.git` negate; codebase intatta.
+- Approvazioni: una scrittura in `/Users/Shared` ha generato la richiesta, il diniego è stato rispettato e annullare il lavoro rimuove la richiesta.
+- Analisi brand di python.org nella sandbox senza rete: 26 proposte, 3 loghi scaricati con `download_file` (anche dopo un redirect verso S3) e il font Source Sans 3.
+- **Non verificati per assenza di chiavi**: generate_image, TTS, stock.
+- **Nota:** se una richiesta di prova suona "offensiva" (leggere file segreti, hook git), il filtro di sicurezza del modello la blocca anche nei turni successivi. In uso normale non dovrebbe capitare; una creatività bloccata così fallisce con l'errore dell'API.
+
+### Punti aperti alla fine della fase 4 (basso rischio)
+- Mancano un punto di iniezione per testare il portachiavi e un indicatore "portachiavi disponibile".
+- Dopo la scrittura dei file generati manca un secondo controllo che il percorso reale sia ancora nel progetto.
+- In `download_file` l'estensione del file non è legata alla cartella di destinazione, e la porta non è legata allo schema.
+- Interfaccia:
+  - la lista dei permessi non si aggiorna in tempo reale;
+  - il campo dei lavori in parallelo è scomodo da modificare;
+  - due modifiche rapide ai domini possono annullarsi a vicenda;
+  - le approvazioni della descrizione asset compaiono solo nell'indicatore globale.
