@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/prom
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workspaceSettingsSchema, type ServerMessage } from '@motion-studio/shared';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApprovalBroker } from '../src/approvals/broker.ts';
 import { PermissionsStore } from '../src/approvals/permissions-store.ts';
 import type { BridgeContext } from '../src/bridge/bridge.ts';
@@ -50,7 +50,7 @@ describe('generate_image', () => {
   it('asks for confirmation, saves and registers the image', async () => {
     const t = tools();
     const pending = t.generate_image!(ctx, { prompt: 'Banner blu', width: 300, height: 250, name: 'banner' });
-    await new Promise((r) => setTimeout(r, 20));
+    await vi.waitFor(() => expect(approvals.pending()).toHaveLength(1));
     const [req] = approvals.pending();
     expect(req).toMatchObject({ kind: 'provider', toolName: 'provider:openai-images' });
     await approvals.decide(req!.id, 'once');
@@ -146,8 +146,7 @@ describe('cancellation before asking', () => {
   });
   it('cancels a pending approval when the job is aborted', async () => {
     const pending = tools().generate_image!(ctx, { prompt: 'x', width: 1024, height: 1024 });
-    await new Promise((r) => setTimeout(r, 20));
-    expect(approvals.pending()).toHaveLength(1);
+    await vi.waitFor(() => expect(approvals.pending()).toHaveLength(1));
     controller.abort();
     expect(await pending.catch(status)).toBe(499);
     expect(approvals.pending()).toEqual([]);
