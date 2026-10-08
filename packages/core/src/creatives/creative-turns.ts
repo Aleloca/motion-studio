@@ -45,7 +45,6 @@ function addFormatsRequest(formats: string[], base: VersionEntry | undefined): s
 
 const REGENERATE = 'Rigenera tutti i formati partendo dal brief aggiornato.';
 const PINS_ONLY = 'Applica i commenti puntuali.';
-const UNKNOWN_PRESET = 'Preset sconosciuto:';
 const now = () => new Date().toISOString();
 
 class AgentFailure extends Error {}
@@ -208,7 +207,7 @@ export class CreativeTurnService {
         result = await validateOutputs({ dir: store.outputsDir(slug, n), requested: creative.brief.formats, presets, durationSec: creative.brief.durationSec, media: this.deps.media });
         problems = result.problems;
         // A preset missing from the catalog cannot be fixed by the agent: retrying would only waste turns.
-        if (problems.every((p) => p.startsWith(UNKNOWN_PRESET)) || attempt === this.maxAttempts) break;
+        if (problems.length === result.unknownPresets.length || attempt === this.maxAttempts) break;
         await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: `Controllo output: ${problems.length} problemi. Chiedo una correzione (tentativo ${attempt + 1} di ${this.maxAttempts}).` });
         this.changed(ref);
         kind = 'fix';

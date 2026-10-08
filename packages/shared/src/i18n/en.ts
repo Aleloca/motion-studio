@@ -182,4 +182,18 @@ export const en = {
     unknownTool: 'unknown',
     providerNotApproved: 'The user did not approve the use of the provider',
   },
+  validation: {
+    manifestMissing: (p: { dir: string }) => `manifest.json is missing in ${p.dir}`,
+    manifestInvalid: (p: { detail: string }) => `Invalid manifest.json: ${p.detail}`,
+    unknownPreset: (p: { id: string }) => `Unknown preset: ${p.id} (not in the format catalog)`,
+    missingFormat: (p: { label: string; id: string }) => `Missing format ${p.label} (${p.id})`,
+    fileNotFound: (p: { id: string; file: string }) => `File not found for ${p.id}: ${p.file}`,
+    badExtension: (p: { file: string; ext: string; id: string; allowed: string }) => `${p.file}: extension .${p.ext} not allowed for ${p.id} (allowed: ${p.allowed})`,
+    tooLarge: (p: { file: string; size: string; max: number }) => `${p.file}: ${p.size} MB, maximum ${p.max} MB`,
+    notReadable: (p: { file: string }) => `${p.file}: cannot be read as media`,
+    badResolution: (p: { file: string; width: number; height: number; expectedWidth: number; expectedHeight: number }) => `${p.file}: resolution ${p.width}×${p.height}, expected ${p.expectedWidth}×${p.expectedHeight}`,
+    notAVideo: (p: { file: string }) => `${p.file}: does not look like a video`,
+    durationOverMax: (p: { file: string; duration: string; max: number }) => `${p.file}: duration ${p.duration}s exceeds the maximum of ${p.max}s`,
+    durationOffTarget: (p: { file: string; duration: string; target: number }) => `${p.file}: duration ${p.duration}s, about ${p.target}s requested`,
+  },
 } as const satisfies Catalog;

@@ -180,4 +180,18 @@ export const it: Messages = {
     unknownTool: 'sconosciuto',
     providerNotApproved: 'L\'utente non ha approvato l\'uso del provider',
   },
+  validation: {
+    manifestMissing: (p) => `manifest.json mancante in ${p.dir}`,
+    manifestInvalid: (p) => `manifest.json non valido: ${p.detail}`,
+    unknownPreset: (p) => `Preset sconosciuto: ${p.id} (non è nel catalogo formati)`,
+    missingFormat: (p) => `Manca il formato ${p.label} (${p.id})`,
+    fileNotFound: (p) => `File non trovato per ${p.id}: ${p.file}`,
+    badExtension: (p) => `${p.file}: estensione .${p.ext} non ammessa per ${p.id} (ammesse: ${p.allowed})`,
+    tooLarge: (p) => `${p.file}: ${p.size} MB, massimo ${p.max} MB`,
+    notReadable: (p) => `${p.file}: file non leggibile come media`,
+    badResolution: (p) => `${p.file}: risoluzione ${p.width}×${p.height}, attesa ${p.expectedWidth}×${p.expectedHeight}`,
+    notAVideo: (p) => `${p.file}: non sembra un video`,
+    durationOverMax: (p) => `${p.file}: durata ${p.duration}s oltre il massimo di ${p.max}s`,
+    durationOffTarget: (p) => `${p.file}: durata ${p.duration}s, richiesta circa ${p.target}s`,
+  },
 };

@@ -4,6 +4,9 @@ import { join } from 'node:path';
 import type { ApprovalRequest } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ApprovalBroker } from '../src/approvals/broker.ts';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { validateOutputs } from '../src/creatives/output-contract.ts';
+import { NoMediaTools } from '../src/media/media-tools.ts';
 import { runDoctor } from '../src/doctor.ts';
 import type { CommandExec } from '../src/exec.ts';
 import { Git } from '../src/git.ts';
@@ -34,5 +37,14 @@ describe('English messages', () => {
     void broker.request({ jobId: 'j', projectSlug: 'acme', projectDir: '/w/acme', creativeSlug: null, kind: 'tool', toolName: 'Write', input: { file_path: '/tmp/out.txt' } });
     expect(shown[0]).toMatchObject({ kind: 'tool', toolName: 'Write', title: 'Edit a file outside the project', detail: '/tmp/out.txt' });
     await broker.decide(shown[0]!.id, 'once');
+  });
+  it('words validation problems in English', async () => {
+    const dir = join(await mkdtemp(join(tmpdir(), 'ms-en-')), 'v1');
+    await mkdir(dir);
+    expect((await validateOutputs({ dir, requested: ['sq'], presets: [], durationSec: null, media: NoMediaTools })).problems).toEqual(['manifest.json is missing in v1']);
+    await writeFile(join(dir, 'manifest.json'), JSON.stringify({ schemaVersion: 1, files: [], tools: [] }));
+    const r = await validateOutputs({ dir, requested: ['ghost'], presets: [], durationSec: null, media: NoMediaTools });
+    expect(r.problems).toEqual(['Unknown preset: ghost (not in the format catalog)']);
+    expect(r.unknownPresets).toEqual(['ghost']);
   });
 });
