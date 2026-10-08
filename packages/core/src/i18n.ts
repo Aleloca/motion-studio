@@ -1,5 +1,7 @@
 import { languageName, messages, resolveLocale, type LanguageSetting, type Locale, type Messages } from '@motion-studio/shared';
 
+export { resolveLocale } from '@motion-studio/shared';
+
 let current: Locale = 'en';
 
 /** The language of every message the core returns to the UI. Changes at runtime; agent runs already started are untouched. */

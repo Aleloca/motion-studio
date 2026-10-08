@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadOrCreateUiToken } from '@motion-studio/core';
-import { alreadyRunningMessage, answersHealth, NOT_RUNNING, runningUrl } from '../src/print-url.ts';
+import { alreadyRunningMessage, answersHealth, notRunningMessage, runningUrl } from '../src/print-url.ts';
 
 const dirs: string[] = [];
 afterEach(async () => { for (const d of dirs.splice(0)) await rm(d, { recursive: true, force: true }); });
@@ -61,7 +61,7 @@ describe('motion-studio --print-url', () => {
     expect(await runningUrl((await configWith(null)).dir)).toBeNull();
     const { dir } = await configWith({ port: 4318, pid: 999_999, startedAt: new Date().toISOString() });
     expect(await runningUrl(dir, () => false, async () => true)).toBeNull();
-    expect(NOT_RUNNING).toBe('Motion Studio non è in esecuzione: avvialo con motion-studio');
+    expect(notRunningMessage()).toBe('Motion Studio non è in esecuzione: avvialo con motion-studio');
   });
   it('says the app is not running when the port answers for another pid (pid reused)', async () => {
     const server = createServer((_req, res) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ ok: true, pid: process.pid + 1 })); });

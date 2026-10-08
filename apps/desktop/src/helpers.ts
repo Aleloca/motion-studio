@@ -1,5 +1,8 @@
 import { isAbsolute, join } from 'node:path';
-import type { LoginShellPath } from '@motion-studio/core';
+import type { currentLocale, LoginShellPath, t } from '@motion-studio/core';
+
+type Locale = ReturnType<typeof currentLocale>;
+type Messages = ReturnType<typeof t>;
 
 /** The UI token travels only in the URL fragment (`#t=<token>`). */
 export function tokenFromAppUrl(appUrl: string): string | null {
@@ -55,7 +58,7 @@ export function focusOnReady() {
 }
 
 /** Prompt shown when the instance the window is attached to (a CLI or another core) goes away. */
-export const ATTACHED_GONE = { message: 'Il Motion Studio a cui l\'app era collegata si è chiuso.', buttons: ['Riavvia', 'Chiudi'] };
+export const attachedGone = (m: Messages['desktop']) => ({ message: m.attachedGoneMessage, buttons: [m.attachedGoneRestart, m.attachedGoneQuit] });
 /** Button index of the ATTACHED_GONE prompt → what to do (Escape / anything else closes). */
 export const attachedGoneAction = (response: number): 'relaunch' | 'quit' => (response === 0 ? 'relaunch' : 'quit');
 
@@ -74,4 +77,17 @@ export function watchAttached(opts: { check: () => Promise<boolean>; onGone: () 
     opts.check().catch(() => false).then((ok) => { pending = false; if (!ok) gone(); });
   }, opts.intervalMs ?? 5000);
   return { stop, failed: gone };
+}
+
+/**
+ * Language of an attached window (no in-process core): the live instance's own language from `/api/settings/language`,
+ * else the system-resolved one. It is read once at attach time; later changes in the other instance are not followed.
+ */
+export async function attachedLocale(opts: { origin: string; token: string | null; fallback: Locale; fetchFn?: typeof fetch }): Promise<Locale> {
+  try {
+    const res = await (opts.fetchFn ?? fetch)(`${opts.origin}/api/settings/language`, { headers: { 'x-motion-studio-ui': opts.token ?? '' }, signal: AbortSignal.timeout(2000) });
+    if (!res.ok) return opts.fallback;
+    const { locale } = (await res.json()) as { locale?: unknown };
+    return locale === 'en' || locale === 'it' ? locale : opts.fallback;
+  } catch { return opts.fallback; }
 }

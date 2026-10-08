@@ -3,8 +3,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AlreadyRunningError, answersHealth, resolveLoginShellPath, startServer } from '@motion-studio/core';
-import { ATTACHED_GONE, absolutePathArg, attachedGoneAction, focusOnReady, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, userDataDir } from './helpers.ts';
+import { AlreadyRunningError, answersHealth, resolveLocale, resolveLoginShellPath, setLocale, startServer, t } from '@motion-studio/core';
+import { absolutePathArg, attachedGone, attachedGoneAction, attachedLocale, focusOnReady, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, userDataDir } from './helpers.ts';
+import { menuTemplate } from './menu.ts';
 import { setupUpdates } from './updater.ts';
 import { externalUrlAllowed, isAppUrl, windowOptions } from './window.ts';
 
@@ -39,14 +40,17 @@ async function boot(configDir?: string) {
 }
 
 /** Our own core, or the address of the Motion Studio (desktop or CLI) already serving the same config folder. */
-async function bootOrAttach(): Promise<{ url: string; appUrl: string; close: () => Promise<void>; attached?: { port: number; pid: number } }> {
+async function bootOrAttach(): Promise<{ url: string; appUrl: string; close: () => Promise<void>; onLocaleChange: (cb: () => void) => void; attached?: { port: number; pid: number } }> {
   try {
-    return await boot();
+    const server = await boot();
+    return { url: server.url, appUrl: server.appUrl, close: server.close, onLocaleChange: (cb) => { server.onLocaleChange(cb); } };
   } catch (err) {
     if (!(err instanceof AlreadyRunningError)) throw err;
     const { port, pid, appUrl } = err.alreadyRunning;
-    console.log(`Motion Studio è già avviato (porta ${port})`);
-    return { url: new URL(appUrl).origin, appUrl, close: async () => {}, attached: { port, pid } };
+    // Before the first message: no core of our own, so the system language until the live instance is asked.
+    setLocale(resolveLocale('system', app.getPreferredSystemLanguages()));
+    console.log(t().desktop.alreadyRunning({ port }));
+    return { url: new URL(appUrl).origin, appUrl, close: async () => {}, onLocaleChange: () => {}, attached: { port, pid } };
   }
 }
 
@@ -55,7 +59,8 @@ function watchAttachedInstance(win: BrowserWindow, target: { port: number; pid: 
   const watch = watchAttached({
     check: () => answersHealth(target.port, 3000, target.pid),
     onGone: () => {
-      void dialog.showMessageBox(win, { type: 'warning', message: ATTACHED_GONE.message, buttons: ATTACHED_GONE.buttons, defaultId: 0, cancelId: 1 })
+      const prompt = attachedGone(t().desktop);
+      void dialog.showMessageBox(win, { type: 'warning', message: prompt.message, buttons: prompt.buttons, defaultId: 0, cancelId: 1 })
         .then(({ response }) => {
           if (attachedGoneAction(response) === 'relaunch') { app.relaunch(); app.exit(0); } else app.quit();
         });
@@ -90,15 +95,12 @@ async function smoke(mode: string) {
   } finally { await server.close(); await rm(configDir, { recursive: true, force: true }); }
 }
 
+let menuRestart: (() => void) | undefined;
 function buildMenu(restart?: () => void) {
-  const mac = process.platform === 'darwin';
-  Menu.setApplicationMenu(Menu.buildFromTemplate([
-    ...(mac ? [{ role: 'appMenu' as const }] : []),
-    { label: 'Modifica', submenu: [{ role: 'undo', label: 'Annulla' }, { role: 'redo', label: 'Ripeti' }, { type: 'separator' }, { role: 'cut', label: 'Taglia' }, { role: 'copy', label: 'Copia' }, { role: 'paste', label: 'Incolla' }, { role: 'selectAll', label: 'Seleziona tutto' }] },
-    { label: 'Vista', submenu: [{ role: 'reload', label: 'Ricarica' }, { role: 'togglefullscreen', label: 'Schermo intero' }, { type: 'separator' }, { role: 'resetZoom', label: 'Zoom predefinito' }, { role: 'zoomIn', label: 'Ingrandisci' }, { role: 'zoomOut', label: 'Riduci' }] },
-    { label: 'Finestra', submenu: [{ role: 'minimize', label: 'Riduci a icona' }, { role: 'close', label: 'Chiudi' }] },
-    { label: 'Aiuto', submenu: [{ label: 'Riavvia per aggiornare', enabled: !!restart, click: () => restart?.() }, { type: 'separator' }, { label: 'Motion Studio su GitHub', click: () => void shell.openExternal(REPO_URL) }] },
-  ]));
+  if (restart) menuRestart = restart;
+  Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate(t(), {
+    mac: process.platform === 'darwin', ...(menuRestart ? { restart: menuRestart } : {}), openRepo: () => void shell.openExternal(REPO_URL),
+  })));
 }
 
 const focus = focusOnReady();
@@ -106,6 +108,13 @@ const focus = focusOnReady();
 async function run() {
   const server = await bootOrAttach();
   const origin = new URL(server.url).origin;
+  if (server.attached) {
+    // No in-process core: speak the live instance's language (read once), else the system one.
+    setLocale(await attachedLocale({ origin, token: tokenFromAppUrl(server.appUrl), fallback: resolveLocale('system', app.getPreferredSystemLanguages()) }));
+  } else {
+    // The in-process core owns the language: rebuild the menu when it changes in Settings.
+    server.onLocaleChange(() => buildMenu());
+  }
   let closing = false;
   const win = new BrowserWindow(windowOptions(join(__dirname, 'preload.cjs'), nativeTheme.shouldUseDarkColors));
 
@@ -113,13 +122,13 @@ async function run() {
     e.sender === win.webContents && e.senderFrame === e.sender.mainFrame && isAppUrl(e.senderFrame?.url ?? '', origin);
   ipcMain.handle('ms:pick-folder', async (e, arg: unknown) => {
     const args = trusted(e) ? pickFolderArgs(arg) : null;
-    if (!args) throw new Error('Richiesta non valida');
+    if (!args) throw new Error(t().desktop.invalidRequest);
     const r = await dialog.showOpenDialog({ ...args, properties: ['openDirectory', 'createDirectory'] });
     return r.canceled || !r.filePaths[0] ? null : r.filePaths[0];
   });
   ipcMain.handle('ms:reveal', (e, arg: unknown) => {
     const p = trusted(e) ? absolutePathArg(arg) : null;
-    if (!p) throw new Error('Percorso non valido');
+    if (!p) throw new Error(t().desktop.invalidPath);
     shell.showItemInFolder(p);
   });
 

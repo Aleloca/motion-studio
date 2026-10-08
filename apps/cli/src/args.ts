@@ -1,4 +1,5 @@
 import { parseArgs } from 'node:util';
+import { t } from '@motion-studio/core';
 
 export function parseCliArgs(argv: string[]): { port: number; open: boolean; help: boolean; printUrl: boolean } {
   const { values } = parseArgs({
@@ -13,6 +14,6 @@ export function parseCliArgs(argv: string[]): { port: number; open: boolean; hel
   });
   // Decimal digits only: Number() would also accept '0x10', '1e3' or ' 80'.
   const port = /^\d+$/.test(values.port) ? Number(values.port) : Number.NaN;
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`Porta non valida: ${values.port}`);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(t().cli.invalidPort({ value: values.port }));
   return { port, open: !values['no-open'], help: values.help ?? false, printUrl: values['print-url'] ?? false };
 }

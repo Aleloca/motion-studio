@@ -1,8 +1,8 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { defaultConfigDir } from '@motion-studio/core';
-import { ATTACHED_GONE, absolutePathArg, attachedGoneAction, focusOnReady, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, userDataDir } from '../src/helpers.ts';
+import { defaultConfigDir, t } from '@motion-studio/core';
+import { absolutePathArg, attachedGone, attachedGoneAction, attachedLocale, focusOnReady, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, userDataDir } from '../src/helpers.ts';
 
 describe('desktop helpers', () => {
   it('reads the UI token from the URL fragment only', () => {
@@ -113,10 +113,17 @@ describe('attached to another instance', () => {
     expect([calls, gone]).toEqual([0, 0]);
   });
   it('asks to restart or close, in Italian', () => {
-    expect(ATTACHED_GONE).toEqual({ message: 'Il Motion Studio a cui l\'app era collegata si è chiuso.', buttons: ['Riavvia', 'Chiudi'] });
+    expect(attachedGone(t().desktop)).toEqual({ message: 'Il Motion Studio a cui l\'app era collegata si è chiuso.', buttons: ['Riavvia', 'Chiudi'] });
     expect(attachedGoneAction(0)).toBe('relaunch');
     expect(attachedGoneAction(1)).toBe('quit');
     expect(attachedGoneAction(-1)).toBe('quit');
   });
+  it('takes the live instance language, else the fallback', async () => {
+    const ok = (locale: unknown) => vi.fn(async () => new Response(JSON.stringify({ locale }), { status: 200 })) as unknown as typeof fetch;
+    const base = { origin: 'http://127.0.0.1:4318', token: 'tok', fallback: 'en' as const };
+    expect(await attachedLocale({ ...base, fetchFn: ok('it') })).toBe('it');
+    expect(await attachedLocale({ ...base, fetchFn: ok('de') })).toBe('en');
+    expect(await attachedLocale({ ...base, fetchFn: vi.fn(async () => new Response('{}', { status: 401 })) as unknown as typeof fetch })).toBe('en');
+    expect(await attachedLocale({ ...base, fetchFn: vi.fn(async () => { throw new Error('down'); }) as unknown as typeof fetch })).toBe('en');
+  });
 });
-

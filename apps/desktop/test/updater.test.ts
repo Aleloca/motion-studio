@@ -29,3 +29,15 @@ describe('setupUpdates', () => {
     expect(u.quitAndInstall).toHaveBeenCalled();
   });
 });
+
+describe('setupUpdates language', () => {
+  it('words the notification in the current language', async () => {
+    const { setLocale } = await import('@motion-studio/core');
+    const u = fake(async () => ({}));
+    const notify = vi.fn();
+    setupUpdates({ updater: u, isPackaged: true, notify, log: vi.fn() });
+    setLocale('en');
+    u.fire('0.5.0');
+    expect(notify.mock.calls[0]![0]).toBe('Motion Studio 0.5.0 is available: restart to update');
+  });
+});

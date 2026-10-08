@@ -418,6 +418,38 @@ export const en = {
     tone: 'tone of voice',
     photoStyle: 'photo style',
   },
+  desktop: {
+    menu: {
+      edit: 'Edit', undo: 'Undo', redo: 'Redo', cut: 'Cut', copy: 'Copy', paste: 'Paste', selectAll: 'Select All',
+      view: 'View', reload: 'Reload', fullScreen: 'Toggle Full Screen', resetZoom: 'Actual Size', zoomIn: 'Zoom In', zoomOut: 'Zoom Out',
+      window: 'Window', minimize: 'Minimize', close: 'Close',
+      help: 'Help', restartToUpdate: 'Restart to Update', github: 'Motion Studio on GitHub',
+    },
+    attachedGoneMessage: 'The Motion Studio this app was connected to has closed.',
+    attachedGoneRestart: 'Restart',
+    attachedGoneQuit: 'Quit',
+    invalidRequest: 'Invalid request',
+    invalidPath: 'Invalid path',
+    alreadyRunning: (p: { port: number }) => `Motion Studio is already running (port ${p.port})`,
+    updateAvailable: (p: { version: string }) => `Motion Studio ${p.version} is available: restart to update`,
+    updateCheckFailed: (p: { detail: string }) => `Update check failed: ${p.detail}`,
+  },
+  cli: {
+    help: `Usage: npx @motion-studio/cli [--port 4317] [--no-open]
+       npx @motion-studio/cli --print-url
+(if installed: motion-studio [--port 4317] [--no-open])
+
+Starts Motion Studio locally and opens the browser.
+--print-url shows the address (with the access code) of the Motion Studio that is already running.
+Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
+    invalidPort: (p: { value: string }) => `Invalid port: ${p.value}`,
+    notRunning: 'Motion Studio is not running: start it with motion-studio',
+    alreadyRunning: (p: { url: string }) => `Motion Studio is already running: ${p.url}`,
+    running: (p: { url: string }) => `Motion Studio is running at ${p.url}`,
+    openManually: (p: { url: string }) => `Open ${p.url} manually`,
+    closeFailed: (p: { detail: string }) => `Shutdown failed: ${p.detail}`,
+    portInUse: (p: { port: number }) => `Port ${p.port} is already in use: try --port <other>`,
+  },
   web: {
     theme: { aria: 'Theme', system: 'System', light: 'Light', dark: 'Dark' },
     codebase: {

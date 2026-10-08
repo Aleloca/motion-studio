@@ -416,6 +416,38 @@ export const it: Messages = {
     tone: 'tono di voce',
     photoStyle: 'stile fotografico',
   },
+  desktop: {
+    menu: {
+      edit: 'Modifica', undo: 'Annulla', redo: 'Ripeti', cut: 'Taglia', copy: 'Copia', paste: 'Incolla', selectAll: 'Seleziona tutto',
+      view: 'Vista', reload: 'Ricarica', fullScreen: 'Schermo intero', resetZoom: 'Zoom predefinito', zoomIn: 'Ingrandisci', zoomOut: 'Riduci',
+      window: 'Finestra', minimize: 'Riduci a icona', close: 'Chiudi',
+      help: 'Aiuto', restartToUpdate: 'Riavvia per aggiornare', github: 'Motion Studio su GitHub',
+    },
+    attachedGoneMessage: 'Il Motion Studio a cui l\'app era collegata si è chiuso.',
+    attachedGoneRestart: 'Riavvia',
+    attachedGoneQuit: 'Chiudi',
+    invalidRequest: 'Richiesta non valida',
+    invalidPath: 'Percorso non valido',
+    alreadyRunning: (p) => `Motion Studio è già avviato (porta ${p.port})`,
+    updateAvailable: (p) => `È disponibile Motion Studio ${p.version}: riavvia per aggiornare`,
+    updateCheckFailed: (p) => `Controllo aggiornamenti non riuscito: ${p.detail}`,
+  },
+  cli: {
+    help: `Uso: npx @motion-studio/cli [--port 4317] [--no-open]
+       npx @motion-studio/cli --print-url
+(se installato: motion-studio [--port 4317] [--no-open])
+
+Avvia Motion Studio in locale e apre il browser.
+--print-url mostra l'indirizzo (con il codice di accesso) del Motion Studio già avviato.
+Variabili: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (array JSON)`,
+    invalidPort: (p) => `Porta non valida: ${p.value}`,
+    notRunning: 'Motion Studio non è in esecuzione: avvialo con motion-studio',
+    alreadyRunning: (p) => `Motion Studio è già avviato: ${p.url}`,
+    running: (p) => `Motion Studio è attivo su ${p.url}`,
+    openManually: (p) => `Apri manualmente ${p.url}`,
+    closeFailed: (p) => `Chiusura non riuscita: ${p.detail}`,
+    portInUse: (p) => `La porta ${p.port} è già in uso: riprova con --port <altra>`,
+  },
   web: {
     theme: { aria: 'Tema', system: 'Sistema', light: 'Chiaro', dark: 'Scuro' },
     codebase: {
