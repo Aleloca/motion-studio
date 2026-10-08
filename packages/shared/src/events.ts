@@ -51,9 +51,9 @@ export interface ApprovalRequest {
 export type ApprovalDecision = 'once' | 'always' | 'deny';
 
 export type ServerMessage =
-  | { type: 'snapshot'; jobs: JobSummary[]; approvals: ApprovalRequest[]; locale: Locale; languageSetting: LanguageSetting }
+  | { type: 'snapshot'; jobs: JobSummary[]; approvals: ApprovalRequest[]; locale: Locale; languageSetting: LanguageSetting; /** What 'system' resolves to on the core's machine. */ systemLocale: Locale }
   /** The language setting changed: the UI switches without reloading. */
-  | { type: 'locale'; locale: Locale; setting: LanguageSetting }
+  | { type: 'locale'; locale: Locale; setting: LanguageSetting; systemLocale: Locale }
   | { type: 'approval'; approval: ApprovalRequest }
   | { type: 'approval_resolved'; id: string; decision: ApprovalDecision | 'expired' | 'cancelled' }
   | { type: 'job'; job: JobSummary }

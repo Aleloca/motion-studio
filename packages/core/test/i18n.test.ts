@@ -37,6 +37,25 @@ describe('detectSystemLocales', () => {
   });
 });
 
+describe('LanguageController.systemLocale', () => {
+  it('is what "system" resolves to, whatever the setting', () => {
+    const c = new LanguageController('en', ['it-IT', 'en']);
+    expect(c.systemLocale).toBe('it');
+    c.set('it');
+    expect(c.systemLocale).toBe('it');
+    expect(new LanguageController('it', ['de-DE']).systemLocale).toBe('en');
+  });
+  it('is reported by the language route next to an explicit choice', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'ms-lang-'));
+    const language = new LanguageController('en', ['it-IT']);
+    language.apply();
+    const app = await buildServer({ uiToken: null, language, appConfig: new AppConfigStore(join(base, 'config')), git: new Git(), runner: new ClaudeCodeRunner(['true']), doctor: async () => [] });
+    try {
+      expect((await app.inject('/api/settings/language')).json()).toEqual({ locale: 'en', languageSetting: 'en', systemLocale: 'it' });
+    } finally { await app.close(); await rm(base, { recursive: true, force: true }); }
+  });
+});
+
 describe('AppConfigStore language', () => {
   it('persists the language setting', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ms-lang-'));
@@ -69,7 +88,7 @@ describe('language routes', () => {
 
   it('reports the current language', async () => {
     const res = await app.inject({ url: '/api/settings/language', headers });
-    expect(res.json()).toEqual({ locale: 'en', languageSetting: 'system' });
+    expect(res.json()).toEqual({ locale: 'en', languageSetting: 'system', systemLocale: 'en' });
   });
   it('requires the UI token and rejects unknown values', async () => {
     expect((await app.inject({ method: 'PUT', url: '/api/settings/language', payload: { language: 'it' } })).statusCode).toBe(401);
@@ -92,7 +111,7 @@ describe('language routes', () => {
     expect(currentLocale()).toBe('it');
     expect(seen).toEqual(['it']);
     for (let i = 0; i < 100 && !messages.some((m) => m.type === 'locale'); i++) await new Promise((r) => setTimeout(r, 20));
-    expect(messages).toContainEqual({ type: 'locale', locale: 'it', setting: 'it' });
+    expect(messages).toContainEqual({ type: 'locale', locale: 'it', setting: 'it', systemLocale: 'en' });
     off();
     await app.inject({ method: 'PUT', url: '/api/settings/language', headers, payload: { language: 'en' } });
     expect(seen).toEqual(['it']);
@@ -123,16 +142,16 @@ describe('language routes', () => {
     language.onChange((locale) => seen.push(locale));
     const res = await app.inject({ method: 'PUT', url: '/api/settings/language', headers, payload: { language: 'it' } });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ locale: 'it', languageSetting: 'it' });
+    expect(res.json()).toEqual({ locale: 'it', languageSetting: 'it', systemLocale: 'en' });
     expect(currentLocale()).toBe('it');
     expect(seen).toEqual(['it']);
     expect((await new AppConfigStore(join(base, 'config')).read()).language).toBe('it');
     for (let i = 0; i < 100 && !messages.some((m) => m.type === 'locale'); i++) await new Promise((r) => setTimeout(r, 20));
-    expect(messages[0]).toMatchObject({ type: 'snapshot', locale: 'en', languageSetting: 'system' });
-    expect(messages).toContainEqual({ type: 'locale', locale: 'it', setting: 'it' });
+    expect(messages[0]).toMatchObject({ type: 'snapshot', locale: 'en', languageSetting: 'system', systemLocale: 'en' });
+    expect(messages).toContainEqual({ type: 'locale', locale: 'it', setting: 'it', systemLocale: 'en' });
     // 'system' goes back to the detected language (de-DE → en).
     const back = await app.inject({ method: 'PUT', url: '/api/settings/language', headers, payload: { language: 'system' } });
-    expect(back.json()).toEqual({ locale: 'en', languageSetting: 'system' });
+    expect(back.json()).toEqual({ locale: 'en', languageSetting: 'system', systemLocale: 'en' });
     ws.close();
   });
 });
@@ -175,7 +194,7 @@ describe('buildServer default language', () => {
     setLocale('it');
     const app = await buildServer({ uiToken: null, appConfig: new AppConfigStore(join(base, 'config')), git: new Git(), runner: new ClaudeCodeRunner(['true']), doctor: async () => [] });
     try {
-      expect((await app.inject('/api/settings/language')).json()).toEqual({ locale: 'en', languageSetting: 'en' });
+      expect((await app.inject('/api/settings/language')).json()).toEqual({ locale: 'en', languageSetting: 'en', systemLocale: 'en' });
     } finally { await app.close(); await rm(base, { recursive: true, force: true }); }
   });
 });

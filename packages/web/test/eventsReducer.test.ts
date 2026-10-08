@@ -7,7 +7,7 @@ const job = (id: string, state: JobSummary['state']): JobSummary => ({ id, key: 
 describe('eventsReducer', () => {
   it('replaces jobs on snapshot and keeps events', () => {
     let s = eventsReducer(initialEventsState, { type: 'agent', jobId: 'a', event: { kind: 'text', text: 'hi' } });
-    s = eventsReducer(s, { type: 'snapshot', jobs: [job('a', 'running')], approvals: [], locale: 'it', languageSetting: 'system' });
+    s = eventsReducer(s, { type: 'snapshot', jobs: [job('a', 'running')], approvals: [], locale: 'it', languageSetting: 'system', systemLocale: 'it' });
     expect(s.jobs).toEqual({ a: job('a', 'running') });
     expect(s.events.a).toHaveLength(1);
   });
@@ -24,6 +24,15 @@ describe('eventsReducer', () => {
     for (let i = 0; i < 2010; i++) s = eventsReducer(s, { type: 'agent', jobId: 'a', event: { kind: 'text', text: String(i) } });
     expect(s.events.a).toHaveLength(2000);
     expect(s.events.a?.[0]).toEqual({ kind: 'text', text: '10' });
+  });
+});
+
+describe('language', () => {
+  it('keeps the system locale from the snapshot and the locale event', () => {
+    let s = eventsReducer(initialEventsState, { type: 'snapshot', jobs: [], approvals: [], locale: 'it', languageSetting: 'system', systemLocale: 'it' });
+    expect(s.language).toEqual({ locale: 'it', setting: 'system', systemLocale: 'it' });
+    s = eventsReducer(s, { type: 'locale', locale: 'en', setting: 'en', systemLocale: 'it' });
+    expect(s.language).toEqual({ locale: 'en', setting: 'en', systemLocale: 'it' });
   });
 });
 
@@ -46,7 +55,7 @@ describe('sessionIdOf', () => {
 describe('approvals', () => {
   const approval = { id: 'a1', jobId: 'j', projectSlug: 'acme', creativeSlug: null, kind: 'tool' as const, title: 't', detail: 'd', toolName: 'Bash', alwaysRule: null, createdAt: 'x', expiresAt: 'y' };
   it('tracks pending approvals from snapshot, add and resolve', () => {
-    let s = eventsReducer(initialEventsState, { type: 'snapshot', jobs: [], approvals: [approval], locale: 'it', languageSetting: 'system' });
+    let s = eventsReducer(initialEventsState, { type: 'snapshot', jobs: [], approvals: [approval], locale: 'it', languageSetting: 'system', systemLocale: 'it' });
     expect(Object.keys(s.approvals)).toEqual(['a1']);
     s = eventsReducer(s, { type: 'approval_resolved', id: 'a1', decision: 'deny' });
     expect(s.approvals).toEqual({});

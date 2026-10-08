@@ -38,7 +38,7 @@ describe('approvals, settings and export in English', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Request already handled'));
   });
   it('shows settings sections and key states in English', async () => {
-    en(<SettingsPage settings={settings} checks={checks} language="en" onLanguage={() => {}} onSaved={() => {}} />);
+    en(<SettingsPage settings={settings} checks={checks} language="en" systemLocale="en" onLanguage={() => {}} onSaved={() => {}} />);
     expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy();
     await waitFor(() => screen.getByText('Stored in keychain'));
     expect(screen.getByText('From environment variable')).toBeTruthy();

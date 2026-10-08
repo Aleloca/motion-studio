@@ -3,7 +3,8 @@ import { createContext, useContext, useEffect, type ReactNode } from 'react';
 
 /** Language used outside a provider and before the first snapshot: the browser's preferred languages. */
 const systemLocale = (): Locale => resolveLocale('system', typeof navigator === 'undefined' ? [] : navigator.languages);
-export interface LanguageState { locale: Locale; setting: LanguageSetting }
+/** `systemLocale` is what 'system' resolves to on the core's machine. */
+export interface LanguageState { locale: Locale; setting: LanguageSetting; systemLocale: Locale }
 
 /** The language of the mounted provider, for code that runs outside React (API error texts). */
 let active: Locale | null = null;
@@ -33,7 +34,7 @@ export function currentMessages(): Messages {
   return messages(active ?? systemLocale());
 }
 
-/** The browser's own language (used for the "System (…)" label). */
+/** The browser's own language: the "System (…)" label before the first snapshot tells the core's. */
 export function detectedLocale(): Locale {
   return systemLocale();
 }

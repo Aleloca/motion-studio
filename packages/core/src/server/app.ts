@@ -260,7 +260,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return settings;
   });
 
-  const languageState = () => ({ locale: language.locale, languageSetting: language.setting });
+  const languageState = () => ({ locale: language.locale, languageSetting: language.setting, systemLocale: language.systemLocale });
   app.get('/api/settings/language', async () => languageState());
   app.put<{ Body: { language?: unknown } }>('/api/settings/language', async (req, reply) => {
     const value = req.body?.language;
@@ -269,7 +269,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return languageLock.run('language', async () => {
       await deps.appConfig.setLanguage(value);
       language.set(value);
-      hub.broadcast({ type: 'locale', locale: language.locale, setting: value });
+      hub.broadcast({ type: 'locale', locale: language.locale, setting: value, systemLocale: language.systemLocale });
       return languageState();
     });
   });

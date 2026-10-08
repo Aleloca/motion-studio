@@ -24,7 +24,7 @@ beforeEach(() => vi.clearAllMocks());
 
 describe('SettingsPage', () => {
   it('shows key status without values and saves a new key', async () => {
-    render(<SettingsPage settings={settings} checks={checks} language="system" onLanguage={() => {}} onSaved={() => {}} />);
+    render(<SettingsPage settings={settings} checks={checks} language="system" systemLocale="it" onLanguage={() => {}} onSaved={() => {}} />);
     await waitFor(() => screen.getByText('Configurata nel portachiavi'));
     expect(screen.getByText('Gestita da PEXELS_API_KEY')).toBeTruthy();
     expect((screen.getByLabelText('Nuova chiave Pexels') as HTMLInputElement).disabled).toBe(true);
@@ -39,7 +39,7 @@ describe('SettingsPage', () => {
   });
   it('updates security, costs and domains', async () => {
     const onSaved = vi.fn();
-    render(<SettingsPage settings={settings} checks={checks} language="system" onLanguage={() => {}} onSaved={onSaved} />);
+    render(<SettingsPage settings={settings} checks={checks} language="system" systemLocale="it" onLanguage={() => {}} onSaved={onSaved} />);
     expect(screen.getByText("Sandbox attiva: l'agente lavora isolato nella cartella del progetto")).toBeTruthy();
     await userEvent.click(screen.getByLabelText('Chiedi conferma prima di usare provider a pagamento'));
     await waitFor(() => expect(api.updateSettings).toHaveBeenCalledWith({ confirmPaidProviders: false }));
@@ -52,15 +52,15 @@ describe('SettingsPage', () => {
   });
   it('says the sandbox is active only when it is on in the settings and available', () => {
     const active = "Sandbox attiva: l'agente lavora isolato nella cartella del progetto";
-    const { unmount } = render(<SettingsPage settings={{ ...settings, sandboxMode: 'off' }} checks={checks} language="system" onLanguage={() => {}} onSaved={() => {}} />);
+    const { unmount } = render(<SettingsPage settings={{ ...settings, sandboxMode: 'off' }} checks={checks} language="system" systemLocale="it" onLanguage={() => {}} onSaved={() => {}} />);
     expect(screen.queryByText(active)).toBeNull();
     unmount();
-    render(<SettingsPage settings={settings} checks={[{ ...checks[0]!, ok: false, message: 'Isolamento disattivato nelle Impostazioni' }]} language="system" onLanguage={() => {}} onSaved={() => {}} />);
+    render(<SettingsPage settings={settings} checks={[{ ...checks[0]!, ok: false, message: 'Isolamento disattivato nelle Impostazioni' }]} language="system" systemLocale="it" onLanguage={() => {}} onSaved={() => {}} />);
     expect(screen.queryByText(active)).toBeNull();
     expect(screen.getByText('Isolamento disattivato nelle Impostazioni')).toBeTruthy();
   });
   it('lists the stored domains that were ignored because invalid', () => {
-    render(<SettingsPage settings={{ ...settings, droppedDomains: ['printer.local', '*.co.uk'] }} checks={checks} language="system" onLanguage={() => {}} onSaved={() => {}} />);
+    render(<SettingsPage settings={{ ...settings, droppedDomains: ['printer.local', '*.co.uk'] }} checks={checks} language="system" systemLocale="it" onLanguage={() => {}} onSaved={() => {}} />);
     expect(screen.getByText('Domini ignorati perché non validi: printer.local, *.co.uk')).toBeTruthy();
   });
 });

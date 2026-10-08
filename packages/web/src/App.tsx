@@ -1,4 +1,4 @@
-import type { DoctorCheck, LanguageSetting, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
+import type { DoctorCheck, LanguageSetting, Locale, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api.ts';
 import { ApprovalsIndicator } from './components/ApprovalsIndicator.tsx';
@@ -9,7 +9,7 @@ import { NewCreative } from './screens/NewCreative.tsx';
 import { ProjectList } from './screens/ProjectList.tsx';
 import { SettingsPage } from './screens/SettingsPage.tsx';
 import { ProjectPage } from './screens/ProjectPage.tsx';
-import { detectedLocale, I18nProvider, useT, type LanguageState } from './i18n.tsx';
+import { detectedLocale, I18nProvider, useLocale, useT, type LanguageState } from './i18n.tsx';
 import { href, parseRoute } from './routes.ts';
 import { usePairingNeeded } from './uiToken.ts';
 import type { EventsState } from './eventsReducer.ts';
@@ -35,13 +35,14 @@ export function App() {
   const locale = language?.locale ?? detectedLocale();
   return (
     <I18nProvider locale={locale}>
-      <AppBody live={live} language={language?.setting ?? 'system'} onLanguage={setChosen} />
+      <AppBody live={live} language={language?.setting ?? 'system'} systemLocale={language?.systemLocale ?? detectedLocale()} onLanguage={setChosen} />
     </I18nProvider>
   );
 }
 
-function AppBody({ live, language, onLanguage }: { live: EventsState; language: LanguageSetting; onLanguage(next: LanguageState): void }) {
+function AppBody({ live, language, systemLocale, onLanguage }: { live: EventsState; language: LanguageSetting; systemLocale: Locale; onLanguage(next: LanguageState): void }) {
   const t = useT();
+  const locale = useLocale();
   const [checks, setChecks] = useState<DoctorCheck[] | null>(null);
   const [ws, setWs] = useState<WorkspaceInfo | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -71,6 +72,16 @@ function AppBody({ live, language, onLanguage }: { live: EventsState; language: 
     api.getWorkspace().then((w) => { setWs(w); if (w.settings) applyTheme(w.settings.theme); }).catch(fail);
   }, []);
   useEffect(refresh, [refresh]);
+  // The core writes the doctor texts in its current language: reload them after a switch (the first load is above).
+  const doctorLocale = useRef(locale);
+  useEffect(() => {
+    if (doctorLocale.current === locale) return;
+    doctorLocale.current = locale;
+    let stale = false;
+    // The previous checks stay on screen until the new ones arrive (no flash of the onboarding).
+    api.getDoctor().then((c) => { if (!stale) setChecks(c); }).catch(() => { /* keep the previous checks */ });
+    return () => { stale = true; };
+  }, [locale]);
   // Paired again (a new link was pasted): reload what failed while the token was refused.
   const wasPairing = useRef(pairing);
   useEffect(() => {
@@ -129,7 +140,7 @@ function AppBody({ live, language, onLanguage }: { live: EventsState; language: 
       {r.name === 'new-creative' && <NewCreative key={r.slug} slug={r.slug} />}
       {r.name === 'creative' && <CreativePage key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} expert={settings.expertMode} />}
       {r.name === 'projects' && <ProjectList />}
-      {r.name === 'settings' && <SettingsPage settings={settings} checks={checks} language={language} onLanguage={onLanguage} onSaved={(next) => { applyTheme(next.theme); setWs((prev) => (prev ? { ...prev, settings: next } : prev)); }} />}
+      {r.name === 'settings' && <SettingsPage settings={settings} checks={checks} language={language} systemLocale={systemLocale} onLanguage={onLanguage} onSaved={(next) => { applyTheme(next.theme); setWs((prev) => (prev ? { ...prev, settings: next } : prev)); }} />}
     </>
   );
 }

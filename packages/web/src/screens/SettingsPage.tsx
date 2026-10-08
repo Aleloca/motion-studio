@@ -1,7 +1,7 @@
-import { LOCALES, type DoctorCheck, type LanguageSetting, type ProviderId, type SecretStatus, type WorkspaceSettings, type WorkspaceSettingsView } from '@motion-studio/shared';
+import { LOCALES, type DoctorCheck, type LanguageSetting, type Locale, type ProviderId, type SecretStatus, type WorkspaceSettings, type WorkspaceSettingsView } from '@motion-studio/shared';
 import { useEffect, useState } from 'react';
 import { api } from '../api.ts';
-import { detectedLocale, useT, type LanguageState } from '../i18n.tsx';
+import { useT, type LanguageState } from '../i18n.tsx';
 
 const PROVIDERS: Array<[ProviderId, string, string]> = [['openai', 'OpenAI', 'OPENAI_API_KEY'], ['elevenlabs', 'ElevenLabs', 'ELEVENLABS_API_KEY'], ['pexels', 'Pexels', 'PEXELS_API_KEY'], ['unsplash', 'Unsplash', 'UNSPLASH_ACCESS_KEY']];
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -26,13 +26,13 @@ function KeyRow({ id, label, env, status, onChange }: { id: ProviderId; label: s
   );
 }
 
-function LanguageSelector({ value, onChange }: { value: LanguageSetting; onChange(next: LanguageState): void }) {
+function LanguageSelector({ value, systemLocale, onChange }: { value: LanguageSetting; systemLocale: Locale; onChange(next: LanguageState): void }) {
   const t = useT();
   const [error, setError] = useState<string | null>(null);
-  const options: Array<[LanguageSetting, string]> = [['system', t.web.settings.languageSystem({ detected: t.web.settings.languageNames[detectedLocale()] })], ...LOCALES.map((l): [LanguageSetting, string] => [l, t.web.settings.languageNames[l]])];
+  const options: Array<[LanguageSetting, string]> = [['system', t.web.settings.languageSystem({ detected: t.web.settings.languageNames[systemLocale] })], ...LOCALES.map((l): [LanguageSetting, string] => [l, t.web.settings.languageNames[l]])];
   const choose = async (setting: LanguageSetting) => {
     setError(null);
-    try { const r = await api.setLanguage(setting); onChange({ locale: r.locale, setting: r.languageSetting }); }
+    try { const r = await api.setLanguage(setting); onChange({ locale: r.locale, setting: r.languageSetting, systemLocale: r.systemLocale }); }
     catch (e) { setError(t.web.settings.languageFailed({ detail: msg(e) })); }
   };
   return (
@@ -48,7 +48,7 @@ function LanguageSelector({ value, onChange }: { value: LanguageSetting; onChang
   );
 }
 
-export function SettingsPage({ settings, checks, language, onLanguage, onSaved }: { settings: WorkspaceSettingsView; checks: DoctorCheck[] | null; language: LanguageSetting; onLanguage(next: LanguageState): void; onSaved(next: WorkspaceSettings): void }) {
+export function SettingsPage({ settings, checks, language, systemLocale, onLanguage, onSaved }: { settings: WorkspaceSettingsView; checks: DoctorCheck[] | null; language: LanguageSetting; systemLocale: Locale; onLanguage(next: LanguageState): void; onSaved(next: WorkspaceSettings): void }) {
   const t = useT();
   const s = t.web.settingsUi;
   const [secrets, setSecrets] = useState<SecretStatus[]>([]);
@@ -62,7 +62,7 @@ export function SettingsPage({ settings, checks, language, onLanguage, onSaved }
     <main className="page stack" style={{ maxWidth: 900 }}>
       <h1 style={{ margin: 0, fontSize: 24 }}>{s.title}</h1>
       {error && <p role="alert" className="error">{error}</p>}
-      <LanguageSelector value={language} onChange={onLanguage} />
+      <LanguageSelector value={language} systemLocale={systemLocale} onChange={onLanguage} />
       <section className="card stack" aria-label={s.providerKeys}>
         <h2 style={{ margin: 0, fontSize: 17 }}>{s.providerKeys}</h2>
         <p className="muted" style={{ margin: 0, fontSize: 13 }}>{s.keysNote}</p>

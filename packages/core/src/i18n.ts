@@ -35,6 +35,8 @@ export class LanguageController {
 
   get setting(): LanguageSetting { return this.current_; }
   get locale(): Locale { return currentLocale(); }
+  /** What 'system' resolves to (shown as "System (…)" in Settings). */
+  get systemLocale(): Locale { return resolveLocale('system', this.systemLocales); }
 
   /** Sets the process-wide locale from the current setting (startup). */
   apply(): void { setLocale(resolveLocale(this.current_, this.systemLocales)); }

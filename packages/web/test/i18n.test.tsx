@@ -14,6 +14,8 @@ vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { App } = await import('../src/App.tsx');
 const { I18nProvider, formatDate, formatNumber, useLocale, useT } = await import('../src/i18n.tsx');
 const { SettingsPage } = await import('../src/screens/SettingsPage.tsx');
+const { markPairingNeeded, resetUiTokenForTests } = await import('../src/uiToken.ts');
+const { browserLanguages } = await import('./setup-locale.ts');
 
 const sockets: FakeWebSocket[] = [];
 class FakeWebSocket {
@@ -30,7 +32,7 @@ function Probe() {
   return <span>{useLocale()}:{t.common.cancel}</span>;
 }
 
-afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); sockets.length = 0; document.documentElement.lang = ''; });
+afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); sockets.length = 0; document.documentElement.lang = ''; history.replaceState(null, '', '/'); });
 
 describe('I18nProvider', () => {
   it('serves the catalog of its locale and sets the document language', () => {
@@ -57,31 +59,88 @@ describe('language switching', () => {
     api.getWorkspace.mockResolvedValue({ path: '/w', settings, error: null });
     render(<App />);
     expect(await screen.findByText('Impostazioni')).toBeTruthy();
-    await send({ type: 'snapshot', jobs: [], approvals: [], locale: 'en', languageSetting: 'system' });
+    await send({ type: 'snapshot', jobs: [], approvals: [], locale: 'en', languageSetting: 'system', systemLocale: 'en' });
     await waitFor(() => expect(document.documentElement.lang).toBe('en'));
-    await send({ type: 'locale', locale: 'it', setting: 'it' });
+    expect(await screen.findByText('Settings')).toBeTruthy();
+    expect(screen.queryByText('Impostazioni')).toBeNull();
+    await send({ type: 'locale', locale: 'it', setting: 'it', systemLocale: 'en' });
     await waitFor(() => expect(document.documentElement.lang).toBe('it'));
+    expect(await screen.findByText('Impostazioni')).toBeTruthy();
+    expect(screen.queryByText('Settings')).toBeNull();
+  });
+  it('applies the result of a change made in Settings without waiting for the server event', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    history.replaceState(null, '', '/#/settings');
+    api.getDoctor.mockResolvedValue(checks);
+    api.getWorkspace.mockResolvedValue({ path: '/w', settings, error: null });
+    api.setLanguage.mockResolvedValue({ locale: 'en', languageSetting: 'en', systemLocale: 'it' });
+    render(<App />);
+    await send({ type: 'snapshot', jobs: [], approvals: [], locale: 'it', languageSetting: 'system', systemLocale: 'it' });
+    await userEvent.click(await screen.findByRole('radio', { name: 'English' }));
+    expect(await screen.findByRole('heading', { name: 'Settings' })).toBeTruthy();
+    expect(document.documentElement.lang).toBe('en');
+    expect(screen.getByRole('radio', { name: 'English' }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByRole('radio', { name: 'System (Italiano)' })).toBeTruthy();
+  });
+  it('labels System with the language the core resolved, not the browser one', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    history.replaceState(null, '', '/#/settings');
+    api.getDoctor.mockResolvedValue(checks);
+    api.getWorkspace.mockResolvedValue({ path: '/w', settings, error: null });
+    render(<App />);
+    await send({ type: 'snapshot', jobs: [], approvals: [], locale: 'en', languageSetting: 'system', systemLocale: 'en' });
+    expect(await screen.findByRole('radio', { name: 'System (English)' })).toBeTruthy();
+    await send({ type: 'locale', locale: 'it', setting: 'it', systemLocale: 'en' });
+    expect(await screen.findByRole('radio', { name: 'Sistema (English)' })).toBeTruthy();
+  });
+  it('reloads the doctor checks in the new language', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    history.replaceState(null, '', '/#/settings');
+    let lang: 'it' | 'en' = 'it';
+    const sandbox = (): DoctorCheck[] => [...checks, { id: 'sandbox', label: 'Sandbox', ok: false, required: false, message: lang === 'it' ? 'Sandbox non disponibile' : 'Sandbox unavailable' }];
+    api.getDoctor.mockImplementation(async () => sandbox());
+    api.getWorkspace.mockResolvedValue({ path: '/w', settings, error: null });
+    render(<App />);
+    expect(await screen.findByText('Sandbox non disponibile')).toBeTruthy();
+    await send({ type: 'snapshot', jobs: [], approvals: [], locale: 'it', languageSetting: 'system', systemLocale: 'it' });
+    expect(api.getDoctor).toHaveBeenCalledTimes(1);
+    lang = 'en';
+    await send({ type: 'locale', locale: 'en', setting: 'en', systemLocale: 'it' });
+    expect(await screen.findByText('Sandbox unavailable')).toBeTruthy();
+    expect(screen.queryByText('Sandbox non disponibile')).toBeNull();
+    expect(api.getDoctor).toHaveBeenCalledTimes(2);
+  });
+  it('before the first snapshot follows the browser, English when it has no languages', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    browserLanguages([]);
+    api.getDoctor.mockResolvedValue(checks);
+    api.getWorkspace.mockResolvedValue({ path: '/w', settings, error: null });
+    render(<App />);
+    act(() => markPairingNeeded());
+    try {
+      expect(await screen.findByText('Open Motion Studio from the link shown in the terminal')).toBeTruthy();
+    } finally { resetUiTokenForTests(); }
   });
 });
 
 describe('language selector', () => {
   it('lists System with the detected language and each language in its own', () => {
-    render(<I18nProvider locale="en"><SettingsPage settings={settings} checks={checks} language="system" onLanguage={() => {}} onSaved={() => {}} /></I18nProvider>);
+    render(<I18nProvider locale="en"><SettingsPage settings={settings} checks={checks} language="system" systemLocale="it" onLanguage={() => {}} onSaved={() => {}} /></I18nProvider>);
     const group = screen.getByRole('radiogroup', { name: 'Language' });
-    expect(group.textContent).toMatch(/^System \((English|Italiano)\)EnglishItaliano$/);
+    expect(group.textContent).toBe('System (Italiano)EnglishItaliano');
     expect(screen.getByRole('radio', { name: /^System/ }).getAttribute('aria-checked')).toBe('true');
   });
   it('saves the choice and applies it at once', async () => {
-    api.setLanguage.mockResolvedValue({ locale: 'it', languageSetting: 'it' });
+    api.setLanguage.mockResolvedValue({ locale: 'it', languageSetting: 'it', systemLocale: 'en' });
     const onLanguage = vi.fn();
-    render(<I18nProvider locale="en"><SettingsPage settings={settings} checks={checks} language="system" onLanguage={onLanguage} onSaved={() => {}} /></I18nProvider>);
+    render(<I18nProvider locale="en"><SettingsPage settings={settings} checks={checks} language="system" systemLocale="it" onLanguage={onLanguage} onSaved={() => {}} /></I18nProvider>);
     await userEvent.click(screen.getByRole('radio', { name: 'Italiano' }));
-    await waitFor(() => expect(onLanguage).toHaveBeenCalledWith({ locale: 'it', setting: 'it' }));
+    await waitFor(() => expect(onLanguage).toHaveBeenCalledWith({ locale: 'it', setting: 'it', systemLocale: 'en' }));
     expect(api.setLanguage).toHaveBeenCalledWith('it');
   });
   it('shows why a change failed', async () => {
     api.setLanguage.mockRejectedValue(new Error('boom'));
-    render(<I18nProvider locale="en"><SettingsPage settings={settings} checks={checks} language="system" onLanguage={() => {}} onSaved={() => {}} /></I18nProvider>);
+    render(<I18nProvider locale="en"><SettingsPage settings={settings} checks={checks} language="system" systemLocale="it" onLanguage={() => {}} onSaved={() => {}} /></I18nProvider>);
     await userEvent.click(screen.getByRole('radio', { name: 'English' }));
     expect((await screen.findByRole('alert')).textContent).toBe('Language not changed: boom');
   });
