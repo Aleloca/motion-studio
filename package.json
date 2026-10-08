@@ -7,6 +7,7 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "pnpm -r typecheck",
+    "check:i18n": "node scripts/check-i18n.mjs",
     "build": "pnpm --filter @motion-studio/web build && pnpm --filter @motion-studio/cli build",
     "dev": "pnpm --parallel --filter @motion-studio/core --filter @motion-studio/web dev",
     "motion-studio": "pnpm build && node apps/cli/dist/main.js"

@@ -1,119 +1,127 @@
 # Motion Studio
 
-App locale e open-source per creare video in motion graphics e immagini usando il tuo agente di coding (inizialmente **Claude Code**). Descrivi cosa vuoi, scegli canali e formati: l'agente produce una ricomposizione dedicata per ogni formato. Tutto resta sul tuo computer: i progetti sono cartelle con file JSON/Markdown versionate con git.
+🇮🇹 [Italiano](README.it.md)
 
-<!-- screenshot: aggiungere -->
+A local, open-source app for creating motion-graphics videos and images with your coding agent (initially **Claude Code**). Describe what you want, pick channels and formats: the agent produces a dedicated recomposition for each format. Everything stays on your computer: projects are folders of JSON/Markdown files versioned with git.
 
-> Il design completo è in `docs/superpowers/specs/`. Guide per chi sviluppa: [CONTRIBUTING.md](CONTRIBUTING.md), [contratto di output](docs/output-contract.md), [provider](docs/providers.md), [backend dell'agente](docs/agent-backends.md).
+<!-- screenshot: add -->
 
-## Installazione
+> The full design is in `docs/superpowers/specs/`. Developer guides: [CONTRIBUTING.md](CONTRIBUTING.md), [output contract](docs/output-contract.md), [providers](docs/providers.md), [agent backends](docs/agent-backends.md).
 
-**App desktop (Electron).** Scarica l'installer dalla pagina *Releases* di GitHub del progetto, quando sarà pubblicato (macOS: Apple Silicon `arm64` e Intel `x64`). Le build non firmate (quelle senza i certificati dei maintainer) richiedono un passaggio in più la prima volta:
-- macOS: clic destro sull'app, poi **Apri** (e conferma); un doppio clic normale viene bloccato da Gatekeeper.
-- Gli aggiornamenti automatici dell'app (controllo all'avvio, installazione al riavvio) richiedono build **firmate** su macOS; con una build non firmata aggiorna scaricando a mano la nuova versione.
+## Language
+Motion Studio is available in English and Italian. On first launch it uses your system language (Italian if your first preferred language is Italian, English otherwise). Change it in **Settings → Language** (System / English / Italiano): the interface, the desktop menus and the messages of the terminal launcher switch language, and the agent replies, and writes the texts meant for you, in the chosen language. To add another language, see [CONTRIBUTING.md](CONTRIBUTING.md#adding-a-language).
 
-**Da npm.** `npx @motion-studio/cli` (il comando installato si chiama `motion-studio`), quando sarà pubblicato. Per pubblicarlo serve l'organizzazione npm `motion-studio`. Finché non lo è, usa i sorgenti.
+Texts saved in the past (validation problems in a version, conversation messages, brand guidelines) are not translated; only new texts use the current language.
 
-**Dai sorgenti.**
+## Installation
+
+**Desktop app (Electron).** Download the installer from the project's GitHub *Releases* page, once it is published (macOS: Apple Silicon `arm64` and Intel `x64`). Unsigned builds (those without the maintainers' certificates) need an extra step the first time:
+- macOS: right-click the app, then **Open** (and confirm); a normal double-click is blocked by Gatekeeper.
+- Automatic app updates (check at launch, install on restart) require **signed** builds on macOS; with an unsigned build, update by downloading the new version by hand.
+
+**From npm.** `npx @motion-studio/cli` (the installed command is called `motion-studio`), once it is published. Publishing it requires the `motion-studio` npm organization. Until then, use the sources.
+
+**From source.**
 ```bash
 pnpm install
-pnpm motion-studio        # build + avvio su http://127.0.0.1:4317 e apertura del browser
+pnpm motion-studio        # build + start on http://127.0.0.1:4317 and open the browser
 ```
 
-Opzioni del launcher (dopo il nome dello script, es. `pnpm motion-studio --port 5000 --no-open`):
-- `--port <n>` — porta del server locale (1–65535, predefinita 4317).
-- `--no-open` — non aprire il browser (se l'apertura non riesce, il launcher stampa l'indirizzo da aprire a mano).
-- `--print-url` — stampa l'indirizzo del Motion Studio già avviato, senza avviarne un altro (utile se hai chiuso la scheda).
+Launcher options (after the script name, e.g. `pnpm motion-studio --port 5000 --no-open`):
+- `--port <n>` — port of the local server (1–65535, default 4317).
+- `--no-open` — do not open the browser (if opening fails, the launcher prints the address to open by hand).
+- `--print-url` — print the address of the Motion Studio that is already running, without starting another one (useful if you closed the tab).
 
-L'indirizzo stampato all'avvio contiene un codice di accesso (`#t=…`): apri Motion Studio da quel link. Il browser lo ricorda; se l'interfaccia chiede di riaprirla dal link del terminale, usa `--print-url`. L'app desktop apre da sola la propria finestra.
+The address printed at startup contains an access code (`#t=…`): open Motion Studio from that link. The browser remembers it; if the interface asks you to reopen it from the terminal link, use `--print-url`. The desktop app opens its own window.
 
-Per ogni cartella di configurazione gira un solo Motion Studio: se è già avviato (dal terminale o come app desktop), `motion-studio` stampa `Motion Studio è già avviato: <indirizzo>`, lo apre nel browser (salvo `--no-open`) e termina, e l'app desktop apre quell'indirizzo invece di avviarne un altro (se quel Motion Studio si chiude, l'app propone di riavviarsi).
+Only one Motion Studio runs per configuration folder: if one is already running (from the terminal or as the desktop app), `motion-studio` prints `Motion Studio is already running: <address>`, opens it in the browser (unless `--no-open`) and exits, and the desktop app opens that address instead of starting another (if that Motion Studio quits, the app offers to restart).
 
-## Requisiti
-- [Claude Code](https://docs.claude.com/claude-code) installato e autenticato (`claude auth login`)
+## Requirements
+- [Claude Code](https://docs.claude.com/claude-code) installed and signed in (`claude auth login`)
 - Git
-- FFmpeg (consigliato: senza, gli output risultano "non verificati")
-- Node.js 22+ per `npx` e per i sorgenti (non serve per l'app desktop)
+- FFmpeg (recommended: without it, outputs are shown as "unverified")
+- Node.js 22+ for `npx` and the sources (not needed for the desktop app)
 
-## Come funziona
-1. In un progetto apri **Creatività → + Nuova creatività**, descrivi cosa vuoi, scegli canali e formati e premi **Genera**.
-2. L'agente lavora in `creatives/<data-titolo>/work/` e consegna in `outputs/vN/` un file per formato più `manifest.json` ([contratto completo](docs/output-contract.md)).
-3. Motion Studio controlla gli output (presenza, risoluzione, durata; con ffmpeg/ffprobe installati li verifica davvero): se qualcosa non torna chiede all'agente di correggere, fino a 3 tentativi in totale; poi salva la versione, anche se incompleta.
-4. Ogni versione è un commit git del progetto. Dalla pagina della creatività puoi aprire un formato, aggiungere commenti su un punto/istante, chiedere modifiche, confrontare versioni e ripartire da una versione precedente.
+## How it works
+1. In a project, open **Creatives → + New creative**, describe what you want, pick channels and formats and press **Generate**.
+2. The agent works in `creatives/<date-title>/work/` and delivers, in `outputs/vN/`, one file per format plus `manifest.json` ([full contract](docs/output-contract.md)).
+3. Motion Studio checks the outputs (presence, resolution, duration; with ffmpeg/ffprobe installed it really verifies them): if something is off it asks the agent to fix it, up to 3 attempts in total; then it saves the version, even if incomplete.
+4. Each version is a git commit of the project. From the creative's page you can open a format, add comments on a spot/moment, ask for changes, compare versions and restart from an earlier version.
 
-### Esporta
-Dalla pagina della creatività, **Esporta…** copia gli output di una versione in una cartella a tua scelta (nell'app desktop c'è anche **Scegli cartella…**). I file si chiamano `<slug>-<formato>-vN.<estensione>` (es. `lancio-instagram-reel-9x16-v2.mp4`); non sovrascrive mai nulla (se il nome esiste aggiunge `-2`, `-3`…) e rifiuta destinazioni dentro il workspace di Motion Studio. Gli output non esportabili (file mancante o non regolare) vengono saltati e l'interfaccia li elenca.
+### Export
+From the creative's page, **Export…** copies the outputs of a version into a folder of your choice (the desktop app also has **Choose folder…**). Files are named `<slug>-<format>-vN.<extension>` (e.g. `launch-instagram-reel-9x16-v2.mp4`); it never overwrites anything (if the name exists it appends `-2`, `-3`…) and refuses destinations inside the Motion Studio workspace. Outputs that cannot be exported (missing or irregular file) are skipped and the interface lists them.
 
-### Aggiungere formati
-Se in una creatività già generata aggiungi formati al brief e premi di nuovo **Genera**, Motion Studio chiede all'agente di aggiungere solo i formati mancanti riusando i sorgenti già presenti in `work/` e lo stesso stile della versione precedente; nella richiesta include il comando di render registrato nel manifest (`renderCommand`), se c'è. È l'agente a eseguirlo e ad adattarlo: Motion Studio non lancia il comando da solo, e ogni formato nuovo è comunque una ricomposizione.
+### Adding formats
+If you add formats to the brief of an already generated creative and press **Generate** again, Motion Studio asks the agent to add only the missing formats, reusing the sources already in `work/` and the same style as the previous version; the request includes the render command recorded in the manifest (`renderCommand`), if there is one. The agent runs and adapts it: Motion Studio does not run the command itself, and every new format is still a recomposition.
 
-Limiti attuali: la rigenerazione dei soli formati è quindi guidata dall'agente, non un render automatico del comando del manifest; le build desktop firmate dipendono dai certificati dei maintainer (vedi Rilascio). Su Ubuntu 24.04 e successive l'AppImage può non avviarsi perché il sistema limita i namespace utente non privilegiati (AppArmor, `kernel.apparmor_restrict_unprivileged_userns`), che servono alla sandbox di Chromium: serve un profilo AppArmor per l'app (o, a tuo rischio, disattivare quella restrizione); evita `--no-sandbox`, che toglie l'isolamento della finestra.
+Current limits: regenerating only the new formats is therefore driven by the agent, not an automatic render of the manifest command; signed desktop builds depend on the maintainers' certificates (see Release). On Ubuntu 24.04 and later the AppImage may fail to start because the system restricts unprivileged user namespaces (AppArmor, `kernel.apparmor_restrict_unprivileged_userns`), which Chromium's sandbox needs: you need an AppArmor profile for the app (or, at your own risk, disable that restriction); avoid `--no-sandbox`, which removes the window's isolation.
 
-## Sicurezza
-- **Sandbox dell'agente** (macOS; Linux con `bubblewrap` e `socat`): ogni lavoro dell'agente gira isolato. Può scrivere solo nella cartella del progetto, non può leggere cartelle sensibili (`~/.ssh`, credenziali cloud, portachiavi, configurazione di Motion Studio). La rete dipende dal lavoro: creatività e console usano solo registri di pacchetti, CDN e i domini che aggiungi in **Impostazioni → Rete**; l'analisi brand non ha rete nella sandbox: legge le pagine con `WebFetch` e scarica loghi e font solo con lo strumento `download_file` di Motion Studio, che blocca gli indirizzi privati o locali (controllati sull'IP risolto, a ogni redirect); la descrizione degli asset non ha rete. La sandbox non ripiega sull'esecuzione libera: se non riesce ad avviarsi i comandi non partono, e l'agente non può chiedere di eseguire un comando fuori da essa.
-- **File che configurano Motion Studio e l'agente**: in ogni lavoro, con o senza sandbox, l'agente non può modificare `.git/`, `.claude/`, `.studio/`, `CLAUDE.md`, `CLAUDE.local.md` e `.mcp.json` del progetto; Motion Studio esegue git senza hook del progetto.
-- **Codebase collegate**: leggibili, mai scrivibili (anche dagli interpreti, grazie alla sandbox); Motion Studio segnala comunque se una codebase git cambia durante un turno.
-- **Approvazioni**: tutto ciò che esce dal perimetro (es. installare un programma, scrivere fuori dal progetto) compare come richiesta nella pagina del lavoro e in alto a destra: *Consenti una volta*, *Sempre per questo progetto* (revocabile in Impostazioni del progetto) o *Nega*. "Sempre per questo progetto" è offerto solo per una breve lista di comandi sicuri (`ls`, `mkdir`, `ffprobe`, ottimizzatori di immagini), per cartelle fuori dalle posizioni sensibili e dal workspace, per domini web e per i provider a pagamento; gli altri comandi si approvano una volta per volta. Le regole stanno in `<progetto>/.studio/permissions.json`, protetto dall'agente. Senza risposta entro 10 minuti la richiesta viene negata.
-- **Chiavi API**: nel portachiavi del sistema (o nelle variabili d'ambiente `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `PEXELS_API_KEY`, `UNSPLASH_ACCESS_KEY`); l'agente non le vede mai: le variabili delle chiavi vengono tolte dall'ambiente dell'agente (e del suo server MCP) e gli strumenti MCP chiedono a Motion Studio di chiamare i provider.
-- **Costi**: generazioni di immagini e voci chiedono conferma prima di ogni chiamata (disattivabile in Impostazioni con **Chiedi conferma prima di usare provider a pagamento**).
-- **Codice di accesso dell'interfaccia**: le API di Motion Studio rispondono solo all'interfaccia aperta dal link del terminale (il codice sta in `ui-token` nella cartella di configurazione). È una difesa contro richieste locali estranee, per esempio pagine web aperte nel browser o programmi che non conoscono il codice; non è una barriera contro un processo dello stesso utente che può leggere la cartella di configurazione.
-- **Senza sandbox** (Windows, Linux senza bubblewrap, o isolamento disattivato): Motion Studio usa l'elenco ristretto di comandi della fase precedente e lo segnala nel Doctor e nelle Impostazioni. Senza sandbox i comandi consentiti (node, python, npm/npx, pip, ffmpeg) possono leggere e scrivere ovunque e contattare Motion Studio stesso: usa la sandbox. In particolare un interprete avviato dall'agente potrebbe modificare `.studio/permissions.json`: Motion Studio accetta solo regole nei formati che "Sempre per questo progetto" può produrre (comandi sicuri, cartelle fuori dalle posizioni sensibili e dal workspace, domini web, conferme dei provider), quindi l'agente potrebbe concedersi quei permessi o saltare la conferma di costo di un provider, ma non andare oltre quei limiti.
-- **Output non verificati:** senza ffmpeg/ffprobe installati Motion Studio non può controllare davvero risoluzione e durata, e mostra gli output come "non verificati".
+## Security
+- **Agent sandbox** (macOS; Linux with `bubblewrap` and `socat`): every agent job runs isolated. It can only write in the project folder and cannot read sensitive folders (`~/.ssh`, cloud credentials, keychains, the Motion Studio configuration). The network depends on the job: creatives and the console use only package registries, CDNs and the domains you add in **Settings → Network**; brand analysis has no network in the sandbox: it reads pages with `WebFetch` and downloads logos and fonts only with Motion Studio's `download_file` tool, which blocks private or local addresses (checked on the resolved IP, at every redirect); asset description has no network. The sandbox does not fall back to unrestricted execution: if it cannot start, commands do not run, and the agent cannot ask to run a command outside it.
+- **Files that configure Motion Studio and the agent**: in every job, with or without the sandbox, the agent cannot modify the project's `.git/`, `.claude/`, `.studio/`, `CLAUDE.md`, `CLAUDE.local.md` and `.mcp.json`; Motion Studio runs git without the project's hooks.
+- **Linked codebases**: readable, never writable (interpreters included, thanks to the sandbox); Motion Studio still reports it if a git codebase changes during a turn.
+- **Approvals**: anything outside the perimeter (e.g. installing a program, writing outside the project) appears as a request on the job's page and at the top right: *Allow once*, *Always for this project* (revocable in the project's settings) or *Deny*. "Always for this project" is offered only for a short list of safe commands (`ls`, `mkdir`, `ffprobe`, image optimizers), for folders outside sensitive locations and the workspace, for web domains and for paid providers; other commands are approved one at a time. Rules live in `<project>/.studio/permissions.json`, protected from the agent. With no answer within 10 minutes the request is denied.
+- **API keys**: in the system keychain (or in the `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `PEXELS_API_KEY`, `UNSPLASH_ACCESS_KEY` environment variables); the agent never sees them: the key variables are removed from the agent's environment (and its MCP server's) and the MCP tools ask Motion Studio to call the providers.
+- **Costs**: image and voice generations ask for confirmation before each call (can be turned off in Settings with **Ask before using paid providers**).
+- **Interface access code**: Motion Studio's APIs answer only to the interface opened from the terminal link (the code is in `ui-token` in the configuration folder). It is a defense against stray local requests, for example web pages open in the browser or programs that do not know the code; it is not a barrier against a process of the same user that can read the configuration folder.
+- **Without the sandbox** (Windows, Linux without bubblewrap, or isolation turned off): Motion Studio uses the restricted command list of the previous phase and reports it in the Doctor and in Settings. Without the sandbox the allowed commands (node, python, npm/npx, pip, ffmpeg) can read and write anywhere and contact Motion Studio itself: use the sandbox. In particular, an interpreter started by the agent could modify `.studio/permissions.json`: Motion Studio accepts only rules in the formats that "Always for this project" can produce (safe commands, folders outside sensitive locations and the workspace, web domains, provider confirmations), so the agent could grant itself those permissions or skip a provider's cost confirmation, but not go beyond those limits.
+- **Unverified outputs:** without ffmpeg/ffprobe installed, Motion Studio cannot really check resolution and duration, and shows the outputs as "unverified".
 
-## Provider
-| Strumento | Provider | Chiave |
+## Providers
+| Tool | Provider | Key |
 |---|---|---|
-| Immagini | OpenAI gpt-image-2 | `OPENAI_API_KEY` |
-| Voce fuori campo | OpenAI TTS, ElevenLabs | `OPENAI_API_KEY`, `ELEVENLABS_API_KEY` |
-| Foto e video stock | Pexels, Unsplash | `PEXELS_API_KEY`, `UNSPLASH_ACCESS_KEY` |
-| Font | Google Fonts | nessuna |
+| Images | OpenAI gpt-image-2 | `OPENAI_API_KEY` |
+| Voice-over | OpenAI TTS, ElevenLabs | `OPENAI_API_KEY`, `ELEVENLABS_API_KEY` |
+| Stock photos and videos | Pexels, Unsplash | `PEXELS_API_KEY`, `UNSPLASH_ACCESS_KEY` |
+| Fonts | Google Fonts | none |
 
-Gli asset di stock conservano l'attribuzione richiesta da Pexels e Unsplash (campo `attribution` in `assets/assets.json`).
+Stock assets keep the attribution required by Pexels and Unsplash (`attribution` field in `assets/assets.json`). Details in [docs/providers.md](docs/providers.md).
 
-## Brand, asset e codebase collegate
-- **Brand**: palette, font, loghi, tono, cose da fare e da evitare, stile fotografico; ogni voce mostra da dove arriva (manuale, sito, immagine). Le linee guida discorsive sono in `brand/guidelines.md`.
-- **Analisi brand**: aggiungi uno o più siti (e le immagini di riferimento con "Usa per l'analisi brand") e premi **Analizza brand**. L'agente visita i siti, scarica gli asset utili in `assets/` e propone modifiche: le applichi voce per voce, le voci inserite a mano non vengono mai rimosse. L'agente lavora su copie: brand kit, linee guida, sorgenti e metadati di asset e riferimenti non possono essere modificati dagli strumenti di modifica e, se l'agente li cambia comunque, Motion Studio annulla la modifica e lo segnala.
-- **Asset e riferimenti**: carica file trascinandoli, filtra per tipo e origine, aggiungi descrizioni e tag (anche con **Descrivi con l'agente**).
-- **Codebase collegate** (Impostazioni del progetto o della singola creatività): cartelle del tuo computer che l'agente può leggere; gli strumenti di modifica sono bloccati su ogni turno e, se una cartella è un repository git e risulta modificata dopo un turno, la conversazione lo segnala. Non puoi collegare la cartella del progetto o del workspace, una cartella che le contiene né una cartella al loro interno.
+## Brand, assets and linked codebases
+- **Brand**: palette, fonts, logos, tone, dos and don'ts, photographic style; each entry shows where it comes from (manual, website, image). The prose guidelines are in `brand/guidelines.md`.
+- **Brand analysis**: add one or more websites (and reference images with "Use for brand analysis") and press **Analyze brand**. The agent visits the sites, downloads useful assets into `assets/` and proposes changes: you apply them entry by entry, and manually entered entries are never removed. The agent works on copies: the brand kit, guidelines, sources and asset and reference metadata cannot be modified by the editing tools and, if the agent changes them anyway, Motion Studio reverts the change and reports it.
+- **Assets and references**: upload files by dragging them, filter by type and origin, add descriptions and tags (also with **Describe with the agent**).
+- **Linked codebases** (project or single-creative Settings): folders on your computer that the agent can read; editing tools are blocked on every turn and, if a folder is a git repository and shows changes after a turn, the conversation reports it. You cannot link the project or workspace folder, a folder that contains them, or a folder inside them.
 
-Con la sandbox attiva gli interpreti non possono scrivere nelle codebase collegate. Senza sandbox le regole bloccano solo gli strumenti di modifica dell'agente: gli interpreti (per esempio node o python) potrebbero comunque scrivere nella cartella. Motion Studio rileva e segnala le modifiche solo nelle cartelle che sono repository git; per le altre le modifiche non verrebbero rilevate. Collega preferibilmente repository git con le modifiche già committate.
+With the sandbox on, interpreters cannot write into linked codebases. Without the sandbox, the rules block only the agent's editing tools: interpreters (for example node or python) could still write into the folder. Motion Studio detects and reports changes only in folders that are git repositories; for the others, changes would not be detected. Prefer linking git repositories with their changes already committed.
 
-Consiglio generale: analizza solo siti di cui ti fidi.
+General advice: analyze only websites you trust.
 
-## Limiti attuali dell'agente
-- **Console del progetto:** con la sandbox attiva i comandi girano isolati; fuori dalla sandbox l'agente può modificare i file del progetto, ma le richieste che richiedono un'approvazione compaiono nell'interfaccia (vedi Sicurezza).
-- **Provider di immagini, voce e stock:** sono descritti in [docs/providers.md](docs/providers.md) ma non sono stati verificati dal vivo con chiavi reali (i test usano risposte simulate).
+## Current agent limits
+- **Project console:** with the sandbox on, commands run isolated; outside the sandbox the agent can modify the project's files, but requests that need an approval appear in the interface (see Security).
+- **Image, voice and stock providers:** they are described in [docs/providers.md](docs/providers.md) but have not been verified live with real keys (tests use simulated responses).
 
-## Sviluppo
+## Development
 ```bash
 pnpm install
-pnpm dev                  # core (tsx watch, porta 4317) + web (Vite, porta 5173 con proxy /api); il core stampa il link con il codice di accesso
-pnpm test                 # tutti i test (usano un finto `claude`, nessun consumo di quota)
-npx vitest run packages/core/test/server.test.ts   # un singolo file (dalla radice del repository)
+pnpm dev                  # core (tsx watch, port 4317) + web (Vite, port 5173 with /api proxy); the core prints the link with the access code
+pnpm test                 # all tests (they use a fake `claude`, no quota used)
+npx vitest run packages/core/test/server.test.ts   # a single file (from the repository root)
 pnpm typecheck
-pnpm build                # web + bundle del pacchetto npm (apps/cli/dist)
-pnpm motion-studio        # build + avvio del pacchetto locale
+pnpm check:i18n           # flags Italian text left in the code outside the language catalogs
+pnpm build                # web + npm package bundle (apps/cli/dist)
+pnpm motion-studio        # build + start the local package
 
-pnpm --filter motion-studio-desktop dev        # app Electron in sviluppo (prima: `pnpm --filter @motion-studio/web build && pnpm --filter motion-studio-desktop build`)
-pnpm --filter motion-studio-desktop smoke      # avvio di prova dell'app con una configurazione temporanea
-pnpm --filter motion-studio-desktop dist:dir   # app non impacchettata in apps/desktop/release (solo l'architettura di questo computer)
-pnpm --filter motion-studio-desktop dist:mac   # installer locale (dist:win, dist:linux; senza argomento: la piattaforma corrente)
+pnpm --filter motion-studio-desktop dev        # Electron app in development (first: `pnpm --filter @motion-studio/web build && pnpm --filter motion-studio-desktop build`)
+pnpm --filter motion-studio-desktop smoke      # trial start of the app with a temporary configuration
+pnpm --filter motion-studio-desktop dist:dir   # unpackaged app in apps/desktop/release (only this computer's architecture)
+pnpm --filter motion-studio-desktop dist:mac   # local installer (dist:win, dist:linux; no argument: the current platform)
 ```
 
-Variabili utili:
-- `MOTION_STUDIO_CONFIG_DIR` — dove salvare la config dell'app (percorso del workspace).
-- `MOTION_STUDIO_CLAUDE_COMMAND` — comando dell'agente come array JSON, es. `["node","/percorso/fake-claude.mjs"]`.
+Useful variables:
+- `MOTION_STUDIO_CONFIG_DIR` — where to store the app configuration (workspace path).
+- `MOTION_STUDIO_CLAUDE_COMMAND` — the agent command as a JSON array, e.g. `["node","/path/fake-claude.mjs"]`.
 
-Per contribuire vedi [CONTRIBUTING.md](CONTRIBUTING.md).
+To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Rilascio
-Per i maintainer. Allinea la versione in `apps/desktop/package.json` e `apps/cli/package.json`, poi crea e pubblica il tag `vX.Y.Z` corrispondente: ogni job del workflow `.github/workflows/release.yml` si ferma subito se il tag non coincide con entrambe le versioni. Il workflow costruisce l'app desktop su macOS (`arm64` e `x64`), Windows e Linux e crea una **bozza** di release su GitHub con gli installer (da pubblicare a mano); in parallelo, se `NPM_TOKEN` è presente, pubblica `@motion-studio/cli` su npm (un errore in una build desktop non lo blocca). La CI (`ci.yml`) esegue i test a ogni push su `main` e sulle pull request.
+## Release
+For maintainers. Align the version in `apps/desktop/package.json` and `apps/cli/package.json`, then create and push the matching `vX.Y.Z` tag: every job of the `.github/workflows/release.yml` workflow stops immediately if the tag does not match both versions. The workflow builds the desktop app on macOS (`arm64` and `x64`), Windows and Linux and creates a **draft** GitHub release with the installers (to be published by hand); in parallel, if `NPM_TOKEN` is present, it publishes `@motion-studio/cli` to npm (a failure in a desktop build does not block it). CI (`ci.yml`) runs the type check, the i18n check and the tests on every push to `main` and on pull requests.
 
-Segreti del repository usati dal workflow (tutti facoltativi: senza, la build è non firmata o l'npm viene saltato):
-- macOS (firma e notarizzazione): `MAC_CERT_P12_BASE64`, `MAC_CERT_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`. Senza `MAC_CERT_P12_BASE64` la firma è disattivata; la notarizzazione parte solo se ci sono il certificato (`MAC_CERT_P12_BASE64`) e tutti e tre i segreti `APPLE_*`, altrimenti è disattivata esplicitamente.
+Repository secrets used by the workflow (all optional: without them the build is unsigned or npm is skipped):
+- macOS (signing and notarization): `MAC_CERT_P12_BASE64`, `MAC_CERT_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`. Without `MAC_CERT_P12_BASE64` signing is off; notarization runs only if the certificate (`MAC_CERT_P12_BASE64`) and all three `APPLE_*` secrets are present, otherwise it is explicitly off.
 - Windows: `WIN_CERT_PFX_BASE64`, `WIN_CERT_PASSWORD`.
 - npm: `NPM_TOKEN`.
-- `GITHUB_TOKEN` è fornito da GitHub Actions.
+- `GITHUB_TOKEN` is provided by GitHub Actions.
 
-## Licenza
+## License
 MIT

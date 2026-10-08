@@ -1,46 +1,47 @@
-# Provider
+# Providers
 
-I provider sono servizi esterni che l'agente usa tramite strumenti MCP del server `studio`. L'agente non vede mai le chiavi: chiede a Motion Studio (il core) di chiamare il provider; il core legge la chiave, fa la chiamata e salva il risultato in `assets/`, registrandolo in `assets/assets.json`.
+Providers are external services the agent uses through MCP tools of the `studio` server. The agent never sees the keys: it asks Motion Studio (the core) to call the provider; the core reads the key, makes the call and saves the result in `assets/`, recording it in `assets/assets.json`.
 
-> Stato di verifica: i provider sono coperti da test con `fetch` simulato. Immagini, voce e stock non sono stati provati dal vivo con chiavi reali: i dettagli qui sotto descrivono il codice, non una garanzia sul comportamento dei servizi (modelli, prezzi e API cambiano).
+> Verification status: providers are covered by tests with a simulated `fetch`. Images, voice and stock have not been tried live with real keys: the details below describe the code, not a guarantee about the services' behavior (models, prices and APIs change).
 
-## Dove stanno le chiavi
-- Nel portachiavi del sistema (`@napi-rs/keyring`, servizio "Motion Studio", una voce per provider; su Linux Secret Service), impostate da **Impostazioni**.
-- Oppure nelle variabili d'ambiente, che hanno la precedenza: `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `PEXELS_API_KEY`, `UNSPLASH_ACCESS_KEY`.
-- Le chiavi non finiscono nei file del progetto. Le variabili sono rimosse dall'ambiente dell'agente e del suo server MCP; i messaggi di errore dei provider sono ripuliti dalle chiavi (`redact`).
-- Una chiave mancante produce l'errore "Configura la chiave <Provider> nelle Impostazioni di Motion Studio"; nella richiesta all'agente gli strumenti non configurati compaiono come "non configurato".
+## Where the keys live
+- In the system keychain (`@napi-rs/keyring`, service "Motion Studio", one entry per provider; Secret Service on Linux), set from **Settings**.
+- Or in environment variables, which take precedence: `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `PEXELS_API_KEY`, `UNSPLASH_ACCESS_KEY`.
+- Keys do not end up in project files. The variables are removed from the environment of the agent and its MCP server; provider error messages are scrubbed of keys (`redact`).
+- A missing key produces the error "Set the <Provider> key in the Motion Studio settings" (shown in the language chosen in Settings → Language); in the request to the agent, unconfigured tools appear as "not configured".
 
-## Costi e conferme
-`generate_image` e `tts` sono a pagamento: se l'opzione **Chiedi conferma prima di usare provider a pagamento** è attiva nelle Impostazioni (predefinito), ogni chiamata compare come richiesta nella pagina del lavoro (*Consenti una volta*, *Sempre per questo progetto*, *Nega*; senza risposta in 10 minuti viene negata). "Sempre" salva la regola `provider:openai-images`, `provider:tts-openai` o `provider:tts-elevenlabs` in `<progetto>/.studio/permissions.json`. La ricerca e il download di stock e i font non chiedono conferma (non sono a pagamento).
+## Costs and confirmations
+`generate_image` and `tts` are paid: if the option **Ask before using paid providers** is on in Settings (default), every call appears as a request on the job's page (*Allow once*, *Always for this project*, *Deny*; with no answer in 10 minutes it is denied). "Always" saves the rule `provider:openai-images`, `provider:tts-openai` or `provider:tts-elevenlabs` in `<project>/.studio/permissions.json`. Stock search and download and fonts do not ask for confirmation (they are not paid).
 
-## Immagini: OpenAI gpt-image-2 (`generate_image`)
-- Chiave: `OPENAI_API_KEY`. Modello `gpt-image-2`, uscita PNG.
-- Parametri: `prompt`, `width`, `height`, `quality` (`low|medium|high|auto`), `background` (`transparent|opaque|auto`), `references` (fino a 16 immagini del progetto, png/jpg/webp, per la modifica), `name`.
-- Le dimensioni vengono portate al formato supportato più vicino (multipli di 16, proporzioni tra 1:3 e 3:1, tra circa 0,65 e 8,3 megapixel, lato massimo 3840); se cambiano, la risposta lo segnala.
-- Il file va in `assets/generated/`, con origine "generato" e tag `gpt-image-2`.
+## Images: OpenAI gpt-image-2 (`generate_image`)
+- Key: `OPENAI_API_KEY`. Model `gpt-image-2`, PNG output.
+- Parameters: `prompt`, `width`, `height`, `quality` (`low|medium|high|auto`), `background` (`transparent|opaque|auto`), `references` (up to 16 project images, png/jpg/webp, for editing), `name`.
+- Sizes are brought to the nearest supported format (multiples of 16, aspect ratio between 1:3 and 3:1, between about 0.65 and 8.3 megapixels, longest side 3840); if they change, the response says so.
+- The file goes in `assets/generated/`, with origin "generated" and tag `gpt-image-2`.
 
-## Voce fuori campo: OpenAI TTS ed ElevenLabs (`tts`)
-- Chiavi: `OPENAI_API_KEY` (modello `gpt-4o-mini-tts`, voce predefinita `marin`, testo fino a 4096 caratteri, istruzioni di tono facoltative) oppure `ELEVENLABS_API_KEY` (modello `eleven_multilingual_v2`, testo fino a 5000 caratteri; senza voce indicata usa la prima della lista dell'account).
-- Se il provider non è indicato usa OpenAI quando la chiave c'è, altrimenti ElevenLabs.
-- Formati `mp3` (predefinito) e `wav`; file in `assets/audio/`, con attribuzione "Voce generata con AI (<Provider>)".
+## Voice-over: OpenAI TTS and ElevenLabs (`tts`)
+- Keys: `OPENAI_API_KEY` (model `gpt-4o-mini-tts`, default voice `marin`, text up to 4096 characters, optional tone instructions) or `ELEVENLABS_API_KEY` (model `eleven_multilingual_v2`, text up to 5000 characters; with no voice given it uses the first in the account's list).
+- If the provider is not given, it uses OpenAI when the key is present, otherwise ElevenLabs.
+- Formats `mp3` (default) and `wav`; files in `assets/audio/`, with the attribution "AI-generated voice (<Provider>)" (in the language set in Settings).
 
-## Foto e video stock: Pexels e Unsplash (`stock_search`, `stock_download`)
-- Chiavi: `PEXELS_API_KEY`, `UNSPLASH_ACCESS_KEY`. Unsplash offre solo foto; i video vanno cercati su Pexels.
-- Ricerca: `query`, `kind` (`photo|video`), `orientation`, `limit` (1–20). Download per `id`: file in `assets/stock/`.
-- Attribuzione: ogni download registra il testo richiesto dal servizio (es. "Foto di <autore> su Pexels") nel campo `attribution` di `assets/assets.json`; per Unsplash il download notifica anche l'evento di download e il link sorgente contiene i parametri `utm`. Conserva l'attribuzione dove la licenza la richiede.
-- Limite di 200 MB per file. Per i video Pexels sceglie l'mp4 più grande fino a 1920 px di larghezza.
+## Stock photos and videos: Pexels and Unsplash (`stock_search`, `stock_download`)
+- Keys: `PEXELS_API_KEY`, `UNSPLASH_ACCESS_KEY`. Unsplash offers only photos; search videos on Pexels.
+- Search: `query`, `kind` (`photo|video`), `orientation`, `limit` (1–20). Download by `id`: file in `assets/stock/`.
+- Attribution: every download records the text the service requires (e.g. "Photo by <author> on Pexels") in the `attribution` field of `assets/assets.json`; for Unsplash the download also notifies the download event and the source link carries the `utm` parameters. Keep the attribution wherever the license requires it.
+- 200 MB limit per file. For videos Pexels picks the largest mp4 up to 1920 px wide.
 
-## Font: Google Fonts (`fonts_fetch`)
-- Nessuna chiave. Parametri: `family`, `weights` (multipli di 100, predefiniti 400 e 700), `italic`. File in `assets/fonts/`.
-- Accetta solo file serviti da `fonts.gstatic.com`. Licenza OFL o Apache 2.0 (la risposta lo ricorda).
+## Fonts: Google Fonts (`fonts_fetch`)
+- No key. Parameters: `family`, `weights` (multiples of 100, default 400 and 700), `italic`. Files in `assets/fonts/`.
+- Accepts only files served from `fonts.gstatic.com`. OFL or Apache 2.0 license (the response reminds you).
 
-## Download dall'esterno: `download_file` (analisi brand)
-Solo per l'analisi brand, la cui sandbox non ha rete: scarica un logo, un'immagine o un font da un sito in `assets/brand/` o `assets/fonts/` (estensioni di immagine e font, massimo 50 MB). Tutti i download di URL forniti dall'esterno (anche quelli dei provider) passano da `safe-fetch.ts`: indirizzi privati, locali o riservati sono rifiutati controllando gli IP risolti a ogni redirect, e la connessione avviene proprio verso l'indirizzo controllato. I provider accettano solo https.
+## Downloads from outside: `download_file` (brand analysis)
+Only for brand analysis, whose sandbox has no network: downloads a logo, image or font from a website into `assets/brand/` or `assets/fonts/` (image and font extensions, 50 MB maximum). All downloads of externally supplied URLs (provider ones too) go through `safe-fetch.ts`: private, local or reserved addresses are refused by checking the resolved IPs at every redirect, and the connection goes to the very address that was checked. Providers accept only https.
 
-## Come aggiungere un provider
-1. **Modulo** in `packages/core/src/providers/<nome>.ts`: funzioni pure che ricevono `HttpDeps & { apiKey }` (`fetch`, `transport`, `lookup`) e usano `requestJson`/`requestBytes` di `http.ts` con `secrets: [apiKey]` (errori puliti dalle chiavi, limiti di dimensione). Per scaricare URL restituiti dal servizio usa `safeDownload`.
-2. **Chiave**: aggiungi l'id in `PROVIDER_IDS` (`packages/shared`) e la variabile in `PROVIDER_ENV` (`secrets/vault.ts`); le variabili in `PROVIDER_ENV` vengono tolte automaticamente dall'ambiente dell'agente. Aggiungi la voce nelle Impostazioni della web app.
-3. **Strumento bridge** in `packages/core/src/bridge/provider-tools.ts`: un handler in `providerTools` (valida gli argomenti, `allowed(c, '<tool>')`, `keyOf`, `confirmPaid` se costa, `saveGeneratedFile` e `register` per salvare e registrare l'asset) e una riga in `availableTools`.
-4. **Autorizzazione per tipo di lavoro**: aggiungi il nome in `MCP_TOOLS` (`agent/launcher.ts`) per i lavori che possono usarlo.
-5. **Schema MCP** in `packages/mcp-studio/src/server.mjs` (elenco `TOOLS`, con descrizione in italiano).
-6. **Test** con `fetch` iniettato (vedi `openai-images.test.ts`, `stock.test.ts`, `provider-tools.test.ts`): mai chiamate di rete reali né chiavi vere.
+## Adding a provider
+1. **Module** in `packages/core/src/providers/<name>.ts`: pure functions that take `HttpDeps & { apiKey }` (`fetch`, `transport`, `lookup`) and use `requestJson`/`requestBytes` from `http.ts` with `secrets: [apiKey]` (errors scrubbed of keys, size limits). To download URLs returned by the service use `safeDownload`.
+2. **Key**: add the id to `PROVIDER_IDS` (`packages/shared`) and the variable to `PROVIDER_ENV` (`secrets/vault.ts`); the variables in `PROVIDER_ENV` are automatically removed from the agent's environment. Add the entry in the web app's Settings.
+3. **Bridge tool** in `packages/core/src/bridge/provider-tools.ts`: a handler in `providerTools` (validates the arguments, `allowed(c, '<tool>')`, `keyOf`, `confirmPaid` if it costs, `saveGeneratedFile` and `register` to save and record the asset) and a line in `availableTools`.
+4. **Authorization per job type**: add the name to `MCP_TOOLS` (`agent/launcher.ts`) for the jobs that may use it.
+5. **MCP schema** in `packages/mcp-studio/src/server.mjs` (`TOOLS` list, with an English description: it is agent-facing text).
+6. **Tests** with an injected `fetch` (see `openai-images.test.ts`, `stock.test.ts`, `provider-tools.test.ts`): never real network calls or real keys.
+7. **Texts**: any message shown to the user goes in the language catalogs (`packages/shared/src/i18n`), not in the code; `pnpm check:i18n` flags Italian text left behind.
