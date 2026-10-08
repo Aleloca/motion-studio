@@ -110,7 +110,7 @@ export function CreativePage({ slug, creative, live }: { slug: string; creative:
             {panel === 'chat' && (
               <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={job} live={job ? live.events[job.id] ?? [] : []}
                 pins={pins} onRemovePin={(i) => setPins((p) => p.filter((_, k) => k !== i))} formatName={(id) => presets.find((p) => p.id === id)?.name ?? id}
-                canGenerate={versions.length === 0} onSent={() => { setPins([]); setUserPicked(false); reload(); }} onSelectVersion={pick} />
+                canGenerate={versions.length === 0} onSent={() => { setPins([]); setUserPicked(false); reload(); }} onSelectVersion={pick} snapshots={live.snapshots} />
             )}
             {/* Kept mounted while hidden, so an unsaved brief draft survives tab switches. */}
             <div hidden={panel !== 'brief'} style={{ display: panel === 'brief' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>

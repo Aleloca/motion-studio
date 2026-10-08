@@ -46,6 +46,8 @@ export interface ConversationProps {
   canGenerate?: boolean;
   onSent?(): void;
   onSelectVersion?(n: number): void;
+  /** Socket snapshots received (EventsState.snapshots): a new one is the core's whole state, so stop waiting. */
+  snapshots?: number;
 }
 
 type Item =
@@ -108,7 +110,7 @@ function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], r
  * only in "Activity details", the job's approvals in the flow, typing dots while the agent works (T9), and the
  * composer with the pending comment chips and ⌘↵.
  */
-export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, formatName, canGenerate, onSent, onSelectVersion }: ConversationProps) {
+export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, formatName, canGenerate, onSent, onSelectVersion, snapshots }: ConversationProps) {
   const t = useT();
   const c = t.web.chat;
   const working = active(job);
@@ -194,7 +196,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
           </Row>
         ))}
       </ol>
-      <Composer slug={slug} creative={creative} job={working ? job : undefined} latestJobId={job?.id} pins={pins} onRemovePin={onRemovePin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} />
+      <Composer slug={slug} creative={creative} job={working ? job : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} />
     </div>
   );
 }
@@ -341,8 +343,11 @@ function Details({ events }: { events: AgentEvent[] }) {
   );
 }
 
-function Composer({ slug, creative, job, latestJobId, pins, onRemovePin, formatName, canGenerate, onSent }: {
-  slug: string; creative: string; job: JobSummary | undefined; latestJobId: string | undefined; pins: Pin[]; onRemovePin?(i: number): void; formatName?(id: string): string; canGenerate?: boolean; onSent?(): void;
+/** Longest wait for the job a send started before the composer unlocks anyway. */
+export const AWAIT_JOB_MS = 10_000;
+
+function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemovePin, formatName, canGenerate, onSent }: {
+  slug: string; creative: string; job: JobSummary | undefined; latestJobId: string | undefined; snapshots: number | undefined; pins: Pin[]; onRemovePin?(i: number): void; formatName?(id: string): string; canGenerate?: boolean; onSent?(): void;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -355,9 +360,24 @@ function Composer({ slug, creative, job, latestJobId, pins, onRemovePin, formatN
   // Id of the job a successful send started, until that job reaches this panel: no second send in between.
   const [awaiting, setAwaiting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const stopAwaiting = () => { setAwaiting(null); inFlight.current = false; };
   useEffect(() => {
-    if (awaiting && latestJobId === awaiting) { setAwaiting(null); inFlight.current = false; }
+    if (awaiting && latestJobId === awaiting) stopAwaiting();
   }, [awaiting, latestJobId]);
+  // Never blocked for good: the job message may be lost (socket down, core restarted between the POST and the
+  // broadcast). After AWAIT_JOB_MS, or on a new snapshot (the core's full state), the composer unlocks; a second
+  // turn sent too early is refused by the core with a 409, which the error message explains.
+  useEffect(() => {
+    if (!awaiting) return;
+    const id = setTimeout(stopAwaiting, AWAIT_JOB_MS);
+    return () => clearTimeout(id);
+  }, [awaiting]);
+  const lastSnapshots = useRef(snapshots);
+  useEffect(() => {
+    if (snapshots === lastSnapshots.current) return;
+    lastSnapshots.current = snapshots;
+    stopAwaiting();
+  }, [snapshots]);
   const busy = Boolean(job) || sending || awaiting !== null;
   const canSend = !busy && (text.trim().length > 0 || pins.length > 0);
 

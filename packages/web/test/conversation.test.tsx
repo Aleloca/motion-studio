@@ -45,7 +45,7 @@ const agent = (min: number, event: AgentEvent, jobId = 'j1'): ConversationEntry 
 const text = (t: string): AgentEvent => ({ kind: 'text', text: t });
 
 const props = { slug: 'acme', creative: 'c1', approvals: [] as ApprovalRequest[], job: undefined as JobSummary | undefined, live: [] as AgentEvent[], pins: [] as Pin[], onRemovePin: vi.fn(), onSent: vi.fn(), onSelectVersion: vi.fn() };
-type Props = Partial<typeof props> & { entries: ConversationEntry[]; canGenerate?: boolean };
+type Props = Partial<typeof props> & { entries: ConversationEntry[]; canGenerate?: boolean; snapshots?: number };
 const view = (p: Props) => <I18nProvider locale="en"><Conversation {...props} {...p} /></I18nProvider>;
 
 beforeEach(() => {
@@ -230,6 +230,37 @@ describe('Conversation composer guards', () => {
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(false);
     fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
     await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledTimes(2));
+  });
+
+  it('unlocks after a bounded wait when the started job never arrives', async () => {
+    vi.useFakeTimers();
+    try {
+      api.sendCreativeTurn.mockResolvedValueOnce({ ...running, id: 'j9' } as never);
+      render(view({ entries: [], job: done }));
+      const box = screen.getByLabelText('Request a change');
+      const send = screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement;
+      fireEvent.change(box, { target: { value: 'Hello' } });
+      await act(async () => { fireEvent.keyDown(box, { key: 'Enter', metaKey: true }); });
+      fireEvent.change(box, { target: { value: 'Next' } });
+      expect(send.disabled).toBe(true);
+      await act(async () => { vi.advanceTimersByTime(9_000); });
+      expect(send.disabled).toBe(true);
+      await act(async () => { vi.advanceTimersByTime(1_000); });
+      expect(send.disabled).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('unlocks when a new socket snapshot arrives', async () => {
+    api.sendCreativeTurn.mockResolvedValueOnce({ ...running, id: 'j9' } as never);
+    const { rerender } = render(view({ entries: [], job: done, snapshots: 1 } as Props));
+    const box = screen.getByLabelText('Request a change');
+    await userEvent.type(box, 'Hello');
+    fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledTimes(1));
+    await userEvent.type(box, 'Next');
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true);
+    rerender(view({ entries: [], job: done, snapshots: 2 } as Props));
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('explains a failed send, keeps the text and allows a retry', async () => {
