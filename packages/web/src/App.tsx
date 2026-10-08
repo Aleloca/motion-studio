@@ -1,10 +1,11 @@
 import type { ApprovalRequest, DoctorCheck, LanguageSetting, Locale, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
-import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { api } from './api.ts';
-import { detectedLocale, I18nProvider, useLocale, useT, type LanguageState } from './i18n.tsx';
+import { detectedLocale, I18nProvider, useLocale, type LanguageState } from './i18n.tsx';
 import { PageHost, type PageMode } from './motion/index.ts';
 import { depthOf, href, parseRoute, projectOf, routeKey, type Route } from './routes.ts';
-import { AssetsPage } from './screens/AssetsPage.tsx';
+import { AppSettings } from './screens/AppSettings.tsx';
+import { Assets } from './screens/Assets.tsx';
 import { Brand } from './screens/Brand.tsx';
 import { CreativeCanvas } from './screens/CreativeCanvas.tsx';
 import { FormatView } from './screens/FormatView.tsx';
@@ -14,14 +15,13 @@ import { ProjectConsole } from './screens/ProjectConsole.tsx';
 import { ProjectCreatives } from './screens/ProjectCreatives.tsx';
 import { Projects } from './screens/Projects.tsx';
 import { ProjectSettings } from './screens/ProjectSettings.tsx';
-import { ReferencesPage } from './screens/ReferencesPage.tsx';
-import { SettingsPage } from './screens/SettingsPage.tsx';
+import { References } from './screens/References.tsx';
 import { Welcome, type WelcomeProps } from './screens/Welcome.tsx';
 import { useCatalog } from './shell/catalog.ts';
 import { CommandPalette } from './shell/CommandPalette.tsx';
 import { go, isMac, ShellContext, type ActivityTab, type Shell } from './shell/ShellContext.tsx';
 import { TopBar } from './shell/TopBars.tsx';
-import { useAttention } from './shell/useAttention.ts';
+import { useAttention, useReadyNotice } from './shell/useAttention.ts';
 import { applyTheme } from './theme.ts';
 import { Spinner, Toasts } from './ui/index.ts';
 import { usePairingNeeded } from './uiToken.ts';
@@ -80,6 +80,8 @@ function AppBody({ live, language, systemLocale, onLanguage }: Props) {
     else setActivity((a) => ({ open: true, tab: 'needs', seq: a.seq + 1 }));
   }, []);
   useAttention(approvals.length, approvals, { onReview: review, snapshot: live.snapshots ?? 0 });
+  // "When a creative is ready" (Settings → Notifications), while the app is in the background.
+  useReadyNotice(live.jobs);
 
   // A recheck keeps the previous checks on screen (no step jump in the setup) and flags `checking`; `checkRun` counts
   // the completed runs, so the setup reveals the rows again only after an actual recheck (not a language reload).
@@ -167,7 +169,7 @@ interface ShellProps extends Props {
 
 /**
  * The app shell (spec §6.1, §7): the bar of the current route over a full-height stage where pages change with T1
- * (direction from the route depth) and project tabs with T2. Old screens render inside until later tasks replace them.
+ * (direction from the route depth) and project tabs with T2.
  */
 function AppShell({ route, live, settings, checks, activity, setActivity, language, systemLocale, onLanguage, onSettings, setup }: ShellProps) {
   const current = projectOf(route);
@@ -216,16 +218,17 @@ function AppShell({ route, live, settings, checks, activity, setActivity, langua
     openPalette: () => setPalette(true),
   }), [route, live, catalog, activity, setActivity]);
 
-  const expert = settings?.expertMode ?? false;
   const render = (r: Route) => {
     switch (r.name) {
       case 'projects': return <Projects live={live} />;
-      case 'project': return <ProjectHost route={r} live={live} expert={expert} />;
+      case 'project': return <ProjectHost route={r} live={live} settings={settings} onSettings={onSettings} />;
       case 'new-creative': return <NewCreative key={r.slug} slug={r.slug} />;
       case 'creative': return <CreativeCanvas key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} />;
       case 'format': return <FormatView key={`${r.slug}/${r.creative}/${r.format}`} slug={r.slug} creative={r.creative} format={r.format} live={live} />;
-      // Every section maps to the current settings page until the new one (Task 15).
-      case 'settings': return settings ? <SettingsPage settings={settings} checks={checks} language={language} systemLocale={systemLocale} onLanguage={onLanguage} onSaved={onSettings} /> : null;
+      case 'settings': return settings ? (
+        <AppSettings section={r.section} settings={settings} checks={checks} checking={Boolean(setup.checking)} checksRun={setup.checksRun ?? 0}
+          loadError={setup.loadError ?? null} onRecheck={setup.onRecheck} language={language} systemLocale={systemLocale} onLanguage={onLanguage} onSettings={onSettings} />
+      ) : null;
       // The setup: a full page without the bar, at depth 0.
       case 'welcome': return <Welcome {...setup} step={r.step} />;
     }
@@ -250,41 +253,18 @@ function sharedElement(a: Route, b: Route): PageMode {
   return pair(a, b) || pair(b, a) ? 'shared' : undefined;
 }
 
-/**
- * A project page: its tabs (in the project bar) change in place with T2 (soft fade and 6 px lift). Creatives and Brand
- * are redesigned screens; the other tabs keep their current screens until their tasks replace them.
- */
-function ProjectHost({ route, live, expert }: { route: Extract<Route, { name: 'project' }>; live: EventsState; expert: boolean }) {
-  return <PageHost route={route} keyOf={(r) => r.tab} soft render={(r) => <ProjectTabPage route={r} live={live} expert={expert} />} />;
+/** A project page: its tabs (in the project bar) change in place with T2 (soft fade and 6 px lift). */
+function ProjectHost({ route, live, settings, onSettings }: { route: Extract<Route, { name: 'project' }>; live: EventsState; settings: WorkspaceInfo['settings']; onSettings(next: WorkspaceSettings): void }) {
+  return <PageHost route={route} keyOf={(r) => r.tab} soft render={(r) => <ProjectTabPage route={r} live={live} settings={settings} onSettings={onSettings} />} />;
 }
 
-function ProjectTabPage({ route: { slug, tab }, live, expert }: { route: Extract<Route, { name: 'project' }>; live: EventsState; expert: boolean }) {
-  const tick = live.projectTicks[slug] ?? 0;
+function ProjectTabPage({ route: { slug, tab }, live, settings, onSettings }: { route: Extract<Route, { name: 'project' }>; live: EventsState; settings: WorkspaceInfo['settings']; onSettings(next: WorkspaceSettings): void }) {
   switch (tab) {
     case 'creatives': return <ProjectCreatives key={slug} slug={slug} live={live} />;
     case 'brand': return <Brand key={slug} slug={slug} live={live} />;
-    case 'assets': return <LegacyTab slug={slug} tick={tick}><AssetsPage key={slug} slug={slug} live={live} /></LegacyTab>;
-    case 'references': return <LegacyTab slug={slug} tick={tick}><ReferencesPage key={slug} slug={slug} live={live} /></LegacyTab>;
-    case 'settings': return <LegacyTab slug={slug} tick={tick}><ProjectSettings key={slug} slug={slug} tick={tick} /></LegacyTab>;
-    case 'console': return <ProjectConsole key={slug} slug={slug} live={live} expert={expert} />;
+    case 'assets': return <Assets key={slug} slug={slug} live={live} />;
+    case 'references': return <References key={slug} slug={slug} live={live} />;
+    case 'settings': return settings ? <ProjectSettings key={slug} slug={slug} live={live} settings={settings} onSettings={onSettings} /> : null;
+    case 'console': return <ProjectConsole key={slug} slug={slug} live={live} />;
   }
-}
-
-/** The page frame the old ProjectPage gave its tabs, with its "can't load the project" alert above (Tasks 11–15 replace them). */
-function LegacyTab({ slug, tick, children }: { slug: string; tick: number; children: ReactNode }) {
-  const t = useT();
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let alive = true;
-    setError(null);
-    Promise.resolve().then(() => api.getProject(slug))
-      .catch((e: unknown) => { if (alive) setError(t.web.project.loadFailed({ detail: e instanceof Error ? e.message : String(e) })); });
-    return () => { alive = false; };
-  }, [slug, tick, t]);
-  return (
-    <main className="page stack">
-      {error ? <p role="alert" className="error" style={{ margin: 0 }}>{error}</p> : null}
-      {children}
-    </main>
-  );
 }

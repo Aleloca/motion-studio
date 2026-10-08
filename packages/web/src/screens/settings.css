@@ -1,0 +1,168 @@
+/* Project · Settings and App settings (spec §6.2 #12–13), ported from the prototype's settings.js and the
+   ProjectSettings / AppSettings boards. Tokens only. */
+.ms-settings { height: 100%; display: grid; grid-template-columns: 260px minmax(0, 1fr); color: var(--text); }
+.ms-set-center { height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.ms-set-nav { border-right: 1px solid var(--line); padding: 24px 14px; display: flex; flex-direction: column; gap: 2px; overflow: auto; min-height: 0; }
+.ms-set-nav .ms-navitem { height: 34px; }
+.ms-set-cap { padding: 0 10px 10px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-set-dot { width: 7px; height: 7px; border-radius: 50%; margin-left: auto; flex: none; background: var(--ok); }
+.ms-set-dot.ms-warn { background: var(--warn); }
+.ms-set-dot.ms-busy { background: var(--faint); }
+.ms-set-nav .ms-navitem .ms-set-dot { margin-right: 2px; }
+.ms-set-main { min-width: 0; min-height: 0; overflow: auto; padding: 28px 40px 60px; display: flex; flex-direction: column; gap: 18px; }
+.ms-set-head { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.ms-set-head-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 280px; }
+.ms-set-head h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.015em; }
+.ms-set-head-text > span { color: var(--muted); line-height: 1.45; }
+.ms-set-cols { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 18px; align-items: start; }
+.ms-set-cols.ms-wide-side { grid-template-columns: minmax(0, 1fr) 400px; }
+.ms-set-col { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.ms-set-side-top { padding-top: 52px; }
+.ms-set-narrow { display: flex; flex-direction: column; gap: 18px; max-width: 640px; min-width: 0; }
+@media (max-width: 1180px) { .ms-set-cols, .ms-set-cols.ms-wide-side { grid-template-columns: minmax(0, 1fr); } .ms-set-side-top { padding-top: 0; } }
+@media (max-width: 760px) {
+  .ms-settings { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .ms-set-nav { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); padding: 12px; }
+  .ms-set-nav .ms-navitem { width: auto; }
+  .ms-set-cap { display: none; }
+  .ms-set-main { padding: 20px 16px 48px; }
+}
+
+/* Cards and rows (prototype Row). */
+.ms-set-card { overflow: hidden; }
+.ms-set-pad { padding: 16px 18px; }
+.ms-set-stack { display: flex; flex-direction: column; gap: 10px; }
+.ms-set-cardhead { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line2); min-width: 0; flex-wrap: wrap; }
+.ms-set-cardhead.ms-set-flat { padding: 0; border-bottom: 0; }
+.ms-set-cardhead b { font-weight: 600; }
+.ms-set-link.ms-btn { margin-left: auto; color: var(--accentText); }
+.ms-set-row { display: flex; align-items: flex-start; gap: 16px; padding: 14px 18px; border-bottom: 1px solid var(--line2); min-width: 0; }
+.ms-set-card > .ms-set-row:last-child { border-bottom: 0; }
+.ms-set-row-text { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.ms-set-row-text b { font-weight: 600; }
+.ms-set-row-text > span { color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+.ms-set-row-ctl { margin-top: 2px; flex: none; max-width: 60%; display: flex; align-items: center; gap: 8px; }
+.ms-set-sub { color: var(--muted); line-height: 1.5; }
+.ms-set-faint { color: var(--faint); font-size: 12px; }
+.ms-set-small { font-size: 12px; line-height: 1.45; }
+.ms-set-shared { display: inline-block; font-size: 11px; color: var(--faint); }
+.ms-set-cardhead .ms-set-shared { margin-left: auto; }
+.ms-set-warn { margin: 0; color: var(--warn); line-height: 1.45; }
+.ms-set-error { margin: 0; color: var(--warn); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.ms-set-saved { font-size: 12px; color: var(--ok); }
+.ms-set-mono { font-family: var(--mono); font-size: 12px; }
+.ms-set-alert {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; line-height: 1.45;
+  background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); color: var(--text); overflow-wrap: anywhere;
+}
+.ms-set-alert > svg { color: var(--warn); flex: none; }
+.ms-set-alert > span { flex: 1; min-width: 0; }
+.ms-set-inline { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ms-set-inline .ms-input { flex: 1; min-width: 0; height: 32px; font-size: 12px; }
+.ms-set-model.ms-input { width: 220px; max-width: 100%; height: 32px; font-size: 12px; }
+
+/* General form. */
+.ms-set-form { padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+.ms-set-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ms-set-field > span { font-size: 12px; font-weight: 600; color: var(--muted); }
+.ms-set-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+
+/* Jobs stepper. */
+.ms-stepper { display: inline-flex; align-items: center; border-radius: 8px; background: var(--field); }
+.ms-stepper button {
+  width: 32px; height: 32px; min-height: 0; padding: 0; margin: 0; border: 0; border-radius: 8px; background: transparent; color: var(--text);
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: background var(--d-s) var(--e-std);
+}
+.ms-stepper button:hover:not(:disabled) { background: var(--line); }
+.ms-stepper button:disabled { color: var(--faint); cursor: not-allowed; }
+.ms-stepper span { width: 28px; text-align: center; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* Always allowed. */
+.ms-perm { display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--line2); overflow: hidden; min-width: 0; }
+.ms-perm:last-child { border-bottom: 0; }
+.ms-perm-icon { width: 26px; height: 26px; border-radius: 7px; background: var(--field); color: var(--text); display: flex; align-items: center; justify-content: center; flex: none; }
+.ms-perm-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.ms-perm-text b { font-weight: 600; overflow-wrap: anywhere; }
+.ms-perm-rule { font-family: var(--mono); font-size: 11px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-perm-date { flex: none; white-space: nowrap; }
+@media (max-width: 560px) { .ms-perm-date { display: none; } }
+
+/* Internet access. */
+.ms-set-domains { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.ms-domain {
+  height: 24px; max-width: 100%; display: inline-flex; align-items: center; gap: 2px; padding: 0 3px 0 8px; border-radius: 5px; background: var(--sel); color: var(--text);
+  font-family: var(--mono); font-size: 11px;
+}
+.ms-domain-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-domain button, .ms-key-actions .ms-x {
+  width: 18px; height: 18px; min-height: 0; padding: 0; margin: 0; border: 0; border-radius: 4px; background: transparent; color: var(--muted); flex: none;
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.ms-domain button:hover, .ms-domain button:focus-visible { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--text); }
+
+/* Linked code. */
+.ms-code { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--field); min-width: 0; }
+.ms-code-icon { width: 28px; height: 28px; border-radius: 7px; background: var(--panel); display: flex; align-items: center; justify-content: center; flex: none; }
+.ms-code-text { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.ms-code-text b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-code-path { font-family: var(--mono); font-size: 11px; color: var(--faint); overflow-wrap: anywhere; }
+.ms-code-note { width: 100%; height: 22px; padding: 0; margin: 2px 0 0; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; outline: none; }
+.ms-code-note:focus { color: var(--text); box-shadow: 0 1px 0 var(--accent); }
+.ms-code-note::placeholder { color: var(--faint); opacity: 1; }
+.ms-code .ms-tag { background: var(--panel); }
+.ms-code-add.ms-btn { align-self: flex-start; box-shadow: none; outline: 1px dashed var(--line); outline-offset: -1px; }
+.ms-code-form { display: flex; flex-direction: column; gap: 8px; }
+.ms-code-form .ms-input { height: 32px; font-size: 12px; }
+.ms-code-form .ms-set-inline { justify-content: flex-end; }
+
+/* ---------- App settings ---------- */
+.ms-theme-group { display: flex; gap: 10px; }
+.ms-theme-opt {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; min-height: 0; height: auto; padding: 0; margin: 0; border: 0; background: transparent;
+  font: inherit; font-size: 12px; color: var(--muted); cursor: pointer; border-radius: 8px;
+}
+.ms-theme-opt[aria-checked='true'] { color: var(--text); font-weight: 600; }
+.ms-theme-opt:focus-visible { outline: none; }
+.ms-theme-opt:focus-visible .ms-theme-preview { box-shadow: 0 0 0 2px var(--accent), 0 0 0 5px color-mix(in srgb, var(--accent) 20%, transparent); }
+.ms-theme-preview {
+  width: 64px; height: 42px; border-radius: 8px; overflow: hidden; display: flex; box-shadow: 0 0 0 1px var(--line);
+  transition: box-shadow var(--d-s) var(--e-std), transform var(--d-s) var(--e-spring);
+}
+.ms-theme-opt:hover .ms-theme-preview { transform: translateY(-1px); }
+.ms-theme-opt[aria-checked='true'] .ms-theme-preview { box-shadow: 0 0 0 2px var(--accent); }
+.ms-theme-preview > span { flex: 1; position: relative; }
+.ms-theme-preview > span::after { content: ''; position: absolute; left: 7px; right: 7px; top: 9px; height: 10px; border-radius: 3px; }
+.ms-theme-light { background: var(--previewLight); }
+.ms-theme-light::after { background: var(--previewLightPanel); }
+.ms-theme-dark { background: var(--previewDark); }
+.ms-theme-dark::after { background: var(--previewDarkPanel); }
+
+.ms-status { padding: 14px 18px; display: flex; flex-direction: column; gap: 8px; }
+.ms-status-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.ms-status-mark { width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex: none; background: var(--okBg); color: var(--ok); }
+.ms-status-mark.ms-warn { background: var(--warnBg); color: var(--warn); }
+.ms-status-mark.ms-busy { background: transparent; color: var(--muted); }
+.ms-status-head b { font-weight: 600; }
+.ms-status-head .ms-btn { margin-left: auto; color: var(--accentText); }
+.ms-status-line { font-size: 12px; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+.ms-status .ms-blink { align-self: flex-start; padding: 0; height: auto; min-height: 0; border: 0; background: transparent; color: var(--accentText); font: inherit; font-size: 12px; cursor: pointer; }
+.ms-status .ms-blink:hover { text-decoration: underline; }
+.ms-syscard { padding: 6px 16px; }
+
+/* Paid services. */
+.ms-key { border-bottom: 1px solid var(--line2); }
+.ms-key:last-child { border-bottom: 0; }
+.ms-key-row { display: flex; align-items: center; gap: 12px; padding: 12px 18px; min-width: 0; flex-wrap: wrap; }
+.ms-key-mark {
+  width: 32px; height: 32px; border-radius: 8px; flex: none; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 11px;
+  background: var(--ink); color: var(--inkText);
+}
+.ms-key-mark.ms-off { background: var(--field); color: var(--muted); }
+.ms-key-text { display: flex; flex-direction: column; gap: 2px; flex: 1 1 200px; min-width: 0; }
+.ms-key-text b { font-weight: 600; }
+.ms-key-text span { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.ms-key-text .ms-ok { color: var(--ok); }
+.ms-key-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.ms-key-form { display: flex; align-items: center; gap: 8px; padding: 0 18px 14px; flex-wrap: wrap; }
+.ms-key-form .ms-input { flex: 1 1 220px; min-width: 0; height: 32px; font-size: 12px; font-family: var(--mono); }
+.ms-key .ms-set-error { padding: 0 18px 12px; }

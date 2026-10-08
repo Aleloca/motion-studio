@@ -6,10 +6,11 @@ import { sessionIdOf, type EventsState } from '../eventsReducer.ts';
 import { useT } from '../i18n.tsx';
 
 /**
- * The project's agent console (expert test turns in the project folder), moved out of the old ProjectPage unchanged.
- * Spec §3.2 folds it into Activity details: Task 15/16 removes it.
+ * The project's agent console (technical test turns in the project folder), moved out of the old ProjectPage.
+ * Spec §3.2 folds it into Activity details: Task 16 removes it. With the expert mode gone (spec §3.2), this technical
+ * console always shows the raw events.
  */
-export function ProjectConsole({ slug, live, expert }: { slug: string; live: EventsState; expert: boolean }) {
+export function ProjectConsole({ slug, live }: { slug: string; live: EventsState }) {
   const t = useT();
   const [jobKey, setJobKey] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
@@ -65,7 +66,7 @@ export function ProjectConsole({ slug, live, expert }: { slug: string; live: Eve
         {error && <p role="alert" className="error" style={{ margin: 0 }}>{error}</p>}
       </form>
       {approvals.map((a) => <ApprovalCard key={a.id} approval={a} />)}
-      {jobId && <AgentConsole job={job} events={events} expert={expert} onCancel={() => cancel(jobId)} />}
+      {jobId && <AgentConsole job={job} events={events} expert onCancel={() => cancel(jobId)} />}
     </main>
   );
 }

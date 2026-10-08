@@ -13,7 +13,7 @@ const api = {
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { App } = await import('../src/App.tsx');
 const { I18nProvider, formatDate, formatNumber, useLocale, useT } = await import('../src/i18n.tsx');
-const { SettingsPage } = await import('../src/screens/SettingsPage.tsx');
+const { AppSettings } = await import('../src/screens/AppSettings.tsx');
 const { markPairingNeeded, resetUiTokenForTests } = await import('../src/uiToken.ts');
 const { browserLanguages } = await import('./setup-locale.ts');
 
@@ -76,11 +76,13 @@ describe('language switching', () => {
     api.setLanguage.mockResolvedValue({ locale: 'en', languageSetting: 'en', systemLocale: 'it' });
     render(<App />);
     await send({ type: 'snapshot', jobs: [], approvals: [], locale: 'it', languageSetting: 'system', systemLocale: 'it' });
-    await userEvent.click(await screen.findByRole('radio', { name: 'English' }));
-    expect(await screen.findByRole('heading', { name: 'Settings' })).toBeTruthy();
+    await userEvent.click(await screen.findByRole('button', { name: 'Lingua Sistema (Italiano)' }));
+    await userEvent.click(screen.getByRole('option', { name: 'English' }));
+    expect(await screen.findByRole('heading', { name: 'General' })).toBeTruthy();
     expect(document.documentElement.lang).toBe('en');
-    expect(screen.getByRole('radio', { name: 'English' }).getAttribute('aria-checked')).toBe('true');
-    expect(screen.getByRole('radio', { name: 'System (Italiano)' })).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Language English' }));
+    expect(screen.getByRole('option', { name: 'English' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('option', { name: 'System (Italiano)' })).toBeTruthy();
   });
   it('labels System with the language the core resolved, not the browser one', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
@@ -89,13 +91,13 @@ describe('language switching', () => {
     api.getWorkspace.mockResolvedValue({ path: '/w', settings, error: null });
     render(<App />);
     await send({ type: 'snapshot', jobs: [], approvals: [], locale: 'en', languageSetting: 'system', systemLocale: 'en' });
-    expect(await screen.findByRole('radio', { name: 'System (English)' })).toBeTruthy();
-    await send({ type: 'locale', locale: 'it', setting: 'it', systemLocale: 'en' });
-    expect(await screen.findByRole('radio', { name: 'Sistema (English)' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Language System (English)' })).toBeTruthy();
+    await send({ type: 'locale', locale: 'it', setting: 'system', systemLocale: 'en' });
+    expect(await screen.findByRole('button', { name: 'Lingua Sistema (English)' })).toBeTruthy();
   });
   it('reloads the doctor checks in the new language', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
-    history.replaceState(null, '', '/#/settings');
+    history.replaceState(null, '', '/#/settings/system');
     let lang: 'it' | 'en' = 'it';
     const sandbox = (): DoctorCheck[] => [...checks, { id: 'sandbox', label: 'Sandbox', ok: false, required: false, message: lang === 'it' ? 'Sandbox non disponibile' : 'Sandbox unavailable' }];
     api.getDoctor.mockImplementation(async () => sandbox());
@@ -124,24 +126,34 @@ describe('language switching', () => {
 });
 
 describe('language selector', () => {
-  it('lists System with the detected language and each language in its own', () => {
-    render(<I18nProvider locale="en"><SettingsPage settings={settings} checks={checks} language="system" systemLocale="it" onLanguage={() => {}} onSaved={() => {}} /></I18nProvider>);
-    const group = screen.getByRole('radiogroup', { name: 'Language' });
-    expect(group.textContent).toBe('System (Italiano)EnglishItaliano');
-    expect(within(group).getByRole('radio', { name: /^System/ }).getAttribute('aria-checked')).toBe('true');
+  const page = (onLanguage = vi.fn()) => (
+    <I18nProvider locale="en">
+      <AppSettings section="general" settings={settings} checks={checks} checking={false} checksRun={1} loadError={null} onRecheck={() => {}}
+        language="system" systemLocale="it" onLanguage={onLanguage} onSettings={() => {}} />
+    </I18nProvider>
+  );
+  it('lists System with the detected language and each language in its own', async () => {
+    render(page());
+    await userEvent.click(screen.getByRole('button', { name: 'Language System (Italiano)' }));
+    const list = screen.getByRole('listbox', { name: 'Language' });
+    expect(within(list).getAllByRole('option').map((o) => o.textContent)).toEqual(['System (Italiano)', 'English', 'Italiano']);
+    expect(within(list).getByRole('option', { name: /^System/ }).getAttribute('aria-selected')).toBe('true');
   });
   it('saves the choice and applies it at once', async () => {
     api.setLanguage.mockResolvedValue({ locale: 'it', languageSetting: 'it', systemLocale: 'en' });
     const onLanguage = vi.fn();
-    render(<I18nProvider locale="en"><SettingsPage settings={settings} checks={checks} language="system" systemLocale="it" onLanguage={onLanguage} onSaved={() => {}} /></I18nProvider>);
-    await userEvent.click(screen.getByRole('radio', { name: 'Italiano' }));
+    render(page(onLanguage));
+    await userEvent.click(screen.getByRole('button', { name: 'Language System (Italiano)' }));
+    await userEvent.click(screen.getByRole('option', { name: 'Italiano' }));
     await waitFor(() => expect(onLanguage).toHaveBeenCalledWith({ locale: 'it', setting: 'it', systemLocale: 'en' }));
     expect(api.setLanguage).toHaveBeenCalledWith('it');
   });
   it('shows why a change failed', async () => {
     api.setLanguage.mockRejectedValue(new Error('boom'));
-    render(<I18nProvider locale="en"><SettingsPage settings={settings} checks={checks} language="system" systemLocale="it" onLanguage={() => {}} onSaved={() => {}} /></I18nProvider>);
-    await userEvent.click(screen.getByRole('radio', { name: 'English' }));
+    render(page());
+    await userEvent.click(screen.getByRole('button', { name: 'Language System (Italiano)' }));
+    await userEvent.click(screen.getByRole('option', { name: 'English' }));
     expect((await screen.findByRole('alert')).textContent).toBe('Language not changed: boom');
   });
 });
+

@@ -19,6 +19,8 @@
   /* Canvas (Canvas boards): the floating tool bar is dark in both themes; labels over media sit on a light or dark veil. */
   --toolbar: #171717; --toolbarLine: #171717; --onToolbar: #FFFFFF; --toolbarSep: #3A3A3A;
   --onMedia: rgba(255, 255, 255, .94); --onMediaText: #171717; --mediaScrim: rgba(0, 0, 0, .65); --onMediaScrim: #FFFFFF;
+  /* Settings → Theme previews: the light and dark backgrounds, the same whatever theme is on. */
+  --previewLight: #F5F5F4; --previewLightPanel: #FFFFFF; --previewDark: #0F0F0F; --previewDarkPanel: #171717;
   color-scheme: light;
 
   /* Legacy aliases for the screens not yet redesigned; Task 16 removes them. */

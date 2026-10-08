@@ -14,7 +14,7 @@ const api = {
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { ApprovalCard } = await import('../src/components/ApprovalCard.tsx');
 const { ApprovalsIndicator } = await import('../src/components/ApprovalsIndicator.tsx');
-const { SettingsPage } = await import('../src/screens/SettingsPage.tsx');
+const { AppSettings } = await import('../src/screens/AppSettings.tsx');
 const { ExportDialog } = await import('../src/screens/ExportDialog.tsx');
 const en = (node: React.ReactNode) => render(<I18nProvider locale="en">{node}</I18nProvider>);
 
@@ -39,15 +39,13 @@ describe('approvals, settings and export in English', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Request already handled'));
   });
   it('shows settings sections and key states in English', async () => {
-    en(<SettingsPage settings={settings} checks={checks} language="en" systemLocale="en" onLanguage={() => {}} onSaved={() => {}} />);
-    expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy();
-    await waitFor(() => screen.getByText('Stored in keychain'));
-    expect(screen.getByText('From environment variable')).toBeTruthy();
-    expect(screen.getByText('Managed by PEXELS_API_KEY')).toBeTruthy();
-    expect(screen.getByLabelText('New ElevenLabs key')).toBeTruthy();
-    expect(screen.getByText('Sandbox on: the agent works isolated in the project folder')).toBeTruthy();
-    expect(screen.getByLabelText('Agent isolation')).toBeTruthy();
-    expect(screen.getByRole('radio', { name: 'English' }).getAttribute('aria-checked')).toBe('true');
+    en(<AppSettings section="paid" settings={settings} checks={checks} checking={false} checksRun={1} loadError={null} onRecheck={() => {}}
+      language="en" systemLocale="en" onLanguage={() => {}} onSettings={() => {}} />);
+    expect(screen.getByRole('heading', { name: 'Paid services' })).toBeTruthy();
+    await waitFor(() => screen.getByText('Key saved in the Keychain'));
+    expect(screen.getByText('From the PEXELS_API_KEY environment variable')).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'Add key' })).toHaveLength(2);
+    expect(screen.getByRole('navigation', { name: 'Settings sections' })).toBeTruthy();
   });
   it('exports with English labels and singular/plural counts', async () => {
     const at = '2026-10-08T10:00:00.000Z';

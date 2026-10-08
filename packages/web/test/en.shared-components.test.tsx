@@ -1,18 +1,14 @@
 import type { AgentEvent, JobSummary } from '@motion-studio/shared';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../src/i18n.tsx';
 
-const api = { getPermissions: vi.fn(async () => [{ rule: 'Bash(ls:*)', label: 'Run ls' }]), deletePermission: vi.fn() };
-vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
+vi.mock('../src/api.ts', () => ({ api: {}, ApiError: class extends Error {} }));
 const { ThemeToggle } = await import('../src/components/ThemeToggle.tsx');
 const { CodebaseList } = await import('../src/components/CodebaseList.tsx');
-const { PermissionsList } = await import('../src/components/PermissionsList.tsx');
 const { AgentConsole } = await import('../src/components/AgentConsole.tsx');
-const { UploadZone } = await import('../src/components/UploadZone.tsx');
 const { ConfirmButton } = await import('../src/components/ConfirmButton.tsx');
-const { SourceBadge } = await import('../src/components/SourceBadge.tsx');
 const en = (node: React.ReactNode) => render(<I18nProvider locale="en">{node}</I18nProvider>);
 
 describe('shared components in English', () => {
@@ -28,11 +24,6 @@ describe('shared components in English', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Link' }));
     expect(screen.getByRole('alert').textContent).toBe('Enter an absolute path');
   });
-  it('lists permissions with a revoke action', async () => {
-    en(<PermissionsList slug="acme" />);
-    await waitFor(() => screen.getByRole('button', { name: 'Revoke Run ls' }));
-    expect(screen.getByRole('region', { name: 'Always-allowed permissions' })).toBeTruthy();
-  });
   it('shows the agent console in English, with a localized cost', () => {
     const job: JobSummary = { id: 'j', key: 'k', kind: 'console', label: 'Turn', state: 'running', createdAt: '2026-10-07T10:00:00.000Z' };
     const events: AgentEvent[] = [{ kind: 'tool_use', id: 't', name: 'Write', input: {} }, { kind: 'result', ok: true, costUsd: 0.0123 }];
@@ -43,10 +34,8 @@ describe('shared components in English', () => {
     rerender(<I18nProvider locale="en"><AgentConsole job={job} events={events} expert onCancel={() => {}} /></I18nProvider>);
     expect(screen.getByText(/ok · \$0\.0123/)).toBeTruthy();
   });
-  it('labels upload, confirm and source controls', async () => {
-    en(<><UploadZone label="Upload" onFiles={async () => {}} /><ConfirmButton label="Delete" onConfirm={() => {}} /><SourceBadge source={{ kind: 'manual', ref: null }} /></>);
-    expect(screen.getByText(/Drop files here/)).toBeTruthy();
-    expect(screen.getByText('Manual')).toBeTruthy();
+  it('labels the confirm control', async () => {
+    en(<ConfirmButton label="Delete" onConfirm={() => {}} />);
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
     expect(screen.getByRole('button', { name: 'Confirm delete' })).toBeTruthy();
   });

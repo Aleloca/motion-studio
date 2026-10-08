@@ -25,6 +25,20 @@ export function setNotifyApprovals(on: boolean): void {
   try { localStorage.setItem(NOTIFY_APPROVALS_KEY, String(on)); } catch { /* storage unavailable: keep the default */ }
 }
 
+/** localStorage key of the "Notify when a creative is ready" setting (Settings → Notifications). Default on. */
+export const NOTIFY_READY_KEY = 'motion-studio.notifyReady';
+export function notifyReadyEnabled(): boolean {
+  try { return localStorage.getItem(NOTIFY_READY_KEY) !== 'false'; } catch { return true; }
+}
+export function setNotifyReady(on: boolean): void {
+  try { localStorage.setItem(NOTIFY_READY_KEY, String(on)); } catch { /* storage unavailable: keep the default */ }
+}
+
+/** The window is in the background: hidden, or visible without the focus. */
+export function appInBackground(): boolean {
+  try { return document.visibilityState === 'hidden' || !document.hasFocus(); } catch { return false; }
+}
+
 /** A failing bridge call must never break the page: errors are swallowed (sync throw or rejected promise). */
 function quietly(call: () => unknown): void {
   try { void Promise.resolve(call()).catch(() => {}); } catch { /* ignored */ }

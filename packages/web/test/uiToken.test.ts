@@ -33,7 +33,7 @@ describe('UI token', () => {
     const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     await api.getWorkspace();
-    await api.updateSettings({ expertMode: true });
+    await api.updateSettings({ theme: 'dark' });
     await api.uploadFiles('acme', 'assets', [new File(['x'], 'a.png')]);
     for (const call of fetchMock.mock.calls as unknown as Array<[string, RequestInit]>) {
       expect(new Headers(call[1].headers).get('x-motion-studio-ui')).toBe(TOKEN);

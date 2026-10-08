@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react';
+import { workspaceSettingsSchema } from '@motion-studio/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../src/i18n.tsx';
 
@@ -33,9 +34,11 @@ describe('projects in English', () => {
     expect(screen.getByRole('button', { name: 'Create' })).toBeTruthy();
     await waitFor(() => expect(screen.getByText('creatives')).toBeTruthy());
   });
-  it('confirms a saved project', async () => {
+  it('shows the project settings in English', async () => {
     api.getProject.mockResolvedValue({ project: { name: 'Acme', description: '', linkedCodebases: [] }, jobKey: null });
-    en(<ProjectSettings slug="acme" tick={0} />);
-    expect(await screen.findByRole('button', { name: 'Save' })).toBeTruthy();
+    en(<ProjectSettings slug="acme" live={live} settings={workspaceSettingsSchema.parse({ schemaVersion: 1 })} onSettings={() => {}} />);
+    expect(await screen.findByRole('heading', { name: 'Agent and approvals' })).toBeTruthy();
+    expect(screen.getByRole('switch', { name: 'Confirm before using paid services' })).toBeTruthy();
+    expect(await screen.findByText('Nothing is always allowed')).toBeTruthy();
   });
 });

@@ -59,9 +59,23 @@ describe('App startup', () => {
     history.replaceState(null, '', '/#/settings');
     start(Promise.resolve({ path: '/w', settings, error: null }));
     vi.mocked(api.updateSettings).mockRejectedValue(new Error('disco pieno'));
-    // Expert mode and the theme moved from the top bar to Settings.
-    await userEvent.click(await screen.findByRole('switch', { name: 'Modalità esperto' }));
+    // The theme moved from the top bar to Settings → General.
+    await userEvent.click(await screen.findByRole('radio', { name: 'Scuro' }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Impossibile salvare le impostazioni: disco pieno'));
+    expect(document.documentElement.hasAttribute('data-theme')).toBe(false);
+  });
+  it('the theme chosen in Settings changes data-theme', async () => {
+    history.replaceState(null, '', '/#/settings/general');
+    start(Promise.resolve({ path: '/w', settings, error: null }));
+    vi.mocked(api.updateSettings).mockImplementation(async (patch) => ({ ...settings, ...patch }));
+    await userEvent.click(await screen.findByRole('radio', { name: 'Scuro' }));
+    await waitFor(() => expect(document.documentElement.getAttribute('data-theme')).toBe('dark'));
+    expect(api.updateSettings).toHaveBeenCalledWith({ theme: 'dark' });
+    expect(screen.getByRole('radio', { name: 'Scuro' }).getAttribute('aria-checked')).toBe('true');
+    await userEvent.click(screen.getByRole('radio', { name: 'Sistema' }));
+    await waitFor(() => expect(document.documentElement.hasAttribute('data-theme')).toBe(false));
+    // Expert mode is gone (spec §3.2).
+    expect(screen.queryByText(/esperto/i)).toBeNull();
   });
   it('does not show the setup when only the optional sandbox check fails', async () => {
     const checks: DoctorCheck[] = [...okChecks, { id: 'sandbox', label: 'Sandbox', ok: false, required: false, message: 'Non disponibile' }];

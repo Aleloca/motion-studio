@@ -1,5 +1,5 @@
 import { EMPTY_BRAND_KIT, type BrandOverview } from '@motion-studio/shared';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../src/i18n.tsx';
@@ -21,8 +21,8 @@ const api = {
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { Brand } = await import('../src/screens/Brand.tsx');
-const { AssetsPage } = await import('../src/screens/AssetsPage.tsx');
-const { ReferencesPage } = await import('../src/screens/ReferencesPage.tsx');
+const { Assets } = await import('../src/screens/Assets.tsx');
+const { References } = await import('../src/screens/References.tsx');
 const live = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
 const en = (node: React.ReactNode) => render(<I18nProvider locale="en">{node}</I18nProvider>);
 
@@ -37,18 +37,20 @@ describe('brand, assets and references in English', () => {
     expect(screen.getByRole('button', { name: /Analyze again/ })).toBeTruthy();
   });
   it('lists assets with English kinds and counts', async () => {
-    en(<AssetsPage slug="acme" live={live} />);
-    expect(await screen.findByText('2 files in the assets/ folder are not registered')).toBeTruthy();
+    en(<Assets slug="acme" live={live} />);
+    expect(await screen.findByText('2 files in the assets folder are not in the library yet')).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Open logo.svg' }));
-    expect(screen.getByText(/Generated · added 10\/7\/2026/)).toBeTruthy();
-    expect(screen.getByText('Credit: Jane')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Describe with the agent' })).toBeTruthy();
+    const panel = screen.getByRole('complementary', { name: 'Asset details' });
+    expect(within(panel).getByText('Generated · 10/7/2026')).toBeTruthy();
+    expect(within(panel).getByText('Jane')).toBeTruthy();
+    expect(within(panel).getByText('10×10')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Describe it' })).toBeTruthy();
   });
   it('labels the references actions', async () => {
-    en(<ReferencesPage slug="acme" live={live} />);
-    expect(await screen.findByLabelText('Note for mood.jpg')).toBeTruthy();
-    expect(screen.getByLabelText('Use for brand analysis')).toBeTruthy();
-    await userEvent.click(screen.getByRole('button', { name: 'Delete mood.jpg' }));
-    expect(screen.getByRole('button', { name: 'Confirm deleting mood.jpg' })).toBeTruthy();
+    en(<References slug="acme" live={live} />);
+    expect(await screen.findByRole('button', { name: 'Note for mood.jpg' })).toBeTruthy();
+    expect(screen.getByRole('switch', { name: 'Use mood.jpg for brand analysis' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Remove mood.jpg' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Analyze brand with these' })).toBeTruthy();
   });
 });

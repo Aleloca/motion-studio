@@ -1,0 +1,218 @@
+/* Project · Assets and References (spec §6.2 #10–11), ported from the prototype's library.js and the Assets /
+   References boards. Tokens only. */
+
+/* Shared bits. */
+.ms-lib-center { height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.ms-lib-muted { color: var(--muted); font-size: 12px; }
+.ms-lib-faint { color: var(--faint); }
+.ms-lib-small { font-size: 11px; }
+.ms-lib-mono { font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; }
+.ms-lib-note { font-size: 11.5px; line-height: 1.45; color: var(--muted); }
+.ms-lib-label { font-size: 11px; font-weight: 600; color: var(--muted); }
+.ms-lib-cap { padding: 0 8px 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.ms-lib-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ms-lib-push.ms-lib-push { margin-left: auto; }
+.ms-lib-group { display: flex; flex-direction: column; gap: 2px; }
+.ms-lib-empty { flex: 1; display: flex; align-items: center; justify-content: center; padding: 48px 0; }
+.ms-lib-alert {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; line-height: 1.45; flex-wrap: wrap;
+  background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); color: var(--text); overflow-wrap: anywhere;
+}
+.ms-lib-alert > svg { color: var(--warn); flex: none; }
+.ms-lib-alert > span { flex: 1 1 240px; min-width: 0; }
+.ms-lib-pop { display: flex; gap: 8px; padding: 10px; align-items: center; }
+.ms-lib-pop .ms-input { flex: 1; min-width: 0; height: 32px; }
+
+/* Search field (prototype .search). */
+.ms-lib-search {
+  width: 260px; max-width: 100%; height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-radius: 8px;
+  background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); color: var(--faint); transition: box-shadow var(--d-s) var(--e-std);
+}
+.ms-lib-search:focus-within { box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
+.ms-lib-search input { flex: 1; min-width: 0; height: 100%; padding: 0; margin: 0; border: 0; background: transparent; color: var(--text); font: inherit; outline: none; }
+.ms-lib-search input::placeholder { color: var(--faint); opacity: 1; }
+.ms-lib-search input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+
+/* Page-wide drop target (prototype: dashed accent frame over the page). */
+.ms-lib-dropzone {
+  position: absolute; inset: 8px; z-index: 30; border-radius: 16px; display: flex; align-items: center; justify-content: center; pointer-events: none;
+  border: 2px dashed var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); font-size: 16px; font-weight: 700; color: var(--text);
+  animation: ms-lib-fade var(--d-s) var(--e-out);
+}
+.ms-lib-dropzone > span { padding: 10px 16px; border-radius: 10px; background: var(--panel); box-shadow: 0 10px 30px var(--shadow); }
+@keyframes ms-lib-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* ---------- Assets ---------- */
+.ms-assets {
+  position: relative; height: 100%; display: grid; grid-template-columns: 220px minmax(0, 1fr) 0px; color: var(--text);
+  transition: grid-template-columns var(--d-m) var(--e-out);
+}
+.ms-assets.ms-with-detail { grid-template-columns: 220px minmax(0, 1fr) 360px; }
+.ms-assets .ms-grow { flex: 1; min-width: 0; }
+.ms-assets-side { border-right: 1px solid var(--line); padding: 18px 12px; display: flex; flex-direction: column; gap: 18px; overflow: auto; min-height: 0; }
+.ms-assets-filters { display: flex; flex-direction: column; gap: 18px; }
+.ms-assets-filters .ms-navitem { height: 30px; }
+.ms-assets-filters .ms-navitem.ms-dim:not(.ms-on) { opacity: .5; }
+.ms-assets-tags { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 6px; }
+.ms-assets-tags .ms-chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.ms-assets-describe { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 10px; background: var(--field); font-size: 12px; line-height: 1.4; }
+.ms-assets-describe .ms-btn { align-self: flex-start; }
+
+.ms-assets-main { position: relative; min-width: 0; min-height: 0; overflow: auto; padding: 18px 22px 96px; display: flex; flex-direction: column; gap: 14px; }
+.ms-assets-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-width: 0; }
+.ms-assets-head h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -.015em; }
+
+.ms-assets-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr)); gap: 12px; align-items: start; }
+.ms-assets-drop {
+  min-height: 230px; padding: 16px; margin: 0; border-radius: 12px; border: 1.5px dashed var(--line); background: transparent; color: var(--muted);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; font: inherit; font-size: 12px; line-height: 1.45; cursor: pointer;
+  transition: border-color var(--d-s) var(--e-std), color var(--d-s) var(--e-std);
+}
+.ms-assets-drop b { color: var(--text); font-size: 13px; }
+.ms-assets-drop:hover, .ms-assets-drop:focus-visible { border-color: var(--faint); color: var(--text); }
+
+/* Card (prototype AssetCard). The open button covers the card; the check sits above it. */
+.ms-acard {
+  position: relative; min-width: 0; border-radius: 12px; overflow: hidden; background: var(--panel); box-shadow: 0 0 0 1px var(--line);
+  transition: box-shadow var(--d-m) var(--e-std), transform var(--d-s) var(--e-std);
+}
+.ms-acard:hover { box-shadow: 0 0 0 1px var(--faint), 0 12px 30px var(--shadow); transform: translateY(-2px); }
+.ms-acard.ms-sel { box-shadow: 0 0 0 1.5px var(--accent); }
+.ms-acard.ms-active { box-shadow: 0 0 0 2px var(--accent), 0 12px 30px var(--shadow); }
+.ms-acard-open { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; min-height: 0; margin: 0; padding: 0; border: 0; border-radius: 12px; background: transparent; cursor: pointer; }
+.ms-acard-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ms-acard-check { position: absolute; left: 8px; top: 8px; z-index: 2; opacity: 0; transition: opacity var(--d-s) var(--e-std); }
+.ms-acard:hover .ms-acard-check, .ms-acard-check:focus-within, .ms-acard.ms-sel .ms-acard-check, .ms-assets:has(.ms-acard.ms-sel) .ms-acard-check { opacity: 1; }
+@media (hover: none) { .ms-acard-check { opacity: 1; } }
+.ms-acard-media { position: relative; height: 150px; overflow: hidden; }
+.ms-acard-dims { position: absolute; right: 8px; bottom: 8px; padding: 1px 6px; border-radius: 4px; background: var(--mediaScrim); color: var(--onMediaScrim); font-family: var(--mono); font-size: 10px; }
+.ms-acard-describing.ms-pill { position: absolute; left: 8px; bottom: 8px; background: var(--mediaScrim); color: var(--onMediaScrim); }
+.ms-acard-body { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; min-width: 0; }
+.ms-acard-name { font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-acard-desc { font-size: 12px; line-height: 1.4; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; min-height: 2.8em; }
+.ms-acard-desc.ms-lib-faint { color: var(--faint); }
+.ms-acard-skeleton { display: flex; flex-direction: column; gap: 6px; min-height: 2.8em; }
+.ms-acard-skeleton i { height: 10px; border-radius: 4px; background: var(--field); width: 80%; }
+.ms-acard-skeleton i + i { width: 55%; }
+.ms-acard-meta { display: flex; align-items: center; gap: 4px; min-width: 0; min-height: 20px; font-size: 11px; }
+.ms-acard-meta .ms-tag { min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; display: inline-block; line-height: 20px; }
+.ms-acard-origin { margin-left: auto; color: var(--faint); white-space: nowrap; flex: none; }
+.ms-acard-uploading { opacity: .85; }
+
+/* Moving highlight on a card being described (T10-like shimmer). */
+.ms-shimmer { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--panel) 45%, transparent) 50%, transparent 70%); background-size: 220% 100%; animation: ms-lib-shimmer 1.6s linear infinite; }
+@keyframes ms-lib-shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+@media (prefers-reduced-motion: reduce) { .ms-shimmer { animation: none; } }
+
+/* Media of an asset. */
+.ms-athumb { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: var(--field); overflow: hidden; }
+.ms-athumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ms-athumb-svg img { width: auto; height: auto; max-width: 72%; max-height: 64%; object-fit: contain; }
+.ms-athumb-svg.ms-dark { background: var(--term); }
+.ms-athumb-video { position: relative; background: var(--term); }
+.ms-athumb-play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--mediaScrim); color: var(--onMediaScrim); }
+.ms-athumb-font { flex-direction: column; gap: 4px; padding: 0 12px; text-align: center; }
+.ms-athumb-aa { font-size: 46px; line-height: 1; }
+.ms-athumb-sample { font-size: 13px; color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-athumb-file { flex-direction: column; gap: 6px; color: var(--muted); font-family: var(--mono); font-size: 12px; }
+
+/* Selection bar (prototype SelBar): dark in both themes. */
+.ms-selbar-wrap { position: absolute; left: 220px; right: 0; bottom: 20px; z-index: 10; display: flex; justify-content: center; pointer-events: none; transition: right var(--d-m) var(--e-out); }
+.ms-assets.ms-with-detail .ms-selbar-wrap { right: 360px; }
+.ms-selbar {
+  pointer-events: auto; display: flex; align-items: center; gap: 4px; padding: 6px 6px 6px 14px; border-radius: 12px; max-width: calc(100% - 16px); flex-wrap: wrap;
+  background: var(--toolbar); color: var(--onToolbar); box-shadow: 0 0 0 1px var(--toolbarLine), 0 14px 40px var(--shadowLg);
+}
+.ms-selbar b { margin-right: 8px; font-size: 13px; white-space: nowrap; }
+.ms-selbar-btn {
+  height: 28px; min-height: 0; padding: 0 10px; margin: 0; border: 0; border-radius: 7px; background: transparent; color: var(--onToolbar);
+  font: inherit; font-size: 12px; font-weight: 500; white-space: nowrap; cursor: pointer; display: inline-flex; align-items: center; transition: background var(--d-s) var(--e-std);
+}
+.ms-selbar-btn:hover:not(:disabled), .ms-selbar-btn:focus-visible { background: var(--toolbarSep); }
+.ms-selbar-btn:disabled { opacity: .5; cursor: not-allowed; }
+.ms-selbar-danger { color: var(--termLink); }
+.ms-selbar-x { width: 28px; padding: 0; justify-content: center; }
+.ms-selbar-sep { width: 1px; height: 18px; margin: 0 4px; background: var(--toolbarSep); }
+
+/* Detail panel (prototype AssetDetail). */
+.ms-assets-detail { min-width: 0; min-height: 0; overflow: hidden; border-left: 1px solid transparent; }
+.ms-assets.ms-with-detail .ms-assets-detail { border-left-color: var(--line); }
+.ms-adetail { width: 360px; height: 100%; display: flex; flex-direction: column; background: var(--bg); }
+.ms-adetail-head { height: 48px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 10px 0 14px; border-bottom: 1px solid var(--line2); min-width: 0; }
+.ms-adetail-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-adetail-saved { font-size: 11px; color: var(--ok); }
+.ms-adetail-body { flex: 1; min-height: 0; overflow: auto; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+.ms-adetail-media { height: 240px; border-radius: 10px; overflow: hidden; flex: none; }
+.ms-adetail-media .ms-athumb img { object-fit: contain; }
+.ms-adetail-media .ms-athumb-svg img { max-width: 72%; max-height: 64%; }
+.ms-adetail-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ms-adetail-field .ms-textarea { font-size: 12.5px; line-height: 1.5; border-radius: 8px; min-height: 104px; }
+.ms-adetail-looking { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 8px; background: var(--field); color: var(--muted); font-size: 12px; }
+.ms-adetail-tags { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.ms-adetail-tag {
+  height: 24px; display: inline-flex; align-items: center; gap: 2px; padding: 0 3px 0 9px; border-radius: 999px; background: var(--field); font-size: 12px; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ms-adetail-tag button {
+  width: 18px; height: 18px; min-height: 0; padding: 0; margin: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted);
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex: none;
+}
+.ms-adetail-tag button:hover, .ms-adetail-tag button:focus-visible { background: var(--line); color: var(--text); }
+.ms-adetail-tagin {
+  width: 84px; height: 24px; padding: 0 9px; margin: 0; border: 0; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line); background: transparent;
+  color: var(--text); font: inherit; font-size: 12px; outline: none; transition: box-shadow var(--d-s) var(--e-std), width var(--d-s) var(--e-std);
+}
+.ms-adetail-tagin:focus { width: 140px; box-shadow: inset 0 0 0 1px var(--accent); }
+.ms-adetail-tagin::placeholder { color: var(--muted); opacity: 1; }
+.ms-adetail-meta { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 6px 10px; margin: 0; padding-top: 12px; border-top: 1px solid var(--line2); font-size: 12px; }
+.ms-adetail-meta dt { color: var(--muted); }
+.ms-adetail-meta dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.ms-adetail-meta a { color: var(--accentText); }
+
+/* Narrow windows: the filters become a top band, the detail floats over the grid. */
+@media (max-width: 900px) {
+  .ms-assets, .ms-assets.ms-with-detail { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .ms-assets-side { border-right: 0; border-bottom: 1px solid var(--line); flex-direction: row; flex-wrap: wrap; gap: 12px; max-height: 40vh; }
+  .ms-assets-filters { flex-direction: row; flex-wrap: wrap; gap: 12px; }
+  .ms-assets-side > .ms-grow { display: none; }
+  .ms-assets-detail { position: absolute; top: 0; right: 0; bottom: 0; z-index: 20; width: min(360px, 100%); box-shadow: -12px 0 30px var(--shadow); }
+  .ms-assets:not(.ms-with-detail) .ms-assets-detail { display: none; }
+  .ms-adetail { width: 100%; }
+  .ms-selbar-wrap, .ms-assets.ms-with-detail .ms-selbar-wrap { left: 0; right: 0; }
+}
+
+/* ---------- References ---------- */
+.ms-refs { position: relative; height: 100%; overflow: auto; color: var(--text); }
+.ms-refs-inner { width: 1280px; max-width: calc(100% - 48px); margin: 0 auto; padding: 24px 0 60px; display: flex; flex-direction: column; gap: 18px; }
+.ms-refs-head { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+.ms-refs-head h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.015em; }
+.ms-refs-title { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 320px; }
+.ms-refs-title > span { color: var(--muted); line-height: 1.45; }
+.ms-refs-brand { display: flex; align-items: center; gap: 10px; padding: 10px 14px; flex-wrap: wrap; }
+.ms-refs-brand .ms-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+.ms-refs-brand .ms-lib-muted { font-size: 13px; }
+.ms-refs-brand .ms-btn { margin-left: auto; color: var(--accentText); }
+.ms-refs-board { columns: 4 240px; column-gap: 14px; }
+.ms-rcard {
+  position: relative; break-inside: avoid; margin: 0 0 14px; border-radius: 14px; overflow: hidden; background: var(--panel); box-shadow: 0 0 0 1px var(--line);
+  transition: box-shadow var(--d-s) var(--e-std); display: flex; flex-direction: column;
+}
+.ms-rcard.ms-on { box-shadow: 0 0 0 1.5px var(--accent); }
+.ms-rcard img { width: 100%; display: block; min-height: 80px; max-height: 420px; object-fit: cover; object-position: top; background: var(--field); }
+.ms-rcard-body { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; min-width: 0; }
+.ms-rcard-note {
+  min-height: 0; height: auto; margin: 0; padding: 2px 0; border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: left;
+  font: inherit; font-size: 13px; line-height: 1.45; cursor: text; overflow-wrap: anywhere; white-space: pre-wrap;
+}
+.ms-rcard-note:hover { background: var(--field); }
+.ms-rcard-note.ms-empty-note { color: var(--faint); }
+.ms-rcard .ms-textarea { font-size: 13px; line-height: 1.45; border-radius: 8px; }
+.ms-rcard-foot { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); min-width: 0; }
+.ms-rcard-file { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; }
+.ms-rcard-switch { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; flex: none; white-space: nowrap; }
+.ms-rcard-remove.ms-btn {
+  position: absolute; right: 8px; top: 8px; z-index: 2; background: var(--onMedia); color: var(--onMediaText); opacity: 0; transition: opacity var(--d-s) var(--e-std);
+}
+.ms-rcard:hover .ms-rcard-remove, .ms-rcard-remove:focus-visible { opacity: 1; }
+@media (hover: none) { .ms-rcard-remove.ms-btn { opacity: 1; } }
+.ms-refs-uploading { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
