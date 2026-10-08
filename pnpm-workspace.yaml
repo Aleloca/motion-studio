@@ -3,3 +3,7 @@ packages:
   - apps/*
 onlyBuiltDependencies:
   - electron
+# Both macOS architectures get their native modules (keyring) so one Mac can package arm64 and x64.
+supportedArchitectures:
+  os: [current]
+  cpu: [arm64, x64]

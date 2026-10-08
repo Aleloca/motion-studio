@@ -1,6 +1,6 @@
 {
   "name": "motion-studio-desktop",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "description": "Motion Studio: app desktop (Electron)",
@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "prepare-resources": "node -e \"const fs=require('fs');fs.rmSync('resources',{recursive:true,force:true});fs.mkdirSync('resources',{recursive:true});fs.cpSync('../../packages/web/dist','resources/web',{recursive:true});fs.copyFileSync('../../packages/mcp-studio/src/server.mjs','resources/mcp-studio.mjs')\"",
     "dist": "pnpm run build && pnpm run prepare-resources && electron-builder",
+    "dist:dir": "pnpm run build && pnpm run prepare-resources && electron-builder --dir",
     "dist:mac": "pnpm run build && pnpm run prepare-resources && electron-builder --mac",
     "dist:win": "pnpm run build && pnpm run prepare-resources && electron-builder --win",
     "dist:linux": "pnpm run build && pnpm run prepare-resources && electron-builder --linux"

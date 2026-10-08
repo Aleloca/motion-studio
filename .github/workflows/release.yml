@@ -20,7 +20,19 @@ jobs:
     env:
       MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
     steps:
+      # The checkout is needed to read the versions; nothing else runs before the check.
       - uses: actions/checkout@v4
+      - name: Check that the tag matches the package versions
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          for f in apps/desktop/package.json apps/cli/package.json; do
+            v="$(node -p "require('./$f').version")"
+            if [ "$v" != "$tag" ]; then
+              echo "::error::$f has version $v but the tag is $GITHUB_REF_NAME"
+              exit 1
+            fi
+          done
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -37,8 +49,21 @@ jobs:
           else
             echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
           fi
+      - name: Decide macOS notarization
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            echo "MAC_NOTARIZE=true" >> "$GITHUB_ENV"
+          else
+            echo "MAC_NOTARIZE=false" >> "$GITHUB_ENV"
+          fi
       - name: Package and publish draft release
-        run: pnpm --filter motion-studio-desktop dist --publish always
+        shell: bash
+        run: pnpm --filter motion-studio-desktop dist --publish always "-c.mac.notarize=$MAC_NOTARIZE"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
@@ -49,19 +74,29 @@ jobs:
           WIN_CSC_LINK: ${{ secrets.WIN_CERT_PFX_BASE64 }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD }}
 
+  # Independent of the desktop builds: a failed installer on one OS does not block the npm package.
   npm:
-    needs: desktop
     runs-on: ubuntu-latest
     permissions:
       contents: read
     env:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
+      - uses: actions/checkout@v4
+      - name: Check that the tag matches the package versions
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          for f in apps/desktop/package.json apps/cli/package.json; do
+            v="$(node -p "require('./$f').version")"
+            if [ "$v" != "$tag" ]; then
+              echo "::error::$f has version $v but the tag is $GITHUB_REF_NAME"
+              exit 1
+            fi
+          done
       - name: Skip notice
         if: env.NPM_TOKEN == ''
         run: echo "NPM_TOKEN not set, skipping npm publish"
-      - uses: actions/checkout@v4
-        if: env.NPM_TOKEN != ''
       - uses: pnpm/action-setup@v4
         if: env.NPM_TOKEN != ''
       - uses: actions/setup-node@v4

@@ -6,7 +6,7 @@ extraResources:
   - { from: resources/web, to: web }
   - { from: resources/mcp-studio.mjs, to: mcp-studio.mjs }
 asarUnpack: ["**/node_modules/@napi-rs/keyring*/**"]
-mac: { category: public.app-category.video, target: [dmg, zip], hardenedRuntime: true, entitlements: build/entitlements.mac.plist, entitlementsInherit: build/entitlements.mac.plist }
+mac: { category: public.app-category.video, target: [{ target: dmg, arch: [arm64, x64] }, { target: zip, arch: [arm64, x64] }], hardenedRuntime: true, entitlements: build/entitlements.mac.plist, entitlementsInherit: build/entitlements.mac.plist }
 win: { target: [nsis] }
 linux: { target: [AppImage], category: Video }
 publish: { provider: github, owner: Aleloca, repo: motion-studio, releaseType: draft }
