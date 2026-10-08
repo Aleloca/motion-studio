@@ -57,7 +57,7 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
     await lib.listAssets(); // corrupt assets.json → 422 before any file is written
     const saved = await saveUploads(req, lib.dir('assets'));
     const assets = await registerOrRemove(lib.dir('assets'), saved, () => lib.registerAssets(saved.map((file) => ({ file, origin: 'upload' as const }))));
-    await done(projectDir, req.params.slug, `Carica ${saved.length} asset`);
+    await done(projectDir, req.params.slug, t().jobs.uploadAssetsCommit({ count: saved.length }));
     return reply.status(201).send({ assets });
   });
 
@@ -65,7 +65,7 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
     const { files } = parse(filesBody, req.body);
     const { lib, projectDir } = await project(req.params.slug);
     const assets = await lib.registerAssets(files.map((file) => ({ file, origin: 'upload' as const })));
-    await done(projectDir, req.params.slug, 'Registra asset');
+    await done(projectDir, req.params.slug, t().jobs.registerAssetsCommit);
     return { assets };
   });
 
@@ -85,7 +85,7 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
   app.delete<{ Params: { slug: string; '*': string } }>('/api/projects/:slug/assets/item/*', async (req) => {
     const { lib, projectDir } = await project(req.params.slug);
     await lib.removeAsset(req.params['*']);
-    await done(projectDir, req.params.slug, `Elimina asset ${req.params['*']}`);
+    await done(projectDir, req.params.slug, t().jobs.deleteAssetCommit({ file: req.params['*'] }));
     return { ok: true };
   });
 
@@ -100,7 +100,7 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
     await lib.listReferences();
     const saved = await saveUploads(req, lib.dir('references'));
     const references = await registerOrRemove(lib.dir('references'), saved, () => lib.registerReferences(saved));
-    await done(projectDir, req.params.slug, `Carica ${saved.length} riferimenti`);
+    await done(projectDir, req.params.slug, t().jobs.uploadReferencesCommit({ count: saved.length }));
     return reply.status(201).send({ references });
   });
 
@@ -116,7 +116,7 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
     const { lib, projectDir } = await project(req.params.slug);
     await lib.removeReference(req.params['*']);
     const dropped = await dropImageSource(projectDir, req.params['*']);
-    await done(projectDir, req.params.slug, `Elimina riferimento ${req.params['*']}`, dropped);
+    await done(projectDir, req.params.slug, t().jobs.deleteReferenceCommit({ file: req.params['*'] }), dropped);
     return { ok: true };
   });
 

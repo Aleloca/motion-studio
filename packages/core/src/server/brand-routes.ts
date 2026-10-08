@@ -44,7 +44,7 @@ export function registerBrandRoutes(app: FastifyInstance, ctx: BrandRoutesContex
   app.put<{ Params: { slug: string }; Body: { kit?: unknown } }>('/api/projects/:slug/brand/kit', async (req) => {
     const { store, projectDir } = await project(req.params.slug);
     const kit = await store.replaceReadableKit(req.body?.kit); // a corrupt file on disk → 422, never overwritten from the UI
-    await done(projectDir, req.params.slug, 'Brand kit aggiornato');
+    await done(projectDir, req.params.slug, t().jobs.brandKitCommit);
     return kit;
   });
 
@@ -52,7 +52,7 @@ export function registerBrandRoutes(app: FastifyInstance, ctx: BrandRoutesContex
     if (typeof req.body?.text !== 'string') throw new WorkspaceError(400, t().errors.textMissing);
     const { store, projectDir } = await project(req.params.slug);
     await store.writeGuidelines(req.body.text);
-    await done(projectDir, req.params.slug, 'Linee guida aggiornate');
+    await done(projectDir, req.params.slug, t().jobs.guidelinesCommit);
     return { ok: true };
   });
 
@@ -64,14 +64,14 @@ export function registerBrandRoutes(app: FastifyInstance, ctx: BrandRoutesContex
       await new LibraryStore(projectDir, ctx.media).existingFile('references', body.file.slice('references/'.length));
     }
     const source = await store.addSource(body);
-    await done(projectDir, req.params.slug, 'Aggiungi sorgente brand');
+    await done(projectDir, req.params.slug, t().jobs.addSourceCommit);
     return reply.status(201).send(source);
   });
 
   app.delete<{ Params: { slug: string; id: string } }>('/api/projects/:slug/brand/sources/:id', async (req) => {
     const { store, projectDir } = await project(req.params.slug);
     await store.removeSource(req.params.id);
-    await done(projectDir, req.params.slug, 'Rimuovi sorgente brand');
+    await done(projectDir, req.params.slug, t().jobs.removeSourceCommit);
     return { ok: true };
   });
 
@@ -91,7 +91,7 @@ export function registerBrandRoutes(app: FastifyInstance, ctx: BrandRoutesContex
       if (refs.some((r) => r.file === file && !r.useForBrand) || !(await exists(file))) drop.push(s.file);
     }
     // Persist the change even when the analysis is then refused (409/400).
-    if (await store.syncImageSources([...usable], drop)) await done(ref.projectDir, req.params.slug, 'Allinea sorgenti brand ai riferimenti');
+    if (await store.syncImageSources([...usable], drop)) await done(ref.projectDir, req.params.slug, t().jobs.syncSourcesCommit);
     return reply.status(202).send(await ctx.brand.analyze(ref, sourceIds));
   });
 

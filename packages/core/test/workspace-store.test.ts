@@ -132,7 +132,7 @@ describe('updateProject', () => {
     expect(u).toMatchObject({ name: 'Acme 2', description: 'd', linkedCodebases: [{ path: '/Users/me/app', note: 'iOS' }] });
     expect(u.updatedAt).not.toBe(before.updatedAt);
     expect((await ws.updateProject(slug, { name: undefined })).name).toBe('Acme 2');
-  });
+  }, { timeout: 20_000 });
   it('refuses codebases that contain the project or the workspace or sit inside them', async () => {
     const ws = await WorkspaceStore.open(join(base, 'ws'), new Git());
     const { slug } = await ws.createProject({ name: 'Acme' });

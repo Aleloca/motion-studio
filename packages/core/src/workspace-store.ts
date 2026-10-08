@@ -210,7 +210,7 @@ export class WorkspaceStore {
       if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidProject({ fields: parsed.error.issues.map((i) => i.path.join('.')).join(', ') }));
       const dir = this.projectDir(slug);
       await writeJsonFileAtomic(join(dir, 'project.json'), parsed.data);
-      await this.git.commitAll(dir, 'Progetto aggiornato');
+      await this.git.commitAll(dir, t().jobs.updateProjectCommit);
       return parsed.data;
     });
   }
