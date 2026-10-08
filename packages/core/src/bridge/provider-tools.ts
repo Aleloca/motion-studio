@@ -17,6 +17,7 @@ import { elevenlabsSpeech, openaiSpeech } from '../providers/tts.ts';
 import type { SecretsVault } from '../secrets/vault.ts';
 import type { BridgeContext } from './bridge.ts';
 import type { BridgeHandler } from './bridge-routes.ts';
+import { t } from '../i18n.ts';
 
 export interface ProviderToolsDeps {
   vault: SecretsVault; approvals: ApprovalBroker; media: MediaTools;
@@ -73,7 +74,7 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
     let decision: Awaited<typeof pending>['decision'];
     try { ({ decision } = await pending); } finally { c.signal.removeEventListener('abort', onAbort); }
     alive(c);
-    if (decision !== 'once' && decision !== 'always') throw new ProviderError(403, "L'utente non ha approvato l'uso del provider");
+    if (decision !== 'once' && decision !== 'always') throw new ProviderError(403, t().approvals.providerNotApproved);
   };
   const removeFiles = (c: BridgeContext, files: string[]) =>
     Promise.all(files.map((f) => rm(join(c.projectDir, 'assets', ...f.split('/')), { force: true }).catch(() => {})));
@@ -117,7 +118,7 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       const quality = oneOf(a.quality, ['low', 'medium', 'high', 'auto'] as const, 'Qualità');
       const background = oneOf(a.background, ['transparent', 'opaque', 'auto'] as const, 'Sfondo');
       const refs = await readReferences(c, a.references);
-      await confirmPaid(c, 'provider:openai-images', "Generare un'immagine con gpt-image-2", `${size.width}×${size.height}${refs.length ? `, ${refs.length} riferimenti` : ''}: ${prompt.slice(0, 300)}`);
+      await confirmPaid(c, 'provider:openai-images', t().approvals.generateImage, t().approvals.imageDetail({ width: size.width, height: size.height, refs: refs.length, prompt: prompt.slice(0, 300) }));
       alive(c);
       const img = await generateImage({ ...httpFor(c), apiKey }, { prompt, width: size.width, height: size.height, quality, background, references: refs });
       alive(c);
@@ -136,7 +137,7 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       const provider = requested ?? ((await deps.vault.get('openai')) ? 'openai' : (await deps.vault.get('elevenlabs')) ? 'elevenlabs' : 'openai');
       const apiKey = await keyOf(provider);
       const format = a.format === 'wav' ? 'wav' : 'mp3';
-      await confirmPaid(c, `provider:tts-${provider}`, `Generare una voce con ${LABEL[provider]}`, text.slice(0, 300));
+      await confirmPaid(c, `provider:tts-${provider}`, t().approvals.generateVoice({ provider: LABEL[provider] }), text.slice(0, 300));
       alive(c);
       const req = { text, voice, instructions: s(a.instructions, 1000) || undefined, format } as const;
       const http = { ...httpFor(c), apiKey };

@@ -11,11 +11,7 @@ import { t } from '../i18n.ts';
 export type BridgeHandler = (ctx: BridgeContext, args: Record<string, unknown>) => Promise<unknown>;
 export interface BridgeRoutesContext { bridge: AgentBridge; approvals: ApprovalBroker; extraTools?: Record<string, BridgeHandler> }
 
-const DENY_MESSAGES = {
-  deny: "L'utente ha negato questa azione.",
-  expired: 'Nessuna risposta entro 10 minuti: azione negata.',
-  cancelled: 'Il lavoro è stato annullato.',
-} as const;
+const denyMessage = (d: 'deny' | 'expired' | 'cancelled'): string => (d === 'deny' ? t().approvals.denied : d === 'expired' ? t().approvals.expired : t().errors.jobCancelled);
 const MAX_GUIDELINES = 50_000;
 
 /** Progress shown in the UI: no control, zero-width or bidi characters (they could disguise the text), single spaces. */
@@ -30,15 +26,15 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
   const tools: Record<string, BridgeHandler> = {
     approve: async (c, a) => {
       const raw = a.input ?? a.tool_input;
-      if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { behavior: 'deny', message: 'Richiesta non valida.' };
+      if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { behavior: 'deny', message: t().approvals.invalidRequest };
       const input = raw as Record<string, unknown>;
-      const toolName = typeof a.tool_name === 'string' ? a.tool_name : 'sconosciuto';
+      const toolName = typeof a.tool_name === 'string' ? a.tool_name : t().approvals.unknownTool;
       // Provider confirmations and Motion Studio's own tools never go through the agent's permission prompts.
-      if (toolName.startsWith('provider:') || toolName.startsWith(`mcp__${MCP_SERVER}__`)) return { behavior: 'deny', message: 'Richiesta non valida.' };
+      if (toolName.startsWith('provider:') || toolName.startsWith(`mcp__${MCP_SERVER}__`)) return { behavior: 'deny', message: t().approvals.invalidRequest };
       const { decision } = await ctx.approvals.request({ jobId: c.jobId, projectSlug: c.projectSlug, projectDir: c.projectDir, creativeSlug: c.creativeSlug, kind: 'tool', toolName, input });
       return decision === 'once' || decision === 'always'
         ? { behavior: 'allow', updatedInput: input }
-        : { behavior: 'deny', message: DENY_MESSAGES[decision] };
+        : { behavior: 'deny', message: denyMessage(decision) };
     },
     report_progress: async (c, a) => {
       const text = typeof a.message === 'string' ? cleanProgress(a.message) : '';

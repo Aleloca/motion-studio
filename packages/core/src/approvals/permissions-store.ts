@@ -56,14 +56,14 @@ function dirRule(tool: 'Edit' | 'Read', filePath: string, env: RuleEnv) {
   if (!filePath.startsWith('/')) return null;
   const dir = safeDir(dirname(resolve(filePath)), env);
   if (!dir) return null;
-  return { rule: `${tool}(/${escapeGlob(dir)}/**)`, label: `${tool === 'Edit' ? 'Modifiche' : 'Letture'} in ${dir}` };
+  return { rule: `${tool}(/${escapeGlob(dir)}/**)`, label: tool === 'Edit' ? t().approvals.editsIn({ dir }) : t().approvals.readsIn({ dir }) };
 }
 
 function bashRule(command: string) {
   const cmd = command.trim();
   if (SHELL_CONTROL.test(cmd)) return null;
   const [w] = cmd.split(/\s+/);
-  if (w && SAFE_ALWAYS.has(w)) return { rule: `Bash(${w}:*)`, label: `Comandi "${w}"` };
+  if (w && SAFE_ALWAYS.has(w)) return { rule: `Bash(${w}:*)`, label: t().approvals.commandsLabel({ command: w }) };
   return null;
 }
 
@@ -82,11 +82,11 @@ function rawRuleFor(toolName: string, input: unknown, env: RuleEnv): { rule: str
   if (toolName === 'WebFetch') {
     try {
       const host = new URL(str(i.url)).hostname;
-      return isPublicHost(host) ? { rule: `WebFetch(domain:${host})`, label: `Pagine di ${host}` } : null;
+      return isPublicHost(host) ? { rule: `WebFetch(domain:${host})`, label: t().approvals.pagesOf({ host }) } : null;
     } catch { return null; }
   }
-  if (PROVIDER_RULES.has(toolName)) return { rule: toolName, label: `Uso di ${toolName.slice(9)} senza conferma` };
-  if (STUDIO_RULES.has(toolName)) return { rule: toolName, label: `Strumento ${toolName}` };
+  if (PROVIDER_RULES.has(toolName)) return { rule: toolName, label: t().approvals.providerNoConfirm({ provider: toolName.slice(9) }) };
+  if (STUDIO_RULES.has(toolName)) return { rule: toolName, label: t().approvals.toolLabel({ tool: toolName }) };
   return null;
 }
 

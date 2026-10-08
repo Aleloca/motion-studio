@@ -11,11 +11,12 @@ export interface ApprovalOutcome { decision: ApprovalDecision | 'expired' | 'can
 export function describeRequest(toolName: string, input: unknown): { title: string; detail: string } {
   const i = (input ?? {}) as Record<string, unknown>;
   const s = (v: unknown) => (typeof v === 'string' ? v : '');
-  if (toolName === 'Bash') return { title: 'Eseguire un comando', detail: s(i.command) };
-  if (['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(toolName)) return { title: 'Modificare un file fuori dal progetto', detail: s(i.file_path) };
-  if (toolName === 'Read') return { title: 'Leggere un file fuori dal progetto', detail: s(i.file_path) };
-  if (toolName === 'WebFetch') return { title: 'Aprire una pagina web', detail: s(i.url) };
-  return { title: `Usare lo strumento ${toolName}`, detail: JSON.stringify(input ?? {}).slice(0, 500) };
+  const a = t().approvals;
+  if (toolName === 'Bash') return { title: a.runCommand, detail: s(i.command) };
+  if (['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(toolName)) return { title: a.editOutside, detail: s(i.file_path) };
+  if (toolName === 'Read') return { title: a.readOutside, detail: s(i.file_path) };
+  if (toolName === 'WebFetch') return { title: a.openPage, detail: s(i.url) };
+  return { title: a.useTool({ tool: toolName }), detail: JSON.stringify(input ?? {}).slice(0, 500) };
 }
 
 interface Pending { request: ApprovalRequest; alwaysLabel: string; projectDir: string; resolve(o: ApprovalOutcome): void; timer: NodeJS.Timeout }
