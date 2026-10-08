@@ -113,6 +113,27 @@ describe('ApprovalCard', () => {
     expect(screen.getByText(/first 2,000 characters/)).toBeTruthy();
   });
 
+  it('says when the core shortened a generic tool input (500 characters)', async () => {
+    en(<ApprovalCard approval={{ ...base, toolName: 'mcp__other__thing', alwaysRule: null, detail: '{"a":"' + 'x'.repeat(494) }} />);
+    await userEvent.click(screen.getByRole('button', { name: /Show details/ }));
+    expect(screen.getByText(/first 500 characters/)).toBeTruthy();
+  });
+
+  it('does not claim a short detail was shortened', async () => {
+    en(<ApprovalCard approval={{ ...base, detail: 'x'.repeat(600) }} />);
+    await userEvent.click(screen.getByRole('button', { name: /Show command/ }));
+    expect(screen.queryByText(/first .* characters/)).toBeNull();
+  });
+
+  it('a card that is pending again after a decision can be decided again', async () => {
+    const { rerender } = en(<ApprovalCard approval={base} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Allow' }));
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Allow' }) as HTMLButtonElement).disabled).toBe(true));
+    rerender(<I18nProvider locale="en"><ApprovalCard approval={base} leaving /></I18nProvider>);
+    rerender(<I18nProvider locale="en"><ApprovalCard approval={base} leaving={false} /></I18nProvider>);
+    expect((screen.getByRole('button', { name: 'Allow' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('Allow sends a one-time approval', async () => {
     en(<ApprovalCard approval={base} />);
     await userEvent.click(screen.getByRole('button', { name: 'Allow' }));

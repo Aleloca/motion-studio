@@ -185,7 +185,7 @@ function AppShell({ route, live, ws, settings, checks, activity, setActivity, la
       case 'project': return <ProjectHost route={r} live={live} expert={expert} />;
       case 'new-creative': return <NewCreative key={r.slug} slug={r.slug} />;
       // The format view (Task 13) opens on the creative until then.
-      case 'creative': case 'format': return <CreativePage key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} expert={expert} />;
+      case 'creative': case 'format': return <CreativePage key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} />;
       // Every section maps to the current settings page until the new one (Task 15).
       case 'settings': return <SettingsPage settings={settings} checks={checks} language={language} systemLocale={systemLocale} onLanguage={onLanguage} onSaved={onSettings} />;
       // Replay setup (Task 9 brings the three-step welcome): the current onboarding, back to the projects when done.

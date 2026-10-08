@@ -23,11 +23,11 @@ describe('CreativePage export', () => {
   it('keeps the dialog on the version it was opened for when a new version arrives', async () => {
     versions = [version(1)];
     const live = { approvals: {}, jobs: {}, events: {}, creativeTicks: {} as Record<string, number>, projectTicks: {} as Record<string, number> };
-    const { rerender } = render(<CreativePage slug="acme" creative="c1" live={live} expert={false} />);
+    const { rerender } = render(<CreativePage slug="acme" creative="c1" live={live} />);
     await userEvent.click(await screen.findByRole('button', { name: 'Esporta…' }));
     expect(screen.getByText('Esporta v1')).toBeTruthy();
     versions = [version(1), version(2)];
-    await act(async () => { rerender(<CreativePage slug="acme" creative="c1" live={{ ...live, creativeTicks: { 'acme/c1': 1 } }} expert={false} />); });
+    await act(async () => { rerender(<CreativePage slug="acme" creative="c1" live={{ ...live, creativeTicks: { 'acme/c1': 1 } }} />); });
     await waitFor(() => expect(screen.getByRole('radio', { name: 'v2' }).getAttribute('aria-checked')).toBe('true'));
     expect(screen.getByText('Esporta v1')).toBeTruthy();
     await userEvent.type(screen.getByLabelText('Cartella di destinazione (percorso assoluto)'), '/d');
@@ -37,7 +37,7 @@ describe('CreativePage export', () => {
   it('disables Esporta… without a version', async () => {
     versions = [];
     const live = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
-    render(<CreativePage slug="acme" creative="c1" live={live} expert={false} />);
+    render(<CreativePage slug="acme" creative="c1" live={live} />);
     expect((await screen.findByRole('button', { name: 'Esporta…' }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

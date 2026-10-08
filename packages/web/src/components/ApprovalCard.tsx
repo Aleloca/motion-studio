@@ -5,8 +5,12 @@ import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { collapse, enter, pulse } from '../motion/index.ts';
 import { Button, CountdownRing, Icon, Tag } from '../ui/index.ts';
 
-/** The core cuts the detail to this many characters (approvals broker): at this length the card says so. */
-export const DETAIL_LIMIT = 2000;
+/**
+ * Lengths at which the core cuts the detail, mirrored from packages/core/src/approvals/broker.ts (`describeRequest`
+ * cuts a generic tool's JSON input to 500 characters; `request` cuts every detail to 2000). At these lengths the card
+ * says the text was shortened. Keep in sync with broker.ts.
+ */
+export const DETAIL_LIMITS = { tool: 500, any: 2000 } as const;
 /** Lines that fit the command box before it scrolls (max-height in conversation.css). */
 const VISIBLE_LINES = 10;
 
@@ -68,7 +72,11 @@ export function ApprovalCard({ approval, context, leaving = false, onGone }: App
   useLayoutEffect(() => {
     const el = ref.current;
     if (!leaving) {
-      if (wasLeaving.current) void enter(el, { y: 0, ms: 200 });
+      if (wasLeaving.current) {
+        // Pending again (e.g. the decision did not take): it can be decided anew.
+        setDecided(false);
+        void enter(el, { y: 0, ms: 200 });
+      }
       wasLeaving.current = false;
       return;
     }
@@ -102,6 +110,7 @@ export function ApprovalCard({ approval, context, leaving = false, onGone }: App
   const lines = lineCount(approval.detail);
   const created = ms(approval.createdAt);
   const ttl = (ms(approval.expiresAt) - created) / 1000;
+  const limit = category === 'tool' ? DETAIL_LIMITS.tool : DETAIL_LIMITS.any;
   const disabled = busy || decided || leaving;
 
   return (
@@ -129,7 +138,7 @@ export function ApprovalCard({ approval, context, leaving = false, onGone }: App
         <div id={cmdId} className="ms-approval-cmd">
           <pre ref={preRef} className="ms-approval-pre" tabIndex={0} aria-label={category === 'command' ? a.fullCommand : a.fullDetails}>{approval.detail}</pre>
           {(overflows || lines > VISIBLE_LINES) && <span className="ms-approval-note">{a.scrollMore}</span>}
-          {approval.detail.length >= DETAIL_LIMIT && <span className="ms-approval-note ms-warn">{a.shortened({ count: formatNumber(locale, DETAIL_LIMIT) })}</span>}
+          {approval.detail.length >= limit && <span className="ms-approval-note ms-warn">{a.shortened({ count: formatNumber(locale, limit) })}</span>}
           {approval.alwaysRule && <span className="ms-approval-note">{a.alwaysRule({ rule: approval.alwaysRule })}</span>}
         </div>
       )}

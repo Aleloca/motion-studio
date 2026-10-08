@@ -1,6 +1,6 @@
 import type { AgentEvent, ApprovalRequest, ConversationEntry, JobSummary, Pin } from '@motion-studio/shared';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { api } from '../api.ts';
+import { api, ApiError } from '../api.ts';
 import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
 import { enter } from '../motion/index.ts';
 import { isMac } from '../shell/ShellContext.tsx';
@@ -194,7 +194,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
           </Row>
         ))}
       </ol>
-      <Composer slug={slug} creative={creative} job={working ? job : undefined} pins={pins} onRemovePin={onRemovePin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} />
+      <Composer slug={slug} creative={creative} job={working ? job : undefined} latestJobId={job?.id} pins={pins} onRemovePin={onRemovePin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} />
     </div>
   );
 }
@@ -341,8 +341,8 @@ function Details({ events }: { events: AgentEvent[] }) {
   );
 }
 
-function Composer({ slug, creative, job, pins, onRemovePin, formatName, canGenerate, onSent }: {
-  slug: string; creative: string; job: JobSummary | undefined; pins: Pin[]; onRemovePin?(i: number): void; formatName?(id: string): string; canGenerate?: boolean; onSent?(): void;
+function Composer({ slug, creative, job, latestJobId, pins, onRemovePin, formatName, canGenerate, onSent }: {
+  slug: string; creative: string; job: JobSummary | undefined; latestJobId: string | undefined; pins: Pin[]; onRemovePin?(i: number): void; formatName?(id: string): string; canGenerate?: boolean; onSent?(): void;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -350,24 +350,38 @@ function Composer({ slug, creative, job, pins, onRemovePin, formatName, canGener
   const id = useId();
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  // Synchronous guard: two keystrokes in the same tick both see `sending` false.
+  const inFlight = useRef(false);
+  // Id of the job a successful send started, until that job reaches this panel: no second send in between.
+  const [awaiting, setAwaiting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const busy = Boolean(job) || sending;
+  useEffect(() => {
+    if (awaiting && latestJobId === awaiting) { setAwaiting(null); inFlight.current = false; }
+  }, [awaiting, latestJobId]);
+  const busy = Boolean(job) || sending || awaiting !== null;
   const canSend = !busy && (text.trim().length > 0 || pins.length > 0);
 
   const send = async (body: { text?: string; pins?: Pin[] }) => {
+    if (busy || inFlight.current) return;
+    inFlight.current = true;
     setError(null); setSending(true);
     try {
-      await api.sendCreativeTurn(slug, creative, body);
+      const started = await api.sendCreativeTurn(slug, creative, body);
+      if (started && typeof started.id === 'string' && started.id !== latestJobId) setAwaiting(started.id);
+      else inFlight.current = false;
       setText('');
       onSent?.();
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-    finally { setSending(false); }
+    } catch (e) {
+      // The text stays in the box: explain and say what to do; a 409 means a turn is already running.
+      setError(e instanceof ApiError && e.status === 409 ? c.sendBusy : c.sendFailed);
+      inFlight.current = false;
+    } finally { setSending(false); }
   };
   const submit = () => { if (canSend) void send({ text: text.trim(), pins }); };
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); }
   };
-  const cancel = () => { if (job) api.cancelJob(job.id).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e))); };
+  const cancel = () => { if (job) api.cancelJob(job.id).catch(() => setError(c.cancelFailed)); };
 
   return (
     <form className="ms-composer" onSubmit={(e) => { e.preventDefault(); submit(); }}>
@@ -392,7 +406,7 @@ function Composer({ slug, creative, job, pins, onRemovePin, formatName, canGener
             : <span className="ms-composer-hint">{c.sendHint({ keys: isMac() ? '⌘↵' : 'Ctrl ↵' })}</span>}
           {job && <Button size="sm" variant="ghost" onClick={cancel}>{t.common.cancel}</Button>}
           {canGenerate && !job && (
-            <Button size="sm" variant="accent" aria-label={t.web.newCreative.generate} disabled={sending} onClick={() => void send({})}>
+            <Button size="sm" variant="accent" aria-label={t.web.newCreative.generate} disabled={busy} onClick={() => void send({})}>
               <Icon name="sparkle" size={13} />{t.web.newCreative.generate}
             </Button>
           )}

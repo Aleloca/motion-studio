@@ -9,8 +9,11 @@ const api = {
   cancelJob: vi.fn(async () => ({ cancelled: true })),
   decideApproval: vi.fn(async () => ({})),
 };
-vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
+class ApiError extends Error { constructor(public status: number, m: string) { super(m); } }
+vi.mock('../src/api.ts', () => ({ api, ApiError }));
 const { Conversation, mergeJobEvents } = await import('../src/components/Conversation.tsx');
+const { ActivityCenter } = await import('../src/shell/ActivityCenter.tsx');
+const { initialEventsState } = await import('../src/eventsReducer.ts');
 
 // Controllable Web Animations: each animate() returns a fake whose `finished` settles only when the test says so.
 class FakeAnim {
@@ -201,6 +204,64 @@ describe('Conversation', () => {
   it('has a designed empty state', () => {
     render(view({ entries: [] }));
     expect(screen.getByText('No messages yet')).toBeTruthy();
+  });
+});
+
+describe('Conversation composer guards', () => {
+  it('a rapid double send makes one request and stays blocked until the new job arrives', async () => {
+    let resolve!: (j: JobSummary) => void;
+    api.sendCreativeTurn.mockImplementationOnce(() => new Promise((r) => { resolve = r as never; }) as never);
+    const { rerender } = render(view({ entries: [], job: done }));
+    const box = screen.getByLabelText('Request a change');
+    await userEvent.type(box, 'Again');
+    fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
+    fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(api.sendCreativeTurn).toHaveBeenCalledTimes(1);
+    await act(async () => { resolve({ ...running, id: 'j2' }); });
+    // The POST succeeded but the job has not reached the page yet: still no second send.
+    await userEvent.type(box, 'Once more');
+    fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
+    expect(api.sendCreativeTurn).toHaveBeenCalledTimes(1);
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true);
+    rerender(view({ entries: [], job: { ...running, id: 'j2' } }));
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true);
+    rerender(view({ entries: [], job: { ...done, id: 'j2' } }));
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledTimes(2));
+  });
+
+  it('explains a failed send, keeps the text and allows a retry', async () => {
+    api.sendCreativeTurn.mockRejectedValueOnce(new ApiError(500, 'ECONNRESET socket hang up'));
+    render(view({ entries: [] }));
+    const box = screen.getByLabelText('Request a change') as HTMLTextAreaElement;
+    await userEvent.type(box, 'Bigger logo');
+    fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
+    expect((await screen.findByRole('alert')).textContent).toBe('Couldn’t send. Your message is kept — try again.');
+    expect(box.value).toBe('Bigger logo');
+    fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledTimes(2));
+  });
+
+  it('explains a 409: a generation is already running', async () => {
+    api.sendCreativeTurn.mockRejectedValueOnce(new ApiError(409, 'busy'));
+    render(view({ entries: [], canGenerate: true }));
+    await userEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('A generation is already running for this creative. Wait for it to finish, then send again.');
+  });
+});
+
+describe('Activity center approvals', () => {
+  const where = () => 'Acme';
+  it('an approval resolved while another tab is shown never mounts just to collapse; count and list agree', async () => {
+    const live = { ...initialEventsState, approvals: { a1: ap } };
+    const { rerender } = render(<I18nProvider locale="en"><ActivityCenter live={live} initialTab="running" where={where} /></I18nProvider>);
+    rerender(<I18nProvider locale="en"><ActivityCenter live={{ ...initialEventsState }} initialTab="running" where={where} /></I18nProvider>);
+    await userEvent.click(screen.getByRole('tab', { name: /Needs you/ }));
+    expect(screen.queryByRole('group', { name: 'Run a command' })).toBeNull();
+    expect(collapses()).toHaveLength(0);
+    expect(screen.getByText('Nothing waiting for you')).toBeTruthy();
   });
 });
 

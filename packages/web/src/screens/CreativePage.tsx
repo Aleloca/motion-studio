@@ -2,7 +2,7 @@ import type { FormatPreset, Pin } from '@motion-studio/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.ts';
 import { Conversation } from '../components/Conversation.tsx';
-import { BriefEditor } from '../components/ConversationPanel.tsx';
+import { BriefEditor } from '../components/BriefEditor.tsx';
 import { FocusView } from '../components/FocusView.tsx';
 import { ExportDialog } from '../components/ExportDialog.tsx';
 import { FormatBoard } from '../components/FormatBoard.tsx';
@@ -13,7 +13,7 @@ import { href } from '../routes.ts';
 import { useCreative } from '../useCreative.ts';
 import { Tabs } from '../ui/index.ts';
 
-export function CreativePage({ slug, creative, live }: { slug: string; creative: string; live: EventsState; /** Unused since the conversation has no expert tab (spec §3.2); kept for the router until Task 12. */ expert: boolean }) {
+export function CreativePage({ slug, creative, live }: { slug: string; creative: string; live: EventsState }) {
   const t = useT();
   const { detail, conversation, error, reload } = useCreative(slug, creative, live.creativeTicks[`${slug}/${creative}`] ?? 0);
   const [presets, setPresets] = useState<FormatPreset[]>([]);

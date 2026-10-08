@@ -42,9 +42,10 @@ export function ActivityCenter({ live, initialTab, request = 0, where }: { live:
   const t = useT();
   const a = t.web.shell.activity;
   const { approvals, running, done } = useMemo(() => activityLists(live), [live]);
-  // Resolved requests collapse out of "Needs you" (T15) instead of vanishing.
-  const needs = useApprovalPresence(approvals);
   const [tab, setTab] = useState<ActivityTab>(initialTab ?? (approvals.length ? 'needs' : 'running'));
+  // Resolved requests collapse out of "Needs you" (T15) while it is shown; on another tab they are dropped at once.
+  const needs = useApprovalPresence(approvals, tab === 'needs');
+  const pending = needs.list.filter((s) => !s.leaving).length;
   const [, rerender] = useState(0);
   // A request to show a tab while the center is already open (e.g. "N running" or Review) switches to it.
   const lastRequest = useRef(request);
@@ -69,7 +70,7 @@ export function ActivityCenter({ live, initialTab, request = 0, where }: { live:
           value={tab}
           onChange={setTab}
           tabs={[
-            { value: 'needs', label: a.needsYou, count: approvals.length, controls: panel },
+            { value: 'needs', label: a.needsYou, count: pending, controls: panel },
             { value: 'running', label: a.running, count: running.length, controls: panel },
             { value: 'done', label: a.done, count: done.length, controls: panel },
           ]}

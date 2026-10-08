@@ -21,13 +21,13 @@ const { CreativePage } = await import('../src/screens/CreativePage.tsx');
 describe('CreativePage version selection', () => {
   it('follows new versions again after the user sends a message', async () => {
     const live = { approvals: {}, jobs: {}, events: {}, creativeTicks: {} as Record<string, number>, projectTicks: {} as Record<string, number> };
-    const { rerender } = render(<CreativePage slug="acme" creative="c1" live={live} expert={false} />);
+    const { rerender } = render(<CreativePage slug="acme" creative="c1" live={live} />);
     await waitFor(() => screen.getByRole('radio', { name: 'v2' }));
     await userEvent.click(screen.getByRole('radio', { name: 'v1' }));
     await userEvent.type(screen.getByLabelText('Chiedi una modifica'), 'ciao');
     await userEvent.click(screen.getByRole('button', { name: 'Invia' }));
     versions = [version(1), version(2), version(3)];
-    await act(async () => { rerender(<CreativePage slug="acme" creative="c1" live={{ ...live, creativeTicks: { 'acme/c1': 1 }, projectTicks: {} }} expert={false} />); });
+    await act(async () => { rerender(<CreativePage slug="acme" creative="c1" live={{ ...live, creativeTicks: { 'acme/c1': 1 }, projectTicks: {} }} />); });
     await waitFor(() => expect(screen.getByRole('radio', { name: 'v3' }).getAttribute('aria-checked')).toBe('true'));
   });
 });

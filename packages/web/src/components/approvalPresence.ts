@@ -8,8 +8,10 @@ export interface ShownApproval { approval: ApprovalRequest; /** No longer pendin
  * `leaving: true` until its card reports the exit finished (`gone`); if it comes back meanwhile it is simply pending
  * again, in the same place, never twice. `gone` for an id that is pending again is ignored, so a late "finished" of
  * a cancelled exit cannot remove a revived card. New approvals are appended in the order given.
+ * `visible: false` (the list is not on screen): resolved approvals are dropped at once, so they never mount later
+ * just to collapse.
  */
-export function useApprovalPresence(approvals: ApprovalRequest[]): { list: ShownApproval[]; gone(id: string): void } {
+export function useApprovalPresence(approvals: ApprovalRequest[], visible = true): { list: ShownApproval[]; gone(id: string): void } {
   const [, rerender] = useReducer((n: number) => n + 1, 0);
   const shown = useRef<ApprovalRequest[]>([]);
   const finished = useRef(new Set<string>());
@@ -23,7 +25,7 @@ export function useApprovalPresence(approvals: ApprovalRequest[]): { list: Shown
     const now = current.get(a.id);
     if (now) next.push(now);
     else if (finished.current.has(a.id)) finished.current.delete(a.id); // its exit finished: drop it
-    else next.push(a);
+    else if (visible) next.push(a);
     seen.add(a.id);
   }
   for (const a of approvals) if (!seen.has(a.id)) { next.push(a); seen.add(a.id); }
