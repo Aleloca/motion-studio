@@ -83,5 +83,7 @@ export type ConversationEntry =
   | { type: 'system'; at: string; level: 'info' | 'error'; text: string };
 
 export interface CreativeSummary { slug: string; title: string; status: CreativeStatus; formats: string[]; versions: number; updatedAt: string; cover: string | null }
+/** A creative summary tagged with its project, for cross-project lists such as "Jump back in". */
+export type RecentCreative = CreativeSummary & { project: { slug: string; name: string } };
 export type CreativeListItem = ({ ok: true } & CreativeSummary) | { ok: false; slug: string; error: string };
 export interface CreativeDetail { slug: string; creative: CreativeFile; versions: VersionEntry[]; jobKey: string }

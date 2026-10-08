@@ -1,7 +1,7 @@
 import { lstat, realpath } from 'node:fs/promises';
 import { dirname, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { briefSchema, issuesText, linkedCodebaseSchema, pinSchema, type CreativeDetail } from '@motion-studio/shared';
+import { briefSchema, issuesText, linkedCodebaseSchema, pinSchema, type CreativeDetail, type RecentCreative } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -71,6 +71,25 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const ws = ctx.requireWorkspace();
     await ws.getProject(req.params.slug);
     return new CreativeStore(ws.projectDir(req.params.slug)).list();
+  });
+
+  // Read-only: the most recent creatives across all readable projects ("Jump back in").
+  app.get<{ Querystring: { limit?: string } }>('/api/recent-creatives', async (req): Promise<RecentCreative[]> => {
+    const raw = Number.parseInt(req.query.limit ?? '', 10);
+    const limit = Number.isFinite(raw) ? Math.min(12, Math.max(1, raw)) : 3;
+    const ws = ctx.requireWorkspace();
+    const all: RecentCreative[] = [];
+    for (const p of await ws.listProjects()) {
+      if (!p.ok) continue;
+      const items = await new CreativeStore(ws.projectDir(p.slug)).list().catch(() => []);
+      for (const i of items) {
+        if (!i.ok) continue;
+        const { ok: _ok, ...summary } = i;
+        all.push({ ...summary, project: { slug: p.slug, name: p.project.name } });
+      }
+    }
+    all.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.project.slug.localeCompare(b.project.slug) || a.slug.localeCompare(b.slug));
+    return all.slice(0, limit);
   });
 
   app.post<{ Params: { slug: string } }>('/api/projects/:slug/creatives', async (req, reply) => {
