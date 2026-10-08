@@ -9,6 +9,7 @@ import WebSocket from 'ws';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AppConfigStore } from '../src/app-config.ts';
 import { Git } from '../src/git.ts';
+import { runDoctor } from '../src/doctor.ts';
 import { buildServer } from '../src/server/app.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
@@ -26,7 +27,7 @@ beforeEach(async () => {
 });
 afterEach(async () => { await app.close(); delete process.env.FAKE_CLAUDE_SCENARIO; delete process.env.FAKE_CLAUDE_ARGS_FILE; });
 
-const buildWith = (opts: { webDir?: string } = {}) => buildServer({
+const buildWith = (opts: Partial<Parameters<typeof buildServer>[0]> = {}) => buildServer({
   appConfig: new AppConfigStore(join(base, 'config')),
   git: new Git(),
   runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),
@@ -116,6 +117,18 @@ describe('doctor', () => {
   it('returns the checks', async () => {
     expect((await app.inject('/api/doctor')).json()[0]).toMatchObject({ id: 'git', ok: true });
   });
+  it('includes the sandbox check from the server sandbox detection', async () => {
+    const exec = async () => ({ code: 0, stdout: '1.0.0', stderr: '', notFound: false });
+    let calls = 0;
+    const other = await buildWith({
+      doctor: (extra) => runDoctor({ exec, claudeCommand: ['claude'], sandbox: extra?.sandbox }),
+      sandbox: async () => { calls++; return { available: false, reason: 'Mancano bubblewrap e socat' }; },
+    });
+    const checks = (await other.inject('/api/doctor')).json() as Array<{ id: string; ok: boolean; message: string }>;
+    expect(checks.find((c) => c.id === 'sandbox')).toMatchObject({ ok: false, message: 'Mancano bubblewrap e socat' });
+    expect(calls).toBe(1);
+    await other.close();
+  });
 });
 
 describe('turns over WebSocket', () => {
@@ -156,19 +169,22 @@ describe('turns over WebSocket', () => {
     await waitFor(() => messages.some((m) => m.type === 'project' && m.project === 'acme'));
     ws.close();
   });
-  it('does not pass linked codebases to the agent in phase 1', async () => {
+  it('passes the existing linked codebases read-only to the console, ignoring missing and overlapping ones', async () => {
     process.env.FAKE_CLAUDE_ARGS_FILE = join(base, 'args.json');
     await setWorkspace();
     await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' } });
+    const codebase = await mkdtemp(join(tmpdir(), 'ms-cb-'));
     const projectJson = join(base, 'Spazio di lavoro', 'acme', 'project.json');
     const project = JSON.parse(await readFile(projectJson, 'utf8'));
-    await writeFile(projectJson, JSON.stringify({ ...project, linkedCodebases: [{ path: base }] }));
+    await writeFile(projectJson, JSON.stringify({ ...project, linkedCodebases: [{ path: base }, { path: codebase }, { path: join(base, 'manca') }] }));
     const { messages, ws } = await connect();
     const id = (await app.inject({ method: 'POST', url: '/api/projects/acme/turns', payload: { prompt: 'x' } })).json().id;
     await waitFor(() => messages.some((m) => m.type === 'job' && m.job.id === id && m.job.state === 'succeeded'));
-    const args = JSON.parse(await readFile(join(base, 'args.json'), 'utf8')).args;
-    expect(args).not.toContain('--add-dir');
-    expect(args).not.toContain('--allowedTools'); // the project console keeps the phase-1 policy
+    const args = JSON.parse(await readFile(join(base, 'args.json'), 'utf8')).args as string[];
+    expect(args.filter((a, i) => args[i - 1] === '--add-dir')).toEqual([codebase]);
+    expect(args).toContain(`Edit(/${codebase}/**)`);
+    expect(args).not.toContain('--allowedTools'); // the console has no default tools
+    expect(args).toContain(`Edit(/${join(base, 'Spazio di lavoro', 'acme', '.studio')}/**)`);
     ws.close();
   });
   it('rejects a second concurrent turn on the same project, and cancels a hanging one', async () => {

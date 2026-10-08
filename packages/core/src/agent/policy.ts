@@ -6,6 +6,8 @@ export type AgentJobKind = 'creative' | 'brand-analysis' | 'describe' | 'console
 export interface PolicyInput {
   kind: AgentJobKind; sandbox: boolean; home: string; configDir: string;
   codebases: string[]; protectedFiles: string[];
+  /** Folders the agent must never write, whatever the job (e.g. `<project>/.studio`, where its permissions live). */
+  protectedDirs: string[];
   extraDomains: string[]; projectAllowRules: string[]; mcpTools: string[];
 }
 export interface AgentPolicy { settings: Record<string, unknown> | null; allowedTools: string[]; disallowedTools: string[]; addDirs: string[] }
@@ -24,6 +26,7 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
     ...dirDenyRules(['Read'], [...sensitive.dirs, i.configDir]),
     ...fileDenyRules(['Read'], sensitive.files),
     ...(i.protectedFiles.length ? fileDenyRules(EDIT_TOOLS, i.protectedFiles) : []),
+    ...dirDenyRules(EDIT_TOOLS, i.protectedDirs),
   ];
   const extra = [...i.projectAllowRules, ...i.mcpTools];
   if (!i.sandbox) {
@@ -40,7 +43,7 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
       failIfUnavailable: true,
       allowUnsandboxedCommands: false,
       autoAllowBashIfSandboxed: AUTO_BASH[i.kind],
-      filesystem: { denyRead: [...sensitiveHomePaths(i.home), i.configDir], denyWrite: [...i.codebases, ...i.protectedFiles] },
+      filesystem: { denyRead: [...sensitiveHomePaths(i.home), i.configDir], denyWrite: [...i.codebases, ...i.protectedFiles, ...i.protectedDirs] },
       ...(network ? { network } : {}),
     },
   };

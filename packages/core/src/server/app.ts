@@ -5,14 +5,19 @@ import fastifyMultipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance } from 'fastify';
-import type { DoctorCheck, ProjectDetail, ServerMessage, WorkspaceInfo, WorkspaceProblem, WorkspaceSettings } from '@motion-studio/shared';
+import { workspaceSettingsSchema, type DoctorCheck, type LinkedCodebase, type ProjectDetail, type ServerMessage, type WorkspaceInfo, type WorkspaceProblem, type WorkspaceSettings } from '@motion-studio/shared';
 import { BrandService } from '../brand/brand-analysis.ts';
 import { UPLOAD_LIMITS } from '../library/upload.ts';
 import { CreativeTurnService } from '../creatives/creative-turns.ts';
 import { FormatCatalog } from '../formats/format-catalog.ts';
 import { NoMediaTools, type MediaTools } from '../media/media-tools.ts';
+import { AgentLauncher } from '../agent/launcher.ts';
 import type { AgentRunner } from '../agent/runner.ts';
-import type { AppConfigStore } from '../app-config.ts';
+import { detectSandbox, type SandboxSupport } from '../agent/sandbox.ts';
+import { defaultConfigDir, type AppConfigStore } from '../app-config.ts';
+import { AgentBridge } from '../bridge/bridge.ts';
+import { registerBridgeRoutes } from '../bridge/bridge-routes.ts';
+import { checkCodebases, codebaseOverlaps, normalizeCodebaseList } from '../codebases.ts';
 import type { Git } from '../git.ts';
 import { JobConflictError, JobQueue } from '../jobs/job-queue.ts';
 import { JsonFileError } from '../json-file.ts';
@@ -30,12 +35,26 @@ export interface ServerDeps {
   appConfig: AppConfigStore;
   git: Git;
   runner: AgentRunner;
-  doctor: () => Promise<DoctorCheck[]>;
+  /** Receives the server's (cached) sandbox detection, so the report includes the sandbox check. */
+  doctor: (extra: { sandbox: () => Promise<SandboxSupport> }) => Promise<DoctorCheck[]>;
   webDir?: string;
   media?: MediaTools;
   openPath?: (path: string) => Promise<void>;
   vault?: SecretsVault;
   approvals?: ApprovalBroker;
+  /** Callback channel of the `studio` MCP server; its origin is set once the server listens. */
+  bridge?: AgentBridge;
+  /** Command that starts the `studio` MCP server; null (default) runs the agent without MCP nor UI approvals. */
+  mcpCommand?: string[] | null;
+  configDir?: string;
+  /** Sandbox support of the system; defaults to a cached detectSandbox(). */
+  sandbox?: () => Promise<SandboxSupport>;
+}
+
+/** Runs `fn` once and keeps its promise (a rejection is not cached). */
+function memo<T>(fn: () => Promise<T>): () => Promise<T> {
+  let p: Promise<T> | null = null;
+  return () => (p ??= fn().catch((err) => { p = null; throw err; }));
 }
 
 const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?$/i;
@@ -61,6 +80,18 @@ const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/;
 function describeWorkspaceProblem(err: unknown): WorkspaceProblem {
   if (err instanceof WorkspaceError && err.code) return { code: err.code, message: err.message };
   return { code: 'invalid', message: err instanceof Error ? err.message : String(err) };
+}
+
+/** The project's linked codebases the console may read: existing folders that do not overlap the project or the workspace. */
+async function consoleCodebases(list: LinkedCodebase[], forbidden: string[]): Promise<string[]> {
+  const kept: LinkedCodebase[] = [];
+  for (const c of list) {
+    try {
+      const [n] = normalizeCodebaseList([c]);
+      if (n && !(await codebaseOverlaps(n.path, forbidden))) kept.push(n);
+    } catch { /* an invalid entry is skipped */ }
+  }
+  return (await checkCodebases(normalizeCodebaseList(kept))).filter((c) => c.exists).map((c) => c.path);
 }
 
 /** Key of a project's agent jobs: unique per workspace root, so two workspaces never collide. */
@@ -95,15 +126,24 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return workspace;
   };
 
+  const sandbox = deps.sandbox ?? memo(() => detectSandbox());
+  const bridge = deps.bridge ?? new AgentBridge();
+  const launcher = new AgentLauncher({
+    runner: deps.runner, bridge, approvals, sandbox,
+    settings: async () => (workspace ? workspace.readSettings() : workspaceSettingsSchema.parse({ schemaVersion: 1 })),
+    configDir: deps.configDir ?? defaultConfigDir(),
+    mcpCommand: deps.mcpCommand ?? null,
+  });
+
   const turns = new CreativeTurnService({
-    queue, runner: deps.runner, git: deps.git, media,
+    queue, launcher, git: deps.git, media,
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     model: async () => (await requireWorkspace().readSettings()).model,
     broadcast: (msg) => hub.broadcast(msg),
   });
 
   const brandService = new BrandService({
-    queue, runner: deps.runner, git: deps.git, media,
+    queue, launcher, git: deps.git, media,
     model: async () => (await requireWorkspace().readSettings()).model,
     broadcast: (msg) => hub.broadcast(msg),
   });
@@ -142,7 +182,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await app.register(fastifyMultipart, { limits: UPLOAD_LIMITS });
 
   app.get('/api/health', async () => ({ ok: true }));
-  app.get('/api/doctor', async () => deps.doctor());
+  app.get('/api/doctor', async () => deps.doctor({ sandbox }));
 
   app.get('/api/workspace', async (): Promise<WorkspaceInfo> => {
     if (!workspace) return { path: workspaceProblem?.path ?? null, settings: null, error: workspaceProblem?.error ?? null };
@@ -204,27 +244,23 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       }
       const resumeSessionId = rawSession ?? undefined;
       const settings = await ws.readSettings();
-      const cwd = ws.projectDir(slug);
+      const projectDir = ws.projectDir(slug);
       const job = queue.enqueue({
         key: projectJobKey(ws.root, slug),
         label: `Turno · ${project.name}`,
         run: async (signal, jobId) => {
-          const run = deps.runner.start(
-            {
-              cwd,
-              prompt,
-              resumeSessionId,
-              // Phase 1 deliberately ignores project.linkedCodebases (no --add-dir): phase 3 will pass them
-              // together with per-session deny rules on Edit/Write so they stay read-only (spec §6.3).
-              model: settings.model ?? undefined,
-            },
-            (event) => {
+          const run = await launcher.start({
+            kind: 'console', jobId, projectSlug: slug, projectDir,
+            codebases: await consoleCodebases(project.linkedCodebases, [projectDir, ws.root]),
+            request: { prompt, resumeSessionId, model: settings.model ?? undefined },
+            onEvent: (event) => {
               hub.broadcast({ type: 'agent', jobId, event });
               const sessionId = event.kind === 'session' ? event.sessionId : event.kind === 'result' ? event.sessionId : undefined;
               if (sessionId) queue.patch(jobId, { sessionId });
             },
-          );
+          });
           signal.addEventListener('abort', () => run.cancel(), { once: true });
+          if (signal.aborted) run.cancel(); // cancelled while the turn was being prepared
           const result = await run.done;
           if (result.status === 'failed') throw new Error(result.error ?? 'Turno non riuscito');
           // A cancel that arrived after an ok result yields 'succeeded' from the runner: keep it.
@@ -250,6 +286,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   registerLibraryRoutes(app, routeCtx);
   registerProjectRoutes(app, { requireWorkspace, jobKeyOf: projectJobKey, broadcast: (m) => hub.broadcast(m) });
 
+  registerBridgeRoutes(app, { bridge, approvals });
   registerSettingsRoutes(app, { vault: deps.vault ?? new MemoryVault(), approvals, requireWorkspace });
 
   const serveWeb = Boolean(deps.webDir && (await stat(deps.webDir).catch(() => null))?.isDirectory());

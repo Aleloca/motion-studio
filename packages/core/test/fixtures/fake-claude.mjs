@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 
 const args = process.argv.slice(2);
-if (process.env.FAKE_CLAUDE_ARGS_FILE) writeFileSync(process.env.FAKE_CLAUDE_ARGS_FILE, JSON.stringify({ args, cwd: process.cwd(), pid: process.pid, env: process.env.MS_TEST_ENV ?? null }));
+if (process.env.FAKE_CLAUDE_ARGS_FILE) writeFileSync(process.env.FAKE_CLAUDE_ARGS_FILE, JSON.stringify({ args, cwd: process.cwd(), pid: process.pid, env: process.env.MS_TEST_ENV ?? null, mcpTimeout: process.env.MCP_TOOL_TIMEOUT ?? null }));
 if (args[0] === '--version') { console.log('9.9.9 (Claude Code)'); process.exit(0); }
 if (args[0] === 'auth' && args[1] === 'status') {
   const loggedIn = process.env.FAKE_CLAUDE_LOGGED_IN !== '0';

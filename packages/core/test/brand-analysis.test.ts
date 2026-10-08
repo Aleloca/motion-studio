@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import type { ServerMessage } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
+import { testLauncher } from './helpers/launcher.ts';
 import { BrandService, type ProjectRef } from '../src/brand/brand-analysis.ts';
 import { BrandStore } from '../src/brand/brand-store.ts';
 import { execCommand } from '../src/exec.ts';
@@ -31,7 +32,7 @@ beforeEach(async () => {
   ref = { root: ws.root, projectSlug: slug, projectDir: ws.projectDir(slug) };
   queue = new JobQueue({ concurrency: 2 });
   messages = [];
-  service = new BrandService({ queue, git, media: NoMediaTools, runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }), model: async () => null, broadcast: (m) => messages.push(m) });
+  service = new BrandService({ queue, git, media: NoMediaTools, launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })), model: async () => null, broadcast: (m) => messages.push(m) });
   brand = new BrandStore(ref.projectDir);
   await brand.writeKit({ schemaVersion: 1, colors: [{ id: 'blu', name: 'Blu', hex: '#1E3A5F', role: 'primary', source: { kind: 'manual', ref: null } }] });
   await brand.addSource({ kind: 'website', url: 'https://acme.example' });

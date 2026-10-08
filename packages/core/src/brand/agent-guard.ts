@@ -1,20 +1,18 @@
 import { randomBytes } from 'node:crypto';
 import { lstat, readFile, realpath, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
-import { fileDenyRules } from '../codebases.ts';
 import { fileLock } from '../file-locks.ts';
 
 /** The project's live metadata: brand jobs' agents work on copies and must never write these. */
 export const GUARDED_FILES = ['brand/brand-kit.json', 'brand/guidelines.md', 'brand/sources.json', 'assets/assets.json', 'references/references.json'] as const;
-const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 
 const absOf = (projectDir: string, rel: string) => join(projectDir, ...rel.split('/'));
 
-/** Deny rules on the guarded files for every file-editing tool (also under the project's real path when it differs). */
-export async function guardRules(projectDir: string): Promise<string[]> {
+/** Absolute paths of the guarded files, also under the project's real path when it differs (the policy denies edits on them). */
+export async function guardedPaths(projectDir: string): Promise<string[]> {
   const real = await realpath(projectDir).catch(() => projectDir);
   const roots = real === projectDir ? [projectDir] : [projectDir, real];
-  return fileDenyRules(EDIT_TOOLS, roots.flatMap((r) => GUARDED_FILES.map((f) => absOf(r, f))));
+  return roots.flatMap((r) => GUARDED_FILES.map((f) => absOf(r, f)));
 }
 
 interface GuardedFile { rel: string; abs: string; bytes: Buffer | null | undefined; writes: number }

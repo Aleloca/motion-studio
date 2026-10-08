@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { DEFAULT_FORMATS, type Brief, type ServerMessage } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
+import { testLauncher } from './helpers/launcher.ts';
 import { AGENT_ALLOWED_TOOLS } from '../src/agent/runner.ts';
 import { BrandStore } from '../src/brand/brand-store.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
@@ -39,7 +40,7 @@ beforeEach(async () => {
   queue = new JobQueue({ concurrency: 2 });
   service = new CreativeTurnService({
     queue, git, media: NoMediaTools,
-    runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),
+    launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
     presets: async () => DEFAULT_FORMATS, model: async () => null,
     broadcast: (m) => messages.push(m),
   });
@@ -184,7 +185,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     const q1 = new JobQueue({ concurrency: 1 });
     const svc = new CreativeTurnService({
       queue: q1, git: new Git(), media: NoMediaTools,
-      runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),
+      launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
     });
     let release!: () => void;
@@ -227,7 +228,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     const throwing: MediaTools = { available: true, probe: async () => null, poster: async () => false, frame: async () => { throw new Error('ffmpeg esploso'); } };
     const svc = new CreativeTurnService({
       queue, git: new Git(), media: throwing,
-      runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),
+      launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
     });
     const job = await svc.start(ref, { text: 'ritocca', pins: [{ format: 'instagram-post-1x1', x: 0.5, y: 0.5, timeSec: 1, note: 'qui' }] });
@@ -239,7 +240,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     const q1 = new JobQueue({ concurrency: 1 });
     const svc = new CreativeTurnService({
       queue: q1, git: new Git(), media: NoMediaTools,
-      runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),
+      launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
     });
     let release!: () => void;
@@ -291,7 +292,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
       frame: async (input) => { sources.push(input); return false; },
     };
     const svc = new CreativeTurnService({
-      queue, git: new Git(), media, runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),
+      queue, git: new Git(), media, launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
     });
     await finalState((await svc.start(ref, { text: 'da v1', pins: [{ format: 'instagram-post-1x1', x: 0.5, y: 0.5, timeSec: 1 }] })).id);
@@ -319,7 +320,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
         poster: async () => false, frame: async () => false,
       };
       const svc = new CreativeTurnService({
-        queue, git, media, runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),
+        queue, git, media, launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
         presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
       });
       return { start: async () => { jobId = (await svc.start(ref)).id; return jobId; } };
@@ -406,7 +407,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     git.commitAll = async (dir, msg) => { if (msg.endsWith('· stato')) throw new Error('disco pieno'); return real(dir, msg); };
     const svc = new CreativeTurnService({
       queue, git, media: NoMediaTools,
-      runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),
+      launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
     });
     expect(await finalState((await svc.start(ref)).id)).toBe('succeeded');

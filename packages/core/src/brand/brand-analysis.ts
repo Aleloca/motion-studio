@@ -2,14 +2,14 @@ import { appendFile, lstat, mkdir, realpath, rm, writeFile } from 'node:fs/promi
 import { join, relative, sep } from 'node:path';
 import { brandProposalSchema, relativeFileSchema, webUrlSchema, type AssetEntry, type BrandKit, type BrandProposal, type JobSummary, type ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
-import { BRAND_ANALYSIS_TOOLS, DESCRIBE_TOOLS, type AgentRunner } from '../agent/runner.ts';
+import type { AgentLauncher } from '../agent/launcher.ts';
 import type { Git } from '../git.ts';
 import type { JobQueue } from '../jobs/job-queue.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 import { LibraryStore } from '../library/library-store.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { WorkspaceError } from '../workspace-store.ts';
-import { guardRules, readAgentFile, restoreGuarded, snapshotGuarded } from './agent-guard.ts';
+import { guardedPaths, readAgentFile, restoreGuarded, snapshotGuarded } from './agent-guard.ts';
 import { applyBrandChanges, diffBrandKits } from './brand-diff.ts';
 import { buildBrandPrompt, buildDescribePrompt } from './brand-prompt.ts';
 import { BrandStore } from './brand-store.ts';
@@ -17,7 +17,7 @@ import { parseProposedKit } from './proposed-kit.ts';
 
 export interface ProjectRef { root: string; projectSlug: string; projectDir: string }
 export const brandJobKey = (root: string, slug: string) => `brand:${root}:${slug}`;
-export interface BrandServiceDeps { queue: JobQueue; runner: AgentRunner; git: Git; media: MediaTools; model: () => Promise<string | null>; broadcast: (m: ServerMessage) => void }
+export interface BrandServiceDeps { queue: JobQueue; launcher: AgentLauncher; git: Git; media: MediaTools; model: () => Promise<string | null>; broadcast: (m: ServerMessage) => void }
 
 const listedAsset = z.object({ file: relativeFileSchema, sourceUrl: webUrlSchema.nullish(), description: z.string().max(2000).optional(), tags: z.array(z.string().min(1).max(40)).max(30).optional() });
 const describedAsset = z.object({ file: relativeFileSchema, description: z.string().max(2000), tags: z.array(z.string().min(1).max(40)).max(30).optional() });
@@ -72,12 +72,17 @@ export class BrandService {
    * Runs one agent turn with the live metadata files denied to the editing tools; whatever the outcome, files the agent
    * still managed to change (e.g. through an interpreter) are restored. `tampered` receives one note per file the agent changed.
    */
-  private async runAgent(ref: ProjectRef, prompt: string, allowedTools: readonly string[], logFile: string | null, signal: AbortSignal, jobId: string, tampered: string[]): Promise<'ok' | 'cancelled'> {
+  private async runAgent(ref: ProjectRef, kind: 'brand-analysis' | 'describe', prompt: string, logFile: string | null, signal: AbortSignal, jobId: string, tampered: string[]): Promise<'ok' | 'cancelled'> {
     const guard = await snapshotGuarded(ref.projectDir);
     try {
-      const run = this.deps.runner.start({ cwd: ref.projectDir, prompt, model: (await this.deps.model()) ?? undefined, allowedTools: [...allowedTools], disallowedTools: await guardRules(ref.projectDir) }, (event) => {
-        this.deps.broadcast({ type: 'agent', jobId, event });
-        if (logFile) void appendFile(logFile, `${JSON.stringify({ at: new Date().toISOString(), event })}\n`).catch(() => {});
+      const run = await this.deps.launcher.start({
+        kind, jobId, projectSlug: ref.projectSlug, projectDir: ref.projectDir,
+        protectedFiles: await guardedPaths(ref.projectDir),
+        request: { prompt, model: (await this.deps.model()) ?? undefined },
+        onEvent: (event) => {
+          this.deps.broadcast({ type: 'agent', jobId, event });
+          if (logFile) void appendFile(logFile, `${JSON.stringify({ at: new Date().toISOString(), event })}\n`).catch(() => {});
+        },
       });
       const onAbort = () => run.cancel();
       signal.addEventListener('abort', onAbort, { once: true });
@@ -110,7 +115,7 @@ export class BrandService {
         sources: sources.map((s) => ({ id: s.id, kind: s.kind, url: s.url, file: s.file })),
       };
       const tampered: string[] = [];
-      if ((await this.runAgent(ref, buildBrandPrompt(block), BRAND_ANALYSIS_TOOLS, join(dir, 'log.jsonl'), signal, jobId, tampered)) === 'cancelled') {
+      if ((await this.runAgent(ref, 'brand-analysis', buildBrandPrompt(block), join(dir, 'log.jsonl'), signal, jobId, tampered)) === 'cancelled') {
         await rm(dir, { recursive: true, force: true });
         return 'cancelled';
       }
@@ -234,7 +239,7 @@ export class BrandService {
             await mkdir(join(ref.projectDir, 'assets', '.describe'), { recursive: true });
             const prompt = buildDescribePrompt({ outFile: outRel, files: targets.map((t) => `assets/${t.file}`) });
             const tampered: string[] = [];
-            const outcome = await this.runAgent(ref, prompt, DESCRIBE_TOOLS, null, signal, jobId, tampered).finally(() => notes.push(...tampered));
+            const outcome = await this.runAgent(ref, 'describe', prompt, null, signal, jobId, tampered).finally(() => notes.push(...tampered));
             if (outcome === 'cancelled') return 'cancelled';
             const wanted = new Set(targets.map((t) => t.file));
             const described = await readLenient(outAbs, describedAsset);

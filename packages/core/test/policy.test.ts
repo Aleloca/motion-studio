@@ -4,7 +4,7 @@ import { AGENT_ALLOWED_TOOLS, BRAND_ANALYSIS_TOOLS, DESCRIBE_TOOLS } from '../sr
 
 const base: PolicyInput = {
   kind: 'creative', sandbox: true, home: '/Users/me', configDir: '/Users/me/Library/Application Support/Motion Studio',
-  codebases: ['/Users/me/dev/app [ios]'], protectedFiles: [], extraDomains: ['api.acme.io'],
+  codebases: ['/Users/me/dev/app [ios]'], protectedFiles: [], protectedDirs: [], extraDomains: ['api.acme.io'],
   projectAllowRules: ['Bash(brew:*)'], mcpTools: ['mcp__studio__report_progress'],
 };
 type Sb = { sandbox: { enabled: boolean; autoAllowBashIfSandboxed: boolean; filesystem: { denyRead: string[]; denyWrite: string[] }; network?: { allowedDomains: string[] } } };
@@ -61,6 +61,19 @@ describe('buildAgentPolicy hardening', () => {
   it('deduplicates a project rule equal to a default tool', () => {
     const p = buildAgentPolicy({ ...base, sandbox: false, projectAllowRules: ['Bash(node:*)'], mcpTools: [] });
     expect(p.allowedTools.filter((t) => t === 'Bash(node:*)')).toHaveLength(1);
+  });
+});
+
+describe('buildAgentPolicy protected folders', () => {
+  it('denies edits and sandbox writes on the protected folders for every kind, sandbox or not', () => {
+    for (const kind of ['creative', 'console', 'brand-analysis', 'describe'] as const) {
+      for (const sandbox of [true, false]) {
+        const p = buildAgentPolicy({ ...base, kind, sandbox, codebases: [], protectedDirs: ['/p/acme [1]/.studio'] });
+        expect(p.disallowedTools).toEqual(expect.arrayContaining(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].map((t) => `${t}(//p/acme \\[1\\]/.studio/**)`)));
+        if (sandbox) expect((p.settings as Sb).sandbox.filesystem.denyWrite).toEqual(['/p/acme [1]/.studio']);
+        else expect(p.settings).toBeNull();
+      }
+    }
   });
 });
 

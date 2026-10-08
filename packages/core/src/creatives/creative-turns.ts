@@ -1,9 +1,9 @@
 import { lstat, rm, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Pin, type ServerMessage, type VersionEntry } from '@motion-studio/shared';
-import { AGENT_ALLOWED_TOOLS, type AgentRunner } from '../agent/runner.ts';
+import type { AgentLauncher } from '../agent/launcher.ts';
 import { BrandStore } from '../brand/brand-store.ts';
-import { assertCodebasesOutside, checkCodebases, codebaseOverlaps, CODEBASE_OVERLAP, codebaseSnapshot, normalizeCodebaseList, readOnlyRules } from '../codebases.ts';
+import { assertCodebasesOutside, checkCodebases, codebaseOverlaps, CODEBASE_OVERLAP, codebaseSnapshot, normalizeCodebaseList } from '../codebases.ts';
 import { readJsonFile } from '../json-file.ts';
 import { LibraryStore } from '../library/library-store.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
@@ -17,7 +17,7 @@ import { validateOutputs } from './output-contract.ts';
 import { buildCreativePrompt, type CreativeContext, type PromptKind } from './prompt.ts';
 
 export interface CreativeTurnDeps {
-  queue: JobQueue; runner: AgentRunner; git: Git; media: MediaTools;
+  queue: JobQueue; launcher: AgentLauncher; git: Git; media: MediaTools;
   presets: () => Promise<FormatPreset[]>;
   model: () => Promise<string | null>;
   broadcast: (msg: ServerMessage) => void;
@@ -155,13 +155,18 @@ export class CreativeTurnService {
             : `Codebase ${p}: controllo delle modifiche non riuscito, eventuali modifiche non verrebbero rilevate`;
           await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text });
         }
-        const run = this.deps.runner.start({ cwd: ref.projectDir, prompt, resumeSessionId, forkSession, model, allowedTools: [...AGENT_ALLOWED_TOOLS], addDirs: existing, disallowedTools: readOnlyRules(existing) }, (event) => {
-          this.deps.broadcast({ type: 'agent', jobId, event });
-          // Chained so writes stay ordered and a failure surfaces when the chain is awaited after the turn.
-          lastWrite = lastWrite.then(() => store.appendConversation(slug, { type: 'agent', at: now(), jobId, event }));
-          lastWrite.catch(() => {}); // observed here; the same rejection is rethrown by the await below
-          const sid = event.kind === 'session' || event.kind === 'result' ? event.sessionId : undefined;
-          if (sid) this.deps.queue.patch(jobId, { sessionId: sid });
+        const run = await this.deps.launcher.start({
+          kind: 'creative', jobId, projectSlug: ref.projectSlug, projectDir: ref.projectDir, creativeSlug: slug, codebases: existing,
+          request: { prompt, resumeSessionId, forkSession, model },
+          onEvent: (event) => {
+            this.deps.broadcast({ type: 'agent', jobId, event });
+            // Chained so writes stay ordered and a failure surfaces when the chain is awaited after the turn.
+            lastWrite = lastWrite.then(() => store.appendConversation(slug, { type: 'agent', at: now(), jobId, event }));
+            lastWrite.catch(() => {}); // observed here; the same rejection is rethrown by the await below
+            const sid = event.kind === 'session' || event.kind === 'result' ? event.sessionId : undefined;
+            if (sid) this.deps.queue.patch(jobId, { sessionId: sid });
+          },
+          validate: () => validateOutputs({ dir: store.outputsDir(slug, n), requested: creative.brief.formats, presets, durationSec: creative.brief.durationSec, media: this.deps.media }),
         });
         const onAbort = () => run.cancel();
         signal.addEventListener('abort', onAbort, { once: true });

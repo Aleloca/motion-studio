@@ -36,3 +36,6 @@ export * from './secrets/vault.ts';
 export * from './server/settings-routes.ts';
 export * from './approvals/permissions-store.ts';
 export * from './approvals/broker.ts';
+export * from './agent/launcher.ts';
+export * from './bridge/bridge.ts';
+export * from './bridge/bridge-routes.ts';
