@@ -81,25 +81,28 @@ describe('main handlers', () => {
     expect(bad.dock.setBadge).not.toHaveBeenCalled();
   });
 
-  it('sets the dock badge and bounces only when the count grows', () => {
+  it('bounces once with each notification; the badge only mirrors the count', () => {
     const { d, dock } = deps();
     const h = attentionHandlers(d);
-    h.badge(event, 1);
-    expect(dock.setBadge).toHaveBeenLastCalledWith('1');
+    h.badge(event, 3); // restored at startup: no bounce
+    expect(dock.setBadge).toHaveBeenLastCalledWith('3');
+    expect(dock.bounce).not.toHaveBeenCalled();
+    h.notify(event, { title: 'Motion Studio', body: 'Run ls' });
     expect(dock.bounce).toHaveBeenCalledTimes(1);
     expect(dock.bounce).toHaveBeenCalledWith('informational');
-    h.badge(event, 1);
+    h.badge(event, 4);
     expect(dock.bounce).toHaveBeenCalledTimes(1);
-    h.badge(event, 2);
-    expect(dock.bounce).toHaveBeenCalledTimes(2);
     h.badge(event, 0);
     expect(dock.setBadge).toHaveBeenLastCalledWith('');
-    expect(dock.bounce).toHaveBeenCalledTimes(2);
+    expect(() => h.notify(event, { title: '', body: '' })).toThrow();
+    expect(dock.bounce).toHaveBeenCalledTimes(1); // a refused request does not bounce
   });
 
   it('works without a dock (Windows, Linux)', () => {
     const { d } = deps();
-    expect(() => attentionHandlers({ ...d, dock: undefined }).badge(event, 3)).not.toThrow();
+    const h = attentionHandlers({ ...d, dock: undefined });
+    expect(() => h.badge(event, 3)).not.toThrow();
+    expect(() => h.notify(event, { title: 'T', body: 'b' })).not.toThrow();
   });
 
   it('registers both channels on ipcMain', () => {

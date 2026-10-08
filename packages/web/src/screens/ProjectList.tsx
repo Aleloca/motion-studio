@@ -1,5 +1,7 @@
 import type { ProjectListItem } from '@motion-studio/shared';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { flash } from '../motion/index.ts';
+import { useNewProjectIntent } from '../shell/intents.ts';
 import { api, ApiError } from '../api.ts';
 import { formatDate, useLocale, useT } from '../i18n.tsx';
 
@@ -9,6 +11,9 @@ export function ProjectList() {
   const [items, setItems] = useState<ProjectListItem[] | null>(null);
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const nameField = useRef<HTMLInputElement>(null);
+  // "New project" from the project switcher: bring the name field forward (prototype focusNew + flash).
+  useNewProjectIntent(() => { nameField.current?.focus(); void flash(nameField.current); });
 
   const load = () => api.listProjects().then(setItems).catch((e) => setError(String(e.message)));
   useEffect(() => { void load(); }, []);
@@ -26,7 +31,7 @@ export function ProjectList() {
       <div className="row"><h1 style={{ margin: 0, fontSize: 24 }}>{t.web.projects.title}</h1></div>
       <form className="card row" onSubmit={(e) => { e.preventDefault(); void create(); }}>
         <label htmlFor="new-project" className="muted">{t.web.projects.newProject}</label>
-        <input id="new-project" value={name} onChange={(e) => setName(e.target.value)} placeholder={t.web.projects.namePlaceholder} style={{ flex: '1 1 240px', width: 'auto' }} />
+        <input id="new-project" ref={nameField} value={name} onChange={(e) => setName(e.target.value)} placeholder={t.web.projects.namePlaceholder} style={{ flex: '1 1 240px', width: 'auto' }} />
         <button type="submit" className="primary" disabled={!name.trim()}>{t.web.projects.create}</button>
       </form>
       {error && <p role="alert" className="error">{error}</p>}

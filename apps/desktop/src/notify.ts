@@ -1,4 +1,4 @@
-// Attention signals for approvals (spec §6.3): native notification, Dock badge and bounce. The renderer asks through
+// Attention signals for approvals (spec §6.3): native notification with one Dock bounce, Dock badge. The renderer asks through
 // ms:notify / ms:badge; arguments are validated here, and only the app's own main frame may ask (same guard as the
 // other IPC handlers).
 import type { IpcMainInvokeEvent } from 'electron';
@@ -32,21 +32,23 @@ export interface AttentionDeps {
   invalid(): Error;
 }
 
+/**
+ * The renderer decides what is an arrival: it calls ms:notify once per new request (never for the requests already
+ * waiting at startup), and the Dock bounces with that notification. ms:badge only mirrors the count, so restoring the
+ * badge at startup or after a reconnect never bounces.
+ */
 export function attentionHandlers(d: AttentionDeps) {
-  let last = 0;
   return {
     notify(e: IpcMainInvokeEvent, arg: unknown): void {
       const args = d.trusted(e) ? notifyArgs(arg) : null;
       if (!args) throw d.invalid();
       d.showNotification(args);
+      d.dock?.bounce('informational');
     },
     badge(e: IpcMainInvokeEvent, arg: unknown): void {
       const n = d.trusted(e) ? badgeArg(arg) : null;
       if (n === null) throw d.invalid();
       d.dock?.setBadge(n ? String(n) : '');
-      // One bounce when something new needs the user, not on every refresh of the same count.
-      if (n > last) d.dock?.bounce('informational');
-      last = n;
     },
   };
 }

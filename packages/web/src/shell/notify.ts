@@ -7,6 +7,16 @@ export const NOTIFY_APPROVALS_KEY = 'motion-studio.notifyApprovals';
 export const APP_TITLE = 'Motion Studio';
 /** The Dock badge (and the IPC validation in the main process) stop at 99. */
 export const MAX_BADGE = 99;
+/** The main process refuses longer notification texts (apps/desktop/src/notify.ts). */
+export const MAX_TEXT = 200;
+
+/** At most `max` UTF-16 units, ending with "…" when cut; never splits a surrogate pair. */
+export function clip(text: string, max = MAX_TEXT): string {
+  if (text.length <= max) return text;
+  let cut = text.slice(0, max - 1);
+  if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
+  return `${cut}…`;
+}
 
 export function notifyApprovalsEnabled(): boolean {
   try { return localStorage.getItem(NOTIFY_APPROVALS_KEY) !== 'false'; } catch { return true; }
@@ -21,14 +31,17 @@ function quietly(call: () => unknown): void {
 }
 
 /**
- * Desktop: native notification from the main process, also with the window visible. Web: the Notification API when
- * the user granted it and the page is hidden (on a visible page the toast is enough).
+ * Desktop: native notification from the main process, also with the window visible (the main process bounces the Dock
+ * with it). Web: the Notification API when the user granted it and the page is hidden or not focused (on a focused page
+ * the toast is enough). Texts are clipped to what the main process accepts.
  */
-export function showNotification(p: { title: string; body: string }): void {
+export function showNotification(raw: { title: string; body: string }): void {
+  const p = { title: clip(raw.title), body: clip(raw.body) };
   const d = desktop();
   if (typeof d?.notify === 'function') { quietly(() => d.notify!(p)); return; }
   try {
-    if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.visibilityState === 'hidden') {
+    const away = document.visibilityState === 'hidden' || !document.hasFocus();
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && away) {
       new Notification(p.title, { body: p.body });
     }
   } catch { /* some browsers only allow notifications from a service worker */ }

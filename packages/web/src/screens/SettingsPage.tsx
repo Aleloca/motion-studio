@@ -57,7 +57,7 @@ export function SettingsPage({ settings, checks, language, systemLocale, onLangu
   const [model, setModel] = useState(settings.model ?? '');
   const [error, setError] = useState<string | null>(null);
   useEffect(() => { api.getSecrets().then(setSecrets).catch((e: unknown) => setError(msg(e))); }, []);
-  const save = async (patch: Partial<WorkspaceSettings>): Promise<boolean> => { setError(null); try { onSaved(await api.updateSettings(patch)); return true; } catch (e) { setError(msg(e)); return false; } };
+  const save = async (patch: Partial<WorkspaceSettings>): Promise<boolean> => { setError(null); try { onSaved(await api.updateSettings(patch)); return true; } catch (e) { setError(t.web.app.settingsSaveFailed({ detail: msg(e) })); return false; } };
   const sandbox = checks?.find((c) => c.id === 'sandbox');
   return (
     <main className="page stack" style={{ maxWidth: 900 }}>

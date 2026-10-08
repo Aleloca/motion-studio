@@ -12,7 +12,7 @@ import { ProjectPage } from './screens/ProjectPage.tsx';
 import { SettingsPage } from './screens/SettingsPage.tsx';
 import { useCatalog } from './shell/catalog.ts';
 import { CommandPalette } from './shell/CommandPalette.tsx';
-import { go, ShellContext, type ActivityTab, type Shell } from './shell/ShellContext.tsx';
+import { go, isMac, ShellContext, type ActivityTab, type Shell } from './shell/ShellContext.tsx';
 import { TopBar } from './shell/TopBars.tsx';
 import { useAttention } from './shell/useAttention.ts';
 import { applyTheme } from './theme.ts';
@@ -48,7 +48,8 @@ export function App() {
   );
 }
 
-interface ActivityState { open: boolean; tab: ActivityTab | null }
+/** `seq` grows with every request to show a tab, so a request reaches an activity center that is already open. */
+interface ActivityState { open: boolean; tab: ActivityTab | null; seq: number }
 interface Props { live: EventsState; language: LanguageSetting; systemLocale: Locale; onLanguage(next: LanguageState): void }
 
 function AppBody({ live, language, systemLocale, onLanguage }: Props) {
@@ -63,16 +64,16 @@ function AppBody({ live, language, systemLocale, onLanguage }: Props) {
   const pairing = usePairingNeeded();
 
   // Attention signals (title, Dock badge, notification, toast) follow the pending approvals on every screen.
-  const [activity, setActivity] = useState<ActivityState>({ open: false, tab: null });
+  const [activity, setActivity] = useState<ActivityState>({ open: false, tab: null, seq: 0 });
   const approvals = useMemo(() => Object.values(live.approvals), [live.approvals]);
   // "Review": the creative's conversation shows the request in context; otherwise (or when already there) the
   // activity center opens on Needs you.
   const review = useCallback((a: ApprovalRequest) => {
     const target = a.creativeSlug ? href.creative(a.projectSlug, a.creativeSlug) : null;
     if (target && location.hash !== target) go(target);
-    else setActivity({ open: true, tab: 'needs' });
+    else setActivity((a) => ({ open: true, tab: 'needs', seq: a.seq + 1 }));
   }, []);
-  useAttention(approvals.length, approvals, review);
+  useAttention(approvals.length, approvals, { onReview: review, snapshot: live.snapshots ?? 0 });
 
   const refresh = useCallback(() => {
     setChecks(null);
@@ -149,7 +150,10 @@ function AppShell({ route, live, ws, settings, checks, activity, setActivity, la
   // ⌘K / Ctrl+K toggles the command palette from anywhere.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k') {
+      if (e.isComposing || e.repeat || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'k') return;
+      // ⌘ on Mac (where Ctrl+K is a text-field shortcut), Ctrl elsewhere.
+      const mac = isMac();
+      if (mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         setPalette((p) => !p);
       }
@@ -159,7 +163,7 @@ function AppShell({ route, live, ws, settings, checks, activity, setActivity, la
   }, []);
   // A page change closes the activity center (its rows navigate).
   const key = routeKey(route);
-  useEffect(() => { setActivity((a) => (a.open ? { open: false, tab: a.tab } : a)); }, [key, setActivity]);
+  useEffect(() => { setActivity((a) => (a.open ? { ...a, open: false } : a)); }, [key, setActivity]);
 
   const shell = useMemo((): Shell => ({
     route,
@@ -167,9 +171,9 @@ function AppShell({ route, live, ws, settings, checks, activity, setActivity, la
     catalog,
     activity: {
       ...activity,
-      show: (tab) => setActivity({ open: true, tab: tab ?? null }),
-      hide: () => setActivity((a) => ({ open: false, tab: a.tab })),
-      toggle: () => setActivity((a) => ({ open: !a.open, tab: null })),
+      show: (tab) => setActivity((a) => ({ open: true, tab: tab ?? null, seq: a.seq + 1 })),
+      hide: () => setActivity((a) => ({ ...a, open: false })),
+      toggle: () => setActivity((a) => ({ open: !a.open, tab: null, seq: a.seq })),
     },
     openPalette: () => setPalette(true),
   }), [route, live, catalog, activity, setActivity]);

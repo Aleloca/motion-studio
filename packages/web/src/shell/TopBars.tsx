@@ -5,12 +5,10 @@ import { href, type ProjectTab, type Route } from '../routes.ts';
 import { Button, Icon, NavItem, Popover, Spinner, cx, initials } from '../ui/index.ts';
 import { ActivityCenter } from './ActivityCenter.tsx';
 import { ProjectSwitcher } from './ProjectSwitcher.tsx';
-import { go, useShell } from './ShellContext.tsx';
+import { go, isMac, useShell } from './ShellContext.tsx';
 
 /** Bar tabs (spec §6.1). The agent console stays reachable (palette, or shown while on it) until Task 16 folds it in. */
 const BAR_TABS: ProjectTab[] = ['creatives', 'brand', 'assets', 'references', 'settings'];
-
-const isMac = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
 function Logo() {
   const t = useT();
@@ -80,7 +78,7 @@ function Bell() {
         {n ? <span ref={badge} className="ms-count ms-bell-count" aria-hidden="true">{n > 99 ? '99+' : n}</span> : null}
       </button>
       <Popover open={activity.open} onClose={activity.hide} anchor={anchor} placement="bottom-end" width={440}>
-        <ActivityCenter live={live} initialTab={activity.tab} where={where} />
+        <ActivityCenter live={live} initialTab={activity.tab} request={activity.seq} where={where} />
       </Popover>
     </>
   );

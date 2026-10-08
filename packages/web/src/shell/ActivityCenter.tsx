@@ -1,5 +1,5 @@
 import type { AgentEvent, ApprovalRequest, JobSummary } from '@motion-studio/shared';
-import { useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ApprovalCard } from '../components/ApprovalCard.tsx';
 import type { EventsState } from '../eventsReducer.ts';
 import { formatDate, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
@@ -37,13 +37,25 @@ function lastStep(events: AgentEvent[] | undefined): string | null {
  * Activity center (spec §6.2 point 15): popover body with Needs you (full approval cards), Running (active jobs with
  * their latest step) and Done (latest results of the session), all derived from the live event state.
  */
-export function ActivityCenter({ live, initialTab, where }: { live: EventsState; initialTab: ActivityTab | null; where(project: string, creative: string | null): string }) {
+export function ActivityCenter({ live, initialTab, request = 0, where }: { live: EventsState; initialTab: ActivityTab | null; /** Changes with each request to show `initialTab`, also while open. */ request?: number; where(project: string, creative: string | null): string }) {
   const t = useT();
   const a = t.web.shell.activity;
   const { approvals, running, done } = useMemo(() => activityLists(live), [live]);
   const [tab, setTab] = useState<ActivityTab>(initialTab ?? (approvals.length ? 'needs' : 'running'));
   const [, rerender] = useState(0);
+  // A request to show a tab while the center is already open (e.g. "N running" or Review) switches to it.
+  const lastRequest = useRef(request);
+  useEffect(() => {
+    if (request === lastRequest.current) return;
+    lastRequest.current = request;
+    if (initialTab) setTab(initialTab);
+  }, [request, initialTab]);
   const panel = `${useId()}-panel`;
+  const askNotifications = () => {
+    const done = () => rerender((n) => n + 1);
+    // Older Safari only has the callback form (it returns undefined): pass the callback and wrap the result.
+    void Promise.resolve(Notification.requestPermission(done)).then(done, () => {});
+  };
 
   return (
     <div className="ms-activity" aria-label={a.label} role="region">
@@ -62,7 +74,7 @@ export function ActivityCenter({ live, initialTab, where }: { live: EventsState;
       </div>
       <div id={panel} role="tabpanel" className="ms-activity-body">
         {tab === 'needs' && canAskNotifications() && (
-          <Button size="sm" variant="outline" className="ms-activity-ask" onClick={() => { void Notification.requestPermission().then(() => rerender((n) => n + 1)); }}>
+          <Button size="sm" variant="outline" className="ms-activity-ask" onClick={askNotifications}>
             <Icon name="bell" size={13} />{a.enableNotifications}
           </Button>
         )}

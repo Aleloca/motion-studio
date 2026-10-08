@@ -1,6 +1,6 @@
 import type { AgentEvent, ApprovalRequest, JobSummary, LanguageSetting, Locale, ServerMessage } from '@motion-studio/shared';
 
-export interface EventsState { approvals: Record<string, ApprovalRequest>; jobs: Record<string, JobSummary>; events: Record<string, AgentEvent[]>; creativeTicks: Record<string, number>; projectTicks: Record<string, number>; /** Unset until the first snapshot. */ language?: { locale: Locale; setting: LanguageSetting; systemLocale: Locale } | null }
+export interface EventsState { approvals: Record<string, ApprovalRequest>; jobs: Record<string, JobSummary>; events: Record<string, AgentEvent[]>; creativeTicks: Record<string, number>; projectTicks: Record<string, number>; /** Snapshots received (one per (re)connection): lets the UI tell restored state from new events. */ snapshots?: number; /** Unset until the first snapshot. */ language?: { locale: Locale; setting: LanguageSetting; systemLocale: Locale } | null }
 export const initialEventsState: EventsState = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
 const MAX_EVENTS = 2000;
 
@@ -10,6 +10,7 @@ export function eventsReducer(state: EventsState, msg: ServerMessage): EventsSta
       // A snapshot follows a (re)connection: anything may have changed meanwhile, so every open creative refetches.
       return {
         ...state,
+        snapshots: (state.snapshots ?? 0) + 1,
         jobs: Object.fromEntries(msg.jobs.map((j) => [j.id, j])),
         approvals: Object.fromEntries((msg.approvals ?? []).map((a) => [a.id, a])),
         language: msg.locale ? { locale: msg.locale, setting: msg.languageSetting ?? 'system', systemLocale: msg.systemLocale ?? msg.locale } : state.language,

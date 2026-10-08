@@ -57,7 +57,7 @@ describe('App startup', () => {
     vi.mocked(api.updateSettings).mockRejectedValue(new Error('disco pieno'));
     // Expert mode and the theme moved from the top bar to Settings.
     await userEvent.click(await screen.findByRole('switch', { name: 'Modalità esperto' }));
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('disco pieno'));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Impossibile salvare le impostazioni: disco pieno'));
   });
   it('does not show onboarding when only the optional sandbox check fails', async () => {
     const checks: DoctorCheck[] = [...okChecks, { id: 'sandbox', label: 'Sandbox', ok: false, required: false, message: 'Non disponibile' }];

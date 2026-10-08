@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { useT } from '../i18n.tsx';
 import { href } from '../routes.ts';
 import { Icon, NavItem, Popover, initials } from '../ui/index.ts';
+import { requestNewProject } from './intents.ts';
 import { go, useShell } from './ShellContext.tsx';
 
 /** Project monogram tile (no brand colours yet: the kit arrives with the Brand screen). */
@@ -43,7 +44,7 @@ export function ProjectSwitcher({ slug }: { slug: string }) {
           </NavItem>
         ))}
         <div className="ms-pop-sep" role="separator" />
-        <NavItem data-row="" icon="plus" onClick={() => pick(href.projects())}>{s.newProject}</NavItem>
+        <NavItem data-row="" icon="plus" onClick={() => { requestNewProject(); pick(href.projects()); }}>{s.newProject}</NavItem>
       </Popover>
     </>
   );

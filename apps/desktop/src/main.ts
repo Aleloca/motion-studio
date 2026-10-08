@@ -134,7 +134,7 @@ async function run() {
     if (!p) throw new Error(t().desktop.invalidPath);
     shell.showItemInFolder(p);
   });
-  // Approval signals: native notification (also with the window visible), Dock badge and one bounce when it grows.
+  // Approval signals: native notification (also with the window visible) with one Dock bounce, and the Dock badge.
   registerAttention(ipcMain, {
     trusted,
     showNotification: ({ title, body }) => {

@@ -87,12 +87,19 @@ async function startApp() {
   return screen.findByRole('button', { name: /^Attività/ });
 }
 
+let platform: ReturnType<typeof vi.spyOn> | null = null;
+/** navigator.platform for the ⌘K / Ctrl+K choice. */
+function onPlatform(name: 'MacIntel' | 'Win32') { platform = vi.spyOn(navigator, 'platform', 'get').mockReturnValue(name); }
+const snapshot = (approvals: ApprovalRequest[]): ServerMessage => ({ type: 'snapshot', jobs: [], approvals, locale: 'it', languageSetting: 'system', systemLocale: 'it' });
+
 beforeEach(() => {
   sockets = [];
   history.replaceState(null, '', '/#/');
   document.title = 'Motion Studio';
 });
 afterEach(() => {
+  platform?.mockRestore();
+  platform = null;
   vi.unstubAllGlobals();
   vi.clearAllMocks();
   delete (window as unknown as { motionStudio?: unknown }).motionStudio;
@@ -259,6 +266,25 @@ describe('useAttention', () => {
     expect(bridge.setBadge).toHaveBeenLastCalledWith(0);
   });
 
+  it('clips notification texts to the 200 characters the main process accepts', () => {
+    const bridge = desktopBridge();
+    const { rerender } = render(<Probe list={[]} />);
+    rerender(<Probe list={[approval('a1', 'x'.repeat(300))]} />);
+    const sent = bridge.notify.mock.calls[0]![0] as { title: string; body: string };
+    expect(sent.body).toHaveLength(200);
+    expect(sent.body.endsWith('…')).toBe(true);
+    expect(sent.title).toBe('Motion Studio: serve la tua approvazione');
+  });
+
+  it('resets the title and clears the badge on unmount', () => {
+    const bridge = desktopBridge();
+    const { unmount } = render(<Probe list={[approval('a1'), approval('a2')]} />);
+    expect(document.title).toBe('(2) Motion Studio');
+    unmount();
+    expect(document.title).toBe('Motion Studio');
+    expect(bridge.setBadge).toHaveBeenLastCalledWith(0);
+  });
+
   it('respects notifyApprovals = false but still updates title and badge', () => {
     localStorage.setItem(NOTIFY_APPROVALS_KEY, 'false');
     const bridge = desktopBridge();
@@ -292,6 +318,21 @@ describe('useAttention', () => {
     }
   });
 
+  it('notifies on the web when the page is visible but not focused, not when focused', () => {
+    const made: unknown[] = [];
+    class FakeNotification { static permission = 'granted'; constructor(title: string) { made.push(title); } }
+    vi.stubGlobal('Notification', FakeNotification);
+    const focus = vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    try {
+      const { rerender } = renderHook(({ list }) => useAttention(list.length, list), { initialProps: { list: [] as ApprovalRequest[] } });
+      rerender({ list: [approval('a1')] });
+      expect(made).toHaveLength(0);
+      focus.mockReturnValue(false);
+      rerender({ list: [approval('a1'), approval('a2')] });
+      expect(made).toHaveLength(1);
+    } finally { focus.mockRestore(); }
+  });
+
   it('survives a desktop bridge that rejects', async () => {
     const bridge = desktopBridge();
     bridge.notify.mockRejectedValue(new Error('denied'));
@@ -304,7 +345,8 @@ describe('useAttention', () => {
 });
 
 describe('command palette', () => {
-  it('opens with ⌘K, filters and navigates with Enter', async () => {
+  it('opens with ⌘K on Mac, filters and navigates with Enter', async () => {
+    onPlatform('MacIntel');
     await startApp();
     fireEvent.keyDown(document, { key: 'k', metaKey: true });
     const dialog = await screen.findByRole('dialog', { name: 'Vai a' });
@@ -317,7 +359,8 @@ describe('command palette', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Vai a' })).toBeNull());
   });
 
-  it('opens with Ctrl+K, moves with the arrows and lists pages', async () => {
+  it('opens with Ctrl+K off Mac, moves with the arrows and lists pages', async () => {
+    onPlatform('Win32');
     await startApp();
     fireEvent.keyDown(document, { key: 'k', ctrlKey: true });
     const dialog = await screen.findByRole('dialog', { name: 'Vai a' });
@@ -337,8 +380,9 @@ describe('command palette', () => {
   });
 
   it('shows a designed empty state and closes with Esc', async () => {
+    onPlatform('Win32');
     await startApp();
-    fireEvent.keyDown(document, { key: 'k', metaKey: true });
+    fireEvent.keyDown(document, { key: 'k', ctrlKey: true });
     const dialog = await screen.findByRole('dialog', { name: 'Vai a' });
     await userEvent.type(within(dialog).getByRole('combobox'), 'zzzz');
     expect(within(dialog).queryAllByRole('option')).toHaveLength(0);
@@ -348,13 +392,28 @@ describe('command palette', () => {
     expect(location.hash).toBe('#/');
   });
 
+  it('ignores Ctrl+K on Mac, Alt/Shift+K, key repeats and IME composition', async () => {
+    onPlatform('MacIntel');
+    await startApp();
+    for (const init of [{ ctrlKey: true }, { metaKey: true, altKey: true }, { metaKey: true, shiftKey: true }, { metaKey: true, repeat: true }, { metaKey: true, isComposing: true }]) {
+      fireEvent.keyDown(document, { key: 'k', ...init });
+    }
+    expect(screen.queryByRole('dialog', { name: 'Vai a' })).toBeNull();
+    platform!.mockReturnValue('Win32');
+    fireEvent.keyDown(document, { key: 'k', metaKey: true });
+    expect(screen.queryByRole('dialog', { name: 'Vai a' })).toBeNull();
+    fireEvent.keyDown(document, { key: 'k', ctrlKey: true });
+    expect(await screen.findByRole('dialog', { name: 'Vai a' })).toBeTruthy();
+  });
+
   it('includes the creatives of visited projects', async () => {
+    onPlatform('Win32');
     vi.mocked(api.listCreatives).mockImplementation(async () => []);
     await startApp();
     vi.mocked(api.listCreatives).mockResolvedValue([{ ok: true, slug: 'lancio', title: 'Lancio estivo', status: 'ready', formats: [], versions: 1, updatedAt: '2026-10-08T10:00:00.000Z', cover: null }]);
     act(() => { history.replaceState(null, '', '/#/p/acme'); window.dispatchEvent(new HashChangeEvent('hashchange')); });
     await waitFor(() => expect(api.listCreatives).toHaveBeenCalledWith('acme'));
-    fireEvent.keyDown(document, { key: 'k', metaKey: true });
+    fireEvent.keyDown(document, { key: 'k', ctrlKey: true });
     const dialog = await screen.findByRole('dialog', { name: 'Vai a' });
     await userEvent.type(within(dialog).getByRole('combobox'), 'lancio');
     await userEvent.keyboard('{Enter}');
@@ -382,5 +441,62 @@ describe('project bar', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Menu account' }));
     await userEvent.click(screen.getByRole('button', { name: 'Rifai la configurazione' }));
     expect(location.hash).toBe('#/welcome');
+  });
+});
+
+describe('startup policy', () => {
+  it('sums the requests already waiting into one toast, without a native notification', async () => {
+    const bridge = desktopBridge();
+    await startApp();
+    send(snapshot([approval('a1'), approval('a2')]));
+    expect(bridge.notify).not.toHaveBeenCalled();
+    expect(screen.getByText('2 richieste hanno bisogno di te')).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'Rivedi' })).toHaveLength(1);
+    expect(document.title).toBe('(2) Motion Studio');
+    expect(bridge.setBadge).toHaveBeenLastCalledWith(2);
+    // A later arrival is a real one.
+    send({ type: 'approval', approval: approval('a3', 'Scaricare un font') });
+    expect(bridge.notify).toHaveBeenCalledTimes(1);
+    expect(bridge.notify).toHaveBeenCalledWith({ title: 'Motion Studio: serve la tua approvazione', body: 'Scaricare un font' });
+    // A reconnection while requests were known: the new one in the snapshot is an arrival, the known ones are not.
+    send(snapshot([approval('a1'), approval('a2'), approval('a3'), approval('a4', 'Usare internet')]));
+    expect(bridge.notify).toHaveBeenCalledTimes(2);
+    expect(bridge.notify).toHaveBeenLastCalledWith({ title: 'Motion Studio: serve la tua approvazione', body: 'Usare internet' });
+  });
+
+  it('treats a reconnection with nothing known before as a restore (singular toast)', async () => {
+    const bridge = desktopBridge();
+    await startApp();
+    send(snapshot([]));
+    send(snapshot([approval('a1')]));
+    expect(bridge.notify).not.toHaveBeenCalled();
+    expect(screen.getByText('1 richiesta ha bisogno di te')).toBeTruthy();
+    expect(document.title).toBe('(1) Motion Studio');
+  });
+});
+
+describe('activity center requests', () => {
+  it('switches tab when asked while already open', async () => {
+    const bell = await startApp();
+    send({ type: 'approval', approval: approval('a1') });
+    send({ type: 'job', job: job('j1', 'running', 'Lancio estivo') });
+    await userEvent.click(bell);
+    const tabs = screen.getByRole('tablist', { name: 'Sezioni attività' });
+    expect(within(tabs).getByRole('tab', { selected: true }).textContent).toContain('Serve a te');
+    // A click without the pointer-down that would close the popover first (as a keyboard activation).
+    fireEvent.click(screen.getByRole('button', { name: '1 in corso' }));
+    expect(within(screen.getByRole('tablist', { name: 'Sezioni attività' })).getByRole('tab', { selected: true }).textContent).toContain('In corso');
+    expect(screen.getByText('Lancio estivo')).toBeTruthy();
+  });
+});
+
+describe('new project from the switcher', () => {
+  it('goes to Projects and focuses the name field', async () => {
+    history.replaceState(null, '', '/#/p/acme');
+    await startApp();
+    await userEvent.click(await screen.findByRole('button', { name: 'Progetto Acme, cambia progetto' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Nuovo progetto' }));
+    expect(location.hash).toBe('#/');
+    await waitFor(() => expect(document.activeElement?.id).toBe('new-project'));
   });
 });
