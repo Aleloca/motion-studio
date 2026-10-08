@@ -1,0 +1,108 @@
+// Motion system: the only place animations are created. Durations/curves match spec §5 and theme.css.
+export const D = { xs: 120, s: 200, m: 320, l: 480 } as const;
+export const E = {
+  std: 'cubic-bezier(.2,0,0,1)',
+  out: 'cubic-bezier(.16,1,.3,1)',
+  in: 'cubic-bezier(.4,0,1,1)',
+  spring: 'cubic-bezier(.34,1.56,.64,1)',
+} as const;
+
+/** Evaluated on every call so the OS setting can change at runtime. */
+export function reducedMotion(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+const done = (a: Animation): Promise<void> =>
+  a.finished.then(
+    () => undefined,
+    () => undefined, // cancelled animations resolve quietly
+  );
+
+export function anim(
+  el: Element | null,
+  frames: Keyframe[],
+  ms: number = D.m,
+  ease: string = E.out,
+  delay = 0,
+): Promise<void> {
+  if (!el || reducedMotion() || typeof el.animate !== 'function') return Promise.resolve();
+  return done(el.animate(frames, { duration: ms, easing: ease, delay, fill: 'backwards' }));
+}
+
+export interface EnterOptions {
+  x?: number;
+  y?: number;
+  scale?: number;
+  delay?: number;
+  ms?: number;
+}
+
+export function enter(el: Element | null, o: EnterOptions = {}): Promise<void> {
+  if (!el) return Promise.resolve();
+  const { x = 0, y = 8, scale = 1, delay = 0, ms = D.m } = o;
+  // A new entrance must win over any lingering exit (fill: forwards) on the same element.
+  if (typeof el.getAnimations === 'function') el.getAnimations().forEach((a) => a.cancel());
+  return anim(
+    el,
+    [{ opacity: 0, transform: `translate(${x}px,${y}px) scale(${scale})` }, { opacity: 1, transform: 'none' }],
+    ms,
+    E.out,
+    delay,
+  );
+}
+
+/** Exits are ~20% faster than entrances (200 vs 320 ms). The final state is held until the caller removes the element. */
+export function exit(el: Element | null, o: { x?: number; y?: number; ms?: number } = {}): Promise<void> {
+  if (!el || reducedMotion() || typeof el.animate !== 'function') return Promise.resolve();
+  const { x = 0, y = 0, ms = D.s } = o;
+  return done(
+    el.animate(
+      [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: `translate(${x}px,${y}px)` }],
+      { duration: ms, easing: E.in, fill: 'forwards' },
+    ),
+  );
+}
+
+/** Cascade entrance; steps of 20–40 ms per spec. */
+export function stagger(els: Iterable<Element>, o: EnterOptions = {}, step = 30): Promise<void> {
+  return Promise.all([...els].map((el, i) => enter(el, { ...o, delay: (o.delay ?? 0) + i * step }))).then(() => undefined);
+}
+
+export function pop(el: Element | null): Promise<void> {
+  return anim(el, [{ transform: 'scale(.7)' }, { transform: 'scale(1.18)' }, { transform: 'scale(1)' }], 520, E.spring);
+}
+
+export function pulse(el: Element | null): Promise<void> {
+  return anim(
+    el,
+    [{ boxShadow: '0 0 0 0 rgba(255,90,31,.45)' }, { boxShadow: '0 0 0 10px rgba(255,90,31,0)' }],
+    900,
+    E.out,
+  );
+}
+
+export function flash(el: Element | null): Promise<void> {
+  return anim(
+    el,
+    [
+      { boxShadow: 'inset 0 0 0 1px #FF5A1F, 0 0 0 3px rgba(255,90,31,.25)' },
+      { boxShadow: 'inset 0 0 0 1px transparent, 0 0 0 0 transparent' },
+    ],
+    800,
+    E.std,
+  );
+}
+
+/** FLIP: animate `el` from a previously measured rect to its current layout. */
+export function flip(el: Element | null, from: DOMRect | null, ms: number = D.l): Promise<void> {
+  if (!el || !from || reducedMotion()) return Promise.resolve();
+  const to = el.getBoundingClientRect();
+  if (!to.width || !to.height) return Promise.resolve();
+  const dx = from.left - to.left;
+  const dy = from.top - to.top;
+  const sx = from.width / to.width;
+  const sy = from.height / to.height;
+  (el as HTMLElement).style.transformOrigin = '0 0';
+  return anim(el, [{ transform: `translate(${dx}px,${dy}px) scale(${sx},${sy})` }, { transform: 'none' }], ms, E.out);
+}
