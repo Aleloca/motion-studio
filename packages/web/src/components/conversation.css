@@ -1,0 +1,115 @@
+/* Approval card (spec §6.3) and conversation (spec §6.2 #6). Tokens only; classes prefixed ms-. */
+
+/* ---------- approval card ---------- */
+.ms-approval {
+  display: flex; flex-direction: column; gap: 9px; min-width: 0; max-width: 100%;
+  padding: 12px; border-radius: 12px; background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine);
+  overflow: hidden; overflow-wrap: anywhere;
+}
+.ms-approval-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ms-approval-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+.ms-approval-title { font-weight: 700; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ms-approval-head .ms-ring { flex: none; }
+.ms-approval-context { color: var(--muted); font-size: 12px; margin-top: -4px; overflow-wrap: anywhere; }
+.ms-approval-text { line-height: 1.5; color: var(--text); overflow-wrap: anywhere; }
+.ms-approval-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.ms-approval-toggle { color: var(--text); }
+.ms-approval-lines { color: var(--muted); font-variant-numeric: tabular-nums; }
+.ms-approval-lines::before { content: '·'; margin-right: 5px; }
+.ms-approval-cmd { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.ms-approval-pre {
+  margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line2);
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.5; color: var(--text);
+  white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal;
+  max-height: 180px; overflow: auto; overscroll-behavior: contain;
+  /* A classic, always-visible scrollbar: macOS overlay scrollbars hide that there is more (visual test point 6). */
+  scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--bar) transparent;
+}
+.ms-approval-pre::-webkit-scrollbar { width: 8px; height: 8px; }
+.ms-approval-pre::-webkit-scrollbar-thumb { background: var(--bar); border-radius: 4px; }
+.ms-approval-pre::-webkit-scrollbar-track { background: transparent; }
+.ms-approval-pre:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ms-approval-note { color: var(--muted); font-size: 11.5px; overflow-wrap: anywhere; }
+.ms-approval-note.ms-warn { color: var(--warn); }
+.ms-approval-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ms-approval-actions .ms-grow { flex: 1 1 auto; }
+.ms-approval-error { margin: 0; color: var(--warn); font-size: 12px; overflow-wrap: anywhere; }
+
+/* ---------- conversation ---------- */
+.ms-convo { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+.ms-convo-list {
+  list-style: none; margin: 0; padding: 14px; flex: 1; min-height: 0; overflow: auto;
+  display: flex; flex-direction: column; gap: 12px; overflow-wrap: anywhere;
+}
+.ms-convo-list > li { min-width: 0; }
+.ms-msg { display: flex; gap: 10px; align-items: flex-start; min-width: 0; }
+.ms-msg-avatar { flex: none; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+.ms-msg-avatar.ms-agent { background: var(--ink); color: var(--accent); }
+.ms-msg-avatar.ms-you { background: var(--field); color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); }
+.ms-msg-body { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
+.ms-msg-meta { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.ms-msg-meta b { color: var(--text); font-weight: 600; }
+.ms-msg-meta time { font-variant-numeric: tabular-nums; }
+.ms-msg-bubble { padding: 9px 12px; border-radius: 4px 12px 12px 12px; background: var(--field); line-height: 1.5; min-width: 0; }
+.ms-msg.ms-you .ms-msg-bubble { background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); white-space: pre-wrap; }
+.ms-msg.ms-summary .ms-msg-bubble { background: var(--panel); box-shadow: inset 0 0 0 1px var(--line), 0 1px 2px var(--shadow); }
+.ms-msg-pins { display: flex; flex-wrap: wrap; gap: 4px; }
+.ms-msg-pins .ms-chip { height: 22px; font-size: 11px; color: var(--muted); }
+
+.ms-step { display: flex; align-items: flex-start; gap: 10px; padding-left: 36px; font-size: 12.5px; line-height: 1.45; min-width: 0; }
+.ms-step-check { color: var(--ok); flex: none; margin-top: 2px; display: inline-flex; }
+.ms-step-text { flex: 1; min-width: 0; }
+.ms-step time { color: var(--faint); font-family: var(--mono); font-size: 10.5px; flex: none; font-variant-numeric: tabular-nums; }
+.ms-convo-fold {
+  margin-left: 36px; align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 24px; min-height: 0; padding: 0 8px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer;
+  transition: background var(--d-s) var(--e-std), color var(--d-s) var(--e-std);
+}
+.ms-convo-fold:hover { background: var(--field); color: var(--text); }
+.ms-convo-fold .ms-step-check { margin-top: 0; }
+.ms-convo-fold svg.ms-chev { transform: rotate(-90deg); transition: transform var(--d-s) var(--e-std); }
+.ms-convo-fold[aria-expanded="true"] svg.ms-chev { transform: none; }
+.ms-convo-details .ms-convo-fold { margin-left: 0; }
+
+.ms-convo-details { margin-left: 36px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ms-convo-log {
+  list-style: none; margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--field);
+  font-family: var(--mono); font-size: 11px; line-height: 1.5; max-height: 240px; overflow: auto;
+  display: flex; flex-direction: column; gap: 4px; overflow-wrap: anywhere;
+}
+.ms-convo-log li { display: flex; gap: 8px; min-width: 0; }
+.ms-convo-log .ms-kind { color: var(--accentText); flex: none; min-width: 72px; }
+.ms-convo-log .ms-val { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ms-convo-log .ms-val pre { margin: 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 120px; overflow: auto; }
+.ms-convo-log .ms-err { color: var(--warn); }
+
+.ms-convo-version { margin-left: 36px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--line); background: var(--panel); }
+.ms-convo-version .ms-grow { flex: 1; }
+.ms-convo-system { margin-left: 36px; font-size: 12px; color: var(--muted); }
+.ms-convo-system.ms-error, .ms-convo-error { color: var(--warn); }
+.ms-convo-error { margin-left: 36px; font-size: 12.5px; padding: 8px 10px; border-radius: 8px; background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); }
+.ms-convo-approval { margin-left: 36px; }
+.ms-convo-typing .ms-msg-bubble { padding: 12px; }
+.ms-convo-empty { margin: auto 0; }
+
+/* ---------- composer ---------- */
+.ms-composer { padding: 12px 14px; border-top: 1px solid var(--line2); }
+.ms-composer-box {
+  display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 12px; background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line); transition: box-shadow var(--d-s) var(--e-std);
+}
+.ms-composer-box:focus-within { box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
+.ms-composer-label { font-size: 11px; color: var(--muted); }
+.ms-composer-pins { display: flex; flex-wrap: wrap; gap: 6px; }
+.ms-composer-pin { height: 24px; padding-right: 2px; }
+.ms-composer-pin .ms-x {
+  width: 20px; height: 20px; min-height: 0; padding: 0; margin: 0; border: 0; border-radius: 50%; background: transparent; color: inherit;
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.ms-composer-pin .ms-x:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.ms-composer .ms-textarea { background: transparent; box-shadow: none; padding: 0; min-height: 0; }
+.ms-composer .ms-textarea:focus, .ms-composer .ms-textarea:focus-visible { box-shadow: none; }
+.ms-composer-foot { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ms-composer-hint { font-size: 11px; color: var(--faint); flex: 1; min-width: 0; }
+.ms-composer-send { border-radius: 50%; box-shadow: none; }
+.ms-composer-error { margin: 0; font-size: 12px; color: var(--warn); overflow-wrap: anywhere; }

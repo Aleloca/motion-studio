@@ -1,7 +1,8 @@
 import type { FormatPreset, Pin } from '@motion-studio/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.ts';
-import { ConversationPanel } from '../components/ConversationPanel.tsx';
+import { Conversation } from '../components/Conversation.tsx';
+import { BriefEditor } from '../components/ConversationPanel.tsx';
 import { FocusView } from '../components/FocusView.tsx';
 import { ExportDialog } from '../components/ExportDialog.tsx';
 import { FormatBoard } from '../components/FormatBoard.tsx';
@@ -10,8 +11,9 @@ import type { EventsState } from '../eventsReducer.ts';
 import { useT } from '../i18n.tsx';
 import { href } from '../routes.ts';
 import { useCreative } from '../useCreative.ts';
+import { Tabs } from '../ui/index.ts';
 
-export function CreativePage({ slug, creative, live, expert }: { slug: string; creative: string; live: EventsState; expert: boolean }) {
+export function CreativePage({ slug, creative, live }: { slug: string; creative: string; live: EventsState; /** Unused since the conversation has no expert tab (spec §3.2); kept for the router until Task 12. */ expert: boolean }) {
   const t = useT();
   const { detail, conversation, error, reload } = useCreative(slug, creative, live.creativeTicks[`${slug}/${creative}`] ?? 0);
   const [presets, setPresets] = useState<FormatPreset[]>([]);
@@ -29,6 +31,7 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
   // Version number pinned when the export dialog opens: new live versions must not retarget it.
   const [exporting, setExporting] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [panel, setPanel] = useState<'chat' | 'brief'>('chat');
 
   useEffect(() => { api.getFormats()
       .then((s) => { setPresets(s.presets); setCatalogError(s.error); setPresetsLoaded(true); })
@@ -100,9 +103,20 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
           <FormatBoard presets={presets} formats={presetsLoaded && !presetsFailure ? c.brief.formats : []} version={version ?? null} compare={compare} fileUrl={fileUrl} pins={pins} showSafeZone={safeZone} onOpen={setFocus} />
         </main>
         <div style={{ flex: '1 1 360px', maxWidth: 440, minWidth: 0, display: 'flex' }}>
-          <ConversationPanel slug={slug} detail={detail} conversation={conversation} presets={presets} job={job} approvals={myApprovals} liveEvents={job ? live.events[job.id] ?? [] : []}
-            expert={expert} pins={pins} onRemovePin={(i) => setPins((p) => p.filter((_, k) => k !== i))} onSent={() => { setPins([]); setUserPicked(false); }}
-            onSelectVersion={pick} onChanged={reload} />
+          {/* Interim side panel until Task 12: the new Conversation plus the existing brief editor. */}
+          <aside aria-label={t.web.conversation.aria} style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, background: 'var(--panel)', borderLeft: '1px solid var(--line)' }}>
+            <Tabs label={t.web.conversation.panel} value={panel} onChange={setPanel}
+              tabs={[{ value: 'chat', label: t.web.conversation.tabs.chat }, { value: 'brief', label: t.web.conversation.tabs.brief }]} />
+            {panel === 'chat' && (
+              <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={job} live={job ? live.events[job.id] ?? [] : []}
+                pins={pins} onRemovePin={(i) => setPins((p) => p.filter((_, k) => k !== i))} formatName={(id) => presets.find((p) => p.id === id)?.name ?? id}
+                canGenerate={versions.length === 0} onSent={() => { setPins([]); setUserPicked(false); reload(); }} onSelectVersion={pick} />
+            )}
+            {/* Kept mounted while hidden, so an unsaved brief draft survives tab switches. */}
+            <div hidden={panel !== 'brief'} style={{ display: panel === 'brief' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+              <BriefEditor slug={slug} detail={detail} presets={presets} disabled={job?.state === 'queued' || job?.state === 'running'} onChanged={reload} />
+            </div>
+          </aside>
         </div>
       </div>
       {exporting !== null && <ExportDialog key={exporting} slug={slug} creative={creative} version={exporting} onClose={() => setExporting(null)} />}

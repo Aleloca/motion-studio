@@ -12,15 +12,24 @@ const base: ApprovalRequest = { id: 'a1', jobId: 'j', projectSlug: 'acme', creat
 beforeEach(() => vi.clearAllMocks());
 
 describe('ApprovalCard', () => {
-  it('sends the three decisions', async () => {
+  it('shows the command and sends a one-time approval', async () => {
     render(<ApprovalCard approval={base} />);
+    await userEvent.click(screen.getByRole('button', { name: /Mostra il comando/ }));
     expect(screen.getByText('brew install ffmpeg')).toBeTruthy();
-    await userEvent.click(screen.getByRole('button', { name: 'Sempre per questo progetto' }));
+    expect(screen.getByText('1 riga')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Consenti' }));
+    expect(api.decideApproval).toHaveBeenCalledWith('a1', 'once');
+    // Decided: the card waits for the core to resolve it and cannot be decided twice.
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Sempre qui' }) as HTMLButtonElement).disabled).toBe(true));
+  });
+  it('sends "always" when a rule is proposed', async () => {
+    render(<ApprovalCard approval={base} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Sempre qui' }));
     expect(api.decideApproval).toHaveBeenCalledWith('a1', 'always');
   });
   it('hides "always" without a rule and labels provider approvals', () => {
     render(<ApprovalCard approval={{ ...base, kind: 'provider', alwaysRule: null, title: "Generare un'immagine con gpt-image-2" }} />);
-    expect(screen.queryByRole('button', { name: 'Sempre per questo progetto' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Sempre qui' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Genera' })).toBeTruthy();
   });
   it('reports a request already handled', async () => {

@@ -25,15 +25,15 @@ describe('approvals, settings and export in English', () => {
   it('labels the approval decisions and the pending count', async () => {
     en(<ApprovalsIndicator approvals={[approval, { ...approval, id: 'a2' }]} />);
     await userEvent.click(screen.getByRole('button', { name: '2 approvals pending' }));
-    expect(screen.getAllByRole('button', { name: 'Allow once' })).toHaveLength(2);
-    expect(screen.getAllByRole('button', { name: 'Always for this project' })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: 'Allow' })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: 'Always here' })).toHaveLength(2);
     expect(screen.getAllByRole('link', { name: 'Open' })).toHaveLength(2);
   });
   it('says when a request was already handled', async () => {
     const { ApiError } = await import('../src/api.ts');
     api.decideApproval.mockRejectedValue(Object.assign(new ApiError(404, "x"), { status: 404 }));
     en(<ApprovalCard approval={approval} />);
-    expect(screen.getByText(/^Expires at /)).toBeTruthy();
+    expect(screen.getByText('The agent wants to run a command on this computer.')).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Deny' }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Request already handled'));
   });

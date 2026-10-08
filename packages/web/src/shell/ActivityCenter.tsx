@@ -1,6 +1,7 @@
 import type { AgentEvent, ApprovalRequest, JobSummary } from '@motion-studio/shared';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ApprovalCard } from '../components/ApprovalCard.tsx';
+import { useApprovalPresence } from '../components/approvalPresence.ts';
 import type { EventsState } from '../eventsReducer.ts';
 import { formatDate, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
 import { href } from '../routes.ts';
@@ -41,6 +42,8 @@ export function ActivityCenter({ live, initialTab, request = 0, where }: { live:
   const t = useT();
   const a = t.web.shell.activity;
   const { approvals, running, done } = useMemo(() => activityLists(live), [live]);
+  // Resolved requests collapse out of "Needs you" (T15) instead of vanishing.
+  const needs = useApprovalPresence(approvals);
   const [tab, setTab] = useState<ActivityTab>(initialTab ?? (approvals.length ? 'needs' : 'running'));
   const [, rerender] = useState(0);
   // A request to show a tab while the center is already open (e.g. "N running" or Review) switches to it.
@@ -78,8 +81,8 @@ export function ActivityCenter({ live, initialTab, request = 0, where }: { live:
             <Icon name="bell" size={13} />{a.enableNotifications}
           </Button>
         )}
-        {tab === 'needs' && (approvals.length
-          ? approvals.map((ap) => <NeedsYou key={ap.id} approval={ap} where={where} />)
+        {tab === 'needs' && (needs.list.length
+          ? needs.list.map(({ approval: ap, leaving }) => <NeedsYou key={ap.id} approval={ap} leaving={leaving} onGone={needs.gone} where={where} />)
           : <Empty icon="check" title={a.emptyNeeds} sub={a.emptyNeedsSub} />)}
         {tab === 'running' && (running.length ? (
           <ul className="ms-activity-list">
@@ -96,16 +99,16 @@ export function ActivityCenter({ live, initialTab, request = 0, where }: { live:
   );
 }
 
-function NeedsYou({ approval, where }: { approval: ApprovalRequest; where(project: string, creative: string | null): string }) {
+function NeedsYou({ approval, leaving, onGone, where }: { approval: ApprovalRequest; leaving: boolean; onGone(id: string): void; where(project: string, creative: string | null): string }) {
   const t = useT();
   const target = approval.creativeSlug ? href.creative(approval.projectSlug, approval.creativeSlug) : href.project(approval.projectSlug);
   return (
     <div className="ms-activity-need">
-      <div className="ms-activity-context">
+      <div className="ms-activity-context" hidden={leaving}>
         <span className="ms-activity-where">{where(approval.projectSlug, approval.creativeSlug)}</span>
         <Button size="sm" variant="ghost" onClick={() => go(target)}>{t.web.shell.activity.open}<Icon name="forward" size={12} /></Button>
       </div>
-      <ApprovalCard approval={approval} />
+      <ApprovalCard approval={approval} leaving={leaving} onGone={onGone} />
     </div>
   );
 }

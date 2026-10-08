@@ -36,7 +36,7 @@ export function mergeJobEvents(persisted: AgentEvent[], live: AgentEvent[]): Age
   return [...persisted, ...live];
 }
 
-function BriefEditor({ slug, detail, presets, disabled, onChanged }: { slug: string; detail: CreativeDetail; presets: FormatPreset[]; disabled: boolean; onChanged(): void }) {
+export function BriefEditor({ slug, detail, presets, disabled, onChanged }: { slug: string; detail: CreativeDetail; presets: FormatPreset[]; disabled: boolean; onChanged(): void }) {
   const t = useT();
   const c = detail.creative;
   const [title, setTitle] = useState(c.title);

@@ -1,0 +1,406 @@
+import type { AgentEvent, ApprovalRequest, ConversationEntry, JobSummary, Pin } from '@motion-studio/shared';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { api } from '../api.ts';
+import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
+import { enter } from '../motion/index.ts';
+import { isMac } from '../shell/ShellContext.tsx';
+import { Button, Empty, Icon, Markdown, Textarea, Typing, cx } from '../ui/index.ts';
+import { ApprovalCard } from './ApprovalCard.tsx';
+import { useApprovalPresence, type ShownApproval } from './approvalPresence.ts';
+
+/**
+ * Events of a job across a page reload. `persisted` are the job's agent entries read from conversation.jsonl
+ * (everything written before the last fetch), `live` the events received over the socket since page load. Both are
+ * in emission order and `live` continues the persisted history, so the longest suffix of `persisted` that equals a
+ * prefix of `live` is the overlap (a mid-job refetch persists events already seen live): it is shown once.
+ */
+export function mergeJobEvents(persisted: AgentEvent[], live: AgentEvent[]): AgentEvent[] {
+  if (persisted.length === 0) return live;
+  const p = persisted.map((e) => JSON.stringify(e));
+  const l = live.map((e) => JSON.stringify(e));
+  for (let k = Math.min(p.length, l.length); k > 0; k--) {
+    let same = true;
+    for (let i = 0; i < k && same; i++) same = p[p.length - k + i] === l[i];
+    if (same) return [...persisted, ...live.slice(k)];
+  }
+  return [...persisted, ...live];
+}
+
+export interface ConversationProps {
+  slug: string;
+  /** Creative slug. */
+  creative: string;
+  entries: ConversationEntry[];
+  /** Pending approvals to show in the flow (the caller filters them to this creative). */
+  approvals: ApprovalRequest[];
+  /** The creative's latest job (active or finished). */
+  job: JobSummary | undefined;
+  /** Events of `job` received over the socket since page load. */
+  live?: AgentEvent[];
+  /** Pending comments (pins) sent with the next message. */
+  pins?: Pin[];
+  onRemovePin?(index: number): void;
+  /** Display name of a format id for the comment chips. */
+  formatName?(id: string): string;
+  /** No version yet: the composer offers Generate (an empty turn). */
+  canGenerate?: boolean;
+  onSent?(): void;
+  onSelectVersion?(n: number): void;
+}
+
+type Item =
+  | { key: string; kind: 'user'; at: string; text: string; pins: Pin[] }
+  | { key: string; kind: 'agent'; at: string; text: string; summary: boolean }
+  | { key: string; kind: 'step'; at: string; text: string }
+  | { key: string; kind: 'fold'; jobId: string; count: number; open: boolean }
+  | { key: string; kind: 'error'; at: string; text: string }
+  | { key: string; kind: 'details'; jobId: string; events: AgentEvent[] }
+  | { key: string; kind: 'version'; at: string; n: number; complete: boolean }
+  | { key: string; kind: 'system'; at: string; error: boolean; text: string }
+  | { key: string; kind: 'approval'; shown: ShownApproval }
+  | { key: string; kind: 'typing' };
+
+const active = (j: JobSummary | undefined) => !!j && (j.state === 'queued' || j.state === 'running');
+const TECHNICAL = new Set<AgentEvent['kind']>(['session', 'tool_use', 'tool_result', 'rate_limit', 'stderr', 'parse_error']);
+const same = (a: string, b: string) => a.trim() === b.trim();
+
+/** One turn (the agent events of one job) as conversation items: messages, compact steps, summary, details. */
+function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], running: boolean, foldOpen: boolean): Item[] {
+  const out: Item[] = [];
+  const steps: Item[] = [];
+  const technical: AgentEvent[] = [];
+  let lastAgent: Extract<Item, { kind: 'agent' }> | null = null;
+  let foldAt = -1;
+  events.forEach(({ at, event: e }, i) => {
+    const key = `${jobId}:${i}`;
+    if (TECHNICAL.has(e.kind)) { technical.push(e); return; }
+    if (e.kind === 'text') {
+      if (!e.text.trim()) return;
+      lastAgent = { key, kind: 'agent', at, text: e.text, summary: false };
+      out.push(lastAgent);
+    } else if (e.kind === 'progress') {
+      const step: Item = { key, kind: 'step', at, text: e.text };
+      steps.push(step);
+      // A finished turn folds its steps behind one toggle, placed where the first step was.
+      if (running) out.push(step);
+      else if (foldAt < 0) foldAt = out.length;
+    } else if (e.kind === 'result') {
+      technical.push(e);
+      if (!e.ok) out.push({ key, kind: 'error', at, text: e.error ?? '' });
+      else if (e.text?.trim()) {
+        // The final result usually repeats the last message: mark that one as the summary instead of repeating it.
+        const last: Extract<Item, { kind: 'agent' }> | null = lastAgent;
+        if (last && same(last.text, e.text)) last.summary = true;
+        else out.push({ key, kind: 'agent', at, text: e.text, summary: true });
+      }
+    }
+  });
+  if (!running && steps.length > 0) {
+    out.splice(foldAt, 0, { key: `${jobId}:fold`, kind: 'fold', jobId, count: steps.length, open: foldOpen }, ...(foldOpen ? steps : []));
+  }
+  if (technical.length > 0) out.push({ key: `${jobId}:details`, kind: 'details', jobId, events: technical });
+  return out;
+}
+
+/**
+ * Conversation of a creative (spec §6.2 #6, visual test points 25 and 32): one message per entry with its time,
+ * agent steps as compact rows with ✓ (folded once the turn is over), the result as safe Markdown, technical events
+ * only in "Activity details", the job's approvals in the flow, typing dots while the agent works (T9), and the
+ * composer with the pending comment chips and ⌘↵.
+ */
+export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, formatName, canGenerate, onSent, onSelectVersion }: ConversationProps) {
+  const t = useT();
+  const c = t.web.chat;
+  const working = active(job);
+  const [unfolded, setUnfolded] = useState<ReadonlySet<string>>(new Set());
+  const { list: shownApprovals, gone } = useApprovalPresence(approvals);
+
+  // First time each live event (not yet persisted) was seen: its time until the refetch brings the real one.
+  const seenAt = useRef(new Map<string, string>());
+  const items = useMemo(() => {
+    const out: Item[] = [];
+    const jobs = new Map<string, { at: string; event: AgentEvent }[]>();
+    const firstIndex = new Map<string, number>();
+    entries.forEach((e, i) => {
+      if (e.type !== 'agent') return;
+      if (!jobs.has(e.jobId)) { jobs.set(e.jobId, []); firstIndex.set(e.jobId, i); }
+      jobs.get(e.jobId)!.push({ at: e.at, event: e.event });
+    });
+    // The latest job continues with the live events (shown once: see mergeJobEvents).
+    if (job && live.length > 0) {
+      const persisted = jobs.get(job.id) ?? [];
+      const merged = mergeJobEvents(persisted.map((p) => p.event), live);
+      const now = new Date().toISOString();
+      jobs.set(job.id, merged.map((event, i) => {
+        if (i < persisted.length) return persisted[i]!;
+        const k = `${job.id}:${i}`;
+        if (!seenAt.current.has(k)) seenAt.current.set(k, now);
+        return { at: seenAt.current.get(k)!, event };
+      }));
+    }
+    const approvalsOf = (jobId: string | null) => shownApprovals
+      .filter((s) => (jobId === null ? !jobs.has(s.approval.jobId) : s.approval.jobId === jobId))
+      .map((s): Item => ({ key: `ap:${s.approval.id}`, kind: 'approval', shown: s }));
+    const turn = (jobId: string) => [
+      ...turnItems(jobId, jobs.get(jobId)!, jobId === job?.id && working, unfolded.has(jobId)),
+      ...approvalsOf(jobId),
+    ];
+
+    entries.forEach((e, i) => {
+      if (e.type === 'agent') { if (firstIndex.get(e.jobId) === i) out.push(...turn(e.jobId)); return; }
+      const key = `e${i}`;
+      if (e.type === 'user') out.push({ key, kind: 'user', at: e.at, text: e.text, pins: e.pins });
+      else if (e.type === 'version') out.push({ key, kind: 'version', at: e.at, n: e.n, complete: e.status === 'complete' });
+      else out.push({ key, kind: 'system', at: e.at, error: e.level === 'error', text: e.text });
+    });
+    // A job with nothing persisted yet (only live events) comes last.
+    if (job && jobs.has(job.id) && !firstIndex.has(job.id)) out.push(...turn(job.id));
+    out.push(...approvalsOf(null));
+    const waiting = shownApprovals.some((s) => !s.leaving && s.approval.jobId === job?.id);
+    if (working && !waiting) out.push({ key: 'typing', kind: 'typing' });
+    return out;
+  }, [entries, job, live, working, unfolded, shownApprovals]);
+
+  // Items present at the first render appear with the panel; later ones enter from +8 px (T9).
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; }, []);
+
+  // Follow the end of the conversation while the user is there.
+  const listRef = useRef<HTMLOListElement>(null);
+  const atEnd = useRef(true);
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (el && atEnd.current) el.scrollTop = el.scrollHeight;
+  }, [items.length]);
+  const onScroll = () => {
+    const el = listRef.current;
+    if (el) atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  };
+
+  const toggleFold = (jobId: string) => setUnfolded((s) => {
+    const n = new Set(s);
+    if (n.has(jobId)) n.delete(jobId); else n.add(jobId);
+    return n;
+  });
+
+  const empty = items.length === 0;
+  return (
+    <div className="ms-convo">
+      <ol ref={listRef} className="ms-convo-list" role="log" aria-label={c.label} onScroll={onScroll}>
+        {empty && <li className="ms-convo-empty"><Empty icon="comment" title={c.emptyTitle} sub={c.emptySub} /></li>}
+        {items.map((item) => (
+          <Row key={item.key} animate={mounted.current && item.kind !== 'approval'}>
+            <ItemView item={item} formatName={formatName} onToggleFold={toggleFold} onSelectVersion={onSelectVersion} onGone={gone} />
+          </Row>
+        ))}
+      </ol>
+      <Composer slug={slug} creative={creative} job={working ? job : undefined} pins={pins} onRemovePin={onRemovePin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} />
+    </div>
+  );
+}
+
+/** List row; enters from +8 px when it appears after the first render (T9). */
+function Row({ animate, children }: { animate: boolean; children: ReactNode }) {
+  const ref = useRef<HTMLLIElement>(null);
+  const animateOnMount = useRef(animate);
+  useLayoutEffect(() => {
+    if (animateOnMount.current) void enter(ref.current?.firstElementChild ?? null, { y: 8 });
+  }, []);
+  return <li ref={ref}>{children}</li>;
+}
+
+function When({ at }: { at: string }) {
+  const locale = useLocale();
+  if (Number.isNaN(new Date(at).getTime())) return null;
+  return <time dateTime={at}>{formatDate(locale, at, TIME_OF_DAY)}</time>;
+}
+
+const AgentMark = () => (
+  <span className="ms-msg-avatar ms-agent" aria-hidden="true">
+    <svg width="10" height="10" viewBox="0 0 12 12"><path d="M3 2.5v7l6-3.5-6-3.5Z" fill="currentColor" /></svg>
+  </span>
+);
+
+function pinText(p: Pin, n: number, formatName: ((id: string) => string) | undefined, t: ReturnType<typeof useT>, locale: ReturnType<typeof useLocale>) {
+  const base = t.web.chat.pin({ n, format: formatName?.(p.format) ?? p.format });
+  if (p.timeSec === null) return base;
+  return `${base} ${t.web.conversation.atSeconds({ time: formatNumber(locale, p.timeSec, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) })}`;
+}
+
+function ItemView({ item, formatName, onToggleFold, onSelectVersion, onGone }: {
+  item: Item; formatName?(id: string): string; onToggleFold(jobId: string): void; onSelectVersion?(n: number): void; onGone(id: string): void;
+}) {
+  const t = useT();
+  const locale = useLocale();
+  const c = t.web.chat;
+  switch (item.kind) {
+    case 'user':
+      return (
+        <article className="ms-msg ms-you" aria-label={c.you}>
+          <span className="ms-msg-avatar ms-you" aria-hidden="true"><Icon name="user" size={13} /></span>
+          <div className="ms-msg-body">
+            <span className="ms-msg-meta"><b>{c.you}</b>·<When at={item.at} /></span>
+            {item.text && <div className="ms-msg-bubble">{item.text}</div>}
+            {item.pins.length > 0 && (
+              <div className="ms-msg-pins">{item.pins.map((p, k) => <span key={k} className="ms-chip"><Icon name="comment" size={11} />{pinText(p, k + 1, formatName, t, locale)}</span>)}</div>
+            )}
+          </div>
+        </article>
+      );
+    case 'agent':
+      return (
+        <article className={cx('ms-msg', item.summary && 'ms-summary')} aria-label={item.summary ? c.summary : c.agent}>
+          <AgentMark />
+          <div className="ms-msg-body">
+            <span className="ms-msg-meta"><b>{c.agent}</b>·<When at={item.at} />{item.summary && <span className="ms-pill ms-ok">{c.summary}</span>}</span>
+            <div className="ms-msg-bubble"><Markdown text={item.text} /></div>
+          </div>
+        </article>
+      );
+    case 'step':
+      return (
+        <div className="ms-step">
+          <span className="ms-step-check" aria-hidden="true"><Icon name="check" size={13} strokeWidth={2} /></span>
+          <span className="ms-step-text">{item.text}</span>
+          <When at={item.at} />
+        </div>
+      );
+    case 'fold':
+      return (
+        <button type="button" className="ms-convo-fold" aria-expanded={item.open} onClick={() => onToggleFold(item.jobId)}>
+          <span className="ms-step-check" aria-hidden="true"><Icon name="check" size={13} strokeWidth={2} /></span>
+          {c.steps({ count: item.count })}
+          <Icon name="chevron" size={12} className="ms-chev" />
+        </button>
+      );
+    case 'error':
+      return <p role="alert" className="ms-convo-error">{c.failed({ error: item.text })}</p>;
+    case 'details':
+      return <Details events={item.events} />;
+    case 'version':
+      return (
+        <div className="ms-convo-version">
+          <span className={cx('ms-pill', item.complete ? 'ms-ok' : 'ms-warn')}>v{item.n} · {item.complete ? t.web.status.ready : t.web.status.incomplete}</span>
+          <span className="ms-grow" />
+          <Button size="sm" variant="outline" onClick={() => onSelectVersion?.(item.n)}>{t.web.conversation.viewVersion({ n: item.n })}</Button>
+        </div>
+      );
+    case 'system':
+      return item.error
+        ? <p role="alert" className="ms-convo-system ms-error">{item.text}</p>
+        : <p className="ms-convo-system">{item.text}</p>;
+    case 'approval':
+      return (
+        <div className="ms-convo-approval">
+          <ApprovalCard approval={item.shown.approval} leaving={item.shown.leaving} onGone={onGone} />
+        </div>
+      );
+    case 'typing':
+      return (
+        <div className="ms-msg ms-convo-typing">
+          <AgentMark />
+          <div className="ms-msg-bubble"><Typing /></div>
+        </div>
+      );
+  }
+}
+
+/** Technical events of one turn (tools, outputs, logs): folded by default, scrolls inside a bounded box. */
+function Details({ events }: { events: AgentEvent[] }) {
+  const t = useT();
+  const k = t.web.chat.detailKinds;
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  const line = (e: AgentEvent): [string, ReactNode, boolean?] => {
+    switch (e.kind) {
+      case 'session': return [k.session, e.model ? `${e.sessionId} · ${e.model}` : e.sessionId];
+      case 'text': return [k.text, e.text];
+      case 'tool_use': return [k.tool, <><b>{e.name}</b><pre>{JSON.stringify(e.input, null, 2)}</pre></>];
+      case 'tool_result': return [e.isError ? k.error : k.result, <pre>{e.content}</pre>, e.isError];
+      case 'rate_limit': return [k.limit, e.status];
+      case 'progress': return [k.step, e.text];
+      case 'stderr': return [k.log, e.text, true];
+      case 'parse_error': return [k.unreadable, e.line, true];
+      case 'result': return e.ok ? [k.done, e.text ?? ''] : [k.failed, e.error ?? '', true];
+    }
+  };
+  return (
+    <div className="ms-convo-details">
+      <button type="button" className="ms-convo-fold" aria-expanded={open} aria-controls={id} onClick={() => setOpen((o) => !o)}>
+        <Icon name="terminal" size={12} />{t.web.chat.details({ count: events.length })}<Icon name="chevron" size={12} className="ms-chev" />
+      </button>
+      {open && (
+        <ul id={id} className="ms-convo-log" tabIndex={0}>
+          {events.map((e, i) => {
+            const [kind, value, err] = line(e);
+            return <li key={i}><span className="ms-kind">{kind}</span><span className={cx('ms-val', err && 'ms-err')}>{value}</span></li>;
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function Composer({ slug, creative, job, pins, onRemovePin, formatName, canGenerate, onSent }: {
+  slug: string; creative: string; job: JobSummary | undefined; pins: Pin[]; onRemovePin?(i: number): void; formatName?(id: string): string; canGenerate?: boolean; onSent?(): void;
+}) {
+  const t = useT();
+  const locale = useLocale();
+  const c = t.web.chat;
+  const id = useId();
+  const [text, setText] = useState('');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const busy = Boolean(job) || sending;
+  const canSend = !busy && (text.trim().length > 0 || pins.length > 0);
+
+  const send = async (body: { text?: string; pins?: Pin[] }) => {
+    setError(null); setSending(true);
+    try {
+      await api.sendCreativeTurn(slug, creative, body);
+      setText('');
+      onSent?.();
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setSending(false); }
+  };
+  const submit = () => { if (canSend) void send({ text: text.trim(), pins }); };
+  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); }
+  };
+  const cancel = () => { if (job) api.cancelJob(job.id).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e))); };
+
+  return (
+    <form className="ms-composer" onSubmit={(e) => { e.preventDefault(); submit(); }}>
+      <div className="ms-composer-box">
+        {pins.length > 0 && (
+          <div className="ms-composer-pins">
+            {pins.map((p, k) => (
+              <span key={k} className="ms-chip ms-on ms-composer-pin">
+                <Icon name="comment" size={11} />{pinText(p, k + 1, formatName, t, locale)}
+                <button type="button" className="ms-x" aria-label={t.web.conversation.removeComment({ n: k + 1 })} onClick={() => onRemovePin?.(k)}><Icon name="close" size={10} /></button>
+              </span>
+            ))}
+          </div>
+        )}
+        <label htmlFor={id} className="ms-composer-label">{t.web.conversation.requestChange}</label>
+        <Textarea id={id} rows={2} maxLength={10_000} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={onKeyDown}
+          placeholder={job ? c.busyPlaceholder : c.placeholder} aria-keyshortcuts={isMac() ? 'Meta+Enter' : 'Control+Enter'} />
+        {error && <p role="alert" className="ms-composer-error">{error}</p>}
+        <div className="ms-composer-foot">
+          {job
+            ? <span className="ms-composer-hint">{c.working}</span>
+            : <span className="ms-composer-hint">{c.sendHint({ keys: isMac() ? '⌘↵' : 'Ctrl ↵' })}</span>}
+          {job && <Button size="sm" variant="ghost" onClick={cancel}>{t.common.cancel}</Button>}
+          {canGenerate && !job && (
+            <Button size="sm" variant="accent" aria-label={t.web.newCreative.generate} disabled={sending} onClick={() => void send({})}>
+              <Icon name="sparkle" size={13} />{t.web.newCreative.generate}
+            </Button>
+          )}
+          <Button type="submit" size="sm" variant="accent" icon className="ms-composer-send" aria-label={t.web.common.send} disabled={!canSend}>
+            <Icon name="upload" size={13} strokeWidth={1.8} />
+          </Button>
+        </div>
+      </div>
+    </form>
+  );
+}

@@ -73,6 +73,25 @@ export function exit(el: Element | null, o: { x?: number; y?: number; ms?: numbe
   );
 }
 
+/**
+ * Removal (T15): height, vertical padding/margins and opacity go to zero (m, in). The element should clip its
+ * overflow. Like `exit`, the end state is held and it resolves true when finished, false when cancelled (an `enter`
+ * on the same element revives it): only remove the element on true.
+ */
+export function collapse(el: Element | null, ms: number = D.m): Promise<boolean> {
+  if (!el || reducedMotion() || typeof el.animate !== 'function') return Promise.resolve(true);
+  const h = (el as HTMLElement).offsetHeight;
+  return done(
+    el.animate(
+      [
+        { height: `${h}px`, opacity: 1 },
+        { height: '0px', opacity: 0, paddingTop: '0px', paddingBottom: '0px', marginTop: '0px', marginBottom: '0px', borderTopWidth: '0px', borderBottomWidth: '0px' },
+      ],
+      { duration: ms, easing: E.in, fill: 'forwards' },
+    ),
+  );
+}
+
 /** Cascade entrance; steps of 20–40 ms per spec. */
 export function stagger(els: Iterable<Element>, o: EnterOptions = {}, step = 30): Promise<void> {
   return Promise.all([...els].map((el, i) => enter(el, { ...o, delay: (o.delay ?? 0) + i * step }))).then(() => undefined);
