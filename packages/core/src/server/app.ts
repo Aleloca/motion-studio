@@ -154,7 +154,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // What the Doctor reports is what the agent gets: the workspace setting wins over the system support.
   const effectiveSandbox = async (): Promise<SandboxSupport> => {
     const mode = await currentSettings().then((s) => s.sandboxMode, () => 'auto' as const);
-    return mode === 'off' ? { available: false, disabled: true, reason: 'Isolamento disattivato nelle Impostazioni' } : sandbox();
+    return mode === 'off' ? { available: false, disabled: true, reason: t().doctor.sandboxOff } : sandbox();
   };
   const launcher = new AgentLauncher({
     runner: deps.runner, bridge, approvals, sandbox,
