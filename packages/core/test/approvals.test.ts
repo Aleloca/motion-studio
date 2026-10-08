@@ -98,7 +98,7 @@ describe('isAllowedRule', () => {
     'WebFetch(domain:*)', 'WebFetch(domain:*.com)', 'WebFetch(domain:2130706433)', 'WebFetch(domain:0x7f000001)', 'WebFetch(domain:127.1)',
     'WebFetch(domain:example.com:8080)', 'WebFetch(domain:Example.com)', 'WebFetch(domain:com)',
     'Edit(//tmp/a\\x/**)', 'Edit(//tmp/a\nb/**)', 'Edit(//etc/**)', 'Edit(//Applications/Foo/**)', 'Edit(//tmp/a*/**)',
-    'Edit(///**)', 'Edit(//**)', 'Edit(//Users/**)', 'Edit(//tmp/../etc/**)', 'Edit(//tmp/a)', 'Read(//**/**)',
+    'Edit(///**)', 'Edit(//**)', 'Edit(//Users/**)', 'Edit(//home/**)', 'Edit(//Volumes/**)', 'Read(//opt/**)', 'Edit(//tmp/../etc/**)', 'Edit(//tmp/a)', 'Read(//**/**)',
     'WebFetch(domain:localhost)', 'WebFetch(domain:127.0.0.1)', 'WebFetch(*)', 'provider:evil', 'mcp__studio__approve', 'mcp__other__x', 'Write(x)', '',
   ])('rejects %j', (r) => { expect(isAllowedRule(r)).toBe(false); });
   it('rejects the home dir, its ancestors and sensitive folders', () => {

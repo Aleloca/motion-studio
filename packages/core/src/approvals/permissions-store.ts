@@ -38,6 +38,8 @@ function safeDir(dir: string, env: RuleEnv): string | null {
   const home = resolve(env.home ?? homedir());
   const ci = (env.platform ?? process.platform) === 'darwin';
   if (!dir.startsWith('/') || dir === '/') return null;
+  // A whole top-level folder (/Users, /home, /Volumes, /opt…) is never a narrow grant, whatever the platform.
+  if (dir.split('/').filter(Boolean).length < 2) return null;
   if (isInside(home, dir, ci)) return null; // home itself or an ancestor of it
   // .studio holds a project's permissions, .git its hooks, .claude the agent's settings: no rule may ever reach one, nor the workspace holding the projects.
   if (dir.split('/').some((seg) => PROTECTED_SEGMENTS.has(ci ? seg.toLowerCase() : seg))) return null;
