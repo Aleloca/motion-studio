@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { workspaceSettingsSchema } from '@motion-studio/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
-import { AgentLauncher } from '../src/agent/launcher.ts';
+import { AgentLauncher, sweepRunDir } from '../src/agent/launcher.ts';
 import type { AgentRunner } from '../src/agent/runner.ts';
 import { ApprovalBroker } from '../src/approvals/broker.ts';
 import { PermissionsStore } from '../src/approvals/permissions-store.ts';
@@ -38,8 +38,8 @@ async function launch(over: Parameters<typeof testLauncher>[1], kind: 'creative'
   const launcher = testLauncher(new ClaudeCodeRunner([process.execPath, FAKE]), over);
   const run = await launcher.start({ kind, jobId: 'j1', projectSlug: 'acme', projectDir: dir, codebases: [], request: { prompt: 'ciao' }, onEvent: () => {} });
   await run.done;
-  const { args, env, mcpTimeout, mcpConfigFile } = JSON.parse(await readFile(argsFile, 'utf8'));
-  return { args: args as string[], env, mcpTimeout, mcpConfigFile: mcpConfigFile as { path: string; mode: number | null; content: string | null } | null, launcher, projectDir: dir };
+  const { args, env, mcpTimeout, mcpConfigFile, tokenFile } = JSON.parse(await readFile(argsFile, 'utf8'));
+  return { args: args as string[], env, mcpTimeout, tokenFile: tokenFile as { path: string; mode: number; content: string } | null, mcpConfigFile: mcpConfigFile as { path: string; mode: number | null; content: string | null } | null, launcher, projectDir: dir };
 }
 
 const studioRules = (dir: string) => ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].map((t) => `${t}(/${escapeGlob(join(dir, '.studio'))}/**)`);
@@ -66,7 +66,7 @@ describe('AgentLauncher', () => {
     const bridge = new AgentBridge();
     bridge.setOrigin('http://127.0.0.1:4317');
     const configDir = await newProject();
-    const { args, env, mcpTimeout, mcpConfigFile } = await launch({ bridge, mcpCommand: ['node', '/x/server.mjs'], configDir });
+    const { args, env, mcpTimeout, mcpConfigFile, tokenFile } = await launch({ bridge, mcpCommand: ['node', '/x/server.mjs'], configDir });
     expect(args).toContain('--strict-mcp-config');
     const path = args[args.indexOf('--mcp-config') + 1]!;
     expect(path.startsWith(join(configDir, 'run') + '/')).toBe(true);
@@ -75,7 +75,11 @@ describe('AgentLauncher', () => {
     const cfg = JSON.parse(mcpConfigFile!.content!);
     expect(cfg.mcpServers.studio).toMatchObject({ type: 'stdio', command: 'node', args: ['/x/server.mjs'] });
     expect(cfg.mcpServers.studio.env.MOTION_STUDIO_BRIDGE_URL).toBe('http://127.0.0.1:4317');
-    const token = cfg.mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN as string;
+    expect(cfg.mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN).toBeUndefined(); // the raw token is not in the config
+    const tokenPath = cfg.mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN_FILE as string;
+    expect(tokenPath).toBe(path.replace(/\.mcp\.json$/, '.token'));
+    expect(tokenFile).toMatchObject({ path: tokenPath, mode: 0o600 });
+    const token = tokenFile!.content;
     expect(token).toMatch(/^[0-9a-f]{64}$/);
     expect(args.some((a) => a.includes(token))).toBe(false); // never visible in the process list
     expect(cfg.mcpServers.studio.env.MOTION_STUDIO_TOOLS).toContain('validate_output');
@@ -86,6 +90,7 @@ describe('AgentLauncher', () => {
     expect(mcpTimeout).toBe('900000');
     expect(bridge.resolve(token)).toBeNull();
     expect(existsSync(path)).toBe(false);
+    expect(existsSync(tokenPath)).toBe(false);
     expect((await stat(join(configDir, 'run'))).mode & 0o777).toBe(0o700);
   });
   it('only exposes the MCP tools of the job kind', { timeout: 20_000 }, async () => {
@@ -149,12 +154,13 @@ describe('AgentLauncher', () => {
     const bridge = new AgentBridge();
     bridge.setOrigin('http://127.0.0.1:4317');
     let configPath = '';
+    let tokenPath = '';
     let runnerCancelled = false;
     let tokenAtRunnerCancel: unknown = 'unset';
     let token = '';
     const runner: AgentRunner = { start: (req) => {
       configPath = req.mcpConfigPath!;
-      token = JSON.parse(readFileSync(configPath, 'utf8')).mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN;
+      tokenPath = configPath.replace(/\.mcp\.json$/, '.token'); token = readFileSync(tokenPath, 'utf8');
       return { done: new Promise(() => {}), cancel: () => { runnerCancelled = true; tokenAtRunnerCancel = bridge.resolve(token); } };
     } };
     const projectDir = await newProject();
@@ -166,15 +172,17 @@ describe('AgentLauncher', () => {
     expect(runnerCancelled).toBe(true);
     expect(tokenAtRunnerCancel).toBeNull(); // revoked before the runner is told
     await vi.waitFor(() => expect(existsSync(configPath)).toBe(false));
+    expect(existsSync(tokenPath)).toBe(false);
   });
   it('frees the token and the MCP config file when the runner fails to start', async () => {
     const bridge = new AgentBridge();
     bridge.setOrigin('http://127.0.0.1:4317');
     let configPath = '';
+    let tokenPath = '';
     let token = '';
     const runner: AgentRunner = { start: (req) => {
       configPath = req.mcpConfigPath!;
-      token = JSON.parse(readFileSync(configPath, 'utf8')).mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN;
+      tokenPath = configPath.replace(/\.mcp\.json$/, '.token'); token = readFileSync(tokenPath, 'utf8');
       throw new Error('claudeCommand vuoto');
     } };
     const projectDir = await newProject();
@@ -183,6 +191,28 @@ describe('AgentLauncher', () => {
     expect(token).toMatch(/^[0-9a-f]{64}$/);
     expect(bridge.resolve(token)).toBeNull();
     expect(existsSync(configPath)).toBe(false);
+    expect(existsSync(tokenPath)).toBe(false);
+  });
+  it('sweeps leftover run files, replacing a run folder that is a link or a file without following it', async () => {
+    const configDir = await newProject();
+    const run = join(configDir, 'run');
+    await mkdir(run, { mode: 0o700 });
+    for (const f of ['a.mcp.json', 'a.token', 'keep.txt']) await writeFile(join(run, f), 'x');
+    await sweepRunDir(configDir);
+    expect(existsSync(join(run, 'a.mcp.json'))).toBe(false);
+    expect(existsSync(join(run, 'a.token'))).toBe(false);
+    expect(existsSync(join(run, 'keep.txt'))).toBe(true);
+    const outside = await newProject();
+    await writeFile(join(outside, 'b.token'), 'x');
+    await rm(run, { recursive: true });
+    await symlink(outside, run);
+    await sweepRunDir(configDir);
+    expect(existsSync(run)).toBe(false); // the link is gone
+    expect(existsSync(join(outside, 'b.token'))).toBe(true); // its target was never touched
+    await writeFile(run, 'file');
+    await sweepRunDir(configDir);
+    expect(existsSync(run)).toBe(false);
+    await sweepRunDir(join(configDir, 'missing')); // no folder: nothing to do
   });
   it('reads the settings once per start', { timeout: 20_000 }, async () => {
     let reads = 0;

@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { chmod, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentEvent, WorkspaceSettings } from '@motion-studio/shared';
@@ -10,6 +10,7 @@ import { buildAgentPolicy, type AgentJobKind } from './policy.ts';
 import type { AgentRun, AgentRunner, AgentTurnRequest } from './runner.ts';
 import type { SandboxSupport } from './sandbox.ts';
 
+const RUN_DIR = 'run';
 export const MCP_SERVER = 'studio';
 export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
   creative: ['report_progress', 'validate_output', 'read_brand_kit', 'generate_image', 'tts', 'stock_search', 'stock_download', 'fonts_fetch'],
@@ -71,6 +72,7 @@ export class AgentLauncher {
 
     let token: string | null = null;
     let configFile: string | null = null;
+    let tokenFile: string | null = null;
     let released = false;
     // Token first (synchronously), then the job's pending approvals (on every call), then the config file.
     const release = async () => {
@@ -78,7 +80,7 @@ export class AgentLauncher {
       released = true;
       if (first && token) bridge.unregister(token);
       approvals.cancelJob(i.jobId);
-      if (first && configFile) await rm(configFile, { force: true }).catch(() => {});
+      if (first) await Promise.all([configFile, tokenFile].map((f) => (f ? rm(f, { force: true }).catch(() => {}) : undefined)));
     };
     let mcp: Pick<AgentTurnRequest, 'mcpConfigPath' | 'permissionPromptTool'> = {};
     try {
@@ -87,17 +89,22 @@ export class AgentLauncher {
           jobId: i.jobId, kind: i.kind, projectSlug: i.projectSlug, projectDir: i.projectDir, creativeSlug: i.creativeSlug ?? null,
           emit: i.onEvent, ...(i.validate ? { validate: i.validate } : {}),
         });
+        // The paths are recorded before writing, so release() also removes a half-written pair.
+        const files = await prepareRunFiles(configDir, i.jobId);
+        configFile = files.config;
+        tokenFile = files.token;
         const config = {
           mcpServers: {
             [MCP_SERVER]: {
               type: 'stdio', command: mcpCommand[0], args: mcpCommand.slice(1),
-              env: { MOTION_STUDIO_BRIDGE_URL: bridge.origin!, MOTION_STUDIO_BRIDGE_TOKEN: token, MOTION_STUDIO_TOOLS: MCP_TOOLS[i.kind].join(',') },
+              env: { MOTION_STUDIO_BRIDGE_URL: bridge.origin!, MOTION_STUDIO_BRIDGE_TOKEN_FILE: files.token, MOTION_STUDIO_TOOLS: MCP_TOOLS[i.kind].join(',') },
             },
           },
         };
-        // The token travels in a private file (the config folder is denied to the agent), never in argv where `ps` shows it.
-        configFile = await writeMcpConfig(configDir, i.jobId, config);
-        mcp = { mcpConfigPath: configFile, permissionPromptTool: `mcp__${MCP_SERVER}__approve` };
+        // The token travels in a private file (the config folder is denied to the agent), never in argv or env where `ps` shows it.
+        await writeFile(files.token, token, { mode: 0o600, flag: 'wx' });
+        await writeFile(files.config, JSON.stringify(config), { mode: 0o600, flag: 'wx' });
+        mcp = { mcpConfigPath: files.config, permissionPromptTool: `mcp__${MCP_SERVER}__approve` };
       }
       const run = this.deps.runner.start({
         cwd: i.projectDir, ...i.request,
@@ -117,11 +124,22 @@ export class AgentLauncher {
   }
 }
 
-async function writeMcpConfig(configDir: string, jobId: string, config: unknown): Promise<string> {
-  const dir = join(configDir, 'run');
+/** Private paths for one job's MCP config and token file (same base name; the folder is 0700). */
+async function prepareRunFiles(configDir: string, jobId: string): Promise<{ config: string; token: string }> {
+  const dir = join(configDir, RUN_DIR);
   await mkdir(dir, { recursive: true, mode: 0o700 });
   await chmod(dir, 0o700);
-  const file = join(dir, `${jobId.replace(/[^A-Za-z0-9-]/g, '_')}-${randomBytes(8).toString('hex')}.mcp.json`);
-  await writeFile(file, JSON.stringify(config), { mode: 0o600, flag: 'wx' });
-  return file;
+  const base = join(dir, `${jobId.replace(/[^A-Za-z0-9-]/g, '_')}-${randomBytes(8).toString('hex')}`);
+  return { config: `${base}.mcp.json`, token: `${base}.token` };
+}
+
+/** Removes what a crashed run left behind. The folder is never followed if it was replaced by a link or a file. */
+export async function sweepRunDir(configDir: string): Promise<void> {
+  const dir = join(configDir, RUN_DIR);
+  const st = await lstat(dir).catch(() => null);
+  if (!st) return;
+  if (st.isSymbolicLink() || !st.isDirectory()) { await rm(dir, { force: true }); return; }
+  for (const name of await readdir(dir).catch(() => [] as string[])) {
+    if (name.endsWith('.mcp.json') || name.endsWith('.token')) await rm(join(dir, name), { force: true }).catch(() => {});
+  }
 }

@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import open from 'open';
+import { sweepRunDir } from '../agent/launcher.ts';
 import { ClaudeCodeRunner, claudeCommandFromEnv } from '../agent/claude-code-runner.ts';
 import { cachedSandboxDetection } from '../agent/sandbox.ts';
 import { AppConfigStore, defaultConfigDir } from '../app-config.ts';
@@ -18,6 +19,8 @@ const DEV_MCP_SERVER = fileURLToPath(new URL('../../../mcp-studio/src/server.mjs
 export async function startServer(opts: { port?: number; host?: string; configDir?: string; webDir?: string; claudeCommand?: string[]; mcpServerPath?: string } = {}) {
   const claudeCommand = opts.claudeCommand ?? claudeCommandFromEnv();
   const configDir = opts.configDir ?? defaultConfigDir();
+  // Leftovers (config and token files) of a run that was killed with the app; no job is alive at boot.
+  await sweepRunDir(configDir).catch(() => {});
   const bridge = new AgentBridge();
   const mcpServerPath = opts.mcpServerPath ?? DEV_MCP_SERVER;
   // Without the server file the agent runs as in phase 3 (anything that would prompt is denied) instead of failing to start.

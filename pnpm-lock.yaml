@@ -86,6 +86,8 @@ importers:
         specifier: ^8.22.0
         version: 8.22.0
 
+  packages/mcp-studio: {}
+
   packages/shared:
     dependencies:
       zod:

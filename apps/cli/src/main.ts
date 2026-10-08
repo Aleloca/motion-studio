@@ -14,9 +14,11 @@ async function main() {
   try { args = parseCliArgs(process.argv.slice(2)); }
   catch (e) { console.error((e as Error).message); console.error(HELP); process.exit(1); }
   if (args.help) { console.log(HELP); return; }
-  const webDir = join(dirname(fileURLToPath(import.meta.url)), 'web');
+  const here = dirname(fileURLToPath(import.meta.url));
+  const webDir = join(here, 'web');
+  const mcpServerPath = join(here, 'mcp-studio.mjs');
   try {
-    const { url, close } = await startServer({ port: args.port, webDir });
+    const { url, close } = await startServer({ port: args.port, webDir, mcpServerPath });
     console.log(`Motion Studio è attivo su ${url}`);
     // Registered before opening the browser so a stop is always handled.
     let closing = false;

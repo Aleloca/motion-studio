@@ -14,7 +14,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsup && node -e \"require('node:fs').cpSync('../../packages/web/dist','dist/web',{recursive:true})\"",
+    "build": "tsup && node -e \"require('node:fs').cpSync('../../packages/web/dist','dist/web',{recursive:true})\" && node -e \"require('node:fs').copyFileSync('../../packages/mcp-studio/src/server.mjs','dist/mcp-studio.mjs')\"",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
