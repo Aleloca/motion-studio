@@ -14,8 +14,9 @@ describe('Pairing page', () => {
     en();
     expect(screen.getByRole('heading', { name: 'Open Motion Studio from the link in your terminal' })).toBeTruthy();
     expect(screen.getByText(COMMAND)).toBeTruthy();
-    // No desktop shortcut: the server does not say a desktop app is available.
-    expect(screen.queryByRole('link', { name: /desktop/i })).toBeNull();
+    // The desktop line is static copy, never a link (the server does not say a desktop app is installed).
+    expect(screen.getByText('Using the desktop app? Open Motion Studio from Applications; it never needs this step.')).toBeTruthy();
+    expect(screen.queryByRole('link')).toBeNull();
   });
 
   it('copies the command with Copy and confirms it', async () => {
@@ -23,18 +24,20 @@ describe('Pairing page', () => {
     const writeText = vi.fn(async () => {});
     setClipboard({ writeText });
     en();
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Copy the command' })); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Copy' })); });
     expect(writeText).toHaveBeenCalledWith(COMMAND);
-    expect(screen.getByRole('button', { name: 'Copy the command' }).textContent).toContain('Copied');
+    // The visible text is the accessible name; the status region announces the copy.
+    expect(screen.getByRole('button', { name: 'Copied' })).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe('Command copied to the clipboard.');
     act(() => { vi.advanceTimersByTime(2000); });
-    expect(screen.getByRole('button', { name: 'Copy the command' }).textContent).toContain('Copy');
-    expect(screen.getByRole('button', { name: 'Copy the command' }).textContent).not.toContain('Copied');
+    expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe('');
   });
 
   it('selects the command and shows how to copy it when the clipboard is not available', async () => {
     setClipboard(undefined);
     en();
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Copy the command' })); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Copy' })); });
     expect(window.getSelection()?.toString()).toBe(COMMAND);
     expect(screen.getByRole('status').textContent).toMatch(/press (⌘C|Ctrl\+C)/);
   });
@@ -42,7 +45,7 @@ describe('Pairing page', () => {
   it('falls back the same way when the clipboard refuses', async () => {
     setClipboard({ writeText: vi.fn(async () => { throw new Error('denied'); }) });
     en();
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Copy the command' })); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Copy' })); });
     expect(window.getSelection()?.toString()).toBe(COMMAND);
     expect(screen.getByRole('status').textContent).toMatch(/press/);
   });

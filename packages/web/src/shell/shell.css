@@ -102,3 +102,4 @@ input.ms-palette-input::placeholder { color: var(--faint); }
   .ms-search-text, .ms-search .ms-kbd { display: none; }
   .ms-topbar-center { flex: 0 0 auto; }
 }
+.ms-app.ms-bare { grid-template-rows: minmax(0, 1fr); }

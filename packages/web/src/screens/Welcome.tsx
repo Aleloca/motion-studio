@@ -28,20 +28,27 @@ function problemText(problem: WorkspaceProblem, path: string, w: Messages['web']
 export function normalizeSite(raw: string): string | null {
   const text = raw.trim();
   if (!text || /\s/.test(text)) return null;
-  const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(text) ? text : `https://${text}`;
+  // Only "scheme://" counts as a scheme: "acme.com:8080" is a host with a port.
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`;
   try {
     const url = new URL(withScheme);
-    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !url.hostname.includes('.')) return null;
+    // No credentials: "mailto:x@acme.com" would otherwise read as user "mailto" on acme.com.
+    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !url.hostname.includes('.') || url.username || url.password) return null;
     return withScheme;
   } catch { return null; }
 }
 
 export interface WelcomeProps {
   checks: DoctorCheck[] | null;
+  /** A recheck is running: `checks` still holds the previous result. */
+  checking?: boolean;
+  /** Completed doctor runs: the rows are revealed one by one once per run (not when only the texts change). */
+  checksRun?: number;
   /** The doctor or the workspace could not be loaded (server unreachable). */
   loadError?: string | null;
   workspace: WorkspaceInfo | null;
-  /** Step to open on (route `welcome/:step`); clamped to the first one that is not done yet. */
+  /** Step to open on (route `welcome/:step`); clamped to the first one that is not done yet. A later result that
+   *  invalidates the current step (a required check now failing) moves back with T17. */
   step?: WelcomeStep;
   /** The setup is not required (Replay setup): the logo leads back to the projects. */
   canLeave?: boolean;
@@ -67,8 +74,10 @@ export function Welcome(props: WelcomeProps) {
   const [savedPath, setSavedPath] = useState<string | null>(null);
   const configured = Boolean(workspace?.settings) || savedPath !== null;
   const maxStep: WelcomeStep = blocking ? 1 : configured ? 3 : 2;
-  const [step, setStep] = useState<WelcomeStep>(props.step ?? 1);
-  const shown = Math.min(step, maxStep) as WelcomeStep;
+  const [step, setStep] = useState<WelcomeStep>(() => Math.min(props.step ?? 1, maxStep) as WelcomeStep);
+  const shown = step;
+  // Rows revealed once per doctor run, across remounts of step 1.
+  const revealedRun = useRef<number | null>(null);
 
   // T17. `seq` changes with every move, so the panel always comes back in even if the clamped step stays the same.
   const panel = useRef<HTMLDivElement>(null);
@@ -78,9 +87,9 @@ export function Welcome(props: WelcomeProps) {
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const go = async (n: WelcomeStep) => {
-    if (moving.current || n === shown || n < 1) return;
+    if (moving.current || n === step || n < 1) return;
     moving.current = true;
-    const d = n > shown ? 1 : -1;
+    const d = n > step ? 1 : -1;
     await exit(panel.current, { x: -d * 16 });
     if (!alive.current) return;
     dir.current = d;
@@ -93,6 +102,8 @@ export function Welcome(props: WelcomeProps) {
     void enter(panel.current, { x: dir.current * 16, y: 0 });
     dir.current = 0;
   }, [seq]);
+  // The current step is kept while rechecking; only a result that rules it out sends the panel back (T17).
+  useEffect(() => { if (step > maxStep) void go(maxStep); });
   const root = useEnter<HTMLDivElement>([]);
 
   // The panel's main action, also run by ↵ (spec: "Press ↵ to continue").
@@ -117,7 +128,7 @@ export function Welcome(props: WelcomeProps) {
   ];
 
   let body: ReactNode;
-  if (shown === 1) body = <CheckStep {...props} blocking={blocking} onNext={() => void go(2)} primary={primary} onBack={() => {}} />;
+  if (shown === 1) body = <CheckStep {...props} blocking={blocking} onNext={() => void go(2)} primary={primary} onBack={() => {}} revealedRun={revealedRun} />;
   // Re-check from step 2 goes back to the system check, where the rows reveal again.
   else if (shown === 2) body = <WorkspaceStep {...props} onRecheck={() => void go(1).then(props.onRecheck)} onBack={() => void go(1)} onSaved={(r) => { setSavedPath(r.path); props.onWorkspace(r); void go(3); }} primary={primary} />;
   else body = <ProjectStep onBack={() => void go(2)} onFinish={onFinish} primary={primary} />;
@@ -219,10 +230,10 @@ function Footer({ onBack, back = true, hint = true, children }: { onBack(): void
 
 /* ---------- step 1: system check ---------- */
 
-function CheckStep({ checks, loadError, onRecheck, blocking, onNext, primary, onBack }: WelcomeProps & { blocking: boolean; onNext(): void; primary: PrimaryRef; onBack(): void }) {
+function CheckStep({ checks, checking, checksRun, loadError, onRecheck, blocking, onNext, primary, onBack, revealedRun }: WelcomeProps & { blocking: boolean; onNext(): void; primary: PrimaryRef; onBack(): void; revealedRun: { current: number | null } }) {
   const t = useT();
   const w = t.web.welcome;
-  useEffect(() => { primary.current = blocking ? null : onNext; });
+  useEffect(() => { primary.current = blocking || checking ? null : onNext; });
   return (
     <Panel
       title={w.checkTitle}
@@ -230,34 +241,44 @@ function CheckStep({ checks, loadError, onRecheck, blocking, onNext, primary, on
       footer={(
         <Footer onBack={onBack} back={false} hint={!blocking}>
           {blocking && checks && !loadError ? <span className="ms-welcome-blocked">{w.blocked}</span> : null}
-          <Button variant="ink" size="lg" disabled={blocking} onClick={onNext}>{w.continue}</Button>
+          <Button variant="ink" size="lg" disabled={blocking || checking} onClick={onNext}>{w.continue}</Button>
         </Footer>
       )}
     >
-      <SystemChecks checks={checks} loadError={loadError ?? null} onRecheck={onRecheck} />
+      <SystemChecks checks={checks} checking={Boolean(checking)} run={checksRun ?? 0} revealedRun={revealedRun} loadError={loadError ?? null} onRecheck={onRecheck} />
     </Panel>
   );
 }
 
-/** The doctor checks, revealed one by one; failures show their remedy with "Check again". */
-export function SystemChecks({ checks, loadError, onRecheck }: { checks: DoctorCheck[] | null; loadError: string | null; onRecheck(): void }) {
+/**
+ * The doctor checks, revealed one by one once per doctor run (`run`); new texts for the same run (a language switch)
+ * or coming back to step 1 show them at once. While `checking`, every row waits again. Failures show their remedy
+ * with "Check again".
+ */
+export function SystemChecks({ checks, checking, run, revealedRun, loadError, onRecheck }: {
+  checks: DoctorCheck[] | null; checking: boolean; run: number; revealedRun: { current: number | null }; loadError: string | null; onRecheck(): void;
+}) {
   const t = useT();
   const w = t.web.welcome;
-  const [revealed, setRevealed] = useState(0);
+  const [revealed, setRevealed] = useState(() => (revealedRun.current === run ? Infinity : 0));
+  const count = checks?.length ?? 0;
+  const ready = checks !== null && !checking;
   useEffect(() => {
-    if (!checks) { setRevealed(0); return; }
-    if (reducedMotion()) { setRevealed(checks.length); return; }
+    if (!ready) return;
+    if (revealedRun.current === run || reducedMotion()) { revealedRun.current = run; setRevealed(Infinity); return; }
     setRevealed(0);
     let i = 0;
     const id = setInterval(() => {
       i += 1;
       setRevealed(i);
-      if (i >= checks.length) clearInterval(id);
+      if (i >= count) { clearInterval(id); revealedRun.current = run; setRevealed(Infinity); }
     }, REVEAL_MS);
     return () => clearInterval(id);
-  }, [checks]);
+    // Keyed on the run, not on the checks array: a reload of the same result (new language) must not replay it.
+  }, [run, ready]); // eslint-disable-line react-hooks/exhaustive-deps
+  const visible = checking ? 0 : revealed;
 
-  if (loadError) {
+  if (loadError && !checking) {
     return (
       <div className="ms-syscheck-error">
         <p role="alert">{w.serverUnreachable({ detail: loadError })}</p>
@@ -273,8 +294,8 @@ export function SystemChecks({ checks, loadError, onRecheck }: { checks: DoctorC
     );
   }
   return (
-    <ul className="ms-syschecks" aria-label={w.checksList} aria-busy={revealed < checks.length || undefined}>
-      {checks.map((c, i) => (i < revealed ? <CheckRow key={c.id} check={c} onRecheck={onRecheck} /> : (
+    <ul className="ms-syschecks" aria-label={w.checksList} aria-busy={visible < checks.length || undefined}>
+      {checks.map((c, i) => (i < visible ? <CheckRow key={c.id} check={c} onRecheck={onRecheck} /> : (
         <li key={c.id} className="ms-syscheck">
           <Spinner decorative size={16} />
           <span className="ms-syscheck-label ms-muted">{c.label}</span>
@@ -355,8 +376,11 @@ function WorkspaceStep({ workspace, checks, onRecheck, onBack, onSaved, primary 
       if (picked) { setPath(picked); setError(null); }
     } catch (e) { setError(message(e)); }
   };
+  // A ref, not the `busy` state: two submits in the same frame (click and ↵) must save once.
+  const saving = useRef(false);
   const save = async () => {
-    if (!trimmed || busy) return;
+    if (!trimmed || saving.current) return;
+    saving.current = true;
     setBusy(true); setError(null);
     try {
       const r = await api.setWorkspace(trimmed);
@@ -364,6 +388,7 @@ function WorkspaceStep({ workspace, checks, onRecheck, onBack, onSaved, primary 
     } catch (e) {
       setError(w.saveFailed({ detail: message(e) }));
       setBusy(false);
+      saving.current = false;
     }
   };
   useEffect(() => { primary.current = trimmed && !busy ? () => void save() : null; });
@@ -425,7 +450,7 @@ function ChecksSummary({ checks, onRecheck }: { checks: DoctorCheck[]; onRecheck
       <div className="ms-ws-checks-head">
         <button type="button" className="ms-ws-checks-toggle" aria-expanded={open} aria-controls="ms-ws-checks-list" onClick={() => setOpen((o) => !o)}>
           <span className={cx('ms-syscheck-mark', notes ? 'ms-note' : 'ms-ok')} aria-hidden="true"><Icon name={notes ? 'minus' : 'check'} size={10} strokeWidth={2.4} /></span>
-          <b>{notes ? w.macNotes : w.macReady}</b>
+          <b>{notes ? w.systemNotes : w.systemReady}</b>
           <span className="ms-muted">· {w.checksPassed({ ok: passed, total: checks.length })}</span>
           <Icon name="chevron" size={12} className={cx('ms-ws-chev', open && 'ms-open')} />
         </button>
@@ -459,15 +484,18 @@ function ProjectStep({ onBack, onFinish, primary }: { onBack(): void; onFinish(h
   const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => { nameRef.current?.focus({ preventScroll: true }); }, []);
 
+  // A ref, not the `busy` state: two submits in the same frame (click and ↵) must create one project.
+  const creating = useRef(false);
   const create = async () => {
     const title = name.trim();
-    if (!title || busy) return;
+    if (!title || creating.current) return;
     const url = site.trim() ? normalizeSite(site) : null;
     if (site.trim() && !url) { setSiteError(true); return; }
+    creating.current = true;
     setBusy(true); setError(null); setSiteError(false);
     let slug: string;
     try { slug = (await api.createProject(title)).slug; }
-    catch (e) { setError(w.createFailed({ detail: message(e) })); setBusy(false); return; }
+    catch (e) { setError(w.createFailed({ detail: message(e) })); setBusy(false); creating.current = false; return; }
     // From here the project exists: whatever happens next, the user lands on its Brand tab.
     if (url) {
       let step: 'source' | 'analysis' = 'source';

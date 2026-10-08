@@ -81,6 +81,34 @@ describe('App startup', () => {
     expect(await screen.findByRole('button', { name: /^Attività/ })).toBeTruthy();
     expect(location.hash).toBe('#/');
   });
+  it('opens the setup when a required check fails even with a valid workspace', async () => {
+    const failing: DoctorCheck[] = [{ id: 'git', label: 'Git', ok: false, required: true, message: 'Non trovato', fix: 'brew install git' }];
+    start(Promise.resolve({ path: '/w', settings, error: null }), Promise.resolve(failing));
+    expect(await screen.findByRole('heading', { name: 'Controlla il sistema' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Attività/ })).toBeNull();
+    expect(await screen.findByText('brew install git')).toBeTruthy();
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Continua' }).disabled).toBe(true);
+  });
+  it('slides from the setup to the projects with T1 (deeper: in from the right)', async () => {
+    const frames: Array<{ el: Element; f: Keyframe[] }> = [];
+    const orig = Element.prototype.animate;
+    Element.prototype.animate = function (this: Element, f: Keyframe[]) {
+      frames.push({ el: this, f });
+      return { finished: Promise.resolve(), cancel() {} } as unknown as Animation;
+    } as never;
+    try {
+      history.replaceState(null, '', '/#/welcome');
+      start(Promise.resolve({ path: '/w', settings, error: null }));
+      await screen.findByRole('heading', { name: 'Controlla il sistema' });
+      frames.length = 0;
+      await userEvent.click(screen.getByRole('link', { name: 'Home di Motion Studio' }));
+      expect(await screen.findByRole('button', { name: /^Attività/ })).toBeTruthy();
+      const pages = frames.filter((x) => x.el.classList.contains('ms-page')).map((x) => String(x.f[0]?.transform));
+      // depth welcome 0 → projects 1: the setup leaves to the left, the projects come in from +24 px.
+      expect(pages).toContain('translate(24px,0px) scale(1)');
+      expect(frames.some((x) => x.el.classList.contains('ms-page') && String(x.f[1]?.transform) === 'translate(-16px,0px)')).toBe(true);
+    } finally { Element.prototype.animate = orig; }
+  });
   it('opens the setup again from Replay setup and leads back to the projects', async () => {
     history.replaceState(null, '', '/#/welcome');
     start(Promise.resolve({ path: '/w', settings, error: null }));

@@ -10,7 +10,7 @@ import { Pairing } from './screens/Pairing.tsx';
 import { ProjectList } from './screens/ProjectList.tsx';
 import { ProjectPage } from './screens/ProjectPage.tsx';
 import { SettingsPage } from './screens/SettingsPage.tsx';
-import { Welcome } from './screens/Welcome.tsx';
+import { Welcome, type WelcomeProps } from './screens/Welcome.tsx';
 import { useCatalog } from './shell/catalog.ts';
 import { CommandPalette } from './shell/CommandPalette.tsx';
 import { go, isMac, ShellContext, type ActivityTab, type Shell } from './shell/ShellContext.tsx';
@@ -75,11 +75,17 @@ function AppBody({ live, language, systemLocale, onLanguage }: Props) {
   }, []);
   useAttention(approvals.length, approvals, { onReview: review, snapshot: live.snapshots ?? 0 });
 
+  // A recheck keeps the previous checks on screen (no step jump in the setup) and flags `checking`; `checkRun` counts
+  // the completed runs, so the setup reveals the rows again only after an actual recheck (not a language reload).
+  const [checking, setChecking] = useState(false);
+  const [checkRun, setCheckRun] = useState(0);
   const refresh = useCallback(() => {
-    setChecks(null);
-    setLoadError(null);
+    setChecking(true);
     const fail = (e: unknown) => setLoadError(e instanceof Error ? e.message : String(e));
-    api.getDoctor().then(setChecks).catch(fail);
+    api.getDoctor()
+      .then((c) => { setChecks(c); setLoadError(null); setCheckRun((n) => n + 1); })
+      .catch(fail)
+      .finally(() => setChecking(false));
     // The stored theme is applied on load (the switch itself lives in Settings).
     api.getWorkspace().then((w) => { setWs(w); if (w.settings) applyTheme(w.settings.theme); }).catch(fail);
   }, []);
@@ -113,31 +119,40 @@ function AppBody({ live, language, systemLocale, onLanguage }: Props) {
     if (location.hash !== hash) go(hash);
   }, []);
 
+  // While the setup is required, every route shows it: it lives in the shell's page host (depth 0), so leaving it
+  // slides with T1 and the shell state survives.
+  const gate = setupOpen || (loaded && needsSetup) || Boolean(loadError);
+  const shown = useMemo<Route>(() => (gate && route.name !== 'welcome' ? SETUP_ROUTE : route), [gate, route]);
+  const onWorkspace = useCallback((next: { path: string; settings: WorkspaceSettings }) => {
+    applyTheme(next.settings.theme);
+    setWs({ path: next.path, settings: next.settings, error: null });
+  }, []);
+  const setup: SetupProps = {
+    checks, checking, checksRun: checkRun, loadError, workspace: ws, canLeave: loaded && !needsSetup,
+    language, systemLocale, onLanguage, onRecheck: refresh, onWorkspace, onFinish: finishSetup,
+  };
+
   if (pairing) return <Pairing />;
-  if (route.name === 'welcome' || setupOpen || (loaded && needsSetup) || loadError) {
-    return (
-      <Welcome
-        checks={checks} loadError={loadError} workspace={ws} step={route.name === 'welcome' ? route.step : undefined}
-        canLeave={loaded && !needsSetup} language={language} systemLocale={systemLocale} onLanguage={onLanguage}
-        onRecheck={refresh} onFinish={finishSetup}
-        onWorkspace={(next) => { applyTheme(next.settings.theme); setWs({ path: next.path, settings: next.settings, error: null }); }}
-      />
-    );
-  }
   // First load: nothing to show yet (no flash of the setup when everything is in place).
-  if (!checks || !ws?.settings) return <div className="ms-boot"><Spinner size={18} /></div>;
+  if (shown.name !== 'welcome' && (!checks || !ws?.settings)) return <div className="ms-boot"><Spinner size={18} /></div>;
   return (
     <AppShell
-      route={route} live={live} settings={ws.settings} checks={checks} activity={activity} setActivity={setActivity}
-      language={language} systemLocale={systemLocale} onLanguage={onLanguage}
+      route={shown} live={live} settings={ws?.settings ?? null} checks={checks} activity={activity} setActivity={setActivity}
+      language={language} systemLocale={systemLocale} onLanguage={onLanguage} setup={setup}
       onSettings={(next) => { applyTheme(next.theme); setWs((prev) => (prev ? { ...prev, settings: next } : prev)); }}
     />
   );
 }
 
+/** The setup shown on the welcome route (or whenever it is required). */
+const SETUP_ROUTE: Route = { name: 'welcome' };
+type SetupProps = Omit<WelcomeProps, 'step'>;
+
 interface ShellProps extends Props {
   route: Route;
-  settings: NonNullable<WorkspaceInfo['settings']>;
+  /** Null only while the setup is required (the welcome route is then the only one shown). */
+  settings: WorkspaceInfo['settings'];
+  setup: SetupProps;
   checks: DoctorCheck[] | null;
   activity: ActivityState;
   setActivity: Dispatch<SetStateAction<ActivityState>>;
@@ -148,16 +163,26 @@ interface ShellProps extends Props {
  * The app shell (spec §6.1, §7): the bar of the current route over a full-height stage where pages change with T1
  * (direction from the route depth) and project tabs with T2. Old screens render inside until later tasks replace them.
  */
-function AppShell({ route, live, settings, checks, activity, setActivity, language, systemLocale, onLanguage, onSettings }: ShellProps) {
+function AppShell({ route, live, settings, checks, activity, setActivity, language, systemLocale, onLanguage, onSettings, setup }: ShellProps) {
   const current = projectOf(route);
   const tick = current ? (live.projectTicks[current] ?? 0) + Object.entries(live.creativeTicks).filter(([k]) => k.startsWith(`${current}/`)).reduce((a, [, v]) => a + v, 0) : 0;
   const catalog = useCatalog(current, tick);
   const [palette, setPalette] = useState(false);
+  const bare = route.name === 'welcome';
+  const bareRef = useRef(bare);
+  useEffect(() => { bareRef.current = bare; }, [bare]);
+  // Leaving the setup: the workspace (and its projects) may be new.
+  const wasBare = useRef(bare);
+  useEffect(() => {
+    if (wasBare.current && !bare) catalog.refresh();
+    wasBare.current = bare;
+  }, [bare, catalog]);
 
   // ⌘K / Ctrl+K toggles the command palette from anywhere.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.isComposing || e.repeat || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'k') return;
+      // The setup has no bar and nothing to jump to.
+      if (bareRef.current || e.isComposing || e.repeat || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'k') return;
       // ⌘ on Mac (where Ctrl+K is a text-field shortcut), Ctrl elsewhere.
       const mac = isMac();
       if (mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) {
@@ -185,7 +210,7 @@ function AppShell({ route, live, settings, checks, activity, setActivity, langua
     openPalette: () => setPalette(true),
   }), [route, live, catalog, activity, setActivity]);
 
-  const expert = settings.expertMode;
+  const expert = settings?.expertMode ?? false;
   const render = (r: Route) => {
     switch (r.name) {
       case 'projects': return <ProjectList />;
@@ -194,16 +219,16 @@ function AppShell({ route, live, settings, checks, activity, setActivity, langua
       // The format view (Task 13) opens on the creative until then.
       case 'creative': case 'format': return <CreativePage key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} />;
       // Every section maps to the current settings page until the new one (Task 15).
-      case 'settings': return <SettingsPage settings={settings} checks={checks} language={language} systemLocale={systemLocale} onLanguage={onLanguage} onSaved={onSettings} />;
-      // The setup is a full page of its own, outside the shell (AppBody renders it).
-      case 'welcome': return null;
+      case 'settings': return settings ? <SettingsPage settings={settings} checks={checks} language={language} systemLocale={systemLocale} onLanguage={onLanguage} onSaved={onSettings} /> : null;
+      // The setup: a full page without the bar, at depth 0.
+      case 'welcome': return <Welcome {...setup} step={r.step} />;
     }
   };
 
   return (
     <ShellContext.Provider value={shell}>
-      <div className="ms-app">
-        <TopBar />
+      <div className={bare ? 'ms-app ms-bare' : 'ms-app'}>
+        {bare ? null : <TopBar />}
         <div className="ms-main">
           <PageHost route={route} keyOf={routeKey} depthOf={depthOf} render={render} />
         </div>

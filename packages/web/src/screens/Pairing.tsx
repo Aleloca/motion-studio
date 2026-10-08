@@ -21,8 +21,8 @@ function selectText(el: HTMLElement | null) {
 
 /**
  * The page shown when the server refuses the UI token (spec §6.2 #2): open the app from the terminal link, or print it
- * again with the copyable `--print-url` command. The server's 401 says nothing about a desktop app, so no desktop
- * shortcut is offered.
+ * again with the copyable `--print-url` command. The desktop line is static text, not a link: the server's 401 says
+ * nothing about a desktop app being installed.
  */
 export function Pairing() {
   const t = useT();
@@ -74,13 +74,18 @@ export function Pairing() {
           <span className="ms-pairing-muted">{p.lostBody}</span>
           <div className="ms-pairing-cmd">
             <code ref={command}>{PRINT_URL_COMMAND}</code>
-            <Button size="sm" variant="outline" aria-label={p.copyLabel} onClick={() => void copy()}>
+            {/* The visible "Copy" / "Copied" is the accessible name; the status line below announces the result. */}
+            <Button size="sm" variant="outline" onClick={() => void copy()}>
               <Icon name={state === 'copied' ? 'check' : 'copy'} size={13} strokeWidth={state === 'copied' ? 2 : 1.4} />
               {state === 'copied' ? p.copied : p.copy}
             </Button>
           </div>
-          <p className="ms-pairing-hint" role="status">{state === 'manual' ? p.copyFallback({ keys: isMac() ? '⌘C' : 'Ctrl+C' }) : ''}</p>
+          <p className={state === 'manual' ? 'ms-pairing-hint' : 'ms-pairing-hint ms-sr'} role="status">
+            {state === 'manual' ? p.copyFallback({ keys: isMac() ? '⌘C' : 'Ctrl+C' }) : state === 'copied' ? p.copiedStatus : ''}
+          </p>
         </section>
+        {/* Static copy (prototype): the desktop app opens with its own key and never shows this page. */}
+        <span className="ms-pairing-desktop" data-enter>{p.desktopHint}</span>
       </div>
     </div>
   );

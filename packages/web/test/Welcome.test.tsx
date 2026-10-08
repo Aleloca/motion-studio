@@ -13,7 +13,7 @@ const api = {
   setLanguage: vi.fn(),
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
-const { Welcome } = await import('../src/screens/Welcome.tsx');
+const { Welcome, normalizeSite } = await import('../src/screens/Welcome.tsx');
 const { Toasts, toast } = await import('../src/ui/index.ts');
 
 const settings = { schemaVersion: 1 as const, maxConcurrentJobs: 2, expertMode: false, theme: 'system' as const, model: null, sandboxMode: 'auto' as const, extraAllowedDomains: [] as string[], confirmPaidProviders: true };
@@ -31,7 +31,8 @@ function setup(over: Partial<Props> = {}) {
     ...over,
   };
   const view = render(<I18nProvider locale="en"><Welcome {...props} /><Toasts /></I18nProvider>);
-  return { props, view };
+  const rerender = (next: Partial<Props>) => { Object.assign(props, next); view.rerender(<I18nProvider locale="en"><Welcome {...props} /><Toasts /></I18nProvider>); };
+  return { props, view, rerender };
 }
 
 afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); delete (window as unknown as { motionStudio?: unknown }).motionStudio; });
@@ -210,5 +211,90 @@ describe('Welcome · step 3 (first project)', () => {
   it('cannot open step 3 before a workspace is set', () => {
     setup({ step: 3 });
     expect(screen.getByRole('heading', { name: 'Choose a workspace' })).toBeTruthy();
+  });
+});
+
+describe('Welcome · rechecks and texts', () => {
+  it('does not replay the reveal when only the texts change (language), but does after a recheck', () => {
+    vi.useFakeTimers();
+    const { rerender } = setup({ checksRun: 1 });
+    act(() => { vi.advanceTimersByTime(2000); });
+    expect(screen.getByText('2.1.293')).toBeTruthy();
+    // Same run, new array (the core rewrote the texts in another language): shown at once.
+    rerender({ checks: okChecks.map((c) => ({ ...c, message: 'Installato' })) });
+    expect(screen.getByText('2.1.293')).toBeTruthy();
+    expect(screen.getByText('2.47.1')).toBeTruthy();
+    // A recheck: rows wait while it runs, then reveal one by one again.
+    rerender({ checking: true });
+    expect(screen.queryByText('2.1.293')).toBeNull();
+    rerender({ checking: false, checksRun: 2, checks: [...okChecks] });
+    expect(screen.queryByText('2.1.293')).toBeNull();
+    act(() => { vi.advanceTimersByTime(280); });
+    expect(screen.getByText('2.1.293')).toBeTruthy();
+    expect(screen.queryByText('2.47.1')).toBeNull();
+  });
+
+  it('keeps the current step and its typed input while rechecking, and goes back only when the result requires it', async () => {
+    const ws: WorkspaceInfo = { path: '/w', settings, error: null };
+    const { rerender } = setup({ step: 3, workspace: ws });
+    await userEvent.type(screen.getByLabelText('Project name'), 'Acme');
+    rerender({ checking: true });
+    expect(screen.getByRole('heading', { name: 'Create your first project' })).toBeTruthy();
+    rerender({ checking: false, checks: [...okChecks] });
+    expect(screen.getByLabelText<HTMLInputElement>('Project name').value).toBe('Acme');
+    rerender({ checks: [okChecks[0]!, { id: 'git', label: 'Git', ok: false, required: true, message: 'Not found' }] });
+    expect(await screen.findByRole('heading', { name: 'Check your setup' })).toBeTruthy();
+  });
+});
+
+describe('Welcome · first project edge cases', () => {
+  const ws: WorkspaceInfo = { path: '/w', settings, error: null };
+  beforeEach(() => {
+    api.createProject.mockResolvedValue({ slug: 'acme', project: { name: 'Acme' } });
+    api.analyzeBrand.mockResolvedValue({ id: 'j1' });
+  });
+
+  it('lands on Brand and explains a website that could not be added, without starting the analysis', async () => {
+    api.addBrandSource.mockRejectedValue(new Error('Invalid address'));
+    const show = vi.spyOn(toast, 'show');
+    const { props } = setup({ step: 3, workspace: ws });
+    await userEvent.type(screen.getByLabelText('Project name'), 'Acme');
+    await userEvent.type(screen.getByLabelText(/Website/), 'acme.com');
+    await userEvent.click(screen.getByRole('button', { name: 'Create project' }));
+    await waitFor(() => expect(props.onFinish).toHaveBeenCalledWith('#/p/acme/brand'));
+    expect(api.analyzeBrand).not.toHaveBeenCalled();
+    const [text, opts] = show.mock.calls.at(-1)!;
+    expect(text).toBe("The project was created, but the website wasn't added: Invalid address. Add it again here in Brand.");
+    expect(opts?.sticky).toBe(true);
+    show.mockRestore();
+  });
+
+  it('creates one project on a double submit', async () => {
+    let resolve!: (v: unknown) => void;
+    api.createProject.mockReturnValue(new Promise((r) => { resolve = r; }));
+    const { props } = setup({ step: 3, workspace: ws });
+    await userEvent.type(screen.getByLabelText('Project name'), 'Acme');
+    const button = screen.getByRole('button', { name: 'Create project' });
+    act(() => {
+      fireEvent.click(button);
+      fireEvent.keyDown(screen.getByLabelText('Project name'), { key: 'Enter' });
+      fireEvent.click(button);
+    });
+    await act(async () => { resolve({ slug: 'acme', project: { name: 'Acme' } }); });
+    await waitFor(() => expect(props.onFinish).toHaveBeenCalledTimes(1));
+    expect(api.createProject).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('normalizeSite', () => {
+  it.each([
+    ['acme.com', 'https://acme.com'],
+    ['acme.com:8080', 'https://acme.com:8080'],
+    ['example.com:8080/x', 'https://example.com:8080/x'],
+    ['http://acme.com', 'http://acme.com'],
+    ['https://www.acme.com/about', 'https://www.acme.com/about'],
+  ])('accepts %s', (raw, out) => { expect(normalizeSite(raw)).toBe(out); });
+  it.each(['not a site', 'localhost', 'mailto:x@acme.com', 'ftp://acme.com', 'javascript:alert(1)', ''])('refuses %s', (raw) => {
+    expect(normalizeSite(raw)).toBeNull();
   });
 });
