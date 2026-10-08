@@ -5,8 +5,14 @@
 // point 38) and the "Scenes" column that says the timeline is coming. Image: zoom (Fit, −/+, 100%) and comments. The
 // Chat panel on the right; "← All formats", the format, the version menu and Export in the bar. T3 on the way in (the
 // board grows into the player), T4 on the way out. Replaces the interim FocusView.
-import { channelName, formatName, type FormatPreset, type Pin } from '@motion-studio/shared';
-import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
+//
+// The playhead moves at frame rate: its time lives in a small store (`Clock`) that only the transport, the comment
+// layer and the hint read, so the page (bar, chat) does not re-render while the video plays.
+import { channelName, DEFAULT_FORMATS, formatName, type FormatPreset, type Pin, type VersionEntry } from '@motion-studio/shared';
+import {
+  useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
+  type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api.ts';
 import { Conversation } from '../components/Conversation.tsx';
@@ -24,7 +30,7 @@ import { pointIn, ratioText, VIDEO_FILE } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf, lastStep } from './creativeState.ts';
 import { ExportDialog } from './ExportDialog.tsx';
-import { bare, inOverlay, isTyping } from './keys.ts';
+import { activatesControl, bare, inOverlay, isTyping } from './keys.ts';
 import { pinsKey, usePendingPins } from './pendingPins.ts';
 import { useNewVersionNotice, VersionControl } from './VersionControl.tsx';
 import './canvas.css';
@@ -36,6 +42,10 @@ const FPS = 30;
 /** A comment shows on the picture within this distance of its time (point 38). */
 const PIN_WINDOW = 0.5;
 const ZOOMS = [0.1, 0.25, 0.33, 0.5, 0.67, 0.75, 1, 1.25, 1.5, 2, 3, 4];
+/** T3 only while the board's rect is fresh: a frame that shows up later than this simply appears. */
+const FLIP_WINDOW_MS = 400;
+/** The player's own controls: Space on them is the shortcut itself, not a click. */
+const PLAYER_CONTROLS = '.ms-fv-play, .ms-fv-scrub';
 const round3 = (v: number) => Math.round(v * 1000) / 1000;
 
 /** `00:04.50` (prototype timecode: minutes, seconds, hundredths). */
@@ -46,6 +56,27 @@ export function timecode(s: number): string {
   const ss = Math.floor((cs % 6000) / 100);
   return `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}.${String(cs % 100).padStart(2, '0')}`;
 }
+
+/**
+ * Playback time. `time` follows the picture (every frame while playing); `settled` changes only on a seek, a pause
+ * or the media's `timeupdate` (what assistive technology is told).
+ */
+interface ClockState { time: number; settled: number }
+interface Clock { get(): ClockState; set(time: number, settled: boolean): void; subscribe(l: () => void): () => void }
+function createClock(): Clock {
+  let state: ClockState = { time: 0, settled: 0 };
+  const listeners = new Set<() => void>();
+  return {
+    get: () => state,
+    set(time, settled) {
+      if (state.time === time && (!settled || state.settled === time)) return;
+      state = { time, settled: settled ? time : state.settled };
+      for (const l of listeners) l();
+    },
+    subscribe(l) { listeners.add(l); return () => { listeners.delete(l); }; },
+  };
+}
+const useClock = (clock: Clock) => useSyncExternalStore(clock.subscribe, clock.get, clock.get);
 
 /** A pending comment of this format with its number among the comments that go out (the chips use the same). */
 interface Mark { pin: Pin; number: number }
@@ -73,10 +104,11 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
   const ownKey = routeKey({ name: 'format', slug, creative, format });
   const active = !shell || routeKey(shell.route) === ownKey;
   const bar = useBarClaim(ownKey, active);
-  // T3: the rect of the board this view grows from, taken once.
+  // T3: the rect of the board this view grows from, taken once, and when the page mounted.
   const [origin] = useState(() => takeFrameOrigin(`format:${slug}/${creative}/${format}`));
+  const [mountedAt] = useState(() => performance.now());
 
-  // Format catalog.
+  // Format catalog. Until it arrives, the built-in catalog gives the frame its proportions (T3 starts at once).
   const [presets, setPresets] = useState<FormatPreset[]>([]);
   const [presetsLoaded, setPresetsLoaded] = useState(false);
   const [presetsFailure, setPresetsFailure] = useState<string | null>(null);
@@ -107,12 +139,14 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
   const step = job && working ? (job.state === 'queued' ? t.web.creatives.queued : lastStep(live.events[job.id]) ?? t.web.creatives.working) : null;
 
   // The format and what this version made of it.
-  const preset = presets.find((p) => p.id === format) ?? null;
+  const loading = !detail || !presetsLoaded;
+  const preset = presets.find((p) => p.id === format) ?? (presetsLoaded ? null : DEFAULT_FORMATS.find((p) => p.id === format) ?? null);
   const out = version?.outputs.find((o) => o.format === format) ?? null;
   const known = Boolean(detail && (detail.creative.brief.formats.includes(format) || versions.some((v) => v.outputs.some((o) => o.format === format))));
   const video = out ? VIDEO_FILE.test(out.file) : preset?.kind === 'video';
-  const width = preset?.width ?? out?.width ?? 1080;
-  const height = preset?.height ?? out?.height ?? 1080;
+  // Proportions: the preset, the output, or (an unknown custom preset still loading) the board it grows from.
+  const width = preset?.width ?? out?.width ?? (origin?.width ? Math.round(origin.width) : 1080);
+  const height = preset?.height ?? out?.height ?? (origin?.height ? Math.round(origin.height) : 1080);
   const label = boardLabel({ id: format, preset, out: null }, locale);
   const src = out && version ? api.fileUrl(slug, creative, `outputs/v${version.n}/${out.file}`) : null;
   const poster = out?.preview && version ? api.fileUrl(slug, creative, `outputs/v${version.n}/${out.preview}`) : undefined;
@@ -130,23 +164,31 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
   useEffect(() => { setDraft(null); }, [pinSource]);
 
   // Playback (video). jsdom and some codecs never fire `play`: the state follows the call and the media events.
+  const [clock] = useState(createClock);
   const media = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
-  const [time, setTime] = useState(0);
   const [metaDuration, setMetaDuration] = useState<number | null>(null);
   const duration = metaDuration ?? out?.durationSec ?? 0;
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  useEffect(() => { setFailed(false); setPlaying(false); setTime(0); setMetaDuration(null); }, [src]);
-  const seek = (to: number) => {
+  /** A time to show once the (new) video is loaded: a chip opened on another version. */
+  const pendingSeek = useRef<number | null>(null);
+  useEffect(() => { setFailed(false); setPlaying(false); clock.set(0, true); setMetaDuration(null); }, [src, clock]);
+  const seek = useCallback((to: number) => {
     const v = media.current;
     if (!v) return;
-    const next = Math.max(0, duration ? Math.min(duration, to) : to);
+    const max = metaDuration ?? out?.durationSec ?? 0;
+    const next = Math.max(0, max ? Math.min(max, to) : to);
     v.currentTime = next;
-    setTime(next);
-  };
-  const pause = () => { media.current?.pause(); setPlaying(false); };
-  const play = () => {
+    clock.set(next, true);
+  }, [clock, metaDuration, out?.durationSec]);
+  const pause = useCallback(() => {
+    const v = media.current;
+    v?.pause();
+    setPlaying(false);
+    if (v) clock.set(v.currentTime, true);
+  }, [clock]);
+  const play = useCallback(() => {
     const v = media.current;
     if (!v || failed) return;
     if (duration && v.currentTime >= duration - 1 / FPS / 2) seek(0);
@@ -155,7 +197,7 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
     setPlaying(true);
     const r = v.play() as Promise<void> | undefined;
     if (r && typeof r.catch === 'function') r.catch(() => setPlaying(false));
-  };
+  }, [duration, failed, seek]);
   const toggle = () => { if (playing) pause(); else play(); };
   const stepFrame = (dir: 1 | -1) => {
     const v = media.current;
@@ -169,17 +211,18 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
     let raf = 0;
     const tick = () => {
       const v = media.current;
-      if (v) setTime((x) => (x === v.currentTime ? x : v.currentTime));
+      if (v) clock.set(v.currentTime, false);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing]);
+  }, [playing, clock]);
   // A page that is leaving stops playing.
-  useEffect(() => { if (!active) pause(); }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!active) pause(); }, [active, pause]);
 
-  // Keyboard: Space plays/pauses, ←/→ one frame (never while typing, never from a page that is leaving).
-  const keysOn = (e: KeyboardEvent) => bare(e) && !e.shiftKey && !isTyping(e) && !inOverlay(e) && video && Boolean(out) && !failed;
+  // Keyboard: Space plays/pauses, ←/→ one frame (never while typing, never on another focused control, never from
+  // a page that is leaving).
+  const keysOn = (e: KeyboardEvent) => bare(e) && !e.shiftKey && !isTyping(e) && !inOverlay(e) && !activatesControl(e, PLAYER_CONTROLS) && video && Boolean(out) && !failed;
   usePageShortcut(root, (e) => (e.key === ' ' || e.code === 'Space') && keysOn(e), toggle);
   usePageShortcut(root, (e) => (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && keysOn(e), (e) => stepFrame(e.key === 'ArrowRight' ? 1 : -1));
 
@@ -188,14 +231,14 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
   const [fitScale, setFitScale] = useState(0);
   useLayoutEffect(() => {
     const el = frame.current;
-    if (!el || zoom !== 'fit') return;
+    if (!el || video || zoom !== 'fit') return;
     const measure = () => setFitScale(el.offsetWidth / width);
     measure();
     if (typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  });
+  }, [video, zoom, width, loading]);
   const scale = zoom === 'fit' ? fitScale : zoom;
   const zoomBy = (dir: 1 | -1) => {
     const base = scale || 1;
@@ -204,27 +247,29 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
   };
   const [safe, setSafe] = useState(false);
 
-  // T3: the board grows into the player (FLIP, l, out); the side columns arrive from ±16 px and the transport from
-  // +24 px, 160 ms later. Without a board to grow from they simply arrive.
-  const ready = Boolean(detail && presetsLoaded && known);
+  // T3: the frame is on the page from the first render (sized from the catalog), so the board grows into it at once
+  // (FLIP, l, out); the side columns arrive from ±16 px and the transport from +24 px, 160 ms later. A frame that
+  // shows up late (FLIP_WINDOW_MS) or a visit without a board simply arrives.
+  const hasFrame = !(error && !detail) && !(!loading && !known);
   const appeared = useRef(false);
   useLayoutEffect(() => {
-    if (appeared.current || !ready || !root.current) return;
+    if (appeared.current || !hasFrame || !root.current) return;
     appeared.current = true;
-    if (origin) void flip(frame.current, origin, D.l);
+    const fresh = origin && performance.now() - mountedAt <= FLIP_WINDOW_MS ? origin : null;
+    if (fresh) void flip(frame.current, fresh, D.l);
     root.current.querySelectorAll<HTMLElement>('[data-part]').forEach((el) => {
       const part = el.dataset.part;
-      void enter(el, { x: part === 'l' ? -16 : part === 'r' ? 16 : 0, y: part === 'b' ? 24 : 0, delay: origin ? 160 : 0 });
+      void enter(el, { x: part === 'l' ? -16 : part === 'r' ? 16 : 0, y: part === 'b' ? 24 : 0, delay: fresh ? 160 : 0 });
     });
-  }, [ready]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [hasFrame]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // T4: back to the canvas; the board grows back from the player there.
   const shownKey = `${slug}/${creative}`;
-  const keepVersion = () => setShownVersion(shownKey, picked !== null && version?.n === picked ? picked : null);
+  const keepVersion = (n: number | null) => setShownVersion(shownKey, n !== null && n !== latest?.n ? n : null);
   const back = () => {
     pause();
     if (frame.current) setFrameOrigin(`canvas:${slug}/${creative}/${format}`, frame.current.getBoundingClientRect());
-    keepVersion();
+    keepVersion(picked !== null && version?.n === picked ? picked : null);
     go(href.creative(slug, creative));
   };
 
@@ -232,24 +277,35 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
   const place = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     const pt = pointIn(e.currentTarget.getBoundingClientRect(), e);
-    const at = video ? round3(media.current?.currentTime ?? time) : null;
+    const at = video ? round3(media.current?.currentTime ?? clock.get().time) : null;
     setDraft((d) => ({ format, x: pt.x, y: pt.y, text: d && d.index === null ? d.text : '', index: null, timeSec: at }));
   };
-  const editPin = (number: number) => {
+  /** Opens comment `number` (1-based among the pin source's): here, on its version and time, or in its format. */
+  const openPin = (number: number) => {
     const pin = pins[number - 1];
-    if (!pin || !canComment) return;
+    if (!pin) return;
     if (pin.format !== format) {
-      // A chip of another format opens that format's view.
-      keepVersion();
+      keepVersion(pinSource);
       go(href.format(slug, creative, pin.format));
+      return;
+    }
+    const d: FDraft = { format, x: pin.x, y: pin.y, text: pin.note ?? '', index: number - 1, timeSec: pin.timeSec };
+    if (!canComment) {
+      // Another version is on screen: go to the one comments apply to, then open it there.
+      if (pinSource === null) return;
+      setPicked(pinSource);
+      if (video && pin.timeSec !== null) pendingSeek.current = pin.timeSec;
+      setDraft(d);
       return;
     }
     if (video) {
       if (playing) pause();
-      if (pin.timeSec !== null && Math.abs(pin.timeSec - time) > 1e-3) seek(pin.timeSec);
+      if (pin.timeSec !== null && Math.abs(pin.timeSec - clock.get().time) > 1e-3) seek(pin.timeSec);
     }
-    setDraft({ format, x: pin.x, y: pin.y, text: pin.note ?? '', index: number - 1, timeSec: pin.timeSec });
+    setDraft(d);
   };
+  const openPinRef = useRef(openPin);
+  openPinRef.current = openPin;
   const commitDraft = () => {
     if (!draft) return;
     const note = draft.text.trim();
@@ -263,11 +319,18 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
     }
     setDraft(null);
   };
-  const removePin = (i: number) => {
+  const removePin = useCallback((i: number) => {
     const at = sourcePins[i]?.at;
     setStored((ps) => ps.filter((_, k) => k !== at));
     setDraft((d) => (d && d.index !== null ? (d.index === i ? null : d.index > i ? { ...d, index: d.index - 1 } : d) : d));
-  };
+  }, [sourcePins, setStored]);
+
+  // Chat callbacks are stable: the panel re-renders only when the conversation or the comments change.
+  const onEditChip = useCallback((i: number) => openPinRef.current(i + 1), []);
+  const formatLabel = useCallback((id: string) => boardLabel({ id, preset: presets.find((p) => p.id === id) ?? null, out: null }, locale), [presets, locale]);
+  const onSent = useCallback(({ pins: sent }: { pins: Pin[] }) => { setStored((ps) => ps.filter((p) => !sent.includes(p.pin))); setPicked(null); reload(); }, [setStored, reload]);
+  const onSelectVersion = useCallback((v: number) => setPicked(v), []);
+  const chatLive = useMemo(() => (job ? live.events[job.id] ?? [] : []), [job, live.events]);
 
   const [compare, setCompare] = useState<{ open: boolean; init: [number, number] } | null>(null);
   const comparable = versions.filter((v) => v.outputs.some((o) => o.format === format)).length >= 2;
@@ -277,8 +340,8 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
     const other = versions[i - 1] ?? versions[i + 1]!;
     setCompare({ open: true, init: other.n < version.n ? [other.n, version.n] : [version.n, other.n] });
   };
-  const [exporting, setExporting] = useState(false);
-  const formatLabel = (id: string) => boardLabel({ id, preset: presets.find((p) => p.id === id) ?? null, out: null }, locale);
+  // Export keeps the version it opened with, even if a new one lands meanwhile.
+  const [exporting, setExporting] = useState<{ open: boolean; version: VersionEntry } | null>(null);
 
   if (error && !detail) {
     return (
@@ -288,10 +351,9 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
       </div>
     );
   }
-  if (!detail || !presetsLoaded) return <div className="ms-cv-state" aria-busy="true"><Spinner size={18} label={c.loading} /></div>;
 
   const backButton = <Button className="ms-back" onClick={back}><Icon name="back" size={16} strokeWidth={1.5} />{t.web.shell.backAllFormats}</Button>;
-  if (!known) {
+  if (!loading && !known) {
     return (
       <div ref={root} className="ms-cv-state">
         {bar?.start ? createPortal(backButton, bar.start) : null}
@@ -301,19 +363,17 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
     );
   }
 
-  const cr = detail.creative;
+  const cr = detail?.creative ?? null;
   const n = version?.n ?? null;
-  const visible = video ? marks.filter((m) => m.pin.timeSec === null || Math.abs(m.pin.timeSec - time) <= PIN_WINDOW + 1e-6) : marks;
-  const nextNumber = pins.length + 1;
   const meta = [`${width}×${height}`, ratioText({ width, height }), video && duration ? c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) }) : null].filter(Boolean).join(' · ');
   const frameStyle: CSSProperties = zoom === 'fit' || video
     ? { width: `min(100cqw, calc(100cqh * ${width / height}))`, aspectRatio: `${width} / ${height}` }
     : { width: Math.round(width * zoom), aspectRatio: `${width} / ${height}` };
-  const lock = !canComment && version && out && pinSource !== null && version.n !== pinSource;
-  const commentHint = canComment && !draft && (!video || (!playing && !failed));
+  const lock = !loading && !canComment && version && out && pinSource !== null && version.n !== pinSource;
+  const ready = !loading && Boolean(out) && !failed;
 
   return (
-    <div ref={root} className={cx('ms-fv', video ? 'ms-fv-video' : 'ms-fv-image')}>
+    <div ref={root} className={cx('ms-fv', video ? 'ms-fv-video' : 'ms-fv-image')} aria-busy={loading || undefined}>
       {bar?.start ? createPortal(backButton, bar.start) : null}
       {bar?.title ? createPortal(
         <>
@@ -329,11 +389,11 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
       ) : null}
       {bar?.end ? createPortal(
         <>
-          {version ? (
+          {version && cr ? (
             <VersionControl slug={slug} creative={creative} versions={versions} version={version} resumeFrom={cr.resumeFrom?.version ?? null} buttonRef={versionButton}
               onPick={setPicked} onCompare={openCompare} onChanged={reload} onError={setActionError} />
           ) : null}
-          <Button variant="ink" className="ms-cv-export" disabled={!version} onClick={() => setExporting(true)}>
+          <Button variant="ink" className="ms-cv-export" disabled={!version} onClick={() => { if (version) setExporting({ open: true, version }); }}>
             <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
           </Button>
         </>,
@@ -353,8 +413,8 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
       <main className="ms-fv-main" aria-label={label}>
         <div className="ms-fv-notes">
           {presetsFailure ? <p role="alert" className="ms-cv-note ms-err">{t.web.creative.formatsLoadFailed({ detail: presetsFailure })}</p> : null}
-          {cr.resumeFrom ? <p className="ms-cv-note ms-info">{t.web.creative.resumeNote({ n: cr.resumeFrom.version })}</p> : null}
-          {(cr.status === 'error' || cr.status === 'interrupted') && cr.error && !working ? <p role="alert" className="ms-cv-note ms-err">{cr.error}</p> : null}
+          {cr?.resumeFrom ? <p className="ms-cv-note ms-info">{t.web.creative.resumeNote({ n: cr.resumeFrom.version })}</p> : null}
+          {cr && (cr.status === 'error' || cr.status === 'interrupted') && cr.error && !working ? <p role="alert" className="ms-cv-note ms-err">{cr.error}</p> : null}
           {actionError ? <p role="alert" className="ms-cv-note ms-err">{actionError}</p> : null}
           {working && step ? (
             <div className="ms-cv-note ms-info ms-fv-gen">
@@ -365,11 +425,17 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
         </div>
         <section className="ms-fv-stage" aria-label={f.stage({ label })}>
           <div ref={frame} className="ms-fv-frame" style={frameStyle}>
-            <div className={cx('ms-fv-media', !out && 'ms-empty-frame')} onClick={() => { if (video && out && !canComment) toggle(); else if (video && playing) pause(); }}>
-              {src && n !== null && video ? (
+            <div className={cx('ms-fv-media', !loading && !out && 'ms-empty-frame')} onClick={() => { if (video && out && !canComment) toggle(); else if (video && playing) pause(); }}>
+              {loading ? (
+                <span className="ms-cv-frame-note"><Spinner size={16} label={c.loading} /></span>
+              ) : src && n !== null && video ? (
                 <video key={`${src}#${attempt}`} ref={media} src={src} poster={poster} preload="auto" playsInline aria-label={`${label} v${n}`}
-                  onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
-                  onLoadedMetadata={(e) => { if (Number.isFinite(e.currentTarget.duration) && e.currentTarget.duration > 0) setMetaDuration(e.currentTarget.duration); }}
+                  onTimeUpdate={(e) => clock.set(e.currentTarget.currentTime, true)}
+                  onLoadedMetadata={(e) => {
+                    const v = e.currentTarget;
+                    if (Number.isFinite(v.duration) && v.duration > 0) setMetaDuration(v.duration);
+                    if (pendingSeek.current !== null) { v.currentTime = pendingSeek.current; clock.set(pendingSeek.current, true); pendingSeek.current = null; }
+                  }}
                   onDurationChange={(e) => { if (Number.isFinite(e.currentTarget.duration) && e.currentTarget.duration > 0) setMetaDuration(e.currentTarget.duration); }}
                   onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} onError={() => { setFailed(true); setPlaying(false); }} />
               ) : src && n !== null ? (
@@ -385,26 +451,21 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
                   <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); setAttempt((a) => a + 1); setFailed(false); }}><Icon name="refresh" size={12} />{c.tryAgain}</Button>
                 </span>
               ) : null}
-              {video && out && !playing && !canComment && !failed ? <span className="ms-fv-bigplay" aria-hidden="true"><Icon name="play" size={22} fill /></span> : null}
-              {canComment && (!video || (!playing && !failed)) ? (
-                <button type="button" className="ms-cv-hit" aria-label={video ? f.commentFrame({ time: timecode(time) }) : c.commentOn({ label })} onClick={place} />
+              {video && ready && !playing && !canComment ? <span className="ms-fv-bigplay" aria-hidden="true"><Icon name="play" size={22} fill /></span> : null}
+              {canComment && ready && (!video || !playing) ? (
+                <HitArea clock={clock} video={video} label={label} onPlace={place} />
               ) : null}
             </div>
-            {canComment ? visible.map(({ pin, number }) => (
-              <button key={number} type="button" className={cx('ms-cv-pin', draft?.index === number - 1 && 'ms-on')} style={{ left: `${pin.x * 100}%`, top: `${pin.y * 100}%` }}
-                aria-label={c.pin.edit({ n: number })} title={pin.note} onClick={(e) => { e.stopPropagation(); editPin(number); }}>
-                {number}
-              </button>
-            )) : null}
-            {draft ? (
-              <PinBubble draft={draft} number={draft.index === null ? nextNumber : draft.index + 1} video={video}
+            {canComment && ready ? <PinLayer clock={clock} video={video} marks={marks} open={draft?.index ?? null} onOpen={openPin} /> : null}
+            {draft && canComment ? (
+              <PinBubble draft={draft} number={draft.index === null ? pins.length + 1 : draft.index + 1} video={video}
                 time={video && draft.timeSec !== null ? f.pinAt({ time: timecode(draft.timeSec) }) : undefined}
                 onText={(text) => setDraft((d) => (d ? { ...d, text } : d))} onCommit={commitDraft} onCancel={() => setDraft(null)}
                 onDelete={() => { if (draft.index !== null) removePin(draft.index); }} />
             ) : null}
           </div>
         </section>
-        {commentHint ? <div className="ms-cv-hint ms-fv-hint" role="status">{video ? f.commentAt({ time: timecode(time) }) : f.commentImage}</div> : null}
+        {canComment && ready && !draft && (!video || !playing) ? <CommentHint clock={clock} video={video} /> : null}
         {lock ? <div className="ms-cv-hint ms-lock ms-fv-hint" id="ms-fv-comment-lock" role="status">{c.versions.commentsOn({ n: pinSource })}</div> : null}
         {preset?.safeZone && out ? (
           <span className="ms-fv-safe-toggle"><Toggle size="sm" on={safe} onChange={setSafe} label={c.safeZones} /><span aria-hidden="true">{c.safeZones}</span></span>
@@ -420,39 +481,75 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
           </div>
         ) : null}
         {video ? (
-          <Transport time={time} duration={duration} playing={playing} disabled={!out || failed} marks={canComment ? marks : []}
+          <Transport clock={clock} duration={duration} playing={playing} disabled={!ready} marks={canComment ? marks : []} commenting={canComment}
             onToggle={toggle} onStep={stepFrame} onSeek={seek} onPause={pause} onResume={play} />
         ) : null}
       </main>
 
       <aside className="ms-fv-side ms-fv-panel" aria-label={c.panel} data-part="r">
         <div className="ms-tabs ms-panel ms-fv-tabs"><span className="ms-tab ms-on">{f.chat}</span></div>
-        <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={job} live={job ? live.events[job.id] ?? [] : []}
-          pins={pins} onRemovePin={removePin} onEditPin={(i) => editPin(i + 1)} formatName={formatLabel}
-          canGenerate={versions.length === 0} onSent={({ pins: sent }) => { setStored((ps) => ps.filter((p) => !sent.includes(p.pin))); setPicked(null); reload(); }}
-          onSelectVersion={(v) => setPicked(v)} snapshots={live.snapshots} />
+        {detail ? (
+          <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={job} live={chatLive}
+            pins={pins} onRemovePin={removePin} onEditPin={onEditChip} formatName={formatLabel}
+            canGenerate={versions.length === 0} onSent={onSent} onSelectVersion={onSelectVersion} snapshots={live.snapshots} />
+        ) : <div className="ms-cv-state"><Spinner size={16} label={c.loading} /></div>}
       </aside>
 
       {compare ? (
         <CompareDialog open={compare.open} onClose={() => setCompare((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
           versions={versions} presets={presets} formats={comparable ? [format] : []} initialFormat={format} initial={compare.init} />
       ) : null}
-      <ExportDialog open={exporting} onClose={() => setExporting(false)} slug={slug} creative={creative} title={cr.title} version={version} presets={presets} />
+      <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
+        title={cr?.title ?? ''} version={exporting?.version ?? null} presets={presets} />
     </div>
   );
 }
 
+/** The paused picture takes the click that places a comment (point 38: on the frame at the current time). */
+function HitArea({ clock, video, label, onPlace }: { clock: Clock; video: boolean; label: string; onPlace(e: MouseEvent<HTMLButtonElement>): void }) {
+  const t = useT();
+  const { settled } = useClock(clock);
+  return (
+    <button type="button" className="ms-cv-hit" aria-label={video ? t.web.formatView.commentFrame({ time: timecode(settled) }) : t.web.canvas.commentOn({ label })} onClick={onPlace} />
+  );
+}
+
+/** The comment markers on the picture: on a video only within ±0.5 s of their time (point 38). */
+function PinLayer({ clock, video, marks, open, onOpen }: { clock: Clock; video: boolean; marks: Mark[]; open: number | null; onOpen(number: number): void }) {
+  const c = useT().web.canvas;
+  const { time } = useClock(clock);
+  const visible = video ? marks.filter((m) => m.pin.timeSec === null || Math.abs(m.pin.timeSec - time) <= PIN_WINDOW + 1e-6) : marks;
+  return (
+    <>
+      {visible.map(({ pin, number }) => (
+        <button key={number} type="button" className={cx('ms-cv-pin', open === number - 1 && 'ms-on')} style={{ left: `${pin.x * 100}%`, top: `${pin.y * 100}%` }}
+          aria-label={c.pin.edit({ n: number })} title={pin.note} onClick={(e) => { e.stopPropagation(); onOpen(number); }}>
+          {number}
+        </button>
+      ))}
+    </>
+  );
+}
+
+function CommentHint({ clock, video }: { clock: Clock; video: boolean }) {
+  const f = useT().web.formatView;
+  const { settled } = useClock(clock);
+  return <div className="ms-cv-hint ms-fv-hint" role="status">{video ? f.commentAt({ time: timecode(settled) }) : f.commentImage}</div>;
+}
+
 /**
  * Under the player: play/pause, the timecode, frame by frame and the scrub bar with a ruler and the comment markers
- * (a marker seeks to its comment). Dragging pauses and resumes afterwards if it was playing.
+ * (a marker seeks to its comment). Dragging pauses and resumes afterwards if it was playing. The playhead follows
+ * every frame; the slider's value for assistive technology only the settled time.
  */
-function Transport({ time, duration, playing, disabled, marks, onToggle, onStep, onSeek, onPause, onResume }: {
-  time: number; duration: number; playing: boolean; disabled: boolean; marks: Mark[];
+function Transport({ clock, duration, playing, disabled, marks, commenting, onToggle, onStep, onSeek, onPause, onResume }: {
+  clock: Clock; duration: number; playing: boolean; disabled: boolean; marks: Mark[]; commenting: boolean;
   onToggle(): void; onStep(dir: 1 | -1): void; onSeek(t: number): void; onPause(): void; onResume(): void;
 }) {
   const t = useT();
   const f = t.web.formatView;
   const locale = useLocale();
+  const { time, settled } = useClock(clock);
   const track = useRef<HTMLDivElement>(null);
   const drag = useRef<{ resume: boolean } | null>(null);
   const pct = (s: number) => (duration ? Math.min(100, Math.max(0, (s / duration) * 100)) : 0);
@@ -483,11 +580,10 @@ function Transport({ time, duration, playing, disabled, marks, onToggle, onStep,
     if (disabled) return;
     if (e.key === 'Home') { e.preventDefault(); onSeek(0); }
     if (e.key === 'End') { e.preventDefault(); onSeek(duration); }
-    if (e.key === 'PageUp' || e.key === 'PageDown') { e.preventDefault(); onSeek(time + (e.key === 'PageUp' ? 1 : -1)); }
+    if (e.key === 'PageUp' || e.key === 'PageDown') { e.preventDefault(); onSeek(clock.get().time + (e.key === 'PageUp' ? 1 : -1)); }
   };
-  // Ruler: at most ~10 labels.
+  // Ruler: at most ~10 labels; the last one would be cut by the end of the bar.
   const every = [1, 2, 5, 10, 15, 30, 60, 120, 300].find((s) => duration / s <= 10) ?? 600;
-  // The last label would be cut by the end of the bar.
   const ticks = duration ? Array.from({ length: Math.floor(duration / every + 1e-6) + 1 }, (_, i) => i * every).filter((s) => s / duration <= 0.94) : [];
   return (
     <section className="ms-fv-transport" aria-label={f.transport} data-part="b">
@@ -499,11 +595,11 @@ function Transport({ time, duration, playing, disabled, marks, onToggle, onStep,
         <Button size="sm" variant="outline" icon aria-label={f.prevFrame} title={f.prevFrame} aria-keyshortcuts="ArrowLeft" disabled={disabled} onClick={() => onStep(-1)}><Icon name="back" size={13} /></Button>
         <Button size="sm" variant="outline" icon aria-label={f.nextFrame} title={f.nextFrame} aria-keyshortcuts="ArrowRight" disabled={disabled} onClick={() => onStep(1)}><Icon name="forward" size={13} /></Button>
         <span className="ms-grow" />
-        <span className="ms-fv-keys">{f.keys}</span>
+        <span className="ms-fv-keys">{commenting ? f.keys : f.keysLocked}</span>
       </div>
       <div className="ms-fv-scrubwrap">
         <div ref={track} className={cx('ms-fv-scrub', disabled && 'ms-off')} role="slider" tabIndex={disabled ? -1 : 0} aria-label={f.position} aria-disabled={disabled || undefined}
-          aria-valuemin={0} aria-valuemax={round3(duration)} aria-valuenow={round3(time)} aria-valuetext={f.positionText({ time: timecode(time), total: timecode(duration) })}
+          aria-valuemin={0} aria-valuemax={round3(duration)} aria-valuenow={round3(settled)} aria-valuetext={f.positionText({ time: timecode(settled), total: timecode(duration) })}
           onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onKeyDown={keys}>
           <div className="ms-fv-ruler" aria-hidden="true">
             {ticks.map((s) => <span key={s} style={{ left: `${pct(s)}%` }}>{t.web.canvas.seconds({ n: formatNumber(locale, s) })}</span>)}

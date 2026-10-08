@@ -14,3 +14,14 @@ export const inOverlay = (e: KeyboardEvent): boolean => {
 
 /** No modifier (Shift aside) and no IME composition. */
 export const bare = (e: KeyboardEvent): boolean => !e.metaKey && !e.ctrlKey && !e.altKey && !e.isComposing;
+
+/**
+ * Space or Enter on a focused control activates that control: a single-key page shortcut must leave it alone.
+ * `except` names the controls the shortcut itself belongs to (the player's play button and scrub bar).
+ */
+export const activatesControl = (e: KeyboardEvent, except?: string): boolean => {
+  if (e.key !== ' ' && e.code !== 'Space' && e.key !== 'Enter') return false;
+  const el = e.target instanceof Element ? e.target : null;
+  const control = el?.closest('button, a[href], [role="button"], [role="tab"], [role="menuitem"], [role="option"], [role="switch"], [role="checkbox"], [role="radio"]');
+  return Boolean(control && !(except && control.closest(except)));
+};

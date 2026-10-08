@@ -74,6 +74,20 @@ export function exit(el: Element | null, o: { x?: number; y?: number; ms?: numbe
 }
 
 /**
+ * The page left behind by a shared-element transition (T3/T4): it recedes (scale .98) and fades while the shared
+ * element flies to the next page. Same contract as `exit`: end state held, resolves true when finished.
+ */
+export function recede(el: Element | null, ms: number = D.m): Promise<boolean> {
+  if (!el || reducedMotion() || typeof el.animate !== 'function') return Promise.resolve(true);
+  return done(
+    el.animate(
+      [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(0.98)' }],
+      { duration: ms, easing: E.in, fill: 'forwards' },
+    ),
+  );
+}
+
+/**
  * Removal (T15): height, vertical padding/margins and opacity go to zero (m, in). The element should clip its
  * overflow. Like `exit`, the end state is held and it resolves true when finished, false when cancelled (an `enter`
  * on the same element revives it): only remove the element on true.

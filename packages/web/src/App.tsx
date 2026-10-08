@@ -2,7 +2,7 @@ import type { ApprovalRequest, DoctorCheck, LanguageSetting, Locale, WorkspaceIn
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import { api } from './api.ts';
 import { detectedLocale, I18nProvider, useLocale, useT, type LanguageState } from './i18n.tsx';
-import { PageHost } from './motion/index.ts';
+import { PageHost, type PageMode } from './motion/index.ts';
 import { depthOf, href, parseRoute, projectOf, routeKey, type Route } from './routes.ts';
 import { AssetsPage } from './screens/AssetsPage.tsx';
 import { BrandPage } from './screens/BrandPage.tsx';
@@ -236,12 +236,18 @@ function AppShell({ route, live, settings, checks, activity, setActivity, langua
       <div className={bare ? 'ms-app ms-bare' : 'ms-app'}>
         {bare ? null : <TopBar />}
         <div className="ms-main">
-          <PageHost route={route} keyOf={routeKey} depthOf={depthOf} render={render} />
+          <PageHost route={route} keyOf={routeKey} depthOf={depthOf} modeOf={sharedElement} render={render} />
         </div>
       </div>
       <CommandPalette open={palette} onClose={() => setPalette(false)} catalog={catalog} route={route} />
     </ShellContext.Provider>
   );
+}
+
+/** T3/T4: a board of the canvas and its format view share an element; the pages fade and recede instead of sliding. */
+function sharedElement(a: Route, b: Route): PageMode {
+  const pair = (x: Route, y: Route) => x.name === 'creative' && y.name === 'format' && x.slug === y.slug && x.creative === y.creative;
+  return pair(a, b) || pair(b, a) ? 'shared' : undefined;
 }
 
 /**

@@ -178,6 +178,31 @@ describe('PageHost', () => {
     expect(container).toBeTruthy();
   });
 
+  it('shared mode (T3/T4): the incoming page only fades in, the outgoing one recedes; T4 is faster', () => {
+    const shared = (a: R, b: R) => ((a.k === 'b' && b.k === 'c') || (a.k === 'c' && b.k === 'b') ? 'shared' as const : undefined);
+    const sui = (route: R) => <PageHost route={route} keyOf={(r) => r.k} depthOf={depthOf} modeOf={shared} render={(r) => <span>{r.k}</span>} />;
+    const { rerender } = render(sui(B));
+    calls = [];
+    rerender(sui(C));
+    const entering = calls.find((c) => c.opts.fill === 'backwards')!;
+    expect(entering.frames[0]!.opacity).toBe(0);
+    expect(String(entering.frames[0]!.transform ?? 'none')).not.toMatch(/translate\((?!0px,0px)/);
+    const leaving = calls.find((c) => c.opts.fill === 'forwards')!;
+    expect(leaving.frames[1]!.transform).toBe('scale(0.98)');
+    expect(leaving.frames[1]!.opacity).toBe(0);
+    expect(leaving.opts.duration).toBe(D.m);
+    calls = [];
+    rerender(sui(B));
+    const back = calls.find((c) => c.opts.fill === 'forwards')!;
+    expect(back.frames[1]!.transform).toBe('scale(0.98)');
+    expect(back.opts.duration).toBeLessThan(D.m);
+    // Any other pair keeps T1.
+    calls = [];
+    rerender(sui(A));
+    const t1 = calls.find((c) => c.opts.fill === 'backwards')!;
+    expect(t1.frames[0]!.transform).toMatch(/translate\(-24px/);
+  });
+
   it('same key with a new route object refreshes content without animating', () => {
     const { container, rerender } = render(ui({ k: 'a', depth: 1, p: 1 }));
     const before = calls.length;

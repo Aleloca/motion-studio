@@ -23,13 +23,15 @@ import { boardsOf, isTall, ratioText, VIDEO_FILE, type BoardModel } from './canv
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf, lastStep } from './creativeState.ts';
 import { ExportDialog } from './ExportDialog.tsx';
-import { bare, inOverlay, isTyping } from './keys.ts';
+import { activatesControl, bare, inOverlay, isTyping } from './keys.ts';
 import { pinsKey, usePendingPins } from './pendingPins.ts';
 import { useNewVersionNotice, VersionControl } from './VersionControl.tsx';
 import './canvas.css';
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const ZOOM_MIN = 0.5;
+/** T4 only while the player's rect is fresh (boards that arrive later cascade in). */
+const FLIP_WINDOW_MS = 400;
 const ZOOM_MAX = 2;
 const ZOOM_STEP = 0.1;
 const TOOL_KEYS: Record<string, Tool> = { v: 'select', c: 'comment', h: 'hand' };
@@ -156,7 +158,7 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
   };
 
   // Keyboard: V / C / H, Esc, F2 (never while typing, never from a page that is leaving).
-  usePageShortcut(root, (e) => bare(e) && !isTyping(e) && !inOverlay(e) && e.key.toLowerCase() in TOOL_KEYS && Boolean(detail) && (canComment || TOOL_KEYS[e.key.toLowerCase()] !== 'comment'),
+  usePageShortcut(root, (e) => bare(e) && !isTyping(e) && !inOverlay(e) && !activatesControl(e) && e.key.toLowerCase() in TOOL_KEYS && Boolean(detail) && (canComment || TOOL_KEYS[e.key.toLowerCase()] !== 'comment'),
     (e) => setTool(TOOL_KEYS[e.key.toLowerCase()]!));
   usePageShortcut(root, (e) => e.key === 'Escape' && !isTyping(e) && !inOverlay(e) && (tool !== 'select' || draft !== null), () => { setDraft(null); setTool('select'); });
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -204,13 +206,16 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
   };
 
   // First appearance: back from the format view (T4) the board grows back from the player; otherwise the boards
-  // cascade in (T14).
+  // cascade in (T14). The player's rect is taken on mount and used only while fresh: boards that arrive late (a slow
+  // load) cascade in instead of flying from a stale spot.
   const appeared = useRef(false);
+  const [mountedAt] = useState(() => performance.now());
   useLayoutEffect(() => {
     if (appeared.current || !boards.length || !root.current) return;
     appeared.current = true;
     const els = [...root.current.querySelectorAll('.ms-cv-board')];
-    const back = boards.map((b) => ({ id: b.id, rect: takeFrameOrigin(`canvas:${slug}/${creative}/${b.id}`) })).find((x) => x.rect);
+    const rects = boards.map((b) => ({ id: b.id, rect: takeFrameOrigin(`canvas:${slug}/${creative}/${b.id}`) }));
+    const back = performance.now() - mountedAt <= FLIP_WINDOW_MS ? rects.find((x) => x.rect) : undefined;
     if (back?.rect) {
       const frame = boardEl(back.id)?.querySelector('.ms-cv-frame') ?? null;
       void flip(frame, back.rect, D.m);
