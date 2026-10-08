@@ -1,7 +1,7 @@
 import { redact } from '../secrets/vault.ts';
 
 export class ProviderError extends Error {
-  constructor(public readonly status: number, message: string) { super(message); this.name = 'ProviderError'; }
+  constructor(public readonly status: number, message: string, public readonly upstreamStatus?: number) { super(message); this.name = 'ProviderError'; }
 }
 export interface HttpDeps { fetch: typeof fetch; timeoutMs?: number }
 interface Opts { provider: string; secrets: string[] }
@@ -18,11 +18,11 @@ async function send(deps: HttpDeps, url: string, init: RequestInit, o: Opts): Pr
   const timeout = AbortSignal.timeout(deps.timeoutMs ?? 120_000);
   const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
   let res: Response;
-  try { res = await deps.fetch(url, { ...init, signal }); }
+  try { res = await deps.fetch(url, { redirect: 'error', ...init, signal }); }
   catch (e) { throw unreachable(o, e); }
   if (res.ok) return { res, signal };
-  if (res.status === 401 || res.status === 403) { await res.body?.cancel().catch(() => {}); throw new ProviderError(401, `Chiave ${o.provider} non valida o senza permessi`); }
-  if (res.status === 429) { await res.body?.cancel().catch(() => {}); throw new ProviderError(429, `Limite di richieste raggiunto per ${o.provider}: riprova più tardi`); }
+  if (res.status === 401 || res.status === 403) { await res.body?.cancel().catch(() => {}); throw new ProviderError(401, `Chiave ${o.provider} non valida o senza permessi`, res.status); }
+  if (res.status === 429) { await res.body?.cancel().catch(() => {}); throw new ProviderError(429, `Limite di richieste raggiunto per ${o.provider}: riprova più tardi`, 429); }
   let text = '';
   try { text = (await readBounded(res, ERROR_BODY_MAX, false)).toString('utf8'); } catch { /* unreadable error body */ }
   let detail = text;
@@ -32,7 +32,7 @@ async function send(deps: HttpDeps, url: string, init: RequestInit, o: Opts): Pr
     if (typeof cand === 'string') detail = cand;
     else if (typeof j.message === 'string') detail = j.message;
   } catch { /* plain text */ }
-  throw new ProviderError(502, redact(`${o.provider} ha risposto ${res.status}: ${redact(String(detail), o.secrets).slice(0, 300)}`, o.secrets));
+  throw new ProviderError(502, redact(`${o.provider} ha risposto ${res.status}: ${redact(String(detail), o.secrets).slice(0, 300)}`, o.secrets), res.status);
 }
 
 /** Reads the body up to `max` bytes: over the limit it throws (strict) or truncates (not strict). */

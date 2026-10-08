@@ -1,5 +1,5 @@
 import { ProviderError, requestJson, type HttpDeps } from './http.ts';
-import { safeDownload } from './safe-url.ts';
+import { safeDownload, safeHttpsUrl } from './safe-url.ts';
 
 export type StockProvider = 'pexels' | 'unsplash';
 export interface StockResult { id: string; provider: StockProvider; kind: 'photo' | 'video'; width: number; height: number; durationSec: number | null; thumb: string; author: string; pageUrl: string }
@@ -8,12 +8,14 @@ const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const extOf = (type: string, fallback: string) => (type.includes('png') ? 'png' : type.includes('jpeg') || type.includes('jpg') ? 'jpg' : type.includes('mp4') ? 'mp4' : type.includes('webp') ? 'webp' : fallback);
 
 const headers = (p: StockProvider, key: string): Record<string, string> => (p === 'pexels' ? { authorization: key } : { authorization: `Client-ID ${key}`, 'accept-version': 'v1' });
+const isUnsplashApi = (u: string | undefined): u is string => { try { return !!u && new URL(u).origin === 'https://api.unsplash.com'; } catch { return false; } };
+const isSafe = (u: unknown, provider: string) => { try { safeHttpsUrl(typeof u === 'string' ? u : undefined, provider); return true; } catch { return false; } };
 const name = (p: StockProvider) => (p === 'pexels' ? 'Pexels' : 'Unsplash');
 
 export async function stockSearch(deps: HttpDeps & { apiKey: string }, q: { provider: StockProvider; query: string; kind: 'photo' | 'video'; orientation?: 'landscape' | 'portrait' | 'square'; limit: number }): Promise<StockResult[]> {
   const o = { provider: name(q.provider), secrets: [deps.apiKey] };
-  const limit = Math.min(20, Math.max(1, Math.trunc(q.limit)));
-  const params = new URLSearchParams({ query: q.query, per_page: String(limit) });
+  const limit = Number.isFinite(q.limit) ? Math.min(20, Math.max(1, Math.trunc(q.limit))) : 10;
+  const params = new URLSearchParams({ query: q.query.slice(0, 200), per_page: String(limit) });
   if (q.provider === 'unsplash') {
     if (q.kind === 'video') throw new ProviderError(400, 'Unsplash non offre video: usa Pexels');
     if (q.orientation) params.set('orientation', q.orientation === 'square' ? 'squarish' : q.orientation);
@@ -40,7 +42,7 @@ export async function stockDownload(deps: HttpDeps & { apiKey: string }, d: { pr
     if (d.kind === 'video') throw new ProviderError(400, 'Unsplash non offre video: usa Pexels');
     type U = { user?: { name?: string }; links?: { html?: string; download_location?: string } };
     const p = await requestJson<U>(deps, `https://api.unsplash.com/photos/${d.id}`, { headers: h }, o);
-    if (!p.links?.download_location?.startsWith('https://api.unsplash.com/')) throw new ProviderError(502, 'Risposta non valida da Unsplash');
+    if (!isUnsplashApi(p.links?.download_location)) throw new ProviderError(502, 'Risposta non valida da Unsplash');
     const tracked = await requestJson<{ url?: string }>(deps, p.links.download_location, { headers: h }, o);
     if (!tracked.url) throw new ProviderError(502, 'Risposta non valida da Unsplash');
     const { bytes, contentType } = await safeDownload(deps, tracked.url, {}, { ...o, maxBytes: MAX });
@@ -50,7 +52,7 @@ export async function stockDownload(deps: HttpDeps & { apiKey: string }, d: { pr
   if (d.kind === 'video') {
     type V = { url: string; user?: { name?: string }; video_files?: Array<{ width?: number; file_type?: string; link: string }> };
     const v = await requestJson<V>(deps, `https://api.pexels.com/videos/videos/${d.id}`, { headers: h }, o);
-    const mp4 = (v.video_files ?? []).filter((f) => f.file_type === 'video/mp4' && f.link.startsWith('https://'));
+    const mp4 = (v.video_files ?? []).filter((f) => f.file_type === 'video/mp4' && typeof f.link === 'string' && isSafe(f.link, 'Pexels'));
     const hd = mp4.filter((f) => (f.width ?? 0) <= 1920).sort((a, b) => (b.width ?? 0) - (a.width ?? 0))[0]
       ?? mp4.sort((a, b) => (a.width ?? 0) - (b.width ?? 0))[0];
     if (!hd) throw new ProviderError(502, 'Nessun file video scaricabile su Pexels');

@@ -33,3 +33,25 @@ describe('elevenlabsSpeech', () => {
     expect((calls[1]!.init.headers as Record<string, string>)['xi-api-key']).toBe('xi');
   });
 });
+
+describe('tts hardening', () => {
+  const key = { apiKey: 'k' };
+  it('validates the voice', async () => {
+    const { fetchImpl } = recorder([]);
+    expect((await openaiSpeech({ fetch: fetchImpl, ...key }, { text: 'a', voice: '../x', format: 'mp3' }).catch((e) => e)).message).toBe('Voce non valida');
+    expect((await elevenlabsSpeech({ fetch: fetchImpl, ...key }, { text: 'a', voice: 'a/b', format: 'mp3' }).catch((e) => e)).status).toBe(400);
+  });
+  it('maps empty audio and missing voices to 502', async () => {
+    const empty = recorder([new Response(new Uint8Array(0), { status: 200 })]);
+    expect((await openaiSpeech({ fetch: empty.fetchImpl, ...key }, { text: 'a', format: 'mp3' }).catch((e) => e)).status).toBe(502);
+    const none = recorder([new Response(JSON.stringify({ voices: [] }), { status: 200 })]);
+    expect((await elevenlabsSpeech({ fetch: none.fetchImpl, ...key }, { text: 'a', format: 'mp3' }).catch((e) => e)).status).toBe(502);
+  });
+  it('limits ElevenLabs text to 5000 characters and uses mp3_44100_128 for mp3', async () => {
+    const { fetchImpl } = recorder([]);
+    expect((await elevenlabsSpeech({ fetch: fetchImpl, ...key }, { text: 'x'.repeat(5001), voice: 'v', format: 'mp3' }).catch((e) => e)).status).toBe(400);
+    const ok = recorder([audio()]);
+    await elevenlabsSpeech({ fetch: ok.fetchImpl, ...key }, { text: 'x'.repeat(5000), voice: 'v1', format: 'mp3' });
+    expect(ok.calls[0]!.url).toContain('output_format=mp3_44100_128');
+  });
+});

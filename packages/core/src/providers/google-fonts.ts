@@ -26,15 +26,17 @@ export async function fetchGoogleFont(deps: HttpDeps, q: { family: string; weigh
     const { bytes } = await requestBytes(deps, url, { headers: { 'user-agent': 'curl/8' } }, { provider: 'Google Fonts', secrets: [], maxBytes: 1024 * 1024 });
     css = bytes.toString('utf8');
   } catch (e) {
-    if (e instanceof ProviderError && e.status === 502) throw new ProviderError(404, `Font "${family}" non trovato su Google Fonts`);
+    if (e instanceof ProviderError && e.upstreamStatus === 400) throw new ProviderError(404, `Font "${family}" non trovato su Google Fonts`);
     throw e;
   }
-  const files = parseFontCss(css);
+  const seen = new Set<string>();
+  const files = parseFontCss(css).filter((f) => { const k = `${f.weight}/${f.italic}`; if (seen.has(k)) return false; seen.add(k); return true; })
+    .slice(0, weights.length * (q.italic ? 2 : 1));
   if (!files.length) throw new ProviderError(404, `Font "${family}" non trovato su Google Fonts`);
   const out: Array<{ weight: number; italic: boolean; bytes: Buffer; ext: string }> = [];
   for (const f of files) {
     const { bytes } = await safeDownload(deps, f.url, {}, { provider: 'Google Fonts', secrets: [], maxBytes: 10 * 1024 * 1024 });
-    out.push({ weight: f.weight, italic: f.italic, bytes, ext: f.url.endsWith('.woff2') ? 'woff2' : 'ttf' });
+    out.push({ weight: f.weight, italic: f.italic, bytes, ext: f.url.endsWith('.woff2') ? 'woff2' : f.url.endsWith('.otf') ? 'otf' : 'ttf' });
   }
   return out;
 }

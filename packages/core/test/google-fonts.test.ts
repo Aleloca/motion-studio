@@ -51,8 +51,31 @@ describe('fetchGoogleFont', () => {
       return new Response(new Uint8Array([1]), { status: 200 });
     }) as unknown as typeof fetch;
     const ok = await fetchGoogleFont({ fetch: make('https://fonts.example/moved.ttf') }, { family: 'Manrope', weights: [400], italic: false });
-    expect(ok).toHaveLength(2);
+    expect(ok).toHaveLength(1);
     const e = await fetchGoogleFont({ fetch: make('https://127.0.0.1/moved.ttf') }, { family: 'Manrope', weights: [400], italic: false }).catch((x) => x);
     expect(e.message).toBe('Risposta non valida da Google Fonts');
+  });
+  it('downloads one file per weight/style even when the css lists many unicode-range subsets', async () => {
+    const block = (w: number, n: string) => `@font-face { font-style: normal; font-weight: ${w}; src: url(https://fonts.gstatic.com/s/x/${n}.woff2) format('woff2'); }`;
+    const css = [block(400, 'a'), block(400, 'b'), block(400, 'c'), block(700, 'd'), block(700, 'e')].join('\n');
+    const urls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      urls.push(url);
+      return url.startsWith('https://fonts.googleapis.com/') ? new Response(css, { status: 200 }) : new Response(new Uint8Array([1]), { status: 200 });
+    }) as unknown as typeof fetch;
+    const files = await fetchGoogleFont({ fetch: fetchImpl }, { family: 'Manrope', weights: [400, 700], italic: false });
+    expect(files.map((f) => f.weight)).toEqual([400, 700]);
+    expect(urls.slice(1)).toEqual(['https://fonts.gstatic.com/s/x/a.woff2', 'https://fonts.gstatic.com/s/x/d.woff2']);
+  });
+  it('maps only a real Google 400 to "non trovato"; other failures keep their own message', async () => {
+    const run = (f: typeof fetch) => fetchGoogleFont({ fetch: f }, { family: 'Manrope', weights: [400], italic: false }).catch((e) => e);
+    expect((await run((async () => new Response('x', { status: 400 })) as unknown as typeof fetch)).status).toBe(404);
+    const down = await run((async () => { throw new Error('ECONNREFUSED'); }) as unknown as typeof fetch);
+    expect(down.status).toBe(502);
+    expect(down.message).toContain('Google Fonts non raggiungibile');
+    const five = await run((async () => new Response('boom', { status: 503 })) as unknown as typeof fetch);
+    expect(five.message).toContain('ha risposto 503');
+    const empty = await run((async () => new Response(null, { status: 200 })) as unknown as typeof fetch);
+    expect(empty.message).toBe('Risposta non valida da Google Fonts');
   });
 });

@@ -2,6 +2,13 @@ import { isPrivateHost } from '../brand/brand-store.ts';
 import { ProviderError, requestBytes, type HttpDeps } from './http.ts';
 
 const MAX_REDIRECTS = 3;
+const CREDENTIAL_HEADERS = ['authorization', 'proxy-authorization', 'cookie', 'xi-api-key', 'x-api-key', 'api-key'];
+
+function withoutCredentials(init: RequestInit): RequestInit {
+  const headers = new Headers(init.headers);
+  for (const h of CREDENTIAL_HEADERS) headers.delete(h);
+  return { ...init, headers };
+}
 
 /** Parses a provider-supplied URL; only https URLs whose host is not a private/loopback/link-local literal pass. */
 export function safeHttpsUrl(raw: string | undefined, provider: string): URL {
@@ -22,14 +29,17 @@ export async function safeDownload(
   let rejected: ProviderError | undefined;
   const follow = (async (_url: string, i: RequestInit = {}) => {
     let current = first;
+    let req = i;
     for (let hop = 0; ; hop++) {
-      const res = await deps.fetch(current.href, { ...i, redirect: 'manual' });
+      const res = await deps.fetch(current.href, { ...req, redirect: 'manual' });
       if (res.status < 300 || res.status >= 400) return res;
       await res.body?.cancel().catch(() => {});
       const loc = res.headers.get('location');
       try {
         if (hop >= MAX_REDIRECTS || !loc) throw new ProviderError(502, `Risposta non valida da ${o.provider}`);
-        current = safeHttpsUrl(new URL(loc, current).href, o.provider);
+        const next = safeHttpsUrl(new URL(loc, current).href, o.provider);
+        if (next.origin !== current.origin) req = withoutCredentials(req);
+        current = next;
       } catch (e) {
         rejected = e instanceof ProviderError ? e : new ProviderError(502, `Risposta non valida da ${o.provider}`);
         throw rejected;
