@@ -113,7 +113,7 @@ export function CanvasBoard(p: BoardProps) {
           {p.tool === 'select' && board.out ? (
             <button type="button" className="ms-cv-open" aria-label={c.openEditorOf({ label })}
               onClick={(e) => { e.stopPropagation(); if (frame.current) p.onOpen(frame.current); }}>
-              <Icon name="video" size={14} strokeWidth={1.6} />{c.openEditor}
+              <Icon name={board.preset?.kind === 'image' ? 'image' : 'video'} size={14} strokeWidth={1.6} />{c.openEditor}
             </button>
           ) : null}
         </div>

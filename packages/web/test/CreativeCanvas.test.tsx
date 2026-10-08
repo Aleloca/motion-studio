@@ -355,3 +355,152 @@ describe('CreativeCanvas · ported checks', () => {
     expect(screen.getByRole('button', { name: 'Commenta (C)' }).getAttribute('aria-pressed')).toBe('true');
   });
 });
+
+describe('CreativeCanvas · review round 1', () => {
+  const pinOnPost = async (text: string) => {
+    await userEvent.click(screen.getByRole('button', { name: 'Commenta (C)' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Commenta Instagram · Post 1:1/ }));
+    await userEvent.type(await screen.findByLabelText('Testo del commento'), text);
+    await userEvent.click(screen.getByRole('button', { name: 'Commenta' }));
+  };
+  const pickVersion = async (n: number) => {
+    await userEvent.click(screen.getByRole('button', { name: /apri la cronologia/ }));
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Versioni' })).getByRole('button', { name: new RegExp(`^Versione ${n}`) }));
+  };
+
+  it('comments only on the core pin source (the latest): another version disables C and hides its pins', async () => {
+    detail = makeDetail([version(1), version(2)]);
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await pinOnPost('Più contrasto');
+    expect(screen.getByRole('button', { name: 'Modifica il commento 1' })).toBeTruthy();
+    await pickVersion(1);
+    await waitFor(() => expect(screen.getByRole('img', { name: /Post 1:1 v1/ })).toBeTruthy());
+    const tool = screen.getByRole('button', { name: 'Commenta (C)' }) as HTMLButtonElement;
+    expect(tool.disabled).toBe(true);
+    expect(screen.getByText('I commenti valgono per la v2: usa Riparti da qui per commentare questa versione.')).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'c' });
+    expect(tool.getAttribute('aria-pressed')).toBe('false');
+    // The v2 pin is not drawn on v1's boards, but it is still pending for v2 (its chip stays).
+    expect(screen.queryByRole('button', { name: 'Modifica il commento 1' })).toBeNull();
+    expect(screen.getByRole('button', { name: /^Modifica il commento 1 ·/ })).toBeTruthy();
+  });
+
+  it('with a resume point, comments go on that version and not on the latest', async () => {
+    detail = makeDetail([version(1), version(2)], { resumeFrom: { version: 1, sessionId: 's' } });
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    // The latest (v2) is on screen: not the pin source.
+    expect((screen.getByRole('button', { name: 'Commenta (C)' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('I commenti valgono per la v1: usa Riparti da qui per commentare questa versione.')).toBeTruthy();
+    await pickVersion(1);
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Commenta (C)' }) as HTMLButtonElement).disabled).toBe(false));
+    await pinOnPost('Tieni questo');
+    await userEvent.click(screen.getByRole('button', { name: 'Invia' }));
+    await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'lancio', { text: '', pins: [expect.objectContaining({ note: 'Tieni questo', format: 'instagram-post-1x1' })] }));
+  });
+
+  it('a failed send keeps the pins', async () => {
+    api.sendCreativeTurn.mockRejectedValueOnce(new Error('rete'));
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await pinOnPost('Logo');
+    await userEvent.click(screen.getByRole('button', { name: 'Invia' }));
+    await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledOnce());
+    expect(await screen.findByText(/Impossibile inviare|Non è stato possibile|riprova/i)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Modifica il commento 1 ·/ })).toBeTruthy();
+  });
+
+  it('a pin added while the send is in flight stays pending', async () => {
+    let finish!: () => void;
+    api.sendCreativeTurn.mockImplementationOnce(() => new Promise((r) => { finish = () => r({ id: 'j9', key: 'k', kind: 'creative', label: 'x', state: 'queued', createdAt: at }); }));
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await pinOnPost('Primo');
+    await userEvent.click(screen.getByRole('button', { name: 'Invia' }));
+    await pinOnPost('Secondo');
+    await act(async () => { finish(); });
+    await waitFor(() => expect(screen.queryByText('Primo')).toBeNull());
+    expect(screen.getByRole('button', { name: /^Modifica il commento 1 ·/ }).textContent).toContain('Secondo');
+  });
+
+  it('double click opens the editor only with the Select tool', async () => {
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    fireEvent.keyDown(window, { key: 'h' });
+    fireEvent.doubleClick(screen.getByRole('img', { name: /Post 1:1 v1/ }).closest('[data-frame]')!);
+    expect(location.hash).toBe('#/p/acme/c/lancio');
+  });
+
+  it('a click on the canvas keeps a bubble with text, and closes an empty one', async () => {
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    fireEvent.keyDown(window, { key: 'c' });
+    fireEvent.click(screen.getByRole('button', { name: /^Commenta Instagram · Post 1:1/ }));
+    await screen.findByLabelText('Testo del commento');
+    const viewport = document.querySelector('.ms-cv-viewport')!;
+    fireEvent.click(viewport);
+    expect(screen.queryByLabelText('Testo del commento')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^Commenta Instagram · Post 1:1/ }));
+    await userEvent.type(await screen.findByLabelText('Testo del commento'), 'Non perdermi');
+    fireEvent.click(viewport);
+    expect((screen.getByLabelText('Testo del commento') as HTMLTextAreaElement).value).toBe('Non perdermi');
+  });
+
+  it('cannot close the export while it runs', async () => {
+    localStorage.setItem('ms.exportFolder', '/d');
+    let finish!: () => void;
+    api.exportVersion.mockImplementationOnce((_s, _c, _n, d) => new Promise((r) => { finish = () => r({ destination: d, files: [{ from: 'a', to: 'b' }], skipped: [] }); }));
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await userEvent.click(screen.getByRole('button', { name: 'Esporta' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Esporta “Lancio estivo”' });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Esporta 2 file' }));
+    expect((within(dialog).getByRole('button', { name: 'Annulla' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(dialog).getByRole('button', { name: 'Chiudi' }) as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.keyboard('{Escape}');
+    fireEvent.click(document.querySelector('.ms-scrim')!);
+    expect(screen.getByRole('dialog', { name: 'Esporta “Lancio estivo”' })).toBe(dialog);
+    await act(async () => { finish(); });
+    expect(await within(dialog).findByText('1 file esportato')).toBeTruthy();
+    // Done: closing works again.
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Esporta “Lancio estivo”' })).toBeNull());
+  });
+
+  it('Restart from here offers Undo back to the previous resume point', async () => {
+    const { __resetToasts, getToasts } = await import('../src/ui/toast.tsx');
+    __resetToasts();
+    detail = makeDetail([version(1), version(2)]);
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await pickVersion(1);
+    await userEvent.click(screen.getByRole('button', { name: /apri la cronologia/ }));
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Versioni' })).getByRole('button', { name: 'Riparti da qui' }));
+    await waitFor(() => expect(getToasts().some((x) => x.text === 'Le prossime modifiche partono dalla v1')).toBe(true));
+    const item = getToasts().find((x) => x.text === 'Le prossime modifiche partono dalla v1')!;
+    expect(item.action?.label).toBe('Annulla');
+    act(() => item.action!.run());
+    await waitFor(() => expect(api.restoreVersion).toHaveBeenLastCalledWith('acme', 'lancio', 2));
+    __resetToasts();
+  });
+
+  it('edits the brief with ui controls: length segments, format chips, same save semantics', async () => {
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Modifica il brief' }));
+    const form = document.querySelector('.ms-brief-form') as HTMLElement;
+    // No native select, checkbox or number field.
+    expect(form.querySelector('select, input[type="checkbox"], input[type="number"]')).toBeNull();
+    await userEvent.click(within(form).getByRole('radio', { name: '15 s' }));
+    await userEvent.click(within(within(form).getByRole('group', { name: 'YouTube' })).getByRole('button', { name: /Shorts/ }));
+    await userEvent.click(within(form).getByRole('button', { name: 'Salva e rigenera' }));
+    await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'lancio', {}));
+    expect(api.updateCreative).toHaveBeenCalledWith('acme', 'lancio', expect.objectContaining({
+      title: 'Lancio estivo',
+      brief: expect.objectContaining({ durationSec: 15, formats: ['instagram-post-1x1', 'tiktok-9x16', 'youtube-shorts-9x16'] }),
+    }));
+  });
+});
+

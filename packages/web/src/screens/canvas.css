@@ -116,6 +116,7 @@
 .ms-cv-nothing-icon { width: 36px; height: 36px; border-radius: 10px; background: var(--field); display: flex; align-items: center; justify-content: center; }
 
 /* Floating hint, legend and tool bar. */
+.ms-cv-hint.ms-lock { height: auto; min-height: 30px; padding: 6px 12px; max-width: calc(100% - 32px); white-space: normal; text-align: center; color: var(--muted); border-radius: 15px; }
 .ms-cv-hint {
   position: absolute; left: 50%; top: 14px; z-index: 5; transform: translateX(-50%); height: 30px; padding: 0 12px; border-radius: 999px;
   display: flex; align-items: center; background: var(--panel); box-shadow: 0 0 0 1px var(--line), 0 6px 16px var(--shadow); font-size: 12px; font-weight: 500; white-space: nowrap;

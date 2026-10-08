@@ -46,7 +46,8 @@ export interface ConversationProps {
   formatName?(id: string): string;
   /** No version yet: the composer offers Generate (an empty turn). */
   canGenerate?: boolean;
-  onSent?(): void;
+  /** After a successful send, with the pins that went with it (pins added meanwhile stay pending). */
+  onSent?(sent: { pins: Pin[] }): void;
   onSelectVersion?(n: number): void;
   /** Socket snapshots received (EventsState.snapshots): a new one is the core's whole state, so stop waiting. */
   snapshots?: number;
@@ -359,7 +360,7 @@ function Details({ events }: { events: AgentEvent[] }) {
 export const AWAIT_JOB_MS = 10_000;
 
 function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemovePin, onEditPin, formatName, canGenerate, onSent }: {
-  slug: string; creative: string; job: JobSummary | undefined; latestJobId: string | undefined; snapshots: number | undefined; pins: Pin[]; onRemovePin?(i: number): void; onEditPin?(i: number): void; formatName?(id: string): string; canGenerate?: boolean; onSent?(): void;
+  slug: string; creative: string; job: JobSummary | undefined; latestJobId: string | undefined; snapshots: number | undefined; pins: Pin[]; onRemovePin?(i: number): void; onEditPin?(i: number): void; formatName?(id: string): string; canGenerate?: boolean; onSent?(sent: { pins: Pin[] }): void;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -402,7 +403,7 @@ function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemoveP
       if (started && typeof started.id === 'string' && started.id !== latestJobId) setAwaiting(started.id);
       else inFlight.current = false;
       setText('');
-      onSent?.();
+      onSent?.({ pins: body.pins ?? [] });
     } catch (e) {
       // The text stays in the box: explain and say what to do; a 409 means a turn is already running.
       setError(e instanceof ApiError && e.status === 409 ? c.sendBusy : c.sendFailed);

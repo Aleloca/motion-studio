@@ -10,6 +10,8 @@ export interface ModalProps {
   /** Accessible name of the dialog. */
   label: string;
   width?: number;
+  /** false while closing would lose work in flight (an export copying): Esc and the scrim then do nothing. */
+  dismissible?: boolean;
   children: ReactNode;
 }
 
@@ -19,13 +21,15 @@ export interface ModalProps {
  * via the layer manager); focus returns to the element that had it when the modal opened, or to the nearest anchor
  * still on the page when that element has gone (a menu item).
  */
-export function Modal({ open, onClose, label, width = 560, children }: ModalProps) {
+export function Modal({ open, onClose, label, width = 560, dismissible = true, children }: ModalProps) {
   const scrim = useRef<HTMLDivElement>(null);
   const dialog = useRef<HTMLDivElement>(null);
   const [id] = useState(nextLayerId);
   const parent = useContext(LayerContext);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const dismissRef = useRef(dismissible);
+  dismissRef.current = dismissible;
   // Remember the opener while rendering the opening frame: children (autoFocus, a nested popover) may move focus
   // inside before this component's effects run.
   // The opener may be a menu item that unmounts with its popover: keep the chain up to the menu's button.
@@ -62,7 +66,7 @@ export function Modal({ open, onClose, label, width = 560, children }: ModalProp
       parent,
       outside: false,
       contains: (n) => !!dialog.current?.contains(n),
-      close: () => onCloseRef.current(),
+      close: () => { if (dismissRef.current) onCloseRef.current(); },
       trap: () => dialog.current,
     });
     focusInto(dialog.current);
@@ -74,7 +78,7 @@ export function Modal({ open, onClose, label, width = 560, children }: ModalProp
 
   if (!shown) return null;
   const onScrimClick = (e: MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget && scrimClickCloses(id, e.currentTarget)) onCloseRef.current();
+    if (e.target === e.currentTarget && dismissRef.current && scrimClickCloses(id, e.currentTarget)) onCloseRef.current();
   };
   // Portalled events still bubble through the React tree: keep clicks from reaching the modal's React ancestors.
   const stop = (e: MouseEvent) => { e.stopPropagation(); };

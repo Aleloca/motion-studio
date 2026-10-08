@@ -119,9 +119,23 @@ export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasPr
   const [zoom, setZoom] = useState(1);
   const [safe, setSafe] = useState(false);
 
-  // Comments: pending pins (shared with the format view), the bubble being written.
-  const [pins, setPins] = usePendingPins(pinsKey(slug, creative));
+  // Comments: pending pins (shared with the format view), the bubble being written. The core crops pin frames from
+  // its pin source (core creative-turns: the version resumed from, else the latest): comments are placed, shown and
+  // sent only on that version. `sourcePins` are the pending pins of the source, with their place in the store; a draft's
+  // `index` is a position in `sourcePins`.
+  const pinSource = detail ? detail.creative.resumeFrom?.version ?? latest?.n ?? null : null;
+  const canComment = version !== null && version.n === pinSource;
+  const [stored, setStored] = usePendingPins(pinsKey(slug, creative));
+  const sourcePins = useMemo(() => stored.flatMap((p, i) => (p.version === pinSource ? [{ pin: p.pin, at: i }] : [])), [stored, pinSource]);
+  const pins = useMemo(() => sourcePins.map((p) => p.pin), [sourcePins]);
   const [draft, setDraft] = useState<Draft | null>(null);
+  // Another version on screen (or a new pin source): no comment tool, no bubble.
+  useEffect(() => {
+    if (canComment) return;
+    setDraft(null);
+    setTool((tl) => (tl === 'comment' ? 'select' : tl));
+  }, [canComment]);
+  useEffect(() => { setDraft(null); }, [pinSource]);
   const boardEl = (id: string) => [...(root.current?.querySelectorAll<HTMLElement>('[data-board]') ?? [])].find((el) => el.dataset.board === id) ?? null;
   const reveal = (id: string) => {
     const el = boardEl(id);
@@ -134,6 +148,7 @@ export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasPr
   };
   const editPin = (number: number) => {
     const pin = pins[number - 1];
+    if (!canComment) return;
     if (!pin) return;
     setSel(pin.format);
     setDraft({ format: pin.format, x: pin.x, y: pin.y, text: pin.note ?? '', index: number - 1 });
@@ -147,21 +162,23 @@ export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasPr
       const out = boards.find((b) => b.id === draft.format)?.out;
       // On the canvas a video comment is at 0 s; frame-accurate comments come with the format view.
       const pin: Pin = { format: draft.format, x: draft.x, y: draft.y, timeSec: out && VIDEO_FILE.test(out.file) ? 0 : null, note };
-      setPins((ps) => [...ps, pin]);
+      if (pinSource !== null) setStored((ps) => [...ps, { pin, version: pinSource }]);
     } else {
-      const i = draft.index;
-      setPins((ps) => ps.map((p, k) => (k === i ? { ...p, note } : p)));
+      const at = sourcePins[draft.index]?.at;
+      setStored((ps) => ps.map((p, k) => (k === at ? { ...p, pin: { ...p.pin, note } } : p)));
     }
     setDraft(null);
     setTool('select');
   };
   const removePin = (i: number) => {
-    setPins((ps) => ps.filter((_, k) => k !== i));
+    const at = sourcePins[i]?.at;
+    setStored((ps) => ps.filter((_, k) => k !== at));
     setDraft((d) => (d && d.index !== null ? (d.index === i ? null : d.index > i ? { ...d, index: d.index - 1 } : d) : d));
   };
 
   // Keyboard: V / C / H, Esc, F2 (never while typing, never from a page that is leaving).
-  usePageShortcut(root, (e) => bare(e) && !isTyping(e) && !inOverlay(e) && e.key.toLowerCase() in TOOL_KEYS && Boolean(detail), (e) => setTool(TOOL_KEYS[e.key.toLowerCase()]!));
+  usePageShortcut(root, (e) => bare(e) && !isTyping(e) && !inOverlay(e) && e.key.toLowerCase() in TOOL_KEYS && Boolean(detail) && (canComment || TOOL_KEYS[e.key.toLowerCase()] !== 'comment'),
+    (e) => setTool(TOOL_KEYS[e.key.toLowerCase()]!));
   usePageShortcut(root, (e) => e.key === 'Escape' && !isTyping(e) && !inOverlay(e) && (tool !== 'select' || draft !== null), () => { setDraft(null); setTool('select'); });
   const [renaming, setRenaming] = useState<string | null>(null);
   const startRename = useCallback(() => { if (detail) setRenaming(detail.creative.title); }, [detail]);
@@ -281,8 +298,8 @@ export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasPr
   const pinsOf = (id: string) => pins.map((pin, i) => ({ pin, number: i + 1 })).filter((x) => x.pin.format === id);
   const board = (b: BoardModel, first: boolean) => (
     <CanvasBoard key={b.id} slug={slug} creative={creative} board={b} n={n} tool={tool} selected={sel === b.id} working={working} safe={safe}
-      pins={pinsOf(b.id)} draft={draft} nextNumber={pins.length + 1}
-      onSelect={() => setSel(b.id)} onOpen={(el) => openEditor(b.id, el)} onPlace={(x, y) => place(b.id, x, y)} onEditPin={editPin}
+      pins={canComment ? pinsOf(b.id) : []} draft={canComment ? draft : null} nextNumber={pins.length + 1}
+      onSelect={() => setSel(b.id)} onOpen={(el) => { if (tool === 'select') openEditor(b.id, el); }} onPlace={(x, y) => place(b.id, x, y)} onEditPin={editPin}
       onDraftText={(text) => setDraft((d) => (d ? { ...d, text } : d))} onDraftCommit={commitDraft} onDraftCancel={() => setDraft(null)}
       onDraftDelete={() => { if (draft?.index !== null && draft?.index !== undefined) removePin(draft.index); }}
       footer={first && working && step ? (
@@ -316,7 +333,18 @@ export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasPr
                 <VersionMenu slug={slug} creative={creative} versions={versions} shown={version.n}
                   onPick={(v) => { setPicked(v); setMenuOpen(false); }}
                   onCompare={openCompare}
-                  onRestart={(v) => { setMenuOpen(false); act(() => api.restoreVersion(slug, creative, v), () => { toast.show(c.versions.restarted({ n: v }), { tone: 'ok' }); reload(); }); }}
+                  onRestart={(v) => {
+                    setMenuOpen(false);
+                    // Undo goes back to the previous resume point (the one resumed from, else the latest).
+                    const previous = pinSource;
+                    act(() => api.restoreVersion(slug, creative, v), () => {
+                      reload();
+                      toast.show(c.versions.restarted({ n: v }), {
+                        tone: 'ok',
+                        action: previous !== null && previous !== v ? { label: c.versions.undo, run: () => act(() => api.restoreVersion(slug, creative, previous), reload) } : undefined,
+                      });
+                    });
+                  }}
                   onReveal={(v) => { setMenuOpen(false); act(() => api.revealVersion(slug, creative, v)); }} />
               </Popover>
             </>
@@ -366,7 +394,12 @@ export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasPr
           onPointerMove={onPointerMove}
           onPointerUp={endDrag}
           onPointerCancel={endDrag}
-          onClick={(e) => { if (!(e.target as Element).closest('.ms-cv-board')) { setDraft(null); setSel(null); } }}
+          onClick={(e) => {
+            if ((e.target as Element).closest('.ms-cv-board')) return;
+            // A bubble with typed text stays open: only an empty one closes on a click outside.
+            setDraft((d) => (d && d.text.trim() ? d : null));
+            setSel(null);
+          }}
         >
           <div className="ms-cv-world" style={{ zoom }}>
             {tall.map((b, i) => board(b, i === 0))}
@@ -384,6 +417,7 @@ export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasPr
           </div>
         ) : null}
         {tool === 'comment' ? <div className="ms-cv-hint" role="status">{c.commentHint}</div> : null}
+        {!canComment && version && pinSource !== null ? <div className="ms-cv-hint ms-lock" id="ms-cv-comment-lock" role="status">{c.versions.commentsOn({ n: pinSource })}</div> : null}
         {safe ? (
           <div className="ms-cv-legend" role="note">
             <b>{c.safeTitle}</b>
@@ -393,7 +427,8 @@ export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasPr
         ) : null}
         <div className="ms-cv-toolbar" role="toolbar" aria-label={c.tools}>
           {([['select', 'cursor', c.select], ['comment', 'comment', c.comment], ['hand', 'hand', c.hand]] as const).map(([k, icon, label]) => (
-            <button key={k} type="button" className={cx('ms-cv-tool', tool === k && 'ms-on')} aria-label={label} title={label} aria-pressed={tool === k}
+            <button key={k} type="button" className={cx('ms-cv-tool', tool === k && 'ms-on')} aria-label={label} title={k === 'comment' && !canComment && pinSource !== null ? c.versions.commentsOn({ n: pinSource }) : label} aria-pressed={tool === k}
+              disabled={k === 'comment' && !canComment} aria-describedby={k === 'comment' && !canComment && pinSource !== null ? 'ms-cv-comment-lock' : undefined}
               aria-keyshortcuts={k === 'select' ? 'V' : k === 'comment' ? 'C' : 'H'} onClick={() => setTool(k)}>
               <Icon name={icon} size={15} strokeWidth={1.5} />
             </button>
@@ -413,7 +448,7 @@ export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasPr
         {tab === 'chat' ? (
           <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={job} live={job ? live.events[job.id] ?? [] : []}
             pins={pins} onRemovePin={removePin} onEditPin={(i) => editPin(i + 1)} formatName={formatLabel}
-            canGenerate={versions.length === 0} onSent={() => { setPins(() => []); setDraft(null); setPicked(null); reload(); }}
+            canGenerate={versions.length === 0} onSent={({ pins: sent }) => { setStored((ps) => ps.filter((p) => !sent.includes(p.pin))); setPicked(null); reload(); }}
             onSelectVersion={(v) => setPicked(v)} snapshots={live.snapshots} />
         ) : null}
         {tab === 'comments' ? <CommentsTab sent={sent} working={working} formatLabel={formatLabel} onStart={() => { setTool('comment'); }} /> : null}
@@ -435,7 +470,7 @@ export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasPr
           compareSrc={null} versionN={version?.n ?? null} compareN={null} verified={focusOut?.verified !== false}
           pins={pins.filter((p) => p.format === focusPreset.id)}
           pinNumbers={pins.flatMap((p, i) => (p.format === focusPreset.id ? [i + 1] : []))}
-          onAddPin={(pin) => setPins((ps) => [...ps, pin])} onClose={() => go(href.creative(slug, creative))} />
+          onAddPin={(pin) => { if (version) setStored((ps) => [...ps, { pin, version: version.n }]); }} onClose={() => go(href.creative(slug, creative))} />
       ) : null}
     </div>
   );

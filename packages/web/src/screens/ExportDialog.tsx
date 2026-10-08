@@ -2,7 +2,7 @@
 // final file name and a check; the destination (native picker on desktop, a field on the web) is remembered; progress,
 // then a success screen with Show in Finder. File sizes are not shown: the API does not report them (ruling R6).
 import type { FormatPreset, VersionEntry } from '@motion-studio/shared';
-import { useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { api } from '../api.ts';
 import { desktop } from '../desktop.ts';
 import { exportFileName } from '../exportName.ts';
@@ -33,16 +33,18 @@ export interface ExportDialogProps {
 
 export function ExportDialog(p: ExportDialogProps) {
   const t = useT();
+  // While the copy runs the dialog stays: closing it would hide an export that still writes files.
+  const [busy, setBusy] = useState(false);
   return (
-    <Modal open={p.open} onClose={p.onClose} label={t.web.exportUi.title({ title: p.title })} width={760}>
-      {p.version ? <ExportBody key={p.version.n} {...p} version={p.version} /> : null}
+    <Modal open={p.open} onClose={p.onClose} label={t.web.exportUi.title({ title: p.title })} width={760} dismissible={!busy}>
+      {p.version ? <ExportBody key={p.version.n} {...p} version={p.version} onBusy={setBusy} /> : null}
     </Modal>
   );
 }
 
 type Phase = { kind: 'idle' } | { kind: 'run' } | { kind: 'done'; destination: string; count: number; skipped: string[] };
 
-function ExportBody({ onClose, slug, creative, title, version, presets }: ExportDialogProps & { version: VersionEntry }) {
+function ExportBody({ onClose, slug, creative, title, version, presets, onBusy }: ExportDialogProps & { version: VersionEntry; onBusy(busy: boolean): void }) {
   const t = useT();
   const x = t.web.exportUi;
   const locale = useLocale();
@@ -55,6 +57,9 @@ function ExportBody({ onClose, slug, creative, title, version, presets }: Export
   const [error, setError] = useState<string | null>(null);
   const chosen = outputs.filter((o) => on[o.format]).map((o) => o.format);
   const running = phase.kind === 'run';
+  const labelId = useId();
+  useEffect(() => { onBusy(running); }, [running, onBusy]);
+  useEffect(() => () => onBusy(false), [onBusy]);
   const reveal = isMac() ? x.showInFinder : x.showInFolder;
 
   const choose = async () => {
@@ -85,7 +90,7 @@ function ExportBody({ onClose, slug, creative, title, version, presets }: Export
         <h2>{x.title({ title })}</h2>
         <span className="ms-exp-sub">{x.sub({ n: version.n })}</span>
       </div>
-      <Button variant="ghost" icon aria-label={t.common.close} onClick={onClose}><Icon name="close" size={13} strokeWidth={1.6} /></Button>
+      <Button variant="ghost" icon aria-label={t.common.close} disabled={running} onClick={onClose}><Icon name="close" size={13} strokeWidth={1.6} /></Button>
     </div>
   );
 
@@ -140,10 +145,10 @@ function ExportBody({ onClose, slug, creative, title, version, presets }: Export
         </div>
       ) : <p className="ms-exp-empty">{x.empty}</p>}
       <div className="ms-exp-dest">
-        <span className="ms-exp-dest-label" id="ms-exp-folder-label">{x.saveTo}</span>
+        <span className="ms-exp-dest-label" id={labelId}>{x.saveTo}</span>
         <div className="ms-exp-dest-field">
           {bridge ? (
-            <div className="ms-exp-folder" aria-labelledby="ms-exp-folder-label">
+            <div className="ms-exp-folder" aria-labelledby={labelId}>
               <Icon name="folder" size={14} />
               <span className={cx('ms-exp-path', !folder && 'ms-faint')}>{folder || x.noFolder}</span>
               {remembered ? <span className="ms-exp-last">{x.lastUsed}</span> : null}
@@ -168,7 +173,7 @@ function ExportBody({ onClose, slug, creative, title, version, presets }: Export
             {error ? <span role="alert" className="ms-exp-error">{error}</span> : <span className="ms-exp-note">{x.noOverwrite}</span>}
           </div>
         )}
-        <Button size="lg" variant="ghost" onClick={onClose}>{t.common.cancel}</Button>
+        <Button size="lg" variant="ghost" disabled={running} onClick={onClose}>{t.common.cancel}</Button>
         <Button size="lg" variant="ink" loading={running} disabled={!chosen.length || !folder.trim() || running} onClick={() => void run()}>
           {x.run({ count: chosen.length })}
         </Button>
