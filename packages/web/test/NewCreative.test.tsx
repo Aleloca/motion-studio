@@ -55,7 +55,7 @@ describe('NewCreative · generate', () => {
     await userEvent.type(brief(), 'Lancio della nuova app. Mostra che prenotare è immediato');
     await userEvent.click(within(screen.getByRole('group', { name: 'Instagram' })).getByRole('button', { name: /Post 1:1/ }));
     await userEvent.click(within(screen.getByRole('group', { name: 'TikTok' })).getByRole('button', { name: /Video 9:16/ }));
-    expect(screen.getByText(/^2 formati · 2 render video \+ 0 immagini$/)).toBeTruthy();
+    expect(screen.getByText(/^2 formati · 2 render video$/)).toBeTruthy();
     fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
     await waitFor(() => expect(createCreative).toHaveBeenCalledOnce());
     expect(createCreative.mock.calls[0]).toEqual(['acme', {
@@ -100,6 +100,98 @@ describe('NewCreative · generate', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('disco pieno');
     expect((brief() as HTMLTextAreaElement).value).toBe('Lancio');
     expect(location.hash).toBe('');
+  });
+});
+
+describe('NewCreative · one creative per Generate', () => {
+  const ready = async () => {
+    await board();
+    await userEvent.type(brief(), 'Lancio');
+    await userEvent.click(within(screen.getByRole('group', { name: 'Instagram' })).getByRole('button', { name: /Post 1:1/ }));
+  };
+
+  it('a second ⌘↵ after a successful Generate makes no second call', async () => {
+    render(<NewCreative slug="acme" />);
+    await ready();
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(location.hash).toBe('#/p/acme/c/2026-10-07-lancio'));
+    // The page is still mounted while it leaves: the shortcut and the button stay off.
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+    await userEvent.click(screen.getByRole('button', { name: 'Genera' }));
+    await act(async () => { await Promise.resolve(); });
+    expect(createCreative).toHaveBeenCalledOnce();
+  });
+
+  it('two quick presses before the answer make one call', async () => {
+    let resolve!: (v: { slug: string; creative: object; job: null }) => void;
+    createCreative.mockImplementationOnce(() => new Promise((r) => { resolve = r; }));
+    render(<NewCreative slug="acme" />);
+    await ready();
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+    await act(async () => { resolve({ slug: 'x', creative: {}, job: null }); });
+    expect(createCreative).toHaveBeenCalledOnce();
+  });
+
+  it('ignores a held ⌘↵ (key repeat)', async () => {
+    render(<NewCreative slug="acme" />);
+    await ready();
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true, repeat: true });
+    await act(async () => { await Promise.resolve(); });
+    expect(createCreative).not.toHaveBeenCalled();
+  });
+
+  it('ignores ⌘↵ when its page is leaving (not the active page)', async () => {
+    const { container } = render(<div className="ms-page"><NewCreative slug="acme" /></div>);
+    await ready();
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+    await act(async () => { await Promise.resolve(); });
+    expect(createCreative).not.toHaveBeenCalled();
+    // The same page, active: the shortcut works.
+    container.querySelector('.ms-page')!.setAttribute('data-page-active', '');
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(createCreative).toHaveBeenCalledOnce());
+  });
+
+  it('after a failed call Generate works again', async () => {
+    createCreative.mockRejectedValueOnce(new Error('rete'));
+    render(<NewCreative slug="acme" />);
+    await ready();
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+    await screen.findByRole('alert');
+    fireEvent.keyDown(window, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(createCreative).toHaveBeenCalledTimes(2));
+  });
+
+  it('shows a long API error whole, outside the summary bar', async () => {
+    const detail = `${'errore '.repeat(40)}fine`;
+    createCreative.mockRejectedValueOnce(new Error(detail));
+    const { container } = render(<NewCreative slug="acme" />);
+    await ready();
+    await userEvent.click(screen.getByRole('button', { name: 'Genera' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Controlla il brief e riprova');
+    expect(container.querySelector('.ms-nc-foot')!.contains(alert)).toBe(false);
+  });
+});
+
+describe('NewCreative · accessible reasons', () => {
+  it('links the disabled video length to its visible reason', async () => {
+    render(<NewCreative slug="acme" />);
+    await board();
+    const length = screen.getByRole('radiogroup', { name: 'Durata dei video' });
+    const id = length.getAttribute('aria-describedby')!;
+    expect(document.getElementById(id)!.textContent).toBe('nessun formato video scelto');
+  });
+
+  it('shows a partial library error above the picker grid', async () => {
+    api.listAssets.mockResolvedValueOnce({ assets: [asset('foto.jpg')], error: 'assets.json: riga 3 non valida', unregistered: [] } as never);
+    render(<NewCreative slug="acme" />);
+    await board();
+    await userEvent.click(screen.getByRole('button', { name: 'Sfoglia la libreria' }));
+    const picker = await screen.findByRole('dialog');
+    expect(within(picker).getByText(/assets\.json: riga 3 non valida/)).toBeTruthy();
+    expect(within(picker).getByRole('button', { name: /foto\.jpg/ })).toBeTruthy();
   });
 });
 
@@ -241,6 +333,8 @@ describe('NewCreative · brand', () => {
     const toggle = screen.getByRole('switch', { name: 'Segui il brand' }) as HTMLButtonElement;
     expect(toggle.getAttribute('aria-checked')).toBe('true');
     expect(toggle.disabled).toBe(true);
+    // The reason is on screen, not in a hover title.
+    expect(screen.getByText('Per ora sempre attivo: ogni brief usa il kit del brand.')).toBeTruthy();
   });
 });
 
@@ -252,7 +346,11 @@ describe('NewCreative · English', () => {
     expect(screen.getByRole('heading', { name: 'Where will it be published?' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Generate' })).toBeTruthy();
     await userEvent.click(within(screen.getByRole('group', { name: 'Instagram' })).getByRole('button', { name: /Post 1:1/ }));
-    expect(screen.getByText(/^1 format · 1 video render \+ 0 images$/)).toBeTruthy();
+    expect(screen.getByText(/^1 format · 1 video render$/)).toBeTruthy();
+    await userEvent.click(within(screen.getByRole('group', { name: 'Instagram' })).getByRole('button', { name: /Image 1:1/ }));
+    expect(screen.getByText(/^2 formats · 1 video render \+ 1 image$/)).toBeTruthy();
+    await userEvent.click(within(screen.getByRole('group', { name: 'Instagram' })).getByRole('button', { name: /Post 1:1/ }));
+    expect(screen.getByText(/^1 format · 1 image$/)).toBeTruthy();
   });
 });
 

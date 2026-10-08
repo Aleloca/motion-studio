@@ -16,10 +16,12 @@ export interface SegmentedProps<V extends string> {
   className?: string;
   /** Turns every option off (e.g. a setting that does not apply right now); the value stays visible. */
   disabled?: boolean;
+  /** Id of the visible text that explains the group (e.g. why it is off). */
+  describedBy?: string;
 }
 
 /** Segmented control (role="radiogroup"): replaces radios and small selects; arrows move and select, wrapping. */
-export function Segmented<V extends string>({ options, value, onChange, label, className, disabled }: SegmentedProps<V>) {
+export function Segmented<V extends string>({ options, value, onChange, label, className, disabled, describedBy }: SegmentedProps<V>) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const current = Math.max(0, options.findIndex((o) => o.value === value));
 
@@ -34,7 +36,7 @@ export function Segmented<V extends string>({ options, value, onChange, label, c
   };
 
   return (
-    <div role="radiogroup" aria-label={label} aria-disabled={disabled || undefined} className={cx('ms-seg', className)}>
+    <div role="radiogroup" aria-label={label} aria-disabled={disabled || undefined} aria-describedby={describedBy} className={cx('ms-seg', className)}>
       {options.map((o, i) => {
         const on = o.value === value;
         return (

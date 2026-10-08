@@ -1,5 +1,5 @@
 /* New creative (spec §6.2 #5), ported from the prototype's NewCreativePage / Tile and the NewCreative boards. */
-.ms-nc { position: absolute; inset: 0; display: grid; grid-template-rows: minmax(0, 1fr) 64px; color: var(--text); background: var(--bg); overflow-wrap: anywhere; }
+.ms-nc { position: absolute; inset: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto 64px; color: var(--text); background: var(--bg); overflow-wrap: anywhere; }
 .ms-nc-body { min-height: 0; display: grid; grid-template-columns: clamp(380px, 38vw, 540px) minmax(0, 1fr); }
 .ms-nc .ms-grow { flex: 1; min-width: 0; }
 .ms-nc-faint { color: var(--faint); font-weight: 400; }
@@ -89,6 +89,7 @@
 .ms-nc-brand-text span { font-size: 12px; color: var(--muted); }
 .ms-nc-brand-icon { width: 30px; height: 30px; flex: none; border-radius: 8px; background: var(--field); color: var(--muted); display: flex; align-items: center; justify-content: center; }
 .ms-nc-brand .ms-toggle:disabled { cursor: default; }
+.ms-nc-brand-text .ms-nc-why { font-size: 11px; color: var(--faint); }
 
 /* More options. */
 .ms-nc-options { gap: 10px; }
@@ -161,8 +162,14 @@
 .ms-nc-sum b { font-weight: 600; }
 .ms-nc-sum > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-nc-warn { color: var(--warn); }
-.ms-nc-ferr { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--warn); }
-.ms-nc-ferr svg { flex: none; }
+/* Generation error: a strip above the bar, wrapped in full (the remedy is at the end). */
+.ms-nc-errbar { min-width: 0; }
+.ms-nc-ferr {
+  margin: 0; display: flex; align-items: flex-start; gap: 8px; padding: 10px 20px; max-height: 30vh; overflow: auto;
+  background: var(--warnBg); border-top: 1px solid var(--warnLine); color: var(--text); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere;
+}
+.ms-nc-ferr svg { flex: none; color: var(--warn); margin-top: 1px; }
+.ms-nc-ferr span { min-width: 0; }
 .ms-nc-foot .ms-btn { flex: none; }
 .ms-nc-kbd { font-family: var(--mono); font-size: 11px; opacity: .8; margin-left: 2px; }
 
@@ -170,6 +177,8 @@
 .ms-nc-picker { display: flex; flex-direction: column; gap: 8px; padding: 4px; min-width: 0; }
 .ms-nc-cap { display: block; padding: 4px 6px 0; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .ms-nc-pick-state { display: flex; align-items: center; gap: 8px; padding: 12px 6px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.ms-nc-pick-warn { margin: 0; display: flex; align-items: flex-start; gap: 6px; padding: 6px 8px; border-radius: 8px; background: var(--warnBg); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.ms-nc-pick-warn svg { flex: none; color: var(--warn); margin-top: 1px; }
 .ms-nc-pick-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; max-height: 320px; overflow: auto; padding: 2px; }
 .ms-nc-pick {
   position: relative; height: 74px; padding: 0; margin: 0; border: 0; border-radius: 8px; overflow: hidden; background: var(--field); cursor: pointer;

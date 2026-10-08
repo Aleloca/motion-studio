@@ -654,8 +654,11 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
       formatsLoading: 'Loading the formats…',
       formatsFailed: (p: { detail: string }) => `Couldn't load the formats: ${p.detail}`,
       linkLater: 'Same 9:16 video as the first one: linking them arrives in a later update',
-      summary: (p: { formats: number; videos: number; images: number }) =>
-        `${p.formats === 1 ? '1 format' : `${p.formats} formats`} · ${p.videos === 1 ? '1 video render' : `${p.videos} video renders`} + ${p.images === 1 ? '1 image' : `${p.images} images`}`,
+      summary: (p: { formats: number; videos: number; images: number }) => [
+        p.formats === 1 ? '1 format' : `${p.formats} formats`,
+        [p.videos && (p.videos === 1 ? '1 video render' : `${p.videos} video renders`), p.images && (p.images === 1 ? '1 image' : `${p.images} images`)].filter(Boolean).join(' + '),
+      ].join(' · '),
+      libraryPartial: (p: { detail: string }) => `Part of the library could not be read: ${p.detail}`,
       pickFormat: 'Pick at least one format',
       summaryHint: 'It runs in the background: you\'ll get a notification when it\'s ready.',
       createFailed: (p: { detail: string }) => `Couldn't create the creative: ${p.detail}. Check the brief and try again.`,

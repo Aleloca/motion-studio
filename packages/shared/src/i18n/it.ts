@@ -652,8 +652,11 @@ Variabili: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (array JSON)`,
       formatsLoading: 'Caricamento dei formati…',
       formatsFailed: (p) => `Impossibile caricare i formati: ${p.detail}`,
       linkLater: 'Stesso video 9:16 del primo: il collegamento arriva in un aggiornamento successivo',
-      summary: (p) =>
-        `${p.formats === 1 ? '1 formato' : `${p.formats} formati`} · ${p.videos === 1 ? '1 render video' : `${p.videos} render video`} + ${p.images === 1 ? '1 immagine' : `${p.images} immagini`}`,
+      summary: (p) => [
+        p.formats === 1 ? '1 formato' : `${p.formats} formati`,
+        [p.videos && (p.videos === 1 ? '1 render video' : `${p.videos} render video`), p.images && (p.images === 1 ? '1 immagine' : `${p.images} immagini`)].filter(Boolean).join(' + '),
+      ].join(' · '),
+      libraryPartial: (p) => `Una parte della libreria non è leggibile: ${p.detail}`,
       pickFormat: 'Scegli almeno un formato',
       summaryHint: 'Lavora in background: ricevi una notifica quando è pronta.',
       createFailed: (p) => `Impossibile creare la creatività: ${p.detail}. Controlla il brief e riprova.`,

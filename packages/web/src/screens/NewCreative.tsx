@@ -3,7 +3,7 @@ import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, u
 import { api } from '../api.ts';
 import { CodebaseList } from '../components/CodebaseList.tsx';
 import { useLocale, useT } from '../i18n.tsx';
-import { anim, E, flash, useEnter } from '../motion/index.ts';
+import { anim, E, flash, isSubmitChord, useEnter, usePageShortcut } from '../motion/index.ts';
 import { href } from '../routes.ts';
 import { useNewCreativeAssetsIntent } from '../shell/intents.ts';
 import { go, isMac, ShellContext } from '../shell/ShellContext.tsx';
@@ -176,8 +176,11 @@ export function NewCreative({ slug }: { slug: string }) {
   const togglePicked = (path: string) => setPicked((p) => (p.includes(path) ? p.filter((x) => x !== path) : [...p, path]));
   const openPicker = (el: HTMLElement) => { pickerAnchor.current = el; setPickerOpen(true); };
 
+  // One creative per Generate: set before the request and cleared only on failure, so a second press (while the
+  // request runs, or while the page is leaving after success) never creates a duplicate and starts a second agent.
+  const inFlight = useRef(false);
   const submit = async (generate: boolean) => {
-    if (busy) return;
+    if (inFlight.current) return;
     if (!goal.trim()) {
       setGoalError(true);
       goalRef.current?.focus();
@@ -190,6 +193,7 @@ export function NewCreative({ slug }: { slug: string }) {
       return;
     }
     if (videos.length > 0 && !durationValid) { setLengthError(true); return; }
+    inFlight.current = true;
     setBusy(generate ? 'generate' : 'draft');
     setError(null);
     try {
@@ -207,23 +211,14 @@ export function NewCreative({ slug }: { slug: string }) {
         toast.show(n.draftSaved({ title }), { tone: 'ok', action: { label: n.open, run: () => go(href.creative(slug, created.slug)) } });
         go(href.project(slug));
       }
+      // Success: stay busy; the page is leaving.
     } catch (e) {
-      setError(errText(e));
-    } finally {
+      inFlight.current = false;
       setBusy(null);
+      setError(errText(e));
     }
   };
-  const submitRef = useRef(submit);
-  submitRef.current = submit;
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Enter' || !(e.metaKey || e.ctrlKey) || e.defaultPrevented) return;
-      e.preventDefault();
-      void submitRef.current(true);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  usePageShortcut(root, isSubmitChord, () => { void submit(true); });
 
   const kit = brand.value;
   const hasBrand = !!kit && (kit.colors.length > 0 || kit.fonts.length > 0 || kit.logos.length > 0 || kit.tone !== null);
@@ -272,12 +267,13 @@ export function NewCreative({ slug }: { slug: string }) {
           <div className={cx('ms-nc-sec', videos.length === 0 && 'ms-nc-off')} data-enter>
             <div className="ms-nc-row">
               <span className="ms-nc-lbl">{n.videoLength}</span>
-              <span className="ms-nc-faint ms-nc-small">{videos.length ? n.lengthFor({ count: videos.length }) : n.noVideo}</span>
+              <span id="ms-nc-len-why" className="ms-nc-faint ms-nc-small">{videos.length ? n.lengthFor({ count: videos.length }) : n.noVideo}</span>
             </div>
             <Segmented
               className="ms-nc-len"
               label={n.videoLength}
               disabled={videos.length === 0}
+              describedBy="ms-nc-len-why"
               value={length}
               onChange={(v) => { setLength(v); setLengthError(false); }}
               options={LENGTHS.map((v) => ({ value: v, label: v === 'custom' ? n.custom : n.secondsShort({ n: Number(v) }) }))}
@@ -324,9 +320,11 @@ export function NewCreative({ slug }: { slug: string }) {
                 </div>
                 <div className="ms-nc-brand-text">
                   <b>{n.followsBrand({ project: projectName })}</b>
-                  <span className="ms-nc-ell">{[kit.fonts[0]?.family, kit.tone?.text].filter(Boolean).join(' · ') || n.brandAlways}</span>
+                  {kit.fonts[0] || kit.tone ? <span className="ms-nc-ell">{[kit.fonts[0]?.family, kit.tone?.text].filter(Boolean).join(' · ')}</span> : null}
+                  {/* The brief has no brand switch yet: the reason is on screen, not in a hover title. */}
+                  <span className="ms-nc-faint ms-nc-why">{n.brandAlways}</span>
                 </div>
-                <span title={n.brandAlways}><Toggle on onChange={() => {}} label={n.followBrand} disabled /></span>
+                <Toggle on onChange={() => {}} label={n.followBrand} disabled />
               </div>
             ) : (
               <div className="ms-nc-brand ms-nc-nobrand">
@@ -430,6 +428,10 @@ export function NewCreative({ slug }: { slug: string }) {
         </div>
       </div>
 
+      {/* Above the bar, not inside it: a long error keeps its remedy in full. */}
+      <div className="ms-nc-errbar">
+        {error ? <p className="ms-nc-ferr" role="alert"><Icon name="warn" size={14} /><span>{n.createFailed({ detail: error })}</span></p> : null}
+      </div>
       <footer className="ms-nc-foot">
         <div className="ms-nc-frames" aria-hidden="true">
           {chosen.slice(0, SUMMARY_FRAMES).map((p) => {
@@ -444,11 +446,7 @@ export function NewCreative({ slug }: { slug: string }) {
           ) : (
             <b className={cx(formatError && 'ms-nc-warn')}>{n.pickFormat}</b>
           )}
-          {error ? (
-            <span className="ms-nc-ferr" role="alert"><Icon name="warn" size={13} />{n.createFailed({ detail: error })}</span>
-          ) : (
-            <span className="ms-nc-muted ms-nc-small">{n.summaryHint}</span>
-          )}
+          <span className="ms-nc-muted ms-nc-small">{n.summaryHint}</span>
         </div>
         <div className="ms-grow" />
         <Button size="lg" variant="ghost" loading={busy === 'draft'} disabled={busy !== null} onClick={() => void submit(false)}>{n.saveDraft}</Button>
@@ -467,7 +465,11 @@ export function NewCreative({ slug }: { slug: string }) {
               <span>{n.libraryFailed({ detail: library.error })}</span>
               <Button size="sm" variant="outline" onClick={() => { setLibrary({ value: null, error: null }); setLibraryNonce((x) => x + 1); }}>{n.tryAgain}</Button>
             </div>
-          ) : libraryItems.length === 0 ? (
+          ) : null}
+          {library.error && library.value !== null ? (
+            <p className="ms-nc-pick-warn" role="status"><Icon name="warn" size={13} /><span>{n.libraryPartial({ detail: library.error })}</span></p>
+          ) : null}
+          {library.value === null ? null : libraryItems.length === 0 ? (
             <Empty icon="image" title={n.libraryEmpty} sub={n.libraryEmptyBody} action={<Button size="sm" variant="outline" onClick={() => { setPickerOpen(false); go(href.project(slug, 'assets')); }}>{n.openAssets}</Button>} />
           ) : (
             <div className="ms-nc-pick-grid">
