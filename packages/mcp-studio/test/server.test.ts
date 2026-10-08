@@ -27,10 +27,15 @@ beforeEach(async () => {
     let raw = '';
     req.on('data', (d) => { raw += d; });
     req.on('end', () => {
+      const msg = (JSON.parse(raw || '{}') as { message?: string }).message;
+      const delay = msg === 'slow' ? 1500 : msg === 'hang' ? 60_000 : 0;
+      setTimeout(() => respond(), delay);
+      function respond() {
       calls.push({ url: req.url!, token: req.headers['x-motion-studio-bridge'] as string, body: JSON.parse(raw || '{}') });
       if (req.url === '/api/bridge/validate_output') { res.writeHead(400, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: 'Validazione disponibile solo nelle creatività' })); return; }
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(req.url === '/api/bridge/approve' ? { behavior: 'deny', message: 'no' } : { ok: true }));
+      }
     });
   });
   await new Promise<void>((r) => http.listen(0, '127.0.0.1', r));
@@ -38,7 +43,7 @@ beforeEach(async () => {
   startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok' });
 });
 afterEach(async () => {
-  child.kill(); http.close();
+  child.kill(); http.closeAllConnections(); http.close();
   for (const d of dirs.splice(0)) await rm(d, { recursive: true, force: true });
 });
 
@@ -84,5 +89,40 @@ describe('mcp-studio server', () => {
     const res = await rpc(2, 'tools/call', { name: 'report_progress', arguments: { message: 'x' } });
     expect(res.result).toEqual({ content: [{ type: 'text', text: 'Motion Studio non raggiungibile: token mancante' }], isError: true });
     expect(calls).toEqual([]);
+  });
+  it('waits for a slow response (no headers timeout of its own)', async () => {
+    await rpc(1, 'initialize');
+    const res = await rpc(2, 'tools/call', { name: 'report_progress', arguments: { message: 'slow' } });
+    expect(res.result).toEqual({ content: [{ type: 'text', text: '{"ok":true}' }] });
+  });
+  it('gives up with isError after the overall cap', async () => {
+    child.kill();
+    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_BRIDGE_TIMEOUT_MS: '300' });
+    const res = await rpc(1, 'tools/call', { name: 'report_progress', arguments: { message: 'hang' } });
+    expect(res.result.isError).toBe(true);
+    expect(res.result.content[0].text).toMatch(/^Motion Studio non raggiungibile: /);
+  });
+  it('answers id 0 and string ids, concurrent calls with the right ids, and ignores malformed or null lines', async () => {
+    child.stdin.write('not json\nnull\n42\n"x"\n');
+    const raw = new Map<string | number, any>();
+    createInterface({ input: child.stdout }).on('line', (l) => { const m = JSON.parse(l); raw.set(m.id, m); });
+    const wait = async (id: string | number) => { for (let i = 0; i < 300 && !raw.has(id); i++) await new Promise((r) => setTimeout(r, 10)); return raw.get(id); };
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'ping' })}\n`);
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 'abc', method: 'tools/call', params: { name: 'report_progress', arguments: { message: 'slow' } } })}\n`);
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 'fast', method: 'tools/call', params: { name: 'report_progress', arguments: { message: 'f' } } })}\n`);
+    expect((await wait(0)).result).toEqual({});
+    const fast = await wait('fast');
+    expect(raw.has('abc')).toBe(false); // the slow one is still pending
+    expect(fast.result.content[0].text).toBe('{"ok":true}');
+    expect((await wait('abc')).result.content[0].text).toBe('{"ok":true}');
+    expect(raw.size).toBe(3); // nothing was emitted for the ignored lines
+  });
+  it('exits on stdin close once in-flight calls are answered', async () => {
+    const exited = new Promise<void>((r) => child.on('exit', () => r()));
+    const out = rpc(1, 'tools/call', { name: 'report_progress', arguments: { message: 'slow' } });
+    await new Promise((r) => setTimeout(r, 100));
+    child.stdin.end();
+    expect((await out).result.content[0].text).toBe('{"ok":true}');
+    await exited;
   });
 });

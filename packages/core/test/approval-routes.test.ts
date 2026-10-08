@@ -50,4 +50,8 @@ describe('approvals API', () => {
     expect(await pending).toEqual({ decision: 'cancelled' });
     app = await buildServer({ sandbox: async () => ({ available: false, reason: 'test' }), appConfig: new AppConfigStore(join(base, 'c2')), git: new Git(), doctor: async () => [], runner: new ClaudeCodeRunner(['true']) });
   });
+  it('does not cut a long-pending request (approvals wait for the user for minutes)', () => {
+    expect(app.server.requestTimeout).toBe(0);
+    expect(app.server.timeout).toBe(0);
+  });
 });

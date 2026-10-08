@@ -2,6 +2,7 @@
 // Motion Studio MCP server: a dependency-free stdio bridge. Every tool call is forwarded to the Motion Studio core
 // on loopback with the per-job token; the core holds the API keys and does the work.
 import { readFileSync } from 'node:fs';
+import { request } from 'node:http';
 import { createInterface } from 'node:readline';
 
 const URL_BASE = (process.env.MOTION_STUDIO_BRIDGE_URL ?? '').replace(/\/+$/, '');
@@ -13,6 +14,8 @@ const TOKEN = (() => {
   }
   return (process.env.MOTION_STUDIO_BRIDGE_TOKEN ?? '').trim();
 })();
+// Just above the agent's MCP_TOOL_TIMEOUT (15 min): an approval waits for the user with no response headers, so no shorter timeout may apply.
+const CAP_MS = Number(process.env.MOTION_STUDIO_BRIDGE_TIMEOUT_MS) || 16 * 60 * 1000;
 const ENABLED = new Set((process.env.MOTION_STUDIO_TOOLS ?? '').split(',').map((s) => s.trim()).filter(Boolean));
 
 const str = (description, extra = {}) => ({ type: 'string', description, ...extra });
@@ -32,25 +35,51 @@ const send = (m) => process.stdout.write(`${JSON.stringify(m)}\n`);
 const listed = () => TOOLS.filter((t) => t.name === 'approve' || ENABLED.has(t.name));
 const fail = (text) => ({ content: [{ type: 'text', text }], isError: true });
 
+// node:http instead of fetch: undici cuts a request without response headers after 5 minutes.
+function post(path, payload) {
+  return new Promise((resolve, reject) => {
+    const req = request(`${URL_BASE}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload), 'x-motion-studio-bridge': TOKEN } }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        clearTimeout(timer);
+        let body = {};
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* not JSON */ }
+        resolve({ status: res.statusCode ?? 0, body });
+      });
+      res.on('error', (e) => { clearTimeout(timer); reject(e); });
+    });
+    const timer = setTimeout(() => req.destroy(new Error('nessuna risposta entro il tempo massimo')), CAP_MS);
+    req.on('error', (e) => { clearTimeout(timer); reject(e); });
+    req.end(payload);
+  });
+}
+
 async function call(name, args) {
   if (!listed().some((t) => t.name === name)) return fail(`Strumento non disponibile: ${name}`);
   if (!TOKEN) return fail('Motion Studio non raggiungibile: token mancante');
   try {
-    const res = await fetch(`${URL_BASE}/api/bridge/${encodeURIComponent(name)}`, {
-      method: 'POST', headers: { 'content-type': 'application/json', 'x-motion-studio-bridge': TOKEN }, body: JSON.stringify(args ?? {}),
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) return fail(body.error ?? `Errore ${res.status}`);
+    const { status, body } = await post(`/api/bridge/${encodeURIComponent(name)}`, JSON.stringify(args ?? {}));
+    if (status < 200 || status > 299) return fail(body?.error ?? `Errore ${status}`);
     return { content: [{ type: 'text', text: JSON.stringify(body) }] };
   } catch (err) {
     return fail(`Motion Studio non raggiungibile: ${err.message}`);
   }
 }
 
+let inflight = 0;
+let closed = false;
+const maybeExit = () => { if (closed && inflight === 0) process.exit(0); };
 createInterface({ input: process.stdin }).on('line', async (line) => {
   let msg;
   try { msg = JSON.parse(line); } catch { return; }
+  if (!msg || typeof msg !== 'object') return;
   if (msg.id === undefined) return; // notification
+  inflight++;
+  try { await handle(msg); } finally { inflight--; maybeExit(); }
+}).on('close', () => { closed = true; maybeExit(); });
+
+async function handle(msg) {
   switch (msg.method) {
     case 'initialize':
       return send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: msg.params?.protocolVersion ?? '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'studio', version: '0.4.0' } } });
@@ -63,4 +92,4 @@ createInterface({ input: process.stdin }).on('line', async (line) => {
     default:
       return send({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: `Metodo non supportato: ${msg.method}` } });
   }
-});
+}

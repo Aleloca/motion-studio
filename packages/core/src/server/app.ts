@@ -92,7 +92,8 @@ async function consoleCodebases(list: LinkedCodebase[], forbidden: string[]): Pr
 const projectJobKey = (root: string, slug: string) => `project:${root}:${slug}`;
 
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
-  const app = Fastify({ logger: false });
+  // requestTimeout 0: /api/bridge/approve stays pending while the user decides (up to 10 min); Node's default would cut it at 5.
+  const app = Fastify({ logger: false, requestTimeout: 0, connectionTimeout: 0 });
   const hub = new EventHub();
   const approvals = deps.approvals ?? new ApprovalBroker({ broadcast: (m) => hub.broadcast(m) });
   const queue = new JobQueue({ concurrency: 2, onUpdate: (job) => hub.broadcast({ type: 'job', job }) });

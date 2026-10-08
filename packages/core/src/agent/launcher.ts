@@ -133,7 +133,7 @@ async function prepareRunFiles(configDir: string, jobId: string): Promise<{ conf
   return { config: `${base}.mcp.json`, token: `${base}.token` };
 }
 
-/** Removes what a crashed run left behind. The folder is never followed if it was replaced by a link or a file. */
+/** Removes what a crashed run left behind. Assumes a single running instance per configDir (a second instance booting would delete the first one's live files). The folder is never followed if it was replaced by a link or a file. */
 export async function sweepRunDir(configDir: string): Promise<void> {
   const dir = join(configDir, RUN_DIR);
   const st = await lstat(dir).catch(() => null);
