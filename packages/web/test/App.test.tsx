@@ -55,4 +55,20 @@ describe('App startup', () => {
     await userEvent.click(await screen.findByLabelText('Modalità esperto'));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Impossibile salvare le impostazioni: disco pieno'));
   });
+  it('does not show onboarding when only the optional sandbox check fails', async () => {
+    const checks: DoctorCheck[] = [...okChecks, { id: 'sandbox', label: 'Sandbox', ok: false, required: false, message: 'Non disponibile' }];
+    start(Promise.resolve({ path: '/w', settings, error: null }), Promise.resolve(checks));
+    await userEvent.click(await screen.findByLabelText('Modalità esperto'));
+    expect(screen.queryByText('Benvenuto in Motion Studio')).toBeNull();
+  });
+});
+
+describe('Onboarding sandbox check', () => {
+  it('shows the optional sandbox check with the Consigliato badge, message and fix', async () => {
+    const { Onboarding } = await import('../src/screens/Onboarding.tsx');
+    render(<Onboarding checks={[{ id: 'sandbox', label: 'Sandbox', ok: false, required: false, message: 'Non disponibile', fix: 'installa bubblewrap' }]} workspacePath={null} onRecheck={() => {}} onWorkspaceSet={() => {}} />);
+    expect(screen.getByText('Consigliato')).toBeTruthy();
+    expect(screen.getByText(/Non disponibile/)).toBeTruthy();
+    expect(screen.getByText('installa bubblewrap')).toBeTruthy();
+  });
 });
