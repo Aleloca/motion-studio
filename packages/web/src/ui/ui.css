@@ -225,6 +225,6 @@ button.ms-avatar:active { transform: scale(.95); }
 .ms-toast { pointer-events: auto; display: flex; align-items: center; gap: 10px; min-height: 38px; max-width: 100%; padding: 0 6px 0 14px; border-radius: 999px; background: var(--panel); color: var(--text); font-size: 13px; box-shadow: 0 0 0 1px var(--line), 0 12px 30px var(--shadowLg); }
 .ms-toast-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-toast-ok { display: inline-flex; color: var(--ok); flex: none; }
-.ms-toast-dot { color: var(--accent); }
+.ms-toast-dot { color: var(--muted); }
 .ms-toast-end { width: 8px; flex: none; }
 .ms-toast .ms-btn { border-radius: 999px; flex: none; }

@@ -1,4 +1,4 @@
-import { useContext, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { useContext, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { D, E, enter, exit, stagger } from '../motion/index.ts';
 import { LayerContext, focusInto, nextLayerId, pushLayer, trapTab } from './layers.ts';
@@ -18,7 +18,31 @@ export interface PopoverProps {
 
 const GAP = 6;
 const MARGIN = 8;
-const ORIGIN: Record<PopoverPlacement, string> = { 'bottom-start': 'top left', 'bottom-end': 'top right', 'top-start': 'bottom left' };
+/** Below this much room on the preferred side, a popover flips to the other side when that one is roomier. */
+const MIN_ROOM = 160;
+
+interface Placed { style: CSSProperties; origin: string }
+
+/**
+ * Fixed-position placement against the anchor rect: horizontally clamped to the viewport; vertically on the
+ * preferred side unless the content (natural height `h`) does not fit there and the other side has more room; the
+ * height is capped to the room on the chosen side.
+ */
+export function placePopover(r: DOMRect, placement: PopoverPlacement, w: number, h: number, vw: number, vh: number): Placed {
+  let left = placement === 'bottom-end' ? r.right - w : r.left;
+  left = Math.max(MARGIN, Math.min(left, vw - w - MARGIN));
+  const below = vh - r.bottom - GAP - MARGIN;
+  const above = r.top - GAP - MARGIN;
+  const preferBelow = placement !== 'top-start';
+  const want = Math.max(h, MIN_ROOM);
+  const room = preferBelow ? below : above;
+  const other = preferBelow ? above : below;
+  const useBelow = room < want && other > room ? !preferBelow : preferBelow;
+  const x = placement === 'bottom-end' ? 'right' : 'left';
+  return useBelow
+    ? { style: { left, top: r.bottom + GAP, maxHeight: Math.max(0, below) }, origin: `top ${x}` }
+    : { style: { left, bottom: vh - r.top + GAP, maxHeight: Math.max(0, above) }, origin: `bottom ${x}` };
+}
 
 /**
  * Anchored popover (spec §4.3, T5), portalled into document.body so overflow:hidden parents cannot clip it. Closes on
@@ -31,7 +55,7 @@ export function Popover({ open, onClose, anchor, placement = 'bottom-start', wid
   const parent = useContext(LayerContext);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
-  const [pos, setPos] = useState<CSSProperties>({});
+  const [pos, setPos] = useState<Placed>({ style: {}, origin: placement === 'top-start' ? 'bottom left' : 'top left' });
 
   const shown = usePresence(open, {
     enter: () => {
@@ -61,6 +85,7 @@ export function Popover({ open, onClose, anchor, placement = 'bottom-start', wid
       outside: true,
       contains: (n) => !!(ref.current?.contains(n) || anchor.current?.contains(n)),
       close: () => onCloseRef.current(),
+      anchor: () => anchor.current,
     });
     focusInto(ref.current);
     return pop;
@@ -72,16 +97,8 @@ export function Popover({ open, onClose, anchor, placement = 'bottom-start', wid
     const place = () => {
       const a = anchor.current;
       if (!a) return;
-      const r = a.getBoundingClientRect();
-      const w = width ?? ref.current?.offsetWidth ?? 0;
-      const vw = window.innerWidth;
-      let left = placement === 'bottom-end' ? r.right - w : r.left;
-      left = Math.max(MARGIN, Math.min(left, vw - w - MARGIN));
-      setPos(
-        placement === 'top-start'
-          ? { left, bottom: window.innerHeight - r.top + GAP }
-          : { left, top: r.bottom + GAP },
-      );
+      const el = ref.current;
+      setPos(placePopover(a.getBoundingClientRect(), placement, width ?? el?.offsetWidth ?? 0, el?.scrollHeight ?? 0, window.innerWidth, window.innerHeight));
     };
     place();
     window.addEventListener('resize', place);
@@ -94,14 +111,18 @@ export function Popover({ open, onClose, anchor, placement = 'bottom-start', wid
 
   if (!shown) return null;
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => { trapTab(e, ref.current); };
+  // Portalled events still bubble through the React tree: keep clicks from reaching the popover's React ancestors
+  // (a Select inside a clickable card row).
+  const onClick = (e: MouseEvent<HTMLDivElement>) => { e.stopPropagation(); };
   return createPortal(
     <LayerContext.Provider value={id}>
       <div
         ref={ref}
         className="ms-pop"
         tabIndex={-1}
-        style={{ ...pos, width, transformOrigin: ORIGIN[placement] }}
+        style={{ ...pos.style, width, transformOrigin: pos.origin }}
         onKeyDown={onKeyDown}
+        onClick={onClick}
         inert={!open || undefined}
       >
         {children}

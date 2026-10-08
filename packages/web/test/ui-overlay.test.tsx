@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { useRef, useState, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -58,14 +60,14 @@ function PopoverDemo({ under }: { under?: () => void }) {
   );
 }
 
-function ModalDemo({ under }: { under?: () => void }) {
+function ModalDemo() {
   const [open, setOpen] = useState(false);
   const [pop, setPop] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
   return (
     <div>
       <button onClick={() => setOpen(true)}>Open modal</button>
-      <button onClick={under}>Beneath</button>
+      <button>Beneath</button>
       <Modal open={open} onClose={() => setOpen(false)} label="Export">
         <p>Dialog body</p>
         <button ref={anchor} onClick={() => setPop((p) => !p)}>Formats</button>
@@ -109,6 +111,53 @@ describe('Popover', () => {
     expect(screen.queryByRole('button', { name: 'Second item' })).toBeNull();
   });
 
+  it('clicks inside the popover do not bubble to React ancestors of the portal', () => {
+    const parent = vi.fn();
+    render(<div onClick={parent}><PopoverDemo /></div>);
+    fireEvent.click(screen.getByRole('button', { name: 'Menu' }));
+    parent.mockClear();
+    pointer(screen.getByRole('button', { name: 'First item' }));
+    expect(parent).not.toHaveBeenCalled();
+  });
+
+  it('flips above the anchor and caps its height when the space below is short', () => {
+    const h = window.innerHeight;
+    window.innerHeight = 600;
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return (this.textContent === 'Menu' ? { left: 20, right: 120, top: 540, bottom: 570, width: 100, height: 30 } : { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 }) as DOMRect;
+    });
+    try {
+      render(<PopoverDemo />);
+      fireEvent.click(screen.getByRole('button', { name: 'Menu' }));
+      const pop = document.querySelector<HTMLElement>('.ms-pop')!;
+      expect(pop.style.top).toBe('');
+      expect(pop.style.bottom).toBe(`${600 - 540 + 6}px`);
+      expect(pop.style.maxHeight).toBe(`${540 - 6 - 8}px`);
+      expect(pop.style.transformOrigin).toBe('bottom left');
+    } finally {
+      rect.mockRestore();
+      window.innerHeight = h;
+    }
+  });
+
+  it('stays below with a capped height when there is room', () => {
+    const h = window.innerHeight;
+    window.innerHeight = 600;
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return (this.textContent === 'Menu' ? { left: 20, right: 120, top: 40, bottom: 70, width: 100, height: 30 } : { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 }) as DOMRect;
+    });
+    try {
+      render(<PopoverDemo />);
+      fireEvent.click(screen.getByRole('button', { name: 'Menu' }));
+      const pop = document.querySelector<HTMLElement>('.ms-pop')!;
+      expect(pop.style.top).toBe('76px');
+      expect(pop.style.maxHeight).toBe(`${600 - 76 - 8}px`);
+    } finally {
+      rect.mockRestore();
+      window.innerHeight = h;
+    }
+  });
+
   it('keeps Tab inside (light focus trap)', () => {
     render(<PopoverDemo />);
     fireEvent.click(screen.getByRole('button', { name: 'Menu' }));
@@ -149,17 +198,100 @@ describe('Modal', () => {
     expect(document.querySelector('.ms-scrim')).not.toBeNull();
   });
 
-  it('closes on a scrim click without passing it through, and returns focus to the opener', async () => {
-    const under = vi.fn();
-    render(<ModalDemo under={under} />);
+  it('closes on a scrim click, and returns focus to the opener', async () => {
+    render(<ModalDemo />);
     const opener = screen.getByRole('button', { name: 'Open modal' });
     opener.focus();
     fireEvent.click(opener);
     expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true);
     await act(async () => { pointer(document.querySelector('.ms-scrim')!); });
     expect(screen.queryByRole('dialog')).toBeNull();
-    expect(under).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(opener);
+  });
+
+  it('clicks on the scrim or inside the dialog do not bubble to React ancestors of the portal', async () => {
+    const parent = vi.fn();
+    render(<div onClick={parent}><ModalDemo /></div>);
+    fireEvent.click(screen.getByRole('button', { name: 'Open modal' }));
+    parent.mockClear();
+    pointer(screen.getByText('Dialog body'));
+    await act(async () => { pointer(document.querySelector('.ms-scrim')!); });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(parent).not.toHaveBeenCalled();
+  });
+
+  it('pulls focus back into the dialog: Tab from body, and focus moving to the page behind', () => {
+    render(<ModalDemo />);
+    fireEvent.click(screen.getByRole('button', { name: 'Open modal' }));
+    const dialog = screen.getByRole('dialog');
+    act(() => { (document.activeElement as HTMLElement).blur(); });
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.keyDown(document.body, { key: 'Tab' });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    act(() => { (document.activeElement as HTMLElement).blur(); });
+    fireEvent.keyDown(document.body, { key: 'Tab', shiftKey: true });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    act(() => { screen.getByRole('button', { name: 'Beneath', hidden: true }).focus(); });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
+  it('Tab skips focusables inside hidden or inert containers', () => {
+    render(
+      <Modal open onClose={() => {}} label="H">
+        <button>One</button>
+        <button>Two</button>
+        <div hidden><button>Hidden</button></div>
+        <div inert><button>Inert</button></div>
+      </Modal>,
+    );
+    const two = screen.getByRole('button', { name: 'Two' });
+    act(() => { two.focus(); });
+    fireEvent.keyDown(two, { key: 'Tab' });
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'One' }));
+  });
+
+  it('returns focus to the menu anchor when the opener (a menu item) has gone', async () => {
+    function MenuToModal() {
+      const [menu, setMenu] = useState(false);
+      const [modal, setModal] = useState(false);
+      const a = useRef<HTMLButtonElement>(null);
+      return (
+        <>
+          <button ref={a} onClick={() => setMenu((m) => !m)}>More</button>
+          <Popover open={menu} onClose={() => setMenu(false)} anchor={a}>
+            <button onClick={() => { setMenu(false); setModal(true); }}>Export…</button>
+          </Popover>
+          <Modal open={modal} onClose={() => setModal(false)} label="Export"><button>Done</button></Modal>
+        </>
+      );
+    }
+    render(<MenuToModal />);
+    const more = screen.getByRole('button', { name: 'More' });
+    act(() => { more.focus(); });
+    fireEvent.click(more);
+    const item = screen.getByRole('button', { name: 'Export…' });
+    expect(document.activeElement).toBe(item);
+    await act(async () => { fireEvent.click(item); });
+    expect(screen.queryByRole('button', { name: 'Export…' })).toBeNull();
+    await act(async () => { esc(); });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(more);
+  });
+
+  it('restores focus when unmounted while open', () => {
+    function Host() {
+      const [on, setOn] = useState(false);
+      return <><button onClick={() => setOn(true)}>Go</button>{on ? <Modal open onClose={() => {}} label="U"><button onClick={() => setOn(false)}>Leave</button></Modal> : null}</>;
+    }
+    render(<Host />);
+    const go = screen.getByRole('button', { name: 'Go' });
+    act(() => { go.focus(); });
+    fireEvent.click(go);
+    const leave = screen.getByRole('button', { name: 'Leave' });
+    expect(document.activeElement).toBe(leave);
+    act(() => { fireEvent.click(leave); });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(go);
   });
 
   it('does not close on a click inside the dialog', () => {
@@ -321,42 +453,103 @@ describe('Select', () => {
 });
 
 describe('Toasts', () => {
-  it('shows a status toast with an action that runs and dismisses it', async () => {
+  const region = () => screen.getByRole('status');
+  const visible = () => [...document.querySelectorAll('.ms-toast:not([aria-hidden])')].map((t) => t.querySelector('.ms-toast-text')!.textContent);
+
+  it('has one persistent polite status region, empty with no toasts', () => {
+    en(<Toasts />);
+    expect(region().getAttribute('aria-live')).toBe('polite');
+    expect(region().textContent).toBe('');
+    act(() => { toast.show('Hi'); });
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+    expect(region().textContent).toContain('Hi');
+  });
+
+  it('shows a toast inside the status region with an action that runs and dismisses it', async () => {
     en(<Toasts />);
     const run = vi.fn();
     act(() => { toast.show('Approval needed', { action: { label: 'Review', run } }); });
-    const status = screen.getByRole('status');
-    expect(status.textContent).toContain('Approval needed');
+    expect(region().textContent).toContain('Approval needed');
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Review' })); });
     expect(run).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole('status')).toBeNull();
+    expect(visible()).toEqual([]);
+  });
+
+  it('still dismisses when the action throws', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    en(<Toasts />);
+    act(() => { toast.show('Boom', { action: { label: 'Undo', run: () => { throw new Error('nope'); } } }); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Undo' })); });
+    expect(visible()).toEqual([]);
+    expect(err).toHaveBeenCalled();
+    err.mockRestore();
   });
 
   it('auto-dismisses after ms (fake timers) and supports manual dismiss', async () => {
     vi.useFakeTimers();
     en(<Toasts />);
     act(() => { toast.show('Saved', { tone: 'ok', ms: 1000 }); });
-    expect(screen.getByRole('status').textContent).toContain('Saved');
+    expect(visible()).toEqual(['Saved']);
     await act(async () => { vi.advanceTimersByTime(999); });
-    expect(screen.queryByRole('status')).not.toBeNull();
+    expect(visible()).toEqual(['Saved']);
     await act(async () => { vi.advanceTimersByTime(1); });
-    expect(screen.queryByRole('status')).toBeNull();
+    expect(visible()).toEqual([]);
     let id = 0;
-    act(() => { id = toast.show('Sticky-ish', { ms: 60_000 }); });
+    act(() => { id = toast.show('Later', { ms: 60_000 }); });
     await act(async () => { toast.dismiss(id); });
-    expect(screen.queryByRole('status')).toBeNull();
+    expect(visible()).toEqual([]);
+  });
+
+  it('pauses while hovered or focused and resumes with the remaining time', async () => {
+    vi.useFakeTimers();
+    en(<Toasts />);
+    act(() => { toast.show('Hover me', { ms: 1000, action: { label: 'Open', run() {} } }); });
+    const el = document.querySelector('.ms-toast')!;
+    await act(async () => { vi.advanceTimersByTime(400); });
+    fireEvent.pointerEnter(el);
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    expect(visible()).toEqual(['Hover me']);
+    fireEvent.pointerLeave(el);
+    await act(async () => { vi.advanceTimersByTime(599); });
+    expect(visible()).toEqual(['Hover me']);
+    await act(async () => { vi.advanceTimersByTime(1); });
+    expect(visible()).toEqual([]);
+
+    act(() => { toast.show('Focus me', { ms: 1000, action: { label: 'Go', run() {} } }); });
+    const btn = screen.getByRole('button', { name: 'Go' });
+    act(() => { btn.focus(); });
+    await act(async () => { vi.advanceTimersByTime(5000); });
+    expect(visible()).toEqual(['Focus me']);
+    act(() => { btn.blur(); });
+    await act(async () => { vi.advanceTimersByTime(1000); });
+    expect(visible()).toEqual([]);
+  });
+
+  it('keeps a sticky toast until dismissed', async () => {
+    vi.useFakeTimers();
+    en(<Toasts />);
+    let id = 0;
+    act(() => { id = toast.show('Stays', { sticky: true, action: { label: 'Review', run() {} } }); });
+    await act(async () => { vi.advanceTimersByTime(600_000); });
+    expect(visible()).toEqual(['Stays']);
+    await act(async () => { toast.dismiss(id); });
+    expect(visible()).toEqual([]);
   });
 
   it('caps the visible stack at 3, dropping the oldest', async () => {
     en(<Toasts />);
     await act(async () => { for (let i = 1; i <= 6; i++) toast.show(`T${i}`); });
-    expect(screen.getAllByRole('status').map((s) => s.textContent)).toEqual(['T4', 'T5', 'T6']);
+    expect(visible()).toEqual(['T4', 'T5', 'T6']);
   });
 
-  it('renders into a body portal', () => {
+  it('renders into a body portal; the neutral tone carries no accent', () => {
     const { container } = en(<Toasts />);
     act(() => { toast.show('Hi'); });
-    expect(container.contains(screen.getByRole('status'))).toBe(false);
+    expect(container.contains(region())).toBe(false);
+    const css = readFileSync(resolve(import.meta.dirname, '../src/ui/ui.css'), 'utf8');
+    const rules = [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)].filter((m) => m[1]!.includes('ms-toast'));
+    expect(rules.length).toBeGreaterThan(0);
+    for (const r of rules) expect(r[2], r[1]).not.toMatch(/var\(--accent/);
   });
 });
 
