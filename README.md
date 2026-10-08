@@ -27,7 +27,7 @@ Opzioni del launcher (dopo il nome dello script, es. `pnpm motion-studio --port 
 
 L'indirizzo stampato all'avvio contiene un codice di accesso (`#t=…`): apri Motion Studio da quel link. Il browser lo ricorda; se l'interfaccia chiede di riaprirla dal link del terminale, usa `--print-url`. L'app desktop apre da sola la propria finestra.
 
-Per ogni cartella di configurazione gira un solo Motion Studio: se è già avviato (dal terminale o come app desktop), `motion-studio` stampa `Motion Studio è già avviato: <indirizzo>` e termina, e l'app desktop apre quell'indirizzo invece di avviarne un altro.
+Per ogni cartella di configurazione gira un solo Motion Studio: se è già avviato (dal terminale o come app desktop), `motion-studio` stampa `Motion Studio è già avviato: <indirizzo>`, lo apre nel browser (salvo `--no-open`) e termina, e l'app desktop apre quell'indirizzo invece di avviarne un altro (se quel Motion Studio si chiude, l'app propone di riavviarsi).
 
 ## Requisiti
 - [Claude Code](https://docs.claude.com/claude-code) installato e autenticato (`claude auth login`)
@@ -110,7 +110,7 @@ Per contribuire vedi [CONTRIBUTING.md](CONTRIBUTING.md).
 Per i maintainer. Allinea la versione in `apps/desktop/package.json` e `apps/cli/package.json`, poi crea e pubblica il tag `vX.Y.Z` corrispondente: ogni job del workflow `.github/workflows/release.yml` si ferma subito se il tag non coincide con entrambe le versioni. Il workflow costruisce l'app desktop su macOS (`arm64` e `x64`), Windows e Linux e crea una **bozza** di release su GitHub con gli installer (da pubblicare a mano); in parallelo, se `NPM_TOKEN` è presente, pubblica `motion-studio-app` su npm (un errore in una build desktop non lo blocca). La CI (`ci.yml`) esegue i test a ogni push su `main` e sulle pull request.
 
 Segreti del repository usati dal workflow (tutti facoltativi: senza, la build è non firmata o l'npm viene saltato):
-- macOS (firma e notarizzazione): `MAC_CERT_P12_BASE64`, `MAC_CERT_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`. Senza `MAC_CERT_P12_BASE64` la firma è disattivata; la notarizzazione parte solo se ci sono tutti e tre i segreti `APPLE_*`, altrimenti è disattivata esplicitamente.
+- macOS (firma e notarizzazione): `MAC_CERT_P12_BASE64`, `MAC_CERT_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`. Senza `MAC_CERT_P12_BASE64` la firma è disattivata; la notarizzazione parte solo se ci sono il certificato (`MAC_CERT_P12_BASE64`) e tutti e tre i segreti `APPLE_*`, altrimenti è disattivata esplicitamente.
 - Windows: `WIN_CERT_PFX_BASE64`, `WIN_CERT_PASSWORD`.
 - npm: `NPM_TOKEN`.
 - `GITHUB_TOKEN` è fornito da GitHub Actions.

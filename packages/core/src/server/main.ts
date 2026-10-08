@@ -14,6 +14,7 @@ import { createFfmpegTools } from '../media/media-tools.ts';
 import { KeyringVault, type SecretsVault } from '../secrets/vault.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import { buildServer } from './app.ts';
+import { acquireBootLock, type BootLock } from './boot-lock.ts';
 import { findRunningInstance, type RunningInstance } from './running-instance.ts';
 import { loadOrCreateUiToken, removeServerInfo, uiUrl, writeServerInfo } from './ui-token.ts';
 
@@ -48,7 +49,7 @@ export class AlreadyRunningError extends Error {
   }
 }
 
-export async function startServer(opts: {
+export interface StartServerOptions {
   /** 'auto': 4318, or a free port when busy. Default 4317. */
   port?: number | 'auto'; host?: string; configDir?: string; webDir?: string; claudeCommand?: string[]; mcpServerPath?: string;
   /** Extra env for the MCP server process (Electron passes { ELECTRON_RUN_AS_NODE: '1' }). */
@@ -59,12 +60,48 @@ export async function startServer(opts: {
   shellPath?: ShellPathOrigin;
   /** How long a live instance recorded in run/server.json gets to answer /api/health. Default 3 s. */
   healthTimeoutMs?: number;
-} = {}) {
-  const claudeCommand = opts.claudeCommand ?? claudeCommandFromEnv();
+  /** How long to wait for another boot holding run/boot.lock. Default 5 s. */
+  bootLockWaitMs?: number;
+}
+
+export async function startServer(opts: StartServerOptions = {}) {
   const configDir = opts.configDir ?? defaultConfigDir();
-  // One running instance per config folder: two cores would share workspace, jobs and run/ files.
-  const running = await findRunningInstance(configDir, { healthTimeoutMs: opts.healthTimeoutMs });
-  if (running) throw new AlreadyRunningError(running);
+  // One running instance per config folder: two cores would share workspace, jobs and run/ files. The boot lock makes
+  // "check, then start and write server.json" atomic between two launches.
+  const lock = await lockAndCheck(configDir, opts);
+  try {
+    return await startLocked(configDir, opts);
+  } finally {
+    await lock.release();
+  }
+}
+
+const BOOT_BUSY = 'Un altro Motion Studio si sta avviando con la stessa configurazione: riprova tra poco';
+
+/** Takes the boot lock and confirms no other instance runs; throws AlreadyRunningError when one does. */
+async function lockAndCheck(configDir: string, opts: StartServerOptions): Promise<BootLock> {
+  const check = async () => {
+    const running = await findRunningInstance(configDir, { healthTimeoutMs: opts.healthTimeoutMs });
+    if (running) throw new AlreadyRunningError(running);
+  };
+  let lock = await acquireBootLock(configDir, { waitMs: opts.bootLockWaitMs });
+  if (lock === 'waited') {
+    // The other boot has likely started by now.
+    await check();
+    lock = await acquireBootLock(configDir, { waitMs: 0 });
+    if (lock === 'waited') throw new Error(BOOT_BUSY);
+  }
+  try {
+    await check();
+  } catch (err) {
+    await lock.release();
+    throw err;
+  }
+  return lock;
+}
+
+async function startLocked(configDir: string, opts: StartServerOptions) {
+  const claudeCommand = opts.claudeCommand ?? claudeCommandFromEnv();
   // Leftovers (config and token files) of a run that was killed with the app; no other instance is alive here.
   await sweepRunDir(configDir).catch(() => {});
   const bridge = new AgentBridge();

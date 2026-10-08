@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { MemoryVault } from '../src/secrets/vault.ts';
+import { sweepRunDir } from '../src/agent/launcher.ts';
 import { AlreadyRunningError, startServer } from '../src/server/main.ts';
 import { loadOrCreateUiToken, readServerInfo } from '../src/server/ui-token.ts';
 
@@ -105,15 +106,33 @@ describe('startServer single instance per config dir', () => {
     return { configDir, token };
   };
   const deadPid = () => spawnSync(process.execPath, ['-e', '']).pid!;
+  const healthServer = (pid: number) => createHttpServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(req.url === '/api/health' ? JSON.stringify({ ok: true, pid }) : '{}');
+  });
+
+  it('starts when the recorded pid is alive but its port answers for another process (pid reused)', async () => {
+    const other = healthServer(process.ppid + 100_000);
+    const port = await listen(other);
+    const { configDir } = await configWith({ port, pid: process.ppid });
+    const s = await startServer({ port: 0, configDir, claudeCommand: ['true'], vault: new MemoryVault() });
+    try {
+      expect((await readServerInfo(configDir))?.pid).toBe(process.pid);
+    } finally {
+      await s.close();
+      other.close();
+      await rm(configDir, { recursive: true, force: true });
+    }
+  });
 
   it('does not start when another live instance answers: returns its address and leaves run/ alone', async () => {
-    const other = createHttpServer((req, res) => { res.setHeader('content-type', 'application/json'); res.end(req.url === '/api/health' ? '{"ok":true}' : '{}'); });
+    const other = healthServer(process.ppid);
     const port = await listen(other);
     const { configDir, token } = await configWith({ port, pid: process.ppid });
     try {
       const err = await startServer({ port: 0, configDir, claudeCommand: ['true'], vault: new MemoryVault() }).then(async (s) => { await s.close(); return null; }, (e) => e);
       expect(err).toBeInstanceOf(AlreadyRunningError);
-      expect(err.alreadyRunning).toEqual({ port, appUrl: `http://127.0.0.1:${port}/#t=${token}` });
+      expect(err.alreadyRunning).toEqual({ port, pid: process.ppid, appUrl: `http://127.0.0.1:${port}/#t=${token}` });
       expect(existsSync(join(configDir, 'run', 'old.mcp.json'))).toBe(true);
       expect((await readServerInfo(configDir))?.pid).toBe(process.ppid);
     } finally {
@@ -158,5 +177,101 @@ describe('startServer single instance per config dir', () => {
     }
     expect((await readServerInfo(configDir))?.pid).toBe(process.ppid);
     await rm(configDir, { recursive: true, force: true });
+  });
+});
+
+describe('startServer boot lock', () => {
+  const lockOf = (configDir: string) => join(configDir, 'run', 'boot.lock');
+  const withLock = async (pid: number) => {
+    const configDir = await mkdtemp(join(tmpdir(), 'ms-ss-'));
+    await mkdir(join(configDir, 'run'), { mode: 0o700 });
+    await writeFile(lockOf(configDir), String(pid), { mode: 0o600 });
+    return configDir;
+  };
+  const deadPid = () => spawnSync(process.execPath, ['-e', '']).pid!;
+
+  it('holds the lock while booting and releases it once started', async () => {
+    const configDir = await mkdtemp(join(tmpdir(), 'ms-ss-'));
+    const s = await startServer({ port: 0, configDir, claudeCommand: ['true'], vault: new MemoryVault() });
+    try {
+      expect(existsSync(lockOf(configDir))).toBe(false);
+    } finally {
+      await s.close();
+      await rm(configDir, { recursive: true, force: true });
+    }
+  });
+  it('releases the lock when the boot fails', async () => {
+    const blocker = createServer();
+    const port = await new Promise<number>((r) => blocker.listen(0, '127.0.0.1', () => r((blocker.address() as AddressInfo).port)));
+    const configDir = await mkdtemp(join(tmpdir(), 'ms-ss-'));
+    try {
+      const err = await startServer({ port, configDir, claudeCommand: ['true'], vault: new MemoryVault() }).catch((e) => e);
+      expect(err.code).toBe('EADDRINUSE');
+      expect(existsSync(lockOf(configDir))).toBe(false);
+    } finally {
+      blocker.close();
+      await rm(configDir, { recursive: true, force: true });
+    }
+  });
+  it('removes a stale lock (dead pid) and starts', async () => {
+    const configDir = await withLock(deadPid());
+    const s = await startServer({ port: 0, configDir, claudeCommand: ['true'], vault: new MemoryVault(), bootLockWaitMs: 300 });
+    try {
+      expect((await readServerInfo(configDir))?.pid).toBe(process.pid);
+      expect(existsSync(lockOf(configDir))).toBe(false);
+    } finally {
+      await s.close();
+      await rm(configDir, { recursive: true, force: true });
+    }
+  });
+  it('waits for a live lock to go away, then starts', async () => {
+    const configDir = await withLock(process.ppid);
+    setTimeout(() => void rm(lockOf(configDir), { force: true }), 200);
+    const s = await startServer({ port: 0, configDir, claudeCommand: ['true'], vault: new MemoryVault(), bootLockWaitMs: 3000 });
+    try {
+      expect((await readServerInfo(configDir))?.pid).toBe(process.pid);
+    } finally {
+      await s.close();
+      await rm(configDir, { recursive: true, force: true });
+    }
+  });
+  it('after waiting, reports the instance the lock holder started', async () => {
+    const configDir = await withLock(process.ppid);
+    const other = createHttpServer((_req, res) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ ok: true, pid: process.ppid })); });
+    const port = await new Promise<number>((r) => other.listen(0, '127.0.0.1', () => r((other.address() as AddressInfo).port)));
+    // The other boot finishes while we wait: it writes server.json and releases its lock.
+    setTimeout(() => {
+      void writeFile(join(configDir, 'run', 'server.json'), JSON.stringify({ port, pid: process.ppid, startedAt: new Date().toISOString() }), { mode: 0o600 })
+        .then(() => rm(lockOf(configDir), { force: true }));
+    }, 200);
+    try {
+      const err = await startServer({ port: 0, configDir, claudeCommand: ['true'], vault: new MemoryVault(), bootLockWaitMs: 3000 }).then(async (s) => { await s.close(); return null; }, (e) => e);
+      expect(err).toBeInstanceOf(AlreadyRunningError);
+      expect(err.alreadyRunning.port).toBe(port);
+    } finally {
+      other.close();
+      await rm(configDir, { recursive: true, force: true });
+    }
+  });
+  it('gives up with a clear error when a live lock is never released, and leaves it alone', async () => {
+    const configDir = await withLock(process.ppid);
+    try {
+      const t0 = Date.now();
+      const err = await startServer({ port: 0, configDir, claudeCommand: ['true'], vault: new MemoryVault(), bootLockWaitMs: 300 }).then(async (s) => { await s.close(); return null; }, (e) => e);
+      expect(err?.message).toBe('Un altro Motion Studio si sta avviando con la stessa configurazione: riprova tra poco');
+      expect(Date.now() - t0).toBeLessThan(2500);
+      expect(await readFile(lockOf(configDir), 'utf8')).toBe(String(process.ppid));
+    } finally {
+      await rm(configDir, { recursive: true, force: true });
+    }
+  });
+  it('is never removed by the run/ sweep', async () => {
+    const configDir = await withLock(process.ppid);
+    try {
+      await sweepRunDir(configDir);
+      expect(existsSync(lockOf(configDir))).toBe(true);
+    } finally {
+      await rm(configDir, { recursive: true, force: true });
+    }
   });
 });

@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AlreadyRunningError, resolveLoginShellPath, startServer } from '@motion-studio/core';
-import { absolutePathArg, focusOnReady, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, userDataDir } from './helpers.ts';
+import { AlreadyRunningError, answersHealth, resolveLoginShellPath, startServer } from '@motion-studio/core';
+import { ATTACHED_GONE, absolutePathArg, attachedGoneAction, focusOnReady, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, userDataDir } from './helpers.ts';
 import { setupUpdates } from './updater.ts';
 import { externalUrlAllowed, isAppUrl, windowOptions } from './window.ts';
 
@@ -36,15 +36,31 @@ async function boot(configDir?: string) {
 }
 
 /** Our own core, or the address of the Motion Studio (desktop or CLI) already serving the same config folder. */
-async function bootOrAttach(): Promise<{ url: string; appUrl: string; close: () => Promise<void> }> {
+async function bootOrAttach(): Promise<{ url: string; appUrl: string; close: () => Promise<void>; attached?: { port: number; pid: number } }> {
   try {
     return await boot();
   } catch (err) {
     if (!(err instanceof AlreadyRunningError)) throw err;
-    const { port, appUrl } = err.alreadyRunning;
+    const { port, pid, appUrl } = err.alreadyRunning;
     console.log(`Motion Studio è già avviato (porta ${port})`);
-    return { url: new URL(appUrl).origin, appUrl, close: async () => {} };
+    return { url: new URL(appUrl).origin, appUrl, close: async () => {}, attached: { port, pid } };
   }
+}
+
+/** Attached window: when the other instance goes away, offer to restart (with an own core) or close. */
+function watchAttachedInstance(win: BrowserWindow, target: { port: number; pid: number }) {
+  const watch = watchAttached({
+    check: () => answersHealth(target.port, 3000, target.pid),
+    onGone: () => {
+      void dialog.showMessageBox(win, { type: 'warning', message: ATTACHED_GONE.message, buttons: ATTACHED_GONE.buttons, defaultId: 0, cancelId: 1 })
+        .then(({ response }) => {
+          if (attachedGoneAction(response) === 'relaunch') { app.relaunch(); app.exit(0); } else app.quit();
+        });
+    },
+  });
+  // -3 (ERR_ABORTED) is a navigation replaced by another one, not a dead server.
+  win.webContents.on('did-fail-load', (_e, code, _desc, _url, isMainFrame) => { if (isMainFrame && code !== -3) watch.failed(); });
+  win.on('closed', () => watch.stop());
 }
 
 /** The smoke output never contains the token. */
@@ -137,7 +153,9 @@ async function run() {
   win.webContents.on('will-navigate', (e, url) => guard(e, url));
   win.webContents.on('will-redirect', (e, url) => guard(e, url));
   win.webContents.on('will-frame-navigate', (e) => guard(e, e.url));
-  await win.loadURL(server.appUrl);
+  if (server.attached) watchAttachedInstance(win, server.attached);
+  // Attached: a failed load is handled by the restart prompt (did-fail-load), not by the fatal error box.
+  await win.loadURL(server.appUrl).catch((err: unknown) => { if (!server.attached) throw err; });
 }
 
 if (smokeArg) {

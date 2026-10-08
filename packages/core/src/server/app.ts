@@ -215,7 +215,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   await app.register(fastifyWebsocket);
   await app.register(fastifyMultipart, { limits: UPLOAD_LIMITS });
 
-  app.get('/api/health', async () => ({ ok: true }));
+  // pid: lets a second launch check that the recorded server.json pid is really this server (pids get reused).
+  app.get('/api/health', async () => ({ ok: true, pid: process.pid }));
   app.get('/api/doctor', async () => deps.doctor({ sandbox: effectiveSandbox }));
 
   app.get('/api/workspace', async (): Promise<WorkspaceInfo> => {

@@ -53,3 +53,25 @@ export function focusOnReady() {
     },
   };
 }
+
+/** Prompt shown when the instance the window is attached to (a CLI or another core) goes away. */
+export const ATTACHED_GONE = { message: 'Il Motion Studio a cui l\'app era collegata si è chiuso.', buttons: ['Riavvia', 'Chiudi'] };
+/** Button index of the ATTACHED_GONE prompt → what to do (Escape / anything else closes). */
+export const attachedGoneAction = (response: number): 'relaunch' | 'quit' => (response === 0 ? 'relaunch' : 'quit');
+
+/**
+ * Watches the instance an attached window depends on: `check` every `intervalMs` (one at a time), `failed()` for a failed
+ * page load. `onGone` fires once, on the first failure; then the watch stops.
+ */
+export function watchAttached(opts: { check: () => Promise<boolean>; onGone: () => void; intervalMs?: number }) {
+  let stopped = false;
+  let pending = false;
+  const stop = () => { stopped = true; clearInterval(timer); };
+  const gone = () => { if (stopped) return; stop(); opts.onGone(); };
+  const timer = setInterval(() => {
+    if (pending || stopped) return;
+    pending = true;
+    opts.check().catch(() => false).then((ok) => { pending = false; if (!ok) gone(); });
+  }, opts.intervalMs ?? 5000);
+  return { stop, failed: gone };
+}

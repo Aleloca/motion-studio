@@ -51,7 +51,12 @@ async function main() {
     }
   } catch (e) {
     // Another instance already serves this config folder: show its address instead of starting a second core.
-    if (e instanceof AlreadyRunningError) { console.log(alreadyRunningMessage(e.alreadyRunning.appUrl)); process.exit(0); }
+    if (e instanceof AlreadyRunningError) {
+      const { appUrl } = e.alreadyRunning;
+      console.log(alreadyRunningMessage(appUrl));
+      if (args.open) await open(appUrl).catch(() => console.log(`Apri manualmente ${appUrl}`));
+      process.exit(0);
+    }
     const err = e as NodeJS.ErrnoException;
     console.error(err.code === 'EADDRINUSE' ? `La porta ${args.port} è già in uso: riprova con --port <altra>` : err.message);
     process.exit(1);

@@ -34,3 +34,5 @@ Altre guide: [contratto di output](docs/output-contract.md), [provider](docs/pro
 
 ## Rilasci
 Vedi la sezione *Rilascio* del README (tag `vX.Y.Z`, segreti del workflow).
+
+Per creare il pacchetto npm serve Node ≥ 22.18 (prepack in TypeScript).

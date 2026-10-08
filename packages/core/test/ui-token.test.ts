@@ -86,7 +86,10 @@ describe('UI token on the API', () => {
     expect((await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' }, headers: H() })).statusCode).toBe(201);
   });
   it('needs no token for health, the bridge and the served files', async () => {
-    expect((await app.inject('/api/health')).statusCode).toBe(200);
+    const health = await app.inject('/api/health');
+    expect(health.statusCode).toBe(200);
+    // The pid lets a second launch tell this server from an unrelated process that reused the recorded pid.
+    expect(health.json()).toEqual({ ok: true, pid: process.pid });
     expect((await app.inject({ method: 'POST', url: '/api/bridge/report_progress', payload: {} })).json()).toEqual({ error: 'Accesso al bridge non valido' });
     await app.inject({ method: 'PUT', url: '/api/workspace', payload: { path: join(base, 'ws') }, headers: H() });
     await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' }, headers: H() });

@@ -52,11 +52,13 @@ jobs:
       - name: Decide macOS notarization
         shell: bash
         env:
+          MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          if [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+          # Notarization needs a signed app: only with the certificate and all three Apple secrets.
+          if [ -n "$MAC_CERT_P12_BASE64" ] && [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
             echo "MAC_NOTARIZE=true" >> "$GITHUB_ENV"
           else
             echo "MAC_NOTARIZE=false" >> "$GITHUB_ENV"

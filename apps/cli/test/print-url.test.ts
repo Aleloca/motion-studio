@@ -24,7 +24,7 @@ async function configWith(server: object | null) {
 describe('motion-studio --print-url', () => {
   it('prints the running server address with the UI token, without starting anything', async () => {
     const server = createServer((req, res) => {
-      if (req.url === '/api/health') { res.setHeader('content-type', 'application/json'); res.end('{"ok":true}'); } else { res.statusCode = 404; res.end(); }
+      if (req.url === '/api/health') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ ok: true, pid: process.pid })); } else { res.statusCode = 404; res.end(); }
     });
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
     const port = (server.address() as AddressInfo).port;
@@ -62,6 +62,19 @@ describe('motion-studio --print-url', () => {
     const { dir } = await configWith({ port: 4318, pid: 999_999, startedAt: new Date().toISOString() });
     expect(await runningUrl(dir, () => false, async () => true)).toBeNull();
     expect(NOT_RUNNING).toBe('Motion Studio non è in esecuzione: avvialo con motion-studio');
+  });
+  it('says the app is not running when the port answers for another pid (pid reused)', async () => {
+    const server = createServer((_req, res) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ ok: true, pid: process.pid + 1 })); });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const { dir } = await configWith({ port, pid: process.pid, startedAt: new Date().toISOString() });
+      expect(await runningUrl(dir)).toBeNull();
+      expect(await answersHealth(port, 1500, process.pid)).toBe(false);
+      expect(await answersHealth(port, 1500)).toBe(true);
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
   });
   it('tells where the already running instance is, with the same address --print-url prints', () => {
     expect(alreadyRunningMessage('http://127.0.0.1:4318/#t=abc')).toBe('Motion Studio è già avviato: http://127.0.0.1:4318/#t=abc');

@@ -1,8 +1,8 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { defaultConfigDir } from '@motion-studio/core';
-import { absolutePathArg, focusOnReady, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, userDataDir } from '../src/helpers.ts';
+import { ATTACHED_GONE, absolutePathArg, attachedGoneAction, focusOnReady, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, userDataDir } from '../src/helpers.ts';
 
 describe('desktop helpers', () => {
   it('reads the UI token from the URL fragment only', () => {
@@ -64,3 +64,59 @@ describe('desktop helpers', () => {
     expect(calls).toEqual([]);
   });
 });
+
+describe('attached to another instance', () => {
+  afterEach(() => { vi.useRealTimers(); });
+  const flush = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); };
+
+  it('polls the other server every 5 s and reports once when it stops answering', async () => {
+    vi.useFakeTimers();
+    const answers = [true, true, false, false];
+    let calls = 0;
+    let gone = 0;
+    watchAttached({ check: async () => answers[calls++] ?? false, onGone: () => { gone++; } });
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(calls).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(calls).toBe(1);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect([calls, gone]).toEqual([3, 1]);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect([calls, gone]).toEqual([3, 1]); // stopped after the first failure
+  });
+  it('reports at once on a failed page load, and only once', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    let gone = 0;
+    const w = watchAttached({ check: async () => { calls++; return true; }, onGone: () => { gone++; } });
+    w.failed();
+    w.failed();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await flush();
+    expect([calls, gone]).toEqual([0, 1]);
+  });
+  it('does not stack checks while one is still pending', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    watchAttached({ check: () => { calls++; return new Promise<boolean>(() => {}); }, onGone: () => {} });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(calls).toBe(1);
+  });
+  it('stop() ends the polling without reporting', async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    let gone = 0;
+    const w = watchAttached({ check: async () => { calls++; return false; }, onGone: () => { gone++; } });
+    w.stop();
+    w.failed();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect([calls, gone]).toEqual([0, 0]);
+  });
+  it('asks to restart or close, in Italian', () => {
+    expect(ATTACHED_GONE).toEqual({ message: 'Il Motion Studio a cui l\'app era collegata si è chiuso.', buttons: ['Riavvia', 'Chiudi'] });
+    expect(attachedGoneAction(0)).toBe('relaunch');
+    expect(attachedGoneAction(1)).toBe('quit');
+    expect(attachedGoneAction(-1)).toBe('quit');
+  });
+});
+
