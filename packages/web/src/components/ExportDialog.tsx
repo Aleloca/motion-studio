@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.ts';
 import { desktop } from '../desktop.ts';
 
@@ -11,27 +11,32 @@ export function ExportDialog({ slug, creative, version, onClose }: { slug: strin
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{ destination: string; count: number; skipped: string[] } | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     // Focus moves into the dialog and goes back to the opener when it closes.
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     dialogRef.current?.focus();
-    return () => { if (opener?.isConnected) opener.focus(); };
+    // Document-level so Escape and the Tab trap keep working even when focus sits on a disabled control.
+    const keyDown = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') { onCloseRef.current(); return; }
+      if (e.key !== 'Tab' || !dialogRef.current) return;
+      const items = [...dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)];
+      const first = items[0];
+      const last = items.at(-1);
+      if (!first || !last) { e.preventDefault(); dialogRef.current.focus(); return; }
+      const current = document.activeElement;
+      const inside = dialogRef.current.contains(current) && current !== dialogRef.current;
+      if (!inside) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+      else if (e.shiftKey && current === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && current === last) { e.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', keyDown);
+    return () => { document.removeEventListener('keydown', keyDown); if (opener?.isConnected) opener.focus(); };
   }, []);
 
-  const keyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.key === 'Escape') { onClose(); return; }
-    if (e.key !== 'Tab' || !dialogRef.current) return;
-    const items = [...dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)];
-    const first = items[0];
-    const last = items.at(-1);
-    if (!first || !last) { e.preventDefault(); return; }
-    const current = document.activeElement;
-    if (e.shiftKey && (current === first || current === dialogRef.current)) { e.preventDefault(); last.focus(); }
-    else if (!e.shiftKey && current === last) { e.preventDefault(); first.focus(); }
-  };
-
   const choose = async () => {
-    try { const picked = await bridge?.pickFolder('Scegli la cartella di destinazione', destination.trim() || undefined); if (picked) setDestination(picked); }
+    try { const picked = await bridge?.pickFolder('Scegli la cartella di destinazione', destination.trim() || undefined); if (picked) { setDestination(picked); setDone(null); } }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
   const run = async () => {
@@ -44,13 +49,13 @@ export function ExportDialog({ slug, creative, version, onClose }: { slug: strin
   };
 
   return (
-    <div role="dialog" aria-modal="true" aria-label={`Esporta v${version}`} tabIndex={-1} ref={dialogRef} onKeyDown={keyDown}
+    <div role="dialog" aria-modal="true" aria-label={`Esporta v${version}`} tabIndex={-1} ref={dialogRef}
       style={{ position: 'fixed', inset: 0, background: 'var(--scrim)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, zIndex: 50 }}>
       <div className="card stack" style={{ width: 'min(560px, 100%)', maxHeight: '95vh', overflow: 'auto' }}>
         <div className="row"><strong>Esporta v{version}</strong><div style={{ flex: 1 }} /><button type="button" onClick={onClose}>Chiudi</button></div>
         <label htmlFor="export-destination">Cartella di destinazione (percorso assoluto)</label>
         <div className="row" style={{ gap: 8 }}>
-          <input id="export-destination" value={destination} disabled={busy} onChange={(e) => setDestination(e.target.value)} placeholder="/Users/tuonome/Consegna" style={{ flex: '1 1 240px', width: 'auto' }} />
+          <input id="export-destination" value={destination} disabled={busy} onChange={(e) => { setDestination(e.target.value); setDone(null); }} placeholder="/Users/tuonome/Consegna" style={{ flex: '1 1 240px', width: 'auto' }} />
           {bridge && <button type="button" disabled={busy} onClick={choose}>Scegli cartella…</button>}
         </div>
         {error && <p role="alert" className="error" style={{ margin: 0 }}>{error}</p>}

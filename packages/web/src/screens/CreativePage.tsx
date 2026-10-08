@@ -24,7 +24,8 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
   const [presetsLoaded, setPresetsLoaded] = useState(false);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [presetsFailure, setPresetsFailure] = useState<string | null>(null);
-  const [exporting, setExporting] = useState(false);
+  // Version number pinned when the export dialog opens: new live versions must not retarget it.
+  const [exporting, setExporting] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => { api.getFormats()
@@ -76,7 +77,7 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
         )}
         <label className="row" style={{ gap: 6 }}><input type="checkbox" checked={safeZone} onChange={(e) => setSafeZone(e.target.checked)} style={{ width: 16, height: 16 }} />Safe zone</label>
         {version && <button type="button" onClick={() => act(api.revealVersion(slug, creative, version.n))}>Mostra nella cartella</button>}
-        <button type="button" disabled={!version} onClick={() => setExporting(true)}>Esporta…</button>
+        <button type="button" disabled={!version} onClick={() => version && setExporting(version.n)}>Esporta…</button>
         {version && latest && version.n !== latest.n && (
           <button type="button" onClick={() => act(api.restoreVersion(slug, creative, version.n))}>Riparti da v{version.n}</button>
         )}
@@ -102,7 +103,7 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
             onSelectVersion={pick} onChanged={reload} />
         </div>
       </div>
-      {exporting && version && <ExportDialog slug={slug} creative={creative} version={version.n} onClose={() => setExporting(false)} />}
+      {exporting !== null && <ExportDialog key={exporting} slug={slug} creative={creative} version={exporting} onClose={() => setExporting(null)} />}
       {focusPreset && (
         <FocusView preset={focusPreset}
           src={version && outFor(version, focusPreset.id) ? fileUrl(version.n, outFor(version, focusPreset.id)!.file) : null}

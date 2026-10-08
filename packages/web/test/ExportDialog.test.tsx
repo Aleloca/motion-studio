@@ -46,4 +46,35 @@ describe('ExportDialog', () => {
     await userEvent.keyboard('{Escape}');
     expect(onClose).toHaveBeenCalled();
   });
+  it('keeps the typed value when the picker is cancelled, and disables Esporta when empty', async () => {
+    (window as unknown as { motionStudio: unknown }).motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: async () => null, revealPath: async () => {} };
+    render(<ExportDialog slug="acme" creative="c1" version={2} onClose={() => {}} />);
+    expect((screen.getByRole('button', { name: 'Esporta' }) as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.type(screen.getByLabelText('Cartella di destinazione (percorso assoluto)'), '/typed');
+    await userEvent.click(screen.getByRole('button', { name: 'Scegli cartella…' }));
+    expect((screen.getByLabelText('Cartella di destinazione (percorso assoluto)') as HTMLInputElement).value).toBe('/typed');
+  });
+  it('shows an alert when the picker rejects', async () => {
+    (window as unknown as { motionStudio: unknown }).motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: async () => { throw new Error('Selettore non disponibile'); }, revealPath: async () => {} };
+    render(<ExportDialog slug="acme" creative="c1" version={2} onClose={() => {}} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Scegli cartella…' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('Selettore non disponibile');
+  });
+  it('clears the previous result when the destination is edited, and Escape works while exporting', async () => {
+    const onClose = vi.fn();
+    render(<ExportDialog slug="acme" creative="c1" version={2} onClose={onClose} />);
+    const input = screen.getByLabelText('Cartella di destinazione (percorso assoluto)');
+    await userEvent.type(input, '/a');
+    await userEvent.click(screen.getByRole('button', { name: 'Esporta' }));
+    await screen.findByText(/Esportati 2 file/);
+    await userEvent.type(input, 'b');
+    expect(screen.queryByText(/Esportati/)).toBeNull();
+    let release: () => void = () => {};
+    api.exportVersion.mockImplementationOnce(() => new Promise((r) => { release = () => r({ destination: '/ab', files: [], skipped: [] }); }));
+    await userEvent.click(screen.getByRole('button', { name: 'Esporta' }));
+    expect((screen.getByRole('button', { name: 'Esporta' }) as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalled();
+    release();
+  });
 });
