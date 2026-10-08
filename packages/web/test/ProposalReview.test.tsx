@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { BrandProposal } from '@motion-studio/shared';
+import { messages, type BrandProposal } from '@motion-studio/shared';
 import { describe, expect, it, vi } from 'vitest';
 
 const api = { applyProposal: vi.fn(async () => ({})), discardProposal: vi.fn(async () => ({})) };
@@ -21,7 +21,7 @@ const proposal: BrandProposal = {
 
 describe('describeChange', () => {
   it('labels changes in Italian', () => {
-    expect(proposal.changes.map(describeChange)).toEqual(['Aggiungi colore Arancio #FF7A45', 'Aggiorna tono', 'Rimuovi regola da evitare: "Niente gradienti"']);
+    expect(proposal.changes.map((c) => describeChange(c, messages('it')))).toEqual(['Aggiungi colore Arancio #FF7A45', 'Aggiorna tono', 'Rimuovi regola da evitare: "Niente gradienti"']);
   });
 });
 

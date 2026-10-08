@@ -1,25 +1,25 @@
-import type { BrandChange, BrandField, BrandProposal } from '@motion-studio/shared';
+import type { BrandChange, BrandField, BrandProposal, Messages } from '@motion-studio/shared';
 import { useState } from 'react';
 import { api } from '../api.ts';
+import { formatDateTime, useLocale, useT } from '../i18n.tsx';
 
-const VERB = { add: 'Aggiungi', update: 'Aggiorna', remove: 'Rimuovi' } as const;
-const HEADINGS: Array<[BrandField, string]> = [['colors', 'Colori'], ['fonts', 'Font'], ['logos', 'Loghi'], ['tone', 'Tono'], ['dos', 'Fare'], ['donts', 'Evitare'], ['photoStyle', 'Stile fotografico']];
+const FIELDS: BrandField[] = ['colors', 'fonts', 'logos', 'tone', 'dos', 'donts', 'photoStyle'];
 type Item = { name?: string; hex?: string; family?: string; file?: string; text?: string };
 
-export function describeChange(c: BrandChange): string {
+export function describeChange(c: BrandChange, t: Messages): string {
   const item = ((c.op === 'remove' ? c.before : c.after) ?? {}) as Item;
   const what = (() => {
     switch (c.field) {
-      case 'colors': return `colore ${item.name} ${item.hex}`;
-      case 'fonts': return `font ${item.family}`;
-      case 'logos': return `logo ${item.file}`;
-      case 'tone': return 'tono';
-      case 'photoStyle': return 'stile fotografico';
-      case 'dos': return `regola da fare: "${item.text}"`;
-      case 'donts': return `regola da evitare: "${item.text}"`;
+      case 'colors': return t.web.proposal.color(item);
+      case 'fonts': return t.web.proposal.font(item);
+      case 'logos': return t.web.proposal.logo(item);
+      case 'tone': return t.web.proposal.tone;
+      case 'photoStyle': return t.web.proposal.photoStyle;
+      case 'dos': return t.web.proposal.doRule(item);
+      case 'donts': return t.web.proposal.avoidRule(item);
     }
   })();
-  return `${VERB[c.op]} ${what}`;
+  return `${t.web.proposal.verbs[c.op]} ${what}`;
 }
 
 function Preview({ value, field }: { value: unknown; field: BrandField }) {
@@ -34,6 +34,8 @@ export function ProposalReview(props: { slug: string; proposal: BrandProposal; o
 }
 
 function ProposalReviewBody({ slug, proposal, onDone }: { slug: string; proposal: BrandProposal; onDone: () => void }) {
+  const t = useT();
+  const locale = useLocale();
   const [checked, setChecked] = useState<Set<string>>(() => new Set(proposal.changes.map((c) => c.id)));
   const [guidelines, setGuidelines] = useState(Boolean(proposal.guidelines));
   const [error, setError] = useState<string | null>(null);
@@ -46,22 +48,22 @@ function ProposalReviewBody({ slug, proposal, onDone }: { slug: string; proposal
   const empty = proposal.changes.length === 0 && !proposal.guidelines;
 
   return (
-    <section className="card stack" aria-label="Proposta di brand">
-      <strong>Proposta dall'analisi del {new Date(proposal.createdAt).toLocaleString('it-IT')}</strong>
+    <section className="card stack" aria-label={t.web.proposal.aria}>
+      <strong>{t.web.proposal.title({ date: formatDateTime(locale, proposal.createdAt) })}</strong>
       {proposal.summary && <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{proposal.summary}</p>}
-      {proposal.assetsAdded.length > 0 && <p className="muted" style={{ margin: 0 }}>{proposal.assetsAdded.length} asset scaricati e aggiunti alla libreria</p>}
-      {empty && <p className="muted" style={{ margin: 0 }}>Nessuna modifica proposta.</p>}
-      {HEADINGS.map(([field, heading]) => {
+      {proposal.assetsAdded.length > 0 && <p className="muted" style={{ margin: 0 }}>{t.web.proposal.assetsAdded({ count: proposal.assetsAdded.length })}</p>}
+      {empty && <p className="muted" style={{ margin: 0 }}>{t.web.proposal.noChanges}</p>}
+      {FIELDS.map((field) => {
         const changes = proposal.changes.filter((c) => c.field === field);
         if (!changes.length) return null;
         return (
           <fieldset key={field} style={{ border: 0, padding: 0, margin: 0 }} className="stack">
-            <legend style={{ fontWeight: 800, marginBottom: 4 }}>{heading}</legend>
+            <legend style={{ fontWeight: 800, marginBottom: 4 }}>{t.web.proposal.headings[field]}</legend>
             {changes.map((c) => (
               <div key={c.id} className="row" style={{ gap: 10, alignItems: 'flex-start' }}>
                 <label className="row" style={{ gap: 6, flex: '1 1 260px' }}>
                   <input type="checkbox" checked={checked.has(c.id)} onChange={() => toggle(c.id)} style={{ width: 16, height: 16 }} />
-                  {describeChange(c)}
+                  {describeChange(c, t)}
                 </label>
                 <span className="row muted" style={{ gap: 6, fontSize: 13, flex: '1 1 260px' }}>
                   <Preview value={c.before} field={field} /> → <Preview value={c.after} field={field} />
@@ -75,10 +77,10 @@ function ProposalReviewBody({ slug, proposal, onDone }: { slug: string; proposal
         <div className="stack">
           <label className="row" style={{ gap: 6 }}>
             <input type="checkbox" checked={guidelines} onChange={(e) => setGuidelines(e.target.checked)} style={{ width: 16, height: 16 }} />
-            Applica le linee guida proposte
+            {t.web.proposal.applyGuidelines}
           </label>
           <div className="row" style={{ alignItems: 'stretch', gap: 10 }}>
-            {[['Attuali', proposal.guidelines.current], ['Proposte', proposal.guidelines.proposed]].map(([t, text]) => (
+            {[[t.web.proposal.current, proposal.guidelines.current], [t.web.proposal.proposed, proposal.guidelines.proposed]].map(([t, text]) => (
               <div key={t} className="stack" style={{ flex: '1 1 300px', gap: 4 }}>
                 <span className="muted" style={{ fontSize: 12, fontWeight: 700 }}>{t}</span>
                 <pre className="mono" style={{ margin: 0, padding: 10, background: 'var(--surface-2)', borderRadius: 8, whiteSpace: 'pre-wrap', maxHeight: 260, overflow: 'auto' }}>{text || '—'}</pre>
@@ -90,8 +92,8 @@ function ProposalReviewBody({ slug, proposal, onDone }: { slug: string; proposal
       {error && <p role="alert" className="error" style={{ margin: 0 }}>{error}</p>}
       <div className="row">
         <div style={{ flex: 1 }} />
-        <button type="button" disabled={busy} onClick={() => void act(() => api.discardProposal(slug, proposal.id))}>{empty ? 'Chiudi' : 'Scarta proposta'}</button>
-        {!empty && <button type="button" className="primary" disabled={busy} onClick={() => void act(() => api.applyProposal(slug, proposal.id, proposal.changes.filter((c) => checked.has(c.id)).map((c) => c.id), guidelines))}>Applica selezionate</button>}
+        <button type="button" disabled={busy} onClick={() => void act(() => api.discardProposal(slug, proposal.id))}>{empty ? t.common.close : t.web.proposal.discard}</button>
+        {!empty && <button type="button" className="primary" disabled={busy} onClick={() => void act(() => api.applyProposal(slug, proposal.id, proposal.changes.filter((c) => checked.has(c.id)).map((c) => c.id), guidelines))}>{t.web.proposal.applySelected}</button>}
       </div>
     </section>
   );
