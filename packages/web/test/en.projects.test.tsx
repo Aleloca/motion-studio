@@ -9,7 +9,6 @@ const api = {
   getPermissions: vi.fn(async () => []),
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
-const { Onboarding } = await import('../src/screens/Onboarding.tsx');
 const { ProjectList } = await import('../src/screens/ProjectList.tsx');
 const { ProjectPage } = await import('../src/screens/ProjectPage.tsx');
 const { ProjectSettings } = await import('../src/screens/ProjectSettings.tsx');
@@ -17,15 +16,7 @@ const { ProjectSettings } = await import('../src/screens/ProjectSettings.tsx');
 const en = (node: React.ReactNode) => render(<I18nProvider locale="en">{node}</I18nProvider>);
 const live = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
 
-describe('onboarding and projects in English', () => {
-  it('shows the environment check and workspace form', () => {
-    en(<Onboarding checks={[{ id: 'git', label: 'Git', ok: false, required: true, message: 'Not found' }]} workspacePath={null}
-      workspaceError={{ code: 'not-found', message: 'x' }} onRecheck={() => {}} onWorkspaceSet={() => {}} />);
-    expect(screen.getByRole('heading', { name: 'Welcome to Motion Studio' })).toBeTruthy();
-    expect(screen.getByText('Missing')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Use this folder' })).toBeTruthy();
-    expect(screen.getByRole('alert').textContent).toBe('Folder not found: . Choose another.');
-  });
+describe('projects in English', () => {
   it('lists projects with a localized date', async () => {
     api.listProjects.mockResolvedValue([
       { ok: true, slug: 'acme', project: { name: 'Acme', description: '', updatedAt: '2026-10-07T12:00:00.000Z' } },

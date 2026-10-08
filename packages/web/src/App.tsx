@@ -1,22 +1,23 @@
 import type { ApprovalRequest, DoctorCheck, LanguageSetting, Locale, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { api } from './api.ts';
-import { detectedLocale, I18nProvider, useLocale, useT, type LanguageState } from './i18n.tsx';
+import { detectedLocale, I18nProvider, useLocale, type LanguageState } from './i18n.tsx';
 import { PageHost } from './motion/index.ts';
 import { depthOf, href, parseRoute, projectOf, routeKey, type ProjectTab, type Route } from './routes.ts';
 import { CreativePage } from './screens/CreativePage.tsx';
 import { NewCreative } from './screens/NewCreative.tsx';
-import { Onboarding } from './screens/Onboarding.tsx';
+import { Pairing } from './screens/Pairing.tsx';
 import { ProjectList } from './screens/ProjectList.tsx';
 import { ProjectPage } from './screens/ProjectPage.tsx';
 import { SettingsPage } from './screens/SettingsPage.tsx';
+import { Welcome } from './screens/Welcome.tsx';
 import { useCatalog } from './shell/catalog.ts';
 import { CommandPalette } from './shell/CommandPalette.tsx';
 import { go, isMac, ShellContext, type ActivityTab, type Shell } from './shell/ShellContext.tsx';
 import { TopBar } from './shell/TopBars.tsx';
 import { useAttention } from './shell/useAttention.ts';
 import { applyTheme } from './theme.ts';
-import { Toasts } from './ui/index.ts';
+import { Spinner, Toasts } from './ui/index.ts';
 import { usePairingNeeded } from './uiToken.ts';
 import type { EventsState } from './eventsReducer.ts';
 import { useServerEvents } from './useServerEvents.ts';
@@ -53,7 +54,6 @@ interface ActivityState { open: boolean; tab: ActivityTab | null; seq: number }
 interface Props { live: EventsState; language: LanguageSetting; systemLocale: Locale; onLanguage(next: LanguageState): void }
 
 function AppBody({ live, language, systemLocale, onLanguage }: Props) {
-  const t = useT();
   const locale = useLocale();
   const [checks, setChecks] = useState<DoctorCheck[] | null>(null);
   const [ws, setWs] = useState<WorkspaceInfo | null>(null);
@@ -90,7 +90,7 @@ function AppBody({ live, language, systemLocale, onLanguage }: Props) {
     if (doctorLocale.current === locale) return;
     doctorLocale.current = locale;
     let stale = false;
-    // The previous checks stay on screen until the new ones arrive (no flash of the onboarding).
+    // The previous checks stay on screen until the new ones arrive (no flash of the setup).
     api.getDoctor().then((c) => { if (!stale) setChecks(c); }).catch(() => { /* keep the previous checks */ });
     return () => { stale = true; };
   }, [locale]);
@@ -101,26 +101,35 @@ function AppBody({ live, language, systemLocale, onLanguage }: Props) {
     wasPairing.current = pairing;
   }, [pairing, refresh]);
 
+  // The setup shows when the workspace is missing or a required check fails (and on Replay setup). Once it opened
+  // for a missing setup it stays until the user finishes it: saving the workspace at step 2 must not skip step 3.
+  const loaded = checks !== null && ws !== null;
   const blocking = checks?.some((c) => c.required && !c.ok) ?? true;
-  if (pairing) {
+  const needsSetup = !ws || !ws.settings || blocking;
+  const [setupOpen, setSetupOpen] = useState(false);
+  useEffect(() => { if (loaded && needsSetup) setSetupOpen(true); }, [loaded, needsSetup]);
+  const finishSetup = useCallback((hash: string) => {
+    setSetupOpen(false);
+    if (location.hash !== hash) go(hash);
+  }, []);
+
+  if (pairing) return <Pairing />;
+  if (route.name === 'welcome' || setupOpen || (loaded && needsSetup) || loadError) {
     return (
-      <main className="page stack" style={{ maxWidth: 640 }}>
-        <h1 style={{ margin: 0, fontSize: 24 }}>Motion Studio</h1>
-        <p role="alert" style={{ margin: 0 }}>{t.pairing.openFromLink}</p>
-        <p className="muted" style={{ margin: 0 }}>{t.web.app.pairingHintBefore}<span className="mono">motion-studio --print-url</span>{t.web.app.pairingHintAfter}</p>
-      </main>
+      <Welcome
+        checks={checks} loadError={loadError} workspace={ws} step={route.name === 'welcome' ? route.step : undefined}
+        canLeave={loaded && !needsSetup} language={language} systemLocale={systemLocale} onLanguage={onLanguage}
+        onRecheck={refresh} onFinish={finishSetup}
+        onWorkspace={(next) => { applyTheme(next.settings.theme); setWs({ path: next.path, settings: next.settings, error: null }); }}
+      />
     );
   }
-  if (!ws || !ws.settings || blocking) {
-    return (
-      <Onboarding checks={checks} workspacePath={ws?.path ?? null} workspaceError={ws?.error ?? null} error={loadError}
-        onRecheck={refresh} onWorkspaceSet={refresh} />
-    );
-  }
+  // First load: nothing to show yet (no flash of the setup when everything is in place).
+  if (!checks || !ws?.settings) return <div className="ms-boot"><Spinner size={18} /></div>;
   return (
     <AppShell
-      route={route} live={live} ws={ws} settings={ws.settings} checks={checks} activity={activity} setActivity={setActivity}
-      language={language} systemLocale={systemLocale} onLanguage={onLanguage} refresh={refresh}
+      route={route} live={live} settings={ws.settings} checks={checks} activity={activity} setActivity={setActivity}
+      language={language} systemLocale={systemLocale} onLanguage={onLanguage}
       onSettings={(next) => { applyTheme(next.theme); setWs((prev) => (prev ? { ...prev, settings: next } : prev)); }}
     />
   );
@@ -128,12 +137,10 @@ function AppBody({ live, language, systemLocale, onLanguage }: Props) {
 
 interface ShellProps extends Props {
   route: Route;
-  ws: WorkspaceInfo;
   settings: NonNullable<WorkspaceInfo['settings']>;
   checks: DoctorCheck[] | null;
   activity: ActivityState;
   setActivity: Dispatch<SetStateAction<ActivityState>>;
-  refresh(): void;
   onSettings(next: WorkspaceSettings): void;
 }
 
@@ -141,7 +148,7 @@ interface ShellProps extends Props {
  * The app shell (spec §6.1, §7): the bar of the current route over a full-height stage where pages change with T1
  * (direction from the route depth) and project tabs with T2. Old screens render inside until later tasks replace them.
  */
-function AppShell({ route, live, ws, settings, checks, activity, setActivity, language, systemLocale, onLanguage, refresh, onSettings }: ShellProps) {
+function AppShell({ route, live, settings, checks, activity, setActivity, language, systemLocale, onLanguage, onSettings }: ShellProps) {
   const current = projectOf(route);
   const tick = current ? (live.projectTicks[current] ?? 0) + Object.entries(live.creativeTicks).filter(([k]) => k.startsWith(`${current}/`)).reduce((a, [, v]) => a + v, 0) : 0;
   const catalog = useCatalog(current, tick);
@@ -188,8 +195,8 @@ function AppShell({ route, live, ws, settings, checks, activity, setActivity, la
       case 'creative': case 'format': return <CreativePage key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} />;
       // Every section maps to the current settings page until the new one (Task 15).
       case 'settings': return <SettingsPage settings={settings} checks={checks} language={language} systemLocale={systemLocale} onLanguage={onLanguage} onSaved={onSettings} />;
-      // Replay setup (Task 9 brings the three-step welcome): the current onboarding, back to the projects when done.
-      case 'welcome': return <Onboarding checks={checks} workspacePath={ws.path} workspaceError={ws.error ?? null} error={null} onRecheck={refresh} onWorkspaceSet={() => { refresh(); go(href.projects()); }} />;
+      // The setup is a full page of its own, outside the shell (AppBody renders it).
+      case 'welcome': return null;
     }
   };
 

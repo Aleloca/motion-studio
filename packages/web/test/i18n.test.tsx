@@ -118,7 +118,7 @@ describe('language switching', () => {
     render(<App />);
     act(() => markPairingNeeded());
     try {
-      expect(await screen.findByText('Open Motion Studio from the link shown in the terminal')).toBeTruthy();
+      expect(await screen.findByRole('heading', { name: 'Open Motion Studio from the link in your terminal' })).toBeTruthy();
     } finally { resetUiTokenForTests(); }
   });
 });

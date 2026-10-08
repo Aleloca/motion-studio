@@ -14,6 +14,8 @@
      button text (13px/700 + icon + aria-label), Avatar initials and non-text glyphs (toggle knob, check tick).
      Small text on the accent (count badges) uses --onAccentStrong (≈5.7:1). */
   --onAccent: #FFFFFF; --onAccentStrong: #171717;
+  /* Theme-invariant terminal illustration (Pairing): a terminal is dark in both themes. */
+  --term: #141414; --termBar: #1E1E1E; --termDot: #3A3A3A; --termDim: #8A8A8A; --termText: #CFCFCF; --termLink: #FF8A5C;
   color-scheme: light;
 
   /* Legacy aliases for the screens not yet redesigned; Task 16 removes them. */

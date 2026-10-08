@@ -1,0 +1,118 @@
+/* First-run setup (spec §6.2 #1), ported from the prototype's WelcomePage / SystemChecks and the Welcome boards. */
+.ms-welcome {
+  min-height: 100%; display: flex; flex-direction: column; color: var(--text);
+  background-color: var(--bg); background-image: radial-gradient(var(--dot) 1px, transparent 1px); background-size: 20px 20px;
+}
+.ms-welcome .ms-grow { flex: 1; }
+.ms-welcome .ms-muted { color: var(--muted); }
+.ms-welcome .ms-faint { color: var(--faint); }
+.ms-welcome-top { height: 52px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 20px; }
+.ms-welcome-brand { font-weight: 700; font-size: 14px; }
+.ms-welcome-lang { min-width: 0; max-width: 220px; }
+
+.ms-welcome-stage { flex: 1; display: flex; align-items: center; justify-content: center; padding: 12px 24px 52px; min-width: 0; }
+.ms-welcome-grid { width: 100%; max-width: 980px; display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 28px; align-items: start; }
+@media (max-width: 860px) { .ms-welcome-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* Left column: headline and stepper. */
+.ms-welcome-side { display: flex; flex-direction: column; gap: 22px; padding-top: 12px; min-width: 0; }
+.ms-welcome-hero { display: flex; flex-direction: column; gap: 8px; }
+.ms-welcome-cap { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--accentText); }
+.ms-welcome-cap.ms-plain { color: var(--muted); letter-spacing: .06em; }
+.ms-welcome-hero h1 { margin: 0; font-size: 30px; line-height: 1.12; letter-spacing: -.02em; font-weight: 700; text-wrap: balance; overflow-wrap: anywhere; }
+.ms-welcome-hero p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+
+.ms-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.ms-step {
+  display: flex; gap: 12px; padding: 10px 12px; border-radius: 10px; align-items: flex-start;
+  transition: background var(--d-m) var(--e-std), box-shadow var(--d-m) var(--e-std);
+}
+.ms-step.ms-now { background: var(--panel); box-shadow: 0 0 0 1px var(--line), 0 6px 16px var(--shadow); }
+.ms-step-mark {
+  width: 22px; height: 22px; border-radius: 50%; flex: none; display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums;
+  transition: background var(--d-m) var(--e-std), color var(--d-m) var(--e-std), box-shadow var(--d-m) var(--e-std);
+}
+.ms-step.ms-done .ms-step-mark { background: var(--okBg); color: var(--ok); }
+/* Progress: the current step is the one orange mark (text in --onAccentStrong for AA). */
+.ms-step.ms-now .ms-step-mark { background: var(--accent); color: var(--onAccentStrong); }
+.ms-step.ms-next .ms-step-mark { color: var(--faint); box-shadow: inset 0 0 0 1.5px var(--line); }
+.ms-step-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ms-step-text b { font-weight: 600; }
+.ms-step-text > span { font-size: 12px; color: var(--muted); }
+.ms-step.ms-next .ms-step-text b { color: var(--muted); }
+.ms-step.ms-next .ms-step-text > span { color: var(--faint); }
+
+/* Right column: the step panel (T17 moves it). */
+.ms-welcome-panel {
+  display: flex; flex-direction: column; min-width: 0; overflow: hidden; border-radius: 16px;
+  background: var(--panel); box-shadow: 0 0 0 1px var(--line), 0 24px 60px var(--shadow);
+}
+.ms-panel-head { padding: 24px 28px 18px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--line2); }
+.ms-panel-head h2 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -.01em; }
+.ms-panel-head p { margin: 0; color: var(--muted); line-height: 1.5; }
+.ms-panel-body { padding: 20px 28px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.ms-panel-foot { display: flex; align-items: center; gap: 10px; padding: 16px 28px; border-top: 1px solid var(--line2); background: var(--bg); flex-wrap: wrap; }
+.ms-welcome-hint { font-size: 12px; color: var(--faint); }
+.ms-welcome-blocked { font-size: 12px; color: var(--warn); max-width: 280px; text-align: right; }
+@media (max-width: 560px) {
+  .ms-panel-head, .ms-panel-body, .ms-panel-foot { padding-left: 18px; padding-right: 18px; }
+  .ms-welcome-hint { display: none; }
+}
+
+/* System checks (step 1). */
+.ms-syschecks { list-style: none; margin: 0; padding: 0; border-radius: 14px; box-shadow: 0 0 0 1px var(--line); background: var(--panel); }
+.ms-syscheck { display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 0 16px; border-bottom: 1px solid var(--line2); min-width: 0; }
+.ms-syscheck:last-child { border-bottom: 0; }
+.ms-syscheck.ms-fail { flex-direction: column; align-items: stretch; gap: 6px; padding: 11px 16px 12px; }
+.ms-syscheck-line { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.ms-syscheck-label { min-width: 0; overflow-wrap: anywhere; }
+.ms-syscheck-label.ms-muted { color: var(--muted); }
+.ms-syscheck-line .ms-pill { margin-left: auto; }
+.ms-syscheck-value { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--faint); text-align: right; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+.ms-syscheck-mark { width: 18px; height: 18px; border-radius: 50%; flex: none; display: flex; align-items: center; justify-content: center; }
+.ms-syscheck-mark.ms-ok { background: var(--okBg); color: var(--ok); }
+.ms-syscheck-mark.ms-warn { background: var(--warnBg); color: var(--warn); }
+.ms-syscheck-mark.ms-note { background: var(--field); color: var(--muted); }
+.ms-syscheck-message { margin: 0 0 0 28px; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+.ms-remedy { margin-left: 28px; display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; background: var(--field); min-width: 0; }
+.ms-syscheck.ms-required .ms-remedy { background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); }
+.ms-remedy-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.ms-remedy-text code { font-family: var(--mono); font-size: 12px; color: var(--text); overflow-wrap: anywhere; white-space: pre-wrap; user-select: all; -webkit-user-select: all; }
+.ms-syscheck-error { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 14px; background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); }
+.ms-syscheck-error p { margin: 0; flex: 1; min-width: 0; line-height: 1.5; overflow-wrap: anywhere; }
+
+/* Workspace (step 2) and project (step 3) fields. */
+.ms-ws-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ms-welcome-label { font-size: 12px; font-weight: 600; }
+.ms-welcome-label .ms-faint { font-weight: 400; }
+.ms-ws-row { display: flex; gap: 8px; min-width: 0; }
+.ms-ws-input { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; }
+.ms-ws-input > svg { position: absolute; left: 12px; color: var(--muted); pointer-events: none; }
+.ms-ws-input .ms-input { height: 38px; padding-left: 34px; font-family: var(--mono); font-size: 13px; width: 100%; }
+.ms-panel-body .ms-input { height: 38px; }
+.ms-ws-status { margin: 0; display: flex; align-items: flex-start; gap: 6px; font-size: 12px; line-height: 1.45; color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
+.ms-ws-status > svg { flex: none; margin-top: 2px; }
+.ms-ws-status.ms-ok { color: var(--ok); }
+.ms-ws-status.ms-warn { color: var(--warn); }
+.ms-ws-preview { border-radius: 10px; background: var(--field); padding: 12px 14px; font-family: var(--mono); font-size: 12px; line-height: 1.75; color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
+.ms-ws-root, .ms-ws-name { color: var(--text); }
+.ms-ws-checks { border-radius: 10px; box-shadow: inset 0 0 0 1px var(--line2); }
+.ms-ws-checks-head { display: flex; align-items: center; gap: 6px; padding-right: 8px; }
+.ms-ws-checks-toggle {
+  flex: 1; min-width: 0; min-height: 40px; display: flex; align-items: center; gap: 10px; padding: 0 14px; margin: 0;
+  border: 0; border-radius: 10px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.ms-ws-checks-toggle b { font-weight: 600; }
+.ms-ws-chev { color: var(--muted); transition: transform var(--d-s) var(--e-std); flex: none; }
+.ms-ws-chev.ms-open { transform: rotate(180deg); }
+.ms-ws-checks-list { list-style: none; margin: 0; padding: 2px 14px 12px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 20px; }
+@media (max-width: 560px) { .ms-ws-checks-list { grid-template-columns: minmax(0, 1fr); } }
+.ms-ws-checks-list li { display: flex; align-items: center; gap: 8px; height: 30px; border-top: 1px solid var(--line2); min-width: 0; }
+.ms-ws-checks-list .ms-syscheck-value { max-width: 55%; }
+.ms-ws-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+.ms-ws-dot.ms-ok { background: var(--ok); }
+.ms-ws-dot.ms-note { background: var(--faint); }
+
+/* First load, before the app knows whether the setup is needed (App). */
+.ms-boot { min-height: 100vh; display: flex; align-items: center; justify-content: center; color: var(--muted); }

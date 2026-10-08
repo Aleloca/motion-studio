@@ -11,6 +11,8 @@ vi.mock('../src/api.ts', () => ({
   api: {
     getDoctor: vi.fn(),
     getWorkspace: vi.fn(),
+    setWorkspace: vi.fn(),
+    createProject: vi.fn(),
     updateSettings: vi.fn(),
     listProjects: vi.fn(() => Promise.resolve([])),
     getSecrets: vi.fn(() => Promise.resolve([])),
@@ -34,7 +36,7 @@ function start(workspace: Promise<WorkspaceInfo>, doctor: Promise<DoctorCheck[]>
 
 describe('App startup', () => {
   afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); history.replaceState(null, '', '/'); });
-  it('shows an alert in onboarding when the server is unreachable', async () => {
+  it('shows an alert in the setup when the server is unreachable', async () => {
     start(Promise.reject(new Error('Failed to fetch')), Promise.reject(new Error('Failed to fetch')));
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('Impossibile contattare il server di Motion Studio: Failed to fetch');
@@ -42,13 +44,15 @@ describe('App startup', () => {
   });
   it('explains a workspace folder that no longer exists and prefills its path', async () => {
     start(Promise.resolve({ path: '/Users/me/Studio', settings: null, error: { code: 'not-found', message: 'Cartella del workspace non trovata: /Users/me/Studio' } }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Continua' }));
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toBe("Cartella non trovata: /Users/me/Studio, scegline un'altra");
-    await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>('Cartella di lavoro').value).toBe('/Users/me/Studio'));
+    await waitFor(() => expect(screen.getByLabelText<HTMLInputElement>('Cartella').value).toBe('/Users/me/Studio'));
     expect(alert.textContent).not.toContain('Impossibile contattare');
   });
   it('explains invalid workspace content', async () => {
     start(Promise.resolve({ path: '/w', settings: null, error: { code: 'invalid', message: '/w/.studio/settings.json: JSON non valido' } }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Continua' }));
     expect((await screen.findByRole('alert')).textContent).toBe('Contenuto non valido in /w: /w/.studio/settings.json: JSON non valido');
   });
   it('shows an error when saving settings fails', async () => {
@@ -59,11 +63,30 @@ describe('App startup', () => {
     await userEvent.click(await screen.findByRole('switch', { name: 'Modalità esperto' }));
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Impossibile salvare le impostazioni: disco pieno'));
   });
-  it('does not show onboarding when only the optional sandbox check fails', async () => {
+  it('does not show the setup when only the optional sandbox check fails', async () => {
     const checks: DoctorCheck[] = [...okChecks, { id: 'sandbox', label: 'Sandbox', ok: false, required: false, message: 'Non disponibile' }];
     start(Promise.resolve({ path: '/w', settings, error: null }), Promise.resolve(checks));
     expect(await screen.findByRole('button', { name: /^Attività/ })).toBeTruthy();
-    expect(screen.queryByText('Benvenuto in Motion Studio')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Controlla il sistema' })).toBeNull();
+  });
+  it('keeps the setup open after the workspace is saved, until the first project step is done', async () => {
+    start(Promise.resolve({ path: null, settings: null, error: null }));
+    vi.mocked(api.setWorkspace).mockResolvedValue({ path: '/w', settings });
+    await userEvent.click(await screen.findByRole('button', { name: 'Continua' }));
+    await userEvent.type(screen.getByLabelText('Cartella'), '/w');
+    await userEvent.click(screen.getByRole('button', { name: 'Continua' }));
+    expect(await screen.findByRole('heading', { name: 'Crea il primo progetto' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Attività/ })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Salta per ora' }));
+    expect(await screen.findByRole('button', { name: /^Attività/ })).toBeTruthy();
+    expect(location.hash).toBe('#/');
+  });
+  it('opens the setup again from Replay setup and leads back to the projects', async () => {
+    history.replaceState(null, '', '/#/welcome');
+    start(Promise.resolve({ path: '/w', settings, error: null }));
+    expect(await screen.findByRole('heading', { name: 'Controlla il sistema' })).toBeTruthy();
+    await userEvent.click(screen.getByRole('link', { name: 'Home di Motion Studio' }));
+    expect(await screen.findByRole('button', { name: /^Attività/ })).toBeTruthy();
   });
 });
 
@@ -73,7 +96,8 @@ describe('App pairing and notifications', () => {
     start(Promise.resolve({ path: '/w', settings, error: null }));
     await screen.findByRole('button', { name: /^Attività/ });
     act(() => markPairingNeeded());
-    expect(await screen.findByText('Apri Motion Studio dal link mostrato nel terminale')).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Apri Motion Studio dal link nel terminale' })).toBeTruthy();
+    expect(screen.getByText('npx @motion-studio/cli --print-url')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^Attività/ })).toBeNull();
     const loads = vi.mocked(api.getWorkspace).mock.calls.length;
     history.replaceState(null, '', `/#t=${'ef'.repeat(32)}`);
@@ -102,24 +126,3 @@ describe('App pairing and notifications', () => {
   });
 });
 
-describe('Onboarding sandbox check', () => {
-  it('shows the optional sandbox check with the Consigliato badge, message and fix', async () => {
-    const { Onboarding } = await import('../src/screens/Onboarding.tsx');
-    render(<Onboarding checks={[{ id: 'sandbox', label: 'Sandbox', ok: false, required: false, message: 'Non disponibile', fix: 'installa bubblewrap' }]} workspacePath={null} onRecheck={() => {}} onWorkspaceSet={() => {}} />);
-    expect(screen.getByText('Consigliato')).toBeTruthy();
-    expect(screen.getByText(/Non disponibile/)).toBeTruthy();
-    expect(screen.getByText('installa bubblewrap')).toBeTruthy();
-  });
-});
-
-describe('Onboarding native picker', () => {
-  it('fills the workspace path from the folder picker in the app', async () => {
-    (window as unknown as { motionStudio: unknown }).motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: async () => '/Users/me/MS', revealPath: async () => {} };
-    try {
-      const { Onboarding } = await import('../src/screens/Onboarding.tsx');
-      render(<Onboarding checks={[]} workspacePath={null} onRecheck={() => {}} onWorkspaceSet={() => {}} />);
-      await userEvent.click(screen.getByRole('button', { name: 'Scegli cartella…' }));
-      expect((screen.getByLabelText('Cartella di lavoro') as HTMLInputElement).value).toBe('/Users/me/MS');
-    } finally { delete (window as unknown as { motionStudio?: unknown }).motionStudio; }
-  });
-});
