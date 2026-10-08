@@ -17,6 +17,7 @@ import { cachedSandboxDetection, type SandboxSupport } from '../agent/sandbox.ts
 import { defaultConfigDir, type AppConfigStore } from '../app-config.ts';
 import { AgentBridge } from '../bridge/bridge.ts';
 import { registerBridgeRoutes } from '../bridge/bridge-routes.ts';
+import { providerTools } from '../bridge/provider-tools.ts';
 import { checkCodebases, codebaseOverlaps, normalizeCodebaseList } from '../codebases.ts';
 import type { Git } from '../git.ts';
 import { JobConflictError, JobQueue } from '../jobs/job-queue.ts';
@@ -130,8 +131,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     mcpCommand: deps.mcpCommand ?? null,
   });
 
+  const vault = deps.vault ?? new MemoryVault();
   const turns = new CreativeTurnService({
-    queue, launcher, git: deps.git, media,
+    queue, launcher, git: deps.git, media, vault,
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     model: async () => (await requireWorkspace().readSettings()).model,
     broadcast: (msg) => hub.broadcast(msg),
@@ -281,8 +283,11 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   registerLibraryRoutes(app, routeCtx);
   registerProjectRoutes(app, { requireWorkspace, jobKeyOf: projectJobKey, broadcast: (m) => hub.broadcast(m) });
 
-  registerBridgeRoutes(app, { bridge, approvals });
-  registerSettingsRoutes(app, { vault: deps.vault ?? new MemoryVault(), approvals, requireWorkspace });
+  registerBridgeRoutes(app, {
+    bridge, approvals,
+    extraTools: providerTools({ vault, approvals, media, settings: () => requireWorkspace().readSettings(), broadcast: (m) => hub.broadcast(m) }),
+  });
+  registerSettingsRoutes(app, { vault, approvals, requireWorkspace });
 
   const serveWeb = Boolean(deps.webDir && (await stat(deps.webDir).catch(() => null))?.isDirectory());
   // Always registered: it provides reply.sendFile to the creative file route; it serves the web build only when present.

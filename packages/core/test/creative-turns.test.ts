@@ -1,3 +1,4 @@
+import { MemoryVault } from '../src/secrets/vault.ts';
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -39,7 +40,7 @@ beforeEach(async () => {
   messages = [];
   queue = new JobQueue({ concurrency: 2 });
   service = new CreativeTurnService({
-    queue, git, media: NoMediaTools,
+    queue, git, media: NoMediaTools, vault: new MemoryVault(),
     launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
     presets: async () => DEFAULT_FORMATS, model: async () => null,
     broadcast: (m) => messages.push(m),
@@ -184,7 +185,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
   it('restores the creative when it is cancelled while still queued', async () => {
     const q1 = new JobQueue({ concurrency: 1 });
     const svc = new CreativeTurnService({
-      queue: q1, git: new Git(), media: NoMediaTools,
+      queue: q1, git: new Git(), media: NoMediaTools, vault: new MemoryVault(),
       launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
     });
@@ -227,7 +228,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     await finalState((await service.start(ref)).id);
     const throwing: MediaTools = { available: true, probe: async () => null, poster: async () => false, frame: async () => { throw new Error('ffmpeg esploso'); } };
     const svc = new CreativeTurnService({
-      queue, git: new Git(), media: throwing,
+      queue, git: new Git(), media: throwing, vault: new MemoryVault(),
       launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
     });
@@ -239,7 +240,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
   it('a start() right after a queued cancel is not clobbered by the stale cleanup', async () => {
     const q1 = new JobQueue({ concurrency: 1 });
     const svc = new CreativeTurnService({
-      queue: q1, git: new Git(), media: NoMediaTools,
+      queue: q1, git: new Git(), media: NoMediaTools, vault: new MemoryVault(),
       launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
     });
@@ -292,7 +293,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
       frame: async (input) => { sources.push(input); return false; },
     };
     const svc = new CreativeTurnService({
-      queue, git: new Git(), media, launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
+      queue, git: new Git(), media, vault: new MemoryVault(), launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
     });
     await finalState((await svc.start(ref, { text: 'da v1', pins: [{ format: 'instagram-post-1x1', x: 0.5, y: 0.5, timeSec: 1 }] })).id);
@@ -320,7 +321,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
         poster: async () => false, frame: async () => false,
       };
       const svc = new CreativeTurnService({
-        queue, git, media, launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
+        queue, git, media, vault: new MemoryVault(), launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
         presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
       });
       return { start: async () => { jobId = (await svc.start(ref)).id; return jobId; } };
@@ -406,7 +407,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     const real = git.commitAll.bind(git);
     git.commitAll = async (dir, msg) => { if (msg.endsWith('· stato')) throw new Error('disco pieno'); return real(dir, msg); };
     const svc = new CreativeTurnService({
-      queue, git, media: NoMediaTools,
+      queue, git, media: NoMediaTools, vault: new MemoryVault(),
       launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
     });

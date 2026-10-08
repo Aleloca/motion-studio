@@ -3,6 +3,7 @@ import { EMPTY_BRAND_KIT, brandKitSchema } from '@motion-studio/shared';
 import { MCP_TOOLS } from '../agent/launcher.ts';
 import type { ApprovalBroker } from '../approvals/broker.ts';
 import { readConfinedFile } from '../brand/agent-guard.ts';
+import { ProviderError } from '../providers/http.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import type { AgentBridge, BridgeContext } from './bridge.ts';
 
@@ -74,8 +75,8 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
     try {
       return await handler(c, (req.body ?? {}) as Record<string, unknown>);
     } catch (err) {
-      if (err instanceof WorkspaceError) return reply.status(err.status).send({ error: err.message });
-      throw err;
+      if (err instanceof WorkspaceError || err instanceof ProviderError) return reply.status(err.status).send({ error: err.message });
+      return reply.status(500).send({ error: 'Errore interno di Motion Studio' });
     }
   });
 }

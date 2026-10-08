@@ -85,7 +85,7 @@ describe('brand and codebase context', () => {
       tone: { id: 'tone', text: 'Diretto', source: manual }, dos: [{ id: 'd1', text: 'Usa foto reali', source: manual }],
       donts: [{ id: 'n1', text: 'Niente gradienti', source: manual }], photoStyle: null },
     hasGuidelines: true, assets: 12, references: 3,
-    codebases: [{ path: '/Users/me/app ios', note: 'schermate in /Screens' }], missingCodebases: ['/Users/me/old'],
+    codebases: [{ path: '/Users/me/app ios', note: 'schermate in /Screens' }], missingCodebases: ['/Users/me/old'], tools: [],
   };
   it('adds brand and read-only codebase sections to first and iteration prompts', () => {
     for (const kind of ['first', 'iteration'] as const) {
@@ -103,9 +103,22 @@ describe('brand and codebase context', () => {
     }
   });
   it('omits empty sections and never adds them to fix prompts', () => {
-    const empty = { ...context, kit: { ...context.kit, colors: [], fonts: [], logos: [], tone: null, dos: [], donts: [] }, hasGuidelines: false, assets: 0, references: 0, codebases: [], missingCodebases: [] };
+    const empty = { ...context, kit: { ...context.kit, colors: [], fonts: [], logos: [], tone: null, dos: [], donts: [] }, hasGuidelines: false, assets: 0, references: 0, codebases: [], missingCodebases: [], tools: [] };
     expect(buildCreativePrompt({ ...base, kind: 'first', context: empty })).not.toContain('## Brand');
+    expect(buildCreativePrompt({ ...base, kind: 'first', context: empty })).not.toContain('## Strumenti Motion Studio');
     expect(buildCreativePrompt({ ...base, kind: 'fix', problems: ['x'], context })).not.toContain('## Brand');
+  });
+  it('lists the tools when given', () => {
+    const p = buildCreativePrompt({ ...base, kind: 'first', context: { ...context, tools: ['- fonts_fetch: font di Google Fonts (pronto)'] } });
+    expect(p).toContain('## Strumenti Motion Studio (MCP)');
+    expect(p).toContain('validate_output prima di chiudere il turno');
+  });
+});
+
+describe('Motion Studio tools in CONTEXT_MD', () => {
+  it('is explained in CONTEXT_MD', () => {
+    expect(CONTEXT_MD).toContain('## Strumenti Motion Studio');
+    expect(CONTEXT_MD).toContain('attribution');
   });
 });
 

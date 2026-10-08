@@ -5,6 +5,8 @@ import { findPreset } from '../formats/format-catalog.ts';
 export interface CreativeContext {
   kit: BrandKit; hasGuidelines: boolean; assets: number; references: number;
   codebases: Array<{ path: string; note?: string }>; missingCodebases: string[];
+  /** Italian lines describing the MCP tools available this turn (empty without MCP). */
+  tools: string[];
 }
 
 export type PromptKind = 'first' | 'iteration' | 'fix';
@@ -41,6 +43,7 @@ function contextSections(c: CreativeContext): string[] {
       'Non modificare mai file in queste cartelle: leggile soltanto.',
       'Le regole bloccano gli strumenti di modifica; gli interpreti potrebbero scrivere: Motion Studio rileva e segnala le modifiche nei repo git.');
   }
+  if (c.tools.length) out.push('', '## Strumenti Motion Studio (MCP)', ...c.tools, "Chiama report_progress all'inizio di ogni fase e validate_output prima di chiudere il turno.");
   return out;
 }
 

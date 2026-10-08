@@ -10,6 +10,8 @@ import { KeyedMutex } from '../keyed-mutex.ts';
 import type { Git } from '../git.ts';
 import { JobFailedError, type JobQueue } from '../jobs/job-queue.ts';
 import type { MediaTools } from '../media/media-tools.ts';
+import { availableTools } from '../bridge/provider-tools.ts';
+import type { SecretsVault } from '../secrets/vault.ts';
 import { CONTEXT_MD } from '../project-template.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import { CreativeStore } from './creative-store.ts';
@@ -17,7 +19,7 @@ import { validateOutputs } from './output-contract.ts';
 import { buildCreativePrompt, type CreativeContext, type PromptKind } from './prompt.ts';
 
 export interface CreativeTurnDeps {
-  queue: JobQueue; launcher: AgentLauncher; git: Git; media: MediaTools;
+  queue: JobQueue; launcher: AgentLauncher; git: Git; media: MediaTools; vault: SecretsVault;
   presets: () => Promise<FormatPreset[]>;
   model: () => Promise<string | null>;
   broadcast: (msg: ServerMessage) => void;
@@ -250,7 +252,7 @@ export class CreativeTurnService {
     for (const c of checks.filter((x) => !x.exists)) await note(`Codebase non trovata, ignorata in questo turno: ${c.path}`);
     const existing = checks.filter((c) => c.exists);
     return {
-      context: { kit, hasGuidelines, assets, references, codebases: existing.map(({ path, note: n }) => ({ path, ...(n ? { note: n } : {}) })), missingCodebases: checks.filter((c) => !c.exists).map((c) => c.path) },
+      context: { kit, hasGuidelines, assets, references, codebases: existing.map(({ path, note: n }) => ({ path, ...(n ? { note: n } : {}) })), missingCodebases: checks.filter((c) => !c.exists).map((c) => c.path), tools: this.deps.launcher.mcpActive() ? await availableTools(this.deps.vault) : [] },
       existing: existing.map((c) => c.path),
     };
   }

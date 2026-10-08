@@ -42,6 +42,9 @@ export interface LaunchInput {
 export class AgentLauncher {
   constructor(private readonly deps: LauncherDeps) {}
 
+  /** True when agents get the `studio` MCP server (bridge listening and a command to start it). */
+  mcpActive(): boolean { return Boolean(this.deps.bridge.origin && this.deps.mcpCommand?.length); }
+
   async sandboxActive(): Promise<boolean> {
     return this.activeWith(await this.deps.settings());
   }
@@ -62,7 +65,9 @@ export class AgentLauncher {
     // .studio holds the project's permissions: the agent must never be able to grant itself more.
     const realDir = await realpath(i.projectDir).catch(() => i.projectDir);
     const protectedDirs = [...new Set([i.projectDir, realDir])].map((d) => join(d, '.studio'));
-    const mcpOn = Boolean(bridge.origin && mcpCommand?.length);
+    const mcpOn = this.mcpActive();
+    // Aborted on cancel and when the run settles: provider calls started by the agent's tools stop with the job.
+    const abort = new AbortController();
     const policy = buildAgentPolicy({
       kind: i.kind, sandbox, home, configDir,
       codebases: i.codebases ?? [], protectedFiles: i.protectedFiles ?? [], protectedDirs,
@@ -78,6 +83,7 @@ export class AgentLauncher {
     const release = async () => {
       const first = !released;
       released = true;
+      abort.abort();
       if (first && token) bridge.unregister(token);
       approvals.cancelJob(i.jobId);
       if (first) await Promise.all([configFile, tokenFile].map((f) => (f ? rm(f, { force: true }).catch(() => {}) : undefined)));
@@ -87,7 +93,7 @@ export class AgentLauncher {
       if (mcpOn && mcpCommand) {
         token = bridge.register({
           jobId: i.jobId, kind: i.kind, projectSlug: i.projectSlug, projectDir: i.projectDir, creativeSlug: i.creativeSlug ?? null,
-          emit: i.onEvent, ...(i.validate ? { validate: i.validate } : {}),
+          emit: i.onEvent, signal: abort.signal, ...(i.validate ? { validate: i.validate } : {}),
         });
         // The paths are recorded before writing, so release() also removes a half-written pair.
         const files = await prepareRunFiles(configDir, i.jobId);

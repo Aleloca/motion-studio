@@ -36,6 +36,9 @@ Suggerimenti (non vincoli): per video brevi Remotion funziona bene; per immagini
 - \`assets/assets.json\`: elenco degli asset con descrizione, tag e origine; i file sono in \`assets/\`.
 - \`references/references.json\`: immagini di riferimento con note; i file sono in \`references/\`.
 Le regole del brand hanno la precedenza sulle scelte generiche. Usa gli asset del progetto prima di generarne di nuovi.
+
+## Strumenti Motion Studio
+Quando la richiesta elenca gli strumenti Motion Studio (MCP) puoi usarli: generare immagini (gpt-image-2), voci fuori campo, cercare e scaricare foto/video stock, scaricare font di Google Fonts. I file finiscono in \`assets/\` e sono già registrati in \`assets/assets.json\`. Conserva l'attribuzione degli asset di stock (campo \`attribution\`). Usa \`report_progress\` per dire a che punto sei e \`validate_output\` per controllare gli output prima di chiudere il turno.
 `;
 
 export const CLAUDE_MD = `@.studio/context.md

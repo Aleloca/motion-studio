@@ -131,3 +131,38 @@ export async function readConfinedFile(projectDir: string, rel: string, maxBytes
     await fh.close().catch(() => {});
   }
 }
+
+export const MAX_AGENT_BYTES = 50 * 1024 * 1024;
+
+/** Same checks as readConfinedFile, for binary files (e.g. reference images): the bytes, or `{ skipped }` / null when missing. */
+export async function readConfinedBytes(projectDir: string, rel: string, maxBytes = MAX_AGENT_BYTES): Promise<{ bytes: Buffer } | { skipped: string } | null> {
+  const abs = absOf(projectDir, rel);
+  let fh: FileHandle;
+  try {
+    fh = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? null : { skipped: 'non leggibile' };
+  }
+  try {
+    const info = await fh.stat();
+    if (!info.isFile()) return { skipped: 'non è un file regolare' };
+    if (info.size > maxBytes) return { skipped: 'file troppo grande' };
+    const [real, realProject] = await Promise.all([realpath(abs).catch(() => null), realpath(projectDir).catch(() => null)]);
+    if (!real || !realProject || !real.startsWith(realProject + sep)) return { skipped: 'fuori dal progetto' };
+    const check = await stat(real).catch(() => null);
+    if (!check || check.ino !== info.ino || check.dev !== info.dev) return { skipped: 'fuori dal progetto' };
+    const chunks: Buffer[] = [];
+    let total = 0;
+    for (;;) {
+      const buf = Buffer.alloc(Math.min(1024 * 1024, maxBytes + 1 - total));
+      const { bytesRead } = await fh.read(buf, 0, buf.length, total);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+      if (total > maxBytes) return { skipped: 'file troppo grande' };
+      chunks.push(buf.subarray(0, bytesRead));
+    }
+    return { bytes: Buffer.concat(chunks) };
+  } finally {
+    await fh.close().catch(() => {});
+  }
+}

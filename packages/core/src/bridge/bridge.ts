@@ -7,6 +7,8 @@ export interface BridgeContext {
   jobId: string; kind: AgentJobKind; projectSlug: string; projectDir: string; creativeSlug: string | null;
   /** Same sink as the turn's onEvent. */
   emit(e: AgentEvent): void;
+  /** Aborted when the job is cancelled or ends: in-flight provider calls must stop. */
+  signal: AbortSignal;
   /** Creative turns only. */
   validate?: () => Promise<{ problems: string[]; outputs: unknown[] }>;
 }
