@@ -11,7 +11,7 @@ I provider sono servizi esterni che l'agente usa tramite strumenti MCP del serve
 - Una chiave mancante produce l'errore "Configura la chiave <Provider> nelle Impostazioni di Motion Studio"; nella richiesta all'agente gli strumenti non configurati compaiono come "non configurato".
 
 ## Costi e conferme
-`generate_image` e `tts` sono a pagamento: se la conferma dei provider a pagamento è attiva nelle Impostazioni (predefinito), ogni chiamata compare come richiesta nella pagina del lavoro (*Consenti una volta*, *Sempre per questo progetto*, *Nega*; senza risposta in 10 minuti viene negata). "Sempre" salva la regola `provider:openai-images`, `provider:tts-openai` o `provider:tts-elevenlabs` in `<progetto>/.studio/permissions.json`. La ricerca e il download di stock e i font non chiedono conferma (non sono a pagamento).
+`generate_image` e `tts` sono a pagamento: se l'opzione **Chiedi conferma prima di usare provider a pagamento** è attiva nelle Impostazioni (predefinito), ogni chiamata compare come richiesta nella pagina del lavoro (*Consenti una volta*, *Sempre per questo progetto*, *Nega*; senza risposta in 10 minuti viene negata). "Sempre" salva la regola `provider:openai-images`, `provider:tts-openai` o `provider:tts-elevenlabs` in `<progetto>/.studio/permissions.json`. La ricerca e il download di stock e i font non chiedono conferma (non sono a pagamento).
 
 ## Immagini: OpenAI gpt-image-2 (`generate_image`)
 - Chiave: `OPENAI_API_KEY`. Modello `gpt-image-2`, uscita PNG.

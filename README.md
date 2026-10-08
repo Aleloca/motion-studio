@@ -8,7 +8,7 @@ App locale e open-source per creare video in motion graphics e immagini usando i
 
 ## Installazione
 
-**App desktop (Electron).** Scarica l'installer dalla pagina *Releases* di GitHub del progetto, quando sarà pubblicato. Le build non firmate (quelle senza i certificati dei maintainer) richiedono un passaggio in più la prima volta:
+**App desktop (Electron).** Scarica l'installer dalla pagina *Releases* di GitHub del progetto, quando sarà pubblicato (macOS: Apple Silicon `arm64` e Intel `x64`). Le build non firmate (quelle senza i certificati dei maintainer) richiedono un passaggio in più la prima volta:
 - macOS: clic destro sull'app, poi **Apri** (e conferma); un doppio clic normale viene bloccato da Gatekeeper.
 - Gli aggiornamenti automatici dell'app (controllo all'avvio, installazione al riavvio) richiedono build **firmate** su macOS; con una build non firmata aggiorna scaricando a mano la nuova versione.
 
@@ -26,6 +26,8 @@ Opzioni del launcher (dopo il nome dello script, es. `pnpm motion-studio --port 
 - `--print-url` — stampa l'indirizzo del Motion Studio già avviato, senza avviarne un altro (utile se hai chiuso la scheda).
 
 L'indirizzo stampato all'avvio contiene un codice di accesso (`#t=…`): apri Motion Studio da quel link. Il browser lo ricorda; se l'interfaccia chiede di riaprirla dal link del terminale, usa `--print-url`. L'app desktop apre da sola la propria finestra.
+
+Per ogni cartella di configurazione gira un solo Motion Studio: se è già avviato (dal terminale o come app desktop), `motion-studio` stampa `Motion Studio è già avviato: <indirizzo>` e termina, e l'app desktop apre quell'indirizzo invece di avviarne un altro.
 
 ## Requisiti
 - [Claude Code](https://docs.claude.com/claude-code) installato e autenticato (`claude auth login`)
@@ -45,7 +47,7 @@ Dalla pagina della creatività, **Esporta…** copia gli output di una versione 
 ### Aggiungere formati
 Se in una creatività già generata aggiungi formati al brief e premi di nuovo **Genera**, Motion Studio chiede all'agente di aggiungere solo i formati mancanti riusando i sorgenti già presenti in `work/` e lo stesso stile della versione precedente; nella richiesta include il comando di render registrato nel manifest (`renderCommand`), se c'è. È l'agente a eseguirlo e ad adattarlo: Motion Studio non lancia il comando da solo, e ogni formato nuovo è comunque una ricomposizione.
 
-Limiti attuali: la rigenerazione dei soli formati è quindi guidata dall'agente, non un render automatico del comando del manifest; le build desktop firmate dipendono dai certificati dei maintainer (vedi Rilascio).
+Limiti attuali: la rigenerazione dei soli formati è quindi guidata dall'agente, non un render automatico del comando del manifest; le build desktop firmate dipendono dai certificati dei maintainer (vedi Rilascio). Su Ubuntu 24.04 e successive l'AppImage può non avviarsi perché il sistema limita i namespace utente non privilegiati (AppArmor, `kernel.apparmor_restrict_unprivileged_userns`), che servono alla sandbox di Chromium: serve un profilo AppArmor per l'app (o, a tuo rischio, disattivare quella restrizione); evita `--no-sandbox`, che toglie l'isolamento della finestra.
 
 ## Sicurezza
 - **Sandbox dell'agente** (macOS; Linux con `bubblewrap` e `socat`): ogni lavoro dell'agente gira isolato. Può scrivere solo nella cartella del progetto, non può leggere cartelle sensibili (`~/.ssh`, credenziali cloud, portachiavi, configurazione di Motion Studio). La rete dipende dal lavoro: creatività e console usano solo registri di pacchetti, CDN e i domini che aggiungi in **Impostazioni → Rete**; l'analisi brand non ha rete nella sandbox: legge le pagine con `WebFetch` e scarica loghi e font solo con lo strumento `download_file` di Motion Studio, che blocca gli indirizzi privati o locali (controllati sull'IP risolto, a ogni redirect); la descrizione degli asset non ha rete. La sandbox non ripiega sull'esecuzione libera: se non riesce ad avviarsi i comandi non partono, e l'agente non può chiedere di eseguire un comando fuori da essa.
@@ -53,7 +55,7 @@ Limiti attuali: la rigenerazione dei soli formati è quindi guidata dall'agente,
 - **Codebase collegate**: leggibili, mai scrivibili (anche dagli interpreti, grazie alla sandbox); Motion Studio segnala comunque se una codebase git cambia durante un turno.
 - **Approvazioni**: tutto ciò che esce dal perimetro (es. installare un programma, scrivere fuori dal progetto) compare come richiesta nella pagina del lavoro e in alto a destra: *Consenti una volta*, *Sempre per questo progetto* (revocabile in Impostazioni del progetto) o *Nega*. "Sempre per questo progetto" è offerto solo per una breve lista di comandi sicuri (`ls`, `mkdir`, `ffprobe`, ottimizzatori di immagini), per cartelle fuori dalle posizioni sensibili e dal workspace, per domini web e per i provider a pagamento; gli altri comandi si approvano una volta per volta. Le regole stanno in `<progetto>/.studio/permissions.json`, protetto dall'agente. Senza risposta entro 10 minuti la richiesta viene negata.
 - **Chiavi API**: nel portachiavi del sistema (o nelle variabili d'ambiente `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `PEXELS_API_KEY`, `UNSPLASH_ACCESS_KEY`); l'agente non le vede mai: le variabili delle chiavi vengono tolte dall'ambiente dell'agente (e del suo server MCP) e gli strumenti MCP chiedono a Motion Studio di chiamare i provider.
-- **Costi**: generazioni di immagini e voci chiedono conferma prima di ogni chiamata (disattivabile in Impostazioni).
+- **Costi**: generazioni di immagini e voci chiedono conferma prima di ogni chiamata (disattivabile in Impostazioni con **Chiedi conferma prima di usare provider a pagamento**).
 - **Codice di accesso dell'interfaccia**: le API di Motion Studio rispondono solo all'interfaccia aperta dal link del terminale (il codice sta in `ui-token` nella cartella di configurazione). È una difesa contro richieste locali estranee, per esempio pagine web aperte nel browser o programmi che non conoscono il codice; non è una barriera contro un processo dello stesso utente che può leggere la cartella di configurazione.
 - **Senza sandbox** (Windows, Linux senza bubblewrap, o isolamento disattivato): Motion Studio usa l'elenco ristretto di comandi della fase precedente e lo segnala nel Doctor e nelle Impostazioni. Senza sandbox i comandi consentiti (node, python, npm/npx, pip, ffmpeg) possono leggere e scrivere ovunque e contattare Motion Studio stesso: usa la sandbox. In particolare un interprete avviato dall'agente potrebbe modificare `.studio/permissions.json`: Motion Studio accetta solo regole nei formati che "Sempre per questo progetto" può produrre (comandi sicuri, cartelle fuori dalle posizioni sensibili e dal workspace, domini web, conferme dei provider), quindi l'agente potrebbe concedersi quei permessi o saltare la conferma di costo di un provider, ma non andare oltre quei limiti.
 - **Output non verificati:** senza ffmpeg/ffprobe installati Motion Studio non può controllare davvero risoluzione e durata, e mostra gli output come "non verificati".
@@ -94,6 +96,7 @@ pnpm motion-studio        # build + avvio del pacchetto locale
 
 pnpm --filter motion-studio-desktop dev        # app Electron in sviluppo (prima: `pnpm --filter @motion-studio/web build && pnpm --filter motion-studio-desktop build`)
 pnpm --filter motion-studio-desktop smoke      # avvio di prova dell'app con una configurazione temporanea
+pnpm --filter motion-studio-desktop dist:dir   # app non impacchettata in apps/desktop/release (solo l'architettura di questo computer)
 pnpm --filter motion-studio-desktop dist:mac   # installer locale (dist:win, dist:linux; senza argomento: la piattaforma corrente)
 ```
 
@@ -104,10 +107,10 @@ Variabili utili:
 Per contribuire vedi [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Rilascio
-Per i maintainer. Crea e pubblica un tag `vX.Y.Z` (allinea prima le versioni nei `package.json`): il workflow `.github/workflows/release.yml` costruisce l'app desktop su macOS, Windows e Linux e crea una **bozza** di release su GitHub con gli installer (da pubblicare a mano); poi, se `NPM_TOKEN` è presente, pubblica `motion-studio-app` su npm. La CI (`ci.yml`) esegue i test a ogni push su `main` e sulle pull request.
+Per i maintainer. Allinea la versione in `apps/desktop/package.json` e `apps/cli/package.json`, poi crea e pubblica il tag `vX.Y.Z` corrispondente: ogni job del workflow `.github/workflows/release.yml` si ferma subito se il tag non coincide con entrambe le versioni. Il workflow costruisce l'app desktop su macOS (`arm64` e `x64`), Windows e Linux e crea una **bozza** di release su GitHub con gli installer (da pubblicare a mano); in parallelo, se `NPM_TOKEN` è presente, pubblica `motion-studio-app` su npm (un errore in una build desktop non lo blocca). La CI (`ci.yml`) esegue i test a ogni push su `main` e sulle pull request.
 
 Segreti del repository usati dal workflow (tutti facoltativi: senza, la build è non firmata o l'npm viene saltato):
-- macOS (firma e notarizzazione): `MAC_CERT_P12_BASE64`, `MAC_CERT_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`. Senza `MAC_CERT_P12_BASE64` la firma è disattivata.
+- macOS (firma e notarizzazione): `MAC_CERT_P12_BASE64`, `MAC_CERT_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`. Senza `MAC_CERT_P12_BASE64` la firma è disattivata; la notarizzazione parte solo se ci sono tutti e tre i segreti `APPLE_*`, altrimenti è disattivata esplicitamente.
 - Windows: `WIN_CERT_PFX_BASE64`, `WIN_CERT_PASSWORD`.
 - npm: `NPM_TOKEN`.
 - `GITHUB_TOKEN` è fornito da GitHub Actions.

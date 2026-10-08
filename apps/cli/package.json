@@ -34,7 +34,7 @@
   "scripts": {
     "build": "tsup && node -e \"require('node:fs').cpSync('../../packages/web/dist','dist/web',{recursive:true})\" && node -e \"require('node:fs').copyFileSync('../../packages/mcp-studio/src/server.mjs','dist/mcp-studio.mjs')\"",
     "typecheck": "tsc -p tsconfig.json",
-    "prepack": "pnpm run build && node -e \"const f=require('node:fs');for(const n of ['README.md','LICENSE'])f.copyFileSync('../../'+n,n)\""
+    "prepack": "pnpm run build && node scripts/prepack.ts"
   },
   "dependencies": {
     "@fastify/multipart": "^9.4.0",
