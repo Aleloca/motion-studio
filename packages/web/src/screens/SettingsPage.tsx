@@ -7,6 +7,8 @@ const PROVIDERS: Array<[ProviderId, string, string]> = [['openai', 'OpenAI', 'OP
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 function KeyRow({ id, label, env, status, onChange }: { id: ProviderId; label: string; env: string; status?: SecretStatus; onChange(s: SecretStatus): void }) {
+  const t = useT();
+  const s = t.web.settingsUi;
   const [value, setValue] = useState('');
   const [error, setError] = useState<string | null>(null);
   const fromEnv = status?.source === 'env';
@@ -14,11 +16,11 @@ function KeyRow({ id, label, env, status, onChange }: { id: ProviderId; label: s
   return (
     <div className="row" style={{ gap: 8 }}>
       <strong style={{ width: 110 }}>{label}</strong>
-      <span className={`badge ${status?.configured ? 'ok' : ''}`}>{fromEnv ? 'Da variabile d\'ambiente' : status?.configured ? 'Configurata nel portachiavi' : 'Non configurata'}</span>
-      <input type="password" autoComplete="off" aria-label={`Nuova chiave ${label}`} value={value} disabled={fromEnv} onChange={(e) => setValue(e.target.value)} style={{ flex: '1 1 220px', width: 'auto' }} />
-      <button type="button" aria-label={`Salva chiave ${label}`} disabled={fromEnv || !value.trim()} onClick={() => void run(() => api.setSecret(id, value))}>Salva</button>
-      {status?.source === 'keychain' && <button type="button" aria-label={`Rimuovi chiave ${label}`} onClick={() => void run(() => api.deleteSecret(id))}>Rimuovi</button>}
-      {fromEnv && <span className="muted" style={{ fontSize: 12 }}>Gestita da {env}</span>}
+      <span className={`badge ${status?.configured ? 'ok' : ''}`}>{fromEnv ? s.fromEnv : status?.configured ? s.inKeychain : s.notConfigured}</span>
+      <input type="password" autoComplete="off" aria-label={s.newKey({ label })} value={value} disabled={fromEnv} onChange={(e) => setValue(e.target.value)} style={{ flex: '1 1 220px', width: 'auto' }} />
+      <button type="button" aria-label={s.saveKey({ label })} disabled={fromEnv || !value.trim()} onClick={() => void run(() => api.setSecret(id, value))}>{t.common.save}</button>
+      {status?.source === 'keychain' && <button type="button" aria-label={s.removeKey({ label })} onClick={() => void run(() => api.deleteSecret(id))}>{t.web.common.remove}</button>}
+      {fromEnv && <span className="muted" style={{ fontSize: 12 }}>{s.managedBy({ env })}</span>}
       {error && <p role="alert" className="error" style={{ margin: 0, flexBasis: '100%' }}>{error}</p>}
     </div>
   );
@@ -47,6 +49,8 @@ function LanguageSelector({ value, onChange }: { value: LanguageSetting; onChang
 }
 
 export function SettingsPage({ settings, checks, language, onLanguage, onSaved }: { settings: WorkspaceSettingsView; checks: DoctorCheck[] | null; language: LanguageSetting; onLanguage(next: LanguageState): void; onSaved(next: WorkspaceSettings): void }) {
+  const t = useT();
+  const s = t.web.settingsUi;
   const [secrets, setSecrets] = useState<SecretStatus[]>([]);
   const [domain, setDomain] = useState('');
   const [model, setModel] = useState(settings.model ?? '');
@@ -56,53 +60,53 @@ export function SettingsPage({ settings, checks, language, onLanguage, onSaved }
   const sandbox = checks?.find((c) => c.id === 'sandbox');
   return (
     <main className="page stack" style={{ maxWidth: 900 }}>
-      <h1 style={{ margin: 0, fontSize: 24 }}>Impostazioni</h1>
+      <h1 style={{ margin: 0, fontSize: 24 }}>{s.title}</h1>
       {error && <p role="alert" className="error">{error}</p>}
       <LanguageSelector value={language} onChange={onLanguage} />
-      <section className="card stack" aria-label="Chiavi dei provider">
-        <h2 style={{ margin: 0, fontSize: 17 }}>Chiavi dei provider</h2>
-        <p className="muted" style={{ margin: 0, fontSize: 13 }}>Le chiavi restano nel portachiavi del sistema: l'agente non le vede mai.</p>
+      <section className="card stack" aria-label={s.providerKeys}>
+        <h2 style={{ margin: 0, fontSize: 17 }}>{s.providerKeys}</h2>
+        <p className="muted" style={{ margin: 0, fontSize: 13 }}>{s.keysNote}</p>
         {PROVIDERS.map(([id, label, env]) => (
           <KeyRow key={id} id={id} label={label} env={env} status={secrets.find((s) => s.provider === id)} onChange={(s) => setSecrets((all) => all.map((x) => (x.provider === s.provider ? s : x)))} />
         ))}
-        <div className="row" style={{ gap: 8 }}><strong style={{ width: 110 }}>Google Fonts</strong><span className="muted">Non serve una chiave</span></div>
+        <div className="row" style={{ gap: 8 }}><strong style={{ width: 110 }}>Google Fonts</strong><span className="muted">{s.noKeyNeeded}</span></div>
         <label className="row" style={{ gap: 6 }}>
           <input type="checkbox" checked={settings.confirmPaidProviders} onChange={(e) => void save({ confirmPaidProviders: e.target.checked })} style={{ width: 16, height: 16 }} />
-          Chiedi conferma prima di usare provider a pagamento
+          {s.confirmPaid}
         </label>
       </section>
-      <section className="card stack" aria-label="Sicurezza">
-        <h2 style={{ margin: 0, fontSize: 17 }}>Sicurezza</h2>
-        {settings.sandboxMode === 'auto' && sandbox?.ok ? <p style={{ margin: 0 }}>Sandbox attiva: l'agente lavora isolato nella cartella del progetto</p> : <p className="warn" style={{ margin: 0 }}>{sandbox?.message ?? 'Stato della sandbox non disponibile'}</p>}
-        <label className="row" style={{ gap: 6 }}>Isolamento dell'agente
-          <select aria-label="Isolamento dell'agente" value={settings.sandboxMode} onChange={(e) => void save({ sandboxMode: e.target.value as WorkspaceSettings['sandboxMode'] })}>
-            <option value="auto">Automatico (consigliato)</option>
-            <option value="off">Disattivato</option>
+      <section className="card stack" aria-label={s.security}>
+        <h2 style={{ margin: 0, fontSize: 17 }}>{s.security}</h2>
+        {settings.sandboxMode === 'auto' && sandbox?.ok ? <p style={{ margin: 0 }}>{s.sandboxOn}</p> : <p className="warn" style={{ margin: 0 }}>{sandbox?.message ?? s.sandboxUnknown}</p>}
+        <label className="row" style={{ gap: 6 }}>{s.isolation}
+          <select aria-label={s.isolation} value={settings.sandboxMode} onChange={(e) => void save({ sandboxMode: e.target.value as WorkspaceSettings['sandboxMode'] })}>
+            <option value="auto">{s.isolationAuto}</option>
+            <option value="off">{s.isolationOff}</option>
           </select>
         </label>
-        {settings.sandboxMode === 'off' && <p className="warn" style={{ margin: 0 }}>Senza isolamento l'agente può scrivere ovunque con i comandi consentiti.</p>}
+        {settings.sandboxMode === 'off' && <p className="warn" style={{ margin: 0 }}>{s.isolationWarning}</p>}
       </section>
-      <section className="card stack" aria-label="Rete">
-        <h2 style={{ margin: 0, fontSize: 17 }}>Rete consentita all'agente</h2>
-        <p className="muted" style={{ margin: 0, fontSize: 13 }}>Sempre consentiti: registri di pacchetti (npm, PyPI), GitHub, CDN e Google Fonts.</p>
-        {settings.droppedDomains?.length ? <p role="status" className="warn" style={{ margin: 0 }}>Domini ignorati perché non validi: {settings.droppedDomains.join(', ')}</p> : null}
+      <section className="card stack" aria-label={s.network}>
+        <h2 style={{ margin: 0, fontSize: 17 }}>{s.networkTitle}</h2>
+        <p className="muted" style={{ margin: 0, fontSize: 13 }}>{s.alwaysAllowed}</p>
+        {settings.droppedDomains?.length ? <p role="status" className="warn" style={{ margin: 0 }}>{s.droppedDomains({ list: settings.droppedDomains.join(', ') })}</p> : null}
         {settings.extraAllowedDomains.map((d) => (
           <div key={d} className="row" style={{ gap: 8 }}>
             <span className="mono" style={{ flex: 1 }}>{d}</span>
-            <button type="button" aria-label={`Rimuovi dominio ${d}`} onClick={() => void save({ extraAllowedDomains: settings.extraAllowedDomains.filter((x) => x !== d) })}>Rimuovi</button>
+            <button type="button" aria-label={s.removeDomain({ domain: d })} onClick={() => void save({ extraAllowedDomains: settings.extraAllowedDomains.filter((x) => x !== d) })}>{t.web.common.remove}</button>
           </div>
         ))}
         <form className="row" style={{ gap: 6 }} onSubmit={(e) => { e.preventDefault(); void save({ extraAllowedDomains: [...settings.extraAllowedDomains, domain.trim()] }).then((ok) => { if (ok) setDomain(''); }); }}>
-          <input aria-label="Dominio da consentire" placeholder="api.esempio.it o *.esempio.it" value={domain} onChange={(e) => setDomain(e.target.value)} style={{ flex: 1, width: 'auto' }} />
-          <button type="submit" disabled={!domain.trim()}>Aggiungi dominio</button>
+          <input aria-label={s.allowDomain} placeholder={s.domainPlaceholder} value={domain} onChange={(e) => setDomain(e.target.value)} style={{ flex: 1, width: 'auto' }} />
+          <button type="submit" disabled={!domain.trim()}>{s.addDomain}</button>
         </form>
       </section>
-      <section className="card stack" aria-label="Agente">
-        <h2 style={{ margin: 0, fontSize: 17 }}>Agente</h2>
-        <label className="row" style={{ gap: 6 }}>Modello
-          <input value={model} placeholder="predefinito di Claude Code" onChange={(e) => setModel(e.target.value)} onBlur={() => { const next = model.trim() || null; if (next !== settings.model) void save({ model: next }); }} style={{ width: 240 }} />
+      <section className="card stack" aria-label={s.agent}>
+        <h2 style={{ margin: 0, fontSize: 17 }}>{s.agent}</h2>
+        <label className="row" style={{ gap: 6 }}>{s.model}
+          <input value={model} placeholder={s.modelPlaceholder} onChange={(e) => setModel(e.target.value)} onBlur={() => { const next = model.trim() || null; if (next !== settings.model) void save({ model: next }); }} style={{ width: 240 }} />
         </label>
-        <label className="row" style={{ gap: 6 }}>Lavori in parallelo
+        <label className="row" style={{ gap: 6 }}>{s.parallelJobs}
           <input type="number" min={1} max={8} value={settings.maxConcurrentJobs} onChange={(e) => { const n = Number(e.target.value); if (Number.isInteger(n) && n >= 1 && n <= 8) void save({ maxConcurrentJobs: n }); }} style={{ width: 80 }} />
         </label>
       </section>
