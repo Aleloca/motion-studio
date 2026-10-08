@@ -39,14 +39,33 @@ describe('ruleFor hardening', () => {
     ['Write', { file_path: '/Users/me/a' }, null],
     ['Write', { file_path: '/Users/me/Desktop/./a.png' }, 'Edit(//Users/me/Desktop/**)'],
     ['Write', { file_path: '/Users/me/Desktop/x/../../Docs/a.png' }, 'Edit(//Users/me/Docs/**)'],
+    ['Bash', { command: 'node script.js' }, null],
     ['Bash', { command: 'node -e "x"' }, null],
-    ['Bash', { command: 'python3 -c x' }, null],
-    ['Bash', { command: 'node' }, null],
-    ['Bash', { command: 'npm install' }, 'Bash(npm install:*)'],
+    ['Bash', { command: 'python3.12 x.py' }, null],
+    ['Bash', { command: 'node22 x.js' }, null],
+    ['Bash', { command: 'pwsh -c x' }, null],
+    ['Bash', { command: 'php x.php' }, null],
+    ['Bash', { command: 'npm run build' }, null],
+    ['Bash', { command: 'npm exec foo' }, null],
+    ['Bash', { command: 'uv run x.py' }, null],
+    ['Bash', { command: 'Bash -c x' }, null],
+    ['Bash', { command: 'SH -c x' }, null],
+    ['Bash', { command: 'FFMPEG -i a b' }, null],
     ['Bash', { command: 'env FOO=1 ls' }, null],
     ['Bash', { command: './run.sh' }, null],
-    ['Bash', { command: '.. x' }, null],
-    ['Bash', { command: 'git status' }, 'Bash(git:*)'],
+    ['Bash', { command: 'git status' }, null],
+    ['Bash', { command: 'brew upgrade' }, null],
+    ['Bash', { command: 'ffmpeg -i a b' }, 'Bash(ffmpeg:*)'],
+    ['Bash', { command: 'ffmpeg -i a b; rm -rf x' }, null],
+    ['Bash', { command: 'ls $(rm x)' }, null],
+    ['Read', { file_path: '/etc/passwd' }, null],
+    ['Write', { file_path: '/Applications/X.app/a' }, null],
+    ['Write', { file_path: '/Users/me/.claude/hooks/a' }, null],
+    ['Write', { file_path: '/Users/me/Library/LaunchAgents/a.plist' }, null],
+    ['WebFetch', { url: 'http://2130706433/x' }, null],
+    ['WebFetch', { url: 'http://127.1/x' }, null],
+    ['WebFetch', { url: 'http://example.com:8080/x' }, 'WebFetch(domain:example.com)'],
+    ['WebFetch', { url: 'http://[::1]/x' }, null],
     ['WebFetch', { url: 'http://localhost:3000/x' }, null],
     ['WebFetch', { url: 'http://192.168.1.5/x' }, null],
     ['Bash', { command: 'a'.repeat(600) }, null],
@@ -58,7 +77,7 @@ describe('ruleFor hardening', () => {
 
 describe('isAllowedRule', () => {
   it('accepts what ruleFor produces', () => {
-    for (const [t, i] of [['Bash', { command: 'git log' }], ['Bash', { command: 'brew install x' }], ['Write', { file_path: '/Users/me/Desktop/out [1]/a.png' }],
+    for (const [t, i] of [['Bash', { command: 'ls -la' }], ['Bash', { command: 'tar xf a.tar' }], ['Bash', { command: 'brew install x' }], ['Write', { file_path: '/Users/me/Desktop/out [1]/a.png' }],
       ['Read', { file_path: '/tmp/a/b.txt' }], ['WebFetch', { url: 'https://www.python.org/' }], ['provider:tts-openai', {}], ['provider:openai-images', {}], ['mcp__studio__report_progress', {}]] as const) {
       const r = ruleFor(t, i);
       expect(r, t).not.toBeNull();
@@ -67,6 +86,10 @@ describe('isAllowedRule', () => {
   });
   it.each([
     'Bash(*)', 'Bash(:*)', 'Bash(sudo:*)', 'Bash(env:*)', 'Bash(.:*)', 'Bash(node:*)', 'Bash(node -e:*)', 'Bash(brew:*)', 'Bash(git status:*)',
+    'Bash(Bash:*)', 'Bash(SH:*)', 'Bash(python3.12:*)', 'Bash(npm run:*)', 'Bash(ffmpeg -i:*)', 'Bash(FFMPEG:*)',
+    'WebFetch(domain:*)', 'WebFetch(domain:*.com)', 'WebFetch(domain:2130706433)', 'WebFetch(domain:0x7f000001)', 'WebFetch(domain:127.1)',
+    'WebFetch(domain:example.com:8080)', 'WebFetch(domain:Example.com)', 'WebFetch(domain:com)',
+    'Edit(//tmp/a\\x/**)', 'Edit(//tmp/a\nb/**)', 'Edit(//etc/**)', 'Edit(//Applications/Foo/**)', 'Edit(//tmp/a*/**)',
     'Edit(///**)', 'Edit(//**)', 'Edit(//Users/**)', 'Edit(//tmp/../etc/**)', 'Edit(//tmp/a)', 'Read(//**/**)',
     'WebFetch(domain:localhost)', 'WebFetch(domain:127.0.0.1)', 'WebFetch(*)', 'provider:evil', 'mcp__studio__approve', 'mcp__other__x', 'Write(x)', '',
   ])('rejects %j', (r) => { expect(isAllowedRule(r)).toBe(false); });
@@ -85,7 +108,7 @@ describe('PermissionsStore limits', () => {
     await mkdir(join(projectDir, '.studio'), { recursive: true });
     const allow = Array.from({ length: 200 }, (_, n) => ({ rule: `Bash(tool${n}:*)`, label: 'x', addedAt: new Date().toISOString() }));
     await writeFile(join(projectDir, '.studio', 'permissions.json'), JSON.stringify({ schemaVersion: 1, allow }));
-    const err = await s.add('Bash(one:*)', 'x').catch((e) => e);
+    const err = await s.add('Bash(ls:*)', 'x').catch((e) => e);
     expect(err.status).toBe(409);
     expect(err.message).toMatch(/Troppi permessi/);
   });
@@ -155,7 +178,7 @@ describe('PermissionsStore', () => {
     expect((await s.remove('Bash(brew install:*)').catch((e) => e)).status).toBe(404);
     await mkdir(join(projectDir, '.studio'), { recursive: true });
     await writeFile(join(projectDir, '.studio', 'permissions.json'), '{bad');
-    await expect(s.add('Bash(x:*)', 'x')).rejects.toMatchObject({ reason: 'invalid-json' });
+    await expect(s.add('Bash(ls:*)', 'x')).rejects.toMatchObject({ reason: 'invalid-json' });
     expect(await readFile(join(projectDir, '.studio', 'permissions.json'), 'utf8')).toBe('{bad');
   });
 });

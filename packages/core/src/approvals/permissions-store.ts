@@ -9,13 +9,11 @@ import { fileLock } from '../file-locks.ts';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 
-const RISKY_COMMANDS = new Set([
-  'sudo', 'rm', 'sh', 'bash', 'zsh', 'eval', 'exec', 'chmod', 'chown', 'dd', 'mkfs',
-  'env', 'xargs', 'command', 'nohup', 'time', 'timeout', 'nice', 'builtin', 'source', 'fish', 'dash', 'ksh', 'csh', 'tcsh',
-  'su', 'doas', 'osascript', 'perl', 'ruby', 'awk', 'find',
-]);
-/** Interpreters and package runners: the grant is keyed on the first two words (e.g. "brew install"). */
-const TWO_WORD_COMMANDS = new Set(['node', 'python', 'python3', 'npx', 'npm', 'pnpm', 'yarn', 'pip', 'pip3', 'brew', 'uv', 'deno', 'bun']);
+/** Commands that may be granted "always": media/file tools whose arguments cannot run other programs. Exact, case-sensitive. */
+const SAFE_ALWAYS = new Set(['ffmpeg', 'ffprobe', 'magick', 'convert', 'rsvg-convert', 'cwebp', 'gifsicle', 'optipng', 'pngquant', 'mkdir', 'cp', 'mv', 'ls', 'unzip', 'tar']);
+/** Ordered by how a system folder may be granted: never the folder itself nor anything inside it. */
+const SYSTEM_DIRS = ['/etc', '/private', '/usr', '/bin', '/sbin', '/System', '/Library', '/Applications'];
+const SHELL_CONTROL = /[;&|`$<>\n\r(){}]/;
 const PROVIDER_RULES = new Set(['provider:openai-images', 'provider:tts-openai', 'provider:tts-elevenlabs']);
 const STUDIO_RULES = new Set(['mcp__studio__report_progress']);
 const MAX_RULE = 500;
@@ -41,6 +39,7 @@ function safeDir(dir: string, env: RuleEnv): string | null {
   const { dirs, files } = sensitiveHomeEntries(home);
   const configDir = resolve(env.configDir ?? defaultConfigDir());
   if ([...dirs, ...files, configDir].some((x) => isInside(dir, x, ci) || isInside(x, dir, ci))) return null;
+  if ([join(home, '.claude'), join(home, 'Library', 'LaunchAgents'), ...SYSTEM_DIRS].some((x) => isInside(dir, x, ci))) return null;
   return dir;
 }
 
@@ -52,13 +51,19 @@ function dirRule(tool: 'Edit' | 'Read', filePath: string, env: RuleEnv) {
 }
 
 function bashRule(command: string) {
-  const [w, second] = command.trim().split(/\s+/);
-  if (!w || w.startsWith('.') || !/^[A-Za-z0-9._-]+$/.test(w) || RISKY_COMMANDS.has(w)) return null;
-  if (TWO_WORD_COMMANDS.has(w)) {
-    if (!second || second.startsWith('-') || !/^[A-Za-z0-9_][A-Za-z0-9_-]*$/.test(second)) return null;
-    return { rule: `Bash(${w} ${second}:*)`, label: `Comandi "${w} ${second}"` };
-  }
-  return { rule: `Bash(${w}:*)`, label: `Comandi "${w}"` };
+  const cmd = command.trim();
+  if (SHELL_CONTROL.test(cmd)) return null;
+  const [w, second] = cmd.split(/\s+/);
+  if (w === 'brew' && second === 'install') return { rule: 'Bash(brew install:*)', label: 'Comandi "brew install"' };
+  if (w && SAFE_ALWAYS.has(w)) return { rule: `Bash(${w}:*)`, label: `Comandi "${w}"` };
+  return null;
+}
+
+/** A canonical, public DNS name: no wildcard, port, IP shorthand or private/loopback address. */
+function isPublicHost(host: string): boolean {
+  if (!/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(host) || !host.includes('.')) return false;
+  try { if (new URL('http://' + host).hostname !== host) return false; } catch { return false; }
+  return !isPrivateHost(host);
 }
 
 function rawRuleFor(toolName: string, input: unknown, env: RuleEnv): { rule: string; label: string } | null {
@@ -69,7 +74,7 @@ function rawRuleFor(toolName: string, input: unknown, env: RuleEnv): { rule: str
   if (toolName === 'WebFetch') {
     try {
       const host = new URL(str(i.url)).hostname;
-      return host && !isPrivateHost(host) ? { rule: `WebFetch(domain:${host})`, label: `Pagine di ${host}` } : null;
+      return isPublicHost(host) ? { rule: `WebFetch(domain:${host})`, label: `Pagine di ${host}` } : null;
     } catch { return null; }
   }
   if (PROVIDER_RULES.has(toolName)) return { rule: toolName, label: `Uso di ${toolName.slice(9)} senza conferma` };
@@ -79,7 +84,7 @@ function rawRuleFor(toolName: string, input: unknown, env: RuleEnv): { rule: str
 
 export function ruleFor(toolName: string, input: unknown, env: RuleEnv = {}): { rule: string; label: string } | null {
   const r = rawRuleFor(toolName, input, env);
-  if (!r || r.rule.length > MAX_RULE) return null;
+  if (!r || !isAllowedRule(r.rule, env)) return null;
   return { rule: r.rule, label: r.label.slice(0, MAX_LABEL) };
 }
 
@@ -89,20 +94,20 @@ const unescapeGlob = (p: string) => p.replace(/\\([\\\[\]*?{}()!+@])/g, '$1');
 export function isAllowedRule(rule: string, env: RuleEnv = {}): boolean {
   if (typeof rule !== 'string' || rule.length > MAX_RULE) return false;
   if (PROVIDER_RULES.has(rule) || STUDIO_RULES.has(rule)) return true;
-  let m = /^Bash\(([A-Za-z0-9._-]+)(?: ([A-Za-z0-9_][A-Za-z0-9_-]*))?:\*\)$/.exec(rule);
-  if (m) {
-    const [, w, sub] = m;
-    if (w!.startsWith('.') || RISKY_COMMANDS.has(w!)) return false;
-    return TWO_WORD_COMMANDS.has(w!) ? Boolean(sub) : !sub;
-  }
+  if (rule === 'Bash(brew install:*)') return true;
+  let m = /^Bash\(([a-z0-9-]+):\*\)$/.exec(rule);
+  if (m) return SAFE_ALWAYS.has(m[1]!);
   m = /^(Edit|Read)\(\/\/(.+)\/\*\*\)$/.exec(rule);
   if (m) {
-    const dir = '/' + unescapeGlob(m[2]!);
-    if (/[\\[\]*?{}()!+@]/.test(m[2]!.replace(/\\./g, ''))) return false; // unescaped glob characters
+    const raw = m[2]!;
+    if (/[\n\r]/.test(rule)) return false;
+    const rest = raw.replace(/\\[\\\[\]*?{}()!+@]/g, ''); // only escapes produced by escapeGlob
+    if (/[\\[\]*?{}()!+@]/.test(rest)) return false;
+    const dir = '/' + unescapeGlob(raw);
     return !dir.split('/').includes('..') && !dir.includes('/./') && !dir.includes('//') && !dir.endsWith('/') && safeDir(dir, env) === dir;
   }
-  m = /^WebFetch\(domain:([^\s()]+)\)$/.exec(rule);
-  if (m) return !isPrivateHost(m[1]!);
+  m = /^WebFetch\(domain:([^()]+)\)$/.exec(rule);
+  if (m) return isPublicHost(m[1]!);
   return false;
 }
 
