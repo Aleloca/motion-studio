@@ -1,6 +1,7 @@
 import { act, render } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { D, E, anim, enter, exit, flip, reducedMotion, stagger } from '../src/motion/motion';
+import { useEnter } from '../src/motion/useEnter';
 import { PageHost } from '../src/motion/PageHost';
 
 interface Call { el: Element; frames: Keyframe[]; opts: KeyframeAnimationOptions; fake: FakeAnim }
@@ -20,6 +21,10 @@ const first = <T,>(a: T[]): T => a[0]!;
 let reduced = false;
 const live = new Map<Element, FakeAnim[]>();
 
+const origAnimate = Element.prototype.animate;
+const origGetAnimations = Element.prototype.getAnimations;
+const origMatchMedia = window.matchMedia;
+
 beforeEach(() => {
   calls = []; reduced = false; live.clear();
   Element.prototype.animate = function (this: Element, frames: Keyframe[], opts: KeyframeAnimationOptions) {
@@ -33,7 +38,11 @@ beforeEach(() => {
   } as never;
   window.matchMedia = ((q: string) => ({ matches: reduced && q.includes('reduce'), media: q, addEventListener() {}, removeEventListener() {} })) as never;
 });
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => {
+  Element.prototype.animate = origAnimate;
+  Element.prototype.getAnimations = origGetAnimations;
+  window.matchMedia = origMatchMedia;
+});
 
 describe('motion helpers', () => {
   it('exposes spec durations and curves', () => {
@@ -57,6 +66,19 @@ describe('motion helpers', () => {
     void exit(el); void enter(el);
     expect(call(0).opts.fill).toBe('forwards');
     expect(call(0).opts.duration).toBeLessThan(call(1).opts.duration as number);
+  });
+
+  it('exit resolves false when cancelled by an enter, true when finished', async () => {
+    const el = document.createElement('div');
+    const p = exit(el);
+    void enter(el);
+    await expect(p).resolves.toBe(false);
+    const el2 = document.createElement('div');
+    const p2 = exit(el2);
+    call(calls.length - 1).fake.finish();
+    await expect(p2).resolves.toBe(true);
+    reduced = true;
+    await expect(exit(el)).resolves.toBe(true);
   });
 
   it('stagger spaces entrances by the step', () => {
@@ -90,14 +112,20 @@ describe('PageHost', () => {
   const ui = (route: R) => (
     <PageHost route={route} keyOf={(r) => r.k} depthOf={depthOf} render={(r) => <span data-testid={`p-${r.k}`}>{r.k}{r.p}</span>} />
   );
-  const pages = (c: HTMLElement) => [...c.querySelectorAll<HTMLElement>('.page')];
+  const pages = (c: HTMLElement) => [...c.querySelectorAll<HTMLElement>('.ms-page')];
   const settle = async () => { await act(async () => { calls.forEach((c) => c.fake.finish()); await Promise.resolve(); }); };
 
   it('rapid A -> B -> C leaves max 2 pages and only C active', async () => {
     const { container, rerender } = render(ui(A));
     rerender(ui(B));
     rerender(ui(C));
-    expect(pages(container).length).toBeLessThanOrEqual(2);
+    const mid = pages(container);
+    expect(mid).toHaveLength(2);
+    expect(container.querySelectorAll('[data-page-active]')).toHaveLength(1);
+    const act1 = container.querySelector<HTMLElement>('[data-page-active]')!;
+    expect(act1.textContent).toBe('c');
+    const leaving = mid.find((p) => p !== act1)!;
+    expect(leaving.style.pointerEvents).toBe('none');
     await settle();
     const ps = pages(container);
     expect(ps).toHaveLength(1);
@@ -110,7 +138,7 @@ describe('PageHost', () => {
     const { container, rerender } = render(ui(A));
     rerender(ui(B));
     rerender(ui(A));
-    const exitsOnA = calls.filter((c) => c.opts.fill === 'forwards');
+    const forwardsExits = calls.filter((c) => c.opts.fill === 'forwards');
     await settle(); // old exit animations finish late, after A re-entered
     const ps = pages(container);
     expect(ps).toHaveLength(1);
@@ -119,7 +147,7 @@ describe('PageHost', () => {
     // the active page has no lingering forwards-filled animation
     const active = first(ps);
     expect((live.get(active) ?? []).filter((a) => !a.cancelled && calls.find((c) => c.fake === a)?.opts.fill === 'forwards')).toHaveLength(0);
-    expect(exitsOnA.length).toBeGreaterThan(0);
+    expect(forwardsExits.length).toBeGreaterThan(0);
   });
 
   it('direction is +1 when depth grows and -1 when it shrinks', () => {
@@ -128,10 +156,16 @@ describe('PageHost', () => {
       const entering = calls.filter((c) => c.opts.fill === 'backwards').at(-1)!;
       return (entering.frames[0]!.transform as string).match(/translate\((-?[\d.]+)px/)![1]!;
     };
+    const exitX = () => {
+      const ex = calls.filter((c) => c.opts.fill === 'forwards').at(-1)!;
+      return (ex.frames[1]!.transform as string).match(/translate\((-?[\d.]+)px/)![1]!;
+    };
     rerender(ui(C));
     expect(Number(enterX())).toBe(24);
+    expect(Number(exitX())).toBe(-16);
     rerender(ui(A));
     expect(Number(enterX())).toBe(-24);
+    expect(Number(exitX())).toBe(16);
     expect(container).toBeTruthy();
   });
 
@@ -142,5 +176,24 @@ describe('PageHost', () => {
     expect(calls).toHaveLength(before);
     expect(pages(container)).toHaveLength(1);
     expect(container.textContent).toBe('a2');
+  });
+});
+
+describe('useEnter', () => {
+  it('animates [data-enter] children in cascade', () => {
+    function Box() {
+      const ref = useEnter<HTMLDivElement>([]);
+      return (
+        <div ref={ref}>
+          <i data-enter />
+          <i data-enter />
+          <i data-enter data-delay="500" data-y="20" />
+          <i />
+        </div>
+      );
+    }
+    render(<Box />);
+    expect(calls.map((c) => c.opts.delay)).toEqual([0, 30, 500]);
+    expect(call(2).frames[0]!.transform).toBe('translate(0px,20px) scale(1)');
   });
 });

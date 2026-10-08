@@ -13,20 +13,22 @@ export function reducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
-const done = (a: Animation): Promise<void> =>
+/** true = ran to completion, false = cancelled (e.g. by a later enter). */
+const done = (a: Animation): Promise<boolean> =>
   a.finished.then(
-    () => undefined,
-    () => undefined, // cancelled animations resolve quietly
+    () => true,
+    () => false,
   );
 
+/** Resolves true when finished, false when cancelled; true at once under reduced motion or without an element. */
 export function anim(
   el: Element | null,
   frames: Keyframe[],
   ms: number = D.m,
   ease: string = E.out,
   delay = 0,
-): Promise<void> {
-  if (!el || reducedMotion() || typeof el.animate !== 'function') return Promise.resolve();
+): Promise<boolean> {
+  if (!el || reducedMotion() || typeof el.animate !== 'function') return Promise.resolve(true);
   return done(el.animate(frames, { duration: ms, easing: ease, delay, fill: 'backwards' }));
 }
 
@@ -49,12 +51,17 @@ export function enter(el: Element | null, o: EnterOptions = {}): Promise<void> {
     ms,
     E.out,
     delay,
-  );
+  ).then(() => undefined);
 }
 
-/** Exits are ~20% faster than entrances (200 vs 320 ms). The final state is held until the caller removes the element. */
-export function exit(el: Element | null, o: { x?: number; y?: number; ms?: number } = {}): Promise<void> {
-  if (!el || reducedMotion() || typeof el.animate !== 'function') return Promise.resolve();
+/**
+ * Exit, 200 ms (D.s) with the "in" curve, shorter than the 320 ms entrance (T1 as spec'd). The end state is held
+ * (fill: forwards) until the caller removes the element.
+ * Resolves true when finished and false when cancelled (an enter revived the element): only remove on true.
+ * Under reduced motion it resolves true immediately.
+ */
+export function exit(el: Element | null, o: { x?: number; y?: number; ms?: number } = {}): Promise<boolean> {
+  if (!el || reducedMotion() || typeof el.animate !== 'function') return Promise.resolve(true);
   const { x = 0, y = 0, ms = D.s } = o;
   return done(
     el.animate(
@@ -70,7 +77,7 @@ export function stagger(els: Iterable<Element>, o: EnterOptions = {}, step = 30)
 }
 
 export function pop(el: Element | null): Promise<void> {
-  return anim(el, [{ transform: 'scale(.7)' }, { transform: 'scale(1.18)' }, { transform: 'scale(1)' }], 520, E.spring);
+  return anim(el, [{ transform: 'scale(.7)' }, { transform: 'scale(1.18)' }, { transform: 'scale(1)' }], 520, E.spring).then(() => undefined);
 }
 
 export function pulse(el: Element | null): Promise<void> {
@@ -79,7 +86,7 @@ export function pulse(el: Element | null): Promise<void> {
     [{ boxShadow: '0 0 0 0 rgba(255,90,31,.45)' }, { boxShadow: '0 0 0 10px rgba(255,90,31,0)' }],
     900,
     E.out,
-  );
+  ).then(() => undefined);
 }
 
 export function flash(el: Element | null): Promise<void> {
@@ -91,7 +98,7 @@ export function flash(el: Element | null): Promise<void> {
     ],
     800,
     E.std,
-  );
+  ).then(() => undefined);
 }
 
 /** FLIP: animate `el` from a previously measured rect to its current layout. */
@@ -104,5 +111,7 @@ export function flip(el: Element | null, from: DOMRect | null, ms: number = D.l)
   const sx = from.width / to.width;
   const sy = from.height / to.height;
   (el as HTMLElement).style.transformOrigin = '0 0';
-  return anim(el, [{ transform: `translate(${dx}px,${dy}px) scale(${sx},${sy})` }, { transform: 'none' }], ms, E.out);
+  return anim(el, [{ transform: `translate(${dx}px,${dy}px) scale(${sx},${sy})` }, { transform: 'none' }], ms, E.out).then(
+    () => undefined,
+  );
 }

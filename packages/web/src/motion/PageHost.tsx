@@ -48,7 +48,7 @@ export function PageHost<R>({ route, keyOf, depthOf, soft, render }: PageHostPro
   const gone = (id: number) => setPages((ps) => ps.filter((p) => p.id !== id));
 
   return (
-    <div className="main">
+    <div className="ms-stage">
       {pages.map((p) => (
         <Page key={p.id} leaving={p.leaving} dir={p.dir} soft={soft} onGone={() => gone(p.id)}>
           {render(p.route)}
@@ -75,12 +75,17 @@ function Page({
   const goneRef = useRef(onGone);
   goneRef.current = onGone;
   useLayoutEffect(() => {
-    if (leaving) void exit(ref.current, { x: soft ? 0 : -dir * 16, ms: D.s }).then(() => goneRef.current());
-    else void enter(ref.current, { x: soft ? 0 : dir * 24, y: soft ? 6 : 0, ms: D.m });
+    if (leaving) {
+      void exit(ref.current, { x: soft ? 0 : -dir * 16, ms: D.s }).then((finished) => {
+        if (finished) goneRef.current();
+      });
+    } else {
+      void enter(ref.current, { x: soft ? 0 : dir * 24, y: soft ? 6 : 0, ms: D.m });
+    }
   }, [leaving]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div
-      className="page"
+      className="ms-page"
       ref={ref}
       data-page-active={leaving ? undefined : ''}
       style={{ pointerEvents: leaving ? 'none' : 'auto', zIndex: leaving ? 0 : 1 }}

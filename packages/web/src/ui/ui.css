@@ -1,1 +1,5 @@
 /* Motion Studio UI component styles (src/ui). Tokens come from ../theme.css. */
+
+/* Page host (motion/PageHost): outgoing and incoming pages overlap during a transition. */
+.ms-stage { position: relative; height: 100%; }
+.ms-page { position: absolute; inset: 0; overflow: auto; }
