@@ -1,28 +1,55 @@
+/* Motion Studio design tokens (spec 4.1). Light on :root; dark in the two blocks below (same values twice, by design). */
 :root {
-  --bg: #F4F4F1; --dot: #D4D4CE; --surface: #FFFFFF; --surface-2: #ECECE8; --border: #D6D6D1;
-  --text: #18181B; --muted: #52525B; --accent: #6D28D9; --accent-soft: #EDE7FB; --accent-ink: #5B21B6;
-  --on-accent: #FFFFFF; --ok: #15803D; --danger: #B42318; --scrim: rgba(0, 0, 0, 0.55);
-  --warn-bg: #FFF6EC; --warn-border: #F3D3AE; --warn-text: #5A3300;
-  --font: 'Manrope', system-ui, sans-serif; --mono: 'JetBrains Mono', ui-monospace, monospace;
-  --logo-bg-dark: #111111; --logo-bg-light: #FFFFFF;
+  --bg: #F5F5F4; --panel: #FFFFFF; --line: #E5E5E3; --line2: #EFEFED;
+  --text: #171717; --muted: #6B6B6B; --faint: #A3A3A3;
+  --field: #F2F2F1; --dot: #DEDEDB; --ink: #171717; --inkText: #FFFFFF; --sel: #FFF1EA;
+  --ok: #2E7A4C; --okBg: #E4F3EA; --warn: #D9480F; --warnBg: #FFF5EF; --warnLine: #FFD3C0;
+  --scrim: rgba(23, 23, 23, .32); --shadow: rgba(0, 0, 0, .10); --shadowLg: rgba(0, 0, 0, .22); --bar: #DADAD7;
+  --accent: #FF5A1F; --accentText: #E8501A;
+  --sans: 'Schibsted Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+  --d-xs: 120ms; --d-s: 200ms; --d-m: 320ms; --d-l: 480ms;
+  --e-std: cubic-bezier(.2, 0, 0, 1); --e-out: cubic-bezier(.16, 1, .3, 1); --e-in: cubic-bezier(.4, 0, 1, 1);
   color-scheme: light;
+
+  /* Legacy aliases for the screens not yet redesigned; Task 16 removes them. */
+  --surface: var(--panel); --surface-2: var(--field); --border: var(--line);
+  --accent-soft: var(--sel); --accent-ink: var(--accentText); --on-accent: #FFFFFF;
+  --danger: var(--warn); --warn-bg: var(--warnBg); --warn-border: var(--warnLine); --warn-text: var(--text);
+  --font: var(--sans);
+  --logo-bg-dark: #111111; --logo-bg-light: #FFFFFF;
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    --bg: #0E0F12; --dot: #262830; --surface: #17181C; --surface-2: #1F2026; --border: #2E3038;
-    --text: #ECECEF; --muted: #A1A1AA; --accent: #7C3AED; --accent-soft: #2A2140; --accent-ink: #C4B5FD;
-    --ok: #4ADE80; --danger: #FCA5A5; --scrim: rgba(0, 0, 0, 0.7); --warn-bg: #2A1F12; --warn-border: #5A3A1E; --warn-text: #FFD2B8;
+  :root:not([data-theme="light"]) {
+    --bg: #0F0F0F; --panel: #171717; --line: #2A2A2A; --line2: #212121;
+    --text: #EDEDED; --muted: #9C9C9C; --faint: #6B6B6B;
+    --field: #222222; --dot: #262626; --ink: #EDEDED; --inkText: #0F0F0F; --sel: #2A1A12;
+    --ok: #6FCF97; --okBg: #132A1D; --warn: #FF8A5C; --warnBg: #231711; --warnLine: #55301E;
+    --scrim: rgba(0, 0, 0, .6); --shadow: rgba(0, 0, 0, .5); --shadowLg: rgba(0, 0, 0, .7); --bar: #3A3A3A;
+    --accentText: #FF8A5C;
     color-scheme: dark;
   }
 }
-:root[data-theme='dark'] {
-  --bg: #0E0F12; --dot: #262830; --surface: #17181C; --surface-2: #1F2026; --border: #2E3038;
-  --text: #ECECEF; --muted: #A1A1AA; --accent: #7C3AED; --accent-soft: #2A2140; --accent-ink: #C4B5FD;
-  --ok: #4ADE80; --danger: #FCA5A5; --scrim: rgba(0, 0, 0, 0.7); --warn-bg: #2A1F12; --warn-border: #5A3A1E; --warn-text: #FFD2B8;
+:root[data-theme="dark"] {
+  --bg: #0F0F0F; --panel: #171717; --line: #2A2A2A; --line2: #212121;
+  --text: #EDEDED; --muted: #9C9C9C; --faint: #6B6B6B;
+  --field: #222222; --dot: #262626; --ink: #EDEDED; --inkText: #0F0F0F; --sel: #2A1A12;
+  --ok: #6FCF97; --okBg: #132A1D; --warn: #FF8A5C; --warnBg: #231711; --warnLine: #55301E;
+  --scrim: rgba(0, 0, 0, .6); --shadow: rgba(0, 0, 0, .5); --shadowLg: rgba(0, 0, 0, .7); --bar: #3A3A3A;
+  --accentText: #FF8A5C;
   color-scheme: dark;
 }
+
+/* Base reset. */
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 var(--font); }
+body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 var(--sans); -webkit-font-smoothing: antialiased; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; transition-delay: 0ms !important; scroll-behavior: auto !important; }
+}
+
+/* Legacy component styles for the screens not yet redesigned; Task 16 removes them. */
+* { box-sizing: border-box; }
 button, input, textarea { font: inherit; color: inherit; }
 button { min-height: 36px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; }
 button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 700; }
