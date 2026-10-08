@@ -34,7 +34,7 @@ import { registerLibraryRoutes } from './library-routes.ts';
 import { registerProjectRoutes } from './project-routes.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 import { tokenMatches } from './ui-token.ts';
-import { LanguageController, t } from '../i18n.ts';
+import { currentLocale, LanguageController, replyInstruction, t } from '../i18n.ts';
 
 export interface ServerDeps {
   appConfig: AppConfigStore;
@@ -304,6 +304,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       const resumeSessionId = rawSession ?? undefined;
       const settings = await ws.readSettings();
       const projectDir = ws.projectDir(slug);
+      // The reply language is the one set when the turn is sent; a later switch does not change a queued turn.
+      const agentPrompt = `${prompt}\n\n${replyInstruction(currentLocale())}`;
       const job = queue.enqueue({
         key: projectJobKey(ws.root, slug),
         kind: 'console',
@@ -312,7 +314,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
           const run = await launcher.start({
             kind: 'console', jobId, projectSlug: slug, projectDir,
             codebases: await consoleCodebases(project.linkedCodebases, [projectDir, ws.root]),
-            request: { prompt, resumeSessionId, model: settings.model ?? undefined },
+            request: { prompt: agentPrompt, resumeSessionId, model: settings.model ?? undefined },
             onEvent: (event) => {
               hub.broadcast({ type: 'agent', jobId, event });
               const sessionId = event.kind === 'session' ? event.sessionId : event.kind === 'result' ? event.sessionId : undefined;

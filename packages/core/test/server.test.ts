@@ -11,6 +11,7 @@ import { AppConfigStore } from '../src/app-config.ts';
 import { Git } from '../src/git.ts';
 import { runDoctor } from '../src/doctor.ts';
 import { buildServer } from '../src/server/app.ts';
+import { replyInstruction, setLocale } from '../src/i18n.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 let app: FastifyInstance;
@@ -176,6 +177,21 @@ describe('turns over WebSocket', () => {
     const agentKinds = messages.filter((m) => m.type === 'agent' && m.jobId === jobId).map((m) => (m as any).event.kind);
     expect(agentKinds).toEqual(['session', 'text', 'result']);
     ws.close();
+  });
+  it('asks the console agent to reply in the language set when the turn was sent', async () => {
+    const promptFile = join(base, 'prompts.jsonl');
+    process.env.FAKE_CLAUDE_PROMPT_FILE = promptFile;
+    await setWorkspace();
+    await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' } });
+    const { messages, ws } = await connect();
+    setLocale('en');
+    try {
+      const id = (await app.inject({ method: 'POST', url: '/api/projects/acme/turns', payload: { prompt: 'ciao' } })).json().id;
+      setLocale('it');
+      await waitFor(() => messages.some((m) => m.type === 'job' && m.job.id === id && m.job.state === 'succeeded'));
+      const { prompt } = JSON.parse((await readFile(promptFile, 'utf8')).trim().split('\n')[0]!) as { prompt: string };
+      expect(prompt).toBe(`ciao\n\n${replyInstruction('en')}`);
+    } finally { setLocale('it'); delete process.env.FAKE_CLAUDE_PROMPT_FILE; ws.close(); }
   });
   it('broadcasts a project message when the project is updated', async () => {
     await setWorkspace();
