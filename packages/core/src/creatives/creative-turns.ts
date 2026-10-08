@@ -28,6 +28,20 @@ export interface CreativeTurnDeps {
 export interface CreativeRef { root: string; projectSlug: string; projectDir: string; creativeSlug: string }
 
 export const creativeJobKey = (root: string, projectSlug: string, creativeSlug: string) => `creative:${root}:${projectSlug}:${creativeSlug}`;
+/** The render command comes from an agent-written manifest: single line, bounded, no control chars. */
+const sanitizeCommand = (cmd: string): string => cmd.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300);
+
+function addFormatsRequest(formats: string[], latest: VersionEntry | undefined): string | undefined {
+  if (!latest) return undefined;
+  const present = new Set(latest.outputs.map((o) => o.format));
+  const added = formats.filter((f) => !present.has(f));
+  if (added.length === 0) return undefined;
+  const command = latest.renderCommand ? sanitizeCommand(latest.renderCommand) : '';
+  return `Aggiungi i formati ${added.join(', ')} riusando i sorgenti esistenti in work/ e lo stesso stile della versione ${latest.n}.`
+    + (command ? ` Il comando di render della versione ${latest.n} era: ${command}.` : '')
+    + ' Riconsegna tutti i formati richiesti.';
+}
+
 const REGENERATE = 'Rigenera tutti i formati partendo dal brief aggiornato.';
 const PINS_ONLY = 'Applica i commenti puntuali.';
 const UNKNOWN_PRESET = 'Preset sconosciuto:';
@@ -127,7 +141,7 @@ export class CreativeTurnService {
       // Pins refer to the version on screen: the one being resumed from, else the latest.
       const pinSource = creative.resumeFrom ? versions.find((v) => v.n === creative.resumeFrom!.version) : latest;
       const attachments = await this.extractPinFrames(ref, store, message?.pins ?? [], pinSource, n);
-      const request = message?.text || (message?.pins.length ? PINS_ONLY : versions.length === 0 ? undefined : REGENERATE);
+      const request = message?.text || (message?.pins.length ? PINS_ONLY : versions.length === 0 ? undefined : (addFormatsRequest(creative.brief.formats, latest) ?? REGENERATE));
 
       const { context, existing } = await this.buildContext(ref, store, creative.linkedCodebases);
       const uncheckable = new Set<string>();

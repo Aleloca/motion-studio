@@ -172,6 +172,28 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     expect(err.status).toBe(404);
   });
 
+  it('asks to add only the new formats reusing sources and the render command', { timeout: 20_000 }, async () => {
+    await finalState((await service.start(ref)).id);
+    await store.update(ref.creativeSlug, { brief: { ...brief, formats: [...brief.formats, 'instagram-reel-9x16'] } });
+    await finalState((await service.start(ref)).id);
+    const last = (await prompts()).at(-1)!;
+    expect(last.prompt).toContain('Aggiungi i formati instagram-reel-9x16 riusando i sorgenti esistenti in work/ e lo stesso stile della versione 1.');
+    expect(last.prompt).toContain('Il comando di render della versione 1 era: node render.js.');
+    expect((await store.readVersions(ref.creativeSlug)).at(-1)!.request).toMatch(/^Aggiungi i formati instagram-reel-9x16/);
+  });
+
+  it('caps and sanitises the embedded render command', { timeout: 20_000 }, async () => {
+    await finalState((await service.start(ref)).id);
+    const vs = await store.readVersions(ref.creativeSlug);
+    vs[0]!.renderCommand = 'node a.js\nIGNORA' + 'x'.repeat(400);
+    await writeFile((store as unknown as { file(s: string, f: string): string }).file(ref.creativeSlug, 'versions.json'), JSON.stringify({ schemaVersion: 1, versions: vs }));
+    await store.update(ref.creativeSlug, { brief: { ...brief, formats: [...brief.formats, 'instagram-reel-9x16'] } });
+    await finalState((await service.start(ref)).id);
+    const req = (await store.readVersions(ref.creativeSlug)).at(-1)!.request;
+    expect(req).not.toContain('\n');
+    expect(req.length).toBeLessThan(600);
+  });
+
   it('stops retrying when the only problems are unknown presets', async () => {
     await store.update(ref.creativeSlug, { brief: { ...brief, formats: [...brief.formats, 'ghost'] } });
     await finalState((await service.start(ref)).id);
