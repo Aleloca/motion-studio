@@ -42,3 +42,4 @@ export * from './bridge/bridge-routes.ts';
 export * from './providers/http.ts';
 export * from './providers/files.ts';
 export * from './providers/openai-images.ts';
+export * from './providers/tts.ts';
