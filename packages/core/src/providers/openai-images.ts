@@ -4,7 +4,7 @@ const MIN_PIXELS = 655_360, MAX_PIXELS = 8_294_400, MAX_EDGE = 3840;
 const r16 = (v: number) => Math.max(16, Math.round(v / 16) * 16);
 
 export function normalizeImageSize(width: number, height: number): { width: number; height: number } {
-  if (!(width > 0 && height > 0)) throw new ProviderError(400, 'Dimensioni immagine non valide');
+  if (!(Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0)) throw new ProviderError(400, 'Dimensioni immagine non valide');
   const ratio = Math.min(3, Math.max(1 / 3, width / height));
   const pixels = Math.min(MAX_PIXELS, Math.max(MIN_PIXELS, width * height));
   let w = Math.sqrt(pixels * ratio);
@@ -40,6 +40,6 @@ export async function generateImage(deps: HttpDeps & { apiKey: string }, req: Im
     out = await requestJson<Out>(deps, 'https://api.openai.com/v1/images/edits', { method: 'POST', headers: auth, body: form }, { provider: 'OpenAI', secrets: [deps.apiKey] });
   }
   const b64 = out.data?.[0]?.b64_json;
-  if (!b64) throw new ProviderError(502, 'Risposta non valida da OpenAI');
+  if (typeof b64 !== 'string' || !b64) throw new ProviderError(502, 'Risposta non valida da OpenAI');
   return { bytes: Buffer.from(b64, 'base64'), width, height, revisedPrompt: out.data?.[0]?.revised_prompt ?? null };
 }

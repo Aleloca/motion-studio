@@ -35,3 +35,31 @@ describe('redaction of transport details', () => {
     expect(err.message).toBe('X non raggiungibile: connect failed https://x.test/v1?key=••• Bearer •••');
   });
 });
+
+describe('body failures and aborts', () => {
+  const o = { provider: 'X', secrets: ['sk-1234'] };
+  const erroring = () => new Response(new ReadableStream({ start(c) { c.enqueue(new Uint8Array([1])); c.error(new Error('reset sk-1234')); } }), { status: 200 });
+  it('maps mid-body stream errors for bytes and json', async () => {
+    const b = await requestBytes(deps(erroring()), 'u', {}, { ...o, maxBytes: 100 }).catch((e: unknown) => e as ProviderError);
+    expect(b).toMatchObject({ status: 502, message: 'X non raggiungibile: reset •••' });
+    const j = await requestJson<never>(deps(erroring()), 'u', {}, o).catch((e: unknown) => e as ProviderError);
+    expect(j).toMatchObject({ status: 502, message: 'X non raggiungibile: reset •••' });
+  });
+  it('rejects empty or missing bodies', async () => {
+    for (const r of [new Response(null, { status: 200 }), new Response(new Uint8Array(0), { status: 200 })]) {
+      expect(await requestBytes(deps(r), 'u', {}, { ...o, maxBytes: 10 }).catch((e: unknown) => e as ProviderError)).toMatchObject({ status: 502, message: 'Risposta non valida da X' });
+    }
+  });
+  it('honours a caller abort signal', async () => {
+    const ac = new AbortController();
+    const d = { fetch: ((_u: string, init: RequestInit) => new Promise((_r, rej) => init.signal!.addEventListener('abort', () => rej(new Error('aborted'))))) as unknown as typeof fetch };
+    const p = requestJson<never>(d, 'u', { signal: ac.signal }, o).catch((e: unknown) => e as ProviderError);
+    ac.abort();
+    expect(await p).toMatchObject({ status: 502, message: 'X non raggiungibile: aborted' });
+  });
+  it('enforces maxBytes on json and redacts before truncating', async () => {
+    expect(await requestJson<never>(deps(res(200, { a: 'x'.repeat(50) })), 'u', {}, { ...o, maxBytes: 10 }).catch((e: unknown) => e as ProviderError)).toMatchObject({ status: 413 });
+    const e = await requestJson<never>(deps(res(500, { error: { message: 'a'.repeat(298) + 'sk-1234' } })), 'u', {}, o).catch((x: unknown) => x as ProviderError);
+    expect(e.message).not.toContain('sk-');
+  });
+});

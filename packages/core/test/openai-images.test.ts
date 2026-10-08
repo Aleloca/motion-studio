@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -51,5 +51,17 @@ describe('saveGeneratedFile', () => {
     expect(await saveGeneratedFile(project, 'generated', 'Logo Blu.png', Buffer.from('b'))).toBe('generated/Logo-Blu-2.png');
     expect(await readFile(join(project, 'assets', 'generated', 'Logo-Blu-2.png'), 'utf8')).toBe('b');
     expect((await readdir(join(project, 'assets', 'generated'))).sort()).toEqual(['Logo-Blu-2.png', 'Logo-Blu.png']);
+  });
+  it('refuses symlinked asset folders and writes nothing outside', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'ms-gen-'));
+    const outside = await mkdtemp(join(tmpdir(), 'ms-out-'));
+    await mkdir(join(project, 'assets'));
+    await symlink(outside, join(project, 'assets', 'generated'));
+    await expect(saveGeneratedFile(project, 'generated', 'a.png', Buffer.from('x'))).rejects.toMatchObject({ status: 400, message: 'Cartella degli asset non valida' });
+    expect(await readdir(outside)).toEqual([]);
+    const p2 = await mkdtemp(join(tmpdir(), 'ms-gen-'));
+    await symlink(outside, join(p2, 'assets'));
+    await expect(saveGeneratedFile(p2, 'audio', 'a.mp3', Buffer.from('x'))).rejects.toMatchObject({ status: 400 });
+    expect(await readdir(outside)).toEqual([]);
   });
 });
