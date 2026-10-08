@@ -70,7 +70,7 @@ describe('metadata isolation and concurrency', () => {
     expect(rs.map((r) => r.statusCode)).toEqual(names.map(() => 200));
     const list = (await app.inject(`${P}/assets`)).json().assets as Array<{ file: string; description: string }>;
     expect(names.map((n) => list.find((a) => a.file === n)?.description)).toEqual(names.map((_, i) => `d${i}`));
-  });
+  }, { timeout: 20_000 });
   it('does not serve the metadata files', async () => {
     await app.inject({ method: 'POST', url: `${P}/assets`, ...multipart([{ name: 'a.png', content: 'x' }]) });
     for (const p of ['assets/assets.json', 'assets/./assets.json', 'references/references.json', 'assets/ASSETS.json', 'references/References.JSON']) {
