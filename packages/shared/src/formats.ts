@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { messages, type Locale } from './i18n/index.ts';
 
 export type FormatKind = 'video' | 'image';
 
@@ -23,6 +24,27 @@ export const formatsFileSchema = z.object({
   presets: z.array(formatPresetSchema).min(1),
 }).refine((f) => new Set(f.presets.map((p) => p.id)).size === f.presets.length, { message: 'id dei preset duplicati', path: ['presets'] });
 export type FormatsFile = z.infer<typeof formatsFileSchema>;
+
+/**
+ * Display name of a preset. The id is the stable key: a built-in preset whose stored name is still one of the shipped
+ * names (any language) is shown in `locale`; a name the user edited, or a custom preset, is shown as stored.
+ */
+export function formatName(preset: Pick<FormatPreset, 'id' | 'name'>, locale: Locale): string {
+  const names = (l: Locale) => messages(l).formats as Record<string, string>;
+  if (!Object.hasOwn(names(locale), preset.id)) return preset.name;
+  return names('en')[preset.id] === preset.name || names('it')[preset.id] === preset.name ? names(locale)[preset.id]! : preset.name;
+}
+
+/** `Instagram` → `channels.instagram`, `App Store` → `channels.appStore`; unknown channels are shown as stored. */
+export function channelName(channel: string, locale: Locale): string {
+  const key = channel.replace(/^./, (c) => c.toLowerCase()).replace(/\s+(\w)/g, (_, c: string) => c.toUpperCase());
+  const names = messages(locale).channels as Record<string, string>;
+  return Object.hasOwn(names, key) ? names[key]! : channel;
+}
+
+/** `Instagram · Post 1:1`. */
+export const formatLabel = (preset: Pick<FormatPreset, 'id' | 'name' | 'channel'>, locale: Locale): string =>
+  `${channelName(preset.channel, locale)} · ${formatName(preset, locale)}`;
 
 const VIDEO = ['mp4', 'webm', 'mov', 'gif'];
 const IMAGE = ['png', 'jpg', 'jpeg', 'webp'];

@@ -1,7 +1,7 @@
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { ApprovalRequest, VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, type ApprovalRequest, type VersionEntry } from '@motion-studio/shared';
 import { fileURLToPath } from 'node:url';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AppConfigStore } from '../src/app-config.ts';
@@ -69,5 +69,15 @@ describe('English messages', () => {
     } finally {
       await app.close();
     }
+  });
+  it('names a missing format with its English preset name', async () => {
+    const dir = join(await mkdtemp(join(tmpdir(), 'ms-en-')), 'v1');
+    await mkdir(dir);
+    await writeFile(join(dir, 'manifest.json'), JSON.stringify({ schemaVersion: 1, files: [], tools: [] }));
+    const r = await validateOutputs({ dir, requested: ['instagram-image-1x1'], presets: DEFAULT_FORMATS, durationSec: null, media: NoMediaTools });
+    expect(r.problems).toEqual(['Missing format Instagram · Image 1:1 (instagram-image-1x1)']);
+    setLocale('it');
+    expect((await validateOutputs({ dir, requested: ['instagram-image-1x1'], presets: DEFAULT_FORMATS, durationSec: null, media: NoMediaTools })).problems)
+      .toEqual(['Manca il formato Instagram · Immagine 1:1 (instagram-image-1x1)']);
   });
 });

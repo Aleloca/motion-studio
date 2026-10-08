@@ -19,7 +19,7 @@ export class FormatCatalog {
     } catch (err) {
       if (err instanceof JsonFileError && err.reason === 'missing') return this.write(DEFAULT_FORMATS);
       if (err instanceof JsonFileError) {
-        return { presets: DEFAULT_FORMATS, error: `${err.message}. Uso il catalogo predefinito.`, path: this.path };
+        return { presets: DEFAULT_FORMATS, error: t().errors.formatCatalogFallback({ detail: err.message }), path: this.path };
       }
       throw err;
     }

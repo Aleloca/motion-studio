@@ -1,10 +1,10 @@
 import { lstat } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
-import { manifestSchema, type FormatPreset, type OutputFileInfo } from '@motion-studio/shared';
+import { formatLabel, manifestSchema, type FormatPreset, type OutputFileInfo } from '@motion-studio/shared';
 import { findPreset } from '../formats/format-catalog.ts';
 import { JsonFileError, readJsonFile } from '../json-file.ts';
 import type { MediaTools } from '../media/media-tools.ts';
-import { t } from '../i18n.ts';
+import { currentLocale, t } from '../i18n.ts';
 
 export interface ValidationResult { outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: string | null;
   /** Requested ids missing from the format catalog: the agent cannot fix those, so they never justify another attempt. */
@@ -34,7 +34,7 @@ export async function validateOutputs(opts: {
     const preset = findPreset(opts.presets, id);
     if (!preset) { problems.push(v.unknownPreset({ id })); unknownPresets.push(id); continue; }
     const entry = manifest.files.find((f) => f.format === id);
-    if (!entry) { problems.push(v.missingFormat({ label: `${preset.channel} · ${preset.name}`, id })); continue; }
+    if (!entry) { problems.push(v.missingFormat({ label: formatLabel(preset, currentLocale()), id })); continue; }
     const path = join(dir, entry.file);
     const info = await lstat(path).catch(() => null);
     if (!info || !info.isFile()) { problems.push(v.fileNotFound({ id, file: entry.file })); continue; }
