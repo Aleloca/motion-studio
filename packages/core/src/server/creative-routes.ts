@@ -6,11 +6,12 @@ import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
+import { exportVersion } from '../creatives/export.ts';
 import { creativeJobKey, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
 import { FormatCatalog } from '../formats/format-catalog.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { completeGitignore, sweepProject } from '../project-maintenance.ts';
-import { WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
+import { expandHome, WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import { sendConfinedFile } from './serve-file.ts';
 
 export interface CreativeRoutesContext {
@@ -134,6 +135,14 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     if (!ok) throw new WorkspaceError(404, 'Cartella degli output non trovata');
     await ctx.openPath(dir);
     return { ok: true };
+  });
+
+  app.post<{ Params: { slug: string; c: string; n: string }; Body: { destination?: unknown } }>('/api/projects/:slug/creatives/:c/versions/:n/export', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const version = (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === Number(req.params.n));
+    if (!version) throw new WorkspaceError(404, 'Versione non trovata');
+    const destination = typeof req.body?.destination === 'string' ? expandHome(req.body.destination.trim()) : '';
+    return exportVersion({ creativeDir: ref.store.dir(ref.creativeSlug), version, destination, slug: ref.creativeSlug, forbiddenRoot: ref.root });
   });
 
   app.get<{ Params: { slug: string; c: string; '*': string } }>('/api/projects/:slug/creatives/:c/files/*', async (req, reply) => {

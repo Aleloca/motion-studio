@@ -247,3 +247,21 @@ describe('creative linked codebases', { timeout: 20_000 }, () => {
     expect(edit.json().error).toBe('La cartella collegata non può contenere il progetto né trovarsi al suo interno');
   });
 });
+
+describe('creative export', { timeout: 20_000 }, () => {
+  it('exports a version to a folder outside the workspace and validates input', async () => {
+    const { slug } = await createCreative();
+    await waitJobs();
+    const url = (n: number) => `/api/projects/acme/creatives/${slug}/versions/${n}/export`;
+    const dest = join(base, 'consegna');
+    const ok = await app.inject({ method: 'POST', url: url(1), payload: { destination: dest } });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().files).toHaveLength(2);
+    expect((await readdir(dest)).length).toBe(2);
+    expect((await app.inject({ method: 'POST', url: url(9), payload: { destination: dest } })).statusCode).toBe(404);
+    expect((await app.inject({ method: 'POST', url: url(1), payload: {} })).statusCode).toBe(400);
+    const inside = await app.inject({ method: 'POST', url: url(1), payload: { destination: join(base, 'ws', 'acme', 'out') } });
+    expect(inside.statusCode).toBe(400);
+    expect(inside.json().error).toBe('Scegli una cartella fuori dal workspace di Motion Studio');
+  });
+});
