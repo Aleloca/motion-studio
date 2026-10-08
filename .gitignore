@@ -3,3 +3,5 @@ dist/
 coverage/
 *.log
 .DS_Store
+apps/desktop/release/
+apps/desktop/resources/

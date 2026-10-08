@@ -43,6 +43,8 @@ async function smoke(mode: string) {
     } else {
       const res = await fetch(`${server.url}/api/health`);
       if (!res.ok) throw new Error(`health HTTP ${res.status}`);
+      const page = await fetch(`${server.url}/`);
+      if (!page.ok || !(await page.text()).includes('id="root"')) throw new Error('index.html not served at /');
       console.log(`SMOKE_OK ${server.url}`);
     }
   } finally { await server.close(); await rm(configDir, { recursive: true, force: true }); }

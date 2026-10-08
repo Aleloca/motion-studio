@@ -9,7 +9,12 @@
     "build": "tsup",
     "dev": "electron .",
     "smoke": "electron . --smoke-test",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "prepare-resources": "node -e \"const fs=require('fs');fs.rmSync('resources',{recursive:true,force:true});fs.mkdirSync('resources',{recursive:true});fs.cpSync('../../packages/web/dist','resources/web',{recursive:true});fs.copyFileSync('../../packages/mcp-studio/src/server.mjs','resources/mcp-studio.mjs')\"",
+    "dist": "pnpm run build && pnpm run prepare-resources && electron-builder",
+    "dist:mac": "pnpm run build && pnpm run prepare-resources && electron-builder --mac",
+    "dist:win": "pnpm run build && pnpm run prepare-resources && electron-builder --win",
+    "dist:linux": "pnpm run build && pnpm run prepare-resources && electron-builder --linux"
   },
   "dependencies": {
     "@napi-rs/keyring": "^2.1.0",
