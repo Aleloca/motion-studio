@@ -50,7 +50,7 @@ rl.once('line', async (line) => {
   if (process.env.FAKE_CLAUDE_PROMPT_FILE) appendFileSync(process.env.FAKE_CLAUDE_PROMPT_FILE, `${JSON.stringify({ prompt, args })}\n`);
   // Same rule as parseStudioBlock: the last motion-studio fence wins.
   const block = (() => { const m = [...prompt.matchAll(/```motion-studio\n([\s\S]*?)\n```/g)].at(-1); return m ? JSON.parse(m[1]) : null; })();
-  const isFix = prompt.includes('non rispettano il contratto');
+  const isFix = prompt.includes('do not meet the contract');
   const render = (skipLast) => {
     mkdirSync(block.outputDir, { recursive: true });
     mkdirSync(block.workDir, { recursive: true });

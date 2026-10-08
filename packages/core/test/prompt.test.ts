@@ -9,7 +9,7 @@ const creative: CreativeFile = {
   brief: { goal: 'Far capire che prenotare è immediato', message: 'Prenota in 3 tap', formats: ['instagram-post-1x1', 'web-banner-300x250', 'ghost'],
     durationSec: 15, assets: ['assets/logo.svg'], notes: 'Chiudi sempre con il logo' },
 };
-const base = { slug: '2026-10-07-lancio-app', creative, presets: DEFAULT_FORMATS, version: 2 };
+const base = { slug: '2026-10-07-lancio-app', creative, presets: DEFAULT_FORMATS, version: 2, locale: 'it' as const };
 
 describe('buildCreativePrompt', () => {
   it('first turn: brief, formats, paths and the machine block', () => {
@@ -20,8 +20,8 @@ describe('buildCreativePrompt', () => {
     expect(p).toContain('assets/logo.svg');
     expect(p).toContain('Instagram · Post 1:1 — 1080×1080, video');
     expect(p).toContain('creatives/2026-10-07-lancio-app/outputs/v2/');
-    expect(p).toContain('ricomposizione');
-    expect(p).toContain('ghost: preset sconosciuto');
+    expect(p).toContain('recomposition');
+    expect(p).toContain('ghost: unknown preset');
     expect(parseStudioBlock(p)).toEqual({
       outputDir: 'creatives/2026-10-07-lancio-app/outputs/v2',
       workDir: 'creatives/2026-10-07-lancio-app/work',
@@ -36,21 +36,28 @@ describe('buildCreativePrompt', () => {
     const p = buildCreativePrompt({ ...base, kind: 'iteration', userText: 'Logo più grande',
       pins: [{ format: 'instagram-post-1x1', x: 0.25, y: 0.5, timeSec: 4.2, note: 'qui' }], attachments: ['creatives/2026-10-07-lancio-app/work/.feedback/p1.jpg'] });
     expect(p).toContain('Logo più grande');
-    expect(p).toContain('instagram-post-1x1 @ 4.2s, punto (25%, 50%): qui');
+    expect(p).toContain('instagram-post-1x1 @ 4.2s, point (25%, 50%): qui');
     expect(p).toContain('work/.feedback/p1.jpg');
     expect(p).toContain('outputs/v2/');
   });
   it('fix: lists the problems', () => {
     const p = buildCreativePrompt({ ...base, kind: 'fix', problems: ['Manca il formato Web · Banner 300×250 (web-banner-300x250)'] });
     expect(p).toContain('- Manca il formato Web · Banner 300×250 (web-banner-300x250)');
-    expect(p).toContain('stessa cartella');
+    expect(p).toContain('same folder');
   });
 
-  it('every kind asks for Italian replies right before the machine block', () => {
+  it('every kind ends with the reply-language instruction right before the machine block', () => {
     for (const kind of ['first', 'iteration', 'fix'] as const) {
-      const p = buildCreativePrompt({ ...base, kind, userText: 'x', problems: ['y'] });
-      expect(p).toMatch(/Rispondi sempre in italiano\.\n\n```motion-studio\n/);
+      for (const [locale, name] of [['it', 'Italian'], ['en', 'English']] as const) {
+        const p = buildCreativePrompt({ ...base, kind, userText: 'x', problems: ['y'], locale });
+        expect(p).toContain(`Always reply to the user in ${name}. Write every text meant for the user (conversation messages, brand guidelines, asset descriptions, problem reports) in ${name}.\n\n\`\`\`motion-studio\n`);
+        expect(p).not.toMatch(/italiano/i);
+      }
     }
+  });
+  it('shows format names in English whatever the locale', () => {
+    expect(buildCreativePrompt({ ...base, kind: 'first', locale: 'it' })).toContain('Instagram · Post 1:1');
+    expect(buildCreativePrompt({ ...base, kind: 'first', locale: 'en' })).toContain('Instagram · Post 1:1');
   });
 });
 
@@ -69,10 +76,10 @@ describe('parseStudioBlock', () => {
 
 describe('CONTEXT_MD', () => {
   it('documents the output contract', () => {
-    expect(CONTEXT_MD).toContain('## Contratto di output');
+    expect(CONTEXT_MD).toContain('## Output contract');
     expect(CONTEXT_MD).toContain('manifest.json');
-    expect(CONTEXT_MD).toContain('`durationSec` (secondi, numero positivo) va indicato solo per i video');
-    expect(CONTEXT_MD).toContain('`file` è il solo nome del file, senza sottocartelle');
+    expect(CONTEXT_MD).toContain('`durationSec` (seconds, positive number) is required only for videos');
+    expect(CONTEXT_MD).toContain('`file` is the file name only, without subfolders');
   });
 });
 
@@ -90,42 +97,46 @@ describe('brand and codebase context', () => {
   it('adds brand and read-only codebase sections to first and iteration prompts', () => {
     for (const kind of ['first', 'iteration'] as const) {
       const p = buildCreativePrompt({ ...base, kind, userText: 'x', context });
-      expect(p).toContain('- Colore Blu Acme (primary): #1E3A5F');
-      expect(p).toContain('- Font heading: Manrope (pesi 700, 800) — file assets/fonts/manrope.woff2');
-      expect(p).toContain('- Logo primary (sfondo light): assets/logo.svg');
-      expect(p).toContain('- Evitare: Niente gradienti');
-      expect(p).toContain('- Linee guida complete: brand/guidelines.md');
-      expect(p).toContain('- Asset disponibili: 12 (elenco in assets/assets.json)');
-      expect(p).toContain('## Codebase di riferimento (sola lettura)');
+      expect(p).toContain('- Color Blu Acme (primary): #1E3A5F');
+      expect(p).toContain('- Font heading: Manrope (weights 700, 800) — file assets/fonts/manrope.woff2');
+      expect(p).toContain('- Logo primary (background light): assets/logo.svg');
+      expect(p).toContain('- Avoid: Niente gradienti');
+      expect(p).toContain('- Full guidelines: brand/guidelines.md');
+      expect(p).toContain('- Available assets: 12 (list in assets/assets.json)');
+      expect(p).toContain('## Reference codebases (read-only)');
       expect(p).toContain('- /Users/me/app ios: schermate in /Screens');
-      expect(p).toContain('- /Users/me/old: non disponibile in questo turno');
-      expect(p).toContain('Non modificare mai file in queste cartelle: leggile soltanto.\nLe regole bloccano gli strumenti di modifica; gli interpreti potrebbero scrivere: Motion Studio rileva e segnala le modifiche nei repo git.');
+      expect(p).toContain('- /Users/me/old: not available in this turn');
+      expect(p).toContain('Never modify files in these folders: only read them.\nThe rules block the editing tools, but interpreters might still write: Motion Studio detects and reports changes in git repos.');
     }
   });
   it('omits empty sections and never adds them to fix prompts', () => {
     const empty = { ...context, kit: { ...context.kit, colors: [], fonts: [], logos: [], tone: null, dos: [], donts: [] }, hasGuidelines: false, assets: 0, references: 0, codebases: [], missingCodebases: [], tools: [] };
     expect(buildCreativePrompt({ ...base, kind: 'first', context: empty })).not.toContain('## Brand');
-    expect(buildCreativePrompt({ ...base, kind: 'first', context: empty })).not.toContain('## Strumenti Motion Studio');
+    expect(buildCreativePrompt({ ...base, kind: 'first', context: empty })).not.toContain('## Motion Studio tools');
     expect(buildCreativePrompt({ ...base, kind: 'fix', problems: ['x'], context })).not.toContain('## Brand');
   });
   it('lists the tools when given', () => {
-    const p = buildCreativePrompt({ ...base, kind: 'first', context: { ...context, tools: ['- fonts_fetch: font di Google Fonts (pronto)'] } });
-    expect(p).toContain('## Strumenti Motion Studio (MCP)');
-    expect(p).toContain('validate_output prima di chiudere il turno');
+    const p = buildCreativePrompt({ ...base, kind: 'first', context: { ...context, tools: ['- fonts_fetch: Google Fonts fonts (ready)'] } });
+    expect(p).toContain('## Motion Studio tools (MCP)');
+    expect(p).toContain('validate_output before ending the turn');
   });
 });
 
 describe('Motion Studio tools in CONTEXT_MD', () => {
   it('is explained in CONTEXT_MD', () => {
-    expect(CONTEXT_MD).toContain('## Strumenti Motion Studio');
+    expect(CONTEXT_MD).toContain('## Motion Studio tools');
     expect(CONTEXT_MD).toContain('attribution');
-    expect(CONTEXT_MD).toContain('`validate_output` (solo nelle creatività)');
-    expect(CONTEXT_MD).toContain('Non usare git nel progetto: Motion Studio gestisce le versioni.');
+    expect(CONTEXT_MD).toContain('`validate_output` (only in creatives)');
+    expect(CONTEXT_MD).toContain('Do not use git in the project: Motion Studio manages the versions.');
   });
 });
 
 describe('CONTEXT_MD brand section', () => {
   it('explains brand and asset files', () => {
-    for (const f of ['## Brand e asset', 'brand/brand-kit.json', 'brand/guidelines.md', 'assets/assets.json', 'references/references.json', 'precedenza']) expect(CONTEXT_MD).toContain(f);
+    for (const f of ['## Brand and assets', 'brand/brand-kit.json', 'brand/guidelines.md', 'assets/assets.json', 'references/references.json', 'take precedence']) expect(CONTEXT_MD).toContain(f);
   });
+});
+
+describe('CONTEXT_MD language', () => {
+  it('is English', () => { expect(CONTEXT_MD).not.toMatch(/italiano|Contratto|Regole/); });
 });

@@ -98,6 +98,8 @@ export class BrandService {
   }
 
   private async runAnalysis(ref: ProjectRef, store: BrandStore, sources: Awaited<ReturnType<BrandStore['readSources']>>, signal: AbortSignal, jobId: string): Promise<void | 'cancelled'> {
+    // The agent's language is fixed when the job starts: a setting change mid-turn does not affect it.
+    const locale = currentLocale();
     const library = new LibraryStore(ref.projectDir, this.deps.media);
     const id = await store.newProposalId();
     const dir = store.proposalDir(id);
@@ -117,7 +119,7 @@ export class BrandService {
         sources: sources.map((s) => ({ id: s.id, kind: s.kind, url: s.url, file: s.file })),
       };
       const tampered: string[] = [];
-      if ((await this.runAgent(ref, 'brand-analysis', buildBrandPrompt(block), join(dir, 'log.jsonl'), signal, jobId, tampered)) === 'cancelled') {
+      if ((await this.runAgent(ref, 'brand-analysis', buildBrandPrompt(block, locale), join(dir, 'log.jsonl'), signal, jobId, tampered)) === 'cancelled') {
         await rm(dir, { recursive: true, force: true });
         return 'cancelled';
       }
@@ -241,12 +243,13 @@ export class BrandService {
       return this.deps.queue.enqueue({
         key, kind: 'asset-description', label: t().jobs.assetDescriptionLabel,
         run: async (signal, jobId) => {
+          const locale = currentLocale();
           const outRel = `assets/.describe/${jobId}.json`;
           const outAbs = join(ref.projectDir, 'assets', '.describe', `${jobId}.json`);
           const notes: string[] = [];
           try {
             await mkdir(join(ref.projectDir, 'assets', '.describe'), { recursive: true });
-            const prompt = buildDescribePrompt({ outFile: outRel, files: targets.map((t) => `assets/${t.file}`) });
+            const prompt = buildDescribePrompt({ outFile: outRel, files: targets.map((t) => `assets/${t.file}`) }, locale);
             const tampered: string[] = [];
             const outcome = await this.runAgent(ref, 'describe', prompt, null, signal, jobId, tampered).finally(() => notes.push(...tampered));
             if (outcome === 'cancelled') return 'cancelled';

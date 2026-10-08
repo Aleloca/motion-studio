@@ -1,4 +1,4 @@
-import { messages, resolveLocale, type LanguageSetting, type Locale, type Messages } from '@motion-studio/shared';
+import { languageName, messages, resolveLocale, type LanguageSetting, type Locale, type Messages } from '@motion-studio/shared';
 
 let current: Locale = 'en';
 
@@ -6,6 +6,10 @@ let current: Locale = 'en';
 export function setLocale(l: Locale): void { current = l; }
 export function currentLocale(): Locale { return current; }
 export function t(): Messages { return messages(current); }
+
+/** The closing instruction of every agent prompt: reply and write user-facing texts in the user's language. */
+export const replyInstruction = (locale: Locale): string =>
+  `Always reply to the user in ${languageName(locale)}. Write every text meant for the user (conversation messages, brand guidelines, asset descriptions, problem reports) in ${languageName(locale)}.`;
 
 /** `it_IT.UTF-8` → `it-IT`; `C`, `POSIX` and empty values → null. */
 function normalizePosixLocale(value: string | undefined): string | null {

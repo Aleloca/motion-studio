@@ -193,15 +193,16 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
   }) as BridgeHandler]));
 }
 
+/** Agent-facing lines (English): which Motion Studio tools can be used this turn. */
 export async function availableTools(vault: SecretsVault): Promise<string[]> {
   const has = async (p: keyof typeof LABEL) => Boolean(await vault.get(p));
-  const st = (ok: boolean, missing: string) => (ok ? '(pronto)' : `(non configurato: ${missing})`);
+  const st = (ok: boolean, missing: string) => (ok ? '(ready)' : `(not configured: ${missing})`);
   const [openai, eleven, pexels, unsplash] = await Promise.all([has('openai'), has('elevenlabs'), has('pexels'), has('unsplash')]);
   return [
-    `- generate_image: immagini con gpt-image-2 ${st(openai, 'la chiave OpenAI manca')}`,
-    `- tts: voce fuori campo con OpenAI o ElevenLabs ${st(openai || eleven, 'nessuna chiave TTS')}`,
-    `- stock_search / stock_download: foto e video da Pexels e Unsplash ${st(pexels || unsplash, 'nessuna chiave Pexels o Unsplash')}`,
-    '- fonts_fetch: font di Google Fonts (pronto)',
-    '- report_progress, validate_output, read_brand_kit (pronti)',
+    `- generate_image: images with gpt-image-2 ${st(openai, 'the OpenAI key is missing')}`,
+    `- tts: voice-over with OpenAI or ElevenLabs ${st(openai || eleven, 'no TTS key')}`,
+    `- stock_search / stock_download: photos and videos from Pexels and Unsplash ${st(pexels || unsplash, 'no Pexels or Unsplash key')}`,
+    '- fonts_fetch: Google Fonts fonts (ready)',
+    '- report_progress, validate_output, read_brand_kit (ready)',
   ];
 }

@@ -126,8 +126,8 @@ describe('fonts_fetch', () => {
 describe('availableTools', () => {
   it('reports configured and missing providers', async () => {
     const lines = await availableTools(new MemoryVault({ OPENAI_API_KEY: 'k' }));
-    expect(lines.find((l) => l.startsWith('- generate_image'))).toContain('(pronto)');
-    expect(lines.find((l) => l.startsWith('- stock_search'))).toContain('non configurato');
+    expect(lines.find((l) => l.startsWith('- generate_image'))).toContain('(ready)');
+    expect(lines.find((l) => l.startsWith('- stock_search'))).toContain('not configured');
   });
 });
 

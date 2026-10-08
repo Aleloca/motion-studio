@@ -20,16 +20,16 @@ const ENABLED = new Set((process.env.MOTION_STUDIO_TOOLS ?? '').split(',').map((
 
 const str = (description, extra = {}) => ({ type: 'string', description, ...extra });
 const TOOLS = [
-  { name: 'approve', description: 'Uso interno di Motion Studio (richieste di permesso).', inputSchema: { type: 'object', properties: { tool_name: str('Strumento'), input: { type: 'object' }, tool_use_id: str('Id') }, additionalProperties: true } },
-  { name: 'report_progress', description: "Comunica all'utente a che punto sei (una frase breve).", inputSchema: { type: 'object', properties: { message: str('Frase breve', { maxLength: 300 }) }, required: ['message'] } },
-  { name: 'validate_output', description: 'Controlla gli output della versione corrente rispetto al contratto e restituisce i problemi.', inputSchema: { type: 'object', properties: {} } },
-  { name: 'read_brand_kit', description: 'Legge brand kit e linee guida del progetto.', inputSchema: { type: 'object', properties: {} } },
-  { name: 'generate_image', description: "Genera o modifica un'immagine con gpt-image-2 (a pagamento; può chiedere conferma all'utente). Restituisce il percorso del file salvato negli asset.", inputSchema: { type: 'object', properties: { prompt: str('Descrizione'), width: { type: 'integer' }, height: { type: 'integer' }, quality: { enum: ['low', 'medium', 'high', 'auto'] }, background: { enum: ['transparent', 'opaque', 'auto'] }, references: { type: 'array', items: { type: 'string' }, maxItems: 16, description: 'Immagini del progetto da usare come riferimento' }, name: str('Nome file (facoltativo)') }, required: ['prompt', 'width', 'height'] } },
-  { name: 'tts', description: 'Genera una voce fuori campo (a pagamento; può chiedere conferma). Restituisce il percorso del file audio.', inputSchema: { type: 'object', properties: { text: str('Testo da leggere'), provider: { enum: ['openai', 'elevenlabs'] }, voice: str('Voce'), instructions: str('Tono e stile (solo OpenAI)'), format: { enum: ['mp3', 'wav'] }, name: str('Nome file (facoltativo)') }, required: ['text'] } },
-  { name: 'stock_search', description: 'Cerca foto o video su Pexels o Unsplash.', inputSchema: { type: 'object', properties: { provider: { enum: ['pexels', 'unsplash'] }, query: str('Ricerca (in inglese funziona meglio)'), kind: { enum: ['photo', 'video'] }, orientation: { enum: ['landscape', 'portrait', 'square'] }, limit: { type: 'integer', minimum: 1, maximum: 20 } }, required: ['provider', 'query'] } },
-  { name: 'stock_download', description: "Scarica un risultato di stock negli asset del progetto, con l'attribuzione richiesta.", inputSchema: { type: 'object', properties: { provider: { enum: ['pexels', 'unsplash'] }, id: str('Id del risultato'), kind: { enum: ['photo', 'video'] } }, required: ['provider', 'id'] } },
-  { name: 'fonts_fetch', description: 'Scarica un font da Google Fonts negli asset del progetto.', inputSchema: { type: 'object', properties: { family: str('Famiglia, es. "Manrope"'), weights: { type: 'array', items: { type: 'integer' } }, italic: { type: 'boolean' } }, required: ['family'] } },
-  { name: 'download_file', description: "Scarica un file (logo, immagine o font) da un sito negli asset del progetto: indica l'URL e la destinazione in assets/brand/ o assets/fonts/", inputSchema: { type: 'object', properties: { url: str('URL http(s) del file da scaricare'), dest: str('Destinazione, es. "assets/brand/logo.svg" o "assets/fonts/Inter-400.woff2"') }, required: ['url', 'dest'] } },
+  { name: 'approve', description: 'Internal to Motion Studio (permission requests).', inputSchema: { type: 'object', properties: { tool_name: str('Tool'), input: { type: 'object' }, tool_use_id: str('Id') }, additionalProperties: true } },
+  { name: 'report_progress', description: 'Tell the user where you are (one short sentence).', inputSchema: { type: 'object', properties: { message: str('Short sentence', { maxLength: 300 }) }, required: ['message'] } },
+  { name: 'validate_output', description: 'Checks the outputs of the current version against the contract and returns the problems.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'read_brand_kit', description: 'Reads the project brand kit and guidelines.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'generate_image', description: 'Generates or edits an image with gpt-image-2 (paid; may ask the user for confirmation). Returns the path of the file saved in the assets.', inputSchema: { type: 'object', properties: { prompt: str('Description'), width: { type: 'integer' }, height: { type: 'integer' }, quality: { enum: ['low', 'medium', 'high', 'auto'] }, background: { enum: ['transparent', 'opaque', 'auto'] }, references: { type: 'array', items: { type: 'string' }, maxItems: 16, description: 'Project images to use as references' }, name: str('File name (optional)') }, required: ['prompt', 'width', 'height'] } },
+  { name: 'tts', description: 'Generates a voice-over (paid; may ask for confirmation). Returns the path of the audio file.', inputSchema: { type: 'object', properties: { text: str('Text to read'), provider: { enum: ['openai', 'elevenlabs'] }, voice: str('Voice'), instructions: str('Tone and style (OpenAI only)'), format: { enum: ['mp3', 'wav'] }, name: str('File name (optional)') }, required: ['text'] } },
+  { name: 'stock_search', description: 'Searches photos or videos on Pexels or Unsplash.', inputSchema: { type: 'object', properties: { provider: { enum: ['pexels', 'unsplash'] }, query: str('Search query (works best in English)'), kind: { enum: ['photo', 'video'] }, orientation: { enum: ['landscape', 'portrait', 'square'] }, limit: { type: 'integer', minimum: 1, maximum: 20 } }, required: ['provider', 'query'] } },
+  { name: 'stock_download', description: 'Downloads a stock result into the project assets, with the required attribution.', inputSchema: { type: 'object', properties: { provider: { enum: ['pexels', 'unsplash'] }, id: str('Result id'), kind: { enum: ['photo', 'video'] } }, required: ['provider', 'id'] } },
+  { name: 'fonts_fetch', description: 'Downloads a font from Google Fonts into the project assets.', inputSchema: { type: 'object', properties: { family: str('Family, e.g. "Manrope"'), weights: { type: 'array', items: { type: 'integer' } }, italic: { type: 'boolean' } }, required: ['family'] } },
+  { name: 'download_file', description: 'Downloads a file (logo, image or font) from a website into the project assets: give the URL and the destination in assets/brand/ or assets/fonts/', inputSchema: { type: 'object', properties: { url: str('http(s) URL of the file to download'), dest: str('Destination, e.g. "assets/brand/logo.svg" or "assets/fonts/Inter-400.woff2"') }, required: ['url', 'dest'] } },
 ];
 
 const send = (m) => process.stdout.write(`${JSON.stringify(m)}\n`);
@@ -50,21 +50,21 @@ function post(path, payload) {
       });
       res.on('error', (e) => { clearTimeout(timer); reject(e); });
     });
-    const timer = setTimeout(() => req.destroy(new Error('nessuna risposta entro il tempo massimo')), CAP_MS);
+    const timer = setTimeout(() => req.destroy(new Error('no response within the maximum time')), CAP_MS);
     req.on('error', (e) => { clearTimeout(timer); reject(e); });
     req.end(payload);
   });
 }
 
 async function call(name, args) {
-  if (!listed().some((t) => t.name === name)) return fail(`Strumento non disponibile: ${name}`);
-  if (!TOKEN) return fail('Motion Studio non raggiungibile: token mancante');
+  if (!listed().some((t) => t.name === name)) return fail(`Tool not available: ${name}`);
+  if (!TOKEN) return fail('Motion Studio is unreachable: token missing');
   try {
     const { status, body } = await post(`/api/bridge/${encodeURIComponent(name)}`, JSON.stringify(args ?? {}));
-    if (status < 200 || status > 299) return fail(body?.error ?? `Errore ${status}`);
+    if (status < 200 || status > 299) return fail(body?.error ?? `Error ${status}`);
     return { content: [{ type: 'text', text: JSON.stringify(body) }] };
   } catch (err) {
-    return fail(`Motion Studio non raggiungibile: ${err.message}`);
+    return fail(`Motion Studio is unreachable: ${err.message}`);
   }
 }
 
@@ -91,6 +91,6 @@ async function handle(msg) {
     case 'tools/call':
       return send({ jsonrpc: '2.0', id: msg.id, result: await call(msg.params?.name, msg.params?.arguments) });
     default:
-      return send({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: `Metodo non supportato: ${msg.method}` } });
+      return send({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: `Unsupported method: ${msg.method}` } });
   }
 }

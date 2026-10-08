@@ -1,45 +1,46 @@
-export const CONTEXT_MD = `# Contesto Motion Studio
+// Agent-facing: written in English. The agent answers in the language the prompt asks for.
+export const CONTEXT_MD = `# Motion Studio context
 
-Questa cartella è un progetto di **Motion Studio**: un'app locale che usa un agente di coding per produrre video in motion graphics e immagini.
+This folder is a **Motion Studio** project: a local app that uses a coding agent to produce motion-graphics videos and images.
 
-## Struttura
-- \`project.json\` — metadati del progetto (non modificarlo a mano).
-- \`brand/\` — brand kit (\`brand-kit.json\`), linee guida (\`guidelines.md\`), sorgenti analizzate.
-- \`assets/\` — asset del progetto con metadati in \`assets.json\`.
-- \`references/\` — immagini di riferimento con note in \`references.json\`.
-- \`creatives/<slug>/\` — una cartella per creatività: \`work/\` è il tuo spazio di lavoro, \`outputs/vN/\` gli output consegnati.
+## Structure
+- \`project.json\` — project metadata (do not edit it by hand).
+- \`brand/\` — brand kit (\`brand-kit.json\`), guidelines (\`guidelines.md\`), analysed sources.
+- \`assets/\` — project assets with metadata in \`assets.json\`.
+- \`references/\` — reference images with notes in \`references.json\`.
+- \`creatives/<slug>/\` — one folder per creative: \`work/\` is your workspace, \`outputs/vN/\` holds the delivered outputs.
 
-## Regole
-- Lavora solo dentro la cartella della creatività che ti viene indicata.
-- Le cartelle di codebase collegate sono in sola lettura.
-- Installa dipendenze solo in locale nella cartella di lavoro.
-- Non usare git nel progetto: Motion Studio gestisce le versioni.
+## Rules
+- Work only inside the folder of the creative you are given.
+- Linked codebase folders are read-only.
+- Install dependencies only locally, in the work folder.
+- Do not use git in the project: Motion Studio manages the versions.
 
-## Contratto di output
-Sei libero di scegliere strumenti e tecniche (Remotion, Motion Canvas, HTML + Playwright, ffmpeg, Python…). Al termine di ogni turno consegna in \`creatives/<slug>/outputs/vN/\` (la cartella esatta è indicata nella richiesta):
-1. un file per ogni formato richiesto, chiamato \`<id-preset>.<estensione>\` (es. \`instagram-reel-9x16.mp4\`), con la risoluzione esatta del preset;
+## Output contract
+You are free to choose tools and techniques (Remotion, Motion Canvas, HTML + Playwright, ffmpeg, Python…). At the end of every turn deliver in \`creatives/<slug>/outputs/vN/\` (the exact folder is given in the request):
+1. one file for each requested format, named \`<preset-id>.<extension>\` (e.g. \`instagram-reel-9x16.mp4\`), with the exact resolution of the preset;
 2. \`manifest.json\`:
    \`\`\`json
    { "schemaVersion": 1,
-     "files": [{ "format": "<id-preset>", "file": "<nome file>", "width": 1080, "height": 1920, "durationSec": 15 }],
+     "files": [{ "format": "<preset-id>", "file": "<file name>", "width": 1080, "height": 1920, "durationSec": 15 }],
      "tools": ["remotion"],
-     "renderCommand": "comando da eseguire in work/ per rigenerare gli output" }
+     "renderCommand": "command to run in work/ to regenerate the outputs" }
    \`\`\`
-   - \`file\` è il solo nome del file, senza sottocartelle (il file sta direttamente in \`outputs/vN/\`).
-   - \`durationSec\` (secondi, numero positivo) va indicato solo per i video; per le immagini omettilo.
-Ogni formato è una **ricomposizione** dedicata (layout adattato, testi ridimensionati, safe zone rispettate), mai un ritaglio di un master.
-Motion Studio controlla gli output dopo il turno: se mancano formati o le risoluzioni non tornano, riceverai l'elenco dei problemi da correggere.
-Suggerimenti (non vincoli): per video brevi Remotion funziona bene; per immagini statiche HTML/CSS renderizzato con Playwright.
+   - \`file\` is the file name only, without subfolders (the file sits directly in \`outputs/vN/\`).
+   - \`durationSec\` (seconds, positive number) is required only for videos; omit it for images.
+Each format is a dedicated **recomposition** (adapted layout, resized text, safe zones respected), never a crop of a master.
+Motion Studio checks the outputs after the turn: if formats are missing or the resolutions do not match, you will receive the list of problems to fix.
+Suggestions (not constraints): Remotion works well for short videos; for still images, HTML/CSS rendered with Playwright.
 
-## Brand e asset
-- \`brand/brand-kit.json\`: colori, font, loghi, tono, cose da fare e da evitare (ogni voce con la sua fonte).
-- \`brand/guidelines.md\`: linee guida discorsive.
-- \`assets/assets.json\`: elenco degli asset con descrizione, tag e origine; i file sono in \`assets/\`.
-- \`references/references.json\`: immagini di riferimento con note; i file sono in \`references/\`.
-Le regole del brand hanno la precedenza sulle scelte generiche. Usa gli asset del progetto prima di generarne di nuovi.
+## Brand and assets
+- \`brand/brand-kit.json\`: colors, fonts, logos, tone, dos and don'ts (each entry with its source).
+- \`brand/guidelines.md\`: narrative guidelines.
+- \`assets/assets.json\`: list of the assets with description, tags and origin; the files are in \`assets/\`.
+- \`references/references.json\`: reference images with notes; the files are in \`references/\`.
+Brand rules take precedence over generic choices. Use the project's assets before generating new ones.
 
-## Strumenti Motion Studio
-Quando la richiesta elenca gli strumenti Motion Studio (MCP) puoi usarli: generare immagini (gpt-image-2), voci fuori campo, cercare e scaricare foto/video stock, scaricare font di Google Fonts. I file finiscono in \`assets/\` e sono già registrati in \`assets/assets.json\`. Conserva l'attribuzione degli asset di stock (campo \`attribution\`). Usa \`report_progress\` per dire a che punto sei e \`validate_output\` (solo nelle creatività) per controllare gli output prima di chiudere il turno.
+## Motion Studio tools
+When the request lists the Motion Studio tools (MCP) you can use them: generate images (gpt-image-2), voice-overs, search and download stock photos/videos, download Google Fonts. The files end up in \`assets/\` and are already registered in \`assets/assets.json\`. Keep the attribution of stock assets (\`attribution\` field). Use \`report_progress\` to say where you are and \`validate_output\` (only in creatives) to check the outputs before ending the turn.
 `;
 
 export const CLAUDE_MD = `@.studio/context.md

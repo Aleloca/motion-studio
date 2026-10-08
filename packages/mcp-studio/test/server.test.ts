@@ -65,13 +65,22 @@ describe('mcp-studio server', () => {
     startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,read_brand_kit,fonts_fetch,download_file' });
     const tools = (await rpc(3, 'tools/list')).result.tools as Array<{ name: string; description: string; inputSchema: { required: string[]; properties: Record<string, { type: string }> } }>;
     const dl = tools.find((t) => t.name === 'download_file')!;
-    expect(dl.description).toBe("Scarica un file (logo, immagine o font) da un sito negli asset del progetto: indica l'URL e la destinazione in assets/brand/ o assets/fonts/");
+    expect(dl.description).toBe('Downloads a file (logo, image or font) from a website into the project assets: give the URL and the destination in assets/brand/ or assets/fonts/');
     expect(dl.inputSchema.required).toEqual(['url', 'dest']);
     expect(dl.inputSchema.properties.url!.type).toBe('string');
     expect(dl.inputSchema.properties.dest!.type).toBe('string');
     const res = await rpc(4, 'tools/call', { name: 'download_file', arguments: { url: 'https://acme.example/logo.svg', dest: 'assets/brand/logo.svg' } });
     expect(res.result.isError).toBeUndefined();
     expect(calls.at(-1)).toMatchObject({ url: '/api/bridge/download_file', body: { url: 'https://acme.example/logo.svg', dest: 'assets/brand/logo.svg' } });
+  });
+  it('describes every tool in English', async () => {
+    child.kill();
+    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,validate_output,read_brand_kit,generate_image,tts,stock_search,stock_download,fonts_fetch,download_file' });
+    const tools = (await rpc(3, 'tools/list')).result.tools as Array<{ name: string }>;
+    expect(tools).toHaveLength(10);
+    const text = JSON.stringify(tools);
+    expect(text).not.toMatch(/[àèéìòù]|\b(Genera|Scarica|Cerca|Legge|Controlla|Comunica|Uso interno|italiano)\b/);
+    expect(text).toContain('Searches photos or videos on Pexels or Unsplash.');
   });
   it('forwards calls with the token and maps errors', async () => {
     await rpc(1, 'initialize', { protocolVersion: '2025-06-18' });
@@ -100,7 +109,7 @@ describe('mcp-studio server', () => {
     startChild({ MOTION_STUDIO_BRIDGE_TOKEN_FILE: '/nonexistent/ms.token' });
     await rpc(1, 'initialize', { protocolVersion: '2025-06-18' });
     const res = await rpc(2, 'tools/call', { name: 'report_progress', arguments: { message: 'x' } });
-    expect(res.result).toEqual({ content: [{ type: 'text', text: 'Motion Studio non raggiungibile: token mancante' }], isError: true });
+    expect(res.result).toEqual({ content: [{ type: 'text', text: 'Motion Studio is unreachable: token missing' }], isError: true });
     expect(calls).toEqual([]);
   });
   it('waits for a slow response (no headers timeout of its own)', async () => {
@@ -113,7 +122,7 @@ describe('mcp-studio server', () => {
     startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_BRIDGE_TIMEOUT_MS: '300' });
     const res = await rpc(1, 'tools/call', { name: 'report_progress', arguments: { message: 'hang' } });
     expect(res.result.isError).toBe(true);
-    expect(res.result.content[0].text).toMatch(/^Motion Studio non raggiungibile: /);
+    expect(res.result.content[0].text).toMatch(/^Motion Studio is unreachable: /);
   });
   it('answers id 0 and string ids, concurrent calls with the right ids, and ignores malformed or null lines', async () => {
     child.stdin.write('not json\nnull\n42\n"x"\n');

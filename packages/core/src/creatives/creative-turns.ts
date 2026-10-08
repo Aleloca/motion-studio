@@ -17,7 +17,7 @@ import { WorkspaceError } from '../workspace-store.ts';
 import { CreativeStore } from './creative-store.ts';
 import { validateOutputs } from './output-contract.ts';
 import { buildCreativePrompt, type CreativeContext, type PromptKind } from './prompt.ts';
-import { t } from '../i18n.ts';
+import { currentLocale, t } from '../i18n.ts';
 
 export interface CreativeTurnDeps {
   queue: JobQueue; launcher: AgentLauncher; git: Git; media: MediaTools; vault: SecretsVault;
@@ -126,6 +126,8 @@ export class CreativeTurnService {
 
   private async run(ref: CreativeRef, store: CreativeStore, previous: CreativeStatus, message: { text: string; pins: Pin[] } | undefined, signal: AbortSignal, jobId: string): Promise<void | 'cancelled'> {
     const slug = ref.creativeSlug;
+    // The agent's language is fixed when the job starts: a setting change mid-turn does not affect it.
+    const locale = currentLocale();
     // Set once the last agent turn is over: from then on an abort no longer cancels (the version gets saved).
     let finalizing = false;
     try {
@@ -158,7 +160,7 @@ export class CreativeTurnService {
           userText: kind === 'fix' ? undefined : request,
           pins: kind === 'iteration' ? message?.pins : undefined,
           attachments: kind === 'iteration' ? attachments : undefined,
-          problems, context,
+          problems, context, locale,
         });
         const snapshotsBefore = await Promise.all(existing.map((p) => codebaseSnapshot(p)));
         for (const [k, p] of existing.entries()) {

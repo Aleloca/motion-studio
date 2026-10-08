@@ -71,7 +71,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     expect(conv.some((e) => e.type === 'agent')).toBe(true);
     expect(conv.at(-1)).toMatchObject({ type: 'version', n: 1, status: 'complete' });
     expect(messages.some((m) => m.type === 'creative')).toBe(true);
-    expect((await prompts())[0]!.prompt).toContain('Realizza la creatività "Lancio" (versione 1)');
+    expect((await prompts())[0]!.prompt).toContain('Create the creative "Lancio" (version 1)');
   });
 
   it('lets every creative turn (first, fix, iteration) use the allowed tool rules', async () => {
@@ -88,6 +88,19 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     await writeFile(join(ref.projectDir, '.studio', 'context.md'), 'manomesso');
     await finalState((await service.start(ref)).id);
     expect(await readFile(join(ref.projectDir, '.studio', 'context.md'), 'utf8')).toBe(CONTEXT_MD);
+  });
+
+  it('keeps the language of the job start for the fix attempt even if the setting changes mid-turn', async () => {
+    process.env.FAKE_CLAUDE_SCENARIO = 'render_missing_once';
+    const push = messages.push.bind(messages);
+    messages.push = (...m) => { if (m.some((x) => x.type === 'agent')) setLocale('en'); return push(...m); };
+    try { await finalState((await service.start(ref)).id); } finally { setLocale('it'); }
+    const all = await prompts();
+    expect(all).toHaveLength(2);
+    for (const { prompt } of all) {
+      expect(prompt).toContain('Always reply to the user in Italian.');
+      expect(prompt).not.toContain('in English.');
+    }
   });
 
   it('asks the agent to fix missing outputs and then succeeds', async () => {
@@ -139,7 +152,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     const versions = await store.readVersions(ref.creativeSlug);
     expect(versions.map((v) => [v.n, v.request, v.basedOn])).toEqual([[1, 'Generazione dal brief', null], [2, 'Logo più grande', 1]]);
     const last = (await prompts()).at(-1)!;
-    expect(last.prompt).toContain('instagram-post-1x1 @ 2.0s, punto (50%, 25%): qui');
+    expect(last.prompt).toContain('instagram-post-1x1 @ 2.0s, point (50%, 25%): qui');
     expect(last.args.slice(last.args.indexOf('--resume'), last.args.indexOf('--resume') + 2)).toEqual(['--resume', 'fake-session-1']);
     expect((await store.readConversation(ref.creativeSlug)).find((e) => e.type === 'user')).toMatchObject({ text: 'Logo più grande' });
   });
@@ -357,7 +370,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     await finalState((await service.start(ref, { text: '', pins: [{ format: 'instagram-post-1x1', x: 0.1, y: 0.2, timeSec: null, note: 'più luce' }] })).id);
     expect((await store.readVersions(ref.creativeSlug)).at(-1)!.request).toBe('Applica i commenti puntuali.');
     const last = (await prompts()).at(-1)!.prompt;
-    expect(last).toContain('## Richiesta\nApplica i commenti puntuali.');
+    expect(last).toContain('## Request\nApplica i commenti puntuali.');
     expect(last).not.toContain('Rigenera tutti i formati');
   });
 
@@ -491,7 +504,7 @@ describe('brand and codebases in creative turns', { timeout: 20_000 }, () => {
     const { prompt, args } = (await prompts())[0]!;
     expect(args.slice(args.indexOf('--add-dir'), args.indexOf('--add-dir') + 2)).toEqual(['--add-dir', appDir]);
     expect(args).toContain(`Edit(/${appDir}/**)`);
-    expect(prompt).toContain('- Colore Blu (primary): #1E3A5F');
+    expect(prompt).toContain('- Color Blu (primary): #1E3A5F');
     expect(prompt).toContain(`- ${appDir}: iOS`);
     const entries = await sys();
     expect(entries.some((e) => e.text === `Codebase non trovata, ignorata in questo turno: ${join(cbBase, 'missing')}`)).toBe(true);
