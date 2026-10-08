@@ -42,7 +42,7 @@ export const ICONS = {
   clock: 'M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2ZM8 4.5V8l2.5 1.5',
   terminal: 'M2.5 3.5h11v9h-11ZM5 6.5l2 1.5-2 1.5M8.5 10h2.5',
   key: 'M10 2.5a3.5 3.5 0 1 1-3.2 4.9L2.5 11.7v1.8h1.8l.7-.7v-1.3h1.3l1-1',
-  // Added for the redesign (same drawing rules): forward/menu/minus/external/copy/edit/pin/user.
+  // Added for the redesign (same drawing rules): forward/menu/minus/external/copy/edit/pin/pause/user.
   forward: 'M6 3.5 10.5 8 6 12.5',
   menu: 'M2.5 4.5h11M2.5 8h11M2.5 11.5h11',
   minus: 'M3 8h10',
@@ -50,6 +50,7 @@ export const ICONS = {
   copy: 'M5.5 5.5h8v8h-8ZM10.5 5.5v-3h-8v8h3',
   edit: 'M10.5 2.5 13.5 5.5 6 13H3v-3l7.5-7.5Z',
   pin: 'M8 14s4.5-4.2 4.5-7.5a4.5 4.5 0 0 0-9 0C3.5 9.8 8 14 8 14ZM8 5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Z',
+  pause: 'M5.5 3.5v9M10.5 3.5v9',
   user: 'M8 8a2.75 2.75 0 1 0 0-5.5A2.75 2.75 0 0 0 8 8ZM2.5 13.5c.7-2.4 2.9-3.8 5.5-3.8s4.8 1.4 5.5 3.8',
 } as const;
 

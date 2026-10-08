@@ -6,7 +6,7 @@ import { useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEve
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { anim, D, E, isSubmitChord } from '../motion/index.ts';
 import { Button, Icon, Pill, Textarea, cx } from '../ui/index.ts';
-import { boardSize, outputMedia, pointIn, type BoardModel } from './canvasModel.ts';
+import { boardSize, outputMedia, pointIn, ratioText, type BoardModel } from './canvasModel.ts';
 
 export type Tool = 'select' | 'comment' | 'hand';
 
@@ -40,12 +40,6 @@ export interface BoardProps {
   footer?: ReactNode;
 }
 
-const ratioOf = (p: FormatPreset) => {
-  const g = (a: number, b: number): number => (b ? g(b, a % b) : a);
-  const d = g(p.width, p.height);
-  return p.width / d <= 21 && p.height / d <= 21 ? `${p.width / d}:${p.height / d}` : `${p.width}×${p.height}`;
-};
-
 export function boardLabel(board: BoardModel, locale: ReturnType<typeof useLocale>): string {
   return board.preset ? `${channelName(board.preset.channel, locale)} · ${formatName(board.preset, locale)}` : board.id;
 }
@@ -59,7 +53,6 @@ export function CanvasBoard(p: BoardProps) {
   const label = boardLabel(board, locale);
   const size = board.preset ? boardSize(board.preset.width, board.preset.height) : { width: 300, height: 300 };
   const media = board.out && n !== null ? outputMedia(p.slug, p.creative, n, board.out) : null;
-  const zone = p.safe && board.preset?.safeZone ? board.preset.safeZone : null;
   const video = board.preset?.kind === 'video';
   const duration = board.out?.durationSec ?? null;
 
@@ -71,13 +64,12 @@ export function CanvasBoard(p: BoardProps) {
     const pt = pointIn(e.currentTarget.getBoundingClientRect(), e);
     p.onPlace(pt.x, pt.y);
   };
-  const band = (s: CSSProperties) => ({ ...s, position: 'absolute' as const });
 
   return (
     <div className={cx('ms-cv-board', p.selected && 'ms-on')} data-board={board.id}>
       <div className="ms-cv-board-head" style={{ maxWidth: Math.max(size.width, 220) }}>
         <b className="ms-cv-board-name">{label}</b>
-        {board.preset ? <span className="ms-cv-board-meta">{ratioOf(board.preset)}{duration !== null ? ` · ${c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) })}` : ''}</span> : null}
+        {board.preset ? <span className="ms-cv-board-meta">{ratioText(board.preset)}{duration !== null ? ` · ${c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) })}` : ''}</span> : null}
         {p.working && (!board.out || video) ? <Pill spinner>{c.rendering}</Pill> : null}
         {board.out && !board.out.verified ? <Pill tone="warn">{t.web.formatUi.unverified}</Pill> : null}
       </div>
@@ -99,14 +91,7 @@ export function CanvasBoard(p: BoardProps) {
             </span>
           )}
           {p.working ? <span className="ms-shimmer" aria-hidden="true" /> : null}
-          {zone && board.preset ? (
-            <span className="ms-cv-safe" aria-hidden="true">
-              {zone.top > 0 ? <i className="ms-cv-safe-top" style={band({ height: `${(zone.top / board.preset.height) * 100}%` })}><em>{c.safeTop}</em></i> : null}
-              {zone.bottom > 0 ? <i className="ms-cv-safe-bottom" style={band({ height: `${(zone.bottom / board.preset.height) * 100}%` })}><em>{c.safeBottom}</em></i> : null}
-              {zone.left > 0 ? <i className="ms-cv-safe-left" style={band({ width: `${(zone.left / board.preset.width) * 100}%`, top: `${(zone.top / board.preset.height) * 100}%`, bottom: `${(zone.bottom / board.preset.height) * 100}%` })} /> : null}
-              {zone.right > 0 ? <i className="ms-cv-safe-right" style={band({ width: `${(zone.right / board.preset.width) * 100}%`, top: `${(zone.top / board.preset.height) * 100}%`, bottom: `${(zone.bottom / board.preset.height) * 100}%` })} /> : null}
-            </span>
-          ) : null}
+          {p.safe && board.preset ? <SafeZoneBands preset={board.preset} /> : null}
           {p.tool === 'comment' && board.out ? (
             <button type="button" className="ms-cv-hit" aria-label={c.commentOn({ label })} onClick={(e) => { e.stopPropagation(); place(e); }} />
           ) : null}
@@ -133,9 +118,32 @@ export function CanvasBoard(p: BoardProps) {
   );
 }
 
-/** The comment bubble (point 40): the text is written next to the spot; Comment adds it to the pending chips. */
-function PinBubble({ draft, number, video, onText, onCommit, onCancel, onDelete }: {
-  draft: Draft; number: number; video: boolean; onText(t: string): void; onCommit(): void; onCancel(): void; onDelete(): void;
+/** Safe zones (point 37): tinted bands with what covers them, over a frame of `preset`. Nothing without a zone. */
+export function SafeZoneBands({ preset }: { preset: FormatPreset }) {
+  const c = useT().web.canvas;
+  const zone = preset.safeZone;
+  if (!zone) return null;
+  const band = (s: CSSProperties) => ({ ...s, position: 'absolute' as const });
+  const top = `${(zone.top / preset.height) * 100}%`;
+  const bottom = `${(zone.bottom / preset.height) * 100}%`;
+  return (
+    <span className="ms-cv-safe" aria-hidden="true">
+      {zone.top > 0 ? <i className="ms-cv-safe-top" style={band({ height: top })}><em>{c.safeTop}</em></i> : null}
+      {zone.bottom > 0 ? <i className="ms-cv-safe-bottom" style={band({ height: bottom })}><em>{c.safeBottom}</em></i> : null}
+      {zone.left > 0 ? <i className="ms-cv-safe-left" style={band({ width: `${(zone.left / preset.width) * 100}%`, top, bottom })} /> : null}
+      {zone.right > 0 ? <i className="ms-cv-safe-right" style={band({ width: `${(zone.right / preset.width) * 100}%`, top, bottom })} /> : null}
+    </span>
+  );
+}
+
+/**
+ * The comment bubble (point 40): the text is written next to the spot; Comment adds it to the pending chips. It sits in
+ * a positioned box the size of the frame and opens to the left when its scroll area (`.ms-cv-viewport` on the canvas,
+ * `.ms-fv-stage` in the format view) has no room on the right. `time` replaces the canvas' "At 0:00" (the format view
+ * comments on an exact frame).
+ */
+export function PinBubble({ draft, number, video, time, onText, onCommit, onCancel, onDelete }: {
+  draft: Draft; number: number; video: boolean; time?: string; onText(t: string): void; onCommit(): void; onCancel(): void; onDelete(): void;
 }) {
   const t = useT();
   const c = t.web.canvas.pin;
@@ -151,7 +159,7 @@ function PinBubble({ draft, number, video, onText, onCommit, onCancel, onDelete 
   const [left, setLeft] = useState(draft.x > 0.55);
   useLayoutEffect(() => {
     const el = ref.current;
-    const box = el?.closest('.ms-cv-viewport')?.getBoundingClientRect();
+    const box = el?.closest('.ms-cv-viewport, .ms-fv-stage')?.getBoundingClientRect();
     const marker = el?.parentElement?.getBoundingClientRect();
     if (!el || !box || !marker || !box.width) return;
     const at = marker.left + draft.x * marker.width;
@@ -171,7 +179,8 @@ function PinBubble({ draft, number, video, onText, onCommit, onCancel, onDelete 
         <Textarea ref={field} rows={3} maxLength={2000} aria-label={c.field} placeholder={c.placeholder} value={draft.text}
           onChange={(e) => onText(e.target.value)} onKeyDown={onKeyDown} />
         <div className="ms-cv-bubble-foot">
-          {video ? <span className="ms-cv-bubble-time" title={c.atStartHint}>{c.atStart}</span> : null}
+          {time !== undefined ? <span className="ms-cv-bubble-time">{time}</span>
+            : video ? <span className="ms-cv-bubble-time" title={c.atStartHint}>{c.atStart}</span> : null}
           <span className="ms-grow" />
           {draft.index !== null ? (
             <Button size="sm" variant="ghost" icon aria-label={c.remove} title={c.remove} onClick={onDelete}><Icon name="trash" size={13} /></Button>

@@ -7,6 +7,7 @@ import { depthOf, href, parseRoute, projectOf, routeKey, type Route } from './ro
 import { AssetsPage } from './screens/AssetsPage.tsx';
 import { BrandPage } from './screens/BrandPage.tsx';
 import { CreativeCanvas } from './screens/CreativeCanvas.tsx';
+import { FormatView } from './screens/FormatView.tsx';
 import { NewCreative } from './screens/NewCreative.tsx';
 import { Pairing } from './screens/Pairing.tsx';
 import { ProjectConsole } from './screens/ProjectConsole.tsx';
@@ -222,8 +223,7 @@ function AppShell({ route, live, settings, checks, activity, setActivity, langua
       case 'project': return <ProjectHost route={r} live={live} expert={expert} />;
       case 'new-creative': return <NewCreative key={r.slug} slug={r.slug} />;
       case 'creative': return <CreativeCanvas key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} />;
-      // Until the format view (Task 13): the canvas with that format in the focus view.
-      case 'format': return <CreativeCanvas key={`${r.slug}/${r.creative}/${r.format}`} slug={r.slug} creative={r.creative} focus={r.format} live={live} />;
+      case 'format': return <FormatView key={`${r.slug}/${r.creative}/${r.format}`} slug={r.slug} creative={r.creative} format={r.format} live={live} />;
       // Every section maps to the current settings page until the new one (Task 15).
       case 'settings': return settings ? <SettingsPage settings={settings} checks={checks} language={language} systemLocale={systemLocale} onLanguage={onLanguage} onSaved={onSettings} /> : null;
       // The setup: a full page without the bar, at depth 0.

@@ -1,30 +1,31 @@
 // Creative · canvas (spec §6.2 #6, §6.1 creative bar), ported from the prototype's CanvasView / VersionsPopover /
 // PinComposer and the Canvas boards: formats column by channel, the boards in proportion on a dotted canvas (zoom,
 // safe zones with a legend, V/C/H tools), Figma-style comments that become chips of the composer, the Chat · Comments ·
-// Brief panel, the version history with Compare, and Export. Replaces the interim CreativePage.
+// Brief panel, the version history with Compare, and Export. Replaces the interim CreativePage. A board opens in the
+// format view (screens/FormatView.tsx) with T3.
 import { channelName, formatName, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type VersionEntry } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api.ts';
 import { BriefEditor } from '../components/BriefEditor.tsx';
 import { Conversation } from '../components/Conversation.tsx';
-import { FocusView } from '../components/FocusView.tsx';
 import type { EventsState } from '../eventsReducer.ts';
 import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
-import { D, enter, flip, pop, pulse, stagger, usePageShortcut } from '../motion/index.ts';
+import { D, enter, flip, pulse, stagger, usePageShortcut } from '../motion/index.ts';
 import { href, routeKey } from '../routes.ts';
 import { useBarClaim } from '../shell/barSlots.ts';
-import { setFrameOrigin, takeFrameOrigin } from '../shell/intents.ts';
+import { setFrameOrigin, setShownVersion, takeFrameOrigin, takeShownVersion } from '../shell/intents.ts';
 import { go, ShellContext } from '../shell/ShellContext.tsx';
-import { Button, ChannelMark, Empty, Icon, Input, Pill, Popover, Spinner, Tabs, Tag, Toggle, cx, toast } from '../ui/index.ts';
+import { Button, ChannelMark, Empty, Icon, Input, Pill, Spinner, Tabs, Tag, Toggle, cx, toast } from '../ui/index.ts';
 import { useCreative } from '../useCreative.ts';
 import { boardLabel, CanvasBoard, type Draft, type Tool } from './CanvasBoard.tsx';
-import { boardsOf, isTall, VIDEO_FILE, type BoardModel } from './canvasModel.ts';
+import { boardsOf, isTall, ratioText, VIDEO_FILE, type BoardModel } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf, lastStep } from './creativeState.ts';
 import { ExportDialog } from './ExportDialog.tsx';
+import { bare, inOverlay, isTyping } from './keys.ts';
 import { pinsKey, usePendingPins } from './pendingPins.ts';
-import { VersionMenu } from './VersionMenu.tsx';
+import { useNewVersionNotice, VersionControl } from './VersionControl.tsx';
 import './canvas.css';
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -33,27 +34,14 @@ const ZOOM_MAX = 2;
 const ZOOM_STEP = 0.1;
 const TOOL_KEYS: Record<string, Tool> = { v: 'select', c: 'comment', h: 'hand' };
 
-/** Keys typed into a field are text, not canvas shortcuts. */
-const isTyping = (e: KeyboardEvent) => {
-  const el = e.target instanceof Element ? e.target : null;
-  return Boolean(el?.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]'));
-};
-/** A popover or modal on top owns the keyboard. */
-const inOverlay = (e: KeyboardEvent) => {
-  const el = e.target instanceof Element ? e.target : null;
-  return Boolean(el?.closest('.ms-modal, .ms-pop'));
-};
-const bare = (e: KeyboardEvent) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.isComposing;
 
 export interface CreativeCanvasProps {
   slug: string;
   creative: string;
   live: EventsState;
-  /** The format route (until the format view of Task 13): the canvas with that format open in the focus view. */
-  focus?: string;
 }
 
-export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasProps) {
+export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
   const t = useT();
   const c = t.web.canvas;
   const locale = useLocale();
@@ -62,9 +50,9 @@ export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasPr
   const { detail, conversation, error, reload } = useCreative(slug, creative, live.creativeTicks[`${slug}/${creative}`] ?? 0);
 
   // This page owns the creative bar only while it is the route's page (a leaving page stays mounted ~200 ms).
-  const ownKey = focus ? routeKey({ name: 'format', slug, creative, format: focus }) : routeKey({ name: 'creative', slug, creative });
+  const ownKey = routeKey({ name: 'creative', slug, creative });
   const active = !shell || routeKey(shell.route) === ownKey;
-  const bar = useBarClaim(ownKey, active && !focus);
+  const bar = useBarClaim(ownKey, active);
 
   // Format catalog.
   const [presets, setPresets] = useState<FormatPreset[]>([]);
@@ -79,23 +67,15 @@ export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasPr
     return () => { alive = false; };
   }, []);
 
-  // Versions: the canvas follows the newest until the user picks one (sending a change follows again).
+  // Versions: the canvas follows the newest until the user picks one (sending a change follows again). A version picked
+  // in the format view comes back with T4.
   const versions = useMemo(() => detail?.versions ?? [], [detail]);
   const latest = versions.at(-1) ?? null;
-  const [picked, setPicked] = useState<number | null>(null);
+  const [picked, setPicked] = useState<number | null>(() => takeShownVersion(`${slug}/${creative}`));
   const version = (picked !== null ? versions.find((v) => v.n === picked) : undefined) ?? latest;
   const versionButton = useRef<HTMLButtonElement>(null);
   // T11: a new version → toast and a spring on the version badge (the frames reveal themselves on load).
-  const seenLatest = useRef<number | null | undefined>(undefined);
-  useEffect(() => {
-    if (!detail) return;
-    const n = latest?.n ?? null;
-    const prev = seenLatest.current;
-    seenLatest.current = n;
-    if (prev === undefined || n === null || (prev !== null && n <= prev) || !active) return;
-    toast.show(c.versionReady({ n }), { tone: 'ok' });
-    void pop(versionButton.current);
-  }, [detail, latest?.n, active, c]);
+  useNewVersionNotice(Boolean(detail), latest?.n ?? null, active, versionButton);
 
   const myApprovals = useMemo(() => Object.values(live.approvals).filter((a) => a.projectSlug === slug && a.creativeSlug === creative), [live.approvals, slug, creative]);
   const job = useMemo(() => {
@@ -181,7 +161,7 @@ export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasPr
   usePageShortcut(root, (e) => e.key === 'Escape' && !isTyping(e) && !inOverlay(e) && (tool !== 'select' || draft !== null), () => { setDraft(null); setTool('select'); });
   const [renaming, setRenaming] = useState<string | null>(null);
   const startRename = useCallback(() => { if (detail) setRenaming(detail.creative.title); }, [detail]);
-  usePageShortcut(root, (e) => e.key === 'F2' && bare(e) && !e.shiftKey && !isTyping(e) && !inOverlay(e) && Boolean(detail) && !focus, startRename);
+  usePageShortcut(root, (e) => e.key === 'F2' && bare(e) && !e.shiftKey && !isTyping(e) && !inOverlay(e) && Boolean(detail), startRename);
 
   // Title.
   const [savedTitle, setSavedTitle] = useState<string | null>(null);
@@ -203,16 +183,10 @@ export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasPr
   };
 
   // Version actions.
-  const [menuOpen, setMenuOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const act = (p: () => Promise<unknown>, then?: () => void) => {
-    setActionError(null);
-    Promise.resolve().then(p).then(() => then?.()).catch((e: unknown) => setActionError(c.versions.actionFailed({ detail: message(e) })));
-  };
   const [compare, setCompare] = useState<{ open: boolean; init: [number, number]; format: string } | null>(null);
   const comparable = useMemo(() => boards.filter((b) => versions.some((v) => v.outputs.some((o) => o.format === b.id))).map((b) => b.id), [boards, versions]);
   const openCompare = () => {
-    setMenuOpen(false);
     if (!version || versions.length < 2) return;
     const i = versions.findIndex((v) => v.n === version.n);
     const other = versions[i - 1] ?? versions[i + 1]!;
@@ -225,6 +199,7 @@ export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasPr
   // Open a board in the format view (T3): its rect goes along for the shared-element transition.
   const openEditor = (id: string, frame: HTMLElement) => {
     setFrameOrigin(`format:${slug}/${creative}/${id}`, frame.getBoundingClientRect());
+    setShownVersion(`${slug}/${creative}`, picked !== null && version?.n === picked ? picked : null);
     go(href.format(slug, creative, id));
   };
 
@@ -310,9 +285,6 @@ export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasPr
     />
   );
 
-  const focusPreset = focus ? presets.find((p) => p.id === focus) : undefined;
-  const focusOut = focus ? version?.outputs.find((o) => o.format === focus) : undefined;
-
   return (
     <div ref={root} className="ms-cv">
       {bar?.title ? createPortal(
@@ -323,31 +295,8 @@ export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasPr
       {bar?.end ? createPortal(
         <>
           {version ? (
-            <>
-              <button ref={versionButton} type="button" className={cx('ms-btn ms-outline ms-cv-vbtn', menuOpen && 'ms-open')} aria-haspopup="dialog" aria-expanded={menuOpen}
-                aria-label={c.versions.menu({ n: version.n, total: versions.length })} onClick={() => setMenuOpen((o) => !o)}>
-                <span>{c.versions.button({ n: version.n, total: versions.length })}</span><Icon name="chevron" size={11} />
-              </button>
-              <Popover open={menuOpen} onClose={() => setMenuOpen(false)} anchor={versionButton} placement="bottom-end" width={320}>
-                <VersionMenu slug={slug} creative={creative} versions={versions} shown={version.n} resumeFrom={cr.resumeFrom?.version ?? null}
-                  onPick={(v) => { setPicked(v); setMenuOpen(false); }}
-                  onCompare={openCompare}
-                  onRestart={(v) => {
-                    setMenuOpen(false);
-                    // Undo restores exactly the previous resume point. Without one (the latest) there is nothing exact to
-                    // restore (the core cannot clear a resume point): no Undo; the menu offers the latest explicitly.
-                    const previous = cr.resumeFrom?.version ?? null;
-                    act(() => api.restoreVersion(slug, creative, v), () => {
-                      reload();
-                      toast.show(c.versions.restarted({ n: v }), {
-                        tone: 'ok',
-                        action: previous !== null && previous !== v ? { label: c.versions.undo, run: () => act(() => api.restoreVersion(slug, creative, previous), reload) } : undefined,
-                      });
-                    });
-                  }}
-                  onReveal={(v) => { setMenuOpen(false); act(() => api.revealVersion(slug, creative, v)); }} />
-              </Popover>
-            </>
+            <VersionControl slug={slug} creative={creative} versions={versions} version={version} resumeFrom={cr.resumeFrom?.version ?? null} buttonRef={versionButton}
+              onPick={setPicked} onCompare={openCompare} onChanged={reload} onError={setActionError} />
           ) : null}
           <Button variant="ink" className="ms-cv-export" disabled={!version} onClick={() => { if (version) setExporting({ open: true, version }); }}>
             <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
@@ -464,24 +413,9 @@ export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasPr
       ) : null}
       <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
         title={title} version={exporting?.version ?? null} presets={presets} />
-      {focusPreset ? (
-        <FocusView preset={focusPreset}
-          src={version && focusOut ? api.fileUrl(slug, creative, `outputs/v${version.n}/${focusOut.file}`) : null}
-          compareSrc={null} versionN={version?.n ?? null} compareN={null} verified={focusOut?.verified !== false}
-          pins={pins.filter((p) => p.format === focusPreset.id)}
-          pinNumbers={pins.flatMap((p, i) => (p.format === focusPreset.id ? [i + 1] : []))}
-          onAddPin={canComment && pinSource !== null ? (pin) => setStored((ps) => [...ps, { pin, version: pinSource }]) : undefined}
-          commentLock={!canComment && pinSource !== null ? c.versions.commentsOn({ n: pinSource }) : undefined} onClose={() => go(href.creative(slug, creative))} />
-      ) : null}
     </div>
   );
 }
-
-const ratioText = (p: FormatPreset) => {
-  const g = (a: number, b: number): number => (b ? g(b, a % b) : a);
-  const d = g(p.width, p.height);
-  return p.width / d <= 21 && p.height / d <= 21 ? `${p.width / d}:${p.height / d}` : `${p.width}×${p.height}`;
-};
 
 function groupByChannel(boards: BoardModel[]): Array<[string, BoardModel[]]> {
   const m = new Map<string, BoardModel[]>();

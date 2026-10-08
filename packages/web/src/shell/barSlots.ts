@@ -1,9 +1,11 @@
 // Slots of the creative bar (spec §6.1): the bar lives in the shell, outside the page host, but the title, the state,
-// the version menu and Export belong to the creative page. The bar renders two empty slots; the page that owns the
+// the version menu and Export belong to the creative page (and, in the format view, the back button too). The bar renders two empty slots; the page that owns the
 // current route portals its controls into them. A page that is leaving (still mounted for its exit) never claims them.
 import { useLayoutEffect, useSyncExternalStore } from 'react';
 
 export interface BarSlots {
+  /** Before the breadcrumb: the page's own back button (the format view's "← All formats", which runs T4). */
+  start: HTMLElement | null;
   /** After the breadcrumb: the creative's title and state. */
   title: HTMLElement | null;
   /** Before the bell: version menu and Export. */
@@ -12,7 +14,7 @@ export interface BarSlots {
   owner: string | null;
 }
 
-let slots: BarSlots = { title: null, end: null, owner: null };
+let slots: BarSlots = { start: null, title: null, end: null, owner: null };
 const listeners = new Set<() => void>();
 const emit = (next: Partial<BarSlots>) => {
   slots = { ...slots, ...next };
@@ -22,7 +24,7 @@ const subscribe = (l: () => void) => { listeners.add(l); return () => { listener
 const get = () => slots;
 
 /** Called by the bar's slot elements (ref callbacks). */
-export function setBarSlot(name: 'title' | 'end', el: HTMLElement | null): void {
+export function setBarSlot(name: 'start' | 'title' | 'end', el: HTMLElement | null): void {
   if (slots[name] !== el) emit({ [name]: el });
 }
 

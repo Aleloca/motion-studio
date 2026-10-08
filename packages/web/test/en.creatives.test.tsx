@@ -16,7 +16,6 @@ const api = {
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { ConversationPanel } = await import('../src/components/ConversationPanel.tsx');
 const { CanvasBoard } = await import('../src/screens/CanvasBoard.tsx');
-const { FocusView } = await import('../src/components/FocusView.tsx');
 const en = (node: React.ReactNode) => render(<I18nProvider locale="en">{node}</I18nProvider>);
 
 describe('creatives in English', () => {
@@ -40,7 +39,7 @@ describe('creatives in English', () => {
     expect(screen.getByRole('button', { name: 'View v1' })).toBeTruthy();
     expect(screen.getByLabelText('Request a change')).toBeTruthy();
   });
-  it('labels frames and the focus view with English channel and format names', async () => {
+  it('labels frames with English channel and format names', async () => {
     const banner = DEFAULT_FORMATS.find((f) => f.id === 'instagram-post-1x1')!;
     const version = { n: 1, commit: 'c', sessionId: 's', status: 'complete' as const, createdAt: at, request: 'r', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: null };
     const noop = () => {};
@@ -55,9 +54,5 @@ describe('creatives in English', () => {
     const second = en(board(version.n, true));
     expect(screen.getByRole('button', { name: 'Open the editor for Instagram · Post 1:1' })).toBeTruthy();
     second.unmount();
-    en(<FocusView preset={banner} src="/f/a.png" compareSrc={null} versionN={1} compareN={null} verified={false} pins={[]} onAddPin={() => {}} onClose={() => {}} />);
-    expect(screen.getByRole('dialog', { name: 'Instagram · Post 1:1' })).toBeTruthy();
-    expect(screen.getByText('unverified')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Add comment' })).toBeTruthy();
   });
 });

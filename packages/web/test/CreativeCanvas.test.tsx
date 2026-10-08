@@ -510,20 +510,6 @@ describe('CreativeCanvas · review round 1', () => {
     expect(within(await screen.findByRole('dialog', { name: 'Versioni' })).queryByRole('button', { name: 'Riparti da qui' })).toBeNull();
   });
 
-  it('the interim focus view adds comments only on the pin source', async () => {
-    detail = makeDetail([version(1), version(2)], { resumeFrom: { version: 1, sessionId: 's' } });
-    const view = render(<CreativeCanvas slug="acme" creative="lancio" live={emptyLive()} focus="instagram-post-1x1" />);
-    const dialog = await screen.findByRole('dialog', { name: 'Instagram · Post 1:1' });
-    // v2 is shown, comments go to v1: no adding, and the reason is on screen.
-    expect((within(dialog).getByRole('button', { name: 'Aggiungi commento' }) as HTMLButtonElement).disabled).toBe(true);
-    expect(within(dialog).getByText('I commenti valgono per la v1: usa Riparti da qui per commentare questa versione.')).toBeTruthy();
-    view.unmount();
-    detail = makeDetail([version(1), version(2)]);
-    render(<CreativeCanvas slug="acme" creative="lancio" live={emptyLive()} focus="instagram-post-1x1" />);
-    const ok = await screen.findByRole('dialog', { name: 'Instagram · Post 1:1' });
-    await waitFor(() => expect((within(ok).getByRole('button', { name: 'Aggiungi commento' }) as HTMLButtonElement).disabled).toBe(false));
-  });
-
   it('edits the brief with ui controls: length segments, format chips, same save semantics', async () => {
     render(<Harness live={emptyLive()} />);
     await ready();

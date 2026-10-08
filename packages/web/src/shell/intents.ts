@@ -73,3 +73,18 @@ export function takeFrameOrigin(key: string): DOMRect | null {
   frameOrigins.delete(key);
   return rect;
 }
+
+// The version on screen travels with T3/T4: a version picked on the canvas is the one the format view opens on, and
+// back. Keyed by `<project>/<creative>`; the next page takes it once, on mount.
+const shownVersions = new Map<string, number>();
+
+export function setShownVersion(key: string, n: number | null): void {
+  if (n === null) shownVersions.delete(key); else shownVersions.set(key, n);
+}
+
+/** The version picked on the page left behind, removed (null: follow the newest). */
+export function takeShownVersion(key: string): number | null {
+  const n = shownVersions.get(key) ?? null;
+  shownVersions.delete(key);
+  return n;
+}

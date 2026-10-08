@@ -1,0 +1,120 @@
+/* Creative · format view (spec §6.2 #7), ported from the Editor / ImageEditor boards (light + dark) without the
+   Phase 10 parts: Scenes column, player on the dotted stage, transport with the scrub bar, Chat on the right. */
+.ms-fv { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 320px; background: var(--bg); color: var(--text); }
+.ms-fv.ms-fv-video { grid-template-columns: 224px minmax(0, 1fr) 320px; }
+.ms-fv .ms-grow { flex: 1; }
+
+/* Side columns. */
+.ms-fv-side { min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--panel); overflow: hidden; }
+.ms-fv-scenes { border-right: 1px solid var(--line); }
+.ms-fv-side-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 38px; padding: 0 12px; border-bottom: 1px solid var(--line2); flex: none; }
+.ms-fv-side-head b { font-size: 12px; font-weight: 600; }
+.ms-fv-side-head span { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.ms-fv-soon {
+  margin: 12px; padding: 14px; border-radius: 10px; display: flex; flex-direction: column; gap: 10px;
+  border: 1px dashed var(--line); background: var(--bg);
+}
+.ms-fv-soon p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); text-wrap: pretty; overflow-wrap: anywhere; }
+.ms-fv-soon-icon { width: 28px; height: 28px; border-radius: 8px; background: var(--field); color: var(--muted); display: flex; align-items: center; justify-content: center; }
+.ms-fv-panel { border-left: 1px solid var(--line); }
+.ms-fv-tabs { flex: none; }
+.ms-fv-tabs .ms-tab { cursor: default; }
+.ms-fv-panel > .ms-conv, .ms-fv-panel > section, .ms-fv-panel > div:not(.ms-tabs) { flex: 1; min-height: 0; }
+
+/* Stage. */
+.ms-fv-main { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
+  background-color: var(--bg); background-image: radial-gradient(var(--dot) 1px, transparent 1px); background-size: 20px 20px; }
+.ms-fv-notes { position: relative; z-index: 3; display: flex; flex-direction: column; gap: 8px; padding: 12px 16px 0; flex: none; }
+.ms-fv-notes:empty { display: none; }
+.ms-fv-gen { display: flex; flex-direction: column; gap: 6px; }
+.ms-fv-stage { position: relative; flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; display: flex; container-type: size; }
+.ms-fv-frame { position: relative; flex: none; margin: auto; }
+/* The frame fits the content box (container units): room above for the hint, below for the zoom bar. */
+.ms-fv-video .ms-fv-stage { padding: 60px 32px 24px; }
+.ms-fv-image .ms-fv-stage { padding: 60px 48px 84px; }
+.ms-fv-media {
+  position: absolute; inset: 0; border-radius: 6px; overflow: hidden; background: var(--field);
+  box-shadow: 0 20px 50px var(--shadow);
+}
+.ms-fv-media.ms-empty-frame { background: transparent; box-shadow: none; border: 1.5px dashed var(--line); border-radius: 10px; }
+.ms-fv-media video, .ms-fv-media img { width: 100%; height: 100%; object-fit: contain; display: block; user-select: none; background: var(--field); }
+.ms-fv-video .ms-fv-media { cursor: pointer; }
+.ms-fv-media .ms-shimmer { z-index: 1; }
+.ms-fv-bigplay {
+  position: absolute; left: 50%; top: 50%; z-index: 2; width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; background: var(--mediaScrim); color: var(--onMediaScrim); pointer-events: none;
+}
+.ms-fv-bigplay svg { margin-left: 3px; }
+.ms-fv-failed {
+  position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  padding: 16px; text-align: center; font-size: 12.5px; line-height: 1.5; background: var(--panel); color: var(--muted); overflow-wrap: anywhere;
+}
+.ms-fv-hint { top: 12px; }
+.ms-fv-notes:not(:empty) ~ .ms-fv-hint { top: auto; bottom: 108px; }
+.ms-fv-image .ms-fv-notes:not(:empty) ~ .ms-fv-hint { bottom: 76px; }
+.ms-fv-safe-toggle {
+  position: absolute; right: 20px; top: 14px; z-index: 5; display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 8px;
+  background: var(--panel); box-shadow: 0 0 0 1px var(--line); font-size: 12px; white-space: nowrap;
+}
+
+/* Image zoom (floating, as on the board). */
+.ms-fv-zoom { gap: 2px; }
+.ms-fv-zoom-pct { min-width: 48px; text-align: center; font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+.ms-fv-zoom-btn {
+  height: 28px; min-height: 0; padding: 0 10px; margin: 0; border: 0; border-radius: 6px; background: transparent; color: var(--onToolbar);
+  font: inherit; font-size: 12px; cursor: pointer; transition: background var(--d-s) var(--e-std);
+}
+.ms-fv-zoom-btn:hover { background: color-mix(in srgb, var(--onToolbar) 10%, transparent); }
+.ms-fv-zoom-btn.ms-on { background: color-mix(in srgb, var(--onToolbar) 16%, transparent); font-weight: 600; }
+.ms-fv-zoom-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Transport: play/pause, timecode, frame by frame, scrub bar with comment markers. */
+.ms-fv-transport { position: relative; z-index: 4; flex: none; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--line); }
+.ms-fv-controls { display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-bottom: 1px solid var(--line2); min-width: 0; }
+.ms-fv-play {
+  width: 32px; height: 32px; min-height: 0; padding: 0; margin: 0; border: 0; border-radius: 50%; flex: none; background: var(--ink); color: var(--inkText);
+  display: flex; align-items: center; justify-content: center; cursor: pointer; transition: transform var(--d-s) var(--e-spring), opacity var(--d-s) var(--e-std);
+}
+.ms-fv-play:hover:not(:disabled) { transform: scale(1.06); }
+.ms-fv-play:disabled { opacity: .4; cursor: default; }
+.ms-fv-play:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ms-fv-play svg[fill="currentColor"] { margin-left: 2px; }
+.ms-fv-tc { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
+.ms-fv-keys { font-size: 12px; color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-fv-scrubwrap { position: relative; padding: 4px 16px 12px; }
+.ms-fv-scrub { position: relative; height: 40px; cursor: ew-resize; touch-action: none; user-select: none; outline: none; border-radius: 6px; }
+.ms-fv-scrub.ms-off { cursor: default; opacity: .5; }
+.ms-fv-scrub:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.ms-fv-ruler { position: absolute; left: 0; right: 0; top: 0; height: 18px; }
+.ms-fv-ruler span {
+  position: absolute; top: 2px; padding-left: 4px; border-left: 1px solid var(--line); font-family: var(--mono); font-size: 10px; line-height: 14px; color: var(--faint); white-space: nowrap;
+}
+.ms-fv-track { position: absolute; left: 0; right: 0; top: 24px; height: 6px; border-radius: 3px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line2); overflow: hidden; }
+.ms-fv-track i { display: block; height: 100%; background: var(--text); opacity: .7; }
+.ms-fv-head { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--text); pointer-events: none; }
+.ms-fv-head::before { content: ''; position: absolute; left: -5px; top: 18px; width: 12px; height: 12px; border-radius: 3px; background: var(--text); }
+.ms-fv-marks { position: absolute; left: 16px; right: 16px; top: 4px; height: 0; }
+.ms-fv-mark {
+  position: absolute; top: 0; z-index: 1; width: 20px; height: 20px; min-height: 0; padding: 0; margin: 0; border: 0;
+  border-radius: 10px 10px 10px 2px; background: var(--accent); color: var(--onAccentStrong); font: inherit; font-size: 9px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; cursor: pointer; transform: translateX(-50%);
+  box-shadow: 0 3px 8px color-mix(in srgb, var(--accent) 40%, transparent); transition: transform var(--d-s) var(--e-spring);
+}
+.ms-fv-mark:hover { transform: translateX(-50%) scale(1.12); }
+.ms-fv-mark:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.ms-fv-mark:disabled { opacity: .5; cursor: default; }
+
+/* Bar (portalled into the shell's creative bar). */
+.ms-fv-crumb { flex: 0 1 auto; min-width: 0; }
+.ms-fv-crumb .ms-chmark, .ms-fv-crumb > span[role="img"] { flex: none; }
+.ms-fv-meta { font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap; flex: none; }
+
+/* Narrow windows: the Scenes column folds first, then the chat goes under the player. */
+@media (max-width: 1180px) { .ms-fv.ms-fv-video { grid-template-columns: 180px minmax(0, 1fr) 300px; } .ms-fv { grid-template-columns: minmax(0, 1fr) 300px; } }
+@media (max-width: 980px) { .ms-fv.ms-fv-video { grid-template-columns: minmax(0, 1fr) 300px; } .ms-fv-scenes { display: none; } .ms-fv-keys { display: none; } }
+@media (max-width: 760px) {
+  .ms-fv, .ms-fv.ms-fv-video { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(460px, 70vh) auto; height: auto; min-height: 100%; }
+  .ms-fv-panel { border-left: 0; border-top: 1px solid var(--line); min-height: 420px; }
+  .ms-fv-meta { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .ms-fv-play, .ms-fv-mark { transition: none; } }

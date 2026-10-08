@@ -153,20 +153,23 @@ export function ProjectTop({ slug, tab }: { slug: string; tab: ProjectTab }) {
 }
 
 // Stable ref callbacks: a new function each render would empty and refill the slots (and re-render the bar) every time.
+const startSlotRef = (el: HTMLElement | null) => setBarSlot('start', el);
 const titleSlotRef = (el: HTMLElement | null) => setBarSlot('title', el);
 const endSlotRef = (el: HTMLElement | null) => setBarSlot('end', el);
 
 /**
  * Creative / editor bar: back, breadcrumb, bell, avatar. With `slots`, the page of the route fills the title slot
  * (after the breadcrumb: editable title and state) and the end slot (version menu, Export); `claimed` says it did, so
- * the last crumb is the page's own title and not the bar's.
+ * the last crumb is the page's own title and not the bar's. Without `back` the page puts its own back button in the
+ * start slot (the format view, whose way back is a transition).
  */
-export function CreativeTop({ back, crumbs, right, slots, claimed }: { back: { label: string; hash: string }; crumbs: ReactNode[]; right?: ReactNode; slots?: boolean; claimed?: boolean }) {
+export function CreativeTop({ back, crumbs, right, slots, claimed }: { back: { label: string; hash: string } | null; crumbs: ReactNode[]; right?: ReactNode; slots?: boolean; claimed?: boolean }) {
   const t = useT();
   const current = (i: number) => i === crumbs.length - 1 && !claimed;
   return (
     <>
-      <Button className="ms-back" onClick={() => go(back.hash)}><Icon name="back" size={16} strokeWidth={1.5} />{back.label}</Button>
+      {slots ? <span className="ms-bar-slot ms-bar-start" ref={startSlotRef} /> : null}
+      {back ? <Button className="ms-back" onClick={() => go(back.hash)}><Icon name="back" size={16} strokeWidth={1.5} />{back.label}</Button> : null}
       <nav className="ms-crumbs" aria-label={t.web.shell.breadcrumb}>
         {crumbs.map((c, i) => (
           <span key={i} className={cx('ms-crumb', current(i) && 'ms-last')}>
@@ -224,9 +227,14 @@ export function TopBar() {
         crumbs={claimed ? [projectName(r.slug)] : [projectName(r.slug), creativeTitle(r.slug, r.creative)]} />;
       break;
     }
-    case 'format':
-      content = <CreativeTop back={{ label: t.web.shell.backAllFormats, hash: href.creative(r.slug, r.creative) }} crumbs={[projectName(r.slug), creativeTitle(r.slug, r.creative), <span className="ms-mono">{r.format}</span>]} />;
+    case 'format': {
+      // The format view puts "← All formats" (T4), the format and the version controls in the bar; until it does, the
+      // bar's own back button and the format id.
+      const claimed = owner === routeKey(r);
+      content = <CreativeTop back={claimed ? null : { label: t.web.shell.backAllFormats, hash: href.creative(r.slug, r.creative) }} slots claimed={claimed}
+        crumbs={claimed ? [projectName(r.slug), creativeTitle(r.slug, r.creative)] : [projectName(r.slug), creativeTitle(r.slug, r.creative), <span className="ms-mono">{r.format}</span>]} />;
       break;
+    }
     case 'settings':
       content = <GlobalTop title={t.web.shell.settings} />;
       break;

@@ -49,6 +49,13 @@ export function boardSize(width: number, height: number): { width: number; heigh
   return fit(520);
 }
 
+/** `9:16`, or `W×H` when the reduced ratio is not a readable one. */
+export function ratioText(p: { width: number; height: number }): string {
+  const g = (a: number, b: number): number => (b ? g(b, a % b) : a);
+  const d = g(p.width, p.height);
+  return p.width / d <= 21 && p.height / d <= 21 ? `${p.width / d}:${p.height / d}` : `${p.width}×${p.height}`;
+}
+
 /** Tall boards sit in the first row, the others stack in a column next to them (prototype). */
 export const isTall = (b: BoardModel) => (b.preset ? b.preset.width / b.preset.height <= 0.75 : false);
 
