@@ -189,6 +189,19 @@ Legenda impatto: 🟢 basso · 🟡 medio · 🔴 alto (sicurezza o prodotto).
 - **17 cambiata:** inglese come lingua primaria, italiano come seconda; al primo avvio vale la lingua del sistema, poi si cambia nelle Impostazioni; l'agente risponde nella lingua scelta. Piano: fase 6 (`docs/superpowers/plans/2026-10-08-motion-studio-phase6-i18n.md`).
 - **10 confermata dopo il chiarimento:** riguarda solo i font dell'interfaccia, già inclusi nell'app; i font dei brand arrivano da Google Fonts in automatico.
 
+## Fase 6 — lingue
+
+79. 🟢 **Lingua di sistema**: vale la prima lingua supportata nell'ordine delle tue preferenze. Con inglese prima e italiano dopo, l'app parte in inglese; con tedesco prima e italiano dopo, parte in italiano. Su Linux e da terminale segue le regole POSIX: `LC_ALL` prevale su `LC_MESSAGES`, che prevale su `LANG`.
+80. 🟢 **Testi già salvati**: restano nella lingua in cui sono stati scritti, cioè cronologia, conversazioni e linee guida. Si traducono i nomi dei formati, tranne quelli che hai rinominato tu.
+81. 🟢 **Separatore decimale**: in italiano la vista esperto usa la virgola ("2,0s").
+82. 🟢 **Nome di cartella di riserva**: per i nuovi progetti è "project". Le cartelle esistenti non cambiano.
+
+### Esito della fase 6
+- 775 testi per lingua. I testi italiani sono identici a prima, verificato con uno script; le uniche eccezioni volute sono la virgola decimale e "Scegli una lingua dall'elenco.".
+- Verifica dal vivo: con il sistema in inglese gli errori e la pagina di abbinamento sono in inglese; dopo il cambio in italiano, senza riavvio, gli stessi messaggi arrivano in italiano. Con il sistema in italiano l'app parte in italiano.
+- I nomi dei formati predefiniti salvati diventano "Image 1:1"; quelli vecchi, "Immagine 1:1", vengono ancora riconosciuti.
+- **Da controllare a occhio**: la lunghezza dei testi inglesi nei bottoni e nella tavola dei formati, a 1024 px di larghezza.
+
 ### Esito della fase 5
 - L'app impacchettata (arm64, non firmata, 311 MB) è stata avviata in modo da simulare il Finder. Trova `claude` e tutte le dipendenze tramite la shell di login, e il Doctor dà tutto OK. Il pacchetto include i binari del portachiavi per arm64 e x64.
 - Il pacchetto npm, installato dal tarball, si avvia. L'export reale produce i file nominati per canale. Una seconda istanza rimanda alla prima.
