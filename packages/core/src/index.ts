@@ -39,3 +39,6 @@ export * from './approvals/broker.ts';
 export * from './agent/launcher.ts';
 export * from './bridge/bridge.ts';
 export * from './bridge/bridge-routes.ts';
+export * from './providers/http.ts';
+export * from './providers/files.ts';
+export * from './providers/openai-images.ts';
