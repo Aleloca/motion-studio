@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AppConfigStore } from '../src/app-config.ts';
 import { buildServer } from '../src/server/app.ts';
+import { requestJson } from '../src/providers/http.ts';
+import { stockSearch } from '../src/providers/stock.ts';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ApprovalBroker } from '../src/approvals/broker.ts';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -93,5 +95,15 @@ describe('English messages', () => {
     } finally {
       await app.close();
     }
+  });
+  it('words provider errors in English', async () => {
+    await expect(stockSearch({ fetch: globalThis.fetch, apiKey: 'k' }, { provider: 'unsplash', query: 'sea', kind: 'video', limit: 3 }))
+      .rejects.toMatchObject({ status: 400, message: 'Unsplash does not offer video: use Pexels' });
+    const denied = (async () => new Response('no', { status: 401 })) as unknown as typeof fetch;
+    await expect(requestJson({ fetch: denied }, 'https://api.example/x', {}, { provider: 'OpenAI', secrets: ['sk-x'] }))
+      .rejects.toMatchObject({ status: 401, message: 'The OpenAI key is invalid or lacks permission' });
+    setLocale('it');
+    await expect(requestJson({ fetch: denied }, 'https://api.example/x', {}, { provider: 'OpenAI', secrets: ['sk-x'] }))
+      .rejects.toMatchObject({ message: 'Chiave OpenAI non valida o senza permessi' });
   });
 });

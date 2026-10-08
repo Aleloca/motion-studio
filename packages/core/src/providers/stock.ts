@@ -1,5 +1,6 @@
 import { ProviderError, requestJson, type HttpDeps } from './http.ts';
 import { safeDownload, safeHttpsUrl } from './safe-url.ts';
+import { t } from '../i18n.ts';
 
 export type StockProvider = 'pexels' | 'unsplash';
 export interface StockResult { id: string; provider: StockProvider; kind: 'photo' | 'video'; width: number; height: number; durationSec: number | null; thumb: string; author: string; pageUrl: string }
@@ -17,7 +18,7 @@ export async function stockSearch(deps: HttpDeps & { apiKey: string }, q: { prov
   const limit = Number.isFinite(q.limit) ? Math.min(20, Math.max(1, Math.trunc(q.limit))) : 10;
   const params = new URLSearchParams({ query: q.query.slice(0, 200), per_page: String(limit) });
   if (q.provider === 'unsplash') {
-    if (q.kind === 'video') throw new ProviderError(400, 'Unsplash non offre video: usa Pexels');
+    if (q.kind === 'video') throw new ProviderError(400, t().providers.unsplashNoVideo);
     if (q.orientation) params.set('orientation', q.orientation === 'square' ? 'squarish' : q.orientation);
     type U = { results?: Array<{ id: string; width: number; height: number; user?: { name?: string }; links?: { html?: string }; urls?: { small?: string } }> };
     const r = await requestJson<U>(deps, `https://api.unsplash.com/search/photos?${params}`, { headers: headers('unsplash', deps.apiKey) }, o);
@@ -35,19 +36,19 @@ export async function stockSearch(deps: HttpDeps & { apiKey: string }, q: { prov
 }
 
 export async function stockDownload(deps: HttpDeps & { apiKey: string }, d: { provider: StockProvider; id: string; kind: 'photo' | 'video' }) {
-  if (!ID.test(d.id)) throw new ProviderError(400, 'Identificativo di stock non valido');
+  if (!ID.test(d.id)) throw new ProviderError(400, t().providers.invalidStockId);
   const o = { provider: name(d.provider), secrets: [deps.apiKey] };
   const h = headers(d.provider, deps.apiKey);
   if (d.provider === 'unsplash') {
-    if (d.kind === 'video') throw new ProviderError(400, 'Unsplash non offre video: usa Pexels');
+    if (d.kind === 'video') throw new ProviderError(400, t().providers.unsplashNoVideo);
     type U = { user?: { name?: string }; links?: { html?: string; download_location?: string } };
     const p = await requestJson<U>(deps, `https://api.unsplash.com/photos/${d.id}`, { headers: h }, o);
-    if (!isUnsplashApi(p.links?.download_location)) throw new ProviderError(502, 'Risposta non valida da Unsplash');
+    if (!isUnsplashApi(p.links?.download_location)) throw new ProviderError(502, t().providers.invalidResponse({ provider: 'Unsplash' }));
     const tracked = await requestJson<{ url?: string }>(deps, p.links.download_location, { headers: h }, o);
-    if (!tracked.url) throw new ProviderError(502, 'Risposta non valida da Unsplash');
+    if (!tracked.url) throw new ProviderError(502, t().providers.invalidResponse({ provider: 'Unsplash' }));
     const { bytes, contentType } = await safeDownload(deps, tracked.url, {}, { ...o, maxBytes: MAX });
-    const author = p.user?.name ?? 'autore sconosciuto';
-    return { bytes, ext: extOf(contentType, 'jpg'), author, attribution: `Foto di ${author} su Unsplash`, sourceUrl: `${p.links.html ?? 'https://unsplash.com'}?utm_source=motion_studio&utm_medium=referral` };
+    const author = p.user?.name ?? t().providers.unknownAuthor;
+    return { bytes, ext: extOf(contentType, 'jpg'), author, attribution: t().providers.photoBy({ author, provider: 'Unsplash' }), sourceUrl: `${p.links.html ?? 'https://unsplash.com'}?utm_source=motion_studio&utm_medium=referral` };
   }
   if (d.kind === 'video') {
     type V = { url: string; user?: { name?: string }; video_files?: Array<{ width?: number; file_type?: string; link: string }> };
@@ -55,15 +56,15 @@ export async function stockDownload(deps: HttpDeps & { apiKey: string }, d: { pr
     const mp4 = (v.video_files ?? []).filter((f) => f.file_type === 'video/mp4' && typeof f.link === 'string' && isSafe(f.link, 'Pexels'));
     const hd = mp4.filter((f) => (f.width ?? 0) <= 1920).sort((a, b) => (b.width ?? 0) - (a.width ?? 0))[0]
       ?? mp4.sort((a, b) => (a.width ?? 0) - (b.width ?? 0))[0];
-    if (!hd) throw new ProviderError(502, 'Nessun file video scaricabile su Pexels');
+    if (!hd) throw new ProviderError(502, t().providers.noPexelsVideo);
     const { bytes } = await safeDownload(deps, hd.link, {}, { ...o, maxBytes: MAX });
-    const author = v.user?.name ?? 'autore sconosciuto';
-    return { bytes, ext: 'mp4', author, attribution: `Video di ${author} su Pexels`, sourceUrl: v.url };
+    const author = v.user?.name ?? t().providers.unknownAuthor;
+    return { bytes, ext: 'mp4', author, attribution: t().providers.videoBy({ author, provider: 'Pexels' }), sourceUrl: v.url };
   }
   type P = { url: string; photographer?: string; src?: { original?: string } };
   const p = await requestJson<P>(deps, `https://api.pexels.com/v1/photos/${d.id}`, { headers: h }, o);
-  if (!p.src?.original) throw new ProviderError(502, 'Risposta non valida da Pexels');
+  if (!p.src?.original) throw new ProviderError(502, t().providers.invalidResponse({ provider: 'Pexels' }));
   const { bytes, contentType } = await safeDownload(deps, p.src.original, {}, { ...o, maxBytes: MAX });
-  const author = p.photographer ?? 'autore sconosciuto';
-  return { bytes, ext: extOf(contentType, 'jpg'), author, attribution: `Foto di ${author} su Pexels`, sourceUrl: p.url };
+  const author = p.photographer ?? t().providers.unknownAuthor;
+  return { bytes, ext: extOf(contentType, 'jpg'), author, attribution: t().providers.photoBy({ author, provider: 'Pexels' }), sourceUrl: p.url };
 }

@@ -1,6 +1,7 @@
 import { isPrivateHost } from '../brand/brand-store.ts';
 import { ProviderError, requestBytes, type HttpDeps } from './http.ts';
 import { BlockedUrlError, safeFetch } from './safe-fetch.ts';
+import { t } from '../i18n.ts';
 
 const PROVIDER_MAX_REDIRECTS = 3;
 
@@ -8,7 +9,7 @@ const PROVIDER_MAX_REDIRECTS = 3;
 export function safeHttpsUrl(raw: string | undefined, provider: string): URL {
   let u: URL | undefined;
   try { u = raw ? new URL(raw) : undefined; } catch { /* invalid */ }
-  if (!u || u.protocol !== 'https:' || isPrivateHost(u.hostname)) throw new ProviderError(502, `Risposta non valida da ${provider}`);
+  if (!u || u.protocol !== 'https:' || isPrivateHost(u.hostname)) throw new ProviderError(502, t().providers.invalidResponse({ provider }));
   return u;
 }
 
@@ -44,7 +45,7 @@ export async function safeDownload(
   try {
     return await downloadBytes(deps, first.href, init, { ...o, maxRedirects: PROVIDER_MAX_REDIRECTS });
   } catch (e) {
-    if (e instanceof BlockedUrlError) throw new ProviderError(502, `Risposta non valida da ${o.provider}`);
+    if (e instanceof BlockedUrlError) throw new ProviderError(502, t().providers.invalidResponse({ provider: o.provider }));
     throw e;
   }
 }

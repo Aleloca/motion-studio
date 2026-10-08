@@ -65,7 +65,7 @@ export class ClaudeCodeRunner implements AgentRunner {
     try { cwdIsDir = statSync(req.cwd).isDirectory(); } catch { /* reported below */ }
     if (!cwdIsDir) {
       return {
-        done: Promise.resolve({ status: 'failed', error: `Cartella del progetto non trovata: ${req.cwd}` }),
+        done: Promise.resolve({ status: 'failed', error: t().providers.projectFolderMissing({ path: req.cwd }) }),
         cancel: () => {},
       };
     }
@@ -125,9 +125,9 @@ export class ClaudeCodeRunner implements AgentRunner {
         // An ok result is the real outcome even if a cancel arrived afterwards.
         if (result?.ok) return settle({ status: 'succeeded' });
         if (cancelled) return settle({ status: 'cancelled' });
-        if (result) return settle({ status: 'failed', error: result.error ?? 'Turno non riuscito' });
+        if (result) return settle({ status: 'failed', error: result.error ?? t().errors.turnFailed });
         const tail = stderrTail.join('\n');
-        settle({ status: 'failed', error: `claude è terminato con codice ${exited?.code ?? exited?.signal} senza risultato${tail ? `: ${tail}` : ''}` });
+        settle({ status: 'failed', error: `${t().providers.claudeExited({ code: String(exited?.code ?? exited?.signal) })}${tail ? `: ${tail}` : ''}` });
       };
       child.on('exit', (code, sig) => {
         exited = { code, signal: sig };
@@ -138,8 +138,8 @@ export class ClaudeCodeRunner implements AgentRunner {
       });
       child.on('error', (err: NodeJS.ErrnoException) => {
         settle(err.code === 'ENOENT'
-          ? { status: 'failed', error: `Comando claude non trovato (${bin}). Installa Claude Code o controlla il Doctor.` }
-          : { status: 'failed', error: `Impossibile avviare claude: ${err.message}` });
+          ? { status: 'failed', error: t().providers.claudeNotFound({ bin }) }
+          : { status: 'failed', error: t().providers.claudeCannotStart({ detail: err.message }) });
       });
       child.on('close', (code, sig) => { exited ??= { code, signal: sig }; finish(); });
     });

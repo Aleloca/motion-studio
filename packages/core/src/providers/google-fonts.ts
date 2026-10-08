@@ -1,5 +1,6 @@
 import { ProviderError, requestBytes, type HttpDeps } from './http.ts';
 import { safeDownload } from './safe-url.ts';
+import { t } from '../i18n.ts';
 
 export interface FontFile { weight: number; italic: boolean; url: string }
 
@@ -16,9 +17,9 @@ export function parseFontCss(css: string): FontFile[] {
 
 export async function fetchGoogleFont(deps: HttpDeps, q: { family: string; weights: number[]; italic: boolean }) {
   const family = q.family.trim();
-  if (!/^[A-Za-z0-9 ]{1,60}$/.test(family)) throw new ProviderError(400, 'Nome del font non valido');
+  if (!/^[A-Za-z0-9 ]{1,60}$/.test(family)) throw new ProviderError(400, t().providers.invalidFontName);
   const weights = [...new Set(q.weights.length ? q.weights : [400, 700])].filter((w) => Number.isInteger(w) && w >= 100 && w <= 900 && w % 100 === 0).slice(0, 9).sort((a, b) => a - b);
-  if (!weights.length) throw new ProviderError(400, 'Pesi del font non validi');
+  if (!weights.length) throw new ProviderError(400, t().providers.invalidFontWeights);
   const axis = q.italic ? `ital,wght@${[0, 1].flatMap((i) => weights.map((w) => `${i},${w}`)).join(';')}` : `wght@${weights.join(';')}`;
   const url = `https://fonts.googleapis.com/css2?family=${family.replace(/ /g, '+')}:${axis}`;
   let css: string;
@@ -26,13 +27,13 @@ export async function fetchGoogleFont(deps: HttpDeps, q: { family: string; weigh
     const { bytes } = await requestBytes(deps, url, { headers: { 'user-agent': 'curl/8' } }, { provider: 'Google Fonts', secrets: [], maxBytes: 1024 * 1024 });
     css = bytes.toString('utf8');
   } catch (e) {
-    if (e instanceof ProviderError && e.upstreamStatus === 400) throw new ProviderError(404, `Font "${family}" non trovato su Google Fonts`);
+    if (e instanceof ProviderError && e.upstreamStatus === 400) throw new ProviderError(404, t().providers.fontNotFound({ family }));
     throw e;
   }
   const seen = new Set<string>();
   const files = parseFontCss(css).filter((f) => { const k = `${f.weight}/${f.italic}`; if (seen.has(k)) return false; seen.add(k); return true; })
     .slice(0, weights.length * (q.italic ? 2 : 1));
-  if (!files.length) throw new ProviderError(404, `Font "${family}" non trovato su Google Fonts`);
+  if (!files.length) throw new ProviderError(404, t().providers.fontNotFound({ family }));
   const out: Array<{ weight: number; italic: boolean; bytes: Buffer; ext: string }> = [];
   for (const f of files) {
     const { bytes } = await safeDownload(deps, f.url, {}, { provider: 'Google Fonts', secrets: [], maxBytes: 10 * 1024 * 1024 });

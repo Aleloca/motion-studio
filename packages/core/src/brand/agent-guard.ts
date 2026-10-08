@@ -47,8 +47,8 @@ async function confinedParent(abs: string, projectDir: string): Promise<boolean>
   return real !== null && realProject !== null && real.startsWith(realProject + sep);
 }
 
-export const tamperNote = (rel: string) => `L'agente ha provato a modificare direttamente ${rel}: modifica annullata`;
-export const unrestorableNote = (rel: string) => `L'agente ha provato a modificare direttamente ${rel}: modifica non annullabile`;
+export const tamperNote = (rel: string) => t().providers.revertedEdit({ file: rel });
+export const unrestorableNote = (rel: string) => t().providers.unrestorableEdit({ file: rel });
 
 /**
  * Puts back the pre-turn bytes of every guarded file the agent changed (an interpreter can bypass the deny rules).

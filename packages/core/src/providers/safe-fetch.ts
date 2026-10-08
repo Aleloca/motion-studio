@@ -4,6 +4,7 @@ import { request as httpsRequest } from 'node:https';
 import { isIP, type LookupFunction } from 'node:net';
 import { Readable } from 'node:stream';
 import { ProviderError } from './http.ts';
+import { t } from '../i18n.ts';
 
 export type Address = { address: string; family: 4 | 6 };
 export type LookupFn = (host: string) => Promise<Address[]>;
@@ -27,7 +28,7 @@ export interface SafeFetchDeps {
 
 /** A download target refused by policy (scheme, credentials, port, private or reserved address, redirects). */
 export class BlockedUrlError extends ProviderError {
-  constructor(message = 'Indirizzo non consentito per il download') { super(502, message); this.name = 'BlockedUrlError'; }
+  constructor(message = t().providers.blockedAddress) { super(502, message); this.name = 'BlockedUrlError'; }
 }
 
 const CREDENTIAL_HEADERS = ['authorization', 'proxy-authorization', 'cookie', 'xi-api-key', 'x-api-key', 'api-key'];
@@ -186,7 +187,7 @@ export async function safeFetch(deps: SafeFetchDeps, url: string, init: RequestI
     const loc = REDIRECTS.has(res.status) ? res.headers.get('location') : null;
     if (loc === null) return res;
     await res.body?.cancel().catch(() => {});
-    if (hop >= max) throw new BlockedUrlError('Troppi reindirizzamenti');
+    if (hop >= max) throw new BlockedUrlError(t().providers.tooManyRedirects);
     let next: URL;
     try { next = checkUrl(new URL(loc, current).href, o.allowHttp === true); } catch { throw new BlockedUrlError(); }
     if (current.protocol === 'https:' && next.protocol === 'http:') throw new BlockedUrlError();

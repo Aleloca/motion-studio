@@ -10,6 +10,7 @@ import { downloadBytes } from '../providers/safe-url.ts';
 import type { BridgeContext } from './bridge.ts';
 import type { BridgeHandler } from './bridge-routes.ts';
 import { jobHttp } from './provider-tools.ts';
+import { t } from '../i18n.ts';
 
 export interface DownloadToolDeps {
   media: MediaTools; broadcast(m: ServerMessage): void;
@@ -21,14 +22,14 @@ const MAX_BYTES = 50 * 1024 * 1024;
 const MAX_URL = 2000;
 const DIRS = { brand: ['brand'], fonts: ['font'] } as const;
 const EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'ico', 'avif', 'woff', 'woff2', 'ttf', 'otf']);
-const CANCELLED = 'Il lavoro è stato annullato.';
-const BAD_DEST = 'Destinazione non valida: usa assets/brand/<nome> per immagini e loghi o assets/fonts/<nome> per i font (png, jpg, jpeg, webp, gif, svg, ico, avif, woff, woff2, ttf, otf)';
+const cancelled = (): string => t().errors.jobCancelled;
+const badDest = (): string => t().providers.invalidDestination;
 
 function destination(raw: unknown): { dir: keyof typeof DIRS; name: string } {
-  if (typeof raw !== 'string' || !relativeFileSchema.safeParse(raw).success) throw new ProviderError(400, BAD_DEST);
+  if (typeof raw !== 'string' || !relativeFileSchema.safeParse(raw).success) throw new ProviderError(400, badDest());
   const parts = raw.split('/');
-  if (parts.length !== 3 || parts[0] !== 'assets' || !Object.hasOwn(DIRS, parts[1]!) || parts.some((p) => p.startsWith('.'))) throw new ProviderError(400, BAD_DEST);
-  if (!EXTENSIONS.has(extname(parts[2]!).slice(1).toLowerCase())) throw new ProviderError(400, BAD_DEST);
+  if (parts.length !== 3 || parts[0] !== 'assets' || !Object.hasOwn(DIRS, parts[1]!) || parts.some((p) => p.startsWith('.'))) throw new ProviderError(400, badDest());
+  if (!EXTENSIONS.has(extname(parts[2]!).slice(1).toLowerCase())) throw new ProviderError(400, badDest());
   return { dir: parts[1] as keyof typeof DIRS, name: parts[2]! };
 }
 
@@ -37,11 +38,11 @@ function destination(raw: unknown): { dir: keyof typeof DIRS; name: string } {
  * font from a website into assets/brand or assets/fonts, under a new name, and registers it. Failures leave nothing behind.
  */
 export function downloadTool(deps: DownloadToolDeps): BridgeHandler {
-  const alive = (c: BridgeContext) => { if (c.signal.aborted) throw new ProviderError(499, CANCELLED); };
+  const alive = (c: BridgeContext) => { if (c.signal.aborted) throw new ProviderError(499, cancelled()); };
   const run: BridgeHandler = async (c, a) => {
-    if (c.kind !== 'brand-analysis') throw new ProviderError(403, 'Strumento non disponibile in questo lavoro');
+    if (c.kind !== 'brand-analysis') throw new ProviderError(403, t().errors.toolUnavailable);
     const url = a.url;
-    if (typeof url !== 'string' || url.length > MAX_URL || !webUrlSchema.safeParse(url).success) throw new ProviderError(400, 'URL non valido: indica un indirizzo http(s) completo');
+    if (typeof url !== 'string' || url.length > MAX_URL || !webUrlSchema.safeParse(url).success) throw new ProviderError(400, t().providers.invalidUrl);
     const { dir, name } = destination(a.dest);
     const host = new URL(url).hostname;
     let bytes: Buffer;
@@ -49,7 +50,7 @@ export function downloadTool(deps: DownloadToolDeps): BridgeHandler {
       ({ bytes } = await downloadBytes(jobHttp(deps, c), url, {}, { provider: host, secrets: [], maxBytes: MAX_BYTES, allowHttp: true }));
     } catch (e) {
       // http.ts words 401/403 for API keys; a website simply refuses the file.
-      if (e instanceof ProviderError && (e.upstreamStatus === 401 || e.upstreamStatus === 403)) throw new ProviderError(502, `${host} ha negato l'accesso al file (${e.upstreamStatus})`, e.upstreamStatus);
+      if (e instanceof ProviderError && (e.upstreamStatus === 401 || e.upstreamStatus === 403)) throw new ProviderError(502, t().providers.accessDenied({ host, status: e.upstreamStatus }), e.upstreamStatus);
       throw e;
     }
     alive(c);
@@ -67,7 +68,7 @@ export function downloadTool(deps: DownloadToolDeps): BridgeHandler {
   return async (c, a) => {
     try { return await run(c, a); }
     catch (e) {
-      if (c.signal.aborted) throw new ProviderError(499, CANCELLED);
+      if (c.signal.aborted) throw new ProviderError(499, cancelled());
       throw e;
     }
   };

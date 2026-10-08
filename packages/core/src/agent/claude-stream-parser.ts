@@ -1,4 +1,5 @@
 import type { AgentEvent } from '@motion-studio/shared';
+import { t } from '../i18n.ts';
 
 export class LineSplitter {
   private buf = '';
@@ -77,7 +78,7 @@ export function parseClaudeLine(line: string): AgentEvent[] {
         ...(typeof msg.session_id === 'string' ? { sessionId: msg.session_id } : {}),
         ...(text !== undefined ? { text } : {}),
         ...(typeof msg.total_cost_usd === 'number' ? { costUsd: msg.total_cost_usd } : {}),
-        ...(!ok ? { error: text ?? `Turno terminato con esito ${String(msg.subtype)}` } : {}),
+        ...(!ok ? { error: text ?? t().providers.turnEnded({ subtype: String(msg.subtype) }) } : {}),
       }];
     }
     default:

@@ -1,5 +1,6 @@
 import { redact } from '../secrets/vault.ts';
 import type { LookupFn, Transport } from './safe-fetch.ts';
+import { t } from '../i18n.ts';
 
 export class ProviderError extends Error {
   constructor(public readonly status: number, message: string, public readonly upstreamStatus?: number) { super(message); this.name = 'ProviderError'; }
@@ -15,7 +16,7 @@ const ERROR_BODY_MAX = 64 * 1024;
 const JSON_MAX = 64 * 1024 * 1024;
 
 const reason = (e: unknown): string => (e as Error | undefined)?.message ?? String(e);
-const unreachable = (o: Opts, e: unknown) => new ProviderError(502, redact(`${o.provider} non raggiungibile: ${reason(e)}`, o.secrets));
+const unreachable = (o: Opts, e: unknown) => new ProviderError(502, redact(t().providers.unreachable({ provider: o.provider, detail: reason(e) }), o.secrets));
 
 interface Sent { res: Response; signal: AbortSignal }
 
@@ -26,8 +27,8 @@ async function send(deps: HttpDeps, url: string, init: RequestInit, o: Opts): Pr
   try { res = await deps.fetch(url, { redirect: 'error', ...init, signal }); }
   catch (e) { throw unreachable(o, e); }
   if (res.ok) return { res, signal };
-  if (res.status === 401 || res.status === 403) { await res.body?.cancel().catch(() => {}); throw new ProviderError(401, `Chiave ${o.provider} non valida o senza permessi`, res.status); }
-  if (res.status === 429) { await res.body?.cancel().catch(() => {}); throw new ProviderError(429, `Limite di richieste raggiunto per ${o.provider}: riprova più tardi`, 429); }
+  if (res.status === 401 || res.status === 403) { await res.body?.cancel().catch(() => {}); throw new ProviderError(401, t().providers.invalidKey({ provider: o.provider }), res.status); }
+  if (res.status === 429) { await res.body?.cancel().catch(() => {}); throw new ProviderError(429, t().providers.rateLimited({ provider: o.provider }), 429); }
   let text = '';
   try { text = (await readBounded(res, ERROR_BODY_MAX, false)).toString('utf8'); } catch { /* unreadable error body */ }
   let detail = text;
@@ -37,7 +38,7 @@ async function send(deps: HttpDeps, url: string, init: RequestInit, o: Opts): Pr
     if (typeof cand === 'string') detail = cand;
     else if (typeof j.message === 'string') detail = j.message;
   } catch { /* plain text */ }
-  throw new ProviderError(502, redact(`${o.provider} ha risposto ${res.status}: ${redact(String(detail), o.secrets).slice(0, 300)}`, o.secrets), res.status);
+  throw new ProviderError(502, redact(t().providers.responded({ provider: o.provider, status: res.status, detail: redact(String(detail), o.secrets).slice(0, 300) }), o.secrets), res.status);
 }
 
 /** Reads the body up to `max` bytes: over the limit it throws (strict) or truncates (not strict). */
@@ -62,7 +63,7 @@ async function readBounded(res: Response, max: number, strict: boolean, onOver?:
 }
 
 async function readBody(res: Response, o: Opts, max: number): Promise<Buffer> {
-  try { return await readBounded(res, max, true, () => new ProviderError(413, `File troppo grande da ${o.provider}`)); }
+  try { return await readBounded(res, max, true, () => new ProviderError(413, t().providers.fileTooLarge({ provider: o.provider }))); }
   catch (e) {
     if (e instanceof ProviderError) throw e;
     throw unreachable(o, e);
@@ -72,13 +73,13 @@ async function readBody(res: Response, o: Opts, max: number): Promise<Buffer> {
 export async function requestJson<T>(deps: HttpDeps, url: string, init: RequestInit, o: Opts & { maxBytes?: number }): Promise<T> {
   const { res } = await send(deps, url, init, o);
   const buf = await readBody(res, o, o.maxBytes ?? JSON_MAX);
-  try { return JSON.parse(buf.toString('utf8')) as T; } catch { throw new ProviderError(502, `Risposta non valida da ${o.provider}`); }
+  try { return JSON.parse(buf.toString('utf8')) as T; } catch { throw new ProviderError(502, t().providers.invalidResponse({ provider: o.provider })); }
 }
 
 export async function requestBytes(deps: HttpDeps, url: string, init: RequestInit, o: Opts & { maxBytes: number }): Promise<{ bytes: Buffer; contentType: string }> {
   const { res } = await send(deps, url, init, o);
-  if (!res.body) throw new ProviderError(502, `Risposta non valida da ${o.provider}`);
+  if (!res.body) throw new ProviderError(502, t().providers.invalidResponse({ provider: o.provider }));
   const bytes = await readBody(res, o, o.maxBytes);
-  if (bytes.length === 0) throw new ProviderError(502, `Risposta non valida da ${o.provider}`);
+  if (bytes.length === 0) throw new ProviderError(502, t().providers.invalidResponse({ provider: o.provider }));
   return { bytes, contentType: res.headers.get('content-type') ?? '' };
 }
