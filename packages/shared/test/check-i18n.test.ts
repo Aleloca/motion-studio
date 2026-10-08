@@ -20,7 +20,8 @@ function run(name: string, source: string): { code: number; out: string } {
   }
 }
 
-describe('check-i18n', () => {
+// Every case spawns node (which loads TypeScript) several times: under a full parallel run that can exceed 5 s.
+describe('check-i18n', { timeout: 30_000 }, () => {
   it('flags an Italian string and accepts an English one', () => {
     const bad = run('bad.ts', "export const m = 'Cartella non trovata';\n");
     expect(bad.code).toBe(1);
