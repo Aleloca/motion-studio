@@ -1,4 +1,5 @@
-import type { FormatPreset } from '@motion-studio/shared';
+import { channelName, formatName, type FormatPreset } from '@motion-studio/shared';
+import { useLocale, useT } from '../i18n.tsx';
 
 export function groupByChannel(presets: FormatPreset[]): Array<[string, FormatPreset[]]> {
   const map = new Map<string, FormatPreset[]>();
@@ -7,14 +8,16 @@ export function groupByChannel(presets: FormatPreset[]): Array<[string, FormatPr
 }
 
 export function FormatPicker({ presets, selected, onToggle }: { presets: FormatPreset[]; selected: string[]; onToggle: (id: string) => void }) {
+  const t = useT();
+  const locale = useLocale();
   return (
     <div className="stack" style={{ gap: 8 }}>
       {groupByChannel(presets).map(([channel, items]) => (
-        <div key={channel} role="group" aria-label={channel} className="row" style={{ gap: 6 }}>
-          <span className="muted" style={{ flex: '0 0 96px', fontSize: 12, fontWeight: 800, letterSpacing: '0.04em', textTransform: 'uppercase' }}>{channel}</span>
+        <div key={channel} role="group" aria-label={channelName(channel, locale)} className="row" style={{ gap: 6 }}>
+          <span className="muted" style={{ flex: '0 0 96px', fontSize: 12, fontWeight: 800, letterSpacing: '0.04em', textTransform: 'uppercase' }}>{channelName(channel, locale)}</span>
           {items.map((p) => (
-            <button key={p.id} type="button" className="chip" aria-pressed={selected.includes(p.id)} title={`${p.width}×${p.height} · ${p.kind === 'video' ? 'video' : 'immagine'}`} onClick={() => onToggle(p.id)}>
-              {p.name}
+            <button key={p.id} type="button" className="chip" aria-pressed={selected.includes(p.id)} title={`${p.width}×${p.height} · ${p.kind === 'video' ? t.web.formatUi.video : t.web.formatUi.image}`} onClick={() => onToggle(p.id)}>
+              {formatName(p, locale)}
             </button>
           ))}
         </div>

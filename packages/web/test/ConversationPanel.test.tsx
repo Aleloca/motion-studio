@@ -37,7 +37,7 @@ describe('ConversationPanel', () => {
   it('renders the history and selects versions', async () => {
     render(<ConversationPanel {...base} detail={detail()} conversation={conversation} job={undefined} />);
     expect(screen.getByText('Logo più grande')).toBeTruthy();
-    expect(screen.getByText('1 · instagram-post-1x1 @ 2.0s')).toBeTruthy();
+    expect(screen.getByText('1 · instagram-post-1x1 @ 2,0s')).toBeTruthy();
     expect(screen.getByText('Ingrandisco il logo.')).toBeTruthy();
     expect(screen.queryByText(/Usa lo strumento Write/)).toBeNull();
     expect(screen.getByRole('alert').textContent).toContain('boom');

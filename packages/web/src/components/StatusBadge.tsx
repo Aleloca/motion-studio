@@ -1,11 +1,11 @@
 import type { CreativeStatus } from '@motion-studio/shared';
+import { useT } from '../i18n.tsx';
 
-export const STATUS_LABEL: Record<CreativeStatus, string> = {
-  draft: 'Bozza', working: 'In lavorazione', ready: 'Pronta', incomplete: 'Incompleta', error: 'Errore', interrupted: 'Interrotta',
-};
+export const STATUSES: CreativeStatus[] = ['draft', 'working', 'ready', 'incomplete', 'error', 'interrupted'];
 const CLASS: Record<CreativeStatus, string> = { draft: '', working: 'run', ready: 'ok', incomplete: 'warn-badge', error: 'err', interrupted: 'warn-badge' };
 
 export function StatusBadge({ status, waiting }: { status: CreativeStatus; waiting?: boolean }) {
-  if (waiting) return <span className="badge warn-badge">In attesa di approvazione</span>;
-  return <span className={`badge ${CLASS[status]}`}>{STATUS_LABEL[status]}</span>;
+  const t = useT();
+  if (waiting) return <span className="badge warn-badge">{t.web.status.awaitingApproval}</span>;
+  return <span className={`badge ${CLASS[status]}`}>{t.web.status[status]}</span>;
 }

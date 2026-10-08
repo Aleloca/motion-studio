@@ -7,10 +7,12 @@ import { ExportDialog } from '../components/ExportDialog.tsx';
 import { FormatBoard } from '../components/FormatBoard.tsx';
 import { StatusBadge } from '../components/StatusBadge.tsx';
 import type { EventsState } from '../eventsReducer.ts';
+import { useT } from '../i18n.tsx';
 import { href } from '../routes.ts';
 import { useCreative } from '../useCreative.ts';
 
 export function CreativePage({ slug, creative, live, expert }: { slug: string; creative: string; live: EventsState; expert: boolean }) {
+  const t = useT();
   const { detail, conversation, error, reload } = useCreative(slug, creative, live.creativeTicks[`${slug}/${creative}`] ?? 0);
   const [presets, setPresets] = useState<FormatPreset[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
@@ -46,7 +48,7 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
   const act = (p: Promise<unknown>) => { setActionError(null); p.then(reload).catch((e: unknown) => setActionError(e instanceof Error ? e.message : String(e))); };
 
   if (error) return <main className="page"><p role="alert" className="error">{error}</p></main>;
-  if (!detail) return <main className="page muted">Caricamento…</main>;
+  if (!detail) return <main className="page muted">{t.common.loading}</main>;
   const c = detail.creative;
   const focusPreset = focus ? presets.find((p) => p.id === focus) : undefined;
   const outFor = (v: typeof version, id: string) => v?.outputs.find((o) => o.format === id);
@@ -54,12 +56,12 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 'calc(100vh - 57px)' }}>
       <header className="topbar" style={{ position: 'static' }}>
-        <a href={href.project(slug)} className="muted">← Creatività</a>
+        <a href={href.project(slug)} className="muted">{t.web.newCreative.back}</a>
         <strong>{c.title}</strong>
         <StatusBadge status={c.status} waiting={myApprovals.length > 0} />
         <div style={{ flex: 1 }} />
         {versions.length > 0 && (
-          <div role="radiogroup" aria-label="Versione" className="row" style={{ gap: 4 }}>
+          <div role="radiogroup" aria-label={t.web.creative.version} className="row" style={{ gap: 4 }}>
             {versions.map((v) => (
               <button key={v.n} type="button" role="radio" aria-checked={version?.n === v.n} className={version?.n === v.n ? 'primary' : ''} onClick={() => pick(v.n)}>
                 v{v.n}{v.status === 'incomplete' ? ' ⚠' : ''}
@@ -68,29 +70,29 @@ export function CreativePage({ slug, creative, live, expert }: { slug: string; c
           </div>
         )}
         {versions.length > 1 && (
-          <label className="row" style={{ gap: 6 }}>Confronta con
+          <label className="row" style={{ gap: 6 }}>{t.web.creative.compareWith}
             <select value={compare?.n ?? ''} onChange={(e) => setCompareN(e.target.value ? Number(e.target.value) : null)} style={{ minHeight: 36, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)', color: 'var(--text)' }}>
               <option value="">—</option>
               {versions.filter((v) => v.n !== version?.n).map((v) => <option key={v.n} value={v.n}>v{v.n}</option>)}
             </select>
           </label>
         )}
-        <label className="row" style={{ gap: 6 }}><input type="checkbox" checked={safeZone} onChange={(e) => setSafeZone(e.target.checked)} style={{ width: 16, height: 16 }} />Safe zone</label>
-        {version && <button type="button" onClick={() => act(api.revealVersion(slug, creative, version.n))}>Mostra nella cartella</button>}
-        <button type="button" disabled={!version} onClick={() => version && setExporting(version.n)}>Esporta…</button>
+        <label className="row" style={{ gap: 6 }}><input type="checkbox" checked={safeZone} onChange={(e) => setSafeZone(e.target.checked)} style={{ width: 16, height: 16 }} />{t.web.creative.safeZone}</label>
+        {version && <button type="button" onClick={() => act(api.revealVersion(slug, creative, version.n))}>{t.web.common.revealFolder}</button>}
+        <button type="button" disabled={!version} onClick={() => version && setExporting(version.n)}>{t.web.creative.export}</button>
         {version && latest && version.n !== latest.n && (
-          <button type="button" onClick={() => act(api.restoreVersion(slug, creative, version.n))}>Riparti da v{version.n}</button>
+          <button type="button" onClick={() => act(api.restoreVersion(slug, creative, version.n))}>{t.web.creative.restartFrom({ n: version.n })}</button>
         )}
       </header>
-      {c.resumeFrom && <p className="warn" style={{ margin: 12 }}>Il prossimo messaggio riparte dalla versione {c.resumeFrom.version}.</p>}
+      {c.resumeFrom && <p className="warn" style={{ margin: 12 }}>{t.web.creative.resumeNote({ n: c.resumeFrom.version })}</p>}
       {(c.status === 'error' || c.status === 'interrupted') && c.error && <p role="alert" className="error" style={{ margin: 12 }}>{c.error}</p>}
       {version?.status === 'incomplete' && (
         <div className="warn" style={{ margin: 12 }}>
-          <strong>v{version.n} incompleta:</strong>
+          <strong>{t.web.creative.versionIncomplete({ n: version.n })}</strong>
           <ul style={{ margin: '4px 0 0' }}>{version.problems.map((p) => <li key={p}>{p}</li>)}</ul>
         </div>
       )}
-      {presetsFailure && <p role="alert" className="error" style={{ margin: 12 }}>Impossibile caricare i formati: {presetsFailure}</p>}
+      {presetsFailure && <p role="alert" className="error" style={{ margin: 12 }}>{t.web.creative.formatsLoadFailed({ detail: presetsFailure })}</p>}
       {catalogError && <p className="warn" style={{ margin: 12 }}>{catalogError}</p>}
       {actionError && <p role="alert" className="error" style={{ margin: 12 }}>{actionError}</p>}
       <div style={{ flex: 1, display: 'flex', flexWrap: 'wrap', minHeight: 0 }}>

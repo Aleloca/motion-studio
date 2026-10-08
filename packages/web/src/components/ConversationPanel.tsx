@@ -1,6 +1,7 @@
-import type { AgentEvent, ApprovalRequest, Brief, ConversationEntry, CreativeDetail, FormatPreset, JobSummary, LinkedCodebase, Pin } from '@motion-studio/shared';
+import type { AgentEvent, ApprovalRequest, Brief, Locale, Messages, ConversationEntry, CreativeDetail, FormatPreset, JobSummary, LinkedCodebase, Pin } from '@motion-studio/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.ts';
+import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { ApprovalCard } from './ApprovalCard.tsx';
 import { ExpertLine } from './AgentConsole.tsx';
 import { CodebaseList } from './CodebaseList.tsx';
@@ -13,7 +14,8 @@ export interface ConversationPanelProps {
 }
 
 type Tab = 'chat' | 'brief' | 'expert';
-const pinLabel = (p: Pin, k: number) => `${k + 1} · ${p.format}${p.timeSec !== null ? ` @ ${p.timeSec.toFixed(1)}s` : ''}`;
+const pinLabel = (p: Pin, k: number, t: Messages, locale: Locale) =>
+  `${k + 1} · ${p.format}${p.timeSec !== null ? ` ${t.web.conversation.atSeconds({ time: formatNumber(locale, p.timeSec, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) })}` : ''}`;
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
@@ -35,6 +37,7 @@ export function mergeJobEvents(persisted: AgentEvent[], live: AgentEvent[]): Age
 }
 
 function BriefEditor({ slug, detail, presets, disabled, onChanged }: { slug: string; detail: CreativeDetail; presets: FormatPreset[]; disabled: boolean; onChanged(): void }) {
+  const t = useT();
   const c = detail.creative;
   const [title, setTitle] = useState(c.title);
   const [brief, setBrief] = useState<Brief>(c.brief);
@@ -55,27 +58,29 @@ function BriefEditor({ slug, detail, presets, disabled, onChanged }: { slug: str
   };
   return (
     <form className="stack" onSubmit={(e) => { e.preventDefault(); void save(false); }} style={{ padding: 14, overflow: 'auto' }}>
-      <label htmlFor="b-title">Titolo</label><input id="b-title" value={title} onChange={(e) => setTitle(e.target.value)} />
-      <label htmlFor="b-goal">Obiettivo</label><textarea id="b-goal" rows={3} value={brief.goal} onChange={(e) => set('goal', e.target.value)} />
-      <label htmlFor="b-msg">Messaggio chiave</label><input id="b-msg" value={brief.message} onChange={(e) => set('message', e.target.value)} />
-      <label htmlFor="b-dur">Durata (secondi, vuoto = nessuna)</label>
+      <label htmlFor="b-title">{t.web.newCreative.title}</label><input id="b-title" value={title} onChange={(e) => setTitle(e.target.value)} />
+      <label htmlFor="b-goal">{t.web.conversation.goal}</label><textarea id="b-goal" rows={3} value={brief.goal} onChange={(e) => set('goal', e.target.value)} />
+      <label htmlFor="b-msg">{t.web.newCreative.keyMessage}</label><input id="b-msg" value={brief.message} onChange={(e) => set('message', e.target.value)} />
+      <label htmlFor="b-dur">{t.web.conversation.length}</label>
       <input id="b-dur" type="number" min={1} max={600} value={brief.durationSec ?? ''} onChange={(e) => set('durationSec', e.target.value ? Number(e.target.value) : null)} />
-      <label htmlFor="b-assets">Asset (separati da virgola)</label><input id="b-assets" value={assets} onChange={(e) => setAssets(e.target.value)} />
-      <label htmlFor="b-notes">Note</label><input id="b-notes" value={brief.notes} onChange={(e) => set('notes', e.target.value)} />
-      <strong>Formati</strong>
+      <label htmlFor="b-assets">{t.web.conversation.assets}</label><input id="b-assets" value={assets} onChange={(e) => setAssets(e.target.value)} />
+      <label htmlFor="b-notes">{t.web.conversation.notes}</label><input id="b-notes" value={brief.notes} onChange={(e) => set('notes', e.target.value)} />
+      <strong>{t.web.conversation.formats}</strong>
       <FormatPicker presets={presets} selected={brief.formats} onToggle={(id) => set('formats', brief.formats.includes(id) ? brief.formats.filter((x) => x !== id) : [...brief.formats, id])} />
-      <strong>Codebase di questa creatività</strong>
+      <strong>{t.web.newCreative.codebases}</strong>
       <CodebaseList value={codebases} onChange={setCodebases} disabled={disabled} />
       {error && <p role="alert" className="error" style={{ margin: 0 }}>{error}</p>}
       <div className="row">
-        <button type="submit" disabled={disabled}>Salva</button>
-        <button type="button" className="primary" disabled={disabled} onClick={() => void save(true)}>Salva e rigenera</button>
+        <button type="submit" disabled={disabled}>{t.common.save}</button>
+        <button type="button" className="primary" disabled={disabled} onClick={() => void save(true)}>{t.web.conversation.saveAndRegenerate}</button>
       </div>
     </form>
   );
 }
 
 export function ConversationPanel(props: ConversationPanelProps) {
+  const t = useT();
+  const locale = useLocale();
   const { slug, detail, conversation, job, liveEvents, expert, pins } = props;
   const [selectedTab, setTab] = useState<Tab>('chat');
   // The expert tab disappears when expert mode is turned off: fall back to the conversation.
@@ -100,16 +105,16 @@ export function ConversationPanel(props: ConversationPanelProps) {
     } catch (e) { setError(message(e)); }
   };
 
-  const tabs: Array<[Tab, string]> = [['chat', 'Conversazione'], ['brief', 'Brief'], ...(expert ? [['expert', 'Esperto'] as [Tab, string]] : [])];
+  const tabs: Tab[] = expert ? ['chat', 'brief', 'expert'] : ['chat', 'brief'];
   const allAgentEvents = [
     ...conversation.filter((e): e is Extract<ConversationEntry, { type: 'agent' }> => persistedAgent(e)).map((e) => e.event),
     ...activeEvents,
   ];
 
   return (
-    <aside aria-label="Conversazione" style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--surface)', borderLeft: '1px solid var(--border)', minHeight: 0 }}>
-      <div role="tablist" aria-label="Pannello" className="tabs" style={{ padding: '0 10px' }}>
-        {tabs.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}>{label}</button>)}
+    <aside aria-label={t.web.conversation.aria} style={{ flex: 1, display: 'flex', flexDirection: 'column', background: 'var(--surface)', borderLeft: '1px solid var(--border)', minHeight: 0 }}>
+      <div role="tablist" aria-label={t.web.conversation.panel} className="tabs" style={{ padding: '0 10px' }}>
+        {tabs.map((id) => <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}>{t.web.conversation.tabs[id]}</button>)}
       </div>
 
       {tab === 'chat' && (
@@ -117,7 +122,7 @@ export function ConversationPanel(props: ConversationPanelProps) {
           {conversation.map((e, i) => {
             if (e.type === 'user') return (
               <div key={i} style={{ alignSelf: 'flex-end', maxWidth: '88%', padding: '10px 12px', borderRadius: '14px 14px 4px 14px', background: 'var(--text)', color: 'var(--bg)' }}>
-                {e.pins.length > 0 && <div className="row" style={{ gap: 4, marginBottom: 6 }}>{e.pins.map((p, k) => <span key={k} className="badge run">{pinLabel(p, k)}</span>)}</div>}
+                {e.pins.length > 0 && <div className="row" style={{ gap: 4, marginBottom: 6 }}>{e.pins.map((p, k) => <span key={k} className="badge run">{pinLabel(p, k, t, locale)}</span>)}</div>}
                 <span style={{ whiteSpace: 'pre-wrap' }}>{e.text}</span>
               </div>
             );
@@ -125,9 +130,9 @@ export function ConversationPanel(props: ConversationPanelProps) {
               ? <p key={i} style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{e.event.text}</p> : null;
             if (e.type === 'version') return (
               <div key={i} className="card row" style={{ padding: 10, background: 'var(--surface-2)' }}>
-                <span className={`badge ${e.status === 'complete' ? 'ok' : 'warn-badge'}`}>v{e.n} · {e.status === 'complete' ? 'Pronta' : 'Incompleta'}</span>
+                <span className={`badge ${e.status === 'complete' ? 'ok' : 'warn-badge'}`}>v{e.n} · {e.status === 'complete' ? t.web.status.ready : t.web.status.incomplete}</span>
                 <div style={{ flex: 1 }} />
-                <button type="button" onClick={() => props.onSelectVersion(e.n)}>Vedi v{e.n}</button>
+                <button type="button" onClick={() => props.onSelectVersion(e.n)}>{t.web.conversation.viewVersion({ n: e.n })}</button>
               </div>
             );
             return e.level === 'error'
@@ -136,11 +141,11 @@ export function ConversationPanel(props: ConversationPanelProps) {
           })}
           {active && (
             <div className="card stack" style={{ padding: 12, gap: 6, background: 'var(--surface-2)' }}>
-              <div className="row"><span className={`badge ${jobApprovals.length > 0 ? 'warn-badge' : 'run'}`}>{jobApprovals.length > 0 ? 'In attesa della tua approvazione' : active.state === 'queued' ? 'In coda' : 'In lavorazione'}</span><div style={{ flex: 1 }} /><button type="button" onClick={() => void api.cancelJob(active.id).catch((e: unknown) => setError(message(e)))}>Annulla</button></div>
+              <div className="row"><span className={`badge ${jobApprovals.length > 0 ? 'warn-badge' : 'run'}`}>{jobApprovals.length > 0 ? t.web.conversation.waitingApproval : active.state === 'queued' ? t.web.jobState.queued : t.web.jobState.running}</span><div style={{ flex: 1 }} /><button type="button" onClick={() => void api.cancelJob(active.id).catch((e: unknown) => setError(message(e)))}>{t.common.cancel}</button></div>
               {jobApprovals.map((a) => <ApprovalCard key={a.id} approval={a} />)}
               {activeEvents.filter((e) => e.kind === 'text').map((e, k) => <p key={k} style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{e.kind === 'text' ? e.text : ''}</p>)}
               {activeEvents.filter((e) => e.kind === 'progress').slice(-5).map((e, k) => <span key={k} className="muted" style={{ fontSize: 13 }}>→ {e.kind === 'progress' ? e.text : ''}</span>)}
-              {activeEvents.filter((e) => e.kind === 'tool_use').slice(-5).map((e, k) => <span key={k} className="muted" style={{ fontSize: 13 }}>Usa lo strumento {e.kind === 'tool_use' ? e.name : ''}</span>)}
+              {activeEvents.filter((e) => e.kind === 'tool_use').slice(-5).map((e, k) => <span key={k} className="muted" style={{ fontSize: 13 }}>{e.kind === 'tool_use' ? t.web.usesTool({ name: e.name }) : ''}</span>)}
             </div>
           )}
         </div>
@@ -162,19 +167,19 @@ export function ConversationPanel(props: ConversationPanelProps) {
           {pins.length > 0 && (
             <div className="row" style={{ gap: 4 }}>
               {pins.map((p, k) => (
-                <span key={k} className="badge run row" style={{ gap: 4 }}>{pinLabel(p, k)}
-                  <button type="button" aria-label={`Rimuovi commento ${k + 1}`} onClick={() => props.onRemovePin(k)} style={{ minHeight: 20, padding: '0 6px', border: 0, background: 'transparent' }}>×</button>
+                <span key={k} className="badge run row" style={{ gap: 4 }}>{pinLabel(p, k, t, locale)}
+                  <button type="button" aria-label={t.web.conversation.removeComment({ n: k + 1 })} onClick={() => props.onRemovePin(k)} style={{ minHeight: 20, padding: '0 6px', border: 0, background: 'transparent' }}>×</button>
                 </span>
               ))}
             </div>
           )}
-          <label htmlFor="cp-text" className="muted" style={{ fontSize: 12 }}>Chiedi una modifica</label>
-          <textarea id="cp-text" rows={2} maxLength={10_000} value={text} onChange={(e) => setText(e.target.value)} placeholder="Es. rallenta il finale e alza la CTA nel 9:16" />
+          <label htmlFor="cp-text" className="muted" style={{ fontSize: 12 }}>{t.web.conversation.requestChange}</label>
+          <textarea id="cp-text" rows={2} maxLength={10_000} value={text} onChange={(e) => setText(e.target.value)} placeholder={t.web.conversation.changePlaceholder} />
           {error && <p role="alert" className="error" style={{ margin: 0 }}>{error}</p>}
           <div className="row">
-            {detail.versions.length === 0 && <button type="button" disabled={Boolean(active)} onClick={() => void send({})}>Genera</button>}
+            {detail.versions.length === 0 && <button type="button" disabled={Boolean(active)} onClick={() => void send({})}>{t.web.newCreative.generate}</button>}
             <div style={{ flex: 1 }} />
-            <button type="submit" className="primary" disabled={Boolean(active) || (!text.trim() && pins.length === 0)}>Invia</button>
+            <button type="submit" className="primary" disabled={Boolean(active) || (!text.trim() && pins.length === 0)}>{t.web.common.send}</button>
           </div>
         </form>
       )}
