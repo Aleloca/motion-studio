@@ -13,6 +13,7 @@ vi.mock('../src/api.ts', () => ({
     getWorkspace: vi.fn(),
     updateSettings: vi.fn(),
     listProjects: vi.fn(() => Promise.resolve([])),
+    getSecrets: vi.fn(() => Promise.resolve([])),
   },
 }));
 
@@ -32,7 +33,7 @@ function start(workspace: Promise<WorkspaceInfo>, doctor: Promise<DoctorCheck[]>
 }
 
 describe('App startup', () => {
-  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); history.replaceState(null, '', '/'); });
   it('shows an alert in onboarding when the server is unreachable', async () => {
     start(Promise.reject(new Error('Failed to fetch')), Promise.reject(new Error('Failed to fetch')));
     const alert = await screen.findByRole('alert');
@@ -51,15 +52,17 @@ describe('App startup', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('Contenuto non valido in /w: /w/.studio/settings.json: JSON non valido');
   });
   it('shows an error when saving settings fails', async () => {
+    history.replaceState(null, '', '/#/settings');
     start(Promise.resolve({ path: '/w', settings, error: null }));
     vi.mocked(api.updateSettings).mockRejectedValue(new Error('disco pieno'));
-    await userEvent.click(await screen.findByLabelText('Modalità esperto'));
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('Impossibile salvare le impostazioni: disco pieno'));
+    // Expert mode and the theme moved from the top bar to Settings.
+    await userEvent.click(await screen.findByRole('switch', { name: 'Modalità esperto' }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('disco pieno'));
   });
   it('does not show onboarding when only the optional sandbox check fails', async () => {
     const checks: DoctorCheck[] = [...okChecks, { id: 'sandbox', label: 'Sandbox', ok: false, required: false, message: 'Non disponibile' }];
     start(Promise.resolve({ path: '/w', settings, error: null }), Promise.resolve(checks));
-    await userEvent.click(await screen.findByLabelText('Modalità esperto'));
+    expect(await screen.findByRole('button', { name: /^Attività/ })).toBeTruthy();
     expect(screen.queryByText('Benvenuto in Motion Studio')).toBeNull();
   });
 });
@@ -68,14 +71,14 @@ describe('App pairing and notifications', () => {
   afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); resetUiTokenForTests(); });
   it('shows a full page asking to open the app from the terminal link when the token is refused', async () => {
     start(Promise.resolve({ path: '/w', settings, error: null }));
-    await screen.findByLabelText('Modalità esperto');
+    await screen.findByRole('button', { name: /^Attività/ });
     act(() => markPairingNeeded());
     expect(await screen.findByText('Apri Motion Studio dal link mostrato nel terminale')).toBeTruthy();
-    expect(screen.queryByLabelText('Modalità esperto')).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Attività/ })).toBeNull();
     const loads = vi.mocked(api.getWorkspace).mock.calls.length;
     history.replaceState(null, '', `/#t=${'ef'.repeat(32)}`);
     act(() => { captureUiToken(); });
-    expect(await screen.findByLabelText('Modalità esperto')).toBeTruthy();
+    expect(await screen.findByRole('button', { name: /^Attività/ })).toBeTruthy();
     expect(vi.mocked(api.getWorkspace).mock.calls.length).toBeGreaterThan(loads);
     localStorage.clear();
     history.replaceState(null, '', '/');
@@ -90,10 +93,10 @@ describe('App pairing and notifications', () => {
     vi.mocked(api.getWorkspace).mockReturnValue(Promise.resolve({ path: '/w', settings, error: null }));
     vi.stubGlobal('WebSocket', FakeEventsSocket);
     render(<App />);
-    await screen.findByLabelText('Modalità esperto');
+    await screen.findByRole('button', { name: /^Attività/ });
     const approval = { id: 'a1', jobId: 'j1', projectSlug: 'acme', creativeSlug: null, kind: 'tool', title: 'Eseguire un comando', detail: 'ls', toolName: 'Bash', alwaysRule: null, createdAt: 'x', expiresAt: '2026-10-08T10:10:00.000Z' };
     act(() => sockets.at(-1)!.onmessage!({ data: JSON.stringify({ type: 'approval', approval }) }));
-    expect(await screen.findByText('1 approvazione in attesa')).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Attività, 1 in attesa' })).toBeTruthy();
     Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
     sockets = [];
   });

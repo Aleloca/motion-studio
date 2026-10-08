@@ -9,6 +9,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App.tsx';
 import './theme.css';
 import './ui/ui.css';
+import './shell/shell.css';
 import { captureUiToken, listenForUiToken } from './uiToken.ts';
 
 // Before any routing or API call: the terminal link carries the UI token in the fragment (also when pasted later).

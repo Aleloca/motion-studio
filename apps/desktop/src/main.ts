@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { AlreadyRunningError, answersHealth, defaultConfigDir, resolveLocale, resolveLoginShellPath, setLocale, startServer, t } from '@motion-studio/core';
 import { absolutePathArg, attachedGone, attachedGoneAction, attachedLocale, bootLocale, focusOnReady, readSavedLanguage, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, userDataDir } from './helpers.ts';
 import { menuTemplate } from './menu.ts';
+import { registerAttention } from './notify.ts';
 import { setupUpdates } from './updater.ts';
 import { externalUrlAllowed, isAppUrl, windowOptions } from './window.ts';
 
@@ -132,6 +133,19 @@ async function run() {
     const p = trusted(e) ? absolutePathArg(arg) : null;
     if (!p) throw new Error(t().desktop.invalidPath);
     shell.showItemInFolder(p);
+  });
+  // Approval signals: native notification (also with the window visible), Dock badge and one bounce when it grows.
+  registerAttention(ipcMain, {
+    trusted,
+    showNotification: ({ title, body }) => {
+      if (!Notification.isSupported()) return;
+      const n = new Notification({ title, body });
+      // Clicking it brings the window back, where the activity center shows the request.
+      n.on('click', () => { if (win.isMinimized()) win.restore(); win.show(); win.focus(); });
+      n.show();
+    },
+    dock: app.dock,
+    invalid: () => new Error(t().desktop.invalidRequest),
   });
 
   const allowed = (permission: string, requestingUrl: string) => permission === 'notifications' && isAppUrl(requestingUrl, origin);

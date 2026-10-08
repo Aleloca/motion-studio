@@ -2,6 +2,7 @@ import { LOCALES, type DoctorCheck, type LanguageSetting, type Locale, type Prov
 import { useEffect, useState } from 'react';
 import { api } from '../api.ts';
 import { useT, type LanguageState } from '../i18n.tsx';
+import { Segmented, Toggle } from '../ui/index.ts';
 
 const PROVIDERS: Array<[ProviderId, string, string]> = [['openai', 'OpenAI', 'OPENAI_API_KEY'], ['elevenlabs', 'ElevenLabs', 'ELEVENLABS_API_KEY'], ['pexels', 'Pexels', 'PEXELS_API_KEY'], ['unsplash', 'Unsplash', 'UNSPLASH_ACCESS_KEY']];
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -63,6 +64,20 @@ export function SettingsPage({ settings, checks, language, systemLocale, onLangu
       <h1 style={{ margin: 0, fontSize: 24 }}>{s.title}</h1>
       {error && <p role="alert" className="error">{error}</p>}
       <LanguageSelector value={language} systemLocale={systemLocale} onChange={onLanguage} />
+      {/* The theme left the top bar (spec §4.1); the redesigned General section arrives with Task 15. */}
+      <section className="card stack" aria-label={s.appearance}>
+        <h2 style={{ margin: 0, fontSize: 17 }}>{s.appearance}</h2>
+        <Segmented
+          label={t.web.theme.aria}
+          value={settings.theme}
+          onChange={(theme) => void save({ theme })}
+          options={(['system', 'light', 'dark'] as const).map((id) => ({ value: id, label: t.web.theme[id] }))}
+        />
+        <div className="row" style={{ gap: 10 }}>
+          <Toggle on={settings.expertMode} onChange={(on) => void save({ expertMode: on })} label={t.web.app.expertMode} />
+          <span>{t.web.app.expertMode}</span>
+        </div>
+      </section>
       <section className="card stack" aria-label={s.providerKeys}>
         <h2 style={{ margin: 0, fontSize: 17 }}>{s.providerKeys}</h2>
         <p className="muted" style={{ margin: 0, fontSize: 13 }}>{s.keysNote}</p>

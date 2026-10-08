@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { workspaceSettingsSchema, type DoctorCheck, type ServerMessage } from '@motion-studio/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -58,15 +58,15 @@ describe('language switching', () => {
     api.getDoctor.mockResolvedValue(checks);
     api.getWorkspace.mockResolvedValue({ path: '/w', settings, error: null });
     render(<App />);
-    expect(await screen.findByText('Impostazioni')).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Attività' })).toBeTruthy();
     await send({ type: 'snapshot', jobs: [], approvals: [], locale: 'en', languageSetting: 'system', systemLocale: 'en' });
     await waitFor(() => expect(document.documentElement.lang).toBe('en'));
-    expect(await screen.findByText('Settings')).toBeTruthy();
-    expect(screen.queryByText('Impostazioni')).toBeNull();
+    expect(await screen.findByRole('button', { name: 'Activity' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Attività' })).toBeNull();
     await send({ type: 'locale', locale: 'it', setting: 'it', systemLocale: 'en' });
     await waitFor(() => expect(document.documentElement.lang).toBe('it'));
-    expect(await screen.findByText('Impostazioni')).toBeTruthy();
-    expect(screen.queryByText('Settings')).toBeNull();
+    expect(await screen.findByRole('button', { name: 'Attività' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Activity' })).toBeNull();
   });
   it('applies the result of a change made in Settings without waiting for the server event', async () => {
     vi.stubGlobal('WebSocket', FakeWebSocket);
@@ -128,7 +128,7 @@ describe('language selector', () => {
     render(<I18nProvider locale="en"><SettingsPage settings={settings} checks={checks} language="system" systemLocale="it" onLanguage={() => {}} onSaved={() => {}} /></I18nProvider>);
     const group = screen.getByRole('radiogroup', { name: 'Language' });
     expect(group.textContent).toBe('System (Italiano)EnglishItaliano');
-    expect(screen.getByRole('radio', { name: /^System/ }).getAttribute('aria-checked')).toBe('true');
+    expect(within(group).getByRole('radio', { name: /^System/ }).getAttribute('aria-checked')).toBe('true');
   });
   it('saves the choice and applies it at once', async () => {
     api.setLanguage.mockResolvedValue({ locale: 'it', languageSetting: 'it', systemLocale: 'en' });

@@ -1,0 +1,103 @@
+/* App shell (spec §6.1): bars, activity center, command palette. Tokens only; every class carries the ms- prefix.
+   Buttons set min-height/padding/border explicitly: the legacy global button rules still apply until Task 16. */
+
+/* Layout: a full-height grid (bar row + stage) gives PageHost's .ms-stage a definite height. */
+html, body, #root { height: 100%; }
+.ms-app { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--bg); }
+.ms-main { position: relative; min-height: 0; overflow: hidden; }
+
+.ms-grow { flex: 1; min-width: 0; }
+.ms-faint { color: var(--faint); }
+.ms-mono { font-family: var(--mono); font-size: 12px; }
+.ms-cap { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+
+/* Top bar. */
+.ms-topbar { height: 52px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 14px; min-width: 0; background: var(--panel); border-bottom: 1px solid var(--line); position: relative; z-index: 20; }
+.ms-logo { width: 26px; height: 26px; border-radius: 7px; background: var(--ink); display: flex; align-items: center; justify-content: center; flex: none; transition: transform var(--d-xs) var(--e-std); }
+.ms-logo:active { transform: scale(.94); }
+.ms-logo path { fill: var(--accent); }
+.ms-brand { font-weight: 700; white-space: nowrap; }
+.ms-topbar-title { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-topbar-center { flex: 1; min-width: 0; display: flex; justify-content: center; }
+.ms-topbar-end { display: flex; align-items: center; gap: 6px; flex: none; }
+.ms-topbar-tabs { margin-left: 4px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.ms-topbar-tabs a.ms-tab { text-decoration: none; }
+
+.ms-search { width: min(420px, 100%); height: 32px; min-height: 0; margin: 0; padding: 0 6px 0 10px; display: flex; align-items: center; gap: 8px; border: 0; border-radius: 8px; background: var(--field); color: var(--faint); font: inherit; font-size: 13px; cursor: pointer; transition: box-shadow var(--d-s) var(--e-std), color var(--d-s) var(--e-std); }
+.ms-search:hover { box-shadow: inset 0 0 0 1px var(--line); color: var(--muted); }
+.ms-search svg { flex: none; }
+.ms-search-text { flex: 1; min-width: 0; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ms-kbd { font-family: var(--mono); font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 4px; background: var(--panel); box-shadow: 0 0 0 1px var(--line); color: var(--faint); white-space: nowrap; flex: none; }
+
+.ms-running { color: var(--muted); gap: 8px; font-variant-numeric: tabular-nums; }
+.ms-bell { position: relative; }
+.ms-bell-count { position: absolute; right: 2px; top: 2px; box-shadow: 0 0 0 2px var(--panel); pointer-events: none; }
+
+/* Project switcher. */
+.ms-switcher { height: 32px; min-height: 0; margin: 0; padding: 0 8px 0 6px; max-width: 260px; display: inline-flex; align-items: center; gap: 8px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-weight: 600; cursor: pointer; flex: none; transition: background var(--d-s) var(--e-std); }
+.ms-switcher:hover, .ms-switcher[aria-expanded="true"] { background: var(--field); }
+.ms-switcher-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-switcher-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.ms-switcher-check { margin-left: auto; color: var(--text); }
+.ms-projmark { width: 20px; height: 20px; border-radius: 5px; background: var(--ink); color: var(--inkText); font-size: 9px; font-weight: 700; letter-spacing: .02em; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.ms-projmark.ms-md { width: 32px; height: 32px; border-radius: 8px; font-size: 12px; }
+.ms-pop-cap { display: block; padding: 4px 8px 6px; }
+.ms-pop-sep { height: 1px; background: var(--line2); margin: 6px 4px; }
+
+/* Creative bar. */
+.ms-back { padding-left: 6px; flex: none; }
+.ms-crumbs { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); }
+.ms-crumb { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.ms-crumb > span:last-child, .ms-crumb > b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-crumb:not(.ms-last) { flex: 0 1 auto; max-width: 30%; }
+.ms-crumb.ms-last { flex: 1 1 auto; }
+.ms-crumb.ms-last b { color: var(--text); font-weight: 600; }
+
+/* Activity center (popover body). */
+.ms-activity { margin: -8px; display: flex; flex-direction: column; min-height: 0; }
+.ms-activity-head { padding: 8px; border-bottom: 1px solid var(--line2); }
+.ms-activity-head .ms-tab .ms-tag.ms-n { background: transparent; color: var(--faint); padding: 0 2px; }
+.ms-activity-ask { align-self: flex-start; }
+.ms-activity-body { padding: 12px; display: flex; flex-direction: column; gap: 10px; max-height: 460px; overflow: auto; overscroll-behavior: contain; }
+.ms-activity-need { display: flex; flex-direction: column; gap: 6px; }
+.ms-activity-context { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.ms-activity-where { font-size: 12px; color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-activity-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.ms-activity-row { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 4px 8px; border-radius: 8px; transition: background var(--d-s) var(--e-std); }
+.ms-activity-row:hover { background: var(--field); }
+.ms-activity-row.ms-tall { align-items: flex-start; padding: 8px; }
+.ms-activity-glyph { width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; flex: none; color: var(--accentText); }
+.ms-activity-glyph.ms-muted { color: var(--faint); }
+.ms-activity-mark { width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex: none; }
+.ms-activity-mark.ms-ok { background: var(--okBg); color: var(--ok); }
+.ms-activity-mark.ms-warn { background: var(--warnBg); color: var(--warn); }
+.ms-activity-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ms-activity-text b { font-weight: 600; overflow-wrap: anywhere; }
+.ms-activity-sub { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.ms-activity-time { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; flex: none; }
+
+/* Command palette: a modal placed high, like a spotlight. */
+.ms-modal:has(.ms-palette) { place-items: start center; padding-top: 12vh; }
+.ms-palette { display: flex; flex-direction: column; min-height: 0; }
+.ms-palette-field { height: 54px; display: flex; align-items: center; gap: 10px; padding: 0 14px 0 18px; border-bottom: 1px solid var(--line2); color: var(--faint); flex: none; }
+.ms-palette-field svg { flex: none; }
+input.ms-palette-input { flex: 1; min-width: 0; width: auto; height: 100%; margin: 0; padding: 0; border: 0; border-radius: 0; outline: none; background: transparent; color: var(--text); font: inherit; font-size: 15px; }
+input.ms-palette-input::placeholder { color: var(--faint); }
+.ms-palette-list { max-height: min(400px, 52vh); overflow: auto; overscroll-behavior: contain; padding: 6px 8px 8px; display: flex; flex-direction: column; gap: 4px; }
+.ms-palette-group { display: flex; flex-direction: column; gap: 1px; }
+.ms-palette-cap { display: block; padding: 8px 10px 4px; }
+.ms-palette-row { min-height: 36px; transition: background var(--d-xs) var(--e-std); }
+.ms-palette-row svg { color: var(--muted); }
+.ms-palette-row.ms-active svg { color: var(--text); }
+.ms-palette-row .ms-option-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ms-palette-sub { font-size: 12px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; flex: none; }
+.ms-palette-row svg.ms-palette-go { color: var(--accentText); }
+.ms-palette-empty { padding: 32px 12px; text-align: center; color: var(--muted); overflow-wrap: anywhere; }
+.ms-palette-foot { padding: 8px 18px; border-top: 1px solid var(--line2); font-size: 11px; color: var(--faint); background: var(--bg); flex: none; }
+
+@media (max-width: 1100px) {
+  .ms-brand { display: none; }
+  .ms-search { width: 44px; }
+  .ms-search-text, .ms-search .ms-kbd { display: none; }
+  .ms-topbar-center { flex: 0 0 auto; }
+}

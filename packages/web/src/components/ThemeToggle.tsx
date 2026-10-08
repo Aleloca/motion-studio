@@ -1,13 +1,8 @@
-import type { WorkspaceSettings } from '@motion-studio/shared';
 import { useT } from '../i18n.tsx';
+import type { Theme } from '../theme.ts';
 
-type Theme = WorkspaceSettings['theme'];
-
-export function applyTheme(theme: Theme): void {
-  const root = document.documentElement;
-  if (theme === 'system') root.removeAttribute('data-theme');
-  else root.setAttribute('data-theme', theme);
-}
+// Superseded by the theme choice in Settings (Phase 7); removed in Task 16.
+export { applyTheme } from '../theme.ts';
 
 const THEMES: Theme[] = ['system', 'light', 'dark'];
 

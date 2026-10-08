@@ -63,7 +63,8 @@ function ProjectConsole({ slug, jobKey, live, expert }: { slug: string; jobKey: 
   );
 }
 
-export function ProjectPage({ slug, tab, live, expert }: { slug: string; tab: ProjectTab; live: EventsState; expert: boolean }) {
+/** `embedded`: inside the new shell, whose project bar already shows the name, the way back and the tabs. */
+export function ProjectPage({ slug, tab, live, expert, embedded = false }: { slug: string; tab: ProjectTab; live: EventsState; expert: boolean; embedded?: boolean }) {
   const t = useT();
   const [name, setName] = useState<string>(slug);
   const [jobKey, setJobKey] = useState<string | null>(null);
@@ -81,12 +82,14 @@ export function ProjectPage({ slug, tab, live, expert }: { slug: string; tab: Pr
   const tick = Object.entries(live.creativeTicks).filter(([k]) => k.startsWith(`${slug}/`)).reduce((a, [, v]) => a + v, 0);
   return (
     <main className="page stack">
-      <a href={href.projects()} className="muted">{t.web.project.back}</a>
-      <h1 style={{ margin: 0, fontSize: 24 }}>{name}</h1>
+      {!embedded && <a href={href.projects()} className="muted">{t.web.project.back}</a>}
+      {!embedded && <h1 style={{ margin: 0, fontSize: 24 }}>{name}</h1>}
       {error && <p role="alert" className="error" style={{ margin: 0 }}>{error}</p>}
-      <nav className="tabs" aria-label={t.web.project.sections}>
-        {TABS.map((id) => <a key={id} href={href.project(slug, id)} aria-current={tab === id ? 'page' : undefined}>{t.web.project.tabs[id]}</a>)}
-      </nav>
+      {!embedded && (
+        <nav className="tabs" aria-label={t.web.project.sections}>
+          {TABS.map((id) => <a key={id} href={href.project(slug, id)} aria-current={tab === id ? 'page' : undefined}>{t.web.project.tabs[id]}</a>)}
+        </nav>
+      )}
       {tab === 'creatives' && <CreativeList slug={slug} tick={tick} waiting={waiting} />}
       {tab === 'settings' && <ProjectSettings key={slug} slug={slug} tick={projectTick} />}
       {tab === 'console' && <ProjectConsole slug={slug} jobKey={jobKey} live={live} expert={expert} />}

@@ -1,16 +1,22 @@
-import type { DoctorCheck, LanguageSetting, Locale, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ApprovalRequest, DoctorCheck, LanguageSetting, Locale, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { api } from './api.ts';
-import { ApprovalsIndicator } from './components/ApprovalsIndicator.tsx';
-import { applyTheme, ThemeToggle } from './components/ThemeToggle.tsx';
-import { Onboarding } from './screens/Onboarding.tsx';
+import { detectedLocale, I18nProvider, useLocale, useT, type LanguageState } from './i18n.tsx';
+import { PageHost } from './motion/index.ts';
+import { depthOf, href, parseRoute, projectOf, routeKey, type ProjectTab, type Route } from './routes.ts';
 import { CreativePage } from './screens/CreativePage.tsx';
 import { NewCreative } from './screens/NewCreative.tsx';
+import { Onboarding } from './screens/Onboarding.tsx';
 import { ProjectList } from './screens/ProjectList.tsx';
-import { SettingsPage } from './screens/SettingsPage.tsx';
 import { ProjectPage } from './screens/ProjectPage.tsx';
-import { detectedLocale, I18nProvider, useLocale, useT, type LanguageState } from './i18n.tsx';
-import { href, parseRoute } from './routes.ts';
+import { SettingsPage } from './screens/SettingsPage.tsx';
+import { useCatalog } from './shell/catalog.ts';
+import { CommandPalette } from './shell/CommandPalette.tsx';
+import { go, ShellContext, type ActivityTab, type Shell } from './shell/ShellContext.tsx';
+import { TopBar } from './shell/TopBars.tsx';
+import { useAttention } from './shell/useAttention.ts';
+import { applyTheme } from './theme.ts';
+import { Toasts } from './ui/index.ts';
 import { usePairingNeeded } from './uiToken.ts';
 import type { EventsState } from './eventsReducer.ts';
 import { useServerEvents } from './useServerEvents.ts';
@@ -36,39 +42,44 @@ export function App() {
   return (
     <I18nProvider locale={locale}>
       <AppBody live={live} language={language?.setting ?? 'system'} systemLocale={language?.systemLocale ?? detectedLocale()} onLanguage={setChosen} />
+      {/* The one toast stack of the app (spec §4.3), above every screen including the setup. */}
+      <Toasts />
     </I18nProvider>
   );
 }
 
-function AppBody({ live, language, systemLocale, onLanguage }: { live: EventsState; language: LanguageSetting; systemLocale: Locale; onLanguage(next: LanguageState): void }) {
+interface ActivityState { open: boolean; tab: ActivityTab | null }
+interface Props { live: EventsState; language: LanguageSetting; systemLocale: Locale; onLanguage(next: LanguageState): void }
+
+function AppBody({ live, language, systemLocale, onLanguage }: Props) {
   const t = useT();
   const locale = useLocale();
   const [checks, setChecks] = useState<DoctorCheck[] | null>(null);
   const [ws, setWs] = useState<WorkspaceInfo | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [settingsError, setSettingsError] = useState<string | null>(null);
-  const route = useHashRoute();
+  const hash = useHashRoute();
+  // One route object per hash: the page hosts compare it by identity.
+  const route = useMemo(() => parseRoute(hash), [hash]);
   const pairing = usePairingNeeded();
-  const notified = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    // Only the pending requests are remembered: the set never grows beyond them.
-    for (const id of notified.current) if (!live.approvals[id]) notified.current.delete(id);
-    for (const a of Object.values(live.approvals)) {
-      if (notified.current.has(a.id)) continue;
-      notified.current.add(a.id);
-      try {
-        if (typeof Notification !== 'undefined' && document.visibilityState === 'hidden' && Notification.permission === 'granted') {
-          new Notification(t.web.app.approvalNotificationTitle, { body: a.title });
-        }
-      } catch { /* some browsers only allow notifications from a service worker */ }
-    }
-  }, [live.approvals, t]);
+
+  // Attention signals (title, Dock badge, notification, toast) follow the pending approvals on every screen.
+  const [activity, setActivity] = useState<ActivityState>({ open: false, tab: null });
+  const approvals = useMemo(() => Object.values(live.approvals), [live.approvals]);
+  // "Review": the creative's conversation shows the request in context; otherwise (or when already there) the
+  // activity center opens on Needs you.
+  const review = useCallback((a: ApprovalRequest) => {
+    const target = a.creativeSlug ? href.creative(a.projectSlug, a.creativeSlug) : null;
+    if (target && location.hash !== target) go(target);
+    else setActivity({ open: true, tab: 'needs' });
+  }, []);
+  useAttention(approvals.length, approvals, review);
 
   const refresh = useCallback(() => {
     setChecks(null);
     setLoadError(null);
     const fail = (e: unknown) => setLoadError(e instanceof Error ? e.message : String(e));
     api.getDoctor().then(setChecks).catch(fail);
+    // The stored theme is applied on load (the switch itself lives in Settings).
     api.getWorkspace().then((w) => { setWs(w); if (w.settings) applyTheme(w.settings.theme); }).catch(fail);
   }, []);
   useEffect(refresh, [refresh]);
@@ -105,42 +116,100 @@ function AppBody({ live, language, systemLocale, onLanguage }: { live: EventsSta
         onRecheck={refresh} onWorkspaceSet={refresh} />
     );
   }
-  const settings = ws.settings;
-  const update = async (patch: Partial<WorkspaceSettings>) => {
-    setSettingsError(null);
-    try {
-      const next = await api.updateSettings(patch);
-      applyTheme(next.theme);
-      setWs((prev) => (prev ? { ...prev, settings: next } : prev));
-    } catch (e) {
-      setSettingsError(t.web.app.settingsSaveFailed({ detail: e instanceof Error ? e.message : String(e) }));
+  return (
+    <AppShell
+      route={route} live={live} ws={ws} settings={ws.settings} checks={checks} activity={activity} setActivity={setActivity}
+      language={language} systemLocale={systemLocale} onLanguage={onLanguage} refresh={refresh}
+      onSettings={(next) => { applyTheme(next.theme); setWs((prev) => (prev ? { ...prev, settings: next } : prev)); }}
+    />
+  );
+}
+
+interface ShellProps extends Props {
+  route: Route;
+  ws: WorkspaceInfo;
+  settings: NonNullable<WorkspaceInfo['settings']>;
+  checks: DoctorCheck[] | null;
+  activity: ActivityState;
+  setActivity: Dispatch<SetStateAction<ActivityState>>;
+  refresh(): void;
+  onSettings(next: WorkspaceSettings): void;
+}
+
+/**
+ * The app shell (spec §6.1, §7): the bar of the current route over a full-height stage where pages change with T1
+ * (direction from the route depth) and project tabs with T2. Old screens render inside until later tasks replace them.
+ */
+function AppShell({ route, live, ws, settings, checks, activity, setActivity, language, systemLocale, onLanguage, refresh, onSettings }: ShellProps) {
+  const current = projectOf(route);
+  const tick = current ? (live.projectTicks[current] ?? 0) + Object.entries(live.creativeTicks).filter(([k]) => k.startsWith(`${current}/`)).reduce((a, [, v]) => a + v, 0) : 0;
+  const catalog = useCatalog(current, tick);
+  const [palette, setPalette] = useState(false);
+
+  // ⌘K / Ctrl+K toggles the command palette from anywhere.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPalette((p) => !p);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+  // A page change closes the activity center (its rows navigate).
+  const key = routeKey(route);
+  useEffect(() => { setActivity((a) => (a.open ? { open: false, tab: a.tab } : a)); }, [key, setActivity]);
+
+  const shell = useMemo((): Shell => ({
+    route,
+    live,
+    catalog,
+    activity: {
+      ...activity,
+      show: (tab) => setActivity({ open: true, tab: tab ?? null }),
+      hide: () => setActivity((a) => ({ open: false, tab: a.tab })),
+      toggle: () => setActivity((a) => ({ open: !a.open, tab: null })),
+    },
+    openPalette: () => setPalette(true),
+  }), [route, live, catalog, activity, setActivity]);
+
+  const expert = settings.expertMode;
+  const render = (r: Route) => {
+    switch (r.name) {
+      case 'projects': return <ProjectList />;
+      case 'project': return <ProjectHost route={r} live={live} expert={expert} />;
+      case 'new-creative': return <NewCreative key={r.slug} slug={r.slug} />;
+      // The format view (Task 13) opens on the creative until then.
+      case 'creative': case 'format': return <CreativePage key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} expert={expert} />;
+      // Every section maps to the current settings page until the new one (Task 15).
+      case 'settings': return <SettingsPage settings={settings} checks={checks} language={language} systemLocale={systemLocale} onLanguage={onLanguage} onSaved={onSettings} />;
+      // Replay setup (Task 9 brings the three-step welcome): the current onboarding, back to the projects when done.
+      case 'welcome': return <Onboarding checks={checks} workspacePath={ws.path} workspaceError={ws.error ?? null} error={null} onRecheck={refresh} onWorkspaceSet={() => { refresh(); go(href.projects()); }} />;
     }
   };
-  const running = Object.values(live.jobs).filter((j) => j.state === 'running').length;
-  const queued = Object.values(live.jobs).filter((j) => j.state === 'queued').length;
-  const r = parseRoute(route);
 
   return (
-    <>
-      <header className="topbar">
-        <a href="#/" style={{ fontWeight: 800, color: 'inherit', textDecoration: 'none' }}>Motion Studio</a>
-        <span className="muted mono">{ws.path}</span>
-        <div style={{ flex: 1 }} />
-        <ApprovalsIndicator approvals={Object.values(live.approvals)} />
-        <span className="muted">{t.web.app.activity({ running, queued })}</span>
-        <a href={href.settings()} style={{ color: 'inherit' }}>{t.web.app.settings}</a>
-        <label className="row" style={{ gap: 6 }}>
-          <input type="checkbox" checked={settings.expertMode} onChange={(e) => void update({ expertMode: e.target.checked })} style={{ width: 16, height: 16 }} />
-          {t.web.app.expertMode}
-        </label>
-        <ThemeToggle value={settings.theme} onChange={(theme) => void update({ theme })} />
-      </header>
-      {settingsError && <p role="alert" className="error page" style={{ margin: 0, paddingBottom: 0 }}>{settingsError}</p>}
-      {r.name === 'project' && <ProjectPage key={r.slug} slug={r.slug} tab={r.tab} live={live} expert={settings.expertMode} />}
-      {r.name === 'new-creative' && <NewCreative key={r.slug} slug={r.slug} />}
-      {r.name === 'creative' && <CreativePage key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} expert={settings.expertMode} />}
-      {r.name === 'projects' && <ProjectList />}
-      {r.name === 'settings' && <SettingsPage settings={settings} checks={checks} language={language} systemLocale={systemLocale} onLanguage={onLanguage} onSaved={(next) => { applyTheme(next.theme); setWs((prev) => (prev ? { ...prev, settings: next } : prev)); }} />}
-    </>
+    <ShellContext.Provider value={shell}>
+      <div className="ms-app">
+        <TopBar />
+        <div className="ms-main">
+          <PageHost route={route} keyOf={routeKey} depthOf={depthOf} render={render} />
+        </div>
+      </div>
+      <CommandPalette open={palette} onClose={() => setPalette(false)} catalog={catalog} route={route} />
+    </ShellContext.Provider>
+  );
+}
+
+/** A project page: its tabs change in place with T2 (soft fade and 6 px lift). */
+function ProjectHost({ route, live, expert }: { route: Extract<Route, { name: 'project' }>; live: EventsState; expert: boolean }) {
+  return (
+    <PageHost
+      route={route}
+      keyOf={(r) => r.tab}
+      soft
+      render={(r) => <ProjectPage key={r.slug} slug={r.slug} tab={r.tab as ProjectTab} live={live} expert={expert} embedded />}
+    />
   );
 }
