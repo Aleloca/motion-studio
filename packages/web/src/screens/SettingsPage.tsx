@@ -1,6 +1,7 @@
-import type { DoctorCheck, ProviderId, SecretStatus, WorkspaceSettings, WorkspaceSettingsView } from '@motion-studio/shared';
+import { LOCALES, type DoctorCheck, type LanguageSetting, type ProviderId, type SecretStatus, type WorkspaceSettings, type WorkspaceSettingsView } from '@motion-studio/shared';
 import { useEffect, useState } from 'react';
 import { api } from '../api.ts';
+import { detectedLocale, useT, type LanguageState } from '../i18n.tsx';
 
 const PROVIDERS: Array<[ProviderId, string, string]> = [['openai', 'OpenAI', 'OPENAI_API_KEY'], ['elevenlabs', 'ElevenLabs', 'ELEVENLABS_API_KEY'], ['pexels', 'Pexels', 'PEXELS_API_KEY'], ['unsplash', 'Unsplash', 'UNSPLASH_ACCESS_KEY']];
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -23,7 +24,29 @@ function KeyRow({ id, label, env, status, onChange }: { id: ProviderId; label: s
   );
 }
 
-export function SettingsPage({ settings, checks, onSaved }: { settings: WorkspaceSettingsView; checks: DoctorCheck[] | null; onSaved(next: WorkspaceSettings): void }) {
+function LanguageSelector({ value, onChange }: { value: LanguageSetting; onChange(next: LanguageState): void }) {
+  const t = useT();
+  const [error, setError] = useState<string | null>(null);
+  const options: Array<[LanguageSetting, string]> = [['system', t.web.settings.languageSystem({ detected: t.web.settings.languageNames[detectedLocale()] })], ...LOCALES.map((l): [LanguageSetting, string] => [l, t.web.settings.languageNames[l]])];
+  const choose = async (setting: LanguageSetting) => {
+    setError(null);
+    try { const r = await api.setLanguage(setting); onChange({ locale: r.locale, setting: r.languageSetting }); }
+    catch (e) { setError(t.web.settings.languageFailed({ detail: msg(e) })); }
+  };
+  return (
+    <section className="card stack" aria-label={t.web.settings.language}>
+      <h2 style={{ margin: 0, fontSize: 17 }}>{t.web.settings.language}</h2>
+      <div role="radiogroup" aria-label={t.web.settings.language} className="row" style={{ gap: 4 }}>
+        {options.map(([id, label]) => (
+          <button key={id} type="button" role="radio" aria-checked={value === id} className={value === id ? 'primary' : ''} onClick={() => void choose(id)}>{label}</button>
+        ))}
+      </div>
+      {error && <p role="alert" className="error" style={{ margin: 0 }}>{error}</p>}
+    </section>
+  );
+}
+
+export function SettingsPage({ settings, checks, language, onLanguage, onSaved }: { settings: WorkspaceSettingsView; checks: DoctorCheck[] | null; language: LanguageSetting; onLanguage(next: LanguageState): void; onSaved(next: WorkspaceSettings): void }) {
   const [secrets, setSecrets] = useState<SecretStatus[]>([]);
   const [domain, setDomain] = useState('');
   const [model, setModel] = useState(settings.model ?? '');
@@ -35,6 +58,7 @@ export function SettingsPage({ settings, checks, onSaved }: { settings: Workspac
     <main className="page stack" style={{ maxWidth: 900 }}>
       <h1 style={{ margin: 0, fontSize: 24 }}>Impostazioni</h1>
       {error && <p role="alert" className="error">{error}</p>}
+      <LanguageSelector value={language} onChange={onLanguage} />
       <section className="card stack" aria-label="Chiavi dei provider">
         <h2 style={{ margin: 0, fontSize: 17 }}>Chiavi dei provider</h2>
         <p className="muted" style={{ margin: 0, fontSize: 13 }}>Le chiavi restano nel portachiavi del sistema: l'agente non le vede mai.</p>

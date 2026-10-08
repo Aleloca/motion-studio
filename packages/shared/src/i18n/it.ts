@@ -416,4 +416,24 @@ export const it: Messages = {
     tone: 'tono di voce',
     photoStyle: 'stile fotografico',
   },
+  web: {
+    common: {
+      remove: 'Rimuovi',
+      delete: 'Elimina',
+      confirmDelete: 'Conferma eliminazione',
+      chooseFolder: 'Scegli cartella…',
+      revealFolder: 'Mostra nella cartella',
+      send: 'Invia',
+      unreadable: 'Non leggibile',
+    },
+    api: {
+      httpError: (p) => `Errore ${p.status}`,
+    },
+    settings: {
+      language: 'Lingua',
+      languageSystem: (p) => `Sistema (${p.detected})`,
+      languageNames: { en: 'English', it: 'Italiano' },
+      languageFailed: (p) => `Lingua non cambiata: ${p.detail}`,
+    },
+  },
 };

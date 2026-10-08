@@ -1,4 +1,5 @@
-import type { ApprovalDecision, ApprovalRequest, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, PermissionsFile, ProjectListItem, SecretStatus, ProviderId, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
+import type { ApprovalDecision, ApprovalRequest, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, PermissionsFile, ProjectListItem, SecretStatus, ProviderId, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
+import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, uiToken } from './uiToken.ts';
 
 export class ApiError extends Error {
@@ -15,7 +16,7 @@ async function parse<T>(res: Response): Promise<T> {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 401 && (data as { code?: string }).code === 'ui-token') markPairingNeeded();
-    throw new ApiError(res.status, (data as { error?: string }).error ?? `Errore ${res.status}`);
+    throw new ApiError(res.status, (data as { error?: string }).error ?? currentMessages().web.api.httpError({ status: res.status }));
   }
   return data as T;
 }
@@ -48,6 +49,7 @@ export const api = {
   getWorkspace: () => request<WorkspaceInfo>('GET', '/api/workspace'),
   setWorkspace: (path: string) => request<{ path: string; settings: WorkspaceSettings }>('PUT', '/api/workspace', { path }),
   updateSettings: (patch: Partial<WorkspaceSettings>) => request<WorkspaceSettings>('PUT', '/api/settings', patch),
+  setLanguage: (language: LanguageSetting) => request<{ locale: Locale; languageSetting: LanguageSetting }>('PUT', '/api/settings/language', { language }),
   getSecrets: () => request<SecretStatus[]>('GET', '/api/secrets'),
   setSecret: (provider: ProviderId, value: string) => request<SecretStatus>('PUT', `/api/secrets/${provider}`, { value }),
   deleteSecret: (provider: ProviderId) => request<SecretStatus>('DELETE', `/api/secrets/${provider}`),

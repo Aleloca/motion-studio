@@ -1,4 +1,4 @@
-import type { DoctorCheck, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
+import type { DoctorCheck, LanguageSetting, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api.ts';
 import { ApprovalsIndicator } from './components/ApprovalsIndicator.tsx';
@@ -9,8 +9,10 @@ import { NewCreative } from './screens/NewCreative.tsx';
 import { ProjectList } from './screens/ProjectList.tsx';
 import { SettingsPage } from './screens/SettingsPage.tsx';
 import { ProjectPage } from './screens/ProjectPage.tsx';
+import { detectedLocale, I18nProvider, type LanguageState } from './i18n.tsx';
 import { href, parseRoute } from './routes.ts';
 import { usePairingNeeded } from './uiToken.ts';
+import type { EventsState } from './eventsReducer.ts';
 import { useServerEvents } from './useServerEvents.ts';
 
 function useHashRoute(): string {
@@ -23,12 +25,26 @@ function useHashRoute(): string {
   return hash;
 }
 
+/** Owns the UI language: the snapshot and `locale` events set it, the language selector applies a change at once. */
 export function App() {
+  const live = useServerEvents();
+  const [chosen, setChosen] = useState<LanguageState | null>(null);
+  // A server message supersedes a choice made here (both carry the same value unless another client changed it).
+  useEffect(() => { if (live.language) setChosen(live.language); }, [live.language]);
+  const language = chosen ?? live.language;
+  const locale = language?.locale ?? detectedLocale();
+  return (
+    <I18nProvider locale={locale}>
+      <AppBody live={live} language={language?.setting ?? 'system'} onLanguage={setChosen} />
+    </I18nProvider>
+  );
+}
+
+function AppBody({ live, language, onLanguage }: { live: EventsState; language: LanguageSetting; onLanguage(next: LanguageState): void }) {
   const [checks, setChecks] = useState<DoctorCheck[] | null>(null);
   const [ws, setWs] = useState<WorkspaceInfo | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
-  const live = useServerEvents();
   const route = useHashRoute();
   const pairing = usePairingNeeded();
   const notified = useRef<Set<string>>(new Set());
@@ -112,7 +128,7 @@ export function App() {
       {r.name === 'new-creative' && <NewCreative key={r.slug} slug={r.slug} />}
       {r.name === 'creative' && <CreativePage key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} expert={settings.expertMode} />}
       {r.name === 'projects' && <ProjectList />}
-      {r.name === 'settings' && <SettingsPage settings={settings} checks={checks} onSaved={(next) => { applyTheme(next.theme); setWs((prev) => (prev ? { ...prev, settings: next } : prev)); }} />}
+      {r.name === 'settings' && <SettingsPage settings={settings} checks={checks} language={language} onLanguage={onLanguage} onSaved={(next) => { applyTheme(next.theme); setWs((prev) => (prev ? { ...prev, settings: next } : prev)); }} />}
     </>
   );
 }

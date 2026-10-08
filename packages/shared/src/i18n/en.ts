@@ -418,4 +418,24 @@ export const en = {
     tone: 'tone of voice',
     photoStyle: 'photo style',
   },
+  web: {
+    common: {
+      remove: 'Remove',
+      delete: 'Delete',
+      confirmDelete: 'Confirm delete',
+      chooseFolder: 'Choose folder…',
+      revealFolder: 'Show in folder',
+      send: 'Send',
+      unreadable: 'Unreadable',
+    },
+    api: {
+      httpError: (p: { status: number }) => `Error ${p.status}`,
+    },
+    settings: {
+      language: 'Language',
+      languageSystem: (p: { detected: string }) => `System (${p.detected})`,
+      languageNames: { en: 'English', it: 'Italiano' },
+      languageFailed: (p: { detail: string }) => `Language not changed: ${p.detail}`,
+    },
+  },
 } as const satisfies Catalog;

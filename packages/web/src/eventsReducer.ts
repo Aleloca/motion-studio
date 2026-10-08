@@ -1,6 +1,6 @@
-import type { AgentEvent, ApprovalRequest, JobSummary, ServerMessage } from '@motion-studio/shared';
+import type { AgentEvent, ApprovalRequest, JobSummary, LanguageSetting, Locale, ServerMessage } from '@motion-studio/shared';
 
-export interface EventsState { approvals: Record<string, ApprovalRequest>; jobs: Record<string, JobSummary>; events: Record<string, AgentEvent[]>; creativeTicks: Record<string, number>; projectTicks: Record<string, number> }
+export interface EventsState { approvals: Record<string, ApprovalRequest>; jobs: Record<string, JobSummary>; events: Record<string, AgentEvent[]>; creativeTicks: Record<string, number>; projectTicks: Record<string, number>; /** Unset until the first snapshot. */ language?: { locale: Locale; setting: LanguageSetting } | null }
 export const initialEventsState: EventsState = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
 const MAX_EVENTS = 2000;
 
@@ -12,12 +12,12 @@ export function eventsReducer(state: EventsState, msg: ServerMessage): EventsSta
         ...state,
         jobs: Object.fromEntries(msg.jobs.map((j) => [j.id, j])),
         approvals: Object.fromEntries((msg.approvals ?? []).map((a) => [a.id, a])),
+        language: msg.locale ? { locale: msg.locale, setting: msg.languageSetting ?? 'system' } : state.language,
         creativeTicks: Object.fromEntries(Object.entries(state.creativeTicks).map(([k, v]) => [k, v + 1])),
         projectTicks: Object.fromEntries(Object.entries(state.projectTicks).map(([k, v]) => [k, v + 1])),
       };
     case 'locale':
-      // Handled by the language provider; nothing to keep in this state.
-      return state;
+      return { ...state, language: { locale: msg.locale, setting: msg.setting } };
     case 'approval':
       return { ...state, approvals: { ...state.approvals, [msg.approval.id]: msg.approval } };
     case 'approval_resolved': {
