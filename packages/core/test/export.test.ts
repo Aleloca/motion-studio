@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { VersionEntry } from '@motion-studio/shared';
@@ -43,6 +43,32 @@ describe('exportVersion', () => {
     await symlink('/etc/hosts', join(creativeDir, 'outputs', 'v2', 'leak.mp4'));
     expect((await exportVersion({ creativeDir, version: lonely, destination: dest, slug: 'x' }).catch((e) => e)).status).toBe(404);
   });
+  it('keeps target names inside the destination whatever the format or slug', async () => {
+    const evil = { ...version, outputs: [{ ...version.outputs[0]!, format: 'x/../../y' }, { ...version.outputs[0]!, format: '../..' }] };
+    const r = await exportVersion({ creativeDir, version: evil, destination: dest, slug: '../s/..' });
+    for (const f of r.files) expect(join(f.to, '..')).toBe(dest);
+    expect(await readdir(base)).toEqual(['Consegna cliente', 'creative']);
+    expect((await readdir(dest)).length).toBe(2);
+  });
+  it('reports skipped outputs by name', async () => {
+    const more = { ...version, outputs: [...version.outputs, { ...version.outputs[0]!, file: 'missing.mp4' }, { ...version.outputs[0]!, file: '../x.mp4' }] };
+    const r = await exportVersion({ creativeDir, version: more, destination: dest, slug: 'x' });
+    expect(r.files).toHaveLength(2);
+    expect(r.skipped).toEqual(['missing.mp4', '../x.mp4']);
+  });
+  it('turns a mid-way copy failure into a readable error and removes the partial target', async () => {
+    const { copyFile } = await import('node:fs/promises');
+    let calls = 0;
+    const copy = async (f: string, t: string, m: number) => {
+      if (++calls === 2) { await writeFile(t, 'par'); throw Object.assign(new Error(`ENOSPC: no space left, copyfile '${f}' -> '${t}'`), { code: 'ENOSPC' }); }
+      await copyFile(f, t, m);
+    };
+    const err = await exportVersion({ creativeDir, version, destination: dest, slug: 'x', copy }).catch((e) => e);
+    expect(err.status).toBe(500);
+    expect(err.message).toBe(`Esportazione interrotta: spazio su disco esaurito. File già copiati: 1 in ${dest}`);
+    expect(err.message).not.toContain(creativeDir);
+    expect(await readdir(dest)).toEqual(['x-instagram-reel-9x16-v2.mp4']);
+  });
   it('skips output names that are not plain file names', async () => {
     await writeFile(join(creativeDir, 'secret.mp4'), 'secret');
     const evil = { ...version, outputs: [{ ...version.outputs[0]!, file: '../../secret.mp4' }, { ...version.outputs[0]!, file: 'sub/x.mp4' }, { ...version.outputs[0]!, file: '..' }] };
@@ -52,7 +78,7 @@ describe('exportVersion', () => {
     const outside = join(base, 'outside');
     await mkdir(outside);
     await writeFile(join(outside, 'instagram-reel-9x16.mp4'), 'stolen');
-    await (await import('node:fs/promises')).rm(join(creativeDir, 'outputs', 'v2'), { recursive: true });
+    await rm(join(creativeDir, 'outputs', 'v2'), { recursive: true });
     await symlink(outside, join(creativeDir, 'outputs', 'v2'));
     expect((await exportVersion({ creativeDir, version, destination: dest, slug: 'x' }).catch((e) => e)).status).toBe(404);
   });

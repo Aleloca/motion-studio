@@ -1,17 +1,42 @@
-import { access, constants, copyFile, lstat, mkdir, realpath, stat } from 'node:fs/promises';
+import { access, constants, copyFile, lstat, mkdir, realpath, rm, stat } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path';
 import type { VersionEntry } from '@motion-studio/shared';
 import { WorkspaceError } from '../workspace-store.ts';
 
-export interface ExportResult { destination: string; files: Array<{ from: string; to: string }> }
+export interface ExportResult { destination: string; files: Array<{ from: string; to: string }>; skipped: string[] }
 
-const isInside = (p: string, base: string) => p === base || p.startsWith(base.endsWith(sep) ? base : base + sep);
+const CASE_INSENSITIVE = process.platform === 'darwin' || process.platform === 'win32';
+const fold = (p: string) => (CASE_INSENSITIVE ? p.toLowerCase() : p);
+const isInside = (p: string, base: string) => {
+  const a = fold(p);
+  const b = fold(base);
+  return a === b || a.startsWith(b.endsWith(sep) ? b : b + sep);
+};
 
-async function copyUnique(from: string, dir: string, stem: string, ext: string): Promise<string> {
+/** A file-name segment: only [A-Za-z0-9._-], no leading dots. */
+const safeSegment = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '') || '_';
+
+type CopyFn = (from: string, to: string, mode: number) => Promise<void>;
+
+/** Copies without overwriting; null when the computed target would not be a direct child of `dir`. */
+async function copyUnique(copy: CopyFn, from: string, dir: string, stem: string, ext: string): Promise<string | null> {
   for (let i = 1; ; i++) {
     const to = join(dir, i === 1 ? `${stem}${ext}` : `${stem}-${i}${ext}`);
-    try { await copyFile(from, to, constants.COPYFILE_EXCL); return to; }
-    catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; }
+    if (dirname(to) !== dir) return null;
+    try { await copy(from, to, constants.COPYFILE_EXCL); return to; }
+    catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') { (e as { target?: string }).target = to; throw e; }
+    }
+  }
+}
+
+function reasonOf(e: unknown): string {
+  switch ((e as NodeJS.ErrnoException).code) {
+    case 'ENOSPC': return 'spazio su disco esaurito';
+    case 'EACCES': case 'EPERM': case 'EROFS': return 'permesso negato';
+    case 'EDQUOT': return 'quota di spazio esaurita';
+    case 'ENAMETOOLONG': return 'nome del file troppo lungo';
+    default: return 'errore di scrittura';
   }
 }
 
@@ -34,7 +59,7 @@ async function resolveLoose(p: string): Promise<string> {
  * Copies the outputs of a version into `destination` using channel names (`<slug>-<format>-v<n>.<ext>`), never overwriting.
  * `forbiddenRoot`: destinations inside it are refused (exports are meant for delivery outside the workspace).
  */
-export async function exportVersion(opts: { creativeDir: string; version: VersionEntry; destination: string; slug: string; forbiddenRoot?: string }): Promise<ExportResult> {
+export async function exportVersion(opts: { creativeDir: string; version: VersionEntry; destination: string; slug: string; forbiddenRoot?: string; copy?: CopyFn }): Promise<ExportResult> {
   const dest = opts.destination.trim();
   if (!isAbsolute(dest)) throw new WorkspaceError(400, 'Scegli una cartella di destinazione (percorso assoluto)');
   if (opts.forbiddenRoot) {
@@ -51,17 +76,28 @@ export async function exportVersion(opts: { creativeDir: string; version: Versio
   const realOutDir = await realpath(outDir).catch(() => null);
   const realCreative = await realpath(opts.creativeDir).catch(() => null);
   const files: ExportResult['files'] = [];
-  if (realOutDir && realCreative && isInside(realOutDir, join(realCreative, 'outputs'))) {
-    for (const o of opts.version.outputs) {
-      if (!o.file || o.file === '.' || o.file === '..' || o.file !== basename(o.file) || o.file.includes('\\') || o.file.includes('/')) continue;
-      const from = join(outDir, o.file);
-      if (!(await lstat(from).catch(() => null))?.isFile()) continue;
-      const realFrom = await realpath(from).catch(() => null);
-      if (!realFrom || !isInside(realFrom, realOutDir + sep)) continue;
-      const ext = extname(o.file).toLowerCase();
-      files.push({ from, to: await copyUnique(from, dest, `${opts.slug}-${o.format}-v${n}`, ext) });
+  const skipped: string[] = [];
+  const copy = opts.copy ?? ((f, t, m) => copyFile(f, t, m));
+  const slug = safeSegment(opts.slug);
+  const canRead = Boolean(realOutDir && realCreative && isInside(realOutDir, join(realCreative, 'outputs')));
+  for (const o of opts.version.outputs) {
+    if (!canRead || !realOutDir) { skipped.push(o.file); continue; }
+    if (!o.file || o.file === '.' || o.file === '..' || o.file !== basename(o.file) || o.file.includes('\\') || o.file.includes('/')) { skipped.push(o.file); continue; }
+    const from = join(outDir, o.file);
+    if (!(await lstat(from).catch(() => null))?.isFile()) { skipped.push(o.file); continue; }
+    const realFrom = await realpath(from).catch(() => null);
+    if (!realFrom || !isInside(realFrom, realOutDir + sep)) { skipped.push(o.file); continue; }
+    const rawExt = extname(o.file).slice(1).toLowerCase();
+    const ext = rawExt ? `.${rawExt.replace(/[^a-z0-9]/g, '_')}` : '';
+    try {
+      const to = await copyUnique(copy, from, dest, `${slug}-${safeSegment(o.format)}-v${n}`, ext);
+      if (to) files.push({ from, to }); else skipped.push(o.file);
+    } catch (e) {
+      const target = (e as { target?: string }).target;
+      if (target) await rm(target, { force: true }).catch(() => undefined);
+      throw new WorkspaceError(500, `Esportazione interrotta: ${reasonOf(e)}. File già copiati: ${files.length} in ${dest}`);
     }
   }
   if (!files.length) throw new WorkspaceError(404, `Nessun output da esportare per v${n}`);
-  return { destination: dest, files };
+  return { destination: dest, files, skipped };
 }

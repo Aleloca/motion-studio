@@ -264,4 +264,12 @@ describe('creative export', { timeout: 20_000 }, () => {
     expect(inside.statusCode).toBe(400);
     expect(inside.json().error).toBe('Scegli una cartella fuori dal workspace di Motion Studio');
   });
+  it('requires the UI token', async () => {
+    const guarded = await buildServer({ uiToken: 'ab'.repeat(32), sandbox: async () => ({ available: false, reason: 'test' }),
+      appConfig: new AppConfigStore(join(base, 'config2')), git: new Git(), doctor: async () => [],
+      runner: new ClaudeCodeRunner([process.execPath, FAKE]) });
+    const r = await guarded.inject({ method: 'POST', url: '/api/projects/acme/creatives/x/versions/1/export', payload: { destination: join(base, 'out') } });
+    await guarded.close();
+    expect(r.statusCode).toBe(401);
+  });
 });
