@@ -50,4 +50,13 @@ describe('SettingsPage', () => {
     await waitFor(() => expect(api.updateSettings).toHaveBeenCalledWith({ extraAllowedDomains: ['api.acme.io'] }));
     expect(onSaved).toHaveBeenCalled();
   });
+  it('says the sandbox is active only when it is on in the settings and available', () => {
+    const active = "Sandbox attiva: l'agente lavora isolato nella cartella del progetto";
+    const { unmount } = render(<SettingsPage settings={{ ...settings, sandboxMode: 'off' }} checks={checks} onSaved={() => {}} />);
+    expect(screen.queryByText(active)).toBeNull();
+    unmount();
+    render(<SettingsPage settings={settings} checks={[{ ...checks[0]!, ok: false, message: 'Isolamento disattivato nelle Impostazioni' }]} onSaved={() => {}} />);
+    expect(screen.queryByText(active)).toBeNull();
+    expect(screen.getByText('Isolamento disattivato nelle Impostazioni')).toBeTruthy();
+  });
 });

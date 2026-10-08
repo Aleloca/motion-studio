@@ -49,7 +49,7 @@ export function SettingsPage({ settings, checks, onSaved }: { settings: Workspac
       </section>
       <section className="card stack" aria-label="Sicurezza">
         <h2 style={{ margin: 0, fontSize: 17 }}>Sicurezza</h2>
-        {sandbox?.ok ? <p style={{ margin: 0 }}>Sandbox attiva: l'agente lavora isolato nella cartella del progetto</p> : <p className="warn" style={{ margin: 0 }}>{sandbox?.message ?? 'Stato della sandbox non disponibile'}</p>}
+        {settings.sandboxMode === 'auto' && sandbox?.ok ? <p style={{ margin: 0 }}>Sandbox attiva: l'agente lavora isolato nella cartella del progetto</p> : <p className="warn" style={{ margin: 0 }}>{sandbox?.message ?? 'Stato della sandbox non disponibile'}</p>}
         <label className="row" style={{ gap: 6 }}>Isolamento dell'agente
           <select aria-label="Isolamento dell'agente" value={settings.sandboxMode} onChange={(e) => void save({ sandboxMode: e.target.value as WorkspaceSettings['sandboxMode'] })}>
             <option value="auto">Automatico (consigliato)</option>

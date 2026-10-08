@@ -1,18 +1,32 @@
 import type { ApprovalDecision, ApprovalRequest, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, PermissionsFile, ProjectListItem, SecretStatus, ProviderId, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
+import { markPairingNeeded, uiToken } from './uiToken.ts';
 
 export class ApiError extends Error {
   constructor(public readonly status: number, message: string) { super(message); this.name = 'ApiError'; }
 }
 
+/** Headers of every API call: the UI token (the server refuses calls without it). */
+function headers(extra: Record<string, string> = {}): Record<string, string> {
+  const token = uiToken();
+  return token ? { ...extra, 'x-motion-studio-ui': token } : extra;
+}
+
+async function parse<T>(res: Response): Promise<T> {
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (res.status === 401 && (data as { code?: string }).code === 'ui-token') markPairingNeeded();
+    throw new ApiError(res.status, (data as { error?: string }).error ?? `Errore ${res.status}`);
+  }
+  return data as T;
+}
+
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
     method,
-    headers: body === undefined ? undefined : { 'content-type': 'application/json' },
+    headers: headers(body === undefined ? {} : { 'content-type': 'application/json' }),
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(res.status, (data as { error?: string }).error ?? `Errore ${res.status}`);
-  return data as T;
+  return parse<T>(res);
 }
 
 export interface CodebaseCheck { path: string; note?: string; exists: boolean }
@@ -21,10 +35,8 @@ const enc = (rel: string) => rel.split('/').map(encodeURIComponent).join('/');
 async function upload<T>(url: string, files: File[]): Promise<T> {
   const form = new FormData();
   for (const f of files) form.append('files', f, f.name);
-  const res = await fetch(url, { method: 'POST', body: form });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(res.status, (data as { error?: string }).error ?? `Errore ${res.status}`);
-  return data as T;
+  const res = await fetch(url, { method: 'POST', body: form, headers: headers() });
+  return parse<T>(res);
 }
 
 export interface CatalogState { presets: FormatPreset[]; error: string | null; path: string }

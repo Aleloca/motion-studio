@@ -9,5 +9,9 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App.tsx';
 import './theme.css';
+import { captureUiToken } from './uiToken.ts';
+
+// Before any routing or API call: the terminal link carries the UI token in the fragment.
+captureUiToken();
 
 createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>);

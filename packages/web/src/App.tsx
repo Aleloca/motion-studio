@@ -10,6 +10,7 @@ import { ProjectList } from './screens/ProjectList.tsx';
 import { SettingsPage } from './screens/SettingsPage.tsx';
 import { ProjectPage } from './screens/ProjectPage.tsx';
 import { href, parseRoute } from './routes.ts';
+import { usePairingNeeded } from './uiToken.ts';
 import { useServerEvents } from './useServerEvents.ts';
 
 function useHashRoute(): string {
@@ -29,14 +30,19 @@ export function App() {
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const live = useServerEvents();
   const route = useHashRoute();
+  const pairing = usePairingNeeded();
   const notified = useRef<Set<string>>(new Set());
   useEffect(() => {
+    // Only the pending requests are remembered: the set never grows beyond them.
+    for (const id of notified.current) if (!live.approvals[id]) notified.current.delete(id);
     for (const a of Object.values(live.approvals)) {
       if (notified.current.has(a.id)) continue;
       notified.current.add(a.id);
-      if (typeof Notification !== 'undefined' && document.visibilityState === 'hidden' && Notification.permission === 'granted') {
-        new Notification('Motion Studio: serve la tua approvazione', { body: a.title });
-      }
+      try {
+        if (typeof Notification !== 'undefined' && document.visibilityState === 'hidden' && Notification.permission === 'granted') {
+          new Notification('Motion Studio: serve la tua approvazione', { body: a.title });
+        }
+      } catch { /* some browsers only allow notifications from a service worker */ }
     }
   }, [live.approvals]);
 
@@ -50,6 +56,15 @@ export function App() {
   useEffect(refresh, [refresh]);
 
   const blocking = checks?.some((c) => c.required && !c.ok) ?? true;
+  if (pairing) {
+    return (
+      <main className="page stack" style={{ maxWidth: 640 }}>
+        <h1 style={{ margin: 0, fontSize: 24 }}>Motion Studio</h1>
+        <p role="alert" style={{ margin: 0 }}>Apri Motion Studio dal link mostrato nel terminale</p>
+        <p className="muted" style={{ margin: 0 }}>Per vederlo di nuovo esegui <span className="mono">motion-studio --print-url</span>.</p>
+      </main>
+    );
+  }
   if (!ws || !ws.settings || blocking) {
     return (
       <Onboarding checks={checks} workspacePath={ws?.path ?? null} workspaceError={ws?.error ?? null} error={loadError}

@@ -1,9 +1,10 @@
 import type { DoctorCheck, WorkspaceInfo } from '@motion-studio/shared';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../src/api.ts';
 import { App } from '../src/App.tsx';
+import { markPairingNeeded, resetUiTokenForTests } from '../src/uiToken.ts';
 
 vi.mock('../src/api.ts', () => ({
   ApiError: class extends Error {},
@@ -60,6 +61,34 @@ describe('App startup', () => {
     start(Promise.resolve({ path: '/w', settings, error: null }), Promise.resolve(checks));
     await userEvent.click(await screen.findByLabelText('Modalità esperto'));
     expect(screen.queryByText('Benvenuto in Motion Studio')).toBeNull();
+  });
+});
+
+describe('App pairing and notifications', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); resetUiTokenForTests(); });
+  it('shows a full page asking to open the app from the terminal link when the token is refused', async () => {
+    start(Promise.resolve({ path: '/w', settings, error: null }));
+    await screen.findByLabelText('Modalità esperto');
+    act(() => markPairingNeeded());
+    expect(await screen.findByText('Apri Motion Studio dal link mostrato nel terminale')).toBeTruthy();
+    expect(screen.queryByLabelText('Modalità esperto')).toBeNull();
+  });
+  it('survives a Notification constructor that throws', async () => {
+    let sockets: FakeEventsSocket[] = [];
+    class FakeEventsSocket { onmessage: ((e: { data: string }) => void) | null = null; onclose: unknown; onerror: unknown; constructor() { sockets.push(this); } close() {} }
+    class ThrowingNotification { static permission = 'granted'; constructor() { throw new Error('Illegal constructor'); } }
+    vi.stubGlobal('Notification', ThrowingNotification);
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    vi.mocked(api.getDoctor).mockReturnValue(Promise.resolve(okChecks));
+    vi.mocked(api.getWorkspace).mockReturnValue(Promise.resolve({ path: '/w', settings, error: null }));
+    vi.stubGlobal('WebSocket', FakeEventsSocket);
+    render(<App />);
+    await screen.findByLabelText('Modalità esperto');
+    const approval = { id: 'a1', jobId: 'j1', projectSlug: 'acme', creativeSlug: null, kind: 'tool', title: 'Eseguire un comando', detail: 'ls', toolName: 'Bash', alwaysRule: null, createdAt: 'x', expiresAt: '2026-10-08T10:10:00.000Z' };
+    act(() => sockets.at(-1)!.onmessage!({ data: JSON.stringify({ type: 'approval', approval }) }));
+    expect(await screen.findByText('1 approvazione in attesa')).toBeTruthy();
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+    sockets = [];
   });
 });
 
