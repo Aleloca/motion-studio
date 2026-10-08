@@ -32,7 +32,6 @@ const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 2;
 const ZOOM_STEP = 0.1;
 const TOOL_KEYS: Record<string, Tool> = { v: 'select', c: 'comment', h: 'hand' };
-const TITLE_MAX = 80;
 
 /** Keys typed into a field are text, not canvas shortcuts. */
 const isTyping = (e: KeyboardEvent) => {
@@ -190,7 +189,7 @@ export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasPr
   const title = savedTitle ?? detail?.creative.title ?? '';
   const saveTitle = async (next: string) => {
     setRenaming(null);
-    const value = next.trim().slice(0, TITLE_MAX);
+    const value = next.trim();
     if (!detail || !value || value === detail.creative.title) return;
     setSavedTitle(value);
     try {
@@ -330,13 +329,14 @@ export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasPr
                 <span>{c.versions.button({ n: version.n, total: versions.length })}</span><Icon name="chevron" size={11} />
               </button>
               <Popover open={menuOpen} onClose={() => setMenuOpen(false)} anchor={versionButton} placement="bottom-end" width={320}>
-                <VersionMenu slug={slug} creative={creative} versions={versions} shown={version.n}
+                <VersionMenu slug={slug} creative={creative} versions={versions} shown={version.n} resumeFrom={cr.resumeFrom?.version ?? null}
                   onPick={(v) => { setPicked(v); setMenuOpen(false); }}
                   onCompare={openCompare}
                   onRestart={(v) => {
                     setMenuOpen(false);
-                    // Undo goes back to the previous resume point (the one resumed from, else the latest).
-                    const previous = pinSource;
+                    // Undo restores exactly the previous resume point. Without one (the latest) there is nothing exact to
+                    // restore (the core cannot clear a resume point): no Undo; the menu offers the latest explicitly.
+                    const previous = cr.resumeFrom?.version ?? null;
                     act(() => api.restoreVersion(slug, creative, v), () => {
                       reload();
                       toast.show(c.versions.restarted({ n: v }), {
@@ -470,7 +470,8 @@ export function CreativeCanvas({ slug, creative, live, focus }: CreativeCanvasPr
           compareSrc={null} versionN={version?.n ?? null} compareN={null} verified={focusOut?.verified !== false}
           pins={pins.filter((p) => p.format === focusPreset.id)}
           pinNumbers={pins.flatMap((p, i) => (p.format === focusPreset.id ? [i + 1] : []))}
-          onAddPin={(pin) => { if (version) setStored((ps) => [...ps, { pin, version: version.n }]); }} onClose={() => go(href.creative(slug, creative))} />
+          onAddPin={canComment && pinSource !== null ? (pin) => setStored((ps) => [...ps, { pin, version: pinSource }]) : undefined}
+          commentLock={!canComment && pinSource !== null ? c.versions.commentsOn({ n: pinSource }) : undefined} onClose={() => go(href.creative(slug, creative))} />
       ) : null}
     </div>
   );
@@ -520,7 +521,7 @@ function BarTitle({ title, renaming, onStart, onChange, onSave, onCancel, state 
       <span className="ms-crumb ms-last ms-cv-crumb">
         <span className="ms-faint" aria-hidden="true">/</span>
         {renaming !== null ? (
-          <Input ref={field} className="ms-cv-title-input" aria-label={c.field} value={renaming} maxLength={TITLE_MAX} spellCheck={false}
+          <Input ref={field} className="ms-cv-title-input" aria-label={c.field} value={renaming} spellCheck={false}
             onChange={(e) => onChange(e.target.value)} onBlur={() => finish(true)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') { e.preventDefault(); finish(true); }

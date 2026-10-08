@@ -13,6 +13,8 @@ export interface VersionMenuProps {
   versions: VersionEntry[];
   /** The version on the canvas. */
   shown: number;
+  /** The version the next change resumes from, when one was chosen (null: the latest). */
+  resumeFrom: number | null;
   onPick(n: number): void;
   onCompare(): void;
   onRestart(n: number): void;
@@ -21,11 +23,13 @@ export interface VersionMenuProps {
 
 const sameDay = (iso: string) => new Date(iso).toDateString() === new Date().toDateString();
 
-export function VersionMenu({ slug, creative, versions, shown, onPick, onCompare, onRestart, onReveal }: VersionMenuProps) {
+export function VersionMenu({ slug, creative, versions, shown, resumeFrom, onPick, onCompare, onRestart, onReveal }: VersionMenuProps) {
   const t = useT();
   const v = t.web.canvas.versions;
   const locale = useLocale();
   const latest = versions.at(-1)?.n ?? 0;
+  // Restarting is offered on any version but the current resume point (also on the latest, to go back to it).
+  const canRestart = shown !== (resumeFrom ?? latest);
   const when = (iso: string) => formatDate(locale, iso, sameDay(iso) ? TIME_OF_DAY : { day: 'numeric', month: 'short', ...TIME_OF_DAY });
   return (
     <div className="ms-vmenu" role="dialog" aria-label={v.title}>
@@ -49,10 +53,10 @@ export function VersionMenu({ slug, creative, versions, shown, onPick, onCompare
           );
         })}
       </div>
-      {shown !== latest ? <p className="ms-vmenu-explain">{v.restartNote({ n: shown })}</p> : null}
+      {canRestart ? <p className="ms-vmenu-explain">{v.restartNote({ n: shown })}</p> : null}
       <div className="ms-vmenu-foot">
         <Button size="sm" className="ms-grow" disabled={versions.length < 2} onClick={onCompare}>{v.compare}</Button>
-        {shown !== latest ? <Button size="sm" className="ms-grow" onClick={() => onRestart(shown)}>{v.restart}</Button> : null}
+        {canRestart ? <Button size="sm" className="ms-grow" onClick={() => onRestart(shown)}>{v.restart}</Button> : null}
         <Button size="sm" variant="ghost" icon aria-label={isMac() ? v.showInFinder : v.showInFolder} title={isMac() ? v.showInFinder : v.showInFolder} onClick={() => onReveal(shown)}>
           <Icon name="folder" size={14} />
         </Button>

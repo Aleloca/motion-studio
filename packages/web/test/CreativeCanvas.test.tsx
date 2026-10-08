@@ -468,21 +468,60 @@ describe('CreativeCanvas · review round 1', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Esporta “Lancio estivo”' })).toBeNull());
   });
 
-  it('Restart from here offers Undo back to the previous resume point', async () => {
+  it('Restart from here: Undo only when there was a resume point, restoring exactly that version', async () => {
     const { __resetToasts, getToasts } = await import('../src/ui/toast.tsx');
+    const restart = async (pick: number) => {
+      await pickVersion(pick);
+      await userEvent.click(screen.getByRole('button', { name: /apri la cronologia/ }));
+      await userEvent.click(within(await screen.findByRole('dialog', { name: 'Versioni' })).getByRole('button', { name: 'Riparti da qui' }));
+      await waitFor(() => expect(getToasts().some((x) => x.text === `Le prossime modifiche partono dalla v${pick}`)).toBe(true));
+      return getToasts().find((x) => x.text === `Le prossime modifiche partono dalla v${pick}`)!;
+    };
+    // No resume point before: no exact undo exists, so no Undo.
     __resetToasts();
     detail = makeDetail([version(1), version(2)]);
+    const first = render(<Harness live={emptyLive()} />);
+    await ready();
+    expect((await restart(1)).action).toBeUndefined();
+    first.unmount();
+    // With a resume point (v2 of 3), Undo restores exactly v2.
+    __resetToasts();
+    detail = makeDetail([version(1), version(2), version(3)], { resumeFrom: { version: 2, sessionId: 's' } });
     render(<Harness live={emptyLive()} />);
     await ready();
-    await pickVersion(1);
-    await userEvent.click(screen.getByRole('button', { name: /apri la cronologia/ }));
-    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Versioni' })).getByRole('button', { name: 'Riparti da qui' }));
-    await waitFor(() => expect(getToasts().some((x) => x.text === 'Le prossime modifiche partono dalla v1')).toBe(true));
-    const item = getToasts().find((x) => x.text === 'Le prossime modifiche partono dalla v1')!;
+    const item = await restart(1);
     expect(item.action?.label).toBe('Annulla');
     act(() => item.action!.run());
     await waitFor(() => expect(api.restoreVersion).toHaveBeenLastCalledWith('acme', 'lancio', 2));
     __resetToasts();
+  });
+
+  it('while a resume point is set, the latest version offers Restart from here as the way back', async () => {
+    detail = makeDetail([version(1), version(2)], { resumeFrom: { version: 1, sessionId: 's' } });
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    // v2 (the latest) is on screen.
+    await userEvent.click(screen.getByRole('button', { name: 'Versione 2 di 2, apri la cronologia' }));
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Versioni' })).getByRole('button', { name: 'Riparti da qui' }));
+    expect(api.restoreVersion).toHaveBeenCalledWith('acme', 'lancio', 2);
+    // On the resume version itself there is nothing to restart.
+    await pickVersion(1);
+    await userEvent.click(screen.getByRole('button', { name: /apri la cronologia/ }));
+    expect(within(await screen.findByRole('dialog', { name: 'Versioni' })).queryByRole('button', { name: 'Riparti da qui' })).toBeNull();
+  });
+
+  it('the interim focus view adds comments only on the pin source', async () => {
+    detail = makeDetail([version(1), version(2)], { resumeFrom: { version: 1, sessionId: 's' } });
+    const view = render(<CreativeCanvas slug="acme" creative="lancio" live={emptyLive()} focus="instagram-post-1x1" />);
+    const dialog = await screen.findByRole('dialog', { name: 'Instagram · Post 1:1' });
+    // v2 is shown, comments go to v1: no adding, and the reason is on screen.
+    expect((within(dialog).getByRole('button', { name: 'Aggiungi commento' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(within(dialog).getByText('I commenti valgono per la v1: usa Riparti da qui per commentare questa versione.')).toBeTruthy();
+    view.unmount();
+    detail = makeDetail([version(1), version(2)]);
+    render(<CreativeCanvas slug="acme" creative="lancio" live={emptyLive()} focus="instagram-post-1x1" />);
+    const ok = await screen.findByRole('dialog', { name: 'Instagram · Post 1:1' });
+    await waitFor(() => expect((within(ok).getByRole('button', { name: 'Aggiungi commento' }) as HTMLButtonElement).disabled).toBe(false));
   });
 
   it('edits the brief with ui controls: length segments, format chips, same save semantics', async () => {

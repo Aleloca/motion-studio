@@ -7,10 +7,11 @@ const round = (v: number, d: number) => Math.round(v * 10 ** d) / 10 ** d;
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), video[controls], [tabindex]:not([tabindex="-1"])';
 
-export function FocusView({ preset, src, compareSrc, versionN, compareN, verified = true, pins, pinNumbers, onAddPin, onClose }: {
+export function FocusView({ preset, src, compareSrc, versionN, compareN, verified = true, pins, pinNumbers, onAddPin, commentLock, onClose }: {
   preset: FormatPreset; src: string | null; compareSrc: string | null; versionN: number | null; compareN: number | null;
   /** false when the shown output could not be checked with ffprobe. */ verified?: boolean;
-  pins: Pin[]; /** 1-based global numbers of `pins`, so markers match the pending list; defaults to 1..n. */ pinNumbers?: number[]; onAddPin: (pin: Pin) => void; onClose: () => void;
+  pins: Pin[]; /** 1-based global numbers of `pins`, so markers match the pending list; defaults to 1..n. */ pinNumbers?: number[];
+  /** Absent: no comments on this view (`commentLock` says why). */ onAddPin?: (pin: Pin) => void; commentLock?: string; onClose: () => void;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -43,7 +44,7 @@ export function FocusView({ preset, src, compareSrc, versionN, compareN, verifie
     const x = Math.min(1, Math.max(0, round((e.clientX - r.left) / r.width, 3)));
     const y = Math.min(1, Math.max(0, round((e.clientY - r.top) / r.height, 3)));
     const video = videoRef.current;
-    onAddPin({ format: preset.id, x, y, timeSec: video ? round(video.currentTime, 1) : null });
+    onAddPin?.({ format: preset.id, x, y, timeSec: video ? round(video.currentTime, 1) : null });
     setCommenting(false);
   };
 
@@ -75,13 +76,14 @@ export function FocusView({ preset, src, compareSrc, versionN, compareN, verifie
           <span className="mono muted">{preset.width}×{preset.height}</span>
           {src && !verified && <span className="badge">{t.web.formatUi.unverified}</span>}
           <div style={{ flex: 1 }} />
-          <button type="button" aria-pressed={commenting} onClick={() => setCommenting((c) => !c)} disabled={!src}>{t.web.focus.addComment}</button>
+          <button type="button" aria-pressed={commenting} onClick={() => setCommenting((c) => !c)} disabled={!src || !onAddPin} aria-describedby={commentLock ? 'ms-focus-lock' : undefined}>{t.web.focus.addComment}</button>
           <button type="button" onClick={onClose}>{t.common.close}</button>
         </div>
         <div className="row" style={{ alignItems: 'flex-start', gap: 16, flexWrap: 'nowrap' }}>
           {compareSrc !== null && media(compareSrc, compareN, false)}
           {media(src, versionN, true)}
         </div>
+        {commentLock ? <p id="ms-focus-lock" className="muted" role="status" style={{ margin: 0 }}>{commentLock}</p> : null}
         {commenting && <p className="muted" style={{ margin: 0 }}>{t.web.focus.clickHint({ video: Boolean(videoRef.current) })}</p>}
       </div>
     </div>

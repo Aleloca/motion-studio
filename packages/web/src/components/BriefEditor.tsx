@@ -62,9 +62,9 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged }: { sl
   return (
     <form className="ms-brief-form" onSubmit={(e) => { e.preventDefault(); void save(false); }}>
       <label className="ms-brief-lbl" htmlFor={`${id}-title`}>{nc.title}</label>
-      <Input id={`${id}-title`} value={title} maxLength={80} onChange={(e) => setTitle(e.target.value)} />
+      <Input id={`${id}-title`} value={title} onChange={(e) => setTitle(e.target.value)} />
       <label className="ms-brief-lbl" htmlFor={`${id}-goal`}>{cv.goal}</label>
-      <Textarea id={`${id}-goal`} rows={4} maxLength={2000} value={brief.goal} onChange={(e) => set('goal', e.target.value)} />
+      <Textarea id={`${id}-goal`} rows={4} value={brief.goal} onChange={(e) => set('goal', e.target.value)} />
       <label className="ms-brief-lbl" htmlFor={`${id}-msg`}>{nc.keyMessage}</label>
       <Input id={`${id}-msg`} value={brief.message} onChange={(e) => set('message', e.target.value)} />
       <span className="ms-brief-lbl">{cv.length}</span>
