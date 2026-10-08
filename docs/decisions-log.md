@@ -182,6 +182,8 @@ Legenda impatto: 🟢 basso · 🟡 medio · 🔴 alto (sicurezza o prodotto).
 76. 🟢 **Build per macOS arm64 e x64** (Intel), come richiede la spec. In locale è verificata solo la build arm64.
 77. 🟢 **Versioni allineate a 0.5.0** per l'app desktop e il pacchetto npm. La release si ferma se il tag non corrisponde alla versione.
 
+78. 🟡 **Nessun permesso "Sempre" su un'intera cartella di primo livello** (`/Users`, `/home`, `/Volumes`, `/opt`…). Il primo giro della CI su Linux ha mostrato che `/Users/**` e `/home/**` passavano, perché venivano rifiutate solo le cartelle che contengono la home. Ora la regola vale su ogni sistema.
+
 ### Esito della fase 5
 - L'app impacchettata (arm64, non firmata, 311 MB) è stata avviata in modo da simulare il Finder. Trova `claude` e tutte le dipendenze tramite la shell di login, e il Doctor dà tutto OK. Il pacchetto include i binari del portachiavi per arm64 e x64.
 - Il pacchetto npm, installato dal tarball, si avvia. L'export reale produce i file nominati per canale. Una seconda istanza rimanda alla prima.
