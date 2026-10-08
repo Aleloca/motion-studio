@@ -2,7 +2,7 @@ import { Fragment, type ReactNode } from 'react';
 import { cx } from './cx.ts';
 
 // Safe Markdown subset for agent and user text (spec point 32): **bold**, *italic* / _italic_, `code`, bullet lists,
-// [label](https://…) and bare http(s) URLs. Everything else, HTML included, stays text: React escapes it and no
+// [label](https://…), bare http(s) URLs and, with `headings`, `#` titles. Everything else, HTML included, stays text: React escapes it and no
 // dangerouslySetInnerHTML is used anywhere.
 //
 // Linear time on hostile input: every pattern's body stops at the next delimiter of its kind (bold cannot contain
@@ -84,17 +84,29 @@ function inline(text: string, keyPrefix: string, links = true): ReactNode[] {
   return out;
 }
 
-type Block = { kind: 'p'; lines: string[] } | { kind: 'ul'; items: string[] };
+type Block = { kind: 'p'; lines: string[] } | { kind: 'ul'; items: string[] } | { kind: 'h'; level: number; text: string };
 
 const BULLET = /^\s*[-*+]\s+(.*)$/;
+const HEADING = /^(#{1,6})[ \t]+(.*)$/;
+/** Drops a closing `##` run and trailing spaces (a loop, not a regex: linear on hostile input). */
+function headingText(raw: string): string {
+  let end = raw.length;
+  while (end > 0 && (raw[end - 1] === '#' || raw[end - 1] === ' ' || raw[end - 1] === '\t')) end--;
+  return raw.slice(0, end);
+}
 
-function blocks(text: string): Block[] {
+function blocks(text: string, headings: boolean): Block[] {
   const out: Block[] = [];
   let cur: Block | null = null;
   for (const line of text.split(/\r?\n/)) {
     const bullet = BULLET.exec(line);
+    const heading = headings ? HEADING.exec(line) : null;
     if (!line.trim()) { cur = null; continue; }
-    if (bullet) {
+    const title = heading ? headingText(heading[2]!) : '';
+    if (heading && title) {
+      out.push({ kind: 'h', level: heading[1]!.length, text: title });
+      cur = null;
+    } else if (bullet) {
       if (cur?.kind !== 'ul') { cur = { kind: 'ul', items: [] }; out.push(cur); }
       cur.items.push(bullet[1]!);
     } else {
@@ -105,19 +117,31 @@ function blocks(text: string): Block[] {
   return out;
 }
 
-export interface MarkdownProps { text: string; className?: string }
+export interface MarkdownProps {
+  text: string;
+  className?: string;
+  /** `#` … `######` lines become headings (documents such as the brand guidelines); off for chat text. */
+  headings?: boolean;
+}
+
+/** `#` → h3, `##` → h4, deeper → h5: documents are shown inside cards and dialogs that have their own h1/h2. */
+const H = ['h3', 'h4', 'h5'] as const;
 
 /** Safe Markdown renderer: see the comment at the top of the file for the supported subset. */
-export function Markdown({ text, className }: MarkdownProps) {
+export function Markdown({ text, className, headings = false }: MarkdownProps) {
   return (
     <div className={cx('ms-md', className)}>
-      {blocks(text).map((b, i) =>
-        b.kind === 'ul' ? (
+      {blocks(text, headings).map((b, i) => {
+        if (b.kind === 'h') {
+          const Tag = H[Math.min(b.level, 3) - 1]!;
+          return <Tag key={i} className="ms-md-h">{inline(b.text, `${i}`)}</Tag>;
+        }
+        return b.kind === 'ul' ? (
           <ul key={i}>{b.items.map((item, j) => <li key={j}>{inline(item, `${i}.${j}`)}</li>)}</ul>
         ) : (
           <p key={i}>{b.lines.map((line, j) => <Fragment key={j}>{j > 0 ? <br /> : null}{inline(line, `${i}.${j}`)}</Fragment>)}</p>
-        ),
-      )}
+        );
+      })}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { EMPTY_BRAND_KIT, messages, type BrandOverview, type BrandProposal } from '@motion-studio/shared';
+import { EMPTY_BRAND_KIT, type BrandOverview } from '@motion-studio/shared';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -16,27 +16,25 @@ const api = {
   listAssets: vi.fn(async () => ({ assets: [asset], error: null, unregistered: ['a.png', 'b.png'] })),
   listReferences: vi.fn(async () => ({ references: [{ file: 'mood.jpg', note: '', useForBrand: true, addedAt: '2026-10-07T10:00:00.000Z' }], error: null })),
   updateAsset: vi.fn(), deleteAsset: vi.fn(), uploadFiles: vi.fn(), registerAssets: vi.fn(), describeAssets: vi.fn(), deleteReference: vi.fn(), updateReference: vi.fn(),
-  applyProposal: vi.fn(), discardProposal: vi.fn(), cancelJob: vi.fn(),
+  applyProposal: vi.fn(), discardProposal: vi.fn(), cancelJob: vi.fn(), getProject: vi.fn(async () => ({ slug: 'acme', project: { name: 'Acme' }, jobKey: 'k' })),
   projectFileUrl: (s: string, r: string) => `/f/${s}/${r}`,
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
-const { BrandPage } = await import('../src/screens/BrandPage.tsx');
+const { Brand } = await import('../src/screens/Brand.tsx');
 const { AssetsPage } = await import('../src/screens/AssetsPage.tsx');
 const { ReferencesPage } = await import('../src/screens/ReferencesPage.tsx');
-const { ProposalReview, describeChange } = await import('../src/components/ProposalReview.tsx');
 const live = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
 const en = (node: React.ReactNode) => render(<I18nProvider locale="en">{node}</I18nProvider>);
 
 describe('brand, assets and references in English', () => {
-  it('shows the brand kit sections, roles and sources', async () => {
-    en(<BrandPage slug="acme" live={live} />);
-    await waitFor(() => screen.getByDisplayValue('Blu'));
-    expect(screen.getByRole('heading', { name: 'Tone and style' })).toBeTruthy();
-    expect(screen.getByText('Website: acme.example')).toBeTruthy();
-    expect(screen.getByRole('option', { name: 'Primary' })).toBeTruthy();
-    expect(screen.getByLabelText('Color hex 1')).toBeTruthy();
-    expect(screen.getByText('Analyzed on 10/7/2026')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Analyze brand' })).toBeTruthy();
+  it('shows the brand sections, roles and sources', async () => {
+    en(<Brand slug="acme" live={live} />);
+    expect(await screen.findByRole('button', { name: 'Edit color Blu' })).toBeTruthy();
+    expect(screen.getByRole('navigation', { name: 'Brand sections' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Colors' })).toBeTruthy();
+    expect(screen.getByText('Primary')).toBeTruthy();
+    expect(screen.getByText('acme.example')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Analyze again/ })).toBeTruthy();
   });
   it('lists assets with English kinds and counts', async () => {
     en(<AssetsPage slug="acme" live={live} />);
@@ -52,15 +50,5 @@ describe('brand, assets and references in English', () => {
     expect(screen.getByLabelText('Use for brand analysis')).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Delete mood.jpg' }));
     expect(screen.getByRole('button', { name: 'Confirm deleting mood.jpg' })).toBeTruthy();
-  });
-  it('describes a proposal in English', () => {
-    const proposal: BrandProposal = {
-      schemaVersion: 1, id: 'p-1', createdAt: '2026-10-07T10:00:00.000Z', sourceIds: [], status: 'open', summary: '', assetsAdded: ['x'], guidelines: null,
-      changes: [{ id: 'c1', field: 'colors', op: 'add', itemId: 'o', before: null, after: { id: 'o', name: 'Orange', hex: '#FF7A45', role: 'accent', source: site } }],
-    };
-    expect(describeChange(proposal.changes[0]!, messages('en'))).toBe('Add color Orange #FF7A45');
-    en(<ProposalReview slug="acme" proposal={proposal} onDone={() => {}} />);
-    expect(screen.getByText('1 asset downloaded and added to the library')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Apply selected' })).toBeTruthy();
   });
 });

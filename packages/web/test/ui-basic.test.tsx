@@ -440,6 +440,16 @@ describe('accent contrast', () => {
 });
 
 describe('Markdown', () => {
+  it('renders # titles as headings only when asked (documents), never in chat text', () => {
+    const doc = render(<Markdown headings text={'# Brand ##\n\nIntro\n\n## Key **lines**\n###### Deep'} />);
+    expect(doc.container.querySelector('h3')!.textContent).toBe('Brand');
+    expect(doc.container.querySelector('h4 strong')!.textContent).toBe('lines');
+    expect(doc.container.querySelector('h5')!.textContent).toBe('Deep');
+    doc.unmount();
+    const chat = render(<Markdown text={'# not a title'} />);
+    expect(chat.container.querySelector('h3')).toBeNull();
+    expect(chat.container.textContent).toBe('# not a title');
+  });
   it('renders bold, italic and inline code', () => {
     const { container } = render(<Markdown text={'**a** and *b* and `c`'} />);
     expect(container.querySelector('strong')!.textContent).toBe('a');

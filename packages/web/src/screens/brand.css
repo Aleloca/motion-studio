@@ -1,0 +1,306 @@
+/* Project · Brand and the brand proposal review (spec §6.2 #8–9), ported from the prototype's brand.js and the Brand /
+   BrandReview boards. Tokens only: colours that come from the brand itself are set inline as data. */
+.ms-bpage { height: 100%; display: grid; grid-template-columns: 220px minmax(0, 1fr) 320px; color: var(--text); }
+.ms-bpage .ms-grow { flex: 1; min-width: 0; }
+.ms-bpage .ms-muted, .ms-review .ms-muted { color: var(--muted); }
+.ms-bpage .ms-faint, .ms-review .ms-faint { color: var(--faint); }
+.ms-bpage .ms-mono, .ms-review .ms-mono { font-family: var(--mono); font-size: 11px; }
+.ms-bpage .ms-ell, .ms-review .ms-ell, .ms-bpop .ms-ell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-bpage .ms-cap, .ms-bpop .ms-cap { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.ms-brow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.ms-bnowrap { flex-wrap: nowrap; }
+.ms-bpush.ms-bpush { margin-left: auto; }
+.ms-bsmall-text { font-size: 12px; line-height: 1.45; }
+.ms-bnote { font-size: 11.5px; line-height: 1.4; color: var(--muted); }
+.ms-bwarn { font-size: 12px; line-height: 1.4; color: var(--warn); }
+.ms-bok { font-size: 11px; color: var(--ok); }
+.ms-baccent { color: var(--accentText); display: inline-flex; align-items: center; gap: 6px; }
+.ms-bempty-line { margin: 0; color: var(--muted); line-height: 1.55; }
+.ms-bstart { align-self: flex-start; }
+.ms-bwide { width: 100%; }
+.ms-bsmall.ms-input { height: 32px; font-size: 12px; }
+.ms-brand-center { height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px; }
+
+/* Text buttons in the accent text colour (prototype `btn sm ghost` with --accentText). */
+.ms-btn.ms-blink.ms-blink { margin-left: auto; color: var(--accentText); }
+.ms-blink-btn {
+  min-height: 0; height: auto; padding: 0; margin: 0; border: 0; background: transparent; font: inherit; font-size: 12px;
+  color: var(--accentText); cursor: pointer; border-radius: 4px; white-space: nowrap;
+}
+.ms-blink-btn:hover { text-decoration: underline; }
+.ms-blink-btn:disabled { color: var(--faint); cursor: not-allowed; text-decoration: none; }
+
+/* Section navigation. */
+.ms-brand-nav { padding: 24px 12px; display: flex; flex-direction: column; gap: 2px; border-right: 1px solid var(--line); overflow: auto; min-height: 0; }
+.ms-brand-allsaved { padding: 0 10px; font-size: 12px; color: var(--faint); }
+
+/* Main column: scrolls on its own; the sections are spaced as on the board. */
+.ms-brand-main { position: relative; min-width: 0; min-height: 0; overflow: auto; padding: 28px 36px 80px; display: flex; flex-direction: column; gap: 34px; }
+.ms-brand-main h2 { margin: 0; font-size: 16px; font-weight: 700; }
+.ms-brand-alert, .ms-bfailed {
+  display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 10px; line-height: 1.45;
+  background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); color: var(--text); overflow-wrap: anywhere;
+}
+.ms-brand-alert > svg, .ms-bfailed > svg { color: var(--warn); flex: none; margin-top: 2px; }
+.ms-brand-alert > span, .ms-bfailed > span { flex: 1; min-width: 0; }
+.ms-bfailed { flex-wrap: wrap; align-items: center; }
+
+/* T12: the save pill sits over the top right corner of the main column and takes no room. */
+.ms-brand-savepill { position: sticky; top: 0; height: 0; z-index: 5; display: flex; justify-content: flex-end; overflow: visible; margin: -14px 0 0; }
+.ms-brand-savepill > .ms-pill, .ms-brand-saveerr { box-shadow: 0 4px 14px var(--shadow); }
+.ms-brand-savepill > .ms-pill:not(.ms-ok):not(.ms-warn) { background: var(--panel); color: var(--muted); box-shadow: 0 0 0 1px var(--line), 0 4px 14px var(--shadow); }
+.ms-brand-saveerr { display: inline-flex; align-items: center; gap: 8px; padding: 4px 4px 4px 0; border-radius: 999px; background: var(--panel); max-width: 100%; }
+.ms-brand-saveerr .ms-pill { white-space: normal; height: auto; min-height: 22px; }
+
+/* Overview. */
+.ms-boverview { display: flex; gap: 20px; align-items: center; min-width: 0; }
+.ms-boverview-tile {
+  width: 180px; height: 104px; flex: none; border-radius: 14px; overflow: hidden; display: flex; align-items: center; justify-content: center;
+  background: var(--field); box-shadow: 0 10px 24px var(--shadow);
+}
+.ms-boverview-tile.ms-dark { background: var(--term); }
+.ms-boverview-tile img { max-width: 78%; max-height: 64%; object-fit: contain; display: block; }
+.ms-boverview-tile.ms-initials { background: var(--ink); color: var(--inkText); font-weight: 800; font-size: 26px; letter-spacing: .02em; }
+.ms-boverview-text { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ms-boverview-text h1 { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -.02em; overflow-wrap: anywhere; }
+.ms-boverview-text p { margin: 0; max-width: 620px; color: var(--muted); font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.ms-boverview-text .ms-faint { font-size: 12px; }
+
+.ms-bsection { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.ms-bsection-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex-wrap: wrap; }
+.ms-bsection-head .ms-faint { font-size: 12px; }
+
+/* Colors. */
+.ms-bswatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; }
+@media (min-width: 1360px) { .ms-bswatches { grid-template-columns: repeat(7, minmax(0, 1fr)); } }
+.ms-bswatch-wrap { position: relative; min-width: 0; overflow: hidden; border-radius: 12px; }
+.ms-bswatch {
+  width: 100%; min-height: 0; height: auto; padding: 0; margin: 0; border: 0; border-radius: 12px; overflow: hidden; text-align: left;
+  display: flex; flex-direction: column; background: var(--panel); color: var(--text); font: inherit; cursor: pointer;
+  box-shadow: 0 0 0 1px var(--line) inset; transition: box-shadow var(--d-m) var(--e-std), transform var(--d-s) var(--e-std);
+}
+.ms-bswatch:hover { box-shadow: 0 0 0 1px var(--faint) inset, 0 8px 20px var(--shadow); transform: translateY(-1px); }
+.ms-bswatch.ms-on { box-shadow: 0 0 0 2px var(--accent) inset; }
+.ms-bswatch-color { position: relative; height: 84px; display: block; box-shadow: inset 0 -1px 0 var(--line); transition: background var(--d-m) var(--e-std); }
+.ms-bswatch-aa { position: absolute; left: 8px; bottom: 6px; font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums; opacity: 0; transition: opacity var(--d-s) var(--e-std); }
+.ms-bswatch:hover .ms-bswatch-aa, .ms-bswatch:focus-visible .ms-bswatch-aa, .ms-bswatch-wrap:first-child .ms-bswatch-aa { opacity: 1; }
+.ms-bswatch-meta { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; min-width: 0; }
+.ms-bswatch-meta b { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-bswatch-meta .ms-faint { font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Popovers of the editors. */
+.ms-bpop { display: flex; flex-direction: column; gap: 10px; padding: 12px; min-width: 0; }
+.ms-bpop-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.ms-bpop-field > span:first-child { font-size: 11px; font-weight: 600; color: var(--muted); }
+.ms-bpop .ms-input { height: 32px; }
+.ms-bpop .ms-btn.ms-danger { align-self: flex-start; }
+.ms-bhex { display: flex; align-items: center; gap: 8px; }
+.ms-bhex .ms-field { height: 32px; }
+.ms-bhex .ms-field input { font-family: var(--mono); text-transform: uppercase; }
+.ms-bhex-chip { width: 22px; height: 22px; border-radius: 6px; flex: none; box-shadow: inset 0 0 0 1px var(--line); }
+.ms-bchips { display: flex; flex-wrap: wrap; gap: 4px; }
+.ms-bchips .ms-chip { height: 22px; font-size: 11px; }
+.ms-bmenu-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 0; height: 34px; padding: 0 8px; margin: 0; border: 0; border-radius: 7px;
+  background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer;
+}
+.ms-bmenu-row:hover, .ms-bmenu-row:focus-visible { background: var(--field); }
+.ms-bmenu-row.ms-danger { color: var(--warn); }
+.ms-bmenu-row img { width: 28px; height: 22px; object-fit: contain; border-radius: 4px; background: var(--field); flex: none; }
+.ms-bpicker { padding: 6px; gap: 4px; }
+.ms-bpicker .ms-cap { padding: 6px 8px 2px; }
+.ms-bpicker .ms-bnote { padding: 0 8px 6px; }
+.ms-bpicker-list { display: flex; flex-direction: column; max-height: 240px; overflow: auto; }
+
+/* Typography. */
+.ms-bfonts { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 12px; }
+.ms-bfont { padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; min-width: 0; overflow: hidden; }
+.ms-bfont-top { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.ms-bfont-specimen { font-size: 38px; line-height: 1.05; letter-spacing: -.01em; overflow-wrap: anywhere; }
+.ms-bfont-sample { font-size: 17px; color: var(--muted); overflow-wrap: anywhere; }
+.ms-bfont-foot { display: flex; align-items: center; gap: 10px; padding-top: 10px; border-top: 1px solid var(--line2); min-width: 0; }
+.ms-bfont-foot b { font-weight: 600; }
+.ms-bfont-foot .ms-blink-btn { margin-left: auto; }
+
+/* Logos: previews on the brand's own dark / light colour (data), else a theme-invariant stage. */
+.ms-blogos { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); gap: 12px; }
+.ms-blogo { overflow: hidden; display: flex; flex-direction: column; min-width: 0; padding: 0; }
+.ms-blogo-stage, .ms-rlogo-stage {
+  height: 120px; display: flex; align-items: center; justify-content: center; padding: 16px; margin: 0; border: 0; border-radius: 0; width: 100%;
+  min-height: 0; cursor: pointer; background: var(--field);
+}
+.ms-blogo-stage.ms-bg-dark, .ms-rlogo-stage.ms-bg-dark { background: var(--term); }
+.ms-blogo-stage.ms-bg-light, .ms-rlogo-stage.ms-bg-light { background: var(--onMedia); box-shadow: inset 0 -1px 0 var(--line); }
+.ms-blogo-stage img, .ms-rlogo-stage img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.ms-blogo-meta { padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ms-blogo-meta b { font-weight: 600; }
+.ms-blogo-meta .ms-mono { font-size: 11px; }
+.ms-blogo-missing {
+  border-radius: 14px; border: 1.5px dashed var(--line); display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; padding: 16px; text-align: center; color: var(--muted); min-height: 170px; min-width: 0;
+}
+.ms-blogo-missing b { color: var(--text); font-weight: 600; }
+.ms-blogo-missing > span:not(.ms-brow) { font-size: 12px; line-height: 1.45; }
+.ms-blogo-missing .ms-brow { justify-content: center; }
+
+/* Voice, photo style, guidelines. */
+.ms-bvoice { display: grid; grid-template-columns: 1.1fr 1fr 1fr; gap: 12px; align-items: start; }
+.ms-bgrid2 { display: grid; grid-template-columns: 1fr 1.25fr; gap: 12px; align-items: start; }
+@media (max-width: 1280px) { .ms-bvoice { grid-template-columns: 1fr 1fr; } .ms-bvoice > :first-child { grid-column: 1 / -1; } .ms-bgrid2 { grid-template-columns: minmax(0, 1fr); } }
+.ms-bcard { padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ms-btext { margin: 0; color: var(--muted); line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
+.ms-bnote-edit { display: flex; flex-direction: column; gap: 8px; }
+.ms-brules-head { display: flex; align-items: center; gap: 8px; }
+.ms-brules-head h3 { margin: 0; font-size: 13px; font-weight: 700; }
+.ms-brules-head .ms-faint { font-size: 12px; }
+.ms-brules-icon { width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex: none; }
+.ms-brules-icon.ms-ok { background: var(--okBg); color: var(--ok); }
+.ms-brules-icon.ms-warn { background: var(--warnBg); color: var(--warn); }
+.ms-brules-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ms-brule { display: flex; align-items: flex-start; gap: 6px; line-height: 1.45; color: var(--muted); overflow: hidden; overflow-wrap: anywhere; }
+.ms-brule.ms-first { color: var(--text); }
+.ms-brule > span { flex: 1; min-width: 0; }
+.ms-brule-x.ms-btn { width: 22px; height: 22px; opacity: 0; flex: none; transition: opacity var(--d-s) var(--e-std); }
+.ms-brule:hover .ms-brule-x, .ms-brule-x:focus-visible { opacity: 1; }
+@media (hover: none) { .ms-brule-x.ms-btn { opacity: 1; } }
+.ms-bphotos { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.ms-bphotos img { width: 100%; height: 96px; object-fit: cover; border-radius: 8px; display: block; background: var(--field); }
+.ms-bguide-preview { position: relative; max-height: 220px; overflow: hidden; border-radius: 10px; background: var(--bg); padding: 14px 16px; line-height: 1.55; color: var(--muted); }
+.ms-bguide-preview::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 48px; background: linear-gradient(to bottom, transparent, var(--bg)); pointer-events: none; }
+.ms-bguide-preview .ms-md-h, .ms-bguide-dialog .ms-md-h { color: var(--text); }
+.ms-bguide-dialog { display: flex; flex-direction: column; min-height: 0; max-height: calc(100vh - 64px); }
+.ms-bguide-head { display: flex; align-items: center; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--line2); }
+.ms-bguide-head h2 { margin: 0 auto 0 0; font-size: 18px; }
+.ms-bguide-body { padding: 18px 22px; overflow: auto; line-height: 1.6; min-height: 0; }
+.ms-bguide-body .ms-textarea { width: 100%; min-height: 360px; font-size: 12.5px; line-height: 1.55; }
+.ms-bguide-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--line2); background: var(--bg); }
+
+/* Side column. */
+.ms-brand-side { min-width: 0; min-height: 0; overflow: auto; border-left: 1px solid var(--line); background: var(--panel); padding: 22px 18px; display: flex; flex-direction: column; gap: 18px; }
+.ms-bready { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 12px; background: var(--sel); box-shadow: inset 0 0 0 1px var(--warnLine); }
+.ms-bready-icon { width: 30px; height: 30px; border-radius: 9px; flex: none; display: flex; align-items: center; justify-content: center; background: var(--sel); color: var(--accentText); }
+.ms-bready .ms-bready-icon { background: var(--panel); }
+.ms-bready-icon.ms-big { width: 36px; height: 36px; border-radius: 10px; }
+.ms-bready-text { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.ms-bready-text .ms-muted { font-size: 12px; }
+.ms-banalysis { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 12px; background: var(--sel); box-shadow: inset 0 0 0 1px var(--warnLine); min-width: 0; }
+.ms-banalysis .ms-brow { flex-wrap: nowrap; }
+/* Indeterminate progress (point 2): report_progress carries no number, so the bar never claims one. */
+.ms-bbar { position: relative; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--accent) 18%, transparent); overflow: hidden; }
+.ms-bbar > i { position: absolute; top: 0; bottom: 0; left: 0; width: 34%; border-radius: 2px; background: var(--accent); animation: ms-bbar 1.4s var(--e-std) infinite; }
+@keyframes ms-bbar { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+@media (prefers-reduced-motion: reduce) { .ms-bbar > i { animation: none; width: 100%; opacity: .45; } }
+.ms-bsteps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+.ms-bstep { display: flex; gap: 8px; align-items: flex-start; line-height: 1.4; overflow-wrap: anywhere; }
+.ms-bstep-mark { width: 14px; height: 17px; flex: none; display: flex; align-items: center; justify-content: center; color: var(--ok); }
+.ms-bstep-mark > i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.ms-bstep:not(.ms-done) { font-weight: 600; }
+.ms-bworking { font-size: 12px; gap: 8px; }
+.ms-bsources, .ms-bhealth { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ms-bsource { display: flex; flex-direction: column; gap: 6px; padding: 10px 10px 10px 12px; border-radius: 12px; box-shadow: inset 0 0 0 1px var(--line); min-width: 0; overflow: hidden; }
+.ms-bsource b { font-weight: 600; }
+.ms-bsource-icon { width: 24px; height: 24px; border-radius: 6px; background: var(--field); display: flex; align-items: center; justify-content: center; flex: none; }
+.ms-bsource .ms-btn.ms-icon { width: 24px; height: 24px; flex: none; }
+.ms-bhealth-list { display: flex; flex-direction: column; gap: 2px; }
+.ms-bhealth-row { display: flex; align-items: center; gap: 8px; min-height: 30px; }
+.ms-bhealth-row > .ms-grow { overflow-wrap: anywhere; }
+.ms-bhealth-dot { width: 16px; height: 16px; border-radius: 50%; flex: none; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; }
+.ms-bhealth-dot.ms-ok { background: var(--okBg); color: var(--ok); }
+.ms-bhealth-dot.ms-warn { background: var(--warnBg); color: var(--warn); }
+.ms-bhistory { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 12px; background: var(--bg); }
+.ms-bhistory b { font-weight: 600; }
+
+/* Empty project. */
+.ms-brand-empty {
+  min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 32px 16px;
+  background-color: var(--bg); background-image: radial-gradient(var(--dot) 1px, transparent 1px); background-size: 20px 20px;
+}
+.ms-brand-empty-card { width: 480px; max-width: 100%; padding: 28px; display: flex; flex-direction: column; gap: 12px; }
+.ms-brand-empty-card h1 { margin: 4px 0 0; font-size: 18px; font-weight: 700; }
+.ms-brand-empty-card p { margin: 0; color: var(--muted); line-height: 1.5; }
+.ms-brand-empty-card .ms-input { min-width: 0; }
+
+/* Narrow windows: the section nav goes first, then the side column moves under the content. */
+@media (max-width: 1100px) { .ms-bpage { grid-template-columns: minmax(0, 1fr) 300px; } .ms-brand-nav { display: none; } }
+@media (max-width: 780px) {
+  .ms-bpage { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .ms-brand-main { overflow: visible; padding: 22px 16px 32px; }
+  .ms-brand-side { border-left: 0; border-top: 1px solid var(--line); overflow: visible; }
+  .ms-bvoice { grid-template-columns: minmax(0, 1fr); }
+  .ms-boverview { flex-direction: column; align-items: flex-start; }
+}
+
+/* ---------- proposal review sheet ---------- */
+.ms-dialog:has(> .ms-review) { max-width: calc(100vw - 48px); }
+.ms-review { height: calc(100vh - 72px); max-height: 900px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; color: var(--text); }
+.ms-review-head { display: flex; align-items: center; gap: 14px; padding: 18px 22px; border-bottom: 1px solid var(--line2); min-width: 0; }
+.ms-review-title { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.ms-review-title h2 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -.01em; overflow-wrap: anywhere; }
+.ms-review-close.ms-btn { width: 32px; height: 32px; background: var(--field); color: var(--muted); flex: none; }
+.ms-review-main { display: grid; grid-template-columns: 260px minmax(0, 1fr); min-height: 0; }
+.ms-review-nav { border-right: 1px solid var(--line2); padding: 14px 10px; display: flex; flex-direction: column; gap: 2px; overflow: auto; min-height: 0; }
+.ms-review-group {
+  display: flex; align-items: center; gap: 10px; height: 36px; min-height: 0; padding: 0 10px; margin: 0; border: 0; border-radius: 8px;
+  background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: background var(--d-m) var(--e-std);
+}
+.ms-review-group:hover { background: var(--field); }
+.ms-review-group.ms-on { background: var(--sel); font-weight: 600; }
+.ms-review-count { font-family: var(--mono); font-size: 11px; color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+.ms-review-count.ms-partial { color: var(--accentText); }
+.ms-review-glyph { width: 20px; flex: none; text-align: center; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; font-weight: 600; }
+.ms-review-glyph.ms-ok { color: var(--ok); }
+.ms-review-glyph.ms-warn { color: var(--warn); }
+.ms-review-glyph.ms-thumb { height: 14px; border-radius: 3px; overflow: hidden; background: var(--field); }
+.ms-review-glyph.ms-thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.ms-review-dots { display: flex; width: 28px; flex: none; }
+.ms-review-dots > i { width: 12px; height: 12px; border-radius: 50%; box-shadow: 0 0 0 1.5px var(--panel); }
+.ms-review-dots > i + i { margin-left: -4px; }
+.ms-review-sep { height: 1px; background: var(--line2); margin: 8px 10px; }
+.ms-review-assets { padding: 0 10px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.ms-review-list { min-width: 0; min-height: 0; overflow: auto; padding: 20px 24px 28px; display: flex; flex-direction: column; gap: 22px; }
+.ms-review-summary { margin: 0; color: var(--muted); line-height: 1.55; max-width: 760px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ms-review-sec { display: flex; flex-direction: column; gap: 10px; scroll-margin-top: 12px; min-width: 0; }
+.ms-review-sec-head { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
+.ms-review-sec-head h3 { margin: 0; font-size: 15px; font-weight: 700; }
+.ms-review-grid { display: grid; gap: 10px; }
+.ms-review-grid.ms-g-colors { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+.ms-review-grid.ms-g-fonts { grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); }
+.ms-review-grid.ms-g-logos { grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 12px; }
+.ms-review-grid.ms-g-dos, .ms-review-grid.ms-g-donts, .ms-review-grid.ms-g-tone, .ms-review-grid.ms-g-photoStyle { grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 8px; }
+.ms-review-op.ms-tag { font-size: 10.5px; height: 18px; }
+.ms-review-op.ms-remove { background: var(--warnBg); color: var(--warn); }
+
+/* T13: a kept suggestion has the accent ring; the ring and the fade move with an m transition. */
+.ms-rcard {
+  position: relative; display: flex; flex-direction: column; min-width: 0; overflow: hidden; border-radius: 12px; background: var(--panel); cursor: pointer;
+  box-shadow: 0 0 0 1px var(--line); opacity: .78; transition: box-shadow var(--d-m) var(--e-std), opacity var(--d-m) var(--e-std), background var(--d-m) var(--e-std);
+}
+.ms-rcard:hover { opacity: .92; }
+.ms-rcard.ms-on { box-shadow: 0 0 0 1.5px var(--accent); opacity: 1; }
+.ms-rcard-check { position: absolute; right: 10px; top: 10px; }
+.ms-rcard-body { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; min-width: 0; }
+.ms-rcolor-swatch { height: 64px; display: flex; box-shadow: inset 0 -1px 0 var(--line); }
+.ms-rcolor-swatch > i { flex: 1; }
+.ms-rcolor .ms-rcard-body b { font-size: 12px; font-weight: 600; }
+.ms-rcolor .ms-rcard-check, .ms-rlogo .ms-rcard-check { box-shadow: 0 0 0 2px var(--panel); }
+.ms-rfont .ms-rcard-body { padding: 16px 44px 14px 16px; gap: 6px; }
+.ms-rfont-specimen { font-size: 30px; line-height: 1.1; overflow-wrap: anywhere; }
+.ms-rfont-sample { font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
+.ms-rlogo-stage { height: 150px; cursor: inherit; }
+.ms-rlogo .ms-rcard-body { padding: 10px 12px; }
+.ms-rnote { flex-direction: row; }
+.ms-rnote.ms-on { background: var(--sel); }
+.ms-rnote .ms-rcard-body { padding: 10px 44px 10px 14px; gap: 6px; flex: 1; }
+.ms-rnote-text { line-height: 1.45; overflow-wrap: anywhere; }
+.ms-rnote-text.ms-struck { text-decoration: line-through; color: var(--muted); }
+.ms-removing.ms-on { box-shadow: 0 0 0 1.5px var(--warn); }
+.ms-rguide .ms-rcard-body { padding: 14px 48px 14px 16px; gap: 10px; }
+.ms-rguide-doc { max-height: 320px; overflow: auto; border-radius: 10px; background: var(--bg); padding: 12px 14px; line-height: 1.55; color: var(--muted); cursor: auto; }
+.ms-rguide-doc .ms-md-h { color: var(--text); }
+.ms-review-nothing { display: flex; align-items: center; justify-content: center; padding: 40px; }
+.ms-review-foot { display: flex; align-items: center; gap: 12px; padding: 14px 22px; border-top: 1px solid var(--line2); background: var(--bg); min-width: 0; flex-wrap: wrap; }
+.ms-review-foot > span { min-width: 0; flex: 0 1 auto; }
+@media (max-width: 860px) {
+  .ms-review-main { grid-template-columns: minmax(0, 1fr); }
+  .ms-review-nav { display: none; }
+}

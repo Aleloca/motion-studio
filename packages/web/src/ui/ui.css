@@ -198,6 +198,8 @@ button.ms-avatar:active { transform: scale(.95); }
 .ms-md li { margin: 2px 0; }
 .ms-md li::marker { color: var(--faint); }
 .ms-md strong { font-weight: 600; }
+.ms-md .ms-md-h { margin: 14px 0 6px; font-size: 14px; font-weight: 700; letter-spacing: -.005em; color: var(--text); }
+.ms-md h3.ms-md-h { font-size: 15px; }
 .ms-md code { font-family: var(--mono); font-size: .92em; padding: 1px 5px; border-radius: 4px; background: var(--field); }
 .ms-link { color: var(--accentText); text-decoration: none; }
 .ms-link:hover { text-decoration: underline; }

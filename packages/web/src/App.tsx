@@ -5,7 +5,7 @@ import { detectedLocale, I18nProvider, useLocale, useT, type LanguageState } fro
 import { PageHost, type PageMode } from './motion/index.ts';
 import { depthOf, href, parseRoute, projectOf, routeKey, type Route } from './routes.ts';
 import { AssetsPage } from './screens/AssetsPage.tsx';
-import { BrandPage } from './screens/BrandPage.tsx';
+import { Brand } from './screens/Brand.tsx';
 import { CreativeCanvas } from './screens/CreativeCanvas.tsx';
 import { FormatView } from './screens/FormatView.tsx';
 import { NewCreative } from './screens/NewCreative.tsx';
@@ -251,8 +251,8 @@ function sharedElement(a: Route, b: Route): PageMode {
 }
 
 /**
- * A project page: its tabs (in the project bar) change in place with T2 (soft fade and 6 px lift). Creatives is the
- * redesigned screen; the other tabs keep their current screens until their tasks replace them.
+ * A project page: its tabs (in the project bar) change in place with T2 (soft fade and 6 px lift). Creatives and Brand
+ * are redesigned screens; the other tabs keep their current screens until their tasks replace them.
  */
 function ProjectHost({ route, live, expert }: { route: Extract<Route, { name: 'project' }>; live: EventsState; expert: boolean }) {
   return <PageHost route={route} keyOf={(r) => r.tab} soft render={(r) => <ProjectTabPage route={r} live={live} expert={expert} />} />;
@@ -262,7 +262,7 @@ function ProjectTabPage({ route: { slug, tab }, live, expert }: { route: Extract
   const tick = live.projectTicks[slug] ?? 0;
   switch (tab) {
     case 'creatives': return <ProjectCreatives key={slug} slug={slug} live={live} />;
-    case 'brand': return <LegacyTab slug={slug} tick={tick}><BrandPage key={slug} slug={slug} live={live} /></LegacyTab>;
+    case 'brand': return <Brand key={slug} slug={slug} live={live} />;
     case 'assets': return <LegacyTab slug={slug} tick={tick}><AssetsPage key={slug} slug={slug} live={live} /></LegacyTab>;
     case 'references': return <LegacyTab slug={slug} tick={tick}><ReferencesPage key={slug} slug={slug} live={live} /></LegacyTab>;
     case 'settings': return <LegacyTab slug={slug} tick={tick}><ProjectSettings key={slug} slug={slug} tick={tick} /></LegacyTab>;

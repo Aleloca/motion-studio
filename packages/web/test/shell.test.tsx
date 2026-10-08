@@ -456,7 +456,7 @@ describe('project bar', () => {
   });
 
   it('explains above an older tab when the project cannot be loaded', async () => {
-    history.replaceState(null, '', '/#/p/acme/brand');
+    history.replaceState(null, '', '/#/p/acme/assets');
     vi.mocked(api.getProject).mockRejectedValue(new Error('Progetto non trovato'));
     await startApp();
     expect((await screen.findByText(/Impossibile caricare il progetto/)).textContent).toBe('Impossibile caricare il progetto: Progetto non trovato');
