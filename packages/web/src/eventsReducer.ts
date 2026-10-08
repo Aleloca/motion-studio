@@ -15,6 +15,9 @@ export function eventsReducer(state: EventsState, msg: ServerMessage): EventsSta
         creativeTicks: Object.fromEntries(Object.entries(state.creativeTicks).map(([k, v]) => [k, v + 1])),
         projectTicks: Object.fromEntries(Object.entries(state.projectTicks).map(([k, v]) => [k, v + 1])),
       };
+    case 'locale':
+      // Handled by the language provider; nothing to keep in this state.
+      return state;
     case 'approval':
       return { ...state, approvals: { ...state.approvals, [msg.approval.id]: msg.approval } };
     case 'approval_resolved': {

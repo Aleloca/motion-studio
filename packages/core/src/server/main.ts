@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import type { LanguageSetting, Locale } from '@motion-studio/shared';
 import type { FastifyInstance } from 'fastify';
 import open from 'open';
 import { sweepRunDir } from '../agent/launcher.ts';
@@ -8,6 +9,7 @@ import { cachedSandboxDetection } from '../agent/sandbox.ts';
 import { AppConfigStore, defaultConfigDir } from '../app-config.ts';
 import { AgentBridge } from '../bridge/bridge.ts';
 import { runDoctor, type ShellPathOrigin } from '../doctor.ts';
+import { LanguageController, detectSystemLocales } from '../i18n.ts';
 import { execCommand } from '../exec.ts';
 import { Git } from '../git.ts';
 import { createFfmpegTools } from '../media/media-tools.ts';
@@ -62,6 +64,8 @@ export interface StartServerOptions {
   healthTimeoutMs?: number;
   /** How long to wait for another boot holding run/boot.lock. Default 5 s. */
   bootLockWaitMs?: number;
+  /** The user's preferred languages (first match wins) for the 'system' language setting. Default: detectSystemLocales(). */
+  systemLocales?: string[];
 }
 
 export async function startServer(opts: StartServerOptions = {}) {
@@ -111,9 +115,12 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
   // One detection shared by the agent launcher and the Doctor.
   const sandbox = cachedSandboxDetection();
   const uiToken = await loadOrCreateUiToken(configDir);
+  const appConfig = new AppConfigStore(configDir);
+  const language = new LanguageController((await appConfig.read()).language, opts.systemLocales ?? detectSystemLocales());
+  language.apply();
   const app = await buildServer({
     uiToken,
-    appConfig: new AppConfigStore(configDir),
+    appConfig, language,
     configDir,
     git: new Git(),
     runner: new ClaudeCodeRunner(claudeCommand),
@@ -132,6 +139,9 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
   await writeServerInfo(configDir, { port, pid: process.pid, startedAt: new Date().toISOString() }).catch(() => {});
   return {
     url, port,
+    /** The language the core currently uses, and a subscription to its changes (returns the unsubscribe). */
+    locale: () => language.locale,
+    onLocaleChange: (cb: (locale: Locale, setting: LanguageSetting) => void) => language.onChange(cb),
     /** The address to open: it carries the UI token in the fragment. */
     appUrl: uiUrl(port, uiToken),
     // server.json is removed only when it is still this process's.

@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { appConfigSchema, type AppConfig } from '@motion-studio/shared';
+import { appConfigSchema, type AppConfig, type LanguageSetting } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from './json-file.ts';
 
 export function defaultConfigDir(): string {
@@ -26,6 +26,12 @@ export class AppConfigStore {
 
   async setWorkspacePath(path: string): Promise<AppConfig> {
     const next: AppConfig = { ...(await this.read()), workspacePath: path };
+    await writeJsonFileAtomic(this.file, next);
+    return next;
+  }
+
+  async setLanguage(setting: LanguageSetting): Promise<AppConfig> {
+    const next: AppConfig = { ...(await this.read()), language: setting };
     await writeJsonFileAtomic(this.file, next);
     return next;
   }

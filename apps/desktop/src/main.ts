@@ -32,7 +32,10 @@ async function boot(configDir?: string) {
   const shellPath = await resolveLoginShellPath(loginShellOptions());
   process.env.PATH = shellPath.path;
   console.log(`PATH source: ${shellPath.source}`);
-  return startServer(serverOptions({ resources: resourcePaths(), shellPath, ...(configDir ? { configDir } : {}) }));
+  return startServer({
+    ...serverOptions({ resources: resourcePaths(), shellPath, ...(configDir ? { configDir } : {}) }),
+    systemLocales: app.getPreferredSystemLanguages(),
+  });
 }
 
 /** Our own core, or the address of the Motion Studio (desktop or CLI) already serving the same config folder. */

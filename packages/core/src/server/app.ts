@@ -33,6 +33,7 @@ import { EventHub } from './event-hub.ts';
 import { registerLibraryRoutes } from './library-routes.ts';
 import { registerProjectRoutes } from './project-routes.ts';
 import { tokenMatches } from './ui-token.ts';
+import { LanguageController, t } from '../i18n.ts';
 
 export interface ServerDeps {
   appConfig: AppConfigStore;
@@ -59,6 +60,8 @@ export interface ServerDeps {
    * health, the bridge and the served files. null disables the check (tests only); startServer always sets it.
    */
   uiToken: string | null;
+  /** Language state shared with startServer; defaults to the saved setting with no system languages. */
+  language?: LanguageController;
 }
 
 /** Routes reachable without the UI token: health, the MCP bridge (it has its own token) and files shown by <img>/<video>. */
@@ -121,7 +124,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // Why the configured workspace could not be opened at startup (shown by the onboarding).
   let workspaceProblem: { path: string; error: WorkspaceProblem } | null = null;
 
-  const configured = (await deps.appConfig.read()).workspacePath;
+  const appConfig = await deps.appConfig.read();
+  const language = deps.language ?? new LanguageController(appConfig.language, []);
+  const configured = appConfig.workspacePath;
   if (configured) {
     try {
       // Never recreate a vanished workspace folder nor rewrite corrupt settings: report them instead.
@@ -250,6 +255,17 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     return settings;
   });
 
+  const languageState = () => ({ locale: language.locale, languageSetting: language.setting });
+  app.get('/api/settings/language', async () => languageState());
+  app.put<{ Body: { language?: unknown } }>('/api/settings/language', async (req, reply) => {
+    const value = req.body?.language;
+    if (value !== 'system' && value !== 'en' && value !== 'it') return reply.status(400).send({ error: t().errors.invalidLanguage });
+    await deps.appConfig.setLanguage(value);
+    language.set(value);
+    hub.broadcast({ type: 'locale', locale: language.locale, setting: value });
+    return languageState();
+  });
+
   app.get('/api/projects', async () => requireWorkspace().listProjects());
 
   app.post<{ Body: { name?: unknown; description?: unknown } }>('/api/projects', async (req, reply) => {
@@ -311,7 +327,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   app.get('/api/events', { websocket: true }, (socket) => {
     hub.add(socket);
-    hub.send(socket, { type: 'snapshot', jobs: queue.list(), approvals: approvals.pending() });
+    hub.send(socket, { type: 'snapshot', jobs: queue.list(), approvals: approvals.pending(), ...languageState() });
   });
 
   registerCreativeRoutes(app, { requireWorkspace, turns, media, openPath: deps.openPath ?? (async () => {}), isJobActive });

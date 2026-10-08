@@ -1,3 +1,4 @@
+import type { LanguageSetting, Locale } from './i18n/index.ts';
 import type { ProjectFile, WorkspaceSettings, WorkspaceSettingsView } from './schemas.ts';
 
 /** Agent-neutral event stream produced by any AgentRunner. */
@@ -45,7 +46,9 @@ export interface ApprovalRequest {
 export type ApprovalDecision = 'once' | 'always' | 'deny';
 
 export type ServerMessage =
-  | { type: 'snapshot'; jobs: JobSummary[]; approvals: ApprovalRequest[] }
+  | { type: 'snapshot'; jobs: JobSummary[]; approvals: ApprovalRequest[]; locale: Locale; languageSetting: LanguageSetting }
+  /** The language setting changed: the UI switches without reloading. */
+  | { type: 'locale'; locale: Locale; setting: LanguageSetting }
   | { type: 'approval'; approval: ApprovalRequest }
   | { type: 'approval_resolved'; id: string; decision: ApprovalDecision | 'expired' | 'cancelled' }
   | { type: 'job'; job: JobSummary }

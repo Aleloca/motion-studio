@@ -7,7 +7,7 @@ const job = (id: string, state: JobSummary['state']): JobSummary => ({ id, key: 
 describe('eventsReducer', () => {
   it('replaces jobs on snapshot and keeps events', () => {
     let s = eventsReducer(initialEventsState, { type: 'agent', jobId: 'a', event: { kind: 'text', text: 'hi' } });
-    s = eventsReducer(s, { type: 'snapshot', jobs: [job('a', 'running')], approvals: [] });
+    s = eventsReducer(s, { type: 'snapshot', jobs: [job('a', 'running')], approvals: [], locale: 'it', languageSetting: 'system' });
     expect(s.jobs).toEqual({ a: job('a', 'running') });
     expect(s.events.a).toHaveLength(1);
   });
@@ -46,7 +46,7 @@ describe('sessionIdOf', () => {
 describe('approvals', () => {
   const approval = { id: 'a1', jobId: 'j', projectSlug: 'acme', creativeSlug: null, kind: 'tool' as const, title: 't', detail: 'd', toolName: 'Bash', alwaysRule: null, createdAt: 'x', expiresAt: 'y' };
   it('tracks pending approvals from snapshot, add and resolve', () => {
-    let s = eventsReducer(initialEventsState, { type: 'snapshot', jobs: [], approvals: [approval] });
+    let s = eventsReducer(initialEventsState, { type: 'snapshot', jobs: [], approvals: [approval], locale: 'it', languageSetting: 'system' });
     expect(Object.keys(s.approvals)).toEqual(['a1']);
     s = eventsReducer(s, { type: 'approval_resolved', id: 'a1', decision: 'deny' });
     expect(s.approvals).toEqual({});

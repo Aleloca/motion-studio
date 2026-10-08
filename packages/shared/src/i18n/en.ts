@@ -10,4 +10,7 @@ export const en = {
     loading: 'Loading…',
     items: (p: { count: number }) => (p.count === 1 ? '1 item' : `${p.count} items`),
   },
+  errors: {
+    invalidLanguage: 'Choose System, English or Italian',
+  },
 } as const satisfies Catalog;

@@ -8,4 +8,7 @@ export const it: Messages = {
     loading: 'Caricamento…',
     items: (p) => (p.count === 1 ? '1 elemento' : `${p.count} elementi`),
   },
+  errors: {
+    invalidLanguage: 'Scegli Sistema, Inglese o Italiano',
+  },
 };

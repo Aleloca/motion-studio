@@ -1,7 +1,7 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import open from 'open';
-import { AlreadyRunningError, startServer } from '@motion-studio/core';
+import { AlreadyRunningError, detectSystemLocales, startServer } from '@motion-studio/core';
 import { parseCliArgs } from './args.ts';
 import { alreadyRunningMessage, NOT_RUNNING, runningUrl } from './print-url.ts';
 
@@ -28,7 +28,7 @@ async function main() {
   const webDir = join(here, 'web');
   const mcpServerPath = join(here, 'mcp-studio.mjs');
   try {
-    const { appUrl, close } = await startServer({ port: args.port, webDir, mcpServerPath });
+    const { appUrl, close } = await startServer({ port: args.port, webDir, mcpServerPath, systemLocales: detectSystemLocales() });
     // The address carries the UI access code: printed even with --no-open (it can be shown again with --print-url).
     console.log(`Motion Studio è attivo su ${appUrl}`);
     // Registered before opening the browser so a stop is always handled.
