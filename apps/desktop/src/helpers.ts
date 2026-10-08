@@ -1,5 +1,5 @@
 import { isAbsolute, join } from 'node:path';
-import { isLocale, type currentLocale, type LoginShellPath, type t } from '@motion-studio/core';
+import { AppConfigStore, isLocale, resolveLocale, type currentLocale, type LoginShellPath, type t } from '@motion-studio/core';
 
 type Locale = ReturnType<typeof currentLocale>;
 type Messages = ReturnType<typeof t>;
@@ -90,4 +90,14 @@ export async function attachedLocale(opts: { origin: string; token: string | nul
     const { locale } = (await res.json()) as { locale?: unknown };
     return isLocale(locale) ? locale : opts.fallback;
   } catch { return opts.fallback; }
+}
+
+/** The saved language setting, read without creating or rewriting the config; undefined when the file cannot be read. */
+export function readSavedLanguage(configDir: string): Promise<unknown> {
+  return new AppConfigStore(configDir).read().then((c) => c.language, () => undefined);
+}
+
+/** Language before the core starts (early error boxes): the saved setting, else the system languages. */
+export function bootLocale(saved: unknown, systemLanguages: readonly string[]): Locale {
+  return resolveLocale(saved === 'system' || isLocale(saved) ? saved : 'system', systemLanguages);
 }

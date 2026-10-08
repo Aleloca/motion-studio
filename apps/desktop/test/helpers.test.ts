@@ -1,8 +1,10 @@
-import { homedir } from 'node:os';
+import { existsSync } from 'node:fs';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { defaultConfigDir, t } from '@motion-studio/core';
-import { absolutePathArg, attachedGone, attachedGoneAction, attachedLocale, focusOnReady, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, userDataDir } from '../src/helpers.ts';
+import { AppConfigStore, defaultConfigDir, t } from '@motion-studio/core';
+import { absolutePathArg, attachedGone, attachedGoneAction, attachedLocale, bootLocale, focusOnReady, readSavedLanguage, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, userDataDir } from '../src/helpers.ts';
 
 describe('desktop helpers', () => {
   it('reads the UI token from the URL fragment only', () => {
@@ -125,5 +127,32 @@ describe('attached to another instance', () => {
     expect(await attachedLocale({ ...base, fetchFn: ok('de') })).toBe('en');
     expect(await attachedLocale({ ...base, fetchFn: vi.fn(async () => new Response('{}', { status: 401 })) as unknown as typeof fetch })).toBe('en');
     expect(await attachedLocale({ ...base, fetchFn: vi.fn(async () => { throw new Error('down'); }) as unknown as typeof fetch })).toBe('en');
+  });
+});
+
+describe('boot language', () => {
+  it('uses the saved setting, else the first supported system language, else English', () => {
+    expect(bootLocale('it', ['en-US'])).toBe('it');
+    expect(bootLocale('en', ['it-IT'])).toBe('en');
+    expect(bootLocale('system', ['de-DE', 'it-IT'])).toBe('it');
+    expect(bootLocale(undefined, ['it-IT'])).toBe('it');
+    expect(bootLocale('de', ['fr-FR'])).toBe('en');
+    expect(bootLocale(undefined, [])).toBe('en');
+  });
+  it('reads the saved language without creating or rewriting anything', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'ms-desk-lang-'));
+    try {
+      const missing = join(base, 'missing');
+      expect(await readSavedLanguage(missing)).toBe('system');
+      expect(existsSync(missing)).toBe(false);
+      const saved = join(base, 'saved');
+      await new AppConfigStore(saved).setLanguage('it');
+      expect(await readSavedLanguage(saved)).toBe('it');
+      const corrupt = join(base, 'corrupt');
+      await new AppConfigStore(corrupt).setLanguage('en');
+      await writeFile(join(corrupt, 'config.json'), '{ nope');
+      expect(await readSavedLanguage(corrupt)).toBeUndefined();
+      expect(await readFile(join(corrupt, 'config.json'), 'utf8')).toBe('{ nope');
+    } finally { await rm(base, { recursive: true, force: true }); }
   });
 });

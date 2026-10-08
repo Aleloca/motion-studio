@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AlreadyRunningError, answersHealth, resolveLocale, resolveLoginShellPath, setLocale, startServer, t } from '@motion-studio/core';
-import { absolutePathArg, attachedGone, attachedGoneAction, attachedLocale, focusOnReady, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, userDataDir } from './helpers.ts';
+import { AlreadyRunningError, answersHealth, defaultConfigDir, resolveLocale, resolveLoginShellPath, setLocale, startServer, t } from '@motion-studio/core';
+import { absolutePathArg, attachedGone, attachedGoneAction, attachedLocale, bootLocale, focusOnReady, readSavedLanguage, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, userDataDir } from './helpers.ts';
 import { menuTemplate } from './menu.ts';
 import { setupUpdates } from './updater.ts';
 import { externalUrlAllowed, isAppUrl, windowOptions } from './window.ts';
@@ -30,6 +30,8 @@ function resourcePaths() {
 }
 
 async function boot(configDir?: string) {
+  // Errors shown before the core is up (dialogs, logs) already speak the saved or system language.
+  setLocale(bootLocale(await readSavedLanguage(configDir ?? defaultConfigDir()), app.getPreferredSystemLanguages()));
   const shellPath = await resolveLoginShellPath(loginShellOptions());
   process.env.PATH = shellPath.path;
   console.log(`PATH source: ${shellPath.source}`);
