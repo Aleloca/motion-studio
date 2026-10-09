@@ -103,6 +103,45 @@
 
 ---
 
+### Task 0b: Integrated desktop title bar (user feedback, 2026-10-09)
+
+Today the desktop window uses the default system frame: a system title bar holding only the window controls, with the app's own top bar below it, so the app looks like it sits "inside a window". Users expect what other macOS apps do: window controls inside the app's own top bar.
+
+**Files:**
+- Modify: `apps/desktop/src/window.ts`
+- Modify: `apps/desktop/src/main.ts`
+- Modify: `apps/desktop/src/preload.ts`
+- Modify: `packages/web/src/desktop.ts`
+- Modify: `packages/web/src/shell/TopBars.tsx` (and the creative and format top bars)
+- Modify: `ui.css`
+- Test: `apps/desktop/test/window.test.ts`
+- Test: extend the shell tests
+
+**Requirements:**
+- **macOS:** `titleBarStyle: 'hiddenInset'` with `trafficLightPosition` vertically centred in the 48 px top bar.
+- **Windows and Linux:** `titleBarStyle: 'hidden'` plus `titleBarOverlay`:
+  - `{ color, symbolColor, height: 48 }` taken from the current theme tokens;
+  - updated with `win.setTitleBarOverlay` when the theme changes, through a small validated IPC from the renderer: `ms:titlebar-theme`, with `'light' | 'dark'` only.
+- **`backgroundColor`** uses the new tokens (dark `#0F0F0F`, and the light `--bg`), no longer the old values.
+- **Web top bars:**
+  - every top bar is a drag region (`-webkit-app-region: drag`), and every interactive element in it is `no-drag`;
+  - double-click on an empty area of the bar keeps the OS behaviour (zoom or maximize);
+  - when `desktop()?.platform === 'darwin'` and the window is not fullscreen, the bar gets left padding (about 78 px) so the traffic lights don't overlap the logo;
+  - on Windows and Linux, right padding equals the overlay width.
+- **Fullscreen:** main sends `ms:fullscreen` (a boolean) on `enter-full-screen` and `leave-full-screen`, exposed in the preload as `onFullscreenChange(cb)`. The bar drops the traffic-light padding in fullscreen.
+- **Web (non-desktop):** no change.
+
+- [ ] **Step 1. Failing tests:**
+  - `windowOptions('darwin')` has hiddenInset and the traffic light position;
+  - `windowOptions('win32')` has the overlay with the dark-theme colours;
+  - the IPC rejects values other than light or dark;
+  - the top bar has the drag class and buttons are no-drag;
+  - darwin non-fullscreen padding is applied, and removed in fullscreen.
+- [ ] **Steps 2–4.** FAIL → implement → PASS. Run the desktop smoke test with a temporary config. Take a screenshot of the window in light and dark (dev build) to check the traffic lights' alignment.
+- [ ] **Step 5. Commit:** `feat(desktop): integrated title bar with native window controls in the app bar`.
+
+---
+
 ### Task 1: Shared types, the catalog link rule and hashes
 
 **Files:**
