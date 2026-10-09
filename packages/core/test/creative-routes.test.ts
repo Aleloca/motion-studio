@@ -267,6 +267,26 @@ describe('creative export', { timeout: 20_000 }, () => {
     expect(inside.statusCode).toBe(400);
     expect(inside.json().error).toBe('Scegli una cartella fuori dal workspace di Motion Studio');
   });
+  it('names the files after the creative title in the destination, without overwriting (route level)', async () => {
+    const { slug } = await createCreative();
+    await waitJobs();
+    const renamed = await app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}`, payload: { title: 'Autumn Sourdough Launch!' } });
+    expect(renamed.statusCode).toBe(200);
+    const url = `/api/projects/acme/creatives/${slug}/versions/1/export`;
+    const dest = join(base, 'delivery');
+    // The extension is the output's own (the fake agent decides it).
+    const out = ((await app.inject(`/api/projects/acme/creatives/${slug}`)).json().versions[0].outputs as Array<{ format: string; file: string }>).find((o) => o.format === 'instagram-post-1x1')!;
+    const ext = out.file.slice(out.file.lastIndexOf('.'));
+    const first = await app.inject({ method: 'POST', url, payload: { destination: dest, formats: ['instagram-post-1x1'] } });
+    expect(first.statusCode).toBe(200);
+    const [file] = first.json().files as Array<{ to: string }>;
+    expect(file!.to).toBe(join(dest, `autumn-sourdough-launch-instagram-post-1x1-v1${ext}`));
+    expect(await readdir(dest)).toEqual([`autumn-sourdough-launch-instagram-post-1x1-v1${ext}`]);
+    // The same export again: a second copy with -2, the first one untouched.
+    const again = await app.inject({ method: 'POST', url, payload: { destination: dest, formats: ['instagram-post-1x1'] } });
+    expect((again.json().files as Array<{ to: string }>)[0]!.to).toBe(join(dest, `autumn-sourdough-launch-instagram-post-1x1-v1-2${ext}`));
+    expect((await readdir(dest)).sort()).toEqual([`autumn-sourdough-launch-instagram-post-1x1-v1-2${ext}`, `autumn-sourdough-launch-instagram-post-1x1-v1${ext}`].sort());
+  });
   it('requires the UI token', async () => {
     const guarded = await buildServer({ uiToken: 'ab'.repeat(32), sandbox: async () => ({ available: false, reason: 'test' }),
       appConfig: new AppConfigStore(join(base, 'config2')), git: new Git(), doctor: async () => [],

@@ -203,6 +203,58 @@ describe('PageHost', () => {
     expect(t1.frames[0]!.transform).toMatch(/translate\(-24px/);
   });
 
+  describe('rapid navigation with the shared mode (creative ↔ format)', () => {
+    const P: R = { k: 'projects', depth: 1 }, CR: R = { k: 'creative', depth: 3 }, F: R = { k: 'format', depth: 4 };
+    const shared = (a: R, b: R) => ((a.k === 'creative' && b.k === 'format') || (a.k === 'format' && b.k === 'creative') ? 'shared' as const : undefined);
+    const sui = (route: R) => <PageHost route={route} keyOf={(r) => r.k} depthOf={depthOf} modeOf={shared} render={(r) => <span>{r.k}</span>} />;
+    /** The active page shows: no forwards-filled (exit/recede) animation still holds it. */
+    const holding = (el: Element) => (live.get(el) ?? []).filter((a) => !a.cancelled && calls.find((c) => c.fake === a)?.opts.fill === 'forwards');
+    const check = (container: HTMLElement, name: string) => {
+      expect(pages(container).length).toBeLessThanOrEqual(2);
+      const active = container.querySelectorAll<HTMLElement>('[data-page-active]');
+      expect(active).toHaveLength(1);
+      expect(active[0]!.textContent).toBe(name);
+      expect(holding(active[0]!)).toHaveLength(0);
+    };
+
+    it('creative → format → creative quickly: at most 2 pages, one active, the creative visible at the end', async () => {
+      const { container, rerender } = render(sui(CR));
+      rerender(sui(F));
+      check(container, 'format');
+      rerender(sui(CR));
+      check(container, 'creative');
+      await settle();
+      const ps = pages(container);
+      expect(ps).toHaveLength(1);
+      expect(first(ps).textContent).toBe('creative');
+      expect(first(ps).style.pointerEvents).toBe('auto');
+      expect(holding(first(ps))).toHaveLength(0);
+    });
+
+    it('creative → format, then projects before the shared transition ends: projects is the one page left', async () => {
+      const { container, rerender } = render(sui(CR));
+      rerender(sui(F));
+      rerender(sui(P));
+      check(container, 'projects');
+      // The last step is T1, not shared: projects slides in from the left.
+      const enteringProjects = calls.filter((c) => c.opts.fill === 'backwards').at(-1)!;
+      expect(String(enteringProjects.frames[0]!.transform)).toMatch(/translate\(-24px/);
+      await settle();
+      const ps = pages(container);
+      expect(ps).toHaveLength(1);
+      expect(first(ps).textContent).toBe('projects');
+      expect(holding(first(ps))).toHaveLength(0);
+    });
+
+    it('format → creative → format → creative in a burst never leaves two active pages', async () => {
+      const { container, rerender } = render(sui(F));
+      for (const r of [CR, F, CR, F, CR]) { rerender(sui(r)); check(container, r.k); }
+      await settle();
+      expect(pages(container)).toHaveLength(1);
+      expect(first(pages(container)).textContent).toBe('creative');
+    });
+  });
+
   it('same key with a new route object refreshes content without animating', () => {
     const { container, rerender } = render(ui({ k: 'a', depth: 1, p: 1 }));
     const before = calls.length;
