@@ -321,3 +321,16 @@ describe('Welcome · header (W1, W2)', () => {
     await waitFor(() => expect(onLanguage).toHaveBeenCalledWith({ locale: 'it', setting: 'it', systemLocale: 'en' }));
   });
 });
+
+describe('Welcome · integrated desktop title bar', () => {
+  it('its bar is a drag region with room for the traffic lights on macOS, unchanged in the browser', () => {
+    const view = setup({ onLanguage: vi.fn() });
+    expect(document.querySelector('.ms-welcome-top')!.className).toBe('ms-welcome-top');
+    view.view.unmount();
+    (window as unknown as { motionStudio: unknown }).motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: async () => null, revealPath: async () => {} };
+    setup({ onLanguage: vi.fn() });
+    const top = document.querySelector('.ms-welcome-top')!;
+    expect(top.classList).toContain('ms-titlebar');
+    expect(top.classList).toContain('ms-tb-mac');
+  });
+});

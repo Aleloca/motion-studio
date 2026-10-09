@@ -1,5 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
+// Full-screen state from the main process (ms:fullscreen). Remembered from the start, so a page that subscribes after
+// the main process spoke (a reload while in full screen) still learns it.
+let fullscreen: boolean | null = null;
+ipcRenderer.on('ms:fullscreen', (_e: unknown, value: unknown) => { if (typeof value === 'boolean') fullscreen = value; });
+
 contextBridge.exposeInMainWorld('motionStudio', {
   isDesktop: true,
   platform: process.platform,
@@ -17,5 +22,18 @@ contextBridge.exposeInMainWorld('motionStudio', {
     const listener = () => { try { cb(); } catch { /* the page's own error */ } };
     ipcRenderer.on('ms:attention-click', listener);
     return () => { ipcRenderer.removeListener('ms:attention-click', listener); };
+  },
+  // Integrated title bar: the page's resolved theme ('light' | 'dark', validated by the main process) recolours the
+  // window controls overlay (Windows, Linux) and the window background.
+  setTitleBarTheme: (theme: 'light' | 'dark'): Promise<void> => ipcRenderer.invoke('ms:titlebar-theme', theme),
+  // Calls `cb` with true or false when the window enters or leaves full screen (and at once with the state already
+  // known). Only a boolean reaches the page, never the IPC event. Returns the unsubscribe.
+  onFullscreenChange: (cb: (fullscreen: boolean) => void): (() => void) => {
+    if (typeof cb !== 'function') return () => {};
+    const call = (v: boolean) => { try { cb(v); } catch { /* the page's own error */ } };
+    const listener = (_e: unknown, value: unknown) => { if (typeof value === 'boolean') call(value); };
+    ipcRenderer.on('ms:fullscreen', listener);
+    if (fullscreen !== null) call(fullscreen);
+    return () => { ipcRenderer.removeListener('ms:fullscreen', listener); };
   },
 });

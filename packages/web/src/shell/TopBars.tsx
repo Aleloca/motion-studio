@@ -10,6 +10,7 @@ import { go, useShell } from './ShellContext.tsx';
 import { TokensButton } from './Tokens.tsx';
 import { todayTokens } from '../usageLive.ts';
 import { isMac } from '../platform.ts';
+import { useTitleBarClass } from '../titleBar.ts';
 
 /** Bar tabs (spec §6.1). */
 const BAR_TABS: ProjectTab[] = ['creatives', 'brand', 'assets', 'references', 'settings'];
@@ -210,6 +211,7 @@ export function TopBar() {
   const t = useT();
   const { route: r, catalog } = useShell();
   const { owner } = useBarSlots();
+  const titleBar = useTitleBarClass();
   const ref = useRef<HTMLElement>(null);
   const key = barKey(r);
   const prev = useRef(key);
@@ -250,5 +252,6 @@ export function TopBar() {
     default:
       content = <GlobalTop />;
   }
-  return <header ref={ref} className="ms-topbar">{content}</header>;
+  // Desktop: the bar is the window's title bar (drag region, room for the window controls); no change in a browser.
+  return <header ref={ref} className={cx('ms-topbar', titleBar)}>{content}</header>;
 }

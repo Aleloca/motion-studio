@@ -17,6 +17,10 @@ export interface DesktopBridge {
   setBadge?(n: number): Promise<void>;
   /** Calls `cb` when one of the app's native notifications is clicked; returns the unsubscribe. Missing before Phase 7. */
   onAttentionClick?(cb: () => void): () => void;
+  /** Integrated title bar: recolours the window controls overlay and background for the page's theme. Missing before Phase 9. */
+  setTitleBarTheme?(theme: 'light' | 'dark'): Promise<void>;
+  /** Calls `cb` when the window enters (true) or leaves (false) full screen; returns the unsubscribe. Missing before Phase 9. */
+  onFullscreenChange?(cb: (fullscreen: boolean) => void): () => void;
 }
 
 /** The Electron preload bridge, or null in a plain browser (or when the bridge is malformed). */

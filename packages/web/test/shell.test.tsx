@@ -1,5 +1,7 @@
 import type { ApprovalRequest, DoctorCheck, JobSummary, ServerMessage, WorkspaceInfo } from '@motion-studio/shared';
-import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../src/api.ts';
@@ -573,5 +575,155 @@ describe('new project from the switcher', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Nuovo progetto' }));
     expect(location.hash).toBe('#/');
     await waitFor(() => expect(document.activeElement?.id).toBe('new-project'));
+  });
+});
+
+describe('integrated desktop title bar', () => {
+  const css = (file: string) => readFileSync(resolvePath(import.meta.dirname, '../src', file), 'utf8');
+  /** The selector list of the rule that sets `-webkit-app-region: <value>` and mentions `anchor`. */
+  const regionSelector = (file: string, value: 'drag' | 'no-drag', anchor: string) => {
+    const re = new RegExp(`([^{}]+)\\{[^}]*-webkit-app-region:\\s*${value}\\s*;?[^}]*\\}`, 'g');
+    for (const m of css(file).matchAll(re)) {
+      const sel = m[1]!.replace(/\/\*[^*]*\*\//g, '').trim();
+      if (sel.includes(anchor)) return sel;
+    }
+    throw new Error(`no ${value} rule for ${anchor} in ${file}`);
+  };
+  type FullscreenBridge = { fullscreen(v: boolean): void; off: ReturnType<typeof vi.fn> };
+  function titleBridge(platform: string): FullscreenBridge {
+    let cb: ((v: boolean) => void) | null = null;
+    const off = vi.fn(() => { cb = null; });
+    (window as unknown as { motionStudio: unknown }).motionStudio = {
+      isDesktop: true, platform, pickFolder: async () => null, revealPath: async () => {},
+      onFullscreenChange: (fn: (v: boolean) => void) => { cb = fn; return off; },
+    };
+    return { fullscreen: (v) => act(() => cb?.(v)), off };
+  }
+  const bar = () => document.querySelector('header.ms-topbar')!;
+
+  it('web: no change (no drag region, no padding classes)', async () => {
+    await startApp();
+    expect(bar().className).toBe('ms-topbar');
+  });
+
+  it('macOS: the bar is a drag region with room for the traffic lights, dropped in full screen', async () => {
+    const b = titleBridge('darwin');
+    await startApp();
+    expect(bar().classList).toContain('ms-titlebar');
+    expect(bar().classList).toContain('ms-tb-mac');
+    expect(bar().classList).not.toContain('ms-tb-overlay');
+    b.fullscreen(true);
+    expect(bar().classList).toContain('ms-titlebar');
+    expect(bar().classList).not.toContain('ms-tb-mac');
+    b.fullscreen(false);
+    expect(bar().classList).toContain('ms-tb-mac');
+  });
+
+  it('Windows and Linux: room on the right for the window controls overlay', async () => {
+    titleBridge('win32');
+    await startApp();
+    expect(bar().classList).toContain('ms-titlebar');
+    expect(bar().classList).toContain('ms-tb-overlay');
+    expect(bar().classList).not.toContain('ms-tb-mac');
+  });
+
+  it('CSS: the bar drags, the left padding clears the traffic lights, the right one the overlay', () => {
+    expect(regionSelector('shell/shell.css', 'drag', '.ms-titlebar')).toBe('.ms-titlebar');
+    expect(css('shell/shell.css')).toMatch(/\.ms-titlebar\.ms-tb-mac \{[^}]*padding-left: 80px/);
+    expect(css('shell/shell.css')).toMatch(/\.ms-titlebar\.ms-tb-overlay \{[^}]*padding-right: [^;]*env\(titlebar-area-width/);
+  });
+
+  it('every interactive element of every bar is no-drag (project bar, creative bar with its slots)', async () => {
+    titleBridge('darwin');
+    const noDrag = regionSelector('shell/shell.css', 'no-drag', '.ms-titlebar');
+    history.replaceState(null, '', '/#/p/acme/brand');
+    await startApp();
+    await screen.findByRole('button', { name: 'Progetto Acme, cambia progetto' });
+    const check = () => {
+      const interactive = bar().querySelectorAll('button, a, input, select, textarea, [tabindex], [role="button"]');
+      expect(interactive.length).toBeGreaterThan(4);
+      for (const el of interactive) expect(el.matches(noDrag), el.outerHTML.slice(0, 80)).toBe(true);
+    };
+    check();
+    // A page's own controls portalled into the creative bar's slots (version menu, Export) are covered too.
+    act(() => {
+      history.replaceState(null, '', '/#/p/acme/c/lancio');
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+    await waitFor(() => expect(document.querySelector('.ms-bar-end')).toBeTruthy());
+    const slotted = document.createElement('button');
+    document.querySelector('.ms-bar-end')!.appendChild(slotted);
+    expect(slotted.matches(noDrag)).toBe(true);
+    check();
+  });
+
+  it('popovers and modals are portalled out of the bar and never drag (a drag region swallows clicks)', async () => {
+    titleBridge('darwin');
+    await startApp();
+    await userEvent.click(screen.getByRole('button', { name: 'Menu account' }));
+    const pop = document.querySelector('.ms-pop')!;
+    expect(pop.closest('.ms-titlebar')).toBeNull();
+    const overlays = regionSelector('ui/ui.css', 'no-drag', '.ms-pop');
+    for (const cls of ['.ms-pop', '.ms-modal', '.ms-toasts']) expect(overlays).toContain(cls);
+    expect(pop.matches(overlays)).toBe(true);
+  });
+
+  it('unsubscribes from the full-screen signal when the bar goes away', async () => {
+    const b = titleBridge('darwin');
+    await startApp();
+    cleanup();
+    expect(b.off).toHaveBeenCalled();
+  });
+});
+
+describe('title bar theme (desktop)', () => {
+  type MQ = { matches: boolean; listeners: Set<() => void>; addEventListener(t: string, l: () => void): void; removeEventListener(t: string, l: () => void): void };
+  let mq: MQ;
+  beforeEach(() => {
+    mq = { matches: false, listeners: new Set(), addEventListener(_t, l) { this.listeners.add(l); }, removeEventListener(_t, l) { this.listeners.delete(l); } };
+    vi.stubGlobal('matchMedia', vi.fn(() => mq));
+  });
+  afterEach(() => { document.documentElement.removeAttribute('data-theme'); });
+
+  it('reports the resolved theme: system, then forced, deduplicated; stops on unsubscribe', async () => {
+    const { watchTitleBarTheme } = await import('../src/titleBar.ts');
+    const setTitleBarTheme = vi.fn(async () => {});
+    (window as unknown as { motionStudio: unknown }).motionStudio = { isDesktop: true, platform: 'win32', pickFolder: async () => null, revealPath: async () => {}, setTitleBarTheme };
+    const stop = watchTitleBarTheme();
+    expect(setTitleBarTheme).toHaveBeenLastCalledWith('light');
+    mq.matches = true;
+    for (const l of mq.listeners) l();
+    expect(setTitleBarTheme).toHaveBeenLastCalledWith('dark');
+    document.documentElement.setAttribute('data-theme', 'light');
+    await waitFor(() => expect(setTitleBarTheme).toHaveBeenLastCalledWith('light'));
+    document.documentElement.setAttribute('data-theme', 'dark');
+    await waitFor(() => expect(setTitleBarTheme).toHaveBeenLastCalledWith('dark'));
+    const n = setTitleBarTheme.mock.calls.length;
+    document.documentElement.removeAttribute('data-theme'); // system, and the system is dark: same theme, not sent again
+    await new Promise((r) => setTimeout(r, 0));
+    expect(setTitleBarTheme).toHaveBeenCalledTimes(n);
+    stop();
+    expect(mq.listeners.size).toBe(0);
+    document.documentElement.setAttribute('data-theme', 'light');
+    await new Promise((r) => setTimeout(r, 0));
+    expect(setTitleBarTheme).toHaveBeenCalledTimes(n);
+  });
+
+  it('does nothing in the browser or with an older desktop build', async () => {
+    const { watchTitleBarTheme } = await import('../src/titleBar.ts');
+    expect(() => watchTitleBarTheme()()).not.toThrow();
+    (window as unknown as { motionStudio: unknown }).motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: async () => null, revealPath: async () => {} };
+    expect(() => watchTitleBarTheme()()).not.toThrow();
+    expect(mq.listeners.size).toBe(0);
+  });
+
+  it('a refused theme call never surfaces as an unhandled rejection', async () => {
+    const { watchTitleBarTheme } = await import('../src/titleBar.ts');
+    const setTitleBarTheme = vi.fn(() => Promise.reject(new Error('Invalid request')));
+    (window as unknown as { motionStudio: unknown }).motionStudio = { isDesktop: true, platform: 'linux', pickFolder: async () => null, revealPath: async () => {}, setTitleBarTheme };
+    const stop = watchTitleBarTheme();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(setTitleBarTheme).toHaveBeenCalledWith('light');
+    stop();
   });
 });
