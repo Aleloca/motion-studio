@@ -173,6 +173,43 @@ describe('Assets · library', () => {
   });
 });
 
+describe('Assets · bulk delete commit', () => {
+  afterEach(() => { api.deleteAsset.mockImplementation((async () => ({ ok: true })) as never); });
+  const selectAndDelete = async () => {
+    await screen.findByText('Wordmark for dark backgrounds');
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select logo.svg' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select night.jpg' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select intro.mp4' }));
+    fireEvent.click(within(screen.getByRole('toolbar', { name: 'Selection' })).getByRole('button', { name: 'Delete' }));
+    await act(async () => { vi.advanceTimersByTime(400); });
+  };
+
+  it('issues every keepalive delete synchronously on a pagehide flush, before any resolves', async () => {
+    api.deleteAsset.mockImplementation(() => new Promise<never>(() => {}));
+    en(<Assets slug="acme" live={live()} />);
+    await selectAndDelete();
+    await act(async () => { window.dispatchEvent(new Event('pagehide')); });
+    expect(api.deleteAsset).toHaveBeenCalledTimes(3);
+    expect(api.deleteAsset).toHaveBeenCalledWith('acme', 'intro.mp4', { keepalive: true });
+  });
+
+  it('when only some deletes fail, restores only the files that failed', async () => {
+    api.deleteAsset.mockImplementation((async (_s: string, f: string) => {
+      if (f === 'night.jpg') throw new Error('nope');
+      return { ok: true };
+    }) as never);
+    en(<Assets slug="acme" live={live()} />);
+    await selectAndDelete();
+    await act(async () => { vi.advanceTimersByTime(UNDO_MS + 1000); });
+    await act(async () => {});
+    expect(api.deleteAsset).toHaveBeenCalledTimes(3);
+    expect(card('night.jpg')).toBeTruthy();
+    expect(card('logo.svg')).toBeNull();
+    expect(card('intro.mp4')).toBeNull();
+  });
+});
+
 describe('Assets · stages and unreadable files', () => {
   it('puts SVG and transparent formats on a stage that suits them, never on the theme tile', async () => {
     listing.assets.push(asset({ file: 'mark.svg', kind: 'svg', tags: ['logo'] }), asset({ file: 'badge.png', tags: [] }));

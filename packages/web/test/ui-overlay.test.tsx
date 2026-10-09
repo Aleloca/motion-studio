@@ -549,7 +549,8 @@ describe('Toasts', () => {
     const css = readFileSync(resolve(import.meta.dirname, '../src/ui/ui.css'), 'utf8');
     const rules = [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)].filter((m) => m[1]!.includes('ms-toast'));
     expect(rules.length).toBeGreaterThan(0);
-    for (const r of rules) expect(r[2], r[1]).not.toMatch(/var\(--accent/);
+    // No orange fill on a toast; the action text may use the AA --accentText (checked in ui-basic).
+    for (const r of rules) expect(r[2], r[1]).not.toMatch(/var\(--accent\)|var\(--onAccent/);
   });
 });
 

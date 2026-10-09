@@ -431,6 +431,29 @@ describe('accent contrast', () => {
     }
     expect(ui).toMatch(/\.ms-count \{[^}]*color: var\(--onAccentStrong\); font-size: 11px; font-weight: 700;/);
   });
+  it('renders toast actions as AA text buttons, never white on the accent fill', () => {
+    const rules = [...ui.matchAll(/([^{}]+)\{([^}]*)\}/g)].map((m) => ({ sel: m[1]!.trim(), body: m[2]! }));
+    const toastRules = rules.filter((r) => /\.ms-toast/.test(r.sel));
+    expect(toastRules.length).toBeGreaterThan(0);
+    for (const r of toastRules) expect(/--onAccent\b/.test(r.body) && /var\(--accent\)/.test(r.body), r.sel).toBe(false);
+    const action = toastRules.find((r) => r.sel === '.ms-toast-action')!;
+    expect(action, '.ms-toast-action rule').toBeTruthy();
+    expect(action.body).not.toMatch(/background:\s*var\(--accent\)/);
+    const fg = /(?:^|;)\s*color:\s*var\(--(\w+)\)/.exec(action.body)![1]!;
+    const bg = /(?:^|;)\s*background:\s*var\(--(\w+)\)/.exec(toastRules.find((r) => r.sel === '.ms-toast')!.body)![1]!;
+    expect(ui).toMatch(/\.ms-toast-action:hover \{[^}]*underline/);
+    expect(ui).toMatch(/\.ms-toast-action:focus-visible \{[^}]*outline/);
+    const lum = (hex: string) => {
+      const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * c[0]! + 0.7152 * c[1]! + 0.0722 * c[2]!;
+    };
+    const ratio = (a: string, b: string) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x! + 0.05) / (y! + 0.05); };
+    const tok = (block: string, name: string) => new RegExp(`--${name}:\\s*(#[0-9A-Fa-f]{6})`).exec(block)![1]!;
+    const light = theme.slice(theme.indexOf(':root {'), theme.indexOf('@media'));
+    const dark = theme.slice(theme.indexOf(':root[data-theme="dark"]'));
+    const media = theme.slice(theme.indexOf('@media (prefers-color-scheme: dark)'), theme.indexOf(':root[data-theme="dark"]'));
+    for (const block of [light, dark, media]) expect(ratio(tok(block, fg), tok(block, bg))).toBeGreaterThanOrEqual(4.5);
+  });
   it('keeps --onAccentStrong #171717 in every theme and uses the AA light --accentText', () => {
     expect(theme).toContain('--onAccentStrong: #171717;');
     expect(theme.match(/--onAccentStrong:/g)).toHaveLength(1);

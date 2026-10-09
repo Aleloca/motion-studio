@@ -244,4 +244,7 @@ button.ms-avatar:active { transform: scale(.95); }
 .ms-toast-ok { display: inline-flex; color: var(--ok); flex: none; }
 .ms-toast-dot { color: var(--muted); }
 .ms-toast-end { width: 8px; flex: none; }
-.ms-toast .ms-btn { border-radius: 999px; flex: none; }
+.ms-toast-action { flex: none; height: 26px; padding: 0 10px; margin: 0; border: 0; border-radius: 999px; background: transparent; color: var(--accentText); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.ms-toast-action:hover { text-decoration: underline; }
+.ms-toast-action:focus-visible { outline: 2px solid var(--accentText); outline-offset: 1px; }
+.ms-toast-action:disabled { opacity: 0.5; cursor: default; }

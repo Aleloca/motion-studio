@@ -198,8 +198,11 @@ describe('Conversation', () => {
     expect(api.cancelJob).toHaveBeenCalledWith('j1');
   });
 
-  it('offers Generate before the first version', async () => {
+  it('offers Generate before the first version, as an accent button (it acts as Send)', async () => {
     render(view({ entries: [], canGenerate: true }));
+    const gen = screen.getByRole('button', { name: 'Generate' });
+    expect(gen.className).toContain('ms-accent');
+    expect(gen.className).not.toContain('ms-ink');
     await userEvent.click(screen.getByRole('button', { name: 'Generate' }));
     await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'c1', {}));
   });

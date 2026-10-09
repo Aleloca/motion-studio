@@ -1,7 +1,6 @@
 import { useLayoutEffect, useRef, useSyncExternalStore, type FocusEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { D, enter, exit } from '../motion/index.ts';
-import { Button } from './Button.tsx';
 import { Icon } from './Icon.tsx';
 import { getToasts, pauseToast, removeToast, resumeToast, subscribeToasts, toast, type ToastItem } from './toast.tsx';
 
@@ -65,9 +64,9 @@ function Toast({ t }: { t: ToastItem }) {
       )}
       <span className="ms-toast-text">{t.text}</span>
       {t.action ? (
-        <Button variant="accent" size="sm" disabled={t.leaving} onClick={act}>
+        <button type="button" className="ms-toast-action" disabled={t.leaving} onClick={act}>
           {t.action.label}
-        </Button>
+        </button>
       ) : (
         <span className="ms-toast-end" />
       )}

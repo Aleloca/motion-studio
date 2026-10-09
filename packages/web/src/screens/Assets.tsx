@@ -205,19 +205,29 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
     const finished = await Promise.all(els.map((el) => exit(el, { y: 6, ms: D.s })));
     if (finished.includes(false)) return; // an entrance revived a card meanwhile
     setHidden((h) => new Set([...h, ...files]));
-    const unhide = () => setHidden((h) => new Set([...h].filter((f) => !files.includes(f))));
+    const unhide = (only: string[] = files) => setHidden((h) => new Set([...h].filter((f) => !only.includes(f))));
+    // Set when some (not all) deletes failed: only those files come back.
+    let failed: string[] | null = null;
     deferRemoval({
       text: a.deleted({ count: files.length, name: baseName(files[0]!) }),
       undoLabel: a.undo,
       ms: UNDO_MS,
       keys: files.map((f) => removalKey('asset', slug, f)),
       commit: async () => {
-        for (const f of files) await api.deleteAsset(slug, f, KEEPALIVE);
+        // Every request starts synchronously: on pagehide only requests already issued leave before the page dies.
+        const results = await Promise.allSettled(files.map((f) => api.deleteAsset(slug, f, KEEPALIVE)));
+        const bad = files.filter((_, i) => results[i]!.status === 'rejected');
+        if (bad.length) {
+          failed = bad;
+          const gone = files.filter((f) => !bad.includes(f));
+          setListing((l) => (l ? { ...l, assets: l.assets.filter((x) => !gone.includes(x.file)) } : l));
+          throw (results[files.indexOf(bad[0]!)] as PromiseRejectedResult).reason;
+        }
         setListing((l) => (l ? { ...l, assets: l.assets.filter((x) => !files.includes(x.file)) } : l));
         unhide();
         reload();
       },
-      restore: unhide,
+      restore: () => unhide(failed ?? files),
       onError: (e) => { toast.show(a.deleteFailed({ detail: message(e) })); reload(); },
     });
   }, [slug, a, root, setListing, reload]);
