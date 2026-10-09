@@ -164,6 +164,17 @@
 .ms-adetail-meta dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .ms-adetail-meta a { color: var(--accentText); }
 
+/* Medium windows (e.g. 1024): narrower filters and detail, so the grid keeps at least two columns beside the detail. */
+@media (max-width: 1180px) and (min-width: 901px) {
+  .ms-assets { grid-template-columns: 188px minmax(0, 1fr) 0px; }
+  .ms-assets.ms-with-detail { grid-template-columns: 188px minmax(0, 1fr) 312px; }
+  .ms-adetail { width: 312px; }
+  .ms-selbar-wrap { left: 188px; }
+  .ms-assets.ms-with-detail .ms-selbar-wrap { right: 312px; }
+  .ms-assets.ms-with-detail .ms-assets-main { padding-left: 16px; padding-right: 16px; }
+  .ms-assets.ms-with-detail .ms-assets-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 156px), 1fr)); }
+}
+
 /* Narrow windows: the filters become a top band, the detail floats over the grid. */
 @media (max-width: 900px) {
   .ms-assets, .ms-assets.ms-with-detail { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
