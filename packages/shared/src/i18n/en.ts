@@ -504,6 +504,9 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
       agentSays: (p: { reason: string }) => `The agent says: “${p.reason}”`,
       /** Screen-reader prefix of a risk chip (the colour is never the only signal), e.g. "High risk:". */
       riskPrefix: (p: { risk: string }) => `${p.risk}:`,
+      /** Generic labels when the catalog has no entry for what the core sent (a newer core). */
+      otherRisk: 'Other risk',
+      runsCommand: 'Runs a command',
     },
     exportUi: {
       title: (p: { title: string }) => `Export “${p.title}”`,

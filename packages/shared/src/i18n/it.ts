@@ -500,6 +500,8 @@ Variabili: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (array JSON)`,
       kinds: { command: 'Comando', edit: 'Modifica di file', read: 'Lettura di file', web: 'Pagina web', tool: 'Strumento', provider: 'Servizio esterno' },
       agentSays: (p) => `L’agente dice: “${p.reason}”`,
       riskPrefix: (p) => `${p.risk}:`,
+      otherRisk: 'Altro rischio',
+      runsCommand: 'Esegue un comando',
     },
     exportUi: {
       title: (p) => `Esporta “${p.title}”`,

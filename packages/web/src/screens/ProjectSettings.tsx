@@ -1,5 +1,5 @@
 import { domainSchema, type DoctorCheck, type LinkedCodebase, type PermissionsFile, type WorkspaceSettings, type WorkspaceSettingsView } from '@motion-studio/shared';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { api, type CodebaseCheck } from '../api.ts';
 import { desktop } from '../desktop.ts';
 import type { EventsState } from '../eventsReducer.ts';
@@ -177,6 +177,7 @@ function AgentCard({ settings, save, sandbox, running }: { settings: WorkspaceSe
   // unknown doctor result (not checked yet) does not disable it.
   const isolated = settings.sandboxMode !== 'off' && sandbox?.ok !== false;
   const auto = isolated && settings.autoApproveSandboxed;
+  const statusId = useId();
   const setAuto = async (on: boolean) => {
     if (!(await save({ autoApproveSandboxed: on }))) return;
     const head = on ? a.autoOn : a.autoOff;
@@ -193,10 +194,10 @@ function AgentCard({ settings, save, sandbox, running }: { settings: WorkspaceSe
       <Row title={a.autoApprove} sub={(
         <>
           {a.autoApproveSub} <span className="ms-set-shared">{s.everyProject}</span>
-          {isolated ? <span className="ms-set-status">{a.appliesNew}</span> : <span className="ms-set-status ms-set-warn">{a.needsIsolation}</span>}
+          <span id={statusId} className={cx('ms-set-status', !isolated && 'ms-set-warn')}>{isolated ? a.appliesNew : a.needsIsolation}</span>
         </>
       )}>
-        <Toggle on={auto} disabled={!isolated} onChange={(on) => void setAuto(on)} label={a.autoApprove} />
+        <Toggle on={auto} disabled={!isolated} describedBy={statusId} onChange={(on) => void setAuto(on)} label={a.autoApprove} />
       </Row>
       <Row title={s.agent.confirmPaid} sub={<>{s.agent.confirmPaidSub} <span className="ms-set-shared">{s.everyProject}</span></>}>
         <Toggle on={settings.confirmPaidProviders} onChange={(on) => void save({ confirmPaidProviders: on })} label={s.agent.confirmPaid} />

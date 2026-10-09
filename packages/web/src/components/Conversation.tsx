@@ -340,14 +340,7 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
     case 'details':
       return <Details jobId={item.jobId} events={item.events} open={item.open} onToggle={() => onToggleDetails(item.jobId)} />;
     case 'autoline':
-      return (
-        <p className="ms-convo-autoline">
-          <span className="ms-step-check" aria-hidden="true"><Icon name="shield" size={13} /></span>
-          <span>{c.autoRan({ count: item.count })}</span>
-          <span aria-hidden="true">·</span>
-          <Button size="sm" variant="ghost" onClick={() => onOpenDetails(item.jobId)}>{c.autoDetails}</Button>
-        </p>
-      );
+      return <AutoLine jobId={item.jobId} count={item.count} onOpen={onOpenDetails} />;
     case 'version':
       return (
         <div className="ms-convo-version">
@@ -418,21 +411,40 @@ function Details({ jobId, events, open, onToggle }: { jobId: string; events: Age
   );
 }
 
+/** First line of a command, at most 120 characters: the row title when the explanation is missing. */
+const firstLine = (s: string) => { const l = s.split('\n', 1)[0] ?? ''; return l.length > 120 ? `${l.slice(0, 119)}\u2026` : l; };
+
+/** End-of-turn line: how many commands ran without asking; "Details" (described by the count) opens Activity details. */
+function AutoLine({ jobId, count, onOpen }: { jobId: string; count: number; onOpen(jobId: string): void }) {
+  const c = useT().web.chat;
+  const id = useId();
+  return (
+    <p className="ms-convo-autoline">
+      <span className="ms-step-check" aria-hidden="true"><Icon name="shield" size={13} /></span>
+      <span id={id}>{c.autoRan({ count })}</span>
+      <span aria-hidden="true">·</span>
+      <Button size="sm" variant="ghost" aria-describedby={id} onClick={() => onOpen(jobId)}>{c.autoDetails}</Button>
+    </p>
+  );
+}
+
 /** One command approved automatically in the sandbox: check, summary phrase and chips; the command expands below. */
 function AutoRow({ event }: { event: Extract<AgentEvent, { kind: 'auto_approved' }> }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const id = useId();
+  // A persisted event may be malformed (older or damaged log): never throw, show the tool and the command instead.
   const view = explanationView(event.explanation, t);
+  const fallback = `${typeof event.toolName === 'string' ? event.toolName : '?'}: ${firstLine(typeof event.command === 'string' ? event.command : '')}`;
   return (
     <li className="ms-convo-auto">
       <button type="button" className="ms-convo-auto-row" aria-expanded={open} aria-controls={id} onClick={() => setOpen((o) => !o)}>
         <span className="ms-step-check" aria-hidden="true"><Icon name="check" size={13} strokeWidth={2} /></span>
-        <span className="ms-convo-auto-text">{view.title || event.toolName}</span>
-        <RiskChips explanation={event.explanation} />
+        <span className="ms-convo-auto-text">{view?.title || fallback}</span>
+        {view ? <RiskChips explanation={event.explanation} /> : null}
         <Icon name="chevron" size={12} className="ms-chev" />
       </button>
-      {open && <pre id={id} tabIndex={0} aria-label={t.web.approvalUi.fullCommand}>{event.command}</pre>}
+      {open && <pre id={id} tabIndex={0} aria-label={t.web.approvalUi.fullCommand}>{typeof event.command === 'string' ? event.command : ''}</pre>}
     </li>
   );
 }

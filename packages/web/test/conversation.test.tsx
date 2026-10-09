@@ -452,9 +452,21 @@ describe('Conversation · automatic approvals (Phase 8)', () => {
     expect(wrap.querySelector('.ms-msg-bubble')).toBeNull();
     const details = screen.getByRole('button', { name: 'Activity details (4)' });
     expect(details.getAttribute('aria-expanded')).toBe('false');
-    await userEvent.click(within(wrap).getByRole('button', { name: 'Details' }));
+    const open = within(wrap).getByRole('button', { name: 'Details' });
+    expect(document.getElementById(open.getAttribute('aria-describedby')!)!.textContent).toBe('3 commands ran automatically in the sandbox');
+    await userEvent.click(open);
     expect(details.getAttribute('aria-expanded')).toBe('true');
     expect(document.querySelectorAll('.ms-convo-auto')).toHaveLength(3);
+  });
+
+  it('a malformed persisted event shows the tool and the command instead of throwing', async () => {
+    const bad = { kind: 'auto_approved', toolName: 'Bash', command: 'ls -la' } as unknown as AgentEvent;
+    const odd = { kind: 'auto_approved', toolName: 'Bash', command: 'pwd', explanation: { summary: 'x', indicators: null } } as unknown as AgentEvent;
+    render(view({ entries: [agent(2, bad), agent(3, odd)], job: done }));
+    await userEvent.click(screen.getByRole('button', { name: 'Activity details (2)' }));
+    expect(screen.getByRole('button', { name: /Bash: ls -la/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Bash: pwd/ })).toBeTruthy();
+    expect(screen.getByText('2 commands ran automatically in the sandbox')).toBeTruthy();
   });
 
   it('says it once for one command, and not while the turn runs or when nothing ran automatically', () => {

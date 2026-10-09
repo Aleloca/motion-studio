@@ -230,6 +230,8 @@ describe('Project settings · automatic approval (Phase 8)', () => {
     const sw = within(row).getByRole('switch', { name: NAME });
     expect(sw.getAttribute('aria-checked')).toBe('true');
     expect((sw as HTMLButtonElement).disabled).toBe(false);
+    // The status line is the switch's description.
+    expect(document.getElementById(sw.getAttribute('aria-describedby')!)!.textContent).toBe('Applies to new jobs');
   });
 
   it('turning it off saves autoApproveSandboxed:false and says every command will ask', async () => {
@@ -270,6 +272,8 @@ describe('Project settings · automatic approval (Phase 8)', () => {
     expect(sw.getAttribute('aria-checked')).toBe('false');
     const row = sw.closest('.ms-set-row') as HTMLElement;
     expect(within(row).getByText('Needs agent isolation')).toBeTruthy();
+    // A disabled switch says why.
+    expect(document.getElementById(sw.getAttribute('aria-describedby')!)!.textContent).toBe('Needs agent isolation');
     await userEvent.click(sw);
     expect(api.updateSettings).not.toHaveBeenCalled();
     rerender(<I18nProvider locale="en"><ProjectSettings slug="acme" live={live()} settings={settings} onSettings={onSettings}

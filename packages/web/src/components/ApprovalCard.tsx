@@ -121,7 +121,7 @@ export function ApprovalCard({ approval, context, leaving = false, onGone }: App
   const disabled = busy || decided || leaving;
   // Phase 8 (spec §4.6): the core's explanation replaces the generic title and the kind tag; without one (older core,
   // provider requests) the card is the Phase 7 card.
-  const explained = approval.explanation ? explanationView(approval.explanation, t) : null;
+  const explained = explanationView(approval.explanation, t);
   const title = explained?.title || approval.title;
 
   return (
@@ -136,7 +136,7 @@ export function ApprovalCard({ approval, context, leaving = false, onGone }: App
         ? <span className="ms-approval-text">{approval.detail}</span>
         : <span className="ms-approval-text">{a.describe[category]}</span>}
       <div className="ms-approval-chips">
-        {approval.explanation ? <RiskChips explanation={approval.explanation} /> : <Tag>{a.kinds[category]}</Tag>}
+        {explained && approval.explanation ? <RiskChips explanation={approval.explanation} /> : <Tag>{a.kinds[category]}</Tag>}
         {!provider && approval.detail && (
           <button type="button" className="ms-chip ms-approval-toggle" aria-expanded={open} aria-controls={cmdId} onClick={() => setOpen((o) => !o)}>
             <Icon name="code" size={11} />

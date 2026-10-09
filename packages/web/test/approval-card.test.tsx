@@ -236,6 +236,14 @@ describe('ApprovalCard · explained (Phase 8)', () => {
     expect(screen.getByLabelText('Full command').textContent).toBe(explained.detail);
   });
 
+  it('shows generic strings when the catalog has no entry for a phrase or an indicator (newer core)', () => {
+    const unknown = { ...explanation, summary: [{ key: 'explain.fromTheFuture', params: {} }], indicators: [{ id: 'from-the-future', risk: 'high' }] } as unknown as Explanation;
+    en(<ApprovalCard approval={{ ...explained, explanation: unknown }} />);
+    expect(screen.getByRole('group', { name: 'Runs a command' })).toBeTruthy();
+    expect(document.querySelector('.ms-risk')!.textContent).toBe('High risk: Other risk');
+    expect(document.body.textContent).not.toContain('explain.');
+  });
+
   it('has no quote without an agent reason', () => {
     en(<ApprovalCard approval={{ ...explained, agentReason: null }} />);
     expect(screen.queryByText(/The agent says/)).toBeNull();
