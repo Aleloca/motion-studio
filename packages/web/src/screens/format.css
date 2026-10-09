@@ -118,3 +118,8 @@
   .ms-fv-meta { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .ms-fv-play, .ms-fv-mark { transition: none; } }
+
+/* Loop and speed (visual test point 39). */
+.ms-fv-sep { width: 1px; height: 18px; background: var(--line); flex: none; margin: 0 2px; }
+.ms-fv-loop.ms-on { background: var(--sel); color: var(--accentText); box-shadow: inset 0 0 0 1px var(--accent); }
+.ms-select.ms-fv-speed { flex: none; height: 28px; font-family: var(--mono); font-size: 11px; }

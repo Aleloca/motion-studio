@@ -23,7 +23,7 @@ import { href, routeKey } from '../routes.ts';
 import { useBarClaim } from '../shell/barSlots.ts';
 import { setFrameOrigin, setShownVersion, takeFrameOrigin, takeShownVersion } from '../shell/intents.ts';
 import { go, ShellContext } from '../shell/ShellContext.tsx';
-import { Button, ChannelMark, Empty, Icon, Pill, Spinner, Toggle, cx } from '../ui/index.ts';
+import { Button, ChannelMark, Empty, Icon, Pill, Select, Spinner, Toggle, cx } from '../ui/index.ts';
 import { useCreative } from '../useCreative.ts';
 import { boardLabel, PinBubble, SafeZoneBands, type Draft } from './CanvasBoard.tsx';
 import { pointIn, ratioText } from './canvasModel.ts';
@@ -172,6 +172,16 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
   const duration = metaDuration ?? out?.durationSec ?? 0;
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  // Loop and speed (visual test point 39): kept across versions and a replaced <video> (Try again).
+  const [loop, setLoop] = useState(false);
+  const [rate, setRate] = useState<Speed>('1');
+  // A new element (src or attempt) starts at its default rate: apply ours on mount, on change and on metadata.
+  const applyRate = useCallback((v: HTMLVideoElement | null) => {
+    if (!v) return;
+    v.defaultPlaybackRate = Number(rate);
+    v.playbackRate = Number(rate);
+  }, [rate]);
+  useEffect(() => { applyRate(media.current); }, [applyRate, src, attempt]);
   /** A time to show once the (new) video is loaded: a chip opened on another version. */
   const pendingSeek = useRef<number | null>(null);
   useEffect(() => { setFailed(false); setPlaying(false); clock.set(0, true); setMetaDuration(null); }, [src, clock]);
@@ -430,10 +440,11 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
               {loading ? (
                 <span className="ms-cv-frame-note"><Spinner size={16} label={c.loading} /></span>
               ) : src && n !== null && video ? (
-                <video key={`${src}#${attempt}`} ref={media} src={src} poster={poster} preload="auto" playsInline aria-label={`${label} v${n}`}
+                <video key={`${src}#${attempt}`} ref={media} src={src} poster={poster} preload="auto" playsInline loop={loop} aria-label={`${label} v${n}`}
                   onTimeUpdate={(e) => clock.set(e.currentTarget.currentTime, true)}
                   onLoadedMetadata={(e) => {
                     const v = e.currentTarget;
+                    applyRate(v);
                     if (Number.isFinite(v.duration) && v.duration > 0) setMetaDuration(v.duration);
                     if (pendingSeek.current !== null) { v.currentTime = pendingSeek.current; clock.set(pendingSeek.current, true); pendingSeek.current = null; }
                   }}
@@ -483,7 +494,8 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
         ) : null}
         {video ? (
           <Transport clock={clock} duration={duration} playing={playing} disabled={!ready} marks={canComment ? marks : []} commenting={canComment}
-            onToggle={toggle} onStep={stepFrame} onSeek={seek} onPause={pause} onResume={play} />
+            onToggle={toggle} onStep={stepFrame} onSeek={seek} onPause={pause} onResume={play}
+            loop={loop} onLoop={setLoop} speed={rate} onSpeed={setRate} />
         ) : null}
       </main>
 
@@ -543,9 +555,13 @@ function CommentHint({ clock, video }: { clock: Clock; video: boolean }) {
  * (a marker seeks to its comment). Dragging pauses and resumes afterwards if it was playing. The playhead follows
  * every frame; the slider's value for assistive technology only the settled time.
  */
-function Transport({ clock, duration, playing, disabled, marks, commenting, onToggle, onStep, onSeek, onPause, onResume }: {
+const SPEEDS = ['0.5', '1', '1.5', '2'] as const;
+type Speed = (typeof SPEEDS)[number];
+
+function Transport({ clock, duration, playing, disabled, marks, commenting, onToggle, onStep, onSeek, onPause, onResume, loop, onLoop, speed, onSpeed }: {
   clock: Clock; duration: number; playing: boolean; disabled: boolean; marks: Mark[]; commenting: boolean;
   onToggle(): void; onStep(dir: 1 | -1): void; onSeek(t: number): void; onPause(): void; onResume(): void;
+  loop: boolean; onLoop(on: boolean): void; speed: Speed; onSpeed(s: Speed): void;
 }) {
   const t = useT();
   const f = t.web.formatView;
@@ -595,6 +611,10 @@ function Transport({ clock, duration, playing, disabled, marks, commenting, onTo
         <span className="ms-fv-tc">{timecode(time)}<span className="ms-faint"> / {timecode(duration)}</span></span>
         <Button size="sm" variant="outline" icon aria-label={f.prevFrame} title={f.prevFrame} aria-keyshortcuts="ArrowLeft" disabled={disabled} onClick={() => onStep(-1)}><Icon name="back" size={13} /></Button>
         <Button size="sm" variant="outline" icon aria-label={f.nextFrame} title={f.nextFrame} aria-keyshortcuts="ArrowRight" disabled={disabled} onClick={() => onStep(1)}><Icon name="forward" size={13} /></Button>
+        <span className="ms-fv-sep" aria-hidden="true" />
+        <Button size="sm" variant="outline" icon className={cx('ms-fv-loop', loop && 'ms-on')} aria-label={f.loop} title={f.loop} aria-pressed={loop} onClick={() => onLoop(!loop)}><Icon name="refresh" size={13} /></Button>
+        <Select className="ms-fv-speed" variant="pill" label={f.speed} value={speed} onChange={onSpeed}
+          options={SPEEDS.map((v) => ({ value: v, label: f.speedValue({ n: formatNumber(locale, Number(v)) }) }))} />
         <span className="ms-grow" />
         <span className="ms-fv-keys">{commenting ? f.keys : f.keysLocked}</span>
       </div>

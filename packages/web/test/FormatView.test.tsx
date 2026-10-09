@@ -251,6 +251,53 @@ describe('FormatView · English', () => {
   });
 });
 
+describe('FormatView · loop and speed (visual test point 39)', () => {
+  const en = () => render(<I18nProvider locale="en"><Harness format={VIDEO} /></I18nProvider>);
+  const video = async () => (await screen.findByLabelText('TikTok · Video 9:16 v1', { selector: 'video' })) as HTMLVideoElement;
+
+  it('loop is a pressed/unpressed toggle that sets the video to loop', async () => {
+    en();
+    const v = await video();
+    const loop = screen.getByRole('button', { name: 'Loop' });
+    expect(loop.getAttribute('aria-pressed')).toBe('false');
+    expect(v.loop).toBe(false);
+    await userEvent.click(loop);
+    expect(loop.getAttribute('aria-pressed')).toBe('true');
+    expect(v.loop).toBe(true);
+    await userEvent.click(loop);
+    expect(v.loop).toBe(false);
+  });
+
+  it('plays at 0.5×, 1×, 1.5× or 2× from a ui Select (no native control)', async () => {
+    const { container } = en();
+    const v = await video();
+    expect(v.playbackRate).toBe(1);
+    expect(container.querySelector('select')).toBeNull();
+    const speed = screen.getByRole('button', { name: /Playback speed/ });
+    expect(speed.textContent).toContain('1×');
+    await userEvent.click(speed);
+    const list = screen.getByRole('listbox', { name: 'Playback speed' });
+    expect(within(list).getAllByRole('option').map((o) => o.textContent)).toEqual(['0.5×', '1×', '1.5×', '2×']);
+    await userEvent.click(within(list).getByRole('option', { name: '2×' }));
+    expect(v.playbackRate).toBe(2);
+    expect(speed.textContent).toContain('2×');
+  });
+
+  it('keeps loop and speed when the video element is replaced (Try again after an error)', async () => {
+    en();
+    let v = await video();
+    await userEvent.click(screen.getByRole('button', { name: 'Loop' }));
+    await userEvent.click(screen.getByRole('button', { name: /Playback speed/ }));
+    await userEvent.click(screen.getByRole('option', { name: '1.5×' }));
+    fireEvent.error(v);
+    await userEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+    v = await video();
+    fireEvent.loadedMetadata(v);
+    expect(v.loop).toBe(true);
+    expect(v.playbackRate).toBe(1.5);
+  });
+});
+
 describe('FormatView · fix round 1', () => {
   it('the playhead does not re-render the page: the chat stays put while the time moves', async () => {
     render(<Harness format={VIDEO} />);
