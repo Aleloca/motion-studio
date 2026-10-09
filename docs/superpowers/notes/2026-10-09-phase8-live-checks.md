@@ -21,9 +21,9 @@ sandbox: { enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: fal
   network: { allowedDomains: [registry.npmjs.org, *.npmjs.org, …, remotion.dev, *.remotion.dev] } }
 ```
 
-There is no explicit `allowWrite`: the effective write allowlist is Claude Code's default, which is the cwd (the project), the `/dev/*` streams, `/tmp/claude` / `/private/tmp/claude`, `~/.npm/_logs`, `~/.claude/debug` (from the binary), **and Claude Code's per-user temp area `/private/tmp/claude-<uid>`**. That last one was shown live: a sandboxed write to `<scratchpad>/outside-probe/a.txt` succeeded, and the session scratchpad lives under `/private/tmp/claude-501/…`.
+There is no explicit `allowWrite`: the effective write allowlist is Claude Code's default, which is the cwd (the project), the `/dev/*` streams, `/tmp/claude` / `/private/tmp/claude`, `~/.npm/_logs`, `~/.claude/debug` (from the binary), **and Claude Code's per-user temp area `/private/tmp/claude-<uid>`**. That last one was shown live: a sandboxed write to `<scratchpad>/outside-probe/a.txt` succeeded, and the session scratchpad lives under `/private/tmp/claude-<uid>/…`.
 
-**Choice of the outside-probe directory.** Because the scratchpad is covered by the allowlist, the probe directory for 4(a)/4(c) was `/private/tmp/ms-p8-outside-4690b1f2`. It's outside every allowlisted path, it's a throwaway directory created for the test, and it isn't one of the user's folders. It was deleted afterwards, along with `<scratchpad>/outside-probe`.
+**Choice of the outside-probe directory.** Because the scratchpad is covered by the allowlist, the probe directory for 4(a)/4(c) was `/private/tmp/ms-p8-outside-<rand>`. It's outside every allowlisted path, it's a throwaway directory created for the test, and it isn't one of the user's folders. It was deleted afterwards, along with `<scratchpad>/outside-probe`.
 
 ## Step 3 — point-24 commands
 
@@ -61,7 +61,7 @@ So with `autoAllowBashIfSandboxed: true`, `;`, `&&`, pipes and a plain `time` pr
 All three ran through `approve` and were approved with `once`.
 
 - **4(a) write outside the allowlist.**
-  - Command: `time PROBE=1 sh -c 'echo probe-4a > /private/tmp/ms-p8-outside-4690b1f2/a.txt' ; ls -la /private/tmp/ms-p8-outside-4690b1f2`.
+  - Command: `time PROBE=1 sh -c 'echo probe-4a > /private/tmp/ms-p8-outside-<rand>/a.txt' ; ls -la /private/tmp/ms-p8-outside-<rand>`.
   - Result: `sh: …/a.txt: Operation not permitted`, and the directory stayed empty (checked from outside too). **FAILED as required.**
   - Before that, the same write without the `PROBE=1` prefix was auto-allowed in the sandbox, with the same EPERM.
 - **4(b) non-allowlisted domain.**
