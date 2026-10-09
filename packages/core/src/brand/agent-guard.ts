@@ -93,6 +93,8 @@ export const skipText = (r: SkipReason, locale: Locale = currentLocale()): strin
 
 export const MAX_AGENT_FILE_BYTES = 1024 * 1024;
 export type AgentFile = { text: string } | { skipped: SkipReason } | null;
+/** A refused confined read; `code`: the errno of a failed open (`unreadable`), e.g. EACCES (permanent) or EMFILE (transient). */
+export type ConfinedSkip = { skipped: SkipReason; code?: string };
 
 /** A file the agent wrote: only a regular file (no symlink) up to the size limit is read; null when missing. */
 export async function readAgentFile(path: string, maxBytes = MAX_AGENT_FILE_BYTES): Promise<AgentFile> {
@@ -132,14 +134,15 @@ export async function readConfinedFile(projectDir: string, rel: string, maxBytes
  * refuses a symlinked folder inside `base`. null when missing; `{ skipped }` when refused.
  */
 async function withConfinedFile<T>(base: string, rel: string, exact: boolean,
-  use: (fh: FileHandle, info: Stats) => Promise<T | { skipped: SkipReason }>): Promise<T | { skipped: SkipReason } | null> {
+  use: (fh: FileHandle, info: Stats) => Promise<T | { skipped: SkipReason }>): Promise<T | ConfinedSkip | null> {
   if (exact && rel.split(/[/\\]/).includes('..')) return { skipped: 'outside' };
   const abs = absOf(base, rel);
   let fh: FileHandle;
   try {
     fh = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (e) {
-    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? null : { skipped: 'unreadable' };
+    const code = (e as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' ? null : { skipped: 'unreadable', ...(code ? { code } : {}) };
   }
   try {
     const info = await fh.stat();
@@ -159,7 +162,7 @@ async function withConfinedFile<T>(base: string, rel: string, exact: boolean,
  * sha256 (hex) of `rel` under `base`, streamed (any size), with the confined-read checks and an exact real path (see
  * withConfinedFile). Also returns the size and mtime the file had when opened, the key of the hash caches.
  */
-export function hashConfinedFile(base: string, rel: string): Promise<{ sha256: string; size: number; mtimeMs: number } | { skipped: SkipReason } | null> {
+export function hashConfinedFile(base: string, rel: string): Promise<{ sha256: string; size: number; mtimeMs: number } | ConfinedSkip | null> {
   return withConfinedFile(base, rel, true, async (fh, info) => {
     const hash = createHash('sha256');
     await pipeline(fh.createReadStream({ start: 0, autoClose: false }), hash);

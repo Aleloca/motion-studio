@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { link, mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, link, mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -410,6 +410,33 @@ describe('hashing: scheduling, de-duplication and safety', () => {
     expect(second.versions[0]!.outputs[0]!.sha256).toBe(sha('a-1'));
   });
 
+  it('treats a permission error as unhashable for good (warned once), a transient errno as retry', async () => {
+    await addVersion(1, ['a', 'b']);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    hashTesting.setHasher(async (base, rel) => (rel.endsWith('a.mp4') ? { skipped: 'unreadable', code: 'EACCES' } : hashConfinedFile(base, rel)));
+    expect((await lazyFull()).complete).toBe(true);
+    expect((await lazyFull()).complete).toBe(true);
+    expect(warn).toHaveBeenCalledTimes(1);
+    clearHashMemory();
+    hashTesting.setHasher(async (base, rel) => (rel.endsWith('a.mp4') ? { skipped: 'unreadable', code: 'EIO' } : hashConfinedFile(base, rel)));
+    expect((await lazyFull()).complete).toBe(false);
+  });
+
+  it('retries an `outside` skip when the file is confined again, and is final otherwise', async () => {
+    await addVersion(1, ['a']);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // The check raced a swap: the file on disk is a normal confined file now.
+    hashTesting.setHasher(async () => ({ skipped: 'outside' }));
+    expect((await lazyFull()).complete).toBe(false);
+    // A version folder that is a symlink stays outside: unhashable, complete.
+    hashTesting.setHasher(null);
+    await symlink(store.outputsDir(slug, 1), store.outputsDir(slug, 2));
+    const r = await withLazyHashes({ projectDir, creativeSlug: slug, creativeDir: store.dir(slug), budgetMs: 10_000,
+      versions: [version(2, [output('a', 'a.mp4')])] });
+    expect(r.complete).toBe(true);
+    expect('sha256' in r.versions[0]!.outputs[0]!).toBe(false);
+  });
+
   it('does not join a run hashing a file that changed since', async () => {
     await addVersion(1, ['a']);
     const h = fakeHasher(true);
@@ -469,8 +496,42 @@ describe('export picks are never decided on partial hashes', { timeout: 20_000 }
     await expect(service.setExportPick(ref, REEL, 9)).rejects.toMatchObject({ apiCode: 'version-not-found' });
     await h.waitCalls(2);
     h.release();
-    await new Promise((r) => setTimeout(r, 100));
+    // Bounded poll until the background hashing has filled both versions' caches.
+    for (let i = 0; i < 200; i++) {
+      const done = await Promise.all([1, 2].map((n) => readFile(hashCachePath(projectDir, created.slug, n), 'utf8').then(
+        (t) => Boolean(JSON.parse(t).files['reel.mp4']), () => false)));
+      if (done.every(Boolean)) break;
+      await new Promise((r) => setTimeout(r, 10));
+    }
     expect((await service.setExportPick(ref, REEL, 1)).exportPicks).toEqual({ [REEL]: 1 });
+  });
+
+  it('lets a pick succeed when an old file cannot be read (chmod 000), warning once', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'ms-fv-eacces-'));
+    const git = new Git();
+    const ws = await WorkspaceStore.open(join(base, 'ws'), git);
+    const { slug: project } = await ws.createProject({ name: 'Acme' });
+    const projectDir = ws.projectDir(project);
+    const store = new CreativeStore(projectDir);
+    const created = await store.create({ title: 'Lancio', brief: { goal: 'x', message: '', formats: [REEL], durationSec: null, assets: [], notes: '' } });
+    const ref: CreativeRef = { root: ws.root, projectSlug: project, projectDir, creativeSlug: created.slug };
+    for (const n of [1, 2]) {
+      await mkdir(store.outputsDir(created.slug, n), { recursive: true });
+      await writeFile(join(store.outputsDir(created.slug, n), 'reel.mp4'), `reel-${n}`);
+      await store.appendVersion(created.slug, version(n, [output(REEL, 'reel.mp4')]));
+    }
+    const locked = join(store.outputsDir(created.slug, 1), 'reel.mp4');
+    await chmod(locked, 0o000);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const service = new CreativeTurnService({
+        queue: new JobQueue({ concurrency: 1 }), git, media: NoMediaTools, vault: new MemoryVault(),
+        launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
+        presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
+      });
+      expect((await service.setExportPick(ref, REEL, 1)).exportPicks).toEqual({ [REEL]: 1 });
+      expect(warn.mock.calls.filter(([m]) => String(m).includes('outputs/v1/reel.mp4'))).toHaveLength(1);
+    } finally { await chmod(locked, 0o644); }
   });
 
   it('sends Retry-After with the 503', async () => {

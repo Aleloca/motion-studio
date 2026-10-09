@@ -1,8 +1,8 @@
-import { lstat } from 'node:fs/promises';
+import { lstat, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { OutputFileInfo, VersionEntry } from '@motion-studio/shared';
-import { hashConfinedFile, type SkipReason } from '../brand/agent-guard.ts';
+import { hashConfinedFile, type ConfinedSkip, type SkipReason } from '../brand/agent-guard.ts';
 import { readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 
@@ -45,7 +45,12 @@ function limiter(max: number) {
 }
 const limit = limiter(HASH_PARALLELISM);
 
-type HashResult = { sha256: string; size: number; mtimeMs: number } | { skipped: SkipReason } | null;
+type HashResult = { sha256: string; size: number; mtimeMs: number } | ConfinedSkip | null;
+
+/** Errors that may pass on their own (descriptor exhaustion, I/O, busy); any other errno (EACCES, EPERM, EISDIR, ELOOP…) is permanent. */
+const TRANSIENT_CODES = new Set(['EMFILE', 'ENFILE', 'EIO', 'EAGAIN', 'EBUSY']);
+/** A failure worth retrying: an `unreadable` skip with a transient errno, or a thrown error without a code. */
+const isTransient = (h: ConfinedSkip) => h.skipped === 'unreadable' && (h.code === undefined || TRANSIENT_CODES.has(h.code));
 let hashFile: (base: string, rel: string) => Promise<HashResult> = hashConfinedFile;
 
 const cacheEntrySchema = z.object({ size: z.number(), mtimeMs: z.number(), sha256: z.string().regex(/^[0-9a-f]{64}$/) });
@@ -86,7 +91,16 @@ const warnSkip = (rel: string, reason: string) => console.warn(`Motion Studio: n
  * A thrown error (EMFILE, EIO…) becomes `{ skipped: 'unreadable' }`, which callers treat as transient. Never warns.
  */
 async function hashOutput(creativeDir: string, n: number, file: string, priority: boolean): Promise<HashResult> {
-  return limit(() => hashFile(creativeDir, `outputs/v${n}/${file}`), priority).catch(() => ({ skipped: 'unreadable' as const }));
+  return limit(() => hashFile(creativeDir, `outputs/v${n}/${file}`), priority).catch((err: NodeJS.ErrnoException) => ({
+    skipped: 'unreadable' as const, ...(typeof err?.code === 'string' ? { code: err.code } : {}),
+  }));
+}
+
+/** After an `outside` skip: the expected path is now a regular, single-linked file whose real path is the expected one. */
+async function nowConfined(creativeDir: string, n: number, file: string): Promise<boolean> {
+  const abs = join(creativeDir, 'outputs', `v${n}`, file);
+  const [info, real, realBase] = await Promise.all([lstat(abs).catch(() => null), realpath(abs).catch(() => null), realpath(creativeDir).catch(() => null)]);
+  return Boolean(info?.isFile() && info.nlink === 1 && real && realBase && real === join(realBase, 'outputs', `v${n}`, file));
 }
 
 /** The outputs of a version being recorded, each with the sha256 of its file (absent when not hashable). Priority lane. */
@@ -114,27 +128,33 @@ type Entry = CacheEntry | 'unhashable' | 'retry';
 /** The entry of one file: from the caches when name, size and mtime match, else computed (one run per file state at a time). */
 async function entryFor(cachePath: string, creativeDir: string, n: number, file: string, cached: CacheEntry | undefined): Promise<Entry> {
   const rel = `outputs/v${n}/${file}`;
-  const info = await lstat(join(creativeDir, 'outputs', `v${n}`, file)).catch((e: NodeJS.ErrnoException) => (e.code === 'ENOENT' ? null : undefined));
+  const info = await lstat(join(creativeDir, 'outputs', `v${n}`, file)).catch((e: NodeJS.ErrnoException) => (e.code === 'ENOENT' ? null : e));
   if (info === null) return 'unhashable'; // missing on disk: no hash
-  if (info === undefined) { warnSkip(rel, 'unreadable'); return 'retry'; }
+  if (info instanceof Error) {
+    const h: ConfinedSkip = { skipped: 'unreadable', ...(info.code ? { code: info.code } : {}) };
+    warnSkip(rel, h.code ?? h.skipped);
+    return isTransient(h) ? 'retry' : 'unhashable';
+  }
   const state = `${cachePath}\0${file}\0${info.size}\0${info.mtimeMs}`;
-  // Symlinks and hard links are reported once per file state: they stay what they are until the file changes.
-  const linked = (reason: SkipReason): Entry => {
+  // Permanent skips (symlink, hard link, not a regular file, outside, a permission error…) are reported once per file
+  // state: they stay what they are until the file changes. Transient ones are reported on each call and retried.
+  const unhashable = (reason: string): Entry => {
     if (!reported.has(state)) { warnSkip(rel, reason); bounded(reported, state, true); }
     return 'unhashable';
   };
-  if (info.isSymbolicLink()) return linked('not-regular');
-  if (info.isFile() && info.nlink > 1) return linked('linked');
-  if (!info.isFile()) { warnSkip(rel, 'not-regular'); return 'unhashable'; }
+  if (info.isSymbolicLink()) return unhashable('not-regular');
+  if (info.isFile() && info.nlink > 1) return unhashable('linked');
+  if (!info.isFile()) return unhashable('not-regular');
   if (cached && cached.size === info.size && cached.mtimeMs === info.mtimeMs) return cached;
   const running = inflight.get(state);
   if (running) return running;
-  const run = hashOutput(creativeDir, n, file, false).then((h): Entry => {
+  const run = hashOutput(creativeDir, n, file, false).then(async (h): Promise<Entry> => {
     if (h === null) return 'unhashable';
     if ('skipped' in h) {
-      if (h.skipped === 'linked') return linked('linked');
-      warnSkip(rel, h.skipped);
-      return h.skipped === 'unreadable' ? 'retry' : 'unhashable';
+      if (isTransient(h)) { warnSkip(rel, h.code ?? h.skipped); return 'retry'; }
+      // Replaced mid-check (e.g. a symlink swapped for the real file): the next request hashes it.
+      if (h.skipped === 'outside' && await nowConfined(creativeDir, n, file)) { warnSkip(rel, 'outside'); return 'retry'; }
+      return unhashable(h.code ?? h.skipped);
     }
     return { size: h.size, mtimeMs: h.mtimeMs, sha256: h.sha256 };
   }).finally(() => inflight.delete(state));
