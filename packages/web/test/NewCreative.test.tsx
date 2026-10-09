@@ -320,24 +320,29 @@ describe('NewCreative · brand', () => {
   it('offers to set up the brand when the project has none', async () => {
     render(<NewCreative slug="acme" />);
     await board();
-    await screen.findByText('Ancora nessun kit del brand');
+    await screen.findByText('Ancora nessun brand');
     await userEvent.click(screen.getByRole('button', { name: 'Imposta il brand' }));
     expect(location.hash).toBe('#/p/acme/brand');
   });
 
-  it('shows the brand it follows, as information only', async () => {
+  it('shows the brand it follows as an info row: palette, description and Edit brand, no switch', async () => {
     api.getBrand.mockResolvedValueOnce({
-      kit: { ...EMPTY_BRAND_KIT, colors: [{ id: 'c', name: 'Ink', hex: '#1B1913', role: 'primary', source: { kind: 'manual', ref: null } }], fonts: [{ id: 'f', family: 'Newsreader', role: 'heading', weights: [400], source: { kind: 'manual', ref: null } }] },
+      kit: {
+        ...EMPTY_BRAND_KIT,
+        colors: [{ id: 'c', name: 'Sepia ink', hex: '#1B1913', role: 'primary', source: { kind: 'manual', ref: null } }],
+        fonts: [{ id: 'f', family: 'Newsreader', role: 'heading', weights: [400], source: { kind: 'manual', ref: null } }],
+        tone: { text: 'measured, atmospheric noir', source: { kind: 'manual', ref: null } },
+      },
       kitError: null, guidelines: '', sources: [], sourcesError: null, proposals: [], jobKey: 'k',
     } as never);
     render(<ShellContext.Provider value={shell('Half Story')}><NewCreative slug="acme" /></ShellContext.Provider>);
-    await screen.findByText('Segue il brand di Half Story');
-    expect(screen.getByText(/Newsreader/)).toBeTruthy();
-    const toggle = screen.getByRole('switch', { name: 'Segui il brand' }) as HTMLButtonElement;
-    expect(toggle.getAttribute('aria-checked')).toBe('true');
-    expect(toggle.disabled).toBe(true);
-    // The reason is on screen, not in a hover title.
-    expect(screen.getByText('Per ora sempre attivo: ogni brief usa il kit del brand.')).toBeTruthy();
+    const title = await screen.findByText('Segue il brand di Half Story');
+    const row = title.closest('.ms-nc-brand') as HTMLElement;
+    expect(within(row).getByText('Newsreader · Sepia ink · measured, atmospheric noir')).toBeTruthy();
+    expect(row.querySelectorAll('.ms-nc-swatches > span')).toHaveLength(1);
+    expect(within(row).queryByRole('switch')).toBeNull();
+    const edit = within(row).getByRole('link', { name: 'Modifica il brand' });
+    expect(edit.getAttribute('href')).toBe('#/p/acme/brand');
   });
 });
 

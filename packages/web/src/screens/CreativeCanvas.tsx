@@ -388,7 +388,7 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
               <span className="ms-cv-nothing-icon" aria-hidden="true"><Icon name="sparkle" size={16} /></span>
               <b>{c.nothingTitle}</b>
               <p>{c.nothingBody}</p>
-              <Button variant="accent" aria-label={c.generate} loading={starting} onClick={generate}><Icon name="sparkle" size={13} />{c.generate}</Button>
+              <Button variant="ink" aria-label={c.generate} loading={starting} onClick={generate}><Icon name="sparkle" size={13} />{c.generate}</Button>
             </div>
           </div>
         ) : null}

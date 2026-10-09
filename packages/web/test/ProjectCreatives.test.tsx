@@ -183,7 +183,7 @@ describe('ProjectCreatives cards', () => {
     expect(location.hash).toBe('#/settings');
   });
 
-  it('generates a draft with the accent Generate and opens it', async () => {
+  it('generates a draft with the card-level (ink) Generate and opens it', async () => {
     api.listCreatives.mockResolvedValue(LIST);
     api.sendCreativeTurn.mockResolvedValue({ ...runningJob, id: 'j9', key: 'creative:/w:acme:shots' });
     en(<ProjectCreatives slug="acme" live={live()} />);
@@ -191,7 +191,9 @@ describe('ProjectCreatives cards', () => {
     const shots = card('App Store screenshots');
     expect(within(shots).getByText('Brief saved · nothing generated yet')).toBeTruthy();
     const generate = within(shots).getByRole('button', { name: /Generate/ });
-    expect(generate.className).toContain('ms-accent');
+    // C1: accent is only for New creative's main Generate and Send; a card's Generate is ink.
+    expect(generate.className).toContain('ms-ink');
+    expect(generate.className).not.toContain('ms-accent');
     await userEvent.click(generate);
     expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'shots', {});
     await waitFor(() => expect(location.hash).toBe('#/p/acme/c/shots'));

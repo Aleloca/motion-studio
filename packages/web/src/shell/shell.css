@@ -66,8 +66,8 @@ html, body, #root { height: 100%; }
 .ms-activity-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .ms-activity-row { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 4px 8px; border-radius: 8px; transition: background var(--d-s) var(--e-std); }
 .ms-activity-row:hover { background: var(--field); }
-.ms-activity-row.ms-link { color: inherit; text-decoration: none; }
-.ms-activity-row.ms-link:focus-visible { outline-offset: -2px; }
+.ms-activity-link { color: inherit; text-decoration: none; }
+.ms-activity-link:focus-visible { outline-offset: -2px; }
 .ms-activity-row.ms-tall { align-items: flex-start; padding: 8px; }
 .ms-activity-glyph { width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; flex: none; color: var(--accentText); }
 .ms-activity-glyph.ms-muted { color: var(--faint); }

@@ -254,7 +254,7 @@ function CreativeCard({ slug, c, info, presets, index, fresh }: CardProps) {
         {state === 'draft' ? (
           <div className="ms-cc-draft">
             <span className="ms-cc-note">{s.draftNote}</span>
-            <Button size="sm" variant="accent" className="ms-cc-act" aria-label={s.generateOf({ title: c.title })} loading={busy} onClick={() => void start('open', s.generateFailed)}>
+            <Button size="sm" variant="ink" className="ms-cc-act" aria-label={s.generateOf({ title: c.title })} loading={busy} onClick={() => void start('open', s.generateFailed)}>
               <Icon name="sparkle" size={13} />{s.generate}
             </Button>
           </div>

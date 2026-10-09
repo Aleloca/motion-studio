@@ -88,8 +88,8 @@
 .ms-nc-brand-text b { font-weight: 600; overflow-wrap: anywhere; }
 .ms-nc-brand-text span { font-size: 12px; color: var(--muted); }
 .ms-nc-brand-icon { width: 30px; height: 30px; flex: none; border-radius: 8px; background: var(--field); color: var(--muted); display: flex; align-items: center; justify-content: center; }
-.ms-nc-brand .ms-toggle:disabled { cursor: default; }
-.ms-nc-brand-text .ms-nc-why { font-size: 11px; color: var(--faint); }
+.ms-nc-editbrand { flex: none; margin-left: auto; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.ms-nc-editbrand:hover { text-decoration: underline; }
 
 /* More options. */
 .ms-nc-options { gap: 10px; }

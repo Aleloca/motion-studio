@@ -8,7 +8,7 @@ import { href } from '../routes.ts';
 import { useNewCreativeAssetsIntent } from '../shell/intents.ts';
 import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { isMac } from '../platform.ts';
-import { Button, ChannelMark, Chip, Empty, Icon, Input, Popover, Segmented, Spinner, Toggle, cx, initials, toast } from '../ui/index.ts';
+import { Button, ChannelMark, Chip, Empty, Icon, Input, Popover, Segmented, Spinner, cx, initials, toast } from '../ui/index.ts';
 import { channelOf } from './creativeState.ts';
 import './newcreative.css';
 import { message as errText } from './common.tsx';
@@ -224,6 +224,8 @@ export function NewCreative({ slug }: { slug: string }) {
 
   const kit = brand.value;
   const hasBrand = !!kit && (kit.colors.length > 0 || kit.fonts.length > 0 || kit.logos.length > 0 || kit.tone !== null);
+  // The brand in one line, as on the board: heading font · main colour · tone.
+  const brandLine = kit ? [kit.fonts[0]?.family, kit.colors[0]?.name, kit.tone?.text].filter(Boolean).join(' · ') : '';
   const libraryItems = (library.value ?? []).filter((a) => a.kind !== 'font');
   const entryOf = (path: string) => library.value?.find((a) => assetPath(a.file) === path) ?? null;
 
@@ -322,11 +324,10 @@ export function NewCreative({ slug }: { slug: string }) {
                 </div>
                 <div className="ms-nc-brand-text">
                   <b>{n.followsBrand({ project: projectName })}</b>
-                  {kit.fonts[0] || kit.tone ? <span className="ms-nc-ell">{[kit.fonts[0]?.family, kit.tone?.text].filter(Boolean).join(' · ')}</span> : null}
-                  {/* The brief has no brand switch yet: the reason is on screen, not in a hover title. */}
-                  <span className="ms-nc-faint ms-nc-why">{n.brandAlways}</span>
+                  {brandLine ? <span className="ms-nc-ell" title={brandLine}>{brandLine}</span> : null}
                 </div>
-                <Toggle on onChange={() => {}} label={n.followBrand} disabled />
+                {/* Information only: the brief has no brand field, so there is no switch (it returns when there is). */}
+                <a className="ms-link ms-nc-editbrand" href={href.project(slug, 'brand')}>{n.editBrand}</a>
               </div>
             ) : (
               <div className="ms-nc-brand ms-nc-nobrand">

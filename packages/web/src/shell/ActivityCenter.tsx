@@ -181,7 +181,7 @@ function Row({ job, className, children }: { job: JobSummary; className?: string
   const to = jobHref(job);
   return (
     <li className="ms-activity-item">
-      {to ? <a className={cx('ms-activity-row ms-link', className)} href={to}>{children}</a> : <div className={cx('ms-activity-row', className)}>{children}</div>}
+      {to ? <a className={cx('ms-activity-row ms-activity-link', className)} href={to}>{children}</a> : <div className={cx('ms-activity-row', className)}>{children}</div>}
     </li>
   );
 }

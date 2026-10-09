@@ -445,7 +445,7 @@ function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemoveP
             : <span className="ms-composer-hint">{c.sendHint({ keys: isMac() ? '⌘↵' : 'Ctrl ↵' })}</span>}
           {job && <Button size="sm" variant="ghost" onClick={cancel}>{t.common.cancel}</Button>}
           {canGenerate && !job && (
-            <Button size="sm" variant="accent" aria-label={t.web.newCreative.generate} disabled={busy} onClick={() => void send({})}>
+            <Button size="sm" variant="ink" aria-label={t.web.newCreative.generate} disabled={busy} onClick={() => void send({})}>
               <Icon name="sparkle" size={13} />{t.web.newCreative.generate}
             </Button>
           )}
