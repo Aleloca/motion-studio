@@ -49,6 +49,45 @@ export function boardSize(width: number, height: number): { width: number; heigh
   return fit(520);
 }
 
+/** A board's frame at 100% zoom: its preset in proportion, a square when the catalog no longer has the format. */
+export function boardFrame(b: BoardModel): { width: number; height: number } {
+  return b.preset ? boardSize(b.preset.width, b.preset.height) : { width: 300, height: 300 };
+}
+
+// The canvas world's layout at 100% (canvas.css: .ms-cv-world padding and gap, .ms-cv-stack gap, board head + gap).
+const WORLD_PAD_X = 60;
+const WORLD_PAD_TOP = 40;
+const WORLD_PAD_BOTTOM = 140;
+const WORLD_GAP = 40;
+const STACK_GAP = 44;
+const BOARD_HEAD = 30;
+
+/** The size of the canvas world at 100%: tall boards in a row, the others stacked in a column next to them. */
+export function worldSize(boards: BoardModel[]): { width: number; height: number } {
+  const tall = boards.filter(isTall).map(boardFrame);
+  const rest = boards.filter((b) => !isTall(b)).map(boardFrame);
+  const columns = [...tall.map((f) => ({ width: f.width, height: BOARD_HEAD + f.height }))];
+  if (rest.length) {
+    columns.push({
+      width: Math.max(...rest.map((f) => f.width)),
+      height: rest.reduce((h, f) => h + BOARD_HEAD + f.height, 0) + STACK_GAP * (rest.length - 1),
+    });
+  }
+  const width = columns.reduce((w, c) => w + c.width, 0) + WORLD_GAP * Math.max(0, columns.length - 1);
+  const height = Math.max(0, ...columns.map((c) => c.height));
+  return { width: width + 2 * WORLD_PAD_X, height: height + WORLD_PAD_TOP + WORLD_PAD_BOTTOM };
+}
+
+/**
+ * The zoom that shows every board in the viewport (the canvas opens fitted, never above 100%), rounded down to 5%
+ * and kept within `min`. Null when the viewport has no size yet (not laid out).
+ */
+export function fitZoom(world: { width: number; height: number }, view: { width: number; height: number }, min: number): number | null {
+  if (view.width <= 0 || view.height <= 0 || world.width <= 0 || world.height <= 0) return null;
+  const z = Math.min(1, view.width / world.width, view.height / world.height);
+  return Math.max(min, Math.floor(z * 20 + 1e-9) / 20);
+}
+
 /** `9:16`, or `W×H` when the reduced ratio is not a readable one. */
 export function ratioText(p: { width: number; height: number }): string {
   const g = (a: number, b: number): number => (b ? g(b, a % b) : a);

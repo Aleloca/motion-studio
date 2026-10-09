@@ -19,7 +19,7 @@ import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { Button, ChannelMark, Empty, Icon, Input, Pill, Spinner, Tabs, Tag, Toggle, cx, toast } from '../ui/index.ts';
 import { useCreative } from '../useCreative.ts';
 import { boardLabel, CanvasBoard, type Draft, type Tool } from './CanvasBoard.tsx';
-import { boardsOf, isTall, ratioText, type BoardModel } from './canvasModel.ts';
+import { boardsOf, fitZoom, isTall, ratioText, worldSize, type BoardModel } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf, lastStep } from './creativeState.ts';
 import { ExportDialog } from './ExportDialog.tsx';
@@ -246,6 +246,27 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
   };
   const endDrag = () => { drag.current = null; setGrabbing(false); };
 
+  // The canvas opens fitted: every board visible in the viewport (never above 100%). Until the user zooms, it refits
+  // when the viewport or the boards change size (a window resize, a format added); after that the zoom is theirs.
+  const userZoomed = useRef(false);
+  const fitKey = boards.map((b) => `${b.id}:${b.preset?.width ?? 0}x${b.preset?.height ?? 0}`).join('|');
+  useLayoutEffect(() => {
+    const v = viewport.current;
+    if (!v || !boards.length) return;
+    const fit = () => {
+      if (userZoomed.current) return;
+      const z = fitZoom(worldSize(boards), { width: v.clientWidth, height: v.clientHeight }, ZOOM_MIN);
+      if (z !== null) setZoom((cur) => (Math.abs(cur - z) < 1e-6 ? cur : z));
+    };
+    fit();
+    if (typeof ResizeObserver === 'undefined') return;
+    let frame = 0;
+    const ro = new ResizeObserver(() => { cancelAnimationFrame(frame); frame = requestAnimationFrame(fit); });
+    ro.observe(v);
+    return () => { cancelAnimationFrame(frame); ro.disconnect(); };
+  }, [fitKey, Boolean(detail)]); // eslint-disable-line react-hooks/exhaustive-deps
+  const zoomBy = (next: (z: number) => number) => { userZoomed.current = true; setZoom(next); };
+
   // Generate (no version yet).
   const [starting, setStarting] = useState(false);
   const generate = () => {
@@ -389,9 +410,9 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
             </button>
           ))}
           <span className="ms-cv-tool-sep" aria-hidden="true" />
-          <button type="button" className="ms-cv-tool ms-sm" aria-label={c.zoomOut} disabled={zoom <= ZOOM_MIN + 1e-6} onClick={() => setZoom((z) => Math.max(ZOOM_MIN, Math.round((z - ZOOM_STEP) * 10) / 10))}><Icon name="minus" size={13} /></button>
-          <button type="button" className="ms-cv-zoom" aria-label={c.zoomReset({ pct: Math.round(zoom * 100) })} onClick={() => setZoom(1)}>{formatNumber(locale, Math.round(zoom * 100))}%</button>
-          <button type="button" className="ms-cv-tool ms-sm" aria-label={c.zoomIn} disabled={zoom >= ZOOM_MAX - 1e-6} onClick={() => setZoom((z) => Math.min(ZOOM_MAX, Math.round((z + ZOOM_STEP) * 10) / 10))}><Icon name="plus" size={13} /></button>
+          <button type="button" className="ms-cv-tool ms-sm" aria-label={c.zoomOut} disabled={zoom <= ZOOM_MIN + 1e-6} onClick={() => zoomBy((z) => Math.max(ZOOM_MIN, Math.round((z - ZOOM_STEP) * 20) / 20))}><Icon name="minus" size={13} /></button>
+          <button type="button" className="ms-cv-zoom" aria-label={c.zoomReset({ pct: Math.round(zoom * 100) })} onClick={() => zoomBy(() => 1)}>{formatNumber(locale, Math.round(zoom * 100))}%</button>
+          <button type="button" className="ms-cv-tool ms-sm" aria-label={c.zoomIn} disabled={zoom >= ZOOM_MAX - 1e-6} onClick={() => zoomBy((z) => Math.min(ZOOM_MAX, Math.round((z + ZOOM_STEP) * 20) / 20))}><Icon name="plus" size={13} /></button>
           <span className="ms-cv-tool-sep" aria-hidden="true" />
           <span className="ms-cv-safe-toggle"><Toggle size="sm" on={safe} onChange={setSafe} label={c.safeZones} /><span aria-hidden="true">{c.safeZones}</span></span>
         </div>

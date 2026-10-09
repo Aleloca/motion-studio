@@ -75,6 +75,25 @@ afterEach(() => {
   delete (window as unknown as { motionStudio?: unknown }).motionStudio;
 });
 
+describe('CreativeCanvas · fit to view', () => {
+  it('opens fitted so every board is visible (CV1), and the zoom controls still work', async () => {
+    const size = (dim: 'clientWidth' | 'clientHeight', v: number) => vi.spyOn(HTMLElement.prototype, dim, 'get')
+      .mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-viewport') ? v : 0; });
+    const w = size('clientWidth', 484);
+    const h = size('clientHeight', 700);
+    try {
+      const { container } = render(<Harness live={emptyLive()} />);
+      await ready();
+      expect(screen.getByRole('button', { name: /55%/ })).toBeTruthy();
+      expect((container.querySelector('.ms-cv-world') as HTMLElement).style.zoom).toBe('0.55');
+      await userEvent.click(screen.getByRole('button', { name: /^(Zoom in|Aumenta lo zoom|Ingrandisci)/ }));
+      expect(screen.getByRole('button', { name: /65%/ })).toBeTruthy();
+      await userEvent.click(screen.getByRole('button', { name: /65%/ }));
+      expect(screen.getByRole('button', { name: /100%,/ })).toBeTruthy();
+    } finally { w.mockRestore(); h.mockRestore(); }
+  });
+});
+
 describe('CreativeCanvas · comments', () => {
   it('a click in comment mode opens a bubble whose text becomes a pin chip that can be edited and deleted', async () => {
     render(<Harness live={emptyLive()} />);

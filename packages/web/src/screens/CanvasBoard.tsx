@@ -6,7 +6,7 @@ import { useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEve
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { anim, D, E, isSubmitChord } from '../motion/index.ts';
 import { Button, Icon, Pill, Textarea, cx } from '../ui/index.ts';
-import { boardSize, outputMedia, pointIn, ratioText, type BoardModel } from './canvasModel.ts';
+import { boardFrame, outputMedia, pointIn, ratioText, type BoardModel } from './canvasModel.ts';
 
 export type Tool = 'select' | 'comment' | 'hand';
 
@@ -51,7 +51,7 @@ export function CanvasBoard(p: BoardProps) {
   const { board, n } = p;
   const frame = useRef<HTMLDivElement>(null);
   const label = boardLabel(board, locale);
-  const size = board.preset ? boardSize(board.preset.width, board.preset.height) : { width: 300, height: 300 };
+  const size = boardFrame(board);
   const media = board.out && n !== null ? outputMedia(p.slug, p.creative, n, board.out) : null;
   const video = board.preset?.kind === 'video';
   const duration = board.out?.durationSec ?? null;
