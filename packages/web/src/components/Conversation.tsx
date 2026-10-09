@@ -5,6 +5,7 @@ import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.
 import { enter, isSubmitChord } from '../motion/index.ts';
 import { isMac } from '../platform.ts';
 import { Button, Empty, Icon, Markdown, Textarea, Typing, cx } from '../ui/index.ts';
+import { message } from '../errors.ts';
 import { ApprovalCard } from './ApprovalCard.tsx';
 import { useApprovalPresence, type ShownApproval } from './approvalPresence.ts';
 
@@ -63,11 +64,14 @@ type Item =
   | { key: string; kind: 'version'; at: string; n: number; complete: boolean }
   | { key: string; kind: 'system'; at: string; error: boolean; text: string }
   | { key: string; kind: 'approval'; shown: ShownApproval }
-  | { key: string; kind: 'typing' };
+  | { key: string; kind: 'typing' }
+  | { key: string; kind: 'retried'; at: string };
 
 const active = (j: JobSummary | undefined) => !!j && (j.state === 'queued' || j.state === 'running');
 const TECHNICAL = new Set<AgentEvent['kind']>(['session', 'tool_use', 'tool_result', 'rate_limit', 'stderr', 'parse_error']);
 const same = (a: string, b: string) => a.trim() === b.trim();
+const samePins = (a: Pin[], b: Pin[]) => a.length === b.length
+  && a.every((p, i) => { const q = b[i]!; return p.format === q.format && p.x === q.x && p.y === q.y && p.timeSec === q.timeSec && (p.note ?? '') === (q.note ?? ''); });
 
 /** One turn (the agent events of one job) as conversation items: messages, compact steps, summary, details. */
 function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], running: boolean, foldOpen: boolean): Item[] {
@@ -151,12 +155,28 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
       ...approvalsOf(jobId),
     ];
 
+    // C2: a user turn sent again with the same text and comments right after its turn failed (Try again) is a compact
+    // "Retried · HH:MM" label, not a second identical bubble. A turn failed when its agent result is an error or the
+    // core wrote an error line; a version means it succeeded.
+    let lastUser: { text: string; pins: Pin[]; failed: boolean } | null = null;
     entries.forEach((e, i) => {
-      if (e.type === 'agent') { if (firstIndex.get(e.jobId) === i) out.push(...turn(e.jobId)); return; }
+      if (e.type === 'agent') {
+        if (lastUser && e.event.kind === 'result' && !e.event.ok) lastUser.failed = true;
+        if (firstIndex.get(e.jobId) === i) out.push(...turn(e.jobId));
+        return;
+      }
       const key = `e${i}`;
-      if (e.type === 'user') out.push({ key, kind: 'user', at: e.at, text: e.text, pins: e.pins });
-      else if (e.type === 'version') out.push({ key, kind: 'version', at: e.at, n: e.n, complete: e.status === 'complete' });
-      else out.push({ key, kind: 'system', at: e.at, error: e.level === 'error', text: e.text });
+      if (e.type === 'user') {
+        const retried = lastUser !== null && lastUser.failed && same(lastUser.text, e.text) && samePins(lastUser.pins, e.pins);
+        out.push(retried ? { key, kind: 'retried', at: e.at } : { key, kind: 'user', at: e.at, text: e.text, pins: e.pins });
+        lastUser = { text: e.text, pins: e.pins, failed: false };
+      } else if (e.type === 'version') {
+        if (lastUser) lastUser.failed = false;
+        out.push({ key, kind: 'version', at: e.at, n: e.n, complete: e.status === 'complete' });
+      } else {
+        if (lastUser && e.level === 'error') lastUser.failed = true;
+        out.push({ key, kind: 'system', at: e.at, error: e.level === 'error', text: e.text });
+      }
     });
     // A job with nothing persisted yet (only live events) comes last.
     if (job && jobs.has(job.id) && !firstIndex.has(job.id)) out.push(...turn(job.id));
@@ -261,6 +281,13 @@ function ItemView({ item, formatName, onToggleFold, onSelectVersion, onGone }: {
             )}
           </div>
         </article>
+      );
+    case 'retried':
+      return (
+        <div className="ms-convo-retried">
+          <Icon name="refresh" size={11} />
+          <span>{c.retried({ time: formatDate(locale, item.at, TIME_OF_DAY) })}</span>
+        </div>
       );
     case 'agent':
       return (
@@ -406,7 +433,7 @@ function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemoveP
       onSent?.({ pins: body.pins ?? [] });
     } catch (e) {
       // The text stays in the box: explain and say what to do; a 409 means a turn is already running.
-      setError(e instanceof ApiError && e.status === 409 ? c.sendBusy : c.sendFailed);
+      setError(e instanceof ApiError && e.status === 409 ? c.sendBusy : c.sendFailed({ detail: message(e) }));
       inFlight.current = false;
     } finally { setSending(false); }
   };

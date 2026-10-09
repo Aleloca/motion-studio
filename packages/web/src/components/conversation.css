@@ -125,3 +125,6 @@
 }
 .ms-pin-edit:hover .ms-pin-note { text-decoration: underline; text-underline-offset: 2px; }
 .ms-pin-edit:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+/* C2: a turn sent again after a failure (Try again) is a compact label, not a second identical bubble. */
+.ms-convo-retried { display: flex; align-items: center; gap: 6px; margin-left: 36px; font-size: 11.5px; color: var(--faint); }

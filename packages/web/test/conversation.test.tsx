@@ -279,7 +279,8 @@ describe('Conversation composer guards', () => {
     const box = screen.getByLabelText('Request a change') as HTMLTextAreaElement;
     await userEvent.type(box, 'Bigger logo');
     fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
-    expect((await screen.findByRole('alert')).textContent).toBe('Couldn’t send. Your message is kept — try again.');
+    // D4: the server's explanation follows the generic text.
+    expect((await screen.findByRole('alert')).textContent).toBe('Couldn’t send: ECONNRESET socket hang up. Your message is kept — try again.');
     expect(box.value).toBe('Bigger logo');
     fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
     await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledTimes(2));
@@ -290,6 +291,48 @@ describe('Conversation composer guards', () => {
     render(view({ entries: [], canGenerate: true }));
     await userEvent.click(screen.getByRole('button', { name: 'Generate' }));
     expect((await screen.findByRole('alert')).textContent).toBe('A generation is already running for this creative. Wait for it to finish, then send again.');
+  });
+});
+
+describe('Conversation · retried turns (C2)', () => {
+  const user = (min: number, t: string, pins: Pin[] = []): ConversationEntry => ({ type: 'user', at: at(min), text: t, pins, attachments: [] });
+  const failed = (min: number, jobId: string): ConversationEntry => agent(min, { kind: 'result', ok: false, error: 'Render failed' }, jobId);
+  const pin: Pin = { format: 'tiktok-9x16', x: 0.5, y: 0.2, timeSec: 1.5, note: 'here' };
+
+  it('the same text and pins sent again after a failed turn is a compact "Retried · HH:MM" label, not a second bubble', () => {
+    render(view({ entries: [user(1, 'Bigger logo', [pin]), failed(2, 'j1'), user(3, 'Bigger logo', [pin]), agent(4, text('Done'), 'j2')] }));
+    expect(screen.getAllByRole('article', { name: 'You' })).toHaveLength(1);
+    const label = screen.getByText(/^Retried · /);
+    // The app's time of day (as on every message).
+    expect(label.textContent).toMatch(/^Retried · \d{1,2}:\d\d/);
+  });
+
+  it('a pins-only retry is recognized too', () => {
+    render(view({ entries: [user(1, '', [pin]), failed(2, 'j1'), user(3, '', [pin])] }));
+    expect(screen.getAllByRole('article', { name: 'You' })).toHaveLength(1);
+    expect(screen.getByText(/^Retried · /)).toBeTruthy();
+  });
+
+  it('two failures in a row give two Retried labels', () => {
+    render(view({ entries: [user(1, 'Bigger logo'), failed(2, 'j1'), user(3, 'Bigger logo'), failed(4, 'j2'), user(5, 'Bigger logo')] }));
+    expect(screen.getAllByRole('article', { name: 'You' })).toHaveLength(1);
+    expect(screen.getAllByText(/^Retried · /)).toHaveLength(2);
+  });
+
+  it('a new message, a different comment or a repeat after a success stays a full bubble', () => {
+    render(view({ entries: [
+      user(1, 'Bigger logo'), failed(2, 'j1'),
+      user(3, 'Bigger logo', [pin]), // different pins
+      { type: 'version', at: at(4), n: 1, status: 'complete' },
+      user(5, 'Bigger logo', [pin]), // same as before, but the turn before succeeded
+    ] }));
+    expect(screen.getAllByRole('article', { name: 'You' })).toHaveLength(3);
+    expect(screen.queryByText(/^Retried · /)).toBeNull();
+  });
+
+  it('a system error after the turn counts as a failure', () => {
+    render(view({ entries: [user(1, 'Bigger logo'), { type: 'system', at: at(2), level: 'error', text: 'Generation failed' }, user(3, 'Bigger logo')] }));
+    expect(screen.getByText(/^Retried · /)).toBeTruthy();
   });
 });
 

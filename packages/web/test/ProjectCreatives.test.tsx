@@ -156,6 +156,43 @@ describe('ProjectCreatives cards', () => {
     expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'loop', { text: 'Make the logo bigger', pins });
   });
 
+  it('tries again a comments-only turn (no text) with its pins', async () => {
+    api.listCreatives.mockResolvedValue(LIST);
+    api.getCreative.mockResolvedValue({ slug: 'loop', jobKey: 'k', versions: [], creative: { title: 'Calder at night loop', status: 'error', error: 'Render failed' } });
+    const pins = [{ format: 'tiktok-9x16', x: 0.4, y: 0.6, timeSec: 2, note: 'Logo here' }];
+    api.getConversation.mockResolvedValue([
+      { type: 'user', at, text: 'First idea', pins: [], attachments: [] },
+      { type: 'version', at, n: 1, status: 'complete' },
+      { type: 'user', at, text: '', pins, attachments: [] },
+      { type: 'agent', at, jobId: 'j1', event: { kind: 'result', ok: false, error: 'Render failed' } },
+    ] as never);
+    api.sendCreativeTurn.mockResolvedValue({ ...runningJob, id: 'j9', key: 'creative:/w:acme:loop' });
+    en(<ProjectCreatives slug="acme" live={live()} />);
+    const loop = await waitFor(() => { const c = card('Calder at night loop'); within(c).getByText('Render failed'); return c; });
+    await userEvent.click(within(loop).getByRole('button', { name: 'Try again' }));
+    expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'loop', { text: '', pins });
+  });
+
+  it('after two failures in a row, tries again the same user turn (not an empty one)', async () => {
+    api.listCreatives.mockResolvedValue(LIST);
+    api.getCreative.mockResolvedValue({ slug: 'loop', jobKey: 'k', versions: [], creative: { title: 'Calder at night loop', status: 'error', error: 'Render failed' } });
+    api.getConversation.mockResolvedValue([
+      { type: 'user', at, text: 'First idea', pins: [], attachments: [] },
+      { type: 'version', at, n: 1, status: 'complete' },
+      { type: 'user', at, text: 'Make it warmer', pins: [], attachments: [] },
+      { type: 'system', at, level: 'error', text: 'Generation failed' },
+      // The first Try again appended the same turn, which failed as well.
+      { type: 'user', at, text: 'Make it warmer', pins: [], attachments: [] },
+      { type: 'system', at, level: 'error', text: 'Generation failed' },
+    ] as never);
+    api.sendCreativeTurn.mockResolvedValue({ ...runningJob, id: 'j9', key: 'creative:/w:acme:loop' });
+    en(<ProjectCreatives slug="acme" live={live()} />);
+    const loop = await waitFor(() => { const c = card('Calder at night loop'); within(c).getByText('Render failed'); return c; });
+    await userEvent.click(within(loop).getByRole('button', { name: 'Try again' }));
+    expect(api.sendCreativeTurn).toHaveBeenCalledTimes(1);
+    expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'loop', { text: 'Make it warmer' });
+  });
+
   it('retries a failed regeneration without a message as an empty turn', async () => {
     api.listCreatives.mockResolvedValue(LIST);
     api.getCreative.mockResolvedValue({ slug: 'loop', jobKey: 'k', versions: [], creative: { title: 'Calder at night loop', status: 'error', error: 'Render failed' } });
