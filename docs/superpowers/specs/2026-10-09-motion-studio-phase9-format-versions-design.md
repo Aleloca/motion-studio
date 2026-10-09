@@ -128,7 +128,7 @@ Da `modals.js` `ExportDialog`.
 
 ## 4. Fuori perimetro
 
-- Hard link o deduplicazione su disco: si usano copie, e git deduplica comunque i blob.
+- Hard link o deduplicazione su disco: si usano copie. Gli output non sono in git; i file copiati occupano spazio su disco, accettabile con i pesi della Fase 8.
 - Rinumerazione delle versioni per formato.
 - Confronto tra formati diversi.
 - "Restart from here" per singolo formato: il ripristino resta per creatività.
