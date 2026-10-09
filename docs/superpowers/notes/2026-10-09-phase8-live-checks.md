@@ -246,3 +246,38 @@ The comparison with the prototype is in `visual-diff.md` in the same folder.
 - cache read 1,889,061.
 
 That is 175.4k tokens shown, about **$0.064** at API list prices (counted against the plan).
+
+---
+
+# Phase 8 — final fix wave, live re-check (section F)
+
+Date: 2026-10-09. Claude Code 2.1.295, model `haiku`, git 2.50.1, macOS. Branch `feat/phase8-approvals-usage` after the final-wave commits, core run from source (`node --experimental-transform-types`).
+
+## Setup
+
+- Throwaway core: `startServer({ port: 4498, configDir, vault: new MemoryVault(), claudeCommand: [wrapper] })`. Config, workspace and project (`demo`) were under the session scratchpad; the driver refused any other location. The wrapper tee'd the agent's stream-json and passed `claude auth` calls straight through (never logged).
+- Claude Code session variables of the calling session were removed from the driver's environment (the user's `CLAUDE_CONFIG_DIR` login stays, as in Task 10).
+- A watcher polled `GET /api/approvals`, logged each request and answered `once`.
+- Settings: `sandboxMode: auto`, `autoApproveSandboxed: true`, `model: haiku`.
+- Afterwards the core was stopped and the scratch folder deleted. User folders, mtime before → after: `~/Library/Application Support/Motion Studio` 1791461297 → 1791461297; `~/MotionStudio` 1791538433 → 1791538433 (unchanged).
+
+## Results
+
+Creative "Autumn sale": 6 s, Instagram Story/Reel 9:16 and Post 1:1, generated from the brief, then the change request "Make the 20% off text larger and use a deep burgundy background".
+
+| Check | Target | Result |
+|---|---|---|
+| Commits with `.cache/` present and gitignored (C1/A1) | succeed | **both jobs succeeded**, v1 `feb1b4a`, v2 `0fde768`; `.cache/npm` existed; `git ls-files` has nothing under `.cache/` or `work/tmp/` |
+| Approvals reaching the user (Bash and Read) | 0 | **0** |
+| `auto_approved` events | — | **2** (both Bash: the render scripts with `ls`/`ffprobe`); 0 Read, see below |
+| Read of check frames | in the project | **4 Reads, all in `creatives/<slug>/work/tmp/`** (B1 followed); no `$TMPDIR` frame, so the Read safety net (A2) was not needed and not exercised live |
+| npm `Unknown env config "store-dir"` | none | **0** in `.cache/npm` logs and in the streams |
+| Creative Tokens = ledger total | equal | `/api/usage?project=demo&creative=<slug>` **105,426** = ledger sum 105,426 (2 records, v1 68,664 + v2 36,762); not estimated |
+| Large-file warnings | — | none (4 outputs, `warnings: []`) |
+
+- `.git/info/exclude` ends with `/.cache/` and `/creatives/*/work/tmp/`; `.gitattributes` has `.studio/usage.jsonl merge=union`.
+- Workspace usage: 105,426 tokens shown (cache read 1,021,020), $0.042 at API prices, billing subscription.
+
+## Cost of this re-check
+
+2 Haiku runs: input 36, output 34,850, cache write 70,540, cache read 1,021,020 → 105.4k tokens shown, about **$0.042** at API list prices (counted against the plan).
