@@ -3,7 +3,8 @@
 // other IPC handlers).
 import type { IpcMainInvokeEvent } from 'electron';
 
-export interface NotifyArgs { title: string; body: string }
+/** `sound` is optional; absent means the system default sound (on). */
+export interface NotifyArgs { title: string; body: string; sound?: boolean }
 /** Longest title or body accepted from the renderer. */
 export const MAX_TEXT = 200;
 export const MAX_BADGE = 99;
@@ -13,8 +14,23 @@ const text = (v: unknown, min: number): v is string => typeof v === 'string' && 
 /** `{ title, body }` with a 1–200 character title and a body of at most 200 characters, else null. */
 export function notifyArgs(arg: unknown): NotifyArgs | null {
   if (!arg || typeof arg !== 'object' || Array.isArray(arg)) return null;
-  const { title, body } = arg as Record<string, unknown>;
-  return text(title, 1) && text(body, 0) ? { title, body } : null;
+  const { title, body, sound } = arg as Record<string, unknown>;
+  if (!text(title, 1) || !text(body, 0)) return null;
+  if (sound === undefined) return { title, body };
+  return typeof sound === 'boolean' ? { title, body, sound } : null; // strict boolean: "false", 0, null are refused
+}
+
+/** The macOS sound name; `sound` is a darwin-only Electron option (Windows and Linux ignore it). */
+export const MAC_SOUND = 'Glass';
+
+export interface NotificationOptions { title: string; body: string; silent: boolean; sound?: string }
+/**
+ * Electron options for a validated request. Sound on: `silent: false` (the system default sound where the platform
+ * supports it: Windows toast sound, Linux notification daemon) plus the named sound on macOS. Sound off: `silent: true`.
+ */
+export function notificationOptions(a: NotifyArgs, platform: string): NotificationOptions {
+  const on = a.sound !== false;
+  return { title: a.title, body: a.body, silent: !on, ...(on && platform === 'darwin' ? { sound: MAC_SOUND } : {}) };
 }
 
 /** An integer from 0 to 99, else null. */
@@ -26,10 +42,14 @@ export interface DockLike { setBadge(text: string): void; bounce(type: 'informat
 export interface AttentionDeps {
   /** The IPC origin guard shared with the other handlers. */
   trusted(e: IpcMainInvokeEvent): boolean;
+  /** Notification.isSupported() of the main process. */
+  isSupported(): boolean;
   showNotification(args: NotifyArgs): void;
   /** macOS only (app.dock). */
   dock: DockLike | undefined;
   invalid(): Error;
+  /** The error reported to the page when the platform cannot show notifications. */
+  unsupported(): Error;
 }
 
 /**
@@ -42,8 +62,14 @@ export function attentionHandlers(d: AttentionDeps) {
     notify(e: IpcMainInvokeEvent, arg: unknown): void {
       const args = d.trusted(e) ? notifyArgs(arg) : null;
       if (!args) throw d.invalid();
+      if (!d.isSupported()) throw d.unsupported();
       d.showNotification(args);
       d.dock?.bounce('informational');
+    },
+    /** Whether the main process can show notifications at all (origin-checked, no argument). */
+    status(e: IpcMainInvokeEvent): { supported: boolean } {
+      if (!d.trusted(e)) throw d.invalid();
+      return { supported: d.isSupported() };
     },
     badge(e: IpcMainInvokeEvent, arg: unknown): void {
       const n = d.trusted(e) ? badgeArg(arg) : null;
@@ -56,6 +82,7 @@ export function attentionHandlers(d: AttentionDeps) {
 export function registerAttention(ipc: { handle(channel: string, fn: (e: IpcMainInvokeEvent, arg: unknown) => unknown): void }, d: AttentionDeps): void {
   const h = attentionHandlers(d);
   ipc.handle('ms:notify', h.notify);
+  ipc.handle('ms:notify-status', h.status);
   ipc.handle('ms:badge', h.badge);
 }
 

@@ -294,7 +294,7 @@ describe('useAttention', () => {
     expect(document.title).toBe('(1) Motion Studio');
     expect(bridge.setBadge).toHaveBeenLastCalledWith(1);
     expect(bridge.notify).toHaveBeenCalledTimes(1);
-    expect(bridge.notify).toHaveBeenCalledWith({ title: 'Motion Studio: serve la tua approvazione', body: 'Eseguire un comando' });
+    expect(bridge.notify).toHaveBeenCalledWith({ title: 'Motion Studio: serve la tua approvazione', body: 'Eseguire un comando', sound: true });
     expect(screen.getByRole('button', { name: 'Rivedi' })).toBeTruthy();
     // The same id again (a repeated event): no second notification.
     rerender(<Probe list={[{ ...approval('a1', 'Eseguire un comando') }]} />);
@@ -323,6 +323,14 @@ describe('useAttention', () => {
     expect(bridge.setBadge).toHaveBeenLastCalledWith(0);
   });
 
+  it('passes sound: false when the sound setting is off', () => {
+    localStorage.setItem('motion-studio.notifySound', 'false');
+    const bridge = desktopBridge();
+    const { rerender } = render(<Probe list={[]} />);
+    rerender(<Probe list={[approval('a1')]} />);
+    expect(bridge.notify).toHaveBeenCalledWith({ title: 'Motion Studio: serve la tua approvazione', body: 'Richiesta a1', sound: false });
+  });
+
   it('respects notifyApprovals = false but still updates title and badge', () => {
     localStorage.setItem(NOTIFY_APPROVALS_KEY, 'false');
     const bridge = desktopBridge();
@@ -339,7 +347,7 @@ describe('useAttention', () => {
     const { rerender } = render(<Probe list={[]} />);
     rerender(<Probe list={[approval('a1'), approval('a2'), approval('a3')]} />);
     expect(bridge.notify).toHaveBeenCalledTimes(1);
-    expect(bridge.notify).toHaveBeenCalledWith({ title: 'Motion Studio: serve la tua approvazione', body: '3 approvazioni in attesa' });
+    expect(bridge.notify).toHaveBeenCalledWith({ title: 'Motion Studio: serve la tua approvazione', body: '3 approvazioni in attesa', sound: true });
   });
 
   it('falls back to the web Notification API when granted and the page is hidden', () => {
@@ -524,11 +532,11 @@ describe('startup policy', () => {
     // A later arrival is a real one.
     send({ type: 'approval', approval: approval('a3', 'Scaricare un font') });
     expect(bridge.notify).toHaveBeenCalledTimes(1);
-    expect(bridge.notify).toHaveBeenCalledWith({ title: 'Motion Studio: serve la tua approvazione', body: 'Scaricare un font' });
+    expect(bridge.notify).toHaveBeenCalledWith({ title: 'Motion Studio: serve la tua approvazione', body: 'Scaricare un font', sound: true });
     // A reconnection while requests were known: the new one in the snapshot is an arrival, the known ones are not.
     send(snapshot([approval('a1'), approval('a2'), approval('a3'), approval('a4', 'Usare internet')]));
     expect(bridge.notify).toHaveBeenCalledTimes(2);
-    expect(bridge.notify).toHaveBeenLastCalledWith({ title: 'Motion Studio: serve la tua approvazione', body: 'Usare internet' });
+    expect(bridge.notify).toHaveBeenLastCalledWith({ title: 'Motion Studio: serve la tua approvazione', body: 'Usare internet', sound: true });
   });
 
   it('treats a reconnection with nothing known before as a restore (singular toast)', async () => {

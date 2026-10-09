@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ATTENTION_CLICK, attentionHandlers, badgeArg, notifyArgs, registerAttention, sendAttentionClick, showKept, type AttentionDeps } from '../src/notify.ts';
+import { ATTENTION_CLICK, attentionHandlers, badgeArg, notificationOptions, notifyArgs, registerAttention, sendAttentionClick, showKept, type AttentionDeps } from '../src/notify.ts';
 
 vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld: vi.fn() },
@@ -52,10 +52,10 @@ describe('argument validation', () => {
 
 describe('main handlers', () => {
   const event = { sender: 'win' } as never;
-  function deps(trusted = true) {
-    const shown: Array<{ title: string; body: string }> = [];
+  function deps(trusted = true, supported = true) {
+    const shown: Array<{ title: string; body: string; sound?: boolean }> = [];
     const dock = { setBadge: vi.fn(), bounce: vi.fn(() => 1) };
-    const d: AttentionDeps = { trusted: () => trusted, showNotification: (a) => { shown.push(a); }, dock, invalid: () => new Error('Invalid request') };
+    const d: AttentionDeps = { trusted: () => trusted, isSupported: () => supported, unsupported: () => new Error('Unsupported'), showNotification: (a) => { shown.push(a); }, dock, invalid: () => new Error('Invalid request') };
     return { d, shown, dock };
   }
 
@@ -108,12 +108,64 @@ describe('main handlers', () => {
   it('registers both channels on ipcMain', () => {
     const handle = vi.fn();
     registerAttention({ handle }, deps().d);
-    expect(handle.mock.calls.map((c) => c[0])).toEqual(['ms:notify', 'ms:badge']);
+    expect(handle.mock.calls.map((c) => c[0])).toEqual(['ms:notify', 'ms:notify-status', 'ms:badge']);
   });
 
   it('is wired in main.ts with the same origin guard as the other IPC handlers', () => {
     const main = readFileSync(join(__dirname, '..', 'src', 'main.ts'), 'utf8');
     expect(main).toMatch(/registerAttention\(ipcMain, \{\s*trusted,/);
+  });
+});
+
+describe('notification sound and visibility', () => {
+  const event = { sender: 'win' } as never;
+  const mk = (trusted = true, supported = true) => {
+    const shown: unknown[] = [];
+    const d: AttentionDeps = { trusted: () => trusted, isSupported: () => supported, unsupported: () => new Error('Unsupported'), showNotification: (a) => { shown.push(a); }, dock: undefined, invalid: () => new Error('Invalid request') };
+    return { d, shown };
+  };
+  const base = { title: 'T', body: 'b' };
+
+  it('sound on: silent false, plus the named sound on macOS only', () => {
+    expect(notificationOptions({ ...base, sound: true }, 'darwin')).toEqual({ ...base, silent: false, sound: 'Glass' });
+    expect(notificationOptions({ ...base, sound: true }, 'win32')).toEqual({ ...base, silent: false });
+    expect(notificationOptions({ ...base, sound: true }, 'linux')).toEqual({ ...base, silent: false });
+    expect(notificationOptions(base, 'darwin').silent).toBe(false); // absent = default sound
+  });
+  it('sound off: silent true, no sound name', () => {
+    expect(notificationOptions({ ...base, sound: false }, 'darwin')).toEqual({ ...base, silent: true });
+  });
+  it('accepts a boolean sound and rejects anything else', () => {
+    expect(notifyArgs({ ...base, sound: false })).toEqual({ ...base, sound: false });
+    expect(notifyArgs({ ...base, sound: true })).toEqual({ ...base, sound: true });
+    for (const bad of ['false', 0, 1, null, {}, []]) expect(notifyArgs({ ...base, sound: bad })).toBeNull();
+    const { d, shown } = mk();
+    expect(() => attentionHandlers(d).notify(event, { ...base, sound: 'yes' })).toThrow('Invalid request');
+    expect(shown).toEqual([]);
+  });
+  it('reports an error when notifications are not supported', () => {
+    const { d, shown } = mk(true, false);
+    expect(() => attentionHandlers(d).notify(event, base)).toThrow('Unsupported');
+    expect(shown).toEqual([]);
+    expect(attentionHandlers(d).status(event)).toEqual({ supported: false });
+    expect(attentionHandlers(mk().d).status(event)).toEqual({ supported: true });
+  });
+  it('keeps the origin check on notify and status', () => {
+    const { d, shown } = mk(false);
+    expect(() => attentionHandlers(d).notify(event, { ...base, sound: true })).toThrow('Invalid request');
+    expect(() => attentionHandlers(d).status(event)).toThrow('Invalid request');
+    expect(shown).toEqual([]);
+  });
+  it('preload exposes notifyStatus over ms:notify-status and forwards sound', async () => {
+    const electron = await import('electron');
+    vi.mocked(electron.contextBridge.exposeInMainWorld).mockClear();
+    vi.resetModules();
+    await import('../src/preload.ts');
+    const bridge = vi.mocked((await import('electron')).contextBridge.exposeInMainWorld).mock.calls[0]![1] as { notify(p: unknown): Promise<void>; notifyStatus(): Promise<unknown> };
+    await bridge.notify({ ...base, sound: false });
+    expect(electron.ipcRenderer.invoke).toHaveBeenLastCalledWith('ms:notify', { ...base, sound: false });
+    await bridge.notifyStatus();
+    expect(electron.ipcRenderer.invoke).toHaveBeenLastCalledWith('ms:notify-status');
   });
 });
 

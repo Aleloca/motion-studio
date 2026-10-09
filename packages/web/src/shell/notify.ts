@@ -34,6 +34,15 @@ export function setNotifyReady(on: boolean): void {
   try { localStorage.setItem(NOTIFY_READY_KEY, String(on)); } catch { /* storage unavailable: keep the default */ }
 }
 
+/** localStorage key of the "Play a sound" setting (Settings → Notifications). Default on. */
+export const NOTIFY_SOUND_KEY = 'motion-studio.notifySound';
+export function notifySoundEnabled(): boolean {
+  try { return localStorage.getItem(NOTIFY_SOUND_KEY) !== 'false'; } catch { return true; }
+}
+export function setNotifySound(on: boolean): void {
+  try { localStorage.setItem(NOTIFY_SOUND_KEY, String(on)); } catch { /* storage unavailable: keep the default */ }
+}
+
 /** The window is in the background: hidden, or visible without the focus. */
 export function appInBackground(): boolean {
   try { return document.visibilityState === 'hidden' || !document.hasFocus(); } catch { return false; }
@@ -45,20 +54,42 @@ function quietly(call: () => unknown): void {
 }
 
 /**
+ * Shows a notification and rejects with the reason when it cannot (used by the Settings test button; the automatic path
+ * swallows it). Desktop: the main process validates the arguments, plays the sound per `sound` and refuses when the
+ * platform cannot notify. Web: the Notification API needs the user's permission; the browser has no sound control, so
+ * `silent: !sound`. `onlyAway` keeps the web rule "a focused page already has the toast".
+ */
+export async function sendNotification(raw: { title: string; body: string }, onlyAway = false): Promise<void> {
+  const p = { title: clip(raw.title), body: clip(raw.body), sound: notifySoundEnabled() };
+  const d = desktop();
+  if (typeof d?.notify === 'function') { await d.notify(p); return; }
+  if (typeof Notification === 'undefined') throw new Error('unsupported');
+  if (Notification.permission !== 'granted') throw new Error(Notification.permission);
+  const away = document.visibilityState === 'hidden' || !document.hasFocus();
+  if (onlyAway && !away) return;
+  new Notification(p.title, { body: p.body, silent: !p.sound });
+}
+
+/**
  * Desktop: native notification from the main process, also with the window visible (the main process bounces the Dock
  * with it). Web: the Notification API when the user granted it and the page is hidden or not focused (on a focused page
- * the toast is enough). Texts are clipped to what the main process accepts.
+ * the toast is enough). Texts are clipped to what the main process accepts. Failures are swallowed.
  */
 export function showNotification(raw: { title: string; body: string }): void {
-  const p = { title: clip(raw.title), body: clip(raw.body) };
+  quietly(() => sendNotification(raw, true));
+}
+
+export type NotificationStatus = 'ok' | 'unsupported' | 'default' | 'denied';
+/** Whether notifications can be seen: the main process answers on desktop, `Notification.permission` on the web. */
+export async function notificationStatus(): Promise<NotificationStatus> {
   const d = desktop();
-  if (typeof d?.notify === 'function') { quietly(() => d.notify!(p)); return; }
-  try {
-    const away = document.visibilityState === 'hidden' || !document.hasFocus();
-    if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && away) {
-      new Notification(p.title, { body: p.body });
-    }
-  } catch { /* some browsers only allow notifications from a service worker */ }
+  if (d) {
+    if (typeof d.notifyStatus !== 'function') return 'ok';
+    try { return (await d.notifyStatus()).supported ? 'ok' : 'unsupported'; } catch { return 'unsupported'; }
+  }
+  if (typeof Notification === 'undefined') return 'unsupported';
+  const perm = Notification.permission;
+  return perm === 'granted' ? 'ok' : perm === 'denied' ? 'denied' : 'default';
 }
 
 /** Subscribes to clicks on the desktop app's notifications (nothing on the web); returns the unsubscribe. */

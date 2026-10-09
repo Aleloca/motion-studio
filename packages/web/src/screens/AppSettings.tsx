@@ -4,7 +4,7 @@ import { api } from '../api.ts';
 import { formatDate, useLocale, useT, type LanguageState } from '../i18n.tsx';
 import { anim, D, E, enter } from '../motion/index.ts';
 import { href, type SettingsSection } from '../routes.ts';
-import { notifyApprovalsEnabled, notifyReadyEnabled, setNotifyApprovals, setNotifyReady } from '../shell/notify.ts';
+import { notificationStatus, notifyApprovalsEnabled, notifyReadyEnabled, notifySoundEnabled, sendNotification, setNotifyApprovals, setNotifyReady, setNotifySound, type NotificationStatus } from '../shell/notify.ts';
 import { go } from '../shell/ShellContext.tsx';
 import { billingNote, costText, formatTokens } from '../shell/Tokens.tsx';
 import type { Theme } from '../theme.ts';
@@ -309,6 +309,28 @@ function Notifications() {
   const n = s.notifications;
   const [approvals, setApprovals] = useState(notifyApprovalsEnabled);
   const [ready, setReady] = useState(notifyReadyEnabled);
+  const [sound, setSound] = useState(notifySoundEnabled);
+  const [status, setStatus] = useState<NotificationStatus | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [test, setTest] = useState<{ ok: true } | { ok: false; detail: string } | null>(null);
+  const refresh = () => { void notificationStatus().then(setStatus); };
+  useEffect(() => { refresh(); }, []);
+  const askWeb = () => {
+    const done = () => refresh();
+    void Promise.resolve(Notification.requestPermission(done)).then(done, () => {});
+  };
+  const sendTest = async () => {
+    setTesting(true);
+    setTest(null);
+    try {
+      await sendNotification({ title: t.web.app.approvalNotificationTitle, body: n.testButton });
+      setTest({ ok: true });
+    } catch (e) {
+      const m = e instanceof Error ? e.message : '';
+      setTest({ ok: false, detail: m === 'denied' ? n.webDenied : m === 'default' ? n.webDefault : m === 'unsupported' ? n.webUnsupported : m || n.unsupported });
+    } finally { setTesting(false); refresh(); }
+  };
+  const problem = status === 'unsupported' ? (desktop() ? n.unsupported : n.webUnsupported) : status === 'denied' ? n.webDenied : status === 'default' ? n.webDefault : null;
   return (
     <div className="ms-set-narrow">
       <Head title={n.title} sub={s.appliesAll} />
@@ -319,7 +341,19 @@ function Notifications() {
         <Row title={n.ready} sub={n.readySub}>
           <Toggle on={ready} label={n.readyLabel} onChange={(on) => { setNotifyReady(on); setReady(on); }} />
         </Row>
+        <Row title={n.sound} sub={n.soundSub}>
+          <Toggle on={sound} label={n.soundLabel} onChange={(on) => { setNotifySound(on); setSound(on); }} />
+        </Row>
+        <Row title={n.test} sub={n.testSub}>
+          <Button variant="outline" disabled={testing} onClick={() => { void sendTest(); }}>{n.testButton}</Button>
+        </Row>
       </Card>
+      {problem ? (
+        <Alert action={status === 'default' && !desktop() ? <Button size="sm" variant="outline" onClick={askWeb}>{n.webAllow}</Button> : undefined}>{problem}</Alert>
+      ) : null}
+      {test?.ok === false ? <p className="ms-set-error" role="alert">{n.testFailed({ detail: test.detail })}</p> : null}
+      {test?.ok === true ? <p className="ms-set-sub ms-set-small" role="status">{n.testSent}</p> : null}
+      {desktop() ? <p className="ms-set-faint">{n.howTo}</p> : null}
     </div>
   );
 }

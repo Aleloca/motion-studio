@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { AlreadyRunningError, answersHealth, defaultConfigDir, resolveLocale, resolveLoginShellPath, setLocale, startServer, t } from '@motion-studio/core';
 import { absolutePathArg, attachedGone, attachedGoneAction, attachedLocale, bootLocale, focusOnReady, readSavedLanguage, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, userDataDir } from './helpers.ts';
 import { menuTemplate } from './menu.ts';
-import { registerAttention, sendAttentionClick, showKept } from './notify.ts';
+import { notificationOptions, registerAttention, sendAttentionClick, showKept } from './notify.ts';
 import { setupUpdates } from './updater.ts';
 import { externalUrlAllowed, isAppUrl, windowOptions } from './window.ts';
 
@@ -138,11 +138,12 @@ async function run() {
   const notifications = new Set<Notification>();
   registerAttention(ipcMain, {
     trusted,
-    showNotification: ({ title, body }) => {
-      if (!Notification.isSupported()) return;
+    isSupported: () => Notification.isSupported(),
+    unsupported: () => new Error(t().desktop.notificationsUnsupported),
+    showNotification: (args) => {
       // Kept alive until clicked or closed. A click brings the window back and asks the page to run its "Review"
       // (the request's creative, or the activity center), as the toast does.
-      showKept(notifications, new Notification({ title, body }), () => {
+      showKept(notifications, new Notification(notificationOptions(args, process.platform)), () => {
         if (win.isDestroyed()) return;
         if (win.isMinimized()) win.restore();
         win.show(); win.focus();
