@@ -200,6 +200,14 @@ button.ms-avatar:active { transform: scale(.95); }
 .ms-md .ms-md-h { margin: 14px 0 6px; font-size: 14px; font-weight: 700; letter-spacing: -.005em; color: var(--text); }
 .ms-md h3.ms-md-h { font-size: 15px; }
 .ms-md code { font-family: var(--mono); font-size: .92em; padding: 1px 5px; border-radius: 4px; background: var(--field); }
+/* Fenced code blocks: plain text, the long lines scroll inside the block; the wrapper never takes their width. */
+.ms-md-code { contain: inline-size; max-width: 100%; min-width: 0; margin: 0 0 8px; display: flex; flex-direction: column; gap: 4px; }
+.ms-md-lang { align-self: flex-start; font-family: var(--mono); font-size: 10.5px; line-height: 1.4; color: var(--muted); }
+.ms-md-pre {
+  margin: 0; max-width: 100%; overflow-x: auto; white-space: pre; overflow-wrap: normal; tab-size: 2; padding: 10px 12px;
+  border-radius: 8px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line2); font-family: var(--mono); font-size: 12px; line-height: 1.5;
+}
+.ms-md-pre code { padding: 0; border-radius: 0; background: none; font-size: inherit; white-space: inherit; }
 .ms-link { color: var(--accentText); text-decoration: none; }
 .ms-link:hover { text-decoration: underline; }
 

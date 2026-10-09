@@ -2,8 +2,9 @@ import { Fragment, type ReactNode } from 'react';
 import { cx } from './cx.ts';
 
 // Safe Markdown subset for agent and user text (spec point 32): **bold**, *italic* / _italic_, `code`, bullet lists,
-// [label](https://…), bare http(s) URLs and, with `headings`, `#` titles. Everything else, HTML included, stays text: React escapes it and no
-// dangerouslySetInnerHTML is used anywhere.
+// [label](https://…), bare http(s) URLs, fenced code blocks (``` or ~~~, with an optional language label; an unclosed
+// fence runs to the end) and, with `headings`, `#` titles. Everything else, HTML included, stays text: React escapes
+// it and no dangerouslySetInnerHTML is used anywhere. A fenced block's content is always plain text, never parsed.
 //
 // Linear time on hostile input: every pattern's body stops at the next delimiter of its kind (bold cannot contain
 // "**", a link label cannot contain "[" or "]", a URL in parentheses cannot contain "(" or "["), so a failed attempt
@@ -84,10 +85,14 @@ function inline(text: string, keyPrefix: string, links = true): ReactNode[] {
   return out;
 }
 
-type Block = { kind: 'p'; lines: string[] } | { kind: 'ul'; items: string[] } | { kind: 'h'; level: number; text: string };
+type Block = { kind: 'p'; lines: string[] } | { kind: 'ul'; items: string[] } | { kind: 'h'; level: number; text: string }
+  | { kind: 'pre'; lang: string; lines: string[] };
 
 const BULLET = /^\s*[-*+]\s+(.*)$/;
 const HEADING = /^(#{1,6})[ \t]+(.*)$/;
+/** A fence opener: up to 3 spaces, 3+ backticks or tildes, the info string (its first word is the language). */
+const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})(.*)$/;
+const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
 /** Drops a closing `##` run and trailing spaces (a loop, not a regex: linear on hostile input). */
 function headingText(raw: string): string {
   let end = raw.length;
@@ -98,7 +103,26 @@ function headingText(raw: string): string {
 function blocks(text: string, headings: boolean): Block[] {
   const out: Block[] = [];
   let cur: Block | null = null;
+  // The open fenced block: its fence character and length, the opener's indentation (removed from its lines).
+  let fence: { ch: string; len: number; indent: number; block: { kind: 'pre'; lang: string; lines: string[] } } | null = null;
   for (const line of text.split(/\r?\n/)) {
+    if (fence) {
+      const close = FENCE_CLOSE.exec(line);
+      if (close && close[1]![0] === fence.ch && close[1]!.length >= fence.len) { fence = null; cur = null; continue; }
+      let cut = 0;
+      while (cut < fence.indent && line[cut] === ' ') cut++;
+      fence.block.lines.push(line.slice(cut));
+      continue;
+    }
+    const open = FENCE_OPEN.exec(line);
+    // A backtick fence's info string has no backtick (```code``` on one line is inline code).
+    if (open && !(open[2]![0] === '`' && open[3]!.includes('`'))) {
+      const block = { kind: 'pre' as const, lang: open[3]!.trim().split(' ')[0]!, lines: [] as string[] };
+      out.push(block);
+      fence = { ch: open[2]![0]!, len: open[2]!.length, indent: open[1]!.length, block };
+      cur = null;
+      continue;
+    }
     const bullet = BULLET.exec(line);
     const heading = headings ? HEADING.exec(line) : null;
     if (!line.trim()) { cur = null; continue; }
@@ -135,6 +159,14 @@ export function Markdown({ text, className, headings = false }: MarkdownProps) {
         if (b.kind === 'h') {
           const Tag = H[Math.min(b.level, 3) - 1]!;
           return <Tag key={i} className="ms-md-h">{inline(b.text, `${i}`)}</Tag>;
+        }
+        if (b.kind === 'pre') {
+          return (
+            <div key={i} className="ms-md-code">
+              {b.lang ? <span className="ms-md-lang">{b.lang}</span> : null}
+              <pre className="ms-md-pre"><code>{b.lines.join('\n')}</code></pre>
+            </div>
+          );
         }
         return b.kind === 'ul' ? (
           <ul key={i}>{b.items.map((item, j) => <li key={j}>{inline(item, `${i}.${j}`)}</li>)}</ul>

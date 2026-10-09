@@ -536,6 +536,8 @@ describe('Markdown', () => {
     const lines = [
       '**a `c` '.repeat(2500), '**a '.repeat(5000), '['.repeat(20000), '[a]('.repeat(5000), '*a '.repeat(6700),
       '_a '.repeat(6700), '`'.repeat(20000), 'https://'.repeat(2500), '**['.repeat(6700), '[a](https://x '.repeat(1400),
+      // Fenced code blocks: many tiny blocks, near-miss openers and closers, one unclosed block of hostile inline text.
+      '```js\n**[a](\n```\n'.repeat(1200), '``` `\n'.repeat(2800), '~~~\n```\n'.repeat(2000), '```\n' + '**[a]('.repeat(3300),
     ];
     // Deterministic work count instead of wall-clock time (which flaked under the parallel full run): every regex
     // exec — including those behind split/replace/test — adds the characters it scanned. The current parser does
@@ -558,6 +560,71 @@ describe('Markdown', () => {
         expect(work, text.slice(0, 12)).toBeLessThanOrEqual(K * text.length);
       }
     } finally { RegExp.prototype.exec = exec; }
+  });
+  it('renders a fenced code block as plain text in a pre, between paragraphs', () => {
+    const { container } = render(<Markdown text={'Before **bold**\n\n```ts\nconst a = 1;\n\n  **not bold** `nor code`\n```\nAfter *it*'} />);
+    const pre = container.querySelector('pre.ms-md-pre')!;
+    expect(pre).toBeTruthy();
+    const code = pre.querySelector(':scope > code')!;
+    // The blank line and the indentation are kept; nothing inside is parsed.
+    expect(code.textContent).toBe('const a = 1;\n\n  **not bold** `nor code`');
+    expect(code.querySelector('strong, code, em')).toBeNull();
+    expect(container.textContent).not.toContain('```');
+    // The language as a small label, outside the code.
+    expect(container.querySelector('.ms-md-lang')!.textContent).toBe('ts');
+    const ps = container.querySelectorAll('.ms-md > p');
+    expect(ps).toHaveLength(2);
+    expect(ps[0]!.querySelector('strong')!.textContent).toBe('bold');
+    expect(ps[1]!.querySelector('em')!.textContent).toBe('it');
+  });
+  it('keeps HTML and links inside a fenced block as text', () => {
+    const onerror = vi.fn();
+    (window as unknown as { alert: () => void }).alert = onerror;
+    const { container } = render(<Markdown text={'```html\n<img src=x onerror=alert(1)>\n[x](javascript:alert(1)) [ok](https://example.com) https://example.org\n```'} />);
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('a[href]')).toBeNull();
+    expect(container.querySelector('a')).toBeNull();
+    expect(container.querySelector('pre code')!.textContent).toBe('<img src=x onerror=alert(1)>\n[x](javascript:alert(1)) [ok](https://example.com) https://example.org');
+    expect(onerror).not.toHaveBeenCalled();
+  });
+  it('an unclosed fence runs to the end of the text; ~~~ fences work; no label without a language', () => {
+    const open = render(<Markdown text={'Intro\n```\nline 1\n\n- not a list\n# not a title'} />);
+    expect(open.container.querySelector('pre code')!.textContent).toBe('line 1\n\n- not a list\n# not a title');
+    expect(open.container.querySelector('ul')).toBeNull();
+    expect(open.container.querySelector('.ms-md-lang')).toBeNull();
+    expect(open.container.querySelector('p')!.textContent).toBe('Intro');
+    open.unmount();
+    const tilde = render(<Markdown text={'~~~~ sh extra\n```\necho hi\n~~~~\nDone'} />);
+    expect(tilde.container.querySelector('pre code')!.textContent).toBe('```\necho hi');
+    expect(tilde.container.querySelector('.ms-md-lang')!.textContent).toBe('sh');
+    expect(tilde.container.querySelector('p')!.textContent).toBe('Done');
+    tilde.unmount();
+    // A closing fence must be at least as long as the opener; an inline ```code``` on one line is not a fence.
+    const long = render(<Markdown text={'````\n```\nstill code\n````\n```inline``` text'} />);
+    expect(long.container.querySelector('pre code')!.textContent).toBe('```\nstill code');
+    expect(long.container.querySelectorAll('pre')).toHaveLength(1);
+  });
+  it('a long line scrolls inside the pre and never widens the message (CSS contract)', () => {
+    const { container } = render(<Markdown text={'```\n' + 'x'.repeat(2000) + '\n```'} />);
+    const pre = container.querySelector('pre.ms-md-pre')!;
+    expect(pre.parentElement!.classList.contains('ms-md-code')).toBe(true);
+    const css = readFileSync(resolve(import.meta.dirname, '../src/ui/ui.css'), 'utf8');
+    const rule = (sel: string) => {
+      const m = new RegExp(`(?:^|\\n)${sel.replace(/[.*]/g, (c) => `\\${c}`)}\\s*\\{([^}]*)\\}`).exec(css);
+      expect(m, sel).toBeTruthy();
+      return m![1]!;
+    };
+    const pr = rule('.ms-md-pre');
+    expect(pr).toMatch(/overflow-x:\s*auto/);
+    expect(pr).toMatch(/white-space:\s*pre\b/);
+    expect(pr).toMatch(/font-family:\s*var\(--mono\)/);
+    expect(pr).toMatch(/background:\s*var\(--[\w-]+\)/);
+    expect(pr).toMatch(/max-width:\s*100%/);
+    expect(pr).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|hsl\(/i);
+    // The wrapper does not take the line's width as its own: it fills the message and lets the pre scroll.
+    const wrap = rule('.ms-md-code');
+    expect(wrap).toMatch(/contain:\s*inline-size/);
+    expect(wrap).toMatch(/max-width:\s*100%/);
   });
   it('does not treat snake_case as italic', () => {
     const { container } = render(<Markdown text={'use some_file_name here'} />);
