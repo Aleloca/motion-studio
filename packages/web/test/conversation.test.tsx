@@ -548,12 +548,30 @@ describe('Conversation · every command that ran (count work)', () => {
     expect(screen.getByText('1 command ran')).toBeTruthy();
   });
 
-  it('expired or cancelled requests did not run; a cancelled job keeps the call that had started', async () => {
+  it('expired or cancelled requests did not run; a call cut by a cancelled job is "Interrupted" and the line says "attempted"', async () => {
     const entries = [agent(1, session(true)), agent(2, use('b1', 'ls')), agent(2, decided('b1', 'expired')), agent(3, use('b2', 'pwd')), agent(3, decided('b2', 'cancelled')), agent(4, use('b3', 'sleep 100'))];
     render(view({ entries, job: { ...done, state: 'cancelled' } }));
-    expect(screen.getByText('1 command ran in the sandbox')).toBeTruthy();
+    expect(screen.getByText('1 command ran or was attempted in the sandbox')).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: /^Activity details/ }));
     expect(screen.getAllByText('Didn’t run')).toHaveLength(2);
+    expect(screen.getByText('Interrupted')).toBeTruthy();
+  });
+
+  it('a failed turn with two cut calls: plural "ran or were attempted"; while running there is no mark', async () => {
+    const entries = [agent(1, session(true)), agent(2, use('b1', 'ls')), agent(3, use('b2', 'pwd')), agent(4, result('b2')), agent(5, use('b3', 'sleep 9'))];
+    const { rerender } = render(view({ entries, job: { ...done, state: 'failed' } }));
+    expect(screen.getByText('3 commands ran or were attempted in the sandbox')).toBeTruthy();
+    rerender(view({ entries, job: running }));
+    await userEvent.click(screen.getByRole('button', { name: /^Activity details/ }));
+    expect(screen.queryByText('Interrupted')).toBeNull();
+  });
+
+  it('the line icon is the shield only for sandboxed runs', () => {
+    const { rerender } = render(view({ entries: turn(true), job: done }));
+    const icon = () => document.querySelector('.ms-convo-autoline .ms-step-check svg')!.outerHTML;
+    const shield = icon();
+    rerender(view({ entries: turn(false), job: done }));
+    expect(icon()).not.toBe(shield);
   });
 
   it('only Reads: listed, but no line', () => {
@@ -570,8 +588,11 @@ describe('Conversation · every command that ran (count work)', () => {
     const r2 = it_(two);
     expect(screen.getByText('2 comandi eseguiti · 2 approvati da te')).toBeTruthy();
     r2.unmount();
-    it_([agent(1, session(true)), agent(2, use('b1', 'ls'))]);
+    const r3 = it_([agent(1, session(true)), agent(2, use('b1', 'ls')), agent(2, result('b1'))]);
     expect(screen.getByText('1 comando eseguito nella sandbox')).toBeTruthy();
+    r3.unmount();
+    it_([agent(1, session(true)), agent(2, use('b1', 'ls')), agent(3, use('b2', 'pwd'))]);
+    expect(screen.getByText('2 comandi eseguiti o tentati nella sandbox')).toBeTruthy();
   });
 });
 

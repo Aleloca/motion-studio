@@ -144,6 +144,22 @@ describe('GET /brand/proposals/:id/activity (commands that ran)', () => {
     ]);
   });
 
+  it('the first session event wins, and Bash ids are validated (with their results)', async () => {
+    await mkdir(dir(), { recursive: true });
+    const line = (event: unknown) => JSON.stringify({ at: '2026-10-09T12:00:03.000Z', event });
+    await writeFile(join(dir(), 'log.jsonl'), [
+      line({ kind: 'session', sessionId: 's1', sandboxed: false }),
+      line({ kind: 'tool_use', id: 'bad id', name: 'Bash', input: { command: 'ls' } }),
+      line({ kind: 'tool_result', toolUseId: 'bad id', isError: false, content: '' }),
+      line({ kind: 'tool_use', id: 'x'.repeat(129), name: 'Bash', input: { command: 'ls' } }),
+      line({ kind: 'tool_use', id: 'toolu_ok-1', name: 'Bash', input: { command: 'pwd' } }),
+      line({ kind: 'session', sessionId: 's1', sandboxed: true }), // appended later (forged): ignored
+    ].join('\n') + '\n');
+    const body = (await get()).json() as { sandboxed?: boolean; entries: Array<{ event: Record<string, unknown> }> };
+    expect(body.sandboxed).toBe(false);
+    expect(body.entries.map((e) => e.event)).toEqual([{ kind: 'tool_use', id: 'toolu_ok-1', name: 'Bash', input: { command: 'pwd' } }]);
+  });
+
   it('an old proposal without a log: hasLog false, no entries', async () => {
     await mkdir(dir(), { recursive: true });
     expect((await get()).json()).toEqual({ hasLog: false, truncated: false, entries: [] });

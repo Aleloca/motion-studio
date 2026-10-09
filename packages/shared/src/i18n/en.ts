@@ -1555,9 +1555,17 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
       summary: 'Summary',
       steps: (p: { count: number }) => (p.count === 1 ? '1 step' : `${p.count} steps`),
       details: (p: { count: number }) => `Activity details (${p.count})`,
-      /** Every command a finished turn ran; `sandbox` false (or unknown) drops "in the sandbox"; `approved` > 0 adds how many you approved. */
-      commandsRan: (p: { count: number; approved: number; sandbox: boolean }) => `${p.count === 1 ? '1 command ran' : `${p.count} commands ran`}${p.sandbox ? ' in the sandbox' : ''}${p.approved > 0 ? ` · ${p.approved} approved by you` : ''}`,
-      commandMarks: { approved: 'You approved', denied: 'Denied', notRun: 'Didn’t run', error: 'Ended with an error' },
+      /**
+       * Every command a finished turn ran. `sandbox` false (or unknown) drops "in the sandbox"; `approved` > 0 adds how
+       * many you approved; `attempted`: some were interrupted; `atLeast`: the log was cut, there may be more.
+       */
+      commandsRan: (p: { count: number; approved: number; sandbox: boolean; attempted?: boolean; atLeast?: boolean }) => {
+        const one = p.count === 1;
+        const verb = p.attempted ? (one ? 'ran or was attempted' : 'ran or were attempted') : 'ran';
+        const head = `${p.atLeast ? 'At least ' : ''}${p.count} ${one ? 'command' : 'commands'} ${verb}`;
+        return `${head}${p.sandbox ? ' in the sandbox' : ''}${p.approved > 0 ? ` · ${p.approved} approved by you` : ''}`;
+      },
+      commandMarks: { approved: 'You approved', denied: 'Denied', notRun: 'Didn’t run', error: 'Ended with an error', interrupted: 'Interrupted' },
       readFile: (p: { file: string }) => `Read ${p.file}`,
       autoDetails: 'Details',
       detailKinds: { session: 'Session', text: 'Message', tool: 'Tool', result: 'Output', error: 'Error', limit: 'Limit', step: 'Step', log: 'Log', unreadable: 'Unreadable', done: 'Done', failed: 'Failed' },

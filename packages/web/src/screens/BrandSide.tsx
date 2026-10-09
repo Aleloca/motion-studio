@@ -40,13 +40,14 @@ export function ProposalAutoLine({ project, proposalId }: { project: string; pro
     return () => { alive = false; };
   }, [project, proposalId]);
   const log = useMemo(() => (activity?.hasLog && Array.isArray(activity.entries)
-    ? commandLog(activity.entries.map((e) => e.event), webExplainContext(workspace, project), activity.sandboxed)
+    // A finished analysis, unless the log was cut (then a call without a result may simply be past the cut).
+    ? commandLog(activity.entries.map((e) => e.event), webExplainContext(workspace, project), { finished: !activity.truncated, sandboxedHint: activity.sandboxed })
     : null), [activity, workspace, project]);
   if (!activity?.hasLog || !log || log.ran === 0) return null;
   return (
     <span className="ms-bauto">
-      <Icon name="shield" size={12} />
-      <span id={id}>{c.commandsRan({ count: log.ran, approved: log.approved, sandbox: log.sandboxed })}</span>
+      <Icon name={log.sandboxed ? 'shield' : 'terminal'} size={12} />
+      <span id={id}>{c.commandsRan({ count: log.ran, approved: log.approved, sandbox: log.sandboxed, attempted: log.attempted, atLeast: activity.truncated })}</span>
       <span aria-hidden="true">·</span>
       <Button ref={anchor} size="sm" variant="ghost" className="ms-bauto-details" aria-describedby={id} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{c.autoDetails}</Button>
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="bottom-end" width={360} label={h.autoTitle}>

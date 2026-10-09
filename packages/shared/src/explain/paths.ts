@@ -10,6 +10,11 @@ export interface ExplainContext {
   cwd?: string;
   /** The user's `$TMPDIR`, when known. */
   tmpDir?: string;
+  /**
+   * A placeholder folder that stands for unknown locations (the web uses it for a project or home it can't know).
+   * Paths in it are never shown: the word as the agent wrote it is shown instead.
+   */
+  opaqueRoot?: string;
 }
 
 export type PathClass = 'work' | 'project' | 'tmp' | 'outside' | 'unknown';
@@ -205,12 +210,14 @@ export function displayLoc(l: Loc, ctx: ExplainContext): string {
   if (l.abs === null) return l.raw;
   const d = dirs(ctx);
   const abs = l.abs;
+  const opaque = ctx.opaqueRoot ? normalizeAbs(ctx.opaqueRoot) : null;
   if (isInside(abs, d.project)) {
-    if (abs === d.project) return `${d.project.slice(d.project.lastIndexOf('/') + 1)}/`;
+    if (abs === d.project) return opaque && isInside(abs, opaque) ? l.raw : `${d.project.slice(d.project.lastIndexOf('/') + 1)}/`;
     return abs.slice(d.project.length + 1);
   }
   if (d.tmpDir && isInside(abs, d.tmpDir)) return abs === d.tmpDir ? '$TMPDIR' : `$TMPDIR/${abs.slice(d.tmpDir.length + 1)}`;
   if (d.home !== '/' && isInside(abs, d.home)) return abs === d.home ? '~' : `~/${abs.slice(d.home.length + 1)}`;
+  if (opaque && isInside(abs, opaque)) return l.raw;
   const parts = abs.split('/').slice(1);
   if (parts.length <= 3) return abs;
   return `/${parts[0]}/…/${parts[parts.length - 1]}`;

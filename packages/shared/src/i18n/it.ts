@@ -1550,8 +1550,13 @@ Variabili: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (array JSON)`,
       summary: 'Riepilogo',
       steps: (p) => (p.count === 1 ? '1 passo' : `${p.count} passi`),
       details: (p) => `Dettagli dell’attività (${p.count})`,
-      commandsRan: (p) => `${p.count === 1 ? '1 comando eseguito' : `${p.count} comandi eseguiti`}${p.sandbox ? ' nella sandbox' : ''}${p.approved > 0 ? ` · ${p.approved === 1 ? '1 approvato da te' : `${p.approved} approvati da te`}` : ''}`,
-      commandMarks: { approved: 'Approvato da te', denied: 'Negato', notRun: 'Non eseguito', error: 'Terminato con un errore' },
+      commandsRan: (p) => {
+        const one = p.count === 1;
+        const verb = p.attempted ? (one ? 'eseguito o tentato' : 'eseguiti o tentati') : one ? 'eseguito' : 'eseguiti';
+        const head = `${p.atLeast ? 'Almeno ' : ''}${p.count} ${one ? 'comando' : 'comandi'} ${verb}`;
+        return `${head}${p.sandbox ? ' nella sandbox' : ''}${p.approved > 0 ? ` · ${p.approved === 1 ? '1 approvato da te' : `${p.approved} approvati da te`}` : ''}`;
+      },
+      commandMarks: { approved: 'Approvato da te', denied: 'Negato', notRun: 'Non eseguito', error: 'Terminato con un errore', interrupted: 'Interrotto' },
       readFile: (p) => `Letto ${p.file}`,
       autoDetails: 'Dettagli',
       detailKinds: { session: 'Sessione', text: 'Messaggio', tool: 'Strumento', result: 'Output', error: 'Errore', limit: 'Limite', step: 'Passo', log: 'Log', unreadable: 'Illeggibile', done: 'Fatto', failed: 'Non riuscito' },

@@ -87,12 +87,12 @@ const samePins = (a: Pin[], b: Pin[]) => a.length === b.length
   && a.every((p, i) => { const q = b[i]!; return p.format === q.format && p.x === q.x && p.y === q.y && p.timeSec === q.timeSec && (p.note ?? '') === (q.note ?? ''); });
 
 /** One turn (the agent events of one job) as conversation items: messages, compact steps, summary, details. */
-function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], running: boolean, foldOpen: boolean, detailsOpen: boolean, ctx: ExplainContext): Item[] {
+function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], running: boolean, foldOpen: boolean, detailsOpen: boolean, logOf: (jobId: string, events: AgentEvent[], finished: boolean) => CommandLog): Item[] {
   const out: Item[] = [];
   const steps: Item[] = [];
   const technical: DetailEntry[] = [];
   // Every command of the turn, with its explanation and whether it ran (see commandLog.ts).
-  const log = commandLog(events.map((e) => e.event), ctx);
+  const log = logOf(jobId, events.map((e) => e.event), !running);
   const rowAt = new Map(log.rows.map((r) => [r.key, r]));
   let lastAgent: Extract<Item, { kind: 'agent' }> | null = null;
   let foldAt = -1;
@@ -151,6 +151,18 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
   const { list: shownApprovals, gone } = useApprovalPresence(approvals);
   const workspace = useContext(WorkspacePathContext);
   const ctx = useMemo(() => webExplainContext(workspace, slug, creative), [workspace, slug, creative]);
+  // The command log of each turn, kept while its events (count, first and last event), its state and the context are
+  // the same: a live event recomputes only the turn it belongs to.
+  const logCache = useRef(new Map<string, { n: number; first: AgentEvent | undefined; last: AgentEvent | undefined; finished: boolean; ctx: ExplainContext; log: CommandLog }>());
+  const logOf = (jobId: string, events: AgentEvent[], finished: boolean): CommandLog => {
+    const hit = logCache.current.get(jobId);
+    const first = events[0];
+    const last = events[events.length - 1];
+    if (hit && hit.n === events.length && hit.first === first && hit.last === last && hit.finished === finished && hit.ctx === ctx) return hit.log;
+    const log = commandLog(events, ctx, { finished });
+    logCache.current.set(jobId, { n: events.length, first, last, finished, ctx, log });
+    return log;
+  };
 
   // First time each live event (not yet persisted) was seen: its time until the refetch brings the real one.
   const seenAt = useRef(new Map<string, string>());
@@ -179,7 +191,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
       .filter((s) => (jobId === null ? !jobs.has(s.approval.jobId) : s.approval.jobId === jobId))
       .map((s): Item => ({ key: `ap:${s.approval.id}`, kind: 'approval', shown: s }));
     const turn = (jobId: string) => [
-      ...turnItems(jobId, jobs.get(jobId)!, jobId === job?.id && working, unfolded.has(jobId), detailsOpen.has(jobId), ctx),
+      ...turnItems(jobId, jobs.get(jobId)!, jobId === job?.id && working, unfolded.has(jobId), detailsOpen.has(jobId), logOf),
       ...approvalsOf(jobId),
     ];
 
@@ -441,19 +453,19 @@ function AutoLine({ jobId, log, onOpen }: { jobId: string; log: CommandLog; onOp
   const id = useId();
   return (
     <p className="ms-convo-autoline">
-      <span className="ms-step-check" aria-hidden="true"><Icon name="shield" size={13} /></span>
-      <span id={id}>{c.commandsRan({ count: log.ran, approved: log.approved, sandbox: log.sandboxed })}</span>
+      <span className="ms-step-check" aria-hidden="true"><Icon name={log.sandboxed ? 'shield' : 'terminal'} size={13} /></span>
+      <span id={id}>{c.commandsRan({ count: log.ran, approved: log.approved, sandbox: log.sandboxed, attempted: log.attempted })}</span>
       <span aria-hidden="true">·</span>
       <Button size="sm" variant="ghost" aria-describedby={id} onClick={() => onOpen(jobId)}>{c.autoDetails}</Button>
     </p>
   );
 }
 
-const MARK_ICON: Record<CommandMark, IconName> = { auto: 'check', approved: 'user', denied: 'close', notRun: 'minus', error: 'warn' };
+const MARK_ICON: Record<CommandMark, IconName> = { auto: 'check', approved: 'user', denied: 'close', notRun: 'minus', error: 'warn', interrupted: 'pause' };
 
 /**
  * One command of the log (or an automatic Read): its mark (a check when it ran without asking, "You approved",
- * "Denied", "Didn't run", "Ended with an error"), the summary phrase and the chips; the command expands below. Also
+ * "Denied", "Didn't run", "Ended with an error", "Interrupted"), the summary phrase and the chips; the command expands below. Also
  * the brand activity rows.
  */
 export function CommandRowView({ row }: { row: CommandRow }) {

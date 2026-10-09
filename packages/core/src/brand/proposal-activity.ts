@@ -20,7 +20,7 @@ type Parsed = { entry: ProposalActivityEntry } | { sandboxed: boolean } | null;
 
 /**
  * One log line → an entry when it is an `auto_approved` event, a Bash `tool_use`, the `tool_result` of a Bash call
- * seen earlier (without its output: only whether it was an error) or an `approval_decided`; a `session` event gives
+ * seen earlier (ids checked like Claude Code's `toolu_…`; without its output: only whether it was an error) or an `approval_decided`; a `session` event gives
  * the sandbox decision. Anything else (or malformed) → null. `bash` collects the ids of the Bash calls seen so far.
  */
 function parseLine(line: string, bash: Set<string>): Parsed {
@@ -33,7 +33,7 @@ function parseLine(line: string, bash: Set<string>): Parsed {
     const toolUseId = idOf(e.toolUseId);
     return { entry: { at, event: { kind: 'auto_approved', toolName: e.toolName, command: e.command, explanation: e.explanation as never, ...(toolUseId ? { toolUseId } : {}) } } };
   }
-  if (e.kind === 'tool_use' && e.name === 'Bash' && typeof e.id === 'string') {
+  if (e.kind === 'tool_use' && e.name === 'Bash' && typeof e.id === 'string' && idOf(e.id)) {
     bash.add(e.id);
     return { entry: { at, event: { kind: 'tool_use', id: e.id, name: 'Bash', input: e.input } } };
   }
@@ -86,7 +86,8 @@ export async function readProposalActivity(brandDir: string, proposalDir: string
     for (const line of text.split('\n')) {
       const parsed = line.trim() === '' ? null : parseLine(line, bash);
       if (!parsed) continue;
-      if ('sandboxed' in parsed) { sandboxed = parsed.sandboxed; continue; }
+      // The first session event wins: a line appended later (the agent can write the log) cannot flip the answer.
+      if ('sandboxed' in parsed) { if (sandboxed === undefined) sandboxed = parsed.sandboxed; continue; }
       if (entries.length === MAX_ACTIVITY_ENTRIES) { truncated = true; break; }
       entries.push(parsed.entry);
     }

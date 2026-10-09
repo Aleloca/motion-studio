@@ -405,11 +405,12 @@ describe('Brand · commands that ran (final wave, count work)', () => {
   const ctx = { projectDir: '/w/acme', cwd: '/w/acme', home: '/Users/me', tmpDir: '/var/folders/T' };
   const auto = (command: string) => ({ at: '2026-10-09T10:00:00.000Z', event: { kind: 'auto_approved' as const, toolName: 'Bash', command, explanation: explainTool('Bash', { command }, ctx) } });
   const bashUse = { at: '2026-10-09T10:00:01.000Z', event: { kind: 'tool_use' as const, id: 't1', name: 'Bash', input: { command: 'ls -la' } } };
+  const bashDone = { at: '2026-10-09T10:00:02.000Z', event: { kind: 'tool_result' as const, toolUseId: 't1', isError: false, content: '' } };
 
   it('the analysis card and its Analyses row say how many ran; Details lists them as compact rows with the command behind', async () => {
     overview.proposals = [proposal('p-new', '2026-10-09T09:00:00.000Z', 'open'), proposal('p-old', '2026-10-01T09:00:00.000Z', 'applied')];
     api.getProposalActivity.mockImplementation(async (_s: string, id: string) => (id === 'p-new'
-      ? { hasLog: true, truncated: false, entries: [auto('ls -la'), bashUse, auto('mkdir -p brand/proposals/p-new/assets')] }
+      ? { hasLog: true, truncated: false, entries: [auto('ls -la'), bashUse, bashDone, auto('mkdir -p brand/proposals/p-new/assets')] }
       : { hasLog: false, truncated: false, entries: [] }));
     en(<Brand slug="acme" live={live()} />);
     // Older logs: the automatic approval of `ls -la` is merged into its tool_use; no session flag, but automatic Bash
@@ -472,5 +473,27 @@ describe('Brand · commands that ran (final wave, count work)', () => {
     expect(within(rows[4]!).getByText('Denied')).toBeTruthy();
     expect(within(rows[5]!).getByText('Read /tmp/claude-501/shot.png')).toBeTruthy();
     for (const r of rows.slice(0, 5)) expect(r.querySelector('.ms-convo-auto-text')!.textContent).not.toMatch(/^Bash: |explain\./);
+  });
+
+  it('a cut log says "At least"; a call without a result there is not marked Interrupted', async () => {
+    overview.proposals = [proposal('p-new', '2026-10-09T09:00:00.000Z', 'open')];
+    api.getProposalActivity.mockResolvedValue({ hasLog: true, truncated: true, sandboxed: true, entries: [bashUse, bashDone, { ...bashUse, event: { ...bashUse.event, id: 't2' } }] } satisfies ProposalActivity);
+    en(<Brand slug="acme" live={live()} />);
+    const [line] = await screen.findAllByText('At least 2 commands ran in the sandbox');
+    await userEvent.click(within(line!.closest('.ms-bauto') as HTMLElement).getByRole('button', { name: 'Details' }));
+    const pop = await screen.findByRole('dialog', { name: 'Commands that ran' });
+    expect(within(pop).queryByText('Interrupted')).toBeNull();
+    expect(within(pop).getByText('Only the first ones are listed.')).toBeTruthy();
+  });
+
+  it('a finished analysis with a cut call says "ran or were attempted"; Italian "Almeno"', async () => {
+    overview.proposals = [proposal('p-new', '2026-10-09T09:00:00.000Z', 'open')];
+    api.getProposalActivity.mockResolvedValue({ hasLog: true, truncated: false, sandboxed: false, entries: [bashUse] } satisfies ProposalActivity);
+    const { unmount } = en(<Brand slug="acme" live={live()} />);
+    expect((await screen.findAllByText('1 command ran or was attempted')).length).toBeGreaterThan(0);
+    unmount();
+    api.getProposalActivity.mockResolvedValue({ hasLog: true, truncated: true, sandboxed: true, entries: [bashUse, bashDone] } satisfies ProposalActivity);
+    render(<I18nProvider locale="it"><Brand slug="acme" live={live()} /></I18nProvider>);
+    expect((await screen.findAllByText('Almeno 1 comando eseguito nella sandbox')).length).toBeGreaterThan(0);
   });
 });
