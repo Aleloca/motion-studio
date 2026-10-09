@@ -9,13 +9,14 @@ export interface PolicyInput {
   /** Folders the agent must never write, whatever the job (e.g. `<project>/.studio`, where its permissions live). */
   protectedDirs: string[];
   extraDomains: string[]; projectAllowRules: string[]; mcpTools: string[];
+  /** Workspace setting: sandboxed Bash runs without asking (only meaningful with `sandbox`). */
+  autoApproveSandboxed: boolean;
 }
 export interface AgentPolicy { settings: Record<string, unknown> | null; allowedTools: string[]; disallowedTools: string[]; addDirs: string[] }
 
 const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 const SANDBOXED_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: [], console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS };
 const LEGACY_TOOLS: Record<AgentJobKind, readonly string[]> = { creative: AGENT_ALLOWED_TOOLS, console: [], 'brand-analysis': BRAND_ANALYSIS_TOOLS, describe: DESCRIBE_TOOLS };
-const AUTO_BASH: Record<AgentJobKind, boolean> = { creative: true, console: true, 'brand-analysis': false, describe: false };
 const unique = (xs: string[]) => [...new Set(xs)];
 
 export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
@@ -42,7 +43,10 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
       enabled: true,
       failIfUnavailable: true,
       allowUnsandboxedCommands: false,
-      autoAllowBashIfSandboxed: AUTO_BASH[i.kind],
+      // Phase 8 (spec §3.2, docs/superpowers/specs/2026-10-09-motion-studio-phase8-approvals-usage-design.md): the per-kind
+      // AUTO_BASH table is gone. Every kind follows the workspace setting `autoApproveSandboxed`: brand and describe jobs
+      // too, since their sandbox has no network, writes stay in the project and the configuration files are protected.
+      autoAllowBashIfSandboxed: i.autoApproveSandboxed,
       filesystem: { denyRead: [...sensitiveHomePaths(i.home), i.configDir], denyWrite: [...i.codebases, ...i.protectedFiles, ...i.protectedDirs] },
       ...(network ? { network } : {}),
     },

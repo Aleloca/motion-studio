@@ -41,7 +41,7 @@ beforeEach(async () => {
   sent = [];
   controller = new AbortController();
   approvals = new ApprovalBroker({ broadcast: () => {} });
-  ctx = { jobId: 'j1', kind: 'creative', projectSlug: 'acme', projectDir, creativeSlug: 'c1', emit: () => {}, signal: controller.signal };
+  ctx = { jobId: 'j1', kind: 'creative', projectSlug: 'acme', projectDir, creativeSlug: 'c1', sandboxed: false, emit: () => {}, signal: controller.signal };
 });
 const tools = (settings = {}, env: Record<string, string> = { OPENAI_API_KEY: 'sk-test' }, fetchImpl: typeof fetch = fakeFetch) => providerTools({
   vault: new MemoryVault(env), approvals, media: NoMediaTools, fetch: fetchImpl, lookup: publicLookup, broadcast: (m) => messages.push(m),

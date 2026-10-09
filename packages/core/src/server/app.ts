@@ -350,6 +350,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   registerBridgeRoutes(app, {
     bridge, approvals,
+    // Read on every permission prompt: a setting changed mid-job applies to the next one.
+    settings: () => requireWorkspace().readSettings(),
     extraTools: {
       ...providerTools({ vault, approvals, media, settings: () => requireWorkspace().readSettings(), broadcast: (m) => hub.broadcast(m) }),
       download_file: downloadTool({ media, broadcast: (m) => hub.broadcast(m) }),

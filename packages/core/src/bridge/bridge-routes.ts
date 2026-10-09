@@ -6,20 +6,34 @@ import { readConfinedFile } from '../brand/agent-guard.ts';
 import { ProviderError } from '../providers/http.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import type { AgentBridge, BridgeContext } from './bridge.ts';
+import { cleanProgress } from '../display-text.ts';
 import { t } from '../i18n.ts';
 
+export { cleanProgress };
+
 export type BridgeHandler = (ctx: BridgeContext, args: Record<string, unknown>) => Promise<unknown>;
-export interface BridgeRoutesContext { bridge: AgentBridge; approvals: ApprovalBroker; extraTools?: Record<string, BridgeHandler> }
+export interface BridgeRoutesContext {
+  bridge: AgentBridge; approvals: ApprovalBroker; extraTools?: Record<string, BridgeHandler>;
+  /** The current workspace settings, read on every permission prompt. Absent or failing: nothing is approved automatically. */
+  settings?: () => Promise<{ autoApproveSandboxed: boolean }>;
+}
 
 const denyMessage = (d: 'deny' | 'expired' | 'cancelled'): string => (d === 'deny' ? t().approvals.denied : d === 'expired' ? t().approvals.expired : t().errors.jobCancelled);
 const MAX_GUIDELINES = 50_000;
 
-/** Progress shown in the UI: no control, zero-width or bidi characters (they could disguise the text), single spaces. */
-export const cleanProgress = (text: string) => text
-  .replace(/[\t\n\v\f\r]/g, ' ')
-  .replace(/[\p{Cc}\u200B-\u200F\u202A-\u202E\u2066-\u2069\u061C\uFEFF]/gu, '')
-  .replace(/\s+/g, ' ')
-  .trim();
+/**
+ * Spec §3.2: a permission prompt is answered without asking the user only when ALL of these hold — the tool is exactly
+ * `Bash` (case-sensitive, untrimmed: look-alikes and MCP tools keep asking), the job was registered as sandboxed by the
+ * launcher, the setting is on *now* (read on every call, so turning it off mid-job applies to the next prompt), and the
+ * input does not ask to leave the sandbox. `dangerouslyDisableSandbox` must be absent or exactly `false`: `true`, the
+ * string "true" or any other value asks. A non-string command asks too.
+ */
+async function autoApprovable(ctx: BridgeRoutesContext, c: BridgeContext, toolName: unknown, input: Record<string, unknown>): Promise<boolean> {
+  if (toolName !== 'Bash' || c.sandboxed !== true || typeof input.command !== 'string') return false;
+  if (Object.hasOwn(input, 'dangerouslyDisableSandbox') && input.dangerouslyDisableSandbox !== false) return false;
+  if (!ctx.settings) return false;
+  try { return (await ctx.settings()).autoApproveSandboxed === true; } catch { return false; }
+}
 
 /** Calls from the `studio` MCP server: one per tool, authenticated by the job's bridge token. */
 export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesContext) {
@@ -32,6 +46,16 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
       const toolName = typeof a.tool_name === 'string' ? a.tool_name : 'unknown';
       // Provider confirmations and Motion Studio's own tools never go through the agent's permission prompts.
       if (toolName.startsWith('provider:') || toolName.startsWith(`mcp__${MCP_SERVER}__`)) return { behavior: 'deny', message: t().approvals.invalidRequest };
+      if (await autoApprovable(ctx, c, a.tool_name, input)) {
+        // The job ended while the setting was read: nothing more runs on its behalf.
+        if (c.signal.aborted) return { behavior: 'deny', message: denyMessage('cancelled') };
+        const explanation = ctx.approvals.explain(c, 'Bash', input);
+        // No explanation, no silent approval: the event must say what ran.
+        if (explanation) {
+          c.emit({ kind: 'auto_approved', toolName: 'Bash', command: input.command as string, explanation });
+          return { behavior: 'allow', updatedInput: input };
+        }
+      }
       const { decision } = await ctx.approvals.request({ jobId: c.jobId, projectSlug: c.projectSlug, projectDir: c.projectDir, creativeSlug: c.creativeSlug, kind: 'tool', toolName, input });
       return decision === 'once' || decision === 'always'
         ? { behavior: 'allow', updatedInput: input }

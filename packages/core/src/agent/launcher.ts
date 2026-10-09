@@ -79,6 +79,7 @@ export class AgentLauncher {
       codebases: i.codebases ?? [], protectedFiles, protectedDirs,
       extraDomains: settings.extraAllowedDomains, projectAllowRules: rules,
       mcpTools: mcpOn ? MCP_TOOLS[i.kind].map((t) => `mcp__${MCP_SERVER}__${t}`) : [],
+      autoApproveSandboxed: settings.autoApproveSandboxed,
     });
 
     let token: string | null = null;
@@ -99,6 +100,8 @@ export class AgentLauncher {
       if (mcpOn && mcpCommand) {
         token = bridge.register({
           jobId: i.jobId, kind: i.kind, projectSlug: i.projectSlug, projectDir: i.projectDir, creativeSlug: i.creativeSlug ?? null,
+          // The same value the policy was built with: `approve` auto-allows only for jobs that really run in the sandbox.
+          sandboxed: sandbox,
           emit: i.onEvent, signal: abort.signal, ...(i.validate ? { validate: i.validate } : {}),
         });
         // The paths are recorded before writing, so release() also removes a half-written pair.
