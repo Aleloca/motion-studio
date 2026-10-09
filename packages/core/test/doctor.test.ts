@@ -106,3 +106,18 @@ describe('runDoctor', () => {
     expect(hasBlockingFailure(fallback)).toBe(false);
   });
 });
+
+describe('billing', () => {
+  it('reads the billing method from the auth status field names only', async () => {
+    const { billingFromAuthStatus, readBilling } = await import('../src/doctor.ts');
+    expect(billingFromAuthStatus(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', email: 'x@y.z', orgName: 'Org' }))).toBe('subscription');
+    expect(billingFromAuthStatus(JSON.stringify({ loggedIn: true, authMethod: 'api_key' }))).toBe('api');
+    expect(billingFromAuthStatus(JSON.stringify({ loggedIn: true, authMethod: 'apiKey' }))).toBe('api');
+    expect(billingFromAuthStatus(JSON.stringify({ loggedIn: true, authMethod: 'oauth_token' }))).toBe('unknown');
+    expect(billingFromAuthStatus(JSON.stringify({ loggedIn: false, authMethod: 'claude.ai' }))).toBe('unknown');
+    expect(billingFromAuthStatus('Logged in')).toBe('unknown');
+    expect(billingFromAuthStatus('null')).toBe('unknown');
+    expect(await readBilling({ exec: fakeExec(allGood), claudeCommand: ['claude'] })).toBe('subscription');
+    expect(await readBilling({ exec: async () => { throw new Error('spawn'); }, claudeCommand: ['claude'] })).toBe('unknown');
+  });
+});

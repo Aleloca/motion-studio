@@ -5,7 +5,7 @@ import fastifyMultipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { isLocale, workspaceSettingsSchema, type DoctorCheck, type LinkedCodebase, type ProjectDetail, type ServerMessage, type WorkspaceInfo, type WorkspaceProblem, type WorkspaceSettings } from '@motion-studio/shared';
+import { isLocale, workspaceSettingsSchema, type DoctorCheck, type UsageBilling, type LinkedCodebase, type ProjectDetail, type ServerMessage, type WorkspaceInfo, type WorkspaceProblem, type WorkspaceSettings } from '@motion-studio/shared';
 import { BrandService } from '../brand/brand-analysis.ts';
 import { UPLOAD_LIMITS } from '../library/upload.ts';
 import { CreativeTurnService } from '../creatives/creative-turns.ts';
@@ -32,6 +32,8 @@ import { registerBrandRoutes } from './brand-routes.ts';
 import { EventHub } from './event-hub.ts';
 import { registerLibraryRoutes } from './library-routes.ts';
 import { registerProjectRoutes } from './project-routes.ts';
+import { registerUsageRoutes } from './usage-routes.ts';
+import { UsageLedger } from '../usage/usage-ledger.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 import { tokenMatches } from './ui-token.ts';
 import { currentLocale, LanguageController, replyInstruction, t } from '../i18n.ts';
@@ -63,7 +65,13 @@ export interface ServerDeps {
   uiToken: string | null;
   /** Language state shared with startServer; defaults to the saved setting with no system languages. */
   language?: LanguageController;
+  /** How Claude Code is paid for (doctor's auth check); cached by the server. Defaults to 'unknown'. */
+  billing?: () => Promise<UsageBilling>;
 }
+
+/** How long the billing method (one `claude auth status`) is reused; 'unknown' is retried sooner. */
+const BILLING_TTL_MS = 10 * 60 * 1000;
+const BILLING_RETRY_MS = 60 * 1000;
 
 /** Routes reachable without the UI token: health, the MCP bridge (it has its own token) and files shown by <img>/<video>. */
 const UI_TOKEN_EXEMPT: Record<string, ReadonlySet<string>> = {
@@ -157,8 +165,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const mode = await currentSettings().then((s) => s.sandboxMode, () => 'auto' as const);
     return mode === 'off' ? { available: false, disabled: true, reason: t().doctor.sandboxOff } : sandbox();
   };
+  // One ledger for the launcher (writes) and the usage report (cached reads).
+  const usageLedger = new UsageLedger();
   const launcher = new AgentLauncher({
-    runner: deps.runner, bridge, approvals, sandbox,
+    runner: deps.runner, bridge, approvals, sandbox, usageLedger,
     settings: currentSettings,
     configDir: deps.configDir ?? defaultConfigDir(),
     mcpCommand: deps.mcpCommand ?? null,
@@ -358,6 +368,19 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     },
   });
   registerSettingsRoutes(app, { vault, approvals, requireWorkspace });
+
+  let billingCache: { value: Promise<UsageBilling>; until: number } | null = null;
+  const billing = () => {
+    const now = Date.now();
+    if (!billingCache || billingCache.until <= now) {
+      const value = (deps.billing ?? (async () => 'unknown' as const))().catch(() => 'unknown' as const);
+      const entry = { value, until: now + BILLING_TTL_MS };
+      billingCache = entry;
+      void value.then((b) => { if (b === 'unknown') entry.until = Math.min(entry.until, Date.now() + BILLING_RETRY_MS); });
+    }
+    return billingCache.value;
+  };
+  registerUsageRoutes(app, { workspace: () => workspace, ledger: usageLedger, billing });
 
   const serveWeb = Boolean(deps.webDir && (await stat(deps.webDir).catch(() => null))?.isDirectory());
   // Always registered: it provides reply.sendFile to the creative file route; it serves the web build only when present.

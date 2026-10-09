@@ -1,6 +1,11 @@
 import type { AgentEvent, ApprovalRequest, JobSummary, LanguageSetting, Locale, ServerMessage } from '@motion-studio/shared';
 
-export interface EventsState { approvals: Record<string, ApprovalRequest>; jobs: Record<string, JobSummary>; events: Record<string, AgentEvent[]>; creativeTicks: Record<string, number>; projectTicks: Record<string, number>; /** Snapshots received (one per (re)connection): lets the UI tell restored state from new events. */ snapshots?: number; /** Unset until the first snapshot. */ language?: { locale: Locale; setting: LanguageSetting; systemLocale: Locale } | null }
+/**
+ * `liveUsage`: the latest live usage estimate per job. Live `usage` events (up to one a second per job) are kept here,
+ * latest only, never in `events`, so they cannot push real events out of the MAX_EVENTS window. The final usage
+ * (`live: false`) is a regular event.
+ */
+export interface EventsState { liveUsage?: Record<string, Extract<AgentEvent, { kind: 'usage' }>>; approvals: Record<string, ApprovalRequest>; jobs: Record<string, JobSummary>; events: Record<string, AgentEvent[]>; creativeTicks: Record<string, number>; projectTicks: Record<string, number>; /** Snapshots received (one per (re)connection): lets the UI tell restored state from new events. */ snapshots?: number; /** Unset until the first snapshot. */ language?: { locale: Locale; setting: LanguageSetting; systemLocale: Locale } | null }
 export const initialEventsState: EventsState = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
 const MAX_EVENTS = 2000;
 
@@ -28,6 +33,7 @@ export function eventsReducer(state: EventsState, msg: ServerMessage): EventsSta
     case 'job':
       return { ...state, jobs: { ...state.jobs, [msg.job.id]: msg.job } };
     case 'agent': {
+      if (msg.event.kind === 'usage' && msg.event.live) return { ...state, liveUsage: { ...state.liveUsage, [msg.jobId]: msg.event } };
       const list = [...(state.events[msg.jobId] ?? []), msg.event];
       return { ...state, events: { ...state.events, [msg.jobId]: list.length > MAX_EVENTS ? list.slice(-MAX_EVENTS) : list } };
     }

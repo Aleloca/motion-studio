@@ -124,7 +124,8 @@ describe('ClaudeCodeRunner', () => {
   it('streams events (including a line split across chunks) and succeeds', async () => {
     const { handle, events } = await run('ok', 'ciao mondo');
     await expect(handle.done).resolves.toEqual({ status: 'succeeded', sessionId: 'fake-session-1' });
-    expect(events.map((e) => e.kind)).toEqual(['session', 'text', 'result']);
+    // The fake's result carries usage: the parser adds the final usage event after it.
+    expect(events.map((e) => e.kind)).toEqual(['session', 'text', 'result', 'usage']);
     expect(events[1]).toEqual({ kind: 'text', text: 'echo: ciao mondo' });
   });
   it('runs in the requested cwd (with spaces) and passes resume', async () => {

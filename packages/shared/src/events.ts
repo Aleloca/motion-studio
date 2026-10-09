@@ -15,7 +15,8 @@ export type AgentEvent =
   | { kind: 'parse_error'; line: string }
   | { kind: 'usage'; live: boolean; tokens: TokenCounts; costUsd: number | null; models?: ModelUsage[] }
   | { kind: 'auto_approved'; toolName: string; command: string; explanation: Explanation }
-  | { kind: 'result'; ok: boolean; sessionId?: string; text?: string; costUsd?: number; error?: string };
+  /** `costUsd` is Claude Code's `total_cost_usd`, CUMULATIVE over a resumed session (per-run cost: the final `usage` event). */
+  | { kind: 'result'; ok: boolean; sessionId?: string; text?: string; costUsd?: number; error?: string; durationMs?: number; numTurns?: number };
 
 export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 

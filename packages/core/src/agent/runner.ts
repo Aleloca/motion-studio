@@ -1,4 +1,4 @@
-import type { AgentEvent } from '@motion-studio/shared';
+import type { AgentEvent, UsageRecord } from '@motion-studio/shared';
 
 export interface AgentTurnRequest {
   cwd: string;
@@ -43,6 +43,8 @@ export interface AgentRunResult {
   status: 'succeeded' | 'failed' | 'cancelled';
   sessionId?: string;
   error?: string;
+  /** Set by AgentLauncher: the run's ledger record (per-run values), null when the run reported no usage at all. */
+  usage?: UsageRecord | null;
 }
 
 export interface AgentRun {

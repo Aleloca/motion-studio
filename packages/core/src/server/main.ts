@@ -8,7 +8,7 @@ import { ClaudeCodeRunner, claudeCommandFromEnv } from '../agent/claude-code-run
 import { cachedSandboxDetection } from '../agent/sandbox.ts';
 import { AppConfigStore, defaultConfigDir } from '../app-config.ts';
 import { AgentBridge } from '../bridge/bridge.ts';
-import { runDoctor, type ShellPathOrigin } from '../doctor.ts';
+import { readBilling, runDoctor, type ShellPathOrigin } from '../doctor.ts';
 import { LanguageController, detectSystemLocales, t } from '../i18n.ts';
 import { execCommand } from '../exec.ts';
 import { Git } from '../git.ts';
@@ -126,6 +126,7 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
     runner: new ClaudeCodeRunner(claudeCommand),
     bridge, mcpCommand, sandbox, ...(opts.mcpEnv ? { mcpEnv: opts.mcpEnv } : {}),
     doctor: (extra) => runDoctor({ exec: execCommand, claudeCommand, sandbox: extra.sandbox, ...(opts.shellPath ? { shellPath: opts.shellPath } : {}) }),
+    billing: () => readBilling({ exec: execCommand, claudeCommand }),
     webDir: opts.webDir,
     vault: opts.vault ?? new KeyringVault(),
     media: await createFfmpegTools(),

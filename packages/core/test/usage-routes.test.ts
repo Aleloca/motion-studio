@@ -1,0 +1,87 @@
+import { appendFile, mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { UsageReport } from '@motion-studio/shared';
+import type { FastifyInstance } from 'fastify';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
+import { AppConfigStore } from '../src/app-config.ts';
+import { Git } from '../src/git.ts';
+import { buildServer } from '../src/server/app.ts';
+
+const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
+const TOKEN = 'ab'.repeat(32); // hex, like a real UI token
+const headers = { 'x-motion-studio-ui': TOKEN };
+let app: FastifyInstance;
+let base: string;
+let billingCalls: number;
+
+beforeEach(async () => {
+  base = await mkdtemp(join(tmpdir(), 'ms-usr-'));
+  billingCalls = 0;
+  app = await buildServer({
+    uiToken: TOKEN, sandbox: async () => ({ available: false, reason: 'test' }),
+    appConfig: new AppConfigStore(join(base, 'config')), git: new Git(),
+    runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),
+    doctor: async () => [],
+    billing: async () => { billingCalls++; return 'subscription'; },
+  });
+});
+afterEach(async () => { await app.close(); delete process.env.FAKE_CLAUDE_SCENARIO; });
+
+const setup = async () => {
+  await app.inject({ method: 'PUT', url: '/api/workspace', payload: { path: join(base, 'ws') }, headers });
+  await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Acme' }, headers });
+};
+const waitJobs = async () => {
+  for (let i = 0; i < 500; i++) {
+    const jobs = (await app.inject({ url: '/api/jobs', headers })).json() as Array<{ state: string }>;
+    if (jobs.every((j) => j.state !== 'queued' && j.state !== 'running')) return jobs;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  throw new Error('timeout');
+};
+
+describe('GET /api/usage', { timeout: 20_000 }, () => {
+  it('requires the UI token', async () => {
+    const res = await app.inject({ url: '/api/usage' });
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toMatchObject({ code: 'ui-token' });
+  });
+
+  it('answers with an empty report before a workspace exists', async () => {
+    const r = (await app.inject({ url: '/api/usage', headers })).json() as UsageReport;
+    expect(r).toMatchObject({ byProject: [], trackedSince: null, billing: 'subscription' });
+    expect(r.byDay).toHaveLength(7);
+  });
+
+  it('reports a console turn from the ledger, and never throws on a corrupt ledger', async () => {
+    await setup();
+    process.env.FAKE_CLAUDE_SCENARIO = 'usage_stream';
+    expect((await app.inject({ method: 'POST', url: '/api/projects/acme/turns', payload: { prompt: 'ciao' }, headers })).statusCode).toBe(202);
+    await waitJobs();
+    await appendFile(join(base, 'ws', 'acme', '.studio', 'usage.jsonl'), '{"broken": \n\u0000\u2028garbage');
+    const r = (await app.inject({ url: '/api/usage', headers })).json() as UsageReport;
+    expect(r.byKind.find((k) => k.kind === 'console')).toEqual({ kind: 'console', tokens: 310, costUsd: 0.01 });
+    expect(r.byProject).toEqual([{ slug: 'acme', name: 'Acme', tokens: 310, costUsd: 0.01 }]);
+    expect(r.byDay.at(-1)!.tokens).toBe(310);
+    expect(r.trackedSince).not.toBeNull();
+    expect(typeof r.utcOffsetMinutes).toBe('number');
+    const one = (await app.inject({ url: '/api/usage?project=acme', headers })).json() as UsageReport;
+    expect(one.byProject).toHaveLength(1);
+    // Cached: the auth status is read once.
+    expect(billingCalls).toBe(1);
+  });
+
+  it('validates the range and the project', async () => {
+    await setup();
+    expect((await app.inject({ url: '/api/usage?from=nope', headers })).statusCode).toBe(400);
+    expect((await app.inject({ url: '/api/usage?from=2026-10-09T00:00:00Z&to=2026-10-01T00:00:00Z', headers })).statusCode).toBe(400);
+    expect((await app.inject({ url: '/api/usage?from=2020-01-01T00:00:00Z&to=2026-10-01T00:00:00Z', headers })).statusCode).toBe(400);
+    expect((await app.inject({ url: '/api/usage?project=nobody', headers })).statusCode).toBe(404);
+    const ok = await app.inject({ url: '/api/usage?from=2026-10-01T00:00:00Z&to=2026-10-03T00:00:00Z', headers });
+    expect(ok.statusCode).toBe(200);
+    expect((ok.json() as UsageReport).from).toBe('2026-10-01T00:00:00.000Z');
+  });
+});

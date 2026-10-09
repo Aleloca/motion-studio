@@ -56,5 +56,8 @@ export interface UsageReport {
   byProject: { slug: string; name: string; tokens: number; costUsd: number | null }[];
   byKind: { kind: UsageRecord['kind']; tokens: number; costUsd: number | null }[];
   trackedSince: string | null;
-  billing: 'subscription' | 'api' | 'unknown';
+  billing: UsageBilling;
+  /** Offset from UTC (minutes, e.g. 120 for UTC+2) of the server's local time zone, which buckets `byDay`; taken at `to`. */
+  utcOffsetMinutes: number;
 }
+export type UsageBilling = 'subscription' | 'api' | 'unknown';

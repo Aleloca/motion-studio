@@ -11,6 +11,8 @@ import type { AgentBridge, BridgeContext } from '../bridge/bridge.ts';
 import { buildAgentPolicy, type AgentJobKind } from './policy.ts';
 import type { AgentRun, AgentRunner, AgentTurnRequest } from './runner.ts';
 import type { SandboxSupport } from './sandbox.ts';
+import { UsageLedger } from '../usage/usage-ledger.ts';
+import { UsageTracker } from '../usage/usage-tracker.ts';
 
 const RUN_DIR = 'run';
 export const MCP_SERVER = 'studio';
@@ -39,6 +41,8 @@ export interface LauncherDeps {
   mcpCommand: string[] | null;
   /** Extra env of the MCP server process (e.g. ELECTRON_RUN_AS_NODE=1 when the command is Electron's binary). Never overrides the Motion Studio variables. */
   mcpEnv?: Record<string, string>;
+  /** Where every run's token and cost usage is recorded (`<project>/.studio/usage.jsonl`); defaults to a private one. */
+  usageLedger?: UsageLedger;
 }
 export interface LaunchInput {
   kind: AgentJobKind; jobId: string; projectSlug: string; projectDir: string; creativeSlug?: string | null;
@@ -46,11 +50,14 @@ export interface LaunchInput {
   request: Pick<AgentTurnRequest, 'prompt' | 'resumeSessionId' | 'forkSession' | 'model'>;
   onEvent(e: AgentEvent): void;
   validate?: BridgeContext['validate'];
+  /** What the run's ledger line is about (a creative's version and fix-loop attempt); null for other jobs. */
+  usage?: { version: number | null; attempt: number | null };
 }
 
 /** The only place that starts the agent: applies the job's policy, the project's rules, the MCP server and the UI prompts. */
 export class AgentLauncher {
-  constructor(private readonly deps: LauncherDeps) {}
+  private readonly usageLedger: UsageLedger;
+  constructor(private readonly deps: LauncherDeps) { this.usageLedger = deps.usageLedger ?? new UsageLedger(); }
 
   /** True when agents get the `studio` MCP server (bridge listening and a command to start it). */
   mcpActive(): boolean { return Boolean(this.deps.bridge.origin && this.deps.mcpCommand?.length); }
@@ -121,14 +128,26 @@ export class AgentLauncher {
         await writeFile(files.config, JSON.stringify(config), { mode: 0o600, flag: 'wx' });
         mcp = { mcpConfigPath: files.config, permissionPromptTool: `mcp__${MCP_SERVER}__approve` };
       }
+      // Every run is metered here, whatever the job: the final usage is held back and re-emitted with per-run values.
+      const tracker = new UsageTracker({
+        projectDir: i.projectDir, jobId: i.jobId, kind: i.kind, creativeSlug: i.creativeSlug ?? null,
+        version: i.usage?.version ?? null, attempt: i.usage?.attempt ?? null,
+        ...(i.request.resumeSessionId ? { resumeSessionId: i.request.resumeSessionId } : {}),
+      }, this.usageLedger);
+      const forward = (e: AgentEvent) => { const out = tracker.observe(e); if (out) i.onEvent(out); };
       const run = this.deps.runner.start({
         cwd: i.projectDir, ...i.request,
         addDirs: policy.addDirs, allowedTools: policy.allowedTools, disallowedTools: policy.disallowedTools,
         ...(policy.settings ? { settings: policy.settings } : {}), ...mcp,
         env: { MCP_TOOL_TIMEOUT: '900000' }, unsetEnv: AGENT_UNSET_ENV,
-      }, i.onEvent);
+      }, forward);
+      const done = run.done.then(async (r) => {
+        const { record, event } = await tracker.finish(r.status);
+        if (event) { try { i.onEvent(event); } catch { /* a faulty listener must not lose the outcome */ } }
+        return { ...r, usage: record };
+      });
       return {
-        done: run.done.finally(release),
+        done: done.finally(release),
         // Revoked before the process is told to stop: it may keep calling the bridge until it exits.
         cancel: () => { void release(); run.cancel(); },
       };

@@ -1,6 +1,6 @@
 import { lstat, rm, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
-import { EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Pin, type ServerMessage, type VersionEntry } from '@motion-studio/shared';
+import { EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Pin, type ServerMessage, type UsageRecord, type VersionEntry } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { BrandStore } from '../brand/brand-store.ts';
 import { assertCodebasesOutside, checkCodebases, codebaseOverlaps, codebaseOverlapMessage, codebaseSnapshot, normalizeCodebaseList } from '../codebases.ts';
@@ -17,6 +17,7 @@ import { WorkspaceError } from '../workspace-store.ts';
 import { CreativeStore } from './creative-store.ts';
 import { validateOutputs } from './output-contract.ts';
 import { buildCreativePrompt, type CreativeContext, type PromptKind } from './prompt.ts';
+import { sumUsage } from '../usage/usage-tracker.ts';
 import { currentLocale, t } from '../i18n.ts';
 
 export interface CreativeTurnDeps {
@@ -153,6 +154,8 @@ export class CreativeTurnService {
       let problems: string[] = [];
       let result = null as Awaited<ReturnType<typeof validateOutputs>> | null;
       let lastWrite: Promise<void> = Promise.resolve();
+      // One ledger record per attempt: the version's usage is their sum (fix loop included).
+      const attemptUsage: Array<UsageRecord | null | undefined> = [];
 
       for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
         const prompt = buildCreativePrompt({
@@ -173,8 +176,11 @@ export class CreativeTurnService {
         const run = await this.deps.launcher.start({
           kind: 'creative', jobId, projectSlug: ref.projectSlug, projectDir: ref.projectDir, creativeSlug: slug, codebases: existing,
           request: { prompt, resumeSessionId, forkSession, model },
+          usage: { version: n, attempt },
           onEvent: (event) => {
             this.deps.broadcast({ type: 'agent', jobId, event });
+            // Live usage estimates are only for the UI (up to one a second): the final usage event is the one kept.
+            if (event.kind === 'usage' && event.live) return;
             // Chained so writes stay ordered and a failure surfaces when the chain is awaited after the turn.
             lastWrite = lastWrite.then(() => store.appendConversation(slug, { type: 'agent', at: now(), jobId, event }));
             lastWrite.catch(() => {}); // observed here; the same rejection is rethrown by the await below
@@ -187,6 +193,7 @@ export class CreativeTurnService {
         signal.addEventListener('abort', onAbort, { once: true });
         if (signal.aborted) onAbort(); // cancelled before the listener existed (e.g. while preparing the turn)
         const outcome = await run.done.finally(() => signal.removeEventListener('abort', onAbort));
+        attemptUsage.push(outcome.usage);
         await lastWrite;
         const snapshotsAfter = await Promise.all(existing.map((p) => codebaseSnapshot(p)));
         for (const [k, p] of existing.entries()) {
@@ -215,11 +222,13 @@ export class CreativeTurnService {
       finalizing = true;
       const status = problems.length === 0 ? 'complete' : 'incomplete';
       const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${n}`);
+      const usage = sumUsage(attemptUsage);
       await store.appendVersion(slug, {
         n, commit, sessionId: resumeSessionId ?? null, status, createdAt: now(),
         request: request ?? t().jobs.requestFromBrief,
         outputs: result?.outputs ?? [], problems, tools: result?.tools ?? [], renderCommand: result?.renderCommand ?? null,
         basedOn: creative.resumeFrom?.version ?? latest?.n ?? null,
+        ...(usage ? { usage } : {}),
       });
       await store.appendConversation(slug, { type: 'version', at: now(), n, status });
       await store.update(slug, { status: status === 'complete' ? 'ready' : 'incomplete', error: null, resumeFrom: null });

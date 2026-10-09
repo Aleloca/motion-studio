@@ -25,6 +25,15 @@ describe('eventsReducer', () => {
     expect(s.events.a).toHaveLength(2000);
     expect(s.events.a?.[0]).toEqual({ kind: 'text', text: '10' });
   });
+  it('keeps only the latest live usage per job, outside the capped events', () => {
+    const tokens = (n: number) => ({ input: n, output: n, cacheRead: 0, cacheWrite: 0 });
+    let s = eventsReducer(initialEventsState, { type: 'agent', jobId: 'a', event: { kind: 'text', text: 'real' } });
+    for (let i = 1; i <= 3000; i++) s = eventsReducer(s, { type: 'agent', jobId: 'a', event: { kind: 'usage', live: true, tokens: tokens(i), costUsd: null } });
+    expect(s.events.a).toEqual([{ kind: 'text', text: 'real' }]);
+    expect(s.liveUsage?.a).toEqual({ kind: 'usage', live: true, tokens: tokens(3000), costUsd: null });
+    s = eventsReducer(s, { type: 'agent', jobId: 'a', event: { kind: 'usage', live: false, tokens: tokens(5), costUsd: 0.1 } });
+    expect(s.events.a?.map((e) => e.kind)).toEqual(['text', 'usage']);
+  });
 });
 
 describe('language', () => {

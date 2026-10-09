@@ -1,4 +1,4 @@
-import type { ApprovalDecision, ApprovalRequest, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, PermissionsFile, ProjectListItem, SecretStatus, ProviderId, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
+import type { ApprovalDecision, ApprovalRequest, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, PermissionsFile, ProjectListItem, SecretStatus, ProviderId, UsageReport, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, uiToken } from './uiToken.ts';
 
@@ -50,6 +50,11 @@ const c = (slug: string, creative: string) => `${p(slug)}/creatives/${encodeURIC
 
 export const api = {
   getDoctor: () => request<DoctorCheck[]>('GET', '/api/doctor'),
+  /** Token and cost usage from the projects' ledgers; defaults to the last 7 local days of the core. */
+  getUsage: (q: { from?: string; to?: string; project?: string } = {}) => {
+    const qs = new URLSearchParams(Object.entries(q).filter((e): e is [string, string] => typeof e[1] === 'string' && e[1] !== '')).toString();
+    return request<UsageReport>('GET', `/api/usage${qs ? `?${qs}` : ''}`);
+  },
   getWorkspace: () => request<WorkspaceInfo>('GET', '/api/workspace'),
   setWorkspace: (path: string) => request<{ path: string; settings: WorkspaceSettings }>('PUT', '/api/workspace', { path }),
   updateSettings: (patch: Partial<WorkspaceSettings>) => request<WorkspaceSettings>('PUT', '/api/settings', patch),
