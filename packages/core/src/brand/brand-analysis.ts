@@ -80,7 +80,7 @@ export class BrandService {
     try {
       const run = await this.deps.launcher.start({
         kind, jobId, projectSlug: ref.projectSlug, projectDir: ref.projectDir, sandboxed,
-        protectedFiles: await guardedPaths(ref.projectDir),
+        protectedFiles: [...(await guardedPaths(ref.projectDir)), ...(logFile ? [logFile] : [])],
         request: { prompt, model: (await this.deps.model()) ?? undefined },
         onEvent: (event) => {
           this.deps.broadcast({ type: 'agent', jobId, event });

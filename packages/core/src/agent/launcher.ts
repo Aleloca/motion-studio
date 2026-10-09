@@ -8,6 +8,7 @@ import { PROVIDER_ENV } from '../secrets/vault.ts';
 import type { ApprovalBroker } from '../approvals/broker.ts';
 import { isAllowedRule, PermissionsStore } from '../approvals/permissions-store.ts';
 import type { AgentBridge, BridgeContext } from '../bridge/bridge.ts';
+import { escapeGlob } from '../codebases.ts';
 import { buildAgentPolicy, type AgentJobKind } from './policy.ts';
 import type { AgentRun, AgentRunner, AgentTurnRequest } from './runner.ts';
 import type { SandboxSupport } from './sandbox.ts';
@@ -26,6 +27,13 @@ export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
 /** Project entries the agent may never write, whatever the job or sandbox mode. */
 const PROTECTED_PROJECT_DIRS = ['.git', '.claude', '.studio'];
 const PROTECTED_PROJECT_FILES = ['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json'];
+/**
+ * Transparency logs the UI shows as facts ("N commands ran in the sandbox", Activity): the core writes them from outside
+ * the sandbox, the agent must never alter them. Per creative: conversation.jsonl plus the metadata the core owns (the agent
+ * only writes outputs/vN/ and work/). Per brand proposal: log.jsonl. Protected for every job, for every creative and proposal.
+ */
+const CREATIVE_CORE_FILES = ['conversation.jsonl', 'versions.json', 'creative.json'];
+const PROPOSAL_LOG = 'log.jsonl';
 /** Secrets the core reads from its own environment: never inherited by the agent (nor by the MCP server it starts). */
 const AGENT_UNSET_ENV = [...Object.values(PROVIDER_ENV), 'MOTION_STUDIO_BRIDGE_TOKEN'];
 
@@ -60,6 +68,15 @@ export interface LaunchInput {
   sandboxed?: boolean;
 }
 
+async function existingLogFiles(root: string, creativeSlug?: string | null): Promise<string[]> {
+  const out: string[] = [];
+  const slugs = new Set((await readdir(join(root, 'creatives')).catch(() => [])).filter((n) => !n.startsWith('.')));
+  if (creativeSlug) slugs.add(creativeSlug);
+  for (const s of slugs) for (const n of CREATIVE_CORE_FILES) out.push(join(root, 'creatives', s, n));
+  for (const id of await readdir(join(root, 'brand', 'proposals')).catch(() => [])) out.push(join(root, 'brand', 'proposals', id, PROPOSAL_LOG));
+  return out;
+}
+
 /** The only place that starts the agent: applies the job's policy, the project's rules, the MCP server and the UI prompts. */
 export class AgentLauncher {
   private readonly usageLedger: UsageLedger;
@@ -90,13 +107,23 @@ export class AgentLauncher {
     const realDir = await realpath(i.projectDir).catch(() => i.projectDir);
     const roots = [...new Set([i.projectDir, realDir])];
     const protectedDirs = roots.flatMap((d) => PROTECTED_PROJECT_DIRS.map((n) => join(d, n)));
-    const protectedFiles = [...(i.protectedFiles ?? []), ...roots.flatMap((d) => PROTECTED_PROJECT_FILES.map((n) => join(d, n)))];
+    // Caller-supplied files get both spellings (plain and realpath) like the project entries.
+    const spellings = (f: string) => (f.startsWith(`${i.projectDir}/`) && realDir !== i.projectDir ? [f, join(realDir, f.slice(i.projectDir.length + 1))] : [f]);
+    const protectedFiles = [...(i.protectedFiles ?? []).flatMap(spellings), ...roots.flatMap((d) => PROTECTED_PROJECT_FILES.map((n) => join(d, n)))];
+    const logGlobs = roots.flatMap((d) => [
+      ...CREATIVE_CORE_FILES.map((n) => `${escapeGlob(join(d, 'creatives'))}/*/${n}`),
+      `${escapeGlob(join(d, 'brand', 'proposals'))}/*/${PROPOSAL_LOG}`,
+    ]);
+    // The sandbox's denyWrite takes paths, not globs: list what exists now (plus this job's own creative) and
+    // let the glob rules above cover the Edit/Write tools for anything created later.
+    const logFiles = (await Promise.all(roots.map((d) => existingLogFiles(d, i.creativeSlug)))).flat();
+    protectedFiles.push(...logFiles);
     const mcpOn = this.mcpActive();
     // Aborted on cancel and when the run settles: provider calls started by the agent's tools stop with the job.
     const abort = new AbortController();
     const policy = buildAgentPolicy({
       kind: i.kind, sandbox, projectDir: i.projectDir, home, configDir,
-      codebases: i.codebases ?? [], protectedFiles, protectedDirs,
+      codebases: i.codebases ?? [], protectedFiles, protectedDirs, protectedGlobs: logGlobs,
       extraDomains: settings.extraAllowedDomains, projectAllowRules: rules,
       mcpTools: mcpOn ? MCP_TOOLS[i.kind].map((t) => `mcp__${MCP_SERVER}__${t}`) : [],
       autoApproveSandboxed: autoApproveAtStart,

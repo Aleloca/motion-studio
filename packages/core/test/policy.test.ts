@@ -132,3 +132,31 @@ describe('buildAgentPolicy automatic approval (spec §3.2)', () => {
     }
   });
 });
+
+describe('transparency log protection', () => {
+  // Minimal matcher for the deny rule syntax: `//abs` is an absolute path, `*` one segment, `\x` a literal.
+  const matches = (rule: string, tool: string, path: string) => {
+    const m = /^(\w+)\((.*)\)$/.exec(rule);
+    if (!m || m[1] !== tool) return false;
+    let re = '';
+    const g = m[2]!.slice(1);
+    for (let k = 0; k < g.length; k++) {
+      const c = g[k]!;
+      if (c === '\\') re += g[++k]!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      else if (c === '*') re += '[^/]*';
+      else re += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+    return new RegExp(`^${re}$`).test(path);
+  };
+  it('denies Edit/Write on any creative log and proposal log, and not on outputs', () => {
+    const p = buildAgentPolicy({ ...base, kind: 'creative', projectDir: '/w/acme [1]', protectedGlobs: [
+      '/w/acme \\[1\\]/creatives/*/conversation.jsonl', '/w/acme \\[1\\]/brand/proposals/*/log.jsonl',
+    ] });
+    const denied = (tool: string, path: string) => p.disallowedTools.some((r) => matches(r, tool, path));
+    for (const t of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) {
+      expect(denied(t, '/w/acme [1]/creatives/any-2/conversation.jsonl')).toBe(true);
+      expect(denied(t, '/w/acme [1]/brand/proposals/p-3/log.jsonl')).toBe(true);
+      expect(denied(t, '/w/acme [1]/creatives/any-2/outputs/v1/a.png')).toBe(false);
+    }
+  });
+});

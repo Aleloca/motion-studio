@@ -196,6 +196,32 @@ describe('AgentLauncher', () => {
       }
     }
   });
+  it('protects every creative\'s conversation/versions/creative files and every proposal log, plain and realpath, sandbox or not', { timeout: 30_000 }, async () => {
+    const real = await newProject();
+    const linkParent = await newProject();
+    const linked = join(linkParent, 'link');
+    await symlink(real, linked);
+    const realDir = await realpath(linked);
+    await mkdir(join(real, 'creatives', 'other-1'), { recursive: true });
+    await mkdir(join(real, 'brand', 'proposals', 'p-1'), { recursive: true });
+    const tools = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
+    for (const kind of ['creative', 'brand-analysis'] as const) {
+      for (const available of [false, true]) {
+        const { args } = await launch({ sandbox: async () => ({ available, reason: 'x' }) }, kind, linked);
+        const globs = (d: string) => [...['conversation.jsonl', 'versions.json', 'creative.json'].map((n) => `${escapeGlob(join(d, 'creatives'))}/*/${n}`), `${escapeGlob(join(d, 'brand', 'proposals'))}/*/log.jsonl`];
+        for (const d of [linked, realDir]) for (const g of globs(d)) expect(args).toEqual(expect.arrayContaining(tools.map((t) => `${t}(/${g})`)));
+        // The agent's own folders stay writable.
+        expect(args.some((a) => /\/outputs|\/work/.test(a) && a.startsWith('Edit('))).toBe(false);
+        if (available) {
+          const settings = JSON.parse(args[args.indexOf('--settings') + 1]!);
+          const deny: string[] = settings.sandbox.filesystem.denyWrite;
+          for (const d of [linked, realDir]) {
+            expect(deny).toEqual(expect.arrayContaining([join(d, 'creatives', 'other-1', 'conversation.jsonl'), join(d, 'creatives', 'other-1', 'versions.json'), join(d, 'creatives', 'other-1', 'creative.json'), join(d, 'brand', 'proposals', 'p-1', 'log.jsonl')]));
+          }
+        }
+      }
+    }
+  });
   it('never passes the provider keys or the bridge token from the environment to the agent', { timeout: 20_000 }, async () => {
     const keys = [...Object.values(PROVIDER_ENV), 'MOTION_STUDIO_BRIDGE_TOKEN'];
     for (const k of keys) process.env[k] = `secret-${k}`;

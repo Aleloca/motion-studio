@@ -28,6 +28,9 @@ export const readOnlyRules = (paths: string[]) => dirDenyRules(['Edit'], paths);
 /** Deny rules for each tool on each exact absolute file path (same escaping as readOnlyRules). */
 export const fileDenyRules = (tools: string[], files: string[]) => files.flatMap((f) => tools.map((t) => `${t}(/${escapeGlob(f)})`));
 
+/** Deny rules for each tool on a glob over absolute paths; the caller escapes the literal parts (`escapeGlob`) and leaves the wildcards. */
+export const globDenyRules = (tools: string[], globs: string[]) => globs.flatMap((g) => tools.map((t) => `${t}(/${g})`));
+
 export type Snapshot = { value: string } | { unavailable: 'not-git' | 'failed' };
 export interface HashedRun { code: number; hash: string; stderr: string; timedOut: boolean }
 export type HashedExec = (args: string[]) => Promise<HashedRun>;
