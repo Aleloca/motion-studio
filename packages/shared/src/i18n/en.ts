@@ -100,6 +100,7 @@ export const en = {
       chain: 'links cannot form a chain',
       unknown: 'the format is not in the brief or the catalog',
     },
+    hashesPending: 'Still reading the files of this format: try again in a few seconds',
     pickFollower: (p: { format: string; primary: string }) => `${p.format} follows ${p.primary}: it uses the ★ of ${p.primary}`,
     pickNoFile: (p: { format: string; n: number }) => `Version ${p.n} has no file for ${p.format}`,
     pickFileMissing: (p: { format: string; n: number }) => `The ${p.format} file of version ${p.n} is missing on disk or cannot be used (a link)`,

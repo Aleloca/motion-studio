@@ -4,7 +4,7 @@ import { isAbsolute, join } from 'node:path';
 import fastifyMultipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import fastifyWebsocket from '@fastify/websocket';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { isLocale, workspaceSettingsSchema, type DoctorCheck, type UsageBilling, type LinkedCodebase, type ProjectDetail, type ServerMessage, type WorkspaceInfo, type WorkspaceProblem, type WorkspaceSettings } from '@motion-studio/shared';
 import { BrandService } from '../brand/brand-analysis.ts';
 import { UPLOAD_LIMITS } from '../library/upload.ts';
@@ -122,6 +122,22 @@ async function consoleCodebases(list: LinkedCodebase[], forbidden: string[]): Pr
 /** Key of a project's agent jobs: unique per workspace root, so two workspaces never collide. */
 const projectJobKey = (root: string, slug: string) => `project:${root}:${slug}`;
 
+/** The API's error responses: `{ error }`, plus `code` (and `Retry-After`) for coded errors. */
+export function errorReply(error: unknown, _req: FastifyRequest, reply: FastifyReply): FastifyReply {
+  const err = error as Error;
+  if (err instanceof CodedError) {
+    if (err.retryAfterSec !== undefined) reply.header('Retry-After', String(err.retryAfterSec));
+    return reply.status(err.status).send({ error: err.message, code: err.apiCode });
+  }
+  if (err instanceof WorkspaceError) return reply.status(err.status).send({ error: err.message });
+  if (err instanceof JobConflictError) return reply.status(409).send({ error: err.message });
+  if (err instanceof JsonFileError) return reply.status(422).send({ error: err.message });
+  if ((err as { validation?: unknown }).validation) return reply.status(400).send({ error: err.message });
+  const status = (err as { statusCode?: unknown }).statusCode;
+  if (typeof status === 'number' && status >= 400 && status < 500) return reply.status(status).send({ error: err.message });
+  return reply.status(500).send({ error: err.message });
+}
+
 export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // requestTimeout 0: /api/bridge/approve stays pending while the user decides (up to 10 min); Node's default would cut it at 5.
   const app = Fastify({ logger: false, requestTimeout: 0, connectionTimeout: 0 });
@@ -189,17 +205,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     broadcast: (msg) => hub.broadcast(msg),
   });
 
-  app.setErrorHandler((error: unknown, _req, reply) => {
-    const err = error as Error;
-    if (err instanceof CodedError) return reply.status(err.status).send({ error: err.message, code: err.apiCode });
-    if (err instanceof WorkspaceError) return reply.status(err.status).send({ error: err.message });
-    if (err instanceof JobConflictError) return reply.status(409).send({ error: err.message });
-    if (err instanceof JsonFileError) return reply.status(422).send({ error: err.message });
-    if ((err as { validation?: unknown }).validation) return reply.status(400).send({ error: err.message });
-    const status = (err as { statusCode?: unknown }).statusCode;
-    if (typeof status === 'number' && status >= 400 && status < 500) return reply.status(status).send({ error: err.message });
-    return reply.status(500).send({ error: err.message });
-  });
+  app.setErrorHandler(errorReply);
 
   // Loopback-only by design: blocks DNS rebinding (Host) and cross-site requests/WebSockets (Origin).
   // In phase 5 Electron loads the UI from http://127.0.0.1:<port>, so this check stays valid.

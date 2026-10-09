@@ -141,7 +141,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   const detailOf = async (ref: CreativeRef & { store: CreativeStore }): Promise<CreativeDetail> => {
     const creative = await ref.store.get(ref.creativeSlug);
     const creativeDir = ref.store.dir(ref.creativeSlug);
-    const versions = await withLazyHashes({
+    const { versions } = await withLazyHashes({
       projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir, versions: await ref.store.readVersions(ref.creativeSlug),
       onBackgroundDone: () => ctx.broadcast?.({ type: 'creative', project: ref.projectSlug, creative: ref.creativeSlug }),
     });

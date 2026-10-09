@@ -98,6 +98,7 @@ export const it: Messages = {
       chain: 'i collegamenti non possono formare una catena',
       unknown: 'il formato non è nel brief o nel catalogo',
     },
+    hashesPending: 'Sto ancora leggendo i file di questo formato: riprova tra qualche secondo',
     pickFollower: (p) => `${p.format} segue ${p.primary}: usa la ★ di ${p.primary}`,
     pickNoFile: (p) => `La versione ${p.n} non ha un file per ${p.format}`,
     pickFileMissing: (p) => `Il file ${p.format} della versione ${p.n} non è più sul disco o non si può usare (è un collegamento)`,

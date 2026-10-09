@@ -28,6 +28,8 @@ export interface CreativeTurnDeps {
   model: () => Promise<string | null>;
   broadcast: (msg: ServerMessage) => void;
   maxAttempts?: number;
+  /** How long an export pick waits for hashes before answering `hashes-pending` (default PICK_HASH_BUDGET_MS). */
+  pickHashBudgetMs?: number;
 }
 export interface CreativeRef { root: string; projectSlug: string; projectDir: string; creativeSlug: string }
 
@@ -49,6 +51,8 @@ function addFormatsRequest(formats: string[], base: VersionEntry | undefined): s
 const now = () => new Date().toISOString();
 /** How long an export pick waits for its format's hashes before taking the creative's lock (generous: it is not locked). */
 export const PICK_HASH_BUDGET_MS = 60_000;
+/** `Retry-After` of a pick refused because its hashes are still being computed. */
+export const PICK_RETRY_AFTER_SEC = 5;
 
 class AgentFailure extends Error {}
 
@@ -93,31 +97,43 @@ export class CreativeTurnService {
    * file missing on disk (409).
    */
   async setExportPick(ref: CreativeRef, format: string, version: number | null): Promise<CreativeFile> {
-    // The default rule needs this format's hashes. They are computed before taking the creative's lock (hashing can be
-    // slow and must not block turns, restores or brief edits), bounded; the pass under the lock is then served by the cache.
-    const pre = new CreativeStore(ref.projectDir);
-    const hashed = (versions: VersionEntry[], budgetMs: number) => withLazyHashes({
-      projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir: pre.dir(ref.creativeSlug), versions, formats: [format], budgetMs,
-    });
-    await hashed(await pre.readVersions(ref.creativeSlug), PICK_HASH_BUDGET_MS);
-    return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), async () => {
-      const store = new CreativeStore(ref.projectDir);
-      const creative = await store.get(ref.creativeSlug);
-      const presets = await this.deps.presets();
-      const label = (id: string) => { const p = presets.find((x) => x.id === id); return p ? formatLabel(p, currentLocale()) : id; };
-      const e = t().errors;
+    const store = new CreativeStore(ref.projectDir);
+    const presets = await this.deps.presets();
+    const label = (id: string) => { const p = presets.find((x) => x.id === id); return p ? formatLabel(p, currentLocale()) : id; };
+    const e = t().errors;
+    /** The checks that need no hashes; run on an unlocked read first (fail fast), then again under the lock. */
+    const validate = (creative: CreativeFile, versions: VersionEntry[]) => {
       if (!creative.brief.formats.includes(format)) throw new CodedError(400, e.formatNotInBrief({ format: label(format) }), 'format-not-in-brief');
       const links = effectiveLinks(creative.brief.links, creative.brief.formats);
       if (Object.hasOwn(links, format)) throw new CodedError(400, e.pickFollower({ format: label(format), primary: label(links[format]!) }), 'pick-follower');
-      // Re-read under the lock (a version may have been added meanwhile); the hashes come from the cache, bounded.
-      const versions = await hashed(await store.readVersions(ref.creativeSlug), LAZY_HASH_BUDGET_MS);
       if (version !== null) {
         const entry = versions.find((v) => v.n === version);
         if (!entry) throw new CodedError(404, e.versionNNotFound({ n: version }), 'version-not-found');
         if (!entry.outputs.some((o) => o.format === format)) throw new CodedError(400, e.pickNoFile({ format: label(format), n: version }), 'pick-no-file');
-        if (!(await outputFileExists(store.dir(ref.creativeSlug), versions, version, format))) {
-          throw new CodedError(409, e.pickFileMissing({ format: label(format), n: version }), 'pick-file-missing');
-        }
+      }
+      return links;
+    };
+    // The default rule needs this format's full history, so a pick is never decided on partial hashes: when they are not all
+    // known in time, 503 `hashes-pending` (the hashing goes on; a retry finds them in the cache).
+    const hashed = async (versions: VersionEntry[], budgetMs: number) => {
+      const r = await withLazyHashes({
+        projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir: store.dir(ref.creativeSlug), versions, formats: [format], budgetMs,
+      });
+      if (!r.complete) throw new CodedError(503, e.hashesPending, 'hashes-pending', PICK_RETRY_AFTER_SEC);
+      return r.versions;
+    };
+    // Hashing can be slow: it happens before taking the creative's lock (which would block turns, restores and brief edits).
+    const unlockedVersions = await store.readVersions(ref.creativeSlug);
+    validate(await store.get(ref.creativeSlug), unlockedVersions);
+    await hashed(unlockedVersions, this.deps.pickHashBudgetMs ?? PICK_HASH_BUDGET_MS);
+    return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), async () => {
+      // Re-read and re-check under the lock (the brief or the versions may have changed); the hashes come from the cache.
+      const creative = await store.get(ref.creativeSlug);
+      const raw = await store.readVersions(ref.creativeSlug);
+      const links = validate(creative, raw);
+      const versions = await hashed(raw, LAZY_HASH_BUDGET_MS);
+      if (version !== null && !(await outputFileExists(store.dir(ref.creativeSlug), versions, version, format))) {
+        throw new CodedError(409, e.pickFileMissing({ format: label(format), n: version }), 'pick-file-missing');
       }
       const picks = { ...creative.exportPicks };
       if (version === null || version === starOf(versions, format, undefined, links).version) delete picks[format];

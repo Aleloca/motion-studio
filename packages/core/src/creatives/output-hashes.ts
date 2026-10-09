@@ -52,8 +52,10 @@ const cacheEntrySchema = z.object({ size: z.number(), mtimeMs: z.number(), sha25
 type CacheEntry = z.infer<typeof cacheEntrySchema>;
 const cacheFileSchema = z.object({ schemaVersion: z.literal(1), files: z.record(z.string(), cacheEntrySchema) });
 
-/** Parsed cache files by path, and file states already reported as not hashable; each bounded, oldest dropped first. */
-let memoryMax = 500;
+/** Default bound of each in-memory map below. */
+export const DEFAULT_HASH_MEMORY_MAX = 500;
+/** Parsed cache files by path, and symlinked / hard-linked file states already reported; each bounded, oldest dropped first. */
+let memoryMax = DEFAULT_HASH_MEMORY_MAX;
 const memory = new Map<string, Record<string, CacheEntry>>();
 const reported = new Map<string, true>();
 const bounded = <V>(map: Map<string, V>, key: string, value: V) => {
@@ -61,7 +63,7 @@ const bounded = <V>(map: Map<string, V>, key: string, value: V) => {
   map.set(key, value);
   while (map.size > memoryMax) map.delete(map.keys().next().value!);
 };
-const inflight = new Map<string, Promise<CacheEntry | null>>();
+const inflight = new Map<string, Promise<Entry>>();
 const cacheLock = new KeyedMutex();
 
 /** Forgets the in-memory caches (tests; the files on disk stay). */
@@ -79,13 +81,12 @@ export const hashCachePath = (projectDir: string, creativeSlug: string, n: numbe
 
 const warnSkip = (rel: string, reason: string) => console.warn(`Motion Studio: not hashing ${rel} (${reason}); it counts as changed`);
 
-/** Hash of one output file of version `n`, confined to the creative folder; `{ skipped }` / null (missing) otherwise. */
+/**
+ * Hash of one output file of version `n`, confined to the creative folder; `{ skipped }` / null (missing) otherwise.
+ * A thrown error (EMFILE, EIO…) becomes `{ skipped: 'unreadable' }`, which callers treat as transient. Never warns.
+ */
 async function hashOutput(creativeDir: string, n: number, file: string, priority: boolean): Promise<HashResult> {
-  const rel = `outputs/v${n}/${file}`;
-  return limit(() => hashFile(creativeDir, rel), priority).catch((err: Error) => {
-    console.warn(`Motion Studio: cannot hash ${rel}: ${err.message}`);
-    return { skipped: 'unreadable' as const };
-  });
+  return limit(() => hashFile(creativeDir, `outputs/v${n}/${file}`), priority).catch(() => ({ skipped: 'unreadable' as const }));
 }
 
 /** The outputs of a version being recorded, each with the sha256 of its file (absent when not hashable). Priority lane. */
@@ -103,44 +104,61 @@ async function readCache(path: string): Promise<Record<string, CacheEntry>> {
   try { return (await readJsonFile(path, cacheFileSchema)).files; } catch { return {}; } // missing or corrupt: recompute
 }
 
-/** The cache entry of one file: from the caches when name, size and mtime match, else computed (one run per file at a time). */
-async function entryFor(cachePath: string, creativeDir: string, n: number, file: string, cached: CacheEntry | undefined): Promise<CacheEntry | null> {
+/**
+ * The outcome for one file: a cache entry; `unhashable` for good (missing, symlink, hard link, not a regular file, outside):
+ * it counts as changed and needs no retry; `retry` when hashing failed for a reason that may pass (`unreadable`: an open or
+ * read error), so the next request tries again.
+ */
+type Entry = CacheEntry | 'unhashable' | 'retry';
+
+/** The entry of one file: from the caches when name, size and mtime match, else computed (one run per file state at a time). */
+async function entryFor(cachePath: string, creativeDir: string, n: number, file: string, cached: CacheEntry | undefined): Promise<Entry> {
   const rel = `outputs/v${n}/${file}`;
-  const info = await lstat(join(creativeDir, 'outputs', `v${n}`, file)).catch(() => null);
-  if (!info) return null; // missing on disk: no hash
+  const info = await lstat(join(creativeDir, 'outputs', `v${n}`, file)).catch((e: NodeJS.ErrnoException) => (e.code === 'ENOENT' ? null : undefined));
+  if (info === null) return 'unhashable'; // missing on disk: no hash
+  if (info === undefined) { warnSkip(rel, 'unreadable'); return 'retry'; }
   const state = `${cachePath}\0${file}\0${info.size}\0${info.mtimeMs}`;
-  if (reported.has(state)) return null;
-  const skip = (reason: string) => { warnSkip(rel, reason); bounded(reported, state, true); return null; };
-  if (info.isSymbolicLink()) return skip('not-regular');
-  if (!info.isFile() || info.nlink > 1) return skip(info.isFile() ? 'linked' : 'not-regular');
+  // Symlinks and hard links are reported once per file state: they stay what they are until the file changes.
+  const linked = (reason: SkipReason): Entry => {
+    if (!reported.has(state)) { warnSkip(rel, reason); bounded(reported, state, true); }
+    return 'unhashable';
+  };
+  if (info.isSymbolicLink()) return linked('not-regular');
+  if (info.isFile() && info.nlink > 1) return linked('linked');
+  if (!info.isFile()) { warnSkip(rel, 'not-regular'); return 'unhashable'; }
   if (cached && cached.size === info.size && cached.mtimeMs === info.mtimeMs) return cached;
-  const key = `${cachePath}\0${file}`;
-  const running = inflight.get(key);
+  const running = inflight.get(state);
   if (running) return running;
-  const run = hashOutput(creativeDir, n, file, false).then((h) => {
-    if (h && 'skipped' in h) return skip(h.skipped);
-    return h ? { size: h.size, mtimeMs: h.mtimeMs, sha256: h.sha256 } : null;
-  }).finally(() => inflight.delete(key));
-  inflight.set(key, run);
+  const run = hashOutput(creativeDir, n, file, false).then((h): Entry => {
+    if (h === null) return 'unhashable';
+    if ('skipped' in h) {
+      if (h.skipped === 'linked') return linked('linked');
+      warnSkip(rel, h.skipped);
+      return h.skipped === 'unreadable' ? 'retry' : 'unhashable';
+    }
+    return { size: h.size, mtimeMs: h.mtimeMs, sha256: h.sha256 };
+  }).finally(() => inflight.delete(state));
+  inflight.set(state, run);
   return run;
 }
 
 /** Hashes of the outputs of `v` that have none (only `formats`' when given), file → sha256; updates the caches. */
-async function fillVersion(projectDir: string, creativeSlug: string, creativeDir: string, v: VersionEntry, formats?: readonly string[]): Promise<Record<string, string>> {
+async function fillVersion(projectDir: string, creativeSlug: string, creativeDir: string, v: VersionEntry, formats?: readonly string[]): Promise<{ found: Record<string, string>; retry: boolean }> {
   const path = hashCachePath(projectDir, creativeSlug, v.n);
   const cache = await readCache(path);
   const wanted = v.outputs.filter((o) => o.sha256 === undefined && (!formats || formats.includes(o.format)));
   const entries = await Promise.all(wanted.map(async (o) => [o.file, await entryFor(path, creativeDir, v.n, o.file, cache[o.file])] as const));
   const found: Record<string, string> = {};
-  for (const [file, e] of entries) if (e) found[file] = e.sha256;
+  for (const [file, e] of entries) if (typeof e === 'object') found[file] = e.sha256;
   // Merged under a lock on a fresh read: concurrent fills of other files of the same version must not drop each other's entries.
   await cacheLock.run(path, async () => {
     const current = await readCache(path);
     let dirty = false;
     for (const [file, e] of entries) {
       const before = current[file];
-      if (e && (before?.sha256 !== e.sha256 || before.size !== e.size || before.mtimeMs !== e.mtimeMs)) { current[file] = e; dirty = true; }
-      else if (!e && before) { delete current[file]; dirty = true; }
+      if (typeof e === 'object') {
+        if (before?.sha256 !== e.sha256 || before.size !== e.size || before.mtimeMs !== e.mtimeMs) { current[file] = e; dirty = true; }
+      } else if (e === 'unhashable' && before) { delete current[file]; dirty = true; }
     }
     bounded(memory, path, current);
     if (dirty) {
@@ -149,7 +167,7 @@ async function fillVersion(projectDir: string, creativeSlug: string, creativeDir
       });
     }
   });
-  return found;
+  return { found, retry: entries.some(([, e]) => e === 'retry') };
 }
 
 export interface LazyHashInput {
@@ -162,13 +180,21 @@ export interface LazyHashInput {
   onBackgroundDone?: () => void;
 }
 
-/** `versions` with the missing hashes filled from the caches or computed within the budget; never throws. */
-export async function withLazyHashes(input: LazyHashInput): Promise<VersionEntry[]> {
+/**
+ * `versions` with the missing hashes filled from the caches or computed within the budget; never throws.
+ * `complete`: every wanted hash is known or can never be (missing file, symlink, hard link…); false when some work outlived
+ * the budget or failed in a way the next request may get past (then it retries).
+ */
+export async function withLazyHashes(input: LazyHashInput): Promise<{ versions: VersionEntry[]; complete: boolean }> {
   const pending = input.versions.filter((v) => v.outputs.some((o) => o.sha256 === undefined && (!input.formats || input.formats.includes(o.format))));
-  if (pending.length === 0) return input.versions;
+  if (pending.length === 0) return { versions: input.versions, complete: true };
   const results = new Map<number, Record<string, string>>();
+  let retry = false;
   const work = Promise.all(pending.map((v) => fillVersion(input.projectDir, input.creativeSlug, input.creativeDir, v, input.formats)
-    .then((r) => { results.set(v.n, r); }, (err: Error) => { console.warn(`Motion Studio: lazy hashes failed: ${err.message}`); })));
+    .then((r) => { results.set(v.n, r.found); if (r.retry) retry = true; }, (err: Error) => {
+      retry = true;
+      console.warn(`Motion Studio: lazy hashes failed: ${err.message}`);
+    })));
   const budget = input.budgetMs ?? LAZY_HASH_BUDGET_MS;
   let timer: NodeJS.Timeout | undefined;
   // A budget of 0 does not wait at all; an infinite one waits for everything.
@@ -178,9 +204,10 @@ export async function withLazyHashes(input: LazyHashInput): Promise<VersionEntry
   ]);
   clearTimeout(timer);
   if (!inTime) void work.then(() => input.onBackgroundDone?.());
-  return input.versions.map((v) => {
+  const versions = input.versions.map((v) => {
     const found = results.get(v.n);
     if (!found) return v;
     return { ...v, outputs: v.outputs.map((o) => (o.sha256 === undefined && found[o.file] ? { ...o, sha256: found[o.file] } : o)) };
   });
+  return { versions, complete: inTime && !retry };
 }

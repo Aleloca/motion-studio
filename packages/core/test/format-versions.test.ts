@@ -9,8 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AppConfigStore } from '../src/app-config.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
-import { CreativeTurnService, type CreativeRef } from '../src/creatives/creative-turns.ts';
-import { clearHashMemory, hashCachePath, hashTesting, hashVersionOutputs, withLazyHashes } from '../src/creatives/output-hashes.ts';
+import { CreativeTurnService, PICK_RETRY_AFTER_SEC, type CreativeRef } from '../src/creatives/creative-turns.ts';
+import { clearHashMemory, DEFAULT_HASH_MEMORY_MAX, hashCachePath, hashTesting, hashVersionOutputs, withLazyHashes } from '../src/creatives/output-hashes.ts';
 import { hashConfinedFile } from '../src/brand/agent-guard.ts';
 import { execCommand } from '../src/exec.ts';
 import { Git } from '../src/git.ts';
@@ -18,7 +18,7 @@ import { JobQueue } from '../src/jobs/job-queue.ts';
 import { NoMediaTools } from '../src/media/media-tools.ts';
 import { MemoryVault } from '../src/secrets/vault.ts';
 import { buildServer } from '../src/server/app.ts';
-import { WorkspaceStore } from '../src/workspace-store.ts';
+import { CodedError, WorkspaceStore } from '../src/workspace-store.ts';
 import { testLauncher } from './helpers/launcher.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
@@ -28,7 +28,7 @@ const TIKTOK = 'tiktok-9x16';
 const SHORTS = 'youtube-shorts-9x16';
 const POST = 'instagram-post-1x1';
 
-afterEach(() => { delete process.env.FAKE_CLAUDE_SCENARIO; clearHashMemory(); hashTesting.setHasher(null); hashTesting.setMemoryMax(500); vi.restoreAllMocks(); });
+afterEach(() => { delete process.env.FAKE_CLAUDE_SCENARIO; clearHashMemory(); hashTesting.setHasher(null); hashTesting.setMemoryMax(DEFAULT_HASH_MEMORY_MAX); vi.restoreAllMocks(); });
 
 const output = (format: string, file: string, durationSec: number | null = 20): OutputFileInfo =>
   ({ format, file, width: 1080, height: format === POST ? 1080 : 1920, durationSec, verified: true, preview: null });
@@ -79,9 +79,9 @@ describe('lazy hashes of old versions', () => {
     for (const [f, c] of Object.entries(files)) await writeFile(join(store.outputsDir(slug, 1), f), c);
     await store.appendVersion(slug, version(1, [output(REEL, `${REEL}.mp4`), output(POST, `${POST}.mp4`)]));
   });
-  const lazy = async (budgetMs = 10_000, onBackgroundDone?: () => void) => withLazyHashes({
+  const lazy = async (budgetMs = 10_000, onBackgroundDone?: () => void) => (await withLazyHashes({
     projectDir, creativeSlug: slug, creativeDir: store.dir(slug), versions: await store.readVersions(slug), budgetMs, onBackgroundDone,
-  });
+  })).versions;
 
   it('fills the missing hashes, writes the cache outside outputs/ and never rewrites versions.json', async () => {
     const before = await readFile(join(store.dir(slug), 'versions.json'), 'utf8');
@@ -340,7 +340,8 @@ describe('hashing: scheduling, de-duplication and safety', () => {
     for (const f of names) await writeFile(join(store.outputsDir(slug, n), `${f}.mp4`), `${f}-${n}`);
     await store.appendVersion(slug, version(n, names.map((f) => output(f, `${f}.mp4`))));
   };
-  const lazy = async (budgetMs = 10_000) => withLazyHashes({ projectDir, creativeSlug: slug, creativeDir: store.dir(slug), versions: await store.readVersions(slug), budgetMs });
+  const lazyFull = async (budgetMs = 10_000) => withLazyHashes({ projectDir, creativeSlug: slug, creativeDir: store.dir(slug), versions: await store.readVersions(slug), budgetMs });
+  const lazy = async (budgetMs = 10_000) => (await lazyFull(budgetMs)).versions;
 
   it('runs one hashing per file for concurrent requests', async () => {
     await addVersion(1, ['a', 'b']);
@@ -382,6 +383,47 @@ describe('hashing: scheduling, de-duplication and safety', () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
+  it('reports completeness: unhashable files count as complete, pending work does not', async () => {
+    await addVersion(1, ['a', 'b']);
+    await rm(join(store.outputsDir(slug, 1), 'b.mp4'));
+    expect((await lazyFull()).complete).toBe(true);
+    clearHashMemory();
+    await writeFile(join(store.outputsDir(slug, 1), 'b.mp4'), 'b-again');
+    const h = fakeHasher(true);
+    const r = await lazyFull(0);
+    expect(r.complete).toBe(false);
+    await h.waitCalls(1);
+    h.release();
+  });
+
+  it('retries a transient hashing error on the next request, warning once', async () => {
+    await addVersion(1, ['a']);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let fail = true;
+    hashTesting.setHasher(async (base, rel) => { if (fail) { fail = false; throw Object.assign(new Error('EMFILE'), { code: 'EMFILE' }); } return hashConfinedFile(base, rel); });
+    const first = await lazyFull();
+    expect(first.complete).toBe(false);
+    expect('sha256' in first.versions[0]!.outputs[0]!).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const second = await lazyFull();
+    expect(second).toMatchObject({ complete: true });
+    expect(second.versions[0]!.outputs[0]!.sha256).toBe(sha('a-1'));
+  });
+
+  it('does not join a run hashing a file that changed since', async () => {
+    await addVersion(1, ['a']);
+    const h = fakeHasher(true);
+    const old = lazy();
+    await h.waitCalls(1);
+    await writeFile(join(store.outputsDir(slug, 1), 'a.mp4'), 'a-changed!');
+    const fresh = lazy();
+    await h.waitCalls(2);
+    h.release();
+    expect(h.calls).toHaveLength(2);
+    await old;
+    expect((await fresh)[0]!.outputs[0]!.sha256).toBe(sha('a-changed!'));
+  });
+
   it('keeps the in-memory cache within its bound', async () => {
     hashTesting.setMemoryMax(2);
     for (const n of [1, 2, 3]) await addVersion(n, ['a']);
@@ -396,6 +438,48 @@ describe('hashing: scheduling, de-duplication and safety', () => {
     await symlink(store.outputsDir(slug, 1), join(store.dir(slug), 'outputs', 'v9'));
     expect(await hashConfinedFile(store.dir(slug), 'outputs/v9/a.mp4')).toEqual({ skipped: 'outside' });
     expect(await hashConfinedFile(store.dir(slug), 'outputs/v1/a.mp4')).toMatchObject({ sha256: sha('a-1') });
+  });
+});
+
+describe('export picks are never decided on partial hashes', { timeout: 20_000 }, () => {
+  it('answers hashes-pending (503) while hashes are missing, then succeeds on retry', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'ms-fv-503-'));
+    const git = new Git();
+    const ws = await WorkspaceStore.open(join(base, 'ws'), git);
+    const { slug: project } = await ws.createProject({ name: 'Acme' });
+    const projectDir = ws.projectDir(project);
+    const store = new CreativeStore(projectDir);
+    const created = await store.create({ title: 'Lancio', brief: { goal: 'x', message: '', formats: [REEL], durationSec: null, assets: [], notes: '' } });
+    const ref: CreativeRef = { root: ws.root, projectSlug: project, projectDir, creativeSlug: created.slug };
+    for (const n of [1, 2]) {
+      await mkdir(store.outputsDir(created.slug, n), { recursive: true });
+      await writeFile(join(store.outputsDir(created.slug, n), 'reel.mp4'), `reel-${n}`);
+      await store.appendVersion(created.slug, version(n, [output(REEL, 'reel.mp4')]));
+    }
+    const service = new CreativeTurnService({
+      queue: new JobQueue({ concurrency: 1 }), git, media: NoMediaTools, vault: new MemoryVault(),
+      launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
+      presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {}, pickHashBudgetMs: 50,
+    });
+    const h = fakeHasher(true);
+    const err = await service.setExportPick(ref, REEL, 1).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CodedError);
+    expect(err).toMatchObject({ status: 503, apiCode: 'hashes-pending', retryAfterSec: PICK_RETRY_AFTER_SEC });
+    // Cheap checks come first: no waiting for hashes on an invalid pick.
+    await expect(service.setExportPick(ref, REEL, 9)).rejects.toMatchObject({ apiCode: 'version-not-found' });
+    await h.waitCalls(2);
+    h.release();
+    await new Promise((r) => setTimeout(r, 100));
+    expect((await service.setExportPick(ref, REEL, 1)).exportPicks).toEqual({ [REEL]: 1 });
+  });
+
+  it('sends Retry-After with the 503', async () => {
+    const app = (await import('fastify')).default();
+    app.setErrorHandler((await import('../src/server/app.ts')).errorReply);
+    app.get('/x', async () => { throw new CodedError(503, 'wait', 'hashes-pending', 5); });
+    const res = await app.inject('/x');
+    expect([res.statusCode, res.headers['retry-after'], res.json()]).toEqual([503, '5', { error: 'wait', code: 'hashes-pending' }]);
+    await app.close();
   });
 });
 
