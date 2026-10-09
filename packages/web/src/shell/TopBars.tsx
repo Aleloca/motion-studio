@@ -6,7 +6,8 @@ import { Button, Icon, NavItem, Popover, Spinner, cx, initials } from '../ui/ind
 import { ActivityCenter } from './ActivityCenter.tsx';
 import { setBarSlot, useBarSlots } from './barSlots.ts';
 import { ProjectSwitcher } from './ProjectSwitcher.tsx';
-import { go, isMac, useShell } from './ShellContext.tsx';
+import { go, useShell } from './ShellContext.tsx';
+import { isMac } from '../platform.ts';
 
 /** Bar tabs (spec §6.1). */
 const BAR_TABS: ProjectTab[] = ['creatives', 'brand', 'assets', 'references', 'settings'];

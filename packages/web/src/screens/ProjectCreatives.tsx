@@ -9,8 +9,8 @@ import { go } from '../shell/ShellContext.tsx';
 import { Button, ChannelMark, CountdownRing, Empty, Icon, Pill, Segmented, Tag, cx, toast } from '../ui/index.ts';
 import { CREATIVE_FILTERS, channelOf, frames, liveCreative, matches, retryTurn, type CreativeFilter, type LiveCreative } from './creativeState.ts';
 import './creatives.css';
+import { message } from './common.tsx';
 
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const VIDEO = /\.(mp4|webm|mov)$/i;
 /** Preview stage: frames up to 164 px tall in a row of at most 300 px (prototype CreativeCard). */
 const STAGE = { height: 164, maxWidth: 300, gap: 10 };

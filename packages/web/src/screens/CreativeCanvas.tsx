@@ -27,8 +27,8 @@ import { activatesControl, bare, inOverlay, isTyping } from './keys.ts';
 import { pinsKey, usePendingPins } from './pendingPins.ts';
 import { useNewVersionNotice, VersionControl } from './VersionControl.tsx';
 import './canvas.css';
+import { message } from './common.tsx';
 
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const ZOOM_MIN = 0.5;
 /** T4 only while the player's rect is fresh (boards that arrive later cascade in). */
 const FLIP_WINDOW_MS = 400;

@@ -35,8 +35,8 @@ import { pinsKey, usePendingPins } from './pendingPins.ts';
 import { useNewVersionNotice, VersionControl } from './VersionControl.tsx';
 import './canvas.css';
 import './format.css';
+import { message } from './common.tsx';
 
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** Frame step of ←/→ (spec: 1/30 s). */
 const FPS = 30;
 /** A comment shows on the picture within this distance of its time (point 38). */

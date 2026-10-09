@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useT } from '../i18n.tsx';
 import { useEnter } from '../motion/index.ts';
-import { isMac } from '../shell/ShellContext.tsx';
+import { isMac } from '../platform.ts';
 import { Button, Icon } from '../ui/index.ts';
 import './pairing.css';
 

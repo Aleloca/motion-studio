@@ -6,12 +6,13 @@ import { useLocale, useT } from '../i18n.tsx';
 import { anim, E, flash, isSubmitChord, useEnter, usePageShortcut } from '../motion/index.ts';
 import { href } from '../routes.ts';
 import { useNewCreativeAssetsIntent } from '../shell/intents.ts';
-import { go, isMac, ShellContext } from '../shell/ShellContext.tsx';
+import { go, ShellContext } from '../shell/ShellContext.tsx';
+import { isMac } from '../platform.ts';
 import { Button, ChannelMark, Chip, Empty, Icon, Input, Popover, Segmented, Spinner, Toggle, cx, initials, toast } from '../ui/index.ts';
 import { channelOf } from './creativeState.ts';
 import './newcreative.css';
+import { message as errText } from './common.tsx';
 
-const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Brief length shown under the field (prototype: "142 / 2000"). */
 const GOAL_MAX = 2000;

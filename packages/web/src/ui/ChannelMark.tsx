@@ -6,6 +6,14 @@ import { ICONS } from './icons.ts';
 export const CHANNELS = ['instagram', 'tiktok', 'youtube', 'facebook', 'linkedin', 'x', 'pinterest', 'appstore', 'googleplay', 'web'] as const;
 export type Channel = (typeof CHANNELS)[number];
 
+/** The mark for a catalog channel name ("Instagram", "Play Store"…); anything unknown is the web mark. */
+export function channelOf(channel: string): Channel {
+  const raw = channel.toLowerCase().replace(/[^a-z]/g, '');
+  // The catalog calls Google's store "Play Store"; its mark is Google Play.
+  const id = raw === 'playstore' ? 'googleplay' : raw;
+  return (CHANNELS as readonly string[]).includes(id) ? (id as Channel) : 'web';
+}
+
 /**
  * Brand tile colours (data, not theme tokens): from the prototype's channel chips, chosen so the white glyph reads
  * on every tile. Exported so screens can reuse them without literal colours of their own.

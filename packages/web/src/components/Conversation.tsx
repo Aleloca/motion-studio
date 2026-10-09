@@ -3,7 +3,7 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Keyb
 import { api, ApiError } from '../api.ts';
 import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
 import { enter, isSubmitChord } from '../motion/index.ts';
-import { isMac } from '../shell/ShellContext.tsx';
+import { isMac } from '../platform.ts';
 import { Button, Empty, Icon, Markdown, Textarea, Typing, cx } from '../ui/index.ts';
 import { ApprovalCard } from './ApprovalCard.tsx';
 import { useApprovalPresence, type ShownApproval } from './approvalPresence.ts';

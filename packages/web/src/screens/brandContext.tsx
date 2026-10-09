@@ -4,7 +4,6 @@ import { createContext, useContext, useLayoutEffect, type RefObject } from 'reac
 import { collapse, D, enter } from '../motion/index.ts';
 import type { BrandSaver } from './brandSave.ts';
 
-export const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export const IMAGE = /\.(png|jpe?g|webp|gif|svg|avif)$/i;
 export const SECTIONS = ['overview', 'colors', 'type', 'logos', 'voice', 'photo', 'guidelines'] as const;
 export type SectionId = (typeof SECTIONS)[number];

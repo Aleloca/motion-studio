@@ -7,7 +7,8 @@ import './common.css';
 /** Time the Undo of a delete, removal or revoke stays offered before it is sent (brief: 5 s). */
 export const UNDO_MS = 5000;
 
-export const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+/** The one error-text helper of the screens (see errors.ts). */
+export { message } from '../errors.ts';
 
 /** A warning explained in place, with an optional action (the remedy). */
 export function Alert({ children, action }: { children: ReactNode; action?: ReactNode }) {

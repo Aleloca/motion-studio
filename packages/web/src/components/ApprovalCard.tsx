@@ -4,6 +4,7 @@ import { api, ApiError } from '../api.ts';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { collapse, enter, pulse } from '../motion/index.ts';
 import { Button, CountdownRing, Icon, Tag } from '../ui/index.ts';
+import { message } from '../errors.ts';
 
 /**
  * Lengths at which the core cuts the detail, mirrored from packages/core/src/approvals/broker.ts (`describeRequest`
@@ -101,7 +102,7 @@ export function ApprovalCard({ approval, context, leaving = false, onGone }: App
       // The card leaves when the core confirms (approval_resolved); until then it cannot be decided twice.
       setDecided(true);
     } catch (e) {
-      setError(e instanceof ApiError && e.status === 404 ? a.alreadyHandled : e instanceof Error ? e.message : String(e));
+      setError(e instanceof ApiError && e.status === 404 ? a.alreadyHandled : message(e));
     } finally { setBusy(false); }
   };
 

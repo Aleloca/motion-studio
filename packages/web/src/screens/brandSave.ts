@@ -4,6 +4,7 @@
 import type { BrandKit } from '@motion-studio/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api.ts';
+import { message } from './common.tsx';
 
 /** How long "Saved" stays before the pill leaves. */
 export const SAVED_MS = 1800;
@@ -18,7 +19,6 @@ export interface SaveStatus {
   error: { target: SaveTarget; message: string } | null;
 }
 
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 type KitUpdate = BrandKit | ((k: BrandKit) => BrandKit);
 
 export interface BrandSaver {

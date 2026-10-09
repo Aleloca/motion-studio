@@ -3,7 +3,7 @@
 // Compare, "Restart from here" with what it means, and Show in Finder.
 import type { VersionEntry } from '@motion-studio/shared';
 import { formatDate, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
-import { isMac } from '../shell/ShellContext.tsx';
+import { isMac } from '../platform.ts';
 import { Button, Icon, Pill, cx } from '../ui/index.ts';
 import { versionThumb } from './canvasModel.ts';
 

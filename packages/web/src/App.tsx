@@ -18,7 +18,8 @@ import { References } from './screens/References.tsx';
 import { Welcome, type WelcomeProps } from './screens/Welcome.tsx';
 import { useCatalog } from './shell/catalog.ts';
 import { CommandPalette } from './shell/CommandPalette.tsx';
-import { go, isMac, ShellContext, type ActivityTab, type Shell } from './shell/ShellContext.tsx';
+import { go, ShellContext, type ActivityTab, type Shell } from './shell/ShellContext.tsx';
+import { isMac } from './platform.ts';
 import { TopBar } from './shell/TopBars.tsx';
 import { useAttention, useReadyNotice } from './shell/useAttention.ts';
 import { applyTheme } from './theme.ts';
@@ -26,6 +27,7 @@ import { Spinner, Toasts } from './ui/index.ts';
 import { usePairingNeeded } from './uiToken.ts';
 import type { EventsState } from './eventsReducer.ts';
 import { useServerEvents } from './useServerEvents.ts';
+import { message } from './errors.ts';
 
 /** The current hash; an old link is replaced in place (no history entry) by its new address. */
 function currentHash(): string {
@@ -97,7 +99,7 @@ function AppBody({ live, language, systemLocale, onLanguage }: Props) {
   const [checkRun, setCheckRun] = useState(0);
   const refresh = useCallback(() => {
     setChecking(true);
-    const fail = (e: unknown) => setLoadError(e instanceof Error ? e.message : String(e));
+    const fail = (e: unknown) => setLoadError(message(e));
     api.getDoctor()
       .then((c) => { setChecks(c); setLoadError(null); setCheckRun((n) => n + 1); })
       .catch(fail)

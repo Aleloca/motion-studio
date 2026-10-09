@@ -7,12 +7,13 @@ import { D, enter, isActivePage, useEnter } from '../motion/index.ts';
 import { anyLayerOpen, Button, Empty, Icon, Input, NavItem, Pill, Spinner, toast } from '../ui/index.ts';
 import { applyChanges, brandIsEmpty, latestBrandJob, undoChanges, MANUAL, nextId, normalizeUrl } from './brandModel.ts';
 import { useBrandSaver, type BrandSaver } from './brandSave.ts';
-import { message, isActive, BrandCtx, type SectionId, type Ctx } from './brandContext.tsx';
+import { isActive, BrandCtx, type SectionId, type Ctx } from './brandContext.tsx';
 import { BrandReview, type AppliedProposal } from './BrandReview.tsx';
 import { Colors, Typography, Logos } from './BrandKitSections.tsx';
 import { Overview, Voice, PhotoStyle, Guidelines } from './BrandTextSections.tsx';
 import { ProposalReady, AnalysisCard, AnalysisFailure, Sources, Health, History } from './BrandSide.tsx';
 import './brand.css';
+import { message } from './common.tsx';
 
 /**
  * Project · Brand (spec §6.2 #8), ported from the prototype's BrandPage / Colors / Typography / Logos / Voice /

@@ -4,12 +4,11 @@ import { channelName, formatName, type Brief, type CreativeDetail, type FormatPr
 import { useId, useMemo, useState } from 'react';
 import { api } from '../api.ts';
 import { useLocale, useT } from '../i18n.tsx';
-import { channelOf } from '../screens/creativeState.ts';
-import { Button, ChannelMark, Chip, Input, Segmented, Textarea } from '../ui/index.ts';
+import { Button, ChannelMark, Chip, channelOf, Input, Segmented, Textarea } from '../ui/index.ts';
 import { CodebaseList } from './CodebaseList.tsx';
 import './brief.css';
+import { message } from '../errors.ts';
 
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const LENGTHS = ['none', '6', '15', '30', '60', 'custom'] as const;
 type LengthChoice = (typeof LENGTHS)[number];
 const lengthChoice = (sec: number | null): LengthChoice => (sec === null ? 'none' : (LENGTHS as readonly string[]).includes(String(sec)) ? (String(sec) as LengthChoice) : 'custom');

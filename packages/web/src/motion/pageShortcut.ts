@@ -1,5 +1,5 @@
 import { useEffect, useRef, type RefObject } from 'react';
-import { isMac } from '../shell/ShellContext.tsx';
+import { isMac } from '../platform.ts';
 
 /**
  * Whether `el` belongs to the page the user is on. PageHost keeps a leaving page mounted for its exit (with only

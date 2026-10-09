@@ -1,6 +1,7 @@
-import type { AgentEvent, ApprovalRequest, ConversationEntry, CreativeSummary, FormatPreset, JobSummary, Pin } from '@motion-studio/shared';
+import type { ApprovalRequest, ConversationEntry, CreativeSummary, FormatPreset, JobSummary, Pin } from '@motion-studio/shared';
 import type { EventsState } from '../eventsReducer.ts';
-import { CHANNELS, type Channel } from '../ui/index.ts';
+import { lastStep } from '../jobEvents.ts';
+import { channelOf } from '../ui/index.ts';
 
 /** What a creative card says about a creative, from its stored status and the live state (approvals, jobs). */
 export type CardState = 'needs' | 'running' | 'ready' | 'incomplete' | 'draft' | 'failed' | 'interrupted';
@@ -26,15 +27,7 @@ export function creativeJob(live: EventsState, project: string, creative: string
   return Object.values(live.jobs).find((j) => isActive(j) && j.key.startsWith('creative:') && j.key.endsWith(suffix)) ?? null;
 }
 
-/** Latest step the job reported (agent progress), if any. */
-export function lastStep(events: AgentEvent[] | undefined): string | null {
-  if (!events) return null;
-  for (let i = events.length - 1; i >= 0; i--) {
-    const e = events[i]!;
-    if (e.kind === 'progress' && e.text.trim()) return e.text.trim();
-  }
-  return null;
-}
+export { lastStep };
 
 export function liveCreative(c: CreativeSummary, project: string, live: EventsState): LiveCreative {
   const approval = Object.values(live.approvals)
@@ -65,12 +58,7 @@ export function matches(filter: CreativeFilter, state: CardState): boolean {
 }
 
 /** `Instagram` → `instagram`, `App Store` → `appstore`, `Play Store` → `googleplay`; unknown channels get the generic web mark. */
-export function channelOf(channel: string): Channel {
-  const raw = channel.toLowerCase().replace(/[^a-z]/g, '');
-  // The catalog calls Google's store "Play Store"; its mark is Google Play.
-  const id = raw === 'playstore' ? 'googleplay' : raw;
-  return (CHANNELS as readonly string[]).includes(id) ? (id as Channel) : 'web';
-}
+export { channelOf };
 
 export interface Frame { id: string; preset: FormatPreset | null; width: number; height: number }
 

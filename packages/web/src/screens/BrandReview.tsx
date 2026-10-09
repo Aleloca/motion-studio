@@ -6,12 +6,12 @@ import { Button, Check, cx, Empty, Icon, Markdown, Modal, Tag, toast } from '../
 import { specimenFamily, useFontPreview } from './brandFonts.ts';
 import { hostOf, stageColor, websiteHosts } from './brandModel.ts';
 import './brand.css';
+import { message } from './common.tsx';
 
 type GroupId = BrandField | 'guidelines';
 const GROUPS: GroupId[] = ['colors', 'fonts', 'logos', 'tone', 'dos', 'donts', 'photoStyle', 'guidelines'];
 /** The guidelines are one more item of the sheet (applied with `applyGuidelines`, not by change id). */
 const GUIDELINES = '__guidelines';
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const shown = (c: BrandChange) => (c.op === 'remove' ? c.before : c.after);
 
 /** What an Apply did, so the page can undo exactly that (as an inverse on the kit as it is then, never a snapshot). */

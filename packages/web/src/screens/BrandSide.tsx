@@ -9,7 +9,8 @@ import { enter } from '../motion/index.ts';
 import { Button, cx, Icon, Input, Popover, Spinner, toast, Typing } from '../ui/index.ts';
 import { analysisSteps, healthChecks, hostOf, normalizeUrl, type HealthId } from './brandModel.ts';
 import { KEEPALIVE, deferRemoval, flushDeferred, isPendingRemoval, removalKey, usePendingRemovals } from './deferred.ts';
-import { message, isActive, useBrand, useAppear, type SectionId } from './brandContext.tsx';
+import { isActive, useBrand, useAppear, type SectionId } from './brandContext.tsx';
+import { message } from './common.tsx';
 /* ---------- side column: analysis, sources, health, history ---------- */
 
 export function ProposalReady({ proposal, onReview }: { proposal: BrandProposal; onReview(): void }) {

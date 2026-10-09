@@ -7,6 +7,7 @@ import { enter, exit, pop, reducedMotion, useEnter } from '../motion/index.ts';
 import { href, type WelcomeStep } from '../routes.ts';
 import { Button, Icon, Input, Pill, Select, Spinner, cx, toast } from '../ui/index.ts';
 import './welcome.css';
+import { message } from './common.tsx';
 
 /** The folders inside every project (core `PROJECT_DIRS`): what the preview shows under each project. */
 const PROJECT_DIRS = 'brand, assets, references, creatives';
@@ -14,7 +15,6 @@ const PROJECT_DIRS = 'brand, assets, references, creatives';
 const REVEAL_MS = 280;
 const PREVIEW_PROJECTS = 3;
 
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 function problemText(problem: WorkspaceProblem, path: string, w: Messages['web']['welcome']): string {
   switch (problem.code) {

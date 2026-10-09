@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { message } from './errors.ts';
 
 export function useProjectData<T>(load: () => Promise<T>, deps: unknown[]) {
   const [data, setData] = useState<T | null>(null);
@@ -6,7 +7,7 @@ export function useProjectData<T>(load: () => Promise<T>, deps: unknown[]) {
   const [nonce, setNonce] = useState(0);
   useEffect(() => {
     let alive = true;
-    load().then((d) => { if (alive) { setData(d); setError(null); } }).catch((e: unknown) => { if (alive) setError(e instanceof Error ? e.message : String(e)); });
+    load().then((d) => { if (alive) { setData(d); setError(null); } }).catch((e: unknown) => { if (alive) setError(message(e)); });
     return () => { alive = false; };
   }, [...deps, nonce]); // eslint-disable-line react-hooks/exhaustive-deps
   const reload = useCallback(() => setNonce((n) => n + 1), []);

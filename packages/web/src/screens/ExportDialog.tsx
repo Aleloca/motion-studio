@@ -8,17 +8,17 @@ import { desktop } from '../desktop.ts';
 import { exportFileName } from '../exportName.ts';
 import { useLocale, useT } from '../i18n.tsx';
 import { pop } from '../motion/index.ts';
-import { isMac } from '../shell/ShellContext.tsx';
+import { isMac } from '../platform.ts';
 import { Button, ChannelMark, Check, Icon, Input, Modal, cx } from '../ui/index.ts';
 import { boardLabel } from './CanvasBoard.tsx';
 import { outputMedia } from './canvasModel.ts';
 import { channelOf } from './creativeState.ts';
+import { message } from './common.tsx';
 
 /** The last destination folder, kept in this browser only. */
 export const EXPORT_FOLDER_KEY = 'ms.exportFolder';
 const readFolder = () => { try { return localStorage.getItem(EXPORT_FOLDER_KEY) ?? ''; } catch { return ''; } };
 const writeFolder = (v: string) => { try { localStorage.setItem(EXPORT_FOLDER_KEY, v); } catch { /* private mode */ } };
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export interface ExportDialogProps {
   open: boolean;

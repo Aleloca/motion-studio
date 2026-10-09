@@ -1,4 +1,4 @@
-import type { AgentEvent, ApprovalRequest, JobSummary } from '@motion-studio/shared';
+import type { ApprovalRequest, JobSummary } from '@motion-studio/shared';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ApprovalCard } from '../components/ApprovalCard.tsx';
 import { useApprovalPresence } from '../components/approvalPresence.ts';
@@ -8,6 +8,7 @@ import { href } from '../routes.ts';
 import { Button, Empty, Icon, Spinner, Tabs, cx } from '../ui/index.ts';
 import { canAskNotifications } from './notify.ts';
 import { go, type ActivityTab } from './ShellContext.tsx';
+import { lastStep } from '../jobEvents.ts';
 
 /** Results kept in the Done tab (the latest of this session). */
 export const DONE_MAX = 20;
@@ -22,16 +23,6 @@ export function activityLists(live: EventsState) {
   const running = jobs.filter(active).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const done = jobs.filter(finished).sort((a, b) => finishedAt(b).localeCompare(finishedAt(a))).slice(0, DONE_MAX);
   return { approvals, running, done };
-}
-
-/** Latest step the job reported (agent progress), if any. */
-function lastStep(events: AgentEvent[] | undefined): string | null {
-  if (!events) return null;
-  for (let i = events.length - 1; i >= 0; i--) {
-    const e = events[i]!;
-    if (e.kind === 'progress' && e.text.trim()) return e.text.trim();
-  }
-  return null;
 }
 
 /**

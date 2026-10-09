@@ -27,7 +27,3 @@ export function go(hash: string): void {
   if (location.hash !== hash) location.hash = hash;
 }
 
-/** macOS (or iOS): the palette shortcut is ⌘K there and Ctrl+K elsewhere. */
-export function isMac(): boolean {
-  return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
-}

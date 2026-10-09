@@ -5,6 +5,7 @@ import { desktop } from '../desktop.ts';
 import { useT } from '../i18n.tsx';
 import { Button, Icon, Input, Pill } from '../ui/index.ts';
 import './codebase.css';
+import { message } from '../errors.ts';
 
 /** Linked code folders inside a form (New creative, Brief): read-only folders the agent can read. */
 export function CodebaseList({ value, checks, onChange, disabled }: { value: LinkedCodebase[]; checks?: CodebaseCheck[]; onChange: (next: LinkedCodebase[]) => void; disabled?: boolean }) {
@@ -24,7 +25,7 @@ export function CodebaseList({ value, checks, onChange, disabled }: { value: Lin
   const bridge = desktop();
   const choose = async () => {
     try { const picked = await bridge?.pickFolder(c.pickTitle, path.trim() || undefined); if (picked) { setPath(picked); setError(null); } }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    catch (e) { setError(message(e)); }
   };
   const onEnter = (e: KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); add(); } };
   return (

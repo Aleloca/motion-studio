@@ -10,8 +10,8 @@ import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { Button, Icon, Input, Pill, Select, cx, initials, toast } from '../ui/index.ts';
 import { liveCreative } from './creativeState.ts';
 import './projects.css';
+import { message } from './common.tsx';
 
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const RECENT = 3;
 const COVERS = 3;
 const PALETTE_MAX = 8;

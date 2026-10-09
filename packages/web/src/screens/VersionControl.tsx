@@ -8,6 +8,7 @@ import { useT } from '../i18n.tsx';
 import { pop } from '../motion/index.ts';
 import { Icon, Popover, cx, toast } from '../ui/index.ts';
 import { VersionMenu } from './VersionMenu.tsx';
+import { message } from './common.tsx';
 
 export interface VersionControlProps {
   slug: string;
@@ -27,7 +28,6 @@ export interface VersionControlProps {
   onError(message: string | null): void;
 }
 
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export function VersionControl({ slug, creative, versions, version, resumeFrom, buttonRef, onPick, onCompare, onChanged, onError }: VersionControlProps) {
   const t = useT();
