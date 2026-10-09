@@ -172,7 +172,7 @@
   .ms-selbar-wrap { left: 188px; }
   .ms-assets.ms-with-detail .ms-selbar-wrap { right: 312px; }
   .ms-assets.ms-with-detail .ms-assets-main { padding-left: 16px; padding-right: 16px; }
-  .ms-assets.ms-with-detail .ms-assets-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 156px), 1fr)); }
+  .ms-assets.ms-with-detail .ms-assets-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 176px), 1fr)); }
 }
 
 /* Narrow windows: the filters become a top band, the detail floats over the grid. */
@@ -227,6 +227,6 @@
 .ms-rcard .ms-rcard-none { height: 140px; }
 
 /* "Analyze brand with these" (R2): the board's accent link, not a grey text button. */
-.ms-btn.ms-accent-link { color: var(--accentText); font-weight: 600; gap: 5px; }
-.ms-btn.ms-accent-link:hover:not(:disabled) { background: var(--sel); }
-.ms-btn.ms-accent-link:disabled { color: var(--faint); }
+.ms-btn.ms-ghost.ms-accent-link { color: var(--accentText); font-weight: 600; gap: 5px; }
+.ms-btn.ms-ghost.ms-accent-link:hover:not(:disabled) { background: var(--sel); color: var(--accentText); }
+.ms-btn.ms-ghost.ms-accent-link:disabled { color: var(--faint); }
