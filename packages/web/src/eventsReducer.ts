@@ -3,11 +3,19 @@ import type { AgentEvent, ApprovalRequest, JobSummary, LanguageSetting, Locale, 
 /**
  * `liveUsage`: the latest live usage estimate per job. Live `usage` events (up to one a second per job) are kept here,
  * latest only, never in `events`, so they cannot push real events out of the MAX_EVENTS window. The final usage
- * (`live: false`) is a regular event.
+ * (`live: false`) is a regular event. An entry is dropped when the final usage arrives, when its job ends, and on a
+ * snapshot unless the job is still running.
  */
 export interface EventsState { liveUsage?: Record<string, Extract<AgentEvent, { kind: 'usage' }>>; approvals: Record<string, ApprovalRequest>; jobs: Record<string, JobSummary>; events: Record<string, AgentEvent[]>; creativeTicks: Record<string, number>; projectTicks: Record<string, number>; /** Snapshots received (one per (re)connection): lets the UI tell restored state from new events. */ snapshots?: number; /** Unset until the first snapshot. */ language?: { locale: Locale; setting: LanguageSetting; systemLocale: Locale } | null }
 export const initialEventsState: EventsState = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
 const MAX_EVENTS = 2000;
+const TERMINAL = new Set<JobSummary['state']>(['succeeded', 'failed', 'cancelled']);
+
+function withoutLiveUsage(state: EventsState, jobId: string): EventsState['liveUsage'] {
+  if (!state.liveUsage || !(jobId in state.liveUsage)) return state.liveUsage;
+  const { [jobId]: _gone, ...rest } = state.liveUsage;
+  return rest;
+}
 
 export function eventsReducer(state: EventsState, msg: ServerMessage): EventsState {
   switch (msg.type) {
@@ -17,6 +25,7 @@ export function eventsReducer(state: EventsState, msg: ServerMessage): EventsSta
         ...state,
         snapshots: (state.snapshots ?? 0) + 1,
         jobs: Object.fromEntries(msg.jobs.map((j) => [j.id, j])),
+        liveUsage: Object.fromEntries(Object.entries(state.liveUsage ?? {}).filter(([id]) => msg.jobs.some((j) => j.id === id && j.state === 'running'))),
         approvals: Object.fromEntries((msg.approvals ?? []).map((a) => [a.id, a])),
         language: msg.locale ? { locale: msg.locale, setting: msg.languageSetting ?? 'system', systemLocale: msg.systemLocale ?? msg.locale } : state.language,
         creativeTicks: Object.fromEntries(Object.entries(state.creativeTicks).map(([k, v]) => [k, v + 1])),
@@ -31,11 +40,12 @@ export function eventsReducer(state: EventsState, msg: ServerMessage): EventsSta
       return { ...state, approvals: rest };
     }
     case 'job':
-      return { ...state, jobs: { ...state.jobs, [msg.job.id]: msg.job } };
+      return { ...state, jobs: { ...state.jobs, [msg.job.id]: msg.job }, ...(TERMINAL.has(msg.job.state) ? { liveUsage: withoutLiveUsage(state, msg.job.id) } : {}) };
     case 'agent': {
       if (msg.event.kind === 'usage' && msg.event.live) return { ...state, liveUsage: { ...state.liveUsage, [msg.jobId]: msg.event } };
       const list = [...(state.events[msg.jobId] ?? []), msg.event];
-      return { ...state, events: { ...state.events, [msg.jobId]: list.length > MAX_EVENTS ? list.slice(-MAX_EVENTS) : list } };
+      const liveUsage = msg.event.kind === 'usage' ? withoutLiveUsage(state, msg.jobId) : state.liveUsage;
+      return { ...state, liveUsage, events: { ...state.events, [msg.jobId]: list.length > MAX_EVENTS ? list.slice(-MAX_EVENTS) : list } };
     }
     case 'creative': {
       const key = `${msg.project}/${msg.creative}`;

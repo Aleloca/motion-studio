@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { UsageBilling, UsageReport } from '@motion-studio/shared';
 import { WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import type { UsageLedger } from '../usage/usage-ledger.ts';
-import { buildUsageReport, defaultUsageRange, type UsageProject } from '../usage/usage-report.ts';
+import { buildUsageReport, defaultUsageRange, rangeEndingAt, type UsageProject } from '../usage/usage-report.ts';
 import { t } from '../i18n.ts';
 
 /** Longest range a report may cover (one bucket per day). */
@@ -30,8 +30,11 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
     const from = parseDate(q.from);
     const to = parseDate(q.to);
     if (from === null || to === null) throw new WorkspaceError(400, t().errors.invalidRequest);
-    const range = from && to ? { from, to } : from ? { from, to: defaultUsageRange().to } : to ? { from: new Date(to.getTime() - 7 * 86_400_000), to } : defaultUsageRange();
+    const range = from && to ? { from, to } : from ? { from, to: defaultUsageRange().to } : to ? rangeEndingAt(to) : defaultUsageRange();
     if (range.from >= range.to || range.to.getTime() - range.from.getTime() > MAX_RANGE_MS) throw new WorkspaceError(400, t().errors.invalidRequest);
+    // Started before the project listing and awaited together with the ledger reads: the first call does not wait for
+    // `claude auth status` after them.
+    const billing = deps.billing().catch(() => 'unknown' as const);
     const ws = deps.workspace();
     let projects: UsageProject[] = [];
     if (ws && typeof q.project === 'string' && q.project !== '') {
@@ -42,7 +45,6 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
       // A project with an unreadable project.json still has its ledger: it is listed under its folder name.
       projects = list.map((p) => ({ slug: p.slug, name: p.ok ? p.project.name : p.slug, dir: ws.projectDir(p.slug) }));
     }
-    const billing = await deps.billing().catch(() => 'unknown' as const);
     return buildUsageReport({ ledger: deps.ledger, projects, billing, ...range });
   });
 }

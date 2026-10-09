@@ -39,16 +39,17 @@ describe('buildUsageReport', () => {
     expect(r.to).toBe('2026-10-09T22:00:00.000Z'); // local midnight after today
     expect(r.byDay.map((d) => d.day)).toEqual(['2026-10-03', '2026-10-04', '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09']);
     expect(r.byDay.at(-2)).toEqual({ day: '2026-10-08', tokens: 60, costUsd: 0.1 });
-    expect(r.byDay.at(-1)).toEqual({ day: '2026-10-09', tokens: 106, costUsd: 0.2 });
+    // The describe run has no cost: the day's cost is partial.
+    expect(r.byDay.at(-1)).toEqual({ day: '2026-10-09', tokens: 106, costUsd: 0.2, estimated: true });
     expect(r.byDay[0]).toEqual({ day: '2026-10-03', tokens: 0, costUsd: null });
     expect(r.byProject).toEqual([
       { slug: 'acme', name: 'Acme', tokens: 66, costUsd: expect.closeTo(0.3, 12) },
-      { slug: 'beta', name: 'Beta', tokens: 100, costUsd: null },
+      { slug: 'beta', name: 'Beta', tokens: 100, costUsd: null, estimated: true },
     ]);
     expect(r.byKind).toEqual([
       { kind: 'creative', tokens: 60, costUsd: 0.1 },
       { kind: 'brand-analysis', tokens: 6, costUsd: 0.2 },
-      { kind: 'describe', tokens: 100, costUsd: null },
+      { kind: 'describe', tokens: 100, costUsd: null, estimated: true },
       { kind: 'console', tokens: 0, costUsd: null },
     ]);
     expect(r.total).toEqual({ tokens: tokens(111, 22, 5000, 33), costUsd: expect.closeTo(0.3, 12), estimated: true });

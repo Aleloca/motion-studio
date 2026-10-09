@@ -52,12 +52,17 @@ export function addTokens(a: TokenCounts, b: TokenCounts): TokenCounts {
 
 export interface UsageReport {
   from: string; to: string; total: UsageSummary;
-  byDay: { day: string; tokens: number; costUsd: number | null }[];
-  byProject: { slug: string; name: string; tokens: number; costUsd: number | null }[];
-  byKind: { kind: UsageRecord['kind']; tokens: number; costUsd: number | null }[];
+  /** `estimated`: some run of the bucket has no known cost (or only a live estimate), so `costUsd` is partial. */
+  byDay: { day: string; tokens: number; costUsd: number | null; estimated?: boolean }[];
+  byProject: { slug: string; name: string; tokens: number; costUsd: number | null; estimated?: boolean }[];
+  byKind: { kind: UsageRecord['kind']; tokens: number; costUsd: number | null; estimated?: boolean }[];
   trackedSince: string | null;
   billing: UsageBilling;
-  /** Offset from UTC (minutes, e.g. 120 for UTC+2) of the server's local time zone, which buckets `byDay`; taken at `to`. */
+  /**
+   * Offset from UTC (minutes, e.g. 120 for UTC+2) of the server's local time zone, which buckets `byDay`. One value for
+   * the whole range, taken at its last instant (`to` - 1 ms): a range that crosses a DST change has days with another
+   * offset (the buckets are still whole local days, only this single number cannot describe both halves).
+   */
   utcOffsetMinutes: number;
 }
 export type UsageBilling = 'subscription' | 'api' | 'unknown';

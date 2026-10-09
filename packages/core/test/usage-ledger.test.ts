@@ -198,6 +198,50 @@ describe('UsageTracker', () => {
     expect((await fresh.finish('succeeded')).record!.costUsd).toBe(0.03);
   });
 
+  it('a resumed run with no record of its own books no cost when the cumulative values exceed its tokens (no backfill)', async () => {
+    // A session from before tracking: its cumulative cost includes runs the ledger never saw.
+    const t = tracker({ resumeSessionId: 'old' });
+    t.observe({ kind: 'session', sessionId: 'old' });
+    t.observe(final(tokens(4, 721, 64200, 1405), 0.00588999, tokens(8, 2385, 109549, 18006)));
+    const { record: r, event } = await t.finish('succeeded');
+    expect(r).toMatchObject({ costUsd: null, estimated: true, models: [], tokens: tokens(4, 721, 64200, 1405), cumulativeCostUsd: 0.00588999 });
+    expect(event).toMatchObject({ live: false, costUsd: null, models: [] });
+    // When the tokens prove the cumulative values are this run's alone, the whole value is kept.
+    const proven = tracker({ resumeSessionId: 'other' });
+    proven.observe({ kind: 'session', sessionId: 'other' });
+    proven.observe(final(tokens(1, 2, 3, 4), 0.02, tokens(1, 2, 3, 4)));
+    expect((await proven.finish('succeeded')).record).toMatchObject({ costUsd: 0.02 });
+  });
+
+  it('a fork that matches neither its own values nor its parent books no cost', async () => {
+    const first = tracker();
+    first.observe({ kind: 'session', sessionId: 'parent' });
+    first.observe(final(tokens(1, 10, 100, 20), 0.1, tokens(1, 10, 100, 20)));
+    await first.finish('succeeded');
+    const fork = tracker({ resumeSessionId: 'parent' });
+    fork.observe({ kind: 'session', sessionId: 'parent-fork' });
+    fork.observe(final(tokens(1, 5, 50, 5), 0.5, tokens(9, 99, 999, 99)));
+    expect((await fork.finish('succeeded')).record).toMatchObject({ costUsd: null, estimated: true });
+  });
+
+  it('gives up on the cost when the baseline had none for a model that has one now', async () => {
+    await ledger.append(dir, record({ sessionId: 'sess', costUsd: null, cumulativeCostUsd: 0.1, cumulativeModels: [{ model: 'm', tokens: tokens(1, 1, 1, 1), costUsd: null }] }));
+    const t = tracker({ resumeSessionId: 'sess' });
+    t.observe({ kind: 'session', sessionId: 'sess' });
+    t.observe({ kind: 'usage', live: false, tokens: tokens(1, 1, 1, 1), costUsd: 0.2, models: [{ model: 'm', tokens: tokens(2, 2, 2, 2), costUsd: 0.2 }] });
+    expect((await t.finish('succeeded')).record).toMatchObject({ costUsd: null, estimated: true });
+  });
+
+  it('looks the baseline up and appends under one lock', async () => {
+    let seen: string[] = [];
+    await Promise.all([
+      ledger.append(dir, record({ jobId: 'first', sessionId: 's', cumulativeCostUsd: 0.1 })),
+      ledger.appendComputed(dir, async (last) => { seen = [(await last('s'))?.jobId ?? 'none']; return record({ jobId: 'second' }); }),
+    ]);
+    expect(seen).toEqual(['first']);
+    expect((await ledger.read(dir)).map((r) => r.jobId)).toEqual(['first', 'second']);
+  });
+
   it('never fails the run when the ledger cannot be written', async () => {
     await writeFile(join(dir, '.studio'), 'not a folder');
     const t = tracker();

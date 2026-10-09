@@ -2,7 +2,8 @@ import { addTokens, shownTotal, usageKindSchema, type TokenCounts, type UsageBil
 import type { UsageLedger } from './usage-ledger.ts';
 
 export interface UsageProject { slug: string; name: string; dir: string }
-export interface UsageReportInput { ledger: UsageLedger; projects: UsageProject[]; billing: UsageBilling; from: Date; to: Date }
+/** `billing` may be a promise: it is awaited in parallel with the ledger reads. */
+export interface UsageReportInput { ledger: UsageLedger; projects: UsageProject[]; billing: UsageBilling | Promise<UsageBilling>; from: Date; to: Date }
 
 const ZERO: TokenCounts = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -15,6 +16,11 @@ export function defaultUsageRange(now: Date = new Date()): { from: Date; to: Dat
   return { from: localMidnight(now, -6), to: localMidnight(now, 1) };
 }
 
+/** Only `to` given: the 7 local days before it (from the local midnight seven days before `to`'s day). */
+export function rangeEndingAt(to: Date): { from: Date; to: Date } {
+  return { from: localMidnight(to, -7), to };
+}
+
 /** Local days touched by [from, to): one bucket each, DST changes included (days are counted by date, not by 24 h). */
 export function localDays(from: Date, to: Date): string[] {
   const days: string[] = [];
@@ -22,29 +28,38 @@ export function localDays(from: Date, to: Date): string[] {
   return days;
 }
 
-/** Sum of the known costs; null when no record of the bucket has one (never 0 standing in for "unknown"). */
+/**
+ * Sum of the known costs; null when no record of the bucket has one (never 0 standing in for "unknown"). `estimated`
+ * when some record had no cost (or was a live estimate): the cost is then partial.
+ */
 class Bucket {
   tokens = ZERO;
+  estimated = false;
   private cost = 0;
   private costs = 0;
   add(r: UsageRecord) {
     this.tokens = addTokens(this.tokens, r.tokens);
     if (r.costUsd !== null) { this.cost += r.costUsd; this.costs++; }
+    if (r.costUsd === null || r.estimated) this.estimated = true;
   }
   get costUsd(): number | null { return this.costs > 0 ? this.cost : null; }
+  view() { return { tokens: shownTotal(this.tokens), costUsd: this.costUsd, ...(this.estimated ? { estimated: true } : {}) }; }
 }
 
 /** Builds the usage report from the projects' ledgers. Never throws on bad ledger content (bad lines are skipped). */
 export async function buildUsageReport(i: UsageReportInput): Promise<UsageReport> {
+  const [billing, ledgers] = await Promise.all([
+    Promise.resolve(i.billing).catch(() => 'unknown' as const),
+    Promise.all(i.projects.map((p) => i.ledger.read(p.dir))),
+  ]);
   const days = localDays(i.from, i.to);
   const byDay = new Map(days.map((d) => [d, new Bucket()]));
   const byKind = new Map(usageKindSchema.options.map((k) => [k, new Bucket()]));
   const total = new Bucket();
-  let estimated = false;
   let trackedSince: { at: string; ms: number } | null = null;
   const byProject: UsageReport['byProject'] = [];
-  for (const p of i.projects) {
-    const all = await i.ledger.read(p.dir);
+  for (const [k, p] of i.projects.entries()) {
+    const all = ledgers[k]!;
     const project = new Bucket();
     for (const r of all) {
       const ms = Date.parse(r.at);
@@ -54,18 +69,17 @@ export async function buildUsageReport(i: UsageReportInput): Promise<UsageReport
       total.add(r);
       byKind.get(r.kind)!.add(r);
       byDay.get(localDay(new Date(ms)))?.add(r);
-      if (r.estimated || r.costUsd === null) estimated = true;
     }
-    byProject.push({ slug: p.slug, name: p.name, tokens: shownTotal(project.tokens), costUsd: project.costUsd });
+    byProject.push({ slug: p.slug, name: p.name, ...project.view() });
   }
   return {
     from: i.from.toISOString(), to: i.to.toISOString(),
-    total: { tokens: total.tokens, costUsd: total.costUsd, ...(estimated ? { estimated: true } : {}) },
-    byDay: days.map((day) => { const b = byDay.get(day)!; return { day, tokens: shownTotal(b.tokens), costUsd: b.costUsd }; }),
+    total: { tokens: total.tokens, costUsd: total.costUsd, ...(total.estimated ? { estimated: true } : {}) },
+    byDay: days.map((day) => ({ day, ...byDay.get(day)!.view() })),
     byProject,
-    byKind: [...byKind].map(([kind, b]) => ({ kind, tokens: shownTotal(b.tokens), costUsd: b.costUsd })),
+    byKind: [...byKind].map(([kind, b]) => ({ kind, ...b.view() })),
     trackedSince: trackedSince?.at ?? null,
-    billing: i.billing,
+    billing,
     utcOffsetMinutes: -new Date(i.to.getTime() - 1).getTimezoneOffset() || 0, // never -0
   };
 }

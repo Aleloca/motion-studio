@@ -83,5 +83,8 @@ describe('GET /api/usage', { timeout: 20_000 }, () => {
     const ok = await app.inject({ url: '/api/usage?from=2026-10-01T00:00:00Z&to=2026-10-03T00:00:00Z', headers });
     expect(ok.statusCode).toBe(200);
     expect((ok.json() as UsageReport).from).toBe('2026-10-01T00:00:00.000Z');
+    // Only `to`: the 7 local days before it, like the default range.
+    const toOnly = (await app.inject({ url: `/api/usage?to=${encodeURIComponent(new Date(2026, 9, 10).toISOString())}`, headers })).json() as UsageReport;
+    expect(toOnly.byDay.map((d) => d.day)).toEqual(['2026-10-03', '2026-10-04', '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09']);
   });
 });

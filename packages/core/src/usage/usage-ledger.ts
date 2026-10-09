@@ -12,6 +12,7 @@ import { KeyedMutex } from '../keyed-mutex.ts';
 export const usageLedgerFile = (projectDir: string) => join(projectDir, '.studio', 'usage.jsonl');
 
 export interface UsageRange { from?: Date; to?: Date }
+export type LastOfSession = (sessionId: string) => Promise<UsageRecord | null>;
 
 interface Cached { size: number; mtimeMs: number; records: UsageRecord[] }
 
@@ -30,13 +31,28 @@ export class UsageLedger {
   async append(projectDir: string, record: UsageRecord): Promise<UsageRecord> {
     const valid = usageRecordSchema.parse(record);
     const file = usageLedgerFile(projectDir);
+    return this.locks.run(file, () => this.appendUnlocked(projectDir, valid));
+  }
+
+  /**
+   * Builds a record from the ledger (e.g. the baseline of its session) and appends it, both under the file's lock:
+   * another run of this ledger cannot append between the lookup and the write. `build` returning null writes nothing.
+   */
+  async appendComputed(projectDir: string, build: (lastOfSession: LastOfSession) => Promise<UsageRecord | null>): Promise<UsageRecord | null> {
+    const file = usageLedgerFile(projectDir);
     return this.locks.run(file, async () => {
-      await mkdir(join(projectDir, '.studio'), { recursive: true });
-      // A line left half-written (crash mid-write) would swallow the next record: start on a fresh line.
-      const prefix = (await endsWithNewline(file)) ? '' : '\n';
-      await appendFile(file, `${prefix}${JSON.stringify(valid)}\n`, { encoding: 'utf8', mode: 0o644 });
-      return valid;
+      const record = await build((sessionId) => this.lastOfSession(projectDir, sessionId));
+      return record ? this.appendUnlocked(projectDir, usageRecordSchema.parse(record)) : null;
     });
+  }
+
+  private async appendUnlocked(projectDir: string, valid: UsageRecord): Promise<UsageRecord> {
+    const file = usageLedgerFile(projectDir);
+    await mkdir(join(projectDir, '.studio'), { recursive: true });
+    // A line left half-written (crash mid-write) would swallow the next record: start on a fresh line.
+    const prefix = (await endsWithNewline(file)) ? '' : '\n';
+    await appendFile(file, `${prefix}${JSON.stringify(valid)}\n`, { encoding: 'utf8', mode: 0o644 });
+    return valid;
   }
 
   /** Records whose `at` falls in [from, to). Never throws: a missing or unreadable ledger reads as empty. */

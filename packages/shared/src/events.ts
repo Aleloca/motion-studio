@@ -15,8 +15,11 @@ export type AgentEvent =
   | { kind: 'parse_error'; line: string }
   | { kind: 'usage'; live: boolean; tokens: TokenCounts; costUsd: number | null; models?: ModelUsage[] }
   | { kind: 'auto_approved'; toolName: string; command: string; explanation: Explanation }
-  /** `costUsd` is Claude Code's `total_cost_usd`, CUMULATIVE over a resumed session (per-run cost: the final `usage` event). */
-  | { kind: 'result'; ok: boolean; sessionId?: string; text?: string; costUsd?: number; error?: string; durationMs?: number; numTurns?: number };
+  /**
+   * `cumulativeCostUsd` is Claude Code's `total_cost_usd`: CUMULATIVE over a resumed session, never this run's cost
+   * (that is the final `usage` event, re-emitted by the core with per-run values). Older stored events may carry it as `costUsd`.
+   */
+  | { kind: 'result'; ok: boolean; sessionId?: string; text?: string; cumulativeCostUsd?: number; error?: string; durationMs?: number; numTurns?: number };
 
 export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 

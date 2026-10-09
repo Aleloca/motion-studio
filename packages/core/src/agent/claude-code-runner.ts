@@ -89,8 +89,9 @@ export class ClaudeCodeRunner implements AgentRunner {
     let result: Extract<AgentEvent, { kind: 'result' }> | undefined;
     const stderrTail: string[] = [];
     const stdout = new LineSplitter();
-    // Per run: keeps the live usage estimate (sum per message id, throttled).
-    const parser = new ClaudeStreamParser();
+    // Per run: keeps the live usage estimate (sum per message id, throttled, with a trailing flush).
+    // The timer only fires after this function returned, when `emit` (declared below) exists.
+    const parser = new ClaudeStreamParser({ onLive: (e) => emit(e) });
     const stderr = new LineSplitter();
 
     const emit = (e: AgentEvent) => {
@@ -116,6 +117,7 @@ export class ClaudeCodeRunner implements AgentRunner {
       const settle = (r: AgentRunResult) => {
         if (settled) return;
         settled = true;
+        parser.stop();
         if (drainTimer) clearTimeout(drainTimer);
         resolve(sessionId ? { ...r, sessionId } : r);
       };

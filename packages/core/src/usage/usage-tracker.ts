@@ -1,6 +1,6 @@
 import { addTokens, type AgentEvent, type ModelUsage, type TokenCounts, type UsageRecord, type UsageSummary } from '@motion-studio/shared';
 import type { AgentRunResult } from '../agent/runner.ts';
-import type { UsageLedger } from './usage-ledger.ts';
+import type { LastOfSession, UsageLedger } from './usage-ledger.ts';
 
 type UsageEvent = Extract<AgentEvent, { kind: 'usage' }>;
 export interface UsageTrackerMeta {
@@ -19,8 +19,10 @@ function subTokens(a: TokenCounts, b: TokenCounts): TokenCounts | null {
   const d = { input: a.input - b.input, output: a.output - b.output, cacheRead: a.cacheRead - b.cacheRead, cacheWrite: a.cacheWrite - b.cacheWrite };
   return d.input < 0 || d.output < 0 || d.cacheRead < 0 || d.cacheWrite < 0 ? null : d;
 }
-function subCost(a: number | null, b: number | null): number | null | 'negative' {
+/** `b` undefined: no baseline value (the whole of `a` is this run's); null: the baseline had no cost, so no difference can be told. */
+function subCost(a: number | null, b: number | null | undefined): number | null | 'negative' {
   if (a === null) return null;
+  if (b === null) return 'negative';
   const d = a - (b ?? 0);
   if (d < -EPSILON) return 'negative';
   return Math.max(0, d);
@@ -29,13 +31,13 @@ const sameTokens = (a: TokenCounts, b: TokenCounts) => a.input === b.input && a.
 
 /** Per-run cost and models: this run's cumulative values minus the baseline's; null when anything went backwards. */
 function delta(final: UsageEvent, baseline: UsageRecord | null): { costUsd: number | null; models: ModelUsage[] } | 'negative' {
-  const cost = subCost(final.costUsd, baseline?.cumulativeCostUsd ?? null);
+  const cost = subCost(final.costUsd, baseline ? baseline.cumulativeCostUsd : undefined);
   if (cost === 'negative') return 'negative';
   const models: ModelUsage[] = [];
   for (const m of final.models ?? []) {
     const prev = baseline?.cumulativeModels.find((p) => p.model === m.model);
     const tokens = subTokens(m.tokens, prev?.tokens ?? ZERO);
-    const c = subCost(m.costUsd, prev?.costUsd ?? null);
+    const c = subCost(m.costUsd, prev ? prev.costUsd : undefined);
     if (!tokens || c === 'negative') return 'negative';
     models.push({ model: m.model, tokens, costUsd: c });
   }
@@ -76,18 +78,24 @@ export class UsageTracker {
     return e;
   }
 
-  /** Writes the ledger line (a write failure is swallowed: usage never fails a run). */
+  /**
+   * Writes the ledger line (a write failure is swallowed: usage never fails a run). The baseline lookup and the append
+   * run under the ledger file's lock, so no other run of the project can slip a line in between.
+   */
   async finish(status: AgentRunResult['status']): Promise<{ record: UsageRecord | null; event: UsageEvent | null }> {
-    const record = await this.buildRecord(OUTCOME[status]).catch(() => null);
-    if (!record) return { record: null, event: null };
-    const saved = await this.ledger.append(this.meta.projectDir, record).catch(() => record);
+    let built: UsageRecord | null = null;
+    const saved = await this.ledger.appendComputed(this.meta.projectDir, async (lastOfSession) => {
+      built = await this.buildRecord(OUTCOME[status], lastOfSession).catch(() => null);
+      return built;
+    }).catch(() => built);
+    if (!saved) return { record: null, event: null };
     const event: UsageEvent | null = this.final
       ? { kind: 'usage', live: false, tokens: saved.tokens, costUsd: saved.costUsd, models: saved.models }
       : null;
     return { record: saved, event };
   }
 
-  private async buildRecord(outcome: UsageRecord['outcome']): Promise<UsageRecord | null> {
+  private async buildRecord(outcome: UsageRecord['outcome'], lastOfSession: LastOfSession): Promise<UsageRecord | null> {
     const base = {
       at: this.now().toISOString(), jobId: this.meta.jobId, kind: this.meta.kind,
       creativeSlug: this.meta.creativeSlug ?? null, version: this.meta.version ?? null, attempt: this.meta.attempt ?? null,
@@ -98,7 +106,7 @@ export class UsageTracker {
       return { ...base, tokens: this.live.tokens, costUsd: null, models: [], durationMs: null, estimated: true, cumulativeCostUsd: null, cumulativeModels: [] };
     }
     const final = this.final;
-    const d = await this.perRun(final);
+    const d = await this.perRun(final, lastOfSession);
     return {
       ...base, tokens: final.tokens, durationMs: this.durationMs,
       ...(d === 'negative' ? { costUsd: null, models: [], estimated: true } : d),
@@ -106,18 +114,25 @@ export class UsageTracker {
     };
   }
 
-  private async perRun(final: UsageEvent): Promise<ReturnType<typeof delta>> {
-    const own = this.sessionId ? await this.ledger.lastOfSession(this.meta.projectDir, this.sessionId) : null;
-    const first = delta(final, own);
+  private async perRun(final: UsageEvent, lastOfSession: LastOfSession): Promise<ReturnType<typeof delta>> {
+    const own = this.sessionId ? await lastOfSession(this.sessionId) : null;
+    if (own) return delta(final, own);
+    const first = delta(final, null);
     const parentId = this.meta.resumeSessionId;
-    if (own || !parentId || parentId === this.sessionId) return first;
-    // A new session forked from `parentId`: whether Claude Code carried the parent's cumulative values over is told by
-    // the tokens, since the per-model deltas must add up to this run's own (per-run) tokens.
-    if (first !== 'negative' && sameTokens(modelTotal(first.models), final.tokens)) return first;
-    const parent = await this.ledger.lastOfSession(this.meta.projectDir, parentId);
-    const fromParent = parent ? delta(final, parent) : 'negative';
-    if (fromParent !== 'negative' && sameTokens(modelTotal(fromParent.models), final.tokens)) return fromParent;
-    return first;
+    // A fresh session: its cumulative values are this run's.
+    if (!parentId) return first;
+    // Resumed (or forked) with no record of its own: a session from before tracking, a lost line, or a fork. The
+    // cumulative values may include earlier runs, so a baseline is accepted only when the tokens prove it: the
+    // per-model deltas must add up exactly to this run's own (per-run) tokens. Otherwise the cost is unknown
+    // (never back-filled from a session's history).
+    const proven = (d: ReturnType<typeof delta>) => d !== 'negative' && sameTokens(modelTotal(d.models), final.tokens);
+    if (proven(first)) return first;
+    if (parentId !== this.sessionId) {
+      const parent = await lastOfSession(parentId);
+      const fromParent = parent ? delta(final, parent) : 'negative';
+      if (proven(fromParent)) return fromParent;
+    }
+    return 'negative';
   }
 }
 

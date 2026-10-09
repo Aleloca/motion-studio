@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import type { AgentEvent } from '@motion-studio/shared';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeStreamParser, parseClaudeLine } from '../src/agent/claude-stream-parser.ts';
 
 type Usage = Extract<AgentEvent, { kind: 'usage' }>;
@@ -46,6 +46,32 @@ describe('usage from the stream (Task 1 sample)', () => {
     // The end of the stream flushes what the throttle held back, so a cancelled run keeps its latest estimate.
     expect(p.end()).toEqual([{ kind: 'usage', live: true, tokens: { input: 3, output: 15, cacheRead: 0, cacheWrite: 30 }, costUsd: null }]);
     expect(p.end()).toEqual([]);
+  });
+
+  it('flushes a held-back sum from a trailing timer, at most once per interval, and stops on end', () => {
+    vi.useFakeTimers();
+    try {
+      const timed: AgentEvent[] = [];
+      const p = new ClaudeStreamParser({ liveIntervalMs: 1000, onLive: (e) => timed.push(e) });
+      const assistant = (id: string) => JSON.stringify({ type: 'assistant', message: { id, usage: { input_tokens: 1, output_tokens: 1 } } });
+      expect(usages(p.parse(assistant('a')))).toHaveLength(1);
+      vi.advanceTimersByTime(100);
+      expect(usages(p.parse(assistant('b')))).toHaveLength(0);
+      vi.advanceTimersByTime(800);
+      expect(timed).toEqual([]); // still within the interval
+      vi.advanceTimersByTime(100);
+      expect(timed).toEqual([{ kind: 'usage', live: true, tokens: { input: 2, output: 2, cacheRead: 0, cacheWrite: 0 }, costUsd: null }]);
+      vi.advanceTimersByTime(5000);
+      expect(timed).toHaveLength(1); // nothing new: no further event
+      p.parse(assistant('c'));
+      vi.advanceTimersByTime(100);
+      p.parse(assistant('d'));
+      expect(p.end()).toHaveLength(1); // end flushes and clears the timer
+      vi.advanceTimersByTime(5000);
+      expect(timed).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not flush a held live estimate once the final usage arrived', () => {

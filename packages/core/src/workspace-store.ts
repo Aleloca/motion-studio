@@ -15,7 +15,7 @@ import {
 import type { Git } from './git.ts';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from './json-file.ts';
 import { KeyedMutex } from './keyed-mutex.ts';
-import { CLAUDE_MD, CONTEXT_MD, GITIGNORE, PROJECT_DIRS } from './project-template.ts';
+import { CLAUDE_MD, CONTEXT_MD, GITATTRIBUTES, GITIGNORE, PROJECT_DIRS } from './project-template.ts';
 import { t } from './i18n.ts';
 
 export class WorkspaceError extends Error {
@@ -188,6 +188,7 @@ export class WorkspaceStore {
       await writeFile(join(dir, '.studio', 'context.md'), CONTEXT_MD);
       await writeFile(join(dir, 'CLAUDE.md'), CLAUDE_MD);
       await writeFile(join(dir, '.gitignore'), GITIGNORE);
+      await writeFile(join(dir, '.gitattributes'), GITATTRIBUTES);
       await writeJsonFileAtomic(join(dir, 'project.json'), project);
       await this.git.init(dir);
       await this.git.commitAll(dir, t().jobs.createProjectCommit({ name }));

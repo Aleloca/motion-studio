@@ -105,7 +105,7 @@ function eventsOf(msg: Json): AgentEvent[] {
         ok,
         ...(typeof msg.session_id === 'string' ? { sessionId: msg.session_id } : {}),
         ...(text !== undefined ? { text } : {}),
-        ...(typeof msg.total_cost_usd === 'number' ? { costUsd: msg.total_cost_usd } : {}),
+        ...(typeof msg.total_cost_usd === 'number' ? { cumulativeCostUsd: msg.total_cost_usd } : {}),
         ...(!ok ? { error: text ?? t().providers.turnEnded({ subtype: String(msg.subtype) }) } : {}),
         ...(money(msg.duration_ms) !== null ? { durationMs: msg.duration_ms as number } : {}),
         ...(count(msg.num_turns) > 0 ? { numTurns: msg.num_turns as number } : {}),
@@ -129,7 +129,8 @@ const sameTokens = (a: TokenCounts, b: TokenCounts) => a.input === b.input && a.
  * `assistant` events carry `message.usage` per API call, and the same `message.id` repeats on consecutive events (one
  * per content block): the last value per id is kept and the SUM over ids is emitted as `usage` with `live: true`,
  * at most once per `liveIntervalMs` and only when it changed. A held-back sum goes out with the next line after the
- * interval, or from end() if no final usage arrived (so a cancelled run keeps its latest estimate).
+ * interval, from a trailing timer (with `onLive`, so a long tool call does not freeze the counter), or from end() if
+ * no final usage arrived (so a cancelled run keeps its latest estimate).
  */
 export class ClaudeStreamParser {
   private readonly perMessage = new Map<string, TokenCounts>();
@@ -140,28 +141,52 @@ export class ClaudeStreamParser {
   private final = false;
   private readonly now: () => number;
   private readonly interval: number;
+  private readonly onLive: ((e: AgentEvent) => void) | null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(opts: { now?: () => number; liveIntervalMs?: number } = {}) {
+  /** `onLive`: receives a held-back estimate from the trailing timer (at most one per interval); without it, no timer. */
+  constructor(opts: { now?: () => number; liveIntervalMs?: number; onLive?: (e: AgentEvent) => void } = {}) {
     this.now = opts.now ?? Date.now;
     this.interval = opts.liveIntervalMs ?? 1000;
+    this.onLive = opts.onLive ?? null;
   }
 
   parse(line: string): AgentEvent[] {
     const { events, msg } = parseLine(line);
-    if (events.some((e) => e.kind === 'usage' && !e.live)) { this.final = true; this.pending = false; return events; }
+    if (events.some((e) => e.kind === 'usage' && !e.live)) { this.final = true; this.pending = false; this.stop(); return events; }
     if (msg && msg.type === 'assistant' && isObj(msg.message) && isObj(msg.message.usage)) {
       const id = typeof msg.message.id === 'string' && msg.message.id !== '' ? msg.message.id : `#${this.anonymous++}`;
       this.perMessage.set(id, apiTokens(msg.message.usage));
       this.pending = !this.lastEmitted || !sameTokens(this.sum(), this.lastEmitted);
     }
     const live = this.release(false);
+    this.schedule();
     return live ? [...events, live] : events;
   }
 
-  /** At the end of the stream: the estimate the throttle held back, unless the final usage arrived. */
+  /** At the end of the stream: the estimate the throttle held back, unless the final usage arrived. Stops the timer. */
   end(): AgentEvent[] {
+    this.stop();
     const live = this.release(true);
     return live ? [live] : [];
+  }
+
+  /** Stops the trailing timer without emitting (the run is over). */
+  stop(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  private schedule(): void {
+    if (!this.onLive || this.timer || !this.pending || this.final) return;
+    const wait = Math.max(0, this.lastEmitAt + this.interval - this.now());
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      const live = this.release(false);
+      if (live) { try { this.onLive?.(live); } catch { /* a faulty listener must not break the parser */ } }
+      this.schedule();
+    }, wait);
+    this.timer.unref?.();
   }
 
   private release(force: boolean): AgentEvent | null {
