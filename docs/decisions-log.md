@@ -213,3 +213,17 @@ Legenda impatto: 🟢 basso · 🟡 medio · 🔴 alto (sicurezza o prodotto).
 4. **Mai provati in CI reale**: build x64, notarizzazione, Windows e Linux.
 5. **Prove visive**: tutta l'interfaccia (progetti, brand, asset, creatività, approvazioni, impostazioni, app desktop con le finestre di scelta cartella, export, abbinamento con il link `#t=`).
 6. **Provider a pagamento** (gpt-image-2, TTS, stock): mai provati con chiavi reali.
+
+## Fase 7 · nuova interfaccia
+
+83. 🟡 **Contrasto dell'arancione.** Il testo bianco su `#FF5A1F` ha un contrasto di circa 3,1:1, sotto la soglia AA (4,5:1) per un testo da 13 px. *Scelta:* restare fedeli al look approvato solo per **Generate**, **Send** e l'**avatar**: testo in grassetto con icona ed etichetta accessibile. Nessun altro testo bianco su arancione: chip e stati selezionati usano l'arancione scuro su fondo tenue. *Alternative:* testo scuro sull'arancione (contrasto circa 6:1) oppure un arancione più bruciato (`#D9480F`). Si possono applicare in un attimo se preferisci la conformità piena.
+84. 🟢 **Loghi dei canali** da Simple Icons. LinkedIn non c'è nella libreria, quindi usa un glifo "in" disegnato a mano; App Store usa il blu ufficiale, perché il nero spariva nel tema scuro.
+85. 🟢 **Arancione dei testi nel tema chiaro** scurito da `#E8501A` a `#C2410C` (contrasto circa 5,2:1 su bianco, AA), per link, chip e badge selezionati. I contatori numerici usano testo scuro sull'arancione. Il tema scuro resta `#FF8A5C`, già conforme.
+86. 🟢 **Nuova creatività senza stima del tempo né dei token** finché non ci sono dati reali (Fase 8). La riga del brand è informativa, con il link "Edit brand", ma senza interruttore: oggi il brief non ha un'opzione per ignorare il brand. Il selettore degli asset offre solo i file della libreria.
+87. 🟢 **"Try again" dopo un errore ripete la tua ultima richiesta** con i commenti, invece di rigenerare dal brief. Nella conversazione la ripetizione compare come etichetta "Retried".
+88. 🟡 **Commenti solo sulla versione da cui l'agente riparte.** Il core prende i fotogrammi dei commenti da quella versione, quindi un commento su una versione più vecchia finirebbe su un'immagine diversa. Sulle altre versioni lo strumento commento è disattivato e un suggerimento indica "Restart from here".
+89. 🟢 **Export bloccato durante la copia**: non si chiude a metà, così non nascono file duplicati.
+90. 🟡 **Chiavi dei servizi a pagamento: "Save" invece di "Save and test".** Il core oggi non ha un modo per verificare una chiave presso il fornitore, quindi il pulsante dice solo quello che fa davvero. La rimozione di una chiave chiede conferma. Una vera verifica della chiave richiede un endpoint nuovo nel core (da pianificare).
+91. 🟢 **Le impostazioni valide per tutto il workspace** (isolamento, modello, lavori in parallelo, domini, conferma dei servizi a pagamento) stanno in Project settings con l'etichetta "Shared by every project", con un rimando da App settings. Niente eliminazione del progetto né link nelle References finché non esistono le API.
+92. 🟢 **La revoca di una regola "Always allowed" è immediata**, con una conferma in linea e senza Undo. Con la revoca differita, nei 5 secondi di attesa la regola restava valida per gli agenti in esecuzione, e chiudendo l'app in quella finestra poteva non essere mai revocata. Le altre eliminazioni (asset, references, fonti) restano annullabili per 5 secondi.
+93. 🟢 **La console del progetto è stata rimossa**, compreso il "turno di prova" libero dell'agente. I dettagli tecnici sono in "Activity details" nella conversazione.
