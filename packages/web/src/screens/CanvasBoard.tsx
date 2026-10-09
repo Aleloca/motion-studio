@@ -46,6 +46,8 @@ export interface BoardProps {
   footer?: ReactNode;
 }
 
+const NARROW_BOARD = 170;
+
 export function boardLabel(board: BoardModel, locale: ReturnType<typeof useLocale>): string {
   return board.preset ? `${channelName(board.preset.channel, locale)} · ${formatName(board.preset, locale)}` : board.id;
 }
@@ -59,6 +61,9 @@ export function CanvasBoard(p: BoardProps) {
   const label = boardLabel(board, locale);
   const size = boardFrame(board);
   const zoom = p.zoom;
+  // Narrower than "Open editor" on screen: the button shows its icon alone.
+  const narrow = size.width * zoom < NARROW_BOARD;
+  const drafting = p.draft !== null && p.draft.format === board.id;
   // A 0–1 point of the frame on screen, from the frame box's top-left corner.
   const at = (x: number, y: number) => {
     const pt = toScreen({ x: x * size.width, y: y * size.height }, zoom);
@@ -78,14 +83,14 @@ export function CanvasBoard(p: BoardProps) {
   };
 
   return (
-    <div className={cx('ms-cv-board', p.selected && 'ms-on')} data-board={board.id}>
+    <div className={cx('ms-cv-board', p.selected && 'ms-on', drafting && 'ms-drafting')} data-board={board.id}>
       <div className="ms-cv-board-head" style={{ maxWidth: Math.max(Math.round(size.width * zoom), LABEL_MIN) }}>
         <b className="ms-cv-board-name" title={label}>{label}</b>
         {board.preset ? <span className="ms-cv-board-meta">{ratioText(board.preset)}{duration !== null ? ` · ${c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) })}` : ''}</span> : null}
         {p.working && (!board.out || video) ? <Pill spinner>{c.rendering}</Pill> : null}
         {board.out && !board.out.verified ? <Pill tone="warn">{t.web.formatUi.unverified}</Pill> : null}
       </div>
-      <div className="ms-cv-frame-wrap" style={{ width: size.width * zoom, height: size.height * zoom }}>
+      <div className={cx('ms-cv-frame-wrap', narrow && 'ms-narrow')} style={{ width: size.width * zoom, height: size.height * zoom }}>
         <div
           ref={frame}
           className={cx('ms-cv-frame', !board.out && 'ms-empty-frame')}

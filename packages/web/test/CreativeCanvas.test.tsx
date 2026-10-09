@@ -143,12 +143,20 @@ describe('CreativeCanvas · overlays stay screen-sized at any zoom', () => {
       expect(netScale(open)).toBe(1);
       expect(open.closest('.ms-cv-frame')).toBeNull();
       expect(open.parentElement!.classList.contains('ms-cv-frame-wrap')).toBe(true);
+      // Narrow boards on screen (< 170 px) switch Open editor to its icon alone: 9:16 is 152 px at 50%, 1:1 is 172 px.
+      const tiktok = container.querySelector('[data-board="tiktok-9x16"]') as HTMLElement;
+      expect(tiktok.querySelector('.ms-cv-frame-wrap')!.classList.contains('ms-narrow')).toBe(true);
+      expect(post.querySelector('.ms-cv-frame-wrap')!.classList.contains('ms-narrow')).toBe(false);
+      expect(post.classList.contains('ms-drafting')).toBe(false);
 
       // A comment at 25% / 50% of the board (click at 43,86 on the 172 px frame).
       fireEvent.keyDown(window, { key: 'c' });
       fireEvent.click(within(post).getByRole('button', { name: /^Commenta Instagram · Post 1:1/ }), { clientX: 43, clientY: 86, detail: 1 });
       const field = await screen.findByLabelText('Testo del commento');
       const bubble = field.closest('.ms-cv-bubble') as HTMLElement;
+      // The board holding the open bubble paints above its neighbours (a bubble past its edge stays on top).
+      expect(post.classList.contains('ms-drafting')).toBe(true);
+      expect(tiktok.classList.contains('ms-drafting')).toBe(false);
       expect(netScale(bubble)).toBe(1);
       expect(netScale(field)).toBe(1);
       expect(bubble.closest('.ms-cv-frame')).toBeNull();

@@ -8,6 +8,7 @@ import {
   Avatar, Button, CHANNELS, Card, ChannelMark, Check, Chip, CountdownRing, Empty, Field, ICONS, Icon, Input, Markdown,
   NavItem, Pill, ProgressBar, Segmented, Spinner, Tabs, Tag, Textarea, Toggle, Typing, VersionBadge,
 } from '../src/ui/index.ts';
+import { LINE_PATTERNS } from '../src/ui/Markdown.tsx';
 
 const en = (ui: ReactNode) => render(<I18nProvider locale="en">{ui}</I18nProvider>);
 
@@ -568,12 +569,12 @@ describe('Markdown', () => {
     // The work count above sees what each exec scans, not the engine's backtracking: a `(.*)$` after a long run
     // fails at a lone \r, U+2028 or U+2029 and retries once per character of the run (20 k chars ≈ 650 ms). Keep
     // the line patterns in a form that cannot do that.
-    const src = readFileSync(resolve(import.meta.dirname, '../src/ui/Markdown.tsx'), 'utf8');
-    const literals = [...src.matchAll(/^const [A-Z_]+ = (\/.+\/[a-z]*);$/gm)].map((m) => m[1]!);
-    expect(literals.length).toBeGreaterThan(3);
-    for (const re of literals) {
-      expect(re, re).not.toMatch(/\.\*\)?\$/);
-      expect(re.startsWith('/^') || !/[+*]\$\/[a-z]*$/.test(re), re).toBe(true);
+    const patterns = Object.entries(LINE_PATTERNS);
+    expect(patterns.length).toBeGreaterThan(3);
+    for (const [name, re] of patterns) {
+      expect(re).toBeInstanceOf(RegExp);
+      expect(re.source, name).not.toMatch(/\.\*\)?\$/);
+      expect(re.source.startsWith('^') || !/[+*]\$$/.test(re.source), name).toBe(true);
     }
     // The lines that used to backtrack still mean the same.
     const fence = render(<Markdown text={'```ts\rx\ncode'} />);
@@ -582,6 +583,13 @@ describe('Markdown', () => {
     const url = render(<Markdown text={'see https://example.com/a...'} />);
     expect(url.container.querySelector('a')!.getAttribute('href')).toBe('https://example.com/a');
     url.unmount();
+  });
+  it('a lone \\r at the end of a heading or bullet line does not leak into the text', () => {
+    const { container } = render(<Markdown headings text={'# Title\r\n- item\r\n- two\r'} />);
+    expect(container.querySelector('h3')!.textContent).toBe('Title');
+    expect([...container.querySelectorAll('li')].map((li) => li.textContent)).toEqual(['item', 'two']);
+    const raw = render(<Markdown headings text={'# Title\r'} />);
+    expect(raw.container.querySelector('h3')!.textContent).toBe('Title');
   });
   it('renders a fenced code block as plain text in a pre, between paragraphs', () => {
     const { container } = render(<Markdown text={'Before **bold**\n\n```ts\nconst a = 1;\n\n  **not bold** `nor code`\n```\nAfter *it*'} />);

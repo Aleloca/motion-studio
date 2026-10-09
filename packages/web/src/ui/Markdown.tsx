@@ -102,6 +102,10 @@ const HEADING = /^(#{1,6})[ \t]+([^]*)$/;
 /** A fence opener: up to 3 spaces, 3+ backticks or tildes, the info string (its first word is the language). */
 const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})([^]*)$/;
 const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
+/** Every pattern run on whole lines (exported for the linear-form guard test). */
+export const LINE_PATTERNS = { BULLET, HEADING, FENCE_OPEN, FENCE_CLOSE } as const;
+/** A lone \r the line split leaves at the end of a line (old Mac line ends) is not text. */
+const dropCR = (raw: string) => (raw.endsWith('\r') ? raw.slice(0, -1) : raw);
 /** Drops a closing `##` run and trailing spaces (a loop, not a regex: linear on hostile input). */
 function headingText(raw: string): string {
   let end = raw.length;
@@ -116,14 +120,14 @@ function blocks(text: string, headings: boolean): Block[] {
   let fence: { ch: string; len: number; indent: number; block: { kind: 'pre'; lang: string; lines: string[] } } | null = null;
   for (const line of text.split(/\r?\n/)) {
     if (fence) {
-      const close = FENCE_CLOSE.exec(line);
+      const close = LINE_PATTERNS.FENCE_CLOSE.exec(line);
       if (close && close[1]![0] === fence.ch && close[1]!.length >= fence.len) { fence = null; cur = null; continue; }
       let cut = 0;
       while (cut < fence.indent && line[cut] === ' ') cut++;
       fence.block.lines.push(line.slice(cut));
       continue;
     }
-    const open = FENCE_OPEN.exec(line);
+    const open = LINE_PATTERNS.FENCE_OPEN.exec(line);
     // A backtick fence's info string has no backtick (```code``` on one line is inline code).
     if (open && !(open[2]![0] === '`' && open[3]!.includes('`'))) {
       const block = { kind: 'pre' as const, lang: open[3]!.trim().split(' ')[0]!, lines: [] as string[] };
@@ -132,16 +136,16 @@ function blocks(text: string, headings: boolean): Block[] {
       cur = null;
       continue;
     }
-    const bullet = BULLET.exec(line);
-    const heading = headings ? HEADING.exec(line) : null;
+    const bullet = LINE_PATTERNS.BULLET.exec(line);
+    const heading = headings ? LINE_PATTERNS.HEADING.exec(line) : null;
     if (!line.trim()) { cur = null; continue; }
-    const title = heading ? headingText(heading[2]!) : '';
+    const title = heading ? headingText(dropCR(heading[2]!)) : '';
     if (heading && title) {
       out.push({ kind: 'h', level: heading[1]!.length, text: title });
       cur = null;
     } else if (bullet) {
       if (cur?.kind !== 'ul') { cur = { kind: 'ul', items: [] }; out.push(cur); }
-      cur.items.push(bullet[1]!);
+      cur.items.push(dropCR(bullet[1]!));
     } else {
       if (cur?.kind !== 'p') { cur = { kind: 'p', lines: [] }; out.push(cur); }
       cur.lines.push(line);
