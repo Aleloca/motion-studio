@@ -29,7 +29,8 @@ export interface CreativeRoutesContext {
 
 const isInsideDir = (p: string, base: string | null) => Boolean(base && p.startsWith(base.endsWith(sep) ? base : base + sep));
 
-const turnBody = z.object({ text: z.string().max(10_000).optional(), pins: z.array(pinSchema).max(50).optional() });
+/** `formats`: the formats the request applies to (spec §2.5); absent or empty: all of them. */
+export const turnBodySchema = z.object({ text: z.string().max(10_000).optional(), pins: z.array(pinSchema).max(50).optional(), formats: z.array(z.string().min(1).max(200)).max(100).optional() });
 const createBody = z.object({ title: z.string(), brief: briefSchema, generate: z.boolean().optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
 const editBody = z.object({ title: z.string().optional(), brief: briefSchema.optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
 const pickBody = z.object({ format: z.string().min(1).max(200), version: z.number().int().min(1).nullable() });
@@ -182,11 +183,11 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   });
 
   app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/turns', async (req, reply) => {
-    const body = parse(turnBody, req.body);
+    const body = parse(turnBodySchema, req.body);
     const ref = await refOf(req.params.slug, req.params.c);
     const text = body.text?.trim() ?? '';
     const pins = body.pins ?? [];
-    const job = await ctx.turns.start(ref, text || pins.length ? { text, pins } : undefined);
+    const job = await ctx.turns.start(ref, text || pins.length ? { text, pins } : undefined, body.formats ? { formats: body.formats } : {});
     return reply.status(202).send(job);
   });
 

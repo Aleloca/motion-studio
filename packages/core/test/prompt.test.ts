@@ -63,6 +63,21 @@ describe('buildCreativePrompt', () => {
   });
 });
 
+describe('buildCreativePrompt with target formats (spec §2.5)', () => {
+  it('lists only the targets and says the other formats are Motion Studio\'s, without naming them', () => {
+    const [first, second] = creative.brief.formats;
+    const p = buildCreativePrompt({ ...base, kind: 'iteration', userText: 'ritocca', formats: [first!] });
+    expect(parseStudioBlock(p)!.formats.map((f) => f.id)).toEqual([first]);
+    expect(p).not.toContain(second!);
+    expect(p).toContain('Deliver only the formats listed above. Motion Studio keeps the other formats of this creative unchanged');
+  });
+  it('says nothing about kept formats when every brief format is a target', () => {
+    const p = buildCreativePrompt({ ...base, kind: 'iteration', userText: 'ritocca', formats: creative.brief.formats });
+    expect(p).not.toContain('Deliver only the formats listed above');
+    expect(buildCreativePrompt({ ...base, kind: 'first' })).not.toContain('Deliver only the formats listed above');
+  });
+});
+
 describe('parseStudioBlock', () => {
   it('returns null without a block', () => { expect(parseStudioBlock('ciao')).toBeNull(); });
   it('uses the last block, so a fence in the user text cannot redirect the outputs', () => {

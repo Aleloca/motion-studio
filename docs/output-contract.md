@@ -34,12 +34,26 @@ Every turn writes into a new `outputs/vN/` folder (the exact folder is given in 
 - `files[]`: `format` (preset id), `file` (name only, no subfolders or `/` or `\`; `.` and `..` not allowed), `width` and `height` (positive integers), `durationSec` (positive number, optional: videos only).
 - `tools`: list of strings, empty by default.
 - `renderCommand`: optional; the command to run in `work/` to regenerate the outputs. It is quoted on one line (no control characters, at most 300 characters) when formats are added.
+- `followsFormat`: optional, **written only by Motion Studio** on the entry of a linked format (see below): the file is a byte copy of that primary format's file. A `followsFormat` (or any hash) the agent writes is ignored and dropped.
 
-A corrupt manifest is never rewritten by Motion Studio.
+The agent lists only the formats it was asked for. When a version also has carried or linked formats, Motion Studio rewrites `manifest.json` after the agent with every file of the version. Otherwise a corrupt manifest is never rewritten by Motion Studio.
+
+## Targeted turns, carried and linked formats
+
+A turn may apply to some formats only (`formats` in the turn request, the composer's "Applies to"). Motion Studio normalizes the list: formats not in the brief are dropped, a linked format stands for its primary ("TikTok follows the Reel: the change applies to both"), and an empty or missing list means every primary format.
+
+- **Targets.** The agent receives only the target formats (in "Required formats" and in the machine block) and is told that Motion Studio keeps the other formats unchanged and writes their files itself. A primary format with no usable file in the base version (missing, a symlink or a hard link) is always a target: it cannot be carried. A Generate with no message after formats were added to the brief targets only the added primary formats.
+- **Carried formats.** After the agent's last attempt, the other primary formats are copied unchanged from the base version (the one restarted from, else the latest) into `outputs/vN/`, under the same file name. Each copy is checked by sha256 against its source, so the format's history does not grow. A carried file is checked only for presence and dimensions, and its `problems` are `[]`; the agent is never asked to fix a file it did not make.
+- **The agent wrote a non-target format anyway.** That is: after its last attempt the folder has an entry (file, link or folder) at the carried file's name, or its manifest lists the format. The agent's file is removed (also when listed under another name), the carried file is put in its place, and the output gets the note `outputs.keptUnchanged` ("… was not part of this request: the agent's file was discarded and the previous one kept unchanged").
+- **Linked formats (followers).** The brief's `links` (follower → primary) name formats that reuse a primary's file. The agent never makes them: after the carried files are in place, each link is checked again on the primary's real file (`canFollow` with its measured duration, an unknown duration being strict; the follower's maximum file size against the file's size), then the primary's file is copied to `<follower>.<primary's extension>` and verified by sha256. A follower's output gets a copy of its primary's `problems`. Copies are never hard links (confined reads refuse files with more than one link).
+- **A link that no longer holds** (e.g. a 70 s Reel and Shorts' 60 s limit) is removed from the brief and the chat explains it. When the primary was carried, this is known before the agent starts, so the agent makes the follower in the same turn. When the primary was just rendered, the follower is not delivered in this version (a version problem with the same text) and the next turn makes a dedicated version, since a primary format missing from the base is always a target.
+- **Formats added without the agent.** When formats added to the brief are all linkable to primaries present in the base version (a brief save links each added format to the first primary it can follow, with the duration checked only at materialization), Generate creates `v(N+1)` without starting `claude`: the base's files are copied, the followers materialized, the manifest written, the version validated and committed. The version request reads "Added TikTok · Video 9:16 and YouTube · Shorts 9:16 using the Instagram · Story/Reel 9:16 (v5)" and the chat adds "· no agent needed". No usage is recorded: nothing ran, so the usage ledger has no row and the version has no `usage`. If any added format is not linkable, the agent runs for those only and the linkable ones are still materialized.
+
+The final check of a version covers every file: targets with all the rules below, carried and linked files on presence and dimensions.
 
 ## Validation rules
 
-After every turn `validateOutputs` checks each format requested in the brief. The messages are the ones the agent receives (and that appear in the version as "problems"). They are written in the language set in **Settings → Language** at the time of the check; the English texts are shown here, and the Italian catalog has the same messages. Problems saved in a version are never translated afterwards.
+After every attempt `validateOutputs` checks each target format of the turn (every format of the brief that the agent delivers); each output also records its own `problems`. The messages are the ones the agent receives (and that appear in the version as "problems"). They are written in the language set in **Settings → Language** at the time of the check; the English texts are shown here, and the Italian catalog has the same messages. Problems saved in a version are never translated afterwards.
 
 | Situation | Message |
 |---|---|
@@ -60,7 +74,7 @@ With ffprobe available, width, height and duration are the measured ones (not th
 
 ## Fix attempts
 
-If there are problems, Motion Studio restarts the agent (in the same session) with the list of problems and asks it to deliver again in the same folder, updating the manifest. Attempts are at most 3 in total (the first turn plus two fixes). The exception is problems that are only unknown presets: the agent cannot solve them, so there is no retry. At the end the version is saved as **complete** (no problems) or **incomplete** (problems left, listed in the version), always with a git commit.
+If there are problems, Motion Studio restarts the agent (in the same session) with the list of problems and asks it to deliver again in the same folder, updating the manifest. Only the target formats are checked and sent back: carried and linked formats never go to the agent for fixing. Attempts are at most 3 in total (the first turn plus two fixes). The exception is problems that are only unknown presets: the agent cannot solve them, so there is no retry. At the end the version is saved as **complete** (no problems) or **incomplete** (problems left, listed in the version), always with a git commit.
 
 ## MCP tool `validate_output`
 

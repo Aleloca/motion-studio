@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { AgentEvent } from './events.ts';
 import { linkedCodebaseSchema } from './schemas.ts';
 import { usageSummarySchema } from './usage.ts';
-import { channelName } from './formats.ts';
+import { channelName, DEFAULT_FORMATS, formatLabel } from './formats.ts';
 import { messages, type Locale } from './i18n/index.ts';
 import type { FormatSummary } from './formats/link.ts';
 
@@ -142,6 +142,12 @@ export function outputWarningText(w: OutputWarning, locale: Locale): string {
     const targetMbps = Number(w.params.targetMbps);
     if (![sizeMB, mbps, targetMbps].every(Number.isFinite)) return w.key;
     return messages(locale).outputs.largeFile({ sizeMB, mbps, targetMbps, channel: channelName(String(w.params.channel ?? ''), locale) });
+  }
+  if (w.key === 'outputs.keptUnchanged') {
+    // A catalog format is named in the reader's language; any other id is shown as stored.
+    const id = String(w.params.format ?? '');
+    const preset = DEFAULT_FORMATS.find((p) => p.id === id);
+    return messages(locale).outputs.keptUnchanged({ format: preset ? formatLabel(preset, locale) : id });
   }
   return w.key;
 }

@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 // Test double for the `claude` CLI. Scenario via FAKE_CLAUDE_SCENARIO: ok | tool | usage_stream | crash | hang | hang_ignore_term | garbage | error_result | leak_fd | render | render_missing_once | render_never | render_then_crash | render_touch | brand | brand_invalid | brand_many_dropped | brand_big_guidelines | brand_symlink_summary | brand_outside_assets | brand_mixed
+// FAKE_CLAUDE_NO_FFMPEG=1: render placeholder media even with ffmpeg installed, each file with its own content.
+// FAKE_CLAUDE_EXTRA_FILES=<json array of manifest entries>: render also writes those files (content `agent:<file>`) and lists
+// the entries whose `format` is set (an entry without one only writes its file).
+// FAKE_CLAUDE_MANIFEST_PATCH=<json object>: merged into every manifest entry the render writes (e.g. a fake followsFormat).
 // FAKE_CLAUDE_TAMPER=1: brand/describe turns also overwrite brand/brand-kit.json and assets/assets.json directly.
 // FAKE_CLAUDE_SYMLINK_BRAND=<dir>: describe turns move brand/ to <dir>, tamper the kit there and leave a symlink.
 // FAKE_CLAUDE_WAIT_FILE=<path>: brand/describe turns wait for that file to exist before finishing.
@@ -33,13 +37,14 @@ const sessionId = resumed ? (args.includes('--fork-session') ? `${resumed}-fork`
 const hasFfmpeg = () => spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status === 0;
 // Real (tiny) media when ffmpeg is installed, so tests that use real MediaTools see valid files.
 const writeMedia = (file, f, durationSec) => {
+  if (process.env.FAKE_CLAUDE_NO_FFMPEG) { writeFileSync(file, `fake-media:${f.id}:${Date.now()}:${Math.random()}`); return; }
   if (!ffmpegOk) { writeFileSync(file, 'fake-media'); return; }
   const input = ['-f', 'lavfi', '-i', `color=c=blue:s=${f.width}x${f.height}${f.kind === 'video' ? `:d=${durationSec}:r=5` : ''}`];
   const output = f.kind === 'video' ? ['-pix_fmt', 'yuv420p', file] : ['-frames:v', '1', file];
   const r = spawnSync('ffmpeg', ['-y', '-loglevel', 'error', ...input, ...output], { stdio: 'ignore' });
   if (r.status !== 0) writeFileSync(file, 'fake-media');
 };
-const ffmpegOk = hasFfmpeg();
+const ffmpegOk = !process.env.FAKE_CLAUDE_NO_FFMPEG && hasFfmpeg();
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -65,7 +70,12 @@ rl.once('line', async (line) => {
       writeMedia(join(block.outputDir, file), f, block.durationSec ?? 10);
       return { format: f.id, file, width: f.width, height: f.height, ...(f.kind === 'video' ? { durationSec: block.durationSec ?? 10 } : {}) };
     });
-    writeFileSync(join(block.outputDir, 'manifest.json'), JSON.stringify({ schemaVersion: 1, files, tools: ['fake'], renderCommand: 'node render.js' }));
+    for (const extra of JSON.parse(process.env.FAKE_CLAUDE_EXTRA_FILES ?? '[]')) {
+      writeFileSync(join(block.outputDir, extra.file), `agent:${extra.file}`);
+      if (extra.format) files.push(extra);
+    }
+    const patch = JSON.parse(process.env.FAKE_CLAUDE_MANIFEST_PATCH ?? '{}');
+    writeFileSync(join(block.outputDir, 'manifest.json'), JSON.stringify({ schemaVersion: 1, files: files.map((x) => ({ ...x, ...patch })), tools: ['fake'], renderCommand: 'node render.js' }));
   };
   if (block && scenario === 'render') render(false);
   if (scenario === 'render_touch' && block) { render(false); if (process.env.FAKE_CLAUDE_TOUCH) writeFileSync(process.env.FAKE_CLAUDE_TOUCH, 'modified'); if (process.env.FAKE_CLAUDE_GIT_INIT) spawnSync('git', ['init', '-q'], { cwd: process.env.FAKE_CLAUDE_GIT_INIT }); }

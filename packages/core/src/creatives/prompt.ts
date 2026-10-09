@@ -19,6 +19,11 @@ export interface PromptInput {
   locale: Locale;
   /** True when the job really runs in the sandbox: only then the prompt describes sandbox limits. */
   sandboxed?: boolean;
+  /**
+   * The formats the agent delivers this turn (spec §2.3, §2.5): primaries only, in the brief's order. Default: every brief
+   * format. When some brief formats are left out (carried over or followers), the prompt says Motion Studio handles them.
+   */
+  formats?: string[];
 }
 export interface StudioBlock {
   outputDir: string; workDir: string; durationSec: number | null;
@@ -87,7 +92,9 @@ export function buildCreativePrompt(i: PromptInput): string {
   const { brief } = i.creative;
   const base = `creatives/${i.slug}`;
   const outputDir = `${base}/outputs/v${i.version}`;
-  const known = brief.formats.map((id) => [id, findPreset(i.presets, id)] as const);
+  const targets = i.formats ?? brief.formats;
+  const known = targets.map((id) => [id, findPreset(i.presets, id)] as const);
+  const othersKept = brief.formats.some((id) => !targets.includes(id));
   const block: StudioBlock = {
     outputDir, workDir: `${base}/work`, durationSec: brief.durationSec,
     formats: known.flatMap(([, p]) => (p ? [{ id: p.id, width: p.width, height: p.height, kind: p.kind, extensions: p.extensions }] : [])),
@@ -130,6 +137,8 @@ export function buildCreativePrompt(i: PromptInput): string {
     `- Workspace: ${base}/work/ (sources, scripts, local dependencies)`,
     `- Delivery: ${outputDir}/ with one file per format (\`<id>.<extension>\`) and manifest.json, as per the contract in .studio/context.md`,
     '- Each format is a dedicated recomposition, not a crop.',
+    // The kept formats are not named: the agent has nothing to deliver for them.
+    ...(othersKept ? ['- Deliver only the formats listed above. Motion Studio keeps the other formats of this creative unchanged and puts their files in the delivery folder itself: do not create, edit or delete files for them, and list only your formats in manifest.json.'] : []),
     '', replyInstruction(locale),
     '', '```motion-studio', JSON.stringify(block), '```',
   );

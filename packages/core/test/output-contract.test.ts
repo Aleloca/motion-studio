@@ -34,8 +34,8 @@ describe('validateOutputs', () => {
     expect(r.tools).toEqual(['remotion']);
     expect(r.renderCommand).toBe('npm run render');
     expect(r.outputs).toEqual([
-      { format: 'sq', file: 'sq.mp4', width: 1080, height: 1080, durationSec: 15.2, verified: true, preview: '.previews/sq.mp4.jpg' },
-      { format: 'banner', file: 'banner.png', width: 300, height: 250, durationSec: null, verified: true, preview: null },
+      { format: 'sq', file: 'sq.mp4', width: 1080, height: 1080, durationSec: 15.2, verified: true, preview: '.previews/sq.mp4.jpg', problems: [] },
+      { format: 'banner', file: 'banner.png', width: 300, height: 250, durationSec: null, verified: true, preview: null, problems: [] },
     ]);
   });
   it('accepts null durationSec/renderCommand and ignores durationSec for images', async () => {
@@ -226,5 +226,59 @@ describe('validateOutputs', () => {
         outputs: [{ format: 'sq', file: 'sq.mp4', width: 1, height: 1, durationSec: null, verified: true, preview: null }], problems: [], tools: [], renderCommand: null, basedOn: null };
       expect(versionEntrySchema.safeParse(old).success).toBe(true);
     });
+  });
+});
+
+describe('validateOutputs per format (phase 9)', () => {
+  const vert: FormatPreset = { id: 'vert', channel: 'TikTok', name: 'Video 9:16', width: 1080, height: 1920, kind: 'video', extensions: ['mp4'], maxDurationSec: 60 };
+  const all = [...presets, vert];
+  it('records each file\'s own problems; the version keeps them all', async () => {
+    await manifest([{ ...sq, durationSec: 99 }, banner]);
+    await writeFile(join(dir, 'sq.mp4'), 'v');
+    await writeFile(join(dir, 'banner.png'), 'i');
+    const r = await validateOutputs({ dir, requested: ['sq', 'banner'], presets, durationSec: 99, media: NoMediaTools });
+    const sqOut = r.outputs.find((o) => o.format === 'sq')!;
+    expect(sqOut.problems).toHaveLength(1);
+    expect(sqOut.problems![0]).toContain('99');
+    expect(r.outputs.find((o) => o.format === 'banner')!.problems).toEqual([]);
+    expect(r.problems).toEqual(sqOut.problems);
+  });
+  it('checks carried files on presence and dimensions only', async () => {
+    // Over the max duration, off target and a wrong extension: none of these counts for a carried file.
+    await manifest([{ ...sq, file: 'sq.webm', durationSec: 99 }, { ...banner, width: 10 }]);
+    await writeFile(join(dir, 'sq.webm'), 'v');
+    await writeFile(join(dir, 'banner.png'), 'i');
+    const r = await validateOutputs({ dir, requested: ['sq', 'banner'], presets, durationSec: 15, media: NoMediaTools, carried: ['sq', 'banner'] });
+    expect(r.outputs.find((o) => o.format === 'sq')!.problems).toEqual([]);
+    expect(r.outputs.find((o) => o.format === 'banner')!.problems).toEqual([expect.stringContaining('10×250')]);
+    expect(r.problems).toEqual([expect.stringContaining('10×250')]);
+  });
+  it('reports a carried file missing on disk', async () => {
+    await manifest([sq]);
+    const r = await validateOutputs({ dir, requested: ['sq'], presets, durationSec: 15, media: NoMediaTools, carried: ['sq'] });
+    expect(r.outputs).toEqual([]);
+    expect(r.problems).toEqual([expect.stringContaining('sq.mp4')]);
+  });
+  it('gives a follower a copy of its primary\'s problems, once in the version, in the requested order', async () => {
+    const big = { ...sq, format: 'vert', file: 'vert.mp4', width: 1080, height: 1920, durationSec: 99 };
+    await manifest([{ ...big, format: 'follower', file: 'follower.mp4' }, big]);
+    await writeFile(join(dir, 'vert.mp4'), 'v');
+    await writeFile(join(dir, 'follower.mp4'), 'v');
+    const withFollower = [...all, { ...vert, id: 'follower' }];
+    const r = await validateOutputs({ dir, requested: ['follower', 'vert'], presets: withFollower, durationSec: 99, media: NoMediaTools, followers: { follower: 'vert' } });
+    expect(r.outputs.map((o) => o.format)).toEqual(['follower', 'vert']);
+    const primary = r.outputs.find((o) => o.format === 'vert')!;
+    expect(primary.problems).toHaveLength(1);
+    expect(r.outputs.find((o) => o.format === 'follower')!.problems).toEqual(primary.problems);
+    expect(r.problems).toEqual(primary.problems);
+  });
+});
+
+describe('outputWarningText outputs.keptUnchanged', () => {
+  it('names a catalog format in the reader\'s language, any other id as stored', () => {
+    const w = { key: 'outputs.keptUnchanged', params: { format: 'instagram-post-1x1' } };
+    expect(outputWarningText(w, 'en')).toBe('Instagram · Post 1:1 was not part of this request: the agent’s file was discarded and the previous one kept unchanged');
+    expect(outputWarningText(w, 'it')).toMatch(/^Instagram · Post 1:1 non faceva parte di questa richiesta/);
+    expect(outputWarningText({ ...w, params: { format: 'custom' } }, 'en')).toMatch(/^custom was not part/);
   });
 });
