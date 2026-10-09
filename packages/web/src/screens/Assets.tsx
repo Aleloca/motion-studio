@@ -12,7 +12,7 @@ import { go } from '../shell/ShellContext.tsx';
 import { Button, Check, Chip, Empty, Icon, Input, NavItem, Pill, Popover, Spinner, Tag, Textarea, Typing, cx, toast, type IconName } from '../ui/index.ts';
 import { useFontPreview, specimenFamily } from './brandFonts.ts';
 import { Alert, UNDO_MS, message } from './common.tsx';
-import { deferRemoval } from './deferred.ts';
+import { KEEPALIVE, deferRemoval, isPendingRemoval, removalKey, usePendingRemovals } from './deferred.ts';
 import './library.css';
 
 const KINDS: AssetKind[] = ['image', 'svg', 'video', 'font', 'audio', 'other'];
@@ -115,7 +115,16 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
   const firstPaint = useRef(true);
   useEffect(() => { firstPaint.current = false; }, []);
 
-  const assets = useMemo(() => listing.assets.filter((x) => !hidden.has(x.file)), [listing.assets, hidden]);
+  // Deletes started earlier (this screen was left and opened again within the Undo time) stay hidden too; when one goes
+  // out, the item leaves this screen's (older) listing in the same render.
+  const removals = usePendingRemovals((keys) => {
+    setListing((l) => (l ? { ...l, assets: l.assets.filter((x) => !keys.includes(removalKey('asset', slug, x.file))) } : l));
+  });
+  const assets = useMemo(
+    () => listing.assets.filter((x) => !hidden.has(x.file) && !isPendingRemoval(removalKey('asset', slug, x.file))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `removals` changes when a pending removal settles
+    [listing.assets, hidden, slug, removals],
+  );
   // The selection bar acts on what is selected: a filter change clears the selection, so it never acts on assets that
   // are no longer on screen.
   const filterKey = `${type}\n${origin ?? ''}\n${tag ?? ''}\n${query.trim()}`;
@@ -195,8 +204,9 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
       text: a.deleted({ count: files.length, name: baseName(files[0]!) }),
       undoLabel: a.undo,
       ms: UNDO_MS,
+      keys: files.map((f) => removalKey('asset', slug, f)),
       commit: async () => {
-        for (const f of files) await api.deleteAsset(slug, f);
+        for (const f of files) await api.deleteAsset(slug, f, KEEPALIVE);
         setListing((l) => (l ? { ...l, assets: l.assets.filter((x) => !files.includes(x.file)) } : l));
         unhide();
         reload();

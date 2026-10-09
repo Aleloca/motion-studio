@@ -1,6 +1,7 @@
 import type { ReferenceEntry } from '@motion-studio/shared';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { __resetDeferred } from '../src/screens/deferred.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import { I18nProvider } from '../src/i18n.tsx';
@@ -39,7 +40,7 @@ beforeEach(() => {
     ],
   };
 });
-afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); __resetToasts(); });
+afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); __resetToasts(); __resetDeferred(); });
 
 describe('References', () => {
   it('shows the moodboard with notes and how many references feed the brand analysis', async () => {
@@ -93,7 +94,23 @@ describe('References', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove leaf.jpg' }));
     await act(async () => {}); // the card collapses (T15), then the Undo time starts
     await act(async () => { vi.advanceTimersByTime(UNDO_MS + 500); });
-    expect(api.deleteReference).toHaveBeenCalledWith('acme', 'leaf.jpg');
+    expect(api.deleteReference).toHaveBeenCalledWith('acme', 'leaf.jpg', { keepalive: true });
+  });
+
+  it('a removed reference stays hidden when References is opened again within the Undo time', async () => {
+    const view = en(<References slug="acme" live={live()} />);
+    await screen.findByText('The single orange leaf is the whole palette idea.');
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove leaf.jpg' }));
+    await act(async () => { vi.advanceTimersByTime(400); });
+    view.unmount();
+    en(<References slug="acme" live={live()} />);
+    for (let i = 0; i < 5; i++) await act(async () => {});
+    expect(screen.getByRole('img', { name: 'deco.png' })).toBeTruthy();
+    expect(screen.queryByRole('img', { name: 'leaf.jpg' })).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(UNDO_MS + 500); });
+    expect(api.deleteReference).toHaveBeenCalledWith('acme', 'leaf.jpg', { keepalive: true });
+    expect(screen.queryByRole('img', { name: 'leaf.jpg' })).toBeNull();
   });
 
   it('"Analyze brand with these" goes to Brand and starts the analysis', async () => {

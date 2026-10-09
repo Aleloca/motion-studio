@@ -20,7 +20,6 @@ const api = {
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { ProjectSettings } = await import('../src/screens/ProjectSettings.tsx');
-const { UNDO_MS } = await import('../src/screens/common.tsx');
 
 const settings = workspaceSettingsSchema.parse({ schemaVersion: 1, extraAllowedDomains: ['cdn.acme.example'] });
 const live = (over: Partial<EventsState> = {}): EventsState => ({ approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {}, ...over });
@@ -57,56 +56,77 @@ describe('Project settings · always allowed', () => {
     expect(screen.getByText('2 · added from approval cards')).toBeTruthy();
   });
 
-  it('revoke hides the rule with Undo: Undo never calls deletePermission', async () => {
+  it('revoke asks first; Cancel keeps the rule and sends nothing', async () => {
     en(page());
     await screen.findByText('Compress images with pngquant');
-    vi.useFakeTimers();
     fireEvent.click(screen.getByRole('button', { name: 'Revoke Compress images with pngquant' }));
-    await act(async () => { vi.advanceTimersByTime(400); });
-    expect(screen.queryByText('Compress images with pngquant')).toBeNull();
-    const toast = getToasts().find((x) => x.text === 'Revoked: Compress images with pngquant')!;
-    expect(toast.action!.label).toBe('Undo');
-    await act(async () => { toast.action!.run(); });
-    await act(async () => { vi.advanceTimersByTime(UNDO_MS * 2); });
+    const row = screen.getByText('Compress images with pngquant').closest('.ms-perm') as HTMLElement;
+    expect(within(row).getByText('Revoke this rule?')).toBeTruthy();
+    fireEvent.click(within(row).getByRole('button', { name: 'Cancel' }));
+    expect(within(row).queryByText('Revoke this rule?')).toBeNull();
     expect(api.deletePermission).not.toHaveBeenCalled();
     expect(screen.getByText('Compress images with pngquant')).toBeTruthy();
   });
 
-  it('revoke without Undo sends deletePermission when the time is over', async () => {
+  it('a confirmed revoke deletes the rule at once (no Undo), then the row collapses', async () => {
     en(page());
-    await screen.findByText('Compress images with pngquant');
+    await screen.findByText('Read pages on acme.example');
     vi.useFakeTimers();
     fireEvent.click(screen.getByRole('button', { name: 'Revoke Read pages on acme.example' }));
-    await act(async () => {}); // the row collapses (T15), then the Undo time starts
-    await act(async () => { vi.advanceTimersByTime(UNDO_MS + 500); });
+    const row = screen.getByText('Read pages on acme.example').closest('.ms-perm') as HTMLElement;
+    fireEvent.click(within(row).getByRole('button', { name: 'Revoke Read pages on acme.example' }));
+    // Sent immediately: the security control takes effect when the UI says so.
     expect(api.deletePermission).toHaveBeenCalledWith('acme', 'WebFetch(domain:acme.example)');
+    await act(async () => {});
+    await act(async () => { vi.advanceTimersByTime(400); });
+    expect(screen.queryByText('Read pages on acme.example')).toBeNull();
+    const toast = getToasts().find((x) => x.text === 'Revoked: Read pages on acme.example')!;
+    expect(toast).toBeTruthy();
+    expect(toast.action).toBeUndefined();
+    expect(screen.getByText('Compress images with pngquant')).toBeTruthy();
   });
 
-  it('a failed revoke brings the rule back and explains why', async () => {
+  it('a failed revoke keeps the rule on screen and explains why', async () => {
     api.deletePermission.mockRejectedValueOnce(new Error('locked'));
     en(page());
     await screen.findByText('Compress images with pngquant');
     vi.useFakeTimers();
     fireEvent.click(screen.getByRole('button', { name: 'Revoke Compress images with pngquant' }));
+    const row = screen.getByText('Compress images with pngquant').closest('.ms-perm') as HTMLElement;
+    fireEvent.click(within(row).getByRole('button', { name: 'Revoke Compress images with pngquant' }));
     await act(async () => {});
-    expect(screen.queryByText('Compress images with pngquant')).toBeNull();
-    await act(async () => { vi.advanceTimersByTime(UNDO_MS + 500); });
-    expect(api.deletePermission).toHaveBeenCalled();
-    expect(screen.getByText('Compress images with pngquant')).toBeTruthy();
-    expect(getToasts().some((x) => x.text === 'Not revoked: locked')).toBe(true);
+    await act(async () => { vi.advanceTimersByTime(400); });
+    expect(api.deletePermission).toHaveBeenCalledTimes(1);
+    const back = screen.getByText('Compress images with pngquant').closest('.ms-perm') as HTMLElement;
+    expect(within(back).getByRole('alert').textContent).toBe('Not revoked: locked');
   });
 
-  it('Revoke all hides every rule with one Undo', async () => {
+  it('Revoke all asks once, then deletes every rule at once', async () => {
     en(page());
     await screen.findByText('Compress images with pngquant');
     vi.useFakeTimers();
     fireEvent.click(screen.getByRole('button', { name: 'Revoke all' }));
+    expect(screen.getByText('Revoke all 2 rules?')).toBeTruthy();
+    expect(api.deletePermission).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke all 2 rules' }));
+    expect(api.deletePermission).toHaveBeenCalledWith('acme', 'Bash(pngquant:*)');
+    await act(async () => {});
+    expect(api.deletePermission).toHaveBeenCalledWith('acme', 'WebFetch(domain:acme.example)');
     await act(async () => { vi.advanceTimersByTime(400); });
     expect(screen.getByText('Nothing is always allowed')).toBeTruthy();
-    const toast = getToasts().find((x) => x.text === '2 permissions revoked')!;
-    await act(async () => { toast.action!.run(); });
-    expect(screen.getByText('Compress images with pngquant')).toBeTruthy();
-    expect(api.deletePermission).not.toHaveBeenCalled();
+    expect(getToasts().find((x) => x.text === '2 permissions revoked')!.action).toBeUndefined();
+  });
+
+  it('Revoke all that fails half way keeps only the rules that are still saved', async () => {
+    api.deletePermission.mockResolvedValueOnce({ ok: true }).mockRejectedValueOnce(new Error('locked'));
+    en(page());
+    await screen.findByText('Compress images with pngquant');
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke all' }));
+    rules = rules.slice(1); // the first delete went through on the server
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke all 2 rules' }));
+    await waitFor(() => expect(screen.queryByText('Compress images with pngquant')).toBeNull());
+    expect(screen.getByText('Read pages on acme.example')).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toBe('Not revoked: locked');
   });
 
   it('shows the designed empty state', async () => {

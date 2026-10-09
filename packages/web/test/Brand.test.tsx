@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { EMPTY_BRAND_KIT, type BrandKit, type BrandOverview, type BrandProposal, type JobSummary } from '@motion-studio/shared';
+import { __resetDeferred } from '../src/screens/deferred.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import { I18nProvider } from '../src/i18n.tsx';
@@ -58,7 +59,7 @@ beforeEach(() => {
     sources: [{ id: 's-1', kind: 'website', url: 'https://acme.example', file: null, addedAt: '2026-10-07T10:00:00.000Z', lastAnalyzedAt: '2026-10-07T10:00:00.000Z' }],
   };
 });
-afterEach(() => { vi.clearAllMocks(); __resetToasts(); });
+afterEach(() => { vi.clearAllMocks(); __resetToasts(); __resetDeferred(); });
 
 describe('Brand · colors', () => {
   it('editing a color saves the kit (as a manual edit)', async () => {
@@ -202,7 +203,7 @@ describe('Brand · overview and sources', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Actions for acme.example' }));
     await userEvent.click(screen.getByRole('button', { name: 'Remove' }));
     await act(async () => { await flushDeferred(); });
-    expect(api.removeBrandSource).toHaveBeenCalledWith('acme', 's-1');
+    expect(api.removeBrandSource).toHaveBeenCalledWith('acme', 's-1', { keepalive: true });
   });
 
   it('picks AA text for a swatch, falling back to black or white', () => {
@@ -306,7 +307,7 @@ describe('Brand · fix round 1', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Remove' }));
     await userEvent.click(screen.getByRole('button', { name: /Analyze again/ }));
     await waitFor(() => expect(api.analyzeBrand).toHaveBeenCalled());
-    expect(api.removeBrandSource).toHaveBeenCalledWith('acme', 's-2');
+    expect(api.removeBrandSource).toHaveBeenCalledWith('acme', 's-2', { keepalive: true });
     expect(api.removeBrandSource.mock.invocationCallOrder[0]!).toBeLessThan(api.analyzeBrand.mock.invocationCallOrder[0]!);
   });
 

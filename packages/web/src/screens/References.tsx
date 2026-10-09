@@ -8,7 +8,7 @@ import { href } from '../routes.ts';
 import { go } from '../shell/ShellContext.tsx';
 import { Button, Card, Empty, Icon, Spinner, Textarea, Toggle, cx, toast } from '../ui/index.ts';
 import { Alert, UNDO_MS, message } from './common.tsx';
-import { deferRemoval, flushDeferred } from './deferred.ts';
+import { KEEPALIVE, deferRemoval, flushDeferred, isPendingRemoval, removalKey, usePendingRemovals } from './deferred.ts';
 import './library.css';
 
 type Listing = { references: ReferenceEntry[]; error: string | null };
@@ -62,7 +62,12 @@ function ReferencesBody({ slug, listing, setListing, reload }: { slug: string; l
   const firstPaint = useRef(true);
   useEffect(() => { firstPaint.current = false; }, []);
 
-  const refs = listing.references.filter((x) => !hidden.has(x.file));
+  // Removals started before this screen was opened again (within the Undo time) stay hidden; a committed one leaves
+  // the listing in the same render.
+  usePendingRemovals((keys) => {
+    setListing((l) => (l ? { ...l, references: l.references.filter((x) => !keys.includes(removalKey('reference', slug, x.file))) } : l));
+  });
+  const refs = listing.references.filter((x) => !hidden.has(x.file) && !isPendingRemoval(removalKey('reference', slug, x.file)));
   const on = (x: ReferenceEntry) => brandUse[x.file] ?? x.useForBrand;
   const feeding = refs.filter(on).length;
   const replace = useCallback((entry: ReferenceEntry) => {
@@ -93,8 +98,9 @@ function ReferencesBody({ slug, listing, setListing, reload }: { slug: string; l
       text: r.removed,
       undoLabel: r.undo,
       ms: UNDO_MS,
+      keys: [removalKey('reference', slug, x.file)],
       commit: async () => {
-        await api.deleteReference(slug, x.file);
+        await api.deleteReference(slug, x.file, KEEPALIVE);
         setListing((l) => (l ? { ...l, references: l.references.filter((y) => y.file !== x.file) } : l));
         unhide();
         reload();

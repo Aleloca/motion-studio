@@ -21,11 +21,15 @@ async function parse<T>(res: Response): Promise<T> {
   return data as T;
 }
 
-async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
+/** Per-call fetch options. `keepalive` lets a delete sent while the page closes reach the server. */
+export interface RequestOptions { keepalive?: boolean }
+
+async function request<T>(method: string, url: string, body?: unknown, opts: RequestOptions = {}): Promise<T> {
   const res = await fetch(url, {
     method,
     headers: headers(body === undefined ? {} : { 'content-type': 'application/json' }),
     body: body === undefined ? undefined : JSON.stringify(body),
+    ...(opts.keepalive ? { keepalive: true } : {}),
   });
   return parse<T>(res);
 }
@@ -67,7 +71,7 @@ export const api = {
   saveBrandKit: (slug: string, kit: BrandKit) => request<BrandKit>('PUT', `${p(slug)}/brand/kit`, { kit }),
   saveGuidelines: (slug: string, text: string) => request<{ ok: true }>('PUT', `${p(slug)}/brand/guidelines`, { text }),
   addBrandSource: (slug: string, body: { kind: 'website'; url: string } | { kind: 'image'; file: string }) => request<BrandSource>('POST', `${p(slug)}/brand/sources`, body),
-  removeBrandSource: (slug: string, id: string) => request<{ ok: true }>('DELETE', `${p(slug)}/brand/sources/${encodeURIComponent(id)}`),
+  removeBrandSource: (slug: string, id: string, opts?: RequestOptions) => request<{ ok: true }>('DELETE', `${p(slug)}/brand/sources/${encodeURIComponent(id)}`, undefined, opts),
   analyzeBrand: (slug: string, sourceIds?: string[]) => request<JobSummary>('POST', `${p(slug)}/brand/analyze`, { sourceIds }),
   applyProposal: (slug: string, id: string, acceptedIds: string[], applyGuidelines: boolean) =>
     request<{ kit: BrandKit; proposal: BrandProposal }>('POST', `${p(slug)}/brand/proposals/${encodeURIComponent(id)}/apply`, { acceptedIds, applyGuidelines }),
@@ -77,10 +81,10 @@ export const api = {
   registerAssets: (slug: string, files: string[]) => request<{ assets: AssetEntry[] }>('POST', `${p(slug)}/assets/register`, { files }),
   describeAssets: (slug: string, files?: string[]) => request<JobSummary>('POST', `${p(slug)}/assets/describe`, { files }),
   updateAsset: (slug: string, file: string, patch: { description?: string; tags?: string[] }) => request<AssetEntry>('PATCH', `${p(slug)}/assets/item/${enc(file)}`, patch),
-  deleteAsset: (slug: string, file: string) => request<{ ok: true }>('DELETE', `${p(slug)}/assets/item/${enc(file)}`),
+  deleteAsset: (slug: string, file: string, opts?: RequestOptions) => request<{ ok: true }>('DELETE', `${p(slug)}/assets/item/${enc(file)}`, undefined, opts),
   listReferences: (slug: string) => request<{ references: ReferenceEntry[]; error: string | null }>('GET', `${p(slug)}/references`),
   updateReference: (slug: string, file: string, patch: { note?: string; useForBrand?: boolean }) => request<ReferenceEntry>('PATCH', `${p(slug)}/references/item/${enc(file)}`, patch),
-  deleteReference: (slug: string, file: string) => request<{ ok: true }>('DELETE', `${p(slug)}/references/item/${enc(file)}`),
+  deleteReference: (slug: string, file: string, opts?: RequestOptions) => request<{ ok: true }>('DELETE', `${p(slug)}/references/item/${enc(file)}`, undefined, opts),
   projectFileUrl: (slug: string, rel: string) => `${p(slug)}/files/${enc(rel)}`,
   cancelJob: (id: string) => request<{ cancelled: boolean }>('POST', `/api/jobs/${encodeURIComponent(id)}/cancel`),
   getFormats: () => request<CatalogState>('GET', '/api/formats'),

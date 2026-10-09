@@ -6,8 +6,7 @@ import type { EventsState } from '../eventsReducer.ts';
 import { formatDate, useLocale, useT } from '../i18n.tsx';
 import { collapse, enter, useEnter } from '../motion/index.ts';
 import { Button, Card, Empty, Icon, Input, NavItem, Pill, Select, Spinner, Tag, Textarea, Toggle, cx, toast, type IconName } from '../ui/index.ts';
-import { Alert, Head, Row, SectionMain, UNDO_MS, message } from './common.tsx';
-import { deferRemoval } from './deferred.ts';
+import { Alert, Head, Row, SectionMain, message } from './common.tsx';
 import './settings.css';
 
 type Section = 'general' | 'agent' | 'internet' | 'code';
@@ -42,7 +41,7 @@ interface Props {
 /**
  * Project · Settings (spec §6.2 #12), ported from the prototype's ProjectSettingsPage and the ProjectSettings boards:
  * General, Agent and approvals (paid-service confirmation, parallel jobs, "Always allowed" with the plain label and the
- * rule below, revoked with T15 and Undo), Internet access and Linked code. The automatic approval of sandboxed
+ * rule below, revoked at once after an inline confirmation, T15 on success), Internet access and Linked code. The automatic approval of sandboxed
  * commands arrives with Phase 8; there is no Delete section because the API cannot delete a project.
  * Paid confirmation, parallel jobs, websites, isolation and model are workspace settings, shared by every project.
  */
@@ -220,46 +219,57 @@ function AdvancedCard({ settings, save, sandbox }: { settings: WorkspaceSettings
   );
 }
 
-/** "Always allowed": the rules saved from approval cards; revoke (or revoke all) collapses with T15 and offers Undo. */
+/**
+ * "Always allowed": the rules saved from approval cards. Revoking is a security control, so it takes effect at once:
+ * an inline confirmation, then the delete goes out immediately (there is no add-permission API, hence no Undo). The
+ * row collapses with T15 on success; on failure it stays with the reason.
+ */
 function AllowedCard({ slug, tick }: { slug: string; tick: number }) {
   const t = useT();
   const locale = useLocale();
   const a = t.web.projectSettings.allowed;
   const [rules, setRules] = useState<Rule[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [hidden, setHidden] = useState<Set<string>>(() => new Set());
   const [nonce, setNonce] = useState(0);
+  /** The rule asking "Revoke this rule?", or 'all' for the header's "Revoke all". */
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const list = useRef<HTMLDivElement>(null);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
-    let alive = true;
+    let on = true;
     Promise.resolve().then(() => api.getPermissions(slug))
-      .then((r) => { if (alive) { setRules(r); setError(null); } })
-      .catch((e: unknown) => { if (alive) setError(a.loadFailed({ detail: message(e) })); });
-    return () => { alive = false; };
+      .then((r) => { if (on) { setRules(r); setError(null); } })
+      .catch((e: unknown) => { if (on) setError(a.loadFailed({ detail: message(e) })); });
+    return () => { on = false; };
   }, [slug, tick, nonce, a]);
-  const shown = (rules ?? []).filter((r) => !hidden.has(r.rule));
+  const shown = rules ?? [];
 
   const revoke = async (targets: Rule[]) => {
-    if (!targets.length) return;
-    const rows = [...(list.current?.querySelectorAll<HTMLElement>('[data-rule]') ?? [])].filter((el) => targets.some((r) => r.rule === el.dataset.rule));
-    const finished = await Promise.all(rows.map((el) => collapse(el)));
-    if (finished.includes(false)) return;
-    const ids = targets.map((r) => r.rule);
-    setHidden((h) => new Set([...h, ...ids]));
-    const unhide = () => setHidden((h) => new Set([...h].filter((x) => !ids.includes(x))));
-    deferRemoval({
-      text: targets.length === 1 ? a.revoked({ label: targets[0]!.label || targets[0]!.rule }) : a.revokedAll({ count: targets.length }),
-      undoLabel: t.web.projectSettings.undo,
-      ms: UNDO_MS,
-      commit: async () => {
-        for (const id of ids) await api.deletePermission(slug, id);
-        setRules((r) => (r ? r.filter((x) => !ids.includes(x.rule)) : r));
-        unhide();
-        setNonce((n) => n + 1);
-      },
-      restore: unhide,
-      onError: (e) => { toast.show(a.revokeFailed({ detail: message(e) })); setNonce((n) => n + 1); },
-    });
+    if (!targets.length || busy) return;
+    setConfirming(null);
+    setBusy(true);
+    setRowErrors({});
+    const done: string[] = [];
+    let failed: { rule: string; error: unknown } | null = null;
+    for (const r of targets) {
+      try { await api.deletePermission(slug, r.rule); done.push(r.rule); } catch (e) { failed = { rule: r.rule, error: e }; break; }
+    }
+    if (!alive.current) return;
+    const rows = [...(list.current?.querySelectorAll<HTMLElement>('[data-rule]') ?? [])].filter((el) => done.includes(el.dataset.rule ?? ''));
+    // The rules are already gone on the server: they leave the list whether or not the collapse finishes.
+    await Promise.all(rows.map((el) => collapse(el)));
+    if (!alive.current) return;
+    setRules((r) => (r ? r.filter((x) => !done.includes(x.rule)) : r));
+    if (done.length) toast.show(done.length === 1 && targets.length === 1 ? a.revoked({ label: targets[0]!.label || targets[0]!.rule }) : a.revokedAll({ count: done.length }));
+    if (failed) {
+      setRowErrors({ [failed.rule]: a.revokeFailed({ detail: message(failed.error) }) });
+      // Re-read what is really saved now (a partial "Revoke all" may have removed some rules).
+      setNonce((n) => n + 1);
+    }
+    setBusy(false);
   };
 
   return (
@@ -267,24 +277,48 @@ function AllowedCard({ slug, tick }: { slug: string; tick: number }) {
       <div className="ms-set-cardhead">
         <b>{a.title}</b>
         {shown.length ? <span className="ms-set-faint">{a.count({ count: shown.length })}</span> : null}
-        {shown.length ? <Button size="sm" variant="ghost" className="ms-set-link" onClick={() => void revoke(shown)}>{a.revokeAll}</Button> : null}
+        {shown.length && confirming !== 'all' ? <Button size="sm" variant="ghost" className="ms-set-link" disabled={busy} onClick={() => setConfirming('all')}>{a.revokeAll}</Button> : null}
+        {shown.length && confirming === 'all' ? (
+          <Confirm question={a.confirmAll({ count: shown.length })} confirmLabel={a.confirmAllLabel({ count: shown.length })}
+            onConfirm={() => void revoke(shown)} onCancel={() => setConfirming(null)} />
+        ) : null}
       </div>
       {error ? <div className="ms-set-pad"><p className="ms-set-error" role="alert">{error}</p></div> : null}
       {!rules && !error ? <div className="ms-set-pad"><Spinner size={16} /></div> : null}
       {rules && shown.length === 0 ? <Empty icon="shield" title={a.emptyTitle} sub={a.emptySub} /> : null}
       <div ref={list}>
-        {shown.map((r) => <RuleRow key={r.rule} rule={r} date={formatDate(locale, r.addedAt, { day: 'numeric', month: 'short' })} onRevoke={() => void revoke([r])} />)}
+        {shown.map((r) => (
+          <RuleRow key={r.rule} rule={r} date={formatDate(locale, r.addedAt, { day: 'numeric', month: 'short' })}
+            confirming={confirming === r.rule} busy={busy} error={rowErrors[r.rule]}
+            onAsk={() => { setRowErrors({}); setConfirming(r.rule); }} onCancel={() => setConfirming(null)} onRevoke={() => void revoke([r])} />
+        ))}
       </div>
     </Card>
   );
 }
 
-function RuleRow({ rule: r, date, onRevoke }: { rule: Rule; date: string; onRevoke(): void }) {
+/** Inline "Revoke this rule? Revoke · Cancel". */
+function Confirm({ question, confirmLabel, onConfirm, onCancel }: { question: string; confirmLabel: string; onConfirm(): void; onCancel(): void }) {
+  const t = useT();
+  const a = t.web.projectSettings.allowed;
+  const yes = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => { yes.current?.focus(); }, []);
+  return (
+    <span className="ms-perm-confirm" role="group" aria-label={question}>
+      <span className="ms-perm-ask">{question}</span>
+      <Button ref={yes} size="sm" variant="danger" aria-label={confirmLabel} onClick={onConfirm}>{a.revoke}</Button>
+      <Button size="sm" variant="ghost" onClick={onCancel}>{a.cancel}</Button>
+    </span>
+  );
+}
+
+function RuleRow({ rule: r, date, confirming, busy, error, onAsk, onCancel, onRevoke }: {
+  rule: Rule; date: string; confirming: boolean; busy: boolean; error?: string; onAsk(): void; onCancel(): void; onRevoke(): void;
+}) {
   const t = useT();
   const a = t.web.projectSettings.allowed;
   const ref = useRef<HTMLDivElement>(null);
   const first = useRef(true);
-  // Back from an Undo (or new): the row enters again.
   useLayoutEffect(() => { if (first.current) { first.current = false; void enter(ref.current, { y: 6 }); } }, []);
   const label = r.label || r.rule;
   return (
@@ -293,9 +327,16 @@ function RuleRow({ rule: r, date, onRevoke }: { rule: Rule; date: string; onRevo
       <div className="ms-perm-text">
         <b>{label}</b>
         <span className="ms-perm-rule" title={r.rule}>{r.rule}</span>
+        {error ? <span className="ms-perm-error" role="alert">{error}</span> : null}
       </div>
-      <span className="ms-set-faint ms-perm-date">{date}</span>
-      <Button size="sm" aria-label={a.revokeLabel({ label })} onClick={onRevoke}>{a.revoke}</Button>
+      {confirming ? (
+        <Confirm question={a.confirm} confirmLabel={a.revokeLabel({ label })} onConfirm={onRevoke} onCancel={onCancel} />
+      ) : (
+        <>
+          <span className="ms-set-faint ms-perm-date">{date}</span>
+          <Button size="sm" aria-label={a.revokeLabel({ label })} disabled={busy} onClick={onAsk}>{a.revoke}</Button>
+        </>
+      )}
     </div>
   );
 }

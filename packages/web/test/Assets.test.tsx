@@ -29,6 +29,7 @@ const api = {
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { Assets } = await import('../src/screens/Assets.tsx');
 const { UNDO_MS } = await import('../src/screens/common.tsx');
+const { __resetDeferred } = await import('../src/screens/deferred.ts');
 const { useNewCreativeAssetsIntent } = await import('../src/shell/intents.ts');
 
 const live = (over: Partial<EventsState> = {}): EventsState => ({ approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {}, ...over });
@@ -48,7 +49,7 @@ beforeEach(() => {
     ],
   };
 });
-afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); __resetToasts(); });
+afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); __resetToasts(); __resetDeferred(); });
 
 describe('Assets · library', () => {
   it('shows descriptions and tags on the cards (point 17), with the file name, not the folder path, as the title', async () => {
@@ -168,7 +169,56 @@ describe('Assets · library', () => {
     await act(async () => { vi.advanceTimersByTime(UNDO_MS - 100); });
     expect(api.deleteAsset).not.toHaveBeenCalled();
     await act(async () => { vi.advanceTimersByTime(1000); });
-    expect(api.deleteAsset).toHaveBeenCalledWith('acme', 'night.jpg');
+    expect(api.deleteAsset).toHaveBeenCalledWith('acme', 'night.jpg', { keepalive: true });
+  });
+});
+
+describe('Assets · pending deletes across navigation', () => {
+  const deleteNight = async () => {
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select night.jpg' }));
+    fireEvent.click(within(screen.getByRole('toolbar', { name: 'Selection' })).getByRole('button', { name: 'Delete' }));
+    await act(async () => {});
+    expect(card('night.jpg')).toBeNull();
+  };
+  const reopen = async (unmount: () => void) => {
+    unmount();
+    en(<Assets slug="acme" live={live()} />);
+    for (let i = 0; i < 5; i++) await act(async () => {});
+    expect(card('logo.svg')).toBeTruthy();
+  };
+
+  it('stays hidden when the screen is left and opened again within the Undo time; Undo brings it back', async () => {
+    const view = en(<Assets slug="acme" live={live()} />);
+    await screen.findByText('Wordmark for dark backgrounds');
+    vi.useFakeTimers();
+    await deleteNight();
+    await reopen(view.unmount);
+    expect(card('night.jpg')).toBeNull();
+    await act(async () => { getToasts().find((x) => x.text === 'night.jpg deleted')!.action!.run(); });
+    expect(card('night.jpg')).toBeTruthy();
+    await act(async () => { vi.advanceTimersByTime(UNDO_MS * 2); });
+    expect(api.deleteAsset).not.toHaveBeenCalled();
+  });
+
+  it('does not come back on the reopened screen once the delete goes out', async () => {
+    const view = en(<Assets slug="acme" live={live()} />);
+    await screen.findByText('Wordmark for dark backgrounds');
+    vi.useFakeTimers();
+    await deleteNight();
+    await reopen(view.unmount);
+    await act(async () => { vi.advanceTimersByTime(UNDO_MS + 500); });
+    expect(api.deleteAsset).toHaveBeenCalledWith('acme', 'night.jpg', { keepalive: true });
+    expect(card('night.jpg')).toBeNull();
+  });
+
+  it('sends the pending delete at once, with keepalive, when the window is closing', async () => {
+    en(<Assets slug="acme" live={live()} />);
+    await screen.findByText('Wordmark for dark backgrounds');
+    vi.useFakeTimers();
+    await deleteNight();
+    expect(api.deleteAsset).not.toHaveBeenCalled();
+    await act(async () => { window.dispatchEvent(new Event('beforeunload')); });
+    expect(api.deleteAsset).toHaveBeenCalledWith('acme', 'night.jpg', { keepalive: true });
   });
 });
 
@@ -194,7 +244,7 @@ describe('Assets · selection and failures', () => {
     await act(async () => {});
     expect(card('night.jpg')).toBeNull();
     await act(async () => { vi.advanceTimersByTime(UNDO_MS + 500); });
-    expect(api.deleteAsset).toHaveBeenCalledWith('acme', 'night.jpg');
+    expect(api.deleteAsset).toHaveBeenCalledWith('acme', 'night.jpg', { keepalive: true });
     expect(card('night.jpg')).toBeTruthy();
     expect(getToasts().some((x) => x.text === 'Not deleted: disk full')).toBe(true);
   });

@@ -8,7 +8,7 @@ import { formatDate, relativeTime, useLocale, useT } from '../i18n.tsx';
 import { enter } from '../motion/index.ts';
 import { Button, cx, Icon, Input, Popover, Spinner, toast, Typing } from '../ui/index.ts';
 import { analysisSteps, healthChecks, hostOf, normalizeUrl, type HealthId } from './brandModel.ts';
-import { deferRemoval, flushDeferred } from './deferred.ts';
+import { KEEPALIVE, deferRemoval, flushDeferred, isPendingRemoval, removalKey, usePendingRemovals } from './deferred.ts';
 import { message, isActive, useBrand, useAppear, type SectionId } from './brandContext.tsx';
 /* ---------- side column: analysis, sources, health, history ---------- */
 
@@ -103,7 +103,15 @@ export function Sources({ overview, job, reload }: { overview: BrandOverview; jo
   const active = isActive(job);
   const analyzing = active && job?.kind === 'brand-analysis';
   const describing = active && job?.kind === 'asset-description';
-  const sites = overview.sources.filter((x) => x.kind === 'website' && !hidden.has(x.id));
+  // A source removed before this screen was opened again (Undo still running) stays hidden; once its delete goes out
+  // the brand reloads.
+  usePendingRemovals((keys) => {
+    const gone = overview.sources.filter((x) => keys.includes(removalKey('brand-source', slug, x.id))).map((x) => x.id);
+    if (!gone.length) return;
+    setHidden((h) => new Set([...h, ...gone]));
+    reload();
+  });
+  const sites = overview.sources.filter((x) => x.kind === 'website' && !hidden.has(x.id) && !isPendingRemoval(removalKey('brand-source', slug, x.id)));
   const images = overview.sources.filter((x) => x.kind === 'image').length;
   const usable = sites.length + images > 0;
   const analyzedOnce = overview.sources.some((x) => x.lastAnalyzedAt);
@@ -134,7 +142,8 @@ export function Sources({ overview, job, reload }: { overview: BrandOverview; jo
     setHidden((h) => new Set(h).add(src.id));
     deferRemoval({
       text: s.removed({ host }), undoLabel: t.web.brand.undo,
-      commit: () => api.removeBrandSource(slug, src.id).then(reload),
+      keys: [removalKey('brand-source', slug, src.id)],
+      commit: () => api.removeBrandSource(slug, src.id, KEEPALIVE).then(reload),
       restore: () => setHidden((h) => { const n = new Set(h); n.delete(src.id); return n; }),
       onError: (err) => setError(message(err)),
     });
