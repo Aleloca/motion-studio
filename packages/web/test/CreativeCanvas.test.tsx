@@ -114,8 +114,8 @@ describe('CreativeCanvas · overlays stay screen-sized at any zoom', () => {
   it('at 50% the bubble, the pins and the board labels are not scaled, and sit at world point × zoom', async () => {
     const size = (dim: 'clientWidth' | 'clientHeight', v: number) => vi.spyOn(HTMLElement.prototype, dim, 'get')
       .mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-viewport') ? v : 0; });
-    // World 808×750 at 100% → a 404 px wide viewport fits at exactly 50%.
-    const w = size('clientWidth', 404);
+    // World 808×750 at 100% → a 412 px wide viewport fits at exactly 50% (the 9:16 label keeps 160 px).
+    const w = size('clientWidth', 412);
     const h = size('clientHeight', 2000);
     const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
       // The 1:1 board (344×344 at 100%) on screen at 50%: 172×172 at the origin.
@@ -136,6 +136,13 @@ describe('CreativeCanvas · overlays stay screen-sized at any zoom', () => {
       expect(head.textContent).toContain('Instagram · Post 1:1');
       expect(netScale(head)).toBe(1);
       expect(head.closest('[style*="zoom"]')).toBeNull();
+      // The ellipsized name says itself in full on hover.
+      expect(head.querySelector('.ms-cv-board-name')!.getAttribute('title')).toBe('Instagram · Post 1:1');
+      // "Open editor" is screen-sized too, over the board, outside the zoomed frame; it still opens with the frame's rect.
+      const open = within(post).getByRole('button', { name: 'Apri l’editor di Instagram · Post 1:1' });
+      expect(netScale(open)).toBe(1);
+      expect(open.closest('.ms-cv-frame')).toBeNull();
+      expect(open.parentElement!.classList.contains('ms-cv-frame-wrap')).toBe(true);
 
       // A comment at 25% / 50% of the board (click at 43,86 on the 172 px frame).
       fireEvent.keyDown(window, { key: 'c' });
@@ -167,6 +174,48 @@ describe('CreativeCanvas · overlays stay screen-sized at any zoom', () => {
       expect(parseFloat(moved.style.left)).toBeCloseTo(0.25 * 344 * 0.6);
       expect(netScale(moved)).toBe(1);
     } finally { w.mockRestore(); h.mockRestore(); rect.mockRestore(); }
+  });
+});
+
+describe('CreativeCanvas · overlays (round 2)', () => {
+  it('Open editor, outside the zoomed frame, still hands the frame rect to T3', async () => {
+    const { container } = render(<Harness live={emptyLive()} />);
+    await ready();
+    const post = container.querySelector('[data-board="instagram-post-1x1"]') as HTMLElement;
+    const frame = post.querySelector('.ms-cv-frame') as HTMLElement;
+    const rect = vi.spyOn(frame, 'getBoundingClientRect').mockReturnValue({ left: 11, top: 22, width: 172, height: 172, x: 11, y: 22, right: 183, bottom: 194, toJSON: () => ({}) } as DOMRect);
+    await userEvent.click(within(post).getByRole('button', { name: 'Apri l’editor di Instagram · Post 1:1' }));
+    expect(rect).toHaveBeenCalled();
+    expect(takeFrameOrigin('format:acme/lancio/instagram-post-1x1')).toMatchObject({ left: 11, top: 22, width: 172 });
+  });
+
+  it('the bubble re-measures its side when the zoom changes while it is open', async () => {
+    const size = (dim: 'clientWidth' | 'clientHeight', v: number) => vi.spyOn(HTMLElement.prototype, dim, 'get')
+      .mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-viewport') ? v : 0; });
+    const w = size('clientWidth', 412);
+    const h = size('clientHeight', 2000);
+    const ow = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-bubble') ? 260 : 0; });
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const r = this.classList.contains('ms-cv-viewport') ? { left: 0, top: 0, width: 500, height: 800 }
+        : this.classList.contains('ms-cv-frame-wrap') ? { left: 0, top: 0, width: parseFloat(this.style.width) || 0, height: parseFloat(this.style.height) || 0 }
+          : this.classList.contains('ms-cv-hit') ? { left: 0, top: 0, width: 172, height: 172 } : { left: 0, top: 0, width: 0, height: 0 };
+      return { ...r, x: r.left, y: r.top, right: r.left + r.width, bottom: r.top + r.height, toJSON: () => r } as DOMRect;
+    });
+    try {
+      const { container } = render(<Harness live={emptyLive()} />);
+      await ready();
+      expect(screen.getByRole('button', { name: /50%/ })).toBeTruthy();
+      const post = container.querySelector('[data-board="instagram-post-1x1"]') as HTMLElement;
+      fireEvent.keyDown(window, { key: 'c' });
+      // At 90% of the board: 155 px from the left at 50% (room on the right), 310 px at 100% (no room: opens left).
+      fireEvent.click(within(post).getByRole('button', { name: /^Commenta Instagram · Post 1:1/ }), { clientX: 155, clientY: 86, detail: 1 });
+      await userEvent.type(await screen.findByLabelText('Testo del commento'), 'Più luce');
+      const bubble = () => container.querySelector('.ms-cv-bubble') as HTMLElement;
+      expect(bubble().classList.contains('ms-left')).toBe(false);
+      await userEvent.click(screen.getByRole('button', { name: /50%,/ }));
+      expect(screen.getByRole('button', { name: /100%,/ })).toBeTruthy();
+      expect(bubble().classList.contains('ms-left')).toBe(true);
+    } finally { w.mockRestore(); h.mockRestore(); ow.mockRestore(); rect.mockRestore(); }
   });
 });
 

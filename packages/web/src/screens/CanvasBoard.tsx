@@ -2,7 +2,7 @@
 // selected version's output, the generation sheen (T10), the reveal of a new picture (T11), safe zones with their
 // labels, the comment markers and the comment bubble, "Open editor" on hover/focus.
 //
-// Zoom: only the frame (media, safe zones, "Open editor") is zoomed. The label above it, the comment markers and the
+// Zoom: only the frame (media, safe zones) is zoomed. The label above it, "Open editor", the comment markers and the
 // bubble are screen-sized at any zoom (as in Figma): they sit in the frame's box, sized in screen pixels, at the
 // world point × zoom, so nothing scales them and the bubble's text field stays crisp.
 import { channelName, formatName, type FormatPreset, type Pin } from '@motion-studio/shared';
@@ -10,7 +10,7 @@ import { useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEve
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { anim, D, E, isSubmitChord } from '../motion/index.ts';
 import { Button, Icon, Pill, Textarea, cx } from '../ui/index.ts';
-import { boardFrame, outputMedia, pointIn, ratioText, toScreen, type BoardModel } from './canvasModel.ts';
+import { boardFrame, LABEL_MIN, outputMedia, pointIn, ratioText, toScreen, type BoardModel } from './canvasModel.ts';
 
 export type Tool = 'select' | 'comment' | 'hand';
 
@@ -79,8 +79,8 @@ export function CanvasBoard(p: BoardProps) {
 
   return (
     <div className={cx('ms-cv-board', p.selected && 'ms-on')} data-board={board.id}>
-      <div className="ms-cv-board-head" style={{ maxWidth: Math.max(Math.round(size.width * zoom), 160) }}>
-        <b className="ms-cv-board-name">{label}</b>
+      <div className="ms-cv-board-head" style={{ maxWidth: Math.max(Math.round(size.width * zoom), LABEL_MIN) }}>
+        <b className="ms-cv-board-name" title={label}>{label}</b>
         {board.preset ? <span className="ms-cv-board-meta">{ratioText(board.preset)}{duration !== null ? ` · ${c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) })}` : ''}</span> : null}
         {p.working && (!board.out || video) ? <Pill spinner>{c.rendering}</Pill> : null}
         {board.out && !board.out.verified ? <Pill tone="warn">{t.web.formatUi.unverified}</Pill> : null}
@@ -108,13 +108,15 @@ export function CanvasBoard(p: BoardProps) {
           {p.tool === 'comment' && board.out ? (
             <button type="button" className="ms-cv-hit" aria-label={c.commentOn({ label })} onClick={(e) => { e.stopPropagation(); place(e); }} />
           ) : null}
-          {p.tool === 'select' && board.out ? (
-            <button type="button" className="ms-cv-open" aria-label={c.openEditorOf({ label })}
-              onClick={(e) => { e.stopPropagation(); if (frame.current) p.onOpen(frame.current); }}>
-              <Icon name={board.preset?.kind === 'image' ? 'image' : 'video'} size={14} strokeWidth={1.6} />{c.openEditor}
-            </button>
-          ) : null}
         </div>
+        {/* Over the frame, outside its zoom: screen-sized, shown on hover of the board or on keyboard focus. */}
+        {p.tool === 'select' && board.out ? (
+          <button type="button" className="ms-cv-open" aria-label={c.openEditorOf({ label })}
+            onClick={(e) => { e.stopPropagation(); if (frame.current) p.onOpen(frame.current); }}
+            onDoubleClick={(e) => e.stopPropagation()}>
+            <Icon name={board.preset?.kind === 'image' ? 'image' : 'video'} size={14} strokeWidth={1.6} /><span className="ms-cv-open-text">{c.openEditor}</span>
+          </button>
+        ) : null}
         {p.pins.map(({ pin, number }) => (
           <button key={number} type="button" className={cx('ms-cv-pin', p.draft?.index === number - 1 && 'ms-on')} style={at(pin.x, pin.y)}
             aria-label={c.pin.edit({ n: number })} title={pin.note} onClick={(e) => { e.stopPropagation(); p.onEditPin(number); }}>
@@ -170,16 +172,25 @@ export function PinBubble({ draft, number, video, time, at, onText, onCommit, on
     if (el) { el.focus({ preventScroll: true }); el.setSelectionRange(el.value.length, el.value.length); }
   }, [opened]);
   // The card opens to the right of the marker, or to its left when the canvas has no room there.
+  // Measured again when the zoom moves the marker (`at`) or the frame's box changes size while the bubble is open.
   const [left, setLeft] = useState(draft.x > 0.55);
   useLayoutEffect(() => {
     const el = ref.current;
-    const box = el?.closest('.ms-cv-viewport, .ms-fv-stage')?.getBoundingClientRect();
-    const marker = el?.parentElement?.getBoundingClientRect();
-    if (!el || !box || !marker || !box.width) return;
-    const at = marker.left + draft.x * marker.width;
-    const room = box.right - at;
-    setLeft(room < el.offsetWidth + 40 && at - box.left > room);
-  }, [draft.x, draft.format]);
+    const measure = () => {
+      const box = el?.closest('.ms-cv-viewport, .ms-fv-stage')?.getBoundingClientRect();
+      const marker = el?.parentElement?.getBoundingClientRect();
+      if (!el || !box || !marker || !box.width) return;
+      const spot = marker.left + draft.x * marker.width;
+      const room = box.right - spot;
+      setLeft(room < el.offsetWidth + 40 && spot - box.left > room);
+    };
+    measure();
+    const parent = el?.parentElement;
+    if (!parent || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(parent);
+    return () => ro.disconnect();
+  }, [draft.x, draft.format, at?.left, at?.top]);
   const empty = !draft.text.trim();
   const pos = at ?? { left: `${draft.x * 100}%`, top: `${draft.y * 100}%` };
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {

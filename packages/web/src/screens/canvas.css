@@ -50,7 +50,7 @@
 .ms-cv-board-name { color: var(--text); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-cv-board-meta { font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap; }
 .ms-cv-board-head .ms-pill { height: 20px; }
-.ms-cv-frame-wrap { position: relative; flex: none; }
+.ms-cv-frame-wrap { position: relative; flex: none; container-type: inline-size; }
 .ms-cv-frame {
   position: absolute; left: 0; top: 0; border-radius: 4px; overflow: hidden; background: var(--field);
   box-shadow: 0 8px 24px var(--shadow); transition: box-shadow var(--d-m) var(--e-std);
@@ -69,7 +69,9 @@
   font: inherit; font-weight: 700; white-space: nowrap; cursor: pointer; box-shadow: 0 8px 24px var(--shadowLg);
   opacity: 0; transition: opacity var(--d-s) var(--e-std);
 }
-.ms-cv-frame:hover .ms-cv-open, .ms-cv-open:focus-visible { opacity: 1; }
+.ms-cv-frame-wrap:hover .ms-cv-open, .ms-cv-open:focus-visible { opacity: 1; }
+/* A board narrower than the button: the icon alone (the name stays in aria-label). */
+@container (max-width: 170px) { .ms-cv-open { padding: 0; width: 36px; justify-content: center; } .ms-cv-open-text { display: none; } }
 .ms-cv-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* Comment mode: the whole frame takes the click. */

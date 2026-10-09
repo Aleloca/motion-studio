@@ -1,7 +1,7 @@
 import { DEFAULT_FORMATS } from '@motion-studio/shared';
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('../src/api.ts', () => ({ api: { fileUrl: () => '' } }));
-const { boardsOf, fitZoom, toScreen, worldFixed, worldSize } = await import('../src/screens/canvasModel.ts');
+const { boardsOf, fitBoards, fitZoom, toScreen, worldAt, worldSize } = await import('../src/screens/canvasModel.ts');
 
 describe('canvas fit to view (CV1)', () => {
   const boards = boardsOf(['tiktok-9x16', 'instagram-post-1x1'], DEFAULT_FORMATS, null);
@@ -19,12 +19,21 @@ describe('canvas fit to view (CV1)', () => {
     expect(fitZoom(world, { width: 0, height: 0 }, 0.5)).toBeNull();
   });
 
-  it('keeps the board labels out of the zoom: their height is fixed, only the rest shrinks to fit', () => {
-    const world = worldSize(boards);
-    const fixed = worldFixed(boards);
-    expect(fixed).toEqual({ width: 0, height: 30 });
-    // 300 px tall: (300 − 30) / (750 − 30) = 0.375 → 35%, where scaling the labels too would give 0.4 → 40% overflowing.
-    expect(fitZoom(world, { width: 2000, height: 300 }, 0.25, fixed)).toBe(0.35);
+  it('fits with the labels at their real size: fixed height (two lines on a narrow board), at least 160 px wide', () => {
+    // At 100% every label is one line over a wide frame: the same world as worldSize.
+    expect(worldAt(boards, 1)).toEqual(worldSize(boards));
+    // At 40% the frames are 121.6 and 137.6 px but their labels keep 160 px and wrap to two lines (58 px with the gap).
+    const small = worldAt(boards, 0.4);
+    expect(small.width).toBeCloseTo(160 + 16 + 160 + 48);
+    expect(small.height).toBeCloseTo(58 + 0.4 * 540 + 0.4 * 180);
+    // 380 px: linear fit gives 45%, where the 160 px labels overflow (later steps: 40% → 384 px); 35% fits (376 px).
+    expect(fitZoom(worldSize(boards), { width: 380, height: 2000 }, 0.25)).toBe(0.45);
+    expect(fitBoards(boards, { width: 380, height: 2000 }, 0.25)).toBe(0.35);
+    expect(fitBoards(boards, { width: 484, height: 700 }, 0.5)).toBe(0.55);
+    expect(fitBoards(boards, { width: 2000, height: 2000 }, 0.5)).toBe(1);
+    expect(fitBoards(boards, { width: 100, height: 100 }, 0.5)).toBe(0.5);
+    expect(fitBoards(boards, { width: 0, height: 0 }, 0.5)).toBeNull();
+    expect(fitBoards([], { width: 400, height: 400 }, 0.5)).toBeNull();
   });
 });
 

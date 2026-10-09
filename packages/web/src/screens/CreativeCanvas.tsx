@@ -19,7 +19,7 @@ import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { Button, ChannelMark, Empty, Icon, Input, Pill, Spinner, Tabs, Tag, Toggle, cx, toast } from '../ui/index.ts';
 import { useCreative } from '../useCreative.ts';
 import { boardLabel, CanvasBoard, type Draft, type Tool } from './CanvasBoard.tsx';
-import { boardsOf, fitZoom, isTall, ratioText, worldFixed, worldSize, type BoardModel } from './canvasModel.ts';
+import { boardsOf, fitBoards, isTall, ratioText, type BoardModel } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf, lastStep } from './creativeState.ts';
 import { ExportDialog } from './ExportDialog.tsx';
@@ -255,7 +255,7 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
     if (!v || !boards.length) return;
     const fit = () => {
       if (userZoomed.current) return;
-      const z = fitZoom(worldSize(boards), { width: v.clientWidth, height: v.clientHeight }, ZOOM_MIN, worldFixed(boards));
+      const z = fitBoards(boards, { width: v.clientWidth, height: v.clientHeight }, ZOOM_MIN);
       if (z !== null) setZoom((cur) => (Math.abs(cur - z) < 1e-6 ? cur : z));
     };
     fit();
