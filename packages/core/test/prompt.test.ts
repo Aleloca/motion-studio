@@ -159,6 +159,13 @@ describe('buildCreativePrompt encoding guidance', () => {
     expect(p).toMatch(/instagram-post-1x1:.*target ~3500 kbps.*-crf 20 -maxrate 5250k -bufsize 7000k -pix_fmt yuv420p -movflags \+faststart/);
     expect(p).toMatch(/web-banner-300x250:(?!.*maxrate)/);
   });
+  it('gives no target or flags to a video preset without mp4/mov (gif/webm only)', () => {
+    const gifOnly = { id: 'custom-gif', channel: 'Custom', name: 'Gif', width: 600, height: 600, kind: 'video' as const, extensions: ['gif', 'webm'] };
+    const creative = { ...base.creative, brief: { ...base.creative.brief, formats: ['custom-gif'] } };
+    const p = buildCreativePrompt({ ...base, presets: [...base.presets, gifOnly], creative, kind: 'first' });
+    expect(p).toMatch(/- custom-gif: .*extensions: gif, webm/);
+    expect(p).not.toMatch(/custom-gif:.*(maxrate|target ~)/);
+  });
 });
 
 describe('Sandbox environment section', () => {
@@ -171,6 +178,7 @@ describe('Sandbox environment section', () => {
       expect(p).not.toMatch(/everything else is read-only/i);
       expect(p).toMatch(/headless Chromium/i);
       expect(p).toMatch(/do not mention these limitations/i);
+      expect(p).toContain("Put check frames and scratch files in `creatives/<slug>/work/tmp/`, not $TMPDIR — reading files outside the project needs the user's approval.");
       noPaths(p);
     }
   });

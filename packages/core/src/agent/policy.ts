@@ -25,7 +25,7 @@ export function sandboxCacheEnv(projectDir: string): Record<string, string> {
   const c = (n: string) => join(projectDir, CACHE_DIR, n);
   return {
     npm_config_cache: c('npm'), PIP_CACHE_DIR: c('pip'), XDG_CACHE_HOME: c('xdg'),
-    PNPM_STORE_DIR: c('pnpm-store'), npm_config_store_dir: c('pnpm-store'), YARN_CACHE_FOLDER: c('yarn'),
+    PNPM_STORE_DIR: c('pnpm-store'), YARN_CACHE_FOLDER: c('yarn'),
     PUPPETEER_SKIP_DOWNLOAD: '1', PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1',
     npm_config_update_notifier: 'false', PIP_DISABLE_PIP_VERSION_CHECK: '1',
   };

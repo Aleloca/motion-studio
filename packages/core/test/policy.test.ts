@@ -42,10 +42,12 @@ describe('buildAgentPolicy cache env', () => {
       const env = buildAgentPolicy({ ...input, kind }).env;
       expect(env).toMatchObject({
         npm_config_cache: '/w/acme/.cache/npm', PIP_CACHE_DIR: '/w/acme/.cache/pip', XDG_CACHE_HOME: '/w/acme/.cache/xdg',
-        PNPM_STORE_DIR: '/w/acme/.cache/pnpm-store', npm_config_store_dir: '/w/acme/.cache/pnpm-store', YARN_CACHE_FOLDER: '/w/acme/.cache/yarn',
+        PNPM_STORE_DIR: '/w/acme/.cache/pnpm-store', YARN_CACHE_FOLDER: '/w/acme/.cache/yarn',
         PUPPETEER_SKIP_DOWNLOAD: '1', PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1', npm_config_update_notifier: 'false', PIP_DISABLE_PIP_VERSION_CHECK: '1',
       });
       for (const v of Object.values(env)) expect(v).not.toContain('/Users/me');
+      // npm 11 warns 'Unknown env config "store-dir"' on every command; pnpm reads PNPM_STORE_DIR.
+      expect(env).not.toHaveProperty('npm_config_store_dir');
     }
     expect(buildAgentPolicy({ ...input, sandbox: false }).env).toEqual({});
   });

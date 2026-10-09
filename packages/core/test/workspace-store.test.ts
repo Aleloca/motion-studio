@@ -58,7 +58,7 @@ describe('projects', () => {
     // The usage ledger stays versioned and merges line by line.
     expect(await readFile(join(dir, '.gitattributes'), 'utf8')).toBe('.studio/usage.jsonl merge=union\n');
     expect(await readFile(join(dir, '.gitignore'), 'utf8')).toContain('creatives/*/work/out/');
-    expect((await readFile(join(dir, '.gitignore'), 'utf8')).split('\n')).toEqual(expect.arrayContaining(['.*.part', 'assets/.describe/', '.cache/']));
+    expect((await readFile(join(dir, '.gitignore'), 'utf8')).split('\n')).toEqual(expect.arrayContaining(['.*.part', 'assets/.describe/', '.cache/', 'creatives/*/work/tmp/']));
     const log = await execCommand('git', ['log', '--format=%s'], { cwd: dir });
     expect(log.stdout.trim()).toBe('Crea progetto Acme');
   });

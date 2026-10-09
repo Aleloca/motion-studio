@@ -51,6 +51,7 @@ creatives/*/work/out/
 node_modules/
 .venv/
 .cache/
+creatives/*/work/tmp/
 *.tmp
 .DS_Store
 .*.part

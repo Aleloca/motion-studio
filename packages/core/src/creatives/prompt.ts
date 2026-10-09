@@ -46,6 +46,7 @@ export const SANDBOX_SECTION_SHORT = [
 export const SANDBOX_SECTION = [
   '## Sandbox environment',
   '- Writable: the project (your work goes in `creatives/<slug>/work/`, deliveries in `outputs/`), except the protected `.git`, `.claude`, `.studio`, `CLAUDE.md`, `CLAUDE.local.md` and `.mcp.json`; plus $TMPDIR and the tool temp dirs. Nowhere else.',
+  "- Put check frames and scratch files in `creatives/<slug>/work/tmp/`, not $TMPDIR — reading files outside the project needs the user's approval.",
   '- Package caches (npm, pnpm, yarn, pip, XDG) are already configured and writable: install dependencies normally, without setting cache folders.',
   '- Network access is limited to the allowlisted domains (package registries and a few others); anything else fails.',
   '- Headless Chromium, Puppeteer and Playwright cannot run here and their browser downloads are disabled. Use a working engine from the start: ffmpeg, node-canvas or skia-canvas, Pillow or cairo. Browser-based rendering comes later and is managed by Motion Studio.',
@@ -93,7 +94,7 @@ export function buildCreativePrompt(i: PromptInput): string {
   };
   // Agent-facing text: format names are always the English ones, whatever the user's language; the id identifies the preset.
   const formatLines = known.map(([id, p]) => p
-    ? `- ${p.id}: ${formatLabel(p, 'en')} — ${p.width}×${p.height}, ${p.kind}${p.maxDurationSec ? `, max ${p.maxDurationSec}s` : ''}${p.safeZone ? `, safe zone px (top ${p.safeZone.top}, bottom ${p.safeZone.bottom}, left ${p.safeZone.left}, right ${p.safeZone.right})` : ''}${p.maxFileMB ? `, hard limit ${p.maxFileMB} MB` : ''}${p.kind === 'video' ? `, target ~${p.targetBitrateKbps ?? videoTargetBitrateKbps(p.width, p.height)} kbps, encode mp4/mov: ${encodeFlags(p.targetBitrateKbps ?? videoTargetBitrateKbps(p.width, p.height))}` : ''} — extensions: ${p.extensions.join(', ')}`
+    ? `- ${p.id}: ${formatLabel(p, 'en')} — ${p.width}×${p.height}, ${p.kind}${p.maxDurationSec ? `, max ${p.maxDurationSec}s` : ''}${p.safeZone ? `, safe zone px (top ${p.safeZone.top}, bottom ${p.safeZone.bottom}, left ${p.safeZone.left}, right ${p.safeZone.right})` : ''}${p.maxFileMB ? `, hard limit ${p.maxFileMB} MB` : ''}${p.kind === 'video' && p.extensions.some((e) => e === 'mp4' || e === 'mov') ? `, target ~${p.targetBitrateKbps ?? videoTargetBitrateKbps(p.width, p.height)} kbps, encode mp4/mov: ${encodeFlags(p.targetBitrateKbps ?? videoTargetBitrateKbps(p.width, p.height))}` : ''} — extensions: ${p.extensions.join(', ')}`
     : `- ${id}: unknown preset, ignore it and mention it in your reply`);
 
   const parts: string[] = [];
