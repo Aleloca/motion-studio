@@ -35,6 +35,14 @@ async function autoApprovable(ctx: BridgeRoutesContext, c: BridgeContext, toolNa
   try { return (await ctx.settings()).autoApproveSandboxed === true; } catch { return false; }
 }
 
+/** Same cap as an approval's detail; the marker says the event shows only the start of the command. */
+const MAX_EVENT_COMMAND = 2000;
+const capCommand = (command: string) => {
+  if (command.length <= MAX_EVENT_COMMAND) return command;
+  const head = command.slice(0, MAX_EVENT_COMMAND - 1);
+  return `${/[\uD800-\uDBFF]$/.test(head) ? head.slice(0, -1) : head}\u2026`;
+};
+
 /** Calls from the `studio` MCP server: one per tool, authenticated by the job's bridge token. */
 export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesContext) {
   const tools: Record<string, BridgeHandler> = {
@@ -52,7 +60,7 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
         const explanation = ctx.approvals.explain(c, 'Bash', input);
         // No explanation, no silent approval: the event must say what ran.
         if (explanation) {
-          c.emit({ kind: 'auto_approved', toolName: 'Bash', command: input.command as string, explanation });
+          c.emit({ kind: 'auto_approved', toolName: 'Bash', command: capCommand(input.command as string), explanation });
           return { behavior: 'allow', updatedInput: input };
         }
       }

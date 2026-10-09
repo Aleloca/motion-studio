@@ -122,8 +122,8 @@ const rows: Row[] = [
   ['rм -rf ~', ['runs'], ['unknown-command', 'writes-outside-project'], 'high', true],
   ['еcho ok', ['runs'], ['unknown-command'], 'medium', true],
   ['RM -rf ~', ['runs'], ['deletes-files', 'unknown-command'], 'high', true],
-  ['r​m -rf ~', ['complex'], ['complex'], 'medium', false],
-  ['ls ‮~ fr- mr', ['complex'], ['complex'], 'medium', false],
+  ['r\u200Bm -rf ~', ['complex'], ['complex'], 'medium', false],
+  ['ls \u202E~ fr- mr', ['complex'], ['complex'], 'medium', false],
   ['ls; '.repeat(60) + 'rm -rf ~', ['complex'], ['complex', 'deletes-files'], 'high', false],
   ['/bin/rm -rf ~/Documents', ['delete'], ['deletes-files'], 'high', true],
   ['/tmp/evil/ls', ['runScript'], ['runs-code'], 'medium', true],
@@ -754,7 +754,7 @@ describe('explainTool: phrases and paths', () => {
     expect(String(e.summary[0]!.params.path)).toContain('(~)');
   });
   it('strips control and bidi characters from parameters', () => {
-    const e = explainTool('Read', { file_path: `${PROJECT}/a‮b\u0007.txt` }, C);
+    const e = explainTool('Read', { file_path: `${PROJECT}/a\u202Eb\u0007.txt` }, C);
     expect(e.summary[0]!.params.path).toBe('a?b?.txt');
   });
 });

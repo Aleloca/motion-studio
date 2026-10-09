@@ -143,7 +143,7 @@ describe('tokenize: bail-outs', () => {
     '(cd x; ls)', '{ ls; }', 'if true; then ls; fi', 'for f in *; do rm $f; done', 'while true; do ls; done',
     '! ls', 'a=(1 2)', `echo $'\\x41'`, 'echo ${HOME:-$(id)}', 'echo ${unterminated',
     'ls # ; rm -rf ~', 'case x in a) ls;; esac',
-    'ls​ -la', 'ls ‮rm', 'ls⁦', 'ls\u0000', 'ls\r', 'ls x', 'ls﻿',
+    'ls\u200B -la', 'ls \u202Erm', 'ls\u2066', 'ls\u0000', 'ls\r', 'ls\u2028x', 'ls\uFEFF',
     'env -S "rm -rf ~"', 'sudo -s', 'sudo',
     'echo ${X:Y}', 'echo ${#X}', 'echo ${X/a/b}', 'echo ${!X}', 'echo "${(e)X}"', 'echo ${X[1]}', 'echo ${X}[1]', 'echo $X[1]', 'echo "$X[1]"', 'echo $[1]',
     'echo ${X:-$Y}', 'su -c ls', 'watch ls', 'script -q out ls', 'nice --frob ls', 'timeout --frob 1 ls',

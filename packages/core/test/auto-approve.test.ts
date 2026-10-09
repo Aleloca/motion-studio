@@ -86,6 +86,18 @@ describe('automatic approval in approve', () => {
     }));
     expect(ev.explanation.summary.length).toBeGreaterThan(0);
   });
+  it('caps the command in the event at 2000 characters, with a marker', async () => {
+    const token = bridge.register(ctxBase());
+    const long = `echo ${'a'.repeat(5000)}`;
+    expect(await outcome(token, bash(long))).toBe('auto');
+    const ev = events[0]!;
+    if (ev.kind !== 'auto_approved') throw new Error('unreachable');
+    expect(ev.command).toHaveLength(2000);
+    expect(ev.command.endsWith('\u2026')).toBe(true);
+    expect(ev.command.startsWith('echo aaa')).toBe(true);
+    expect(await outcome(token, bash('x'.repeat(2000)))).toBe('auto');
+    expect((events[1] as { command: string }).command).toBe('x'.repeat(2000));
+  });
   it('asks when the setting is off', async () => {
     autoApprove = false;
     const token = bridge.register(ctxBase());
@@ -128,7 +140,7 @@ describe('automatic approval in approve', () => {
   });
   it('asks for every other tool name, including look-alikes of Bash', async () => {
     const token = bridge.register(ctxBase());
-    const names = ['bash', 'Bash ', ' Bash', 'BASH', 'Bash​', 'Bаsh', 'Write', 'WebFetch', 'Read', 'mcp__evil__Bash', 'mcp__other__Bash', 'Bash(ls:*)'];
+    const names = ['bash', 'Bash ', ' Bash', 'BASH', 'Bash\u200B', 'B\u0430sh', 'Write', 'WebFetch', 'Read', 'mcp__evil__Bash', 'mcp__other__Bash', 'Bash(ls:*)'];
     for (const tool_name of names) {
       expect(await outcome(token, { tool_name, input: { command: 'ls', description: 'x' } }), tool_name).toBe('asked');
     }
@@ -202,9 +214,9 @@ describe('explained approval requests', () => {
     expect(cleanAgentReason(42)).toBeNull();
     expect(cleanAgentReason('')).toBeNull();
     expect(cleanAgentReason('  \n\t ')).toBeNull();
-    expect(cleanAgentReason('‮⁦​\u0007')).toBeNull();
-    expect(cleanAgentReason('  Render\u001b[31m\n 9:16 ‮gnp.exe⁦x⁩ ')).toBe('Render[31m 9:16 gnp.exex');
-    expect(cleanAgentReason('a​b؜c﻿d e f')).toBe('abcd e f');
+    expect(cleanAgentReason('\u202E\u2066\u200B\u0007')).toBeNull();
+    expect(cleanAgentReason('  Render\u001b[31m\n 9:16 \u202Egnp.exe\u2066x\u2069 ')).toBe('Render[31m 9:16 gnp.exex');
+    expect(cleanAgentReason('a\u200Bb\u061Cc\uFEFFd\u2028e\u2029f')).toBe('abcd e f');
     const long = cleanAgentReason('x'.repeat(5000))!;
     expect([...long]).toHaveLength(300);
     expect(long.endsWith('…')).toBe(true);
@@ -217,7 +229,7 @@ describe('explained approval requests', () => {
   });
   it('agentReason cleaning is linear on hostile input', () => {
     const t0 = performance.now();
-    cleanAgentReason(' ‮'.repeat(10_000) + 'x' + '\t'.repeat(10_000));
+    cleanAgentReason(' \u202E'.repeat(10_000) + 'x' + '\t'.repeat(10_000));
     expect(performance.now() - t0).toBeLessThan(50);
   });
 });
@@ -281,7 +293,7 @@ describe('auto_approved events follow the job event path', () => {
       { sandbox: true, mode: 'off' as const, expected: false },
     ];
     for (const c of cases) {
-      const l = testLauncher(runner, { bridge: b, mcpCommand: ['node', '/x'], sandbox: async () => ({ available: c.sandbox, reason: 'x' }), settings: { sandboxMode: c.mode } });
+      const l = testLauncher(runner, { bridge: b, mcpCommand: ['node', '/x'], sandbox: async () => ({ available: c.sandbox, reason: 'x' }), settings: { sandboxMode: c.mode, autoApproveSandboxed: true } });
       await (await l.start({ kind: 'brand-analysis', jobId: 'jx', projectSlug: 'acme', projectDir, request: { prompt: 'x' }, onEvent })).done;
     }
     expect(seen.map((s) => s?.sandboxed)).toEqual(cases.map((c) => c.expected));

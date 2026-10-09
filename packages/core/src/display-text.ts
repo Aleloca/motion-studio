@@ -1,7 +1,7 @@
 /** Agent-supplied text shown in the UI: no control, zero-width or bidi characters (they could disguise the text), single spaces. */
 export const cleanProgress = (text: string) => text
   .replace(/[\t\n\v\f\r]/g, ' ')
-  .replace(/[\p{Cc}​-‏‪-‮⁦-⁩؜﻿]/gu, '')
+  .replace(/[\p{Cc}\u200B-\u200F\u202A-\u202E\u2066-\u2069\u061C\uFEFF]/gu, '')
   .replace(/\s+/g, ' ')
   .trim();
 
