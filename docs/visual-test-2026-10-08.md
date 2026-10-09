@@ -1,7 +1,12 @@
 # Prova visiva — annotazioni (2026-10-08)
 
 ## Stato dopo la Fase 7 (redesign, branch `feat/phase7-redesign-ui`)
-Legenda: **✅ Fase 7** risolto, con una nota su come; **◐** parziale, resta aperto; **⏳ Fase N** rimandato alla fase indicata. Le differenze rimaste rispetto alle tavole sono in `.superpowers/sdd/2026-10-08-motion-studio-phase7-redesign-ui/visual-diff.md` (non versionato).
+Legenda: **✅ Fase 7** risolto, con una nota su come; **◐** parziale, resta aperto; **⏳ Fase N** rimandato alla fase indicata.
+
+Differenze ancora aperte rispetto alle tavole, dopo la fix wave finale della Fase 7 (nessun difetto noto resta aperto; tutto ciò che segue è voluto o manca un'API):
+- **Fasi successive:** contatore di token e sezione Usage (Fase 8); ★ e versione per formato, "Export ★ versions", schema dei nomi file (Fase 9); editor con timeline, livelli e inspector, "+ Add a format" sul canvas (Fase 10); ricerca Google Fonts (Fase 11).
+- **Manca un'API nel core (congelato in questa fase):** una sola copertina per creatività e per progetto (non una striscia per formato); riferimenti solo come immagini caricate (niente link o note); nessuna eliminazione del progetto; nessuna dimensione dei file nell'export; nessun autore nel menu delle versioni; spazio libero e stato della cartella nel setup; gli export non sono job, quindi non compaiono nel centro attività.
+- **Scelte di design (regole del registro):** impostazioni divise per sezione invece di un'unica dashboard; isolamento, modello e domini nelle impostazioni del progetto ("condivisi da ogni progetto"); "Skip for now" nel setup; Brand health con 4 controlli e storico = elenco delle analisi; nel web "Choose…" (cartella) e il testo sugli aggiornamenti esistono solo nell'app desktop.
 - Redesign UX/UI: **✅ Fase 7**. Nuovo design system (`ui/`), animazioni (`motion/`), barre e centro attività (`shell/`) e tutte le schermate riscritte; le vecchie schermate e i vecchi componenti sono stati rimossi.
 - Loghi dei canali: **✅ Fase 7** (Simple Icons in `ChannelMark`, nella tavola dei formati, nelle schede, nel canvas e nell'export).
 - Controlli nativi: **✅ Fase 7**. Niente `<select>`, checkbox, radio o maniglie delle textarea; un test impedisce anche i colori letterali in `screens/` e `shell/`.
@@ -97,7 +102,7 @@ Legenda: **✅ Fase 7** risolto, con una nota su come; **◐** parziale, resta a
     → **⏳ Fase 8.**
 
 31. **Miniatura del reel nera**: usa il primo fotogramma, che è nero per la dissolvenza in apertura. → Poster da un fotogramma rappresentativo (es. 40% della durata, oppure scelto dall'agente nel manifest) e riproduzione al passaggio del mouse.
-    → **◐ Fase 7, aperto:** le copertine usano l'anteprima del core (fotogramma a 0,5 s); manca la riproduzione al passaggio del mouse (fix wave della Fase 7).
+    → **✅ Fase 7:** le copertine usano l'anteprima del core (fotogramma a 0,5 s) e, al passaggio del mouse o con il focus, riproducono il video (muto, in loop) in Progetti, Jump back in e schede delle creatività; con "riduci movimento" non parte nulla.
 32. **Markdown non renderizzato nella conversazione** (`**grassetto**`, backtick, elenchi). → Render Markdown sicuro (senza HTML).
     → **✅ Fase 7:** Markdown sicuro, senza HTML.
 33. 🔴🔴 **Chromium non gira nella sandbox** ("mach-port permission denied"): Playwright, Puppeteer e Remotion (cioè il render basato su browser, il più adatto alla motion graphics) sono impossibili nelle creatività. L'agente ripiega su Python/Pillow più ffmpeg, che è limitato. → Opzioni: (a) capire quali permessi Seatbelt servono a Chromium (mach-lookup verso alcuni servizi) e se le impostazioni sandbox di Claude Code permettono di concederli in modo mirato; (b) uno strumento MCP `render_web(composition, formats)` eseguito dal core fuori dalla sandbox, in un processo Chromium isolato e senza rete, che renderizza HTML/CSS/JS dalla cartella `work/` in fotogrammi o mp4; (c) Remotion lanciato dal core come renderer controllato. Va valutato insieme al punto 23 (render kit). Impatta direttamente la qualità del prodotto.
@@ -114,7 +119,7 @@ Legenda: **✅ Fase 7** risolto, con una nota su come; **◐** parziale, resta a
 38. **Commenti sui video poco chiari**: "Add comment" su un video chiede di cliccare un punto; la spiegazione ("The comment uses the video's current time") è una riga minuscola in fondo. → Flusso esplicito: pausa automatica, mirino, tooltip "Clicca il punto del fotogramma a 0:05"; possibilità di un commento senza punto (sull'intero video o su un intervallo di tempo); marcatori dei commenti sulla timeline.
     → **✅ Fase 7:** pausa, invito "Click the spot of the frame at 00:02.50", marcatori sulla barra. Il commento senza punto o su un intervallo arriva con le fasi 9–10.
 39. Il player usa i controlli nativi del browser. → Player proprio con timeline, avanzamento fotogramma per fotogramma, loop e velocità.
-    → **◐ Fase 7, aperto:** player proprio con play/pausa, scorrimento e fotogramma per fotogramma; mancano loop e velocità (fix wave della Fase 7).
+    → **✅ Fase 7:** player proprio con play/pausa, scorrimento, fotogramma per fotogramma, loop e velocità (0,5×, 1×, 1,5×, 2×) con i controlli di `ui/`.
 
 40. 🔴 **Commenti puntuali senza testo**: sul media si lasciano solo segnaposti numerati; il testo va scritto a parte in "Request a change", dove i segnaposti diventano chip. L'utente si aspettava di scrivere accanto al punto. Inoltre:
     - i segnaposti non si possono spostare né cancellare sul media (solo la × sulla chip);
