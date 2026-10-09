@@ -227,3 +227,20 @@ Legenda impatto: 🟢 basso · 🟡 medio · 🔴 alto (sicurezza o prodotto).
 91. 🟢 **Le impostazioni valide per tutto il workspace** (isolamento, modello, lavori in parallelo, domini, conferma dei servizi a pagamento) stanno in Project settings con l'etichetta "Shared by every project", con un rimando da App settings. Niente eliminazione del progetto né link nelle References finché non esistono le API.
 92. 🟢 **La revoca di una regola "Always allowed" è immediata**, con una conferma in linea e senza Undo. Con la revoca differita, nei 5 secondi di attesa la regola restava valida per gli agenti in esecuzione, e chiudendo l'app in quella finestra poteva non essere mai revocata. Le altre eliminazioni (asset, references, fonti) restano annullabili per 5 secondi.
 93. 🟢 **La console del progetto è stata rimossa**, compreso il "turno di prova" libero dell'agente. I dettagli tecnici sono in "Activity details" nella conversazione.
+
+## Fase 8 · verifica dal vivo
+
+94. 🟢 **Il prerequisito di sicurezza regge.** Prova con Claude Code 2.1.295 vero, modello Haiku, config, workspace e progetto temporanei. Un comando Bash passato da `approve` e approvato resta comunque nella sandbox:
+    - non scrive in una cartella fuori dall'elenco delle scritture (`Operation not permitted`);
+    - non raggiunge `example.org` (`CONNECT tunnel failed, response 403`);
+    - con `dangerouslyDisableSandbox: true` nell'input non cambia nulla.
+
+    Dettagli in `docs/superpowers/notes/2026-10-09-phase8-live-checks.md`.
+95. 🟡 **Le scritture consentite non sono solo il progetto.** Oltre alla cartella del progetto, la sandbox di Claude Code lascia scrivere nella sua area temporanea per utente (`/private/tmp/claude-<uid>`, condivisa tra le sessioni Claude Code dello stesso utente), in `/tmp/claude`, in `~/.npm/_logs` e in `~/.claude/debug`. Il testo "Commands that stay inside this project" va letto così. Per questo la cartella di prova è stata scelta in `/private/tmp`, fuori da queste aree.
+96. 🟡 **Con `autoAllowBashIfSandboxed` acceso, quasi nessun comando composto del punto 24 arriva ad `approve`.**
+    - `;`, `&&`, le pipe e `time` da solo passano già in automatico nella sandbox.
+    - Ha chiesto conferma solo `time VAR=x comando`.
+    - L'input ricevuto da `approve` è `{ tool_name, input: { command, description, dangerouslyDisableSandbox? }, tool_use_id }`, e `description` c'è sempre.
+    - Il processo `claude` gira con cwd nella cartella del progetto.
+97. 🟡 **Nelle sessioni riprese, costo e `modelUsage` sono cumulativi.** In un turno con `--resume`, `result.usage` conta solo il turno, mentre `result.modelUsage` e `total_cost_usd` sommano tutta la sessione. Nel registro dei consumi i token si prendono da `usage`, e il costo del turno si ottiene per differenza o si calcola dai token. Sommare `total_cost_usd` contando ogni turno raddoppierebbe la spesa.
+98. 🟢 **Abbonamento o chiave API.** Si ricava dal campo `authMethod` di `claude auth status --json` (`"claude.ai"` = abbonamento). `email`, `orgId` e `orgName` non si leggono mai.
