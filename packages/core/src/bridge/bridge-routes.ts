@@ -24,12 +24,12 @@ const MAX_GUIDELINES = 50_000;
 /**
  * Spec §3.2: a permission prompt is answered without asking the user only when ALL of these hold — the tool is exactly
  * `Bash` (case-sensitive, untrimmed: look-alikes and MCP tools keep asking), the job was registered as sandboxed by the
- * launcher, the setting is on *now* (read on every call, so turning it off mid-job applies to the next prompt), and the
+ * launcher, the setting was on when the job started (`autoApproveAtStart`) and is on *now* (read on every call, so turning it off mid-job applies to the next prompt), and the
  * input does not ask to leave the sandbox. `dangerouslyDisableSandbox` must be absent or exactly `false`: `true`, the
  * string "true" or any other value asks. A non-string command asks too.
  */
 async function autoApprovable(ctx: BridgeRoutesContext, c: BridgeContext, toolName: unknown, input: Record<string, unknown>): Promise<boolean> {
-  if (toolName !== 'Bash' || c.sandboxed !== true || typeof input.command !== 'string') return false;
+  if (toolName !== 'Bash' || c.sandboxed !== true || c.autoApproveAtStart !== true || typeof input.command !== 'string') return false;
   if (Object.hasOwn(input, 'dangerouslyDisableSandbox') && input.dangerouslyDisableSandbox !== false) return false;
   if (!ctx.settings) return false;
   try { return (await ctx.settings()).autoApproveSandboxed === true; } catch { return false; }

@@ -70,7 +70,7 @@ describe('AgentLauncher sandbox caches', () => {
 });
 
 describe('AgentLauncher sandbox decision', () => {
-  it('a setting toggled between the prompt and start cannot make the policy disagree with the prompt', { timeout: 20_000 }, async () => {
+  it('a sandbox turned off between the prompt and start wins: the override can only downgrade, never claim a sandbox', { timeout: 20_000 }, async () => {
     const dir = await newProject();
     const argsFile = join(dir, 'args.json');
     process.env.FAKE_CLAUDE_ARGS_FILE = argsFile;
@@ -81,6 +81,19 @@ describe('AgentLauncher sandbox decision', () => {
     mode = 'off'; // toggled after the prompt was built
     const run = await launcher.start({ kind: 'creative', jobId: 'j1', projectSlug: 'acme', projectDir: dir, codebases: [], request: { prompt: 'ciao' }, onEvent: () => {}, sandboxed: decided });
     await run.done;
+    const { cacheEnv, args } = JSON.parse(await readFile(argsFile, 'utf8'));
+    expect(decided).toBe(true);
+    // The safe direction: the job runs unsandboxed (asking as usual) even though the prompt said sandboxed.
+    expect(cacheEnv.npm_config_cache).not.toBe(join(dir, '.cache', 'npm')); // whatever the parent env had, not the project cache
+    expect(args).not.toContain('--settings');
+  });
+  it('the override keeps the prompt and the policy in agreement when nothing changes', { timeout: 20_000 }, async () => {
+    const dir = await newProject();
+    const argsFile = join(dir, 'args.json');
+    process.env.FAKE_CLAUDE_ARGS_FILE = argsFile;
+    const launcher = testLauncher(new ClaudeCodeRunner([process.execPath, FAKE]), { sandbox: async () => ({ available: true, reason: 'ok' }) });
+    const decided = await launcher.sandboxed();
+    await (await launcher.start({ kind: 'creative', jobId: 'j1', projectSlug: 'acme', projectDir: dir, codebases: [], request: { prompt: 'ciao' }, onEvent: () => {}, sandboxed: decided })).done;
     const { cacheEnv, args } = JSON.parse(await readFile(argsFile, 'utf8'));
     expect(decided).toBe(true);
     expect(cacheEnv.npm_config_cache).toBe(join(dir, '.cache', 'npm'));

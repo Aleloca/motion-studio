@@ -10,6 +10,11 @@ export interface BridgeContext {
    * 'auto' and sandbox available), never from anything the agent sends. Read-only: the stored context is a frozen copy.
    */
   readonly sandboxed: boolean;
+  /**
+   * `autoApproveSandboxed` when the job started (the value its policy was built with). `approve` auto-allows only when
+   * it was on at start AND is on now: turning it on mid-job never changes a running job, turning it off applies at once.
+   */
+  readonly autoApproveAtStart: boolean;
   /** Same sink as the turn's onEvent. */
   emit(e: AgentEvent): void;
   /** Aborted when the job is cancelled or ends: in-flight provider calls must stop. */
@@ -25,8 +30,8 @@ export class AgentBridge {
   setOrigin(url: string) { this.origin = url.replace(/\/+$/, ''); }
   register(ctx: BridgeContext): string {
     const t = randomBytes(32).toString('hex');
-    // A frozen copy: later changes to the caller's object (or to a resolved context) can never flip `sandboxed`.
-    this.contexts.set(t, Object.freeze({ ...ctx, sandboxed: ctx.sandboxed === true }));
+    // A frozen copy: later changes to the caller's object (or to a resolved context) can never flip the flags.
+    this.contexts.set(t, Object.freeze({ ...ctx, sandboxed: ctx.sandboxed === true, autoApproveAtStart: ctx.autoApproveAtStart === true }));
     return t;
   }
   unregister(token: string) { this.contexts.delete(token); }

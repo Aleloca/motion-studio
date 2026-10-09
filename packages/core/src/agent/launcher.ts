@@ -52,7 +52,11 @@ export interface LaunchInput {
   validate?: BridgeContext['validate'];
   /** What the run's ledger line is about (a creative's version and fix-loop attempt); null for other jobs. */
   usage?: { version: number | null; attempt: number | null };
-  /** The sandbox decision the caller already put in the prompt: used as is, so prompt and policy cannot disagree. Computed when absent. */
+  /**
+   * The sandbox decision the caller already put in the prompt. It can only downgrade: `false` runs the job unsandboxed,
+   * `true` never claims a sandbox the launcher does not detect itself. Callers must take it from `launcher.sandboxed()`,
+   * so a prompt never says "sandboxed" for a job that is not (if the sandbox vanished meanwhile, the job runs without it).
+   */
   sandboxed?: boolean;
 }
 
@@ -71,7 +75,9 @@ export class AgentLauncher {
 
   async start(i: LaunchInput): Promise<AgentRun> {
     const settings = await this.deps.settings();
-    const sandbox = i.sandboxed ?? (settings.sandboxMode === 'auto' && (await this.deps.sandbox()).available);
+    const detected = settings.sandboxMode === 'auto' && (await this.deps.sandbox()).available;
+    const sandbox = i.sandboxed === false ? false : detected;
+    const autoApproveAtStart = settings.autoApproveSandboxed === true;
     const home = this.deps.home ?? homedir();
     const { configDir, bridge, mcpCommand, approvals } = this.deps;
     // The file is agent-reachable in the fallback mode: only rules that "Sempre" could have produced are honoured;
@@ -93,7 +99,7 @@ export class AgentLauncher {
       codebases: i.codebases ?? [], protectedFiles, protectedDirs,
       extraDomains: settings.extraAllowedDomains, projectAllowRules: rules,
       mcpTools: mcpOn ? MCP_TOOLS[i.kind].map((t) => `mcp__${MCP_SERVER}__${t}`) : [],
-      autoApproveSandboxed: settings.autoApproveSandboxed,
+      autoApproveSandboxed: autoApproveAtStart,
     });
 
     let token: string | null = null;
@@ -116,6 +122,8 @@ export class AgentLauncher {
           jobId: i.jobId, kind: i.kind, projectSlug: i.projectSlug, projectDir: i.projectDir, creativeSlug: i.creativeSlug ?? null,
           // The same value the policy was built with: `approve` auto-allows only for jobs that really run in the sandbox.
           sandboxed: sandbox,
+          // The same value as the policy's autoAllowBashIfSandboxed: a setting turned on later never reaches this job.
+          autoApproveAtStart,
           emit: i.onEvent, signal: abort.signal, ...(i.validate ? { validate: i.validate } : {}),
         });
         // The paths are recorded before writing, so release() also removes a half-written pair.

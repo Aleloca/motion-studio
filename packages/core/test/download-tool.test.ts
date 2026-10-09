@@ -29,7 +29,7 @@ beforeEach(async () => {
   controller = new AbortController();
   messages = [];
   sent = [];
-  ctx = { jobId: 'j1', kind: 'brand-analysis', projectSlug: 'acme', projectDir, creativeSlug: null, sandboxed: false, emit: () => {}, signal: controller.signal };
+  ctx = { jobId: 'j1', kind: 'brand-analysis', projectSlug: 'acme', projectDir, creativeSlug: null, sandboxed: false, autoApproveAtStart: false, emit: () => {}, signal: controller.signal };
 });
 
 describe('download_file', () => {

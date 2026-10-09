@@ -10,6 +10,9 @@ import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import type { AgentRunner } from '../src/agent/runner.ts';
 import { ApprovalBroker, cleanAgentReason } from '../src/approvals/broker.ts';
 import { AgentBridge, type BridgeContext } from '../src/bridge/bridge.ts';
+import { AgentLauncher } from '../src/agent/launcher.ts';
+import { workspaceSettingsSchema, type WorkspaceSettings } from '@motion-studio/shared';
+import { mkdtempSync } from 'node:fs';
 import { registerBridgeRoutes } from '../src/bridge/bridge-routes.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { CreativeTurnService } from '../src/creatives/creative-turns.ts';
@@ -31,7 +34,7 @@ let projectDir: string;
 let autoApprove: boolean;
 
 const ctxBase = (over: Partial<BridgeContext> = {}): BridgeContext => ({
-  jobId: 'j1', kind: 'creative', projectSlug: 'acme', projectDir, creativeSlug: 'c1', sandboxed: true,
+  jobId: 'j1', kind: 'creative', projectSlug: 'acme', projectDir, creativeSlug: 'c1', sandboxed: true, autoApproveAtStart: true,
   emit: (e) => events.push(e), signal: new AbortController().signal, ...over,
 });
 
@@ -183,6 +186,107 @@ describe('automatic approval in approve', () => {
   });
 });
 
+describe('the setting must be on at job start AND now', () => {
+  it('on at start, on now: auto-allows', async () => {
+    const token = bridge.register(ctxBase({ autoApproveAtStart: true }));
+    autoApprove = true;
+    expect(await outcome(token, bash('ls'))).toBe('auto');
+  });
+  it('off at start, turned on mid-job: asks (the setting applies to new jobs)', async () => {
+    const token = bridge.register(ctxBase({ autoApproveAtStart: false }));
+    autoApprove = true;
+    expect(await outcome(token, bash('ls'))).toBe('asked');
+    expect(events).toEqual([]);
+  });
+  it('on at start, turned off mid-job: asks at once', async () => {
+    const token = bridge.register(ctxBase({ autoApproveAtStart: true }));
+    autoApprove = false;
+    expect(await outcome(token, bash('ls'))).toBe('asked');
+  });
+  it('a forged registration or request body cannot flip autoApproveAtStart', async () => {
+    const ctx = ctxBase({ autoApproveAtStart: false });
+    const token = bridge.register(ctx);
+    (ctx as { autoApproveAtStart: boolean }).autoApproveAtStart = true;
+    expect(bridge.resolve(token)!.autoApproveAtStart).toBe(false);
+    expect(() => { (bridge.resolve(token) as { autoApproveAtStart: boolean }).autoApproveAtStart = true; }).toThrow(TypeError);
+    // A non-boolean truthy value at registration does not count as on.
+    const loose = bridge.register({ ...ctxBase(), autoApproveAtStart: 'true' as unknown as boolean });
+    expect(bridge.resolve(loose)!.autoApproveAtStart).toBe(false);
+    expect(await outcome(token, { ...bash('ls'), autoApproveAtStart: true })).toBe('asked');
+    expect(await outcome(loose, bash('ls'))).toBe('asked');
+  });
+  it('end to end through the launcher: the value at launch is recorded, the current one is re-read', async () => {
+    const live: WorkspaceSettings = workspaceSettingsSchema.parse({ schemaVersion: 1, sandboxMode: 'auto', autoApproveSandboxed: false });
+    bridge.setOrigin('http://127.0.0.1:1');
+    const tokens: string[] = [];
+    const runner: AgentRunner = { start: (req) => {
+      tokens.push(readFileSync(req.mcpConfigPath!.replace(/\.mcp\.json$/, '.token'), 'utf8'));
+      return { done: new Promise(() => {}), cancel: () => {} };
+    } };
+    const launcher = new AgentLauncher({
+      runner, bridge, approvals, sandbox: async () => ({ available: true, reason: 'ok' }), settings: async () => live,
+      configDir: mkdtempSync(join(tmpdir(), 'ms-cfg-')), mcpCommand: ['node', '/x/server.mjs'],
+    });
+    const app2 = Fastify();
+    registerBridgeRoutes(app2, { bridge, approvals, settings: async () => live });
+    const ask = async (token: string) => {
+      const res = app2.inject({ method: 'POST', url: '/api/bridge/approve', payload: bash('ls'), headers: { 'x-motion-studio-bridge': token } });
+      for (let i = 0; i < 50 && approvals.pending().length === 0; i++) {
+        if (await Promise.race([res.then(() => true), new Promise((r) => setTimeout(() => r(false), 5))])) break;
+      }
+      const p = approvals.pending()[0];
+      if (p) { await approvals.decide(p.id, 'deny'); await res; return 'asked'; }
+      return (await res).json().behavior === 'allow' ? 'auto' : 'denied';
+    };
+    const runOff = await launcher.start({ kind: 'creative', jobId: 'joff', projectSlug: 'acme', projectDir, request: { prompt: 'x' }, onEvent: () => {} });
+    live.autoApproveSandboxed = true; // turned on while the first job runs
+    const runOn = await launcher.start({ kind: 'creative', jobId: 'jon', projectSlug: 'acme', projectDir, request: { prompt: 'x' }, onEvent: () => {} });
+    expect(bridge.resolve(tokens[0])!.autoApproveAtStart).toBe(false);
+    expect(bridge.resolve(tokens[1])!.autoApproveAtStart).toBe(true);
+    expect(await ask(tokens[0]!)).toBe('asked');
+    expect(await ask(tokens[1]!)).toBe('auto');
+    live.autoApproveSandboxed = false; // turned off while the second job runs
+    expect(await ask(tokens[1]!)).toBe('asked');
+    runOff.cancel(); runOn.cancel();
+    await app2.close();
+  });
+});
+
+describe('LaunchInput.sandboxed can only downgrade', () => {
+  const capture = () => {
+    const b = new AgentBridge();
+    b.setOrigin('http://127.0.0.1:1');
+    const seen: { ctx: BridgeContext | null; settings: unknown; env: Record<string, string> | undefined }[] = [];
+    const runner: AgentRunner = { start: (req) => {
+      seen.push({ ctx: b.resolve(readFileSync(req.mcpConfigPath!.replace(/\.mcp\.json$/, '.token'), 'utf8')), settings: req.settings, env: req.env });
+      return { done: Promise.resolve({ status: 'succeeded' as const }), cancel: () => {} };
+    } };
+    return { b, seen, runner };
+  };
+  it('sandboxed: true while the sandbox is unavailable (or off) runs unsandboxed: no sandbox settings, no cache env', async () => {
+    for (const [available, mode] of [[false, 'auto'], [true, 'off']] as const) {
+      const { b, seen, runner } = capture();
+      const l = testLauncher(runner, { bridge: b, mcpCommand: ['node', '/x'], sandbox: async () => ({ available, reason: 'x' }), settings: { sandboxMode: mode, autoApproveSandboxed: true } });
+      // What callers must put in the prompt: the launcher's own decision.
+      expect(await l.sandboxed()).toBe(false);
+      await (await l.start({ kind: 'creative', jobId: 'jd', projectSlug: 'acme', projectDir, request: { prompt: 'x' }, onEvent: () => {}, sandboxed: true })).done;
+      expect(seen[0]!.ctx!.sandboxed).toBe(false);
+      expect(seen[0]!.settings).toBeUndefined();
+      expect(seen[0]!.env).toEqual({ MCP_TOOL_TIMEOUT: '900000' });
+    }
+  });
+  it('sandboxed: false while the sandbox is available downgrades the job', async () => {
+    const { b, seen, runner } = capture();
+    const l = testLauncher(runner, { bridge: b, mcpCommand: ['node', '/x'], sandbox: async () => ({ available: true, reason: 'ok' }), settings: { sandboxMode: 'auto', autoApproveSandboxed: true } });
+    await (await l.start({ kind: 'creative', jobId: 'jd', projectSlug: 'acme', projectDir, request: { prompt: 'x' }, onEvent: () => {}, sandboxed: false })).done;
+    expect(seen[0]!.ctx!.sandboxed).toBe(false);
+    expect(seen[0]!.settings).toBeUndefined();
+    await (await l.start({ kind: 'creative', jobId: 'je', projectSlug: 'acme', projectDir, request: { prompt: 'x' }, onEvent: () => {}, sandboxed: true })).done;
+    expect(seen[1]!.ctx!.sandboxed).toBe(true);
+    expect(seen[1]!.settings).toBeDefined();
+  });
+});
+
 describe('explained approval requests', () => {
   const base = () => ({ jobId: 'j1', projectSlug: 'acme', projectDir, creativeSlug: 'c1', kind: 'tool' as const });
   it('the request carries the explanation, computed with the job context, and the agent reason', async () => {
@@ -297,6 +401,7 @@ describe('auto_approved events follow the job event path', () => {
       await (await l.start({ kind: 'brand-analysis', jobId: 'jx', projectSlug: 'acme', projectDir, request: { prompt: 'x' }, onEvent })).done;
     }
     expect(seen.map((s) => s?.sandboxed)).toEqual(cases.map((c) => c.expected));
+    expect(seen.map((s) => s?.autoApproveAtStart)).toEqual(cases.map(() => true));
     expect(seen.every((s) => s?.emit === onEvent)).toBe(true);
   });
 });

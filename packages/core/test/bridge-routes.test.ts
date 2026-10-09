@@ -24,7 +24,7 @@ beforeEach(async () => {
   bridge = new AgentBridge();
   approvals = new ApprovalBroker({ broadcast: () => {} });
   events = [];
-  token = bridge.register({ jobId: 'j1', kind: 'creative', projectSlug: 'acme', projectDir, creativeSlug: 'c1', sandboxed: false, emit: (e) => events.push(e), signal: new AbortController().signal, validate: async () => ({ problems: ['Manca il formato X'], outputs: [] }) });
+  token = bridge.register({ jobId: 'j1', kind: 'creative', projectSlug: 'acme', projectDir, creativeSlug: 'c1', sandboxed: false, autoApproveAtStart: false, emit: (e) => events.push(e), signal: new AbortController().signal, validate: async () => ({ problems: ['Manca il formato X'], outputs: [] }) });
   app = Fastify();
   registerBridgeRoutes(app, { bridge, approvals });
 });
@@ -150,17 +150,17 @@ describe('bridge', () => {
     expect(body.guidelines).toHaveLength(50_000);
   });
   it('refuses tools that are not part of the job kind', async () => {
-    const describeToken = bridge.register({ jobId: 'j2', kind: 'describe', projectSlug: 'acme', projectDir, creativeSlug: null, sandboxed: false, emit: () => {}, signal: new AbortController().signal });
+    const describeToken = bridge.register({ jobId: 'j2', kind: 'describe', projectSlug: 'acme', projectDir, creativeSlug: null, sandboxed: false, autoApproveAtStart: false, emit: () => {}, signal: new AbortController().signal });
     const res = await call('read_brand_kit', {}, describeToken);
     expect(res.statusCode).toBe(403);
     expect(res.json()).toEqual({ error: 'Strumento non disponibile in questo lavoro' });
     expect((await call('validate_output', {}, describeToken)).statusCode).toBe(403);
     expect((await call('report_progress', { message: 'ok' }, describeToken)).statusCode).toBe(200);
-    const consoleToken = bridge.register({ jobId: 'j3', kind: 'console', projectSlug: 'acme', projectDir, creativeSlug: null, sandboxed: false, emit: () => {}, signal: new AbortController().signal });
+    const consoleToken = bridge.register({ jobId: 'j3', kind: 'console', projectSlug: 'acme', projectDir, creativeSlug: null, sandboxed: false, autoApproveAtStart: false, emit: () => {}, signal: new AbortController().signal });
     expect((await call('validate_output', {}, consoleToken)).statusCode).toBe(403);
   });
   it('explains that validation is only for creatives when the context has none', async () => {
-    const t = bridge.register({ jobId: 'j4', kind: 'creative', projectSlug: 'acme', projectDir, creativeSlug: 'c2', sandboxed: false, emit: () => {}, signal: new AbortController().signal });
+    const t = bridge.register({ jobId: 'j4', kind: 'creative', projectSlug: 'acme', projectDir, creativeSlug: 'c2', sandboxed: false, autoApproveAtStart: false, emit: () => {}, signal: new AbortController().signal });
     const res = await call('validate_output', {}, t);
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toBe('Validazione disponibile solo nelle creatività');
