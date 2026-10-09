@@ -99,13 +99,21 @@ export function Projects({ live }: { live: EventsState }) {
     return () => { alive = false; };
   }, []);
 
+  // "Last edited" must not jump while the cards load (D6): until every card has reported its creatives, the order
+  // uses what is known up front (the project dates and the latest creatives of "Jump back in"); then it changes once.
+  const upfront = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const c of recent) m[c.project.slug] = m[c.project.slug] ? later(m[c.project.slug]!, c.updatedAt) : c.updatedAt;
+    return m;
+  }, [recent]);
+  const settled = (items ?? []).every((i) => !i.ok || activity[i.slug] !== undefined);
   const sorted = useMemo(() => {
     const list = [...(items ?? [])];
     const key = (i: ProjectListItem) => (i.ok ? i.project.name : i.slug);
-    return sort === 'name'
-      ? list.sort((a, b) => key(a).localeCompare(key(b)))
-      : list.sort((a, b) => lastEdited(b, activity).localeCompare(lastEdited(a, activity)));
-  }, [items, sort, activity]);
+    if (sort === 'name') return list.sort((a, b) => key(a).localeCompare(key(b)));
+    const known = settled ? activity : upfront;
+    return list.sort((a, b) => lastEdited(b, known).localeCompare(lastEdited(a, known)));
+  }, [items, sort, activity, upfront, settled]);
 
   const create = async () => {
     const text = name.trim();
@@ -299,7 +307,8 @@ function ProjectCard({ item, live, waiting, fresh, index, onActivity }: CardProp
   const face = paletteFace(colors);
   const site = siteOf(brand.value, project);
   const updated = readable.reduce((a, c) => later(a, c.updatedAt), project.updatedAt);
-  useEffect(() => { onActivity(slug, updated); }, [onActivity, slug, updated]);
+  // Reported once the creatives answered (or failed): the list orders by it only when every card has.
+  useEffect(() => { if (creatives.done) onActivity(slug, updated); }, [onActivity, slug, updated, creatives.done]);
   // The name stands in for the cover only once we know there is no cover (no flash of the word before the images).
   const settled = creatives.done && brand.done;
   const data = { creatives: creatives.value, assets: assets.value };

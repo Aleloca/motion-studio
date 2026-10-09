@@ -185,6 +185,35 @@ describe('Projects · card data', () => {
     await waitFor(() => expect(names()).toEqual(['Older project', 'Newer project']));
   });
 
+  it('the order never jumps while cards load: it changes once, when every card has settled (D6)', async () => {
+    api.listProjects.mockResolvedValue([
+      project('a', 'Alpha', '2026-10-08T09:00:00.000Z'), project('b', 'Bravo', '2026-10-01T09:00:00.000Z'), project('c', 'Charlie', '2026-10-02T09:00:00.000Z'),
+    ]);
+    const gates: Record<string, () => void> = {};
+    const made = (updatedAt: string) => [{ ok: true, slug: 'x', title: 'X', status: 'ready', formats: [], versions: 1, updatedAt, cover: null }];
+    const latest: Record<string, string | null> = { a: null, b: '2026-10-08T11:00:00.000Z', c: '2026-10-08T10:00:00.000Z' };
+    api.listCreatives.mockImplementation(((slug: string) => new Promise((r) => { gates[slug] = () => r(latest[slug] ? made(latest[slug]!) : []); })) as never);
+    en(<Projects live={live()} />);
+    const names = () => [...document.querySelectorAll('.ms-pcard-name')].map((n) => n.textContent).join(',');
+    await waitFor(() => expect(names()).toBe('Alpha,Charlie,Bravo'));
+    await waitFor(() => expect(Object.keys(gates)).toHaveLength(3));
+    // Charlie settles first with a creative edited at 10:00: it must not jump ahead while the others load.
+    await act(async () => { gates.c!(); });
+    await act(async () => { gates.a!(); });
+    expect(names()).toBe('Alpha,Charlie,Bravo');
+    await act(async () => { gates.b!(); });
+    await waitFor(() => expect(names()).toBe('Bravo,Charlie,Alpha'));
+  });
+
+  it('uses Jump back in to place recently edited projects first before the cards load (D6)', async () => {
+    api.listProjects.mockResolvedValue([project('new', 'Newer project', '2026-10-08T09:00:00.000Z'), project('old', 'Older project', '2026-10-01T09:00:00.000Z')]);
+    api.recentCreatives.mockResolvedValue([recent('c', 'C', 'ready', { updatedAt: '2026-10-08T11:00:00.000Z', project: { slug: 'old', name: 'Older project' } })]);
+    api.listCreatives.mockImplementation((() => new Promise(() => {})) as never); // cards never settle
+    en(<Projects live={live()} />);
+    const names = () => [...document.querySelectorAll('.ms-pcard-name')].map((n) => n.textContent);
+    await waitFor(() => expect(names()).toEqual(['Older project', 'Newer project']));
+  });
+
   it('reads 3-, 6- and 8-digit hex colours and rejects the rest', () => {
     expect(hex6('#abc')).toBe('#aabbcc');
     expect(hex6('#1B1913')).toBe('#1B1913');
