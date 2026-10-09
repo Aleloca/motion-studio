@@ -21,7 +21,10 @@ import { explainWork } from './work.ts';
 
 export interface State {
   ctx: ExplainContext;
+  /** The folder relative paths start from (null: unknown). */
   cwd: string | null;
+  /** Other folders the command may be running in (`cd x; …` when the cd may have failed): paths are rated against all of them. */
+  altCwds: (string | null)[];
   ind: Indicators;
   phrases: Phrase[];
   parsed: boolean;
@@ -35,8 +38,8 @@ export interface State {
   chainNet: boolean;
   /** Absolute paths written earlier in the chain (capped): running one of them is at least medium. */
   written: string[];
-  /** Set by `cd`/`pushd`: where the next command runs if the `cd` succeeded (null: unknown). */
-  cdTarget?: string | null;
+  /** Set by `cd`/`pushd`: where the next command runs if the `cd` succeeded (each null: unknown). */
+  cdTarget?: (string | null)[];
   /** Words containing `token` stand for these locations (`find … -exec … {}`, `xargs` input). */
   found: { token: string; locs: Loc[] } | null;
   /** Display of the first stdout redirect target of the current command, if any. */
@@ -60,9 +63,13 @@ const MAX_WRITTEN = 200;
 // ——— paths ———
 
 const UNKNOWN_LOC = (raw: string): Loc => ({ cls: 'unknown', abs: null, raw, critical: true });
+const isRelativeWord = (w: string) => !w.startsWith('/') && !w.startsWith('~') && !w.startsWith('$');
 function locsOf(st: State, word: string, cwd: string | null = st.cwd): Loc[] {
   if (st.found && st.found.token !== '' && word.includes(st.found.token)) return st.found.locs;
-  return resolveLocs(word, cwd, st.ctx);
+  const locs = resolveLocs(word, cwd, st.ctx);
+  // A relative path in a command that may run in several folders: every one of them counts (the caller rates the worst).
+  if (cwd === st.cwd && st.altCwds.length > 0 && isRelativeWord(word)) for (const alt of st.altCwds) locs.push(...resolveLocs(word, alt, st.ctx));
+  return locs;
 }
 
 export function fmtList(items: readonly string[]): string {
@@ -172,6 +179,8 @@ function scriptArgs(st: State, args: readonly string[]): void {
     if (pathLike(v)) write(st, [v]); else if (pathLike(a) && !a.startsWith('-')) write(st, [a]);
   }
 }
+/** `/dev/stdin`, `//dev/fd/0`, `/proc/self/fd/0`: a script read from stdin. */
+const isStdinPath = (w: string) => ['/dev/stdin', '/dev/fd/0', '/proc/self/fd/0'].includes(normalizeCommandPath(w));
 /** Code read from stdin (`curl … | sh`): high when the pipeline downloads it. */
 function runsInput(st: State, lang: 'python' | 'node' | 'shell'): void {
   if (st.stdinFile !== null) {
@@ -184,12 +193,15 @@ function runsInput(st: State, lang: 'python' | 'node' | 'shell'): void {
 }
 
 const DELETE_TOKENS = ['rm_rf', 'rm_r', 'FileUtils.rm', 'File.delete', 'rmtree', 'os.remove', 'unlink', 'rmdir', 'remove(', 'rmSync', 'rimraf', 'fs.rm', 'shutil.move', "'rm'", '"rm"', 'rm -'];
-const SPAWN_TOKENS = ['do shell script', 'doShellScript', 'system(', 'system ', 'exec ', 'os.system', 'subprocess', 'os.popen', 'os.exec', 'os.spawn', 'pty.spawn', 'child_process', 'execSync', 'spawn(', 'exec(', 'eval(', '__import__', 'execFile', 'process.binding', 'shell_exec', 'passthru', 'popen', 'proc_open', 'Bun.spawn', 'Deno.run', 'Deno.Command', '`'];
+const SPAWN_TOKENS = ['do shell script', 'doShellScript', 'system(', 'os.system', 'subprocess', 'os.popen', 'os.exec', 'os.spawn', 'pty.spawn', 'child_process', 'execSync', 'spawn(', 'exec(', 'eval(', '__import__', 'execFile', 'process.binding', 'shell_exec', 'passthru', 'popen', 'proc_open', 'Bun.spawn', 'Deno.run', 'Deno.Command'];
+/** In perl, ruby, php and shell-like languages a backtick or `system `/`exec ` runs a command; in JavaScript a backtick is a template literal. */
+const SHELLISH_SPAWN_TOKENS = ['`', 'system ', 'exec ', '%x(', '%x{', 'qx(', 'qx{', 'qx/'];
 const NET_TOKENS = ['urllib', 'requests', 'http.client', 'httpx', 'socket', 'fetch(', 'http.get', 'https.get', 'http.request', 'https.request', 'net.connect', 'ftplib', 'smtplib', 'Net::', 'LWP', 'curl_', 'file_get_contents(\'http', 'open-uri'];
 /** Inline code (`python3 -c`, `node -e`, `perl -e`…) can do anything: medium at least, more when it visibly deletes, spawns or connects. */
-function inlineCode(st: State, code: string): void {
+function inlineCode(st: State, code: string, lang: 'js' | 'python' | 'shellish' = 'shellish'): void {
   explainWork.add(code.length * 4);
-  add(st, 'runs-code', SPAWN_TOKENS.some((t) => code.includes(t)) ? 'high' : 'medium');
+  const spawns = SPAWN_TOKENS.some((t) => code.includes(t)) || (lang === 'shellish' && SHELLISH_SPAWN_TOKENS.some((t) => code.includes(t)));
+  add(st, 'runs-code', spawns ? 'high' : 'medium');
   if (DELETE_TOKENS.some((t) => code.includes(t))) add(st, 'deletes-files', 'high');
   if (NET_TOKENS.some((t) => code.includes(t))) add(st, 'uses-network', 'medium');
 }
@@ -303,13 +315,13 @@ const def = (names: string[], h: Handler) => { for (const n of names) H.set(n, h
 def(['cd', 'pushd'], (args, st) => {
   const o = opts(st, args, { f: ['-P', '-L', '-e', '-@'] });
   const target = o.operands[0];
-  if (target === undefined) { st.cdTarget = st.ctx.home; P(st, 'cd', { path: '~' }); return; }
-  if (target === '-') { st.cdTarget = null; P(st, 'cd', { path: '-' }); return; }
+  if (target === undefined) { st.cdTarget = [st.ctx.home]; P(st, 'cd', { path: '~' }); return; }
+  if (target === '-') { st.cdTarget = [null]; P(st, 'cd', { path: '-' }); return; }
   const ls = locsOf(st, target);
   P(st, 'cd', { path: disp(st, [target]) });
-  st.cdTarget = ls.length === 1 && ls[0]!.abs !== null && !ls[0]!.abs.includes('*') && !ls[0]!.abs.includes('?') ? ls[0]!.abs : null;
+  st.cdTarget = [...new Set(ls.map((l) => (l.abs !== null && !l.abs.includes('*') && !l.abs.includes('?') ? l.abs : null)))];
 });
-def(['popd'], (_args, st) => { st.cdTarget = null; P(st, 'cd', { path: '…' }); });
+def(['popd'], (_args, st) => { st.cdTarget = [null]; P(st, 'cd', { path: '…' }); });
 def(['ls'], (args, st) => {
   // pure reader: ls (BSD and GNU) has no option that writes or runs anything.
   const o = opts(st, args, { any: true, v: ['-I', '--ignore', '-w', '--width', '-T', '--tabsize', '--format', '--sort', '--time-style', '-D', '--hide', '--block-size'] });
@@ -611,7 +623,7 @@ const FFMPEG_VALUE = new Set([
   '-bf', '-vf', '-af', '-filter', '-filter_complex', '-lavfi', '-map', '-ss', '-t', '-to', '-f', '-frames', '-vframes', '-aframes', '-dframes',
   '-ar', '-ac', '-ab', '-aspect', '-movflags', '-loglevel', '-v', '-threads', '-fps_mode', '-vsync', '-metadata', '-map_metadata',
   '-map_chapters', '-framerate', '-loop', '-stream_loop', '-start_number', '-q', '-qscale', '-x264-params', '-x265-params', '-x264opts',
-  '-tag', '-max_muxing_queue_size', '-sample_fmt', '-channel_layout', '-ch_layout', '-minrate', '-maxrate', '-bufsize', '-pattern_type',
+  '-tag', '-svtav1-params', '-aom-params', '-dump_attachment', '-max_muxing_queue_size', '-sample_fmt', '-channel_layout', '-ch_layout', '-minrate', '-maxrate', '-bufsize', '-pattern_type',
   '-itsoffset', '-sseof', '-fs', '-color_primaries', '-color_trc', '-colorspace', '-color_range', '-disposition', '-safe', '-probesize',
   '-analyzeduration', '-video_size', '-pixel_format', '-cq', '-qp', '-rc', '-deadline', '-cpu-used', '-row-mt', '-tile-columns',
   '-lag-in-frames', '-auto-alt-ref', '-quality', '-speed', '-compression_level', '-pred', '-lossless', '-sws_flags', '-vtag', '-atag',
@@ -623,7 +635,7 @@ const FFMPEG_VALUE = new Set([
 ]);
 const FFMPEG_READ_VALUE = new Set(['-filter_complex_script', '-filter_script', '-attach', '-hls_key_info_file', '-key_info_file']);
 /** Options whose value is a file ffmpeg writes (muxer side files included). */
-const FFMPEG_WRITE_VALUE = new Set(['-vstats_file', '-passlogfile', '-dump_attachment', '-progress', '-sdp_file', '-hls_segment_filename',
+const FFMPEG_WRITE_VALUE = new Set(['-vstats_file', '-passlogfile', '-progress', '-sdp_file', '-hls_segment_filename',
   '-segment_list', '-master_pl_name', '-hls_fmp4_init_filename', '-hls_base_url', '-dash_segment_filename', '-init_seg_name', '-media_seg_name',
   '-stats_file', '-report_file']);
 const FFPROBE_VALUE = new Set(['-v', '-loglevel', '-print_format', '-of', '-output_format', '-select_streams', '-show_entries', '-read_intervals', '-i', '-o', '-f', '-analyzeduration', '-probesize', '-show_optional_fields', '-threads', '-sections']);
@@ -661,27 +673,121 @@ function ffTarget(st: State, w: string, writes: boolean, depth = 0): boolean {
   if (FF_WRAP.includes(scheme)) return ffTarget(st, rest, writes, depth + 1);
   return false; // subfile, concatf, fd, unknown protocols
 }
-/** Filters that read or load something from a path (`movie=`, `fontfile=`) or talk to the outside (`zmq`). Returns false when unresolvable. */
+/**
+ * Splits `s` on `sep` at the top level of an ffmpeg filtergraph: quotes ('…') and backslash escapes protect separators,
+ * and `[labels]` are skipped. Linear.
+ */
+function ffSplit(s: string, seps: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let quoted = false;
+  let bracket = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]!;
+    if (c === '\\' && i + 1 < s.length) { cur += c + s[i + 1]; i++; continue; }
+    if (c === "'") { quoted = !quoted; cur += c; continue; }
+    if (!quoted) {
+      if (c === '[') bracket++;
+      else if (c === ']' && bracket > 0) bracket--;
+      else if (bracket === 0 && seps.includes(c)) { out.push(cur); cur = ''; continue; }
+    }
+    cur += c;
+  }
+  out.push(cur);
+  explainWork.add(s.length);
+  return out;
+}
+/** Removes one level of ffmpeg quoting and escaping: `'a b'` → `a b`, `a\:b` → `a:b`. */
+function ffUnquote(v: string): string {
+  let out = '';
+  let quoted = false;
+  for (let i = 0; i < v.length; i++) {
+    const c = v[i]!;
+    if (c === "'") { quoted = !quoted; continue; }
+    if (c === '\\' && !quoted && i + 1 < v.length) { out += v[i + 1]; i++; continue; }
+    out += c;
+  }
+  return out.trim();
+}
+/** A filter value that looks like a file: `/x`, `~/x`, `./x`, `../x`, or `dir/name.ext` (not an expression like `(ow-iw)/2`). */
+function ffPathLike(v: string): boolean {
+  if (v.startsWith('/') || v.startsWith('~') || v.startsWith('./') || v.startsWith('../') || v.includes('/../') || v === '..') return true;
+  if (!v.includes('/')) return false;
+  if ([...v].some((c) => ' ()*+<>,='.includes(c))) return false;
+  const dot = v.lastIndexOf('.');
+  return dot > v.lastIndexOf('/') && v.length - dot - 1 >= 1 && v.length - dot - 1 <= 5;
+}
+/** Filter options that read a file (key, or `#n` for the n-th positional argument). */
+const FF_READ_KEYS: Record<string, string[]> = {
+  movie: ['filename', '#0'], amovie: ['filename', '#0'], subtitles: ['filename', 'f', '#0', 'fontsdir'], ass: ['filename', 'f', '#0', 'fontsdir'],
+  drawtext: ['textfile', 'fontfile'], lut3d: ['file', '#0'], lut1d: ['file', '#0'], haldclut: [], sendcmd: ['filename', 'f', '#0'], asendcmd: ['filename', 'f', '#0'],
+  vidstabtransform: ['input'], ocr: ['datapath'], select: [], coreimage: [], afir: [], headphone: [], sofalizer: ['sofa', '#0'], dnn_processing: ['model'],
+};
+/** Filter options that write a file. */
+const FF_WRITE_KEYS: Record<string, string[]> = {
+  psnr: ['stats_file', 'f', '#0'], ssim: ['stats_file', 'f', '#0'], libvmaf: ['log_path'], vmaf: ['log_path'], metadata: ['file'], ametadata: ['file'],
+  signature: ['filename'], vidstabdetect: ['result'], ebur128: [], identity: ['stats_file', 'f'], msad: ['stats_file', 'f'], corr: ['stats_file', 'f'],
+};
+/** Filters that load plugins or talk to the outside: not modeled. */
+const FF_OPAQUE_FILTERS = ['zmq', 'azmq', 'frei0r', 'frei0r_src', 'ladspa', 'lv2', 'lensfun'];
+/**
+ * Checks every filter of a filtergraph. Known reader keys are reads (system fonts excepted), known writer keys are writes,
+ * and a path-like value under any other key is treated as a write (worst case). Returns false when not modeled.
+ */
 function ffmpegFilters(st: State, graph: string): boolean {
-  for (const key of ['movie=', 'amovie=', 'fontfile=', 'textfile=', 'filename=', 'stats_file=', 'file=', 'subtitles=', 'ass=', 'sub=']) {
-    let from = 0;
-    for (;;) {
-      const at = graph.indexOf(key, from);
-      if (at < 0) break;
-      // A whole key only: `file=` inside `fontfile=` is not a key of its own.
-      if (at > 0 && !':,;[=\'" \t'.includes(graph[at - 1]!)) { from = at + key.length; continue; }
-      let end = at + key.length;
-      while (end < graph.length && !':,;[]\'"'.includes(graph[end]!)) end++;
-      // `movie=http\://…`: an escaped colon belongs to the value.
-      while (graph[end] === ':' && graph[end - 1] === '\\') { end++; while (end < graph.length && !':,;[]\'"'.includes(graph[end]!)) end++; }
-      const path = graph.slice(at + key.length, end).split('\\:').join(':');
-      from = end;
-      if (!path || path.startsWith('=')) continue;
-      if ((key === 'fontfile=') && isSystemFont(path)) continue;
-      if (!ffTarget(st, path, key === 'stats_file=')) return false;
+  for (const chain of ffSplit(graph, ';')) {
+    for (const raw of ffSplit(chain, ',')) {
+      let f = raw.trim();
+      while (f.startsWith('[')) { const e = f.indexOf(']'); if (e < 0) return false; f = f.slice(e + 1).trim(); }
+      // Trailing output labels.
+      const eq = f.indexOf('=');
+      let name = (eq >= 0 ? f.slice(0, eq) : f).trim();
+      let argStr = eq >= 0 ? f.slice(eq + 1) : '';
+      const lb = argStr.length ? -1 : name.indexOf('[');
+      if (lb >= 0) name = name.slice(0, lb);
+      { // strip output labels at the end of the arguments: `…:y=10[out]`
+        let end = argStr.length;
+        while (end > 0 && argStr[end - 1] === ']') { const o = argStr.lastIndexOf('[', end - 1); if (o < 0) break; end = o; }
+        argStr = argStr.slice(0, end);
+      }
+      if (name.includes('@')) name = name.slice(0, name.indexOf('@'));
+      name = name.trim();
+      if (FF_OPAQUE_FILTERS.includes(name)) return false;
+      if (argStr === '') continue;
+      const reads = FF_READ_KEYS[name] ?? [];
+      const writes = FF_WRITE_KEYS[name] ?? [];
+      let pos = 0;
+      for (const item of ffSplit(argStr, ':')) {
+        const k = item.indexOf('=');
+        const key = k >= 0 ? item.slice(0, k).trim() : `#${pos++}`;
+        const value = ffUnquote(k >= 0 ? item.slice(k + 1) : item);
+        if (value === '') continue;
+        if (reads.includes(key)) {
+          if ((key === 'fontfile' || key === 'fontsdir') && isSystemFont(value.endsWith('/') ? value : `${value}`)) continue;
+          if (!ffTarget(st, value, false)) return false;
+        } else if (writes.includes(key)) {
+          if (!ffTarget(st, value, true)) return false;
+        } else if (ffPathLike(value)) {
+          if (!ffTarget(st, value, true)) return false;
+        }
+      }
     }
   }
-  for (const f of ['sendcmd', 'zmq', 'azmq', 'frei0r', 'ladspa', 'lv2', 'lensfun', 'vidstabdetect']) if (graph.includes(f)) unknownOpt(st, f);
+  return true;
+}
+/** `-x264-params k=v:k2=v2` and friends: the keys that write or read files. */
+const CODEC_PARAM_WRITES = ['stats', 'dump-yuv', 'csv', 'analysis-save', 'analysis-reuse-file', 'recon', 'pass-stats', 'output'];
+const CODEC_PARAM_READS = ['analysis-load', 'qpfile', 'cqmfile', 'cqm-file', 'zonefile', 'dhdr10-info', 'master-display-file', 'scaling-list', 'lambda-file'];
+function codecParams(st: State, v: string): boolean {
+  for (const item of ffSplit(v, ':')) {
+    const k = item.indexOf('=');
+    if (k < 0) continue;
+    const key = item.slice(0, k).trim().toLowerCase();
+    const value = ffUnquote(item.slice(k + 1));
+    if (CODEC_PARAM_WRITES.includes(key)) { if (!ffTarget(st, value, true)) return false; }
+    else if (CODEC_PARAM_READS.includes(key)) { if (!ffTarget(st, value, false)) return false; }
+    else if (ffPathLike(value)) { if (!ffTarget(st, value, true)) return false; }
+  }
   return true;
 }
 function media(st: State, args: string[], kind: 'ffmpeg' | 'ffprobe'): { inputs: string[]; outputs: string[] } | null {
@@ -714,6 +820,8 @@ function media(st: State, args: string[], kind: 'ffmpeg' | 'ffprobe'): { inputs:
       lastConsumedIdx = i;
       if (v === undefined) continue;
       if (name === '-f') { format = v; continue; }
+      if (name === '-dump_attachment') return null; // writes attachments under names taken from the file
+      if (['-x264-params', '-x265-params', '-x264opts', '-svtav1-params', '-aom-params', '-vpx-params', '-rav1e-params', '-kvazaar-params'].includes(name)) { if (!codecParams(st, v)) return null; continue; }
       if (name === '-i') { inputs.push(v); lastWasInput = true; if (!target(v, false, format)) return null; format = null; continue; }
       lastWasInput = false;
       if (kind === 'ffprobe' && name === '-o') { if (!ffTarget(st, v, true)) return null; outputs.push(v); continue; }
@@ -832,6 +940,9 @@ def(['magick', 'convert', 'mogrify', 'identify', 'montage', 'composite'], (args,
       const values = rest.slice(i + 1, i + 1 + arity);
       i += arity;
       if (opt === 'write') { for (const v of values) writes.push(stripCoder(v)); continue; }
+      // `-set filename:x …` names output files from image properties (`out_%[filename:x].png`): not modeled.
+      if (opt === 'set' && (values[0] ?? '').startsWith('filename:')) { st.parsed = false; return; }
+      if (opt === 'set' || opt === 'define') for (const v of values) { const pv = v.includes('=') ? v.slice(v.indexOf('=') + 1) : v; if (pathLike(pv) && !isSystemFont(pv)) read(st, [pv]); }
       for (const v of values) {
         // Text and drawing values can read files (`@file`, `image Over … 'file'`, `url(…)`): not modeled.
         if (v.includes('@') && (opt === 'annotate' || opt === 'label' || opt === 'caption' || opt === 'comment' || opt === 'draw' || opt === 'title' || opt === 'set')) { st.parsed = false; return; }
@@ -841,6 +952,8 @@ def(['magick', 'convert', 'mogrify', 'identify', 'montage', 'composite'], (args,
       continue;
     }
     const w = stripCoder(a);
+    // An output name computed at run time (`%[filename:x]`, `%[fx:…]`) can point anywhere: not modeled.
+    if (a.includes('%[')) { st.parsed = false; return; }
     // `@file` reads a list or text from a file; `msl:`/`mvg:` are scripts: not modeled.
     if (w.startsWith('@') || a.startsWith('msl:') || a.startsWith('mvg:') || a.includes(':@')) { st.parsed = false; return; }
     words.push(w);
@@ -924,24 +1037,47 @@ const DANGEROUS_ENV = new Set(['PATH', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'LD_AUDI
   'CDPATH', 'GLOBIGNORE', 'ZDOTDIR', 'EDITOR', 'VISUAL', 'PAGER', 'LESSOPEN', 'LESSCLOSE', 'MANPAGER', 'GIT_DIR', 'GIT_WORK_TREE', 'PIP_TARGET', 'PIP_PREFIX',
   'BROWSER', 'SSH_ASKPASS', 'SUDO_ASKPASS', 'FPATH', 'MAILPATH']);
 const SAFE_NPM_ENV = new Set(['npm_config_cache', 'NPM_CONFIG_CACHE', 'npm_config_yes', 'NPM_CONFIG_YES', 'npm_config_loglevel', 'NPM_CONFIG_LOGLEVEL', 'npm_config_update_notifier', 'NPM_CONFIG_UPDATE_NOTIFIER', 'npm_config_fund', 'NPM_CONFIG_FUND', 'npm_config_audit', 'NPM_CONFIG_AUDIT']);
-/** PYTHON* variables that only change output or caching. Every other PYTHON* variable can load code. */
+/** PYTHON* variables that only change output or caching. Every other PYTHON* variable can load code (PYTHONBREAKPOINT…). */
 const SAFE_PYTHON_ENV = new Set(['PYTHONPATH', 'PYTHONUNBUFFERED', 'PYTHONDONTWRITEBYTECODE', 'PYTHONIOENCODING', 'PYTHONHASHSEED', 'PYTHONUTF8',
   'PYTHONWARNINGS', 'PYTHONFAULTHANDLER', 'PYTHONNOUSERSITE', 'PYTHONOPTIMIZE', 'PYTHONVERBOSE']);
-const SAFE_PIP_ENV = new Set(['PIP_CACHE_DIR', 'PIP_NO_CACHE_DIR', 'PIP_DISABLE_PIP_VERSION_CHECK', 'PIP_QUIET', 'PIP_NO_INPUT', 'PIP_PROGRESS_BAR', 'PIP_ROOT_USER_ACTION']);
 /**
- * Variables that change which code or which configuration a program loads. Structural: by name pattern (…CONFIG,
- * …CONFIG_PATH, …CONFIG_FILE, …RC, …STARTUP, …_HOME, …USERCONFIG) and by tool prefix (LD_, DYLD_, GIT_, MAGICK_, PERL,
- * RUBY, BUN_, DENO_, PYTHON* and PIP_* except a few output-only ones), plus the explicit list.
+ * Always refused, whatever the value: names that load code or pick a config file (LD_*, DYLD_*, NODE_OPTIONS, PYTHONSTARTUP,
+ * …_CONFIG_PATH, GIT_*, NPM_CONFIG_USERCONFIG and the other npm config keys, MAGICK_*_PATH, …_PRELOAD, …).
  */
 export function isDangerousEnv(name: string): boolean {
-  if (DANGEROUS_ENV.has(name) || SAFE_NPM_ENV.has(name)) return DANGEROUS_ENV.has(name);
+  if (SAFE_NPM_ENV.has(name)) return false;
+  if (DANGEROUS_ENV.has(name)) return true;
   const n = name.toUpperCase();
   if (n.startsWith('NPM_CONFIG_')) return true;
   if (n.startsWith('PYTHON')) return !SAFE_PYTHON_ENV.has(n);
-  if (n.startsWith('PIP_')) return !SAFE_PIP_ENV.has(n);
-  if (['DYLD_', 'LD_', 'GIT_', 'BASH_FUNC_', 'MAGICK_', 'PERL', 'RUBY', 'BUN_', 'DENO_', 'FFREPORT', 'ZSH', 'LESS', 'NODE_REPL', 'RIPGREP_', 'CURL_', 'WGET', 'SSH_', 'GNUPG', 'GPG_'].some((p) => n.startsWith(p))) return true;
-  return n.endsWith('CONFIG') || n.endsWith('CONFIG_PATH') || n.endsWith('CONFIG_FILE') || n.endsWith('RC') || n.endsWith('RCFILE') || n.endsWith('STARTUP')
-    || n.endsWith('_HOME') || n.endsWith('USERCONFIG') || n.endsWith('GLOBALCONFIG') || n.endsWith('_PLUGINS') || n.endsWith('_PRELOAD');
+  if (['DYLD_', 'LD_', 'GIT_', 'BASH_FUNC_', 'RUBYOPT', 'PERL5', 'NODE_REPL', 'ZDOTDIR'].some((p) => n.startsWith(p))) return true;
+  if (n.startsWith('MAGICK_') && n.endsWith('_PATH')) return true;
+  return n.endsWith('_CONFIG_PATH') || n.endsWith('USERCONFIG') || n.endsWith('GLOBALCONFIG') || n.endsWith('_PRELOAD') || n.endsWith('STARTUP')
+    || n.endsWith('_MODULE_PATH') || n.endsWith('_PLUGIN_PATH') || n.endsWith('_PLUGINS');
+}
+/**
+ * Refused only when the value points outside the project (a config, home, cache or plugin location elsewhere):
+ * `XDG_CONFIG_HOME=/tmp/x`, `GEM_HOME=~/g`, `FFREPORT=file=~/x`. `HF_HOME=./cache`, `FONTCONFIG_FILE=./fonts.conf`,
+ * `CONFIG=prod`, `MAGICK_THREAD_LIMIT=1` are fine.
+ */
+function isLocationEnv(name: string): boolean {
+  const n = name.toUpperCase();
+  if (CODE_PATH_ENV.includes(n)) return false; // PYTHONPATH, NODE_PATH…: their own rule (runs-code medium when outside)
+  return n.endsWith('CONFIG') || n.endsWith('_CONFIG_FILE') || n.endsWith('_FILE') || n.endsWith('_RC') || n.endsWith('RCFILE') || n.endsWith('_HOME')
+    || n.endsWith('_DIR') || n.endsWith('_PATH') || ['XDG_', 'MAGICK_', 'RUBY', 'BUN_', 'DENO_', 'FFREPORT', 'LESS', 'RIPGREP_', 'CURL_', 'WGET', 'SSH_', 'GNUPG', 'GPG_', 'PIP_', 'GEM_', 'CARGO_', 'GO'].some((p) => n.startsWith(p));
+}
+/** A path-like part of an env value (`a:b` lists, `file=x` forms) outside the project, temp folders included. */
+function envValueOutside(st: State, value: string): boolean {
+  for (const part0 of value.split(':')) {
+    const part = part0.includes('=') ? part0.slice(part0.lastIndexOf('=') + 1) : part0;
+    if (part === '' || !pathLike(part)) continue;
+    if (locsOf(st, part).some((l) => l.cls !== 'work' && l.cls !== 'project')) return true;
+  }
+  return false;
+}
+/** An env assignment we refuse to model: a loader or config name, or a location name pointing outside the project. */
+export function envRisky(st: State, name: string, value: string): boolean {
+  return isDangerousEnv(name) || (isLocationEnv(name) && envValueOutside(st, value));
 }
 /** Variables that make an interpreter load code from a folder: outside the project, that's code we can't see. */
 const CODE_PATH_ENV = ['PYTHONPATH', 'NODE_PATH', 'GEM_PATH', 'CLASSPATH'];
@@ -1009,7 +1145,13 @@ def(['python', 'python3', 'pypy3'], (args, st) => {
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === '-') { runsInput(st, 'python'); return; }
-    if (a === '-W' || a === '-X' || a === '--check-hash-based-pycs') { i++; continue; }
+    if (a === '-X' || a.startsWith('-X')) {
+      const v = a === '-X' ? args[++i] : a.slice(2);
+      // `-X pycache_prefix=<dir>`: compiled modules are read from and written to that folder.
+      if (v?.startsWith('pycache_prefix=')) codeFrom(st, v.slice(15));
+      continue;
+    }
+    if (a === '-W' || a === '--check-hash-based-pycs') { i++; continue; }
     if (a === '--version' || a === '--help') { P(st, 'sysInfo'); return; }
     if (a.startsWith('--')) { unknownOpt(st, a); continue; }
     if (a.startsWith('-') && !a.includes('$')) {
@@ -1018,7 +1160,7 @@ def(['python', 'python3', 'pypy3'], (args, st) => {
         if (ch === 'c' || ch === 'm') {
           const v = a.slice(k + 1) !== '' ? a.slice(k + 1) : args[++i];
           if (v === undefined) { st.parsed = false; return; }
-          if (ch === 'c') { inlineCode(st, v); P(st, 'pythonInline'); return; }
+          if (ch === 'c') { inlineCode(st, v, 'python'); P(st, 'pythonInline'); return; }
           pythonModule(v, args.slice(i + 1), st);
           return;
         }
@@ -1027,6 +1169,7 @@ def(['python', 'python3', 'pypy3'], (args, st) => {
       }
       continue;
     }
+    if (isStdinPath(a)) { runsInput(st, 'python'); return; }
     script(st, a);
     scriptArgs(st, args.slice(i + 1));
     P(st, 'pythonScript', { script: disp(st, [a]) });
@@ -1059,18 +1202,29 @@ def(['pip', 'pip3'], (args, st) => pip(args, st));
 // Node.
 const NODE_VALUE = ['-r', '--require', '--import', '--loader', '--experimental-loader', '-C', '--conditions', '--input-type', '--env-file', '--title', '--stack-size', '--max-old-space-size', '--inspect-port', '--test-reporter', '--test-name-pattern'];
 const NODE_NOVAL = ['--no-warnings', '--enable-source-maps', '--trace-warnings', '--trace-uncaught', '--test', '--watch', '--check', '-c', '-v', '--version', '-h', '--help', '--no-deprecation', '--preserve-symlinks', '--abort-on-uncaught-exception', '--unhandled-rejections', '--throw-deprecation', '--pending-deprecation', '--expose-gc'];
-const NODE_PREFIX = ['--experimental-', '--no-experimental-', '--max-old-space-size=', '--stack-size=', '--inspect', '--trace-', '--harmony', '--unhandled-rejections=', '--disable-warning='];
+/** Accepted by prefix: harmless families only. `--experimental-*` and `--trace-*` are listed one by one (some write or load files). */
+const NODE_PREFIX = ['--max-old-space-size=', '--stack-size=', '--inspect', '--harmony', '--unhandled-rejections=', '--disable-warning='];
+const NODE_SAFE_FLAGS = ['--experimental-vm-modules', '--experimental-strip-types', '--experimental-transform-types', '--experimental-specifier-resolution',
+  '--experimental-json-modules', '--experimental-fetch', '--no-experimental-fetch', '--experimental-modules', '--experimental-detect-module',
+  '--experimental-require-module', '--experimental-sqlite', '--experimental-websocket', '--experimental-global-webcrypto', '--experimental-wasm-modules',
+  '--experimental-import-meta-resolve', '--experimental-test-coverage', '--no-experimental-strip-types', '--experimental-default-type',
+  '--trace-warnings', '--trace-uncaught', '--trace-deprecation', '--trace-exit', '--trace-sigint', '--trace-gc', '--trace-sync-io', '--trace-tls'];
+/** Options whose value is a file or folder node writes. */
+const NODE_WRITE_FLAGS = ['--trace-event-file-pattern', '--diagnostic-dir', '--report-directory', '--report-filename', '--cpu-prof-dir', '--heap-prof-dir',
+  '--redirect-warnings', '--cpu-prof-name', '--heap-prof-name', '--experimental-sea-config'];
+/** Options that load a config or policy that can change what runs: not modeled. */
+const NODE_OPAQUE_FLAGS = ['--experimental-config-file', '--experimental-policy', '--policy-integrity', '--openssl-config', '--icu-data-dir', '--snapshot-blob', '--build-snapshot'];
 function node(args: string[], st: State): void {
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === '-e' || a === '--eval' || a === '-p' || a === '--print' || a === '-pe') {
       const v = args[++i];
       if (v === undefined) { st.parsed = false; return; }
-      inlineCode(st, v);
+      inlineCode(st, v, 'js');
       P(st, 'nodeInline');
       return;
     }
-    if (a.startsWith('--eval=') || a.startsWith('--print=')) { inlineCode(st, a.slice(a.indexOf('=') + 1)); P(st, 'nodeInline'); return; }
+    if (a.startsWith('--eval=') || a.startsWith('--print=')) { inlineCode(st, a.slice(a.indexOf('=') + 1), 'js'); P(st, 'nodeInline'); return; }
     if (a === '-') { runsInput(st, 'node'); return; }
     if (a === '-v' || a === '--version') { P(st, 'sysInfo'); return; }
     if (a === '--env-file' || a.startsWith('--env-file=') || a.startsWith('--env-file-if-exists')) {
@@ -1092,7 +1246,9 @@ function node(args: string[], st: State): void {
     }
     if (a.startsWith('-') && !a.includes('$')) {
       const name = a.includes('=') ? a.slice(0, a.indexOf('=')) : a;
-      if (!NODE_NOVAL.includes(a) && !NODE_VALUE.includes(name) && !NODE_PREFIX.some((p) => a.startsWith(p))) unknownOpt(st, name);
+      if (NODE_OPAQUE_FLAGS.includes(name)) { st.parsed = false; return; }
+      if (NODE_WRITE_FLAGS.includes(name)) { write(st, [a.includes('=') ? a.slice(a.indexOf('=') + 1) : args[++i] ?? '']); continue; }
+      if (!NODE_NOVAL.includes(a) && !NODE_SAFE_FLAGS.includes(a) && !NODE_VALUE.includes(name) && !NODE_PREFIX.some((p) => a.startsWith(p))) unknownOpt(st, name);
       if ((name === '--require' || name === '--import' || name === '--loader' || name === '--experimental-loader') && a.includes('=')) {
         const v = a.slice(a.indexOf('=') + 1);
         // `data:` / `http:` modules are inline or remote code.
@@ -1100,6 +1256,7 @@ function node(args: string[], st: State): void {
       }
       continue;
     }
+    if (isStdinPath(a)) { runsInput(st, 'node'); return; }
     script(st, a);
     scriptArgs(st, args.slice(i + 1));
     P(st, 'nodeScript', { script: disp(st, [a]) });
@@ -1145,10 +1302,13 @@ const NPM_SPEC: Spec = {
     '--no-package-lock', '--dev', '-W', '--ignore-workspace-root-check', '--exact', '--dry-run', '--verbose', '-d', '--no-optional', '--no-progress',
     '--workspaces', '--include-workspace-root', '--immutable', '--check-files', '--pure-lockfile', '--no-lockfile', '--non-interactive',
     '--shamefully-hoist', '--prefer-frozen-lockfile', '--no-frozen-lockfile', '--save-peer', '--fix', '--json', '--long', '--all', '--depth',
-    '--stream', '--aggregate-output', '--reporter-hide-prefix', '--color', '--no-color'],
+    '--stream', '--aggregate-output', '--reporter-hide-prefix', '--color', '--no-color', '--version', '-v', '--help', '-h', '--foreground-scripts', '--no-update-notifier'],
   v: ['--omit', '--include', '--reporter', '--loglevel', '-w', '--workspace', '-C', '--dir', '--filter', '-F', '--prefix', '--location', '--cache',
     '--registry', '--cwd', '--tag', '--network-concurrency', '--child-concurrency', '--depth'],
 };
+/** Script names projects define for themselves: `pnpm build`, `yarn dev` run package.json scripts. */
+const COMMON_SCRIPTS = ['build', 'dev', 'test', 'start', 'lint', 'render', 'preview', 'typecheck', 'format', 'serve', 'watch', 'check', 'compile',
+  'bundle', 'export', 'generate', 'gen', 'storybook', 'e2e', 'ci', 'prettier', 'fmt'];
 /** npm reads every `--option` before `--` as its own config, even after the script name: for running scripts only these are accepted. */
 const NPM_RUN_SUBS = ['run', 'run-script', 'rum', 'urn', 'test', 't', 'tst', 'start', 'stop', 'restart'];
 function npmRunOptionsSafe(st: State, args: readonly string[]): boolean {
@@ -1158,7 +1318,8 @@ function npmRunOptionsSafe(st: State, args: readonly string[]): boolean {
     const a = own[i]!;
     if (!a.startsWith('-')) continue;
     const opt = a.includes('=') ? a.slice(0, a.indexOf('=')) : a;
-    if (['--silent', '-s', '--if-present', '--workspaces', '--include-workspace-root', '-ws', '--quiet', '-q'].includes(a)) continue;
+    if (['--silent', '-s', '--if-present', '--workspaces', '--include-workspace-root', '-ws', '--quiet', '-q', '--verbose', '-d', '-dd', '--color', '--no-color', '--foreground-scripts', '--no-audit', '--no-fund', '--no-update-notifier'].includes(a)) continue;
+    if (opt === '--loglevel' || opt === '--color') { if (!a.includes('=')) i++; continue; }
     if (opt === '-w' || opt === '--workspace' || opt === '--prefix') {
       const v = a.includes('=') ? a.slice(a.indexOf('=') + 1) : own[++i];
       if (v !== undefined && locsOf(st, v).every((l) => l.cls === 'work' || l.cls === 'project')) continue;
@@ -1186,6 +1347,7 @@ def(['npm', 'pnpm', 'yarn'], (args, st, name) => {
   write(st, vals(o, '--prefix'));
   read(st, vals(o, '-C', '--dir', '--cwd'));
   if (sub === undefined) {
+    if (has(o, '--version', '-v', '--help', '-h')) { P(st, 'pkgInfo', { tool: name }); return; }
     if (name === 'yarn') { installPkgs(st, [], global, offline); return; }
     P(st, 'pkgInfo', { tool: name }); return;
   }
@@ -1204,9 +1366,12 @@ def(['npm', 'pnpm', 'yarn'], (args, st, name) => {
   if (sub === 'exec' || sub === 'x' || sub === 'dlx' || sub === 'create') { npx(sub === 'create' ? [`create-${rest[0] ?? ''}`, ...rest.slice(1), ...tail] : tail, st); return; }
   if (PKG_REMOVE.includes(sub)) { add(st, 'installs-packages', 'medium'); if (global) add(st, 'writes-outside-project', 'high'); P(st, 'pkgRemove', { packages: fmtList(rest) }); return; }
   if (PKG_INFO.includes(sub)) { P(st, 'pkgInfo', { tool: name }); return; }
+  // `npm audit` reads the dependency tree and reports; `npm audit fix` installs.
+  if (sub === 'audit') { if (rest[0] === 'fix') installPkgs(st, [], global, offline); else P(st, 'pkgInfo', { tool: name }); return; }
   if (name !== 'npm' && runLike) {
-    // pnpm and yarn run a package.json script or a package binary by name: whatever it is, it runs code.
-    add(st, 'runs-code', 'medium');
+    // pnpm and yarn run a package.json script or a package binary by name. The usual script names are the project's own
+    // scripts (low, like `npm run`); any other name may be a package binary (medium). Arguments are path-checked either way.
+    add(st, 'runs-code', COMMON_SCRIPTS.includes(sub) ? 'low' : 'medium');
     scriptArgs(st, tail);
     P(st, 'npmRun', { script: sub }); return;
   }
@@ -1218,7 +1383,7 @@ def(['bun'], (args, st) => {
   if (a0 === '-e' || a0 === '--eval' || a0 === '-p' || a0 === '--print') {
     const v = args[1];
     if (v === undefined) { st.parsed = false; return; }
-    inlineCode(st, v); P(st, 'inlineCode', { lang: 'bun' }); return;
+    inlineCode(st, v, 'js'); P(st, 'inlineCode', { lang: 'bun' }); return;
   }
   if (a0 === '-' || (a0 === 'run' && args[1] === '-')) { runsInput(st, 'node'); return; }
   if (a0 === 'install' || a0 === 'i' || a0 === 'add' || a0 === 'a') {
@@ -1229,8 +1394,9 @@ def(['bun'], (args, st) => {
   const target = a0 === 'run' ? args[1] : a0;
   if (target === undefined) { P(st, 'pkgInfo', { tool: 'bun' }); return; }
   const rest = args.slice(a0 === 'run' ? 2 : 1);
+  if (isStdinPath(target)) { runsInput(st, 'node'); return; }
   if (fileLike(target)) { script(st, target); scriptArgs(st, rest); P(st, 'runScript', { script: disp(st, [target]) }); return; }
-  add(st, 'runs-code', 'medium');
+  add(st, 'runs-code', COMMON_SCRIPTS.includes(target) ? 'low' : 'medium');
   scriptArgs(st, rest);
   P(st, 'npmRun', { script: target });
 });
@@ -1362,6 +1528,10 @@ const GIT_SUBS: Record<string, Spec & { phrase: string; changes?: boolean; net?:
   init: { phrase: 'gitChange', changes: true, f: ['-q', '--quiet', '--bare'], v: ['-b', '--initial-branch', '--shared', '--object-format'] },
   gc: { phrase: 'gitChange', changes: true, f: ['--aggressive', '--auto', '--prune', '--no-prune', '-q', '--quiet', '--force'] },
   apply: { phrase: 'gitChange', changes: true, f: ['--check', '--stat', '--numstat', '--summary', '--cached', '--index', '-3', '--3way', '-R', '--reverse', '-v', '--verbose', '--reject', '--allow-empty', '--recount', '--unidiff-zero', '-N', '--intent-to-add'], v: ['-p', '--whitespace', '--exclude', '--include', '--directory', '-C'] },
+  'format-patch': { phrase: 'gitOther', num: true, f: ['--stdout', '-n', '--numbered', '-N', '--no-numbered', '-k', '--keep-subject', '--cover-letter', '--signoff', '-s', '--no-stat', '--root', '--thread', '-q', '--quiet', '--zero-commit', '--minimal', '-p', '--no-binary'], v: ['-o', '--output-directory', '--subject-prefix', '--start-number', '-v', '--reroll-count', '--base', '--suffix', '--to', '--cc', '--from'] },
+  archive: { phrase: 'gitOther', f: ['--list', '-l', '-v', '--verbose', '--worktree-attributes', '-0', '-1', '-2', '-3', '-4', '-5', '-6', '-7', '-8', '-9'], v: ['-o', '--output', '--format', '--prefix', '--add-file', '--add-virtual-file', '--mtime'] },
+  bundle: { phrase: 'gitOther', f: ['create', 'verify', 'list-heads', 'unbundle', '--all', '--branches', '--tags', '-q', '--quiet', '--progress'], v: ['--version'] },
+  worktree: { phrase: 'gitChange', changes: true, f: ['add', 'list', 'remove', 'prune', 'lock', 'unlock', 'move', 'repair', '-f', '--force', '--detach', '--checkout', '--no-checkout', '--lock', '--orphan', '-q', '--quiet', '--porcelain', '-v', '--verbose', '--track', '--no-track', '--guess-remote'], v: ['-b', '-B', '--reason', '--expire'] },
   am: { phrase: 'gitChange', changes: true, f: ['--abort', '--continue', '--skip', '--quit', '-3', '--3way', '-s', '--signoff', '-k', '--keep', '-q', '--quiet', '--show-current-patch'], v: ['-p', '--whitespace', '--directory'] },
 };
 const GIT_OK: readonly string[] = [...new Set(Object.values(GIT_SUBS).flatMap((x) => [...(x.f ?? []), ...(x.v ?? [])]))];
@@ -1429,6 +1599,15 @@ def(['git'], (args, st) => {
     if (spec.net) add(st, 'uses-network', 'medium');
     switch (sub) {
       case 'diff': if (has(o, '--no-index')) read(st, o.operands); P(st, 'gitDiff'); return;
+      case 'format-patch': write(st, vals(o, '-o', '--output-directory')); if (!has(o, '-o', '--output-directory', '--stdout')) write(st, ['.']); P(st, 'gitOther', { sub }); return;
+      case 'archive': write(st, vals(o, '-o')); read(st, vals(o, '--add-file')); P(st, 'gitOther', { sub }); return;
+      case 'bundle': if (o.operands[0] === 'create') write(st, o.operands.slice(1, 2)); else read(st, o.operands.slice(1, 2)); P(st, 'gitOther', { sub }); return;
+      case 'worktree': {
+        const [op, path] = o.operands;
+        if (op === 'add' || op === 'move') write(st, op === 'move' ? o.operands.slice(1, 3) : path !== undefined ? [path] : []);
+        else if (op === 'remove') del(st, path !== undefined ? [path] : []);
+        P(st, 'gitChange', { sub }); return;
+      }
       case 'add': read(st, o.operands); P(st, 'gitAdd', { paths: disp(st, o.operands.length ? o.operands : ['.']) }); return;
       case 'commit': read(st, vals(o, '-F', '--file', '-t', '--template')); P(st, 'gitCommit'); return;
       case 'clone': {
@@ -1494,12 +1673,12 @@ def(['kill'], (args, st) => {
   let i = 0;
   if (args[0] === '-l' || args[0] === '-L') { P(st, 'sysInfo'); return; }
   if (args[0] === '-s' || args[0] === '-n') i = 2;
-  else if (args[0] !== undefined && args[0] !== '--' && args[0].startsWith('-') && (isDigitsStr(args[0].slice(1)) || isSignalName(args[0].slice(1)))) i = 1;
+  else if (args[0] !== undefined && args[0] !== '--' && args[0].startsWith('-') && !args[0].startsWith('-$') && (isDigitsStr(args[0].slice(1)) || isSignalName(args[0].slice(1)))) i = 1;
   if (args[i] === '--') i++;
   const targets = args.slice(i);
   // A negative pid is a process group (`-1` is every process); `0` is our own group.
   for (const t of targets) {
-    if (t === '0' || (t.startsWith('-') && isDigitsStr(t.slice(1)))) add(st, 'kills-processes', 'high', { target: t });
+    if (t === '0' || (t.startsWith('-') && (isDigitsStr(t.slice(1)) || t.startsWith('-$')))) add(st, 'kills-processes', 'high', { target: t });
     else if (!isDigitsStr(t) && !t.startsWith('%') && !t.startsWith('$')) unknownOpt(st, t);
   }
   P(st, 'kill', { targets: fmtList(targets), n: targets.length });
@@ -1806,6 +1985,36 @@ def(['sysctl'], (args, st) => {
   if (sets) add(st, 'writes-outside-project', 'high');
   P(st, sets ? 'changesSystem' : 'sysInfo');
 });
+/** Persistence and system configuration: scheduled jobs, preferences, launch agents. */
+def(['crontab'], (args, st) => {
+  if (args.length === 1 && args[0] === '-l') { P(st, 'sysInfo'); return; }
+  add(st, 'writes-outside-project', 'high');
+  P(st, 'changesSystem');
+});
+def(['defaults'], (args, st) => {
+  const sub = args.find((a) => !a.startsWith('-'));
+  if (sub === 'read' || sub === 'read-type' || sub === 'domains' || sub === 'find' || sub === 'help') { P(st, 'sysInfo'); return; }
+  add(st, 'writes-outside-project', 'high');
+  P(st, 'changesSystem');
+});
+def(['launchctl'], (args, st) => {
+  const sub = args[0];
+  if (sub === 'list' || sub === 'print' || sub === 'version' || sub === 'help' || sub === 'getenv' || sub === 'blame' || sub === 'print-cache' || sub === 'managerpid' || sub === 'manageruid') { P(st, 'sysInfo'); return; }
+  add(st, 'writes-outside-project', 'high');
+  add(st, 'runs-code', 'high');
+  P(st, 'changesSystem');
+});
+def(['hash'], (args, st) => {
+  // `hash -p /path name` makes later commands named `name` run another program.
+  if (args.some((a) => a.startsWith('-') && a.includes('p'))) { add(st, 'runs-code', 'high'); P(st, 'shellOption'); return; }
+  P(st, 'noop');
+});
+def(['enable'], (args, st) => {
+  // `enable -f lib.so name` loads a builtin from a shared library; `enable -n` unmasks programs named like builtins.
+  if (args.some((a) => a.startsWith('-') && a.includes('f'))) { add(st, 'runs-code', 'high'); P(st, 'shellOption'); return; }
+  add(st, 'unknown-command', 'medium');
+  P(st, 'shellOption');
+});
 def(['printenv'], (_args, st) => P(st, 'printEnv'));
 def(['true', 'false', ':', 'exit', 'wait'], (_args, st) => P(st, 'noop'));
 def(['set'], (_args, st) => P(st, 'shellOption'));
@@ -1828,7 +2037,7 @@ def(['export', 'unset', 'readonly', 'declare', 'typeset', 'local', 'read'], (arg
     }
     const eq = a.indexOf('=');
     const n = eq >= 0 ? a.slice(0, eq) : a;
-    if (isDangerousEnv(n)) { st.parsed = false; return; }
+    if (envRisky(st, n, eq >= 0 ? a.slice(eq + 1) : '')) { st.parsed = false; return; }
     names.push(n);
   }
   P(st, 'setVar', { name: fmtList(names) });
@@ -1880,12 +2089,17 @@ def(['perl', 'ruby', 'php'], (args, st, name) => {
           }
           break;
         }
-        if (spec.rest.includes(ch)) break;
+        if (spec.rest.includes(ch)) {
+          // `-Mlib=/a,/b` (perl) adds module folders, like -I.
+          if (name === 'perl' && (ch === 'M' || ch === 'm') && attached.startsWith('lib=')) for (const d of attached.slice(4).split(',')) if (d) codeFrom(st, d);
+          break;
+        }
         if (spec.digits.includes(ch)) { while (k + 1 < a.length && a[k + 1]! >= '0' && a[k + 1]! <= '9') k++; continue; }
         if (!spec.noval.includes(ch)) unknownOpt(st, `-${ch}`);
       }
       continue;
     }
+    if (isStdinPath(a)) { runsInput(st, 'shell'); return; }
     script(st, a);
     scriptArgs(st, args.slice(i + 1));
     P(st, 'runScript', { script: disp(st, [a]) });
@@ -1901,6 +2115,7 @@ def(['osascript'], (args, st) => {
     if (a === '-i') continue;
     if (a === '-') { runsInput(st, 'shell'); return; }
     if (a.startsWith('-') && !a.includes('$')) { if (a.includes('e')) { st.parsed = false; return; } unknownOpt(st, a); continue; }
+    if (isStdinPath(a)) { runsInput(st, 'shell'); return; }
     script(st, a);
     scriptArgs(st, args.slice(i + 1));
     P(st, 'runScript', { script: disp(st, [a]) });
@@ -1929,6 +2144,7 @@ def(['lua', 'Rscript', 'tclsh', 'deno'], (args, st, name) => {
       P(st, 'runScript', { script: hostOf(a) });
       return;
     }
+    if (isStdinPath(a)) { runsInput(st, 'shell'); return; }
     script(st, a);
     scriptArgs(st, args.slice(i + 1));
     P(st, 'runScript', { script: disp(st, [a]) });
@@ -1945,7 +2161,7 @@ def(['bash', 'sh', 'zsh', 'dash', 'ksh', 'fish'], (args, st) => {
   o.operands.push(...args.slice(args[at] === '--' ? at + 1 : at));
   const first = o.operands[0];
   const firstPath = first === undefined ? '' : normalizeCommandPath(first);
-  if (has(o, '-s') || first === undefined || first === '-' || ['/dev/stdin', '/dev/fd/0', '/proc/self/fd/0'].includes(firstPath)) { runsInput(st, 'shell'); return; }
+  if (has(o, '-s') || first === undefined || first === '-' || isStdinPath(firstPath)) { runsInput(st, 'shell'); return; }
   const rest = o.operands.slice(1);
   script(st, first);
   scriptArgs(st, rest);
@@ -2059,7 +2275,7 @@ function subExplain(argv: readonly string[], st: State, found: State['found']): 
   const c = commandFromArgv(argv);
   if (c === null) st.parsed = false;
   else {
-    for (const k of Object.keys(c.env)) if (isDangerousEnv(k)) st.parsed = false;
+    for (const [k, v] of Object.entries(c.env)) if (envRisky(st, k, v)) st.parsed = false;
     if (c.wrappers.includes('sudo') || c.wrappers.includes('doas')) add(st, 'elevated', 'high');
     if (st.parsed) explainArgv(c.argv, st);
   }
@@ -2072,7 +2288,7 @@ function subExplain(argv: readonly string[], st: State, found: State['found']): 
 /** Explains a whole simple command: wrappers, env, redirects and the command itself. Exactly one phrase is added. */
 export function explainSimple(c: SimpleCommand, st: State): void {
   for (const [k, v] of Object.entries(c.env)) {
-    if (isDangerousEnv(k)) { st.parsed = false; return; }
+    if (envRisky(st, k, v)) { st.parsed = false; return; }
     if (CODE_PATH_ENV.includes(k)) {
       for (const part of v.split(':')) {
         if (part === '') continue;

@@ -17,6 +17,27 @@ export type { ExplainContext, PathClass } from './paths.ts';
 
 const phrase = (key: string, params: Record<string, string | number> = {}): Phrase => ({ key: `explain.${key}`, params });
 
+/** Builtins that evaluate their arguments arithmetically (bash and zsh): a subscript there runs `$(…)`. */
+const ARITH_SINKS = ['exit', 'return', 'shift', 'break', 'continue', 'repeat', 'ulimit', 'sched', 'fc', 'history', 'wait', 'unset', 'read'];
+/**
+ * Code stored as data (`'$(…)'` or a backtick in single quotes) plus any arithmetic sink in the same command:
+ * `p='a['; q='$(id)]'; x=$p$q; printf %d x` runs id in zsh. Not modeled.
+ */
+function hasArithmeticInjection(tok: ReturnType<typeof tokenize>): boolean {
+  const words = tok.commands.flatMap((c) => [...c.argv, ...Object.values(c.env), ...c.redirects.map((r) => r.target)]);
+  explainWork.add(words.reduce((n, w) => n + w.length, 0));
+  if (!words.some((w) => w.includes('$(') || w.includes('`'))) return false;
+  return tok.commands.some((c) => {
+    const name = c.argv[0] ?? '';
+    if (name === 'test' || name === '[') return c.argv.some((x) => ['-eq', '-ne', '-lt', '-le', '-gt', '-ge'].includes(x));
+    if (ARITH_SINKS.includes(name)) return true;
+    // A numeric conversion (`%d`, `%5.2f`…). Linear: the flag class can't contain `%`, so runs after each `%` are disjoint.
+    if (name === 'printf' || (name === 'print' && c.argv.includes('-f'))) return c.argv.some((a) => /%[-+ #0-9.]*[diouxXceEfgGa]/.test(a));
+    // `a[x]=…` as a command is already refused (its name has `[`); `(( ))`, `let` and `[[` are refused by the tokenizer.
+    return ['declare', 'typeset', 'local', 'export', 'readonly', 'integer', 'float'].includes(name);
+  });
+}
+
 /** Word-like occurrence of `w` (preceded by a shell boundary, followed by a blank or the end). Linear: indexOf only. */
 function hasWord(s: string, w: string): boolean {
   explainWork.add(s.length);
@@ -43,28 +64,47 @@ function complex(command: string, ind: Indicators): Phrase[] {
 function explainBash(command: string, ctx: ExplainContext, ind: Indicators): { phrases: Phrase[]; parsed: boolean } {
   const tok = tokenize(command);
   if (!tok.parsed) return { phrases: complex(command, ind), parsed: false };
+  if (hasArithmeticInjection(tok)) return { phrases: complex(command, ind), parsed: false };
   const st: State = {
-    ctx, cwd: normalizeAbs(ctx.cwd ?? ctx.projectDir), ind, phrases: [], parsed: true,
+    ctx, cwd: normalizeAbs(ctx.cwd ?? ctx.projectDir), altCwds: [], ind, phrases: [], parsed: true,
     pipedIn: false, pipeNet: false, usedNet: false, chainNet: false, written: [], found: null, stdout: null, stdinFile: null,
   };
-  /** A `cd` happened earlier: from the first separator other than `&&` after it, the folder is unknown. */
-  let cdSeen = false;
+  /**
+   * The folders the next command may run in. A `cd x` followed by `&&` moves there; followed by `;`, `&`, a newline or `||`
+   * it may have failed, so both folders count ({x, old}); a pipe changes nothing (a subshell). An `||` after a chain
+   * that started with `cd x &&` adds the folder from before the cd. `cd x || exit` leaves only x.
+   */
+  let cur: (string | null)[] = [st.cwd];
+  let beforeCd: (string | null)[] | null = null;
+  let ifNoFailure: (string | null)[] | null = null;
+  const uniq = (xs: (string | null)[]) => [...new Set(xs)];
   tok.commands.forEach((c, i) => {
     if (!st.parsed) return;
-    st.pipedIn = i > 0 && tok.separators[i - 1] === '|';
+    const sepBefore = i > 0 ? tok.separators[i - 1] : undefined;
+    const sep = tok.separators[i];
+    st.pipedIn = sepBefore === '|';
     if (!st.pipedIn) st.pipeNet = false;
     st.usedNet = false;
     st.cdTarget = undefined;
+    st.cwd = cur[0] ?? null;
+    st.altCwds = cur.slice(1);
     explainSimple(c, st);
     if (st.usedNet) { st.pipeNet = true; st.chainNet = true; }
-    // After `cd x &&` the next command runs in x. Any other separator after a cd (`||`, `;`, `&`, newline, `|`) means
-    // the cd may or may not have happened for what follows: the folder is unknown for the rest of the chain
-    // (`cd ~/.ssh || exit; echo k >> authorized_keys`, `cd x && a || b; c`), and relative paths are rated worst case.
-    const sep = tok.separators[i];
     if (st.cdTarget !== undefined) {
-      cdSeen = true;
-      st.cwd = sep === '&&' ? st.cdTarget : null;
-    } else if (cdSeen && sep !== '&&') st.cwd = null;
+      const target = st.cdTarget;
+      if (sep === '|') { /* a subshell: no effect */ }
+      else if (sep === '&&') { beforeCd ??= cur; cur = target; }
+      else {
+        if (sep === '||') ifNoFailure = target;
+        cur = uniq([...target, ...cur]);
+      }
+    } else if (sep === '||' && beforeCd !== null) {
+      ifNoFailure = cur;
+      cur = uniq([...cur, ...beforeCd]);
+    }
+    // `… || exit`: the shell stops when the `||` branch runs, so what follows runs where the chain succeeded.
+    if (sepBefore === '||' && ifNoFailure !== null && (c.argv[0] === 'exit' || c.argv[0] === 'return')) cur = ifNoFailure;
+    if (sep === ';' || sep === '\n' || sep === '&') { beforeCd = null; ifNoFailure = null; }
   });
   if (!st.parsed) return { phrases: complex(command, ind), parsed: false };
   return { phrases: st.phrases, parsed: true };

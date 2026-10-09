@@ -63,7 +63,7 @@ const OPAQUE = new Set([
   'if', 'then', 'else', 'elif', 'fi', 'for', 'while', 'until', 'do', 'done', 'case', 'esac', 'in',
   '{', '}', '[[', ']]', '!', '((', '))',
   'su', 'runuser', 'watch', 'parallel', 'flock', 'chroot', 'sandbox-exec', 'unbuffer', 'stdbuf', 'ionice', 'taskpolicy',
-  'dtruss', 'strace', 'ltrace', 'lldb', 'gdb', 'expect', 'at', 'batch', 'launchctl', 'emacs', 'vim', 'vi', 'nvim', 'ex', 'ed',
+  'dtruss', 'strace', 'ltrace', 'lldb', 'gdb', 'expect', 'at', 'batch', 'emacs', 'vim', 'vi', 'nvim', 'ex', 'ed',
 ]);
 
 /** System folders whose programs we recognise by name. Anything else with a `/` is "a file run directly". */
@@ -236,12 +236,28 @@ function finishCommand(words: Word[], redirects: Redirect[]): SimpleCommand | nu
   return { argv, env, redirects, wrappers };
 }
 
-/** `[` followed (later in the word) by `$(`, a backtick or `${`. Linear: two indexOf calls. */
+/**
+ * A subscript shape (`name[`, an identifier character right before `[`) followed later in the word by `$(` or a backtick:
+ * arithmetic contexts run it (`printf %d 'a[$(id)]'`). `"frame[${i}]"`, `"[0:v]…${T}"` and `-m "fix: [x] ${y}"` are fine.
+ * Linear: one pass to the first subscript shape, then two indexOf calls.
+ */
 export function hasSubscriptCode(word: string): boolean {
-  const open = word.indexOf('[');
-  if (open < 0) return false;
-  const rest = word.slice(open + 1);
-  return rest.includes('$(') || rest.includes('`') || rest.includes('${');
+  for (let i = 1; i < word.length; i++) {
+    if (word[i] !== '[') continue;
+    const c = word[i - 1]!;
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c === '_')) continue;
+    // The subscript runs to the matching `]` (nested brackets included), or to the end of the word.
+    let depth = 0;
+    let j = i;
+    for (; j < word.length; j++) {
+      const ch = word[j]!;
+      if (ch === '[') depth++;
+      else if (ch === ']') { depth--; if (depth === 0) break; }
+      else if (ch === '`' || (ch === '$' && word[j + 1] === '(')) return true;
+    }
+    i = j; // continue after this subscript: every character is visited once
+  }
+  return false;
 }
 
 /** The same assignment and wrapper stripping, for a command run by another one (`find -exec`, `xargs`). */
