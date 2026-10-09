@@ -247,6 +247,32 @@ describe('activity center', () => {
 describe('useAttention', () => {
   const Probe = ({ list }: { list: ApprovalRequest[] }) => { useAttention(list.length, list); return <Toasts />; };
 
+  it('a click on the desktop notification runs the same Review as the toast (D1)', () => {
+    const bridge = desktopBridge() as Bridge & { onAttentionClick?: (cb: () => void) => () => void };
+    let click: (() => void) | null = null;
+    const off = vi.fn();
+    bridge.onAttentionClick = (cb) => { click = cb; return off; };
+    const onReview = vi.fn();
+    const Reviewing = ({ list }: { list: ApprovalRequest[] }) => { useAttention(list.length, list, { onReview }); return null; };
+    const { rerender, unmount } = render(<Reviewing list={[]} />);
+    expect(click).not.toBeNull();
+    // Nothing pending: a click (e.g. on a "creative ready" banner) reviews nothing.
+    act(() => click!());
+    expect(onReview).not.toHaveBeenCalled();
+    const a1 = approval('a1', 'Eseguire un comando');
+    const a2 = { ...approval('a2', 'Leggere una pagina'), createdAt: '2026-10-08T10:01:00.000Z' };
+    rerender(<Reviewing list={[a1]} />);
+    rerender(<Reviewing list={[a1, a2]} />);
+    expect(bridge.notify).toHaveBeenCalledTimes(2);
+    act(() => click!());
+    expect(onReview).toHaveBeenLastCalledWith(a2); // the request the last notification announced
+    rerender(<Reviewing list={[a1]} />);
+    act(() => click!());
+    expect(onReview).toHaveBeenLastCalledWith(a1); // gone: the oldest pending one
+    unmount();
+    expect(off).toHaveBeenCalled();
+  });
+
   it('updates title and badge, notifies once per new approval and shows a Review toast', () => {
     const bridge = desktopBridge();
     const { rerender } = render(<Probe list={[]} />);

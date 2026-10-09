@@ -8,4 +8,12 @@ contextBridge.exposeInMainWorld('motionStudio', {
   // Approval signals (spec §6.3): the main process validates both and shows them only for the app's own page.
   notify: (p: { title: string; body: string }): Promise<void> => ipcRenderer.invoke('ms:notify', { title: p?.title, body: p?.body }),
   setBadge: (n: number): Promise<void> => ipcRenderer.invoke('ms:badge', n),
+  // A click on one of the app's notifications (the main process sends it only to the app's own page). The page gets
+  // a plain call: never the IPC event or its sender. Returns the unsubscribe.
+  onAttentionClick: (cb: () => void): (() => void) => {
+    if (typeof cb !== 'function') return () => {};
+    const listener = () => { try { cb(); } catch { /* the page's own error */ } };
+    ipcRenderer.on('ms:attention-click', listener);
+    return () => { ipcRenderer.removeListener('ms:attention-click', listener); };
+  },
 });

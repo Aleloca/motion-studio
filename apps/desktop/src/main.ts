@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { AlreadyRunningError, answersHealth, defaultConfigDir, resolveLocale, resolveLoginShellPath, setLocale, startServer, t } from '@motion-studio/core';
 import { absolutePathArg, attachedGone, attachedGoneAction, attachedLocale, bootLocale, focusOnReady, readSavedLanguage, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, userDataDir } from './helpers.ts';
 import { menuTemplate } from './menu.ts';
-import { registerAttention } from './notify.ts';
+import { registerAttention, sendAttentionClick, showKept } from './notify.ts';
 import { setupUpdates } from './updater.ts';
 import { externalUrlAllowed, isAppUrl, windowOptions } from './window.ts';
 
@@ -135,14 +135,19 @@ async function run() {
     shell.showItemInFolder(p);
   });
   // Approval signals: native notification (also with the window visible) with one Dock bounce, and the Dock badge.
+  const notifications = new Set<Notification>();
   registerAttention(ipcMain, {
     trusted,
     showNotification: ({ title, body }) => {
       if (!Notification.isSupported()) return;
-      const n = new Notification({ title, body });
-      // Clicking it brings the window back, where the activity center shows the request.
-      n.on('click', () => { if (win.isMinimized()) win.restore(); win.show(); win.focus(); });
-      n.show();
+      // Kept alive until clicked or closed. A click brings the window back and asks the page to run its "Review"
+      // (the request's creative, or the activity center), as the toast does.
+      showKept(notifications, new Notification({ title, body }), () => {
+        if (win.isDestroyed()) return;
+        if (win.isMinimized()) win.restore();
+        win.show(); win.focus();
+        sendAttentionClick(win.webContents, (url) => isAppUrl(url, origin));
+      });
     },
     dock: app.dock,
     invalid: () => new Error(t().desktop.invalidRequest),

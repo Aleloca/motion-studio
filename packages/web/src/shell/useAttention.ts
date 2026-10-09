@@ -2,7 +2,7 @@ import type { ApprovalRequest, JobSummary } from '@motion-studio/shared';
 import { useEffect, useRef } from 'react';
 import { useT } from '../i18n.tsx';
 import { toast } from '../ui/index.ts';
-import { APP_TITLE, appInBackground, notifyApprovalsEnabled, notifyReadyEnabled, setBadge, showNotification } from './notify.ts';
+import { APP_TITLE, appInBackground, notifyApprovalsEnabled, notifyReadyEnabled, onNotificationClick, setBadge, showNotification } from './notify.ts';
 
 export interface AttentionOptions {
   /** "Review" on a toast. */
@@ -34,6 +34,17 @@ export function useAttention(pendingCount: number, approvals: readonly ApprovalR
   }, [pendingCount]);
   useEffect(() => () => { document.title = APP_TITLE; setBadge(0); }, []);
 
+  // A click on the desktop notification runs the same Review as the toast: the request it announced if still
+  // pending, else the oldest pending one (the window has already been brought forward by the main process).
+  const notified = useRef<string | null>(null);
+  const pendingRef = useRef(approvals);
+  pendingRef.current = approvals;
+  useEffect(() => onNotificationClick(() => {
+    const list = pendingRef.current;
+    const target = list.find((a) => a.id === notified.current) ?? [...list].sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+    if (target) reviewRef.current?.(target);
+  }), []);
+
   /** Pending ids already signalled → the toast shown for them (if any). Only pending ids are kept. */
   const seen = useRef(new Map<string, number | null>());
   const lastSnapshot = useRef(snapshot);
@@ -60,6 +71,7 @@ export function useAttention(pendingCount: number, approvals: readonly ApprovalR
       const body = fresh.length === 1 ? first.title : t.web.shell.attention.many({ count: fresh.length });
       if (enabled) {
         showNotification({ title: t.web.app.approvalNotificationTitle, body });
+        notified.current = first.id;
         toastId = toast.show(body, { sticky: true, action: review });
       }
     }

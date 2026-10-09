@@ -61,6 +61,13 @@ export function showNotification(raw: { title: string; body: string }): void {
   } catch { /* some browsers only allow notifications from a service worker */ }
 }
 
+/** Subscribes to clicks on the desktop app's notifications (nothing on the web); returns the unsubscribe. */
+export function onNotificationClick(cb: () => void): () => void {
+  const d = desktop();
+  if (typeof d?.onAttentionClick !== 'function') return () => {};
+  try { return d.onAttentionClick(cb); } catch { return () => {}; }
+}
+
 /** Dock badge on desktop (0 clears it); nothing on the web, where the window title carries the count. */
 export function setBadge(n: number): void {
   const d = desktop();

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { attentionHandlers, badgeArg, notifyArgs, registerAttention, type AttentionDeps } from '../src/notify.ts';
+import { ATTENTION_CLICK, attentionHandlers, badgeArg, notifyArgs, registerAttention, sendAttentionClick, showKept, type AttentionDeps } from '../src/notify.ts';
 
 vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld: vi.fn() },
@@ -114,5 +114,63 @@ describe('main handlers', () => {
   it('is wired in main.ts with the same origin guard as the other IPC handlers', () => {
     const main = readFileSync(join(__dirname, '..', 'src', 'main.ts'), 'utf8');
     expect(main).toMatch(/registerAttention\(ipcMain, \{\s*trusted,/);
+  });
+});
+
+describe('notification clicks (D1)', () => {
+  afterEach(() => { vi.resetModules(); });
+
+  it('keeps each notification alive until it is clicked, closed or fails', () => {
+    const live = new Set<{ on: (ev: string, fn: () => void) => void; show: () => void; fire: (ev: string) => void }>();
+    const make = () => {
+      const handlers: Record<string, () => void> = {};
+      return { on: (ev: string, fn: () => void) => { handlers[ev] = fn; }, show: vi.fn(), fire: (ev: string) => handlers[ev]?.() };
+    };
+    const clicked = vi.fn();
+    const [a, b, c] = [make(), make(), make()];
+    for (const n of [a, b, c]) showKept(live, n, clicked);
+    expect(live.size).toBe(3);
+    expect(a.show).toHaveBeenCalled();
+    a.fire('click');
+    expect(clicked).toHaveBeenCalledTimes(1);
+    b.fire('close');
+    c.fire('failed');
+    expect(live.size).toBe(0);
+    expect(clicked).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends the click to the page only while the window shows the app', () => {
+    const wc = { isDestroyed: vi.fn(() => false), getURL: vi.fn(() => 'http://127.0.0.1:4317/#/'), send: vi.fn() };
+    const isApp = (u: string) => u.startsWith('http://127.0.0.1:4317/');
+    expect(sendAttentionClick(wc, isApp)).toBe(true);
+    expect(wc.send).toHaveBeenCalledWith(ATTENTION_CLICK);
+    expect(wc.send.mock.calls[0]).toHaveLength(1); // no data goes with it
+    wc.getURL.mockReturnValue('https://evil.example/');
+    expect(sendAttentionClick(wc, isApp)).toBe(false);
+    wc.isDestroyed.mockReturnValue(true);
+    wc.getURL.mockReturnValue('http://127.0.0.1:4317/#/');
+    expect(sendAttentionClick(wc, isApp)).toBe(false);
+    expect(wc.send).toHaveBeenCalledTimes(1);
+  });
+
+  it('preload: onAttentionClick listens on ms:attention-click, calls back without the event, and unsubscribes', async () => {
+    const electron = await import('electron');
+    const on = vi.fn();
+    const removeListener = vi.fn();
+    Object.assign(electron.ipcRenderer, { on, removeListener });
+    vi.mocked(electron.contextBridge.exposeInMainWorld).mockClear();
+    await import('../src/preload.ts');
+    const bridge = vi.mocked(electron.contextBridge.exposeInMainWorld).mock.calls[0]![1] as { onAttentionClick(cb: unknown): () => void };
+    const cb = vi.fn();
+    const off = bridge.onAttentionClick(cb);
+    expect(on).toHaveBeenCalledWith('ms:attention-click', expect.any(Function));
+    const listener = on.mock.calls[0]![1] as (...a: unknown[]) => void;
+    listener({ sender: 'secret' }, 'x');
+    expect(cb).toHaveBeenCalledWith();
+    off();
+    expect(removeListener).toHaveBeenCalledWith('ms:attention-click', listener);
+    // A non-function is ignored.
+    expect(typeof bridge.onAttentionClick('nope')).toBe('function');
+    expect(on).toHaveBeenCalledTimes(1);
   });
 });

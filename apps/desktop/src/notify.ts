@@ -58,3 +58,33 @@ export function registerAttention(ipc: { handle(channel: string, fn: (e: IpcMain
   ipc.handle('ms:notify', h.notify);
   ipc.handle('ms:badge', h.badge);
 }
+
+/** Main → page: a notification of the app was clicked (the page runs its "Review", as on the toast). */
+export const ATTENTION_CLICK = 'ms:attention-click';
+
+export interface NativeNotification { on(event: 'click' | 'close' | 'failed', fn: () => void): unknown; show(): void }
+
+/**
+ * Shows `n` and keeps a reference to it until it is clicked, closed or fails: a Notification object that is garbage
+ * collected loses its click handler (Electron), so a click on an older banner would do nothing.
+ */
+export function showKept<N extends NativeNotification>(live: Set<N>, n: N, onClick: () => void): void {
+  live.add(n);
+  const drop = () => { live.delete(n); };
+  n.on('click', () => { drop(); onClick(); });
+  n.on('close', drop);
+  n.on('failed', drop);
+  n.show();
+}
+
+export interface ClickTarget { isDestroyed(): boolean; getURL(): string; send(channel: string): void }
+
+/**
+ * Tells the page about a notification click, only while the window shows the app itself (the origin guard of the
+ * invoke handlers, the other way round). No data goes with it. Returns whether it was sent.
+ */
+export function sendAttentionClick(wc: ClickTarget, isApp: (url: string) => boolean): boolean {
+  if (wc.isDestroyed() || !isApp(wc.getURL())) return false;
+  wc.send(ATTENTION_CLICK);
+  return true;
+}

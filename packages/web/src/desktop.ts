@@ -7,6 +7,8 @@ export interface DesktopBridge {
   notify?(p: { title: string; body: string }): Promise<void>;
   /** Dock badge with the pending approvals (0 clears it); the Dock bounces once when it grows. */
   setBadge?(n: number): Promise<void>;
+  /** Calls `cb` when one of the app's native notifications is clicked; returns the unsubscribe. Missing before Phase 7. */
+  onAttentionClick?(cb: () => void): () => void;
 }
 
 /** The Electron preload bridge, or null in a plain browser (or when the bridge is malformed). */
