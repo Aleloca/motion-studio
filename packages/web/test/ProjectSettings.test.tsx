@@ -20,7 +20,7 @@ const api = {
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { ProjectSettings } = await import('../src/screens/ProjectSettings.tsx');
-const { UNDO_MS } = await import('../src/screens/Assets.tsx');
+const { UNDO_MS } = await import('../src/screens/common.tsx');
 
 const settings = workspaceSettingsSchema.parse({ schemaVersion: 1, extraAllowedDomains: ['cdn.acme.example'] });
 const live = (over: Partial<EventsState> = {}): EventsState => ({ approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {}, ...over });
@@ -82,6 +82,20 @@ describe('Project settings · always allowed', () => {
     expect(api.deletePermission).toHaveBeenCalledWith('acme', 'WebFetch(domain:acme.example)');
   });
 
+  it('a failed revoke brings the rule back and explains why', async () => {
+    api.deletePermission.mockRejectedValueOnce(new Error('locked'));
+    en(page());
+    await screen.findByText('Compress images with pngquant');
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke Compress images with pngquant' }));
+    await act(async () => {});
+    expect(screen.queryByText('Compress images with pngquant')).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(UNDO_MS + 500); });
+    expect(api.deletePermission).toHaveBeenCalled();
+    expect(screen.getByText('Compress images with pngquant')).toBeTruthy();
+    expect(getToasts().some((x) => x.text === 'Not revoked: locked')).toBe(true);
+  });
+
   it('Revoke all hides every rule with one Undo', async () => {
     en(page());
     await screen.findByText('Compress images with pngquant');
@@ -111,6 +125,38 @@ describe('Project settings · agent, internet and code', () => {
     await waitFor(() => expect(onSettings).toHaveBeenCalledWith(expect.objectContaining({ maxConcurrentJobs: 3 })));
     await userEvent.click(screen.getByRole('switch', { name: 'Confirm before using paid services' }));
     expect(api.updateSettings).toHaveBeenCalledWith({ confirmPaidProviders: false });
+  });
+
+  it('marks the workspace-wide rows and saves one jobs change at a time', async () => {
+    let finish!: (s: WorkspaceSettings) => void;
+    api.updateSettings.mockImplementationOnce(() => new Promise((r) => { finish = r; }));
+    en(page());
+    const paid = (await screen.findByText('Confirm before using paid services')).closest('.ms-set-row') as HTMLElement;
+    expect(within(paid).getByText('Shared by every project')).toBeTruthy();
+    const more = screen.getByRole('button', { name: 'More jobs' }) as HTMLButtonElement;
+    await userEvent.click(more);
+    expect(more.disabled).toBe(true);
+    await userEvent.click(more);
+    expect(api.updateSettings).toHaveBeenCalledTimes(1);
+    await act(async () => { finish({ ...settings, maxConcurrentJobs: 3 }); });
+    expect(more.disabled).toBe(false);
+  });
+
+  it('changes the isolation and the model, and shows the sandbox check', async () => {
+    const { rerender } = en(<ProjectSettings slug="acme" live={live()} settings={settings} onSettings={onSettings}
+      checks={[{ id: 'sandbox', label: 'Sandbox', ok: false, required: false, message: 'Seatbelt unavailable' }]} />);
+    expect(await screen.findByText('Seatbelt unavailable')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: /^Agent isolation/ }));
+    await userEvent.click(screen.getByRole('option', { name: 'Off' }));
+    expect(api.updateSettings).toHaveBeenCalledWith({ sandboxMode: 'off' });
+    rerender(<I18nProvider locale="en"><ProjectSettings slug="acme" live={live()} settings={{ ...settings, sandboxMode: 'off' }} onSettings={onSettings} checks={[]} /></I18nProvider>);
+    expect(screen.getByText('Without isolation, the agent can write anywhere with the commands you allow.')).toBeTruthy();
+    rerender(<I18nProvider locale="en"><ProjectSettings slug="acme" live={live()} settings={settings} onSettings={onSettings}
+      checks={[{ id: 'sandbox', label: 'Sandbox', ok: true, required: false, message: 'ok' }]} /></I18nProvider>);
+    expect(screen.getByText('Sandbox on: the agent works isolated in the project folder.')).toBeTruthy();
+    const model = screen.getByRole('textbox', { name: 'Model' });
+    await userEvent.type(model, 'claude-opus-5-5{Enter}');
+    expect(api.updateSettings).toHaveBeenLastCalledWith({ model: 'claude-opus-5-5' });
   });
 
   it('adds and removes websites, refusing what is not a domain', async () => {
@@ -147,6 +193,26 @@ describe('Project settings · agent, internet and code', () => {
     await waitFor(() => expect(api.updateProject).toHaveBeenCalledWith('acme', { linkedCodebases: [{ path: '/Users/me/code/app', note: 'iOS app' }, { path: '/Users/me/code/web' }] }));
     await userEvent.click(screen.getByRole('button', { name: 'Unlink /Users/me/code/app' }));
     await waitFor(() => expect(api.updateProject).toHaveBeenLastCalledWith('acme', { linkedCodebases: [{ path: '/Users/me/code/web' }] }));
+  });
+});
+
+describe('Project settings · linked code notes', () => {
+  it('a note follows live changes, except while it is being typed', async () => {
+    const { rerender } = en(page());
+    await userEvent.click(await screen.findByRole('button', { name: /^Linked code/ }));
+    const note = screen.getByRole('textbox', { name: 'Note for /Users/me/code/app' }) as HTMLInputElement;
+    expect(note.value).toBe('iOS app');
+    api.getProject.mockResolvedValue(proj('Acme', [{ path: '/Users/me/code/app', note: 'iPad app' }]));
+    rerender(<I18nProvider locale="en">{page({ tick: 1 })}</I18nProvider>);
+    await waitFor(() => expect(note.value).toBe('iPad app'));
+    await userEvent.clear(note);
+    await userEvent.type(note, 'Android app');
+    api.getProject.mockResolvedValue(proj('Acme', [{ path: '/Users/me/code/app', note: 'Watch app' }]));
+    rerender(<I18nProvider locale="en">{page({ tick: 2 })}</I18nProvider>);
+    await waitFor(() => expect(api.getProject).toHaveBeenCalledTimes(3));
+    expect(note.value).toBe('Android app');
+    fireEvent.blur(note);
+    await waitFor(() => expect(api.updateProject).toHaveBeenCalledWith('acme', { linkedCodebases: [{ path: '/Users/me/code/app', note: 'Android app' }] }));
   });
 });
 

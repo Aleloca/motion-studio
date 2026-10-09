@@ -1,4 +1,4 @@
-import { domainSchema, type LinkedCodebase, type PermissionsFile, type WorkspaceSettings, type WorkspaceSettingsView } from '@motion-studio/shared';
+import { domainSchema, type DoctorCheck, type LinkedCodebase, type PermissionsFile, type WorkspaceSettings, type WorkspaceSettingsView } from '@motion-studio/shared';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { api, type CodebaseCheck } from '../api.ts';
 import { desktop } from '../desktop.ts';
@@ -6,7 +6,7 @@ import type { EventsState } from '../eventsReducer.ts';
 import { formatDate, useLocale, useT } from '../i18n.tsx';
 import { collapse, enter, useEnter } from '../motion/index.ts';
 import { Button, Card, Empty, Icon, Input, NavItem, Pill, Select, Spinner, Tag, Textarea, Toggle, cx, toast, type IconName } from '../ui/index.ts';
-import { UNDO_MS, message } from './Assets.tsx';
+import { Alert, Head, Row, SectionMain, UNDO_MS, message } from './common.tsx';
 import { deferRemoval } from './deferred.ts';
 import './settings.css';
 
@@ -15,16 +15,6 @@ const SECTIONS: Array<[Section, IconName]> = [['general', 'gear'], ['agent', 'sh
 type Rule = PermissionsFile['allow'][number];
 const MIN_JOBS = 1;
 const MAX_JOBS = 8;
-
-/** A settings row of the prototype: title and explanation on the left, the control on the right. */
-export function Row({ title, sub, children }: { title: string; sub?: ReactNode; children?: ReactNode }) {
-  return (
-    <div className="ms-set-row">
-      <div className="ms-set-row-text"><b>{title}</b>{sub ? <span>{sub}</span> : null}</div>
-      {children !== undefined ? <div className="ms-set-row-ctl">{children}</div> : null}
-    </div>
-  );
-}
 
 /** `https://Media.Acme.example/path` → `media.acme.example`; null when it is not a domain the sandbox accepts. */
 export function normalizeDomain(raw: string): string | null {
@@ -43,7 +33,11 @@ function ruleIcon(rule: string): IconName {
   return 'shield';
 }
 
-interface Props { slug: string; live: EventsState; settings: WorkspaceSettingsView; onSettings(next: WorkspaceSettings): void }
+interface Props {
+  slug: string; live: EventsState; settings: WorkspaceSettingsView; onSettings(next: WorkspaceSettings): void;
+  /** The doctor's checks: the isolation row says whether the sandbox actually works here. */
+  checks?: DoctorCheck[] | null;
+}
 
 /**
  * Project · Settings (spec §6.2 #12), ported from the prototype's ProjectSettingsPage and the ProjectSettings boards:
@@ -52,7 +46,7 @@ interface Props { slug: string; live: EventsState; settings: WorkspaceSettingsVi
  * commands arrives with Phase 8; there is no Delete section because the API cannot delete a project.
  * Paid confirmation, parallel jobs, websites, isolation and model are workspace settings, shared by every project.
  */
-export function ProjectSettings({ slug, live, settings, onSettings }: Props) {
+export function ProjectSettings({ slug, live, settings, onSettings, checks: doctor = null }: Props) {
   const t = useT();
   const s = t.web.projectSettings;
   const tick = live.projectTicks[slug] ?? 0;
@@ -98,7 +92,7 @@ export function ProjectSettings({ slug, live, settings, onSettings }: Props) {
         ))}
       </nav>
       <SectionMain section={section}>
-        {error ? <div className="ms-set-alert" role="alert"><Icon name="warn" size={14} /><span>{error}</span></div> : null}
+        {error ? <Alert>{error}</Alert> : null}
         {section === 'general' ? (
           <GeneralSection slug={slug} project={project} onSaved={(p) => setProject((x) => (x ? { ...x, ...p } : x))} />
         ) : section === 'agent' ? (
@@ -108,7 +102,7 @@ export function ProjectSettings({ slug, live, settings, onSettings }: Props) {
               <div className="ms-set-col">
                 <AgentCard settings={settings} save={save} />
                 <AllowedCard slug={slug} tick={tick} />
-                <AdvancedCard settings={settings} save={save} />
+                <AdvancedCard settings={settings} save={save} sandbox={doctor?.find((c) => c.id === 'sandbox') ?? null} />
               </div>
               <div className="ms-set-col ms-set-side">{internet}{code}</div>
             </div>
@@ -119,21 +113,6 @@ export function ProjectSettings({ slug, live, settings, onSettings }: Props) {
           <><Head title={s.nav.code} /><div className="ms-set-narrow">{code}</div></>
         )}
       </SectionMain>
-    </div>
-  );
-}
-
-/** The section column: its content enters in cascade (data-enter) at each section change. */
-export function SectionMain({ section, children }: { section: string; children: ReactNode }) {
-  const root = useEnter<HTMLElement>([section]);
-  return <main ref={root} className="ms-set-main">{children}</main>;
-}
-
-export function Head({ title, sub, children }: { title: string; sub?: string; children?: ReactNode }) {
-  return (
-    <div className="ms-set-head" data-enter>
-      <div className="ms-set-head-text"><h1>{title}</h1>{sub ? <span>{sub}</span> : null}</div>
-      {children}
     </div>
   );
 }
@@ -190,23 +169,30 @@ function AgentCard({ settings, save }: { settings: WorkspaceSettingsView; save: 
   const t = useT();
   const s = t.web.projectSettings;
   const n = settings.maxConcurrentJobs;
+  // One save at a time: two fast clicks must not both save "n + 1" from the same n.
+  const [stepping, setStepping] = useState(false);
+  const step = async (next: number) => {
+    setStepping(true);
+    try { await save({ maxConcurrentJobs: next }); } finally { setStepping(false); }
+  };
   return (
     <Card className="ms-set-card" data-enter>
-      <Row title={s.agent.confirmPaid} sub={s.agent.confirmPaidSub}>
+      <Row title={s.agent.confirmPaid} sub={<>{s.agent.confirmPaidSub} <span className="ms-set-shared">{s.everyProject}</span></>}>
         <Toggle on={settings.confirmPaidProviders} onChange={(on) => void save({ confirmPaidProviders: on })} label={s.agent.confirmPaid} />
       </Row>
       <Row title={s.agent.jobs} sub={<>{s.agent.jobsSub} <span className="ms-set-shared">{s.everyProject}</span></>}>
         <div className="ms-stepper">
-          <button type="button" aria-label={s.agent.fewer} disabled={n <= MIN_JOBS} onClick={() => void save({ maxConcurrentJobs: n - 1 })}><Icon name="minus" size={12} /></button>
+          <button type="button" aria-label={s.agent.fewer} disabled={stepping || n <= MIN_JOBS} onClick={() => void step(n - 1)}><Icon name="minus" size={12} /></button>
           <span aria-live="polite">{n}</span>
-          <button type="button" aria-label={s.agent.more} disabled={n >= MAX_JOBS} onClick={() => void save({ maxConcurrentJobs: n + 1 })}><Icon name="plus" size={12} /></button>
+          <button type="button" aria-label={s.agent.more} disabled={stepping || n >= MAX_JOBS} onClick={() => void step(n + 1)}><Icon name="plus" size={12} /></button>
         </div>
       </Row>
     </Card>
   );
 }
 
-function AdvancedCard({ settings, save }: { settings: WorkspaceSettingsView; save: Save }) {
+/** Isolation and model (from the old Security and Agent sections), with the doctor's sandbox result as before. */
+function AdvancedCard({ settings, save, sandbox }: { settings: WorkspaceSettingsView; save: Save; sandbox: DoctorCheck | null }) {
   const t = useT();
   const a = t.web.projectSettings.agent;
   const [model, setModel] = useState(settings.model ?? '');
@@ -215,7 +201,14 @@ function AdvancedCard({ settings, save }: { settings: WorkspaceSettingsView; sav
   return (
     <Card className="ms-set-card" data-enter>
       <div className="ms-set-cardhead"><b>{a.advanced}</b><span className="ms-set-shared">{t.web.projectSettings.everyProject}</span></div>
-      <Row title={a.isolation} sub={settings.sandboxMode === 'off' ? <span className="ms-set-warn">{a.isolationWarning}</span> : a.isolationSub}>
+      <Row title={a.isolation} sub={(
+        <>
+          {a.isolationSub}
+          {settings.sandboxMode === 'off' ? <span className="ms-set-status ms-set-warn">{a.isolationWarning}</span>
+            : sandbox?.ok ? <span className="ms-set-status ms-set-ok">{a.sandboxOn}</span>
+            : <span className="ms-set-status ms-set-warn">{sandbox?.message ?? a.sandboxUnknown}</span>}
+        </>
+      )}>
         <Select label={a.isolation} value={settings.sandboxMode} onChange={(v) => void save({ sandboxMode: v })}
           options={[{ value: 'auto', label: a.isolationAuto }, { value: 'off', label: a.isolationOff }]} />
       </Row>
@@ -404,8 +397,7 @@ function CodeCard({ slug, linked, checks, onLinked }: { slug: string; linked: Li
             <div className="ms-code-text">
               <b title={cb.path}>{cb.path.split('/').filter(Boolean).pop() ?? cb.path}</b>
               <span className="ms-code-path">{cb.path}</span>
-              <input className="ms-code-note" defaultValue={cb.note ?? ''} placeholder={c.notePlaceholder} aria-label={c.noteFor({ path: cb.path })}
-                onBlur={(e) => saveNote(cb, e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+              <NoteInput note={cb.note ?? ''} placeholder={c.notePlaceholder} label={c.noteFor({ path: cb.path })} onSave={(v) => saveNote(cb, v)} />
             </div>
             {missing ? <Pill tone="warn">{c.notFound}</Pill> : <Tag>{c.readOnly}</Tag>}
             <Button size="sm" variant="ghost" icon aria-label={c.unlink({ path: cb.path })} title={c.unlink({ path: cb.path })} onClick={() => void unlink(cb)}><Icon name="close" size={11} /></Button>
@@ -426,5 +418,16 @@ function CodeCard({ slug, linked, checks, onLinked }: { slug: string; linked: Li
       )}
       {error ? <p className="ms-set-error" role="alert">{error}</p> : null}
     </Card>
+  );
+}
+
+/** A linked folder's note: follows live changes, except while it is being edited (the draft wins until it is saved). */
+function NoteInput({ note, placeholder, label, onSave }: { note: string; placeholder: string; label: string; onSave(value: string): void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <input className="ms-code-note" value={draft ?? note} placeholder={placeholder} aria-label={label}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => { if (draft !== null) onSave(draft); setDraft(null); }}
+      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { setDraft(null); e.currentTarget.blur(); } }} />
   );
 }

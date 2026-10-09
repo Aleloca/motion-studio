@@ -9,8 +9,7 @@ import { go } from '../shell/ShellContext.tsx';
 import type { Theme } from '../theme.ts';
 import { Button, Card, Icon, Input, Select, Spinner, Toggle, cx, toast } from '../ui/index.ts';
 import { rovingIndex } from '../ui/roving.ts';
-import { message } from './Assets.tsx';
-import { Head, Row, SectionMain } from './ProjectSettings.tsx';
+import { Alert, Head, Row, SectionMain, message } from './common.tsx';
 import { SystemChecks } from './Welcome.tsx';
 import './settings.css';
 
@@ -107,7 +106,7 @@ function General({ settings, checks, checking, loadError, onRecheck, language, s
   ];
   return (
     <>
-      {error ? <div className="ms-set-alert" role="alert"><Icon name="warn" size={14} /><span>{error}</span></div> : null}
+      {error ? <Alert>{error}</Alert> : null}
       <div className="ms-set-cols ms-wide-side">
         <div className="ms-set-col">
           <Head title={s.general.title} sub={s.appliesAll} />
@@ -119,6 +118,7 @@ function General({ settings, checks, checking, loadError, onRecheck, language, s
               <ThemePicker value={settings.theme} onChange={(v) => void theme(v)} />
             </Row>
           </Card>
+          <p className="ms-set-faint ms-set-small ms-set-pointer" data-enter><Icon name="gear" size={12} />{s.general.agentPointer}</p>
         </div>
         <div className="ms-set-col ms-set-side-top">
           <StatusCard checks={checks} checking={checking} loadError={loadError} onRecheck={onRecheck} />
@@ -205,7 +205,7 @@ function Paid({ secrets, error, onChange, reload }: { secrets: SecretStatus[] | 
   return (
     <div className="ms-set-narrow">
       <Head title={p.title} sub={p.sub} />
-      {error ? <div className="ms-set-alert" role="alert"><Icon name="warn" size={14} /><span>{error}</span></div> : null}
+      {error ? <Alert>{error}</Alert> : null}
       <Card className="ms-set-card" data-enter>
         {!secrets && !error ? <div className="ms-set-pad"><Spinner size={16} /></div> : null}
         {secrets ? PROVIDERS.map(([id, name, env, mark]) => (
@@ -221,18 +221,23 @@ function KeyRow({ id, name, env, mark, status, onChange, reload }: { id: Provide
   const p = t.web.appSettings.paid;
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState('');
-  const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const form = useRef<HTMLFormElement>(null);
   useEffect(() => { if (open) void enter(form.current, { y: -6 }); }, [open]);
+  // Removing a key cannot be undone (the Keychain keeps no copy): it asks first, inline.
+  const [confirming, setConfirming] = useState(false);
+  const keep = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (confirming) keep.current?.focus(); }, [confirming]);
   const fromEnv = status?.source === 'env';
   const inKeychain = status?.source === 'keychain';
 
-  // "Save and test": the key goes to the Keychain, then the status is read back to check it is really stored there.
+  // Save: the key goes to the Keychain, then the status is read back to check it is really stored there (the core has
+  // no way to test a key against the provider).
   const save = async (e: FormEvent) => {
     e.preventDefault();
-    if (!value.trim() || testing) return;
-    setTesting(true);
+    if (!value.trim() || saving) return;
+    setSaving(true);
     setError(null);
     try {
       onChange(await api.setSecret(id, value.trim()));
@@ -245,10 +250,11 @@ function KeyRow({ id, name, env, mark, status, onChange, reload }: { id: Provide
     } catch (err) {
       setError(p.failed({ detail: message(err) }));
     } finally {
-      setTesting(false);
+      setSaving(false);
     }
   };
   const remove = async () => {
+    setConfirming(false);
     setError(null);
     try { onChange(await api.deleteSecret(id)); toast.show(p.removed({ name })); }
     catch (err) { setError(p.removeFailed({ detail: message(err) })); }
@@ -264,10 +270,16 @@ function KeyRow({ id, name, env, mark, status, onChange, reload }: { id: Provide
         </div>
         {fromEnv ? null : (
           <div className="ms-key-actions">
-            {inKeychain ? (
+            {inKeychain && confirming ? (
+              <span className="ms-key-confirm" role="group" aria-label={p.removeConfirm({ name })}>
+                <span>{p.removeConfirm({ name })}</span>
+                <Button size="sm" variant="danger" onClick={() => void remove()}>{p.remove}</Button>
+                <Button ref={keep} size="sm" variant="ghost" onClick={() => setConfirming(false)}>{p.cancel}</Button>
+              </span>
+            ) : inKeychain ? (
               <>
                 <Button size="sm" aria-label={p.replaceLabel({ name })} onClick={() => { setOpen(true); setValue(''); }}>{p.replace}</Button>
-                <Button size="sm" variant="ghost" aria-label={p.removeLabel({ name })} onClick={() => void remove()}>{p.remove}</Button>
+                <Button size="sm" variant="ghost" aria-label={p.removeLabel({ name })} onClick={() => { setOpen(false); setConfirming(true); }}>{p.remove}</Button>
               </>
             ) : open ? null : (
               <Button size="sm" variant="ink" onClick={() => { setOpen(true); setValue(''); }}>{p.addKey}</Button>
@@ -280,7 +292,7 @@ function KeyRow({ id, name, env, mark, status, onChange, reload }: { id: Provide
           <Input type="password" autoFocus autoComplete="off" spellCheck={false} value={value} onChange={(e) => setValue(e.target.value)}
             placeholder={p.keyPlaceholder} aria-label={p.keyLabel({ name })} />
           <Button size="sm" variant="ghost" onClick={() => { setOpen(false); setValue(''); setError(null); }}>{p.cancel}</Button>
-          <Button type="submit" size="sm" variant="ink" loading={testing} disabled={!value.trim() || testing}>{testing ? p.testing : p.saveTest}</Button>
+          <Button type="submit" size="sm" variant="ink" loading={saving} disabled={!value.trim() || saving}>{saving ? p.saving : p.save}</Button>
         </form>
       ) : null}
       {error ? <p className="ms-set-error" role="alert">{error}</p> : null}
@@ -309,7 +321,10 @@ function Notifications() {
   );
 }
 
-/** The version only: the desktop bridge exposes no updater status, so there is nothing to check from here. */
+/**
+ * The version and how updates arrive: the desktop bridge exposes no updater status, so this page neither claims the app
+ * is up to date nor offers a check it cannot run.
+ */
 function Updates() {
   const t = useT();
   const u = t.web.appSettings.updates;
@@ -317,7 +332,7 @@ function Updates() {
     <div className="ms-set-narrow">
       <Head title={u.title} />
       <Card className="ms-set-card" data-enter>
-        <Row title={u.version({ version: __APP_VERSION__ })} sub={u.upToDate} />
+        <Row title={u.version({ version: __APP_VERSION__ })} sub={u.automatic} />
       </Card>
     </div>
   );

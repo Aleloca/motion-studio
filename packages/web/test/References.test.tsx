@@ -22,7 +22,7 @@ const api = {
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { References } = await import('../src/screens/References.tsx');
-const { UNDO_MS } = await import('../src/screens/Assets.tsx');
+const { UNDO_MS } = await import('../src/screens/common.tsx');
 const { flushDeferred } = await import('../src/screens/deferred.ts');
 
 const live = (over: Partial<EventsState> = {}): EventsState => ({ approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {}, ...over });

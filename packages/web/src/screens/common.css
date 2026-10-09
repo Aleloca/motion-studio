@@ -1,0 +1,19 @@
+/* Shared by the library and settings screens (screens/common.tsx). Tokens only. */
+.ms-alert {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; line-height: 1.45; flex-wrap: wrap;
+  background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); color: var(--text); overflow-wrap: anywhere;
+}
+.ms-alert > svg { color: var(--warn); flex: none; }
+.ms-alert > span { flex: 1 1 240px; min-width: 0; }
+.ms-set-main { min-width: 0; min-height: 0; overflow: auto; padding: 28px 40px 60px; display: flex; flex-direction: column; gap: 18px; }
+.ms-set-head { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.ms-set-head-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 280px; }
+.ms-set-head h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.015em; }
+.ms-set-head-text > span { color: var(--muted); line-height: 1.45; }
+.ms-set-row { display: flex; align-items: flex-start; gap: 16px; padding: 14px 18px; border-bottom: 1px solid var(--line2); min-width: 0; }
+.ms-set-card > .ms-set-row:last-child { border-bottom: 0; }
+.ms-set-row-text { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.ms-set-row-text b { font-weight: 600; }
+.ms-set-row-text > span { color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+.ms-set-row-ctl { margin-top: 2px; flex: none; max-width: 60%; display: flex; align-items: center; gap: 8px; }
+@media (max-width: 760px) { .ms-set-main { padding: 20px 16px 48px; } }

@@ -7,7 +7,7 @@ import { collapse, enter, useEnter } from '../motion/index.ts';
 import { href } from '../routes.ts';
 import { go } from '../shell/ShellContext.tsx';
 import { Button, Card, Empty, Icon, Spinner, Textarea, Toggle, cx, toast } from '../ui/index.ts';
-import { Alert, UNDO_MS, message } from './Assets.tsx';
+import { Alert, UNDO_MS, message } from './common.tsx';
 import { deferRemoval, flushDeferred } from './deferred.ts';
 import './library.css';
 
@@ -136,12 +136,13 @@ function ReferencesBody({ slug, listing, setListing, reload }: { slug: string; l
     }
   };
 
-  const onDragEnter = (e: DragEvent) => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth.current += 1; setDrag(true); };
-  const onDragOver = (e: DragEvent) => { if (hasFiles(e)) e.preventDefault(); };
-  const onDragLeave = (e: DragEvent) => { if (!hasFiles(e)) return; dragDepth.current = Math.max(0, dragDepth.current - 1); if (dragDepth.current === 0) setDrag(false); };
-  const onDrop = (e: DragEvent) => { e.preventDefault(); dragDepth.current = 0; setDrag(false); void upload(Array.from(e.dataTransfer?.files ?? [])); };
-  const pick = () => fileInput.current?.click();
   const canUpload = !listing.error;
+  // An unreadable list takes no files: no drop target is offered then.
+  const onDragEnter = (e: DragEvent) => { if (!canUpload || !hasFiles(e)) return; e.preventDefault(); dragDepth.current += 1; setDrag(true); };
+  const onDragOver = (e: DragEvent) => { if (canUpload && hasFiles(e)) e.preventDefault(); };
+  const onDragLeave = (e: DragEvent) => { if (!canUpload || !hasFiles(e)) return; dragDepth.current = Math.max(0, dragDepth.current - 1); if (dragDepth.current === 0) setDrag(false); };
+  const onDrop = (e: DragEvent) => { e.preventDefault(); dragDepth.current = 0; setDrag(false); if (canUpload) void upload(Array.from(e.dataTransfer?.files ?? [])); };
+  const pick = () => fileInput.current?.click();
 
   return (
     <div className="ms-refs" onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
@@ -178,7 +179,7 @@ function ReferencesBody({ slug, listing, setListing, reload }: { slug: string; l
           </div>
         )}
       </div>
-      {drag ? <div className="ms-lib-dropzone" aria-hidden="true"><span>{r.dropOverlay}</span></div> : null}
+      {drag && canUpload ? <div className="ms-lib-dropzone" aria-hidden="true"><span>{r.dropOverlay}</span></div> : null}
     </div>
   );
 }

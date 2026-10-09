@@ -221,7 +221,7 @@ function AppShell({ route, live, settings, checks, activity, setActivity, langua
   const render = (r: Route) => {
     switch (r.name) {
       case 'projects': return <Projects live={live} />;
-      case 'project': return <ProjectHost route={r} live={live} settings={settings} onSettings={onSettings} />;
+      case 'project': return <ProjectHost route={r} live={live} settings={settings} checks={checks} onSettings={onSettings} />;
       case 'new-creative': return <NewCreative key={r.slug} slug={r.slug} />;
       case 'creative': return <CreativeCanvas key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} />;
       case 'format': return <FormatView key={`${r.slug}/${r.creative}/${r.format}`} slug={r.slug} creative={r.creative} format={r.format} live={live} />;
@@ -254,17 +254,18 @@ function sharedElement(a: Route, b: Route): PageMode {
 }
 
 /** A project page: its tabs (in the project bar) change in place with T2 (soft fade and 6 px lift). */
-function ProjectHost({ route, live, settings, onSettings }: { route: Extract<Route, { name: 'project' }>; live: EventsState; settings: WorkspaceInfo['settings']; onSettings(next: WorkspaceSettings): void }) {
-  return <PageHost route={route} keyOf={(r) => r.tab} soft render={(r) => <ProjectTabPage route={r} live={live} settings={settings} onSettings={onSettings} />} />;
+interface TabProps { live: EventsState; settings: WorkspaceInfo['settings']; checks: DoctorCheck[] | null; onSettings(next: WorkspaceSettings): void }
+function ProjectHost({ route, ...rest }: TabProps & { route: Extract<Route, { name: 'project' }> }) {
+  return <PageHost route={route} keyOf={(r) => r.tab} soft render={(r) => <ProjectTabPage route={r} {...rest} />} />;
 }
 
-function ProjectTabPage({ route: { slug, tab }, live, settings, onSettings }: { route: Extract<Route, { name: 'project' }>; live: EventsState; settings: WorkspaceInfo['settings']; onSettings(next: WorkspaceSettings): void }) {
+function ProjectTabPage({ route: { slug, tab }, live, settings, checks, onSettings }: TabProps & { route: Extract<Route, { name: 'project' }> }) {
   switch (tab) {
     case 'creatives': return <ProjectCreatives key={slug} slug={slug} live={live} />;
     case 'brand': return <Brand key={slug} slug={slug} live={live} />;
     case 'assets': return <Assets key={slug} slug={slug} live={live} />;
     case 'references': return <References key={slug} slug={slug} live={live} />;
-    case 'settings': return settings ? <ProjectSettings key={slug} slug={slug} live={live} settings={settings} onSettings={onSettings} /> : null;
+    case 'settings': return settings ? <ProjectSettings key={slug} slug={slug} live={live} settings={settings} checks={checks} onSettings={onSettings} /> : null;
     case 'console': return <ProjectConsole key={slug} slug={slug} live={live} />;
   }
 }

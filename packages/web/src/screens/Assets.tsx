@@ -11,18 +11,16 @@ import { requestNewCreativeWithAssets } from '../shell/intents.ts';
 import { go } from '../shell/ShellContext.tsx';
 import { Button, Check, Chip, Empty, Icon, Input, NavItem, Pill, Popover, Spinner, Tag, Textarea, Typing, cx, toast, type IconName } from '../ui/index.ts';
 import { useFontPreview, specimenFamily } from './brandFonts.ts';
+import { Alert, UNDO_MS, message } from './common.tsx';
 import { deferRemoval } from './deferred.ts';
 import './library.css';
 
-/** Time the Undo of a delete stays offered before the delete is sent (brief: 5 s). */
-export const UNDO_MS = 5000;
 const KINDS: AssetKind[] = ['image', 'svg', 'video', 'font', 'audio', 'other'];
 const ORIGINS: AssetOrigin[] = ['website', 'upload', 'generated', 'stock'];
 const MAX_TAGS = 30;
 const MAX_TAG = 40;
 
 type Listing = { assets: AssetEntry[]; error: string | null; unregistered: string[] };
-export const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** The file name without its folder (point 16: never the `brand/…` path as a title). */
 export const baseName = (file: string) => file.split('/').pop() ?? file;
 /** Tags typed by hand: trimmed, at most 40 characters, no duplicates (case-insensitive), at most 30 in all. */
@@ -118,6 +116,15 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
   useEffect(() => { firstPaint.current = false; }, []);
 
   const assets = useMemo(() => listing.assets.filter((x) => !hidden.has(x.file)), [listing.assets, hidden]);
+  // The selection bar acts on what is selected: a filter change clears the selection, so it never acts on assets that
+  // are no longer on screen.
+  const filterKey = `${type}\n${origin ?? ''}\n${tag ?? ''}\n${query.trim()}`;
+  const lastFilter = useRef(filterKey);
+  useEffect(() => {
+    if (lastFilter.current === filterKey) return;
+    lastFilter.current = filterKey;
+    setSel((s) => (s.size ? new Set() : s));
+  }, [filterKey]);
   // A selection or an open detail of an asset that is gone (deleted elsewhere, hidden) lets go of it.
   useEffect(() => {
     const files = new Set(assets.map((x) => x.file));
@@ -165,16 +172,15 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
       const added = res.assets ?? [];
       setFresh((s) => new Set([...s, ...added.map((x) => x.file)]));
       setListing((l) => (l ? { ...l, assets: [...l.assets.filter((x) => !added.some((n) => n.file === x.file)), ...added] } : l));
-      // Claude describes and tags what was just added (the prototype's promise), unless the brand job is busy.
-      const describeNow = added.length > 0 && !busy && (await describe(added.map((x) => x.file)));
-      toast.show(describeNow ? a.uploadedDescribing({ count: added.length }) : a.uploaded({ count: added.length }), { tone: 'ok' });
+      // No agent run without a click: the new files wait in "N without a description → Describe them".
+      toast.show(a.uploaded({ count: added.length }), { tone: 'ok' });
       reload();
     } catch (e) {
       toast.show(a.uploadFailed({ detail: message(e) }));
     } finally {
       setUploading((u) => u.filter((n) => !names.includes(n)));
     }
-  }, [slug, listing.error, busy, describe, a, setListing, reload]);
+  }, [slug, listing.error, a, setListing, reload]);
 
   const remove = useCallback(async (files: string[]) => {
     if (files.length === 0) return;
@@ -245,17 +251,18 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
   const toggle = (f: string) => setSel((s) => { const n = new Set(s); if (n.has(f)) n.delete(f); else n.add(f); return n; });
 
   // Drop anywhere on the page (dragenter/leave are counted: children fire their own).
-  const onDragEnter = (e: DragEvent) => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth.current += 1; setDrag(true); };
-  const onDragOver = (e: DragEvent) => { if (hasFiles(e)) e.preventDefault(); };
-  const onDragLeave = (e: DragEvent) => { if (!hasFiles(e)) return; dragDepth.current = Math.max(0, dragDepth.current - 1); if (dragDepth.current === 0) setDrag(false); };
+  const canUpload = !listing.error;
+  // An unreadable library takes no files: no drop target is offered then.
+  const onDragEnter = (e: DragEvent) => { if (!canUpload || !hasFiles(e)) return; e.preventDefault(); dragDepth.current += 1; setDrag(true); };
+  const onDragOver = (e: DragEvent) => { if (canUpload && hasFiles(e)) e.preventDefault(); };
+  const onDragLeave = (e: DragEvent) => { if (!canUpload || !hasFiles(e)) return; dragDepth.current = Math.max(0, dragDepth.current - 1); if (dragDepth.current === 0) setDrag(false); };
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
     dragDepth.current = 0;
     setDrag(false);
-    void upload(Array.from(e.dataTransfer?.files ?? []));
+    if (canUpload) void upload(Array.from(e.dataTransfer?.files ?? []));
   };
   const pick = () => fileInput.current?.click();
-  const canUpload = !listing.error;
   const lastJobFailed = job && !running && isDescribeJob(job) && job.state === 'failed';
 
   return (
@@ -353,7 +360,7 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
           onAddTags={(text) => addTags([...sel], text)} onUse={() => useInCreative([...sel])}
           onDelete={() => void remove([...sel])} onClear={() => setSel(new Set())} />
       ) : null}
-      {drag ? <div className="ms-lib-dropzone" aria-hidden="true"><span>{a.dropOverlay({ project: projectName })}</span></div> : null}
+      {drag && canUpload ? <div className="ms-lib-dropzone" aria-hidden="true"><span>{a.dropOverlay({ project: projectName })}</span></div> : null}
     </div>
   );
 }
@@ -363,16 +370,6 @@ const KIND_ICON: Record<AssetKind, IconName> = { image: 'image', svg: 'edit', vi
 /** A filter row of the side navigation: a toggle (aria-pressed), not a page. */
 function FilterItem({ on, icon, count, dim, onClick, children }: { on: boolean; icon?: IconName; count: number; dim?: boolean; onClick(): void; children: string }) {
   return <NavItem icon={icon} count={count} aria-pressed={on} className={cx(on && 'ms-on', dim && 'ms-dim')} onClick={onClick}>{children}</NavItem>;
-}
-
-export function Alert({ children, action }: { children: ReactNode; action?: ReactNode }) {
-  return (
-    <div className="ms-lib-alert" role="alert">
-      <Icon name="warn" size={14} />
-      <span>{children}</span>
-      {action}
-    </div>
-  );
 }
 
 /** Side card (point 17): how many assets have no description, and a button that says it. */

@@ -27,7 +27,8 @@ const api = {
   projectFileUrl: (s: string, r: string) => `/f/${s}/${r}`,
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
-const { Assets, UNDO_MS } = await import('../src/screens/Assets.tsx');
+const { Assets } = await import('../src/screens/Assets.tsx');
+const { UNDO_MS } = await import('../src/screens/common.tsx');
 const { useNewCreativeAssetsIntent } = await import('../src/shell/intents.ts');
 
 const live = (over: Partial<EventsState> = {}): EventsState => ({ approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {}, ...over });
@@ -171,6 +172,34 @@ describe('Assets · library', () => {
   });
 });
 
+describe('Assets · selection and failures', () => {
+  it('a filter change clears the selection, so the bar never acts on assets that are not on screen', async () => {
+    en(<Assets slug="acme" live={live()} />);
+    await screen.findByText('Wordmark for dark backgrounds');
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Select logo.svg' }));
+    expect(screen.getByRole('toolbar', { name: 'Selection' })).toBeTruthy();
+    await userEvent.click(within(screen.getByRole('navigation', { name: 'Asset filters' })).getByRole('button', { name: /^Video/ }));
+    expect(screen.queryByRole('toolbar', { name: 'Selection' })).toBeNull();
+    await userEvent.click(within(screen.getByRole('navigation', { name: 'Asset filters' })).getByRole('button', { name: /^All/ }));
+    expect((screen.getByRole('checkbox', { name: 'Select logo.svg' }) as HTMLElement).getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('a failed delete brings the assets back and explains why', async () => {
+    api.deleteAsset.mockRejectedValueOnce(new Error('disk full'));
+    en(<Assets slug="acme" live={live()} />);
+    await screen.findByText('Wordmark for dark backgrounds');
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select night.jpg' }));
+    fireEvent.click(within(screen.getByRole('toolbar', { name: 'Selection' })).getByRole('button', { name: 'Delete' }));
+    await act(async () => {});
+    expect(card('night.jpg')).toBeNull();
+    await act(async () => { vi.advanceTimersByTime(UNDO_MS + 500); });
+    expect(api.deleteAsset).toHaveBeenCalledWith('acme', 'night.jpg');
+    expect(card('night.jpg')).toBeTruthy();
+    expect(getToasts().some((x) => x.text === 'Not deleted: disk full')).toBe(true);
+  });
+});
+
 describe('Assets · detail', () => {
   it('saves tags as chips: Enter adds one, × removes one', async () => {
     en(<Assets slug="acme" live={live()} />);
@@ -212,7 +241,7 @@ describe('Assets · detail', () => {
 });
 
 describe('Assets · upload and states', () => {
-  it('uploads from the button: the cards appear and Claude describes the new files', async () => {
+  it('uploads from the button: the cards appear, and nothing is described without a click', async () => {
     api.uploadFiles.mockImplementationOnce(async () => {
       const added = asset({ file: 'map.png' });
       listing.assets.push(added);
@@ -224,7 +253,10 @@ describe('Assets · upload and states', () => {
     await userEvent.upload(screen.getByLabelText('Upload files'), file);
     await waitFor(() => expect(api.uploadFiles).toHaveBeenCalledWith('acme', 'assets', [file]));
     expect(await screen.findByRole('button', { name: 'Open map.png' })).toBeTruthy();
-    await waitFor(() => expect(api.describeAssets).toHaveBeenCalledWith('acme', ['map.png']));
+    expect(getToasts().some((x) => x.text === 'Uploaded 1 file')).toBe(true);
+    expect(api.describeAssets).not.toHaveBeenCalled();
+    // The new file waits in the side card, described only on a click.
+    expect(screen.getByText('2 assets without a description')).toBeTruthy();
   });
 
   it('accepts files dropped anywhere on the page', async () => {
@@ -237,6 +269,18 @@ describe('Assets · upload and states', () => {
     fireEvent.drop(page, { dataTransfer: { types: ['Files'], files: [file] } });
     await waitFor(() => expect(api.uploadFiles).toHaveBeenCalledWith('acme', 'assets', [file]));
     expect(screen.queryByText('Drop to add to Acme Studio')).toBeNull();
+  });
+
+  it('offers no drop target when the library cannot be read', async () => {
+    listing.error = 'bad JSON';
+    en(<Assets slug="acme" live={live()} />);
+    await screen.findByText(/The asset list can't be read: bad JSON/);
+    const page = document.querySelector('.ms-assets') as HTMLElement;
+    const file = new File(['x'], 'drop.png', { type: 'image/png' });
+    fireEvent.dragEnter(page, { dataTransfer: { types: ['Files'], files: [file] } });
+    expect(screen.queryByText('Drop to add to Acme Studio')).toBeNull();
+    fireEvent.drop(page, { dataTransfer: { types: ['Files'], files: [file] } });
+    expect(api.uploadFiles).not.toHaveBeenCalled();
   });
 
   it('shows the designed empty state with an Upload action', async () => {
