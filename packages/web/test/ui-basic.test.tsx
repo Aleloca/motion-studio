@@ -538,6 +538,9 @@ describe('Markdown', () => {
       '_a '.repeat(6700), '`'.repeat(20000), 'https://'.repeat(2500), '**['.repeat(6700), '[a](https://x '.repeat(1400),
       // Fenced code blocks: many tiny blocks, near-miss openers and closers, one unclosed block of hostile inline text.
       '```js\n**[a](\n```\n'.repeat(1200), '``` `\n'.repeat(2800), '~~~\n```\n'.repeat(2000), '```\n' + '**[a]('.repeat(3300),
+      // Long runs followed by a character that `.` does not match and the line split keeps (\r, U+2028, U+2029).
+      '`'.repeat(20000) + '\rx', '~'.repeat(20000) + ' x', '# ' + ' '.repeat(20000) + ' x', '# ' + ' '.repeat(20000) + 'x\ry',
+      '- ' + ' '.repeat(20000) + 'x\u2028y', '`'.repeat(20000) + '\u2029x', 'https://a' + '.'.repeat(20000) + 'x',
     ];
     // Deterministic work count instead of wall-clock time (which flaked under the parallel full run): every regex
     // exec — including those behind split/replace/test — adds the characters it scanned. The current parser does
@@ -560,6 +563,25 @@ describe('Markdown', () => {
         expect(work, text.slice(0, 12)).toBeLessThanOrEqual(K * text.length);
       }
     } finally { RegExp.prototype.exec = exec; }
+  });
+  it('line patterns cannot backtrack quadratically (no `.*` before `$`, no unanchored trailing run)', () => {
+    // The work count above sees what each exec scans, not the engine's backtracking: a `(.*)$` after a long run
+    // fails at a lone \r, U+2028 or U+2029 and retries once per character of the run (20 k chars ≈ 650 ms). Keep
+    // the line patterns in a form that cannot do that.
+    const src = readFileSync(resolve(import.meta.dirname, '../src/ui/Markdown.tsx'), 'utf8');
+    const literals = [...src.matchAll(/^const [A-Z_]+ = (\/.+\/[a-z]*);$/gm)].map((m) => m[1]!);
+    expect(literals.length).toBeGreaterThan(3);
+    for (const re of literals) {
+      expect(re, re).not.toMatch(/\.\*\)?\$/);
+      expect(re.startsWith('/^') || !/[+*]\$\/[a-z]*$/.test(re), re).toBe(true);
+    }
+    // The lines that used to backtrack still mean the same.
+    const fence = render(<Markdown text={'```ts\rx\ncode'} />);
+    expect(fence.container.querySelector('pre code')!.textContent).toBe('code');
+    fence.unmount();
+    const url = render(<Markdown text={'see https://example.com/a...'} />);
+    expect(url.container.querySelector('a')!.getAttribute('href')).toBe('https://example.com/a');
+    url.unmount();
   });
   it('renders a fenced code block as plain text in a pre, between paragraphs', () => {
     const { container } = render(<Markdown text={'Before **bold**\n\n```ts\nconst a = 1;\n\n  **not bold** `nor code`\n```\nAfter *it*'} />);

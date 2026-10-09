@@ -15,7 +15,13 @@ import { cx } from './cx.ts';
 type Rule = { /** global: searched from `lastIndex` */ re: RegExp; trimEnd?: boolean; render: (m: [string, ...string[]], key: string, links: boolean) => ReactNode };
 
 const SAFE_URL = /^https?:\/\/[^\s]+$/i;
-const TRAILING = /[.,;:!?'"]+$/;
+const TRAILING = new Set(['.', ',', ';', ':', '!', '?', "'", '"']);
+/** Drops the sentence punctuation that ends a bare URL (a loop: an unanchored `[…]+$` is quadratic on long runs). */
+function trimTrailing(raw: string): string {
+  let end = raw.length;
+  while (end > 0 && TRAILING.has(raw[end - 1]!)) end--;
+  return raw.slice(0, end);
+}
 
 /** Only absolute http(s) URLs become links; anything else (javascript:, data:, protocol-relative…) is refused. */
 export function safeHref(raw: string): string | null {
@@ -77,7 +83,7 @@ function inline(text: string, keyPrefix: string, links = true): ReactNode[] {
     if (!found) { out.push(text.slice(pos)); break; }
     const rule = RULES[best]!;
     // A bare URL does not swallow the punctuation that ends the sentence.
-    const whole = rule.trimEnd ? found[0].replace(TRAILING, '') : found[0];
+    const whole = rule.trimEnd ? trimTrailing(found[0]) : found[0];
     if (found.index > pos) out.push(text.slice(pos, found.index));
     out.push(rule.render([whole, ...found.slice(1)], `${keyPrefix}.${n++}`, links));
     pos = found.index + whole.length;
@@ -88,10 +94,13 @@ function inline(text: string, keyPrefix: string, links = true): ReactNode[] {
 type Block = { kind: 'p'; lines: string[] } | { kind: 'ul'; items: string[] } | { kind: 'h'; level: number; text: string }
   | { kind: 'pre'; lang: string; lines: string[] };
 
-const BULLET = /^\s*[-*+]\s+(.*)$/;
-const HEADING = /^(#{1,6})[ \t]+(.*)$/;
+// Line patterns end in `([^]*)$`, never `(.*)$`: `.` stops at a lone \r, U+2028 or U+2029 (the line split keeps them),
+// and `(.*)$` would then fail and retry once per character of the run before it (quadratic). `[^]*` always reaches
+// the end, so each pattern scans its line once.
+const BULLET = /^\s*[-*+]\s+([^]*)$/;
+const HEADING = /^(#{1,6})[ \t]+([^]*)$/;
 /** A fence opener: up to 3 spaces, 3+ backticks or tildes, the info string (its first word is the language). */
-const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})(.*)$/;
+const FENCE_OPEN = /^( {0,3})(`{3,}|~{3,})([^]*)$/;
 const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
 /** Drops a closing `##` run and trailing spaces (a loop, not a regex: linear on hostile input). */
 function headingText(raw: string): string {
