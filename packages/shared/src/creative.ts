@@ -122,7 +122,8 @@ export type ConversationEntry =
   | { type: 'user'; at: string; text: string; pins: Pin[]; attachments: string[] }
   | { type: 'agent'; at: string; jobId: string; event: AgentEvent }
   | { type: 'version'; at: string; n: number; status: 'complete' | 'incomplete' }
-  | { type: 'system'; at: string; level: 'info' | 'error'; text: string };
+  /** `warning`: something the user should know that did not fail the turn (e.g. a link removed); shown like `info`. */
+  | { type: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string };
 
 export interface CreativeSummary { slug: string; title: string; status: CreativeStatus; formats: string[]; versions: number; updatedAt: string; cover: string | null }
 /** A creative summary tagged with its project, for cross-project lists such as "Jump back in". */

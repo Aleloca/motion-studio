@@ -282,3 +282,25 @@ describe('outputWarningText outputs.keptUnchanged', () => {
     expect(outputWarningText({ ...w, params: { format: 'custom' } }, 'en')).toMatch(/^custom was not part/);
   });
 });
+
+describe('validateOutputs carried problems and reserved names (review fixes)', () => {
+  it('a carried file keeps its inherited problems, also in the version list (once)', async () => {
+    await manifest([sq, banner]);
+    await writeFile(join(dir, 'sq.mp4'), 'v');
+    await writeFile(join(dir, 'banner.png'), 'i');
+    const r = await validateOutputs({ dir, requested: ['sq', 'banner'], presets, durationSec: 15, media: NoMediaTools, carried: ['sq', 'banner'],
+      inherited: { sq: ['vecchio problema'], banner: ['vecchio problema'] } });
+    expect(r.outputs.map((o) => o.problems)).toEqual([['vecchio problema'], ['vecchio problema']]);
+    expect(r.problems).toEqual(['vecchio problema']);
+  });
+  it('flags a delivered file that uses a name the core owns, never a carried one', async () => {
+    await manifest([{ ...sq, file: 'banner.png' }, { ...banner, file: 'banner.png' }]);
+    await writeFile(join(dir, 'banner.png'), 'i');
+    const owner = (f: string) => (f === 'banner.png' ? 'banner' : undefined);
+    const r = await validateOutputs({ dir, requested: ['sq'], presets, durationSec: null, media: NoMediaTools, reservedOwner: owner });
+    expect(r.outputs[0]!.problems).toEqual(expect.arrayContaining([expect.stringContaining('banner.png: questo nome appartiene a banner')]));
+    const c = await validateOutputs({ dir, requested: ['banner'], presets, durationSec: null, media: NoMediaTools, carried: ['banner'], reservedOwner: owner });
+    expect(c.problems).toEqual([]);
+  });
+});
+

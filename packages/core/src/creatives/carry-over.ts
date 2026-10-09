@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { copyFile, lstat, mkdir, realpath, rm } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { canFollow, type FollowCheck, type FormatPreset, type OutputFileInfo } from '@motion-studio/shared';
 import { hashConfinedFile } from '../brand/agent-guard.ts';
@@ -48,24 +48,28 @@ export async function isConfinedFile(creativeDir: string, rel: string): Promise<
 
 /**
  * Makes `outputs/v<n>` a real folder of the creative: an entry the agent left there that is not a folder (a symlink, a file)
- * is removed as an entry, never followed. Throws when the folder resolves elsewhere (e.g. `outputs` itself is a link).
+ * is removed as an entry, never followed (returns true then). Throws when the folder resolves elsewhere (e.g. `outputs`
+ * itself is a link).
  */
-export async function versionDirReady(creativeDir: string, n: number): Promise<void> {
+export async function versionDirReady(creativeDir: string, n: number): Promise<boolean> {
   const dir = join(creativeDir, 'outputs', `v${n}`);
   const info = await lstat(dir).catch(() => null);
-  if (info && !info.isDirectory()) await rm(dir, { force: true });
-  if (!info || !info.isDirectory()) await mkdir(dir, { recursive: true });
+  const replaced = info !== null && !info.isDirectory();
+  if (replaced) await rm(dir, { force: true });
+  if (!info || replaced) await mkdir(dir, { recursive: true });
   const [real, realBase] = await Promise.all([realpath(dir).catch(() => null), realpath(creativeDir).catch(() => null)]);
   if (!real || !realBase || real !== join(realBase, 'outputs', `v${n}`)) throw new Error(`outputs/v${n} is not a folder of the creative`);
+  return replaced;
 }
 
 /**
- * Copies `fromRel` to `toRel` (both under `creativeDir`; `toRel` must not exist) and proves the copy byte-identical: the
- * copy's sha256 must equal `expected` (the source's recorded hash) or, when there is none or it differs, the source's
- * current hash. The source must be a confined regular file. Returns the copy's sha256, or null (nothing left at `toRel`).
+ * Copies `fromRel` to `toRel` (both under `creativeDir`; `toRel` must not exist) and proves the copy is the expected
+ * content: its sha256 must equal `expected`, taken by the caller from a trusted reference (the hash recorded for the base
+ * version, or one computed before the agent ran). The source's current bytes are never trusted: on a mismatch the copy is
+ * removed. The source must be a confined regular file. Returns the copy's sha256, or null (nothing left at `toRel`).
  * A clone (copy-on-write) where the volume supports it, a full copy otherwise: never a hard link.
  */
-export async function copyVerified(creativeDir: string, fromRel: string, toRel: string, expected?: string): Promise<string | null> {
+export async function copyVerified(creativeDir: string, fromRel: string, toRel: string, expected: string): Promise<string | null> {
   if (!(await isConfinedFile(creativeDir, fromRel))) return null;
   const dest = join(creativeDir, ...toRel.split('/'));
   try {
@@ -75,16 +79,54 @@ export async function copyVerified(creativeDir: string, fromRel: string, toRel: 
     return null;
   }
   const copy = await hashConfinedFile(creativeDir, toRel);
-  let ok = copy !== null && !('skipped' in copy) && copy.sha256 === expected;
-  if (!ok && copy && !('skipped' in copy)) {
-    const source = await hashConfinedFile(creativeDir, fromRel);
-    ok = source !== null && !('skipped' in source) && source.sha256 === copy.sha256;
-    if (ok && expected !== undefined) console.warn(`Motion Studio: ${fromRel} changed since it was recorded; its current content was carried`);
-  }
-  if (!ok || !copy || 'skipped' in copy) {
-    console.warn(`Motion Studio: the copy of ${fromRel} to ${toRel} could not be verified; it was removed`);
+  if (copy === null || 'skipped' in copy || copy.sha256 !== expected) {
+    console.warn(`Motion Studio: the copy of ${fromRel} to ${toRel} does not match the expected content; it was removed`);
     await rm(dest, { force: true });
     return null;
   }
   return copy.sha256;
+}
+
+/** sha256 of a confined regular file, or null (missing, a link, unreadable). */
+export async function confinedSha(creativeDir: string, rel: string): Promise<string | null> {
+  const h = await hashConfinedFile(creativeDir, rel);
+  return h && !('skipped' in h) ? h.sha256 : null;
+}
+
+/** The creative's `outputs/v<k>` folders other than `v<n>` (real folders only, a link is not one), as `v<k>` names. */
+export async function earlierOutputDirs(creativeDir: string, n: number): Promise<string[]> {
+  const names = await readdir(join(creativeDir, 'outputs')).catch(() => [] as string[]);
+  const out: string[] = [];
+  for (const name of names) {
+    if (!/^v\d+$/.test(name) || name === `v${n}`) continue;
+    if ((await lstat(join(creativeDir, 'outputs', name)).catch(() => null))?.isDirectory()) out.push(name);
+  }
+  return out.sort();
+}
+
+/**
+ * A cheap fingerprint of every entry under the given `outputs/v<k>` folders (path → type, size, mtime, inode), to tell
+ * afterwards which earlier files the turn changed, added or removed. Output folders are not versioned in git, so this
+ * is how the core notices writes into earlier versions.
+ */
+export async function snapshotOutputs(creativeDir: string, dirs: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const walk = async (rel: string, depth: number) => {
+    const entries = await readdir(join(creativeDir, ...rel.split('/'))).catch(() => [] as string[]);
+    for (const name of entries) {
+      const child = `${rel}/${name}`;
+      const info = await lstat(join(creativeDir, ...child.split('/'))).catch(() => null);
+      if (!info) continue;
+      out.set(child, `${info.isDirectory() ? 'd' : info.isSymbolicLink() ? 'l' : 'f'}:${info.size}:${info.mtimeMs}:${info.ino}`);
+      if (info.isDirectory() && depth < 4) await walk(child, depth + 1);
+    }
+  };
+  for (const d of dirs) await walk(`outputs/${d}`, 0);
+  return out;
+}
+
+/** The paths that differ between two snapshots (changed, added or removed), sorted. */
+export function snapshotChanges(before: Map<string, string>, after: Map<string, string>): string[] {
+  const keys = new Set([...before.keys(), ...after.keys()]);
+  return [...keys].filter((k) => before.get(k) !== after.get(k)).sort();
 }

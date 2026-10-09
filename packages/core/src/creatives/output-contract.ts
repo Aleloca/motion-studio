@@ -33,6 +33,16 @@ export async function validateOutputs(opts: {
    * its primary's own problems (the bytes are the same). Those copies are not added again to the version's `problems`.
    */
   followers?: Readonly<Record<string, string>>;
+  /**
+   * Problems a carried file brings from the version it was carried from (spec §2.5 ruling): they stay its own `problems`
+   * and count for the version's status, but they are never sent to the agent (carried files are not in its checks).
+   */
+  inherited?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * File names the core owns this turn (carried files, `<follower>.<ext>`): the owning format for `file`, if any. A
+   * delivered (non-carried) file with such a name is a problem the agent can fix by renaming it.
+   */
+  reservedOwner?: (file: string) => string | undefined;
 }): Promise<ValidationResult> {
   const { dir, media } = opts;
   const locale = opts.locale ?? currentLocale();
@@ -59,7 +69,8 @@ export async function validateOutputs(opts: {
   for (const id of order) {
     // Per-format problems (`OutputFileInfo.problems`): each one also goes into the version's `problems`.
     const own: string[] = [];
-    const problem = (text: string) => { own.push(text); problems.push(text); };
+    const problem = (text: string) => { own.push(text); if (!problems.includes(text)) problems.push(text); };
+    for (const text of carried.has(id) ? opts.inherited?.[id] ?? [] : []) problem(text);
     const preset = findPreset(opts.presets, id);
     if (!preset) { problem(v.unknownPreset({ id })); unknownPresets.push(id); continue; }
     const entry = manifest.files.find((f) => f.format === id);
@@ -69,6 +80,8 @@ export async function validateOutputs(opts: {
     if (!info || !info.isFile()) { problem(v.fileNotFound({ id, file: entry.file })); continue; }
     // Carried and followed files: presence and dimensions only.
     const strict = !carried.has(id) && !isFollower(id);
+    const owner = strict ? opts.reservedOwner?.(entry.file) : undefined;
+    if (owner !== undefined && owner !== id) problem(v.reservedName({ file: entry.file, format: owner }));
 
     const ext = extname(entry.file).slice(1).toLowerCase();
     if (strict && !preset.extensions.includes(ext)) {

@@ -29,7 +29,7 @@ async function newProject() {
   return projectDir;
 }
 
-async function launch(over: Parameters<typeof testLauncher>[1], kind: 'creative' | 'brand-analysis' | 'describe' | 'console' = 'creative', projectDir?: string) {
+async function launch(over: Parameters<typeof testLauncher>[1], kind: 'creative' | 'brand-analysis' | 'describe' | 'console' = 'creative', projectDir?: string, protectedDirs?: string[]) {
   const dir = projectDir ?? await newProject();
   if (!projectDir) {
     await new PermissionsStore(dir).add('Bash(ls:*)', 'x');
@@ -38,7 +38,7 @@ async function launch(over: Parameters<typeof testLauncher>[1], kind: 'creative'
   const argsFile = join(dir, 'args.json');
   process.env.FAKE_CLAUDE_ARGS_FILE = argsFile;
   const launcher = testLauncher(new ClaudeCodeRunner([process.execPath, FAKE]), over);
-  const run = await launcher.start({ kind, jobId: 'j1', projectSlug: 'acme', projectDir: dir, codebases: [], request: { prompt: 'ciao' }, onEvent: () => {} });
+  const run = await launcher.start({ kind, jobId: 'j1', projectSlug: 'acme', projectDir: dir, codebases: [], request: { prompt: 'ciao' }, onEvent: () => {}, ...(protectedDirs ? { protectedDirs } : {}) });
   await run.done;
   const { args, env, mcpTimeout, mcpConfigFile, tokenFile, envKeys, cacheEnv } = JSON.parse(await readFile(argsFile, 'utf8'));
   return { cacheEnv: cacheEnv as Record<string, string | null>, args: args as string[], env, mcpTimeout, envKeys: envKeys as string[], tokenFile: tokenFile as { path: string; mode: number; content: string } | null, mcpConfigFile: mcpConfigFile as { path: string; mode: number | null; content: string | null } | null, launcher, projectDir: dir };
@@ -227,6 +227,22 @@ describe('AgentLauncher', () => {
           }
         }
       }
+    }
+  });
+  it('protects the caller\'s extra folders (earlier outputs/v*), plain and realpath, sandbox or not; the new one stays writable', { timeout: 30_000 }, async () => {
+    const real = await newProject();
+    const linkParent = await newProject();
+    const linked = join(linkParent, 'link');
+    await symlink(real, linked);
+    const realDir = await realpath(linked);
+    const v1 = (d: string) => join(d, 'creatives', 'c', 'outputs', 'v1');
+    for (const available of [false, true]) {
+      const { args } = await launch({ sandbox: async () => ({ available, reason: 'x' }) }, 'creative', linked, [v1(linked)]);
+      for (const d of [linked, realDir]) {
+        expect(args).toEqual(expect.arrayContaining(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].map((t) => `${t}(/${escapeGlob(v1(d))}/**)`)));
+        if (available) expect(JSON.parse(args[args.indexOf('--settings') + 1]!).sandbox.filesystem.denyWrite).toEqual(expect.arrayContaining([v1(d)]));
+      }
+      expect(args.some((a) => a.includes(join('outputs', 'v2')))).toBe(false);
     }
   });
   it('never passes the provider keys or the bridge token from the environment to the agent', { timeout: 20_000 }, async () => {

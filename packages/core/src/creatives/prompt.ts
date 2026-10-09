@@ -136,6 +136,7 @@ export function buildCreativePrompt(i: PromptInput): string {
     '', '## Where to work',
     `- Workspace: ${base}/work/ (sources, scripts, local dependencies)`,
     `- Delivery: ${outputDir}/ with one file per format (\`<id>.<extension>\`) and manifest.json, as per the contract in .studio/context.md`,
+    `- Never write into the other \`${base}/outputs/v*\` folders: they hold earlier versions.`,
     '- Each format is a dedicated recomposition, not a crop.',
     // The kept formats are not named: the agent has nothing to deliver for them.
     ...(othersKept ? ['- Deliver only the formats listed above. Motion Studio keeps the other formats of this creative unchanged and puts their files in the delivery folder itself: do not create, edit or delete files for them, and list only your formats in manifest.json.'] : []),

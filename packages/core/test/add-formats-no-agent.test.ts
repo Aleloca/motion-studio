@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_FORMATS, formatHistory, manifestSchema, type Brief, type VersionEntry } from '@motion-studio/shared';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { CreativeTurnService, type CreativeRef } from '../src/creatives/creative-turns.ts';
@@ -30,6 +30,8 @@ let store: CreativeStore;
 let queue: JobQueue;
 let service: CreativeTurnService;
 let promptFile: string;
+let launcher: ReturnType<typeof testLauncher>;
+let warn: ReturnType<typeof vi.spyOn>;
 /** Every `claude` process the fake runner started, counted by the fake itself. */
 let usageFile: string;
 
@@ -43,9 +45,10 @@ async function setup(b: Brief) {
   const created = await store.create({ title: 'Lancio', brief: b });
   ref = { root: ws.root, projectSlug: slug, projectDir, creativeSlug: created.slug };
   queue = new JobQueue({ concurrency: 2 });
+  launcher = testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }));
   service = new CreativeTurnService({
     queue, git, media: NoMediaTools, vault: new MemoryVault(),
-    launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
+    launcher,
     presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
   });
   promptFile = join(base, 'prompts.jsonl');
@@ -54,10 +57,17 @@ async function setup(b: Brief) {
   process.env.FAKE_CLAUDE_USAGE_FILE = usageFile;
 }
 
-beforeEach(() => { process.env.FAKE_CLAUDE_SCENARIO = 'render'; process.env.FAKE_CLAUDE_NO_FFMPEG = '1'; });
+beforeEach(() => {
+  process.env.FAKE_CLAUDE_SCENARIO = 'render';
+  process.env.FAKE_CLAUDE_NO_FFMPEG = '1';
+  warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+});
 afterEach(() => {
   for (const k of ['FAKE_CLAUDE_SCENARIO', 'FAKE_CLAUDE_PROMPT_FILE', 'FAKE_CLAUDE_NO_FFMPEG', 'FAKE_CLAUDE_USAGE_FILE', 'FAKE_CLAUDE_MANIFEST_PATCH']) delete process.env[k];
   setLocale('it');
+  // No copy was refused and no hash skipped in these flows.
+  expect(warn).not.toHaveBeenCalled();
+  warn.mockRestore();
 });
 
 const claudeRuns = async () => { try { return (JSON.parse(await readFile(usageFile, 'utf8')) as { runs: number }).runs; } catch { return 0; } };
@@ -82,7 +92,9 @@ describe('formats added without the agent (spec §2.4)', { timeout: 30_000 }, ()
     expect(await run(service.start(ref))).toBe('succeeded');
     expect(await claudeRuns()).toBe(1);
     await service.updateBrief(ref, { brief: { ...brief, formats: [REEL, POST, TIKTOK, SHORTS] } });
+    const start = vi.spyOn(launcher, 'start');
     expect(await run(service.start(ref))).toBe('succeeded');
+    expect(start).not.toHaveBeenCalled();
     expect(await claudeRuns()).toBe(1);
     expect(await prompts()).toHaveLength(1);
 
@@ -141,7 +153,7 @@ describe('formats added without the agent (spec §2.4)', { timeout: 30_000 }, ()
     expect(parseStudioBlock((await prompts()).at(-1)!.prompt)!.formats.map((f) => f.id)).toEqual([SHORTS]);
     expect((await store.get(ref.creativeSlug)).brief.links).toEqual({});
     const conv = await store.readConversation(ref.creativeSlug);
-    expect(conv.some((e) => e.type === 'system' && e.text.startsWith('YouTube · Shorts 9:16 can no longer follow Instagram · Story/Reel 9:16'))).toBe(true);
+    expect(conv.some((e) => e.type === 'system' && e.level === 'warning' && e.text.startsWith('YouTube · Shorts 9:16 can no longer follow Instagram · Story/Reel 9:16'))).toBe(true);
     const [v1, v2] = await versions();
     expect(v2!.status).toBe('complete');
     expect(out(v2!, REEL)!.sha256).toBe(out(v1!, REEL)!.sha256);
@@ -156,5 +168,26 @@ describe('formats added without the agent (spec §2.4)', { timeout: 30_000 }, ()
     expect(parseStudioBlock((await prompts()).at(-1)!.prompt)!.formats.map((f) => f.id)).toEqual([REEL, POST]);
     const v2 = (await versions())[1]!;
     expect(out(v2, TIKTOK)!.sha256).toBe(out(v2, REEL)!.sha256);
+  });
+
+  it('keeps the fork after a restore followed by a version made without the agent', async () => {
+    await setup(brief);
+    await run(service.start(ref));
+    await run(service.start(ref, { text: 'cambia', pins: [] }));
+    await service.restore(ref, 1);
+    await service.updateBrief(ref, { brief: { ...brief, formats: [REEL, POST, TIKTOK] } });
+    expect(await run(service.start(ref))).toBe('succeeded');
+    expect(await claudeRuns()).toBe(2);
+    const v3 = (await versions())[2]!;
+    expect(v3).toMatchObject({ n: 3, basedOn: 1, sessionId: 'fake-session-1' });
+    expect((await store.get(ref.creativeSlug)).resumeFrom).toEqual({ version: 3, sessionId: 'fake-session-1' });
+    await run(service.start(ref, { text: 'da qui', pins: [] }));
+    const args = (JSON.parse((await readFile(promptFile, 'utf8')).trim().split('\n').at(-1)!) as { args: string[] }).args;
+    expect(args).toContain('--fork-session');
+    expect(args.slice(args.indexOf('--resume'), args.indexOf('--resume') + 2)).toEqual(['--resume', 'fake-session-1']);
+    const v4 = (await versions())[3]!;
+    expect(v4.basedOn).toBe(3);
+    expect(out(v4, TIKTOK)!.sha256).toBe(out(v4, REEL)!.sha256);
+    expect((await store.get(ref.creativeSlug)).resumeFrom).toBeNull();
   });
 });

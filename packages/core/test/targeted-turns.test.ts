@@ -1,13 +1,15 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_FORMATS, formatHistory, manifestSchema, type Brief, type VersionEntry } from '@motion-studio/shared';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { CreativeTurnService, type CreativeRef } from '../src/creatives/creative-turns.ts';
+import { hashTesting } from '../src/creatives/output-hashes.ts';
+import { hashConfinedFile } from '../src/brand/agent-guard.ts';
 import { parseStudioBlock } from '../src/creatives/prompt.ts';
 import { Git } from '../src/git.ts';
 import { setLocale } from '../src/i18n.ts';
@@ -29,6 +31,9 @@ let store: CreativeStore;
 let queue: JobQueue;
 let service: CreativeTurnService;
 let promptFile: string;
+let launcher: ReturnType<typeof testLauncher>;
+/** console.warn of the core (copies refused, hashes skipped): silenced, and asserted where a test expects one. */
+let warn: ReturnType<typeof vi.spyOn>;
 
 async function setup(brief: Brief) {
   const base = await mkdtemp(join(tmpdir(), 'ms-target-'));
@@ -40,9 +45,10 @@ async function setup(brief: Brief) {
   const created = await store.create({ title: 'Lancio', brief });
   ref = { root: ws.root, projectSlug: slug, projectDir, creativeSlug: created.slug };
   queue = new JobQueue({ concurrency: 2 });
+  launcher = testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }));
   service = new CreativeTurnService({
     queue, git, media: NoMediaTools, vault: new MemoryVault(),
-    launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
+    launcher,
     presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
   });
   promptFile = join(base, 'prompts.jsonl');
@@ -52,9 +58,13 @@ async function setup(brief: Brief) {
 beforeEach(() => {
   process.env.FAKE_CLAUDE_SCENARIO = 'render';
   process.env.FAKE_CLAUDE_NO_FFMPEG = '1';
+  warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
 afterEach(() => {
-  for (const k of ['FAKE_CLAUDE_SCENARIO', 'FAKE_CLAUDE_PROMPT_FILE', 'FAKE_CLAUDE_NO_FFMPEG', 'FAKE_CLAUDE_EXTRA_FILES', 'FAKE_CLAUDE_MANIFEST_PATCH']) delete process.env[k];
+  for (const k of ['FAKE_CLAUDE_SCENARIO', 'FAKE_CLAUDE_PROMPT_FILE', 'FAKE_CLAUDE_NO_FFMPEG', 'FAKE_CLAUDE_EXTRA_FILES', 'FAKE_CLAUDE_MANIFEST_PATCH',
+    'FAKE_CLAUDE_TOUCH', 'FAKE_CLAUDE_HARDLINK', 'FAKE_CLAUDE_SYMLINK_AT', 'FAKE_CLAUDE_BG_WRITE']) delete process.env[k];
+  hashTesting.setHasher(null);
+  warn.mockRestore();
   setLocale('it');
 });
 
@@ -225,3 +235,142 @@ describe('linked formats (spec §2.3)', { timeout: 30_000 }, () => {
     expect(turnBodySchema.safeParse({ formats: [''] }).success).toBe(false);
   });
 });
+
+describe('carry-over safety (review fixes)', { timeout: 30_000 }, () => {
+  it('protects every earlier outputs/v* folder of the creative, never the new one', async () => {
+    await setup(baseBrief);
+    await run(service.start(ref));
+    await run(service.start(ref, { text: 'uno', pins: [] }));
+    const start = vi.spyOn(launcher, 'start');
+    await run(service.start(ref, { text: 'due', pins: [] }, { formats: [REEL] }));
+    const dirs = start.mock.calls[0]![0].protectedDirs!;
+    expect(dirs).toEqual([1, 2].map((k) => store.outputsDir(ref.creativeSlug, k)));
+    expect(dirs).not.toContain(store.outputsDir(ref.creativeSlug, 3));
+  });
+
+  it('never carries a base file changed during the turn: problem, warning, the format is left out', async () => {
+    setLocale('en');
+    await setup(baseBrief);
+    await run(service.start(ref));
+    process.env.FAKE_CLAUDE_SCENARIO = 'render_touch';
+    process.env.FAKE_CLAUDE_TOUCH = fileOf(1, `${POST}.mp4`);
+    await run(service.start(ref, { text: 'solo reel', pins: [] }, { formats: [REEL] }));
+    const v2 = (await versions())[1]!;
+    expect(out(v2, POST)).toBeUndefined();
+    expect(v2.status).toBe('incomplete');
+    expect(v2.problems).toContain('Instagram · Post 1:1: the file of v1 is not the one recorded for that version, so it could not be kept unchanged');
+    await expect(stat(fileOf(2, `${POST}.mp4`))).rejects.toThrow();
+    const conv = await store.readConversation(ref.creativeSlug);
+    expect(conv.some((e) => e.type === 'system' && e.level === 'warning' && e.text.startsWith('Warning: files of earlier versions changed during this turn (outputs/v1/instagram-post-1x1.mp4)'))).toBe(true);
+  });
+
+  it('a base file already changed before the turn is not carried: the agent remakes it', async () => {
+    await setup(baseBrief);
+    await run(service.start(ref));
+    await writeFile(fileOf(1, `${POST}.mp4`), 'manomesso');
+    await run(service.start(ref, { text: 'solo reel', pins: [] }, { formats: [REEL] }));
+    expect(blockFormats((await prompts()).at(-1)!.prompt)).toEqual([REEL, POST]);
+    expect((await versions())[1]!.status).toBe('complete');
+  });
+
+  it('kills what the agent left running before touching the version', async () => {
+    await setup(baseBrief);
+    const late = join(store.workDir(ref.creativeSlug), 'late.txt');
+    process.env.FAKE_CLAUDE_BG_WRITE = late;
+    await run(service.start(ref));
+    await new Promise((r) => setTimeout(r, 1800));
+    await expect(stat(late)).rejects.toThrow();
+  });
+
+  it('a target named like a carried file is a problem for the agent to fix; the carried copy fails honestly, never "kept"', async () => {
+    setLocale('en');
+    await setup(baseBrief);
+    await run(service.start(ref));
+    process.env.FAKE_CLAUDE_MANIFEST_PATCH = JSON.stringify({ file: `${POST}.mp4`, width: 1080, height: 1920 });
+    process.env.FAKE_CLAUDE_EXTRA_FILES = JSON.stringify([{ file: `${POST}.mp4` }]);
+    await run(service.start(ref, { text: 'reel', pins: [] }, { formats: [REEL] }));
+    const all = await prompts();
+    const reserved = `${POST}.mp4: this name belongs to ${POST}, which Motion Studio delivers itself in this version; rename your file`;
+    expect(all).toHaveLength(4);
+    expect(all[2]!.prompt).toContain(reserved);
+    const v2 = (await versions())[1]!;
+    expect(v2.problems).toEqual(expect.arrayContaining([reserved, 'Instagram · Post 1:1: Motion Studio could not put its file in this version']));
+    expect(out(v2, POST)).toBeUndefined();
+    expect(v2.outputs.some((o) => o.warnings?.some((w) => w.key === 'outputs.keptUnchanged'))).toBe(false);
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it('a follower whose copy fails is a version problem, not silently missing', async () => {
+    setLocale('en');
+    await setup({ ...baseBrief, formats: [REEL, TIKTOK], links: { [TIKTOK]: REEL } });
+    process.env.FAKE_CLAUDE_HARDLINK = `${REEL}.mp4`;
+    await run(service.start(ref));
+    const [v1] = await versions();
+    expect(out(v1!, TIKTOK)).toBeUndefined();
+    expect(v1!.problems).toContain('TikTok · Video 9:16: Motion Studio could not put its file in this version');
+    expect(v1!.status).toBe('incomplete');
+  });
+
+  it('removes a symlink the agent planted at a carried name and carries the real file', async () => {
+    await setup(baseBrief);
+    await run(service.start(ref));
+    const outside = join(await mkdtemp(join(tmpdir(), 'ms-outside-')), 'secret.mp4');
+    await writeFile(outside, 'segreto');
+    process.env.FAKE_CLAUDE_SYMLINK_AT = `${POST}.mp4=${outside}`;
+    await run(service.start(ref, { text: 'reel', pins: [] }, { formats: [REEL] }));
+    const [v1, v2] = await versions();
+    expect((await lstat(fileOf(2, `${POST}.mp4`))).isSymbolicLink()).toBe(false);
+    expect(out(v2!, POST)!.sha256).toBe(out(v1!, POST)!.sha256);
+    expect(out(v2!, POST)!.warnings).toEqual([{ key: 'outputs.keptUnchanged', params: { format: POST } }]);
+    expect(await readFile(outside, 'utf8')).toBe('segreto');
+  });
+
+  it('cross-checks the version hashes with the verified copies', async () => {
+    setLocale('en');
+    await setup(baseBrief);
+    await run(service.start(ref));
+    hashTesting.setHasher(async (base, rel) => (rel === `outputs/v2/${POST}.mp4` ? { sha256: 'f'.repeat(64), size: 1, mtimeMs: 1 } : hashConfinedFile(base, rel)));
+    await run(service.start(ref, { text: 'reel', pins: [] }, { formats: [REEL] }));
+    const v2 = (await versions())[1]!;
+    expect(v2.problems).toEqual(['Instagram · Post 1:1: the file changed after Motion Studio copied it']);
+    expect(out(v2, POST)!.problems).toEqual(['Instagram · Post 1:1: the file changed after Motion Studio copied it']);
+  });
+
+  it('a carried format keeps the problems of its base file, never sent to the agent', async () => {
+    await setup(baseBrief);
+    process.env.FAKE_CLAUDE_MANIFEST_PATCH = JSON.stringify({ durationSec: 100 });
+    await run(service.start(ref));
+    delete process.env.FAKE_CLAUDE_MANIFEST_PATCH;
+    const before = (await prompts()).length;
+    await run(service.start(ref, { text: 'reel', pins: [] }, { formats: [REEL] }));
+    expect((await prompts()).length - before).toBe(1);
+    expect((await prompts()).at(-1)!.prompt).not.toContain(POST);
+    const [v1, v2] = await versions();
+    expect(out(v1!, POST)!.problems!.length).toBeGreaterThan(0);
+    expect(out(v2!, POST)!.problems).toEqual(out(v1!, POST)!.problems);
+    expect(out(v2!, REEL)!.problems).toEqual([]);
+    expect(v2!.problems).toEqual(out(v1!, POST)!.problems);
+    expect(v2!.status).toBe('incomplete');
+  });
+
+  it('refuses formats none of which is in the brief, with a stable code', async () => {
+    await setup(baseBrief);
+    await expect(service.start(ref, { text: 'x', pins: [] }, { formats: ['ghost'] })).rejects.toMatchObject({ status: 400, apiCode: 'formats-not-in-brief' });
+    expect(await store.readConversation(ref.creativeSlug)).toEqual([]);
+  });
+
+  it('points the render-command hint at the new version folder and forbids earlier ones', async () => {
+    await setup(baseBrief);
+    await run(service.start(ref));
+    const vs = await versions();
+    vs[0]!.renderCommand = 'npx remotion render Main ../outputs/v1/instagram-reel-9x16.mp4';
+    await writeFile(join(store.dir(ref.creativeSlug), 'versions.json'), JSON.stringify({ schemaVersion: 1, versions: vs }));
+    await store.update(ref.creativeSlug, { brief: { ...baseBrief, formats: [REEL, POST, 'youtube-16x9'] } });
+    await run(service.start(ref));
+    const last = (await prompts()).at(-1)!.prompt;
+    expect(last).toContain('npx remotion render Main ../outputs/v2/instagram-reel-9x16.mp4');
+    expect(last).not.toContain('outputs/v1/');
+    expect(last).toContain(`Never write into the other \`creatives/${ref.creativeSlug}/outputs/v*\` folders`);
+  });
+});
+

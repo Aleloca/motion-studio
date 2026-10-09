@@ -18,7 +18,7 @@ This folder is a **Motion Studio** project: a local app that uses a coding agent
 
 ## Output contract
 You are free to choose tools and techniques (Remotion, Motion Canvas, HTML + Playwright, ffmpeg, Python…). At the end of every turn deliver in \`creatives/<slug>/outputs/vN/\` (the exact folder is given in the request):
-1. one file for each requested format, named \`<preset-id>.<extension>\` (e.g. \`instagram-reel-9x16.mp4\`), with the exact resolution of the preset;
+1. one file for each format listed under "Required formats" in the turn prompt (the \`formats\` of the motion-studio block), named \`<preset-id>.<extension>\` (e.g. \`instagram-reel-9x16.mp4\`), with the exact resolution of the preset. Motion Studio itself puts the files of the creative's other formats (kept or linked) into the folder: do not create, edit or delete them, do not list them in manifest.json, never write \`followsFormat\`, and never write into earlier \`outputs/v*\` folders;
 2. \`manifest.json\`:
    \`\`\`json
    { "schemaVersion": 1,

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_FORMATS, type FormatPreset } from '@motion-studio/shared';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { copyVerified, followCheck, normalizeTargets, versionDirReady } from '../src/creatives/carry-over.ts';
 
 const preset = (id: string) => DEFAULT_FORMATS.find((p) => p.id === id)!;
@@ -40,7 +40,10 @@ describe('followCheck', () => {
 
 describe('copyVerified and versionDirReady', () => {
   let dir: string;
+  let warn: ReturnType<typeof vi.spyOn>;
+  afterEach(() => warn.mockRestore());
   beforeEach(async () => {
+    warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     dir = await mkdtemp(join(tmpdir(), 'ms-carry-'));
     await mkdir(join(dir, 'outputs', 'v1'), { recursive: true });
     await writeFile(join(dir, 'outputs', 'v1', 'a.mp4'), 'contenuto');
@@ -52,17 +55,20 @@ describe('copyVerified and versionDirReady', () => {
     expect(await readFile(join(dir, 'outputs', 'v2', 'a.mp4'), 'utf8')).toBe('contenuto');
     expect((await stat(join(dir, 'outputs', 'v2', 'a.mp4'))).nlink).toBe(1);
     expect((await stat(join(dir, 'outputs', 'v1', 'a.mp4'))).nlink).toBe(1);
+    expect(warn).not.toHaveBeenCalled();
   });
 
-  it('accepts a source changed since recorded when the copy matches its current content', async () => {
+  it('never accepts the source\'s current bytes when they differ from the expected hash', async () => {
     await versionDirReady(dir, 2);
-    expect(await copyVerified(dir, 'outputs/v1/a.mp4', 'outputs/v2/a.mp4', sha('vecchio'))).toBe(sha('contenuto'));
+    expect(await copyVerified(dir, 'outputs/v1/a.mp4', 'outputs/v2/a.mp4', sha('vecchio'))).toBeNull();
+    await expect(stat(join(dir, 'outputs', 'v2', 'a.mp4'))).rejects.toThrow();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('does not match the expected content'));
   });
 
   it('never overwrites an existing destination', async () => {
     await versionDirReady(dir, 2);
     await writeFile(join(dir, 'outputs', 'v2', 'a.mp4'), 'agente');
-    expect(await copyVerified(dir, 'outputs/v1/a.mp4', 'outputs/v2/a.mp4')).toBeNull();
+    expect(await copyVerified(dir, 'outputs/v1/a.mp4', 'outputs/v2/a.mp4', sha('contenuto'))).toBeNull();
     expect(await readFile(join(dir, 'outputs', 'v2', 'a.mp4'), 'utf8')).toBe('agente');
   });
 
@@ -72,15 +78,15 @@ describe('copyVerified and versionDirReady', () => {
     await symlink(outside, join(dir, 'outputs', 'v1', 'b.mp4'));
     await link(join(dir, 'outputs', 'v1', 'a.mp4'), join(dir, 'outputs', 'v1', 'c.mp4'));
     await versionDirReady(dir, 2);
-    expect(await copyVerified(dir, 'outputs/v1/b.mp4', 'outputs/v2/b.mp4')).toBeNull();
-    expect(await copyVerified(dir, 'outputs/v1/c.mp4', 'outputs/v2/c.mp4')).toBeNull();
+    expect(await copyVerified(dir, 'outputs/v1/b.mp4', 'outputs/v2/b.mp4', sha('segreto'))).toBeNull();
+    expect(await copyVerified(dir, 'outputs/v1/c.mp4', 'outputs/v2/c.mp4', sha('contenuto'))).toBeNull();
     await expect(stat(join(dir, 'outputs', 'v2', 'b.mp4'))).rejects.toThrow();
   });
 
   it('replaces a version folder that is a link, and refuses outputs/ resolving elsewhere', async () => {
     const elsewhere = await mkdtemp(join(tmpdir(), 'ms-else-'));
     await symlink(elsewhere, join(dir, 'outputs', 'v3'));
-    await versionDirReady(dir, 3);
+    expect(await versionDirReady(dir, 3)).toBe(true);
     expect((await stat(join(dir, 'outputs', 'v3'))).isDirectory()).toBe(true);
     const other = await mkdtemp(join(tmpdir(), 'ms-carry2-'));
     await symlink(elsewhere, join(other, 'outputs'));

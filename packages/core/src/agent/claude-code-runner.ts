@@ -159,6 +159,7 @@ export class ClaudeCodeRunner implements AgentRunner {
         setTimeout(() => signal('SIGKILL'), this.killGraceMs).unref();
         if (exited) finish({ abandonPipes: true });
       },
+      killGroup: () => signal('SIGKILL'),
     };
   }
 }

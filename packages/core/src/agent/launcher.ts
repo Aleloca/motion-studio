@@ -55,6 +55,8 @@ export interface LauncherDeps {
 export interface LaunchInput {
   kind: AgentJobKind; jobId: string; projectSlug: string; projectDir: string; creativeSlug?: string | null;
   codebases?: string[]; protectedFiles?: string[];
+  /** Extra folders the agent must never write (e.g. a creative's earlier `outputs/v*` folders); both spellings are protected. */
+  protectedDirs?: string[];
   request: Pick<AgentTurnRequest, 'prompt' | 'resumeSessionId' | 'forkSession' | 'model'>;
   onEvent(e: AgentEvent): void;
   validate?: BridgeContext['validate'];
@@ -115,6 +117,7 @@ export class AgentLauncher {
     // Caller-supplied files get both spellings (plain and realpath) like the project entries.
     const spellings = (f: string) => (f.startsWith(`${i.projectDir}/`) && realDir !== i.projectDir ? [f, join(realDir, f.slice(i.projectDir.length + 1))] : [f]);
     const protectedFiles = [...(i.protectedFiles ?? []).flatMap(spellings), ...roots.flatMap((d) => PROTECTED_PROJECT_FILES.map((n) => join(d, n)))];
+    protectedDirs.push(...(i.protectedDirs ?? []).flatMap(spellings));
     const logGlobs = roots.flatMap((d) => [
       ...CREATIVE_CORE_FILES.map((n) => `${escapeGlob(join(d, 'creatives'))}/*/${n}`),
       `${escapeGlob(join(d, 'brand', 'proposals'))}/*/${PROPOSAL_LOG}`,
@@ -207,6 +210,7 @@ export class AgentLauncher {
         done: done.finally(release),
         // Revoked before the process is told to stop: it may keep calling the bridge until it exits.
         cancel: () => { void release(); run.cancel(); },
+        killGroup: () => run.killGroup?.(),
       };
     } catch (err) {
       await release();

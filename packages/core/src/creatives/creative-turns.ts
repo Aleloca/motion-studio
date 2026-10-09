@@ -17,7 +17,7 @@ import { CONTEXT_MD } from '../project-template.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
 import { CreativeStore } from './creative-store.ts';
 import { validateOutputs, type ValidationResult } from './output-contract.ts';
-import { copyVerified, followCheck, isConfinedFile, normalizeTargets, versionDirReady, type FollowFailure } from './carry-over.ts';
+import { confinedSha, copyVerified, earlierOutputDirs, followCheck, isConfinedFile, normalizeTargets, snapshotChanges, snapshotOutputs, versionDirReady, type FollowFailure } from './carry-over.ts';
 import { outputFileExists } from './format-summary.ts';
 import { hashVersionOutputs, LAZY_HASH_BUDGET_MS, withLazyHashes } from './output-hashes.ts';
 import { buildCreativePrompt, type CreativeContext, type PromptKind } from './prompt.ts';
@@ -39,10 +39,14 @@ export const creativeJobKey = (root: string, projectSlug: string, creativeSlug: 
 /** The render command comes from an agent-written manifest: single line, bounded, no control chars. */
 const sanitizeCommand = (cmd: string): string => cmd.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300);
 
-/** The request of a turn that adds `added` (new formats the agent delivers) to `base`; the other formats are carried. */
-function addFormatsRequest(added: string[], base: VersionEntry | undefined): string | undefined {
+/**
+ * The request of a turn that adds `added` (new formats the agent delivers) to `base`; the other formats are carried.
+ * The base's render command is shown with its output folders pointing at this turn's `outputs/v<n>/`, so the agent is
+ * never led to write into an earlier version.
+ */
+function addFormatsRequest(added: string[], base: VersionEntry | undefined, n: number): string | undefined {
   if (!base || added.length === 0) return undefined;
-  const command = base.renderCommand ? sanitizeCommand(base.renderCommand) : '';
+  const command = base.renderCommand ? sanitizeCommand(base.renderCommand).replace(/outputs\/v\d+\//g, `outputs/v${n}/`) : '';
   const j = t().jobs;
   return j.addFormatsRequest({ formats: added.join(', '), n: base.n })
     + (command ? ` ${j.renderCommandWas({ n: base.n, command })}` : '');
@@ -62,6 +66,15 @@ interface TurnPlan {
   links: Record<string, string>;
   /** Brief formats the base version has no file for. */
   added: string[];
+  /**
+   * The trusted sha256 of each carried file: the hash recorded for the base version, checked against the file before the
+   * agent starts (or computed then for old versions without one). A copy must match it.
+   */
+  expected: Map<string, string>;
+  /** Formats unlinked before the agent started (the follower could not follow its carried primary any more). */
+  unlinked: string[];
+  /** The format that owns `file` this turn when the core writes it (carried files, `<follower>.<ext>`). */
+  reservedOwner: (file: string) => string | undefined;
 }
 
 /** One manifest entry; a duration the schema refuses (zero, negative) is left unknown. */
@@ -227,6 +240,8 @@ export class CreativeTurnService {
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     // Same check the queue does, but before touching the creative's files.
     if (this.isActive(key)) throw new WorkspaceError(409, t().errors.generationRunning);
+    // A request for formats none of which is in the brief is a mistake, not "all formats".
+    if (formats?.length && !formats.some((f) => before.brief.formats.includes(f))) throw new CodedError(400, t().errors.formatsNotInBrief, 'formats-not-in-brief');
     if (message) await store.appendConversation(ref.creativeSlug, { type: 'user', at: now(), text: message.text, pins: message.pins, attachments: [] });
     await store.update(ref.creativeSlug, { status: 'working', error: null });
     this.changed(ref);
@@ -286,6 +301,7 @@ export class CreativeTurnService {
       const presets = await this.deps.presets();
       const model = (await this.deps.model()) ?? undefined;
       const initial = await store.get(slug);
+      const creativeDir = store.dir(slug);
       // Pins, the carried files and the add-formats base refer to the version on screen: the one being resumed from, else the latest.
       const base = initial.resumeFrom ? versions.find((v) => v.n === initial.resumeFrom!.version) : latest;
       const attachments = await this.extractPinFrames(ref, store, message?.pins ?? [], base, n);
@@ -298,7 +314,7 @@ export class CreativeTurnService {
       const primaries = creative.brief.formats.filter((f) => !Object.hasOwn(plan.links, f));
       const request = message?.text || (message?.pins.length ? j.pinsOnlyRequest : versions.length === 0 ? undefined
         : noAgent ? this.addedFollowersRequest(plan, base!, label, locale)
-          : (addFormatsRequest(targets.filter((f) => plan.added.includes(f)), base)
+          : (addFormatsRequest(targets.filter((f) => plan.added.includes(f)), base, n)
             ?? (targets.length < primaries.length ? j.regenerateFormatsRequest({ formats: listText(targets.map(label), locale) }) : j.regenerateRequest)));
 
       let resumeSessionId = creative.resumeFrom?.sessionId ?? latest?.sessionId ?? undefined;
@@ -314,7 +330,13 @@ export class CreativeTurnService {
         let problems: string[] = [];
         let lastWrite: Promise<void> = Promise.resolve();
         // The agent delivers and is checked on its target formats only: the carried and linked ones are the core's job.
-        const validateTargets = () => validateOutputs({ dir: store.outputsDir(slug, n), requested: targets, presets, durationSec: creative.brief.durationSec, media: this.deps.media, locale });
+        const validateTargets = () => validateOutputs({
+          dir: store.outputsDir(slug, n), requested: targets, presets, durationSec: creative.brief.durationSec, media: this.deps.media, locale,
+          reservedOwner: plan.reservedOwner,
+        });
+        // Earlier versions are read-only for the agent (sandbox and Edit/Write rules); any change is still detected after.
+        const earlier = await earlierOutputDirs(creativeDir, n);
+        const earlierBefore = await snapshotOutputs(creativeDir, earlier);
 
         for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
           // One decision per attempt, shared by the prompt's claims and the launched policy.
@@ -336,6 +358,7 @@ export class CreativeTurnService {
           }
           const run = await this.deps.launcher.start({
             kind: 'creative', jobId, projectSlug: ref.projectSlug, projectDir: ref.projectDir, creativeSlug: slug, codebases: existing,
+            protectedDirs: earlier.map((d) => join(creativeDir, 'outputs', d)),
             request: { prompt, resumeSessionId, forkSession, model },
             usage: { version: n, attempt }, sandboxed,
             onEvent: (event) => {
@@ -354,6 +377,9 @@ export class CreativeTurnService {
           signal.addEventListener('abort', onAbort, { once: true });
           if (signal.aborted) onAbort(); // cancelled before the listener existed (e.g. while preparing the turn)
           const outcome = await run.done.finally(() => signal.removeEventListener('abort', onAbort));
+          // Whatever the agent left running (a background render, a watcher) stops here: nothing writes in the version
+          // folder while it is checked, completed and hashed.
+          run.killGroup?.();
           attemptUsage.push(outcome.usage);
           await lastWrite;
           const snapshotsAfter = await Promise.all(existing.map((p) => codebaseSnapshot(p)));
@@ -379,27 +405,45 @@ export class CreativeTurnService {
           this.changed(ref);
           kind = 'fix';
         }
+        const changedEarlier = snapshotChanges(earlierBefore, await snapshotOutputs(creativeDir, earlier));
+        if (changedEarlier.length > 0) {
+          const list = changedEarlier.slice(0, 5).join(', ') + (changedEarlier.length > 5 ? ', …' : '');
+          await store.appendConversation(slug, { type: 'system', at: now(), level: 'warning', text: j.earlierOutputsChanged({ list }) });
+        }
       } else if (signal.aborted) {
         return await this.cancelled(ref, store, previous, versions.length > 0);
       }
 
       finalizing = true;
       const assembled = await this.assemble(ref, store, plan, presets, base, n, result, label, locale);
-      const status = assembled.problems.length === 0 ? 'complete' : 'incomplete';
       // Hashed by the core from the files, after the agent is done: never taken from anything the agent wrote.
-      const outputs = await hashVersionOutputs(store.dir(slug), n, assembled.outputs);
+      const outputs = await hashVersionOutputs(creativeDir, n, assembled.outputs);
+      const problems = [...assembled.problems];
+      // Each file the core copied must still be the copy it verified.
+      for (const o of outputs) {
+        const copied = assembled.copied.get(o.format);
+        if (copied !== undefined && o.sha256 !== copied) {
+          const text = j.copyChangedAfter({ format: label(o.format) });
+          problems.push(text);
+          o.problems = [...(o.problems ?? []), text];
+        }
+      }
+      const status = problems.length === 0 ? 'complete' : 'incomplete';
       const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${n}`);
       const usage = sumUsage(attemptUsage);
       await store.appendVersion(slug, {
         n, commit, sessionId: resumeSessionId ?? null, status, createdAt: now(),
         request: request ?? t().jobs.requestFromBrief,
-        outputs, problems: assembled.problems, tools: assembled.tools, renderCommand: assembled.renderCommand,
+        outputs, problems, tools: assembled.tools, renderCommand: assembled.renderCommand,
         basedOn: creative.resumeFrom?.version ?? latest?.n ?? null,
         ...(usage ? { usage } : {}),
       });
       if (noAgent && request) await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: `${request} · ${j.noAgentNeeded}` });
       await store.appendConversation(slug, { type: 'version', at: now(), n, status });
-      await store.update(slug, { status: status === 'complete' ? 'ready' : 'incomplete', error: null, resumeFrom: null });
+      // A version made without the agent after a restart keeps the restart's intent: the next agent turn still forks the
+      // restored session (from this new version, which it now builds on).
+      const resumeFrom = noAgent && creative.resumeFrom ? { version: n, sessionId: creative.resumeFrom.sessionId } : null;
+      await store.update(slug, { status: status === 'complete' ? 'ready' : 'incomplete', error: null, resumeFrom });
       if (signal.aborted) {
         await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: t().jobs.lateCancel({ n }) });
       }
@@ -421,10 +465,12 @@ export class CreativeTurnService {
    * Decides what the turn delivers (spec §2.3–2.5):
    * - targets: the requested formats (`normalizeTargets`); with no request and no explicit formats, a brief that gained
    *   formats targets only the new primaries (spec §2.4), else every primary; no base version: every primary. A primary
-   *   whose file in the base is missing or unusable (a link) is always a target: it cannot be carried;
-   * - carried: the other primaries, copied from the base;
+   *   whose file in the base is missing, unusable (a link) or not the one recorded for that version is always a target:
+   *   it cannot be carried;
+   * - carried: the other primaries, copied from the base, each with the hash its copy must have;
    * - links: every effective link. A follower of a carried primary is checked now on the base file (its real duration and
-   *   size); one that cannot follow any more is unlinked in the brief, told in the chat and delivered by the agent.
+   *   size); one that cannot follow any more is unlinked in the brief (even if the turn is then cancelled), told in the chat
+   *   and delivered by the agent.
    */
   private async planTurn(ref: CreativeRef, store: CreativeStore, creative: CreativeFile, presets: FormatPreset[], base: VersionEntry | undefined,
     hasMessage: boolean, requested: string[] | undefined, locale: Locale): Promise<TurnPlan> {
@@ -442,12 +488,19 @@ export class CreativeTurnService {
     else targets = formats.filter(isPrimary);
     const wanted = new Set(targets);
     const usable = new Map<string, number>(); // carried primary → size of its base file
+    const expected = new Map<string, string>();
     if (base) {
       for (const p of formats.filter(isPrimary)) {
         if (wanted.has(p)) continue;
         const out = baseOut(p);
-        const file = out ? await isConfinedFile(creativeDir, `outputs/v${base.n}/${out.file}`) : null;
-        if (file) usable.set(p, file.size); else wanted.add(p);
+        const rel = out ? `outputs/v${base.n}/${out.file}` : null;
+        const file = rel ? await isConfinedFile(creativeDir, rel) : null;
+        // The file as it is now, before the agent runs; it must be the one recorded for the base version (when recorded).
+        const sha = rel && file ? await confinedSha(creativeDir, rel) : null;
+        if (file && sha !== null && (out!.sha256 === undefined || out!.sha256 === sha)) {
+          usable.set(p, file.size);
+          expected.set(p, sha);
+        } else wanted.add(p);
       }
     }
     const label = (id: string) => { const p = findPreset(presets, id); return p ? formatLabel(p, locale) : id; };
@@ -461,7 +514,7 @@ export class CreativeTurnService {
       if (check.ok) continue;
       unlinked.push(f);
       wanted.add(f);
-      await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: t().jobs.followerUnlinked({ follower: label(f), primary: label(p), reason: e.followReason[check.reason] }) });
+      await store.appendConversation(slug, { type: 'system', at: now(), level: 'warning', text: t().jobs.followerUnlinked({ follower: label(f), primary: label(p), reason: e.followReason[check.reason] }) });
     }
     let current = creative;
     if (unlinked.length > 0) {
@@ -469,10 +522,19 @@ export class CreativeTurnService {
       for (const f of unlinked) delete links[f];
     }
     const primaries = formats.filter(isPrimary);
+    const carried = base ? primaries.filter((f) => !wanted.has(f)) : [];
+    // Core-owned names: each carried file, and `<follower>.<any extension>` (the extension is the primary's, known later).
+    const carriedNames = new Map(carried.map((f) => [baseOut(f)!.file, f] as const));
+    const followerIds = new Set(Object.keys(links));
+    const reservedOwner = (file: string) => {
+      const dot = file.lastIndexOf('.');
+      const stem = dot > 0 ? file.slice(0, dot) : file;
+      return carriedNames.get(file) ?? (followerIds.has(stem) ? stem : undefined);
+    };
     return {
-      creative: current, links, added,
+      creative: current, links, added, expected, unlinked, reservedOwner,
       targets: primaries.filter((f) => wanted.has(f)),
-      carried: base ? primaries.filter((f) => !wanted.has(f)) : [],
+      carried,
     };
   }
 
@@ -495,102 +557,130 @@ export class CreativeTurnService {
   }
 
   /**
-   * Completes `outputs/v<n>` after the agent (spec §2.3–2.5), before the version is validated and committed:
-   * 1. a non-target format the agent wrote anyway is discarded. "Wrote" means: after its last attempt the folder has an
-   *    entry (file, link or folder) at the name the core writes for that format, or the agent's manifest lists the format.
-   *    The format keeps the core's file and gets the note `outputs.keptUnchanged`;
-   * 2. the carried primaries are copied from the base version, verified by sha256;
+   * Completes `outputs/v<n>` after the agent (spec §2.3–2.5), before the version is hashed and committed:
+   * 1. every non-target format the agent wrote anyway is discarded first, before any copy. "Wrote" means: after its last
+   *    attempt the folder has an entry (file, link or folder) at the name the core writes for that format, or the agent's
+   *    manifest lists the format. A format whose core copy then succeeds gets the note `outputs.keptUnchanged`;
+   * 2. the carried primaries are copied from the base version; each copy must match the hash taken before the agent ran
+   *    (`plan.expected`), never the source's current bytes. A failed copy is a version problem (`carriedChanged` when the
+   *    base file is no longer the recorded one, else `copyFailed`) and the format is left out of the version;
    * 3. each follower is re-checked on its primary's actual file (`canFollow` with its real duration, `maxFileMB` with its
-   *    size), then copied to `<follower>.<primary's extension>`. One that fails is not delivered: a problem, a chat message,
-   *    and the link is removed so the next turn makes a dedicated version;
+   *    size), then copied to `<follower>.<primary's extension>`. A failed link is not delivered: a problem, a chat message,
+   *    and the link is removed so the next turn makes a dedicated version. A failed copy is a problem (`copyFailed`);
    * 4. manifest.json is rewritten by the core (`followsFormat` only on the followers it made; anything the agent wrote in
-   *    that field is dropped), then the whole version is validated: targets fully, carried and followed files on presence and
-   *    dimensions (a follower also carries its primary's problems).
+   *    that field is dropped), then the whole version is validated: targets fully, carried files on presence and dimensions
+   *    plus the problems they had in the base, followers on presence and dimensions plus their primary's problems.
    * With nothing to carry or link, the agent's delivery is the version: only `followsFormat` is stripped from its manifest.
+   * `copied`: the sha256 of every file the core copied, to be cross-checked with the version's hashes.
    */
   private async assemble(ref: CreativeRef, store: CreativeStore, plan: TurnPlan, presets: FormatPreset[], base: VersionEntry | undefined, n: number,
-    result: ValidationResult | null, label: (id: string) => string, locale: Locale): Promise<{ outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: string | null }> {
+    result: ValidationResult | null, label: (id: string) => string, locale: Locale): Promise<{ outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: string | null; copied: Map<string, string> }> {
     const slug = ref.creativeSlug;
     const creativeDir = store.dir(slug);
     const dir = store.outputsDir(slug, n);
     const manifestPath = join(dir, 'manifest.json');
     const { creative, targets, carried, links } = plan;
+    const j = t().jobs;
+    const copied = new Map<string, string>();
+    let replaced: boolean;
+    try { replaced = await versionDirReady(creativeDir, n); } catch { throw new Error(j.versionFolderUnsafe({ n })); }
+    // The agent's folder was a link (now replaced by a real, empty folder): its delivery is checked again, so nothing
+    // outside the creative is ever listed.
+    if (replaced && result) result = await validateOutputs({ dir, requested: targets, presets, durationSec: creative.brief.durationSec, media: this.deps.media, locale, reservedOwner: plan.reservedOwner });
     const agentManifest = targets.length > 0 ? await readJsonFile(manifestPath, manifestSchema).catch(() => null) : null;
     const strip = (files: ManifestFile['files']) => files.map(({ followsFormat: _ignored, ...entry }) => entry);
     if (carried.length === 0 && Object.keys(links).length === 0 && result) {
       if (agentManifest?.files.some((f) => f.followsFormat !== undefined)) await writeJsonFileAtomic(manifestPath, { ...agentManifest, files: strip(agentManifest.files) });
-      return { outputs: result.outputs, problems: result.problems, tools: result.tools, renderCommand: result.renderCommand };
+      return { outputs: result.outputs, problems: result.problems, tools: result.tools, renderCommand: result.renderCommand, copied };
     }
-    try { await versionDirReady(creativeDir, n); } catch { throw new Error(t().jobs.versionFolderUnsafe({ n })); }
     const vRel = `outputs/v${n}`;
     const targetOuts = result?.outputs ?? [];
     const targetFiles = new Set(targetOuts.map((o) => o.file));
     const baseOut = (f: string) => base?.outputs.find((o) => o.format === f);
     const primaryOut = (p: string) => (targets.includes(p) ? targetOuts.find((o) => o.format === p) : carried.includes(p) ? baseOut(p) : undefined);
-    const kept = new Set<string>();
+    const followerName = (f: string) => { const o = primaryOut(links[f]!); return o ? `${f}${extname(o.file).toLowerCase()}` : undefined; };
+    const touched = new Set<string>();
     const discard = async (format: string, dest: string | undefined) => {
       const entry = agentManifest?.files.find((e) => e.format === format);
       const atDest = dest ? await lstat(join(dir, dest)).catch(() => null) : null;
       if (!entry && !atDest) return;
-      kept.add(format);
+      touched.add(format);
       for (const name of new Set([dest, entry?.file])) {
-        // Never a file a target delivered, nor the manifest (rewritten below).
+        // Never a file a target delivered (that name clash is the target's problem), nor the manifest (rewritten below).
         if (name && !targetFiles.has(name) && name !== 'manifest.json') await rm(join(dir, name), { recursive: true, force: true });
       }
     };
+    // 1. Discards, all before any copy.
+    for (const p of carried) await discard(p, baseOut(p)!.file);
+    for (const f of Object.keys(links)) await discard(f, followerName(f));
 
+    const problems: string[] = [];
+    // 2. Carried primaries.
     for (const p of carried) {
       const out = baseOut(p)!;
-      await discard(p, out.file);
-      await copyVerified(creativeDir, `outputs/v${base!.n}/${out.file}`, `${vRel}/${out.file}`, out.sha256);
+      const from = `outputs/v${base!.n}/${out.file}`;
+      const sha = await copyVerified(creativeDir, from, `${vRel}/${out.file}`, plan.expected.get(p)!);
+      if (sha !== null) { copied.set(p, sha); continue; }
+      const current = await confinedSha(creativeDir, from);
+      problems.push(current !== null && current !== plan.expected.get(p) ? j.carriedChanged({ format: label(p), n: base!.n }) : j.copyFailed({ format: label(p) }));
     }
+    // 3. Followers.
     const materialized: Record<string, string> = {};
-    const notDelivered = new Map<string, string>(); // follower → why it was not delivered
+    const notDelivered: string[] = [];
     const e = t().errors;
     for (const [f, p] of Object.entries(links)) {
       const out = primaryOut(p);
-      const dest = out ? `${f}${extname(out.file).toLowerCase()}` : undefined;
-      await discard(f, dest);
+      const dest = followerName(f);
       if (!out || !dest) continue; // the primary has no file: its own problem says so, and the link stays
+      if (carried.includes(p) && !copied.has(p)) { problems.push(j.copyFailed({ format: label(f) })); continue; }
       const file = await isConfinedFile(creativeDir, `${vRel}/${out.file}`);
-      if (!file) continue;
+      if (!file) { problems.push(j.copyFailed({ format: label(f) })); continue; }
       const pp = findPreset(presets, p);
       const fp = findPreset(presets, f);
       const check: { ok: true } | { ok: false; reason: FollowFailure } = pp && fp ? followCheck(pp, fp, out, file.size) : { ok: false, reason: 'unknown' };
       if (!check.ok) {
-        const text = t().jobs.followerNotDelivered({ follower: label(f), primary: label(p), reason: e.followReason[check.reason] });
-        notDelivered.set(f, text);
-        await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text });
+        const text = j.followerNotDelivered({ follower: label(f), primary: label(p), reason: e.followReason[check.reason] });
+        notDelivered.push(f);
+        problems.push(text);
+        await store.appendConversation(slug, { type: 'system', at: now(), level: 'warning', text });
         continue;
       }
-      if (await copyVerified(creativeDir, `${vRel}/${out.file}`, `${vRel}/${dest}`)) materialized[f] = p;
+      // The agent is gone (its process group was killed): the primary's bytes now are the ones to copy.
+      const source = copied.get(p) ?? await confinedSha(creativeDir, `${vRel}/${out.file}`);
+      const sha = source !== null ? await copyVerified(creativeDir, `${vRel}/${out.file}`, `${vRel}/${dest}`, source) : null;
+      if (sha !== null) { materialized[f] = p; copied.set(f, sha); } else problems.push(j.copyFailed({ format: label(f) }));
     }
-    if (notDelivered.size > 0) await this.unlinkFollowers(store, slug, [...notDelivered.keys()]);
+    if (notDelivered.length > 0) await this.unlinkFollowers(store, slug, notDelivered);
 
     const { formats } = creative.brief;
     const files = formats.flatMap((f): ManifestFile['files'] => {
       if (targets.includes(f)) return strip((agentManifest?.files ?? []).filter((x) => x.format === f).slice(0, 1));
-      if (carried.includes(f)) return [manifestEntry(f, baseOut(f)!)];
+      if (carried.includes(f)) return copied.has(f) ? [manifestEntry(f, baseOut(f)!)] : [];
       const p = materialized[f];
-      return p !== undefined ? [{ ...manifestEntry(f, primaryOut(p)!, `${f}${extname(primaryOut(p)!.file).toLowerCase()}`), followsFormat: p }] : [];
+      return p !== undefined ? [{ ...manifestEntry(f, primaryOut(p)!, followerName(f)), followsFormat: p }] : [];
     });
     await rm(manifestPath, { recursive: true, force: true });
     await writeJsonFileAtomic(manifestPath, {
       schemaVersion: 1, files,
       tools: result?.tools ?? base?.tools ?? [], renderCommand: result ? result.renderCommand : base?.renderCommand ?? null,
     });
-    const requested = formats.filter((f) => targets.includes(f) || carried.includes(f) || Object.hasOwn(materialized, f));
+    const carriedOk = carried.filter((f) => copied.has(f));
+    const requested = formats.filter((f) => targets.includes(f) || carriedOk.includes(f) || Object.hasOwn(materialized, f));
+    // A carried file keeps the problems it had in the base (old versions without per-file problems: the version's).
+    const inherited = Object.fromEntries(carriedOk.map((f) => [f, baseOut(f)!.problems ?? base!.problems] as const));
     const final = await validateOutputs({
-      dir, requested, presets, durationSec: creative.brief.durationSec, media: this.deps.media, locale, carried, followers: materialized,
+      dir, requested, presets, durationSec: creative.brief.durationSec, media: this.deps.media, locale,
+      carried: carriedOk, followers: materialized, inherited, reservedOwner: plan.reservedOwner,
     });
     // An unreadable agent manifest: its own problem says more than "missing format" for each target.
     const manifestProblems = targets.length > 0 && !agentManifest ? (result?.outputs.length === 0 ? result.problems.filter((x) => !final.problems.includes(x)) : []) : [];
-    const outputs = final.outputs.map((o) => (kept.has(o.format)
+    // "Kept unchanged" only where the core's copy is really there.
+    const outputs = final.outputs.map((o) => (touched.has(o.format) && copied.has(o.format)
       ? { ...o, warnings: [...(o.warnings ?? []), { key: 'outputs.keptUnchanged', params: { format: o.format } }] } : o));
     return {
-      outputs,
-      // A follower not delivered is a problem of the version (a brief format is missing), not of any file.
-      problems: [...manifestProblems, ...final.problems, ...notDelivered.values()],
+      outputs, copied,
+      // A format the core could not deliver is a problem of the version (a brief format is missing), not of any file.
+      problems: [...manifestProblems, ...final.problems, ...problems.filter((x) => !final.problems.includes(x))],
       tools: result?.tools ?? base?.tools ?? [], renderCommand: result ? result.renderCommand : base?.renderCommand ?? null,
     };
   }

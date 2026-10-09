@@ -4,6 +4,9 @@
 // FAKE_CLAUDE_EXTRA_FILES=<json array of manifest entries>: render also writes those files (content `agent:<file>`) and lists
 // the entries whose `format` is set (an entry without one only writes its file).
 // FAKE_CLAUDE_MANIFEST_PATCH=<json object>: merged into every manifest entry the render writes (e.g. a fake followsFormat).
+// FAKE_CLAUDE_HARDLINK=<file>: after render, hard-links outputDir/<file> to outputDir/<file>.lnk.
+// FAKE_CLAUDE_SYMLINK_AT=<name>=<target>: after render, puts a symlink outputDir/<name> → <target>.
+// FAKE_CLAUDE_BG_WRITE=<path>: leaves a background child (same process group) that writes <path> one second later.
 // FAKE_CLAUDE_TAMPER=1: brand/describe turns also overwrite brand/brand-kit.json and assets/assets.json directly.
 // FAKE_CLAUDE_SYMLINK_BRAND=<dir>: describe turns move brand/ to <dir>, tamper the kit there and leave a symlink.
 // FAKE_CLAUDE_WAIT_FILE=<path>: brand/describe turns wait for that file to exist before finishing.
@@ -12,7 +15,7 @@
 // FAKE_CLAUDE_USAGE_FILE=<path> the fake counts its runs there and reports run count × the per-run values.
 // usage_stream: two assistant events sharing one message id (with usage), like the real stream-json.
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, linkSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -76,6 +79,9 @@ rl.once('line', async (line) => {
     }
     const patch = JSON.parse(process.env.FAKE_CLAUDE_MANIFEST_PATCH ?? '{}');
     writeFileSync(join(block.outputDir, 'manifest.json'), JSON.stringify({ schemaVersion: 1, files: files.map((x) => ({ ...x, ...patch })), tools: ['fake'], renderCommand: 'node render.js' }));
+    if (process.env.FAKE_CLAUDE_HARDLINK) linkSync(join(block.outputDir, process.env.FAKE_CLAUDE_HARDLINK), join(block.outputDir, `${process.env.FAKE_CLAUDE_HARDLINK}.lnk`));
+    if (process.env.FAKE_CLAUDE_SYMLINK_AT) { const [name, target] = process.env.FAKE_CLAUDE_SYMLINK_AT.split('='); symlinkSync(target, join(block.outputDir, name)); }
+    if (process.env.FAKE_CLAUDE_BG_WRITE) spawn('sh', ['-c', `sleep 1; echo late > "$0"`, process.env.FAKE_CLAUDE_BG_WRITE], { stdio: 'ignore' });
   };
   if (block && scenario === 'render') render(false);
   if (scenario === 'render_touch' && block) { render(false); if (process.env.FAKE_CLAUDE_TOUCH) writeFileSync(process.env.FAKE_CLAUDE_TOUCH, 'modified'); if (process.env.FAKE_CLAUDE_GIT_INIT) spawnSync('git', ['init', '-q'], { cwd: process.env.FAKE_CLAUDE_GIT_INIT }); }
