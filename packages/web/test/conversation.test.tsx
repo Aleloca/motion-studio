@@ -45,7 +45,7 @@ const running: JobSummary = { id: 'j1', key: 'creative:k', kind: 'creative', lab
 const done: JobSummary = { ...running, state: 'succeeded', finishedAt: at(9) };
 const ap: ApprovalRequest = {
   id: 'a1', jobId: 'j1', projectSlug: 'acme', creativeSlug: 'c1', kind: 'tool', title: 'Run a command', detail: 'npm run render',
-  toolName: 'Bash', alwaysRule: null, createdAt: at(3), expiresAt: '2099-01-01T00:00:00.000Z',
+  toolName: 'Bash', alwaysRule: null, explanation: null, agentReason: null, createdAt: at(3), expiresAt: '2099-01-01T00:00:00.000Z',
 };
 const agent = (min: number, event: AgentEvent, jobId = 'j1'): ConversationEntry => ({ type: 'agent', at: at(min), jobId, event });
 const text = (t: string): AgentEvent => ({ kind: 'text', text: t });

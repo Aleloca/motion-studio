@@ -17,7 +17,7 @@ const { __resetToasts, getToasts } = await import('../src/ui/toast.tsx');
 const en = (node: React.ReactNode) => render(<I18nProvider locale="en">{node}</I18nProvider>);
 const base: ApprovalRequest = {
   id: 'a1', jobId: 'j', projectSlug: 'acme', creativeSlug: 'c1', kind: 'tool', title: 'Run a command', detail: 'brew install ffmpeg',
-  toolName: 'Bash', alwaysRule: 'Bash(brew:*)', createdAt: '2026-10-08T10:00:00.000Z', expiresAt: '2026-10-08T10:10:00.000Z',
+  toolName: 'Bash', alwaysRule: 'Bash(brew:*)', explanation: null, agentReason: null, createdAt: '2026-10-08T10:00:00.000Z', expiresAt: '2026-10-08T10:10:00.000Z',
 };
 
 // Estimated layout. jsdom has no layout engine, so widths are derived from the computed CSS: a box is CARD_W wide; text
@@ -116,7 +116,7 @@ describe('ApprovalCard', () => {
   });
 
   it('says when the core shortened a generic tool input (500 characters)', async () => {
-    en(<ApprovalCard approval={{ ...base, toolName: 'mcp__other__thing', alwaysRule: null, detail: '{"a":"' + 'x'.repeat(494) }} />);
+    en(<ApprovalCard approval={{ ...base, toolName: 'mcp__other__thing', alwaysRule: null, explanation: null, agentReason: null, detail: '{"a":"' + 'x'.repeat(494) }} />);
     await userEvent.click(screen.getByRole('button', { name: /Show details/ }));
     expect(screen.getByText(/first 500 characters/)).toBeTruthy();
   });
@@ -169,13 +169,13 @@ describe('ApprovalCard', () => {
   });
 
   it('has no "Always here" without a proposed rule', () => {
-    en(<ApprovalCard approval={{ ...base, alwaysRule: null }} />);
+    en(<ApprovalCard approval={{ ...base, alwaysRule: null, explanation: null, agentReason: null }} />);
     expect(screen.queryByRole('button', { name: 'Always here' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Allow' })).toBeTruthy();
   });
 
   it('labels provider approvals Generate and shows their summary in plain view', () => {
-    en(<ApprovalCard approval={{ ...base, kind: 'provider', toolName: 'provider:openai-images', alwaysRule: null, title: 'Generate an image', detail: 'gpt-image-2 · 1024×1024' }} />);
+    en(<ApprovalCard approval={{ ...base, kind: 'provider', toolName: 'provider:openai-images', alwaysRule: null, explanation: null, agentReason: null, title: 'Generate an image', detail: 'gpt-image-2 · 1024×1024' }} />);
     expect(screen.getByRole('button', { name: 'Generate' })).toBeTruthy();
     expect(screen.getByText('gpt-image-2 · 1024×1024')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Show command/ })).toBeNull();

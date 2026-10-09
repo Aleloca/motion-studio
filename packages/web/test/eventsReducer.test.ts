@@ -53,7 +53,7 @@ describe('sessionIdOf', () => {
 });
 
 describe('approvals', () => {
-  const approval = { id: 'a1', jobId: 'j', projectSlug: 'acme', creativeSlug: null, kind: 'tool' as const, title: 't', detail: 'd', toolName: 'Bash', alwaysRule: null, createdAt: 'x', expiresAt: 'y' };
+  const approval = { id: 'a1', jobId: 'j', projectSlug: 'acme', creativeSlug: null, kind: 'tool' as const, title: 't', detail: 'd', toolName: 'Bash', alwaysRule: null, explanation: null, agentReason: null, createdAt: 'x', expiresAt: 'y' };
   it('tracks pending approvals from snapshot, add and resolve', () => {
     let s = eventsReducer(initialEventsState, { type: 'snapshot', jobs: [], approvals: [approval], locale: 'it', languageSetting: 'system', systemLocale: 'it' });
     expect(Object.keys(s.approvals)).toEqual(['a1']);

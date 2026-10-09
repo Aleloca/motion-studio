@@ -25,7 +25,7 @@ class FakeWebSocket {
 }
 
 const okChecks: DoctorCheck[] = [{ id: 'git', label: 'Git', ok: true, required: true, message: 'Installato' }];
-const settings = { schemaVersion: 1 as const, maxConcurrentJobs: 2, expertMode: false, theme: 'system' as const, model: null, sandboxMode: 'auto' as const, extraAllowedDomains: [] as string[], confirmPaidProviders: true };
+const settings = { schemaVersion: 1 as const, maxConcurrentJobs: 2, expertMode: false, theme: 'system' as const, model: null, sandboxMode: 'auto' as const, extraAllowedDomains: [] as string[], confirmPaidProviders: true, autoApproveSandboxed: true };
 
 function start(workspace: Promise<WorkspaceInfo>, doctor: Promise<DoctorCheck[]> = Promise.resolve(okChecks)) {
   vi.stubGlobal('WebSocket', FakeWebSocket);
@@ -167,7 +167,7 @@ describe('App pairing and notifications', () => {
     vi.stubGlobal('WebSocket', FakeEventsSocket);
     render(<App />);
     await screen.findByRole('button', { name: /^Attività/ });
-    const approval = { id: 'a1', jobId: 'j1', projectSlug: 'acme', creativeSlug: null, kind: 'tool', title: 'Eseguire un comando', detail: 'ls', toolName: 'Bash', alwaysRule: null, createdAt: 'x', expiresAt: '2026-10-08T10:10:00.000Z' };
+    const approval = { id: 'a1', jobId: 'j1', projectSlug: 'acme', creativeSlug: null, kind: 'tool', title: 'Eseguire un comando', detail: 'ls', toolName: 'Bash', alwaysRule: null, explanation: null, agentReason: null, createdAt: 'x', expiresAt: '2026-10-08T10:10:00.000Z' };
     act(() => sockets.at(-1)!.onmessage!({ data: JSON.stringify({ type: 'approval', approval }) }));
     expect(await screen.findByRole('button', { name: 'Attività, 1 in attesa' })).toBeTruthy();
     Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });

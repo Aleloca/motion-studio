@@ -31,7 +31,7 @@ const brand = (colors: string[]) => ({
 const live = (over: Partial<EventsState> = {}): EventsState => ({ approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {}, ...over });
 const approval: ApprovalRequest = {
   id: 'a1', jobId: 'j1', projectSlug: 'hs', creativeSlug: 'crime', kind: 'tool', title: 'Render?', detail: 'x', toolName: 'Bash',
-  alwaysRule: null, createdAt: at, expiresAt: '2026-10-08T10:05:00.000Z',
+  alwaysRule: null, explanation: null, agentReason: null, createdAt: at, expiresAt: '2026-10-08T10:05:00.000Z',
 };
 const job: JobSummary = { id: 'j2', key: 'creative:/w:hs:teaser', kind: 'creative', label: 'Teaser', state: 'running', createdAt: at };
 

@@ -8,7 +8,7 @@ const api = { decideApproval: vi.fn(async () => ({})) };
 vi.mock('../src/api.ts', () => ({ api, ApiError }));
 const { ApprovalCard } = await import('../src/components/ApprovalCard.tsx');
 
-const base: ApprovalRequest = { id: 'a1', jobId: 'j', projectSlug: 'acme', creativeSlug: 'c1', kind: 'tool', title: 'Eseguire un comando', detail: 'brew install ffmpeg', toolName: 'Bash', alwaysRule: 'Bash(brew:*)', createdAt: '2026-10-08T10:00:00.000Z', expiresAt: '2026-10-08T10:10:00.000Z' };
+const base: ApprovalRequest = { id: 'a1', jobId: 'j', projectSlug: 'acme', creativeSlug: 'c1', kind: 'tool', title: 'Eseguire un comando', detail: 'brew install ffmpeg', toolName: 'Bash', alwaysRule: 'Bash(brew:*)', explanation: null, agentReason: null, createdAt: '2026-10-08T10:00:00.000Z', expiresAt: '2026-10-08T10:10:00.000Z' };
 beforeEach(() => vi.clearAllMocks());
 
 describe('ApprovalCard', () => {
@@ -28,7 +28,7 @@ describe('ApprovalCard', () => {
     expect(api.decideApproval).toHaveBeenCalledWith('a1', 'always');
   });
   it('hides "always" without a rule and labels provider approvals', () => {
-    render(<ApprovalCard approval={{ ...base, kind: 'provider', alwaysRule: null, title: "Generare un'immagine con gpt-image-2" }} />);
+    render(<ApprovalCard approval={{ ...base, kind: 'provider', alwaysRule: null, explanation: null, agentReason: null, title: "Generare un'immagine con gpt-image-2" }} />);
     expect(screen.queryByRole('button', { name: 'Sempre qui' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Genera' })).toBeTruthy();
   });

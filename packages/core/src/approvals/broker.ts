@@ -38,7 +38,7 @@ export class ApprovalBroker {
     const request: ApprovalRequest = {
       id: randomUUID(), jobId: input.jobId, projectSlug: input.projectSlug, creativeSlug: input.creativeSlug, kind: input.kind,
       title: input.title ?? described.title, detail: (input.detail ?? described.detail).slice(0, 2000), toolName: input.toolName,
-      alwaysRule: always?.rule ?? null,
+      alwaysRule: always?.rule ?? null, explanation: null, agentReason: null,
       createdAt: created.toISOString(), expiresAt: new Date(created.getTime() + this.timeoutMs).toISOString(),
     };
     return new Promise((resolve) => {

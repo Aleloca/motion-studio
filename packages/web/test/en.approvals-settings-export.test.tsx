@@ -17,7 +17,7 @@ const { AppSettings } = await import('../src/screens/AppSettings.tsx');
 const { ExportDialog } = await import('../src/screens/ExportDialog.tsx');
 const en = (node: React.ReactNode) => render(<I18nProvider locale="en">{node}</I18nProvider>);
 
-const approval: ApprovalRequest = { id: 'a1', jobId: 'j', projectSlug: 'acme', creativeSlug: 'c1', kind: 'tool', title: 'Run a command', detail: 'ls', toolName: 'Bash', alwaysRule: 'Bash(ls:*)', createdAt: 'x', expiresAt: '2026-10-08T10:10:00.000Z' };
+const approval: ApprovalRequest = { id: 'a1', jobId: 'j', projectSlug: 'acme', creativeSlug: 'c1', kind: 'tool', title: 'Run a command', detail: 'ls', toolName: 'Bash', alwaysRule: 'Bash(ls:*)', explanation: null, agentReason: null, createdAt: 'x', expiresAt: '2026-10-08T10:10:00.000Z' };
 const settings = workspaceSettingsSchema.parse({ schemaVersion: 1 });
 const checks = [{ id: 'sandbox' as const, label: 'Sandbox', ok: true, required: false, message: 'ok' }];
 

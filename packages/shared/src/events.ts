@@ -1,4 +1,6 @@
 import type { LanguageSetting, Locale } from './i18n/index.ts';
+import type { Explanation } from './explain/index.ts';
+import type { ModelUsage, TokenCounts } from './usage.ts';
 import type { ProjectFile, WorkspaceSettings, WorkspaceSettingsView } from './schemas.ts';
 
 /** Agent-neutral event stream produced by any AgentRunner. */
@@ -11,6 +13,8 @@ export type AgentEvent =
   | { kind: 'progress'; text: string }
   | { kind: 'stderr'; text: string }
   | { kind: 'parse_error'; line: string }
+  | { kind: 'usage'; live: boolean; tokens: TokenCounts; costUsd: number | null; models?: ModelUsage[] }
+  | { kind: 'auto_approved'; toolName: string; command: string; explanation: Explanation }
   | { kind: 'result'; ok: boolean; sessionId?: string; text?: string; costUsd?: number; error?: string };
 
 export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
@@ -46,6 +50,10 @@ export interface ApprovalRequest {
   toolName: string;
   /** Rule saved by "Sempre per questo progetto" (null = not offered). */
   alwaysRule: string | null;
+  /** What the command does, in structured form (null = not analyzed, or an old client). */
+  explanation: Explanation | null;
+  /** The agent's own stated reason (e.g. the Bash description), shown only as a quote. */
+  agentReason: string | null;
   createdAt: string; expiresAt: string;
 }
 export type ApprovalDecision = 'once' | 'always' | 'deny';

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { messages, type Locale } from './i18n/index.ts';
 import { issueText, type IssueLike } from './issues.ts';
 import { relativeFileSchema, webUrlSchema } from './library.ts';
+import { usageSummarySchema } from './usage.ts';
 
 const id = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/, 'issue.id');
 
@@ -112,6 +113,7 @@ export const brandProposalSchema = z.object({
   status: z.enum(['open', 'applied', 'discarded']), summary: z.string().max(5000),
   changes: z.array(brandChangeSchema).max(500), guidelines: z.object({ current: z.string().max(200_000), proposed: z.string().max(200_000) }).nullable(),
   assetsAdded: z.array(relativeFileSchema).max(1000),
+  usage: usageSummarySchema.optional(),
 });
 export type BrandProposal = z.infer<typeof brandProposalSchema>;
 

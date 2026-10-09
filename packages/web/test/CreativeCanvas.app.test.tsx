@@ -55,7 +55,7 @@ const send = (msg: ServerMessage) => act(() => sockets.at(-1)!.onmessage!({ data
 
 const at = '2026-10-08T10:00:00.000Z';
 const okChecks: DoctorCheck[] = [{ id: 'git', label: 'Git', ok: true, required: true, message: 'ok' }];
-const settings = { schemaVersion: 1 as const, maxConcurrentJobs: 2, expertMode: false, theme: 'system' as const, model: null, sandboxMode: 'auto' as const, extraAllowedDomains: [] as string[], confirmPaidProviders: true };
+const settings = { schemaVersion: 1 as const, maxConcurrentJobs: 2, expertMode: false, theme: 'system' as const, model: null, sandboxMode: 'auto' as const, extraAllowedDomains: [] as string[], confirmPaidProviders: true, autoApproveSandboxed: true };
 const detail: CreativeDetail = {
   slug: 'lancio', jobKey: 'creative:/w:acme:lancio',
   versions: [{ n: 1, commit: 'c', sessionId: 's', status: 'complete', createdAt: at, request: '', outputs: [{ format: 'instagram-post-1x1', file: 'post.png', width: 1080, height: 1080, durationSec: null, verified: true, preview: null }], problems: [], tools: [], renderCommand: null, basedOn: null }],
@@ -63,7 +63,7 @@ const detail: CreativeDetail = {
     brief: { goal: 'g', message: '', formats: ['instagram-post-1x1'], durationSec: 6, assets: [], notes: '' } },
 };
 const approval = (id: string): ApprovalRequest => ({
-  id, jobId: 'j1', projectSlug: 'acme', creativeSlug: 'lancio', kind: 'tool', title: `Richiesta ${id}`, detail: 'ls -la', toolName: 'Bash', alwaysRule: null,
+  id, jobId: 'j1', projectSlug: 'acme', creativeSlug: 'lancio', kind: 'tool', title: `Richiesta ${id}`, detail: 'ls -la', toolName: 'Bash', alwaysRule: null, explanation: null, agentReason: null,
   createdAt: at, expiresAt: '2026-10-08T10:10:00.000Z',
 });
 

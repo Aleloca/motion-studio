@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { AgentEvent } from './events.ts';
 import { linkedCodebaseSchema } from './schemas.ts';
+import { usageSummarySchema } from './usage.ts';
 
 export const creativeStatusSchema = z.enum(['draft', 'working', 'ready', 'incomplete', 'error', 'interrupted']);
 export type CreativeStatus = z.infer<typeof creativeStatusSchema>;
@@ -46,6 +47,7 @@ export const versionEntrySchema = z.object({
   tools: z.array(z.string()),
   renderCommand: z.string().nullable(),
   basedOn: z.number().int().nullable(),
+  usage: usageSummarySchema.optional(),
 });
 export type VersionEntry = z.infer<typeof versionEntrySchema>;
 

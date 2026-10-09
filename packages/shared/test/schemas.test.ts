@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { appConfigSchema, projectFileSchema, workspaceSettingsSchema } from '../src/index.ts';
+import { appConfigSchema, storedWorkspaceSettingsSchema, projectFileSchema, workspaceSettingsSchema } from '../src/index.ts';
 
 describe('workspaceSettingsSchema', () => {
   it('fills defaults from an empty versioned object', () => {
     expect(workspaceSettingsSchema.parse({ schemaVersion: 1 })).toEqual({
-      schemaVersion: 1, maxConcurrentJobs: 2, expertMode: false, theme: 'system', model: null, sandboxMode: 'auto', extraAllowedDomains: [], confirmPaidProviders: true,
+      schemaVersion: 1, maxConcurrentJobs: 2, expertMode: false, theme: 'system', model: null, sandboxMode: 'auto', extraAllowedDomains: [], confirmPaidProviders: true, autoApproveSandboxed: true,
     });
+  });
+  it('autoApproveSandboxed defaults to true when absent and can be turned off', () => {
+    expect(workspaceSettingsSchema.parse({ schemaVersion: 1 }).autoApproveSandboxed).toBe(true);
+    expect(workspaceSettingsSchema.parse({ schemaVersion: 1, autoApproveSandboxed: false }).autoApproveSandboxed).toBe(false);
+    expect(storedWorkspaceSettingsSchema.parse({ schemaVersion: 1 }).autoApproveSandboxed).toBe(true);
   });
   it('rejects a concurrency outside 1..8', () => {
     expect(workspaceSettingsSchema.safeParse({ schemaVersion: 1, maxConcurrentJobs: 0 }).success).toBe(false);

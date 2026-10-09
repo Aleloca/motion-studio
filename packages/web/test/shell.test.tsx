@@ -50,11 +50,11 @@ const finishAll = async () => {
 };
 
 const okChecks: DoctorCheck[] = [{ id: 'git', label: 'Git', ok: true, required: true, message: 'ok' }];
-const settings = { schemaVersion: 1 as const, maxConcurrentJobs: 2, expertMode: false, theme: 'system' as const, model: null, sandboxMode: 'auto' as const, extraAllowedDomains: [] as string[], confirmPaidProviders: true };
+const settings = { schemaVersion: 1 as const, maxConcurrentJobs: 2, expertMode: false, theme: 'system' as const, model: null, sandboxMode: 'auto' as const, extraAllowedDomains: [] as string[], confirmPaidProviders: true, autoApproveSandboxed: true };
 const project = (slug: string, name: string) => ({ slug, ok: true as const, project: { schemaVersion: 1 as const, name, description: '', createdAt: '2026-10-01T10:00:00.000Z', updatedAt: '2026-10-01T10:00:00.000Z', linkedCodebases: [] } });
 
 const approval = (id: string, title = `Richiesta ${id}`): ApprovalRequest => ({
-  id, jobId: 'j1', projectSlug: 'acme', creativeSlug: 'lancio', kind: 'tool', title, detail: 'ls -la', toolName: 'Bash', alwaysRule: null,
+  id, jobId: 'j1', projectSlug: 'acme', creativeSlug: 'lancio', kind: 'tool', title, detail: 'ls -la', toolName: 'Bash', alwaysRule: null, explanation: null, agentReason: null,
   createdAt: '2026-10-08T10:00:00.000Z', expiresAt: '2026-10-08T10:10:00.000Z',
 });
 const job = (id: string, state: JobSummary['state'], label: string, finishedAt?: string): JobSummary => ({

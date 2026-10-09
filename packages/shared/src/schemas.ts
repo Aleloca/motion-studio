@@ -34,6 +34,8 @@ export const workspaceSettingsSchema = z.object({
   sandboxMode: z.enum(['auto', 'off']).default('auto'),
   extraAllowedDomains: z.array(domainSchema).max(100).default([]),
   confirmPaidProviders: z.boolean().default(true),
+  /** Allow Bash in a sandboxed job without asking; absent in an old settings.json means on. */
+  autoApproveSandboxed: z.boolean().default(true),
 });
 export type WorkspaceSettings = z.infer<typeof workspaceSettingsSchema>;
 

@@ -363,6 +363,8 @@ function Details({ events }: { events: AgentEvent[] }) {
       case 'progress': return [k.step, e.text];
       case 'stderr': return [k.log, e.text, true];
       case 'parse_error': return [k.unreadable, e.line, true];
+      // Not shown in the conversation yet (grouping never hands them to Details).
+      case 'usage': case 'auto_approved': return ['', ''];
       case 'result': return e.ok ? [k.done, e.text ?? ''] : [k.failed, e.error ?? '', true];
     }
   };

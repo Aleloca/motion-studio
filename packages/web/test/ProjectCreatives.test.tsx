@@ -31,7 +31,7 @@ const LIST: CreativeListItem[] = [
 
 const approval: ApprovalRequest = {
   id: 'a1', jobId: 'j1', projectSlug: 'acme', creativeSlug: 'crime', kind: 'tool', title: 'Render the reel again?', detail: 'ffmpeg …',
-  toolName: 'Bash', alwaysRule: null, createdAt: at, expiresAt: '2026-10-08T10:05:00.000Z',
+  toolName: 'Bash', alwaysRule: null, explanation: null, agentReason: null, createdAt: at, expiresAt: '2026-10-08T10:05:00.000Z',
 };
 const runningJob: JobSummary = { id: 'j2', key: 'creative:/w:acme:teaser', kind: 'creative', label: 'Teaser', state: 'running', createdAt: at };
 const live = (over: Partial<EventsState> = {}): EventsState => ({ approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {}, ...over });
