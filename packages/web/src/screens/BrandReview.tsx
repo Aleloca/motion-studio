@@ -4,7 +4,8 @@ import { api } from '../api.ts';
 import { useT } from '../i18n.tsx';
 import { Button, Check, cx, Empty, Icon, Markdown, Modal, Tag, toast } from '../ui/index.ts';
 import { specimenFamily, useFontPreview } from './brandFonts.ts';
-import { hostOf, stageColor, websiteHosts } from './brandModel.ts';
+import { hostOf, splitSummary, stageColor, websiteHosts } from './brandModel.ts';
+import { SummaryDetails } from './BrandTextSections.tsx';
 import './brand.css';
 import { message } from './common.tsx';
 
@@ -69,6 +70,7 @@ function ReviewBody({ slug, proposal, kit, guidelines, sources, onClose, onAppli
 
   const idsOf = (g: GroupId) => (g === 'guidelines' ? (proposal.guidelines ? [GUIDELINES] : []) : proposal.changes.filter((c) => c.field === g).map((c) => c.id));
   const groups = GROUPS.filter((g) => idsOf(g).length > 0);
+  const summary = useMemo(() => splitSummary(proposal.summary), [proposal.summary]);
   const n = all.filter((id) => on.has(id)).length;
   const toggle = (id: string, value: boolean) => setOn((s) => { const next = new Set(s); if (value) next.add(id); else next.delete(id); return next; });
   const setGroup = (g: GroupId, value: boolean) => setOn((s) => { const next = new Set(s); for (const id of idsOf(g)) { if (value) next.add(id); else next.delete(id); } return next; });
@@ -134,7 +136,8 @@ function ReviewBody({ slug, proposal, kit, guidelines, sources, onClose, onAppli
             {proposal.assetsAdded.length ? <><div className="ms-review-sep" /><span className="ms-review-assets">{r.assetsAdded({ count: proposal.assetsAdded.length })}</span></> : null}
           </nav>
           <div className="ms-review-list">
-            {proposal.summary.trim() ? <p className="ms-review-summary">{proposal.summary}</p> : null}
+            {summary.text ? <p className="ms-review-summary">{summary.text}</p> : null}
+            <SummaryDetails details={summary.details} />
             {groups.map((g) => {
               const ids = idsOf(g);
               const k = ids.filter((id) => on.has(id)).length;

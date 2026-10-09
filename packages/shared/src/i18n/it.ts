@@ -1075,6 +1075,7 @@ Variabili: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (array JSON)`,
         learnedFrom: (p: { hosts: string; when: string }) => `Appreso da ${p.hosts} · ${p.when}`,
         notAnalyzed: 'Non ancora analizzato',
         intro: "Colori, font, loghi e regole che l'agente segue in ogni creatività.",
+        details: 'Dettagli',
       },
       colors: {
         hint: 'Clicca un colore per modificarlo',

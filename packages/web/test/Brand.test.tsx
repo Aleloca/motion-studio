@@ -61,6 +61,44 @@ beforeEach(() => {
 });
 afterEach(() => { vi.clearAllMocks(); __resetToasts(); __resetDeferred(); });
 
+describe('Brand · overview summary', () => {
+  const withSummary = (summary: string) => {
+    overview.proposals = [{
+      schemaVersion: 1, id: 'p-0', createdAt: '2026-10-08T09:00:00.000Z', sourceIds: ['s-1'], status: 'applied', summary, guidelines: null, assetsAdded: [], changes: [],
+    } as BrandProposal];
+  };
+
+  it('keeps the hero in plain language; technical notes go into a collapsed Details', async () => {
+    withSummary('A warm, hand-made bakery brand.\n\nDropped entries: logo «logo»: duplicate id; ghost (assets/brand/ghost.svg not found)');
+    en(<Brand slug="acme" live={live()} />);
+    const hero = await screen.findByRole('region', { name: 'Overview' });
+    expect(within(hero).getByText('A warm, hand-made bakery brand.')).toBeTruthy();
+    expect(hero.textContent).not.toContain('duplicate id');
+    const toggle = within(hero).getByRole('button', { name: 'Details' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    await userEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(within(hero).getByText('logo «logo»: duplicate id')).toBeTruthy();
+    expect(within(hero).getByText('ghost (assets/brand/ghost.svg not found)')).toBeTruthy();
+  });
+
+  it('recognizes the notes written in Italian too, and shows the intro when only notes are left', async () => {
+    withSummary('Voci scartate: logo «logo»: id duplicato');
+    en(<Brand slug="acme" live={live()} />);
+    const hero = await screen.findByRole('region', { name: 'Overview' });
+    expect(within(hero).getByText('Colors, fonts, logos and rules the agent follows in every creative.')).toBeTruthy();
+    expect(within(hero).getByRole('button', { name: 'Details' })).toBeTruthy();
+  });
+
+  it('has no Details when the summary has no technical notes', async () => {
+    withSummary('A warm, hand-made bakery brand.');
+    en(<Brand slug="acme" live={live()} />);
+    const hero = await screen.findByRole('region', { name: 'Overview' });
+    expect(within(hero).getByText('A warm, hand-made bakery brand.')).toBeTruthy();
+    expect(within(hero).queryByRole('button', { name: 'Details' })).toBeNull();
+  });
+});
+
 describe('Brand · colors', () => {
   it('editing a color saves the kit (as a manual edit)', async () => {
     en(<Brand slug="acme" live={live()} />);

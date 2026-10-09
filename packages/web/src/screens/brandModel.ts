@@ -1,5 +1,5 @@
 // Brand page model: pure helpers shared by the Brand page and the proposal review (no React, no API).
-import type { AgentEvent, BrandChange, BrandKit, BrandOverview, BrandSource, JobSummary, SourceRef } from '@motion-studio/shared';
+import { LOCALES, messages, type AgentEvent, type BrandChange, type BrandKit, type BrandOverview, type BrandSource, type JobSummary, type SourceRef } from '@motion-studio/shared';
 
 export const MANUAL: SourceRef = { kind: 'manual', ref: null };
 
@@ -198,4 +198,23 @@ export function undoChanges(kit: BrandKit, changes: BrandChange[]): BrandKit {
     set(c.field, arr);
   }
   return next;
+}
+
+// The core appends its technical notes (entries it dropped, files it could not find, ignored files) to the analysis
+// summary as a last paragraph, "Dropped entries: a; b; c", in the locale of the analysis. The hero keeps the summary in
+// plain language and shows those notes only under "Details" (spec §3 #5: no internal terms in the foreground).
+const DROPPED_PREFIXES = LOCALES.map((l) => messages(l).brand.droppedPrefix({ list: '' }));
+
+/** The plain summary and the technical notes (one per dropped entry) of an analysis summary. */
+export function splitSummary(summary: string): { text: string; details: string[] } {
+  const paragraphs = summary.split(/\n\s*\n/);
+  const details: string[] = [];
+  const text = paragraphs.filter((para) => {
+    const trimmed = para.trim();
+    const prefix = DROPPED_PREFIXES.find((x) => trimmed.startsWith(x));
+    if (!prefix) return true;
+    details.push(...trimmed.slice(prefix.length).split('; ').map((x) => x.trim()).filter(Boolean));
+    return false;
+  }).join('\n\n').trim();
+  return { text, details };
 }

@@ -1,11 +1,11 @@
 // Brand page sections in words: overview, voice and rules, photo style and guidelines.
 import type { BrandNote, BrandOverview, ReferenceEntry } from '@motion-studio/shared';
-import { useRef, useState, type FormEvent } from 'react';
+import { useId, useRef, useState, type FormEvent } from 'react';
 import { api } from '../api.ts';
 import { relativeTime, useLocale, useT } from '../i18n.tsx';
 import { enter } from '../motion/index.ts';
 import { Button, cx, initials, Icon, Input, Markdown, Modal, Textarea, toast } from '../ui/index.ts';
-import { MANUAL, nextId, stageColor, websiteHosts } from './brandModel.ts';
+import { MANUAL, nextId, splitSummary, stageColor, websiteHosts } from './brandModel.ts';
 import { IMAGE, RULES_SHOWN, useBrand, useAppear, removeWithUndo } from './brandContext.tsx';
 /* ---------- overview ---------- */
 
@@ -19,6 +19,7 @@ export function Overview({ overview, projectName }: { overview: BrandOverview; p
   const analyzed = overview.sources.map((s) => s.lastAnalyzedAt).filter((x): x is string => Boolean(x)).sort().at(-1);
   const hosts = websiteHosts(overview.sources).join(', ');
   const summary = [...overview.proposals].filter((p) => p.status !== 'discarded' && p.summary.trim()).sort((a, c) => c.createdAt.localeCompare(a.createdAt))[0]?.summary;
+  const plain = splitSummary(summary ?? '');
   const name = projectName ?? slug;
   return (
     <section data-sec="overview" className="ms-boverview" aria-label={b.nav.overview} data-enter>
@@ -27,10 +28,27 @@ export function Overview({ overview, projectName }: { overview: BrandOverview; p
       </div>
       <div className="ms-boverview-text">
         <h1>{name}</h1>
-        <p>{summary ?? b.overview.intro}</p>
+        <p>{plain.text || b.overview.intro}</p>
+        <SummaryDetails details={plain.details} />
         <span className="ms-faint">{analyzed && hosts ? b.overview.learnedFrom({ hosts, when: relativeTime(locale, analyzed) }) : b.overview.notAnalyzed}</span>
       </div>
     </section>
+  );
+}
+
+/** The technical notes of an analysis (see `splitSummary`), collapsed under "Details". */
+export function SummaryDetails({ details }: { details: string[] }) {
+  const b = useT().web.brand;
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  if (!details.length) return null;
+  return (
+    <div className="ms-bdetails">
+      <button type="button" className="ms-bdetails-toggle" aria-expanded={open} aria-controls={id} onClick={() => setOpen((o) => !o)}>
+        <Icon name="chevron" size={12} className={cx('ms-bdetails-chev', open && 'ms-open')} />{b.overview.details}
+      </button>
+      {open ? <ul id={id} className="ms-bdetails-list">{details.map((d, i) => <li key={i}>{d}</li>)}</ul> : null}
+    </div>
   );
 }
 

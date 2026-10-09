@@ -65,6 +65,13 @@
 .ms-boverview-text h1 { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -.02em; overflow-wrap: anywhere; }
 .ms-boverview-text p { margin: 0; max-width: 620px; color: var(--muted); font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .ms-boverview-text .ms-faint { font-size: 12px; }
+/* Technical notes of the analysis (dropped entries, missing files): collapsed under "Details". */
+.ms-bdetails { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ms-bdetails-toggle { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; padding: 2px 0; border: 0; background: none; color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer; border-radius: 4px; }
+.ms-bdetails-toggle:hover { color: var(--text); }
+.ms-bdetails-chev { transform: rotate(-90deg); transition: transform var(--d-xs) var(--e-std); }
+.ms-bdetails-chev.ms-open { transform: none; }
+.ms-bdetails-list { margin: 0; padding: 8px 12px 8px 26px; border-radius: 8px; background: var(--field); color: var(--muted); font-family: var(--mono); font-size: 11px; line-height: 1.6; max-width: 620px; overflow-wrap: anywhere; }
 
 .ms-bsection { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .ms-bsection-head { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex-wrap: wrap; }
