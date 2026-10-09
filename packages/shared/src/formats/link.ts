@@ -12,7 +12,9 @@ export type FollowCheck = { ok: true } | { ok: false; reason: 'kind' | 'size' | 
  *   duration (`null`) is ok only when the follower has no limit; otherwise it is `duration`, since it cannot be proven to fit;
  * - `safeZone`: the follower's safe area contains the primary's, so content placed safely for the primary is safe on the
  *   follower too. The safe zones are insets from the edges and the sizes are equal, so this means every follower inset is
- *   <= the primary's. When either preset has no `safeZone` in the catalog, the size check alone decides (no data to compare).
+ *   <= the primary's. A primary without `safeZone` has a safe area as large as the frame (insets 0), so a follower with a
+ *   `safeZone` fails unless all its insets are 0. A follower without `safeZone` in the catalog: the size check alone decides
+ *   (no data to compare).
  */
 export function canFollow(primary: FormatPreset, follower: FormatPreset, primaryDurationSec: number | null): FollowCheck {
   return check(primary, follower, primaryDurationSec, true);
@@ -24,17 +26,21 @@ function check(primary: FormatPreset, follower: FormatPreset, durationSec: numbe
   if (!primary.extensions.every((e) => follower.extensions.includes(e))) return { ok: false, reason: 'extension' };
   if (checkDuration && follower.kind === 'video' && follower.maxDurationSec !== undefined
     && (durationSec === null || durationSec > follower.maxDurationSec)) return { ok: false, reason: 'duration' };
-  const p = primary.safeZone;
+  const p = primary.safeZone ?? { top: 0, bottom: 0, left: 0, right: 0 };
   const f = follower.safeZone;
-  if (p && f && (f.top > p.top || f.bottom > p.bottom || f.left > p.left || f.right > p.right)) return { ok: false, reason: 'safeZone' };
+  if (f && (f.top > p.top || f.bottom > p.bottom || f.left > p.left || f.right > p.right)) return { ok: false, reason: 'safeZone' };
   return { ok: true };
 }
 
 /**
  * Default links for a new brief, follower → primary, in the order of `formats`: each format follows the first earlier
  * primary it can follow, otherwise it becomes a primary itself. Followers never get followers (no chains).
- * `durationSec` is the brief's duration: when given (a number, or `null` for "unknown"), it is checked as in `canFollow`;
- * when omitted, only the catalog data is compared and the duration is left to the check at materialization.
+ * `durationSec` is the brief's duration:
+ * - omitted (`undefined`): only the catalog data is compared and the duration is left to the check at materialization.
+ *   Callers that do not know the duration yet MUST pass `undefined`, not `null`;
+ * - a number: checked as in `canFollow`;
+ * - `null`: strict, as in `canFollow`: "unknown" never fits a follower with a max duration, so e.g. TikTok and Shorts do NOT
+ *   follow the Reel.
  */
 export function defaultLinks(formats: FormatPreset[], durationSec?: number | null): Record<string, string> {
   const links: Record<string, string> = {};
@@ -46,6 +52,18 @@ export function defaultLinks(formats: FormatPreset[], durationSec?: number | nul
     else primaries.push(f);
   }
   return links;
+}
+
+/**
+ * The links that actually apply, follower → primary: drops self-links, links whose follower or primary is not in `formats`
+ * (when given; e.g. `effectiveLinks(brief.links, brief.formats)`) and chains, i.e. a link whose primary is itself a follower
+ * (in a cycle A→B, B→A both are dropped). Never throws on bad data: a stored brief stays readable.
+ */
+export function effectiveLinks(links: Record<string, string> | undefined, formats?: readonly string[]): Record<string, string> {
+  const inBrief = (id: string) => formats === undefined || formats.includes(id);
+  const candidates = Object.entries(links ?? {}).filter(([f, p]) => f !== p && inBrief(f) && inBrief(p));
+  const followers = new Set(candidates.map(([f]) => f));
+  return Object.fromEntries(candidates.filter(([, p]) => !followers.has(p)));
 }
 
 const byNumber = (versions: VersionEntry[]) => [...versions].sort((a, b) => a.n - b.n);
@@ -86,10 +104,13 @@ export interface Star { version: number | null; manual: boolean; newer: number |
  * - otherwise the latest version of the history whose file has no problems, or the latest one if none is clean;
  * - no history: `version` null.
  * Picking the latest version clears the manual pick: that is the writer's job, this function reports what is stored.
+ * `links` go through `effectiveLinks` here (self-links and chains dropped); pass the brief's formats via
+ * `effectiveLinks(brief.links, brief.formats)` to also drop links to formats no longer in the brief.
  */
 export function starOf(versions: VersionEntry[], formatId: string, picks: Record<string, number> | undefined,
   links: Record<string, string> | undefined): Star {
-  const follows = links && Object.hasOwn(links, formatId) ? links[formatId]! : null;
+  const active = effectiveLinks(links);
+  const follows = Object.hasOwn(active, formatId) ? active[formatId]! : null;
   if (follows !== null) return { version: null, manual: false, newer: null, follows };
   const history = formatHistory(versions, formatId);
   const latest = history.at(-1) ?? null;
