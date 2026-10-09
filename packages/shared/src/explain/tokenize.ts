@@ -1,5 +1,6 @@
 // A prudent shell tokenizer: it models a small, well-understood subset of POSIX sh and gives up (`parsed: false`)
 // on everything else. Single pass, char by char, no regular expressions on the input: linear time.
+import { explainWork } from './work.ts';
 
 export type RedirectOp = '>' | '>>' | '<' | '2>' | '&>';
 export interface Redirect { op: RedirectOp; target: string }
@@ -53,19 +54,47 @@ function assignment(w: Word): [string, string] | null {
 interface Word { text: string; quotedAt: number }
 
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'fish', 'csh', 'tcsh', 'ash', 'busybox']);
-/** Words that make the rest of the command impossible to analyze from its text. */
+/**
+ * Words that make the rest of the command impossible to analyze from its text: shell syntax, and programs that run a
+ * command string or another command in ways we don't model (`su -c`, `watch`, `parallel`, debuggers, schedulers…).
+ */
 const OPAQUE = new Set([
   'eval', 'source', '.', 'exec', 'trap', 'alias', 'unalias', 'function', 'coproc', 'select', 'let',
   'if', 'then', 'else', 'elif', 'fi', 'for', 'while', 'until', 'do', 'done', 'case', 'esac', 'in',
   '{', '}', '[[', ']]', '!', '((', '))',
+  'su', 'runuser', 'watch', 'parallel', 'flock', 'chroot', 'sandbox-exec', 'unbuffer', 'stdbuf', 'ionice', 'taskpolicy',
+  'dtruss', 'strace', 'ltrace', 'lldb', 'gdb', 'expect', 'at', 'batch', 'launchctl', 'emacs', 'vim', 'vi', 'nvim', 'ex', 'ed',
 ]);
+
+/** System folders whose programs we recognise by name. Anything else with a `/` is "a file run directly". */
+export const SYSTEM_BINS = ['/bin', '/usr/bin', '/usr/local/bin', '/opt/homebrew/bin', '/sbin', '/usr/sbin', '/opt/local/bin', '/usr/local/sbin'];
+
+/** `//bin//rm`, `/bin/./rm` → `/bin/rm` (no `..` handling: a path with `..` is not a system program). */
+export function normalizeCommandPath(w: string): string {
+  let out = '';
+  for (const seg of w.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    out += `/${seg}`;
+  }
+  return w.startsWith('/') ? out || '/' : out.slice(1);
+}
+/** The program name when `w` is a bare name or a program in a system folder; null for any other path. */
+export function systemCommandName(w: string): string | null {
+  if (!w.includes('/')) return w;
+  const p = normalizeCommandPath(w);
+  const slash = p.lastIndexOf('/');
+  return SYSTEM_BINS.includes(p.slice(0, slash)) ? p.slice(slash + 1) : null;
+}
+/** How a command word is matched against wrappers and the shell's opaque words: system path stripped, lower case (macOS disks ignore case). */
+const commandKey = (w: string): string => (systemCommandName(w) ?? w).toLowerCase();
 
 /** True when argv runs a shell on a command string (`bash -c`, `sh -ec`, `zsh --command`) or is opaque by itself. */
 export function isOpaqueCommand(argv: readonly string[]): boolean {
   const name = argv[0];
   if (name === undefined) return false;
-  if (OPAQUE.has(name)) return true;
-  const base = name.slice(name.lastIndexOf('/') + 1);
+  const key = commandKey(name);
+  if (OPAQUE.has(key) || OPAQUE.has(name)) return true;
+  const base = key.slice(key.lastIndexOf('/') + 1);
   if (!SHELLS.has(base)) return false;
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i]!;
@@ -80,8 +109,9 @@ export function isOpaqueCommand(argv: readonly string[]): boolean {
 const SUDO_VALUE = new Set(['-u', '-g', '-C', '-p', '-h', '-r', '-t', '-U', '-D', '-R', '-T', '--user', '--group', '--prompt', '--host', '--role', '--type', '--other-user', '--chdir', '--chroot', '--close-from', '--command-timeout']);
 
 /**
- * Strips leading assignments and wrappers. Returns false when a wrapper is used in a way we don't model
- * (`env -S`, `sudo -s`, `sudo -e`, …).
+ * Strips leading assignments and wrappers (time, sudo/doas, nohup, env, nice, timeout, command, builtin, noglob,
+ * caffeinate, xcrun, script, arch). Returns null when a wrapper is used in a way we don't model
+ * (`env -S`, `sudo -s`, `script file cmd`, an unknown wrapper option, …).
  */
 function finishCommand(words: Word[], redirects: Redirect[]): SimpleCommand | null {
   const env: Record<string, string> = {};
@@ -94,27 +124,30 @@ function finishCommand(words: Word[], redirects: Redirect[]): SimpleCommand | nu
       env[a[0]] = a[1];
     }
   };
+  const text = (k: number) => words[k]?.text;
   takeAssignments();
   for (;;) {
-    const w = words[i]?.text;
-    if (w === undefined) break;
+    const raw = text(i);
+    if (raw === undefined) break;
+    const w = commandKey(raw);
     if (w === 'time') {
       wrappers.push('time'); i++;
-      while (words[i]?.text === '-p' || words[i]?.text === '--') i++;
+      while (text(i) === '-p' || text(i) === '--') i++;
       takeAssignments();
-    } else if (w === 'nohup' || w === 'builtin') {
+    } else if (w === 'nohup' || w === 'builtin' || w === 'noglob') {
       wrappers.push(w); i++;
     } else if (w === 'command') {
-      const next = words[i + 1]?.text;
+      const next = text(i + 1);
       if (next === '-v' || next === '-V') break; // a lookup, explained as such
       wrappers.push(w); i++;
-      while (words[i]?.text === '-p' || words[i]?.text === '--') i++;
-    } else if (w === 'sudo') {
-      wrappers.push('sudo'); i++;
+      while (text(i) === '-p' || text(i) === '--') i++;
+    } else if (w === 'sudo' || w === 'doas') {
+      wrappers.push(w); i++;
       for (; i < words.length; i++) {
-        const a = words[i]!.text;
+        const a = text(i)!;
         if (a === '--') { i++; break; }
         if (!a.startsWith('-') || a === '-') break;
+        if (w === 'doas') { if (a === '-u') { i++; continue; } if (a === '-n') continue; return null; }
         if (a === '-s' || a === '-i' || a === '-e' || a === '--shell' || a === '--login' || a === '--edit' || a === '-l' || a === '--list' || a === '-v' || a === '--validate') return null;
         if (SUDO_VALUE.has(a)) { i++; continue; }
         if (a.startsWith('--')) continue;
@@ -128,7 +161,7 @@ function finishCommand(words: Word[], redirects: Redirect[]): SimpleCommand | nu
     } else if (w === 'env') {
       wrappers.push('env'); i++;
       for (; i < words.length; i++) {
-        const a = words[i]!.text;
+        const a = text(i)!;
         if (a === '--') { i++; break; }
         if (a === '-i' || a === '-' || a === '--ignore-environment' || a === '-0' || a === '--null' || a === '-v') continue;
         if (a === '-u' || a === '--unset') { i++; continue; }
@@ -140,34 +173,72 @@ function finishCommand(words: Word[], redirects: Redirect[]): SimpleCommand | nu
     } else if (w === 'nice') {
       wrappers.push('nice'); i++;
       for (; i < words.length; i++) {
-        const a = words[i]!.text;
-        if (a === '-n') { i++; continue; }
-        if (a.startsWith('-') && a !== '-') continue;
+        const a = text(i)!;
+        if (a === '-n' || a === '--adjustment') { i++; continue; }
+        if (a.startsWith('--adjustment=') || (a.startsWith('-') && a.length > 1 && isDigits(a.slice(a[1] === '-' ? 2 : 1)))) continue;
+        if (a.startsWith('-')) return null;
         break;
       }
     } else if (w === 'timeout' || w === 'gtimeout') {
       wrappers.push('timeout'); i++;
       for (; i < words.length; i++) {
-        const a = words[i]!.text;
+        const a = text(i)!;
         if (a === '-s' || a === '-k' || a === '--signal' || a === '--kill-after') { i++; continue; }
-        if (a.startsWith('-')) continue;
+        if (a === '--preserve-status' || a === '--foreground' || a === '-v' || a === '--verbose' || a.startsWith('--signal=') || a.startsWith('--kill-after=')) continue;
+        if (a.startsWith('-')) return null;
         break;
       }
       i++; // the duration
-      if (i > words.length) return null;
+      if (i >= words.length) return null;
+    } else if (w === 'caffeinate' || w === 'arch' || w === 'xcrun' || w === 'script') {
+      // These run the command that follows their options; alone (or as a lookup) they are explained by the dictionary.
+      let k = i + 1;
+      const VALUE: Record<string, string[]> = {
+        caffeinate: ['-t', '-w'], arch: ['-arch', '-d', '-e'], xcrun: ['-sdk', '--sdk', '--toolchain'], script: ['-t', '-T'],
+      };
+      const NOVAL: Record<string, string[]> = {
+        caffeinate: ['-d', '-i', '-m', '-s', '-u', '-di', '-dims', '-dimsu', '-is', '-im', '-ims'],
+        arch: ['-x86_64', '-x86_64h', '-arm64', '-arm64e', '-i386', '-32', '-64', '-c', '-h'],
+        xcrun: ['-l', '--log', '-v', '--verbose', '-n', '--no-cache', '-k', '--kill-cache', '-r', '--run'],
+        script: ['-a', '-d', '-e', '-F', '-k', '-p', '-q', '-r', '-aq', '-qa', '-q', '-qF'],
+      };
+      let lookup = false;
+      for (; k < words.length; k++) {
+        const a = text(k)!;
+        if (!a.startsWith('-')) break;
+        if (VALUE[w]!.includes(a)) { if (w === 'arch' && a === '-e') { const asg = words[k + 1] && assignment(words[k + 1]!); if (asg) env[asg[0]] = asg[1]; } k++; continue; }
+        if (NOVAL[w]!.includes(a)) continue;
+        if (w === 'xcrun' && (a === '-f' || a === '--find' || a.startsWith('--show'))) { lookup = true; break; }
+        return null;
+      }
+      if (lookup || k >= words.length) break;
+      if (w === 'script') {
+        if (text(k) !== '/dev/null') return null; // the typescript file is written: not modeled
+        k++;
+        if (k >= words.length) return null; // an interactive shell
+      }
+      wrappers.push(w);
+      i = k;
     } else break;
   }
+  // zsh `=cmd` expands to the program's path: the command itself.
+  const first = words[i];
+  if (first && first.text.length > 1 && first.text.startsWith('=') && first.quotedAt === -1) words[i] = { text: first.text.slice(1), quotedAt: -1 };
   const argv = words.slice(i).map((x) => x.text);
   if (isOpaqueCommand(argv)) return null;
-  // A wrapper inside the arguments (`time time x`) is already handled by the loop; a wrapper with nothing after it
-  // (`env`, `time`) keeps an empty argv.
+  // A wrapper with nothing after it (`env`, `time`) keeps an empty argv.
   return { argv, env, redirects, wrappers };
 }
 
 /** Splits a shell command into simple commands. Any construct outside the modeled subset yields `parsed: false`. */
 export function tokenize(command: string): Tokenized {
+  /** Characters visited, for the linear-work tests. */
+  let steps = 0;
+  try { return scan(); } finally { explainWork.add(steps); }
+  function scan(): Tokenized {
   const s = command;
   const n = s.length;
+  steps += n;
   for (let i = 0; i < n; i++) if (isInvisibleOrControl(s.charCodeAt(i))) return fail();
 
   const commands: SimpleCommand[] = [];
@@ -236,20 +307,39 @@ export function tokenize(command: string): Tokenized {
   let i = 0;
   let inSingle = false;
   let inDouble = false;
-  // `${…}` copied verbatim: returns the index after `}`, or -1 when unsupported.
+  // `${NAME}` and `${NAME:-word}` (also `:=`, `:+`, `:?`, without the colon too) with a simple word; returns the index
+  // after `}`, or -1 for anything else: `${(e)X}`, `${X:Y}`, `${#X}`, `${X/a/b}`, `${X[…]}`, `${!X}`… can evaluate code.
   const braceParam = (from: number): number => {
-    let depth = 0;
-    for (let j = from; j < n; j++) {
-      const c = s[j]!;
-      if (c === '{') depth++;
-      else if (c === '}') { depth--; if (depth === 0) return j + 1; }
-      else if (c === '$' && s[j + 1] === '(') return -1;
-      else if (c === '`' || c === '"' || c === "'" || c === '\\' || c === '\n') return -1;
-    }
-    return -1;
+    let j = from + 1; // after `{`
+    const nameStart = j;
+    if (j < n && (isNameStart(s[j]!))) { j++; while (j < n && isNameChar(s[j]!)) j++; }
+    else while (j < n && s[j]! >= '0' && s[j]! <= '9') j++;
+    if (j === nameStart) return -1;
+    if (s[j] === ':') j++;
+    if (s[j] === '-' || s[j] === '=' || s[j] === '+' || s[j] === '?') {
+      j++;
+      while (j < n) {
+        const c = s[j]!;
+        if (!(isNameChar(c) || c === '.' || c === '/' || c === '~' || c === '-')) break;
+        j++;
+      }
+    } else if (s[j - 1] === ':') return -1;
+    steps += j - from;
+    if (s[j] !== '}') return -1;
+    if (s[j + 1] === '[') return -1; // zsh subscript
+    return j + 1;
+  };
+  /** `$NAME[` (a zsh subscript, evaluated arithmetically) and `$[` (old arithmetic): not modeled. */
+  const badDollar = (at: number): boolean => {
+    let j = at + 1;
+    if (s[j] === '[') return true;
+    while (j < n && isNameChar(s[j]!)) j++;
+    steps += j - at;
+    return j > at + 1 && s[j] === '[';
   };
 
   while (i < n) {
+    steps++;
     const c = s[i]!;
     if (inSingle) {
       if (c === "'") inSingle = false; else cur += c;
@@ -267,7 +357,7 @@ export function tokenize(command: string): Tokenized {
       if (c === '`') return fail();
       if (c === '$') {
         const next = s[i + 1];
-        if (next === '(') return fail();
+        if (next === '(' || badDollar(i)) return fail();
         if (next === '{') { const end = braceParam(i + 1); if (end < 0) return fail(); cur += s.slice(i, end); i = end; continue; }
       }
       cur += c; i++; continue;
@@ -290,7 +380,7 @@ export function tokenize(command: string): Tokenized {
       case '`': return fail();
       case '$': {
         const next = s[i + 1];
-        if (next === '(' || next === "'" || next === '"') return fail();
+        if (next === '(' || next === "'" || next === '"' || badDollar(i)) return fail();
         if (next === '{') { const end = braceParam(i + 1); if (end < 0) return fail(); started = true; cur += s.slice(i, end); i = end; break; }
         started = true; cur += c; i++; break;
       }
@@ -346,4 +436,5 @@ export function tokenize(command: string): Tokenized {
   if (!endCommand(null)) return fail();
   if (commands.length === 0) return fail();
   return { commands, parsed: true, separators };
+  }
 }

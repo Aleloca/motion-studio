@@ -3,7 +3,8 @@
 import type { Messages } from '../i18n/index.ts';
 import type { Explanation, IndicatorId, Phrase, Risk } from './types.ts';
 import { buildExplanation, Indicators } from './indicators.ts';
-import { explainSimple, hostOf, type State } from './dictionary.ts';
+import { explainSimple, hostOf, sensitiveWrite, type State } from './dictionary.ts';
+import { explainWork } from './work.ts';
 import { displayLoc, normalizeAbs, resolveLocs, type ExplainContext } from './paths.ts';
 import { tokenize } from './tokenize.ts';
 
@@ -11,12 +12,14 @@ export type { Explanation, Phrase, Indicator, IndicatorId, Risk } from './types.
 export { tokenize, isOpaqueCommand, MAX_COMMANDS, MAX_WORDS } from './tokenize.ts';
 export type { SimpleCommand, Redirect, RedirectOp, Separator, Tokenized } from './tokenize.ts';
 export { classifyPath } from './paths.ts';
+export { explainWork } from './work.ts';
 export type { ExplainContext, PathClass } from './paths.ts';
 
 const phrase = (key: string, params: Record<string, string | number> = {}): Phrase => ({ key: `explain.${key}`, params });
 
 /** Word-like occurrence of `w` (preceded by a shell boundary, followed by a blank or the end). Linear: indexOf only. */
 function hasWord(s: string, w: string): boolean {
+  explainWork.add(s.length);
   const BOUND = ' \t\n;&|(`"\'$={';
   for (let from = 0; ;) {
     const at = s.indexOf(w, from);
@@ -42,15 +45,24 @@ function explainBash(command: string, ctx: ExplainContext, ind: Indicators): { p
   if (!tok.parsed) return { phrases: complex(command, ind), parsed: false };
   const st: State = {
     ctx, cwd: normalizeAbs(ctx.cwd ?? ctx.projectDir), ind, phrases: [], parsed: true,
-    pipedIn: false, pipeNet: false, usedNet: false, chainNet: false, stdout: null, stdinFile: null,
+    pipedIn: false, pipeNet: false, usedNet: false, chainNet: false, written: [], found: null, stdout: null, stdinFile: null,
   };
   tok.commands.forEach((c, i) => {
     if (!st.parsed) return;
     st.pipedIn = i > 0 && tok.separators[i - 1] === '|';
     if (!st.pipedIn) st.pipeNet = false;
     st.usedNet = false;
+    st.cdTarget = undefined;
     explainSimple(c, st);
     if (st.usedNet) { st.pipeNet = true; st.chainNet = true; }
+    if (st.cdTarget !== undefined) {
+      // After `cd x &&` we are in x. After `cd x ||` (or in a pipe, a subshell) we are where we were.
+      // After `;`, `&` or a newline the cd may have failed: the folder is unknown.
+      const sep = tok.separators[i];
+      if (sep === '&&') st.cwd = st.cdTarget;
+      else if (sep === '||' || sep === '|') { /* unchanged */ }
+      else if (st.cdTarget !== st.cwd) st.cwd = null;
+    }
   });
   if (!st.parsed) return { phrases: complex(command, ind), parsed: false };
   return { phrases: st.phrases, parsed: true };
@@ -83,6 +95,7 @@ export function explainTool(toolName: string, input: unknown, ctx: ExplainContex
       if (locs.length === 0 || locs.some((l) => l.cls !== 'work' && l.cls !== 'project')) {
         ind.add('writes-outside-project', 'high', locs[0] ? { path: displayLoc(locs[0], ctx) } : undefined);
       }
+      for (const l of locs) sensitiveWrite(ind, l.abs, displayLoc(l, ctx));
       phrases = [phrase('edit', { path: locs[0] ? displayLoc(locs[0], ctx) : '?' })];
       break;
     }

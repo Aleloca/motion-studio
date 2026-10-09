@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { tokenize, type SimpleCommand } from '../src/index.ts';
+import { explainWork, tokenize, type SimpleCommand } from '../src/index.ts';
 
 const argvs = (cmd: string): string[][] => tokenize(cmd).commands.map((c) => c.argv);
 const one = (cmd: string): SimpleCommand => {
@@ -101,6 +101,22 @@ describe('tokenize: env prefixes and wrappers', () => {
     expect(d.env).toEqual({ X: '1' });
     expect(d.argv).toEqual(['rm', '-rf', '/']);
   });
+  it('accepts simple defaults in ${…}', () => {
+    expect(one('echo ${HOME} ${X:-a/b.c} ${1} ${X:=x} ${X:+y} ${X-z}').argv).toEqual(['echo', '${HOME}', '${X:-a/b.c}', '${1}', '${X:=x}', '${X:+y}', '${X-z}']);
+  });
+  it('recognises wrappers by system path and in any case', () => {
+    expect(one('/usr/bin/env A=1 ls').wrappers).toEqual(['env']);
+    expect(one('//usr//bin/sudo ls').wrappers).toEqual(['sudo']);
+    expect(one('SUDO ls').wrappers).toEqual(['sudo']);
+    expect(one('nice --adjustment 5 ls').argv).toEqual(['ls']);
+    expect(one('arch -arm64 ls -la').argv).toEqual(['ls', '-la']);
+    expect(one('arch').argv).toEqual(['arch']);
+    expect(one('caffeinate -i ls').argv).toEqual(['ls']);
+    expect(one('xcrun --show-sdk-path').argv).toEqual(['xcrun', '--show-sdk-path']);
+    expect(one('script -q /dev/null ls').argv).toEqual(['ls']);
+    expect(one('noglob ls *').argv).toEqual(['ls', '*']);
+    expect(one('=ls -la').argv).toEqual(['ls', '-la']);
+  });
   it('keeps a bare env or sudo with nothing after it', () => {
     const c = one('env');
     expect(c.wrappers).toEqual(['env']);
@@ -125,6 +141,8 @@ describe('tokenize: bail-outs', () => {
     'ls # ; rm -rf ~', 'case x in a) ls;; esac',
     'ls​ -la', 'ls ‮rm', 'ls⁦', 'ls\u0000', 'ls\r', 'ls x', 'ls﻿',
     'env -S "rm -rf ~"', 'sudo -s', 'sudo',
+    'echo ${X:Y}', 'echo ${#X}', 'echo ${X/a/b}', 'echo ${!X}', 'echo "${(e)X}"', 'echo ${X[1]}', 'echo ${X}[1]', 'echo $X[1]', 'echo "$X[1]"', 'echo $[1]',
+    'echo ${X:-$Y}', 'su -c ls', 'watch ls', 'script -q out ls', 'nice --frob ls', 'timeout --frob 1 ls',
   ];
   for (const c of bad) it(`bails out on ${JSON.stringify(c)}`, () => expect(tokenize(c).parsed).toBe(false));
 
@@ -144,7 +162,7 @@ describe('tokenize: bail-outs', () => {
   });
 });
 
-describe('tokenize: linear time on 20 KB hostile input', () => {
+describe('tokenize: linear work on 20 KB hostile input', () => {
   const N = 20 * 1024;
   const cases: Record<string, string> = {
     'a; repeated': 'a;'.repeat(N / 2),
@@ -154,12 +172,13 @@ describe('tokenize: linear time on 20 KB hostile input', () => {
     'escapes': '\\a'.repeat(N / 2),
     'spaces': 'a '.repeat(N / 2),
     'dollar braces': '${a}'.repeat(N / 4),
+    'dollar names': '$abc'.repeat(N / 4),
   };
   for (const [name, input] of Object.entries(cases)) {
-    it(name, () => {
-      const t0 = performance.now();
+    it(`${name}: characters visited ≤ 3·n`, () => {
+      explainWork.reset();
       tokenize(input);
-      expect(performance.now() - t0).toBeLessThan(50);
+      expect(explainWork.get()).toBeLessThanOrEqual(3 * input.length);
     });
   }
 });

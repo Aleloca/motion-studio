@@ -1,5 +1,6 @@
 import type { Explanation, Indicator, IndicatorId, Phrase, Risk } from './types.ts';
 import { isInvisibleOrControl } from './tokenize.ts';
+import { explainWork } from './work.ts';
 
 export const RISK_RANK: Record<Risk, number> = { low: 0, medium: 1, high: 2 };
 
@@ -28,6 +29,7 @@ export class Indicators {
 
 /** Replaces the home folder with `~` (at path boundaries), invisible and control characters with `?`, and caps the length. */
 export function sanitizeText(text: string, home: string): string {
+  explainWork.add(text.length);
   let s = '';
   for (let i = 0; i < text.length; i++) {
     const code = text.charCodeAt(i);
@@ -40,8 +42,9 @@ export function sanitizeText(text: string, home: string): string {
     for (;;) {
       const at = s.indexOf(h, from);
       if (at < 0) { out += s.slice(from); break; }
+      // A boundary is anything that can't continue a folder name (`/Users/alex` vs `/Users/alexander`, `/Users/alex.bak`).
       const after = s[at + h.length];
-      const boundary = after === undefined || after === '/' || after === ' ' || after === ',' || after === '"' || after === "'" || after === ':';
+      const boundary = after === undefined || !/[\p{L}\p{N}_.\-]/u.test(after);
       out += s.slice(from, at) + (boundary ? '~' : h);
       from = at + h.length;
     }

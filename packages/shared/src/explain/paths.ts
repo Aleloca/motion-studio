@@ -1,4 +1,5 @@
 // Path resolution and classification for the explainer. Pure string work (no node:path: the web uses it too).
+import { explainWork } from './work.ts';
 
 export interface ExplainContext {
   projectDir: string;
@@ -38,6 +39,7 @@ function canonical(p: string): string {
 
 /** Normalizes an absolute path: collapses `//`, `.` and `..`. */
 export function normalizeAbs(p: string): string {
+  explainWork.add(p.length);
   const out: string[] = [];
   let start = 0;
   for (let i = 0; i <= p.length; i++) {
@@ -119,6 +121,7 @@ function expandBraces(word: string): string[] | null {
       if (next.length > MAX_ALTERNATIVES) return null;
     }
     results = next;
+    for (const w of next) explainWork.add(w.length);
     if (!expanded) return results;
     if (groups + 1 >= MAX_BRACE_GROUPS) {
       // More groups left: give up rather than guess.
@@ -136,6 +139,7 @@ const startsVar = (p: string, name: string): string | null => {
 };
 
 function resolveOne(p: string, cwd: string | null, d: Dirs, depth: number): Loc[] {
+  explainWork.add(p.length + (cwd?.length ?? 0));
   const unknown: Loc[] = [{ cls: 'unknown', abs: null, raw: p, critical: true }];
   if (p === '') return unknown;
   let path = p;
