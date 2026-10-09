@@ -125,7 +125,7 @@ export class BrandService {
         sources: sources.map((s) => ({ id: s.id, kind: s.kind, url: s.url, file: s.file })),
       };
       const tampered: string[] = [];
-      const turn = await this.runAgent(ref, 'brand-analysis', buildBrandPrompt(block, locale), join(dir, 'log.jsonl'), signal, jobId, tampered, locale);
+      const turn = await this.runAgent(ref, 'brand-analysis', buildBrandPrompt(block, locale, await this.deps.launcher.sandboxed()), join(dir, 'log.jsonl'), signal, jobId, tampered, locale);
       if (turn.status === 'cancelled') {
         await rm(dir, { recursive: true, force: true });
         return 'cancelled';
@@ -258,7 +258,7 @@ export class BrandService {
           const notes: string[] = [];
           try {
             await mkdir(join(ref.projectDir, 'assets', '.describe'), { recursive: true });
-            const prompt = buildDescribePrompt({ outFile: outRel, files: targets.map((t) => `assets/${t.file}`) }, locale);
+            const prompt = buildDescribePrompt({ outFile: outRel, files: targets.map((t) => `assets/${t.file}`) }, locale, await this.deps.launcher.sandboxed());
             const tampered: string[] = [];
             const outcome = await this.runAgent(ref, 'describe', prompt, null, signal, jobId, tampered, locale).finally(() => notes.push(...tampered));
             if (outcome.status === 'cancelled') return 'cancelled';

@@ -103,11 +103,14 @@ export type RecentCreative = CreativeSummary & { project: { slug: string; name: 
 export type CreativeListItem = ({ ok: true } & CreativeSummary) | { ok: false; slug: string; error: string };
 export interface CreativeDetail { slug: string; creative: CreativeFile; versions: VersionEntry[]; jobKey: string }
 
-/** Localized text of an output warning; an unknown key (a newer version's) falls back to the key itself. */
+/** Localized text of an output warning; an unknown key, or params that are not numbers, fall back to the key itself. */
 export function outputWarningText(w: OutputWarning, locale: Locale): string {
   if (w.key === 'outputs.largeFile') {
-    const { sizeMB, maxMB, channel } = w.params;
-    return messages(locale).outputs.largeFile({ sizeMB: Number(sizeMB), maxMB: Number(maxMB), channel: channelName(String(channel), locale) });
+    const sizeMB = Number(w.params.sizeMB);
+    const mbps = Number(w.params.mbps);
+    const targetMbps = Number(w.params.targetMbps);
+    if (![sizeMB, mbps, targetMbps].every(Number.isFinite)) return w.key;
+    return messages(locale).outputs.largeFile({ sizeMB, mbps, targetMbps, channel: channelName(String(w.params.channel ?? ''), locale) });
   }
   return w.key;
 }

@@ -2,7 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { execCommand, type CommandExec } from '../exec.ts';
 
-export interface MediaInfo { width: number; height: number; durationSec: number | null }
+export interface MediaInfo { width: number; height: number; durationSec: number | null; /** Average frame rate of the video stream, when known. */ fps?: number }
 export interface MediaTools {
   readonly available: boolean;
   probe(file: string): Promise<MediaInfo | null>;
@@ -38,12 +38,14 @@ export async function createFfmpegTools(exec: CommandExec = execCommand): Promis
       const r = await exec('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', file], { timeoutMs: 30_000 });
       if (r.code !== 0) return null;
       try {
-        const data = JSON.parse(r.stdout) as { streams?: Array<{ codec_type?: string; codec_name?: string; width?: number; height?: number }>; format?: { duration?: string } };
+        const data = JSON.parse(r.stdout) as { streams?: Array<{ codec_type?: string; codec_name?: string; width?: number; height?: number; avg_frame_rate?: string }>; format?: { duration?: string } };
         const s = data.streams?.find((x) => x.codec_type === 'video' && x.width && x.height);
         if (!s?.width || !s.height) return null;
         const still = s.codec_name !== undefined && STILL_CODECS.has(s.codec_name);
         const d = Number(data.format?.duration);
-        return { width: s.width, height: s.height, durationSec: !still && Number.isFinite(d) && d > 0 ? d : null };
+        const [num, den] = (s.avg_frame_rate ?? '').split('/').map(Number);
+        const fps = num && den && Number.isFinite(num / den) ? num / den : undefined;
+        return { width: s.width, height: s.height, durationSec: !still && Number.isFinite(d) && d > 0 ? d : null, ...(fps && !still ? { fps } : {}) };
       } catch {
         return null;
       }

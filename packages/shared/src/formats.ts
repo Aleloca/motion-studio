@@ -15,9 +15,9 @@ export const formatPresetSchema = z.object({
   extensions: z.array(z.string().regex(/^[a-z0-9]{2,5}$/)).min(1),
   maxDurationSec: z.number().positive().optional(),
   safeZone: z.object({ top: z.number().min(0), bottom: z.number().min(0), left: z.number().min(0), right: z.number().min(0) }).optional(),
-  /** Images: a hard limit (a larger file is a problem). Video: a RECOMMENDED size, exceeding it only raises a warning. */
+  /** A REAL, documented upload limit of the channel (a larger file is a problem), for images and video. Never a recommendation. */
   maxFileMB: z.number().positive().optional(),
-  /** Recommended average video bitrate (kbps) the agent should aim for; guidance only, never validated. */
+  /** Target H.264 bitrate (kbps, 30 fps) the agent aims for; a file whose effective bitrate exceeds 1.5x of it only gets a warning. */
   targetBitrateKbps: z.number().positive().optional(),
 });
 export type FormatPreset = z.infer<typeof formatPresetSchema>;
@@ -51,10 +51,30 @@ export function channelName(channel: string, locale: Locale): string {
 export const formatLabel = (preset: Pick<FormatPreset, 'id' | 'name' | 'channel'>, locale: Locale): string =>
   `${channelName(preset.channel, locale)} · ${formatName(preset, locale)}`;
 
+/**
+ * Target H.264 bitrate (kbps) for a video of `width`x`height`. Reference points at 30 fps:
+ * portrait 1080x1920 and 1080x1350: 4000; square 1080x1080: 3500; landscape 1920x1080: 5000 and 3840x2160 (4K): 20000.
+ * Any other size takes the references of its orientation (portrait: h > w, landscape: w > h, square: w = h), picks the one
+ * nearest in pixel count and scales linearly by pixel count (kbps = ref x pixels / refPixels), rounded to 100 kbps.
+ * Frame rates above 45 fps get +50%.
+ */
+const BITRATE_REFS = {
+  portrait: [{ w: 1080, h: 1920, kbps: 4000 }, { w: 1080, h: 1350, kbps: 4000 }],
+  square: [{ w: 1080, h: 1080, kbps: 3500 }],
+  landscape: [{ w: 1920, h: 1080, kbps: 5000 }, { w: 3840, h: 2160, kbps: 20000 }],
+};
+export function videoTargetBitrateKbps(width: number, height: number, fps = 30): number {
+  const refs = BITRATE_REFS[height > width ? 'portrait' : width > height ? 'landscape' : 'square'];
+  const px = width * height;
+  const ref = refs.reduce((best, r) => (Math.abs(Math.log(px / (r.w * r.h))) < Math.abs(Math.log(px / (best.w * best.h))) ? r : best));
+  const base = (ref.kbps * px) / (ref.w * ref.h) * (fps > 45 ? 1.5 : 1);
+  return Math.max(100, Math.round(base / 100) * 100);
+}
+
 const VIDEO = ['mp4', 'webm', 'mov', 'gif'];
 const IMAGE = ['png', 'jpg', 'jpeg', 'webp'];
 const v = (id: string, channel: string, name: string, width: number, height: number, extra: Partial<FormatPreset> = {}): FormatPreset =>
-  ({ id, channel, name, width, height, kind: 'video', extensions: VIDEO, ...extra });
+  ({ id, channel, name, width, height, kind: 'video', extensions: VIDEO, targetBitrateKbps: videoTargetBitrateKbps(width, height), ...extra });
 const i = (id: string, channel: string, name: string, width: number, height: number, extra: Partial<FormatPreset> = {}): FormatPreset =>
   ({ id, channel, name, width, height, kind: 'image', extensions: IMAGE, ...extra });
 
@@ -62,33 +82,28 @@ const i = (id: string, channel: string, name: string, width: number, height: num
 const REELS_SAFE = { top: 220, bottom: 420, left: 60, right: 120 };
 
 export const DEFAULT_FORMATS: FormatPreset[] = [
-  // Instagram: recommendation, not a platform limit. Feed video is re-encoded anyway; 15 MB caps a 60 s clip at ~1.7 Mbps video + 128 kbps audio, with ~10% headroom.
-  v('instagram-post-1x1', 'Instagram', 'Post 1:1', 1080, 1080, { maxDurationSec: 60, maxFileMB: 15, targetBitrateKbps: 1700 }),
-  v('instagram-post-4x5', 'Instagram', 'Post 4:5', 1080, 1350, { maxDurationSec: 60, maxFileMB: 15, targetBitrateKbps: 1700 }),
-  v('instagram-reel-9x16', 'Instagram', 'Story/Reel 9:16', 1080, 1920, { maxDurationSec: 90, safeZone: REELS_SAFE, maxFileMB: 15, targetBitrateKbps: 1100 }),
+  v('instagram-post-1x1', 'Instagram', 'Post 1:1', 1080, 1080, { maxDurationSec: 60 }),
+  v('instagram-post-4x5', 'Instagram', 'Post 4:5', 1080, 1350, { maxDurationSec: 60 }),
+  v('instagram-reel-9x16', 'Instagram', 'Story/Reel 9:16', 1080, 1920, { maxDurationSec: 90, safeZone: REELS_SAFE }),
   i('instagram-image-1x1', 'Instagram', 'Image 1:1', 1080, 1080),
   i('instagram-image-4x5', 'Instagram', 'Image 4:5', 1080, 1350),
-  // TikTok: recommendation, not a platform limit (uploads allow far more); 40 MB for 180 s allows ~1.5 Mbps video + audio with ~10% headroom.
-  v('tiktok-9x16', 'TikTok', 'Video 9:16', 1080, 1920, { maxDurationSec: 180, safeZone: REELS_SAFE, maxFileMB: 40, targetBitrateKbps: 1500 }),
-  // YouTube: recommendation. Its published guidance for 1080p SDR is ~8 Mbps; 100 MB covers about 100 s at that rate.
-  v('youtube-16x9', 'YouTube', 'Video 16:9', 1920, 1080, { maxFileMB: 100, targetBitrateKbps: 8000 }),
-  v('youtube-4k-16x9', 'YouTube', 'Video 4K 16:9', 3840, 2160, { maxFileMB: 300, targetBitrateKbps: 20000 }),
-  v('youtube-shorts-9x16', 'YouTube', 'Shorts 9:16', 1080, 1920, { maxDurationSec: 60, safeZone: REELS_SAFE, maxFileMB: 30, targetBitrateKbps: 3600 }),
+  v('tiktok-9x16', 'TikTok', 'Video 9:16', 1080, 1920, { maxDurationSec: 180, safeZone: REELS_SAFE }),
+  v('youtube-16x9', 'YouTube', 'Video 16:9', 1920, 1080),
+  v('youtube-4k-16x9', 'YouTube', 'Video 4K 16:9', 3840, 2160),
+  v('youtube-shorts-9x16', 'YouTube', 'Shorts 9:16', 1080, 1920, { maxDurationSec: 60, safeZone: REELS_SAFE }),
+  // YouTube: 2 MB is the documented thumbnail size limit.
   i('youtube-thumbnail', 'YouTube', 'Thumbnail', 1280, 720, { maxFileMB: 2 }),
-  // Sizes below follow (video + 128 kbps audio) x maxDurationSec <= maxFileMB with ~10% headroom (tested).
-  // Facebook: recommendation, not a platform limit (the platform accepts much larger files).
-  v('facebook-feed-1x1', 'Facebook', 'Feed 1:1', 1080, 1080, { maxFileMB: 50, targetBitrateKbps: 3500 }),
-  v('facebook-feed-4x5', 'Facebook', 'Feed 4:5', 1080, 1350, { maxFileMB: 50, targetBitrateKbps: 3500 }),
-  v('facebook-story-9x16', 'Facebook', 'Story 9:16', 1080, 1920, { maxDurationSec: 60, safeZone: REELS_SAFE, maxFileMB: 15, targetBitrateKbps: 1700 }),
+  v('facebook-feed-1x1', 'Facebook', 'Feed 1:1', 1080, 1080),
+  v('facebook-feed-4x5', 'Facebook', 'Feed 4:5', 1080, 1350),
+  v('facebook-story-9x16', 'Facebook', 'Story 9:16', 1080, 1920, { maxDurationSec: 60, safeZone: REELS_SAFE }),
   i('facebook-cover', 'Facebook', 'Cover', 1640, 624),
-  // LinkedIn: recommendation; the official limit is far higher, but feed videos are short and re-encoded.
-  v('linkedin-1x1', 'LinkedIn', 'Post 1:1', 1080, 1080, { maxFileMB: 50, targetBitrateKbps: 3500 }),
-  v('linkedin-4x5', 'LinkedIn', 'Post 4:5', 1080, 1350, { maxFileMB: 50, targetBitrateKbps: 3500 }),
-  v('linkedin-16x9', 'LinkedIn', 'Video 16:9', 1920, 1080, { maxFileMB: 100, targetBitrateKbps: 5000 }),
+  v('linkedin-1x1', 'LinkedIn', 'Post 1:1', 1080, 1080),
+  v('linkedin-4x5', 'LinkedIn', 'Post 4:5', 1080, 1350),
+  v('linkedin-16x9', 'LinkedIn', 'Video 16:9', 1920, 1080),
   i('linkedin-banner', 'LinkedIn', 'Banner', 1584, 396),
-  // X: recommendation (the official cap is much higher); keeps uploads quick.
-  v('x-16x9', 'X', 'Video 16:9', 1600, 900, { maxFileMB: 50, targetBitrateKbps: 4000 }),
-  v('x-1x1', 'X', 'Post 1:1', 1080, 1080, { maxFileMB: 50, targetBitrateKbps: 4000 }),
+  // X: 512 MB is the documented video upload limit (X developer docs, media upload).
+  v('x-16x9', 'X', 'Video 16:9', 1600, 900, { maxFileMB: 512 }),
+  v('x-1x1', 'X', 'Post 1:1', 1080, 1080, { maxFileMB: 512 }),
   i('pinterest-2x3', 'Pinterest', 'Pin 2:3', 1000, 1500),
   i('web-hero-16x9', 'Web', 'Hero 16:9', 1920, 1080),
   i('web-banner-300x250', 'Web', 'Banner 300×250', 300, 250),
@@ -97,13 +112,12 @@ export const DEFAULT_FORMATS: FormatPreset[] = [
   i('appstore-iphone-69', 'App Store', 'Screenshot iPhone 6.9"', 1320, 2868),
   i('appstore-iphone-65', 'App Store', 'Screenshot iPhone 6.5"', 1284, 2778),
   i('appstore-ipad-13', 'App Store', 'Screenshot iPad 13"', 2064, 2752),
-  // App Store: recommendation; Apple's cap is higher, but ~10 Mbps for a 30 s preview is about 40 MB.
-  v('appstore-preview', 'App Store', 'App Preview', 886, 1920, { maxDurationSec: 30, extensions: ['mp4', 'mov'], maxFileMB: 50, targetBitrateKbps: 10000 }),
+  // App Store: 500 MB is the documented maximum size of an app preview (App Store Connect help).
+  v('appstore-preview', 'App Store', 'App Preview', 886, 1920, { maxDurationSec: 30, extensions: ['mp4', 'mov'], maxFileMB: 500 }),
   i('appstore-icon', 'App Store', 'Icona', 1024, 1024),
   i('playstore-feature', 'Play Store', 'Feature graphic', 1024, 500),
   i('playstore-phone-9x16', 'Play Store', 'Screenshot telefono 9:16', 1080, 1920),
   i('playstore-tablet', 'Play Store', 'Screenshot tablet', 1600, 2560),
   i('playstore-icon', 'Play Store', 'Icona', 512, 512),
-  // Play Store: the promo video is a YouTube link in practice; same recommendation as YouTube 16:9.
-  v('playstore-promo-16x9', 'Play Store', 'Video promo 16:9', 1920, 1080, { maxFileMB: 100, targetBitrateKbps: 8000 }),
+  v('playstore-promo-16x9', 'Play Store', 'Video promo 16:9', 1920, 1080),
 ];

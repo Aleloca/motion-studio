@@ -1,6 +1,6 @@
 import { lstat } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
-import { formatLabel, manifestSchema, messages, type Locale, type FormatPreset, type OutputFileInfo, type OutputWarning } from '@motion-studio/shared';
+import { formatLabel, videoTargetBitrateKbps, manifestSchema, messages, type Locale, type FormatPreset, type OutputFileInfo, type OutputWarning } from '@motion-studio/shared';
 import { findPreset } from '../formats/format-catalog.ts';
 import { JsonFileError, readJsonFile } from '../json-file.ts';
 import type { MediaTools } from '../media/media-tools.ts';
@@ -9,6 +9,12 @@ import { currentLocale } from '../i18n.ts';
 export interface ValidationResult { outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: string | null;
   /** Requested ids missing from the format catalog: the agent cannot fix those, so they never justify another attempt. */
   unknownPresets: string[];
+}
+
+/** The preset's own target when it has one (the catalog derives it at 30 fps), else derived from its size; fps above 45 gets +50%. */
+function videoTargetKbps(preset: FormatPreset, fps: number | undefined): number {
+  const base = preset.targetBitrateKbps ?? videoTargetBitrateKbps(preset.width, preset.height);
+  return fps !== undefined && fps > 45 ? base * 1.5 : base;
 }
 
 export async function validateOutputs(opts: {
@@ -48,11 +54,9 @@ export async function validateOutputs(opts: {
     }
     const sizeMB = info.size / (1024 * 1024);
     const warnings: OutputWarning[] = [];
+    // maxFileMB is a real, documented upload limit of the channel: a problem for any kind of file.
     if (preset.maxFileMB !== undefined && sizeMB > preset.maxFileMB) {
-      // Images: maxFileMB is a hard platform limit (a problem). Video: it is a recommendation, so only a warning,
-      // which never makes the version incomplete nor triggers the fix loop.
-      if (preset.kind === 'image') problems.push(v.tooLarge({ file: entry.file, size: sizeMB.toFixed(1), max: preset.maxFileMB }));
-      else warnings.push({ key: 'outputs.largeFile', params: { sizeMB: Math.round(sizeMB * 10) / 10, maxMB: preset.maxFileMB, channel: preset.channel } });
+      problems.push(v.tooLarge({ file: entry.file, size: sizeMB.toFixed(1), max: preset.maxFileMB }));
     }
 
     const probed = media.available ? await media.probe(path) : null;
@@ -82,6 +86,18 @@ export async function validateOutputs(opts: {
             problems.push(v.durationOffTarget({ file: entry.file, duration: durationSec.toFixed(1), target }));
           }
         }
+      }
+    }
+
+    // Bitrate-based warning (never a problem): effective bitrate above 1.5x the target. Needs a known duration.
+    if (preset.kind === 'video' && durationSec !== null && durationSec > 0) {
+      const target = videoTargetKbps(preset, probed?.fps);
+      const mbps = (info.size * 8) / durationSec / 1e6;
+      if (mbps > (target / 1000) * 1.5) {
+        warnings.push({ key: 'outputs.largeFile', params: {
+          sizeMB: Math.round(info.size / 1e5) / 10, mbps: mbps >= 10 ? Math.round(mbps) : Math.round(mbps * 10) / 10,
+          targetMbps: Math.round(target / 100) / 10, channel: preset.channel,
+        } });
       }
     }
 

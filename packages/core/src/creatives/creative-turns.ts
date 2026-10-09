@@ -163,7 +163,7 @@ export class CreativeTurnService {
           userText: kind === 'fix' ? undefined : request,
           pins: kind === 'iteration' ? message?.pins : undefined,
           attachments: kind === 'iteration' ? attachments : undefined,
-          problems, context, locale,
+          problems, context, locale, sandboxed: await this.deps.launcher.sandboxed(),
         });
         const snapshotsBefore = await Promise.all(existing.map((p) => codebaseSnapshot(p)));
         for (const [k, p] of existing.entries()) {

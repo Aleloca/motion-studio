@@ -211,7 +211,7 @@ export const it: Messages = {
     durationOffTarget: (p) => `${p.file}: durata ${p.duration}s, richiesta circa ${p.target}s`,
   },
   outputs: {
-    largeFile: (p) => `File pesante: ${p.sizeMB} MB (consigliato ≤ ${p.maxMB} MB per ${p.channel})`,
+    largeFile: (p) => `File pesante: ${p.sizeMB} MB a ${p.mbps} Mbps (circa ${p.targetMbps} Mbps bastano per ${p.channel})`,
   },
   export: {
     absoluteDestination: 'Scegli una cartella di destinazione (percorso assoluto)',

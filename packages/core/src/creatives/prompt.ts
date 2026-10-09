@@ -1,5 +1,5 @@
 import type { CreativeFile, FormatPreset, Pin } from '@motion-studio/shared';
-import { formatLabel, type BrandKit, type Locale } from '@motion-studio/shared';
+import { formatLabel, videoTargetBitrateKbps, type BrandKit, type Locale } from '@motion-studio/shared';
 import { replyInstruction } from '../i18n.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 
@@ -17,6 +17,8 @@ export interface PromptInput {
   context?: CreativeContext;
   /** Language of the user's texts, captured when the job started: a running job keeps it even if the setting changes. */
   locale: Locale;
+  /** True when the job really runs in the sandbox: only then the prompt describes sandbox limits. */
+  sandboxed?: boolean;
 }
 export interface StudioBlock {
   outputDir: string; workDir: string; durationSec: number | null;
@@ -27,19 +29,23 @@ export interface StudioBlock {
 const ENCODING_SECTION = [
   '## Encoding',
   '- Video: H.264 (libx264), `-pix_fmt yuv420p`, CRF 18-23, `-movflags +faststart`; AAC 128k audio only when the video has sound.',
+  '- Each video format lists its target bitrate and the ffmpeg flags to use: stay at or below that bitrate (raise the CRF rather than lowering the resolution); a file far above it is flagged as too large.',
   '- Images: optimized PNG, or JPEG at quality 85-90.',
-  '- Keep files light: stay under the recommended size of each format when listed, raising the CRF rather than lowering the resolution.',
 ];
+
+/** Per-format ffmpeg flags: CRF 20 capped at 1.5x the target bitrate with a 2x buffer. */
+const encodeFlags = (kbps: number) =>
+  `-c:v libx264 -crf 20 -maxrate ${Math.round(kbps * 1.5)}k -bufsize ${Math.round(kbps * 2)}k -pix_fmt yuv420p -movflags +faststart (with audio add -c:a aac -b:a 128k)`;
 
 /** Sandbox facts for the agent, shared by every prompt (the short form is for jobs without network or rendering). Relative paths only. */
 export const SANDBOX_SECTION_SHORT = [
   '## Sandbox environment',
-  '- You run in a sandbox: you can write only inside the project (and the temp dir, $TMPDIR). Package caches are already configured; do not change them.',
+  '- You run in a sandbox: you can write only in the project (except `.git`, `.claude`, `.studio`, `CLAUDE.md`, `CLAUDE.local.md` and `.mcp.json`), in $TMPDIR and in the tool temp dirs, nowhere else. Package caches are already configured; do not change them.',
   '- Do not mention these limitations to the user; they are known.',
 ];
 export const SANDBOX_SECTION = [
   '## Sandbox environment',
-  '- Writable: the project (your work goes in `creatives/<slug>/work/`, deliveries in `outputs/`) and the temp dir ($TMPDIR). Everything else is read-only.',
+  '- Writable: the project (your work goes in `creatives/<slug>/work/`, deliveries in `outputs/`), except the protected `.git`, `.claude`, `.studio`, `CLAUDE.md`, `CLAUDE.local.md` and `.mcp.json`; plus $TMPDIR and the tool temp dirs. Nowhere else.',
   '- Package caches (npm, pnpm, yarn, pip, XDG) are already configured and writable: install dependencies normally, without setting cache folders.',
   '- Network access is limited to the allowlisted domains (package registries and a few others); anything else fails.',
   '- Headless Chromium, Puppeteer and Playwright cannot run here and their browser downloads are disabled. Use a working engine from the start: ffmpeg, node-canvas or skia-canvas, Pillow or cairo. Browser-based rendering comes later and is managed by Motion Studio.',
@@ -87,7 +93,7 @@ export function buildCreativePrompt(i: PromptInput): string {
   };
   // Agent-facing text: format names are always the English ones, whatever the user's language; the id identifies the preset.
   const formatLines = known.map(([id, p]) => p
-    ? `- ${p.id}: ${formatLabel(p, 'en')} — ${p.width}×${p.height}, ${p.kind}${p.maxDurationSec ? `, max ${p.maxDurationSec}s` : ''}${p.safeZone ? `, safe zone px (top ${p.safeZone.top}, bottom ${p.safeZone.bottom}, left ${p.safeZone.left}, right ${p.safeZone.right})` : ''}${p.kind === 'video' && p.maxFileMB ? `, recommended ≤ ${p.maxFileMB} MB${p.targetBitrateKbps ? ` (~${p.targetBitrateKbps} kbps)` : ''}` : ''} — extensions: ${p.extensions.join(', ')}`
+    ? `- ${p.id}: ${formatLabel(p, 'en')} — ${p.width}×${p.height}, ${p.kind}${p.maxDurationSec ? `, max ${p.maxDurationSec}s` : ''}${p.safeZone ? `, safe zone px (top ${p.safeZone.top}, bottom ${p.safeZone.bottom}, left ${p.safeZone.left}, right ${p.safeZone.right})` : ''}${p.maxFileMB ? `, hard limit ${p.maxFileMB} MB` : ''}${p.kind === 'video' ? `, target ~${p.targetBitrateKbps ?? videoTargetBitrateKbps(p.width, p.height)} kbps, encode: ${encodeFlags(p.targetBitrateKbps ?? videoTargetBitrateKbps(p.width, p.height))}` : ''} — extensions: ${p.extensions.join(', ')}`
     : `- ${id}: unknown preset, ignore it and mention it in your reply`);
 
   const parts: string[] = [];
@@ -118,7 +124,7 @@ export function buildCreativePrompt(i: PromptInput): string {
   parts.push(
     '', '## Required formats', ...formatLines,
     '', ...ENCODING_SECTION,
-    '', ...SANDBOX_SECTION,
+    ...(i.sandboxed ? ['', ...SANDBOX_SECTION] : []),
     '', '## Where to work',
     `- Workspace: ${base}/work/ (sources, scripts, local dependencies)`,
     `- Delivery: ${outputDir}/ with one file per format (\`<id>.<extension>\`) and manifest.json, as per the contract in .studio/context.md`,

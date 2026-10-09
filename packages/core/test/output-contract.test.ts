@@ -147,32 +147,55 @@ describe('validateOutputs', () => {
   });
 
   describe('large-file warnings', () => {
-    const reel: FormatPreset = { id: 'reel', channel: 'Instagram', name: 'Reel', width: 1080, height: 1920, kind: 'video', extensions: ['mp4'], maxFileMB: 15 };
-    const reelEntry = { format: 'reel', file: 'reel.mp4', width: 1080, height: 1920, durationSec: 10 };
-    it('warns (never a problem) about a 78 MB file on a reel with max 15', async () => {
-      await manifest([reelEntry]);
-      await writeFile(join(dir, 'reel.mp4'), '');
-      await truncate(join(dir, 'reel.mp4'), 78 * 1024 * 1024);
-      const r = await validateOutputs({ dir, requested: ['reel'], presets: [reel], durationSec: null, media: NoMediaTools });
+    const reel: FormatPreset = { id: 'reel', channel: 'Instagram', name: 'Reel', width: 1080, height: 1920, kind: 'video', extensions: ['mp4'], targetBitrateKbps: 4000 };
+    const entry = (durationSec: number | null) => ({ format: 'reel', file: 'reel.mp4', width: 1080, height: 1920, durationSec });
+    const put = async (bytes: number) => { await writeFile(join(dir, 'reel.mp4'), ''); await truncate(join(dir, 'reel.mp4'), bytes); };
+    const media = (durationSec: number | null, fps?: number) => fakeMedia({ 'reel.mp4': { width: 1080, height: 1920, durationSec, ...(fps ? { fps } : {}) } });
+    const run = (m: MediaTools, presetList = [reel]) => validateOutputs({ dir, requested: [presetList[0]!.id], presets: presetList, durationSec: null, media: m });
+    it('warns (never a problem) about a 78 MB / 6 s reel (about 104 Mbps)', async () => {
+      await manifest([entry(6)]);
+      await put(78_000_000);
+      const r = await run(media(6));
       expect(r.problems).toEqual([]);
-      expect(r.outputs[0]!.warnings).toEqual([{ key: 'outputs.largeFile', params: { sizeMB: 78, maxMB: 15, channel: 'Instagram' } }]);
-      expect(outputWarningText(r.outputs[0]!.warnings![0]!, 'en')).toBe('Large file: 78 MB (recommended ≤ 15 MB for Instagram)');
-      expect(outputWarningText(r.outputs[0]!.warnings![0]!, 'it')).toContain('78 MB');
+      expect(r.outputs[0]!.warnings).toEqual([{ key: 'outputs.largeFile', params: { sizeMB: 78, mbps: 104, targetMbps: 4, channel: 'Instagram' } }]);
+      expect(outputWarningText(r.outputs[0]!.warnings![0]!, 'en')).toBe('Large file: 78 MB at 104 Mbps (about 4 Mbps is plenty for Instagram)');
+      expect(outputWarningText(r.outputs[0]!.warnings![0]!, 'it')).toContain('104 Mbps');
     });
-    it('a custom user video preset with maxFileMB warns instead of raising a problem', async () => {
-      const custom: FormatPreset = { id: 'mine', channel: 'Custom', name: 'Mine', width: 640, height: 360, kind: 'video', extensions: ['mp4'], maxFileMB: 1 };
-      await manifest([{ format: 'mine', file: 'mine.mp4', width: 640, height: 360, durationSec: 5 }]);
+    it('does not warn at a 4 Mbps reel', async () => {
+      await manifest([entry(6)]);
+      await put(3_000_000);
+      const r = await run(media(6));
+      expect(r.problems).toEqual([]);
+      expect(r.outputs[0]!.warnings).toBeUndefined();
+    });
+    it('60 fps raises the target by 50%: 7 Mbps warns at 30 fps but not at 60', async () => {
+      await manifest([entry(6)]);
+      await put(5_250_000); // 7 Mbps over 6 s
+      expect((await run(media(6, 30))).outputs[0]!.warnings).toHaveLength(1);
+      expect((await run(media(6, 60))).outputs[0]!.warnings).toBeUndefined();
+    });
+    it('does not warn on bitrate when the duration is unknown', async () => {
+      await manifest([entry(null)]);
+      await put(78_000_000);
+      const r = await run(NoMediaTools);
+      expect(r.problems).toEqual([]);
+      expect(r.outputs[0]!.warnings).toBeUndefined();
+    });
+    it('a custom video preset without a target derives it from its size and warns, never a problem', async () => {
+      const custom: FormatPreset = { id: 'mine', channel: 'Custom', name: 'Mine', width: 1080, height: 1920, kind: 'video', extensions: ['mp4'] };
+      await manifest([{ format: 'mine', file: 'mine.mp4', width: 1080, height: 1920, durationSec: 6 }]);
       await writeFile(join(dir, 'mine.mp4'), '');
-      await truncate(join(dir, 'mine.mp4'), Math.round(2.55 * 1024 * 1024));
+      await truncate(join(dir, 'mine.mp4'), 78_000_000);
       const r = await validateOutputs({ dir, requested: ['mine'], presets: [custom], durationSec: null, media: NoMediaTools });
       expect(r.problems).toEqual([]);
-      expect(r.outputs[0]!.warnings).toEqual([{ key: 'outputs.largeFile', params: { sizeMB: 2.6, maxMB: 1, channel: 'Custom' } }]);
+      expect(r.outputs[0]!.warnings?.[0]?.params).toMatchObject({ mbps: 104, targetMbps: 4 });
     });
-    it('does not warn under the limit', async () => {
-      await manifest([reelEntry]);
-      await writeFile(join(dir, 'reel.mp4'), 'small');
-      const r = await validateOutputs({ dir, requested: ['reel'], presets: [reel], durationSec: null, media: NoMediaTools });
-      expect(r.problems).toEqual([]);
+    it('a documented maxFileMB stays a hard problem, for video too', async () => {
+      const x: FormatPreset = { ...reel, maxFileMB: 1 };
+      await manifest([entry(600)]);
+      await put(3 * 1024 * 1024);
+      const r = await run(media(600), [x]);
+      expect(r.problems).toHaveLength(1);
       expect(r.outputs[0]!.warnings).toBeUndefined();
     });
     it('an oversized image stays a hard problem, not a warning', async () => {
@@ -182,6 +205,10 @@ describe('validateOutputs', () => {
       const r = await validateOutputs({ dir, requested: ['banner'], presets, durationSec: null, media: NoMediaTools });
       expect(r.problems).toHaveLength(1);
       expect(r.outputs[0]!.warnings).toBeUndefined();
+    });
+    it('outputWarningText is safe on unknown keys and non-numeric params', () => {
+      expect(outputWarningText({ key: 'x.y', params: {} }, 'en')).toBe('x.y');
+      expect(outputWarningText({ key: 'outputs.largeFile', params: { sizeMB: 'a', channel: 'X' } }, 'en')).toBe('outputs.largeFile');
     });
     it('old versions without warnings still parse', () => {
       const old = { n: 1, commit: null, sessionId: null, status: 'complete', createdAt: '2026-10-07T10:00:00.000Z', request: 'x',

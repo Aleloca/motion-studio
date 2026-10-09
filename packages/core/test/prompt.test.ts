@@ -154,9 +154,10 @@ describe('buildCreativePrompt encoding guidance', () => {
       expect(p).toContain('AAC');
     }
   });
-  it('lists the recommended size and bitrate of a format that has them', () => {
+  it('gives each video format its target bitrate with maxrate and bufsize', () => {
     const p = buildCreativePrompt({ ...base, kind: 'first' });
-    expect(p).toMatch(/instagram-post-1x1:.*recommended ≤ 15 MB.*~1700 kbps/);
+    expect(p).toMatch(/instagram-post-1x1:.*target ~3500 kbps.*-crf 20 -maxrate 5250k -bufsize 7000k -pix_fmt yuv420p -movflags \+faststart/);
+    expect(p).toMatch(/web-banner-300x250:(?!.*maxrate)/);
   });
 });
 
@@ -164,8 +165,10 @@ describe('Sandbox environment section', () => {
   const noPaths = (p: string) => { expect(p).not.toMatch(/\/Users\/|\/home\/|C:\\|\/private\//); expect(p).not.toContain(homedir()); };
   it('is in the creative prompt of every kind, relative and English', () => {
     for (const kind of ['first', 'iteration', 'fix'] as const) {
-      const p = buildCreativePrompt({ ...base, kind, userText: 'x' });
+      const p = buildCreativePrompt({ ...base, kind, userText: 'x', sandboxed: true });
       expect(p).toContain('## Sandbox environment');
+      expect(p).toContain('`.studio`');
+      expect(p).not.toMatch(/everything else is read-only/i);
       expect(p).toMatch(/headless Chromium/i);
       expect(p).toMatch(/do not mention these limitations/i);
       noPaths(p);
@@ -173,12 +176,21 @@ describe('Sandbox environment section', () => {
   });
   it('is in the brand and describe prompts, short', () => {
     for (const p of [
-      buildBrandPrompt({ proposalDir: 'brand/proposals/p1', kitFile: 'k', guidelinesFile: 'g', assetsListFile: 'a', summaryFile: 's', sources: [] }, 'it'),
-      buildDescribePrompt({ outFile: 'o.json', files: ['assets/a.png'] }, 'it'),
+      buildBrandPrompt({ proposalDir: 'brand/proposals/p1', kitFile: 'k', guidelinesFile: 'g', assetsListFile: 'a', summaryFile: 's', sources: [] }, 'it', true),
+      buildDescribePrompt({ outFile: 'o.json', files: ['assets/a.png'] }, 'it', true),
     ]) {
       expect(p).toContain('## Sandbox environment');
       expect(p).toMatch(/do not mention these limitations/i);
       noPaths(p);
     }
+  });
+  it('is omitted when the job is not sandboxed', () => {
+    for (const kind of ['first', 'iteration', 'fix'] as const) {
+      const p = buildCreativePrompt({ ...base, kind, userText: 'x' });
+      expect(p).not.toContain('## Sandbox environment');
+      expect(p).not.toMatch(/chromium/i);
+    }
+    expect(buildBrandPrompt({ proposalDir: 'p', kitFile: 'k', guidelinesFile: 'g', assetsListFile: 'a', summaryFile: 's', sources: [] }, 'it')).not.toContain('## Sandbox environment');
+    expect(buildDescribePrompt({ outFile: 'o.json', files: ['assets/a.png'] }, 'it')).not.toContain('## Sandbox environment');
   });
 });

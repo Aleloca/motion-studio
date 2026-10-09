@@ -213,7 +213,7 @@ export const en = {
     durationOffTarget: (p: { file: string; duration: string; target: number }) => `${p.file}: duration ${p.duration}s, about ${p.target}s requested`,
   },
   outputs: {
-    largeFile: (p: { sizeMB: number; maxMB: number; channel: string }) => `Large file: ${p.sizeMB} MB (recommended ≤ ${p.maxMB} MB for ${p.channel})`,
+    largeFile: (p: { sizeMB: number; mbps: number; targetMbps: number; channel: string }) => `Large file: ${p.sizeMB} MB at ${p.mbps} Mbps (about ${p.targetMbps} Mbps is plenty for ${p.channel})`,
   },
   export: {
     absoluteDestination: 'Choose a destination folder (absolute path)',

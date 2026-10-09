@@ -48,12 +48,20 @@ const studioRules = (dir: string) => protectedDirRules(dir, '.studio');
 
 describe('AgentLauncher sandbox caches', () => {
   it('points the caches at <project>/.cache only when sandboxed', { timeout: 20_000 }, async () => {
-    const on = await launch({ sandbox: async () => ({ available: true, reason: 'ok' }) });
+    const realHome = process.env.HOME;
+    process.env.HOME = '/fake-home-for-test';
+    let on: Awaited<ReturnType<typeof launch>>;
+    try { on = await launch({ sandbox: async () => ({ available: true, reason: 'ok' }) }); } finally { if (realHome === undefined) delete process.env.HOME; else process.env.HOME = realHome; }
+    // No cache variable may point into the (fake) real HOME: every one is inside the project.
+    for (const k of ['npm_config_cache', 'PIP_CACHE_DIR', 'XDG_CACHE_HOME'] as const) {
+      expect(on.cacheEnv[k], k).not.toContain('/fake-home-for-test');
+      expect(on.cacheEnv[k], k).toContain(on.projectDir);
+    }
     expect(on.cacheEnv.npm_config_cache).toBe(join(on.projectDir, '.cache', 'npm'));
     expect(on.cacheEnv.PIP_CACHE_DIR).toBe(join(on.projectDir, '.cache', 'pip'));
     expect(on.cacheEnv.XDG_CACHE_HOME).toBe(join(on.projectDir, '.cache', 'xdg'));
     expect(on.cacheEnv.PUPPETEER_SKIP_DOWNLOAD).toBe('1');
-    expect(on.cacheEnv.HOME).toBe(process.env.HOME ?? null);
+    expect(on.cacheEnv.HOME).toBe('/fake-home-for-test');
     const off = await launch({});
     expect(off.cacheEnv.npm_config_cache).toBe(process.env.npm_config_cache ?? null);
     expect(off.cacheEnv.PUPPETEER_SKIP_DOWNLOAD).toBe(null);

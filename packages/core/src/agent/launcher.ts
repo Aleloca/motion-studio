@@ -62,6 +62,11 @@ export class AgentLauncher {
   /** True when agents get the `studio` MCP server (bridge listening and a command to start it). */
   mcpActive(): boolean { return Boolean(this.deps.bridge.origin && this.deps.mcpCommand?.length); }
 
+  /** True when a job started now runs in the sandbox: what prompts may claim about the environment. */
+  async sandboxed(): Promise<boolean> {
+    return (await this.deps.settings()).sandboxMode === 'auto' && (await this.deps.sandbox()).available;
+  }
+
   async start(i: LaunchInput): Promise<AgentRun> {
     const settings = await this.deps.settings();
     const sandbox = settings.sandboxMode === 'auto' && (await this.deps.sandbox()).available;
