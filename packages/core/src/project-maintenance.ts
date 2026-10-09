@@ -6,7 +6,7 @@ const PART_RE = /^\..+\.part$/;
 const isMissing = (e: unknown) => (e as NodeJS.ErrnoException).code === 'ENOENT';
 
 /** Lines added to the project template after phase 2: appended to older projects' .gitignore (other lines are the user's call). */
-const ADDED_IGNORES = ['.*.part', 'assets/.describe/'];
+const ADDED_IGNORES = ['.*.part', 'assets/.describe/', '.cache/'];
 
 /** Appends the missing ADDED_IGNORES to an existing project's .gitignore (a missing file is left alone). */
 export async function completeGitignore(projectDir: string): Promise<void> {

@@ -191,9 +191,9 @@ describe('recoverWorkspace', { timeout: 20_000 }, () => {
     expect(await readdir(join(dir, 'assets', '.describe'))).toEqual([]);
     expect(await readdir(join(dir, 'references'))).toEqual(['.gitkeep']);
     expect(await readdir(join(dir, 'brand', 'proposals'))).toEqual(['p-20260101-000001']);
-    expect((await readFile(join(dir, '.gitignore'), 'utf8')).split('\n')).toEqual(['outputs/', '.*.part', 'assets/.describe/', '']);
+    expect((await readFile(join(dir, '.gitignore'), 'utf8')).split('\n')).toEqual(['outputs/', '.*.part', 'assets/.describe/', '.cache/', '']);
     await recoverWorkspace(ws);
-    expect((await readFile(join(dir, '.gitignore'), 'utf8')).split('\n')).toEqual(['outputs/', '.*.part', 'assets/.describe/', '']);
+    expect((await readFile(join(dir, '.gitignore'), 'utf8')).split('\n')).toEqual(['outputs/', '.*.part', 'assets/.describe/', '.cache/', '']);
   });
   it('leaves brand job files alone while a brand job runs', async () => {
     const ws = await WorkspaceStore.open(join(base, 'ws'), new Git());

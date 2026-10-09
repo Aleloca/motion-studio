@@ -39,12 +39,28 @@ async function launch(over: Parameters<typeof testLauncher>[1], kind: 'creative'
   const launcher = testLauncher(new ClaudeCodeRunner([process.execPath, FAKE]), over);
   const run = await launcher.start({ kind, jobId: 'j1', projectSlug: 'acme', projectDir: dir, codebases: [], request: { prompt: 'ciao' }, onEvent: () => {} });
   await run.done;
-  const { args, env, mcpTimeout, mcpConfigFile, tokenFile, envKeys } = JSON.parse(await readFile(argsFile, 'utf8'));
-  return { args: args as string[], env, mcpTimeout, envKeys: envKeys as string[], tokenFile: tokenFile as { path: string; mode: number; content: string } | null, mcpConfigFile: mcpConfigFile as { path: string; mode: number | null; content: string | null } | null, launcher, projectDir: dir };
+  const { args, env, mcpTimeout, mcpConfigFile, tokenFile, envKeys, cacheEnv } = JSON.parse(await readFile(argsFile, 'utf8'));
+  return { cacheEnv: cacheEnv as Record<string, string | null>, args: args as string[], env, mcpTimeout, envKeys: envKeys as string[], tokenFile: tokenFile as { path: string; mode: number; content: string } | null, mcpConfigFile: mcpConfigFile as { path: string; mode: number | null; content: string | null } | null, launcher, projectDir: dir };
 }
 
 const protectedDirRules = (dir: string, name: string) => ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].map((t) => `${t}(/${escapeGlob(join(dir, name))}/**)`);
 const studioRules = (dir: string) => protectedDirRules(dir, '.studio');
+
+describe('AgentLauncher sandbox caches', () => {
+  it('points the caches at <project>/.cache only when sandboxed', { timeout: 20_000 }, async () => {
+    const on = await launch({ sandbox: async () => ({ available: true, reason: 'ok' }) });
+    expect(on.cacheEnv.npm_config_cache).toBe(join(on.projectDir, '.cache', 'npm'));
+    expect(on.cacheEnv.PIP_CACHE_DIR).toBe(join(on.projectDir, '.cache', 'pip'));
+    expect(on.cacheEnv.XDG_CACHE_HOME).toBe(join(on.projectDir, '.cache', 'xdg'));
+    expect(on.cacheEnv.PUPPETEER_SKIP_DOWNLOAD).toBe('1');
+    expect(on.cacheEnv.HOME).toBe(process.env.HOME ?? null);
+    const off = await launch({});
+    expect(off.cacheEnv.npm_config_cache).toBe(process.env.npm_config_cache ?? null);
+    expect(off.cacheEnv.PUPPETEER_SKIP_DOWNLOAD).toBe(null);
+    const sandboxOff = await launch({ sandbox: async () => ({ available: true, reason: 'ok' }), settings: { sandboxMode: 'off' } });
+    expect(sandboxOff.cacheEnv.PIP_CACHE_DIR).toBe(null);
+  });
+});
 
 describe('AgentLauncher', () => {
   it('without sandbox and MCP keeps the phase 3 behaviour plus project rules (never provider rules)', { timeout: 20_000 }, async () => {

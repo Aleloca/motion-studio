@@ -35,6 +35,28 @@ describe('buildAgentPolicy with sandbox', () => {
   });
 });
 
+describe('buildAgentPolicy cache env', () => {
+  const input = { ...base, projectDir: '/w/acme', protectedDirs: ['/w/acme/.git', '/w/acme/.claude', '/w/acme/.studio'] };
+  it('sets every cache and download variable inside <project>/.cache, only when sandboxed', () => {
+    for (const kind of ['creative', 'console', 'brand-analysis', 'describe'] as const) {
+      const env = buildAgentPolicy({ ...input, kind }).env;
+      expect(env).toMatchObject({
+        npm_config_cache: '/w/acme/.cache/npm', PIP_CACHE_DIR: '/w/acme/.cache/pip', XDG_CACHE_HOME: '/w/acme/.cache/xdg',
+        PNPM_STORE_DIR: '/w/acme/.cache/pnpm-store', npm_config_store_dir: '/w/acme/.cache/pnpm-store', YARN_CACHE_FOLDER: '/w/acme/.cache/yarn',
+        PUPPETEER_SKIP_DOWNLOAD: '1', PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1', npm_config_update_notifier: 'false', PIP_DISABLE_PIP_VERSION_CHECK: '1',
+      });
+      for (const v of Object.values(env)) expect(v).not.toContain('/Users/me');
+    }
+    expect(buildAgentPolicy({ ...input, sandbox: false }).env).toEqual({});
+  });
+  it('the cache folder is writable (inside the project, no deny rule covers it) and not protected', () => {
+    const p = buildAgentPolicy(input);
+    const deny = (p.settings as Sb).sandbox.filesystem.denyWrite;
+    expect(deny.some((d) => '/w/acme/.cache'.startsWith(d) || d.startsWith('/w/acme/.cache'))).toBe(false);
+    expect(p.disallowedTools.some((d) => d.includes('/w/acme/.cache'))).toBe(false);
+  });
+});
+
 describe('buildAgentPolicy hardening', () => {
   it('fails closed and forbids per-command opt-out', () => {
     const s = buildAgentPolicy(base).settings as Sb & { sandbox: { failIfUnavailable: boolean; allowUnsandboxedCommands: boolean } };

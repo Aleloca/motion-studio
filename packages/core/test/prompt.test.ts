@@ -1,6 +1,8 @@
 import { DEFAULT_FORMATS, type CreativeFile } from '@motion-studio/shared';
+import { homedir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import { buildCreativePrompt, parseStudioBlock } from '../src/creatives/prompt.ts';
+import { buildBrandPrompt, buildDescribePrompt } from '../src/brand/brand-prompt.ts';
 import { CONTEXT_MD } from '../src/project-template.ts';
 
 const creative: CreativeFile = {
@@ -155,5 +157,28 @@ describe('buildCreativePrompt encoding guidance', () => {
   it('lists the recommended size and bitrate of a format that has them', () => {
     const p = buildCreativePrompt({ ...base, kind: 'first' });
     expect(p).toMatch(/instagram-post-1x1:.*recommended ≤ 15 MB.*~1700 kbps/);
+  });
+});
+
+describe('Sandbox environment section', () => {
+  const noPaths = (p: string) => { expect(p).not.toMatch(/\/Users\/|\/home\/|C:\\|\/private\//); expect(p).not.toContain(homedir()); };
+  it('is in the creative prompt of every kind, relative and English', () => {
+    for (const kind of ['first', 'iteration', 'fix'] as const) {
+      const p = buildCreativePrompt({ ...base, kind, userText: 'x' });
+      expect(p).toContain('## Sandbox environment');
+      expect(p).toMatch(/headless Chromium/i);
+      expect(p).toMatch(/do not mention these limitations/i);
+      noPaths(p);
+    }
+  });
+  it('is in the brand and describe prompts, short', () => {
+    for (const p of [
+      buildBrandPrompt({ proposalDir: 'brand/proposals/p1', kitFile: 'k', guidelinesFile: 'g', assetsListFile: 'a', summaryFile: 's', sources: [] }, 'it'),
+      buildDescribePrompt({ outFile: 'o.json', files: ['assets/a.png'] }, 'it'),
+    ]) {
+      expect(p).toContain('## Sandbox environment');
+      expect(p).toMatch(/do not mention these limitations/i);
+      noPaths(p);
+    }
   });
 });

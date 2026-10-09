@@ -7,6 +7,9 @@ const IDENTITY = ['-c', 'user.name=Motion Studio', '-c', 'user.email=motion-stud
 /** The agent can write inside the project: hooks and an fsmonitor command planted in the repo must never run. */
 const HARDENED = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
 
+/** Pathspec excluding the sandbox cache folder from staging and from the "anything to commit?" check. */
+const NO_CACHE = ':(exclude).cache';
+
 /** The git subcommand, skipping `-c key=value` pairs; the rest (e.g. commit messages) is never echoed. */
 function subcommand(args: string[]): string {
   for (let i = 0; i < args.length; i++) {
@@ -26,8 +29,9 @@ export class Git {
 
   commitAll(dir: string, message: string): Promise<string | null> {
     return this.lock.run(resolve(dir), async () => {
-      await this.must(dir, ['add', '-A']);
-      const status = await this.must(dir, ['status', '--porcelain']);
+      // The sandbox caches (`<project>/.cache/`) are never versioned, whatever the project's .gitignore says.
+      await this.must(dir, ['add', '-A', '--', '.', NO_CACHE]);
+      const status = await this.must(dir, ['status', '--porcelain', '--', '.', NO_CACHE]);
       if (status.trim() === '') return null;
       await this.must(dir, [...IDENTITY, 'commit', '-q', '-m', message]);
       return (await this.must(dir, ['rev-parse', 'HEAD'])).trim();

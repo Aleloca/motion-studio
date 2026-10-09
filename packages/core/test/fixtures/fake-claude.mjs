@@ -18,7 +18,7 @@ const mcpConfigAt = process.argv.indexOf('--mcp-config');
 const mcpConfigFile = mcpConfigAt >= 0 ? (() => { const p = process.argv[mcpConfigAt + 1]; try { return { path: p, mode: statSync(p).mode & 0o777, content: readFileSync(p, 'utf8') }; } catch { return { path: p, mode: null, content: null }; } })() : null;
 // The token file named by the MCP config, as claude sees it at startup.
 const tokenFile = (() => { try { const p = JSON.parse(mcpConfigFile.content).mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN_FILE; return { path: p, mode: statSync(p).mode & 0o777, content: readFileSync(p, 'utf8') }; } catch { return null; } })();
-if (process.env.FAKE_CLAUDE_ARGS_FILE) writeFileSync(process.env.FAKE_CLAUDE_ARGS_FILE, JSON.stringify({ args, tokenFile, cwd: process.cwd(), pid: process.pid, env: process.env.MS_TEST_ENV ?? null, mcpTimeout: process.env.MCP_TOOL_TIMEOUT ?? null, envKeys: Object.keys(process.env), mcpConfigFile }));
+if (process.env.FAKE_CLAUDE_ARGS_FILE) writeFileSync(process.env.FAKE_CLAUDE_ARGS_FILE, JSON.stringify({ args, tokenFile, cwd: process.cwd(), pid: process.pid, env: process.env.MS_TEST_ENV ?? null, mcpTimeout: process.env.MCP_TOOL_TIMEOUT ?? null, envKeys: Object.keys(process.env), cacheEnv: Object.fromEntries(['npm_config_cache','PIP_CACHE_DIR','XDG_CACHE_HOME','PUPPETEER_SKIP_DOWNLOAD','HOME'].map((k) => [k, process.env[k] ?? null])), mcpConfigFile }));
 if (args[0] === '--version') { console.log('9.9.9 (Claude Code)'); process.exit(0); }
 if (args[0] === 'auth' && args[1] === 'status') {
   const loggedIn = process.env.FAKE_CLAUDE_LOGGED_IN !== '0';

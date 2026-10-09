@@ -82,7 +82,7 @@ export class AgentLauncher {
     // Aborted on cancel and when the run settles: provider calls started by the agent's tools stop with the job.
     const abort = new AbortController();
     const policy = buildAgentPolicy({
-      kind: i.kind, sandbox, home, configDir,
+      kind: i.kind, sandbox, projectDir: i.projectDir, home, configDir,
       codebases: i.codebases ?? [], protectedFiles, protectedDirs,
       extraDomains: settings.extraAllowedDomains, projectAllowRules: rules,
       mcpTools: mcpOn ? MCP_TOOLS[i.kind].map((t) => `mcp__${MCP_SERVER}__${t}`) : [],
@@ -139,7 +139,7 @@ export class AgentLauncher {
         cwd: i.projectDir, ...i.request,
         addDirs: policy.addDirs, allowedTools: policy.allowedTools, disallowedTools: policy.disallowedTools,
         ...(policy.settings ? { settings: policy.settings } : {}), ...mcp,
-        env: { MCP_TOOL_TIMEOUT: '900000' }, unsetEnv: AGENT_UNSET_ENV,
+        env: { MCP_TOOL_TIMEOUT: '900000', ...policy.env }, unsetEnv: AGENT_UNSET_ENV,
       }, forward);
       const done = run.done.then(async (r) => {
         const { record, event } = await tracker.finish(r.status);

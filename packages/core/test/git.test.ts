@@ -1,7 +1,9 @@
+import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { execCommand, type CommandExec } from '../src/exec.ts';
 import { Git } from '../src/git.ts';
@@ -145,5 +147,22 @@ describe('Git.restorePath', () => {
   it('reports a missing git instead of an unknown version', async () => {
     const exec: CommandExec = async () => ({ code: -1, stdout: '', stderr: '', notFound: true });
     await expect(new Git(exec).restorePath('/r', 'abcdef1', 'work')).rejects.toThrow('git non trovato');
+  });
+});
+
+describe('Git.commitAll and the sandbox cache', () => {
+  it('never commits .cache/, even when the project .gitignore lacks it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-cache-'));
+    const git = new Git();
+    await git.init(dir);
+    await writeFile(join(dir, 'a.txt'), '1');
+    await git.commitAll(dir, 'v1');
+    await mkdir(join(dir, '.cache', 'npm'), { recursive: true });
+    await writeFile(join(dir, '.cache', 'npm', 'blob'), 'x');
+    expect(await git.commitAll(dir, 'only cache')).toBe(null);
+    await writeFile(join(dir, 'a.txt'), '2');
+    expect(await git.commitAll(dir, 'v2')).not.toBe(null);
+    const { stdout } = await promisify(execFile)('git', ['ls-files'], { cwd: dir });
+    expect(stdout.trim()).toBe('a.txt');
   });
 });

@@ -31,6 +31,21 @@ const ENCODING_SECTION = [
   '- Keep files light: stay under the recommended size of each format when listed, raising the CRF rather than lowering the resolution.',
 ];
 
+/** Sandbox facts for the agent, shared by every prompt (the short form is for jobs without network or rendering). Relative paths only. */
+export const SANDBOX_SECTION_SHORT = [
+  '## Sandbox environment',
+  '- You run in a sandbox: you can write only inside the project (and the temp dir, $TMPDIR). Package caches are already configured; do not change them.',
+  '- Do not mention these limitations to the user; they are known.',
+];
+export const SANDBOX_SECTION = [
+  '## Sandbox environment',
+  '- Writable: the project (your work goes in `creatives/<slug>/work/`, deliveries in `outputs/`) and the temp dir ($TMPDIR). Everything else is read-only.',
+  '- Package caches (npm, pnpm, yarn, pip, XDG) are already configured and writable: install dependencies normally, without setting cache folders.',
+  '- Network access is limited to the allowlisted domains (package registries and a few others); anything else fails.',
+  '- Headless Chromium, Puppeteer and Playwright cannot run here and their browser downloads are disabled. Use a working engine from the start: ffmpeg, node-canvas or skia-canvas, Pillow or cairo. Browser-based rendering comes later and is managed by Motion Studio.',
+  '- Do not mention these limitations to the user; they are known.',
+];
+
 function contextSections(c: CreativeContext): string[] {
   const k = c.kit;
   const brand = [
@@ -103,6 +118,7 @@ export function buildCreativePrompt(i: PromptInput): string {
   parts.push(
     '', '## Required formats', ...formatLines,
     '', ...ENCODING_SECTION,
+    '', ...SANDBOX_SECTION,
     '', '## Where to work',
     `- Workspace: ${base}/work/ (sources, scripts, local dependencies)`,
     `- Delivery: ${outputDir}/ with one file per format (\`<id>.<extension>\`) and manifest.json, as per the contract in .studio/context.md`,
