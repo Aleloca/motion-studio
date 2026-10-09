@@ -244,3 +244,76 @@ Legenda impatto: 🟢 basso · 🟡 medio · 🔴 alto (sicurezza o prodotto).
     - Il processo `claude` gira con cwd nella cartella del progetto.
 97. 🟡 **Nelle sessioni riprese, costo e `modelUsage` sono cumulativi.** In un turno con `--resume`, `result.usage` conta solo il turno, mentre `result.modelUsage` e `total_cost_usd` sommano tutta la sessione. Nel registro dei consumi i token si prendono da `usage`, e il costo del turno si ottiene per differenza o si calcola dai token. Sommare `total_cost_usd` contando ogni turno raddoppierebbe la spesa.
 98. 🟢 **Abbonamento o chiave API.** Si ricava dal campo `authMethod` di `claude auth status --json` (`"claude.ai"` = abbonamento). `email`, `orgId` e `orgName` non si leggono mai.
+
+## Fase 8 · approvazioni automatiche, spiegazione dei comandi, consumi
+
+99. 🔴 **Approvazione automatica dei comandi in sandbox, attiva di default.** Il nostro strumento `approve` risponde `allow` senza chiedere solo quando valgono tutte queste condizioni:
+    - lo strumento è `Bash`;
+    - il lavoro è registrato come in sandbox;
+    - l'impostazione `autoApproveSandboxed` è attiva (vedi 101);
+    - l'input non contiene `dangerouslyDisableSandbox: true`.
+
+    Tutto il resto chiede come prima: file fuori dal progetto, provider a pagamento, siti nuovi. Ogni comando approvato così lascia un evento `auto_approved`, con il comando (al massimo 2000 caratteri) e la spiegazione, visibile in "Activity details". *Perché è accettabile:* la verifica 94 ha mostrato che un comando approvato resta comunque nella sandbox. *Dal vivo:* creatività con richiesta di modifica, 0 approvazioni Bash e 4 `auto_approved`. *Costo cambio:* basso (interruttore in Project settings, condiviso da tutti i progetti).
+100. 🟡 **Brand e descrizione degli asset ora eseguono i Bash in sandbox senza chiedere.** Prima nei lavori brand `autoAllowBash` era false, e ogni `sips`, `file` o conversione chiedeva conferma (punti 5, 7 e 8 del test visivo). *Perché è accettabile:*
+    - in questi lavori la sandbox non ha rete: le pagine si leggono con `WebFetch` e i file si scaricano solo con `download_file`, che blocca gli indirizzi privati;
+    - le scritture restano nel perimetro della sandbox (il progetto più le aree temporanee di Claude Code, voce 95);
+    - i file di configurazione (`.studio/`, `.claude/`, `.git`, `CLAUDE.md`, `.mcp.json`) restano protetti.
+
+    *Dal vivo:* l'analisi di `example.com` ha chiesto 0 approvazioni. *Costo:* nessuno, per tornare indietro basta spegnere l'interruttore.
+101. 🟡 **"Attiva all'avvio E ancora attiva".** `approve` approva in automatico solo se l'impostazione era attiva quando il lavoro è partito (valore congelato alla registrazione nel bridge) **e** lo è ancora al momento della richiesta.
+    - Accenderla a lavoro avviato non cambia i lavori in corso.
+    - Spegnerla stringe subito, dalla richiesta successiva.
+    - L'override `sandboxed` passato al launcher può solo togliere la sandbox, mai dichiararla quando il calcolo dice di no.
+
+    *Motivo:* Claude Code riceve `--settings` una volta per processo. Così il comportamento coincide con "Applies to new jobs", e l'unico cambio a metà lavoro va nella direzione sicura. *Accettato:* nella corsa con il declassamento il prompt può ancora dire "ambiente sandbox" (direzione sicura).
+102. 🟢 **"Applies to new jobs".** Sotto l'interruttore c'è la frase "Applies to new jobs"; se ci sono lavori in corso, il toast al cambio la ripete. *Alternativa scartata:* riavviare i lavori in corso. *Costo:* nessuno.
+103. 🟡 **Consumi: delta del costo per sessione.** Ogni turno scrive una riga in `<progetto>/.studio/usage.jsonl`. Le scritture sono solo in coda, ogni riga è aggiunta in modo atomico, le righe malformate si saltano e il file è protetto dall'agente come il resto di `.studio/`.
+    - I token si prendono da `result.usage`, che vale per il singolo turno.
+    - Costo e modelli sono la differenza tra il cumulativo di questo turno (`total_cost_usd`, `modelUsage`) e l'ultima riga con lo stesso `sessionId`. Senza una riga precedente si prende il valore intero solo se la sessione non è stata ripresa, altrimenti costo `null` con `estimated: true`.
+    - Una differenza negativa dà costo `null` e `estimated: true`.
+    - La riga conserva anche `sessionId`, `cumulativeCostUsd` e `cumulativeModels` grezzi.
+
+    *Dal vivo:* 5 righe; la somma coincide con `/api/usage` e con la UI (175,4k token).
+104. 🟢 **Niente recupero del passato (no backfill) e niente numeri inventati.** I lavori precedenti alla Fase 8 non hanno consumi: Usage dice "Tracked since …". Dove manca il dato si mostra "—" o si nasconde l'elemento.
+    - I token sono la cifra principale, il costo è secondario.
+    - Il totale mostrato è input + output + scrittura in cache; le letture dalla cache stanno solo nei dettagli.
+105. 🟢 **Il totale del giorno non scende.** Se il totale finale di un lavoro arriva più basso del valore dal vivo, si tiene il più alto fino al prossimo aggiornamento dal core, che lo corregge.
+106. 🟢 **La stima della nuova creatività esclude le prime generazioni con record stimati.** Le somme parziali la abbasserebbero. *Costo:* distorsione da sopravvivenza, quindi la stima tende al basso.
+107. 🟡 **Avvisi di peso basati sul bitrate, non sul peso.** Target H.264 a 30 fps:
+    - 4 Mbps per 1080×1920 e 1080×1350;
+    - 3,5 Mbps per 1080×1080;
+    - 5 Mbps per 1920×1080;
+    - 20 Mbps per 3840×2160;
+    - le altre misure in proporzione ai pixel, con il riferimento del proprio orientamento;
+    - +50% a 60 fps.
+
+    L'avviso scatta quando il bitrate effettivo (peso × 8 / durata misurata) supera 1,5 volte il target, solo per mp4 e mov. Non è mai un problema e non avvia il ciclo di correzione. Testo: "Large file: 78 MB at 104 Mbps (about 4 Mbps is plenty for Instagram)". `maxFileMB` resta solo dove c'è un limite documentato: X 512 MB e App Store 500 MB, confermati sulle fonti. Il prompt dà a ogni formato `-crf 20 -maxrate <1,5×target> -bufsize <2×target>`. *Dal vivo:* gli output di Haiku pesano 0,14–0,16 MB per 6 s (circa 0,2 Mbps), senza avvisi. Un file sintetico di 85,8 MB a 114 Mbps mostra il chip.
+108. 🟢 **Il limite di 2 MB delle miniature YouTube non è verificato alla fonte.** Resta nel catalogo con una nota; va confermato sulla documentazione di YouTube.
+109. 🟡 **Cartella cache `.cache/` nel progetto.**
+    - npm, pip, XDG, pnpm store e yarn usano `<progetto>/.cache/`. È scrivibile perché sta nel progetto e non è protetta.
+    - È nel `.gitignore` dei nuovi progetti e viene aggiunta a quello dei vecchi (in modo idempotente); `commitAll` la esclude comunque con `:(exclude).cache`.
+    - Il prompt dice cosa è scrivibile: il progetto tranne i file protetti, `$TMPDIR` e le cartelle temporanee degli strumenti. La sezione sulla sandbox compare solo se il lavoro è in sandbox.
+    - Così spariscono "npm cache isn't writable…" e "Headless Chromium can't start…" (0 occorrenze dal vivo).
+
+    🔴 **Difetto trovato dal vivo, aperto:** con `.cache/` nel `.gitignore`, `git add -A -- . ':(exclude).cache'` esce con codice 1 ("paths are ignored by one of your .gitignore files") appena la cartella esiste. Claude Code la crea a ogni avvio (`npm root --global` scrive i log in `npm_config_cache`), quindi ogni `commitAll` successivo fallisce: la prima creatività della verifica è fallita così. Inoltre `npm_config_store_dir` fa stampare a npm 11 `Unknown env config "store-dir"` a ogni comando. Entrambi vanno corretti nella fix wave finale.
+110. 🔴 **Spiegazione dei comandi: regola di arresto.** La spiegazione non è il confine di sicurezza: lo è la sandbox. Obiettivi: spiegare i comandi plausibili di un agente e non dire mai "rischio basso, innocuo" quando non c'è certezza. Il modulo è deterministico, senza dipendenze, senza `eval`, in tempo lineare (20 KB di input ostile sotto 50 ms) e, quando non è sicuro, risponde `parsed: false`. La descrizione dell'agente compare solo come citazione. Regole finali, dopo 4 giri di correzione avversariale e una revisione di conferma:
+    - **Argomenti default-deny.** Flag e sottocomandi non modellati valgono almeno medio; i flag noti di esecuzione o scrittura valgono alto o `parsed: false`.
+    - **Limite al rumore.** Una tabella "comandi comuni" tiene il rischio atteso per il lavoro quotidiano: ffmpeg e ffprobe, mkdir/cp/mv in `work/`, script python3 o node del progetto, pip e npm install (medio), sips e cwebp.
+    - **cwd come insieme che si accumula.** Si parte dalla cartella iniziale e si aggiunge ogni destinazione di `cd`; dopo `cd X &&` il ramo vale {X}. Oltre 8 cartelle diventa sconosciuta e si valuta il caso peggiore; le pipe non cambiano cwd. Costo: `cd work && …; cp … ../outputs` risulta alto.
+    - **Filtri ffmpeg.** I valori di percorso nei filtri sono scritture, salvo chiavi note di sola lettura. I filtergraph che citano filtri o chiavi che toccano file sono medi, senza togliere le virgolette.
+    - **Niente analisi del flusso dei dati.** Variabili in posizione di comando, indici o aritmetica, o variabili concatenate in argomenti interpretati, danno "comando complesso", medio.
+    - **Interpreti** con flag sconosciuti o codice inline: medio, "Runs inline code".
+111. 🟡 **Limiti noti della spiegazione**, accettati perché il confine è la sandbox. Il modulo non capisce:
+    - il flusso dei dati tra comandi: le variabili non sono tracciate e ciò che non è un letterale semplice viene rifiutato, non analizzato;
+    - i livelli di quoting di ffmpeg: la regola grossolana è una lista di parole chiave, e un filtro che tocca file senza nessuna di quelle parole si affida al parser fine;
+    - nomi e percorsi calcolati a runtime: `%[…]` di magick, percorsi con `$VAR` (sconosciuti, caso peggiore), `cd -`, `popd`, più di 8 cartelle possibili;
+    - i costrutti shell fuori dal sottoinsieme (funzioni, alias, `for`/`while`/`if`, `{ }`, `( )`, sostituzioni di processo e di comando, heredoc, `eval`/`source`, effetti di `set -e`): `parsed: false` o modellati per eccesso;
+    - cosa fanno il codice inline e gli script: almeno medio, e uno script del progetto è "runs a script" senza leggerlo;
+    - i flag di espansione e i qualificatori di glob solo di zsh: quasi tutti rifiutati dal tokenizer, gli altri trattati come parole.
+
+    Casi residui accettati: `python -X pycache_prefix=<tmp>` solo medio; `exit; rm -rf *` alto per cwd sconosciuta (conservativo).
+112. 🟢 **Brand: gli eventi `auto_approved` finiscono nel `log.jsonl` della proposta.** La pagina Brand per ora non ha "Activity details", quindi nel web non c'è traccia, come per gli altri eventi tecnici. *Deciso per la fix wave finale:* sulla scheda dell'analisi e nelle righe di Analyses comparirà "N commands ran automatically · Details", da un endpoint di sola lettura confinato alla cartella della proposta, con limiti di numero e dimensione, e nascosto per le proposte vecchie senza log.
+113. 🟢 **Organizzazione e prove dal vivo.**
+    - I tipi della spiegazione (`Explanation`, `Phrase`, `Indicator`, `IndicatorId`) li ha creati il Task 2 e il modulo il Task 3, così ogni commit restava verde senza stub.
+    - Le prove dal vivo (Task 1 e Task 10) usano il login Claude Code dell'utente, con `MemoryVault` e cartelle temporanee, e non leggono né stampano email, organizzazione o chiavi. Costo: circa $0,02 + $0,06 ai prezzi API, conteggiati sul piano.
+114. 🟡 **Approvazioni Read in `$TMPDIR` (aperto).** Con l'approvazione automatica le creatività non chiedono più nulla per i Bash. Restano però 2–4 richieste per turno: l'agente estrae fotogrammi di controllo in `$TMPDIR` (scrivibile, come dice il prompt) e poi li apre con `Read`, e un Read fuori dal progetto chiede conferma. Da decidere nella fix wave finale: dire all'agente di usare `work/` per i fotogrammi, oppure consentire il Read della propria area temporanea.

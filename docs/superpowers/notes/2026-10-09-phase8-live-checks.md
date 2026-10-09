@@ -132,3 +132,117 @@ The prices implied by the runs are consistent with `cost = 1e-7 × (input + 2×c
 ## Cost of the live checks
 
 5 `claude` runs with Haiku: input 32, output 4 971, cache write 81 061, cache read 415 975 tokens; about $0.023 at API list prices (counted against the plan).
+
+---
+
+# Phase 8 — end-to-end verification (Task 10)
+
+Date: 2026-10-09. Claude Code 2.1.295, model `haiku` (→ `claude-haiku-5-5`), git 2.50.1, macOS. Branch `feat/phase8-approvals-usage` at `34210c0`, built with `pnpm build` in the phase 8 worktree.
+
+## Setup
+
+- Throwaway core: `startServer({ port: 4497, configDir, vault: new MemoryVault(), claudeCommand: [wrapper], webDir: <worktree>/packages/web/dist })`, run with `node --experimental-transform-types`. Config, workspace and project (`demo`) were under the session scratchpad; the script refused any config dir outside it.
+- The wrapper tee'd the stream-json of agent runs. A watcher logged every hub message (`/api/events`) and every request in `GET /api/approvals`. In the "on" runs it answered `once` after logging, so a stray request couldn't block the job.
+- Screenshots: headless Chrome 154 over CDP, with a throwaway profile, at 1440×900, light and dark (`prefers-color-scheme`), with reduced motion.
+- Afterwards the core, the watcher and Chrome were stopped and the scratchpad folder was deleted.
+- User folders, mtime before → after:
+  - `~/Library/Application Support/Motion Studio`: 1791461297 → 1791461297 (unchanged);
+  - `~/MotionStudio`: 1791538433 → 1791538433 (unchanged).
+
+## 1. Creative with `autoApproveSandboxed` on
+
+The creative was "Autumn sale": 6 s, Instagram Story/Reel 9:16 and Post 1:1, generated from the brief, then the change request "make the 20% off text larger, deep burgundy background".
+
+| Run | Result | Bash approvals to the user | `auto_approved` | Other approvals |
+|---|---|---|---|---|
+| 1. Generation | **failed at the commit** (see "Defect found" below) | 0 | 2 | 4 × Read in `$TMPDIR` |
+| 2. Generation again (after the workaround) | v1 | 0 | 1 | 2 × Read in `$TMPDIR` |
+| 3. Change request | v2 | 0 | 1 | 2 × Read in `$TMPDIR` |
+
+- **Approvals for sandboxed Bash: 0** (target 0).
+  - 4 commands went through `approve` and were auto-approved. All 4 were `cd <work> && time python3 render.py && ls …`, rated "Runs a complex shell command", medium.
+  - The agent's other Bash calls were allowed by Claude Code itself in the sandbox (`autoAllowBashIfSandboxed`).
+- **Read approvals: 8.** These are not Bash commands, so they ask by design. The agent extracts check frames with `ffmpeg … $TMPDIR/…png`, which is writable, then opens them with `Read`. A Read outside the project asks the user. The card offers "Always" (`Read(//tmp/claude-501/**)`).
+  - This is the remaining source of prompts in a normal creative: 2 to 4 per turn.
+  - Options for the fix wave: tell the agent to put check frames in `work/`, or allow `Read` of the job's own temp area.
+- **Ledger:** `<project>/.studio/usage.jsonl` has 5 lines: 4 creative runs and 1 brand analysis.
+  - The failed run is recorded with `outcome: "ok"` and `version: 1`, because Claude's run itself succeeded; the failure came afterwards, in the commit.
+  - Version cards carry `usage` for their own run only. v1 shows 33.8k tokens and leaves out the failed run's 76.2k; the brief's "Tokens" row (76.0k) sums only the versions. The failed run's tokens are in the ledger and in Usage.
+- **Parity:** `/api/usage` total = input 80 + output 33,467 + cache write 141,897 = **175,444**. The top bar shows "175.4k tokens", and Settings → Usage shows 175.4k for the 7 days, for Today and for project Demo.
+  - By kind: Creatives 152.2k ($0.057), Brand analyses 23.2k ($0.007).
+  - Billing: "subscription" ("This counts toward your Claude plan. At API prices it would be about $0.064").
+- **Output weights:** all H.264, yuv420p, 30 fps, 6.0 s. All are far below the targets, so there were no large-file warnings.
+
+  | Version | Reel 9:16 (target 4 Mbps) | Post 1:1 (target 3.5 Mbps) |
+  |---|---|---|
+  | v1 | 154,080 B (0.21 Mbps) | 144,147 B (0.19 Mbps) |
+  | v2 | 148,603 B (0.20 Mbps) | 136,570 B (0.18 Mbps) |
+  | v3 (setting off) | 155,879 B | 141,863 B |
+
+- **Large-file chip:** a synthetic 6 s 1080×1920 file of 85.8 MB (114 Mbps) was checked with the core's own `validateOutputs`. Result: `outputs.largeFile {sizeMB: 85.8, mbps: 114, targetMbps: 4, channel: Instagram}`. The canvas shows the chip "86 MB · large", and its popover says "Large file: 85.8 MB at 114 Mbps (about 4 Mbps is plenty for Instagram)".
+- **Task 6b messages:** neither "npm cache isn't writable…" nor "Headless Chromium can't start…" appears in any conversation or stream (0 matches).
+  - The agent ran no `npm install` (it used Pillow + ffmpeg).
+  - Claude Code itself runs `npm root --global` at start, and its log went to `<project>/.cache/npm/_logs/`. That log has `warn Unknown env config "store-dir"`, which comes from our `npm_config_store_dir` variable (npm 11 doesn't know it; pnpm reads `PNPM_STORE_DIR`). It is harmless, but every npm command in a job prints it. The other warning in that log came from the user's own npmrc.
+
+### Defect found: commits fail when `.cache/` exists
+
+The first generation failed with:
+
+```
+git add failed: The following paths are ignored by one of your .gitignore files:
+.cache
+hint: Use -f if you really want to add them.
+```
+
+Cause:
+- `GitService.commitAll` runs `git add -A -- . ':(exclude).cache'`. The project's `.gitignore` lists `.cache/` (template, plus `completeGitignore`).
+- With git 2.50.1, an exclude pathspec that names an ignored path that exists makes `git add` exit 1. Reproduced in an empty repo: exit 1 with `.cache/` present, exit 0 without it. `-c advice.addIgnoredFile=false`, `':(exclude).cache/'` and `':(exclude,glob).cache/**'` fail the same way.
+- `.cache/` is created at the start of every job (by Claude Code's `npm root --global`, through `npm_config_cache`). So in a real project, once any job has run, **every `commitAll` fails**. That includes creative versions, brand analysis, and the brand and library routes (`brand-analysis.ts`, `creative-turns.ts`, `brand-routes.ts`, `library-routes.ts`).
+
+Workaround used only for this verification (no code change): `.cache/` was removed from the throwaway project's `.gitignore`. `completeGitignore` only runs at workspace recovery, so it didn't come back. With that, `:(exclude).cache` alone keeps the folder out of git, and runs 2–5 committed normally. **To fix in the final fix wave.**
+
+## 2. Brand analysis (`https://example.com`)
+
+- Approvals: **0** (target 0). The job took 26 s.
+- `auto_approved` events in the proposal's `log.jsonl`: **0**. The agent ran no Bash: `ToolSearch`, 4 × `Read` in the project, 1 × `WebFetch`, 1 × `Write`.
+  - So this run doesn't exercise auto-approval in brand jobs. The rule itself is covered by tests.
+- Usage on the proposal: input 8, output 2,488, cache write 20,717 (23.2k shown), cache read 116,271, $0.0069.
+  - The ledger's `models` entry reports input 381 / output 3,129, more than `usage`. `modelUsage` also counts the model call made inside `WebFetch`. Tokens come from `usage` by design.
+
+## 3. Setting off (`autoApproveSandboxed: false`), one short turn
+
+The turn was "make the 20% off text pure white".
+- Approvals: **1 Bash and 1 Read**. `auto_approved` for this job: 0.
+- The Bash card:
+  - title "Runs a complex shell command";
+  - "The agent wants to run a command on this computer.";
+  - indicator chip "Complex command" (medium, with the icon and the "Medium risk:" prefix for screen readers);
+  - "Show command · 1 line";
+  - "The agent says: “Render v3 outputs and probe them”";
+  - Allow / Deny, and a 10-minute countdown.
+- The command had a `for` loop, so `parsed: false` and the generic medium phrase, as specified.
+- Project settings → Agent and approvals shows "Approve sandboxed commands automatically" with "Applies to new jobs" under it.
+  - The switch showed the old value until the page was reloaded, because the setting was changed through the API and not from the UI.
+
+## 4. Screenshots
+
+There are 16 screenshots, 8 views × light/dark at 1440 px, in `.superpowers/sdd/…/screens/` (not committed):
+- approval card;
+- Activity details with an automatic approval;
+- version card with tokens;
+- Settings → Usage;
+- tokens button + activity center;
+- auto-approve setting;
+- large-file chip, and its popover.
+
+The comparison with the prototype is in `visual-diff.md` in the same folder.
+
+## Cost of this verification
+
+5 `claude` runs with Haiku (4 creative, 1 brand), plus `claude auth status` for billing:
+- input 80;
+- output 33,467;
+- cache write 141,897;
+- cache read 1,889,061.
+
+That is 175.4k tokens shown, about **$0.064** at API list prices (counted against the plan).
