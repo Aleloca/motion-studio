@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { usageRecordSchema, type UsageRecord } from '@motion-studio/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { UsageLedger } from '../src/usage/usage-ledger.ts';
-import { buildUsageReport, defaultUsageRange } from '../src/usage/usage-report.ts';
+import { buildUsageReport, defaultUsageRange, firstGenerationTokens } from '../src/usage/usage-report.ts';
 
 const tokens = (input: number, output: number, cacheRead: number, cacheWrite: number) => ({ input, output, cacheRead, cacheWrite });
 const record = (over: Partial<UsageRecord>): UsageRecord => usageRecordSchema.parse({
@@ -79,5 +79,32 @@ describe('buildUsageReport', () => {
   it('a range that crosses the DST change still has one bucket per local day', async () => {
     const r = await buildUsageReport({ ledger: new UsageLedger(), projects: [], billing: 'unknown', ...defaultUsageRange(new Date('2026-10-27T12:00:00.000Z')) });
     expect(r.byDay.map((d) => d.day)).toEqual(['2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25', '2026-10-26', '2026-10-27']);
+  });
+});
+
+describe('firstGenerationTokens', () => {
+  const from = new Date('2026-07-11T00:00:00.000Z');
+  it('sums every attempt of version 1 per creative, per project, and leaves out other versions and kinds', () => {
+    const a = [
+      record({ creativeSlug: 'x', version: 1, attempt: 1, tokens: tokens(100, 50, 9999, 10) }), // 160
+      record({ creativeSlug: 'x', version: 1, attempt: 2, tokens: tokens(10, 10, 0, 20) }), // +40 = 200
+      record({ creativeSlug: 'x', version: 2, attempt: 1, tokens: tokens(5000, 0, 0, 0) }),
+      record({ creativeSlug: 'y', version: 1, attempt: 1, tokens: tokens(300, 0, 0, 0) }),
+      record({ kind: 'brand-analysis', creativeSlug: null, version: null, tokens: tokens(7000, 0, 0, 0) }),
+    ];
+    // The same slug in another project is another creative.
+    const b = [record({ creativeSlug: 'x', version: 1, attempt: 1, tokens: tokens(400, 0, 0, 0) })];
+    expect(firstGenerationTokens([a, b], from).sort((m, n) => m - n)).toEqual([200, 300, 400]);
+  });
+
+  it('leaves out creatives with an estimated run (a live partial sum) and creatives started before the window', () => {
+    const a = [
+      record({ creativeSlug: 'cancelled', version: 1, attempt: 1, tokens: tokens(100, 0, 0, 0) }),
+      record({ creativeSlug: 'cancelled', version: 1, attempt: 2, tokens: tokens(50, 0, 0, 0), costUsd: null, estimated: true }),
+      record({ creativeSlug: 'old', version: 1, attempt: 1, at: '2026-07-01T10:00:00.000Z', tokens: tokens(100, 0, 0, 0) }),
+      record({ creativeSlug: 'old', version: 1, attempt: 2, tokens: tokens(100, 0, 0, 0) }),
+      record({ creativeSlug: 'ok', version: 1, attempt: 1, tokens: tokens(900, 0, 0, 0), costUsd: null }),
+    ];
+    expect(firstGenerationTokens([a], from)).toEqual([900]);
   });
 });

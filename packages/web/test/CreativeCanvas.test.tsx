@@ -734,3 +734,40 @@ describe('CreativeCanvas · tokens (Phase 8)', () => {
     expect(bar.querySelector('.ms-cv-tokens')?.textContent).toBe('1,5k token finora'); // "finora" is screen-reader text
   });
 });
+
+describe('CreativeCanvas · large-file warnings (Phase 8)', () => {
+  const heavy = (): OutputFileInfo => ({ ...out('tiktok-9x16', 'tiktok.mp4', '.previews/tiktok.mp4.jpg'), warnings: [{ key: 'outputs.largeFile', params: { sizeMB: 78.4, mbps: 24, targetMbps: 8, channel: 'TikTok' } }] });
+  const full = 'File pesante: 78.4 MB a 24 Mbps (circa 8 Mbps bastano per TikTok)';
+
+  it('the board shows a warning chip whose popover gives the recommendation as text; the version card says it too', async () => {
+    detail = makeDetail([version(1, 'Dal brief', [out('instagram-post-1x1', 'post.png'), heavy()])]);
+    conversation = [{ type: 'version', at, n: 1, status: 'complete' }];
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    const board = document.querySelector<HTMLElement>('[data-board="tiktok-9x16"]')!;
+    const chip = within(board).getByRole('button', { name: 'File pesante, 78 MB: mostra il consiglio' });
+    expect(chip.textContent).toBe('78 MB · pesante');
+    expect(within(document.querySelector<HTMLElement>('[data-board="instagram-post-1x1"]')!).queryByText(/pesante/)).toBeNull();
+    await userEvent.click(chip);
+    const pop = await screen.findByRole('dialog', { name: 'File pesante' });
+    expect(pop.textContent).toContain(full);
+    const card = await waitFor(() => { const c = document.querySelector<HTMLElement>('.ms-convo-version'); expect(c).toBeTruthy(); return c!; });
+    expect(card.textContent).toContain(full);
+  });
+
+  it('renders the parameters as text, never as markup', async () => {
+    const evil = { ...heavy(), warnings: [{ key: 'outputs.largeFile', params: { sizeMB: 78.4, mbps: 24, targetMbps: 8, channel: '<img src=x onerror=alert(1)>' } }] };
+    detail = makeDetail([version(1, 'Dal brief', [evil])]);
+    conversation = [{ type: 'version', at, n: 1, status: 'complete' }];
+    render(<Harness live={emptyLive()} />);
+    const card = await waitFor(() => { const c = document.querySelector<HTMLElement>('.ms-convo-version'); expect(c?.textContent).toContain('<img src=x'); return c!; });
+    expect(card.querySelector('img')).toBeNull();
+  });
+
+  it('a version without warnings shows no chip and no line', async () => {
+    conversation = [{ type: 'version', at, n: 1, status: 'complete' }];
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    expect(screen.queryByText(/pesante/)).toBeNull();
+  });
+});

@@ -43,7 +43,8 @@ describe('Phase 7 routes', () => {
     ['#/settings/paid', { name: 'settings', section: 'paid' }],
     ['#/settings/notifications', { name: 'settings', section: 'notifications' }],
     ['#/settings/updates', { name: 'settings', section: 'updates' }],
-    ['#/settings/usage', { name: 'projects' }],
+    ['#/settings/usage', { name: 'settings', section: 'usage' }],
+    ['#/settings/billing', { name: 'projects' }],
     ['#/p/acme/c/lancio/f/instagram-reel-9x16', { name: 'format', slug: 'acme', creative: 'lancio', format: 'instagram-reel-9x16' }],
     ['#/p/acme/c/lancio/f/', { name: 'projects' }],
     ['#/p/acme/c/lancio/f/../x', { name: 'projects' }],
@@ -52,7 +53,7 @@ describe('Phase 7 routes', () => {
   it('round-trips href for the new routes', () => {
     expect(href.welcome()).toBe('#/welcome');
     expect(parseRoute(href.welcome(3))).toEqual({ name: 'welcome', step: 3 });
-    for (const section of ['general', 'system', 'paid', 'notifications', 'updates'] as const) {
+    for (const section of ['general', 'system', 'paid', 'usage', 'notifications', 'updates'] as const) {
       expect(parseRoute(href.settings(section))).toEqual({ name: 'settings', section });
     }
     expect(href.settings()).toBe('#/settings/general');

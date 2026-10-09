@@ -297,3 +297,9 @@
   .ms-cv-legend { width: auto; right: 16px; }
 }
 @media (prefers-reduced-motion: reduce) { .ms-cv-open, .ms-cv-pin, .ms-cv-frame { transition: none; } }
+/* Large-file warning (Phase 8, spec §6): a warn pill that opens the recommendation. */
+.ms-cv-large { border: 0; margin: 0; font: inherit; font-size: 11px; cursor: pointer; gap: 4px; }
+.ms-cv-large:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ms-cv-large-pop { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; font-size: 12px; }
+.ms-cv-large-pop b { font-weight: 600; }
+.ms-cv-large-pop p { margin: 0; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }

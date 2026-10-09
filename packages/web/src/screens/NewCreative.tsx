@@ -1,8 +1,8 @@
-import { channelName, formatLabel, formatName, type AssetEntry, type BrandKit, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
+import { channelName, formatLabel, formatName, type AssetEntry, type Locale, type BrandKit, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { api } from '../api.ts';
 import { CodebaseList } from '../components/CodebaseList.tsx';
-import { useLocale, useT } from '../i18n.tsx';
+import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { anim, E, flash, isSubmitChord, useEnter, usePageShortcut } from '../motion/index.ts';
 import { href } from '../routes.ts';
 import { useNewCreativeAssetsIntent } from '../shell/intents.ts';
@@ -64,6 +64,34 @@ export function ratioLabel(w: number, h: number): string {
   return near ? `${near[0]}:${near[1]}` : `${w}×${h}`;
 }
 
+/** Linear-interpolated percentile (0–1) of sorted values. */
+function percentile(sorted: number[], q: number): number {
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  return sorted[lo]! + (sorted[hi]! - sorted[lo]!) * (pos - lo);
+}
+
+/** First generations needed before the estimate is shown (spec §5.4). */
+const MIN_HISTORY = 3;
+
+/**
+ * "15–25k": the 25th–75th percentile of first-generation token totals, in thousands (one decimal under 10k, plain
+ * numbers under 1000, a single figure when both ends round alike); null with fewer than 3 values.
+ */
+export function similarRange(tokens: number[], locale: Locale): string | null {
+  if (tokens.length < MIN_HISTORY) return null;
+  const sorted = [...tokens].sort((a, b) => a - b);
+  const lo = percentile(sorted, 0.25);
+  const hi = percentile(sorted, 0.75);
+  const k = hi >= 1000;
+  const digits = k && hi < 10_000 ? 1 : 0;
+  const f = (n: number) => formatNumber(locale, k ? n / 1000 : n, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  const a = f(lo);
+  const b = f(hi);
+  return `${a === b ? a : `${a}–${b}`}${k ? 'k' : ''}`;
+}
+
 const is916Video = (p: FormatPreset) => p.kind === 'video' && ratioLabel(p.width, p.height) === '9:16';
 const baseName = (path: string) => path.split('/').pop() ?? path;
 /** Brief paths are project paths; the library lists files inside `assets/`. */
@@ -107,6 +135,8 @@ export function NewCreative({ slug }: { slug: string }) {
   const [libraryNonce, setLibraryNonce] = useState(0);
   const [brand, setBrand] = useState<Loaded<BrandKit>>({ value: null, error: null });
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Token totals of the workspace's earlier first generations: the estimate line, absent until there are 3.
+  const [history, setHistory] = useState<number[]>([]);
 
   const goalRef = useRef<HTMLTextAreaElement>(null);
   const goalBox = useRef<HTMLDivElement>(null);
@@ -134,6 +164,16 @@ export function NewCreative({ slug }: { slug: string }) {
       .catch((e: unknown) => { if (alive) setBrand({ value: null, error: errText(e) }); });
     return () => { alive = false; };
   }, [slug]);
+
+  useEffect(() => {
+    let alive = true;
+    // A failure only leaves the line out: the estimate is a hint, never a blocker.
+    Promise.resolve().then(() => api.getFirstGenerations())
+      .then((r) => { if (alive && Array.isArray(r?.tokens)) setHistory(r.tokens.filter((x) => Number.isFinite(x) && x > 0)); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  const similar = similarRange(history, locale);
 
   // "Use in a creative" from Assets.
   useNewCreativeAssetsIntent(slug, useCallback((paths: string[]) => setPicked((p) => [...p, ...paths.filter((x) => !p.includes(x))]), []));
@@ -453,6 +493,7 @@ export function NewCreative({ slug }: { slug: string }) {
             <b className={cx(formatError && 'ms-nc-warn')}>{n.pickFormat}</b>
           )}
           <span className="ms-nc-muted ms-nc-small">{n.summaryHint}</span>
+          {similar ? <span className="ms-nc-muted ms-nc-small ms-nc-estimate">{n.similar({ range: similar })}</span> : null}
         </div>
         <div className="ms-grow" />
         <Button size="lg" variant="ghost" loading={busy === 'draft'} disabled={busy !== null} onClick={() => void submit(false)}>{n.saveDraft}</Button>

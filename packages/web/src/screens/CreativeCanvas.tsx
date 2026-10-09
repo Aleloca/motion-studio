@@ -3,7 +3,7 @@
 // safe zones with a legend, V/C/H tools), Figma-style comments that become chips of the composer, the Chat · Comments ·
 // Brief panel, the version history with Compare, and Export. Replaces the interim CreativePage. A board opens in the
 // format view (screens/FormatView.tsx) with T3.
-import { addTokens, channelName, formatName, shownTotal, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type VersionEntry } from '@motion-studio/shared';
+import { addTokens, channelName, formatName, outputWarningText, shownTotal, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type VersionEntry } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api.ts';
@@ -433,7 +433,8 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
             pins={pins} onRemovePin={removePin} onEditPin={(i) => editPin(i + 1)} formatName={formatLabel}
             canGenerate={versions.length === 0} onSent={({ pins: sent }) => { setStored((ps) => ps.filter((p) => !sent.includes(p.pin))); setPicked(null); reload(); }}
             onSelectVersion={(v) => setPicked(v)} snapshots={live.snapshots}
-            versionExtra={(n) => <UsageBadge usage={versions.find((v) => v.n === n)?.usage} billing={live.today?.billing ?? null} />} />
+            versionExtra={(n) => <UsageBadge usage={versions.find((v) => v.n === n)?.usage} billing={live.today?.billing ?? null} />}
+            versionNote={(n) => <OutputWarnings outputs={versions.find((v) => v.n === n)?.outputs ?? []} formatLabel={formatLabel} />} />
         ) : null}
         {tab === 'comments' ? <CommentsTab sent={sent} working={working} formatLabel={formatLabel} onStart={() => { setTool('comment'); }} /> : null}
         {/* Kept mounted while hidden, so an unsaved brief draft survives tab switches. */}
@@ -449,6 +450,18 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
       <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
         title={title} version={exporting?.version ?? null} presets={presets} />
     </div>
+  );
+}
+
+/** The output warnings of a version (spec §6), one line each with its format, as text; nothing without any. */
+function OutputWarnings({ outputs, formatLabel }: { outputs: VersionEntry['outputs']; formatLabel(id: string): string }) {
+  const locale = useLocale();
+  const lines = outputs.flatMap((o) => (o.warnings ?? []).map((w) => ({ format: o.format, text: outputWarningText(w, locale) })));
+  if (!lines.length) return null;
+  return (
+    <ul className="ms-convo-version-notes">
+      {lines.map((l, i) => <li key={i}><Icon name="warn" size={12} /><span><b>{formatLabel(l.format)}</b> · {l.text}</span></li>)}
+    </ul>
   );
 }
 

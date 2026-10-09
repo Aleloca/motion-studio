@@ -55,12 +55,11 @@ beforeEach(() => {
 afterEach(() => { vi.clearAllMocks(); __resetToasts(); });
 
 describe('App settings · navigation', () => {
-  it('lists General, System check, Paid services, Notifications and Updates; no Usage', async () => {
+  it('lists General, System check, Paid services, Usage, Notifications and Updates; no tokens on General', async () => {
     en(page('general'));
     const nav = screen.getByRole('navigation', { name: 'Settings sections' });
     const names = within(nav).getAllByRole('button').map((b) => b.textContent ?? '');
-    expect(names.map((n) => n.replace(/[0-9. of]+$/, ''))).toEqual(['General', 'System check', 'Paid services', 'Notifications', 'Updates']);
-    expect(screen.queryByText(/Usage/)).toBeNull();
+    expect(names.map((n) => n.replace(/[0-9. of]+$/, ''))).toEqual(['General', 'System check', 'Paid services', 'Usage', 'Notifications', 'Updates']);
     expect(screen.queryByText(/tokens/i)).toBeNull();
     await waitFor(() => expect(within(nav).getByText('2 of 4')).toBeTruthy());
     await userEvent.click(within(nav).getByRole('button', { name: /^Notifications/ }));

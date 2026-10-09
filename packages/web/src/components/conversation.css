@@ -108,6 +108,11 @@
 
 .ms-convo-version { margin-left: 36px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--line); background: var(--panel); }
 .ms-convo-version .ms-grow { flex: 1; }
+.ms-convo-version { flex-wrap: wrap; }
+.ms-convo-version-notes { flex-basis: 100%; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 12px; line-height: 1.45; color: var(--text); }
+.ms-convo-version-notes li { display: flex; align-items: flex-start; gap: 6px; overflow-wrap: anywhere; min-width: 0; }
+.ms-convo-version-notes svg { flex: none; margin-top: 2px; color: var(--warn); }
+.ms-convo-version-notes b { font-weight: 600; }
 .ms-convo-system { margin-left: 36px; font-size: 12px; color: var(--muted); }
 .ms-convo-system.ms-error, .ms-convo-error { color: var(--warn); }
 .ms-convo-error { margin-left: 36px; font-size: 12.5px; padding: 8px 10px; border-radius: 8px; background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); }

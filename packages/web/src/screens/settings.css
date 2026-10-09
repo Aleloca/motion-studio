@@ -156,3 +156,29 @@
 .ms-key-form { display: flex; align-items: center; gap: 8px; padding: 0 18px 14px; flex-wrap: wrap; }
 .ms-key-form .ms-input { flex: 1 1 220px; min-width: 0; height: 32px; font-size: 12px; font-family: var(--mono); }
 .ms-key .ms-set-error { padding: 0 18px 12px; }
+
+/* Usage (Phase 8, prototype UsageCard): one series, so one neutral bar colour and today in accent. Thin bars with
+   rounded tops on a recessive baseline; an empty day is a hairline, never a fake bar. Tokens only. */
+.ms-usage-card { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+.ms-usage-head { display: flex; align-items: baseline; gap: 10px; }
+.ms-usage-head b { font-weight: 600; }
+.ms-usage-total { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ms-usage-bars { height: 120px; padding-top: 16px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; align-items: end; border-bottom: 1px solid var(--line2); }
+.ms-usage-col { height: 100%; position: relative; display: flex; flex-direction: column; justify-content: flex-end; }
+.ms-usage-bar { display: block; min-height: 2px; border-radius: 4px 4px 0 0; background: var(--bar); transform-origin: bottom; }
+.ms-usage-bar.ms-today { background: var(--accent); }
+.ms-usage-bar.ms-zero { height: 1px; min-height: 1px; border-radius: 0; background: var(--line); }
+.ms-usage-val { position: absolute; top: -16px; left: 50%; transform: translateX(-50%); font-family: var(--mono); font-size: 10px; color: var(--text); white-space: nowrap; }
+.ms-usage-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; margin-top: -6px; font-size: 11px; text-align: center; color: var(--faint); }
+.ms-usage-days span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-usage-days .ms-today { color: var(--text); font-weight: 600; }
+.ms-usage-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 24px; }
+.ms-usage-group { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ms-usage-cap { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.ms-usage-group ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.ms-usage-row { display: flex; align-items: baseline; gap: 10px; font-size: 12px; min-width: 0; }
+.ms-usage-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-usage-num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.ms-usage-cost { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); min-width: 56px; text-align: right; }
+.ms-usage-billing { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--field); color: var(--muted); font-size: 12px; line-height: 1.5; }
+.ms-usage-card .ms-usage-note { font-size: 12px; }

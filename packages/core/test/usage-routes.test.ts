@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -86,5 +86,38 @@ describe('GET /api/usage', { timeout: 20_000 }, () => {
     // Only `to`: the 7 local days before it, like the default range.
     const toOnly = (await app.inject({ url: `/api/usage?to=${encodeURIComponent(new Date(2026, 9, 10).toISOString())}`, headers })).json() as UsageReport;
     expect(toOnly.byDay.map((d) => d.day)).toEqual(['2026-10-03', '2026-10-04', '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09']);
+  });
+});
+
+describe('GET /api/usage/first-generations', { timeout: 20_000 }, () => {
+  const line = (over: Record<string, unknown>) => JSON.stringify({
+    at: new Date().toISOString(), jobId: 'j', kind: 'creative', creativeSlug: 'c', version: 1, attempt: 1,
+    tokens: { input: 100, output: 0, cacheRead: 0, cacheWrite: 0 }, costUsd: 0.01, models: [], durationMs: 1, outcome: 'ok', ...over,
+  });
+
+  it('requires the UI token', async () => {
+    const res = await app.inject({ url: '/api/usage/first-generations' });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('is empty before a workspace exists', async () => {
+    expect((await app.inject({ url: '/api/usage/first-generations', headers })).json()).toEqual({ tokens: [] });
+  });
+
+  it('lists the first-generation totals of the window, and validates days', async () => {
+    await setup();
+    const old = new Date(Date.now() - 120 * 24 * 3600 * 1000).toISOString();
+    await mkdir(join(base, 'ws', 'acme', '.studio'), { recursive: true });
+    await appendFile(join(base, 'ws', 'acme', '.studio', 'usage.jsonl'), [
+      line({ creativeSlug: 'a' }), line({ creativeSlug: 'a', attempt: 2 }), line({ creativeSlug: 'b', tokens: { input: 50, output: 0, cacheRead: 0, cacheWrite: 0 } }),
+      line({ creativeSlug: 'old', at: old }), line({ creativeSlug: 'b', version: 2 }), 'garbage',
+    ].join('\n') + '\n');
+    const r = (await app.inject({ url: '/api/usage/first-generations', headers })).json() as { tokens: number[] };
+    expect(r.tokens.sort((x, y) => x - y)).toEqual([50, 200]);
+    const wide = (await app.inject({ url: '/api/usage/first-generations?days=200', headers })).json() as { tokens: number[] };
+    expect(wide.tokens).toHaveLength(3);
+    for (const bad of ['0', '-1', 'x', '401', '1.5']) {
+      expect((await app.inject({ url: `/api/usage/first-generations?days=${bad}`, headers })).statusCode).toBe(400);
+    }
   });
 });

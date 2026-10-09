@@ -20,9 +20,10 @@ const api = {
   getBrand: vi.fn(async () => ({ kit: EMPTY_BRAND_KIT, kitError: null, guidelines: '', sources: [], sourcesError: null, proposals: [], jobKey: 'k' })),
   projectFileUrl: (s: string, rel: string) => `/files/${s}/${rel}`,
   createCreative,
+  getFirstGenerations: vi.fn(async (): Promise<{ tokens: number[] }> => ({ tokens: [] })),
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
-const { NewCreative, titleFromBrief, maxLengthNote } = await import('../src/screens/NewCreative.tsx');
+const { NewCreative, titleFromBrief, maxLengthNote, similarRange } = await import('../src/screens/NewCreative.tsx');
 
 const shell = (name: string) => ({ catalog: { projects: [{ slug: 'acme', name }], creatives: {}, refresh: () => {} } }) as unknown as Shell;
 
@@ -463,5 +464,38 @@ describe('NewCreative · long text', () => {
     style.textContent = css.replace(/overflow-wrap:\s*anywhere/g, 'overflow-wrap: normal').replace(/text-overflow:\s*ellipsis;?/g, '').replace(/overflow:\s*hidden;?/g, '');
     const root = await setup();
     expect(root.querySelector('.ms-nc-left')!.scrollWidth).toBeGreaterThan(BOX_W);
+  });
+});
+
+describe('NewCreative · estimate from history', () => {
+  it('shows no line with fewer than 3 first generations', async () => {
+    api.getFirstGenerations.mockResolvedValueOnce({ tokens: [12000, 30000] });
+    render(<NewCreative slug="acme" />);
+    await board();
+    await waitFor(() => expect(api.getFirstGenerations).toHaveBeenCalled());
+    await act(async () => {});
+    expect(screen.queryByText(/Creatività simili/)).toBeNull();
+  });
+
+  it('shows the 25th–75th percentile range with 3 first generations', async () => {
+    api.getFirstGenerations.mockResolvedValueOnce({ tokens: [30000, 10000, 20000] });
+    render(<NewCreative slug="acme" />);
+    expect(await screen.findByText('Creatività simili hanno usato circa 15–25k token')).toBeTruthy();
+  });
+
+  it('shows no line when the history cannot be read', async () => {
+    api.getFirstGenerations.mockRejectedValueOnce(new Error('offline'));
+    render(<NewCreative slug="acme" />);
+    await board();
+    await act(async () => {});
+    expect(screen.queryByText(/Creatività simili/)).toBeNull();
+  });
+
+  it('formats the range in thousands, with a decimal under 10k', () => {
+    expect(similarRange([1000, 2000, 3000, 4000], 'en')).toBe('1.8–3.3k');
+    expect(similarRange([1000, 2000, 3000, 4000], 'it')).toBe('1,8–3,3k');
+    expect(similarRange([100, 200, 300], 'en')).toBe('150–250');
+    expect(similarRange([20000, 20000, 20000], 'en')).toBe('20k');
+    expect(similarRange([1, 2], 'en')).toBeNull();
   });
 });

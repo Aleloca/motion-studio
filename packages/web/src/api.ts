@@ -55,6 +55,8 @@ export const api = {
     const qs = new URLSearchParams(Object.entries(q).filter((e): e is [string, string] => typeof e[1] === 'string' && e[1] !== '')).toString();
     return request<UsageReport>('GET', `/api/usage${qs ? `?${qs}` : ''}`);
   },
+  /** Shown tokens of each creative's first generation in the last `days` days (New creative estimate). */
+  getFirstGenerations: (days = 90) => request<{ tokens: number[] }>('GET', `/api/usage/first-generations?days=${days}`),
   getWorkspace: () => request<WorkspaceInfo>('GET', '/api/workspace'),
   setWorkspace: (path: string) => request<{ path: string; settings: WorkspaceSettings }>('PUT', '/api/workspace', { path }),
   updateSettings: (patch: Partial<WorkspaceSettings>) => request<WorkspaceSettings>('PUT', '/api/settings', patch),

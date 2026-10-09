@@ -2,11 +2,14 @@ import type { FastifyInstance } from 'fastify';
 import type { UsageBilling, UsageReport } from '@motion-studio/shared';
 import { WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import type { UsageLedger } from '../usage/usage-ledger.ts';
-import { buildUsageReport, defaultUsageRange, rangeEndingAt, type UsageProject } from '../usage/usage-report.ts';
+import { buildUsageReport, defaultUsageRange, firstGenerationTokens, rangeEndingAt, type UsageProject } from '../usage/usage-report.ts';
 import { t } from '../i18n.ts';
 
 /** Longest range a report may cover (one bucket per day). */
-const MAX_RANGE_MS = 400 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_RANGE_MS = 400 * DAY_MS;
+/** Default window of the first-generation figures (New creative estimate). */
+const FIRST_GEN_DAYS = 90;
 
 export interface UsageRouteDeps {
   /** Null while no workspace is open: the report is then empty, never an error. */
@@ -46,5 +49,20 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
       projects = list.map((p) => ({ slug: p.slug, name: p.ok ? p.project.name : p.slug, dir: ws.projectDir(p.slug) }));
     }
     return buildUsageReport({ ledger: deps.ledger, projects, billing, ...range });
+  });
+
+  /**
+   * GET /api/usage/first-generations?days=90: the shown tokens of each creative's first generation started in the last
+   * `days` days (1–400), for the New creative estimate. Read-only; empty while no workspace is open.
+   */
+  app.get<{ Querystring: { days?: string } }>('/api/usage/first-generations', async (req): Promise<{ tokens: number[] }> => {
+    const raw = req.query?.days;
+    const days = raw === undefined || raw === '' ? FIRST_GEN_DAYS : /^[0-9]{1,3}$/.test(String(raw)) ? Number(raw) : NaN;
+    if (!Number.isInteger(days) || days < 1 || days > 400) throw new WorkspaceError(400, t().errors.invalidRequest);
+    const ws = deps.workspace();
+    if (!ws) return { tokens: [] };
+    const list = await ws.listProjects().catch(() => []);
+    const ledgers = await Promise.all(list.map((p) => deps.ledger.read(ws.projectDir(p.slug))));
+    return { tokens: firstGenerationTokens(ledgers, new Date(Date.now() - days * DAY_MS)) };
   });
 }

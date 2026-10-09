@@ -7,10 +7,8 @@ import { shownTotal } from '@motion-studio/shared';
 import { useRef, useState } from 'react';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { Button, Popover, cx } from '../ui/index.ts';
+import { href } from '../routes.ts';
 import { go } from './ShellContext.tsx';
-
-/** Settings → Usage (the section itself arrives with Task 9 of Phase 8). */
-export const USAGE_HASH = '#/settings/usage';
 
 /**
  * "38.2k" (one decimal) from 1000 up, the plain number below. The "k" suffix (and the " · " joiners elsewhere) are
@@ -47,7 +45,7 @@ export function TokensButton({ tokens }: { tokens: number | null }) {
   const locale = useLocale();
   const count = tokens === null ? t.web.usage.unknown : formatTokens(locale, tokens);
   return (
-    <Button variant="ghost" className="ms-tokens ms-mono" aria-label={t.web.usage.todayButton({ count })} onClick={() => go(USAGE_HASH)}>
+    <Button variant="ghost" className="ms-tokens ms-mono" aria-label={t.web.usage.todayButton({ count })} onClick={() => go(href.settings('usage'))}>
       {t.web.usage.tokens({ count })}
     </Button>
   );

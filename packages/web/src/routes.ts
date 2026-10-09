@@ -1,7 +1,7 @@
 export type ProjectTab = 'creatives' | 'brand' | 'assets' | 'references' | 'settings';
 const TABS: ProjectTab[] = ['brand', 'assets', 'references', 'settings'];
-export type SettingsSection = 'general' | 'system' | 'paid' | 'notifications' | 'updates';
-export const SETTINGS_SECTIONS: readonly SettingsSection[] = ['general', 'system', 'paid', 'notifications', 'updates'];
+export type SettingsSection = 'general' | 'system' | 'paid' | 'usage' | 'notifications' | 'updates';
+export const SETTINGS_SECTIONS: readonly SettingsSection[] = ['general', 'system', 'paid', 'usage', 'notifications', 'updates'];
 export type WelcomeStep = 1 | 2 | 3;
 
 export type Route =

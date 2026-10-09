@@ -83,3 +83,29 @@ export async function buildUsageReport(i: UsageReportInput): Promise<UsageReport
     utcOffsetMinutes: -new Date(i.to.getTime() - 1).getTimezoneOffset() || 0, // never -0
   };
 }
+
+/**
+ * Shown tokens of each creative's first generation (spec §5.4, the New creative estimate): the `creative` records of
+ * version 1, every attempt summed (fix rounds included), one total per creative of each ledger (the same slug in two
+ * projects is two creatives). A creative counts only when its first run is at or after `from` (a creative straddling
+ * the window would give a partial sum). Creatives with an `estimated` record are left out: that record holds the last
+ * live sum of a run cut short (cancelled, or no `result`), which undercounts the run, so the total is not a real
+ * figure. Records without a cost still count: their tokens are real.
+ */
+export function firstGenerationTokens(ledgers: UsageRecord[][], from: Date): number[] {
+  const out: number[] = [];
+  for (const records of ledgers) {
+    const byCreative = new Map<string, { tokens: number; first: number; estimated: boolean }>();
+    for (const r of records) {
+      if (r.kind !== 'creative' || r.version !== 1 || !r.creativeSlug) continue;
+      const ms = Date.parse(r.at);
+      const c = byCreative.get(r.creativeSlug) ?? { tokens: 0, first: ms, estimated: false };
+      c.tokens += shownTotal(r.tokens);
+      c.first = Math.min(c.first, ms);
+      c.estimated ||= r.estimated === true;
+      byCreative.set(r.creativeSlug, c);
+    }
+    for (const c of byCreative.values()) if (!c.estimated && c.first >= from.getTime() && c.tokens > 0) out.push(c.tokens);
+  }
+  return out;
+}

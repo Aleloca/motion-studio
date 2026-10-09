@@ -11,7 +11,7 @@ import { canAskNotifications } from './notify.ts';
 import { go, type ActivityTab } from './ShellContext.tsx';
 import { lastStep } from '../jobEvents.ts';
 import { jobFinalTokens, jobLiveTokens, jobUsagePartial, todayTokens } from '../usageLive.ts';
-import { formatTokens, TokenCount, USAGE_HASH } from './Tokens.tsx';
+import { formatTokens, TokenCount } from './Tokens.tsx';
 
 /** Results kept in the Done tab (the latest of this session). */
 export const DONE_MAX = 20;
@@ -197,7 +197,7 @@ function TodayFooter({ tokens }: { tokens: number | null }) {
   return (
     <div className="ms-activity-foot">
       <span className="ms-activity-today">{tokens === null ? u.todayUnknown : u.today({ count: formatTokens(locale, tokens) })}</span>
-      <a href={USAGE_HASH}>{u.open}</a>
+      <a href={href.settings('usage')}>{u.open}</a>
     </div>
   );
 }
