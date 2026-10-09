@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DEFAULT_FORMATS, type ConversationEntry, type CreativeDetail, type OutputFileInfo, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, type ConversationEntry, type CreativeDetail, type OutputFileInfo, type UsageReport, type VersionEntry } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import type { Route } from '../src/routes.ts';
@@ -32,6 +32,8 @@ const api = {
   revealVersion: vi.fn(async () => ({ ok: true })),
   exportVersion: vi.fn(async (_s: string, _c: string, _n: number, d: string, formats?: string[]) => ({ destination: d, files: (formats ?? []).map((f) => ({ from: f, to: `${d}/${f}` })), skipped: [] as string[] })),
   cancelJob: vi.fn(async () => ({ cancelled: true })),
+  // The creative's ledger total; by default unavailable (the panel then falls back to its versions).
+  getUsage: vi.fn(async (_q?: unknown): Promise<UsageReport> => { throw new Error('offline'); }),
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error { status = 0; } }));
 const { CreativeCanvas } = await import('../src/screens/CreativeCanvas.tsx');
@@ -62,6 +64,7 @@ const ready = () => screen.findByRole('img', { name: /Post 1:1 v\d/ });
 let platform: ReturnType<typeof vi.spyOn> | null = null;
 beforeEach(() => {
   vi.clearAllMocks();
+  api.getUsage.mockImplementation(async () => { throw new Error('offline'); });
   detail = makeDetail([version(1, 'Dal brief')]);
   conversation = [];
   __resetPendingPins();
@@ -681,3 +684,133 @@ describe('CreativeCanvas · review round 1', () => {
   });
 });
 
+
+describe('CreativeCanvas · tokens (Phase 8)', () => {
+  const used = { tokens: { input: 30_000, output: 8_000, cacheRead: 900_000, cacheWrite: 400 }, costUsd: 0.42 };
+  const withUsage = (v: VersionEntry, usage = used): VersionEntry => ({ ...v, usage });
+
+  it('the version card shows tokens and cost with a breakdown and the billing note; a version without usage shows none', async () => {
+    detail = makeDetail([version(1, 'Dal brief'), withUsage(version(2, 'Più caldo'))]);
+    conversation = [
+      { type: 'version', at, n: 1, status: 'complete' },
+      { type: 'user', at, text: 'Più caldo', pins: [], attachments: [] },
+      { type: 'version', at, n: 2, status: 'complete' },
+    ];
+    const live = { ...emptyLive(), today: { day: '2026-10-09', tokens: 0, billing: 'subscription', jobs: {} } } as unknown as EventsState;
+    render(<Harness live={live} />);
+    await ready();
+    const cards = await waitFor(() => { const c = [...document.querySelectorAll('.ms-convo-version')]; expect(c).toHaveLength(2); return c as HTMLElement[]; });
+    expect(cards[0]!.textContent).not.toMatch(/token/);
+    const badge = within(cards[1]!).getByRole('button', { name: /^38,4k token · 0,42/ });
+    await userEvent.click(badge);
+    const pop = await screen.findByRole('dialog', { name: 'Dettaglio dei token' });
+    expect(within(pop).getByText('30.000')).toBeTruthy();
+    expect(within(pop).getByText('900.000')).toBeTruthy(); // cache reads only here
+    expect(pop.textContent).toContain('Rientra nel tuo piano Claude');
+  });
+
+  const ledger = (tokens: Partial<UsageReport['total']['tokens']>, costUsd: number | null, estimated?: boolean): UsageReport => ({
+    from: at, to: at, total: { tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, ...tokens }, costUsd, ...(estimated ? { estimated } : {}) },
+    byDay: [], byProject: [], byKind: [], trackedSince: at, billing: 'subscription', utcOffsetMinutes: 0,
+  });
+
+  it('the Brief panel shows the ledger total of the creative (failed and cancelled runs included), asked for this creative only', async () => {
+    detail = makeDetail([withUsage(version(1, 'Dal brief')), withUsage(version(2))]);
+    // The versions sum to 76.8k; the ledger also has a failed run.
+    api.getUsage.mockResolvedValue(ledger({ input: 100_000, output: 20_000, cacheWrite: 30_000, cacheRead: 999_999 }, 0.5));
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
+    const value = (await screen.findByText('150,0k token', { exact: false })).closest('.ms-cv-brief-row')!;
+    expect(value.textContent).toContain('150,0k token · 0,50');
+    expect(value.textContent).not.toContain('≥');
+    expect(value.textContent).not.toContain('non sono incluse');
+    expect(api.getUsage).toHaveBeenCalledWith({ project: 'acme', creative: 'lancio' });
+  });
+
+  it('versions made before tracking, or a partial ledger, make the total a lower bound (≥)', async () => {
+    detail = makeDetail([version(1, 'Dal brief'), withUsage(version(2))]);
+    api.getUsage.mockResolvedValue(ledger({ input: 50_000 }, 0.2));
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
+    const value = (await screen.findByText(/≥ 50,0k token/)).closest('.ms-cv-brief-row')!;
+    expect(value.textContent).toContain('non sono incluse');
+  });
+
+  it('when the ledger cannot be read: the versions\' sum as a lower bound; older versions are said not to be counted', async () => {
+    detail = makeDetail([version(1, 'Dal brief'), withUsage(version(2)), withUsage(version(3), { ...used, costUsd: null } as never)]);
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
+    const value = (await screen.findByText('Token')).closest('.ms-cv-brief-row')!;
+    expect(value.textContent).toContain('≥ 76,8k token · ≥');
+    expect(value.textContent).toContain('non sono incluse');
+  });
+
+  it('a ledger with nothing for the creative and no version usage: no total row (no invented 0)', async () => {
+    api.getUsage.mockResolvedValue(ledger({}, null));
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
+    await waitFor(() => expect(api.getUsage).toHaveBeenCalled());
+    expect(screen.queryByText('Token')).toBeNull();
+  });
+
+  it('no version with usage: no total row', async () => {
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
+    expect(screen.queryByText('Token')).toBeNull();
+  });
+
+  it('a live counter sits beside the status pill while the job runs, and nothing before its first usage event', async () => {
+    const job = { id: 'j1', key: 'creative:/w:acme:lancio', kind: 'creative', label: 'x', state: 'running', createdAt: at };
+    const base = { ...emptyLive(), jobs: { j1: job } } as unknown as EventsState;
+    const { rerender } = render(<Harness live={base} />);
+    await ready();
+    const bar = document.querySelector('.ms-topbar')!;
+    expect(bar.querySelector('.ms-cv-tokens')).toBeNull();
+    await act(async () => { rerender(<Harness live={{ ...base, jobUsage: { j1: { done: 1000, runs: 1, peak: 1500 } } } as unknown as EventsState} />); });
+    expect(bar.querySelector('.ms-cv-tokens')?.textContent).toBe('1,5k token finora'); // "finora" is screen-reader text
+  });
+});
+
+describe('CreativeCanvas · large-file warnings (Phase 8)', () => {
+  const heavy = (): OutputFileInfo => ({ ...out('tiktok-9x16', 'tiktok.mp4', '.previews/tiktok.mp4.jpg'), warnings: [{ key: 'outputs.largeFile', params: { sizeMB: 78.4, mbps: 24, targetMbps: 8, channel: 'TikTok' } }] });
+  const full = 'File pesante: 78.4 MB a 24 Mbps (circa 8 Mbps bastano per TikTok)';
+
+  it('the board shows a warning chip whose popover gives the recommendation as text; the version card says it too', async () => {
+    detail = makeDetail([version(1, 'Dal brief', [out('instagram-post-1x1', 'post.png'), heavy()])]);
+    conversation = [{ type: 'version', at, n: 1, status: 'complete' }];
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    const board = document.querySelector<HTMLElement>('[data-board="tiktok-9x16"]')!;
+    const chip = within(board).getByRole('button', { name: 'File pesante, 78 MB: mostra il consiglio' });
+    expect(chip.textContent).toBe('78 MB · pesante');
+    expect(within(document.querySelector<HTMLElement>('[data-board="instagram-post-1x1"]')!).queryByText(/pesante/)).toBeNull();
+    await userEvent.click(chip);
+    const pop = await screen.findByRole('dialog', { name: 'File pesante' });
+    // The title says "File pesante" once; the text below gives the figures without repeating it.
+    expect(pop.textContent).toContain('78,4 MB a 24 Mbps. Circa 8 Mbps bastano per TikTok.');
+    expect(pop.textContent!.match(/File pesante/g)).toHaveLength(1);
+    const card = await waitFor(() => { const c = document.querySelector<HTMLElement>('.ms-convo-version'); expect(c).toBeTruthy(); return c!; });
+    expect(card.textContent).toContain(full);
+  });
+
+  it('renders the parameters as text, never as markup', async () => {
+    const evil = { ...heavy(), warnings: [{ key: 'outputs.largeFile', params: { sizeMB: 78.4, mbps: 24, targetMbps: 8, channel: '<img src=x onerror=alert(1)>' } }] };
+    detail = makeDetail([version(1, 'Dal brief', [evil])]);
+    conversation = [{ type: 'version', at, n: 1, status: 'complete' }];
+    render(<Harness live={emptyLive()} />);
+    const card = await waitFor(() => { const c = document.querySelector<HTMLElement>('.ms-convo-version'); expect(c?.textContent).toContain('<img src=x'); return c!; });
+    expect(card.querySelector('img')).toBeNull();
+  });
+
+  it('a version without warnings shows no chip and no line', async () => {
+    conversation = [{ type: 'version', at, n: 1, status: 'complete' }];
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    expect(screen.queryByText(/pesante/)).toBeNull();
+  });
+});

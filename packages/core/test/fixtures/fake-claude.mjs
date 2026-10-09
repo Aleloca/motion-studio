@@ -1,8 +1,12 @@
 #!/usr/bin/env node
-// Test double for the `claude` CLI. Scenario via FAKE_CLAUDE_SCENARIO: ok | tool | crash | hang | hang_ignore_term | garbage | error_result | leak_fd | render | render_missing_once | render_never | render_then_crash | render_touch | brand | brand_invalid | brand_many_dropped | brand_big_guidelines | brand_symlink_summary | brand_outside_assets | brand_mixed
+// Test double for the `claude` CLI. Scenario via FAKE_CLAUDE_SCENARIO: ok | tool | usage_stream | crash | hang | hang_ignore_term | garbage | error_result | leak_fd | render | render_missing_once | render_never | render_then_crash | render_touch | brand | brand_invalid | brand_many_dropped | brand_big_guidelines | brand_symlink_summary | brand_outside_assets | brand_mixed
 // FAKE_CLAUDE_TAMPER=1: brand/describe turns also overwrite brand/brand-kit.json and assets/assets.json directly.
 // FAKE_CLAUDE_SYMLINK_BRAND=<dir>: describe turns move brand/ to <dir>, tamper the kit there and leave a symlink.
 // FAKE_CLAUDE_WAIT_FILE=<path>: brand/describe turns wait for that file to exist before finishing.
+// The final result carries `usage` (per run: in 10 / out 100 / cache read 1000 / cache write 200) and `modelUsage` +
+// `total_cost_usd` (0.01 per run). Those two are cumulative over a resumed session in the real CLI: with
+// FAKE_CLAUDE_USAGE_FILE=<path> the fake counts its runs there and reports run count × the per-run values.
+// usage_stream: two assistant events sharing one message id (with usage), like the real stream-json.
 import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -14,7 +18,7 @@ const mcpConfigAt = process.argv.indexOf('--mcp-config');
 const mcpConfigFile = mcpConfigAt >= 0 ? (() => { const p = process.argv[mcpConfigAt + 1]; try { return { path: p, mode: statSync(p).mode & 0o777, content: readFileSync(p, 'utf8') }; } catch { return { path: p, mode: null, content: null }; } })() : null;
 // The token file named by the MCP config, as claude sees it at startup.
 const tokenFile = (() => { try { const p = JSON.parse(mcpConfigFile.content).mcpServers.studio.env.MOTION_STUDIO_BRIDGE_TOKEN_FILE; return { path: p, mode: statSync(p).mode & 0o777, content: readFileSync(p, 'utf8') }; } catch { return null; } })();
-if (process.env.FAKE_CLAUDE_ARGS_FILE) writeFileSync(process.env.FAKE_CLAUDE_ARGS_FILE, JSON.stringify({ args, tokenFile, cwd: process.cwd(), pid: process.pid, env: process.env.MS_TEST_ENV ?? null, mcpTimeout: process.env.MCP_TOOL_TIMEOUT ?? null, envKeys: Object.keys(process.env), mcpConfigFile }));
+if (process.env.FAKE_CLAUDE_ARGS_FILE) writeFileSync(process.env.FAKE_CLAUDE_ARGS_FILE, JSON.stringify({ args, tokenFile, cwd: process.cwd(), pid: process.pid, env: process.env.MS_TEST_ENV ?? null, mcpTimeout: process.env.MCP_TOOL_TIMEOUT ?? null, envKeys: Object.keys(process.env), cacheEnv: Object.fromEntries(['npm_config_cache','PIP_CACHE_DIR','XDG_CACHE_HOME','PUPPETEER_SKIP_DOWNLOAD','HOME'].map((k) => [k, process.env[k] ?? null])), mcpConfigFile }));
 if (args[0] === '--version') { console.log('9.9.9 (Claude Code)'); process.exit(0); }
 if (args[0] === 'auth' && args[1] === 'status') {
   const loggedIn = process.env.FAKE_CLAUDE_LOGGED_IN !== '0';
@@ -147,10 +151,28 @@ rl.once('line', async (line) => {
     out({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'Usage limit reached', session_id: sessionId });
     process.exit(1);
   }
+  if (scenario === 'usage_stream') {
+    const usage = { input_tokens: 10, output_tokens: 40, cache_read_input_tokens: 1000, cache_creation_input_tokens: 200 };
+    out({ type: 'assistant', session_id: sessionId, message: { id: 'msg_1', role: 'assistant', content: [{ type: 'thinking', thinking: '' }], usage } });
+    out({ type: 'assistant', session_id: sessionId, message: { id: 'msg_1', role: 'assistant', content: [{ type: 'text', text: 'working' }], usage } });
+  }
   const text = JSON.stringify({ type: 'assistant', session_id: sessionId, message: { role: 'assistant', content: [{ type: 'text', text: `echo: ${prompt}` }] } });
   process.stdout.write(text.slice(0, 10));
   await sleep(20);
   process.stdout.write(text.slice(10) + '\n');
-  out({ type: 'result', subtype: 'success', is_error: false, result: `echo: ${prompt}`, session_id: sessionId, total_cost_usd: 0 });
+  const runs = (() => {
+    const f = process.env.FAKE_CLAUDE_USAGE_FILE;
+    if (!f) return 1;
+    let n = 0;
+    try { n = JSON.parse(readFileSync(f, 'utf8')).runs; } catch { n = 0; }
+    writeFileSync(f, JSON.stringify({ runs: n + 1 }));
+    return n + 1;
+  })();
+  out({
+    type: 'result', subtype: 'success', is_error: false, result: `echo: ${prompt}`, session_id: sessionId, duration_ms: 1234, num_turns: 1,
+    total_cost_usd: 0.01 * runs,
+    usage: { input_tokens: 10, output_tokens: 100, cache_read_input_tokens: 1000, cache_creation_input_tokens: 200 },
+    modelUsage: { 'fake-model': { inputTokens: 10 * runs, outputTokens: 100 * runs, cacheReadInputTokens: 1000 * runs, cacheCreationInputTokens: 200 * runs, costUSD: 0.01 * runs } },
+  });
   process.exit(0);
 });

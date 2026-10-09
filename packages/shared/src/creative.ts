@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import type { AgentEvent } from './events.ts';
 import { linkedCodebaseSchema } from './schemas.ts';
+import { usageSummarySchema } from './usage.ts';
+import { channelName } from './formats.ts';
+import { messages, type Locale } from './i18n/index.ts';
 
 export const creativeStatusSchema = z.enum(['draft', 'working', 'ready', 'incomplete', 'error', 'interrupted']);
 export type CreativeStatus = z.infer<typeof creativeStatusSchema>;
@@ -28,9 +31,20 @@ export const creativeFileSchema = z.object({
 });
 export type CreativeFile = z.infer<typeof creativeFileSchema>;
 
+/**
+ * A non-blocking note on an output file: never a problem, never triggers the fix loop. `key` is an i18n key
+ * (today only `outputs.largeFile`) and `params` its values, so the web renders it in the user's language
+ * (see `outputWarningText`). Old versions.json files have none.
+ */
+export const outputWarningSchema = z.object({
+  key: z.string(), params: z.record(z.string(), z.union([z.string(), z.number()])),
+});
+export type OutputWarning = z.infer<typeof outputWarningSchema>;
+
 export const outputFileInfoSchema = z.object({
   format: z.string(), file: z.string(), width: z.number(), height: z.number(),
   durationSec: z.number().nullable(), verified: z.boolean(), preview: z.string().nullable(),
+  warnings: z.array(outputWarningSchema).optional(),
 });
 export type OutputFileInfo = z.infer<typeof outputFileInfoSchema>;
 
@@ -46,6 +60,7 @@ export const versionEntrySchema = z.object({
   tools: z.array(z.string()),
   renderCommand: z.string().nullable(),
   basedOn: z.number().int().nullable(),
+  usage: usageSummarySchema.optional(),
 });
 export type VersionEntry = z.infer<typeof versionEntrySchema>;
 
@@ -87,3 +102,15 @@ export interface CreativeSummary { slug: string; title: string; status: Creative
 export type RecentCreative = CreativeSummary & { project: { slug: string; name: string } };
 export type CreativeListItem = ({ ok: true } & CreativeSummary) | { ok: false; slug: string; error: string };
 export interface CreativeDetail { slug: string; creative: CreativeFile; versions: VersionEntry[]; jobKey: string }
+
+/** Localized text of an output warning; an unknown key, or params that are not numbers, fall back to the key itself. */
+export function outputWarningText(w: OutputWarning, locale: Locale): string {
+  if (w.key === 'outputs.largeFile') {
+    const sizeMB = Number(w.params.sizeMB);
+    const mbps = Number(w.params.mbps);
+    const targetMbps = Number(w.params.targetMbps);
+    if (![sizeMB, mbps, targetMbps].every(Number.isFinite)) return w.key;
+    return messages(locale).outputs.largeFile({ sizeMB, mbps, targetMbps, channel: channelName(String(w.params.channel ?? ''), locale) });
+  }
+  return w.key;
+}

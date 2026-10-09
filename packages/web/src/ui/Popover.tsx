@@ -13,6 +13,8 @@ export interface PopoverProps {
   anchor: RefObject<HTMLElement | null>;
   placement?: PopoverPlacement;
   width?: number;
+  /** Accessible name: the popover (which receives focus when it has nothing focusable) becomes a named dialog. */
+  label?: string;
   children: ReactNode;
 }
 
@@ -49,7 +51,7 @@ export function placePopover(r: DOMRect, placement: PopoverPlacement, w: number,
  * an outside pointer down and on Esc (only when it is the top layer); light focus trap; focus returns to the anchor.
  * Rows marked `data-row` cascade in 20 ms apart.
  */
-export function Popover({ open, onClose, anchor, placement = 'bottom-start', width, children }: PopoverProps) {
+export function Popover({ open, onClose, anchor, placement = 'bottom-start', width, label, children }: PopoverProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [id] = useState(nextLayerId);
   const parent = useContext(LayerContext);
@@ -120,6 +122,7 @@ export function Popover({ open, onClose, anchor, placement = 'bottom-start', wid
         ref={ref}
         className="ms-pop"
         tabIndex={-1}
+        {...(label ? { role: 'dialog', 'aria-label': label } : {})}
         style={{ ...pos.style, width, transformOrigin: pos.origin }}
         onKeyDown={onKeyDown}
         onClick={onClick}

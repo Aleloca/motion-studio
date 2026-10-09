@@ -175,7 +175,8 @@ describe('turns over WebSocket', () => {
     await waitFor(() => messages.some((m) => m.type === 'job' && m.job.id === jobId && m.job.state === 'succeeded'));
     expect(messages[0]).toMatchObject({ type: 'snapshot' });
     const agentKinds = messages.filter((m) => m.type === 'agent' && m.jobId === jobId).map((m) => (m as any).event.kind);
-    expect(agentKinds).toEqual(['session', 'text', 'result']);
+    // The final usage is re-emitted by the launcher, with per-run values, once the run is over.
+    expect(agentKinds).toEqual(['session', 'text', 'result', 'usage']);
     ws.close();
   });
   it('asks the console agent to reply in the language set when the turn was sent', async () => {

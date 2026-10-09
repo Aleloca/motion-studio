@@ -123,6 +123,12 @@ describe('Input and Textarea', () => {
 });
 
 describe('Toggle', () => {
+  it('passes a description through to aria-describedby, and sets none by default', () => {
+    const { rerender } = render(<><Toggle on={false} onChange={vi.fn()} label="Auto" describedBy="why" disabled /><span id="why">Needs isolation</span></>);
+    expect(screen.getByRole('switch', { name: 'Auto' }).getAttribute('aria-describedby')).toBe('why');
+    rerender(<Toggle on={false} onChange={vi.fn()} label="Auto" />);
+    expect(screen.getByRole('switch', { name: 'Auto' }).hasAttribute('aria-describedby')).toBe(false);
+  });
   it('is a switch that emits the inverted value', () => {
     const onChange = vi.fn();
     render(<Toggle on={false} onChange={onChange} label="Auto-save" />);

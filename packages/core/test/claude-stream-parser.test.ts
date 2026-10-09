@@ -23,7 +23,7 @@ describe('parseClaudeLine', () => {
       { kind: 'tool_result', toolUseId: 'tu_1', isError: false, content: 'File created' },
       { kind: 'tool_result', toolUseId: 'tu_2', isError: true, content: 'permission denied' },
       { kind: 'rate_limit', status: 'allowed', resetsAt: 1791395400 },
-      { kind: 'result', ok: true, sessionId: 's-123', text: 'ok', costUsd: 0.0156526 },
+      { kind: 'result', ok: true, sessionId: 's-123', text: 'ok', cumulativeCostUsd: 0.0156526, durationMs: 6731 },
     ]);
   });
   it('turns an error result into a failed result with the error text', () => {

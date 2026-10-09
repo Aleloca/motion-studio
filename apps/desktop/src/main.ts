@@ -6,9 +6,9 @@ import { join } from 'node:path';
 import { AlreadyRunningError, answersHealth, defaultConfigDir, resolveLocale, resolveLoginShellPath, setLocale, startServer, t } from '@motion-studio/core';
 import { absolutePathArg, attachedGone, attachedGoneAction, attachedLocale, bootLocale, focusOnReady, readSavedLanguage, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, userDataDir } from './helpers.ts';
 import { menuTemplate } from './menu.ts';
-import { registerAttention, sendAttentionClick, showKept } from './notify.ts';
+import { notificationOptions, registerAttention, sendAttentionClick, showKept } from './notify.ts';
 import { setupUpdates } from './updater.ts';
-import { externalUrlAllowed, isAppUrl, windowOptions } from './window.ts';
+import { externalUrlAllowed, ipcSenderTrusted, isAppUrl, windowOptions } from './window.ts';
 
 const REPO_URL = 'https://github.com/Aleloca/motion-studio';
 const smokeArg = process.argv.find((a) => a === '--smoke-test' || a.startsWith('--smoke-test='));
@@ -121,8 +121,7 @@ async function run() {
   let closing = false;
   const win = new BrowserWindow(windowOptions(join(__dirname, 'preload.cjs'), nativeTheme.shouldUseDarkColors));
 
-  const trusted = (e: IpcMainInvokeEvent) =>
-    e.sender === win.webContents && e.senderFrame === e.sender.mainFrame && isAppUrl(e.senderFrame?.url ?? '', origin);
+  const trusted = (e: IpcMainInvokeEvent) => ipcSenderTrusted(e, win.webContents, origin);
   ipcMain.handle('ms:pick-folder', async (e, arg: unknown) => {
     const args = trusted(e) ? pickFolderArgs(arg) : null;
     if (!args) throw new Error(t().desktop.invalidRequest);
@@ -138,16 +137,19 @@ async function run() {
   const notifications = new Set<Notification>();
   registerAttention(ipcMain, {
     trusted,
-    showNotification: ({ title, body }) => {
-      if (!Notification.isSupported()) return;
+    isSupported: () => Notification.isSupported(),
+    showNotification: async (args) => {
       // Kept alive until clicked or closed. A click brings the window back and asks the page to run its "Review"
       // (the request's creative, or the activity center), as the toast does.
-      showKept(notifications, new Notification({ title, body }), () => {
+      const outcome = await showKept(notifications, new Notification(notificationOptions(args, process.platform)), () => {
         if (win.isDestroyed()) return;
         if (win.isMinimized()) win.restore();
         win.show(); win.focus();
         sendAttentionClick(win.webContents, (url) => isAppUrl(url, origin));
       });
+      // A refusal by the system is otherwise invisible (macOS refuses an unsigned development Electron).
+      if (!outcome.shown) console.warn(`Notification not shown (${outcome.reason})${outcome.detail ? `: ${outcome.detail}` : ''}`);
+      return outcome;
     },
     dock: app.dock,
     invalid: () => new Error(t().desktop.invalidRequest),

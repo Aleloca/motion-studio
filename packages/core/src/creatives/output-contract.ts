@@ -1,6 +1,6 @@
 import { lstat } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
-import { formatLabel, manifestSchema, messages, type Locale, type FormatPreset, type OutputFileInfo } from '@motion-studio/shared';
+import { formatLabel, videoTargetBitrateKbps, manifestSchema, messages, type Locale, type FormatPreset, type OutputFileInfo, type OutputWarning } from '@motion-studio/shared';
 import { findPreset } from '../formats/format-catalog.ts';
 import { JsonFileError, readJsonFile } from '../json-file.ts';
 import type { MediaTools } from '../media/media-tools.ts';
@@ -9,6 +9,14 @@ import { currentLocale } from '../i18n.ts';
 export interface ValidationResult { outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: string | null;
   /** Requested ids missing from the format catalog: the agent cannot fix those, so they never justify another attempt. */
   unknownPresets: string[];
+}
+
+const H264_EXTENSIONS = new Set(['mp4', 'mov', 'm4v']);
+
+/** The preset's own target when it has one (the catalog derives it at 30 fps), else derived from its size; fps above 45 gets +50%. */
+function videoTargetKbps(preset: FormatPreset, fps: number | undefined): number {
+  const base = preset.targetBitrateKbps ?? videoTargetBitrateKbps(preset.width, preset.height);
+  return fps !== undefined && fps > 45 ? base * 1.5 : base;
 }
 
 export async function validateOutputs(opts: {
@@ -46,7 +54,9 @@ export async function validateOutputs(opts: {
     if (!preset.extensions.includes(ext)) {
       problems.push(v.badExtension({ file: entry.file, ext, id, allowed: preset.extensions.join(', ') }));
     }
-    const sizeMB = info.size / (1024 * 1024);
+    const sizeMB = info.size / 1e6; // decimal MB, like the large-file warning and what file managers show
+    const warnings: OutputWarning[] = [];
+    // maxFileMB is a real, documented upload limit of the channel: a problem for any kind of file.
     if (preset.maxFileMB !== undefined && sizeMB > preset.maxFileMB) {
       problems.push(v.tooLarge({ file: entry.file, size: sizeMB.toFixed(1), max: preset.maxFileMB }));
     }
@@ -78,6 +88,19 @@ export async function validateOutputs(opts: {
             problems.push(v.durationOffTarget({ file: entry.file, duration: durationSec.toFixed(1), target }));
           }
         }
+      }
+    }
+
+    // Bitrate-based warning (never a problem): effective bitrate above 1.5x the target. Needs a known duration.
+    // The target is an H.264 one: GIF and WebM outputs have none, so they never get this warning.
+    if (preset.kind === 'video' && H264_EXTENSIONS.has(ext) && durationSec !== null && durationSec > 0) {
+      const target = videoTargetKbps(preset, probed?.fps);
+      const mbps = (info.size * 8) / durationSec / 1e6;
+      if (mbps > (target / 1000) * 1.5) {
+        warnings.push({ key: 'outputs.largeFile', params: {
+          sizeMB: Math.round(info.size / 1e5) / 10, mbps: mbps >= 10 ? Math.round(mbps) : Math.round(mbps * 10) / 10,
+          targetMbps: Math.round(target / 100) / 10, channel: preset.channel,
+        } });
       }
     }
 
@@ -114,7 +137,7 @@ export async function validateOutputs(opts: {
         }
       }
     }
-    outputs.push({ format: id, file: entry.file, width, height, durationSec, verified, preview });
+    outputs.push({ format: id, file: entry.file, width, height, durationSec, verified, preview, ...(warnings.length ? { warnings } : {}) });
   }
   return { outputs, problems, tools: manifest.tools, renderCommand: manifest.renderCommand ?? null, unknownPresets };
 }

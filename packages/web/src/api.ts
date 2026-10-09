@@ -1,4 +1,4 @@
-import type { ApprovalDecision, ApprovalRequest, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, PermissionsFile, ProjectListItem, SecretStatus, ProviderId, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
+import type { ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, PermissionsFile, ProjectListItem, SecretStatus, ProviderId, UsageReport, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, uiToken } from './uiToken.ts';
 
@@ -50,6 +50,18 @@ const c = (slug: string, creative: string) => `${p(slug)}/creatives/${encodeURIC
 
 export const api = {
   getDoctor: () => request<DoctorCheck[]>('GET', '/api/doctor'),
+  /**
+   * Token and cost usage from the projects' ledgers; defaults to the last 7 local days of the core. With `creative`
+   * (and its `project`) and no range: that creative's whole history.
+   */
+  getUsage: (q: { from?: string; to?: string; project?: string; creative?: string } = {}) => {
+    const qs = new URLSearchParams(Object.entries(q).filter((e): e is [string, string] => typeof e[1] === 'string' && e[1] !== '')).toString();
+    return request<UsageReport>('GET', `/api/usage${qs ? `?${qs}` : ''}`);
+  },
+  /** Shown tokens of each creative's first generation in the last `days` days (New creative estimate). */
+  /** What ran during a brand analysis (Bash calls, outcomes, decisions, automatic approvals), from the proposal's log. */
+  getProposalActivity: (slug: string, id: string) => request<ProposalActivity>('GET', `${p(slug)}/brand/proposals/${encodeURIComponent(id)}/activity`),
+  getFirstGenerations: (days = 90) => request<{ tokens: number[] }>('GET', `/api/usage/first-generations?days=${days}`),
   getWorkspace: () => request<WorkspaceInfo>('GET', '/api/workspace'),
   setWorkspace: (path: string) => request<{ path: string; settings: WorkspaceSettings }>('PUT', '/api/workspace', { path }),
   updateSettings: (patch: Partial<WorkspaceSettings>) => request<WorkspaceSettings>('PUT', '/api/settings', patch),

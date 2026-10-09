@@ -78,6 +78,23 @@ html, body, #root { height: 100%; }
 .ms-activity-text b { font-weight: 600; overflow-wrap: anywhere; }
 .ms-activity-sub { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .ms-activity-time { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; flex: none; }
+.ms-activity-side { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex: none; }
+.ms-activity-tokens { font-family: var(--mono); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
+.ms-activity-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line2); background: var(--bg); font-size: 12px; }
+.ms-activity-today { color: var(--muted); font-variant-numeric: tabular-nums; }
+.ms-activity-usage, .ms-activity-usage:visited { color: var(--accentText); font-weight: 500; text-decoration: none; }
+.ms-activity-usage:hover { text-decoration: underline; }
+
+/* Token figures (spec §5.4): mono, tabular. */
+.ms-tokens { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.ms-tokcount { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ms-usage-badge { font-size: 11.5px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.ms-usage-pop { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; font-size: 12px; }
+.ms-usage-rows { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.ms-usage-rows div { display: flex; justify-content: space-between; gap: 12px; }
+.ms-usage-rows dt { color: var(--muted); }
+.ms-usage-rows dd { margin: 0; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.ms-usage-note { margin: 0; color: var(--muted); line-height: 1.45; }
 
 /* Command palette: a modal placed high, like a spotlight. */
 .ms-modal:has(.ms-palette) { place-items: start center; padding-top: 12vh; }

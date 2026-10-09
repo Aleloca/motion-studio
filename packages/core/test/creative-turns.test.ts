@@ -445,15 +445,19 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     await finalState((await service.start(ref)).id);
     const work = store.workDir(ref.creativeSlug);
     await writeFile(join(work, 'appunti.txt'), 'non salvato');
-    await mkdir(join(work, 'tmp'), { recursive: true });
-    await writeFile(join(work, 'tmp', 'x.txt'), 'x');
+    await mkdir(join(work, 'drafts'), { recursive: true });
+    await writeFile(join(work, 'drafts', 'x.txt'), 'x');
     await mkdir(join(work, 'node_modules', 'pkg'), { recursive: true });
     await writeFile(join(work, 'node_modules', 'pkg', 'index.js'), '');
+    // work/tmp/ is the agent's scratch folder: never versioned, so a restore leaves it alone like node_modules.
+    await mkdir(join(work, 'tmp'), { recursive: true });
+    await writeFile(join(work, 'tmp', 'frame.png'), 'x');
     await service.restore(ref, 1);
     const entries = await readdir(work);
     expect(entries).not.toContain('appunti.txt');
-    expect(entries).not.toContain('tmp');
+    expect(entries).not.toContain('drafts');
     expect(entries).toContain('node_modules');
+    expect(entries).toContain('tmp');
     const conv = await store.readConversation(ref.creativeSlug);
     expect(conv.some((e) => e.type === 'system' && e.text === 'Rimossi 2 file non salvati in una versione')).toBe(true);
   });

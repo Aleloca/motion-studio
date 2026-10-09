@@ -1,9 +1,10 @@
 // The creative's version history (prototype VersionsPopover; spec §6.2 #6, point 41): per creative in Phase 7 (per
 // format with Phase 9), so no ★ and no per-format versions. Thumbnail, number, time and the request that made it;
 // Compare, "Restart from here" with what it means, and Show in Finder.
-import type { VersionEntry } from '@motion-studio/shared';
+import { shownTotal, type VersionEntry } from '@motion-studio/shared';
 import { formatDate, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
 import { isMac } from '../platform.ts';
+import { formatTokens, TokenCount } from '../shell/Tokens.tsx';
 import { Button, Icon, Pill, cx } from '../ui/index.ts';
 import { versionThumb } from './canvasModel.ts';
 
@@ -40,13 +41,15 @@ export function VersionMenu({ slug, creative, versions, shown, resumeFrom, onPic
           const note = ver.request.trim() || v.fromBrief;
           return (
             <button key={ver.n} type="button" data-row="" className={cx('ms-vmenu-row', ver.n === shown && 'ms-on')} aria-pressed={ver.n === shown}
-              aria-label={`${t.web.ui.version({ n: ver.n })} · ${when(ver.createdAt)} · ${note}`} onClick={() => onPick(ver.n)}>
+              aria-label={[t.web.ui.version({ n: ver.n }), when(ver.createdAt), note, ver.usage ? t.web.usage.tokens({ count: formatTokens(locale, shownTotal(ver.usage.tokens)) }) : null].filter(Boolean).join(' · ')} onClick={() => onPick(ver.n)}>
               <span className="ms-vmenu-thumb" aria-hidden="true">
                 {thumb ? (thumb.video ? <video src={thumb.src} muted preload="metadata" /> : <img src={thumb.src} alt="" />) : <Icon name="image" size={14} />}
               </span>
               <span className="ms-vmenu-text">
                 <span className="ms-vmenu-line"><b>v{ver.n}</b><span className="ms-vmenu-when">{when(ver.createdAt)}</span>
-                  {ver.status === 'incomplete' ? <Pill tone="warn">{v.incomplete}</Pill> : null}</span>
+                  {ver.status === 'incomplete' ? <Pill tone="warn">{v.incomplete}</Pill> : null}
+                  {/* Versions from before usage tracking have no `usage`: no figure rather than a 0. */}
+                  <TokenCount tokens={ver.usage ? shownTotal(ver.usage.tokens) : null} className="ms-vmenu-tokens" /></span>
                 <span className="ms-vmenu-note">{note}</span>
               </span>
             </button>

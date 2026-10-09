@@ -1,4 +1,4 @@
-import type { DoctorCheck } from '@motion-studio/shared';
+import type { DoctorCheck, UsageBilling } from '@motion-studio/shared';
 import type { SandboxSupport } from './agent/sandbox.ts';
 import type { CommandExec, CommandResult } from './exec.ts';
 import { t } from './i18n.ts';
@@ -88,3 +88,30 @@ export async function runDoctor(opts: {
 }
 
 export const hasBlockingFailure = (checks: DoctorCheck[]) => checks.some((c) => c.required && !c.ok);
+
+/**
+ * How Claude Code is paid for, from `claude auth status --json`: only the `loggedIn` and `authMethod` fields are read
+ * (the output also holds email and organisation, which are never read nor logged). `authMethod: "claude.ai"` is a
+ * Claude subscription login; a method naming an API key is billed per token; anything else is unknown.
+ */
+export function billingFromAuthStatus(stdout: string): UsageBilling {
+  let data: unknown;
+  try { data = JSON.parse(stdout); } catch { return 'unknown'; }
+  if (typeof data !== 'object' || data === null) return 'unknown';
+  const { loggedIn, authMethod } = data as { loggedIn?: unknown; authMethod?: unknown };
+  if (loggedIn !== true || typeof authMethod !== 'string') return 'unknown';
+  if (authMethod === 'claude.ai') return 'subscription';
+  return /api[\s_-]?key/i.test(authMethod) ? 'api' : 'unknown';
+}
+
+/** Billing method of the configured `claude` (never throws: 'unknown' when it cannot be read). */
+export async function readBilling(opts: { exec: CommandExec; claudeCommand: string[] }): Promise<UsageBilling> {
+  const [bin, ...prefix] = opts.claudeCommand;
+  if (!bin) return 'unknown';
+  try {
+    const r = await opts.exec(bin, [...prefix, 'auth', 'status', '--json']);
+    return billingFromAuthStatus(r.stdout);
+  } catch {
+    return 'unknown';
+  }
+}

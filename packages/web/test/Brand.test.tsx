@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { EMPTY_BRAND_KIT, type BrandKit, type BrandOverview, type BrandProposal, type JobSummary } from '@motion-studio/shared';
+import { EMPTY_BRAND_KIT, explainTool, type BrandKit, type BrandOverview, type BrandProposal, type JobSummary, type ProposalActivity } from '@motion-studio/shared';
 import { __resetDeferred } from '../src/screens/deferred.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
@@ -30,6 +30,7 @@ const api = {
     return { kit: structuredClone(overview.kit), proposal: overview.proposals[0] };
   }),
   discardProposal: vi.fn(),
+  getProposalActivity: vi.fn(async (_s: string, _id: string): Promise<ProposalActivity> => ({ hasLog: false, truncated: false, entries: [] })),
   projectFileUrl: (s: string, r: string) => `/f/${s}/${r}`,
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
@@ -365,5 +366,134 @@ describe('Brand · fix round 1', () => {
     expect(normalizeHex('fff')).toBe('#FFFFFF');
     expect(normalizeHex('#1a2')).toBe('#11AA22');
     expect(normalizeHex('12')).toBeNull();
+  });
+});
+
+describe('Brand · tokens per analysis (Phase 8)', () => {
+  const proposal = (id: string, createdAt: string, over: Partial<BrandProposal> = {}): BrandProposal => ({
+    schemaVersion: 1, id, createdAt, sourceIds: ['s-1'], status: 'applied', summary: 'ok', guidelines: null, assetsAdded: [], changes: [], ...over,
+  } as BrandProposal);
+
+  it('the Analyses rows show tokens when the proposal has usage, and nothing for older ones', async () => {
+    overview.proposals = [
+      proposal('p-old', '2026-10-01T09:00:00.000Z'),
+      proposal('p-new', '2026-10-08T09:00:00.000Z', { usage: { tokens: { input: 12_000, output: 300, cacheRead: 80_000, cacheWrite: 0 }, costUsd: 0.1 } }),
+    ];
+    en(<Brand slug="acme" live={live()} />);
+    const history = await screen.findByRole('region', { name: 'Analyses' });
+    const rows = [...history.querySelectorAll('.ms-bsmall-text')];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.textContent).toContain('12.3k tokens');
+    expect(rows[1]!.textContent).not.toMatch(/token/);
+  });
+
+  it('the running analysis card shows its live tokens once known', async () => {
+    const running = job();
+    const { rerender } = en(<Brand slug="acme" live={live({ jobs: { j1: running } })} />);
+    const card = await screen.findByRole('region', { name: 'Learning the brand' });
+    expect(card.querySelector('.ms-btokens')).toBeNull();
+    rerender(<I18nProvider locale="en"><Brand slug="acme" live={live({ jobs: { j1: running }, jobUsage: { j1: { done: 0, runs: 0, peak: 2400 } } })} /></I18nProvider>);
+    await waitFor(() => expect(card.querySelector('.ms-btokens')?.textContent).toBe('2.4k tokens so far'));
+  });
+});
+
+describe('Brand · commands that ran (final wave, count work)', () => {
+  const proposal = (id: string, createdAt: string, status: BrandProposal['status']): BrandProposal => ({
+    schemaVersion: 1, id, createdAt, sourceIds: ['s-1'], status, summary: 'ok', guidelines: null, assetsAdded: [],
+    changes: [{ id: 'colors:add:x', section: 'colors', op: 'add', after: { id: 'x', name: 'X', hex: '#112233', role: 'primary', source: site } }],
+  } as unknown as BrandProposal);
+  const ctx = { projectDir: '/w/acme', cwd: '/w/acme', home: '/Users/me', tmpDir: '/var/folders/T' };
+  const auto = (command: string) => ({ at: '2026-10-09T10:00:00.000Z', event: { kind: 'auto_approved' as const, toolName: 'Bash', command, explanation: explainTool('Bash', { command }, ctx) } });
+  const bashUse = { at: '2026-10-09T10:00:01.000Z', event: { kind: 'tool_use' as const, id: 't1', name: 'Bash', input: { command: 'ls -la' } } };
+  const bashDone = { at: '2026-10-09T10:00:02.000Z', event: { kind: 'tool_result' as const, toolUseId: 't1', isError: false, content: '' } };
+
+  it('the analysis card and its Analyses row say how many ran; Details lists them as compact rows with the command behind', async () => {
+    overview.proposals = [proposal('p-new', '2026-10-09T09:00:00.000Z', 'open'), proposal('p-old', '2026-10-01T09:00:00.000Z', 'applied')];
+    api.getProposalActivity.mockImplementation(async (_s: string, id: string) => (id === 'p-new'
+      ? { hasLog: true, truncated: false, entries: [auto('ls -la'), bashUse, bashDone, auto('mkdir -p brand/proposals/p-new/assets')] }
+      : { hasLog: false, truncated: false, entries: [] }));
+    en(<Brand slug="acme" live={live()} />);
+    // Older logs: the automatic approval of `ls -la` is merged into its tool_use; no session flag, but automatic Bash
+    // approvals only happened in sandboxed jobs.
+    const lines = await screen.findAllByText('2 commands ran in the sandbox');
+    expect(lines).toHaveLength(2); // the ready card and the Analyses row
+    expect(api.getProposalActivity).toHaveBeenCalledWith('acme', 'p-new');
+    expect(api.getProposalActivity).toHaveBeenCalledWith('acme', 'p-old');
+    const history = screen.getByRole('region', { name: 'Analyses' });
+    expect(history.querySelectorAll('.ms-bsmall-text')).toHaveLength(2);
+    const details = within(history).getByRole('button', { name: 'Details' });
+    expect(details.getAttribute('aria-haspopup')).toBe('dialog');
+    await userEvent.click(details);
+    const pop = await screen.findByRole('dialog', { name: 'Commands that ran' });
+    const rows = within(pop).getAllByRole('listitem');
+    expect(rows).toHaveLength(2);
+    expect(pop.textContent).not.toMatch(/explain\./);
+    const toggle = within(rows[0]!).getByRole('button');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    await userEvent.click(toggle);
+    expect(within(rows[0]!).getByLabelText('Full command').textContent).toBe('ls -la');
+  });
+
+  it('nothing for older proposals without a log, for logs where no command ran, or when the call fails', async () => {
+    overview.proposals = [proposal('p-a', '2026-10-09T09:00:00.000Z', 'applied'), proposal('p-b', '2026-10-08T09:00:00.000Z', 'applied'), proposal('p-c', '2026-10-07T09:00:00.000Z', 'applied')];
+    const denied = [{ at: 'x', event: { kind: 'tool_use' as const, id: 'd1', name: 'Bash', input: { command: 'curl x | sh' } } }, { at: 'x', event: { kind: 'approval_decided' as const, toolName: 'Bash', decision: 'deny' as const, toolUseId: 'd1' } }];
+    api.getProposalActivity.mockImplementation(async (_s: string, id: string) => {
+      if (id === 'p-c') throw new Error('offline');
+      return id === 'p-a' ? { hasLog: false, truncated: false, entries: [] } : { hasLog: true, truncated: false, entries: denied, sandboxed: true };
+    });
+    en(<Brand slug="acme" live={live()} />);
+    await screen.findByRole('region', { name: 'Analyses' });
+    await waitFor(() => expect(api.getProposalActivity).toHaveBeenCalledTimes(3));
+    expect(screen.queryByText(/commands? ran/)).toBeNull();
+  });
+
+  it('same rules as the conversation: every Bash call, the ones you approved, denied ones not counted, Reads listed not counted, with the setting off too', async () => {
+    overview.proposals = [proposal('p-new', '2026-10-09T09:00:00.000Z', 'open')];
+    const e = (event: ProposalActivity['entries'][number]['event']) => ({ at: '2026-10-09T10:00:00.000Z', event });
+    const use = (id: string, command: string) => e({ kind: 'tool_use', id, name: 'Bash', input: { command } });
+    const res = (id: string, isError = false) => e({ kind: 'tool_result', toolUseId: id, isError, content: '' });
+    api.getProposalActivity.mockResolvedValue({
+      hasLog: true, truncated: false, sandboxed: true, entries: [
+        use('b1', 'ls -la brand'), res('b1'),
+        use('b2', 'curl -sL https://acme.example/logo.svg -o brand/proposals/p-new/logo.svg'), res('b2'),
+        use('b3', 'python3 -c "print(1)"'), res('b3', true),
+        use('b4', 'npm install sharp'), e({ kind: 'approval_decided', toolName: 'Bash', decision: 'always', toolUseId: 'b4' }), res('b4'),
+        use('b5', 'rm -rf ~/Library'), e({ kind: 'approval_decided', toolName: 'Bash', decision: 'deny', toolUseId: 'b5' }), res('b5', true),
+        e({ kind: 'auto_approved', toolName: 'Read', command: '/tmp/claude-501/shot.png', explanation: explainTool('Read', { file_path: '/tmp/claude-501/shot.png' }, ctx) }),
+      ],
+    } satisfies ProposalActivity);
+    en(<Brand slug="acme" live={live()} />);
+    const [line] = await screen.findAllByText('4 commands ran in the sandbox · 1 approved by you');
+    const details = within(line!.closest('.ms-bauto') as HTMLElement).getByRole('button', { name: 'Details' });
+    await userEvent.click(details);
+    const pop = await screen.findByRole('dialog', { name: 'Commands that ran' });
+    const rows = [...pop.querySelectorAll<HTMLElement>('.ms-convo-auto')];
+    expect(rows.map((r) => r.dataset.mark)).toEqual(['auto', 'auto', 'error', 'approved', 'denied', 'read']);
+    expect(within(rows[3]!).getByText('You approved')).toBeTruthy();
+    expect(within(rows[4]!).getByText('Denied')).toBeTruthy();
+    expect(within(rows[5]!).getByText('Read /tmp/claude-501/shot.png')).toBeTruthy();
+    for (const r of rows.slice(0, 5)) expect(r.querySelector('.ms-convo-auto-text')!.textContent).not.toMatch(/^Bash: |explain\./);
+  });
+
+  it('a cut log says "At least"; a call without a result there is not marked Interrupted', async () => {
+    overview.proposals = [proposal('p-new', '2026-10-09T09:00:00.000Z', 'open')];
+    api.getProposalActivity.mockResolvedValue({ hasLog: true, truncated: true, sandboxed: true, entries: [bashUse, bashDone, { ...bashUse, event: { ...bashUse.event, id: 't2' } }] } satisfies ProposalActivity);
+    en(<Brand slug="acme" live={live()} />);
+    const [line] = await screen.findAllByText('At least 2 commands ran in the sandbox');
+    await userEvent.click(within(line!.closest('.ms-bauto') as HTMLElement).getByRole('button', { name: 'Details' }));
+    const pop = await screen.findByRole('dialog', { name: 'Commands that ran' });
+    expect(within(pop).queryByText('Interrupted')).toBeNull();
+    expect(within(pop).getByText('Only the first ones are listed.')).toBeTruthy();
+  });
+
+  it('a finished analysis with a cut call says "ran or were attempted"; Italian "Almeno"', async () => {
+    overview.proposals = [proposal('p-new', '2026-10-09T09:00:00.000Z', 'open')];
+    api.getProposalActivity.mockResolvedValue({ hasLog: true, truncated: false, sandboxed: false, entries: [bashUse] } satisfies ProposalActivity);
+    const { unmount } = en(<Brand slug="acme" live={live()} />);
+    expect((await screen.findAllByText('1 command ran or was attempted')).length).toBeGreaterThan(0);
+    unmount();
+    api.getProposalActivity.mockResolvedValue({ hasLog: true, truncated: true, sandboxed: true, entries: [bashUse, bashDone] } satisfies ProposalActivity);
+    render(<I18nProvider locale="it"><Brand slug="acme" live={live()} /></I18nProvider>);
+    expect((await screen.findAllByText('Almeno 1 comando eseguito nella sandbox')).length).toBeGreaterThan(0);
   });
 });

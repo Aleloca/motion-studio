@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { messages, type Locale } from './i18n/index.ts';
 import { issueText, type IssueLike } from './issues.ts';
 import { relativeFileSchema, webUrlSchema } from './library.ts';
+import { usageSummarySchema } from './usage.ts';
+import type { AgentEvent } from './events.ts';
 
 const id = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/, 'issue.id');
 
@@ -112,6 +114,7 @@ export const brandProposalSchema = z.object({
   status: z.enum(['open', 'applied', 'discarded']), summary: z.string().max(5000),
   changes: z.array(brandChangeSchema).max(500), guidelines: z.object({ current: z.string().max(200_000), proposed: z.string().max(200_000) }).nullable(),
   assetsAdded: z.array(relativeFileSchema).max(1000),
+  usage: usageSummarySchema.optional(),
 });
 export type BrandProposal = z.infer<typeof brandProposalSchema>;
 
@@ -119,3 +122,12 @@ export interface BrandOverview {
   kit: BrandKit; kitError: string | null; guidelines: string; sources: BrandSource[]; sourcesError: string | null;
   proposals: BrandProposal[]; jobKey: string;
 }
+
+/** GET /api/projects/:slug/brand/proposals/:id/activity: what ran during an analysis (from its log.jsonl). */
+/** A Bash `tool_result` comes without its output (`content` is always empty): only whether it ended with an error. */
+export interface ProposalActivityEntry { at: string; event: Extract<AgentEvent, { kind: 'auto_approved' } | { kind: 'tool_use' } | { kind: 'tool_result' } | { kind: 'approval_decided' }> }
+/**
+ * `hasLog` false: an older proposal without a log (nothing is shown). `truncated`: the entry or size cap was reached.
+ * `sandboxed`: what the run's session event says (absent in older logs).
+ */
+export interface ProposalActivity { hasLog: boolean; truncated: boolean; entries: ProposalActivityEntry[]; sandboxed?: boolean }

@@ -13,6 +13,16 @@ export function isAppUrl(url: string, origin: string): boolean {
   try { return new URL(url).origin === new URL(origin).origin; } catch { return false; }
 }
 
+export interface IpcSender { sender: unknown; senderFrame: { url: string } | null | undefined }
+
+/**
+ * The IPC origin guard: only `wc`'s own main frame, showing the core's origin, may call the app's handlers. Dev and
+ * packaged builds both load the UI from the core's http origin (http://127.0.0.1:<port>), so one check covers both.
+ */
+export function ipcSenderTrusted(e: IpcSender, wc: { mainFrame: unknown }, origin: string): boolean {
+  return e.sender === wc && e.senderFrame != null && e.senderFrame === wc.mainFrame && isAppUrl(e.senderFrame.url, origin);
+}
+
 export function externalUrlAllowed(url: string): boolean {
   try { return ['https:', 'http:', 'mailto:'].includes(new URL(url).protocol); } catch { return false; }
 }

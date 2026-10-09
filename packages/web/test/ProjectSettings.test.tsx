@@ -1,4 +1,4 @@
-import { workspaceSettingsSchema, type WorkspaceSettings } from '@motion-studio/shared';
+import { workspaceSettingsSchema, type DoctorCheck, type WorkspaceSettings } from '@motion-studio/shared';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -38,12 +38,11 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); __resetToasts(); });
 
 describe('Project settings · sections', () => {
-  it('has General, Agent and approvals, Internet access and Linked code; no automatic approval and no Delete', async () => {
+  it('has General, Agent and approvals, Internet access and Linked code; no Delete', async () => {
     en(page());
     const nav = await screen.findByRole('navigation', { name: 'Project settings sections' });
     expect(within(nav).getAllByRole('button').map((b) => b.textContent)).toEqual(['General', 'Agent and approvals', 'Internet access', 'Linked code1']);
     expect(screen.getByRole('heading', { name: 'Agent and approvals' })).toBeTruthy();
-    expect(screen.queryByText(/automatically/i)).toBeNull();
     expect(screen.queryByText(/Delete project/i)).toBeNull();
   });
 });
@@ -213,6 +212,77 @@ describe('Project settings · agent, internet and code', () => {
     await waitFor(() => expect(api.updateProject).toHaveBeenCalledWith('acme', { linkedCodebases: [{ path: '/Users/me/code/app', note: 'iOS app' }, { path: '/Users/me/code/web' }] }));
     await userEvent.click(screen.getByRole('button', { name: 'Unlink /Users/me/code/app' }));
     await waitFor(() => expect(api.updateProject).toHaveBeenLastCalledWith('acme', { linkedCodebases: [{ path: '/Users/me/code/web' }] }));
+  });
+});
+
+describe('Project settings · automatic approval (Phase 8)', () => {
+  const NAME = 'Approve sandboxed commands automatically';
+  const sandboxOk: DoctorCheck[] = [{ id: 'sandbox', label: 'Sandbox', ok: true, required: false, message: 'ok' }];
+  const job = (id: string, state: 'running' | 'queued' | 'succeeded') => ({ id, key: 'k', kind: 'creative' as const, label: 'x', state, createdAt: at });
+
+  it('is in Agent and approvals with the spec text, applies to new jobs and is shared by every project', async () => {
+    en(<ProjectSettings slug="acme" live={live()} settings={settings} onSettings={onSettings} checks={sandboxOk} />);
+    const row = (await screen.findByText(NAME)).closest('.ms-set-row') as HTMLElement;
+    expect(row.closest('.ms-set-card')!.querySelector('[role="switch"][aria-label="Confirm before using paid services"]')).toBeTruthy();
+    expect(within(row).getByText(/Commands that stay inside this project run without asking; network access stays limited to the allowed sites\. You still decide on files outside the project, paid services and new websites\./)).toBeTruthy();
+    expect(within(row).getByText(/Applies to new jobs/)).toBeTruthy();
+    expect(within(row).getByText('Shared by every project')).toBeTruthy();
+    const sw = within(row).getByRole('switch', { name: NAME });
+    expect(sw.getAttribute('aria-checked')).toBe('true');
+    expect((sw as HTMLButtonElement).disabled).toBe(false);
+    // The status line is the switch's description.
+    expect(document.getElementById(sw.getAttribute('aria-describedby')!)!.textContent).toBe('Applies to new jobs');
+  });
+
+  it('turning it off saves autoApproveSandboxed:false and says every command will ask', async () => {
+    en(<ProjectSettings slug="acme" live={live()} settings={settings} onSettings={onSettings} checks={sandboxOk} />);
+    await userEvent.click(await screen.findByRole('switch', { name: NAME }));
+    expect(api.updateSettings).toHaveBeenCalledWith({ autoApproveSandboxed: false });
+    await waitFor(() => expect(getToasts().map((x) => x.text)).toEqual(['Every command will ask for your OK']));
+  });
+
+  it('turning it on says so, and tells that running jobs keep their setting', async () => {
+    const off = { ...settings, autoApproveSandboxed: false };
+    const jobs = { a: job('a', 'running'), b: job('b', 'queued'), c: job('c', 'succeeded') };
+    en(<ProjectSettings slug="acme" live={live({ jobs })} settings={off} onSettings={onSettings} checks={sandboxOk} />);
+    await userEvent.click(await screen.findByRole('switch', { name: NAME }));
+    expect(api.updateSettings).toHaveBeenCalledWith({ autoApproveSandboxed: true });
+    await waitFor(() => expect(getToasts().map((x) => x.text)).toEqual(['Sandboxed commands now run without asking · Applies to new jobs · 1 running job keeps its current setting']));
+  });
+
+  it('counts every running job in the toast', async () => {
+    const jobs = { a: job('a', 'running'), b: job('b', 'running') };
+    en(<ProjectSettings slug="acme" live={live({ jobs })} settings={settings} onSettings={onSettings} checks={sandboxOk} />);
+    await userEvent.click(await screen.findByRole('switch', { name: NAME }));
+    await waitFor(() => expect(getToasts().map((x) => x.text)).toEqual(['Every command will ask for your OK · Applies to new jobs · 2 running jobs keep their current setting']));
+  });
+
+  it('no toast when the save fails', async () => {
+    api.updateSettings.mockRejectedValueOnce(new Error('disk full'));
+    en(<ProjectSettings slug="acme" live={live()} settings={settings} onSettings={onSettings} checks={sandboxOk} />);
+    await userEvent.click(await screen.findByRole('switch', { name: NAME }));
+    expect((await screen.findByRole('alert')).textContent).toBe('Settings not saved: disk full');
+    expect(getToasts()).toEqual([]);
+  });
+
+  it('is disabled with "Needs agent isolation" when isolation is off or the sandbox is unavailable', async () => {
+    const { rerender } = en(<ProjectSettings slug="acme" live={live()} settings={{ ...settings, sandboxMode: 'off' }} onSettings={onSettings} checks={sandboxOk} />);
+    const sw = await screen.findByRole('switch', { name: NAME }) as HTMLButtonElement;
+    expect(sw.disabled).toBe(true);
+    expect(sw.getAttribute('aria-checked')).toBe('false');
+    const row = sw.closest('.ms-set-row') as HTMLElement;
+    expect(within(row).getByText('Needs agent isolation')).toBeTruthy();
+    // A disabled switch says why.
+    expect(document.getElementById(sw.getAttribute('aria-describedby')!)!.textContent).toBe('Needs agent isolation');
+    await userEvent.click(sw);
+    expect(api.updateSettings).not.toHaveBeenCalled();
+    rerender(<I18nProvider locale="en"><ProjectSettings slug="acme" live={live()} settings={settings} onSettings={onSettings}
+      checks={[{ id: 'sandbox', label: 'Sandbox', ok: false, required: false, message: 'Seatbelt unavailable' }]} /></I18nProvider>);
+    expect((screen.getByRole('switch', { name: NAME }) as HTMLButtonElement).disabled).toBe(true);
+    expect(within(screen.getByRole('switch', { name: NAME }).closest('.ms-set-row') as HTMLElement).getByText('Needs agent isolation')).toBeTruthy();
+    rerender(<I18nProvider locale="en"><ProjectSettings slug="acme" live={live()} settings={settings} onSettings={onSettings} checks={sandboxOk} /></I18nProvider>);
+    expect((screen.getByRole('switch', { name: NAME }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText('Needs agent isolation')).toBeNull();
   });
 });
 

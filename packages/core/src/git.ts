@@ -1,4 +1,5 @@
-import { resolve } from 'node:path';
+import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { execCommand, type CommandExec } from './exec.ts';
 import { KeyedMutex } from './keyed-mutex.ts';
 import { t } from './i18n.ts';
@@ -6,6 +7,34 @@ import { t } from './i18n.ts';
 const IDENTITY = ['-c', 'user.name=Motion Studio', '-c', 'user.email=motion-studio@localhost'];
 /** The agent can write inside the project: hooks and an fsmonitor command planted in the repo must never run. */
 const HARDENED = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
+
+/**
+ * Never versioned, whatever the project's .gitignore says: the sandbox caches and the agent's scratch folders. They go
+ * into `.git/info/exclude` (the agent cannot write `.git/`) rather than an exclude pathspec: git 2.50 makes
+ * `git add -A -- . ':(exclude).cache'` exit 1 when `.cache/` is also gitignored and present.
+ */
+export const LOCAL_EXCLUDES = ['/.cache/', '/creatives/*/work/tmp/'] as const;
+
+/**
+ * Appends the missing LOCAL_EXCLUDES to `<dir>/.git/info/exclude`, keeping its other lines. Skipped when `<dir>/.git`
+ * is not a real folder (projects are always created with `git init`). A symlink in place of the file is replaced,
+ * never followed.
+ */
+async function ensureLocalExcludes(dir: string): Promise<void> {
+  const gitDir = join(dir, '.git');
+  const info = await lstat(gitDir).catch(() => null);
+  if (!info?.isDirectory()) return;
+  await mkdir(join(gitDir, 'info'), { recursive: true });
+  const path = join(gitDir, 'info', 'exclude');
+  const current = await lstat(path).catch(() => null);
+  let text = '';
+  if (current?.isFile()) text = await readFile(path, 'utf8');
+  else if (current) await rm(path, { recursive: true, force: true });
+  const present = new Set(text.split(/\r?\n/).map((l) => l.trim()));
+  const missing = LOCAL_EXCLUDES.filter((l) => !present.has(l));
+  if (missing.length === 0 && current?.isFile()) return;
+  await writeFile(path, `${text}${text === '' || text.endsWith('\n') ? '' : '\n'}${missing.join('\n')}${missing.length ? '\n' : ''}`);
+}
 
 /** The git subcommand, skipping `-c key=value` pairs; the rest (e.g. commit messages) is never echoed. */
 function subcommand(args: string[]): string {
@@ -22,10 +51,12 @@ export class Git {
 
   async init(dir: string): Promise<void> {
     await this.must(dir, ['init', '-q', '-b', 'main']);
+    await ensureLocalExcludes(dir);
   }
 
   commitAll(dir: string, message: string): Promise<string | null> {
     return this.lock.run(resolve(dir), async () => {
+      await ensureLocalExcludes(dir);
       await this.must(dir, ['add', '-A']);
       const status = await this.must(dir, ['status', '--porcelain']);
       if (status.trim() === '') return null;

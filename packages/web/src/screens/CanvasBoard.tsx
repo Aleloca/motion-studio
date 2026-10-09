@@ -5,11 +5,11 @@
 // Zoom: only the frame (media, safe zones) is zoomed. The label above it, "Open editor", the comment markers and the
 // bubble are screen-sized at any zoom (as in Figma): they sit in the frame's box, sized in screen pixels, at the
 // world point × zoom, so nothing scales them and the bubble's text field stays crisp.
-import { channelName, formatName, type FormatPreset, type Pin } from '@motion-studio/shared';
+import { channelName, formatName, outputWarningText, type FormatPreset, type OutputWarning, type Pin } from '@motion-studio/shared';
 import { useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode, type SyntheticEvent } from 'react';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { anim, D, E, isSubmitChord } from '../motion/index.ts';
-import { Button, Icon, Pill, Textarea, cx } from '../ui/index.ts';
+import { Button, Icon, Pill, Popover, Textarea, cx } from '../ui/index.ts';
 import { boardFrame, LABEL_MIN, outputMedia, pointIn, ratioText, toScreen, type BoardModel } from './canvasModel.ts';
 
 export type Tool = 'select' | 'comment' | 'hand';
@@ -89,6 +89,7 @@ export function CanvasBoard(p: BoardProps) {
         {board.preset ? <span className="ms-cv-board-meta">{ratioText(board.preset)}{duration !== null ? ` · ${c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) })}` : ''}</span> : null}
         {p.working && (!board.out || video) ? <Pill spinner>{c.rendering}</Pill> : null}
         {board.out && !board.out.verified ? <Pill tone="warn">{t.web.formatUi.unverified}</Pill> : null}
+        {board.out?.warnings?.filter((w) => w.key === 'outputs.largeFile').map((w, i) => <LargeFileChip key={i} warning={w} />)}
       </div>
       <div className={cx('ms-cv-frame-wrap', narrow && 'ms-narrow')} style={{ width: size.width * zoom, height: size.height * zoom }}>
         <div
@@ -135,6 +136,41 @@ export function CanvasBoard(p: BoardProps) {
       </div>
       {p.footer}
     </div>
+  );
+}
+
+/**
+ * A large-file warning (spec §6): "78 MB · large" in the warn tone with an icon, opening a popover with the whole
+ * recommendation. The text comes from `outputWarningText` and is rendered as text, never as markup.
+ */
+export function LargeFileChip({ warning }: { warning: OutputWarning }) {
+  const t = useT();
+  const c = t.web.canvas;
+  const locale = useLocale();
+  const anchor = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const mb = Number(warning.params.sizeMB);
+  const size = Number.isFinite(mb) ? formatNumber(locale, mb, { maximumFractionDigits: 0 }) : null;
+  const text = outputWarningText(warning, locale);
+  // The popover's title already says "Large file": its text gives only the figures (the full sentence stays the tooltip).
+  const num = (k: string, digits: number) => { const v = Number(warning.params[k]); return Number.isFinite(v) ? formatNumber(locale, v, { maximumFractionDigits: digits }) : null; };
+  const [dSize, dMbps, dTarget] = [num('sizeMB', 1), num('mbps', 1), num('targetMbps', 1)];
+  const channel = typeof warning.params.channel === 'string' ? warning.params.channel : null;
+  const detail = dSize !== null && dMbps !== null && dTarget !== null && channel !== null ? c.largeDetail({ size: dSize, mbps: dMbps, target: dTarget, channel }) : text;
+  return (
+    <>
+      <button ref={anchor} type="button" className="ms-pill ms-warn ms-cv-large" aria-haspopup="dialog" aria-expanded={open}
+        aria-label={size !== null ? c.largeOpen({ size }) : c.largeTitle} title={text}
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}>
+        <Icon name="warn" size={11} />{size !== null ? c.largeChip({ size }) : c.largeTitle}
+      </button>
+      <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="bottom-start" width={300} label={c.largeTitle}>
+        <div className="ms-cv-large-pop">
+          <b>{c.largeTitle}</b>
+          <p>{detail}</p>
+        </div>
+      </Popover>
+    </>
   );
 }
 

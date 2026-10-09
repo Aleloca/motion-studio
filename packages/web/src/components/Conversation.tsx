@@ -1,13 +1,15 @@
-import type { AgentEvent, ApprovalRequest, ConversationEntry, JobSummary, Pin } from '@motion-studio/shared';
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import type { AgentEvent, ApprovalRequest, ConversationEntry, ExplainContext, JobSummary, Pin } from '@motion-studio/shared';
+import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { api, ApiError } from '../api.ts';
 import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
 import { enter, isSubmitChord } from '../motion/index.ts';
 import { isMac } from '../platform.ts';
-import { Button, Empty, Icon, Markdown, Textarea, Typing, cx } from '../ui/index.ts';
+import { Button, Empty, Icon, Markdown, Textarea, Typing, cx, type IconName } from '../ui/index.ts';
 import { message } from '../errors.ts';
 import { ApprovalCard } from './ApprovalCard.tsx';
+import { explanationView, RiskChips } from './RiskChips.tsx';
 import { useApprovalPresence, type ShownApproval } from './approvalPresence.ts';
+import { commandLog, webExplainContext, WorkspacePathContext, type CommandLog, type CommandMark, type CommandRow } from './commandLog.ts';
 
 /**
  * Events of a job across a page reload. `persisted` are the job's agent entries read from conversation.jsonl
@@ -50,6 +52,10 @@ export interface ConversationProps {
   /** After a successful send, with the pins that went with it (pins added meanwhile stay pending). */
   onSent?(sent: { pins: Pin[] }): void;
   onSelectVersion?(n: number): void;
+  /** Extra content of a version card, e.g. its token usage (nothing when it returns null). */
+  versionExtra?(n: number): ReactNode;
+  /** A note under a version card, e.g. its large-file warnings (nothing when it returns null). */
+  versionNote?(n: number): ReactNode;
   /** Socket snapshots received (EventsState.snapshots): a new one is the core's whole state, so stop waiting. */
   snapshots?: number;
 }
@@ -60,29 +66,45 @@ type Item =
   | { key: string; kind: 'step'; at: string; text: string }
   | { key: string; kind: 'fold'; jobId: string; count: number; open: boolean }
   | { key: string; kind: 'error'; at: string; text: string }
-  | { key: string; kind: 'details'; jobId: string; events: AgentEvent[] }
+  | { key: string; kind: 'details'; jobId: string; entries: DetailEntry[]; open: boolean }
+  | { key: string; kind: 'autoline'; jobId: string; log: CommandLog }
   | { key: string; kind: 'version'; at: string; n: number; complete: boolean }
   | { key: string; kind: 'system'; at: string; error: boolean; text: string }
   | { key: string; kind: 'approval'; shown: ShownApproval }
   | { key: string; kind: 'typing' }
   | { key: string; kind: 'retried'; at: string };
 
+/** An Activity details row: a command (or Read) of the command log, or a raw technical event. */
+type DetailEntry = { key: string; row: CommandRow } | { key: string; event: AgentEvent };
+
 const active = (j: JobSummary | undefined) => !!j && (j.state === 'queued' || j.state === 'running');
-const TECHNICAL = new Set<AgentEvent['kind']>(['session', 'tool_use', 'tool_result', 'rate_limit', 'stderr', 'parse_error']);
+// `auto_approved` (Phase 8) and Bash `tool_use` go to Activity details as command rows; `usage` and `approval_decided`
+// are never rows (the live estimate has its own slot in the reducer, the final figure belongs to the version card; a
+// decision shows as the mark of its command).
+const TECHNICAL = new Set<AgentEvent['kind']>(['session', 'tool_use', 'tool_result', 'rate_limit', 'stderr', 'parse_error', 'auto_approved']);
 const same = (a: string, b: string) => a.trim() === b.trim();
 const samePins = (a: Pin[], b: Pin[]) => a.length === b.length
   && a.every((p, i) => { const q = b[i]!; return p.format === q.format && p.x === q.x && p.y === q.y && p.timeSec === q.timeSec && (p.note ?? '') === (q.note ?? ''); });
 
 /** One turn (the agent events of one job) as conversation items: messages, compact steps, summary, details. */
-function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], running: boolean, foldOpen: boolean): Item[] {
+function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], running: boolean, foldOpen: boolean, detailsOpen: boolean, logOf: (jobId: string, events: AgentEvent[], finished: boolean) => CommandLog): Item[] {
   const out: Item[] = [];
   const steps: Item[] = [];
-  const technical: AgentEvent[] = [];
+  const technical: DetailEntry[] = [];
+  // Every command of the turn, with its explanation and whether it ran (see commandLog.ts).
+  const log = logOf(jobId, events.map((e) => e.event), !running);
+  const rowAt = new Map(log.rows.map((r) => [r.key, r]));
   let lastAgent: Extract<Item, { kind: 'agent' }> | null = null;
   let foldAt = -1;
   events.forEach(({ at, event: e }, i) => {
     const key = `${jobId}:${i}`;
-    if (TECHNICAL.has(e.kind)) { technical.push(e); return; }
+    if (TECHNICAL.has(e.kind)) {
+      const row = rowAt.get(`c${i}`);
+      // An automatic approval merged into its tool_use has no row of its own.
+      if (row) technical.push({ key, row });
+      else if (e.kind !== 'auto_approved') technical.push({ key, event: e });
+      return;
+    }
     if (e.kind === 'text') {
       if (!e.text.trim()) return;
       lastAgent = { key, kind: 'agent', at, text: e.text, summary: false };
@@ -94,7 +116,7 @@ function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], r
       if (running) out.push(step);
       else if (foldAt < 0) foldAt = out.length;
     } else if (e.kind === 'result') {
-      technical.push(e);
+      technical.push({ key, event: e });
       if (!e.ok) out.push({ key, kind: 'error', at, text: e.error ?? '' });
       else if (e.text?.trim()) {
         // The final result usually repeats the last message: mark that one as the summary instead of repeating it.
@@ -107,7 +129,10 @@ function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], r
   if (!running && steps.length > 0) {
     out.splice(foldAt, 0, { key: `${jobId}:fold`, kind: 'fold', jobId, count: steps.length, open: foldOpen }, ...(foldOpen ? steps : []));
   }
-  if (technical.length > 0) out.push({ key: `${jobId}:details`, kind: 'details', jobId, events: technical });
+  // A finished turn says how many commands ran (whatever the automatic-approval setting: transparency always), as a
+  // line that opens Activity details.
+  if (!running && log.ran > 0) out.push({ key: `${jobId}:auto`, kind: 'autoline', jobId, log });
+  if (technical.length > 0) out.push({ key: `${jobId}:details`, kind: 'details', jobId, entries: technical, open: detailsOpen });
   return out;
 }
 
@@ -117,12 +142,27 @@ function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], r
  * only in "Activity details", the job's approvals in the flow, typing dots while the agent works (T9), and the
  * composer with the pending comment chips and ⌘↵.
  */
-export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, onSelectVersion, snapshots }: ConversationProps) {
+export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, onSelectVersion, versionExtra, versionNote, snapshots }: ConversationProps) {
   const t = useT();
   const c = t.web.chat;
   const working = active(job);
   const [unfolded, setUnfolded] = useState<ReadonlySet<string>>(new Set());
+  const [detailsOpen, setDetailsOpen] = useState<ReadonlySet<string>>(new Set());
   const { list: shownApprovals, gone } = useApprovalPresence(approvals);
+  const workspace = useContext(WorkspacePathContext);
+  const ctx = useMemo(() => webExplainContext(workspace, slug, creative), [workspace, slug, creative]);
+  // The command log of each turn, kept while its events (count, first and last event), its state and the context are
+  // the same: a live event recomputes only the turn it belongs to.
+  const logCache = useRef(new Map<string, { n: number; first: AgentEvent | undefined; last: AgentEvent | undefined; finished: boolean; ctx: ExplainContext; log: CommandLog }>());
+  const logOf = (jobId: string, events: AgentEvent[], finished: boolean): CommandLog => {
+    const hit = logCache.current.get(jobId);
+    const first = events[0];
+    const last = events[events.length - 1];
+    if (hit && hit.n === events.length && hit.first === first && hit.last === last && hit.finished === finished && hit.ctx === ctx) return hit.log;
+    const log = commandLog(events, ctx, { finished });
+    logCache.current.set(jobId, { n: events.length, first, last, finished, ctx, log });
+    return log;
+  };
 
   // First time each live event (not yet persisted) was seen: its time until the refetch brings the real one.
   const seenAt = useRef(new Map<string, string>());
@@ -151,7 +191,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
       .filter((s) => (jobId === null ? !jobs.has(s.approval.jobId) : s.approval.jobId === jobId))
       .map((s): Item => ({ key: `ap:${s.approval.id}`, kind: 'approval', shown: s }));
     const turn = (jobId: string) => [
-      ...turnItems(jobId, jobs.get(jobId)!, jobId === job?.id && working, unfolded.has(jobId)),
+      ...turnItems(jobId, jobs.get(jobId)!, jobId === job?.id && working, unfolded.has(jobId), detailsOpen.has(jobId), logOf),
       ...approvalsOf(jobId),
     ];
 
@@ -184,7 +224,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     const waiting = shownApprovals.some((s) => !s.leaving && s.approval.jobId === job?.id);
     if (working && !waiting) out.push({ key: 'typing', kind: 'typing' });
     return out;
-  }, [entries, job, live, working, unfolded, shownApprovals]);
+  }, [entries, job, live, working, unfolded, detailsOpen, shownApprovals, ctx]);
 
   // Items present at the first render appear with the panel; later ones enter from +8 px (T9).
   const mounted = useRef(false);
@@ -202,11 +242,22 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     if (el) atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
   };
 
-  const toggleFold = (jobId: string) => setUnfolded((s) => {
+  const toggleIn = (set: typeof setUnfolded) => (jobId: string) => set((s) => {
     const n = new Set(s);
     if (n.has(jobId)) n.delete(jobId); else n.add(jobId);
     return n;
   });
+  const toggleFold = toggleIn(setUnfolded);
+  const toggleDetails = toggleIn(setDetailsOpen);
+  // "Details" on the automatic-approval line: opens that turn's Activity details and moves the focus there.
+  const openDetails = (jobId: string) => {
+    setDetailsOpen((s) => (s.has(jobId) ? s : new Set(s).add(jobId)));
+    requestAnimationFrame(() => {
+      const el = [...(listRef.current?.querySelectorAll<HTMLElement>('[data-details]') ?? [])].find((b) => b.dataset.details === jobId);
+      el?.focus();
+      el?.scrollIntoView?.({ block: 'nearest' });
+    });
+  };
 
   const empty = items.length === 0;
   return (
@@ -215,7 +266,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
         {empty && <li className="ms-convo-empty"><Empty icon="comment" title={c.emptyTitle} sub={c.emptySub} /></li>}
         {items.map((item) => (
           <Row key={item.key} animate={mounted.current && item.kind !== 'approval'}>
-            <ItemView item={item} formatName={formatName} onToggleFold={toggleFold} onSelectVersion={onSelectVersion} onGone={gone} />
+            <ItemView item={item} formatName={formatName} onToggleFold={toggleFold} onToggleDetails={toggleDetails} onOpenDetails={openDetails} onSelectVersion={onSelectVersion} versionExtra={versionExtra} versionNote={versionNote} onGone={gone} />
           </Row>
         ))}
       </ol>
@@ -262,8 +313,9 @@ function PinLabel({ pin, text }: { pin: Pin; text: string }) {
   );
 }
 
-function ItemView({ item, formatName, onToggleFold, onSelectVersion, onGone }: {
-  item: Item; formatName?(id: string): string; onToggleFold(jobId: string): void; onSelectVersion?(n: number): void; onGone(id: string): void;
+function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetails, onSelectVersion, versionExtra, versionNote, onGone }: {
+  item: Item; formatName?(id: string): string; onToggleFold(jobId: string): void; onToggleDetails(jobId: string): void; onOpenDetails(jobId: string): void;
+  onSelectVersion?(n: number): void; versionExtra?(n: number): ReactNode; versionNote?(n: number): ReactNode; onGone(id: string): void;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -318,13 +370,17 @@ function ItemView({ item, formatName, onToggleFold, onSelectVersion, onGone }: {
     case 'error':
       return <p role="alert" className="ms-convo-error">{c.failed({ error: item.text })}</p>;
     case 'details':
-      return <Details events={item.events} />;
+      return <Details jobId={item.jobId} entries={item.entries} open={item.open} onToggle={() => onToggleDetails(item.jobId)} />;
+    case 'autoline':
+      return <AutoLine jobId={item.jobId} log={item.log} onOpen={onOpenDetails} />;
     case 'version':
       return (
         <div className="ms-convo-version">
           <span className={cx('ms-pill', item.complete ? 'ms-ok' : 'ms-warn')}>v{item.n} · {item.complete ? t.web.status.ready : t.web.status.incomplete}</span>
           <span className="ms-grow" />
+          {versionExtra?.(item.n) ?? null}
           <Button size="sm" variant="outline" onClick={() => onSelectVersion?.(item.n)}>{t.web.conversation.viewVersion({ n: item.n })}</Button>
+          {versionNote?.(item.n) ?? null}
         </div>
       );
     case 'system':
@@ -347,11 +403,13 @@ function ItemView({ item, formatName, onToggleFold, onSelectVersion, onGone }: {
   }
 }
 
-/** Technical events of one turn (tools, outputs, logs): folded by default, scrolls inside a bounded box. */
-function Details({ events }: { events: AgentEvent[] }) {
+/**
+ * Technical events of one turn (tools, outputs, logs): folded by default, scrolls inside a bounded box. Every command
+ * (and automatic Read) is a compact row: its mark, the plain summary and the risk chips; the command opens below.
+ */
+function Details({ jobId, entries, open, onToggle }: { jobId: string; entries: DetailEntry[]; open: boolean; onToggle(): void }) {
   const t = useT();
   const k = t.web.chat.detailKinds;
-  const [open, setOpen] = useState(false);
   const id = useId();
   const line = (e: AgentEvent): [string, ReactNode, boolean?] => {
     switch (e.kind) {
@@ -363,23 +421,74 @@ function Details({ events }: { events: AgentEvent[] }) {
       case 'progress': return [k.step, e.text];
       case 'stderr': return [k.log, e.text, true];
       case 'parse_error': return [k.unreadable, e.line, true];
+      // `usage` and `approval_decided` are never handed to Details (see TECHNICAL); commands have their own row below.
+      case 'usage': case 'auto_approved': case 'approval_decided': return ['', ''];
       case 'result': return e.ok ? [k.done, e.text ?? ''] : [k.failed, e.error ?? '', true];
     }
   };
   return (
     <div className="ms-convo-details">
-      <button type="button" className="ms-convo-fold" aria-expanded={open} aria-controls={id} onClick={() => setOpen((o) => !o)}>
-        <Icon name="terminal" size={12} />{t.web.chat.details({ count: events.length })}<Icon name="chevron" size={12} className="ms-chev" />
+      <button type="button" className="ms-convo-fold" aria-expanded={open} aria-controls={id} data-details={jobId} onClick={onToggle}>
+        <Icon name="terminal" size={12} />{t.web.chat.details({ count: entries.length })}<Icon name="chevron" size={12} className="ms-chev" />
       </button>
       {open && (
         <ul id={id} className="ms-convo-log" tabIndex={0}>
-          {events.map((e, i) => {
-            const [kind, value, err] = line(e);
-            return <li key={i}><span className="ms-kind">{kind}</span><span className={cx('ms-val', err && 'ms-err')}>{value}</span></li>;
+          {entries.map((d) => {
+            if ('row' in d) return <CommandRowView key={d.key} row={d.row} />;
+            const [kind, value, err] = line(d.event);
+            return <li key={d.key}><span className="ms-kind">{kind}</span><span className={cx('ms-val', err && 'ms-err')}>{value}</span></li>;
           })}
         </ul>
       )}
     </div>
+  );
+}
+
+/** First line of a command, at most 120 characters: the row title when the explanation is missing. */
+const firstLine = (s: string) => { const l = s.split('\n', 1)[0] ?? ''; return l.length > 120 ? `${l.slice(0, 119)}\u2026` : l; };
+
+/** End-of-turn line: how many commands ran (and how many you approved); "Details" (described by the line) opens Activity details. */
+function AutoLine({ jobId, log, onOpen }: { jobId: string; log: CommandLog; onOpen(jobId: string): void }) {
+  const c = useT().web.chat;
+  const id = useId();
+  return (
+    <p className="ms-convo-autoline">
+      <span className="ms-step-check" aria-hidden="true"><Icon name={log.sandboxed ? 'shield' : 'terminal'} size={13} /></span>
+      <span id={id}>{c.commandsRan({ count: log.ran, approved: log.approved, sandbox: log.sandboxed, attempted: log.attempted })}</span>
+      <span aria-hidden="true">·</span>
+      <Button size="sm" variant="ghost" aria-describedby={id} onClick={() => onOpen(jobId)}>{c.autoDetails}</Button>
+    </p>
+  );
+}
+
+const MARK_ICON: Record<CommandMark, IconName> = { auto: 'check', approved: 'user', denied: 'close', notRun: 'minus', error: 'warn', interrupted: 'pause' };
+
+/**
+ * One command of the log (or an automatic Read): its mark (a check when it ran without asking, "You approved",
+ * "Denied", "Didn't run", "Ended with an error", "Interrupted"), the summary phrase and the chips; the command expands below. Also
+ * the brand activity rows.
+ */
+export function CommandRowView({ row }: { row: CommandRow }) {
+  const t = useT();
+  const c = t.web.chat;
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  // A persisted event may be malformed (older or damaged log): never throw, show the tool and the command instead.
+  const view = explanationView(row.explanation, t);
+  const full = row.kind === 'read' ? row.file : row.command;
+  const mark: CommandMark = row.kind === 'read' ? 'auto' : row.mark;
+  const title = row.kind === 'read' ? c.readFile({ file: firstLine(row.file) }) : view?.title || `Bash: ${firstLine(row.command)}`;
+  return (
+    <li className={cx('ms-convo-auto', row.kind === 'command' && !row.counted && 'ms-convo-auto-off')} data-mark={row.kind === 'read' ? 'read' : row.mark}>
+      <button type="button" className="ms-convo-auto-row" aria-expanded={open} aria-controls={id} onClick={() => setOpen((o) => !o)}>
+        <span className="ms-step-check" aria-hidden="true"><Icon name={row.kind === 'read' ? 'eye' : MARK_ICON[mark]} size={13} strokeWidth={2} /></span>
+        <span className="ms-convo-auto-text">{title}</span>
+        {mark !== 'auto' ? <span className="ms-convo-mark">{c.commandMarks[mark]}</span> : null}
+        {view && row.explanation ? <RiskChips explanation={row.explanation} /> : null}
+        <Icon name="chevron" size={12} className="ms-chev" />
+      </button>
+      {open && <pre id={id} tabIndex={0} aria-label={t.web.approvalUi.fullCommand}>{full}</pre>}
+    </li>
   );
 }
 

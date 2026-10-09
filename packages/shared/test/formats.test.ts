@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { channelName, DEFAULT_FORMATS, formatLabel, formatName, formatsFileSchema, messages } from '../src/index.ts';
+import { videoTargetBitrateKbps, channelName, DEFAULT_FORMATS, formatLabel, formatName, formatsFileSchema, messages } from '../src/index.ts';
 
 describe('DEFAULT_FORMATS', () => {
   it('has unique ids that are valid file stems', () => {
@@ -22,6 +22,34 @@ describe('DEFAULT_FORMATS', () => {
   });
   it('video presets accept mp4 first; image presets accept png first', () => {
     for (const f of DEFAULT_FORMATS) expect(f.extensions[0]).toBe(f.kind === 'video' ? 'mp4' : 'png');
+  });
+});
+
+describe('video target bitrates', () => {
+  it('matches the reference table at 30 fps', () => {
+    expect(videoTargetBitrateKbps(1080, 1920)).toBe(4000);
+    expect(videoTargetBitrateKbps(1080, 1350)).toBe(4000);
+    expect(videoTargetBitrateKbps(1080, 1080)).toBe(3500);
+    expect(videoTargetBitrateKbps(1920, 1080)).toBe(5000);
+    expect(videoTargetBitrateKbps(3840, 2160)).toBe(20000);
+  });
+  it('60 fps adds 50%', () => {
+    expect(videoTargetBitrateKbps(1080, 1920, 60)).toBe(6000);
+    expect(videoTargetBitrateKbps(1920, 1080, 30)).toBe(5000);
+  });
+  it('scales an odd size by pixel count against the nearest reference of its orientation', () => {
+    // 1600x900 landscape: nearest is 1920x1080 -> 5000 x 1.44M/2.0736M = 3472 -> 3500
+    expect(videoTargetBitrateKbps(1600, 900)).toBe(3500);
+    // 886x1920 portrait: nearest is 1080x1350 -> 4000 x 1701120/1458000 = 4667 -> 4700
+    expect(videoTargetBitrateKbps(886, 1920)).toBe(4700);
+  });
+  it('every video preset has a target; maxFileMB only where a limit is documented', () => {
+    for (const f of DEFAULT_FORMATS.filter((x) => x.kind === 'video')) {
+      expect(f.targetBitrateKbps, f.id).toBeGreaterThan(0);
+      expect(f.targetBitrateKbps, f.id).toBe(videoTargetBitrateKbps(f.width, f.height));
+    }
+    const withLimit = DEFAULT_FORMATS.filter((f) => f.maxFileMB !== undefined).map((f) => f.id).sort();
+    expect(withLimit).toEqual(['appstore-preview', 'x-16x9', 'x-1x1', 'youtube-thumbnail']);
   });
 });
 

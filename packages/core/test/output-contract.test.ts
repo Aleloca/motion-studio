@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, symlink, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { FormatPreset } from '@motion-studio/shared';
+import { outputWarningText, versionEntrySchema, type FormatPreset } from '@motion-studio/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { validateOutputs } from '../src/creatives/output-contract.ts';
 import { NoMediaTools, type MediaInfo, type MediaTools } from '../src/media/media-tools.ts';
@@ -64,7 +64,7 @@ describe('validateOutputs', () => {
   });
   it('lists every kind of problem', async () => {
     await manifest([{ ...sq, file: 'sq.mov' }, { ...banner, file: 'banner.gif' }, { format: 'ghost', file: 'g.png', width: 1, height: 1 }]);
-    await writeFile(join(dir, 'banner.gif'), 'x'.repeat(2 * 1024 * 1024));
+    await writeFile(join(dir, 'banner.gif'), 'x'.repeat(2_000_000));
     const r = await validateOutputs({ dir, requested: ['sq', 'banner', 'ghost', 'missing'], presets, durationSec: null, media: NoMediaTools });
     expect(r.problems).toEqual([
       'File non trovato per sq: sq.mov',
@@ -144,5 +144,87 @@ describe('validateOutputs', () => {
       media: fakeMedia({ 'sq.mp4': null }) });
     expect(r.problems).toEqual(['sq.mp4: file non leggibile come media']);
     expect(r.outputs[0]).toMatchObject({ verified: false, preview: null });
+  });
+
+  describe('large-file warnings', () => {
+    const reel: FormatPreset = { id: 'reel', channel: 'Instagram', name: 'Reel', width: 1080, height: 1920, kind: 'video', extensions: ['mp4'], targetBitrateKbps: 4000 };
+    const entry = (durationSec: number | null) => ({ format: 'reel', file: 'reel.mp4', width: 1080, height: 1920, durationSec });
+    const put = async (bytes: number) => { await writeFile(join(dir, 'reel.mp4'), ''); await truncate(join(dir, 'reel.mp4'), bytes); };
+    const media = (durationSec: number | null, fps?: number) => fakeMedia({ 'reel.mp4': { width: 1080, height: 1920, durationSec, ...(fps ? { fps } : {}) } });
+    const run = (m: MediaTools, presetList = [reel]) => validateOutputs({ dir, requested: [presetList[0]!.id], presets: presetList, durationSec: null, media: m });
+    it('warns (never a problem) about a 78 MB / 6 s reel (about 104 Mbps)', async () => {
+      await manifest([entry(6)]);
+      await put(78_000_000);
+      const r = await run(media(6));
+      expect(r.problems).toEqual([]);
+      expect(r.outputs[0]!.warnings).toEqual([{ key: 'outputs.largeFile', params: { sizeMB: 78, mbps: 104, targetMbps: 4, channel: 'Instagram' } }]);
+      expect(outputWarningText(r.outputs[0]!.warnings![0]!, 'en')).toBe('Large file: 78 MB at 104 Mbps (about 4 Mbps is plenty for Instagram)');
+      expect(outputWarningText(r.outputs[0]!.warnings![0]!, 'it')).toContain('104 Mbps');
+    });
+    it('does not warn at a 4 Mbps reel', async () => {
+      await manifest([entry(6)]);
+      await put(3_000_000);
+      const r = await run(media(6));
+      expect(r.problems).toEqual([]);
+      expect(r.outputs[0]!.warnings).toBeUndefined();
+    });
+    it('60 fps raises the target by 50%: 7 Mbps warns at 30 fps but not at 60', async () => {
+      await manifest([entry(6)]);
+      await put(5_250_000); // 7 Mbps over 6 s
+      expect((await run(media(6, 30))).outputs[0]!.warnings).toHaveLength(1);
+      expect((await run(media(6, 60))).outputs[0]!.warnings).toBeUndefined();
+    });
+    it('does not warn on bitrate when the duration is unknown', async () => {
+      await manifest([entry(null)]);
+      await put(78_000_000);
+      const r = await run(NoMediaTools);
+      expect(r.problems).toEqual([]);
+      expect(r.outputs[0]!.warnings).toBeUndefined();
+    });
+    it('a custom video preset without a target derives it from its size and warns, never a problem', async () => {
+      const custom: FormatPreset = { id: 'mine', channel: 'Custom', name: 'Mine', width: 1080, height: 1920, kind: 'video', extensions: ['mp4'] };
+      await manifest([{ format: 'mine', file: 'mine.mp4', width: 1080, height: 1920, durationSec: 6 }]);
+      await writeFile(join(dir, 'mine.mp4'), '');
+      await truncate(join(dir, 'mine.mp4'), 78_000_000);
+      const r = await validateOutputs({ dir, requested: ['mine'], presets: [custom], durationSec: null, media: NoMediaTools });
+      expect(r.problems).toEqual([]);
+      expect(r.outputs[0]!.warnings?.[0]?.params).toMatchObject({ mbps: 104, targetMbps: 4 });
+    });
+    it('never warns on bitrate for GIF or WebM outputs (no H.264 target)', async () => {
+      const multi: FormatPreset = { ...reel, extensions: ['mp4', 'gif', 'webm'] };
+      for (const ext of ['gif', 'webm']) {
+        await manifest([{ ...entry(6), file: `reel.${ext}` }]);
+        await writeFile(join(dir, `reel.${ext}`), '');
+        await truncate(join(dir, `reel.${ext}`), 78_000_000);
+        const r = await validateOutputs({ dir, requested: ['reel'], presets: [multi], durationSec: null, media: NoMediaTools });
+        expect(r.problems, ext).toEqual([]);
+        expect(r.outputs[0]!.warnings, ext).toBeUndefined();
+      }
+    });
+    it('a documented maxFileMB stays a hard problem, for video too', async () => {
+      const x: FormatPreset = { ...reel, maxFileMB: 1 };
+      await manifest([entry(600)]);
+      await put(3 * 1024 * 1024);
+      const r = await run(media(600), [x]);
+      expect(r.problems).toHaveLength(1);
+      expect(r.outputs[0]!.warnings).toBeUndefined();
+    });
+    it('an oversized image stays a hard problem, not a warning', async () => {
+      await manifest([banner]);
+      await writeFile(join(dir, 'banner.png'), '');
+      await truncate(join(dir, 'banner.png'), 3 * 1024 * 1024);
+      const r = await validateOutputs({ dir, requested: ['banner'], presets, durationSec: null, media: NoMediaTools });
+      expect(r.problems).toHaveLength(1);
+      expect(r.outputs[0]!.warnings).toBeUndefined();
+    });
+    it('outputWarningText is safe on unknown keys and non-numeric params', () => {
+      expect(outputWarningText({ key: 'x.y', params: {} }, 'en')).toBe('x.y');
+      expect(outputWarningText({ key: 'outputs.largeFile', params: { sizeMB: 'a', channel: 'X' } }, 'en')).toBe('outputs.largeFile');
+    });
+    it('old versions without warnings still parse', () => {
+      const old = { n: 1, commit: null, sessionId: null, status: 'complete', createdAt: '2026-10-07T10:00:00.000Z', request: 'x',
+        outputs: [{ format: 'sq', file: 'sq.mp4', width: 1, height: 1, durationSec: null, verified: true, preview: null }], problems: [], tools: [], renderCommand: null, basedOn: null };
+      expect(versionEntrySchema.safeParse(old).success).toBe(true);
+    });
   });
 });

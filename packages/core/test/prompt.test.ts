@@ -1,6 +1,8 @@
 import { DEFAULT_FORMATS, type CreativeFile } from '@motion-studio/shared';
+import { homedir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import { buildCreativePrompt, parseStudioBlock } from '../src/creatives/prompt.ts';
+import { buildBrandPrompt, buildDescribePrompt } from '../src/brand/brand-prompt.ts';
 import { CONTEXT_MD } from '../src/project-template.ts';
 
 const creative: CreativeFile = {
@@ -139,4 +141,64 @@ describe('CONTEXT_MD brand section', () => {
 
 describe('CONTEXT_MD language', () => {
   it('is English', () => { expect(CONTEXT_MD).not.toMatch(/[àèéìòù]|\b(italiano|Contratto|Regole|Struttura|Strumenti|Suggerimenti|Brand e asset|progetto|cartella)\b/i); });
+});
+
+describe('buildCreativePrompt encoding guidance', () => {
+  it('includes the encoding guidance for video and images in the delivery prompt', () => {
+    for (const kind of ['first', 'iteration', 'fix'] as const) {
+      const p = buildCreativePrompt({ ...base, kind, userText: 'x' });
+      expect(p).toContain('## Encoding');
+      expect(p).toContain('yuv420p');
+      expect(p).toContain('+faststart');
+      expect(p).toContain('CRF 18');
+      expect(p).toContain('AAC');
+    }
+  });
+  it('gives each video format its target bitrate with maxrate and bufsize', () => {
+    const p = buildCreativePrompt({ ...base, kind: 'first' });
+    expect(p).toMatch(/instagram-post-1x1:.*target ~3500 kbps.*-crf 20 -maxrate 5250k -bufsize 7000k -pix_fmt yuv420p -movflags \+faststart/);
+    expect(p).toMatch(/web-banner-300x250:(?!.*maxrate)/);
+  });
+  it('gives no target or flags to a video preset without mp4/mov (gif/webm only)', () => {
+    const gifOnly = { id: 'custom-gif', channel: 'Custom', name: 'Gif', width: 600, height: 600, kind: 'video' as const, extensions: ['gif', 'webm'] };
+    const creative = { ...base.creative, brief: { ...base.creative.brief, formats: ['custom-gif'] } };
+    const p = buildCreativePrompt({ ...base, presets: [...base.presets, gifOnly], creative, kind: 'first' });
+    expect(p).toMatch(/- custom-gif: .*extensions: gif, webm/);
+    expect(p).not.toMatch(/custom-gif:.*(maxrate|target ~)/);
+  });
+});
+
+describe('Sandbox environment section', () => {
+  const noPaths = (p: string) => { expect(p).not.toMatch(/\/Users\/|\/home\/|C:\\|\/private\//); expect(p).not.toContain(homedir()); };
+  it('is in the creative prompt of every kind, relative and English', () => {
+    for (const kind of ['first', 'iteration', 'fix'] as const) {
+      const p = buildCreativePrompt({ ...base, kind, userText: 'x', sandboxed: true });
+      expect(p).toContain('## Sandbox environment');
+      expect(p).toContain('`.studio`');
+      expect(p).not.toMatch(/everything else is read-only/i);
+      expect(p).toMatch(/headless Chromium/i);
+      expect(p).toMatch(/do not mention these limitations/i);
+      expect(p).toContain("Put check frames and scratch files in `creatives/<slug>/work/tmp/`, not $TMPDIR — reading files outside the project needs the user's approval.");
+      noPaths(p);
+    }
+  });
+  it('is in the brand and describe prompts, short', () => {
+    for (const p of [
+      buildBrandPrompt({ proposalDir: 'brand/proposals/p1', kitFile: 'k', guidelinesFile: 'g', assetsListFile: 'a', summaryFile: 's', sources: [] }, 'it', true),
+      buildDescribePrompt({ outFile: 'o.json', files: ['assets/a.png'] }, 'it', true),
+    ]) {
+      expect(p).toContain('## Sandbox environment');
+      expect(p).toMatch(/do not mention these limitations/i);
+      noPaths(p);
+    }
+  });
+  it('is omitted when the job is not sandboxed', () => {
+    for (const kind of ['first', 'iteration', 'fix'] as const) {
+      const p = buildCreativePrompt({ ...base, kind, userText: 'x' });
+      expect(p).not.toContain('## Sandbox environment');
+      expect(p).not.toMatch(/chromium/i);
+    }
+    expect(buildBrandPrompt({ proposalDir: 'p', kitFile: 'k', guidelinesFile: 'g', assetsListFile: 'a', summaryFile: 's', sources: [] }, 'it')).not.toContain('## Sandbox environment');
+    expect(buildDescribePrompt({ outFile: 'o.json', files: ['assets/a.png'] }, 'it')).not.toContain('## Sandbox environment');
+  });
 });

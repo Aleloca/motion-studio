@@ -4,6 +4,8 @@
   --text: #171717; --muted: #6B6B6B; --faint: #A3A3A3;
   --field: #F2F2F1; --dot: #DEDEDB; --ink: #171717; --inkText: #FFFFFF; --sel: #FFF1EA;
   --ok: #2E7A4C; --okBg: #E4F3EA; --warn: #D9480F; --warnBg: #FFF5EF; --warnLine: #FFD3C0;
+  /* High risk on approval chips (Phase 8): always with an icon and a text prefix, AA on --dangerBg and --panel. */
+  --danger: #B42318; --dangerBg: #FEF3F2;
   --scrim: rgba(23, 23, 23, .32); --shadow: rgba(0, 0, 0, .10); --shadowLg: rgba(0, 0, 0, .22); --bar: #DADAD7;
   --accent: #FF5A1F; --accentText: #C2410C;
   --sans: 'Schibsted Grotesk', ui-sans-serif, system-ui, sans-serif;
@@ -28,7 +30,7 @@
     --bg: #0F0F0F; --panel: #171717; --line: #2A2A2A; --line2: #212121;
     --text: #EDEDED; --muted: #9C9C9C; --faint: #6B6B6B;
     --field: #222222; --dot: #262626; --ink: #EDEDED; --inkText: #0F0F0F; --sel: #2A1A12;
-    --ok: #6FCF97; --okBg: #132A1D; --warn: #FF8A5C; --warnBg: #231711; --warnLine: #55301E;
+    --ok: #6FCF97; --okBg: #132A1D; --warn: #FF8A5C; --warnBg: #231711; --warnLine: #55301E; --danger: #FF8A80; --dangerBg: #2A1414;
     --scrim: rgba(0, 0, 0, .6); --shadow: rgba(0, 0, 0, .5); --shadowLg: rgba(0, 0, 0, .7); --bar: #3A3A3A;
     --accentText: #FF8A5C;
     --toolbar: #232323; --toolbarLine: #333333;
@@ -39,7 +41,7 @@
   --bg: #0F0F0F; --panel: #171717; --line: #2A2A2A; --line2: #212121;
   --text: #EDEDED; --muted: #9C9C9C; --faint: #6B6B6B;
   --field: #222222; --dot: #262626; --ink: #EDEDED; --inkText: #0F0F0F; --sel: #2A1A12;
-  --ok: #6FCF97; --okBg: #132A1D; --warn: #FF8A5C; --warnBg: #231711; --warnLine: #55301E;
+  --ok: #6FCF97; --okBg: #132A1D; --warn: #FF8A5C; --warnBg: #231711; --warnLine: #55301E; --danger: #FF8A80; --dangerBg: #2A1414;
   --scrim: rgba(0, 0, 0, .6); --shadow: rgba(0, 0, 0, .5); --shadowLg: rgba(0, 0, 0, .7); --bar: #3A3A3A;
   --accentText: #FF8A5C;
   --toolbar: #232323; --toolbarLine: #333333;

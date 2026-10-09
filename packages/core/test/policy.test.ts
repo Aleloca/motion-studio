@@ -5,7 +5,7 @@ import { AGENT_ALLOWED_TOOLS, BRAND_ANALYSIS_TOOLS, DESCRIBE_TOOLS } from '../sr
 const base: PolicyInput = {
   kind: 'creative', sandbox: true, home: '/Users/me', configDir: '/Users/me/Library/Application Support/Motion Studio',
   codebases: ['/Users/me/dev/app [ios]'], protectedFiles: [], protectedDirs: [], extraDomains: ['api.acme.io'],
-  projectAllowRules: ['Bash(brew:*)'], mcpTools: ['mcp__studio__report_progress'],
+  projectAllowRules: ['Bash(brew:*)'], mcpTools: ['mcp__studio__report_progress'], autoApproveSandboxed: true,
 };
 type Sb = { sandbox: { enabled: boolean; autoAllowBashIfSandboxed: boolean; filesystem: { denyRead: string[]; denyWrite: string[] }; network?: { allowedDomains: string[] } } };
 
@@ -21,11 +21,10 @@ describe('buildAgentPolicy with sandbox', () => {
     expect(p.disallowedTools[0]).toBe('Edit(//Users/me/dev/app \\[ios\\]/**)');
     expect(p.allowedTools).toEqual(['Bash(brew:*)', 'mcp__studio__report_progress']);
   });
-  it('brand analysis: no sandbox network, narrow tools, no auto-allowed Bash, protected files', () => {
+  it('brand analysis: no sandbox network, narrow tools, protected files', () => {
     const p = buildAgentPolicy({ ...base, kind: 'brand-analysis', codebases: [], protectedFiles: ['/p/brand/brand-kit.json'] });
     const s = p.settings as Sb;
     expect(s.sandbox.network).toBeUndefined();
-    expect(s.sandbox.autoAllowBashIfSandboxed).toBe(false);
     expect(s.sandbox.filesystem.denyWrite).toEqual(['/p/brand/brand-kit.json']);
     expect(p.allowedTools.slice(0, BRAND_ANALYSIS_TOOLS.length)).toEqual([...BRAND_ANALYSIS_TOOLS]);
     expect(p.disallowedTools).toEqual(expect.arrayContaining(['Write(//p/brand/brand-kit.json)']));
@@ -33,6 +32,30 @@ describe('buildAgentPolicy with sandbox', () => {
   it('describe: no network at all', () => {
     const s = buildAgentPolicy({ ...base, kind: 'describe', codebases: [] }).settings as Sb;
     expect(s.sandbox.network).toBeUndefined();
+  });
+});
+
+describe('buildAgentPolicy cache env', () => {
+  const input = { ...base, projectDir: '/w/acme', protectedDirs: ['/w/acme/.git', '/w/acme/.claude', '/w/acme/.studio'] };
+  it('sets every cache and download variable inside <project>/.cache, only when sandboxed', () => {
+    for (const kind of ['creative', 'console', 'brand-analysis', 'describe'] as const) {
+      const env = buildAgentPolicy({ ...input, kind }).env;
+      expect(env).toMatchObject({
+        npm_config_cache: '/w/acme/.cache/npm', PIP_CACHE_DIR: '/w/acme/.cache/pip', XDG_CACHE_HOME: '/w/acme/.cache/xdg',
+        PNPM_STORE_DIR: '/w/acme/.cache/pnpm-store', YARN_CACHE_FOLDER: '/w/acme/.cache/yarn',
+        PUPPETEER_SKIP_DOWNLOAD: '1', PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1', npm_config_update_notifier: 'false', PIP_DISABLE_PIP_VERSION_CHECK: '1',
+      });
+      for (const v of Object.values(env)) expect(v).not.toContain('/Users/me');
+      // npm 11 warns 'Unknown env config "store-dir"' on every command; pnpm reads PNPM_STORE_DIR.
+      expect(env).not.toHaveProperty('npm_config_store_dir');
+    }
+    expect(buildAgentPolicy({ ...input, sandbox: false }).env).toEqual({});
+  });
+  it('the cache folder is writable (inside the project, no deny rule covers it) and not protected', () => {
+    const p = buildAgentPolicy(input);
+    const deny = (p.settings as Sb).sandbox.filesystem.denyWrite;
+    expect(deny.some((d) => '/w/acme/.cache'.startsWith(d) || d.startsWith('/w/acme/.cache'))).toBe(false);
+    expect(p.disallowedTools.some((d) => d.includes('/w/acme/.cache'))).toBe(false);
   });
 });
 
@@ -87,5 +110,25 @@ describe('buildAgentPolicy without sandbox', () => {
     expect(buildAgentPolicy({ ...base, sandbox: false }).settings).toBeNull();
     expect(buildAgentPolicy({ ...base, sandbox: false, projectAllowRules: [], mcpTools: [] }).allowedTools).toEqual([...AGENT_ALLOWED_TOOLS]);
     expect(buildAgentPolicy({ ...base, kind: 'describe', sandbox: false, projectAllowRules: [], mcpTools: [] }).allowedTools).toEqual([...DESCRIBE_TOOLS]);
+  });
+});
+
+describe('buildAgentPolicy automatic approval (spec §3.2)', () => {
+  const kinds = ['creative', 'brand-analysis', 'describe', 'console'] as const;
+  it('sandboxed: autoAllowBashIfSandboxed follows the setting for every kind', () => {
+    for (const kind of kinds) {
+      for (const autoApproveSandboxed of [true, false]) {
+        const s = buildAgentPolicy({ ...base, kind, autoApproveSandboxed }).settings as Sb;
+        expect(s.sandbox.autoAllowBashIfSandboxed, `${kind} ${autoApproveSandboxed}`).toBe(autoApproveSandboxed);
+      }
+    }
+  });
+  it('not sandboxed: the setting changes nothing', () => {
+    for (const kind of kinds) {
+      const on = buildAgentPolicy({ ...base, kind, sandbox: false, autoApproveSandboxed: true });
+      const off = buildAgentPolicy({ ...base, kind, sandbox: false, autoApproveSandboxed: false });
+      expect(on).toEqual(off);
+      expect(on.settings).toBeNull();
+    }
   });
 });

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ATTENTION_CLICK, attentionHandlers, badgeArg, notifyArgs, registerAttention, sendAttentionClick, showKept, type AttentionDeps } from '../src/notify.ts';
+import { ATTENTION_CLICK, attentionHandlers, badgeArg, notificationOptions, notifyArgs, registerAttention, sendAttentionClick, showKept, type AttentionDeps } from '../src/notify.ts';
 
 vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld: vi.fn() },
@@ -52,10 +52,10 @@ describe('argument validation', () => {
 
 describe('main handlers', () => {
   const event = { sender: 'win' } as never;
-  function deps(trusted = true) {
-    const shown: Array<{ title: string; body: string }> = [];
+  function deps(trusted = true, supported = true) {
+    const shown: Array<{ title: string; body: string; sound?: boolean }> = [];
     const dock = { setBadge: vi.fn(), bounce: vi.fn(() => 1) };
-    const d: AttentionDeps = { trusted: () => trusted, showNotification: (a) => { shown.push(a); }, dock, invalid: () => new Error('Invalid request') };
+    const d: AttentionDeps = { trusted: () => trusted, isSupported: () => supported, showNotification: async (a) => { shown.push(a); return { shown: true }; }, dock, invalid: () => new Error('Invalid request') };
     return { d, shown, dock };
   }
 
@@ -108,12 +108,64 @@ describe('main handlers', () => {
   it('registers both channels on ipcMain', () => {
     const handle = vi.fn();
     registerAttention({ handle }, deps().d);
-    expect(handle.mock.calls.map((c) => c[0])).toEqual(['ms:notify', 'ms:badge']);
+    expect(handle.mock.calls.map((c) => c[0])).toEqual(['ms:notify', 'ms:notify-status', 'ms:badge']);
   });
 
   it('is wired in main.ts with the same origin guard as the other IPC handlers', () => {
     const main = readFileSync(join(__dirname, '..', 'src', 'main.ts'), 'utf8');
     expect(main).toMatch(/registerAttention\(ipcMain, \{\s*trusted,/);
+  });
+});
+
+describe('notification sound and visibility', () => {
+  const event = { sender: 'win' } as never;
+  const mk = (trusted = true, supported = true) => {
+    const shown: unknown[] = [];
+    const d: AttentionDeps = { trusted: () => trusted, isSupported: () => supported, showNotification: async (a) => { shown.push(a); return { shown: true }; }, dock: undefined, invalid: () => new Error('Invalid request') };
+    return { d, shown };
+  };
+  const base = { title: 'T', body: 'b' };
+
+  it('sound on: silent false, plus the named sound on macOS only', () => {
+    expect(notificationOptions({ ...base, sound: true }, 'darwin')).toEqual({ ...base, silent: false, sound: 'Glass' });
+    expect(notificationOptions({ ...base, sound: true }, 'win32')).toEqual({ ...base, silent: false });
+    expect(notificationOptions({ ...base, sound: true }, 'linux')).toEqual({ ...base, silent: false });
+    expect(notificationOptions(base, 'darwin').silent).toBe(false); // absent = default sound
+  });
+  it('sound off: silent true, no sound name', () => {
+    expect(notificationOptions({ ...base, sound: false }, 'darwin')).toEqual({ ...base, silent: true });
+  });
+  it('accepts a boolean sound and rejects anything else', () => {
+    expect(notifyArgs({ ...base, sound: false })).toEqual({ ...base, sound: false });
+    expect(notifyArgs({ ...base, sound: true })).toEqual({ ...base, sound: true });
+    for (const bad of ['false', 0, 1, null, {}, []]) expect(notifyArgs({ ...base, sound: bad })).toBeNull();
+    const { d, shown } = mk();
+    expect(() => attentionHandlers(d).notify(event, { ...base, sound: 'yes' })).toThrow('Invalid request');
+    expect(shown).toEqual([]);
+  });
+  it('reports "not shown" (not an error) when notifications are not supported', async () => {
+    const { d, shown } = mk(true, false);
+    await expect(attentionHandlers(d).notify(event, base)).resolves.toEqual({ shown: false, reason: 'unsupported' });
+    expect(shown).toEqual([]);
+    expect(attentionHandlers(d).status(event)).toEqual({ supported: false });
+    expect(attentionHandlers(mk().d).status(event)).toEqual({ supported: true });
+  });
+  it('keeps the origin check on notify and status', () => {
+    const { d, shown } = mk(false);
+    expect(() => attentionHandlers(d).notify(event, { ...base, sound: true })).toThrow('Invalid request');
+    expect(() => attentionHandlers(d).status(event)).toThrow('Invalid request');
+    expect(shown).toEqual([]);
+  });
+  it('preload exposes notifyStatus over ms:notify-status and forwards sound', async () => {
+    const electron = await import('electron');
+    vi.mocked(electron.contextBridge.exposeInMainWorld).mockClear();
+    vi.resetModules();
+    await import('../src/preload.ts');
+    const bridge = vi.mocked((await import('electron')).contextBridge.exposeInMainWorld).mock.calls[0]![1] as { notify(p: unknown): Promise<void>; notifyStatus(): Promise<unknown> };
+    await bridge.notify({ ...base, sound: false });
+    expect(electron.ipcRenderer.invoke).toHaveBeenLastCalledWith('ms:notify', { ...base, sound: false });
+    await bridge.notifyStatus();
+    expect(electron.ipcRenderer.invoke).toHaveBeenLastCalledWith('ms:notify-status');
   });
 });
 
@@ -172,5 +224,127 @@ describe('notification clicks (D1)', () => {
     // A non-function is ignored.
     expect(typeof bridge.onAttentionClick('nope')).toBe('function');
     expect(on).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('notification outcome (shown or blocked by the system)', () => {
+  type Listener = (...a: unknown[]) => void;
+  class FakeNotification {
+    static made: FakeNotification[] = [];
+    handlers: Record<string, Listener[]> = {};
+    shows = 0;
+    constructor(readonly opts: unknown) { FakeNotification.made.push(this); }
+    on(ev: string, fn: Listener) { (this.handlers[ev] ??= []).push(fn); return this; }
+    emit(ev: string, ...a: unknown[]) { for (const fn of this.handlers[ev] ?? []) fn(...a); }
+    show() { this.shows++; }
+  }
+  afterEach(() => { FakeNotification.made = []; vi.useRealTimers(); });
+
+  it("resolves shown on the 'show' event", async () => {
+    const live = new Set<FakeNotification>();
+    const n = new FakeNotification({});
+    const p = showKept(live, n, () => {});
+    expect(n.shows).toBe(1);
+    n.emit('show', {});
+    await expect(p).resolves.toEqual({ shown: true });
+    expect(live.has(n)).toBe(true); // still kept for its click
+  });
+
+  it("resolves blocked with the system's reason on 'failed' (macOS: UNErrorDomain 1 for a dev build)", async () => {
+    const live = new Set<FakeNotification>();
+    const n = new FakeNotification({});
+    const p = showKept(live, n, () => {});
+    n.emit('failed', {}, 'The operation couldn’t be completed. (UNErrorDomain error 1.)');
+    await expect(p).resolves.toEqual({ shown: false, reason: 'failed', detail: 'The operation couldn’t be completed. (UNErrorDomain error 1.)' });
+    expect(live.size).toBe(0);
+  });
+
+  it('a synchronous throw from show() settles failed at once, clears the timer and drops the notification', async () => {
+    vi.useFakeTimers();
+    const live = new Set<FakeNotification>();
+    const n = new FakeNotification({});
+    n.show = () => { throw new Error('Notification center unavailable'); };
+    const p = showKept(live, n, () => {}, 5000);
+    await expect(p).resolves.toEqual({ shown: false, reason: 'failed', detail: 'Notification center unavailable' });
+    expect(live.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('a timed-out notification is no longer kept', async () => {
+    vi.useFakeTimers();
+    const live = new Set<FakeNotification>();
+    const n = new FakeNotification({});
+    const p = showKept(live, n, () => {}, 5000);
+    expect(live.has(n)).toBe(true);
+    vi.advanceTimersByTime(5000);
+    await expect(p).resolves.toEqual({ shown: false, reason: 'timeout' });
+    expect(live.size).toBe(0);
+  });
+
+  it("resolves not shown when no 'show' arrives in time", async () => {
+    vi.useFakeTimers();
+    const n = new FakeNotification({});
+    const p = showKept(new Set<FakeNotification>(), n, () => {}, 5000);
+    vi.advanceTimersByTime(4999);
+    let settled = false;
+    void p.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    vi.advanceTimersByTime(1);
+    await expect(p).resolves.toEqual({ shown: false, reason: 'timeout' });
+    n.emit('show', {}); // late: the outcome is already reported
+    await expect(p).resolves.toEqual({ shown: false, reason: 'timeout' });
+  });
+
+  it('notify answers the outcome; an unsupported platform is "not shown", not an error, and does not bounce', async () => {
+    const event = { sender: 'win' } as never;
+    const dock = { setBadge: vi.fn(), bounce: vi.fn(() => 1) };
+    const base: AttentionDeps = { trusted: () => true, isSupported: () => true, showNotification: async () => ({ shown: false, reason: 'failed', detail: 'denied' }), dock, invalid: () => new Error('Invalid request') };
+    await expect(attentionHandlers(base).notify(event, { title: 'T', body: 'b' })).resolves.toEqual({ shown: false, reason: 'failed', detail: 'denied' });
+    expect(dock.bounce).toHaveBeenCalledTimes(1);
+    const show = vi.fn();
+    await expect(attentionHandlers({ ...base, isSupported: () => false, showNotification: show }).notify(event, { title: 'T', body: 'b' })).resolves.toEqual({ shown: false, reason: 'unsupported' });
+    expect(show).not.toHaveBeenCalled();
+    expect(dock.bounce).toHaveBeenCalledTimes(1);
+  });
+
+  it('clips a long system reason', async () => {
+    const n = new FakeNotification({});
+    const p = showKept(new Set<FakeNotification>(), n, () => {});
+    n.emit('failed', {}, 'x'.repeat(500));
+    const o = await p;
+    expect(o.shown).toBe(false);
+    expect((o as { detail: string }).detail.length).toBeLessThanOrEqual(200);
+  });
+
+  it('renderer → preload → ms:notify → origin check → validation → Notification.show, end to end with a dev origin', async () => {
+    // The real preload and the real handlers, joined by a fake IPC that carries the sender like Electron does.
+    const handlers = new Map<string, (e: unknown, arg: unknown) => unknown>();
+    const mainFrame = { url: 'http://127.0.0.1:64278/#/' };
+    const wc = { mainFrame };
+    const sentEvent = { sender: wc, senderFrame: mainFrame };
+    const electron = await import('electron');
+    vi.mocked(electron.ipcRenderer.invoke).mockImplementation(async (channel: string, arg?: unknown) => handlers.get(channel)!(sentEvent, arg) as never);
+    vi.mocked(electron.contextBridge.exposeInMainWorld).mockClear();
+    vi.resetModules();
+    await import('../src/preload.ts');
+    const bridge = vi.mocked((await import('electron')).contextBridge.exposeInMainWorld).mock.calls[0]![1] as { notify(p: unknown): Promise<unknown> };
+    const { ipcSenderTrusted } = await import('../src/window.ts');
+    const live = new Set<FakeNotification>();
+    const reached: unknown[] = [];
+    registerAttention({ handle: (ch, fn) => { handlers.set(ch, fn as never); } }, {
+      trusted: (e) => ipcSenderTrusted(e, wc, 'http://127.0.0.1:64278'),
+      isSupported: () => true,
+      showNotification: (args) => { reached.push(args); const n = new FakeNotification(notificationOptions(args, 'darwin')); const p = showKept(live, n, () => {}); queueMicrotask(() => n.emit('show', {})); return p; },
+      dock: undefined,
+      invalid: () => new Error('Invalid request'),
+    });
+    await expect(bridge.notify({ title: 'Motion Studio: approval needed', body: 'Open a web page', sound: true })).resolves.toEqual({ shown: true });
+    expect(reached).toEqual([{ title: 'Motion Studio: approval needed', body: 'Open a web page', sound: true }]);
+    expect(FakeNotification.made[0]!.opts).toEqual({ title: 'Motion Studio: approval needed', body: 'Open a web page', silent: false, sound: 'Glass' });
+    // Another origin in the same window is still refused before anything is shown.
+    mainFrame.url = 'https://evil.example/';
+    await expect(bridge.notify({ title: 'T', body: 'b' })).rejects.toThrow('Invalid request');
+    expect(reached).toHaveLength(1);
   });
 });

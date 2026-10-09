@@ -34,6 +34,15 @@ export function setNotifyReady(on: boolean): void {
   try { localStorage.setItem(NOTIFY_READY_KEY, String(on)); } catch { /* storage unavailable: keep the default */ }
 }
 
+/** localStorage key of the "Play a sound" setting (Settings → Notifications). Default on. */
+export const NOTIFY_SOUND_KEY = 'motion-studio.notifySound';
+export function notifySoundEnabled(): boolean {
+  try { return localStorage.getItem(NOTIFY_SOUND_KEY) !== 'false'; } catch { return true; }
+}
+export function setNotifySound(on: boolean): void {
+  try { localStorage.setItem(NOTIFY_SOUND_KEY, String(on)); } catch { /* storage unavailable: keep the default */ }
+}
+
 /** The window is in the background: hidden, or visible without the focus. */
 export function appInBackground(): boolean {
   try { return document.visibilityState === 'hidden' || !document.hasFocus(); } catch { return false; }
@@ -45,20 +54,72 @@ function quietly(call: () => unknown): void {
 }
 
 /**
+ * What happened to a notification: `sent` (the system showed it: Electron's / the browser's 'show' event), `blocked` (the
+ * system refused it, cannot show notifications, or did not confirm it in time; `detail` is the system's own message when
+ * there is one), `unconfirmed` (a desktop app older than this check answers nothing), `skipped` (web: a focused page
+ * already has the toast).
+ */
+export type NotificationResult = { state: 'sent' } | { state: 'blocked'; detail?: string; /** Desktop: why (a refusal, no answer in time, no support); absent on the web. */ reason?: BlockedReason } | { state: 'unconfirmed' } | { state: 'skipped' };
+export type BlockedReason = 'failed' | 'timeout' | 'unsupported';
+/** How long the web Notification may take to report 'show' (the desktop main process has its own, shorter wait). */
+export const WEB_SHOW_TIMEOUT_MS = 5000;
+
+function desktopResult(o: unknown): NotificationResult {
+  if (!o || typeof o !== 'object' || !('shown' in o)) return { state: 'unconfirmed' };
+  if ((o as { shown: unknown }).shown === true) return { state: 'sent' };
+  const { detail, reason } = o as { detail?: unknown; reason?: unknown };
+  // An unknown reason from a newer or damaged main process is treated as a refusal.
+  const why: BlockedReason = reason === 'timeout' || reason === 'unsupported' ? reason : 'failed';
+  return typeof detail === 'string' && detail ? { state: 'blocked', reason: why, detail } : { state: 'blocked', reason: why };
+}
+
+/** A web Notification's outcome: 'show' → sent; 'error' or nothing within the timeout → blocked. */
+function webResult(n: Notification): Promise<NotificationResult> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve({ state: 'blocked' }), WEB_SHOW_TIMEOUT_MS);
+    n.onshow = () => { clearTimeout(timer); resolve({ state: 'sent' }); };
+    n.onerror = () => { clearTimeout(timer); resolve({ state: 'blocked' }); };
+  });
+}
+
+/**
+ * Shows a notification and answers what the system did with it (used by the Settings test button; the automatic path
+ * ignores it). Rejects only for a real error: a refused request, or (web) a missing permission or API, with the reason.
+ * Desktop: the main process validates the arguments, plays the sound per `sound` and reports whether the system showed
+ * it. Web: the Notification API needs the user's permission; the browser has no sound control, so `silent: !sound`.
+ * `onlyAway` keeps the web rule "a focused page already has the toast".
+ */
+export async function sendNotification(raw: { title: string; body: string }, onlyAway = false): Promise<NotificationResult> {
+  const p = { title: clip(raw.title), body: clip(raw.body), sound: notifySoundEnabled() };
+  const d = desktop();
+  if (typeof d?.notify === 'function') return desktopResult(await d.notify(p));
+  if (typeof Notification === 'undefined') throw new Error('unsupported');
+  if (Notification.permission !== 'granted') throw new Error(Notification.permission);
+  const away = document.visibilityState === 'hidden' || !document.hasFocus();
+  if (onlyAway && !away) return { state: 'skipped' };
+  return webResult(new Notification(p.title, { body: p.body, silent: !p.sound }));
+}
+
+/**
  * Desktop: native notification from the main process, also with the window visible (the main process bounces the Dock
  * with it). Web: the Notification API when the user granted it and the page is hidden or not focused (on a focused page
- * the toast is enough). Texts are clipped to what the main process accepts.
+ * the toast is enough). Texts are clipped to what the main process accepts. Failures are swallowed.
  */
 export function showNotification(raw: { title: string; body: string }): void {
-  const p = { title: clip(raw.title), body: clip(raw.body) };
+  quietly(() => sendNotification(raw, true));
+}
+
+export type NotificationStatus = 'ok' | 'unsupported' | 'default' | 'denied';
+/** Whether notifications can be seen: the main process answers on desktop, `Notification.permission` on the web. */
+export async function notificationStatus(): Promise<NotificationStatus> {
   const d = desktop();
-  if (typeof d?.notify === 'function') { quietly(() => d.notify!(p)); return; }
-  try {
-    const away = document.visibilityState === 'hidden' || !document.hasFocus();
-    if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && away) {
-      new Notification(p.title, { body: p.body });
-    }
-  } catch { /* some browsers only allow notifications from a service worker */ }
+  if (d) {
+    if (typeof d.notifyStatus !== 'function') return 'ok';
+    try { return (await d.notifyStatus()).supported ? 'ok' : 'unsupported'; } catch { return 'unsupported'; }
+  }
+  if (typeof Notification === 'undefined') return 'unsupported';
+  const perm = Notification.permission;
+  return perm === 'granted' ? 'ok' : perm === 'denied' ? 'denied' : 'default';
 }
 
 /** Subscribes to clicks on the desktop app's notifications (nothing on the web); returns the unsubscribe. */

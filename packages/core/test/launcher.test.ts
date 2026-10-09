@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { workspaceSettingsSchema } from '@motion-studio/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
-import { AgentLauncher, sweepRunDir } from '../src/agent/launcher.ts';
+import { AgentLauncher, sweepRunDir, type LauncherDeps } from '../src/agent/launcher.ts';
 import type { AgentRunner } from '../src/agent/runner.ts';
 import { ApprovalBroker } from '../src/approvals/broker.ts';
 import { PermissionsStore } from '../src/approvals/permissions-store.ts';
@@ -18,6 +18,7 @@ import { testLauncher } from './helpers/launcher.ts';
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const cleanup: string[] = [];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   delete process.env.FAKE_CLAUDE_ARGS_FILE;
   for (const d of cleanup.splice(0)) await rm(d, { recursive: true, force: true });
 });
@@ -39,12 +40,68 @@ async function launch(over: Parameters<typeof testLauncher>[1], kind: 'creative'
   const launcher = testLauncher(new ClaudeCodeRunner([process.execPath, FAKE]), over);
   const run = await launcher.start({ kind, jobId: 'j1', projectSlug: 'acme', projectDir: dir, codebases: [], request: { prompt: 'ciao' }, onEvent: () => {} });
   await run.done;
-  const { args, env, mcpTimeout, mcpConfigFile, tokenFile, envKeys } = JSON.parse(await readFile(argsFile, 'utf8'));
-  return { args: args as string[], env, mcpTimeout, envKeys: envKeys as string[], tokenFile: tokenFile as { path: string; mode: number; content: string } | null, mcpConfigFile: mcpConfigFile as { path: string; mode: number | null; content: string | null } | null, launcher, projectDir: dir };
+  const { args, env, mcpTimeout, mcpConfigFile, tokenFile, envKeys, cacheEnv } = JSON.parse(await readFile(argsFile, 'utf8'));
+  return { cacheEnv: cacheEnv as Record<string, string | null>, args: args as string[], env, mcpTimeout, envKeys: envKeys as string[], tokenFile: tokenFile as { path: string; mode: number; content: string } | null, mcpConfigFile: mcpConfigFile as { path: string; mode: number | null; content: string | null } | null, launcher, projectDir: dir };
 }
 
 const protectedDirRules = (dir: string, name: string) => ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].map((t) => `${t}(/${escapeGlob(join(dir, name))}/**)`);
 const studioRules = (dir: string) => protectedDirRules(dir, '.studio');
+
+describe('AgentLauncher sandbox caches', () => {
+  it('points the caches at <project>/.cache only when sandboxed', { timeout: 20_000 }, async () => {
+    vi.stubEnv('HOME', '/fake-home-for-test');
+    // Restored even when the launch throws: a stubbed HOME must never leak into later tests.
+    let on: Awaited<ReturnType<typeof launch>>;
+    try { on = await launch({ sandbox: async () => ({ available: true, reason: 'ok' }) }); } finally { vi.unstubAllEnvs(); }
+    // No cache variable may point into the (fake) real HOME: every one is inside the project.
+    for (const k of ['npm_config_cache', 'PIP_CACHE_DIR', 'XDG_CACHE_HOME'] as const) {
+      expect(on.cacheEnv[k], k).not.toContain('/fake-home-for-test');
+      expect(on.cacheEnv[k], k).toContain(on.projectDir);
+    }
+    expect(on.cacheEnv.npm_config_cache).toBe(join(on.projectDir, '.cache', 'npm'));
+    expect(on.cacheEnv.PIP_CACHE_DIR).toBe(join(on.projectDir, '.cache', 'pip'));
+    expect(on.cacheEnv.XDG_CACHE_HOME).toBe(join(on.projectDir, '.cache', 'xdg'));
+    expect(on.cacheEnv.PUPPETEER_SKIP_DOWNLOAD).toBe('1');
+    expect(on.cacheEnv.HOME).toBe('/fake-home-for-test');
+    const off = await launch({});
+    expect(off.cacheEnv.npm_config_cache).toBe(process.env.npm_config_cache ?? null);
+    expect(off.cacheEnv.PUPPETEER_SKIP_DOWNLOAD).toBe(null);
+    const sandboxOff = await launch({ sandbox: async () => ({ available: true, reason: 'ok' }), settings: { sandboxMode: 'off' } });
+    expect(sandboxOff.cacheEnv.PIP_CACHE_DIR).toBe(null);
+  });
+});
+
+describe('AgentLauncher sandbox decision', () => {
+  it('a sandbox turned off between the prompt and start wins: the override can only downgrade, never claim a sandbox', { timeout: 20_000 }, async () => {
+    const dir = await newProject();
+    const argsFile = join(dir, 'args.json');
+    process.env.FAKE_CLAUDE_ARGS_FILE = argsFile;
+    let mode: 'auto' | 'off' = 'auto';
+    const base = testLauncher(new ClaudeCodeRunner([process.execPath, FAKE]), { sandbox: async () => ({ available: true, reason: 'ok' }) });
+    const launcher = new AgentLauncher({ ...(base as unknown as { deps: LauncherDeps }).deps, settings: async () => workspaceSettingsSchema.parse({ schemaVersion: 1, sandboxMode: mode }) });
+    const decided = await launcher.sandboxed(); // what the prompt claims
+    mode = 'off'; // toggled after the prompt was built
+    const run = await launcher.start({ kind: 'creative', jobId: 'j1', projectSlug: 'acme', projectDir: dir, codebases: [], request: { prompt: 'ciao' }, onEvent: () => {}, sandboxed: decided });
+    await run.done;
+    const { cacheEnv, args } = JSON.parse(await readFile(argsFile, 'utf8'));
+    expect(decided).toBe(true);
+    // The safe direction: the job runs unsandboxed (asking as usual) even though the prompt said sandboxed.
+    expect(cacheEnv.npm_config_cache).not.toBe(join(dir, '.cache', 'npm')); // whatever the parent env had, not the project cache
+    expect(args).not.toContain('--settings');
+  });
+  it('the override keeps the prompt and the policy in agreement when nothing changes', { timeout: 20_000 }, async () => {
+    const dir = await newProject();
+    const argsFile = join(dir, 'args.json');
+    process.env.FAKE_CLAUDE_ARGS_FILE = argsFile;
+    const launcher = testLauncher(new ClaudeCodeRunner([process.execPath, FAKE]), { sandbox: async () => ({ available: true, reason: 'ok' }) });
+    const decided = await launcher.sandboxed();
+    await (await launcher.start({ kind: 'creative', jobId: 'j1', projectSlug: 'acme', projectDir: dir, codebases: [], request: { prompt: 'ciao' }, onEvent: () => {}, sandboxed: decided })).done;
+    const { cacheEnv, args } = JSON.parse(await readFile(argsFile, 'utf8'));
+    expect(decided).toBe(true);
+    expect(cacheEnv.npm_config_cache).toBe(join(dir, '.cache', 'npm'));
+    expect(args).toContain('--settings');
+  });
+});
 
 describe('AgentLauncher', () => {
   it('without sandbox and MCP keeps the phase 3 behaviour plus project rules (never provider rules)', { timeout: 20_000 }, async () => {
@@ -301,5 +358,26 @@ describe('AgentLauncher', () => {
     });
     await (await launcher.start({ kind: 'describe', jobId: 'j6', projectSlug: 'acme', projectDir, request: { prompt: 'x' }, onEvent: () => {} })).done;
     expect(reads).toBe(1);
+  });
+
+  it("stamps the run's session event with the job's sandbox decision (count work)", { timeout: 20_000 }, async () => {
+    const projectDir = await newProject();
+    const runner: AgentRunner = {
+      start: (_req, onEvent) => {
+        onEvent({ kind: 'session', sessionId: 's1', model: 'haiku' });
+        onEvent({ kind: 'text', text: 'hi' });
+        return { done: Promise.resolve({ status: 'succeeded' as never }), cancel: () => {} };
+      },
+    };
+    for (const [available, mode, expected] of [[true, 'auto', true], [false, 'auto', false], [true, 'off', false]] as const) {
+      const got: unknown[] = [];
+      const launcher = new AgentLauncher({
+        runner, bridge: new AgentBridge(), approvals: new ApprovalBroker({ broadcast: () => {} }),
+        sandbox: async () => ({ available, reason: '' }), configDir: projectDir, mcpCommand: null,
+        settings: async () => workspaceSettingsSchema.parse({ schemaVersion: 1, sandboxMode: mode }),
+      });
+      await (await launcher.start({ kind: 'creative', jobId: 'j7', projectSlug: 'acme', projectDir, request: { prompt: 'x' }, onEvent: (e) => got.push(e) })).done.catch(() => {});
+      expect(got.slice(0, 2)).toEqual([{ kind: 'session', sessionId: 's1', model: 'haiku', sandboxed: expected }, { kind: 'text', text: 'hi' }]);
+    }
   });
 });

@@ -191,9 +191,19 @@ describe('recoverWorkspace', { timeout: 20_000 }, () => {
     expect(await readdir(join(dir, 'assets', '.describe'))).toEqual([]);
     expect(await readdir(join(dir, 'references'))).toEqual(['.gitkeep']);
     expect(await readdir(join(dir, 'brand', 'proposals'))).toEqual(['p-20260101-000001']);
-    expect((await readFile(join(dir, '.gitignore'), 'utf8')).split('\n')).toEqual(['outputs/', '.*.part', 'assets/.describe/', '']);
+    expect((await readFile(join(dir, '.gitignore'), 'utf8')).split('\n')).toEqual(['outputs/', '.*.part', 'assets/.describe/', '.cache/', 'creatives/*/work/tmp/', '']);
     await recoverWorkspace(ws);
-    expect((await readFile(join(dir, '.gitignore'), 'utf8')).split('\n')).toEqual(['outputs/', '.*.part', 'assets/.describe/', '']);
+    expect((await readFile(join(dir, '.gitignore'), 'utf8')).split('\n')).toEqual(['outputs/', '.*.part', 'assets/.describe/', '.cache/', 'creatives/*/work/tmp/', '']);
+    // Older projects also get the union merge for the usage ledger, once.
+    expect(await readFile(join(dir, '.gitattributes'), 'utf8')).toBe('.studio/usage.jsonl merge=union\n');
+  });
+  it('appends the ledger merge rule to an existing .gitattributes, once, keeping its lines', async () => {
+    const ws = await WorkspaceStore.open(join(base, 'ws'), new Git());
+    const dir = ws.projectDir('acme');
+    await writeFile(join(dir, '.gitattributes'), '*.png binary');
+    await recoverWorkspace(ws);
+    await recoverWorkspace(ws);
+    expect(await readFile(join(dir, '.gitattributes'), 'utf8')).toBe('*.png binary\n.studio/usage.jsonl merge=union\n');
   });
   it('leaves brand job files alone while a brand job runs', async () => {
     const ws = await WorkspaceStore.open(join(base, 'ws'), new Git());

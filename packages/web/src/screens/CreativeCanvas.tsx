@@ -3,7 +3,7 @@
 // safe zones with a legend, V/C/H tools), Figma-style comments that become chips of the composer, the Chat · Comments ·
 // Brief panel, the version history with Compare, and Export. Replaces the interim CreativePage. A board opens in the
 // format view (screens/FormatView.tsx) with T3.
-import { channelName, formatName, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type VersionEntry } from '@motion-studio/shared';
+import { addTokens, channelName, formatName, outputWarningText, shownTotal, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VersionEntry } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api.ts';
@@ -18,6 +18,8 @@ import { setFrameOrigin, setShownVersion, takeFrameOrigin, takeShownVersion } fr
 import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { Button, ChannelMark, Empty, Icon, Input, Pill, Spinner, Tabs, Tag, Toggle, cx, toast } from '../ui/index.ts';
 import { useCreative } from '../useCreative.ts';
+import { jobLiveTokens, jobUsagePartial } from '../usageLive.ts';
+import { costText, TokenCount, UsageBadge } from '../shell/Tokens.tsx';
 import { boardLabel, CanvasBoard, type Draft, type Tool } from './CanvasBoard.tsx';
 import { boardsOf, fitBoards, isTall, ratioText, type BoardModel } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
@@ -316,7 +318,11 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
     <div ref={root} className="ms-cv">
       {bar?.title ? createPortal(
         <BarTitle title={title} renaming={renaming} onStart={startRename} onChange={setRenaming} onSave={(v) => void saveTitle(v)} onCancel={() => setRenaming(null)}
-          state={<StatePill status={cr.status} needs={myApprovals.length > 0} working={working} />} />,
+          state={<>
+            <StatePill status={cr.status} needs={myApprovals.length > 0} working={working} />
+            {/* Live tokens of the job (all its runs); nothing until its first usage event, e.g. right after a reconnect. */}
+            {working && job ? <TokenCount tokens={jobLiveTokens(live, job.id)} live partial={jobUsagePartial(live, job.id)} className="ms-cv-tokens" /> : null}
+          </>} />,
         bar.title,
       ) : null}
       {bar?.end ? createPortal(
@@ -426,7 +432,9 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
           <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={job} live={job ? live.events[job.id] ?? [] : []}
             pins={pins} onRemovePin={removePin} onEditPin={(i) => editPin(i + 1)} formatName={formatLabel}
             canGenerate={versions.length === 0} onSent={({ pins: sent }) => { setStored((ps) => ps.filter((p) => !sent.includes(p.pin))); setPicked(null); reload(); }}
-            onSelectVersion={(v) => setPicked(v)} snapshots={live.snapshots} />
+            onSelectVersion={(v) => setPicked(v)} snapshots={live.snapshots}
+            versionExtra={(n) => <UsageBadge usage={versions.find((v) => v.n === n)?.usage} billing={live.today?.billing ?? null} />}
+            versionNote={(n) => <OutputWarnings outputs={versions.find((v) => v.n === n)?.outputs ?? []} formatLabel={formatLabel} />} />
         ) : null}
         {tab === 'comments' ? <CommentsTab sent={sent} working={working} formatLabel={formatLabel} onStart={() => { setTool('comment'); }} /> : null}
         {/* Kept mounted while hidden, so an unsaved brief draft survives tab switches. */}
@@ -442,6 +450,18 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
       <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
         title={title} version={exporting?.version ?? null} presets={presets} />
     </div>
+  );
+}
+
+/** The output warnings of a version (spec §6), one line each with its format, as text; nothing without any. */
+function OutputWarnings({ outputs, formatLabel }: { outputs: VersionEntry['outputs']; formatLabel(id: string): string }) {
+  const locale = useLocale();
+  const lines = outputs.flatMap((o) => (o.warnings ?? []).map((w) => ({ format: o.format, text: outputWarningText(w, locale) })));
+  if (!lines.length) return null;
+  return (
+    <ul className="ms-convo-version-notes">
+      {lines.map((l, i) => <li key={i}><Icon name="warn" size={12} /><span><b>{formatLabel(l.format)}</b> · {l.text}</span></li>)}
+    </ul>
   );
 }
 
@@ -564,6 +584,56 @@ function CommentsTab({ sent, working, formatLabel, onStart }: { sent: SentCommen
   );
 }
 
+/** The versions' sum: the fallback when the ledger cannot be read (a lower bound); null when no version has usage. */
+export function creativeUsage(versions: VersionEntry[]): { tokens: number; costUsd: number | null; estimated: boolean; partial: boolean } | null {
+  const tracked = versions.filter((v) => v.usage);
+  if (!tracked.length) return null;
+  const tokens = tracked.reduce((sum, v) => addTokens(sum, v.usage!.tokens), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+  const costs = tracked.map((v) => v.usage!.costUsd).filter((c): c is number => c !== null);
+  return {
+    tokens: shownTotal(tokens),
+    costUsd: costs.length ? costs.reduce((a, b) => a + b, 0) : null,
+    estimated: costs.length < tracked.length || tracked.some((v) => v.usage!.estimated),
+    partial: tracked.length < versions.length,
+  };
+}
+
+/**
+ * The creative's tokens (Brief panel): the ledger total of this creative — every run, failed and cancelled ones
+ * included — from `/api/usage?project=&creative=`. "≥" when versions predate tracking or a run's figure is partial.
+ * While the ledger cannot be read, the versions' sum stands in, always as a lower bound. Nothing when no figure exists.
+ */
+function CreativeTokens({ project, creative, versions, refresh }: { project: string; creative: string; versions: VersionEntry[]; refresh: string }) {
+  const t = useT();
+  const locale = useLocale();
+  const [ledger, setLedger] = useState<UsageReport['total'] | 'failed' | null>(null);
+  useEffect(() => {
+    let alive = true;
+    // Through a promise: even a synchronous failure lands in the fallback.
+    Promise.resolve().then(() => api.getUsage({ project, creative })).then((r) => { if (alive) setLedger(r.total); }, () => { if (alive) setLedger('failed'); });
+    return () => { alive = false; };
+  }, [project, creative, refresh]);
+  const untracked = versions.some((v) => !v.usage);
+  let shown: { tokens: number; costUsd: number | null; estimated: boolean; partial: boolean } | null = null;
+  if (ledger === 'failed') {
+    const sum = creativeUsage(versions);
+    shown = sum && { ...sum, partial: true };
+  } else if (ledger && shownTotal(ledger.tokens) > 0) {
+    shown = { tokens: shownTotal(ledger.tokens), costUsd: ledger.costUsd, estimated: ledger.estimated === true, partial: untracked || ledger.estimated === true };
+  }
+  if (!shown) return null;
+  const cost = costText(t, locale, shown.costUsd, shown.estimated);
+  return (
+    <div className="ms-cv-brief-row">
+      <span className="ms-cap">{t.web.usage.creativeTotal}</span>
+      <div className="ms-cv-brief-value">
+        <span className="ms-cv-brief-tokens"><TokenCount tokens={shown.tokens} partial={shown.partial} />{cost ? ` · ${cost}` : ''}</span>
+        {untracked ? <span className="ms-cv-brief-note">{t.web.usage.untracked}</span> : null}
+      </div>
+    </div>
+  );
+}
+
 function BriefTab({ project, detail, presets, disabled, formatLabel, onChanged }: {
   project: string; detail: NonNullable<ReturnType<typeof useCreative>['detail']>; presets: FormatPreset[]; disabled: boolean; formatLabel(id: string): string; onChanged(): void;
 }) {
@@ -591,6 +661,8 @@ function BriefTab({ project, detail, presets, disabled, formatLabel, onChanged }
       {row(c.formats, <span className="ms-cv-brief-tags">{b.formats.map((f) => <Tag key={f}>{formatLabel(f)}</Tag>)}</span>)}
       {b.assets.length ? row(c.assets, <span className="ms-cv-brief-tags">{b.assets.map((a) => <Tag key={a}>{a.replace(/^assets\//, '')}</Tag>)}</span>) : null}
       {b.notes ? row(c.notes, b.notes) : null}
+      <CreativeTokens project={project} creative={detail.slug} versions={detail.versions}
+        refresh={`${detail.versions.map((v) => `${v.n}:${v.status}`).join(',')}|${detail.creative.status}|${detail.creative.updatedAt}`} />
       <Button variant="outline" className="ms-cv-brief-edit-btn" onClick={() => setEditing(true)}><Icon name="edit" size={13} />{c.edit}</Button>
     </div>
   );

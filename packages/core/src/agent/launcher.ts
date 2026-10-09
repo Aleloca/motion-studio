@@ -11,6 +11,8 @@ import type { AgentBridge, BridgeContext } from '../bridge/bridge.ts';
 import { buildAgentPolicy, type AgentJobKind } from './policy.ts';
 import type { AgentRun, AgentRunner, AgentTurnRequest } from './runner.ts';
 import type { SandboxSupport } from './sandbox.ts';
+import { UsageLedger } from '../usage/usage-ledger.ts';
+import { UsageTracker } from '../usage/usage-tracker.ts';
 
 const RUN_DIR = 'run';
 export const MCP_SERVER = 'studio';
@@ -39,6 +41,8 @@ export interface LauncherDeps {
   mcpCommand: string[] | null;
   /** Extra env of the MCP server process (e.g. ELECTRON_RUN_AS_NODE=1 when the command is Electron's binary). Never overrides the Motion Studio variables. */
   mcpEnv?: Record<string, string>;
+  /** Where every run's token and cost usage is recorded (`<project>/.studio/usage.jsonl`); defaults to a private one. */
+  usageLedger?: UsageLedger;
 }
 export interface LaunchInput {
   kind: AgentJobKind; jobId: string; projectSlug: string; projectDir: string; creativeSlug?: string | null;
@@ -46,18 +50,34 @@ export interface LaunchInput {
   request: Pick<AgentTurnRequest, 'prompt' | 'resumeSessionId' | 'forkSession' | 'model'>;
   onEvent(e: AgentEvent): void;
   validate?: BridgeContext['validate'];
+  /** What the run's ledger line is about (a creative's version and fix-loop attempt); null for other jobs. */
+  usage?: { version: number | null; attempt: number | null };
+  /**
+   * The sandbox decision the caller already put in the prompt. It can only downgrade: `false` runs the job unsandboxed,
+   * `true` never claims a sandbox the launcher does not detect itself. Callers must take it from `launcher.sandboxed()`,
+   * so a prompt never says "sandboxed" for a job that is not (if the sandbox vanished meanwhile, the job runs without it).
+   */
+  sandboxed?: boolean;
 }
 
 /** The only place that starts the agent: applies the job's policy, the project's rules, the MCP server and the UI prompts. */
 export class AgentLauncher {
-  constructor(private readonly deps: LauncherDeps) {}
+  private readonly usageLedger: UsageLedger;
+  constructor(private readonly deps: LauncherDeps) { this.usageLedger = deps.usageLedger ?? new UsageLedger(); }
 
   /** True when agents get the `studio` MCP server (bridge listening and a command to start it). */
   mcpActive(): boolean { return Boolean(this.deps.bridge.origin && this.deps.mcpCommand?.length); }
 
+  /** True when a job started now runs in the sandbox: what prompts may claim about the environment. */
+  async sandboxed(): Promise<boolean> {
+    return (await this.deps.settings()).sandboxMode === 'auto' && (await this.deps.sandbox()).available;
+  }
+
   async start(i: LaunchInput): Promise<AgentRun> {
     const settings = await this.deps.settings();
-    const sandbox = settings.sandboxMode === 'auto' && (await this.deps.sandbox()).available;
+    const detected = settings.sandboxMode === 'auto' && (await this.deps.sandbox()).available;
+    const sandbox = i.sandboxed === false ? false : detected;
+    const autoApproveAtStart = settings.autoApproveSandboxed === true;
     const home = this.deps.home ?? homedir();
     const { configDir, bridge, mcpCommand, approvals } = this.deps;
     // The file is agent-reachable in the fallback mode: only rules that "Sempre" could have produced are honoured;
@@ -75,10 +95,11 @@ export class AgentLauncher {
     // Aborted on cancel and when the run settles: provider calls started by the agent's tools stop with the job.
     const abort = new AbortController();
     const policy = buildAgentPolicy({
-      kind: i.kind, sandbox, home, configDir,
+      kind: i.kind, sandbox, projectDir: i.projectDir, home, configDir,
       codebases: i.codebases ?? [], protectedFiles, protectedDirs,
       extraDomains: settings.extraAllowedDomains, projectAllowRules: rules,
       mcpTools: mcpOn ? MCP_TOOLS[i.kind].map((t) => `mcp__${MCP_SERVER}__${t}`) : [],
+      autoApproveSandboxed: autoApproveAtStart,
     });
 
     let token: string | null = null;
@@ -99,6 +120,10 @@ export class AgentLauncher {
       if (mcpOn && mcpCommand) {
         token = bridge.register({
           jobId: i.jobId, kind: i.kind, projectSlug: i.projectSlug, projectDir: i.projectDir, creativeSlug: i.creativeSlug ?? null,
+          // The same value the policy was built with: `approve` auto-allows only for jobs that really run in the sandbox.
+          sandboxed: sandbox,
+          // The same value as the policy's autoAllowBashIfSandboxed: a setting turned on later never reaches this job.
+          autoApproveAtStart,
           emit: i.onEvent, signal: abort.signal, ...(i.validate ? { validate: i.validate } : {}),
         });
         // The paths are recorded before writing, so release() also removes a half-written pair.
@@ -118,14 +143,30 @@ export class AgentLauncher {
         await writeFile(files.config, JSON.stringify(config), { mode: 0o600, flag: 'wx' });
         mcp = { mcpConfigPath: files.config, permissionPromptTool: `mcp__${MCP_SERVER}__approve` };
       }
+      // Every run is metered here, whatever the job: the final usage is held back and re-emitted with per-run values.
+      const tracker = new UsageTracker({
+        projectDir: i.projectDir, jobId: i.jobId, kind: i.kind, creativeSlug: i.creativeSlug ?? null,
+        version: i.usage?.version ?? null, attempt: i.usage?.attempt ?? null,
+        ...(i.request.resumeSessionId ? { resumeSessionId: i.request.resumeSessionId } : {}),
+      }, this.usageLedger);
+      // The session event carries the job's sandbox decision: a finished turn says "ran in the sandbox" only when it did.
+      const forward = (e: AgentEvent) => {
+        const out = tracker.observe(e);
+        if (out) i.onEvent(out.kind === 'session' ? { ...out, sandboxed: sandbox } : out);
+      };
       const run = this.deps.runner.start({
         cwd: i.projectDir, ...i.request,
         addDirs: policy.addDirs, allowedTools: policy.allowedTools, disallowedTools: policy.disallowedTools,
         ...(policy.settings ? { settings: policy.settings } : {}), ...mcp,
-        env: { MCP_TOOL_TIMEOUT: '900000' }, unsetEnv: AGENT_UNSET_ENV,
-      }, i.onEvent);
+        env: { MCP_TOOL_TIMEOUT: '900000', ...policy.env }, unsetEnv: AGENT_UNSET_ENV,
+      }, forward);
+      const done = run.done.then(async (r) => {
+        const { record, event } = await tracker.finish(r.status);
+        if (event) { try { i.onEvent(event); } catch { /* a faulty listener must not lose the outcome */ } }
+        return { ...r, usage: record };
+      });
       return {
-        done: run.done.finally(release),
+        done: done.finally(release),
         // Revoked before the process is told to stop: it may keep calling the bridge until it exits.
         cancel: () => { void release(); run.cancel(); },
       };

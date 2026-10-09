@@ -5,6 +5,7 @@ import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { collapse, enter, pulse } from '../motion/index.ts';
 import { Button, CountdownRing, Icon, Tag, toast } from '../ui/index.ts';
 import { message } from '../errors.ts';
+import { explanationView, RiskChips } from './RiskChips.tsx';
 import { ruleLabel } from './ruleLabel.ts';
 
 /**
@@ -118,12 +119,16 @@ export function ApprovalCard({ approval, context, leaving = false, onGone }: App
   const ttl = (ms(approval.expiresAt) - created) / 1000;
   const limit = category === 'tool' ? DETAIL_LIMITS.tool : DETAIL_LIMITS.any;
   const disabled = busy || decided || leaving;
+  // Phase 8 (spec §4.6): the core's explanation replaces the generic title and the kind tag; without one (older core,
+  // provider requests) the card is the Phase 7 card.
+  const explained = explanationView(approval.explanation, t);
+  const title = explained?.title || approval.title;
 
   return (
-    <div ref={ref} role="group" aria-label={approval.title} className="ms-approval" data-approval={approval.id}>
+    <div ref={ref} role="group" aria-label={title} className="ms-approval" data-approval={approval.id}>
       <div className="ms-approval-head">
         <span className="ms-approval-dot" aria-hidden="true" />
-        <b className="ms-approval-title">{approval.title}</b>
+        <b className="ms-approval-title">{title}</b>
         {Number.isFinite(created) && Number.isFinite(ttl) && ttl > 0 && <CountdownRing createdAt={created} ttlSec={ttl} />}
       </div>
       {context && <span className="ms-approval-context">{context}</span>}
@@ -131,7 +136,7 @@ export function ApprovalCard({ approval, context, leaving = false, onGone }: App
         ? <span className="ms-approval-text">{approval.detail}</span>
         : <span className="ms-approval-text">{a.describe[category]}</span>}
       <div className="ms-approval-chips">
-        <Tag>{a.kinds[category]}</Tag>
+        {explained && approval.explanation ? <RiskChips explanation={approval.explanation} /> : <Tag>{a.kinds[category]}</Tag>}
         {!provider && approval.detail && (
           <button type="button" className="ms-chip ms-approval-toggle" aria-expanded={open} aria-controls={cmdId} onClick={() => setOpen((o) => !o)}>
             <Icon name="code" size={11} />
@@ -140,6 +145,7 @@ export function ApprovalCard({ approval, context, leaving = false, onGone }: App
           </button>
         )}
       </div>
+      {explained && approval.agentReason ? <span className="ms-approval-reason">{a.agentSays({ reason: approval.agentReason })}</span> : null}
       {!provider && open && (
         <div id={cmdId} className="ms-approval-cmd">
           <pre ref={preRef} className="ms-approval-pre" tabIndex={0} aria-label={category === 'command' ? a.fullCommand : a.fullDetails}>{approval.detail}</pre>

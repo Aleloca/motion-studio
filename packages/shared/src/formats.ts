@@ -15,7 +15,10 @@ export const formatPresetSchema = z.object({
   extensions: z.array(z.string().regex(/^[a-z0-9]{2,5}$/)).min(1),
   maxDurationSec: z.number().positive().optional(),
   safeZone: z.object({ top: z.number().min(0), bottom: z.number().min(0), left: z.number().min(0), right: z.number().min(0) }).optional(),
+  /** A REAL, documented upload limit of the channel (a larger file is a problem), for images and video. Never a recommendation. */
   maxFileMB: z.number().positive().optional(),
+  /** Target H.264 bitrate (kbps, 30 fps) the agent aims for; a file whose effective bitrate exceeds 1.5x of it only gets a warning. */
+  targetBitrateKbps: z.number().positive().optional(),
 });
 export type FormatPreset = z.infer<typeof formatPresetSchema>;
 
@@ -48,10 +51,30 @@ export function channelName(channel: string, locale: Locale): string {
 export const formatLabel = (preset: Pick<FormatPreset, 'id' | 'name' | 'channel'>, locale: Locale): string =>
   `${channelName(preset.channel, locale)} · ${formatName(preset, locale)}`;
 
+/**
+ * Target H.264 bitrate (kbps) for a video of `width`x`height`. Reference points at 30 fps:
+ * portrait 1080x1920 and 1080x1350: 4000; square 1080x1080: 3500; landscape 1920x1080: 5000 and 3840x2160 (4K): 20000.
+ * Any other size takes the references of its orientation (portrait: h > w, landscape: w > h, square: w = h), picks the one
+ * nearest in pixel count and scales linearly by pixel count (kbps = ref x pixels / refPixels), rounded to 100 kbps.
+ * Frame rates above 45 fps get +50%.
+ */
+const BITRATE_REFS = {
+  portrait: [{ w: 1080, h: 1920, kbps: 4000 }, { w: 1080, h: 1350, kbps: 4000 }],
+  square: [{ w: 1080, h: 1080, kbps: 3500 }],
+  landscape: [{ w: 1920, h: 1080, kbps: 5000 }, { w: 3840, h: 2160, kbps: 20000 }],
+};
+export function videoTargetBitrateKbps(width: number, height: number, fps = 30): number {
+  const refs = BITRATE_REFS[height > width ? 'portrait' : width > height ? 'landscape' : 'square'];
+  const px = width * height;
+  const ref = refs.reduce((best, r) => (Math.abs(Math.log(px / (r.w * r.h))) < Math.abs(Math.log(px / (best.w * best.h))) ? r : best));
+  const base = (ref.kbps * px) / (ref.w * ref.h) * (fps > 45 ? 1.5 : 1);
+  return Math.max(100, Math.round(base / 100) * 100);
+}
+
 const VIDEO = ['mp4', 'webm', 'mov', 'gif'];
 const IMAGE = ['png', 'jpg', 'jpeg', 'webp'];
 const v = (id: string, channel: string, name: string, width: number, height: number, extra: Partial<FormatPreset> = {}): FormatPreset =>
-  ({ id, channel, name, width, height, kind: 'video', extensions: VIDEO, ...extra });
+  ({ id, channel, name, width, height, kind: 'video', extensions: VIDEO, targetBitrateKbps: videoTargetBitrateKbps(width, height), ...extra });
 const i = (id: string, channel: string, name: string, width: number, height: number, extra: Partial<FormatPreset> = {}): FormatPreset =>
   ({ id, channel, name, width, height, kind: 'image', extensions: IMAGE, ...extra });
 
@@ -68,6 +91,7 @@ export const DEFAULT_FORMATS: FormatPreset[] = [
   v('youtube-16x9', 'YouTube', 'Video 16:9', 1920, 1080),
   v('youtube-4k-16x9', 'YouTube', 'Video 4K 16:9', 3840, 2160),
   v('youtube-shorts-9x16', 'YouTube', 'Shorts 9:16', 1080, 1920, { maxDurationSec: 60, safeZone: REELS_SAFE }),
+  // YouTube: 2 MB thumbnail limit, per YouTube Help; not re-verified 2026-10.
   i('youtube-thumbnail', 'YouTube', 'Thumbnail', 1280, 720, { maxFileMB: 2 }),
   v('facebook-feed-1x1', 'Facebook', 'Feed 1:1', 1080, 1080),
   v('facebook-feed-4x5', 'Facebook', 'Feed 4:5', 1080, 1350),
@@ -77,8 +101,9 @@ export const DEFAULT_FORMATS: FormatPreset[] = [
   v('linkedin-4x5', 'LinkedIn', 'Post 4:5', 1080, 1350),
   v('linkedin-16x9', 'LinkedIn', 'Video 16:9', 1920, 1080),
   i('linkedin-banner', 'LinkedIn', 'Banner', 1584, 396),
-  v('x-16x9', 'X', 'Video 16:9', 1600, 900),
-  v('x-1x1', 'X', 'Post 1:1', 1080, 1080),
+  // X: 512 MB is the documented limit for videos uploaded with media_category=amplify_video (X developer docs, media upload).
+  v('x-16x9', 'X', 'Video 16:9', 1600, 900, { maxFileMB: 512 }),
+  v('x-1x1', 'X', 'Post 1:1', 1080, 1080, { maxFileMB: 512 }),
   i('pinterest-2x3', 'Pinterest', 'Pin 2:3', 1000, 1500),
   i('web-hero-16x9', 'Web', 'Hero 16:9', 1920, 1080),
   i('web-banner-300x250', 'Web', 'Banner 300×250', 300, 250),
@@ -87,7 +112,8 @@ export const DEFAULT_FORMATS: FormatPreset[] = [
   i('appstore-iphone-69', 'App Store', 'Screenshot iPhone 6.9"', 1320, 2868),
   i('appstore-iphone-65', 'App Store', 'Screenshot iPhone 6.5"', 1284, 2778),
   i('appstore-ipad-13', 'App Store', 'Screenshot iPad 13"', 2064, 2752),
-  v('appstore-preview', 'App Store', 'App Preview', 886, 1920, { maxDurationSec: 30, extensions: ['mp4', 'mov'] }),
+  // App Store: 500 MB is the documented maximum size of an app preview (App Store Connect help).
+  v('appstore-preview', 'App Store', 'App Preview', 886, 1920, { maxDurationSec: 30, extensions: ['mp4', 'mov'], maxFileMB: 500 }),
   i('appstore-icon', 'App Store', 'Icona', 1024, 1024),
   i('playstore-feature', 'Play Store', 'Feature graphic', 1024, 500),
   i('playstore-phone-9x16', 'Play Store', 'Screenshot telefono 9:16', 1080, 1920),

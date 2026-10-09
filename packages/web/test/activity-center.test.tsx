@@ -41,7 +41,7 @@ describe('Activity center · what happened (AC2)', () => {
     expect(screen.getByText('v2 saved, incomplete')).toBeTruthy();
     expect(api.getConversation).toHaveBeenCalledTimes(1); // one read per creative
     expect(api.getConversation).toHaveBeenCalledWith('acme', 'lancio');
-    const rows = screen.getAllByRole('link');
+    const rows = within(screen.getByRole('list')).getAllByRole('link');
     expect(rows).toHaveLength(2);
     expect(rows.every((a) => a.getAttribute('href') === '#/p/acme/c/lancio')).toBe(true);
   });
@@ -63,6 +63,6 @@ describe('Activity center · what happened (AC2)', () => {
 
   it('running rows link to where the job runs', () => {
     en(live([job({ id: 'r1', state: 'running', finishedAt: undefined })]), 'running');
-    expect(screen.getByRole('link').getAttribute('href')).toBe('#/p/acme/c/lancio');
+    expect(within(screen.getByRole('list')).getByRole('link').getAttribute('href')).toBe('#/p/acme/c/lancio');
   });
 });

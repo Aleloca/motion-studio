@@ -93,6 +93,8 @@ describe('analyze', () => {
     expect((await done(job.id)).state).toBe('succeeded');
     const [p] = await brand.listProposals();
     expect(p).toMatchObject({ status: 'open', sourceIds: ['s-1'], assetsAdded: ['brand/logo.svg', 'brand/unlisted.png'] });
+    // The analysis run's usage (fake claude: per-run tokens, cost 0.01), also recorded in the project's ledger.
+    expect(p!.usage).toEqual({ tokens: { input: 10, output: 100, cacheRead: 1000, cacheWrite: 200 }, costUsd: 0.01 });
     expect(p!.changes.map((c) => c.id)).toEqual(['colors:add:arancio', 'logos:add:logo']);
     expect(p!.summary).toContain('Palette arancio/blu');
     expect(p!.summary).toContain('ghost');

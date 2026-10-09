@@ -358,6 +358,30 @@ Phrases are `{ key, params }` with keys under `explain.*` in the catalogs (e.g. 
 
 ---
 
+### Task 6b: Sandbox environment ready and declared (added by the orchestrator, requested by the user)
+
+**Problem:** every generation the agent writes the same errors in chat and loses the same time: "npm cache isn't writable in the sandbox; using a local cache folder instead." and "Headless Chromium can't start inside the macOS sandbox (Mach port), so I'll render frames with a Node canvas (Skia) instead." The user does not want to see the same problems every time: fix them, or tell the agent up front.
+
+**Files:** `packages/core/src/agent/launcher.ts` (and/or `policy.ts`), the prompt builders (`packages/core/src/creatives/prompt.ts`, brand and describe prompts), the project template (.gitignore), tests.
+
+1. **Writable caches (fix).** In the launcher, when the job is sandboxed, the env of the `claude` process (inherited by Bash commands) points caches at a git-ignored project folder, e.g. `<project>/.cache/`, or inside the sandbox-allowed temp dir if better: `npm_config_cache`, `PIP_CACHE_DIR`, `XDG_CACHE_HOME`, `PNPM_STORE_DIR` and `YARN_CACHE_FOLDER` if needed, plus `PUPPETEER_SKIP_DOWNLOAD=1` and `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`.
+   - Verify the chosen folder is in the sandbox write allowlist;
+   - if in the project: it is in .gitignore and never ends up in version commits;
+   - it is not among the protected paths.
+   - Tests: policy/launcher pass this env only when sandboxed.
+2. **Prompt (instruct).** The creative system prompt, and a short version for brand and describe, add a "Sandbox environment" section (localized like the other prompts) that states up front:
+   - what it can write (project, work/, the temp dir);
+   - caches are already configured;
+   - network only to the allowlisted domains;
+   - headless Chromium/Puppeteer/Playwright cannot run; use a working engine from the start: ffmpeg, node-canvas/skia-canvas, Pillow/cairo; browser-based rendering arrives in Phase 10, managed by the core;
+   - do not announce these limitations to the user, they are known.
+   - Tests: the prompt contains the section and no absolute user paths.
+3. **Task 10 live:** verify the two messages no longer appear in the conversation and that npm install works without cache warnings.
+
+Record the cache-folder choice in the ledger.
+
+---
+
 ### Task 7: Web — explained approvals, automatic approvals and the setting
 
 **Files:**

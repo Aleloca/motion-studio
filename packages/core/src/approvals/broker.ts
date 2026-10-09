@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { dirname } from 'node:path';
-import type { ApprovalDecision, ApprovalKind, ApprovalRequest, ServerMessage } from '@motion-studio/shared';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { explainTool, type ApprovalDecision, type ApprovalKind, type ApprovalRequest, type ExplainContext, type Explanation, type ServerMessage } from '@motion-studio/shared';
+import { CREATIVE_SLUG_RE } from '../creatives/creative-store.ts';
+import { cleanAgentReason } from '../display-text.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import { PermissionsStore, ruleFor } from './permissions-store.ts';
 import { t } from '../i18n.ts';
 
-export interface ApprovalInput { jobId: string; projectSlug: string; projectDir: string; creativeSlug: string | null; kind: ApprovalKind; toolName: string; input: unknown; title?: string; detail?: string }
+export interface ApprovalInput { jobId: string; projectSlug: string; projectDir: string; creativeSlug: string | null; kind: ApprovalKind; toolName: string; input: unknown; title?: string; detail?: string; /** Claude Code's `tool_use_id` of the call (already validated by the caller). */ toolUseId?: string }
 export interface ApprovalOutcome { decision: ApprovalDecision | 'expired' | 'cancelled' }
 
 export function describeRequest(toolName: string, input: unknown): { title: string; detail: string } {
@@ -19,15 +22,36 @@ export function describeRequest(toolName: string, input: unknown): { title: stri
   return { title: a.useTool({ tool: toolName === 'unknown' ? a.unknownTool : toolName }), detail: JSON.stringify(input ?? {}).slice(0, 500) };
 }
 
+export { cleanAgentReason };
+
+/** Where an agent job's paths are judged: relative paths start in the project (the `claude` process cwd). */
+export function explainContext(job: { projectDir: string; creativeSlug: string | null }, env: { home?: string; tmpDir?: string } = {}): ExplainContext {
+  const workDir = job.creativeSlug && CREATIVE_SLUG_RE.test(job.creativeSlug) ? join(job.projectDir, 'creatives', job.creativeSlug, 'work') : undefined;
+  return {
+    projectDir: job.projectDir, cwd: job.projectDir, ...(workDir ? { workDir } : {}),
+    home: env.home ?? homedir(), tmpDir: env.tmpDir ?? (process.env.TMPDIR || tmpdir()),
+  };
+}
+
+/** The deterministic explanation of a tool call; null if the analysis itself fails (the card then shows the title). */
+export function explainRequest(toolName: string, input: unknown, ctx: ExplainContext): Explanation | null {
+  try { return explainTool(toolName, input, ctx); } catch { return null; }
+}
+
 interface Pending { request: ApprovalRequest; alwaysLabel: string; projectDir: string; resolve(o: ApprovalOutcome): void; timer: NodeJS.Timeout }
 
 export class ApprovalBroker {
   private readonly items = new Map<string, Pending>();
   private readonly timeoutMs: number;
   private readonly now: () => Date;
-  constructor(private readonly opts: { broadcast(m: ServerMessage): void; timeoutMs?: number; now?: () => Date }) {
+  constructor(private readonly opts: { broadcast(m: ServerMessage): void; timeoutMs?: number; now?: () => Date; home?: string; tmpDir?: string }) {
     this.timeoutMs = opts.timeoutMs ?? 600_000;
     this.now = opts.now ?? (() => new Date());
+  }
+
+  /** What an agent job's tool call does, judged with this broker's home and temp folder. */
+  explain(job: { projectDir: string; creativeSlug: string | null }, toolName: string, input: unknown): Explanation | null {
+    return explainRequest(toolName, input, explainContext(job, this.opts));
   }
 
   request(input: ApprovalInput): Promise<ApprovalOutcome> {
@@ -35,10 +59,14 @@ export class ApprovalBroker {
     // Projects live directly in the workspace root.
     const always = ruleFor(input.toolName, input.input, { workspaceRoot: dirname(input.projectDir) });
     const created = this.now();
+    // Agent tool calls only: provider confirmations are summarized by the core itself (title/detail).
+    const agentTool = input.kind === 'tool';
+    const explanation = agentTool ? this.explain(input, input.toolName, input.input) : null;
+    const agentReason = agentTool ? cleanAgentReason((input.input as { description?: unknown } | null)?.description) : null;
     const request: ApprovalRequest = {
       id: randomUUID(), jobId: input.jobId, projectSlug: input.projectSlug, creativeSlug: input.creativeSlug, kind: input.kind,
       title: input.title ?? described.title, detail: (input.detail ?? described.detail).slice(0, 2000), toolName: input.toolName,
-      alwaysRule: always?.rule ?? null,
+      alwaysRule: always?.rule ?? null, explanation, agentReason, ...(input.toolUseId ? { toolUseId: input.toolUseId } : {}),
       createdAt: created.toISOString(), expiresAt: new Date(created.getTime() + this.timeoutMs).toISOString(),
     };
     return new Promise((resolve) => {
@@ -82,6 +110,7 @@ export class ApprovalBroker {
 
   private settle(item: Pending, decision: ApprovalOutcome['decision']) {
     item.resolve({ decision });
-    this.opts.broadcast({ type: 'approval_resolved', id: item.request.id, decision });
+    const { toolUseId } = item.request;
+    this.opts.broadcast({ type: 'approval_resolved', id: item.request.id, decision, ...(toolUseId ? { toolUseId } : {}) });
   }
 }

@@ -1,6 +1,6 @@
 import { appendFile, lstat, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
-import { brandProposalSchema, issuesText, messages, relativeFileSchema, webUrlSchema, type AssetEntry, type Locale, type BrandKit, type BrandProposal, type JobSummary, type ServerMessage } from '@motion-studio/shared';
+import { brandProposalSchema, issuesText, messages, relativeFileSchema, webUrlSchema, type AssetEntry, type Locale, type BrandKit, type BrandProposal, type JobSummary, type ServerMessage, type UsageSummary } from '@motion-studio/shared';
 import { z } from 'zod';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import type { Git } from '../git.ts';
@@ -15,6 +15,7 @@ import { buildBrandPrompt, buildDescribePrompt } from './brand-prompt.ts';
 import { BrandStore } from './brand-store.ts';
 import { parseProposedKit } from './proposed-kit.ts';
 import { currentLocale, t } from '../i18n.ts';
+import { sumUsage } from '../usage/usage-tracker.ts';
 
 export interface ProjectRef { root: string; projectSlug: string; projectDir: string }
 export const brandJobKey = (root: string, slug: string) => `brand:${root}:${slug}`;
@@ -74,15 +75,17 @@ export class BrandService {
    * Runs one agent turn with the live metadata files denied to the editing tools; whatever the outcome, files the agent
    * still managed to change (e.g. through an interpreter) are restored. `tampered` receives one note per file the agent changed, in `locale`.
    */
-  private async runAgent(ref: ProjectRef, kind: 'brand-analysis' | 'describe', prompt: string, logFile: string | null, signal: AbortSignal, jobId: string, tampered: string[], locale: Locale): Promise<'ok' | 'cancelled'> {
+  private async runAgent(ref: ProjectRef, kind: 'brand-analysis' | 'describe', prompt: string, logFile: string | null, signal: AbortSignal, jobId: string, tampered: string[], locale: Locale, sandboxed: boolean): Promise<{ status: 'ok' | 'cancelled'; usage: UsageSummary | undefined }> {
     const guard = await snapshotGuarded(ref.projectDir);
     try {
       const run = await this.deps.launcher.start({
-        kind, jobId, projectSlug: ref.projectSlug, projectDir: ref.projectDir,
+        kind, jobId, projectSlug: ref.projectSlug, projectDir: ref.projectDir, sandboxed,
         protectedFiles: await guardedPaths(ref.projectDir),
         request: { prompt, model: (await this.deps.model()) ?? undefined },
         onEvent: (event) => {
           this.deps.broadcast({ type: 'agent', jobId, event });
+          // Live usage estimates are only for the UI: the log keeps the final usage event.
+          if (event.kind === 'usage' && event.live) return;
           if (logFile) void appendFile(logFile, `${JSON.stringify({ at: new Date().toISOString(), event })}\n`).catch(() => {});
         },
       });
@@ -90,9 +93,9 @@ export class BrandService {
       signal.addEventListener('abort', onAbort, { once: true });
       if (signal.aborted) onAbort();
       const outcome = await run.done.finally(() => signal.removeEventListener('abort', onAbort));
-      if (outcome.status === 'cancelled') return 'cancelled';
+      if (outcome.status === 'cancelled') return { status: 'cancelled', usage: undefined };
       if (outcome.status === 'failed') throw new Error(outcome.error ?? t().errors.turnFailed);
-      return 'ok';
+      return { status: 'ok', usage: sumUsage([outcome.usage]) };
     } finally {
       tampered.push(...(await restoreGuarded(guard, ref.projectDir, locale)));
     }
@@ -122,7 +125,9 @@ export class BrandService {
         sources: sources.map((s) => ({ id: s.id, kind: s.kind, url: s.url, file: s.file })),
       };
       const tampered: string[] = [];
-      if ((await this.runAgent(ref, 'brand-analysis', buildBrandPrompt(block, locale), join(dir, 'log.jsonl'), signal, jobId, tampered, locale)) === 'cancelled') {
+      const sandboxed = await this.deps.launcher.sandboxed();
+      const turn = await this.runAgent(ref, 'brand-analysis', buildBrandPrompt(block, locale, sandboxed), join(dir, 'log.jsonl'), signal, jobId, tampered, locale, sandboxed);
+      if (turn.status === 'cancelled') {
         await rm(dir, { recursive: true, force: true });
         return 'cancelled';
       }
@@ -176,6 +181,7 @@ export class BrandService {
         changes: diffBrandKits(currentKit, proposed),
         guidelines: proposedGuidelines !== currentGuidelines ? { current: currentGuidelines, proposed: proposedGuidelines } : null,
         assetsAdded: registered.map((a) => a.file),
+        ...(turn.usage ? { usage: turn.usage } : {}),
       };
       // Validated before anything is superseded: an invalid proposal leaves the open one in place.
       const valid = brandProposalSchema.safeParse(proposal);
@@ -253,10 +259,11 @@ export class BrandService {
           const notes: string[] = [];
           try {
             await mkdir(join(ref.projectDir, 'assets', '.describe'), { recursive: true });
-            const prompt = buildDescribePrompt({ outFile: outRel, files: targets.map((t) => `assets/${t.file}`) }, locale);
+            const sandboxed = await this.deps.launcher.sandboxed();
+            const prompt = buildDescribePrompt({ outFile: outRel, files: targets.map((t) => `assets/${t.file}`) }, locale, sandboxed);
             const tampered: string[] = [];
-            const outcome = await this.runAgent(ref, 'describe', prompt, null, signal, jobId, tampered, locale).finally(() => notes.push(...tampered));
-            if (outcome === 'cancelled') return 'cancelled';
+            const outcome = await this.runAgent(ref, 'describe', prompt, null, signal, jobId, tampered, locale, sandboxed).finally(() => notes.push(...tampered));
+            if (outcome.status === 'cancelled') return 'cancelled';
             const wanted = new Set(targets.map((t) => t.file));
             const described = await readLenient(outAbs, describedAsset);
             if (described.skipped) notes.push(messages(locale).brand.ignoredDescriptions({ reason: skipText(described.skipped, locale) }));

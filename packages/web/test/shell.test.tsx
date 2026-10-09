@@ -50,11 +50,11 @@ const finishAll = async () => {
 };
 
 const okChecks: DoctorCheck[] = [{ id: 'git', label: 'Git', ok: true, required: true, message: 'ok' }];
-const settings = { schemaVersion: 1 as const, maxConcurrentJobs: 2, expertMode: false, theme: 'system' as const, model: null, sandboxMode: 'auto' as const, extraAllowedDomains: [] as string[], confirmPaidProviders: true };
+const settings = { schemaVersion: 1 as const, maxConcurrentJobs: 2, expertMode: false, theme: 'system' as const, model: null, sandboxMode: 'auto' as const, extraAllowedDomains: [] as string[], confirmPaidProviders: true, autoApproveSandboxed: true };
 const project = (slug: string, name: string) => ({ slug, ok: true as const, project: { schemaVersion: 1 as const, name, description: '', createdAt: '2026-10-01T10:00:00.000Z', updatedAt: '2026-10-01T10:00:00.000Z', linkedCodebases: [] } });
 
 const approval = (id: string, title = `Richiesta ${id}`): ApprovalRequest => ({
-  id, jobId: 'j1', projectSlug: 'acme', creativeSlug: 'lancio', kind: 'tool', title, detail: 'ls -la', toolName: 'Bash', alwaysRule: null,
+  id, jobId: 'j1', projectSlug: 'acme', creativeSlug: 'lancio', kind: 'tool', title, detail: 'ls -la', toolName: 'Bash', alwaysRule: null, explanation: null, agentReason: null,
   createdAt: '2026-10-08T10:00:00.000Z', expiresAt: '2026-10-08T10:10:00.000Z',
 });
 const job = (id: string, state: JobSummary['state'], label: string, finishedAt?: string): JobSummary => ({
@@ -126,14 +126,26 @@ describe('top bar bell', () => {
     expect(within(bell).queryByText(/\d/)).toBeNull();
   });
 
-  it('shows "N running" from the active jobs and no token counter or theme switch', async () => {
+  it('shows "N running" from the active jobs and no theme switch', async () => {
     await startApp();
     expect(screen.queryByText(/in corso$/)).toBeNull();
     send({ type: 'job', job: job('j1', 'running', 'Lancio') });
     send({ type: 'job', job: job('j2', 'queued', 'Teaser') });
     expect(screen.getByRole('button', { name: '2 in corso' })).toBeTruthy();
-    expect(screen.queryByText(/token/i)).toBeNull();
     expect(screen.queryByRole('radiogroup', { name: 'Tema' })).toBeNull();
+  });
+
+  it("shows today's tokens: \"—\" until the day total arrives, then live, and opens Settings → Usage", async () => {
+    vi.mocked(api.getUsage).mockResolvedValue({ from: '', to: '', total: { tokens: { input: 38_000, output: 200, cacheRead: 5_000_000, cacheWrite: 40 }, costUsd: 1 }, byDay: [], byProject: [], byKind: [], trackedSince: null, billing: 'subscription', utcOffsetMinutes: 0 });
+    await startApp();
+    const tokens = screen.getByRole('button', { name: 'Token usati oggi: —. Apri Utilizzo' });
+    expect(tokens.textContent).toBe('— token');
+    await act(async () => { sockets.at(-1)!.onmessage!({ data: JSON.stringify(snapshot([])) }); });
+    expect(tokens.textContent).toBe('38,2k token'); // cache reads are not in the total
+    send({ type: 'agent', jobId: 'j1', event: { kind: 'usage', live: true, tokens: { input: 1000, output: 0, cacheRead: 0, cacheWrite: 0 }, costUsd: null } });
+    expect(tokens.textContent).toBe('39,2k token');
+    fireEvent.click(tokens);
+    expect(location.hash).toBe('#/settings/usage');
   });
 
   it('keeps one bell with the right count when an approval arrives while the page changes', async () => {
@@ -282,7 +294,7 @@ describe('useAttention', () => {
     expect(document.title).toBe('(1) Motion Studio');
     expect(bridge.setBadge).toHaveBeenLastCalledWith(1);
     expect(bridge.notify).toHaveBeenCalledTimes(1);
-    expect(bridge.notify).toHaveBeenCalledWith({ title: 'Motion Studio: serve la tua approvazione', body: 'Eseguire un comando' });
+    expect(bridge.notify).toHaveBeenCalledWith({ title: 'Motion Studio: serve la tua approvazione', body: 'Eseguire un comando', sound: true });
     expect(screen.getByRole('button', { name: 'Rivedi' })).toBeTruthy();
     // The same id again (a repeated event): no second notification.
     rerender(<Probe list={[{ ...approval('a1', 'Eseguire un comando') }]} />);
@@ -311,6 +323,14 @@ describe('useAttention', () => {
     expect(bridge.setBadge).toHaveBeenLastCalledWith(0);
   });
 
+  it('passes sound: false when the sound setting is off', () => {
+    localStorage.setItem('motion-studio.notifySound', 'false');
+    const bridge = desktopBridge();
+    const { rerender } = render(<Probe list={[]} />);
+    rerender(<Probe list={[approval('a1')]} />);
+    expect(bridge.notify).toHaveBeenCalledWith({ title: 'Motion Studio: serve la tua approvazione', body: 'Richiesta a1', sound: false });
+  });
+
   it('respects notifyApprovals = false but still updates title and badge', () => {
     localStorage.setItem(NOTIFY_APPROVALS_KEY, 'false');
     const bridge = desktopBridge();
@@ -327,7 +347,7 @@ describe('useAttention', () => {
     const { rerender } = render(<Probe list={[]} />);
     rerender(<Probe list={[approval('a1'), approval('a2'), approval('a3')]} />);
     expect(bridge.notify).toHaveBeenCalledTimes(1);
-    expect(bridge.notify).toHaveBeenCalledWith({ title: 'Motion Studio: serve la tua approvazione', body: '3 approvazioni in attesa' });
+    expect(bridge.notify).toHaveBeenCalledWith({ title: 'Motion Studio: serve la tua approvazione', body: '3 approvazioni in attesa', sound: true });
   });
 
   it('falls back to the web Notification API when granted and the page is hidden', () => {
@@ -512,11 +532,11 @@ describe('startup policy', () => {
     // A later arrival is a real one.
     send({ type: 'approval', approval: approval('a3', 'Scaricare un font') });
     expect(bridge.notify).toHaveBeenCalledTimes(1);
-    expect(bridge.notify).toHaveBeenCalledWith({ title: 'Motion Studio: serve la tua approvazione', body: 'Scaricare un font' });
+    expect(bridge.notify).toHaveBeenCalledWith({ title: 'Motion Studio: serve la tua approvazione', body: 'Scaricare un font', sound: true });
     // A reconnection while requests were known: the new one in the snapshot is an arrival, the known ones are not.
     send(snapshot([approval('a1'), approval('a2'), approval('a3'), approval('a4', 'Usare internet')]));
     expect(bridge.notify).toHaveBeenCalledTimes(2);
-    expect(bridge.notify).toHaveBeenLastCalledWith({ title: 'Motion Studio: serve la tua approvazione', body: 'Usare internet' });
+    expect(bridge.notify).toHaveBeenLastCalledWith({ title: 'Motion Studio: serve la tua approvazione', body: 'Usare internet', sound: true });
   });
 
   it('treats a reconnection with nothing known before as a restore (singular toast)', async () => {

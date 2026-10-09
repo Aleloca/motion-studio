@@ -51,10 +51,15 @@ creatives/*/work/out/
 node_modules/
 .venv/
 .cache/
+creatives/*/work/tmp/
 *.tmp
 .DS_Store
 .*.part
 assets/.describe/
+`;
+
+/** The usage ledger stays versioned; a merge of two histories keeps both sides' lines (append-only JSONL). */
+export const GITATTRIBUTES = `.studio/usage.jsonl merge=union
 `;
 
 export const PROJECT_DIRS = ['brand', 'assets', 'references', 'creatives'] as const;

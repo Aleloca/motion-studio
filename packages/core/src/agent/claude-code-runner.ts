@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { statSync } from 'node:fs';
 import type { AgentEvent } from '@motion-studio/shared';
-import { LineSplitter, parseClaudeLine } from './claude-stream-parser.ts';
+import { ClaudeStreamParser, LineSplitter } from './claude-stream-parser.ts';
 import type { AgentRun, AgentRunner, AgentRunResult, AgentTurnRequest } from './runner.ts';
 import { t } from '../i18n.ts';
 
@@ -89,6 +89,9 @@ export class ClaudeCodeRunner implements AgentRunner {
     let result: Extract<AgentEvent, { kind: 'result' }> | undefined;
     const stderrTail: string[] = [];
     const stdout = new LineSplitter();
+    // Per run: keeps the live usage estimate (sum per message id, throttled, with a trailing flush).
+    // The timer only fires after this function returned, when `emit` (declared below) exists.
+    const parser = new ClaudeStreamParser({ onLive: (e) => emit(e) });
     const stderr = new LineSplitter();
 
     const emit = (e: AgentEvent) => {
@@ -98,7 +101,7 @@ export class ClaudeCodeRunner implements AgentRunner {
         onEvent(e);
       } catch { /* a faulty listener must not crash the process nor lose the turn outcome */ }
     };
-    child.stdout.setEncoding('utf8').on('data', (c: string) => stdout.push(c).flatMap(parseClaudeLine).forEach(emit));
+    child.stdout.setEncoding('utf8').on('data', (c: string) => stdout.push(c).flatMap((l) => parser.parse(l)).forEach(emit));
     child.stderr.setEncoding('utf8').on('data', (c: string) => {
       for (const text of stderr.push(c)) {
         stderrTail.push(text);
@@ -114,13 +117,15 @@ export class ClaudeCodeRunner implements AgentRunner {
       const settle = (r: AgentRunResult) => {
         if (settled) return;
         settled = true;
+        parser.stop();
         if (drainTimer) clearTimeout(drainTimer);
         resolve(sessionId ? { ...r, sessionId } : r);
       };
       // Single outcome logic for 'close', the post-exit drain timeout and a cancel after exit.
       finish = ({ abandonPipes = false } = {}) => {
         if (settled) return;
-        stdout.flush().flatMap(parseClaudeLine).forEach(emit);
+        stdout.flush().flatMap((l) => parser.parse(l)).forEach(emit);
+        parser.end().forEach(emit);
         if (abandonPipes) { child.stdout.destroy(); child.stderr.destroy(); }
         // An ok result is the real outcome even if a cancel arrived afterwards.
         if (result?.ok) return settle({ status: 'succeeded' });

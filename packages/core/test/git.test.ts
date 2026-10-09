@@ -1,7 +1,9 @@
+import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { execCommand, type CommandExec } from '../src/exec.ts';
 import { Git } from '../src/git.ts';
@@ -145,5 +147,69 @@ describe('Git.restorePath', () => {
   it('reports a missing git instead of an unknown version', async () => {
     const exec: CommandExec = async () => ({ code: -1, stdout: '', stderr: '', notFound: true });
     await expect(new Git(exec).restorePath('/r', 'abcdef1', 'work')).rejects.toThrow('git non trovato');
+  });
+});
+
+describe('Git.commitAll and the sandbox cache', () => {
+  it('never commits .cache/, even when the project .gitignore lacks it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-cache-'));
+    const git = new Git();
+    await git.init(dir);
+    await writeFile(join(dir, 'a.txt'), '1');
+    await git.commitAll(dir, 'v1');
+    await mkdir(join(dir, '.cache', 'npm'), { recursive: true });
+    await writeFile(join(dir, '.cache', 'npm', 'blob'), 'x');
+    expect(await git.commitAll(dir, 'only cache')).toBe(null);
+    await writeFile(join(dir, 'a.txt'), '2');
+    expect(await git.commitAll(dir, 'v2')).not.toBe(null);
+    const { stdout } = await promisify(execFile)('git', ['ls-files'], { cwd: dir });
+    expect(stdout.trim()).toBe('a.txt');
+  });
+  it('commits when .cache/ is both in .gitignore and present (git 2.50 exclude-pathspec failure)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-cache-ign-'));
+    const git = new Git();
+    await git.init(dir);
+    await writeFile(join(dir, '.gitignore'), '.cache/\n');
+    await writeFile(join(dir, 'a.txt'), '1');
+    await mkdir(join(dir, '.cache', 'npm'), { recursive: true });
+    await writeFile(join(dir, '.cache', 'npm', 'blob'), 'x');
+    expect(await git.commitAll(dir, 'v1')).toMatch(/^[0-9a-f]{40}$/);
+    await writeFile(join(dir, 'a.txt'), '2');
+    expect(await git.commitAll(dir, 'v2')).toMatch(/^[0-9a-f]{40}$/);
+    const { stdout } = await promisify(execFile)('git', ['ls-files'], { cwd: dir });
+    expect(stdout.trim().split('\n').sort()).toEqual(['.gitignore', 'a.txt']);
+  });
+  it('never commits creatives/*/work/tmp/ scratch files', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-work-tmp-'));
+    const git = new Git();
+    await git.init(dir);
+    await mkdir(join(dir, 'creatives', 'sale', 'work', 'tmp'), { recursive: true });
+    await writeFile(join(dir, 'creatives', 'sale', 'work', 'tmp', 'frame.png'), 'x');
+    await writeFile(join(dir, 'creatives', 'sale', 'work', 'render.py'), 'print(1)');
+    expect(await git.commitAll(dir, 'v1')).not.toBe(null);
+    const { stdout } = await promisify(execFile)('git', ['ls-files'], { cwd: dir });
+    expect(stdout.trim()).toBe('creatives/sale/work/render.py');
+  });
+  it('writes the exclusions into .git/info/exclude once (idempotent), keeping existing lines', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-exclude-'));
+    const git = new Git();
+    await git.init(dir);
+    const path = join(dir, '.git', 'info', 'exclude');
+    await writeFile(path, '# mine\nfoo');
+    await writeFile(join(dir, 'a.txt'), '1');
+    await git.commitAll(dir, 'v1');
+    await writeFile(join(dir, 'a.txt'), '2');
+    await git.commitAll(dir, 'v2');
+    const lines = (await readFile(path, 'utf8')).split('\n');
+    expect(lines.slice(0, 2)).toEqual(['# mine', 'foo']);
+    expect(lines.filter((l) => l === '/.cache/')).toHaveLength(1);
+    expect(lines.filter((l) => l === '/creatives/*/work/tmp/')).toHaveLength(1);
+  });
+  it('init writes the exclusions too', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-exclude-init-'));
+    await new Git().init(dir);
+    const text = await readFile(join(dir, '.git', 'info', 'exclude'), 'utf8');
+    expect(text).toContain('/.cache/\n');
+    expect(text).toContain('/creatives/*/work/tmp/\n');
   });
 });

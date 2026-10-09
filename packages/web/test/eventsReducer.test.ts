@@ -25,6 +25,33 @@ describe('eventsReducer', () => {
     expect(s.events.a).toHaveLength(2000);
     expect(s.events.a?.[0]).toEqual({ kind: 'text', text: '10' });
   });
+  it('keeps only the latest live usage per job, outside the capped events', () => {
+    const tokens = (n: number) => ({ input: n, output: n, cacheRead: 0, cacheWrite: 0 });
+    let s = eventsReducer(initialEventsState, { type: 'agent', jobId: 'a', event: { kind: 'text', text: 'real' } });
+    for (let i = 1; i <= 3000; i++) s = eventsReducer(s, { type: 'agent', jobId: 'a', event: { kind: 'usage', live: true, tokens: tokens(i), costUsd: null } });
+    expect(s.events.a).toEqual([{ kind: 'text', text: 'real' }]);
+    expect(s.liveUsage?.a).toEqual({ kind: 'usage', live: true, tokens: tokens(3000), costUsd: null });
+    s = eventsReducer(s, { type: 'agent', jobId: 'a', event: { kind: 'usage', live: false, tokens: tokens(5), costUsd: 0.1 } });
+    expect(s.events.a?.map((e) => e.kind)).toEqual(['text', 'usage']);
+    // The final usage replaces the live estimate.
+    expect(s.liveUsage?.a).toBeUndefined();
+  });
+  it('drops the live usage of a job that reaches a terminal state', () => {
+    const live = { kind: 'usage' as const, live: true, tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 }, costUsd: null };
+    let s = eventsReducer(initialEventsState, { type: 'agent', jobId: 'a', event: live });
+    s = eventsReducer(s, { type: 'agent', jobId: 'b', event: live });
+    s = eventsReducer(s, { type: 'job', job: job('a', 'running') });
+    expect(Object.keys(s.liveUsage ?? {})).toEqual(['a', 'b']);
+    s = eventsReducer(s, { type: 'job', job: job('a', 'cancelled') });
+    expect(Object.keys(s.liveUsage ?? {})).toEqual(['b']);
+  });
+  it('keeps on snapshot only the live usage of jobs still running', () => {
+    const live = { kind: 'usage' as const, live: true, tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 }, costUsd: null };
+    let s = initialEventsState;
+    for (const id of ['a', 'b', 'c']) s = eventsReducer(s, { type: 'agent', jobId: id, event: live });
+    s = eventsReducer(s, { type: 'snapshot', jobs: [job('a', 'running'), job('b', 'succeeded')], approvals: [], locale: 'it', languageSetting: 'system', systemLocale: 'it' });
+    expect(Object.keys(s.liveUsage ?? {})).toEqual(['a']);
+  });
 });
 
 describe('language', () => {
@@ -53,7 +80,7 @@ describe('sessionIdOf', () => {
 });
 
 describe('approvals', () => {
-  const approval = { id: 'a1', jobId: 'j', projectSlug: 'acme', creativeSlug: null, kind: 'tool' as const, title: 't', detail: 'd', toolName: 'Bash', alwaysRule: null, createdAt: 'x', expiresAt: 'y' };
+  const approval = { id: 'a1', jobId: 'j', projectSlug: 'acme', creativeSlug: null, kind: 'tool' as const, title: 't', detail: 'd', toolName: 'Bash', alwaysRule: null, explanation: null, agentReason: null, createdAt: 'x', expiresAt: 'y' };
   it('tracks pending approvals from snapshot, add and resolve', () => {
     let s = eventsReducer(initialEventsState, { type: 'snapshot', jobs: [], approvals: [approval], locale: 'it', languageSetting: 'system', systemLocale: 'it' });
     expect(Object.keys(s.approvals)).toEqual(['a1']);

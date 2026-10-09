@@ -1,9 +1,12 @@
 import type { LanguageSetting, Locale } from './i18n/index.ts';
+import type { Explanation } from './explain/index.ts';
+import type { ModelUsage, TokenCounts } from './usage.ts';
 import type { ProjectFile, WorkspaceSettings, WorkspaceSettingsView } from './schemas.ts';
 
 /** Agent-neutral event stream produced by any AgentRunner. */
 export type AgentEvent =
-  | { kind: 'session'; sessionId: string; model?: string }
+  /** `sandboxed`: set by the launcher (the job's own sandbox decision); absent in older logs and for runs it did not start. */
+  | { kind: 'session'; sessionId: string; model?: string; sandboxed?: boolean }
   | { kind: 'text'; text: string }
   | { kind: 'tool_use'; id: string; name: string; input: unknown }
   | { kind: 'tool_result'; toolUseId: string; isError: boolean; content: string }
@@ -11,7 +14,19 @@ export type AgentEvent =
   | { kind: 'progress'; text: string }
   | { kind: 'stderr'; text: string }
   | { kind: 'parse_error'; line: string }
-  | { kind: 'result'; ok: boolean; sessionId?: string; text?: string; costUsd?: number; error?: string };
+  | { kind: 'usage'; live: boolean; tokens: TokenCounts; costUsd: number | null; models?: ModelUsage[] }
+  /** `toolUseId`: the agent's tool call this approval answered (absent in older logs or when the agent sent none). */
+  | { kind: 'auto_approved'; toolName: string; command: string; explanation: Explanation; toolUseId?: string }
+  /**
+   * The user's (or the timer's) answer to an approval request, recorded in the job's log so a finished turn can tell
+   * the commands you approved or denied from those that ran without asking. `toolUseId` links it to the `tool_use`.
+   */
+  | { kind: 'approval_decided'; toolName: string; decision: ApprovalDecision | 'expired' | 'cancelled'; toolUseId?: string }
+  /**
+   * `cumulativeCostUsd` is Claude Code's `total_cost_usd`: CUMULATIVE over a resumed session, never this run's cost
+   * (that is the final `usage` event, re-emitted by the core with per-run values). Older stored events may carry it as `costUsd`.
+   */
+  | { kind: 'result'; ok: boolean; sessionId?: string; text?: string; cumulativeCostUsd?: number; error?: string; durationMs?: number; numTurns?: number };
 
 export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
@@ -46,6 +61,12 @@ export interface ApprovalRequest {
   toolName: string;
   /** Rule saved by "Sempre per questo progetto" (null = not offered). */
   alwaysRule: string | null;
+  /** What the command does, in structured form (null = not analyzed, or an old client). */
+  explanation: Explanation | null;
+  /** The agent's own stated reason (e.g. the Bash description), shown only as a quote. */
+  agentReason: string | null;
+  /** The agent's tool call this request is about (Claude Code's `tool_use_id`), when it sent one. */
+  toolUseId?: string;
   createdAt: string; expiresAt: string;
 }
 export type ApprovalDecision = 'once' | 'always' | 'deny';
@@ -55,7 +76,7 @@ export type ServerMessage =
   /** The language setting changed: the UI switches without reloading. */
   | { type: 'locale'; locale: Locale; setting: LanguageSetting; systemLocale: Locale }
   | { type: 'approval'; approval: ApprovalRequest }
-  | { type: 'approval_resolved'; id: string; decision: ApprovalDecision | 'expired' | 'cancelled' }
+  | { type: 'approval_resolved'; id: string; decision: ApprovalDecision | 'expired' | 'cancelled'; /** Same as the request's. */ toolUseId?: string }
   | { type: 'job'; job: JobSummary }
   | { type: 'agent'; jobId: string; event: AgentEvent }
   /** A creative's files changed (status, versions, conversation): clients refetch it. */

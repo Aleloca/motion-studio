@@ -1,8 +1,10 @@
 // Brand page side column: proposal ready, live analysis, sources, brand health and the analyses so far.
-import type { BrandOverview, BrandProposal, BrandSource, JobSummary } from '@motion-studio/shared';
-import { useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { shownTotal, type BrandOverview, type BrandProposal, type BrandSource, type JobSummary, type ProposalActivity } from '@motion-studio/shared';
+import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { api } from '../api.ts';
 import { ApprovalCard } from '../components/ApprovalCard.tsx';
+import { CommandRowView } from '../components/Conversation.tsx';
+import { commandLog, webExplainContext, WorkspacePathContext } from '../components/commandLog.ts';
 import type { EventsState } from '../eventsReducer.ts';
 import { formatWhen, relativeTime, useLocale, useT } from '../i18n.tsx';
 import { enter } from '../motion/index.ts';
@@ -11,9 +13,55 @@ import { analysisSteps, healthChecks, hostOf, normalizeUrl, type HealthId } from
 import { KEEPALIVE, deferRemoval, flushDeferred, isPendingRemoval, removalKey, usePendingRemovals } from './deferred.ts';
 import { isActive, useBrand, useAppear, type SectionId } from './brandContext.tsx';
 import { message } from './common.tsx';
+import { formatTokens, TokenCount } from '../shell/Tokens.tsx';
+import { jobLiveTokens, jobUsagePartial } from '../usageLive.ts';
+
+/** An analysis' tokens from its proposal; null for proposals from before usage tracking. */
+const proposalTokens = (p: BrandProposal) => (p.usage ? shownTotal(p.usage.tokens) : null);
 /* ---------- side column: analysis, sources, health, history ---------- */
 
-export function ProposalReady({ proposal, onReview }: { proposal: BrandProposal; onReview(): void }) {
+/**
+ * "N commands ran in the sandbox · M approved by you · Details" for one analysis (brand transparency, count work): every
+ * Bash call of the proposal's log, counted like a creative turn (see commandLog.ts); Details opens the same compact rows
+ * as Activity details. Nothing for proposals without a log (older ones), when no command ran, or when the call fails.
+ */
+export function ProposalAutoLine({ project, proposalId }: { project: string; proposalId: string }) {
+  const t = useT();
+  const c = t.web.chat;
+  const h = t.web.brand.history;
+  const id = useId();
+  const anchor = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const [activity, setActivity] = useState<ProposalActivity | null>(null);
+  const workspace = useContext(WorkspacePathContext);
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve().then(() => api.getProposalActivity(project, proposalId)).then((a) => { if (alive) setActivity(a); }, () => {});
+    return () => { alive = false; };
+  }, [project, proposalId]);
+  const log = useMemo(() => (activity?.hasLog && Array.isArray(activity.entries)
+    // A finished analysis, unless the log was cut (then a call without a result may simply be past the cut).
+    ? commandLog(activity.entries.map((e) => e.event), webExplainContext(workspace, project), { finished: !activity.truncated, sandboxedHint: activity.sandboxed })
+    : null), [activity, workspace, project]);
+  if (!activity?.hasLog || !log || log.ran === 0) return null;
+  return (
+    <span className="ms-bauto">
+      <Icon name={log.sandboxed ? 'shield' : 'terminal'} size={12} />
+      <span id={id}>{c.commandsRan({ count: log.ran, approved: log.approved, sandbox: log.sandboxed, attempted: log.attempted, atLeast: activity.truncated })}</span>
+      <span aria-hidden="true">·</span>
+      <Button ref={anchor} size="sm" variant="ghost" className="ms-bauto-details" aria-describedby={id} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{c.autoDetails}</Button>
+      <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="bottom-end" width={360} label={h.autoTitle}>
+        <div className="ms-bauto-pop">
+          <b>{h.autoTitle}</b>
+          <ul className="ms-convo-log">{log.rows.map((r) => <CommandRowView key={r.key} row={r} />)}</ul>
+          {activity.truncated ? <p className="ms-muted">{h.autoTruncated}</p> : null}
+        </div>
+      </Popover>
+    </span>
+  );
+}
+
+export function ProposalReady({ project, proposal, onReview }: { project: string; proposal: BrandProposal; onReview(): void }) {
   const t = useT();
   const a = t.web.brand.analysis;
   const ref = useRef<HTMLDivElement>(null);
@@ -22,7 +70,9 @@ export function ProposalReady({ proposal, onReview }: { proposal: BrandProposal;
   return (
     <div className="ms-bready" ref={ref}>
       <span className="ms-bready-icon" aria-hidden="true"><Icon name="sparkle" size={15} /></span>
-      <span className="ms-bready-text"><b>{a.readyTitle}</b><span className="ms-muted">{a.readySub({ count })}</span></span>
+      <span className="ms-bready-text"><b>{a.readyTitle}</b><span className="ms-muted">{a.readySub({ count })}</span>
+        <TokenCount tokens={proposalTokens(proposal)} className="ms-btokens" />
+        <ProposalAutoLine project={project} proposalId={proposal.id} /></span>
       <Button variant="ink" size="sm" onClick={onReview}>{a.review}</Button>
     </div>
   );
@@ -45,6 +95,7 @@ export function AnalysisCard({ job, live }: { job: JobSummary; live: EventsState
       <div className="ms-brow">
         <Spinner decorative size={14} />
         <b id="ms-banalysis-title">{a.title}</b>
+        <TokenCount tokens={jobLiveTokens(live, job.id)} live partial={jobUsagePartial(live, job.id)} className="ms-btokens" />
         <Button variant="ghost" size="sm" className="ms-bpush" loading={cancelling} onClick={cancel}>{a.cancel}</Button>
       </div>
       {/* report_progress carries text only: the bar is indeterminate, never a made-up percentage. */}
@@ -224,7 +275,7 @@ export function Health() {
 }
 
 /** The analyses so far (the API exposes proposals with their date and outcome; kit edits have no history). */
-export function History({ proposals, undone }: { proposals: BrandProposal[]; undone: Set<string> }) {
+export function History({ project, proposals, undone }: { project: string; proposals: BrandProposal[]; undone: Set<string> }) {
   const t = useT();
   const h = t.web.brand.history;
   const locale = useLocale();
@@ -234,9 +285,13 @@ export function History({ proposals, undone }: { proposals: BrandProposal[]; und
     <section className="ms-bhistory" aria-labelledby="ms-bhistory-title">
       <b id="ms-bhistory-title">{h.title}</b>
       {list.map((p) => (
-        <span key={p.id} className="ms-muted ms-bsmall-text">
-          {`${formatWhen(locale, p.createdAt)} · ${p.status === 'applied' ? h.applied : p.status === 'discarded' ? h.discarded : h.open}${undone.has(p.id) ? ` · ${h.undone}` : ''}`}
-        </span>
+        <div key={p.id} className="ms-bhistory-item">
+          <span className="ms-muted ms-bsmall-text">
+            {`${formatWhen(locale, p.createdAt)} · ${p.status === 'applied' ? h.applied : p.status === 'discarded' ? h.discarded : h.open}${undone.has(p.id) ? ` · ${h.undone}` : ''}`}
+            {p.usage ? <span className="ms-btokens">{` · ${t.web.usage.tokens({ count: formatTokens(locale, proposalTokens(p)!) })}`}</span> : null}
+          </span>
+          <ProposalAutoLine project={project} proposalId={p.id} />
+        </div>
       ))}
     </section>
   );
