@@ -1436,6 +1436,8 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
         queued: 'Waiting to start',
         open: 'Open',
         enableNotifications: 'Turn on notifications',
+        versionReady: (p: { n: number }) => `v${p.n} ready`,
+        versionIncomplete: (p: { n: number }) => `v${p.n} saved, incomplete`,
       },
       palette: {
         label: 'Go to',

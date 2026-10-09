@@ -1434,6 +1434,8 @@ Variabili: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (array JSON)`,
         queued: 'In attesa di partire',
         open: 'Apri',
         enableNotifications: 'Attiva le notifiche',
+        versionReady: (p: { n: number }) => `v${p.n} pronta`,
+        versionIncomplete: (p: { n: number }) => `v${p.n} salvata, incompleta`,
       },
       palette: {
         label: 'Vai a',

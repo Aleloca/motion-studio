@@ -1,5 +1,6 @@
-import type { ApprovalRequest, JobSummary } from '@motion-studio/shared';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import type { AgentEvent, ApprovalRequest, ConversationEntry, JobSummary } from '@motion-studio/shared';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { api } from '../api.ts';
 import { ApprovalCard } from '../components/ApprovalCard.tsx';
 import { useApprovalPresence } from '../components/approvalPresence.ts';
 import type { EventsState } from '../eventsReducer.ts';
@@ -26,6 +27,75 @@ export function activityLists(live: EventsState) {
 }
 
 /**
+ * Where a job belongs, from its key. The core's keys are `creative:<root>:<project>:<creative>`, `brand:<root>:<project>`
+ * (analysis and asset descriptions) and `project:<root>:<project>`; the root may contain ':' (Windows), slugs never do.
+ */
+export function jobPlace(job: JobSummary): { project: string; creative: string | null } | null {
+  const parts = job.key.split(':');
+  const kind = parts[0];
+  if (kind === 'creative' && parts.length >= 4) return { project: parts.at(-2)!, creative: parts.at(-1)! };
+  if ((kind === 'brand' || kind === 'project') && parts.length >= 3) return { project: parts.at(-1)!, creative: null };
+  return null;
+}
+
+/** The page a job's row opens: its creative, the brand (analysis), the assets (descriptions) or the project. */
+export function jobHref(job: JobSummary): string | null {
+  const at = jobPlace(job);
+  if (!at || !at.project) return null;
+  if (at.creative) return href.creative(at.project, at.creative);
+  if (job.kind === 'brand-analysis') return href.project(at.project, 'brand');
+  if (job.kind === 'asset-description') return href.project(at.project, 'assets');
+  return href.project(at.project);
+}
+
+type Made = { n: number; status: 'complete' | 'incomplete' };
+
+/** The version each job of a creative produced: agent entries carry the job id, the version entry follows them. */
+export function versionsByJob(entries: ConversationEntry[]): Record<string, Made> {
+  const out: Record<string, Made> = {};
+  let last: string | null = null;
+  for (const e of entries) {
+    if (e.type === 'agent') last = e.jobId;
+    else if (e.type === 'user') last = null;
+    else if (e.type === 'version' && last && !out[last]) out[last] = { n: e.n, status: e.status };
+  }
+  return out;
+}
+
+/**
+ * Versions made by the finished generations in `jobs`, read from their creatives' conversations (one read per
+ * creative) while `enabled`. Jobs whose version is not found simply have none: nothing is guessed.
+ */
+function useMadeVersions(jobs: JobSummary[], enabled: boolean): Record<string, Made> {
+  const [made, setMade] = useState<Record<string, Made>>({});
+  const wanted = jobs.filter((j) => j.kind === 'creative' && j.state === 'succeeded' && !made[j.id]);
+  const creatives = [...new Set(wanted.map((j) => { const at = jobPlace(j); return at?.creative ? `${at.project}\n${at.creative}` : null; }).filter((x): x is string => x !== null))];
+  const key = enabled ? `${creatives.join('|')}#${wanted.map((j) => j.id).join(',')}` : '';
+  useEffect(() => {
+    if (!key) return;
+    let alive = true;
+    for (const c of creatives) {
+      const [project, creative] = c.split('\n') as [string, string];
+      Promise.resolve().then(() => api.getConversation(project, creative))
+        .then((entries) => { if (alive) setMade((m) => ({ ...m, ...versionsByJob(entries) })); })
+        .catch(() => { /* the row keeps its plain state */ });
+    }
+    return () => { alive = false; };
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  return made;
+}
+
+/** The error a failed job reported: its summary's, else the agent's result event. */
+function failureOf(job: JobSummary, events: AgentEvent[] | undefined): string | null {
+  if (job.error) return job.error;
+  for (let i = (events?.length ?? 0) - 1; i >= 0; i--) {
+    const e = events![i]!;
+    if (e.kind === 'result' && !e.ok && e.error?.trim()) return e.error.trim();
+  }
+  return null;
+}
+
+/**
  * Activity center (spec §6.2 point 15): popover body with Needs you (full approval cards), Running (active jobs with
  * their latest step) and Done (latest results of the session), all derived from the live event state.
  */
@@ -45,6 +115,7 @@ export function ActivityCenter({ live, initialTab, request = 0, where }: { live:
     lastRequest.current = request;
     if (initialTab) setTab(initialTab);
   }, [request, initialTab]);
+  const made = useMadeVersions(done, tab === 'done');
   const panel = `${useId()}-panel`;
   const askNotifications = () => {
     const done = () => rerender((n) => n + 1);
@@ -83,7 +154,7 @@ export function ActivityCenter({ live, initialTab, request = 0, where }: { live:
         ) : <Empty icon="clock" title={a.emptyRunning} sub={a.emptyRunningSub} />)}
         {tab === 'done' && (done.length ? (
           <ul className="ms-activity-list">
-            {done.map((j) => <DoneRow key={j.id} job={j} />)}
+            {done.map((j) => <DoneRow key={j.id} job={j} made={made[j.id] ?? null} failure={j.state === 'failed' ? failureOf(j, live.events[j.id]) : null} />)}
           </ul>
         ) : <Empty icon="check" title={a.emptyDone} sub={a.emptyDoneSub} />)}
       </div>
@@ -105,32 +176,49 @@ function NeedsYou({ approval, leaving, onGone, where }: { approval: ApprovalRequ
   );
 }
 
+/** A row of the Running or Done list: a link to where the job belongs, when its key tells. */
+function Row({ job, className, children }: { job: JobSummary; className?: string; children: ReactNode }) {
+  const to = jobHref(job);
+  return (
+    <li className="ms-activity-item">
+      {to ? <a className={cx('ms-activity-row ms-link', className)} href={to}>{children}</a> : <div className={cx('ms-activity-row', className)}>{children}</div>}
+    </li>
+  );
+}
+
 function RunningRow({ job, step }: { job: JobSummary; step: string | null }) {
   const t = useT();
   const queued = job.state === 'queued';
   return (
-    <li className="ms-activity-row ms-tall">
+    <Row job={job} className="ms-tall">
       <span className={cx('ms-activity-glyph', queued && 'ms-muted')}>{queued ? <Icon name="clock" size={14} /> : <Spinner decorative />}</span>
       <span className="ms-activity-text">
         <b>{job.label}</b>
         <span className="ms-activity-sub">{queued ? t.web.shell.activity.queued : step ?? t.web.jobState.running}</span>
       </span>
-    </li>
+    </Row>
   );
 }
 
-function DoneRow({ job }: { job: JobSummary }) {
+/** What a finished job did: the version a generation made, the reason of a failure, its notes; else its state. */
+function DoneRow({ job, made, failure }: { job: JobSummary; made: Made | null; failure: string | null }) {
   const t = useT();
+  const a = t.web.shell.activity;
   const locale = useLocale();
   const ok = job.state === 'succeeded';
+  const state = t.web.jobState[job.state];
+  const what = made ? (made.status === 'complete' ? a.versionReady({ n: made.n }) : a.versionIncomplete({ n: made.n }))
+    : failure ? `${state} · ${failure}`
+    : ok && job.notes?.length ? job.notes[0]!
+    : state;
   return (
-    <li className="ms-activity-row">
+    <Row job={job}>
       <span className={cx('ms-activity-mark', ok ? 'ms-ok' : 'ms-warn')}><Icon name={ok ? 'check' : 'warn'} size={11} strokeWidth={2} /></span>
       <span className="ms-activity-text ms-line">
         <b>{job.label}</b>
-        <span className="ms-activity-sub">{t.web.jobState[job.state]}{job.error ? ` · ${job.error}` : ''}</span>
+        <span className="ms-activity-sub">{what}</span>
       </span>
       <time className="ms-activity-time" dateTime={finishedAt(job)}>{formatDate(locale, finishedAt(job), TIME_OF_DAY)}</time>
-    </li>
+    </Row>
   );
 }
