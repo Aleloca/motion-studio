@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -90,5 +90,73 @@ describe('brand API', () => {
   it('validates sources', async () => {
     expect((await app.inject({ method: 'POST', url: `${P}/brand/sources`, payload: { kind: 'website', url: 'ftp://x' } })).statusCode).toBe(400);
     expect((await app.inject({ method: 'POST', url: `${P}/brand/sources`, payload: { kind: 'image', file: 'references/none.jpg' } })).statusCode).toBe(400);
+  });
+});
+
+describe('GET /brand/proposals/:id/activity (commands that ran automatically)', () => {
+  const id = 'p-20261009-120000';
+  const dir = () => join(base, 'ws', 'acme', 'brand', 'proposals', id);
+  const explanation = { summary: [{ key: 'explain.listFiles', params: {} }], indicators: [], risk: 'low', parsed: true };
+  const auto = (command: string) => JSON.stringify({ at: '2026-10-09T12:00:01.000Z', event: { kind: 'auto_approved', toolName: 'Bash', command, explanation } });
+  const tool = (name: string, input: unknown) => JSON.stringify({ at: '2026-10-09T12:00:02.000Z', event: { kind: 'tool_use', id: 't', name, input } });
+  const get = (pid = id) => app.inject(`${P}/brand/proposals/${pid}/activity`);
+
+  it('returns only auto_approved and Bash tool_use entries, skipping corrupt lines', async () => {
+    await mkdir(dir(), { recursive: true });
+    await writeFile(join(dir(), 'log.jsonl'), [
+      auto('ls -la'), tool('Bash', { command: 'ls -la' }), tool('Read', { file_path: '/x' }), tool('WebFetch', { url: 'https://e.x' }),
+      JSON.stringify({ at: 'x', event: { kind: 'text', text: 'hi' } }), '{"broken', '\u0000garbage', 'null', '[]',
+      JSON.stringify({ at: 'x', event: { kind: 'auto_approved', toolName: 'Bash' } }), // malformed: no command
+      auto('echo ok'),
+    ].join('\n') + '\n');
+    const res = await get();
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { hasLog: boolean; truncated: boolean; entries: Array<{ at: string; event: { kind: string } }> };
+    expect(body.hasLog).toBe(true);
+    expect(body.truncated).toBe(false);
+    expect(body.entries.map((e) => e.event.kind)).toEqual(['auto_approved', 'tool_use', 'auto_approved']);
+    expect(body.entries[0]).toEqual({ at: '2026-10-09T12:00:01.000Z', event: { kind: 'auto_approved', toolName: 'Bash', command: 'ls -la', explanation } });
+  });
+
+  it('an old proposal without a log: hasLog false, no entries', async () => {
+    await mkdir(dir(), { recursive: true });
+    expect((await get()).json()).toEqual({ hasLog: false, truncated: false, entries: [] });
+  });
+
+  it('caps the entries at 500 and the read at 1 MB', async () => {
+    await mkdir(dir(), { recursive: true });
+    await writeFile(join(dir(), 'log.jsonl'), Array.from({ length: 700 }, (_, i) => auto(`echo ${i}`)).join('\n') + '\n');
+    const many = (await get()).json() as { truncated: boolean; entries: unknown[] };
+    expect(many.entries).toHaveLength(500);
+    expect(many.truncated).toBe(true);
+    await writeFile(join(dir(), 'log.jsonl'), 'x'.repeat(1_200_000) + '\n' + auto('late') + '\n');
+    const big = (await get()).json() as { truncated: boolean; entries: unknown[] };
+    expect(big).toMatchObject({ truncated: true, entries: [] });
+  });
+
+  it('is confined to the proposal folder: bad ids, symlinked logs or folders and hard links are refused', async () => {
+    for (const bad of ['..', '..%2F..%2Fetc', 'P-1', '%2Ftmp', 'a'.repeat(100)]) {
+      expect((await get(bad)).statusCode, bad).toBeGreaterThanOrEqual(400);
+    }
+    const outside = await mkdtemp(join(tmpdir(), 'ms-outside-'));
+    await writeFile(join(outside, 'log.jsonl'), auto('secret') + '\n');
+    await mkdir(dir(), { recursive: true });
+    await symlink(join(outside, 'log.jsonl'), join(dir(), 'log.jsonl'));
+    expect((await get()).json()).toMatchObject({ entries: [] });
+    await rm(join(dir(), 'log.jsonl'));
+    await link(join(outside, 'log.jsonl'), join(dir(), 'log.jsonl'));
+    expect((await get()).json()).toMatchObject({ entries: [] });
+    const other = 'p-20261009-130000';
+    await symlink(outside, join(base, 'ws', 'acme', 'brand', 'proposals', other));
+    expect((await get(other)).json()).toMatchObject({ entries: [] });
+    await rm(outside, { recursive: true, force: true });
+  });
+
+  it('requires the UI token', async () => {
+    const secured = await buildServer({ uiToken: 'ab'.repeat(32), sandbox: async () => ({ available: false, reason: 'test' }), appConfig: new AppConfigStore(join(base, 'config2')), git: new Git(), doctor: async () => [],
+      runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }) });
+    const res = await secured.inject(`${P}/brand/proposals/${id}/activity`);
+    expect(res.statusCode).toBe(401);
+    await secured.close();
   });
 });

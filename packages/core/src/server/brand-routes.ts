@@ -1,8 +1,10 @@
 import type { FastifyInstance } from 'fastify';
-import { EMPTY_BRAND_KIT, type BrandOverview, type ServerMessage } from '@motion-studio/shared';
+import { EMPTY_BRAND_KIT, type BrandOverview, type ProposalActivity, type ServerMessage } from '@motion-studio/shared';
+import { join } from 'node:path';
 import { z } from 'zod';
 import { brandJobKey, type BrandService } from '../brand/brand-analysis.ts';
 import { BrandStore } from '../brand/brand-store.ts';
+import { readProposalActivity } from '../brand/proposal-activity.ts';
 import type { Git } from '../git.ts';
 import { JsonFileError } from '../json-file.ts';
 import { LibraryStore } from '../library/library-store.ts';
@@ -99,6 +101,16 @@ export function registerBrandRoutes(app: FastifyInstance, ctx: BrandRoutesContex
     const { acceptedIds, applyGuidelines } = parse(applyBody, req.body);
     const { ref } = await project(req.params.slug);
     return ctx.brand.applyProposal(ref, req.params.id, acceptedIds, applyGuidelines);
+  });
+
+  /**
+   * Read-only: what ran automatically during an analysis (its `auto_approved` events and Bash tool calls), from the
+   * proposal's log.jsonl, confined to the proposal folder and capped (see proposal-activity.ts).
+   */
+  app.get<{ Params: { slug: string; id: string } }>('/api/projects/:slug/brand/proposals/:id/activity', async (req): Promise<ProposalActivity> => {
+    const { projectDir, store } = await project(req.params.slug);
+    if (!/^p-\d{8}-\d{6}(-\d+)?$/.test(req.params.id)) throw new WorkspaceError(400, t().errors.invalidProposalId({ id: req.params.id }));
+    return readProposalActivity(join(projectDir, 'brand'), store.proposalDir(req.params.id));
   });
 
   app.post<{ Params: { slug: string; id: string } }>('/api/projects/:slug/brand/proposals/:id/discard', async (req) => {

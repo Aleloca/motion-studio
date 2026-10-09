@@ -3,6 +3,7 @@ import { messages, type Locale } from './i18n/index.ts';
 import { issueText, type IssueLike } from './issues.ts';
 import { relativeFileSchema, webUrlSchema } from './library.ts';
 import { usageSummarySchema } from './usage.ts';
+import type { AgentEvent } from './events.ts';
 
 const id = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/, 'issue.id');
 
@@ -121,3 +122,8 @@ export interface BrandOverview {
   kit: BrandKit; kitError: string | null; guidelines: string; sources: BrandSource[]; sourcesError: string | null;
   proposals: BrandProposal[]; jobKey: string;
 }
+
+/** GET /api/projects/:slug/brand/proposals/:id/activity: what ran automatically during an analysis (from its log.jsonl). */
+export interface ProposalActivityEntry { at: string; event: Extract<AgentEvent, { kind: 'auto_approved' } | { kind: 'tool_use' }> }
+/** `hasLog` false: an older proposal without a log (nothing is shown). `truncated`: the entry or size cap was reached. */
+export interface ProposalActivity { hasLog: boolean; truncated: boolean; entries: ProposalActivityEntry[] }
