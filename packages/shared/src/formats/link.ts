@@ -1,5 +1,5 @@
 import type { FormatPreset } from '../formats.ts';
-import type { VersionEntry } from '../creative.ts';
+import type { Brief, VersionEntry } from '../creative.ts';
 
 export type FollowCheck = { ok: true } | { ok: false; reason: 'kind' | 'size' | 'extension' | 'duration' | 'safeZone' };
 
@@ -9,15 +9,16 @@ export type FollowCheck = { ok: true } | { ok: false; reason: 'kind' | 'size' | 
  * - `size`: same width and height;
  * - `extension`: the follower accepts every extension the primary may deliver, so any primary file is valid for it;
  * - `duration` (video followers with a `maxDurationSec` only): the primary's duration fits the follower's limit. An unknown
- *   duration (`null`) is ok only when the follower has no limit; otherwise it is `duration`, since it cannot be proven to fit;
+ *   duration (`null`) is ok only when the follower has no limit; otherwise it is `duration`, since it cannot be proven to fit.
+ *   `undefined` skips this check (the duration is not known yet, e.g. no render: it is re-checked at materialization);
  * - `safeZone`: the follower's safe area contains the primary's, so content placed safely for the primary is safe on the
  *   follower too. The safe zones are insets from the edges and the sizes are equal, so this means every follower inset is
  *   <= the primary's. A primary without `safeZone` has a safe area as large as the frame (insets 0), so a follower with a
  *   `safeZone` fails unless all its insets are 0. A follower without `safeZone` in the catalog: the size check alone decides
  *   (no data to compare).
  */
-export function canFollow(primary: FormatPreset, follower: FormatPreset, primaryDurationSec: number | null): FollowCheck {
-  return check(primary, follower, primaryDurationSec, true);
+export function canFollow(primary: FormatPreset, follower: FormatPreset, primaryDurationSec: number | null | undefined): FollowCheck {
+  return check(primary, follower, primaryDurationSec ?? null, primaryDurationSec !== undefined);
 }
 
 function check(primary: FormatPreset, follower: FormatPreset, durationSec: number | null, checkDuration: boolean): FollowCheck {
@@ -120,4 +121,50 @@ export function starOf(versions: VersionEntry[], formatId: string, picks: Record
   }
   const clean = [...history].reverse().find((n) => !hasProblems(versions.find((v) => v.n === n)!, formatId));
   return { version: clean ?? latest, manual: false, newer: null, follows: null };
+}
+
+/**
+ * Duration (seconds) of `formatId`'s file in the latest version that has it, when known (a positive finite number);
+ * `undefined` otherwise (no render yet, an image, or a duration the probe could not read).
+ */
+export function latestDurationOf(versions: VersionEntry[], formatId: string): number | undefined {
+  for (const v of byNumber(versions).reverse()) {
+    const out = v.outputs.find((o) => o.format === formatId);
+    if (!out) continue;
+    return typeof out.durationSec === 'number' && Number.isFinite(out.durationSec) && out.durationSec > 0 ? out.durationSec : undefined;
+  }
+  return undefined;
+}
+
+/** Why a link cannot be made: a `canFollow` reason, or `self`, `chain` (no chains of links), `unknown` (not in the brief or the catalog). */
+export type LinkReason = Extract<FollowCheck, { ok: false }>['reason'] | 'self' | 'chain' | 'unknown';
+export type LinkCheck = { ok: true } | { ok: false; reason: LinkReason };
+
+/**
+ * Whether `follower` may be linked to `primary` in this brief, given the links already in place (spec §2.3): both in the
+ * brief and in the catalog, not the same format, no chain (the primary does not follow another format and the follower has no
+ * followers of its own), and `canFollow` with the primary's latest known duration (`latestDurationOf`; unknown skips the
+ * duration check, which is then done when the follower is materialized).
+ */
+export function checkLink(brief: Pick<Brief, 'formats' | 'links'>, versions: VersionEntry[], presets: FormatPreset[],
+  follower: string, primary: string): LinkCheck {
+  if (follower === primary) return { ok: false, reason: 'self' };
+  const f = brief.formats.includes(follower) ? presets.find((p) => p.id === follower) : undefined;
+  const p = brief.formats.includes(primary) ? presets.find((x) => x.id === primary) : undefined;
+  if (!f || !p) return { ok: false, reason: 'unknown' };
+  const links = effectiveLinks(brief.links, brief.formats);
+  if (Object.hasOwn(links, primary) || Object.entries(links).some(([x, to]) => to === follower && x !== follower)) return { ok: false, reason: 'chain' };
+  return canFollow(p, f, latestDurationOf(versions, primary));
+}
+
+/** Per-format summary of a creative, computed by the core for the creative GET (spec §2.1–2.3). */
+export interface FormatSummary {
+  id: string;
+  /** `formatHistory`: the versions where this format's file is new or changed. */
+  history: number[];
+  star: Star;
+  /** The ★ version's file of this format is missing on disk (e.g. deleted by hand): export will skip it. */
+  starFileMissing: boolean;
+  /** Each other format of the brief as a possible primary for this one (`checkLink`). */
+  linkable: Array<{ primary: string; ok: boolean; reason?: LinkReason }>;
 }

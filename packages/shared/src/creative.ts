@@ -4,6 +4,7 @@ import { linkedCodebaseSchema } from './schemas.ts';
 import { usageSummarySchema } from './usage.ts';
 import { channelName } from './formats.ts';
 import { messages, type Locale } from './i18n/index.ts';
+import type { FormatSummary } from './formats/link.ts';
 
 export const creativeStatusSchema = z.enum(['draft', 'working', 'ready', 'incomplete', 'error', 'interrupted']);
 export type CreativeStatus = z.infer<typeof creativeStatusSchema>;
@@ -127,7 +128,11 @@ export interface CreativeSummary { slug: string; title: string; status: Creative
 /** A creative summary tagged with its project, for cross-project lists such as "Jump back in". */
 export type RecentCreative = CreativeSummary & { project: { slug: string; name: string } };
 export type CreativeListItem = ({ ok: true } & CreativeSummary) | { ok: false; slug: string; error: string };
-export interface CreativeDetail { slug: string; creative: CreativeFile; versions: VersionEntry[]; jobKey: string }
+/**
+ * `formats`: one summary per brief format (history, ★, linkable primaries), always sent by the core; optional in the type
+ * only so older fixtures stay valid. `versions` may carry hashes the core computed lazily for old versions.
+ */
+export interface CreativeDetail { slug: string; creative: CreativeFile; versions: VersionEntry[]; jobKey: string; formats?: FormatSummary[] }
 
 /** Localized text of an output warning; an unknown key, or params that are not numbers, fall back to the key itself. */
 export function outputWarningText(w: OutputWarning, locale: Locale): string {

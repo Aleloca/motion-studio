@@ -1,5 +1,6 @@
-import { randomBytes } from 'node:crypto';
-import { constants } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { constants, type Stats } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
 import { lstat, open, readFile, realpath, rename, rm, stat, unlink, writeFile, type FileHandle } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 import { fileLock } from '../file-locks.ts';
@@ -108,24 +109,8 @@ export async function readAgentFile(path: string, maxBytes = MAX_AGENT_FILE_BYTE
  * null when missing; `{ skipped }` when refused.
  */
 export async function readConfinedFile(projectDir: string, rel: string, maxBytes = MAX_AGENT_FILE_BYTES): Promise<AgentFile> {
-  const abs = absOf(projectDir, rel);
-  let fh: FileHandle;
-  try {
-    fh = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? null : { skipped: 'unreadable' };
-  }
-  try {
-    const info = await fh.stat();
-    if (!info.isFile()) return { skipped: 'not-regular' };
-    // A hard link made by the agent can point at any file of the user's on the same volume.
-    if (info.nlink > 1) return { skipped: 'linked' };
+  return withConfinedFile(projectDir, rel, false, async (fh, info) => {
     if (info.size > maxBytes) return { skipped: 'too-large' };
-    // A symlinked parent folder could lead out of the project: the opened file must be the one under the project's real path.
-    const [real, realProject] = await Promise.all([realpath(abs).catch(() => null), realpath(projectDir).catch(() => null)]);
-    if (!real || !realProject || !real.startsWith(realProject + sep)) return { skipped: 'outside' };
-    const check = await stat(real).catch(() => null);
-    if (!check || check.ino !== info.ino || check.dev !== info.dev) return { skipped: 'outside' };
     // Bounded read: the file may grow after the size check.
     const buf = Buffer.alloc(maxBytes + 1);
     let total = 0;
@@ -136,16 +121,19 @@ export async function readConfinedFile(projectDir: string, rel: string, maxBytes
       if (total > maxBytes) return { skipped: 'too-large' };
     }
     return { text: buf.subarray(0, total).toString('utf8') };
-  } finally {
-    await fh.close().catch(() => {});
-  }
+  });
 }
 
-export const MAX_AGENT_BYTES = 50 * 1024 * 1024;
-
-/** Same checks as readConfinedFile, for binary files (e.g. reference images): the bytes, or `{ skipped }` / null when missing. */
-export async function readConfinedBytes(projectDir: string, rel: string, maxBytes = MAX_AGENT_BYTES): Promise<{ bytes: Buffer } | { skipped: SkipReason } | null> {
-  const abs = absOf(projectDir, rel);
+/**
+ * Opens `rel` under `base` for reading with the confined-read checks and passes the open handle to `use`: never through a
+ * symlink (O_NOFOLLOW, non-blocking so a FIFO cannot hang the core), a regular single-linked file (a hard link made by the
+ * agent can point at any file of the user's on the same volume) whose real path is under `base`'s real path and is the
+ * opened inode. `exact`: the real path must be exactly `<real base>/<rel>`, which also refuses a symlinked folder inside
+ * `base`. null when missing; `{ skipped }` when refused.
+ */
+async function withConfinedFile<T>(base: string, rel: string, exact: boolean,
+  use: (fh: FileHandle, info: Stats) => Promise<T | { skipped: SkipReason }>): Promise<T | { skipped: SkipReason } | null> {
+  const abs = absOf(base, rel);
   let fh: FileHandle;
   try {
     fh = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -155,13 +143,35 @@ export async function readConfinedBytes(projectDir: string, rel: string, maxByte
   try {
     const info = await fh.stat();
     if (!info.isFile()) return { skipped: 'not-regular' };
-    // A hard link made by the agent can point at any file of the user's on the same volume.
     if (info.nlink > 1) return { skipped: 'linked' };
-    if (info.size > maxBytes) return { skipped: 'too-large' };
-    const [real, realProject] = await Promise.all([realpath(abs).catch(() => null), realpath(projectDir).catch(() => null)]);
-    if (!real || !realProject || !real.startsWith(realProject + sep)) return { skipped: 'outside' };
+    const [real, realBase] = await Promise.all([realpath(abs).catch(() => null), realpath(base).catch(() => null)]);
+    if (!real || !realBase || !(exact ? real === absOf(realBase, rel) : real.startsWith(realBase + sep))) return { skipped: 'outside' };
     const check = await stat(real).catch(() => null);
     if (!check || check.ino !== info.ino || check.dev !== info.dev) return { skipped: 'outside' };
+    return await use(fh, info);
+  } finally {
+    await fh.close().catch(() => {});
+  }
+}
+
+/**
+ * sha256 (hex) of `rel` under `base`, streamed (any size), with the confined-read checks and an exact real path (see
+ * withConfinedFile). Also returns the size and mtime the file had when opened, the key of the hash caches.
+ */
+export function hashConfinedFile(base: string, rel: string): Promise<{ sha256: string; size: number; mtimeMs: number } | { skipped: SkipReason } | null> {
+  return withConfinedFile(base, rel, true, async (fh, info) => {
+    const hash = createHash('sha256');
+    await pipeline(fh.createReadStream({ start: 0, autoClose: false }), hash);
+    return { sha256: hash.digest('hex'), size: info.size, mtimeMs: info.mtimeMs };
+  });
+}
+
+export const MAX_AGENT_BYTES = 50 * 1024 * 1024;
+
+/** Same checks as readConfinedFile, for binary files (e.g. reference images): the bytes, or `{ skipped }` / null when missing. */
+export async function readConfinedBytes(projectDir: string, rel: string, maxBytes = MAX_AGENT_BYTES): Promise<{ bytes: Buffer } | { skipped: SkipReason } | null> {
+  return withConfinedFile(projectDir, rel, false, async (fh, info) => {
+    if (info.size > maxBytes) return { skipped: 'too-large' };
     const chunks: Buffer[] = [];
     let total = 0;
     for (;;) {
@@ -173,7 +183,5 @@ export async function readConfinedBytes(projectDir: string, rel: string, maxByte
       chunks.push(buf.subarray(0, bytesRead));
     }
     return { bytes: Buffer.concat(chunks) };
-  } finally {
-    await fh.close().catch(() => {});
-  }
+  });
 }

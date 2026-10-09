@@ -25,6 +25,14 @@ export class WorkspaceError extends Error {
   }
 }
 
+/** A WorkspaceError whose response also carries a stable machine-readable `code` (e.g. `link-chain`), for the UI to branch on. */
+export class CodedError extends WorkspaceError {
+  constructor(status: 400 | 404 | 409, message: string, public readonly apiCode: string) {
+    super(status, message);
+    this.name = 'CodedError';
+  }
+}
+
 /** `~` and `~/…` refer to the user's home folder. */
 export function expandHome(path: string): string {
   if (path === '~') return homedir();

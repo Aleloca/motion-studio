@@ -2,8 +2,9 @@ import type { ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetti
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, uiToken } from './uiToken.ts';
 
+/** `code`: the stable machine-readable reason some routes add (e.g. `link-chain`, `pick-file-missing`). */
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string) { super(message); this.name = 'ApiError'; }
+  constructor(public readonly status: number, message: string, public readonly code?: string) { super(message); this.name = 'ApiError'; }
 }
 
 /** Headers of every API call: the UI token (the server refuses calls without it). */
@@ -16,7 +17,8 @@ async function parse<T>(res: Response): Promise<T> {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 401 && (data as { code?: string }).code === 'ui-token') markPairingNeeded();
-    throw new ApiError(res.status, (data as { error?: string }).error ?? currentMessages().web.api.httpError({ status: res.status }));
+    const code = (data as { code?: unknown }).code;
+    throw new ApiError(res.status, (data as { error?: string }).error ?? currentMessages().web.api.httpError({ status: res.status }), typeof code === 'string' ? code : undefined);
   }
   return data as T;
 }
@@ -106,6 +108,12 @@ export const api = {
     request<{ slug: string; creative: CreativeFile; job: JobSummary | null }>('POST', `${p(slug)}/creatives`, body),
   getCreative: (slug: string, creative: string) => request<CreativeDetail>('GET', c(slug, creative)),
   updateCreative: (slug: string, creative: string, body: { title?: string; brief?: Brief; linkedCodebases?: LinkedCodebase[] }) => request<CreativeFile>('PUT', c(slug, creative), body),
+  /** Manual ★ of a format (`null` clears it; the version the default rule gives also clears it). */
+  setExportPick: (slug: string, creative: string, format: string, version: number | null) =>
+    request<CreativeDetail>('PUT', `${c(slug, creative)}/export-picks`, { format, version }),
+  /** Links `follower` to `primary`, or unlinks it with `null`. */
+  setFormatLink: (slug: string, creative: string, follower: string, primary: string | null) =>
+    request<CreativeDetail>('PUT', `${c(slug, creative)}/links`, { follower, primary }),
   getConversation: (slug: string, creative: string) => request<ConversationEntry[]>('GET', `${c(slug, creative)}/conversation`),
   sendCreativeTurn: (slug: string, creative: string, body: { text?: string; pins?: Pin[] }) => request<JobSummary>('POST', `${c(slug, creative)}/turns`, body),
   restoreVersion: (slug: string, creative: string, n: number) => request<CreativeFile>('POST', `${c(slug, creative)}/versions/${n}/restore`),

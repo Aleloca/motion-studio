@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canFollow, defaultLinks, effectiveLinks, DEFAULT_FORMATS, formatHistory, starOf, type FormatPreset, type OutputFileInfo, type VersionEntry } from '../src/index.ts';
+import { canFollow, checkLink, defaultLinks, effectiveLinks, latestDurationOf, DEFAULT_FORMATS, formatHistory, starOf, type FormatPreset, type OutputFileInfo, type VersionEntry } from '../src/index.ts';
 
 const preset = (id: string): FormatPreset => DEFAULT_FORMATS.find((f) => f.id === id)!;
 const REEL = preset('instagram-reel-9x16');
@@ -123,5 +123,36 @@ describe('effectiveLinks', () => {
     ['no formats given: membership is not checked', { z: 'y', y: 'y' }, undefined, { z: 'y' }],
   ] as const)('%s', (_name, links, formats, expected) => {
     expect(effectiveLinks(links, formats)).toEqual(expected);
+  });
+});
+
+describe('canFollow with an unknown duration (undefined)', () => {
+  it('skips the duration check, unlike null', () => {
+    expect(canFollow(REEL, SHORTS, undefined)).toEqual({ ok: true });
+    expect(canFollow(REEL, SHORTS, null)).toEqual({ ok: false, reason: 'duration' });
+    expect(canFollow(REEL, POST, undefined)).toEqual({ ok: false, reason: 'size' });
+  });
+});
+
+describe('latestDurationOf and checkLink', () => {
+  const reelOut = (n: number, durationSec: number | null): VersionEntry => ver(n, [{ ...out('instagram-reel-9x16', h('a')), durationSec }]);
+  const presets = [REEL, TIKTOK, SHORTS, POST];
+  const brief = { formats: ['instagram-reel-9x16', 'tiktok-9x16', 'youtube-shorts-9x16', 'instagram-post-1x1'], links: { 'tiktok-9x16': 'instagram-reel-9x16' } };
+  it('reads the duration of the latest version with the format', () => {
+    expect(latestDurationOf([reelOut(1, 30), reelOut(2, 75), ver(3, [])], 'instagram-reel-9x16')).toBe(75);
+    expect(latestDurationOf([reelOut(1, 30), reelOut(2, null)], 'instagram-reel-9x16')).toBeUndefined();
+    expect(latestDurationOf([], 'instagram-reel-9x16')).toBeUndefined();
+  });
+  it.each([
+    ['self', 'youtube-shorts-9x16', 'youtube-shorts-9x16', [], { ok: false, reason: 'self' }],
+    ['unknown follower', 'nope', 'instagram-reel-9x16', [], { ok: false, reason: 'unknown' }],
+    ['primary that follows another format', 'youtube-shorts-9x16', 'tiktok-9x16', [], { ok: false, reason: 'chain' }],
+    ['follower that has followers', 'instagram-reel-9x16', 'youtube-shorts-9x16', [], { ok: false, reason: 'chain' }],
+    ['no render yet: duration skipped', 'youtube-shorts-9x16', 'instagram-reel-9x16', [], { ok: true }],
+    ['primary rendered at 75 s', 'youtube-shorts-9x16', 'instagram-reel-9x16', [reelOut(1, 75)], { ok: false, reason: 'duration' }],
+    ['primary rendered at 30 s', 'youtube-shorts-9x16', 'instagram-reel-9x16', [reelOut(1, 30)], { ok: true }],
+    ['different size', 'instagram-post-1x1', 'instagram-reel-9x16', [], { ok: false, reason: 'size' }],
+  ] as const)('%s', (_name, follower, primary, versions, expected) => {
+    expect(checkLink(brief, [...versions], presets, follower, primary)).toEqual(expected);
   });
 });

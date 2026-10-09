@@ -1,17 +1,19 @@
 import { lstat, realpath } from 'node:fs/promises';
 import { dirname, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { briefSchema, issuesText, linkedCodebaseSchema, pinSchema, type CreativeDetail, type RecentCreative } from '@motion-studio/shared';
+import { briefSchema, checkLink, defaultLinks, effectiveLinks, formatLabel, issuesText, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
 import { exportVersion } from '../creatives/export.ts';
+import { formatSummaries } from '../creatives/format-summary.ts';
+import { withLazyHashes } from '../creatives/output-hashes.ts';
 import { creativeJobKey, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
 import { FormatCatalog } from '../formats/format-catalog.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { completeGitignore, sweepProject } from '../project-maintenance.ts';
-import { expandHome, WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
+import { CodedError, expandHome, WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import { sendConfinedFile } from './serve-file.ts';
 import { currentLocale, t } from '../i18n.ts';
 
@@ -21,6 +23,8 @@ export interface CreativeRoutesContext {
   media: MediaTools;
   openPath: (p: string) => Promise<void>;
   isJobActive: (key: string) => boolean;
+  /** Tells the clients a creative changed (e.g. lazy hashes finished after the GET answered). */
+  broadcast?: (msg: ServerMessage) => void;
 }
 
 const isInsideDir = (p: string, base: string | null) => Boolean(base && p.startsWith(base.endsWith(sep) ? base : base + sep));
@@ -28,6 +32,28 @@ const isInsideDir = (p: string, base: string | null) => Boolean(base && p.starts
 const turnBody = z.object({ text: z.string().max(10_000).optional(), pins: z.array(pinSchema).max(50).optional() });
 const createBody = z.object({ title: z.string(), brief: briefSchema, generate: z.boolean().optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
 const editBody = z.object({ title: z.string().optional(), brief: briefSchema.optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
+const pickBody = z.object({ format: z.string().min(1).max(200), version: z.number().int().min(1).nullable() });
+const linkBody = z.object({ follower: z.string().min(1).max(200), primary: z.string().min(1).max(200).nullable() });
+
+/**
+ * The links a new creative starts with: the ones sent (sanitized, each pair checked with `checkLink`; the duration is not
+ * known yet, so it is checked at materialization), else `defaultLinks` over the brief's formats in the catalog, with the
+ * duration left unknown (`undefined`: a `null` would be strict and drop every video link).
+ */
+function initialLinks(brief: Brief, presets: FormatPreset[]): Record<string, string> {
+  if (brief.links === undefined) {
+    const known = brief.formats.map((id) => presets.find((p) => p.id === id)).filter((p): p is FormatPreset => p !== undefined);
+    return defaultLinks(known, undefined);
+  }
+  const links = effectiveLinks(brief.links, brief.formats);
+  const e = t().errors;
+  const label = (id: string) => { const p = presets.find((x) => x.id === id); return p ? formatLabel(p, currentLocale()) : id; };
+  for (const [follower, primary] of Object.entries(links)) {
+    const c = checkLink({ formats: brief.formats, links }, [], presets, follower, primary);
+    if (!c.ok) throw new CodedError(400, e.linkIncompatible({ follower: label(follower), primary: label(primary), reason: e.followReason[c.reason] }), 'link-incompatible');
+  }
+  return links;
+}
 
 function parse<T>(schema: z.ZodType<T>, body: unknown): T {
   const r = schema.safeParse(body ?? {});
@@ -99,7 +125,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const linkedCodebases = body.linkedCodebases ? normalizeCodebaseList(body.linkedCodebases) : null;
     if (linkedCodebases) await assertCodebasesOutside(linkedCodebases, [ws.projectDir(req.params.slug), ws.root]);
     const store = new CreativeStore(ws.projectDir(req.params.slug));
-    const created = await store.create({ title: body.title, brief: body.brief });
+    const links = initialLinks(body.brief, (await catalog().load()).presets);
+    const created = await store.create({ title: body.title, brief: { ...body.brief, links } });
     const slug = created.slug;
     const creative = linkedCodebases ? await store.update(slug, { linkedCodebases }) : created.creative;
     const ref = { root: ws.root, projectSlug: req.params.slug, projectDir: ws.projectDir(req.params.slug), creativeSlug: slug };
@@ -107,14 +134,39 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     return reply.status(201).send({ slug, creative: job ? await store.get(slug) : creative, job });
   });
 
-  app.get<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c', async (req): Promise<CreativeDetail> => {
-    const ref = await refOf(req.params.slug, req.params.c);
+  /**
+   * The creative with its versions and per-format summary. Hashes missing in old versions are computed lazily within a
+   * short budget (see withLazyHashes); when some outlive it, the clients are told once they are ready.
+   */
+  const detailOf = async (ref: CreativeRef & { store: CreativeStore }): Promise<CreativeDetail> => {
+    const creative = await ref.store.get(ref.creativeSlug);
+    const creativeDir = ref.store.dir(ref.creativeSlug);
+    const versions = await withLazyHashes({
+      projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir, versions: await ref.store.readVersions(ref.creativeSlug),
+      onBackgroundDone: () => ctx.broadcast?.({ type: 'creative', project: ref.projectSlug, creative: ref.creativeSlug }),
+    });
     return {
-      slug: ref.creativeSlug,
-      creative: await ref.store.get(ref.creativeSlug),
-      versions: await ref.store.readVersions(ref.creativeSlug),
+      slug: ref.creativeSlug, creative, versions,
       jobKey: creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug),
+      formats: await formatSummaries(creativeDir, creative, versions, (await catalog().load()).presets),
     };
+  };
+
+  app.get<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c', async (req): Promise<CreativeDetail> =>
+    detailOf(await refOf(req.params.slug, req.params.c)));
+
+  app.put<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/export-picks', async (req): Promise<CreativeDetail> => {
+    const body = parse(pickBody, req.body);
+    const ref = await refOf(req.params.slug, req.params.c);
+    await ctx.turns.setExportPick(ref, body.format, body.version);
+    return detailOf(ref);
+  });
+
+  app.put<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/links', async (req): Promise<CreativeDetail> => {
+    const body = parse(linkBody, req.body);
+    const ref = await refOf(req.params.slug, req.params.c);
+    await ctx.turns.setLink(ref, body.follower, body.primary);
+    return detailOf(ref);
   });
 
   app.put<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c', async (req) => {

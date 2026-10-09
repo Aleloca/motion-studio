@@ -1,6 +1,6 @@
 import { lstat, rm, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
-import { EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Pin, type ServerMessage, type UsageRecord, type VersionEntry } from '@motion-studio/shared';
+import { checkLink, effectiveLinks, formatLabel, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Pin, type ServerMessage, type UsageRecord, type VersionEntry } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { BrandStore } from '../brand/brand-store.ts';
 import { assertCodebasesOutside, checkCodebases, codebaseOverlaps, codebaseOverlapMessage, codebaseSnapshot, normalizeCodebaseList } from '../codebases.ts';
@@ -13,9 +13,11 @@ import type { MediaTools } from '../media/media-tools.ts';
 import { availableTools } from '../bridge/provider-tools.ts';
 import type { SecretsVault } from '../secrets/vault.ts';
 import { CONTEXT_MD } from '../project-template.ts';
-import { WorkspaceError } from '../workspace-store.ts';
+import { CodedError, WorkspaceError } from '../workspace-store.ts';
 import { CreativeStore } from './creative-store.ts';
 import { validateOutputs } from './output-contract.ts';
+import { outputFileExists } from './format-summary.ts';
+import { hashVersionOutputs, withLazyHashes } from './output-hashes.ts';
 import { buildCreativePrompt, type CreativeContext, type PromptKind } from './prompt.ts';
 import { sumUsage } from '../usage/usage-tracker.ts';
 import { currentLocale, t } from '../i18n.ts';
@@ -65,12 +67,94 @@ export class CreativeTurnService {
       const store = new CreativeStore(ref.projectDir);
       const linkedCodebases = patch.linkedCodebases ? normalizeCodebaseList(patch.linkedCodebases) : null;
       if (linkedCodebases) await assertCodebasesOutside(linkedCodebases, [ref.projectDir, ref.root]);
+      // Links change only through setLink (validated): a brief save keeps the stored ones, whatever it carries.
+      let brief: Brief | undefined;
+      if (patch.brief) {
+        const { links: _ignored, ...rest } = patch.brief;
+        const stored = (await store.get(ref.creativeSlug)).brief.links;
+        brief = stored ? { ...rest, links: stored } : rest;
+      }
       const updated = await store.update(ref.creativeSlug, {
         ...(patch.title !== undefined ? { title: patch.title } : {}),
-        ...(patch.brief ? { brief: patch.brief } : {}),
+        ...(brief ? { brief } : {}),
         ...(linkedCodebases ? { linkedCodebases } : {}),
       });
       await this.commitState(ref, t().jobs.briefUpdatedCommit({ title: updated.title }));
+      return updated;
+    });
+  }
+
+  /**
+   * Sets (`version`) or clears (`null`) the manual ★ of `format` (spec §2.2). A pick equal to what the default rule gives
+   * is not stored (it clears the format's entry), so the ★ keeps following new versions. Refused for a format not in the
+   * brief, a follower (it uses its primary's ★), a version that does not exist (404) or has no file for the format, and a
+   * file missing on disk (409).
+   */
+  async setExportPick(ref: CreativeRef, format: string, version: number | null): Promise<CreativeFile> {
+    return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), async () => {
+      const store = new CreativeStore(ref.projectDir);
+      const creative = await store.get(ref.creativeSlug);
+      const presets = await this.deps.presets();
+      const label = (id: string) => { const p = presets.find((x) => x.id === id); return p ? formatLabel(p, currentLocale()) : id; };
+      const e = t().errors;
+      if (!creative.brief.formats.includes(format)) throw new CodedError(400, e.formatNotInBrief({ format: label(format) }), 'format-not-in-brief');
+      const links = effectiveLinks(creative.brief.links, creative.brief.formats);
+      if (Object.hasOwn(links, format)) throw new CodedError(400, e.pickFollower({ format: label(format), primary: label(links[format]!) }), 'pick-follower');
+      // The default rule needs the full history: wait for every hash here.
+      const versions = await withLazyHashes({
+        projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir: store.dir(ref.creativeSlug),
+        versions: await store.readVersions(ref.creativeSlug), budgetMs: Number.POSITIVE_INFINITY,
+      });
+      if (version !== null) {
+        const entry = versions.find((v) => v.n === version);
+        if (!entry) throw new CodedError(404, e.versionNNotFound({ n: version }), 'version-not-found');
+        if (!entry.outputs.some((o) => o.format === format)) throw new CodedError(400, e.pickNoFile({ format: label(format), n: version }), 'pick-no-file');
+        if (!(await outputFileExists(store.dir(ref.creativeSlug), versions, version, format))) {
+          throw new CodedError(409, e.pickFileMissing({ format: label(format), n: version }), 'pick-file-missing');
+        }
+      }
+      const picks = { ...creative.exportPicks };
+      if (version === null || version === starOf(versions, format, undefined, links).version) delete picks[format];
+      else picks[format] = version;
+      const updated = await store.update(ref.creativeSlug, { exportPicks: Object.keys(picks).length > 0 ? picks : undefined });
+      await this.commitState(ref, t().jobs.stateCommit({ title: updated.title }));
+      this.changed(ref);
+      return updated;
+    });
+  }
+
+  /**
+   * Links `follower` to `primary`, or unlinks it (`null`) (spec §2.3); refused while a generation is queued or running.
+   * A link is checked with `checkLink` against the primary's latest known duration (unknown: re-checked at materialization).
+   * The stored links are sanitized (`effectiveLinks`): dropped formats, self-links and chains never stay.
+   */
+  async setLink(ref: CreativeRef, follower: string, primary: string | null): Promise<CreativeFile> {
+    const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
+    return this.locks.run(key, async () => {
+      if (this.isActive(key)) throw new CodedError(409, t().errors.waitBeforeLinks, 'job-running');
+      const store = new CreativeStore(ref.projectDir);
+      const creative = await store.get(ref.creativeSlug);
+      const { brief } = creative;
+      const presets = await this.deps.presets();
+      const label = (id: string) => { const p = presets.find((x) => x.id === id); return p ? formatLabel(p, currentLocale()) : id; };
+      const e = t().errors;
+      for (const f of primary === null ? [follower] : [follower, primary]) {
+        if (!brief.formats.includes(f)) throw new CodedError(400, e.formatNotInBrief({ format: label(f) }), 'format-not-in-brief');
+      }
+      const links = effectiveLinks(brief.links, brief.formats);
+      if (primary === null) delete links[follower];
+      else {
+        const check = checkLink(brief, await store.readVersions(ref.creativeSlug), presets, follower, primary);
+        if (!check.ok) {
+          if (check.reason === 'self') throw new CodedError(400, e.linkSelf, 'link-self');
+          if (check.reason === 'chain') throw new CodedError(400, e.linkChain({ follower: label(follower), primary: label(primary) }), 'link-chain');
+          throw new CodedError(400, e.linkIncompatible({ follower: label(follower), primary: label(primary), reason: e.followReason[check.reason] }), 'link-incompatible');
+        }
+        links[follower] = primary;
+      }
+      const updated = await store.update(ref.creativeSlug, { brief: { ...brief, links } });
+      await this.commitState(ref, t().jobs.briefUpdatedCommit({ title: updated.title }));
+      this.changed(ref);
       return updated;
     });
   }
@@ -223,12 +307,14 @@ export class CreativeTurnService {
 
       finalizing = true;
       const status = problems.length === 0 ? 'complete' : 'incomplete';
+      // Hashed by the core from the files, after the agent is done: never taken from anything the agent wrote.
+      const outputs = await hashVersionOutputs(store.dir(slug), n, result?.outputs ?? []);
       const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${n}`);
       const usage = sumUsage(attemptUsage);
       await store.appendVersion(slug, {
         n, commit, sessionId: resumeSessionId ?? null, status, createdAt: now(),
         request: request ?? t().jobs.requestFromBrief,
-        outputs: result?.outputs ?? [], problems, tools: result?.tools ?? [], renderCommand: result?.renderCommand ?? null,
+        outputs, problems, tools: result?.tools ?? [], renderCommand: result?.renderCommand ?? null,
         basedOn: creative.resumeFrom?.version ?? latest?.n ?? null,
         ...(usage ? { usage } : {}),
       });

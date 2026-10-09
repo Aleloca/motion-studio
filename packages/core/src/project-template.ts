@@ -56,6 +56,7 @@ creatives/*/work/tmp/
 .DS_Store
 .*.part
 assets/.describe/
+.studio/cache/
 `;
 
 /** The usage ledger stays versioned; a merge of two histories keeps both sides' lines (append-only JSONL). */

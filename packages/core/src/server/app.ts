@@ -26,7 +26,7 @@ import { JsonFileError } from '../json-file.ts';
 import { MemoryVault, type SecretsVault } from '../secrets/vault.ts';
 import { ApprovalBroker } from '../approvals/broker.ts';
 import { registerSettingsRoutes } from './settings-routes.ts';
-import { expandHome, WorkspaceError, WorkspaceStore } from '../workspace-store.ts';
+import { CodedError, expandHome, WorkspaceError, WorkspaceStore } from '../workspace-store.ts';
 import { recoverWorkspace, registerCreativeRoutes } from './creative-routes.ts';
 import { registerBrandRoutes } from './brand-routes.ts';
 import { EventHub } from './event-hub.ts';
@@ -191,6 +191,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   app.setErrorHandler((error: unknown, _req, reply) => {
     const err = error as Error;
+    if (err instanceof CodedError) return reply.status(err.status).send({ error: err.message, code: err.apiCode });
     if (err instanceof WorkspaceError) return reply.status(err.status).send({ error: err.message });
     if (err instanceof JobConflictError) return reply.status(409).send({ error: err.message });
     if (err instanceof JsonFileError) return reply.status(422).send({ error: err.message });
@@ -351,7 +352,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     hub.send(socket, { type: 'snapshot', jobs: queue.list(), approvals: approvals.pending(), ...languageState() });
   });
 
-  registerCreativeRoutes(app, { requireWorkspace, turns, media, openPath: deps.openPath ?? (async () => {}), isJobActive });
+  registerCreativeRoutes(app, { requireWorkspace, turns, media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m) });
 
   const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m) };
   registerBrandRoutes(app, routeCtx);

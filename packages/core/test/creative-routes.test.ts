@@ -191,9 +191,9 @@ describe('recoverWorkspace', { timeout: 20_000 }, () => {
     expect(await readdir(join(dir, 'assets', '.describe'))).toEqual([]);
     expect(await readdir(join(dir, 'references'))).toEqual(['.gitkeep']);
     expect(await readdir(join(dir, 'brand', 'proposals'))).toEqual(['p-20260101-000001']);
-    expect((await readFile(join(dir, '.gitignore'), 'utf8')).split('\n')).toEqual(['outputs/', '.*.part', 'assets/.describe/', '.cache/', 'creatives/*/work/tmp/', '']);
+    expect((await readFile(join(dir, '.gitignore'), 'utf8')).split('\n')).toEqual(['outputs/', '.*.part', 'assets/.describe/', '.cache/', 'creatives/*/work/tmp/', '.studio/cache/', '']);
     await recoverWorkspace(ws);
-    expect((await readFile(join(dir, '.gitignore'), 'utf8')).split('\n')).toEqual(['outputs/', '.*.part', 'assets/.describe/', '.cache/', 'creatives/*/work/tmp/', '']);
+    expect((await readFile(join(dir, '.gitignore'), 'utf8')).split('\n')).toEqual(['outputs/', '.*.part', 'assets/.describe/', '.cache/', 'creatives/*/work/tmp/', '.studio/cache/', '']);
     // Older projects also get the union merge for the usage ledger, once.
     expect(await readFile(join(dir, '.gitattributes'), 'utf8')).toBe('.studio/usage.jsonl merge=union\n');
   });

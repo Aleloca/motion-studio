@@ -9,11 +9,12 @@ const IDENTITY = ['-c', 'user.name=Motion Studio', '-c', 'user.email=motion-stud
 const HARDENED = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
 
 /**
- * Never versioned, whatever the project's .gitignore says: the sandbox caches and the agent's scratch folders. They go
+ * Never versioned, whatever the project's .gitignore says: the sandbox caches, the agent's scratch folders and the
+ * core's caches (`.studio/cache/`, e.g. output hashes). They go
  * into `.git/info/exclude` (the agent cannot write `.git/`) rather than an exclude pathspec: git 2.50 makes
  * `git add -A -- . ':(exclude).cache'` exit 1 when `.cache/` is also gitignored and present.
  */
-export const LOCAL_EXCLUDES = ['/.cache/', '/creatives/*/work/tmp/'] as const;
+export const LOCAL_EXCLUDES = ['/.cache/', '/creatives/*/work/tmp/', '/.studio/cache/'] as const;
 
 /**
  * Appends the missing LOCAL_EXCLUDES to `<dir>/.git/info/exclude`, keeping its other lines. Skipped when `<dir>/.git`
