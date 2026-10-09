@@ -142,6 +142,7 @@ export function Welcome(props: WelcomeProps) {
           </a>
         ) : <span className="ms-logo" aria-hidden="true"><LogoGlyph /></span>}
         <b className="ms-welcome-brand">Motion Studio</b>
+        <span className="ms-welcome-version">{__APP_VERSION__}</span>
         <div className="ms-grow" />
         {props.onLanguage ? <LanguagePicker value={props.language ?? 'system'} systemLocale={props.systemLocale ?? 'en'} onChange={props.onLanguage} /> : null}
       </header>
@@ -196,7 +197,9 @@ function LanguagePicker({ value, systemLocale, onChange }: { value: LanguageSett
       onChange({ locale: r.locale, setting: r.languageSetting, systemLocale: r.systemLocale });
     } catch (e) { toast.show(s.languageFailed({ detail: message(e) })); }
   };
-  return <Select className="ms-welcome-lang" value={value} options={options} onChange={(v) => void choose(v)} label={s.language} />;
+  // The pill shows the language in use; the list says which one "System" resolves to.
+  const shown = s.languageNames[value === 'system' ? systemLocale : value];
+  return <Select className="ms-welcome-lang" variant="pill" icon="globe" display={shown} value={value} options={options} onChange={(v) => void choose(v)} label={s.language} />;
 }
 
 type PrimaryRef = { current: (() => void) | null };

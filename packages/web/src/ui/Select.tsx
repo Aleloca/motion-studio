@@ -1,6 +1,7 @@
 import { useId, useRef, useState, type KeyboardEvent } from 'react';
 import { cx } from './cx.ts';
 import { Icon } from './Icon.tsx';
+import type { IconName } from './icons.ts';
 import { Popover } from './Popover.tsx';
 import { rovingIndex } from './roving.ts';
 
@@ -15,13 +16,19 @@ export interface SelectProps<T extends string> {
   className?: string;
   /** The value stays visible; the list cannot open (e.g. a read-only brand kit). */
   disabled?: boolean;
+  /** `pill`: a compact rounded trigger sized to its content (e.g. the Welcome language control). */
+  variant?: 'field' | 'pill';
+  /** An icon before the value (e.g. a globe for the language). */
+  icon?: IconName;
+  /** A shorter text for the trigger than the chosen option's label (the list keeps the full labels). */
+  display?: string;
 }
 
 /**
  * Drop-down in a popover, replacing the native <select> (spec §4.3): a button showing the value opens a listbox;
  * arrows / Home / End move, Enter or Space choose, a letter jumps, Esc closes. Focus goes back to the button.
  */
-export function Select<T extends string>({ value, options, onChange, label, className, disabled }: SelectProps<T>) {
+export function Select<T extends string>({ value, options, onChange, label, className, disabled, variant = 'field', icon, display }: SelectProps<T>) {
   const uid = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -78,7 +85,7 @@ export function Select<T extends string>({ value, options, onChange, label, clas
       <button
         ref={trigger}
         type="button"
-        className={cx('ms-select', open && 'ms-open', className)}
+        className={cx('ms-select', variant === 'pill' && 'ms-select-pill', open && 'ms-open', className)}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-labelledby={`${uid}-l ${uid}-v`}
@@ -87,7 +94,8 @@ export function Select<T extends string>({ value, options, onChange, label, clas
         onKeyDown={onTriggerKey}
       >
         <span id={`${uid}-l`} className="ms-sr">{label}</span>
-        <span id={`${uid}-v`} className="ms-select-value">{current?.label ?? ''}</span>
+        {icon ? <Icon name={icon} size={14} className="ms-select-icon" /> : null}
+        <span id={`${uid}-v`} className="ms-select-value">{display ?? current?.label ?? ''}</span>
         <Icon name="chevron" size={14} className="ms-select-chev" />
       </button>
       <Popover open={open && !disabled} onClose={() => setOpen(false)} anchor={trigger} width={width}>

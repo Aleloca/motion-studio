@@ -9,6 +9,7 @@
 .ms-welcome-top { height: 52px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 20px; }
 .ms-welcome-brand { font-weight: 700; font-size: 14px; }
 .ms-welcome-lang { min-width: 0; max-width: 220px; }
+.ms-welcome-version { font-family: var(--mono); font-size: 11px; color: var(--faint); }
 
 .ms-welcome-stage { flex: 1; display: flex; align-items: center; justify-content: center; padding: 12px 24px 52px; min-width: 0; }
 .ms-welcome-grid { width: 100%; max-width: 980px; display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 28px; align-items: start; }
@@ -62,14 +63,14 @@
 
 /* System checks (step 1). */
 .ms-syschecks { list-style: none; margin: 0; padding: 0; border-radius: 14px; box-shadow: 0 0 0 1px var(--line); background: var(--panel); }
-.ms-syscheck { display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 0 16px; border-bottom: 1px solid var(--line2); min-width: 0; }
+.ms-syscheck { display: flex; align-items: center; gap: 10px; min-height: 42px; padding: 8px 16px; border-bottom: 1px solid var(--line2); min-width: 0; }
 .ms-syscheck:last-child { border-bottom: 0; }
 .ms-syscheck.ms-fail { flex-direction: column; align-items: stretch; gap: 6px; padding: 11px 16px 12px; }
 .ms-syscheck-line { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .ms-syscheck-label { min-width: 0; overflow-wrap: anywhere; }
 .ms-syscheck-label.ms-muted { color: var(--muted); }
 .ms-syscheck-line .ms-pill { margin-left: auto; }
-.ms-syscheck-value { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--faint); text-align: right; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+.ms-syscheck-value { margin-left: auto; font-family: var(--mono); font-size: 11px; line-height: 1.45; color: var(--faint); text-align: right; min-width: 0; overflow-wrap: anywhere; max-width: 60%; }
 .ms-syscheck-mark { width: 18px; height: 18px; border-radius: 50%; flex: none; display: flex; align-items: center; justify-content: center; }
 .ms-syscheck-mark.ms-ok { background: var(--okBg); color: var(--ok); }
 .ms-syscheck-mark.ms-warn { background: var(--warnBg); color: var(--warn); }
@@ -108,7 +109,7 @@
 .ms-ws-chev.ms-open { transform: rotate(180deg); }
 .ms-ws-checks-list { list-style: none; margin: 0; padding: 2px 14px 12px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 20px; }
 @media (max-width: 560px) { .ms-ws-checks-list { grid-template-columns: minmax(0, 1fr); } }
-.ms-ws-checks-list li { display: flex; align-items: center; gap: 8px; height: 30px; border-top: 1px solid var(--line2); min-width: 0; }
+.ms-ws-checks-list li { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 5px 0; border-top: 1px solid var(--line2); min-width: 0; }
 .ms-ws-checks-list .ms-syscheck-value { max-width: 55%; }
 .ms-ws-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
 .ms-ws-dot.ms-ok { background: var(--ok); }

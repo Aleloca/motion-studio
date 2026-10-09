@@ -220,6 +220,11 @@ button.ms-avatar:active { transform: scale(.95); }
 .ms-select-value { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ms-select-chev { flex: none; color: var(--muted); transition: transform var(--d-s) var(--e-std); }
 .ms-select.ms-open .ms-select-chev { transform: rotate(180deg); }
+.ms-select-icon { flex: none; color: var(--muted); }
+/* Compact pill (Welcome language): sized to its content, rounded, quieter than a field. */
+.ms-select.ms-select-pill { width: auto; max-width: 100%; height: 30px; gap: 6px; padding: 0 8px 0 10px; border-radius: 999px; background: transparent; box-shadow: inset 0 0 0 1px var(--line); font-size: 12px; font-weight: 600; }
+.ms-select.ms-select-pill:hover { background: var(--field); }
+.ms-select.ms-select-pill .ms-select-chev { width: 12px; height: 12px; }
 .ms-listbox { display: flex; flex-direction: column; gap: 1px; outline: none; }
 .ms-option { display: flex; align-items: center; gap: 10px; min-height: 32px; padding: 0 10px; border-radius: 7px; font-size: 13px; color: var(--text); cursor: pointer; user-select: none; }
 .ms-option-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }

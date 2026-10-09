@@ -298,3 +298,26 @@ describe('normalizeSite', () => {
     expect(normalizeSite(raw)).toBeNull();
   });
 });
+
+describe('Welcome · header (W1, W2)', () => {
+  it('shows the app version next to the name', () => {
+    setup();
+    expect(screen.getByText(__APP_VERSION__)).toBeTruthy();
+  });
+
+  it('the language control is a compact globe pill with the language name, opening the list', async () => {
+    api.setLanguage.mockResolvedValue({ locale: 'it', languageSetting: 'it', systemLocale: 'en' });
+    const onLanguage = vi.fn();
+    setup({ onLanguage, language: 'system', systemLocale: 'en' });
+    const pill = screen.getByRole('button', { name: /Language/ });
+    expect(pill.classList.contains('ms-select-pill')).toBe(true);
+    expect(pill.querySelector('svg')).toBeTruthy(); // the globe
+    expect(pill.textContent).toContain('English');
+    expect(pill.textContent).not.toContain('System');
+    await userEvent.click(pill);
+    const list = screen.getByRole('listbox', { name: 'Language' });
+    expect(list.textContent).toContain('System (English)');
+    await userEvent.click(screen.getByRole('option', { name: 'Italiano' }));
+    await waitFor(() => expect(onLanguage).toHaveBeenCalledWith({ locale: 'it', setting: 'it', systemLocale: 'en' }));
+  });
+});
