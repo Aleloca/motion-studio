@@ -263,6 +263,7 @@ export const it: Messages = {
     copyFailed: (p) => `${p.format}: Motion Studio non è riuscito a mettere il suo file in questa versione`,
     carriedChanged: (p) => `${p.format}: il file di v${p.n} non è quello registrato per quella versione, quindi non può essere mantenuto invariato`,
     copyChangedAfter: (p) => `${p.format}: il file è cambiato dopo la copia di Motion Studio`,
+    copyUnverified: (p) => `${p.format}: il file copiato da Motion Studio non può essere verificato (non è leggibile come file normale)`,
     earlierOutputsChanged: (p) => `Attenzione: durante questo turno sono cambiati file di versioni precedenti (${p.list}). La loro cronologia registrata non cambia; controllali prima di esportare.`,
     followerNotDelivered: (p) => `${p.follower} non è stato consegnato: non può seguire ${p.primary} (${p.reason}). Non è più collegato, quindi il prossimo turno ne fa una versione dedicata.`,
     versionFolderUnsafe: (p) => `La cartella outputs/v${p.n} non è una cartella della creatività (un collegamento?): la versione non può essere salvata`,

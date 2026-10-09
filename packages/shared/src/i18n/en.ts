@@ -265,6 +265,7 @@ export const en = {
     copyFailed: (p: { format: string }) => `${p.format}: Motion Studio could not put its file in this version`,
     carriedChanged: (p: { format: string; n: number }) => `${p.format}: the file of v${p.n} is not the one recorded for that version, so it could not be kept unchanged`,
     copyChangedAfter: (p: { format: string }) => `${p.format}: the file changed after Motion Studio copied it`,
+    copyUnverified: (p: { format: string }) => `${p.format}: the file Motion Studio copied could not be verified (it cannot be read as a regular file)`,
     earlierOutputsChanged: (p: { list: string }) => `Warning: files of earlier versions changed during this turn (${p.list}). Their recorded history is unchanged; check them before exporting.`,
     followerNotDelivered: (p: { follower: string; primary: string; reason: string }) => `${p.follower} was not delivered: it cannot follow ${p.primary} (${p.reason}). It is no longer linked, so the next turn makes a dedicated version.`,
     versionFolderUnsafe: (p: { n: number }) => `The folder outputs/v${p.n} is not a folder of the creative (a link?): the version cannot be saved`,

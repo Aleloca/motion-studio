@@ -363,14 +363,49 @@ describe('carry-over safety (review fixes)', { timeout: 30_000 }, () => {
     await setup(baseBrief);
     await run(service.start(ref));
     const vs = await versions();
-    vs[0]!.renderCommand = 'npx remotion render Main ../outputs/v1/instagram-reel-9x16.mp4';
+    vs[0]!.renderCommand = 'npx remotion render Main ../outputs/v1/instagram-reel-9x16.mp4 --dir=outputs/v1 && cp a "outputs/v1" && ls outputs/v12x outputs/v1';
     await writeFile(join(store.dir(ref.creativeSlug), 'versions.json'), JSON.stringify({ schemaVersion: 1, versions: vs }));
     await store.update(ref.creativeSlug, { brief: { ...baseBrief, formats: [REEL, POST, 'youtube-16x9'] } });
     await run(service.start(ref));
     const last = (await prompts()).at(-1)!.prompt;
-    expect(last).toContain('npx remotion render Main ../outputs/v2/instagram-reel-9x16.mp4');
+    // Followed by a slash, nothing, a quote or the end; never part of a longer name.
+    expect(last).toContain('npx remotion render Main ../outputs/v2/instagram-reel-9x16.mp4 --dir=outputs/v2 && cp a "outputs/v2" && ls outputs/v12x outputs/v2');
     expect(last).not.toContain('outputs/v1/');
     expect(last).toContain(`Never write into the other \`creatives/${ref.creativeSlug}/outputs/v*\` folders`);
+  });
+
+  it('a carried file whose copy cannot be hashed is "could not be verified", not "changed"', async () => {
+    setLocale('en');
+    await setup(baseBrief);
+    await run(service.start(ref));
+    hashTesting.setHasher(async (base, rel) => (rel === `outputs/v2/${POST}.mp4` ? { skipped: 'unreadable', code: 'EACCES' } : hashConfinedFile(base, rel)));
+    await run(service.start(ref, { text: 'reel', pins: [] }, { formats: [REEL] }));
+    const v2 = (await versions())[1]!;
+    expect(v2.problems).toEqual(['Instagram · Post 1:1: the file Motion Studio copied could not be verified (it cannot be read as a regular file)']);
+  });
+
+  it('a legacy version (no per-file problems) passes on only the problems that name the carried format', async () => {
+    await setup(baseBrief);
+    await run(service.start(ref));
+    const vs = await versions();
+    const reelProblem = `${REEL}.mp4: durata 99.0s, richiesta circa 10s`;
+    vs[0]!.outputs = vs[0]!.outputs.map(({ problems: _p, ...o }) => o);
+    vs[0]!.problems = [reelProblem];
+    vs[0]!.status = 'incomplete';
+    await writeFile(join(store.dir(ref.creativeSlug), 'versions.json'), JSON.stringify({ schemaVersion: 1, versions: vs }));
+    // The reel (the format named by the problem) is redone; the post is carried and inherits nothing.
+    await run(service.start(ref, { text: 'reel', pins: [] }, { formats: [REEL] }));
+    const v2 = (await versions())[1]!;
+    expect(out(v2, POST)!.problems).toEqual([]);
+    expect(v2.status).toBe('complete');
+    // Carrying the reel instead: it inherits its own problem.
+    await run(service.start(ref, { text: 'post', pins: [] }, { formats: [POST] }));
+    await service.restore(ref, 1);
+    await run(service.start(ref, { text: 'post da v1', pins: [] }, { formats: [POST] }));
+    const v4 = (await versions())[3]!;
+    expect(v4.basedOn).toBe(1);
+    expect(out(v4, REEL)!.problems).toEqual([reelProblem]);
+    expect(v4.status).toBe('incomplete');
   });
 });
 

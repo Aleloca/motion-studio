@@ -46,7 +46,7 @@ const sanitizeCommand = (cmd: string): string => cmd.replace(/[\u0000-\u001f\u00
  */
 function addFormatsRequest(added: string[], base: VersionEntry | undefined, n: number): string | undefined {
   if (!base || added.length === 0) return undefined;
-  const command = base.renderCommand ? sanitizeCommand(base.renderCommand).replace(/outputs\/v\d+\//g, `outputs/v${n}/`) : '';
+  const command = base.renderCommand ? sanitizeCommand(base.renderCommand).replace(/outputs\/v\d+(?!\w)/g, `outputs/v${n}`) : '';
   const j = t().jobs;
   return j.addFormatsRequest({ formats: added.join(', '), n: base.n })
     + (command ? ` ${j.renderCommandWas({ n: base.n, command })}` : '');
@@ -423,7 +423,8 @@ export class CreativeTurnService {
       for (const o of outputs) {
         const copied = assembled.copied.get(o.format);
         if (copied !== undefined && o.sha256 !== copied) {
-          const text = j.copyChangedAfter({ format: label(o.format) });
+          // No hash at all (the file could not be read as a confined file) is not proof of a change.
+          const text = o.sha256 === undefined ? j.copyUnverified({ format: label(o.format) }) : j.copyChangedAfter({ format: label(o.format) });
           problems.push(text);
           o.problems = [...(o.problems ?? []), text];
         }
@@ -666,8 +667,13 @@ export class CreativeTurnService {
     });
     const carriedOk = carried.filter((f) => copied.has(f));
     const requested = formats.filter((f) => targets.includes(f) || carriedOk.includes(f) || Object.hasOwn(materialized, f));
-    // A carried file keeps the problems it had in the base (old versions without per-file problems: the version's).
-    const inherited = Object.fromEntries(carriedOk.map((f) => [f, baseOut(f)!.problems ?? base!.problems] as const));
+    // A carried file keeps the problems it had in the base. Old versions have no per-file problems: only the version's
+    // problems that name this format's file, id or label are its own; the others belong to other formats.
+    const legacyProblems = (f: string) => {
+      const names = [baseOut(f)!.file, f, label(f)];
+      return base!.problems.filter((p) => names.some((x) => p.includes(x)));
+    };
+    const inherited = Object.fromEntries(carriedOk.map((f) => [f, baseOut(f)!.problems ?? legacyProblems(f)] as const));
     const final = await validateOutputs({
       dir, requested, presets, durationSec: creative.brief.durationSec, media: this.deps.media, locale,
       carried: carriedOk, followers: materialized, inherited, reservedOwner: plan.reservedOwner,
