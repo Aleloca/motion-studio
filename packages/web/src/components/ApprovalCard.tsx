@@ -3,8 +3,9 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../api.ts';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { collapse, enter, pulse } from '../motion/index.ts';
-import { Button, CountdownRing, Icon, Tag } from '../ui/index.ts';
+import { Button, CountdownRing, Icon, Tag, toast } from '../ui/index.ts';
 import { message } from '../errors.ts';
+import { ruleLabel } from './ruleLabel.ts';
 
 /**
  * Lengths at which the core cuts the detail, mirrored from packages/core/src/approvals/broker.ts (`describeRequest`
@@ -95,10 +96,14 @@ export function ApprovalCard({ approval, context, leaving = false, onGone }: App
     setOverflows(Boolean(pre && pre.scrollHeight > pre.clientHeight + 1));
   }, [open, approval.detail]);
 
+  // What "Always here" allows, in the words the core saves with the rule (Project settings → Always allowed).
+  const scope = approval.alwaysRule ? ruleLabel(approval.alwaysRule, t) : null;
+  const scopeId = useId();
   const decide = async (d: ApprovalDecision) => {
     setBusy(true); setError(null);
     try {
       await api.decideApproval(approval.id, d);
+      if (d === 'always' && scope) toast.show(a.alwaysSaved({ label: scope }), { tone: 'ok' });
       // The card leaves when the core confirms (approval_resolved); until then it cannot be decided twice.
       setDecided(true);
     } catch (e) {
@@ -145,9 +150,10 @@ export function ApprovalCard({ approval, context, leaving = false, onGone }: App
       )}
       <div className="ms-approval-actions">
         <Button size="sm" variant="ink" className="ms-grow" disabled={disabled} onClick={() => void decide('once')}>{provider ? a.generate : a.allow}</Button>
-        {approval.alwaysRule && <Button size="sm" variant="outline" disabled={disabled} title={approval.alwaysRule} onClick={() => void decide('always')}>{a.alwaysHere}</Button>}
+        {approval.alwaysRule && <Button size="sm" variant="outline" disabled={disabled} title={approval.alwaysRule} aria-describedby={scopeId} onClick={() => void decide('always')}>{a.alwaysHere}</Button>}
         <Button size="sm" variant="ghost" disabled={disabled} onClick={() => void decide('deny')}>{a.deny}</Button>
       </div>
+      {scope ? <span id={scopeId} className="ms-approval-scope">{a.alwaysScope({ label: scope })}</span> : null}
       {error && <p role="alert" className="ms-approval-error">{error}</p>}
     </div>
   );

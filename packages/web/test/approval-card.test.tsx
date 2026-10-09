@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { ApprovalRequest } from '@motion-studio/shared';
+import { messages, type ApprovalRequest } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../src/i18n.tsx';
 
@@ -11,6 +11,8 @@ class ApiError extends Error { constructor(public status: number, m: string) { s
 const api = { decideApproval: vi.fn(async () => ({})) };
 vi.mock('../src/api.ts', () => ({ api, ApiError }));
 const { ApprovalCard } = await import('../src/components/ApprovalCard.tsx');
+const { ruleLabel } = await import('../src/components/ruleLabel.ts');
+const { __resetToasts, getToasts } = await import('../src/ui/toast.tsx');
 
 const en = (node: React.ReactNode) => render(<I18nProvider locale="en">{node}</I18nProvider>);
 const base: ApprovalRequest = {
@@ -146,6 +148,24 @@ describe('ApprovalCard', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Always here' }));
     expect(api.decideApproval).toHaveBeenLastCalledWith('a1', 'always');
     await waitFor(() => expect((screen.getByRole('button', { name: 'Deny' }) as HTMLButtonElement).disabled).toBe(true));
+  });
+
+  it('says in one plain line what "Always here" allows, and repeats it in the success toast (D3)', async () => {
+    __resetToasts();
+    en(<ApprovalCard approval={base} />);
+    expect(screen.getByText('Always here allows: "brew" commands · this project only')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Always here' }));
+    await waitFor(() => expect(getToasts().some((x) => x.text === 'Always allowed in this project: "brew" commands')).toBe(true));
+  });
+
+  it('labels every kind of rule the way the core saves it', () => {
+    const m = messages('en');
+    expect(ruleLabel('Bash(pngquant:*)', m)).toBe('"pngquant" commands');
+    expect(ruleLabel('WebFetch(domain:acme.example)', m)).toBe('Pages of acme.example');
+    expect(ruleLabel('Edit(//Users/me/Brand \\(old\\)/**)', m)).toBe('Edits in /Users/me/Brand (old)');
+    expect(ruleLabel('Read(//Users/me/refs/**)', m)).toBe('Reads in /Users/me/refs');
+    expect(ruleLabel('provider:openai-images', m)).toBe('Use of openai-images without confirmation');
+    expect(ruleLabel('mcp__studio__report_progress', m)).toBe('Tool mcp__studio__report_progress');
   });
 
   it('has no "Always here" without a proposed rule', () => {

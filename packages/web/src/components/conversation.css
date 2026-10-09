@@ -31,6 +31,7 @@
 .ms-approval-pre:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ms-approval-note { color: var(--muted); font-size: 11.5px; overflow-wrap: anywhere; }
 .ms-approval-note.ms-warn { color: var(--warn); }
+.ms-approval-scope { color: var(--muted); font-size: 11.5px; line-height: 1.4; overflow-wrap: anywhere; }
 .ms-approval-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ms-approval-actions .ms-grow { flex: 1 1 auto; }
 .ms-approval-error { margin: 0; color: var(--warn); font-size: 12px; overflow-wrap: anywhere; }
