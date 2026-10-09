@@ -6,7 +6,7 @@
 // bubble are screen-sized at any zoom (as in Figma): they sit in the frame's box, sized in screen pixels, at the
 // world point × zoom, so nothing scales them and the bubble's text field stays crisp.
 import { channelName, formatName, outputWarningText, type FormatPreset, type OutputWarning, type Pin } from '@motion-studio/shared';
-import { useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode, type SyntheticEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type SyntheticEvent } from 'react';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { anim, D, E, isSubmitChord } from '../motion/index.ts';
 import { Button, Icon, Pill, Popover, Textarea, cx } from '../ui/index.ts';
@@ -42,8 +42,6 @@ export interface BoardProps {
   onDraftCommit(): void;
   onDraftCancel(): void;
   onDraftDelete(): void;
-  /** Extra content under the frame (the generation progress of the first board). */
-  footer?: ReactNode;
 }
 
 const NARROW_BOARD = 170;
@@ -72,6 +70,7 @@ export function CanvasBoard(p: BoardProps) {
   const media = board.out && n !== null ? outputMedia(p.slug, p.creative, n, board.out) : null;
   const video = board.preset?.kind === 'video';
   const duration = board.out?.durationSec ?? null;
+  const largeFile = board.out?.warnings?.filter((w) => w.key === 'outputs.largeFile') ?? [];
 
   // T11: every new picture arrives from blurred to sharp.
   const reveal = (e: SyntheticEvent<HTMLElement>) => {
@@ -85,11 +84,18 @@ export function CanvasBoard(p: BoardProps) {
   return (
     <div className={cx('ms-cv-board', p.selected && 'ms-on', drafting && 'ms-drafting')} data-board={board.id}>
       <div className="ms-cv-board-head" style={{ maxWidth: Math.max(Math.round(size.width * zoom), LABEL_MIN) }}>
-        <b className="ms-cv-board-name" title={label}>{label}</b>
-        {board.preset ? <span className="ms-cv-board-meta">{ratioText(board.preset)}{duration !== null ? ` · ${c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) })}` : ''}</span> : null}
-        {p.working && (!board.out || video) ? <Pill spinner>{c.rendering}</Pill> : null}
-        {board.out && !board.out.verified ? <Pill tone="warn">{t.web.formatUi.unverified}</Pill> : null}
-        {board.out?.warnings?.filter((w) => w.key === 'outputs.largeFile').map((w, i) => <LargeFileChip key={i} warning={w} />)}
+        <div className="ms-cv-board-line">
+          <b className="ms-cv-board-name" title={label}>{label}</b>
+          {/* Reserved for the version badge. */}
+          <span className="ms-cv-board-slot" />
+        </div>
+        <div className="ms-cv-board-line ms-cv-board-sub">
+          {board.preset ? <span className="ms-cv-board-meta">{ratioText(board.preset)}{duration !== null ? ` · ${c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) })}` : ''}</span> : null}
+          {p.working ? <span className="ms-cv-board-state">{c.renderingState}</span>
+            : board.out && board.out.verified && !largeFile.length ? <span className="ms-cv-board-state">{c.boardReady}</span> : null}
+          {!p.working && board.out && !board.out.verified ? <Pill tone="warn">{t.web.formatUi.unverified}</Pill> : null}
+          {largeFile.map((w, i) => <LargeFileChip key={i} warning={w} />)}
+        </div>
       </div>
       <div className={cx('ms-cv-frame-wrap', narrow && 'ms-narrow')} style={{ width: size.width * zoom, height: size.height * zoom }}>
         <div
@@ -134,7 +140,6 @@ export function CanvasBoard(p: BoardProps) {
             onText={p.onDraftText} onCommit={p.onDraftCommit} onCancel={p.onDraftCancel} onDelete={p.onDraftDelete} />
         ) : null}
       </div>
-      {p.footer}
     </div>
   );
 }

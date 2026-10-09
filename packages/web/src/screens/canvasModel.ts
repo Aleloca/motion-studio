@@ -55,23 +55,21 @@ export function boardFrame(b: BoardModel): { width: number; height: number } {
 }
 
 // The canvas world's layout at 100% (canvas.css: .ms-cv-world padding and gap, .ms-cv-stack gap; all scale with the
-// zoom). The board label does not scale (CanvasBoard): one 22 px line + the 8 px board gap, two lines (22 + 6 + 22)
-// when its board is narrower than LABEL_ONE_LINE on screen, and never narrower than LABEL_MIN (its max-width floor).
+// zoom). The board label does not scale (CanvasBoard): always two 20 px lines (title, subtitle) 2 px apart + the 8 px board gap
+// (BOARD_HEAD), and never narrower than LABEL_MIN (its max-width floor). Both lines ellipsize instead of wrapping.
 const WORLD_PAD_X = 60;
 const WORLD_PAD_TOP = 40;
 const WORLD_PAD_BOTTOM = 140;
 const WORLD_GAP = 40;
 const STACK_GAP = 44;
-const BOARD_HEAD = 30;
-const BOARD_HEAD_WRAPPED = 58;
+const BOARD_HEAD = 50;
 export const LABEL_MIN = 160;
-const LABEL_ONE_LINE = 240;
 
 /** The canvas world on screen at zoom `z`: tall boards in a row, the others stacked in a column next to them. */
 export function worldAt(boards: BoardModel[], z: number): { width: number; height: number } {
   const board = (f: { width: number; height: number }) => {
     const w = f.width * z;
-    return { width: Math.max(w, LABEL_MIN), height: (w < LABEL_ONE_LINE ? BOARD_HEAD_WRAPPED : BOARD_HEAD) + f.height * z };
+    return { width: Math.max(w, LABEL_MIN), height: BOARD_HEAD + f.height * z };
   };
   const columns = boards.filter(isTall).map(boardFrame).map(board);
   const rest = boards.filter((b) => !isTall(b)).map(boardFrame).map(board);

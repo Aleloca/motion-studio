@@ -48,9 +48,13 @@
 .ms-cv-board { display: flex; flex-direction: column; gap: 8px; }
 /* The board with the open comment bubble paints above its neighbours: the bubble may reach past its edge. */
 .ms-cv-board.ms-drafting { position: relative; z-index: 5; }
-.ms-cv-board-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--muted); min-height: 22px; }
+.ms-cv-board-head { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
+.ms-cv-board-line { display: flex; align-items: center; gap: 6px; height: 20px; min-width: 0; overflow: hidden; }
 .ms-cv-board-name { color: var(--text); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ms-cv-board-meta { font-family: var(--mono); font-size: 11px; color: var(--faint); white-space: nowrap; }
+.ms-cv-board-slot { display: contents; }
+.ms-cv-board-sub { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.ms-cv-board-meta { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+.ms-cv-board-state { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .ms-cv-board-head .ms-pill { height: 20px; }
 .ms-cv-frame-wrap { position: relative; flex: none; }
 .ms-cv-frame {
@@ -114,7 +118,6 @@
 .ms-cv-bubble-time { font-size: 11px; color: var(--faint); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Generation (T10): thin bar and the agent's latest step under the first board. */
-.ms-cv-gen { display: flex; flex-direction: column; gap: 6px; max-width: 320px; }
 .ms-cv-gen-step { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Nothing generated yet. */

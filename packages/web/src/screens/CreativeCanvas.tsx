@@ -23,7 +23,7 @@ import { costText, TokenCount, UsageBadge } from '../shell/Tokens.tsx';
 import { boardLabel, CanvasBoard, type Draft, type Tool } from './CanvasBoard.tsx';
 import { boardsOf, fitBoards, isTall, ratioText, type BoardModel } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
-import { channelOf, lastStep } from './creativeState.ts';
+import { channelOf } from './creativeState.ts';
 import { ExportDialog } from './ExportDialog.tsx';
 import { activatesControl, bare, inOverlay, isTyping } from './keys.ts';
 import { pinsKey, usePendingPins } from './pendingPins.ts';
@@ -89,7 +89,6 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
     return mine.find((j) => j.state === 'queued' || j.state === 'running') ?? mine.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   }, [live.jobs, detail]);
   const working = job?.state === 'queued' || job?.state === 'running';
-  const step = job && working ? (job.state === 'queued' ? t.web.creatives.queued : lastStep(live.events[job.id]) ?? t.web.creatives.working) : null;
 
   // Boards.
   const boards = useMemo<BoardModel[]>(() => {
@@ -299,18 +298,12 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
   const rest = boards.filter((b) => !isTall(b));
   const zones = boards.some((b) => b.preset?.safeZone);
   const pinsOf = (id: string) => pins.map((pin, i) => ({ pin, number: i + 1 })).filter((x) => x.pin.format === id);
-  const board = (b: BoardModel, first: boolean) => (
+  const board = (b: BoardModel) => (
     <CanvasBoard key={b.id} slug={slug} creative={creative} board={b} n={n} tool={tool} zoom={zoom} selected={sel === b.id} working={working} safe={safe}
       pins={canComment ? pinsOf(b.id) : []} draft={canComment ? draft : null} nextNumber={pins.length + 1}
       onSelect={() => setSel(b.id)} onOpen={(el) => { if (tool === 'select') openEditor(b.id, el); }} onPlace={(x, y) => place(b.id, x, y)} onEditPin={editPin}
       onDraftText={(text) => setDraft((d) => (d ? { ...d, text } : d))} onDraftCommit={commitDraft} onDraftCancel={() => setDraft(null)}
       onDraftDelete={() => { if (draft?.index !== null && draft?.index !== undefined) removePin(draft.index); }}
-      footer={first && working && step ? (
-        <div className="ms-cv-gen">
-          <div className="ms-progress ms-indet" role="progressbar" aria-label={t.web.ui.progress}><i /></div>
-          <span className="ms-cv-gen-step">{step}</span>
-        </div>
-      ) : null}
     />
   );
 
@@ -385,8 +378,8 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
         >
           {/* The world is not zoomed: each board scales its frame, and its spacing follows --cv-z (canvas.css). */}
           <div className="ms-cv-world" style={{ '--cv-z': zoom } as CSSProperties}>
-            {tall.map((b, i) => board(b, i === 0))}
-            {rest.length ? <div className="ms-cv-stack">{rest.map((b, i) => board(b, !tall.length && i === 0))}</div> : null}
+            {tall.map(board)}
+            {rest.length ? <div className="ms-cv-stack">{rest.map(board)}</div> : null}
           </div>
         </div>
         {!versions.length && !working ? (

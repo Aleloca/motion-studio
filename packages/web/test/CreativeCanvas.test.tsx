@@ -814,3 +814,36 @@ describe('CreativeCanvas · large-file warnings (Phase 8)', () => {
     expect(screen.queryByText(/pesante/)).toBeNull();
   });
 });
+
+describe('CreativeCanvas · two-line board headers', () => {
+  it('every board header has a title row and a muted subtitle row with ratio and state; Ready when idle', async () => {
+    detail = makeDetail([version(1, 'Dal brief')]);
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    for (const id of ['instagram-post-1x1', 'tiktok-9x16']) {
+      const head = document.querySelector<HTMLElement>(`[data-board="${id}"] .ms-cv-board-head`)!;
+      const rows = head.querySelectorAll(':scope > .ms-cv-board-line');
+      expect(rows.length).toBe(2);
+      expect(rows[0]!.querySelector('.ms-cv-board-name')).not.toBeNull();
+      expect(rows[0]!.querySelector('.ms-cv-board-slot')).not.toBeNull();
+      expect(rows[1]!.classList.contains('ms-cv-board-sub')).toBe(true);
+      expect(rows[1]!.textContent).toContain('Pronto');
+    }
+    const head = document.querySelector<HTMLElement>('[data-board="instagram-post-1x1"] .ms-cv-board-head')!;
+    expect(head.querySelector('.ms-cv-board-sub')!.textContent).toContain('1:1');
+  });
+
+  it('while a job runs every board says it renders, and no progress bar sits inside a board', async () => {
+    const job = { id: 'j1', key: 'creative:/w:acme:lancio', kind: 'creative', label: 'x', state: 'running', createdAt: at };
+    detail = makeDetail([version(1, 'Dal brief')]);
+    render(<Harness live={{ ...emptyLive(), jobs: { j1: job } } as unknown as EventsState} />);
+    await ready();
+    const boards = document.querySelectorAll<HTMLElement>('[data-board]');
+    expect(boards.length).toBe(2);
+    for (const b of boards) {
+      expect(b.querySelector('[role="progressbar"]')).toBeNull();
+      expect(b.querySelector('.ms-cv-board-sub')!.textContent).toContain('In render…');
+      expect(b.querySelector('.ms-cv-board-sub')!.textContent).not.toContain('Pronto');
+    }
+  });
+});
