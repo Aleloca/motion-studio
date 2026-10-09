@@ -80,6 +80,29 @@
 
 ---
 
+### Task 0: Board polish from the user's feedback (2026-10-09)
+
+**Files:**
+- Modify: `screens/CreativeCanvas.tsx`
+- Modify: `screens/ProjectCreatives.tsx` (if the same bar exists there)
+- Test: extend the canvas test
+
+**Requirements:**
+- **Remove the per-board progress bar during generation.** It shows under only one board, which looks as if only that format is being worked on. Progress is already visible in the chat and as "Rendering…" on every board.
+- **Board header on two lines on every board**, vertical or horizontal:
+  - line 1: the format name (channel · name) and, from Task 4, the version badge;
+  - line 2, as a muted subtitle: ratio · duration · state ("Rendering…", "Ready", warnings).
+  
+  Today these elements share one line, which wraps on vertical boards but not on horizontal ones. With the phase 7 screen-space labels, the header keeps a constant size at any zoom.
+
+- [ ] **Step 1. Failing tests:**
+  - no progressbar inside boards while a job runs;
+  - each board header has a title row and a subtitle row containing the state.
+- [ ] **Steps 2–4.** FAIL → implement → PASS.
+- [ ] **Step 5. Commit:** `fix(web): board headers on two lines, no per-board progress bar`.
+
+---
+
 ### Task 1: Shared types, the catalog link rule and hashes
 
 **Files:**

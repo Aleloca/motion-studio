@@ -24,8 +24,10 @@ Requisito esplicito dell'utente: l'app deve sembrare uno **strumento professiona
 | **7 · Nuova interfaccia** | Design system, sistema di animazioni, nuova struttura e tutte le schermate ridisegnate sulle funzioni esistenti; centro attività, avvisi, notifiche desktop | — |
 | **8 · Approvazioni e consumi** | Approvazione automatica dei comandi in sandbox; spiegazione dei comandi in linguaggio chiaro (indicatori deterministici, frasi per i comandi noti, motivo dell'agente); token e costo per lavoro, progetto e settimana | 7 |
 | **9 · Versioni per formato** | Cronologia per formato; ★ "usata per l'export" per formato; formati collegati (stesso file); confronto; export delle versioni ★ con schema dei nomi | 7 |
-| **10 · Composizioni modificabili** | Render dedicato fuori dalla sandbox (Chromium/Remotion controllato dal core); timeline dei video e livelli delle immagini nel manifest; modifiche dirette che rifanno il render senza agente e senza token | 7, 9 |
-| **11 · Brand e asset** | Ricerca e download di Google Fonts dall'interfaccia; font ricavati dai CSS del sito; avanzamento dell'analisi; miglioramenti degli asset | 7 |
+| **10 · Composizioni modificabili** | Render dedicato fuori dalla sandbox (Chromium/Remotion controllato dal core); timeline dei video e livelli delle immagini nel manifest; modifiche dirette che rifanno il render senza agente e senza token; generazione in due tempi (anteprime e storyboard da commentare prima del render finale) | 7, 9 |
+| **11 · Brand, asset e servizi esterni** | Ricerca e download di Google Fonts dall'interfaccia; font ricavati dai CSS del sito; avanzamento dell'analisi; miglioramenti degli asset; effetti sonori e musica (ElevenLabs); scelta dei servizi esterni nel brief (immagini, voce, audio) e richiesta in chat in qualsiasi momento; verifica delle chiavi e dei permessi al salvataggio | 7 |
+| **12 · Varianti** | Duplicare un formato nella stessa creatività; versioni localizzate (cambiano solo testi e voce); pacchetto promozionale per App Store e Google Play (N screenshot più video di anteprima) | 9, 10 |
+| **13 · Agente interattivo** | Scrivere all'agente mentre lavora e interromperlo senza perdere il lavoro fatto | 8 |
 
 Ogni fase ha la sua specifica e il suo piano. Questo documento specifica in dettaglio solo la **Fase 7**. Le fasi 8–11 sono descritte quanto basta perché la 7 prepari gli spazi giusti senza simulare funzioni che non esistono.
 
