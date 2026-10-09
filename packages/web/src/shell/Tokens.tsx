@@ -12,7 +12,10 @@ import { go } from './ShellContext.tsx';
 /** Settings → Usage (the section itself arrives with Task 9 of Phase 8). */
 export const USAGE_HASH = '#/settings/usage';
 
-/** "38.2k" (one decimal) from 1000 up, the plain number below. */
+/**
+ * "38.2k" (one decimal) from 1000 up, the plain number below. The "k" suffix (and the " · " joiners elsewhere) are
+ * formatting, not words: Intl's compact notation has no "k" in it-IT ("38.240" → "38.240"), so it is not used.
+ */
 export function formatTokens(locale: Locale, n: number): string {
   if (n < 1000) return formatNumber(locale, n, { maximumFractionDigits: 0 });
   return `${formatNumber(locale, n / 1000, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}k`;
@@ -50,13 +53,21 @@ export function TokensButton({ tokens }: { tokens: number | null }) {
   );
 }
 
-/** "12.3k tokens", tabular; nothing when `tokens` is null. */
-export function TokenCount({ tokens, className, live }: { tokens: number | null; className?: string; live?: boolean }) {
+/**
+ * "12.3k tokens", tabular; nothing when `tokens` is null. `partial`: the figure may miss runs this page did not see
+ * ("≥ 12.3k tokens"). `live`: a running figure, read as "… so far" by screen readers.
+ */
+export function TokenCount({ tokens, className, live, partial }: { tokens: number | null; className?: string; live?: boolean; partial?: boolean }) {
   const t = useT();
   const locale = useLocale();
   if (tokens === null) return null;
   const count = formatTokens(locale, tokens);
-  return <span className={cx('ms-tokcount', className)} {...(live ? { 'aria-label': t.web.usage.soFar({ count }) } : {})}>{t.web.usage.tokens({ count })}</span>;
+  return (
+    <span className={cx('ms-tokcount', className)}>
+      {partial ? t.web.usage.tokensAtLeast({ count }) : t.web.usage.tokens({ count })}
+      {live ? <span className="ms-sr">{` ${t.web.usage.soFar}`}</span> : null}
+    </span>
+  );
 }
 
 /**
@@ -70,10 +81,10 @@ export function UsageBadge({ usage, billing }: { usage: UsageSummary | undefined
   const anchor = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   if (!usage) return null;
-  const estimated = usage.estimated === true || usage.costUsd === null;
-  const cost = costText(t, locale, usage.costUsd, usage.estimated === true);
+  const estimated = usage.estimated === true;
+  const cost = costText(t, locale, usage.costUsd, estimated);
   const label = [u.tokens({ count: formatTokens(locale, shownTotal(usage.tokens)) }), cost].filter(Boolean).join(' · ');
-  const note = billingNote(t, locale, billing ?? 'unknown', usage.costUsd, usage.estimated === true);
+  const note = billingNote(t, locale, billing ?? 'unknown', usage.costUsd, estimated);
   const n = (v: number) => formatNumber(locale, v);
   const rows: Array<[string, number]> = [[u.input, usage.tokens.input], [u.output, usage.tokens.output], [u.cacheWrite, usage.tokens.cacheWrite], [u.cacheRead, usage.tokens.cacheRead]];
   return (
@@ -81,13 +92,14 @@ export function UsageBadge({ usage, billing }: { usage: UsageSummary | undefined
       <Button ref={anchor} size="sm" variant="ghost" className="ms-usage-badge ms-mono" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         {label}
       </Button>
-      <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="bottom-end" width={280}>
-        <div className="ms-usage-pop" role="dialog" aria-label={u.details}>
+      <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="bottom-end" width={280} label={u.details}>
+        <div className="ms-usage-pop">
           <b>{u.details}</b>
           <dl className="ms-usage-rows">
             {rows.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{n(v)}</dd></div>)}
           </dl>
           <p className="ms-usage-note">{note ?? u.noCost}</p>
+          {/* "≥": some run of this usage has no known cost. */}
           {estimated && usage.costUsd !== null ? <p className="ms-usage-note">{u.costUnknown}</p> : null}
         </div>
       </Popover>

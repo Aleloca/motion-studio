@@ -7,7 +7,8 @@ vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 
 const { eventsReducer, initialEventsState } = await import('../src/eventsReducer.ts');
 type EventsState = import('../src/eventsReducer.ts').EventsState;
-const { jobLiveTokens, jobFinalTokens, localMidnightIso, localDay } = await import('../src/usageLive.ts');
+const { jobLiveTokens, jobFinalTokens, jobUsagePartial, localMidnightIso, localDay, todayTokens } = await import('../src/usageLive.ts');
+const { USAGE_RETRY_MS } = await import('../src/useServerEvents.ts');
 const { billingNote, formatTokens, TokensButton } = await import('../src/shell/Tokens.tsx');
 const { useServerEvents } = await import('../src/useServerEvents.ts');
 const { VersionMenu } = await import('../src/screens/VersionMenu.tsx');
@@ -109,6 +110,30 @@ describe("today's total (live counter consistency)", () => {
     expect(jobFinalTokens(s, 'b')).toBeNull();
   });
 
+  it('a job running at a snapshot misses earlier runs: its figures are partial, never a complete total', () => {
+    // The page connects mid-job (or reconnects): attempt 1's final was not seen, attempt 2's is.
+    let s = run(initialEventsState, usage('a', false, 400)); // a final seen before the drop
+    s = run(s, { type: 'snapshot', jobs: [job('a', 'running'), job('b', 'running'), job('c', 'queued')], approvals: [], locale: 'en', languageSetting: 'system', systemLocale: 'en' });
+    expect(jobUsagePartial(s, 'a')).toBe(true);
+    expect(jobUsagePartial(s, 'b')).toBe(true);
+    expect(jobUsagePartial(s, 'c')).toBe(false); // queued: nothing ran yet
+    s = run(s, usage('a', false, 300), { type: 'job', job: { ...job('a', 'succeeded'), finishedAt: '2026-10-09T09:00:00.000Z' } });
+    expect(jobFinalTokens(s, 'a')).toBe(700);
+    expect(jobUsagePartial(s, 'a')).toBe(true); // stays partial once done
+    wrap(<ActivityCenter live={s} initialTab="done" where={(p) => p} />);
+    expect(within(screen.getByRole('list')).getByText('≥ 700 tokens')).toBeTruthy();
+    // A later snapshot that still lists it keeps the flag; one that drops it forgets the job.
+    s = run(s, { type: 'snapshot', jobs: [{ ...job('a', 'succeeded') }], approvals: [], locale: 'en', languageSetting: 'system', systemLocale: 'en' });
+    expect(jobUsagePartial(s, 'a')).toBe(true);
+  });
+
+  it("yesterday's total reads as unknown until the new day's arrives", () => {
+    const s = run(initialEventsState, base(5000, '2000-01-01'));
+    expect(s.today?.tokens).toBe(5000);
+    expect(todayTokens(s)).toBeNull();
+    expect(todayTokens(run(s, base(10)))).toBe(10);
+  });
+
   it('a job without any usage event has no figure (never 0)', () => {
     const s = run(initialEventsState, { type: 'job', job: job('a', 'running') });
     expect(jobLiveTokens(s, 'a')).toBeNull();
@@ -151,6 +176,21 @@ describe('useServerEvents · day total', () => {
     render(<Probe />);
     await send(snap());
     expect(state.today).toBeUndefined();
+  });
+
+  it('a failed fetch is retried once after a delay', async () => {
+    vi.useFakeTimers();
+    try {
+      api.getUsage.mockRejectedValueOnce(new Error('down')).mockRejectedValueOnce(new Error('down')).mockResolvedValue(report(42));
+      render(<Probe />);
+      await send(snap());
+      expect(api.getUsage).toHaveBeenCalledTimes(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(USAGE_RETRY_MS); });
+      expect(api.getUsage).toHaveBeenCalledTimes(2);
+      await act(async () => { await vi.advanceTimersByTimeAsync(USAGE_RETRY_MS * 4); });
+      expect(api.getUsage).toHaveBeenCalledTimes(2); // only one retry
+      expect(state.today).toBeUndefined();
+    } finally { vi.useRealTimers(); }
   });
 
   it('an older response arriving after a newer one is ignored', async () => {
@@ -225,7 +265,7 @@ describe('activity center usage', () => {
     const { unmount } = wrap(<ActivityCenter live={s} initialTab="running" where={(p) => p} />);
     expect(screen.getByText('Today · 16.0k tokens')).toBeTruthy(); // 12000 + r's 1500 + d's final 2500
     expect(screen.getByRole('link', { name: 'Usage' }).getAttribute('href')).toBe('#/settings/usage');
-    expect(within(screen.getByRole('list')).getByText('1.5k tokens')).toBeTruthy();
+    expect(within(screen.getByRole('list')).getByText('1.5k tokens', { exact: false }).textContent).toBe('1.5k tokens so far');
     unmount();
     wrap(<ActivityCenter live={s} initialTab="done" where={(p) => p} />);
     expect(within(screen.getByRole('list')).getByText('2.5k tokens')).toBeTruthy();

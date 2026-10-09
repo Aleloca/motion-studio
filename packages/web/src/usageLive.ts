@@ -11,6 +11,15 @@
 // was already added (`counted`) is added: repeated live events add nothing, a new run restarting from 0 adds nothing
 // until it passes what was shown, and a final lower than the last live estimate does not take anything back (the
 // shown number never goes down; the ledger fixes it on the next fetch, e.g. after a reconnect or at midnight).
+//
+// Races around a refetch (both corrected by the next fetch, neither ever lowers the shown number):
+// - undercount: a final processed before the HTTP response although the ledger was read before it was written: its
+//   run becomes part of the offset but is not in the base.
+// - over-count: the HTTP response handled before the final's WS frame although the ledger already holds that run:
+//   the run counts as live at the reset, then its final adds `final - live` on top of a base that already has it.
+//
+// A page that connects (or reconnects) while a job runs has not seen that job's earlier runs: the snapshot marks the
+// job `partial`, and its figures are shown as "≥ N", never as a complete total.
 import { shownTotal, type AgentEvent, type UsageBilling } from '@motion-studio/shared';
 
 export type UsageEvent = Extract<AgentEvent, { kind: 'usage' }>;
@@ -29,7 +38,7 @@ export interface TodayUsage {
 /** The day total fetched from the ledger (dispatched by useServerEvents, never sent by the server). */
 export interface UsageTodayAction { type: 'usage-today'; day: string; tokens: number; billing: UsageBilling }
 
-interface UsageState { liveUsage?: Record<string, UsageEvent>; jobUsage?: Record<string, JobUsage>; today?: TodayUsage }
+interface UsageState { liveUsage?: Record<string, UsageEvent>; jobUsage?: Record<string, JobUsage>; partialUsage?: Record<string, true>; today?: TodayUsage }
 
 const pad = (n: number) => String(n).padStart(2, '0');
 export const localDay = (d: Date = new Date()): string => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -78,6 +87,24 @@ export function applyToday<S extends UsageState>(s: S, a: UsageTodayAction): S {
 export function keepJobUsage(all: Record<string, JobUsage> | undefined, ids: Set<string>): Record<string, JobUsage> | undefined {
   if (!all) return all;
   return Object.fromEntries(Object.entries(all).filter(([id]) => ids.has(id)));
+}
+
+/**
+ * Jobs whose figures miss runs this page did not see: those still listed after a snapshot, plus every job the snapshot
+ * lists as running (its earlier runs may have ended while the page was not connected).
+ */
+export function partialAfterSnapshot(prev: Record<string, true> | undefined, jobs: { id: string; state: string }[]): Record<string, true> {
+  const out: Record<string, true> = {};
+  for (const j of jobs) if (prev?.[j.id] || j.state === 'running') out[j.id] = true;
+  return out;
+}
+
+/** True when the job's figures may miss earlier runs: show them as "≥ N". */
+export const jobUsagePartial = (s: UsageState, jobId: string): boolean => s.partialUsage?.[jobId] === true;
+
+/** Today's total, or null when unknown or still yesterday's (the midnight fetch failed). */
+export function todayTokens(s: UsageState, now: Date = new Date()): number | null {
+  return s.today && s.today.day === localDay(now) ? s.today.tokens : null;
 }
 
 /** A running job's figure (finished runs + the current one), never lower than shown before; null without data. */

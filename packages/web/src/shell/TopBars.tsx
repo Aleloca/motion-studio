@@ -8,6 +8,7 @@ import { setBarSlot, useBarSlots } from './barSlots.ts';
 import { ProjectSwitcher } from './ProjectSwitcher.tsx';
 import { go, useShell } from './ShellContext.tsx';
 import { TokensButton } from './Tokens.tsx';
+import { todayTokens } from '../usageLive.ts';
 import { isMac } from '../platform.ts';
 
 /** Bar tabs (spec §6.1). */
@@ -87,10 +88,10 @@ function Bell() {
   );
 }
 
-/** Today's tokens of the workspace, live (spec §5.4): "—" until the ledger's day total arrives. */
+/** Today's tokens of the workspace, live (spec §5.4): "—" until the ledger's day total arrives (and after midnight until the new day's does). */
 function Tokens() {
   const { live } = useShell();
-  return <TokensButton tokens={live.today?.tokens ?? null} />;
+  return <TokensButton tokens={todayTokens(live)} />;
 }
 
 /** Account menu (spec §6.1): Settings, System check, Replay setup. */

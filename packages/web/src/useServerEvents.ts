@@ -5,6 +5,9 @@ import { eventsReducer, initialEventsState, type EventsState } from './eventsRed
 import { localDay, localMidnightIso, msToMidnight } from './usageLive.ts';
 import { onUiTokenChange, pairingNeeded, uiToken } from './uiToken.ts';
 
+/** Delay before the one retry of a failed day-total fetch. */
+export const USAGE_RETRY_MS = 5000;
+
 export function useServerEvents(): EventsState {
   const [state, dispatch] = useReducer(eventsReducer, initialEventsState);
   useEffect(() => {
@@ -15,16 +18,20 @@ export function useServerEvents(): EventsState {
     // Today's token total from the ledger (spec §5.4): after every snapshot (startup and each reconnection) and at
     // local midnight. Only the latest request's answer is applied; a failure leaves the total as it was (unknown at
     // first: the top bar shows "—", never a made-up 0).
+    // A failed fetch is retried once after USAGE_RETRY_MS; meanwhile a total of another day reads as unknown
+    // (todayTokens), so yesterday's figure is never shown as today's.
     let usageSeq = 0;
-    const fetchToday = () => {
+    let usageRetry: ReturnType<typeof setTimeout> | undefined;
+    const fetchToday = (retry = false) => {
       const seq = ++usageSeq;
       const now = new Date();
       const day = localDay(now);
+      clearTimeout(usageRetry);
       Promise.resolve().then(() => api.getUsage({ from: localMidnightIso(now) }))
         .then((r) => { if (!stopped && seq === usageSeq) dispatch({ type: 'usage-today', day, tokens: shownTotal(r.total.tokens), billing: r.billing }); })
-        .catch(() => { /* unknown stays unknown */ });
+        .catch(() => { if (!stopped && seq === usageSeq && !retry) usageRetry = setTimeout(() => fetchToday(true), USAGE_RETRY_MS); });
       clearTimeout(midnight);
-      midnight = setTimeout(fetchToday, msToMidnight(now) + 1000);
+      midnight = setTimeout(() => fetchToday(), msToMidnight(now) + 1000);
     };
     const connect = () => {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -51,7 +58,7 @@ export function useServerEvents(): EventsState {
       old?.close();
       connect();
     });
-    return () => { stopped = true; off(); clearTimeout(retry); clearTimeout(midnight); ws?.close(); };
+    return () => { stopped = true; off(); clearTimeout(retry); clearTimeout(midnight); clearTimeout(usageRetry); ws?.close(); };
   }, []);
   return state;
 }

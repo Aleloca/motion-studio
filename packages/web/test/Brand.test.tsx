@@ -392,6 +392,6 @@ describe('Brand · tokens per analysis (Phase 8)', () => {
     const card = await screen.findByRole('region', { name: 'Learning the brand' });
     expect(card.querySelector('.ms-btokens')).toBeNull();
     rerender(<I18nProvider locale="en"><Brand slug="acme" live={live({ jobs: { j1: running }, jobUsage: { j1: { done: 0, runs: 0, peak: 2400 } } })} /></I18nProvider>);
-    await waitFor(() => expect(card.querySelector('.ms-btokens')?.textContent).toBe('2.4k tokens'));
+    await waitFor(() => expect(card.querySelector('.ms-btokens')?.textContent).toBe('2.4k tokens so far'));
   });
 });

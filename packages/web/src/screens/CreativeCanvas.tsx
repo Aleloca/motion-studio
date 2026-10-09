@@ -18,7 +18,7 @@ import { setFrameOrigin, setShownVersion, takeFrameOrigin, takeShownVersion } fr
 import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { Button, ChannelMark, Empty, Icon, Input, Pill, Spinner, Tabs, Tag, Toggle, cx, toast } from '../ui/index.ts';
 import { useCreative } from '../useCreative.ts';
-import { jobLiveTokens } from '../usageLive.ts';
+import { jobLiveTokens, jobUsagePartial } from '../usageLive.ts';
 import { costText, TokenCount, UsageBadge } from '../shell/Tokens.tsx';
 import { boardLabel, CanvasBoard, type Draft, type Tool } from './CanvasBoard.tsx';
 import { boardsOf, fitBoards, isTall, ratioText, type BoardModel } from './canvasModel.ts';
@@ -321,7 +321,7 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
           state={<>
             <StatePill status={cr.status} needs={myApprovals.length > 0} working={working} />
             {/* Live tokens of the job (all its runs); nothing until its first usage event, e.g. right after a reconnect. */}
-            {working && job ? <TokenCount tokens={jobLiveTokens(live, job.id)} live className="ms-cv-tokens" /> : null}
+            {working && job ? <TokenCount tokens={jobLiveTokens(live, job.id)} live partial={jobUsagePartial(live, job.id)} className="ms-cv-tokens" /> : null}
           </>} />,
         bar.title,
       ) : null}

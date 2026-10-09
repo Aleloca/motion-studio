@@ -731,6 +731,6 @@ describe('CreativeCanvas · tokens (Phase 8)', () => {
     const bar = document.querySelector('.ms-topbar')!;
     expect(bar.querySelector('.ms-cv-tokens')).toBeNull();
     await act(async () => { rerender(<Harness live={{ ...base, jobUsage: { j1: { done: 1000, runs: 1, peak: 1500 } } } as unknown as EventsState} />); });
-    expect(bar.querySelector('.ms-cv-tokens')?.textContent).toBe('1,5k token');
+    expect(bar.querySelector('.ms-cv-tokens')?.textContent).toBe('1,5k token finora'); // "finora" is screen-reader text
   });
 });

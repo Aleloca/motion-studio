@@ -10,7 +10,7 @@ import { Button, Empty, Icon, Spinner, Tabs, cx } from '../ui/index.ts';
 import { canAskNotifications } from './notify.ts';
 import { go, type ActivityTab } from './ShellContext.tsx';
 import { lastStep } from '../jobEvents.ts';
-import { jobFinalTokens, jobLiveTokens } from '../usageLive.ts';
+import { jobFinalTokens, jobLiveTokens, jobUsagePartial, todayTokens } from '../usageLive.ts';
 import { formatTokens, TokenCount, USAGE_HASH } from './Tokens.tsx';
 
 /** Results kept in the Done tab (the latest of this session). */
@@ -151,16 +151,16 @@ export function ActivityCenter({ live, initialTab, request = 0, where }: { live:
           : <Empty icon="check" title={a.emptyNeeds} sub={a.emptyNeedsSub} />)}
         {tab === 'running' && (running.length ? (
           <ul className="ms-activity-list">
-            {running.map((j) => <RunningRow key={j.id} job={j} step={lastStep(live.events[j.id])} tokens={jobLiveTokens(live, j.id)} />)}
+            {running.map((j) => <RunningRow key={j.id} job={j} step={lastStep(live.events[j.id])} tokens={jobLiveTokens(live, j.id)} partial={jobUsagePartial(live, j.id)} />)}
           </ul>
         ) : <Empty icon="clock" title={a.emptyRunning} sub={a.emptyRunningSub} />)}
         {tab === 'done' && (done.length ? (
           <ul className="ms-activity-list">
-            {done.map((j) => <DoneRow key={j.id} job={j} made={made[j.id] ?? null} failure={j.state === 'failed' ? failureOf(j, live.events[j.id]) : null} tokens={jobFinalTokens(live, j.id)} />)}
+            {done.map((j) => <DoneRow key={j.id} job={j} made={made[j.id] ?? null} failure={j.state === 'failed' ? failureOf(j, live.events[j.id]) : null} tokens={jobFinalTokens(live, j.id)} partial={jobUsagePartial(live, j.id)} />)}
           </ul>
         ) : <Empty icon="check" title={a.emptyDone} sub={a.emptyDoneSub} />)}
       </div>
-      <TodayFooter tokens={live.today?.tokens ?? null} />
+      <TodayFooter tokens={todayTokens(live)} />
     </div>
   );
 }
@@ -202,7 +202,7 @@ function TodayFooter({ tokens }: { tokens: number | null }) {
   );
 }
 
-function RunningRow({ job, step, tokens }: { job: JobSummary; step: string | null; tokens: number | null }) {
+function RunningRow({ job, step, tokens, partial }: { job: JobSummary; step: string | null; tokens: number | null; partial: boolean }) {
   const t = useT();
   const queued = job.state === 'queued';
   return (
@@ -212,13 +212,13 @@ function RunningRow({ job, step, tokens }: { job: JobSummary; step: string | nul
         <b>{job.label}</b>
         <span className="ms-activity-sub">{queued ? t.web.shell.activity.queued : step ?? t.web.jobState.running}</span>
       </span>
-      <TokenCount tokens={tokens} live className="ms-activity-tokens" />
+      <TokenCount tokens={tokens} live partial={partial} className="ms-activity-tokens" />
     </Row>
   );
 }
 
 /** What a finished job did: the version a generation made, the reason of a failure, its notes; else its state. */
-function DoneRow({ job, made, failure, tokens }: { job: JobSummary; made: Made | null; failure: string | null; tokens: number | null }) {
+function DoneRow({ job, made, failure, tokens, partial }: { job: JobSummary; made: Made | null; failure: string | null; tokens: number | null; partial: boolean }) {
   const t = useT();
   const a = t.web.shell.activity;
   const locale = useLocale();
@@ -237,7 +237,7 @@ function DoneRow({ job, made, failure, tokens }: { job: JobSummary; made: Made |
       </span>
       <span className="ms-activity-side">
         <time className="ms-activity-time" dateTime={finishedAt(job)}>{formatDate(locale, finishedAt(job), TIME_OF_DAY)}</time>
-        <TokenCount tokens={tokens} className="ms-activity-tokens" />
+        <TokenCount tokens={tokens} partial={partial} className="ms-activity-tokens" />
       </span>
     </Row>
   );

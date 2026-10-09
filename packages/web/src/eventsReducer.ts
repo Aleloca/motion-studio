@@ -1,5 +1,5 @@
 import type { AgentEvent, ApprovalRequest, JobSummary, LanguageSetting, Locale, ServerMessage } from '@motion-studio/shared';
-import { applyToday, applyUsage, keepJobUsage, type JobUsage, type TodayUsage, type UsageTodayAction } from './usageLive.ts';
+import { applyToday, applyUsage, keepJobUsage, partialAfterSnapshot, type JobUsage, type TodayUsage, type UsageTodayAction } from './usageLive.ts';
 
 /**
  * `liveUsage`: the latest live usage estimate per job. Live `usage` events (up to one a second per job) are kept here,
@@ -9,7 +9,7 @@ import { applyToday, applyUsage, keepJobUsage, type JobUsage, type TodayUsage, t
  * `jobUsage` and `today` are the token figures of usageLive.ts: per job (this session) and today's workspace total
  * (unset until the ledger's day total arrives: `usage-today`, fetched by useServerEvents after each snapshot).
  */
-export interface EventsState { jobUsage?: Record<string, JobUsage>; today?: TodayUsage; liveUsage?: Record<string, Extract<AgentEvent, { kind: 'usage' }>>; approvals: Record<string, ApprovalRequest>; jobs: Record<string, JobSummary>; events: Record<string, AgentEvent[]>; creativeTicks: Record<string, number>; projectTicks: Record<string, number>; /** Snapshots received (one per (re)connection): lets the UI tell restored state from new events. */ snapshots?: number; /** Unset until the first snapshot. */ language?: { locale: Locale; setting: LanguageSetting; systemLocale: Locale } | null }
+export interface EventsState { jobUsage?: Record<string, JobUsage>; /** Jobs whose usage misses runs this page did not see. */ partialUsage?: Record<string, true>; today?: TodayUsage; liveUsage?: Record<string, Extract<AgentEvent, { kind: 'usage' }>>; approvals: Record<string, ApprovalRequest>; jobs: Record<string, JobSummary>; events: Record<string, AgentEvent[]>; creativeTicks: Record<string, number>; projectTicks: Record<string, number>; /** Snapshots received (one per (re)connection): lets the UI tell restored state from new events. */ snapshots?: number; /** Unset until the first snapshot. */ language?: { locale: Locale; setting: LanguageSetting; systemLocale: Locale } | null }
 export const initialEventsState: EventsState = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} };
 const MAX_EVENTS = 2000;
 const TERMINAL = new Set<JobSummary['state']>(['succeeded', 'failed', 'cancelled']);
@@ -35,6 +35,7 @@ export function eventsReducer(state: EventsState, msg: EventsAction): EventsStat
         jobs: Object.fromEntries(msg.jobs.map((j) => [j.id, j])),
         liveUsage: Object.fromEntries(Object.entries(state.liveUsage ?? {}).filter(([id]) => msg.jobs.some((j) => j.id === id && j.state === 'running'))),
         jobUsage: keepJobUsage(state.jobUsage, new Set(msg.jobs.map((j) => j.id))),
+        partialUsage: partialAfterSnapshot(state.partialUsage, msg.jobs),
         approvals: Object.fromEntries((msg.approvals ?? []).map((a) => [a.id, a])),
         language: msg.locale ? { locale: msg.locale, setting: msg.languageSetting ?? 'system', systemLocale: msg.systemLocale ?? msg.locale } : state.language,
         creativeTicks: Object.fromEntries(Object.entries(state.creativeTicks).map(([k, v]) => [k, v + 1])),

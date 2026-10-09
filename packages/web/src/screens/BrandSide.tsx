@@ -12,7 +12,7 @@ import { KEEPALIVE, deferRemoval, flushDeferred, isPendingRemoval, removalKey, u
 import { isActive, useBrand, useAppear, type SectionId } from './brandContext.tsx';
 import { message } from './common.tsx';
 import { formatTokens, TokenCount } from '../shell/Tokens.tsx';
-import { jobLiveTokens } from '../usageLive.ts';
+import { jobLiveTokens, jobUsagePartial } from '../usageLive.ts';
 
 /** An analysis' tokens from its proposal; null for proposals from before usage tracking. */
 const proposalTokens = (p: BrandProposal) => (p.usage ? shownTotal(p.usage.tokens) : null);
@@ -51,7 +51,7 @@ export function AnalysisCard({ job, live }: { job: JobSummary; live: EventsState
       <div className="ms-brow">
         <Spinner decorative size={14} />
         <b id="ms-banalysis-title">{a.title}</b>
-        <TokenCount tokens={jobLiveTokens(live, job.id)} live className="ms-btokens" />
+        <TokenCount tokens={jobLiveTokens(live, job.id)} live partial={jobUsagePartial(live, job.id)} className="ms-btokens" />
         <Button variant="ghost" size="sm" className="ms-bpush" loading={cancelling} onClick={cancel}>{a.cancel}</Button>
       </div>
       {/* report_progress carries text only: the bar is indeterminate, never a made-up percentage. */}
