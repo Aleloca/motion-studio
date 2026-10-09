@@ -21,3 +21,16 @@ describe('window security', () => {
     expect(externalUrlAllowed('javascript:alert(1)')).toBe(false);
   });
 });
+
+describe('IPC sender guard', () => {
+  it("accepts only the window's main frame on the core origin (dev and packaged load the same http origin)", async () => {
+    const { ipcSenderTrusted } = await import('../src/window.ts');
+    const main = { url: 'http://127.0.0.1:64278/#/p/acme' };
+    const wc = { mainFrame: main };
+    expect(ipcSenderTrusted({ sender: wc, senderFrame: main } as never, wc, 'http://127.0.0.1:64278')).toBe(true);
+    expect(ipcSenderTrusted({ sender: wc, senderFrame: main } as never, wc, 'http://127.0.0.1:4318')).toBe(false);
+    expect(ipcSenderTrusted({ sender: wc, senderFrame: { url: main.url } } as never, wc, 'http://127.0.0.1:64278')).toBe(false); // a subframe
+    expect(ipcSenderTrusted({ sender: { mainFrame: main }, senderFrame: main } as never, wc, 'http://127.0.0.1:64278')).toBe(false); // another webContents
+    expect(ipcSenderTrusted({ sender: wc, senderFrame: null } as never, wc, 'http://127.0.0.1:64278')).toBe(false);
+  });
+});

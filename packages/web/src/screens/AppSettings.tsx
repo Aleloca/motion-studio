@@ -4,7 +4,7 @@ import { api } from '../api.ts';
 import { formatDate, useLocale, useT, type LanguageState } from '../i18n.tsx';
 import { anim, D, E, enter } from '../motion/index.ts';
 import { href, type SettingsSection } from '../routes.ts';
-import { notificationStatus, notifyApprovalsEnabled, notifyReadyEnabled, notifySoundEnabled, sendNotification, setNotifyApprovals, setNotifyReady, setNotifySound, type NotificationStatus } from '../shell/notify.ts';
+import { notificationStatus, notifyApprovalsEnabled, notifyReadyEnabled, notifySoundEnabled, sendNotification, setNotifyApprovals, setNotifyReady, setNotifySound, type NotificationResult, type NotificationStatus } from '../shell/notify.ts';
 import { go } from '../shell/ShellContext.tsx';
 import { billingNote, costText, formatTokens } from '../shell/Tokens.tsx';
 import type { Theme } from '../theme.ts';
@@ -312,7 +312,7 @@ function Notifications() {
   const [sound, setSound] = useState(notifySoundEnabled);
   const [status, setStatus] = useState<NotificationStatus | null>(null);
   const [testing, setTesting] = useState(false);
-  const [test, setTest] = useState<{ ok: true } | { ok: false; detail: string } | null>(null);
+  const [test, setTest] = useState<NotificationResult | { state: 'error'; detail: string } | null>(null);
   const refresh = () => { void notificationStatus().then(setStatus); };
   useEffect(() => { refresh(); }, []);
   const askWeb = () => {
@@ -323,11 +323,10 @@ function Notifications() {
     setTesting(true);
     setTest(null);
     try {
-      await sendNotification({ title: t.web.app.approvalNotificationTitle, body: n.testButton });
-      setTest({ ok: true });
+      setTest(await sendNotification({ title: t.web.app.approvalNotificationTitle, body: n.testButton }));
     } catch (e) {
       const m = e instanceof Error ? e.message : '';
-      setTest({ ok: false, detail: m === 'denied' ? n.webDenied : m === 'default' ? n.webDefault : m === 'unsupported' ? n.webUnsupported : m || n.unsupported });
+      setTest({ state: 'error', detail: m === 'denied' ? n.webDenied : m === 'default' ? n.webDefault : m === 'unsupported' ? n.webUnsupported : m || n.unsupported });
     } finally { setTesting(false); refresh(); }
   };
   const problem = status === 'unsupported' ? (desktop() ? n.unsupported : n.webUnsupported) : status === 'denied' ? n.webDenied : status === 'default' ? n.webDefault : null;
@@ -351,8 +350,15 @@ function Notifications() {
       {problem ? (
         <Alert action={status === 'default' && !desktop() ? <Button size="sm" variant="outline" onClick={askWeb}>{n.webAllow}</Button> : undefined}>{problem}</Alert>
       ) : null}
-      {test?.ok === false ? <p className="ms-set-error" role="alert">{n.testFailed({ detail: test.detail })}</p> : null}
-      {test?.ok === true ? <p className="ms-set-sub ms-set-small" role="status">{n.testSent}</p> : null}
+      {test?.state === 'error' ? <p className="ms-set-error" role="alert">{n.testFailed({ detail: test.detail })}</p> : null}
+      {test?.state === 'blocked' ? (
+        <div className="ms-set-error" role="alert">
+          <p>{desktop() ? n.testBlocked : n.testBlockedWeb}</p>
+          {test.detail ? <p className="ms-set-small">{n.testReason({ detail: test.detail })}</p> : null}
+        </div>
+      ) : null}
+      {test?.state === 'sent' ? <p className="ms-set-sub ms-set-small" role="status">{n.testSent}</p> : null}
+      {test?.state === 'unconfirmed' ? <p className="ms-set-sub ms-set-small" role="status">{n.testUnconfirmed}</p> : null}
       {desktop() ? <p className="ms-set-faint">{n.howTo}</p> : null}
     </div>
   );

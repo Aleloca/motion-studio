@@ -193,15 +193,37 @@ describe('App settings · notifications and updates', () => {
     afterEach(() => { delete (window as unknown as { motionStudio?: object }).motionStudio; vi.unstubAllGlobals(); });
 
     it('desktop: the test button goes through notify with the validated args and the sound setting', async () => {
-      const notify = vi.fn(async () => {});
+      const notify = vi.fn(async () => ({ shown: true }));
       setBridge({ notify, notifyStatus: async () => ({ supported: true }) });
       localStorage.setItem(NOTIFY_SOUND_KEY, 'false');
       en(page('notifications'));
       await userEvent.click(screen.getByRole('button', { name: 'Send a test notification' }));
       await waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
       expect(notify).toHaveBeenCalledWith({ title: 'Motion Studio: approval needed', body: 'Send a test notification', sound: false });
-      expect(await screen.findByText(/Sent\./)).toBeTruthy();
+      expect((await screen.findByRole('status')).textContent).toBe('Sent: the system showed the notification.');
       expect(screen.getByText(/System Settings → Notifications → Motion Studio \(or Electron in development\)/)).toBeTruthy();
+    });
+
+    it.each([
+      ['failed', { shown: false, reason: 'failed', detail: 'The operation couldn’t be completed. (UNErrorDomain error 1.)' }],
+      ['timeout', { shown: false, reason: 'timeout' }],
+      ['unsupported', { shown: false, reason: 'unsupported' }],
+    ])('desktop: %s → "blocked or not shown", with where to allow it', async (_name, outcome) => {
+      setBridge({ notify: vi.fn(async () => outcome), notifyStatus: async () => ({ supported: true }) });
+      en(page('notifications'));
+      await userEvent.click(screen.getByRole('button', { name: 'Send a test notification' }));
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toContain('The system blocked the notification or did not show it. Allow it in System Settings → Notifications → Motion Studio (or Electron in development) → Allow notifications.');
+      if ('detail' in outcome) expect(alert.textContent).toContain('System message: The operation couldn’t be completed. (UNErrorDomain error 1.)');
+      else expect(alert.textContent).not.toContain('System message');
+      expect(screen.queryByText(/^Sent/)).toBeNull();
+    });
+
+    it('desktop: an older desktop app that answers nothing is "sent, not confirmed"', async () => {
+      setBridge({ notify: vi.fn(async () => undefined), notifyStatus: async () => ({ supported: true }) });
+      en(page('notifications'));
+      await userEvent.click(screen.getByRole('button', { name: 'Send a test notification' }));
+      expect((await screen.findByRole('status')).textContent).toBe('Sent, but this version of the desktop app cannot confirm that it was shown.');
     });
 
     it('desktop: a refusal from the main process is shown inline', async () => {
@@ -235,17 +257,28 @@ describe('App settings · notifications and updates', () => {
 
     it('web: the test button shows the reason when permission is missing, and sends silent: !sound when granted', async () => {
       const made: Array<[string, unknown]> = [];
-      class Granted { static permission = 'granted'; constructor(t: string, o: unknown) { made.push([t, o]); } }
+      class Granted { static permission = 'granted'; onshow: (() => void) | null = null; constructor(t: string, o: unknown) { made.push([t, o]); setTimeout(() => this.onshow?.(), 0); } }
       vi.stubGlobal('Notification', Granted);
       localStorage.setItem(NOTIFY_SOUND_KEY, 'false');
       en(page('notifications'));
       await userEvent.click(screen.getByRole('button', { name: 'Send a test notification' }));
       await waitFor(() => expect(made).toHaveLength(1));
       expect(made[0]![1]).toEqual({ body: 'Send a test notification', silent: true });
+      expect((await screen.findByRole('status')).textContent).toBe('Sent: the system showed the notification.');
       vi.stubGlobal('Notification', class { static permission = 'denied'; });
       await userEvent.click(screen.getByRole('button', { name: 'Send a test notification' }));
       expect(await screen.findByText(/Couldn't show the notification: The browser blocks/)).toBeTruthy();
     });
+  });
+
+  it('web: an error event (or no show event) is "blocked or not shown"', async () => {
+    class Failing { static permission = 'granted'; onerror: (() => void) | null = null; constructor() { setTimeout(() => this.onerror?.(), 0); } }
+    vi.stubGlobal('Notification', Failing);
+    try {
+      en(page('notifications'));
+      await userEvent.click(screen.getByRole('button', { name: 'Send a test notification' }));
+      expect((await screen.findByRole('alert')).textContent).toContain('The browser or the system did not show the notification.');
+    } finally { vi.unstubAllGlobals(); }
   });
 
   it('in the desktop app: the version and how updates arrive, never claiming it is up to date, with no fake buttons', () => {
