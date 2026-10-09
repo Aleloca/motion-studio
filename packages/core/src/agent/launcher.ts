@@ -149,7 +149,11 @@ export class AgentLauncher {
         version: i.usage?.version ?? null, attempt: i.usage?.attempt ?? null,
         ...(i.request.resumeSessionId ? { resumeSessionId: i.request.resumeSessionId } : {}),
       }, this.usageLedger);
-      const forward = (e: AgentEvent) => { const out = tracker.observe(e); if (out) i.onEvent(out); };
+      // The session event carries the job's sandbox decision: a finished turn says "ran in the sandbox" only when it did.
+      const forward = (e: AgentEvent) => {
+        const out = tracker.observe(e);
+        if (out) i.onEvent(out.kind === 'session' ? { ...out, sandboxed: sandbox } : out);
+      };
       const run = this.deps.runner.start({
         cwd: i.projectDir, ...i.request,
         addDirs: policy.addDirs, allowedTools: policy.allowedTools, disallowedTools: policy.disallowedTools,

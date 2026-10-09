@@ -1,9 +1,10 @@
 // Brand page side column: proposal ready, live analysis, sources, brand health and the analyses so far.
 import { shownTotal, type BrandOverview, type BrandProposal, type BrandSource, type JobSummary, type ProposalActivity } from '@motion-studio/shared';
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { api } from '../api.ts';
 import { ApprovalCard } from '../components/ApprovalCard.tsx';
-import { AutoRow } from '../components/Conversation.tsx';
+import { CommandRowView } from '../components/Conversation.tsx';
+import { commandLog, webExplainContext, WorkspacePathContext } from '../components/commandLog.ts';
 import type { EventsState } from '../eventsReducer.ts';
 import { formatWhen, relativeTime, useLocale, useT } from '../i18n.tsx';
 import { enter } from '../motion/index.ts';
@@ -20,9 +21,9 @@ const proposalTokens = (p: BrandProposal) => (p.usage ? shownTotal(p.usage.token
 /* ---------- side column: analysis, sources, health, history ---------- */
 
 /**
- * "N commands ran automatically in the sandbox · Details" for one analysis (brand transparency, final wave): the
- * proposal's auto_approved events from its log; Details opens the same compact rows as Activity details. Nothing for
- * proposals without a log (older ones), without automatic approvals, or when the call fails.
+ * "N commands ran in the sandbox · M approved by you · Details" for one analysis (brand transparency, count work): every
+ * Bash call of the proposal's log, counted like a creative turn (see commandLog.ts); Details opens the same compact rows
+ * as Activity details. Nothing for proposals without a log (older ones), when no command ran, or when the call fails.
  */
 export function ProposalAutoLine({ project, proposalId }: { project: string; proposalId: string }) {
   const t = useT();
@@ -32,23 +33,26 @@ export function ProposalAutoLine({ project, proposalId }: { project: string; pro
   const anchor = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [activity, setActivity] = useState<ProposalActivity | null>(null);
+  const workspace = useContext(WorkspacePathContext);
   useEffect(() => {
     let alive = true;
     Promise.resolve().then(() => api.getProposalActivity(project, proposalId)).then((a) => { if (alive) setActivity(a); }, () => {});
     return () => { alive = false; };
   }, [project, proposalId]);
-  const auto = (activity?.entries ?? []).flatMap((e) => (e.event.kind === 'auto_approved' ? [e.event] : []));
-  if (!activity?.hasLog || auto.length === 0) return null;
+  const log = useMemo(() => (activity?.hasLog && Array.isArray(activity.entries)
+    ? commandLog(activity.entries.map((e) => e.event), webExplainContext(workspace, project), activity.sandboxed)
+    : null), [activity, workspace, project]);
+  if (!activity?.hasLog || !log || log.ran === 0) return null;
   return (
     <span className="ms-bauto">
       <Icon name="shield" size={12} />
-      <span id={id}>{c.autoRan({ count: auto.length })}</span>
+      <span id={id}>{c.commandsRan({ count: log.ran, approved: log.approved, sandbox: log.sandboxed })}</span>
       <span aria-hidden="true">·</span>
       <Button ref={anchor} size="sm" variant="ghost" className="ms-bauto-details" aria-describedby={id} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{c.autoDetails}</Button>
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="bottom-end" width={360} label={h.autoTitle}>
         <div className="ms-bauto-pop">
           <b>{h.autoTitle}</b>
-          <ul className="ms-convo-log">{auto.map((e, i) => <AutoRow key={i} event={e} />)}</ul>
+          <ul className="ms-convo-log">{log.rows.map((r) => <CommandRowView key={r.key} row={r} />)}</ul>
           {activity.truncated ? <p className="ms-muted">{h.autoTruncated}</p> : null}
         </div>
       </Popover>

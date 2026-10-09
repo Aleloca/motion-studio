@@ -123,7 +123,11 @@ export interface BrandOverview {
   proposals: BrandProposal[]; jobKey: string;
 }
 
-/** GET /api/projects/:slug/brand/proposals/:id/activity: what ran automatically during an analysis (from its log.jsonl). */
-export interface ProposalActivityEntry { at: string; event: Extract<AgentEvent, { kind: 'auto_approved' } | { kind: 'tool_use' }> }
-/** `hasLog` false: an older proposal without a log (nothing is shown). `truncated`: the entry or size cap was reached. */
-export interface ProposalActivity { hasLog: boolean; truncated: boolean; entries: ProposalActivityEntry[] }
+/** GET /api/projects/:slug/brand/proposals/:id/activity: what ran during an analysis (from its log.jsonl). */
+/** A Bash `tool_result` comes without its output (`content` is always empty): only whether it ended with an error. */
+export interface ProposalActivityEntry { at: string; event: Extract<AgentEvent, { kind: 'auto_approved' } | { kind: 'tool_use' } | { kind: 'tool_result' } | { kind: 'approval_decided' }> }
+/**
+ * `hasLog` false: an older proposal without a log (nothing is shown). `truncated`: the entry or size cap was reached.
+ * `sandboxed`: what the run's session event says (absent in older logs).
+ */
+export interface ProposalActivity { hasLog: boolean; truncated: boolean; entries: ProposalActivityEntry[]; sandboxed?: boolean }

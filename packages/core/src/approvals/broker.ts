@@ -8,7 +8,7 @@ import { WorkspaceError } from '../workspace-store.ts';
 import { PermissionsStore, ruleFor } from './permissions-store.ts';
 import { t } from '../i18n.ts';
 
-export interface ApprovalInput { jobId: string; projectSlug: string; projectDir: string; creativeSlug: string | null; kind: ApprovalKind; toolName: string; input: unknown; title?: string; detail?: string }
+export interface ApprovalInput { jobId: string; projectSlug: string; projectDir: string; creativeSlug: string | null; kind: ApprovalKind; toolName: string; input: unknown; title?: string; detail?: string; /** Claude Code's `tool_use_id` of the call (already validated by the caller). */ toolUseId?: string }
 export interface ApprovalOutcome { decision: ApprovalDecision | 'expired' | 'cancelled' }
 
 export function describeRequest(toolName: string, input: unknown): { title: string; detail: string } {
@@ -66,7 +66,7 @@ export class ApprovalBroker {
     const request: ApprovalRequest = {
       id: randomUUID(), jobId: input.jobId, projectSlug: input.projectSlug, creativeSlug: input.creativeSlug, kind: input.kind,
       title: input.title ?? described.title, detail: (input.detail ?? described.detail).slice(0, 2000), toolName: input.toolName,
-      alwaysRule: always?.rule ?? null, explanation, agentReason,
+      alwaysRule: always?.rule ?? null, explanation, agentReason, ...(input.toolUseId ? { toolUseId: input.toolUseId } : {}),
       createdAt: created.toISOString(), expiresAt: new Date(created.getTime() + this.timeoutMs).toISOString(),
     };
     return new Promise((resolve) => {
@@ -110,6 +110,7 @@ export class ApprovalBroker {
 
   private settle(item: Pending, decision: ApprovalOutcome['decision']) {
     item.resolve({ decision });
-    this.opts.broadcast({ type: 'approval_resolved', id: item.request.id, decision });
+    const { toolUseId } = item.request;
+    this.opts.broadcast({ type: 'approval_resolved', id: item.request.id, decision, ...(toolUseId ? { toolUseId } : {}) });
   }
 }

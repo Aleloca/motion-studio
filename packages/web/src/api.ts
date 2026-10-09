@@ -59,7 +59,7 @@ export const api = {
     return request<UsageReport>('GET', `/api/usage${qs ? `?${qs}` : ''}`);
   },
   /** Shown tokens of each creative's first generation in the last `days` days (New creative estimate). */
-  /** What ran automatically during a brand analysis (its auto_approved events), from the proposal's log. */
+  /** What ran during a brand analysis (Bash calls, outcomes, decisions, automatic approvals), from the proposal's log. */
   getProposalActivity: (slug: string, id: string) => request<ProposalActivity>('GET', `${p(slug)}/brand/proposals/${encodeURIComponent(id)}/activity`),
   getFirstGenerations: (days = 90) => request<{ tokens: number[] }>('GET', `/api/usage/first-generations?days=${days}`),
   getWorkspace: () => request<WorkspaceInfo>('GET', '/api/workspace'),

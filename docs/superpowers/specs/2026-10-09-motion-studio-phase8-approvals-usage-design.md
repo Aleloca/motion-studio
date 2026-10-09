@@ -53,6 +53,7 @@ Se una di queste verifiche fallisce, l'approvazione automatica **non** si implem
   - registrato nella conversazione, nel log del brand e nei log dei job come gli altri eventi;
   - visibile in "Activity details" con la spiegazione (§4);
   - nella conversazione, il riepilogo di fine turno dice quanti comandi sono stati approvati in automatico: "8 commands ran automatically in the sandbox", con il link ad Activity details.
+  - **Aggiornamento (decisione del design owner, count work):** la riga conta OGNI Bash eseguito, non solo gli `auto_approved` (con l'impostazione attiva Claude Code autorizza da sé la maggior parte dei Bash in sandbox, e quelle chiamate non arrivano ad `approve`). Copy: "N commands ran in the sandbox · Details", più " · M approved by you" quando M > 0; senza sandbox "N commands ran". La riga appare anche con l'impostazione spenta. `tool_use_id` è registrato su richiesta, decisione (`approval_decided`) e `auto_approved`; l'evento `session` porta `sandboxed`. Regole di conteggio e casi limite in `packages/web/src/components/commandLog.ts`.
 - Si annota nel registro delle decisioni che i lavori brand, pur leggendo pagine web non fidate, ora eseguono Bash senza conferma. Il motivo per cui resta accettabile: sandbox senza rete, scrittura limitata al progetto, file di configurazione protetti.
 
 ## 4. Spiegazione dei comandi

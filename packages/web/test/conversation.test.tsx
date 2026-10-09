@@ -444,7 +444,7 @@ describe('Conversation · automatic approvals (Phase 8)', () => {
 
   it('ends the turn with a compact line counting them, which opens Activity details', async () => {
     render(view({ entries: finished, job: done }));
-    const line = screen.getByText('3 commands ran automatically in the sandbox');
+    const line = screen.getByText('3 commands ran in the sandbox');
     const wrap = line.closest('.ms-convo-autoline') as HTMLElement;
     expect(wrap).toBeTruthy();
     // A line, not a message bubble.
@@ -453,7 +453,7 @@ describe('Conversation · automatic approvals (Phase 8)', () => {
     const details = screen.getByRole('button', { name: 'Activity details (4)' });
     expect(details.getAttribute('aria-expanded')).toBe('false');
     const open = within(wrap).getByRole('button', { name: 'Details' });
-    expect(document.getElementById(open.getAttribute('aria-describedby')!)!.textContent).toBe('3 commands ran automatically in the sandbox');
+    expect(document.getElementById(open.getAttribute('aria-describedby')!)!.textContent).toBe('3 commands ran in the sandbox');
     await userEvent.click(open);
     expect(details.getAttribute('aria-expanded')).toBe('true');
     expect(document.querySelectorAll('.ms-convo-auto')).toHaveLength(3);
@@ -466,16 +466,112 @@ describe('Conversation · automatic approvals (Phase 8)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Activity details (2)' }));
     expect(screen.getByRole('button', { name: /Bash: ls -la/ })).toBeTruthy();
     expect(screen.getByRole('button', { name: /Bash: pwd/ })).toBeTruthy();
-    expect(screen.getByText('2 commands ran automatically in the sandbox')).toBeTruthy();
+    expect(screen.getByText('2 commands ran in the sandbox')).toBeTruthy();
   });
 
-  it('says it once for one command, and not while the turn runs or when nothing ran automatically', () => {
+  it('says it once for one command, and not while the turn runs or when no command ran', () => {
     const { rerender } = render(view({ entries: [agent(2, auto('ffprobe'))], job: done }));
-    expect(screen.getByText('1 command ran automatically in the sandbox')).toBeTruthy();
+    expect(screen.getByText('1 command ran in the sandbox')).toBeTruthy();
     rerender(view({ entries: [agent(2, auto('ffprobe'))], job: running }));
-    expect(screen.queryByText(/ran automatically/)).toBeNull();
+    expect(screen.queryByText(/commands? ran/)).toBeNull();
     rerender(view({ entries: [agent(2, text('Hi'))], job: done }));
-    expect(screen.queryByText(/ran automatically/)).toBeNull();
+    expect(screen.queryByText(/commands? ran/)).toBeNull();
+  });
+});
+
+describe('Conversation · every command that ran (count work)', () => {
+  const session = (sandboxed?: boolean): AgentEvent => ({ kind: 'session', sessionId: 's1', ...(sandboxed === undefined ? {} : { sandboxed }) });
+  const use = (id: string, command: string): AgentEvent => ({ kind: 'tool_use', id, name: 'Bash', input: { command } });
+  const result = (id: string, isError = false): AgentEvent => ({ kind: 'tool_result', toolUseId: id, isError, content: isError ? 'exit 1' : 'ok' });
+  const decided = (id: string, decision: 'once' | 'always' | 'deny' | 'expired' | 'cancelled'): AgentEvent => ({ kind: 'approval_decided', toolName: 'Bash', decision, toolUseId: id });
+  const autoFor = (id: string, command: string): AgentEvent => ({
+    kind: 'auto_approved', toolName: 'Bash', command, toolUseId: id,
+    explanation: { summary: [{ key: 'explain.runs', params: { cmd: 'ffprobe' } }], indicators: [], risk: 'low', parsed: true },
+  });
+  const read = (file: string): AgentEvent => ({
+    kind: 'auto_approved', toolName: 'Read', command: file,
+    explanation: { summary: [{ key: 'explain.runs', params: { cmd: 'read' } }], indicators: [], risk: 'low', parsed: true },
+  });
+  // 5 Bash calls: one auto-approved by our approve, two allowed by Claude Code itself, one you approved, one you denied.
+  const turn = (sandboxed?: boolean) => [
+    agent(1, session(sandboxed)),
+    agent(2, use('b1', 'ffprobe -v error in.mp4')), agent(2, autoFor('b1', 'ffprobe -v error in.mp4')), agent(2, result('b1')),
+    agent(3, use('b2', 'ls -la creatives')), agent(3, result('b2')),
+    agent(4, use('b3', 'mkdir -p work/tmp')), agent(4, result('b3', true)),
+    agent(5, use('b4', 'brew install ffmpeg')), agent(5, decided('b4', 'once')), agent(5, result('b4')),
+    agent(6, use('b5', 'rm -rf ~/Downloads')), agent(6, decided('b5', 'deny')), agent(6, result('b5', true)),
+    agent(7, read('/tmp/claude-501/frames/f1.png')),
+    agent(8, { kind: 'result', ok: true, text: 'Done.' }),
+  ];
+
+  it('counts every Bash call that ran, not only automatic approvals, and says how many you approved', () => {
+    render(view({ entries: turn(true), job: done }));
+    // 5 calls − 1 denied = 4 ran (the Read is listed but never counted).
+    expect(screen.getByText('4 commands ran in the sandbox · 1 approved by you')).toBeTruthy();
+  });
+
+  it('every row has an explanation and the right mark; Read is its own row type', async () => {
+    render(view({ entries: turn(true), job: done }));
+    await userEvent.click(screen.getByRole('button', { name: /^Activity details/ }));
+    const rows = [...document.querySelectorAll<HTMLElement>('.ms-convo-auto')];
+    expect(rows.map((r) => r.dataset.mark)).toEqual(['auto', 'auto', 'error', 'approved', 'denied', 'read']);
+    // The automatic approval is merged into its tool_use: one row per call.
+    expect(rows).toHaveLength(6);
+    expect(within(rows[3]!).getByText('You approved')).toBeTruthy();
+    expect(rows[3]!.querySelector('.ms-step-check svg')).toBeTruthy();
+    expect(within(rows[4]!).getByText('Denied')).toBeTruthy();
+    expect(within(rows[2]!).getByText('Ended with an error')).toBeTruthy();
+    expect(within(rows[0]!).queryByText(/You approved|Denied/)).toBeNull();
+    expect(within(rows[5]!).getByText('Read /tmp/claude-501/frames/f1.png')).toBeTruthy();
+    // An explanation (never a raw "Bash: …" fallback, never a catalog key) on every command row.
+    for (const r of rows.slice(0, 5)) {
+      const title = r.querySelector('.ms-convo-auto-text')!.textContent!;
+      expect(title).not.toMatch(/^Bash: |explain\./);
+      expect(title.length).toBeGreaterThan(0);
+    }
+    // The web explanation of a call the core did not explain still carries its risk chips.
+    expect(within(rows[4]!).getAllByText(/./, { selector: '.ms-risk-label' }).length).toBeGreaterThan(0);
+    await userEvent.click(within(rows[1]!).getByRole('button'));
+    expect(within(rows[1]!).getByText('ls -la creatives', { selector: 'pre' })).toBeTruthy();
+  });
+
+  it('shows the line with the automatic-approval setting off too (no auto_approved at all)', () => {
+    const entries = [agent(1, session(true)), agent(2, use('b1', 'ls')), agent(2, result('b1')), agent(3, use('b2', 'pwd')), agent(3, result('b2'))];
+    render(view({ entries, job: done }));
+    expect(screen.getByText('2 commands ran in the sandbox')).toBeTruthy();
+  });
+
+  it('an unsandboxed job (or one whose log does not say) drops "in the sandbox"', () => {
+    const { rerender } = render(view({ entries: turn(false), job: done }));
+    expect(screen.getByText('4 commands ran · 1 approved by you')).toBeTruthy();
+    rerender(view({ entries: [agent(2, use('b1', 'ls')), agent(2, result('b1'))], job: done }));
+    expect(screen.getByText('1 command ran')).toBeTruthy();
+  });
+
+  it('expired or cancelled requests did not run; a cancelled job keeps the call that had started', async () => {
+    const entries = [agent(1, session(true)), agent(2, use('b1', 'ls')), agent(2, decided('b1', 'expired')), agent(3, use('b2', 'pwd')), agent(3, decided('b2', 'cancelled')), agent(4, use('b3', 'sleep 100'))];
+    render(view({ entries, job: { ...done, state: 'cancelled' } }));
+    expect(screen.getByText('1 command ran in the sandbox')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: /^Activity details/ }));
+    expect(screen.getAllByText('Didn’t run')).toHaveLength(2);
+  });
+
+  it('only Reads: listed, but no line', () => {
+    render(view({ entries: [agent(1, session(true)), agent(2, read('/tmp/claude-501/x.png'))], job: done }));
+    expect(screen.queryByText(/commands? ran/)).toBeNull();
+  });
+
+  it('copy in Italian, singular and plural', () => {
+    const it_ = (entries: ConversationEntry[]) => render(<I18nProvider locale="it"><Conversation {...props} entries={entries} job={done} /></I18nProvider>);
+    const { unmount } = it_(turn(true));
+    expect(screen.getByText('4 comandi eseguiti nella sandbox · 1 approvato da te')).toBeTruthy();
+    unmount();
+    const two = [agent(1, session(false)), agent(2, use('b1', 'ls')), agent(2, decided('b1', 'once')), agent(3, use('b2', 'pwd')), agent(3, decided('b2', 'always'))];
+    const r2 = it_(two);
+    expect(screen.getByText('2 comandi eseguiti · 2 approvati da te')).toBeTruthy();
+    r2.unmount();
+    it_([agent(1, session(true)), agent(2, use('b1', 'ls'))]);
+    expect(screen.getByText('1 comando eseguito nella sandbox')).toBeTruthy();
   });
 });
 

@@ -104,8 +104,8 @@ export function registerBrandRoutes(app: FastifyInstance, ctx: BrandRoutesContex
   });
 
   /**
-   * Read-only: what ran automatically during an analysis (its `auto_approved` events and Bash tool calls), from the
-   * proposal's log.jsonl, confined to the proposal folder and capped (see proposal-activity.ts).
+   * Read-only: what ran during an analysis (its Bash tool calls with their outcome, automatic approvals and the user's
+   * decisions, and whether the run was sandboxed), from the proposal's log.jsonl, confined to the proposal folder and capped (see proposal-activity.ts).
    */
   app.get<{ Params: { slug: string; id: string } }>('/api/projects/:slug/brand/proposals/:id/activity', async (req): Promise<ProposalActivity> => {
     const { projectDir, store } = await project(req.params.slug);

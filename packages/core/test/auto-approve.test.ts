@@ -39,6 +39,8 @@ let claudeRoot: string;
 /** Resolved by the broker's broadcast: an approval reached the user. Re-armed after each one. */
 let nextShown: Promise<void>;
 let markShown: () => void;
+/** Automatic approvals only: a request that reached the user also logs its decision (approval_decided). */
+const autoEvents = () => events.filter((e) => e.kind === 'auto_approved');
 const armShown = () => { nextShown = new Promise<void>((r) => { markShown = r; }); };
 
 const ctxBase = (over: Partial<BridgeContext> = {}): BridgeContext => ({
@@ -97,7 +99,8 @@ describe('automatic approval in approve', () => {
     expect(approvals.pending()).toEqual([]);
     expect(events).toHaveLength(1);
     const ev = events[0]!;
-    expect(ev).toMatchObject({ kind: 'auto_approved', toolName: 'Bash', command: 'ls -la' });
+    // tool_use_id links the event to the agent's tool_use (count work).
+    expect(ev).toMatchObject({ kind: 'auto_approved', toolName: 'Bash', command: 'ls -la', toolUseId: 't' });
     if (ev.kind !== 'auto_approved') throw new Error('unreachable');
     expect(ev.explanation).toEqual(explainTool('Bash', { command: 'ls -la', description: 'Lists files' }, {
       projectDir, workDir: join(projectDir, 'creatives', 'c1', 'work'), cwd: projectDir, home: homedir(), tmpDir: process.env.TMPDIR || tmpdir(),
@@ -120,7 +123,7 @@ describe('automatic approval in approve', () => {
     autoApprove = false;
     const token = bridge.register(ctxBase());
     expect(await outcome(token, bash('ls'))).toBe('asked');
-    expect(events).toEqual([]);
+    expect(autoEvents()).toEqual([]);
   });
   it('asks when the settings cannot be read', async () => {
     const app2 = Fastify();
@@ -147,7 +150,7 @@ describe('automatic approval in approve', () => {
   it('asks when the job is not sandboxed (sandboxMode off, or sandbox unavailable at launch)', async () => {
     const token = bridge.register(ctxBase({ sandboxed: false }));
     expect(await outcome(token, bash('ls'))).toBe('asked');
-    expect(events).toEqual([]);
+    expect(autoEvents()).toEqual([]);
   });
   it('asks with dangerouslyDisableSandbox set to anything but false', async () => {
     const token = bridge.register(ctxBase());
@@ -162,20 +165,20 @@ describe('automatic approval in approve', () => {
     for (const tool_name of names) {
       expect(await outcome(token, { tool_name, input: { command: 'ls', description: 'x' } }), tool_name).toBe('asked');
     }
-    expect(events).toEqual([]);
+    expect(autoEvents()).toEqual([]);
   });
   it('never asks nor allows provider tools through approve', async () => {
     const token = bridge.register(ctxBase());
     const res = await approve(token, { tool_name: 'provider:openai-images', input: { command: 'ls' } });
     expect(res.json()).toEqual({ behavior: 'deny', message: 'Richiesta non valida.' });
-    expect(events).toEqual([]);
+    expect(autoEvents()).toEqual([]);
   });
   it('never auto-allows for a job that has already ended', async () => {
     const ended = new AbortController();
     ended.abort();
     const token = bridge.register(ctxBase({ signal: ended.signal }));
     expect((await approve(token, bash('ls'))).json()).toEqual({ behavior: 'deny', message: 'Il lavoro è stato annullato.' });
-    expect(events).toEqual([]);
+    expect(autoEvents()).toEqual([]);
   });
   it('asks when the command is not a string', async () => {
     const token = bridge.register(ctxBase());
@@ -211,7 +214,7 @@ describe('the setting must be on at job start AND now', () => {
     const token = bridge.register(ctxBase({ autoApproveAtStart: false }));
     autoApprove = true;
     expect(await outcome(token, bash('ls'))).toBe('asked');
-    expect(events).toEqual([]);
+    expect(autoEvents()).toEqual([]);
   });
   it('on at start, turned off mid-job: asks at once', async () => {
     const token = bridge.register(ctxBase({ autoApproveAtStart: true }));
@@ -463,7 +466,7 @@ describe('automatic approval of Read under Claude Code\'s own temp root', () => 
       await rm(other, { recursive: true, force: true });
       await rm(`${claudeRoot}x`, { recursive: true, force: true });
     }
-    expect(events).toEqual([]);
+    expect(autoEvents()).toEqual([]);
   });
   it('asks when a symlink inside the root escapes it (file or folder)', async () => {
     const other = await mkdtemp(join(tmpdir(), 'ms-secret-'));
@@ -475,7 +478,7 @@ describe('automatic approval of Read under Claude Code\'s own temp root', () => 
       expect(await outcome(token, read(join(claudeRoot, 'link.png')))).toBe('asked');
       expect(await outcome(token, read(join(claudeRoot, 'dir', 'secret.txt')))).toBe('asked');
     } finally { await rm(other, { recursive: true, force: true }); }
-    expect(events).toEqual([]);
+    expect(autoEvents()).toEqual([]);
   });
   it('asks for a path written outside the root even when it links into it', async () => {
     const p = await frame();
@@ -488,7 +491,7 @@ describe('automatic approval of Read under Claude Code\'s own temp root', () => 
     for (const p of [join(claudeRoot, 'missing.png'), join(claudeRoot, 'd'), claudeRoot, 'frame.png', '', 42, null, [join(claudeRoot, 'x')]]) {
       expect(await outcome(token, read(p)), String(p)).toBe('asked');
     }
-    expect(events).toEqual([]);
+    expect(autoEvents()).toEqual([]);
   });
   it('asks with the setting off now, off at job start, or in an unsandboxed job', async () => {
     const p = await frame();
@@ -497,7 +500,7 @@ describe('automatic approval of Read under Claude Code\'s own temp root', () => 
     autoApprove = true;
     expect(await outcome(bridge.register(ctxBase({ autoApproveAtStart: false })), read(p))).toBe('asked');
     expect(await outcome(bridge.register(ctxBase({ sandboxed: false })), read(p))).toBe('asked');
-    expect(events).toEqual([]);
+    expect(autoEvents()).toEqual([]);
   });
   it('asks when the root is shared with other users (group or world writable)', async () => {
     const p = await frame();
@@ -517,7 +520,7 @@ describe('automatic approval of Read under Claude Code\'s own temp root', () => 
     for (const tool_name of ['read', 'Read ', 'Glob', 'Grep', 'NotebookRead', 'Write', 'Edit']) {
       expect(await outcome(token, { tool_name, input: { file_path: p } }), tool_name).toBe('asked');
     }
-    expect(events).toEqual([]);
+    expect(autoEvents()).toEqual([]);
   });
 });
 

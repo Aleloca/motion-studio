@@ -65,6 +65,10 @@ const capCommand = (command: string) => {
   return `${/[\uD800-\uDBFF]$/.test(head) ? head.slice(0, -1) : head}\u2026`;
 };
 
+/** Claude Code's `tool_use_id` (e.g. "toolu_01…"): kept only when it looks like one, so a log never carries arbitrary text. */
+const TOOL_USE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+export const toolUseIdOf = (v: unknown): string | undefined => (typeof v === 'string' && TOOL_USE_ID.test(v) ? v : undefined);
+
 /** Calls from the `studio` MCP server: one per tool, authenticated by the job's bridge token. */
 export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesContext) {
   const tools: Record<string, BridgeHandler> = {
@@ -74,6 +78,8 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
       const input = raw as Record<string, unknown>;
       // 'unknown' is a stable identifier (it reaches the broker and rules); the localized word is only for display.
       const toolName = typeof a.tool_name === 'string' ? a.tool_name : 'unknown';
+      const toolUseId = toolUseIdOf(a.tool_use_id);
+      const linked = toolUseId ? { toolUseId } : {};
       // Provider confirmations and Motion Studio's own tools never go through the agent's permission prompts.
       if (toolName.startsWith('provider:') || toolName.startsWith(`mcp__${MCP_SERVER}__`)) return { behavior: 'deny', message: t().approvals.invalidRequest };
       const auto = (await autoApprovable(ctx, c, a.tool_name, input)) ? { tool: 'Bash', shown: input.command as string }
@@ -85,11 +91,13 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
         const explanation = ctx.approvals.explain(c, auto.tool, input);
         // No explanation, no silent approval: the event must say what ran.
         if (explanation) {
-          c.emit({ kind: 'auto_approved', toolName: auto.tool, command: capCommand(auto.shown), explanation });
+          c.emit({ kind: 'auto_approved', toolName: auto.tool, command: capCommand(auto.shown), explanation, ...linked });
           return { behavior: 'allow', updatedInput: input };
         }
       }
-      const { decision } = await ctx.approvals.request({ jobId: c.jobId, projectSlug: c.projectSlug, projectDir: c.projectDir, creativeSlug: c.creativeSlug, kind: 'tool', toolName, input });
+      const { decision } = await ctx.approvals.request({ jobId: c.jobId, projectSlug: c.projectSlug, projectDir: c.projectDir, creativeSlug: c.creativeSlug, kind: 'tool', toolName, input, ...linked });
+      // In the job's log: a finished turn tells the commands you approved or denied from those that ran without asking.
+      try { c.emit({ kind: 'approval_decided', toolName, decision, ...linked }); } catch { /* a faulty listener must not change the answer */ }
       return decision === 'once' || decision === 'always'
         ? { behavior: 'allow', updatedInput: input }
         : { behavior: 'deny', message: denyMessage(decision) };

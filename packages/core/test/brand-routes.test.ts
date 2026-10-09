@@ -93,7 +93,7 @@ describe('brand API', () => {
   });
 });
 
-describe('GET /brand/proposals/:id/activity (commands that ran automatically)', () => {
+describe('GET /brand/proposals/:id/activity (commands that ran)', () => {
   const id = 'p-20261009-120000';
   const dir = () => join(base, 'ws', 'acme', 'brand', 'proposals', id);
   const explanation = { summary: [{ key: 'explain.listFiles', params: {} }], indicators: [], risk: 'low', parsed: true };
@@ -116,6 +116,32 @@ describe('GET /brand/proposals/:id/activity (commands that ran automatically)', 
     expect(body.truncated).toBe(false);
     expect(body.entries.map((e) => e.event.kind)).toEqual(['auto_approved', 'tool_use', 'auto_approved']);
     expect(body.entries[0]).toEqual({ at: '2026-10-09T12:00:01.000Z', event: { kind: 'auto_approved', toolName: 'Bash', command: 'ls -la', explanation } });
+  });
+
+  it('returns what the command log needs: Bash outcomes without their output, decisions and the sandbox flag', async () => {
+    await mkdir(dir(), { recursive: true });
+    const line = (event: unknown) => JSON.stringify({ at: '2026-10-09T12:00:03.000Z', event });
+    await writeFile(join(dir(), 'log.jsonl'), [
+      line({ kind: 'session', sessionId: 's1', model: 'haiku', sandboxed: true }),
+      line({ kind: 'tool_use', id: 'b1', name: 'Bash', input: { command: 'ls' } }),
+      line({ kind: 'tool_result', toolUseId: 'b1', isError: false, content: 'secret-ish output' }),
+      line({ kind: 'tool_use', id: 'r1', name: 'Read', input: { file_path: '/x' } }),
+      line({ kind: 'tool_result', toolUseId: 'r1', isError: false, content: 'file text' }), // not a Bash call: skipped
+      line({ kind: 'tool_result', toolUseId: 'zz', isError: true, content: 'x' }), // unknown call: skipped
+      line({ kind: 'approval_decided', toolName: 'Bash', decision: 'deny', toolUseId: 'b2' }),
+      line({ kind: 'approval_decided', toolName: 'Bash', decision: 'maybe', toolUseId: 'b3' }), // malformed: skipped
+      line({ kind: 'approval_decided', toolName: 'Bash', decision: 'once', toolUseId: 'not an id' }),
+      line({ kind: 'auto_approved', toolName: 'Bash', command: 'pwd', explanation, toolUseId: 'b4' }),
+    ].join('\n') + '\n');
+    const body = (await get()).json() as { sandboxed?: boolean; entries: Array<{ event: Record<string, unknown> }> };
+    expect(body.sandboxed).toBe(true);
+    expect(body.entries.map((e) => e.event)).toEqual([
+      { kind: 'tool_use', id: 'b1', name: 'Bash', input: { command: 'ls' } },
+      { kind: 'tool_result', toolUseId: 'b1', isError: false, content: '' },
+      { kind: 'approval_decided', toolName: 'Bash', decision: 'deny', toolUseId: 'b2' },
+      { kind: 'approval_decided', toolName: 'Bash', decision: 'once' },
+      { kind: 'auto_approved', toolName: 'Bash', command: 'pwd', explanation, toolUseId: 'b4' },
+    ]);
   });
 
   it('an old proposal without a log: hasLog false, no entries', async () => {

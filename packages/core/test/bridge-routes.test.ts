@@ -84,7 +84,43 @@ describe('bridge', () => {
     expect(req!.title).toBe('Eseguire un comando');
     approvals.cancelJob('j1');
     await pending;
-    expect(events).toEqual([]);
+    // Only the outcome is logged: the request itself is not an agent event.
+    expect(events).toEqual([{ kind: 'approval_decided', toolName: 'Bash', decision: 'cancelled', toolUseId: 't4' }]);
+  });
+  it('carries tool_use_id on the request, the resolution and the logged decision (count work)', async () => {
+    const resolved: unknown[] = [];
+    const broker = new ApprovalBroker({ broadcast: (m) => { if (m.type === 'approval_resolved') resolved.push(m); } });
+    const app2 = Fastify();
+    registerBridgeRoutes(app2, { bridge, approvals: broker });
+    const ask = (tool_use_id: unknown, command: string) => app2.inject({ method: 'POST', url: '/api/bridge/approve', payload: { tool_name: 'Bash', input: { command }, tool_use_id }, headers: { 'x-motion-studio-bridge': token } });
+    const a = ask('toolu_01AbC-9_x', 'brew install ffmpeg');
+    await new Promise((r) => setTimeout(r, 20));
+    const [req] = broker.pending();
+    expect(req!.toolUseId).toBe('toolu_01AbC-9_x');
+    await broker.decide(req!.id, 'once');
+    await a;
+    expect(resolved).toEqual([{ type: 'approval_resolved', id: req!.id, decision: 'once', toolUseId: 'toolu_01AbC-9_x' }]);
+    const b = ask('toolu_02', 'rm -rf build');
+    await new Promise((r) => setTimeout(r, 20));
+    await broker.decide(broker.pending()[0]!.id, 'deny');
+    await b;
+    // Not an id (spaces, too long, not a string): dropped, never logged as is.
+    for (const bad of ['a b', 'x'.repeat(129), 42]) {
+      const c = ask(bad, 'ls');
+      await new Promise((r) => setTimeout(r, 20));
+      const [r] = broker.pending();
+      expect(r!.toolUseId).toBeUndefined();
+      await broker.decide(r!.id, 'deny');
+      await c;
+    }
+    expect(events).toEqual([
+      { kind: 'approval_decided', toolName: 'Bash', decision: 'once', toolUseId: 'toolu_01AbC-9_x' },
+      { kind: 'approval_decided', toolName: 'Bash', decision: 'deny', toolUseId: 'toolu_02' },
+      { kind: 'approval_decided', toolName: 'Bash', decision: 'deny' },
+      { kind: 'approval_decided', toolName: 'Bash', decision: 'deny' },
+      { kind: 'approval_decided', toolName: 'Bash', decision: 'deny' },
+    ]);
+    await app2.close();
   });
   it('denies the prompt when the job is cancelled', async () => {
     const pending = call('approve', { tool_name: 'Bash', input: { command: 'ls' }, tool_use_id: 't3' });

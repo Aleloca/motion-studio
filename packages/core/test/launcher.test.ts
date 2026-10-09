@@ -359,4 +359,25 @@ describe('AgentLauncher', () => {
     await (await launcher.start({ kind: 'describe', jobId: 'j6', projectSlug: 'acme', projectDir, request: { prompt: 'x' }, onEvent: () => {} })).done;
     expect(reads).toBe(1);
   });
+
+  it("stamps the run's session event with the job's sandbox decision (count work)", { timeout: 20_000 }, async () => {
+    const projectDir = await newProject();
+    const runner: AgentRunner = {
+      start: (_req, onEvent) => {
+        onEvent({ kind: 'session', sessionId: 's1', model: 'haiku' });
+        onEvent({ kind: 'text', text: 'hi' });
+        return { done: Promise.resolve({ status: 'succeeded' as never }), cancel: () => {} };
+      },
+    };
+    for (const [available, mode, expected] of [[true, 'auto', true], [false, 'auto', false], [true, 'off', false]] as const) {
+      const got: unknown[] = [];
+      const launcher = new AgentLauncher({
+        runner, bridge: new AgentBridge(), approvals: new ApprovalBroker({ broadcast: () => {} }),
+        sandbox: async () => ({ available, reason: '' }), configDir: projectDir, mcpCommand: null,
+        settings: async () => workspaceSettingsSchema.parse({ schemaVersion: 1, sandboxMode: mode }),
+      });
+      await (await launcher.start({ kind: 'creative', jobId: 'j7', projectSlug: 'acme', projectDir, request: { prompt: 'x' }, onEvent: (e) => got.push(e) })).done.catch(() => {});
+      expect(got.slice(0, 2)).toEqual([{ kind: 'session', sessionId: 's1', model: 'haiku', sandboxed: expected }, { kind: 'text', text: 'hi' }]);
+    }
+  });
 });

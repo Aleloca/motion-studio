@@ -11,18 +11,40 @@ export const MAX_ACTIVITY_BYTES = 1_000_000;
 const EMPTY: ProposalActivity = { hasLog: false, truncated: false, entries: [] };
 const isRecord = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-/** One log line → an entry when it is an `auto_approved` event or a Bash `tool_use`; anything else (or malformed) → null. */
-function entryOf(line: string): ProposalActivityEntry | null {
+const ID = /^[A-Za-z0-9_-]{1,128}$/;
+const idOf = (v: unknown): string | undefined => (typeof v === 'string' && ID.test(v) ? v : undefined);
+const DECISIONS = new Set(['once', 'always', 'deny', 'expired', 'cancelled']);
+
+/** What a log line contributes: an entry, the run's sandbox decision, or nothing. */
+type Parsed = { entry: ProposalActivityEntry } | { sandboxed: boolean } | null;
+
+/**
+ * One log line → an entry when it is an `auto_approved` event, a Bash `tool_use`, the `tool_result` of a Bash call
+ * seen earlier (without its output: only whether it was an error) or an `approval_decided`; a `session` event gives
+ * the sandbox decision. Anything else (or malformed) → null. `bash` collects the ids of the Bash calls seen so far.
+ */
+function parseLine(line: string, bash: Set<string>): Parsed {
   let row: unknown;
   try { row = JSON.parse(line); } catch { return null; }
   if (!isRecord(row) || typeof row.at !== 'string' || !isRecord(row.event)) return null;
   const e = row.event;
+  const at = row.at;
   if (e.kind === 'auto_approved' && typeof e.toolName === 'string' && typeof e.command === 'string' && isRecord(e.explanation)) {
-    return { at: row.at, event: { kind: 'auto_approved', toolName: e.toolName, command: e.command, explanation: e.explanation as never } };
+    const toolUseId = idOf(e.toolUseId);
+    return { entry: { at, event: { kind: 'auto_approved', toolName: e.toolName, command: e.command, explanation: e.explanation as never, ...(toolUseId ? { toolUseId } : {}) } } };
   }
   if (e.kind === 'tool_use' && e.name === 'Bash' && typeof e.id === 'string') {
-    return { at: row.at, event: { kind: 'tool_use', id: e.id, name: 'Bash', input: e.input } };
+    bash.add(e.id);
+    return { entry: { at, event: { kind: 'tool_use', id: e.id, name: 'Bash', input: e.input } } };
   }
+  if (e.kind === 'tool_result' && typeof e.toolUseId === 'string' && bash.has(e.toolUseId)) {
+    return { entry: { at, event: { kind: 'tool_result', toolUseId: e.toolUseId, isError: e.isError === true, content: '' } } };
+  }
+  if (e.kind === 'approval_decided' && typeof e.toolName === 'string' && typeof e.decision === 'string' && DECISIONS.has(e.decision)) {
+    const toolUseId = idOf(e.toolUseId);
+    return { entry: { at, event: { kind: 'approval_decided', toolName: e.toolName, decision: e.decision as never, ...(toolUseId ? { toolUseId } : {}) } } };
+  }
+  if (e.kind === 'session' && typeof e.sandboxed === 'boolean') return { sandboxed: e.sandboxed };
   return null;
 }
 
@@ -59,13 +81,16 @@ export async function readProposalActivity(brandDir: string, proposalDir: string
     let text = buf.subarray(0, Math.min(total, MAX_ACTIVITY_BYTES)).toString('utf8');
     if (truncated) text = text.slice(0, Math.max(0, text.lastIndexOf('\n')));
     const entries: ProposalActivityEntry[] = [];
+    const bash = new Set<string>();
+    let sandboxed: boolean | undefined;
     for (const line of text.split('\n')) {
-      const entry = line.trim() === '' ? null : entryOf(line);
-      if (!entry) continue;
+      const parsed = line.trim() === '' ? null : parseLine(line, bash);
+      if (!parsed) continue;
+      if ('sandboxed' in parsed) { sandboxed = parsed.sandboxed; continue; }
       if (entries.length === MAX_ACTIVITY_ENTRIES) { truncated = true; break; }
-      entries.push(entry);
+      entries.push(parsed.entry);
     }
-    return { hasLog: true, truncated, entries };
+    return { hasLog: true, truncated, entries, ...(sandboxed === undefined ? {} : { sandboxed }) };
   } catch {
     return EMPTY;
   } finally {

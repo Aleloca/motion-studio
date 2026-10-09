@@ -1,6 +1,7 @@
 import type { ApprovalRequest, DoctorCheck, LanguageSetting, Locale, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { api } from './api.ts';
+import { WorkspacePathContext } from './components/commandLog.ts';
 import { detectedLocale, I18nProvider, useLocale, type LanguageState } from './i18n.tsx';
 import { PageHost, type PageMode } from './motion/index.ts';
 import { depthOf, href, parseRoute, projectOf, redirectOf, routeKey, type Route } from './routes.ts';
@@ -154,11 +155,14 @@ function AppBody({ live, language, systemLocale, onLanguage }: Props) {
   // First load: nothing to show yet (no flash of the setup when everything is in place).
   if (shown.name !== 'welcome' && (!checks || !ws?.settings)) return <div className="ms-boot"><Spinner size={18} /></div>;
   return (
+    // The workspace folder: where the conversation and the brand log judge the paths of commands the core did not explain.
+    <WorkspacePathContext.Provider value={ws?.path ?? null}>
     <AppShell
       route={shown} live={live} settings={ws?.settings ?? null} checks={checks} activity={activity} setActivity={setActivity}
       language={language} systemLocale={systemLocale} onLanguage={onLanguage} setup={setup}
       onSettings={(next) => { applyTheme(next.theme); setWs((prev) => (prev ? { ...prev, settings: next } : prev)); }}
     />
+    </WorkspacePathContext.Provider>
   );
 }
 

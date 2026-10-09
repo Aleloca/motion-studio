@@ -103,6 +103,9 @@
 .ms-convo-auto-row svg.ms-chev { flex: none; margin-top: 2px; transform: rotate(-90deg); transition: transform var(--d-s) var(--e-std); }
 .ms-convo-auto-row[aria-expanded="true"] svg.ms-chev { transform: none; }
 .ms-convo-auto pre { margin: 0 0 0 19px; padding: 6px 8px; border-radius: 6px; background: var(--panel); font-family: var(--mono); font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 120px; overflow: auto; }
+/* A command that did not run (denied, or never answered): kept in the log, quieter; its mark says why. */
+.ms-convo-auto-off .ms-convo-auto-text { color: var(--muted); }
+.ms-convo-mark { flex: none; font-size: 11px; color: var(--muted); padding: 0 6px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line); }
 .ms-convo-autoline { margin-left: 36px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 12px; color: var(--muted); min-width: 0; }
 .ms-convo-autoline .ms-step-check { margin-top: 0; }
 
