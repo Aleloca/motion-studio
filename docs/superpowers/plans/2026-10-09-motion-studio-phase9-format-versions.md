@@ -142,6 +142,16 @@ Today the desktop window uses the default system frame: a system title bar holdi
 
 ---
 
+### Task 0c: Protect the transparency logs (phase 8 residual)
+
+Phase 8 shows "N commands ran in the sandbox" and the Activity details from `creatives/*/conversation.jsonl` and `brand/proposals/*/log.jsonl`. The agent can write those files today, so it could alter what the user is shown.
+
+- Add them to the protected files of the jobs, the same mechanism as `.studio/`, `CLAUDE.md` and the rest: the creative's `conversation.jsonl` (and `versions.json` and `creative.json` if they are not already protected) and the brand proposal logs. This covers `denyWrite` in the sandbox and the Edit/Write deny rules.
+- Verify that the core's own writes still work, and that a creative turn and a brand analysis still complete. Test it with the policy tests and with a fake-claude scenario that tries to write the file: it must be denied.
+- Commit: `fix(core): protect conversation and brand logs from the agent`.
+
+---
+
 ### Task 1: Shared types, the catalog link rule and hashes
 
 **Files:**
