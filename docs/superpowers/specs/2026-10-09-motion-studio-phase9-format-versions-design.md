@@ -32,7 +32,7 @@ Ci sono altri tre problemi:
 
 - Il file `creative.json` riceve un campo facoltativo `exportPicks: Record<formatId, number>`.
 - **Regola predefinita**: senza scelta, la ★ di un formato è la **versione più recente**, nella cronologia di F, in cui F non ha problemi. Se tutte ne hanno, è la più recente.
-- **Scelta manuale**: l'utente mette la ★ su una versione. Da quel momento la ★ resta lì anche quando arrivano versioni nuove, e l'interfaccia segnala "v7 newer". Mettere la ★ sulla versione più recente equivale a tornare alla regola predefinita, e la scelta manuale si cancella.
+- **Scelta manuale**: l'utente mette la ★ su una versione. Da quel momento la ★ resta lì anche quando arrivano versioni nuove, e l'interfaccia segnala "v7 newer". La scelta manuale si cancella solo quando coincide con la versione che darebbe la regola predefinita. Così si può mettere la ★ anche su una versione recente che ha problemi.
 - La ★ non cambia mai da sola su una versione scelta dall'utente.
 
 ### 2.3 Formati collegati
@@ -42,7 +42,7 @@ Ci sono altri tre problemi:
   - la stessa risoluzione;
   - estensioni compatibili;
   - una durata del file principale che rientra nel limite del formato collegato;
-  - safe zone compatibili, cioè la safe zone del formato collegato contenuta in quella del principale, oppure una differenza di pochi pixel documentata nel catalogo.
+  - safe zone compatibili: l'area sicura del formato collegato **contiene** quella del principale, cioè i margini del collegato sono minori o uguali. Così ciò che è al sicuro sul principale lo è anche sul collegato.
 
   Il catalogo calcola la compatibilità, con il campo `linkGroup` o una funzione `canFollow(a, b)`.
 - Il brief riceve `links: Record<formatId, formatId>` (seguace → principale). Alla creazione è **attivo di default** per le coppie collegabili: il primo formato di ogni gruppo è il principale. Si attiva o disattiva dalla tavola dei formati di New creative e dal canvas con "Unlink — make a dedicated version" o "Link to …".
