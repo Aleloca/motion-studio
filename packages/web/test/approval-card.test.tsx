@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { messages, type ApprovalRequest } from '@motion-studio/shared';
+import { messages, type ApprovalRequest, type Explanation } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../src/i18n.tsx';
 
@@ -204,5 +204,58 @@ describe('ApprovalCard', () => {
     await userEvent.click(screen.getByRole('button', { name: /Show command/ }));
     expect(document.querySelector('img')).toBeNull();
     expect(screen.getByLabelText('Full command').textContent).toBe('<img src=x onerror=alert(1)>');
+  });
+});
+
+describe('ApprovalCard · explained (Phase 8)', () => {
+  const explanation: Explanation = {
+    summary: [{ key: 'explain.runs', params: { cmd: 'magick' } }, { key: 'explain.delete', params: { paths: '~/Desktop/old' } }],
+    // Deliberately out of risk order: the card orders the chips by risk.
+    indicators: [{ id: 'runs-code', risk: 'low' }, { id: 'unknown-command', risk: 'medium' }, { id: 'writes-outside-project', risk: 'high' }],
+    risk: 'high', parsed: true,
+  };
+  const explained: ApprovalRequest = { ...base, detail: 'magick in.png out.png && rm -rf ~/Desktop/old', alwaysRule: null, explanation, agentReason: 'Clean up the old exports' };
+
+  it('titles the card with the summary phrases, chips in risk order (high: danger + icon) and the agent quote', async () => {
+    en(<ApprovalCard approval={explained} />);
+    const card = screen.getByRole('group', { name: 'Runs magick · Deletes ~/Desktop/old' });
+    expect(card.querySelector('.ms-approval-title')!.textContent).toBe('Runs magick · Deletes ~/Desktop/old');
+    expect(screen.queryByText('Run a command')).toBeNull();
+    const chips = [...card.querySelectorAll('.ms-risk')];
+    expect(chips.map((c) => c.textContent)).toEqual(['High risk: Writes outside the project', 'Medium risk: Unknown command', 'Low risk: Runs code']);
+    // Colour is never the only signal: an icon on every chip, a risk prefix for screen readers, danger only on high.
+    for (const c of chips) expect(c.querySelector('svg')).toBeTruthy();
+    expect(chips[0]!.classList.contains('ms-danger')).toBe(true);
+    expect(chips[1]!.classList.contains('ms-warn')).toBe(true);
+    expect(chips.slice(1).some((c) => c.classList.contains('ms-danger'))).toBe(false);
+    expect(within(chips[0] as HTMLElement).getByText('High risk:').classList.contains('ms-sr')).toBe(true);
+    const quote = screen.getByText('The agent says: “Clean up the old exports”');
+    expect(quote.classList.contains('ms-approval-reason')).toBe(true);
+    // "Show command" unchanged.
+    await userEvent.click(screen.getByRole('button', { name: /Show command/ }));
+    expect(screen.getByLabelText('Full command').textContent).toBe(explained.detail);
+  });
+
+  it('has no quote without an agent reason', () => {
+    en(<ApprovalCard approval={{ ...explained, agentReason: null }} />);
+    expect(screen.queryByText(/The agent says/)).toBeNull();
+    expect(screen.getByRole('group', { name: 'Runs magick · Deletes ~/Desktop/old' })).toBeTruthy();
+  });
+
+  it('falls back to the Phase 7 rendering without an explanation (older core, providers)', () => {
+    en(<ApprovalCard approval={{ ...base, agentReason: 'ignored without an explanation' }} />);
+    expect(screen.getByRole('group', { name: 'Run a command' })).toBeTruthy();
+    expect(screen.getByText('The agent wants to run a command on this computer.')).toBeTruthy();
+    expect(screen.getByText('Command')).toBeTruthy();
+    expect(document.querySelector('.ms-risk')).toBeNull();
+    expect(screen.queryByText(/The agent says/)).toBeNull();
+  });
+
+  it('renders the explanation in the current language', () => {
+    render(<I18nProvider locale="it"><ApprovalCard approval={explained} /></I18nProvider>);
+    const it_ = messages('it');
+    const title = `${(it_.explain.runs as (p: { cmd: string }) => string)({ cmd: 'magick' })} · ${(it_.explain.delete as (p: { paths: string }) => string)({ paths: '~/Desktop/old' })}`;
+    expect(screen.getByRole('group', { name: title })).toBeTruthy();
+    expect(screen.getByText(it_.web.approvalUi.agentSays({ reason: 'Clean up the old exports' }))).toBeTruthy();
   });
 });

@@ -412,6 +412,61 @@ describe('Conversation with live events and animations', () => {
   });
 });
 
+describe('Conversation · automatic approvals (Phase 8)', () => {
+  const auto = (cmd: string, risk: 'low' | 'medium' = 'low'): AgentEvent => ({
+    kind: 'auto_approved', toolName: 'Bash', command: cmd,
+    explanation: { summary: [{ key: 'explain.runs', params: { cmd } }], indicators: risk === 'medium' ? [{ id: 'unknown-command', risk: 'medium' }] : [], risk, parsed: true },
+  });
+  const finished = [
+    agent(2, auto('ffprobe')), agent(3, auto('magick', 'medium')), agent(4, text('Rendered.')), agent(5, auto('pngquant')),
+    agent(6, { kind: 'usage', live: false, tokens: { input: 10, output: 20, cacheRead: 0, cacheWrite: 0 }, costUsd: null }),
+    agent(7, { kind: 'result', ok: true, text: 'Rendered.' }),
+  ];
+
+  it('logs each automatic approval as a compact Activity details row whose command expands', async () => {
+    render(view({ entries: finished, job: done }));
+    // Not in the chat itself.
+    expect(screen.queryByText('Runs ffprobe')).toBeNull();
+    // Usage is not a visible row: 3 automatic approvals + the result.
+    await userEvent.click(screen.getByRole('button', { name: 'Activity details (4)' }));
+    const rows = document.querySelectorAll('.ms-convo-auto');
+    expect(rows).toHaveLength(3);
+    const first = rows[0] as HTMLElement;
+    expect(first.querySelector('.ms-step-check svg')).toBeTruthy();
+    const toggle = within(first).getByRole('button', { name: /Runs ffprobe/ });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(within(rows[1] as HTMLElement).getByText('Unknown command')).toBeTruthy();
+    expect(within(first).queryByText('ffprobe', { selector: 'pre' })).toBeNull();
+    await userEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(within(first).getByText('ffprobe', { selector: 'pre' })).toBeTruthy();
+  });
+
+  it('ends the turn with a compact line counting them, which opens Activity details', async () => {
+    render(view({ entries: finished, job: done }));
+    const line = screen.getByText('3 commands ran automatically in the sandbox');
+    const wrap = line.closest('.ms-convo-autoline') as HTMLElement;
+    expect(wrap).toBeTruthy();
+    // A line, not a message bubble.
+    expect(wrap.closest('article')).toBeNull();
+    expect(wrap.querySelector('.ms-msg-bubble')).toBeNull();
+    const details = screen.getByRole('button', { name: 'Activity details (4)' });
+    expect(details.getAttribute('aria-expanded')).toBe('false');
+    await userEvent.click(within(wrap).getByRole('button', { name: 'Details' }));
+    expect(details.getAttribute('aria-expanded')).toBe('true');
+    expect(document.querySelectorAll('.ms-convo-auto')).toHaveLength(3);
+  });
+
+  it('says it once for one command, and not while the turn runs or when nothing ran automatically', () => {
+    const { rerender } = render(view({ entries: [agent(2, auto('ffprobe'))], job: done }));
+    expect(screen.getByText('1 command ran automatically in the sandbox')).toBeTruthy();
+    rerender(view({ entries: [agent(2, auto('ffprobe'))], job: running }));
+    expect(screen.queryByText(/ran automatically/)).toBeNull();
+    rerender(view({ entries: [agent(2, text('Hi'))], job: done }));
+    expect(screen.queryByText(/ran automatically/)).toBeNull();
+  });
+});
+
 describe('mergeJobEvents', () => {
   it('shows the overlap between persisted and live events once', () => {
     expect(mergeJobEvents([text('a'), text('b')], [text('b'), text('c')]).map((e) => (e.kind === 'text' ? e.text : ''))).toEqual(['a', 'b', 'c']);

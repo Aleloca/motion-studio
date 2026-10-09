@@ -41,9 +41,10 @@ interface Props {
 /**
  * Project · Settings (spec §6.2 #12), ported from the prototype's ProjectSettingsPage and the ProjectSettings boards:
  * General, Agent and approvals (paid-service confirmation, parallel jobs, "Always allowed" with the plain label and the
- * rule below, revoked at once after an inline confirmation, T15 on success), Internet access and Linked code. The automatic approval of sandboxed
- * commands arrives with Phase 8; there is no Delete section because the API cannot delete a project.
- * Paid confirmation, parallel jobs, websites, isolation and model are workspace settings, shared by every project.
+ * rule below, revoked at once after an inline confirmation, T15 on success), Internet access and Linked code. Phase 8 adds
+ * the automatic approval of sandboxed commands; there is no Delete section because the API cannot delete a project.
+ * Automatic approval, paid confirmation, parallel jobs, websites, isolation and model are workspace settings, shared by
+ * every project.
  */
 export function ProjectSettings({ slug, live, settings, onSettings, checks: doctor = null }: Props) {
   const t = useT();
@@ -80,6 +81,9 @@ export function ProjectSettings({ slug, live, settings, onSettings, checks: doct
   }
   if (!project) return <div className="ms-set-center"><Spinner size={20} /></div>;
 
+  const sandboxCheck = doctor?.find((c) => c.id === 'sandbox') ?? null;
+  // Jobs already running keep the setting they started with (the toast says so); the setting is workspace-wide.
+  const running = Object.values(live.jobs).filter((j) => j.state === 'running').length;
   const code = <CodeCard slug={slug} linked={project.linkedCodebases} checks={checks} onLinked={(linkedCodebases) => setProject((p) => (p ? { ...p, linkedCodebases } : p))} />;
   const internet = <InternetCard settings={settings} save={save} />;
   return (
@@ -99,9 +103,9 @@ export function ProjectSettings({ slug, live, settings, onSettings, checks: doct
             <Head title={s.agent.title} sub={s.agent.sub} />
             <div className="ms-set-cols">
               <div className="ms-set-col">
-                <AgentCard settings={settings} save={save} />
+                <AgentCard settings={settings} save={save} sandbox={sandboxCheck} running={running} />
                 <AllowedCard slug={slug} tick={tick} />
-                <AdvancedCard settings={settings} save={save} sandbox={doctor?.find((c) => c.id === 'sandbox') ?? null} />
+                <AdvancedCard settings={settings} save={save} sandbox={sandboxCheck} />
               </div>
               <div className="ms-set-col ms-set-side">{internet}{code}</div>
             </div>
@@ -164,10 +168,20 @@ function GeneralSection({ slug, project, onSaved }: { slug: string; project: { n
 
 type Save = (patch: Partial<WorkspaceSettings>) => Promise<boolean>;
 
-function AgentCard({ settings, save }: { settings: WorkspaceSettingsView; save: Save }) {
+function AgentCard({ settings, save, sandbox, running }: { settings: WorkspaceSettingsView; save: Save; sandbox: DoctorCheck | null; running: number }) {
   const t = useT();
   const s = t.web.projectSettings;
+  const a = s.agent;
   const n = settings.maxConcurrentJobs;
+  // Spec §3.2: without the sandbox the setting has no effect, so the switch is off and disabled with the reason. An
+  // unknown doctor result (not checked yet) does not disable it.
+  const isolated = settings.sandboxMode !== 'off' && sandbox?.ok !== false;
+  const auto = isolated && settings.autoApproveSandboxed;
+  const setAuto = async (on: boolean) => {
+    if (!(await save({ autoApproveSandboxed: on }))) return;
+    const head = on ? a.autoOn : a.autoOff;
+    toast.show(running > 0 ? [head, a.appliesNew, a.runningKeeps({ count: running })].join(' · ') : head, { tone: 'ok' });
+  };
   // One save at a time: two fast clicks must not both save "n + 1" from the same n.
   const [stepping, setStepping] = useState(false);
   const step = async (next: number) => {
@@ -176,6 +190,14 @@ function AgentCard({ settings, save }: { settings: WorkspaceSettingsView; save: 
   };
   return (
     <Card className="ms-set-card" data-enter>
+      <Row title={a.autoApprove} sub={(
+        <>
+          {a.autoApproveSub} <span className="ms-set-shared">{s.everyProject}</span>
+          {isolated ? <span className="ms-set-status">{a.appliesNew}</span> : <span className="ms-set-status ms-set-warn">{a.needsIsolation}</span>}
+        </>
+      )}>
+        <Toggle on={auto} disabled={!isolated} onChange={(on) => void setAuto(on)} label={a.autoApprove} />
+      </Row>
       <Row title={s.agent.confirmPaid} sub={<>{s.agent.confirmPaidSub} <span className="ms-set-shared">{s.everyProject}</span></>}>
         <Toggle on={settings.confirmPaidProviders} onChange={(on) => void save({ confirmPaidProviders: on })} label={s.agent.confirmPaid} />
       </Row>

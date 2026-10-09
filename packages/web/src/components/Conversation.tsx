@@ -7,6 +7,7 @@ import { isMac } from '../platform.ts';
 import { Button, Empty, Icon, Markdown, Textarea, Typing, cx } from '../ui/index.ts';
 import { message } from '../errors.ts';
 import { ApprovalCard } from './ApprovalCard.tsx';
+import { explanationView, RiskChips } from './RiskChips.tsx';
 import { useApprovalPresence, type ShownApproval } from './approvalPresence.ts';
 
 /**
@@ -60,7 +61,8 @@ type Item =
   | { key: string; kind: 'step'; at: string; text: string }
   | { key: string; kind: 'fold'; jobId: string; count: number; open: boolean }
   | { key: string; kind: 'error'; at: string; text: string }
-  | { key: string; kind: 'details'; jobId: string; events: AgentEvent[] }
+  | { key: string; kind: 'details'; jobId: string; events: AgentEvent[]; open: boolean }
+  | { key: string; kind: 'autoline'; jobId: string; count: number }
   | { key: string; kind: 'version'; at: string; n: number; complete: boolean }
   | { key: string; kind: 'system'; at: string; error: boolean; text: string }
   | { key: string; kind: 'approval'; shown: ShownApproval }
@@ -68,13 +70,15 @@ type Item =
   | { key: string; kind: 'retried'; at: string };
 
 const active = (j: JobSummary | undefined) => !!j && (j.state === 'queued' || j.state === 'running');
-const TECHNICAL = new Set<AgentEvent['kind']>(['session', 'tool_use', 'tool_result', 'rate_limit', 'stderr', 'parse_error']);
+// `auto_approved` (Phase 8) goes to Activity details as a compact row; `usage` is never a row (the live estimate has
+// its own slot in the reducer, the final figure belongs to the version card).
+const TECHNICAL = new Set<AgentEvent['kind']>(['session', 'tool_use', 'tool_result', 'rate_limit', 'stderr', 'parse_error', 'auto_approved']);
 const same = (a: string, b: string) => a.trim() === b.trim();
 const samePins = (a: Pin[], b: Pin[]) => a.length === b.length
   && a.every((p, i) => { const q = b[i]!; return p.format === q.format && p.x === q.x && p.y === q.y && p.timeSec === q.timeSec && (p.note ?? '') === (q.note ?? ''); });
 
 /** One turn (the agent events of one job) as conversation items: messages, compact steps, summary, details. */
-function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], running: boolean, foldOpen: boolean): Item[] {
+function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], running: boolean, foldOpen: boolean, detailsOpen: boolean): Item[] {
   const out: Item[] = [];
   const steps: Item[] = [];
   const technical: AgentEvent[] = [];
@@ -107,7 +111,10 @@ function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], r
   if (!running && steps.length > 0) {
     out.splice(foldAt, 0, { key: `${jobId}:fold`, kind: 'fold', jobId, count: steps.length, open: foldOpen }, ...(foldOpen ? steps : []));
   }
-  if (technical.length > 0) out.push({ key: `${jobId}:details`, kind: 'details', jobId, events: technical });
+  // A finished turn says how many commands ran without asking (spec §3.2), as a line that opens Activity details.
+  const auto = technical.filter((e) => e.kind === 'auto_approved').length;
+  if (!running && auto > 0) out.push({ key: `${jobId}:auto`, kind: 'autoline', jobId, count: auto });
+  if (technical.length > 0) out.push({ key: `${jobId}:details`, kind: 'details', jobId, events: technical, open: detailsOpen });
   return out;
 }
 
@@ -122,6 +129,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
   const c = t.web.chat;
   const working = active(job);
   const [unfolded, setUnfolded] = useState<ReadonlySet<string>>(new Set());
+  const [detailsOpen, setDetailsOpen] = useState<ReadonlySet<string>>(new Set());
   const { list: shownApprovals, gone } = useApprovalPresence(approvals);
 
   // First time each live event (not yet persisted) was seen: its time until the refetch brings the real one.
@@ -151,7 +159,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
       .filter((s) => (jobId === null ? !jobs.has(s.approval.jobId) : s.approval.jobId === jobId))
       .map((s): Item => ({ key: `ap:${s.approval.id}`, kind: 'approval', shown: s }));
     const turn = (jobId: string) => [
-      ...turnItems(jobId, jobs.get(jobId)!, jobId === job?.id && working, unfolded.has(jobId)),
+      ...turnItems(jobId, jobs.get(jobId)!, jobId === job?.id && working, unfolded.has(jobId), detailsOpen.has(jobId)),
       ...approvalsOf(jobId),
     ];
 
@@ -184,7 +192,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     const waiting = shownApprovals.some((s) => !s.leaving && s.approval.jobId === job?.id);
     if (working && !waiting) out.push({ key: 'typing', kind: 'typing' });
     return out;
-  }, [entries, job, live, working, unfolded, shownApprovals]);
+  }, [entries, job, live, working, unfolded, detailsOpen, shownApprovals]);
 
   // Items present at the first render appear with the panel; later ones enter from +8 px (T9).
   const mounted = useRef(false);
@@ -202,11 +210,22 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     if (el) atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
   };
 
-  const toggleFold = (jobId: string) => setUnfolded((s) => {
+  const toggleIn = (set: typeof setUnfolded) => (jobId: string) => set((s) => {
     const n = new Set(s);
     if (n.has(jobId)) n.delete(jobId); else n.add(jobId);
     return n;
   });
+  const toggleFold = toggleIn(setUnfolded);
+  const toggleDetails = toggleIn(setDetailsOpen);
+  // "Details" on the automatic-approval line: opens that turn's Activity details and moves the focus there.
+  const openDetails = (jobId: string) => {
+    setDetailsOpen((s) => (s.has(jobId) ? s : new Set(s).add(jobId)));
+    requestAnimationFrame(() => {
+      const el = [...(listRef.current?.querySelectorAll<HTMLElement>('[data-details]') ?? [])].find((b) => b.dataset.details === jobId);
+      el?.focus();
+      el?.scrollIntoView?.({ block: 'nearest' });
+    });
+  };
 
   const empty = items.length === 0;
   return (
@@ -215,7 +234,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
         {empty && <li className="ms-convo-empty"><Empty icon="comment" title={c.emptyTitle} sub={c.emptySub} /></li>}
         {items.map((item) => (
           <Row key={item.key} animate={mounted.current && item.kind !== 'approval'}>
-            <ItemView item={item} formatName={formatName} onToggleFold={toggleFold} onSelectVersion={onSelectVersion} onGone={gone} />
+            <ItemView item={item} formatName={formatName} onToggleFold={toggleFold} onToggleDetails={toggleDetails} onOpenDetails={openDetails} onSelectVersion={onSelectVersion} onGone={gone} />
           </Row>
         ))}
       </ol>
@@ -262,8 +281,9 @@ function PinLabel({ pin, text }: { pin: Pin; text: string }) {
   );
 }
 
-function ItemView({ item, formatName, onToggleFold, onSelectVersion, onGone }: {
-  item: Item; formatName?(id: string): string; onToggleFold(jobId: string): void; onSelectVersion?(n: number): void; onGone(id: string): void;
+function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetails, onSelectVersion, onGone }: {
+  item: Item; formatName?(id: string): string; onToggleFold(jobId: string): void; onToggleDetails(jobId: string): void; onOpenDetails(jobId: string): void;
+  onSelectVersion?(n: number): void; onGone(id: string): void;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -318,7 +338,16 @@ function ItemView({ item, formatName, onToggleFold, onSelectVersion, onGone }: {
     case 'error':
       return <p role="alert" className="ms-convo-error">{c.failed({ error: item.text })}</p>;
     case 'details':
-      return <Details events={item.events} />;
+      return <Details jobId={item.jobId} events={item.events} open={item.open} onToggle={() => onToggleDetails(item.jobId)} />;
+    case 'autoline':
+      return (
+        <p className="ms-convo-autoline">
+          <span className="ms-step-check" aria-hidden="true"><Icon name="shield" size={13} /></span>
+          <span>{c.autoRan({ count: item.count })}</span>
+          <span aria-hidden="true">·</span>
+          <Button size="sm" variant="ghost" onClick={() => onOpenDetails(item.jobId)}>{c.autoDetails}</Button>
+        </p>
+      );
     case 'version':
       return (
         <div className="ms-convo-version">
@@ -347,11 +376,14 @@ function ItemView({ item, formatName, onToggleFold, onSelectVersion, onGone }: {
   }
 }
 
-/** Technical events of one turn (tools, outputs, logs): folded by default, scrolls inside a bounded box. */
-function Details({ events }: { events: AgentEvent[] }) {
+/**
+ * Technical events of one turn (tools, outputs, logs): folded by default, scrolls inside a bounded box. Commands
+ * approved automatically (Phase 8) are compact rows: a check, the plain summary and the risk chips; the command opens
+ * below.
+ */
+function Details({ jobId, events, open, onToggle }: { jobId: string; events: AgentEvent[]; open: boolean; onToggle(): void }) {
   const t = useT();
   const k = t.web.chat.detailKinds;
-  const [open, setOpen] = useState(false);
   const id = useId();
   const line = (e: AgentEvent): [string, ReactNode, boolean?] => {
     switch (e.kind) {
@@ -363,25 +395,45 @@ function Details({ events }: { events: AgentEvent[] }) {
       case 'progress': return [k.step, e.text];
       case 'stderr': return [k.log, e.text, true];
       case 'parse_error': return [k.unreadable, e.line, true];
-      // Not shown in the conversation yet (grouping never hands them to Details).
+      // `usage` is never handed to Details (see TECHNICAL); `auto_approved` has its own row below.
       case 'usage': case 'auto_approved': return ['', ''];
       case 'result': return e.ok ? [k.done, e.text ?? ''] : [k.failed, e.error ?? '', true];
     }
   };
   return (
     <div className="ms-convo-details">
-      <button type="button" className="ms-convo-fold" aria-expanded={open} aria-controls={id} onClick={() => setOpen((o) => !o)}>
+      <button type="button" className="ms-convo-fold" aria-expanded={open} aria-controls={id} data-details={jobId} onClick={onToggle}>
         <Icon name="terminal" size={12} />{t.web.chat.details({ count: events.length })}<Icon name="chevron" size={12} className="ms-chev" />
       </button>
       {open && (
         <ul id={id} className="ms-convo-log" tabIndex={0}>
           {events.map((e, i) => {
+            if (e.kind === 'auto_approved') return <AutoRow key={i} event={e} />;
             const [kind, value, err] = line(e);
             return <li key={i}><span className="ms-kind">{kind}</span><span className={cx('ms-val', err && 'ms-err')}>{value}</span></li>;
           })}
         </ul>
       )}
     </div>
+  );
+}
+
+/** One command approved automatically in the sandbox: check, summary phrase and chips; the command expands below. */
+function AutoRow({ event }: { event: Extract<AgentEvent, { kind: 'auto_approved' }> }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  const view = explanationView(event.explanation, t);
+  return (
+    <li className="ms-convo-auto">
+      <button type="button" className="ms-convo-auto-row" aria-expanded={open} aria-controls={id} onClick={() => setOpen((o) => !o)}>
+        <span className="ms-step-check" aria-hidden="true"><Icon name="check" size={13} strokeWidth={2} /></span>
+        <span className="ms-convo-auto-text">{view.title || event.toolName}</span>
+        <RiskChips explanation={event.explanation} />
+        <Icon name="chevron" size={12} className="ms-chev" />
+      </button>
+      {open && <pre id={id} tabIndex={0} aria-label={t.web.approvalUi.fullCommand}>{event.command}</pre>}
+    </li>
   );
 }
 
