@@ -10,6 +10,7 @@ import { Button, Card, Empty, Icon, Spinner, Textarea, Toggle, cx, toast } from 
 import { Alert, UNDO_MS, message } from './common.tsx';
 import { KEEPALIVE, deferRemoval, flushDeferred, isPendingRemoval, removalKey, usePendingRemovals } from './deferred.ts';
 import './library.css';
+import { SafeImg } from '../components/MediaThumb.tsx';
 
 type Listing = { references: ReferenceEntry[]; error: string | null };
 const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
@@ -212,7 +213,7 @@ function RefCard({ slug, entry: x, on, index, cascade, fresh, onToggle, onNote, 
   };
   return (
     <div ref={ref} className={cx('ms-rcard', on && 'ms-on')}>
-      <img src={api.projectFileUrl(slug, `references/${x.file}`)} alt={x.file} loading="lazy" />
+      <SafeImg src={api.projectFileUrl(slug, `references/${x.file}`)} alt={x.file} loading="lazy" fallbackClassName="ms-rcard-none" />
       <div className="ms-rcard-body">
         {draft !== null ? (
           <Textarea autoFocus rows={3} value={draft} aria-label={r.noteFor({ name: x.file })} placeholder={r.notePlaceholder}

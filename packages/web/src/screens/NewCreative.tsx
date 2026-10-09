@@ -12,6 +12,7 @@ import { Button, ChannelMark, Chip, Empty, Icon, Input, Popover, Segmented, Spin
 import { channelOf } from './creativeState.ts';
 import './newcreative.css';
 import { message as errText } from './common.tsx';
+import { isVideoFile } from '../media.ts';
 
 
 /** Brief length shown under the field (prototype: "142 / 2000"). */
@@ -494,7 +495,7 @@ export function NewCreative({ slug }: { slug: string }) {
 
 /** Thumbnail of a library file: the picture for images, SVGs and videos; an icon and the name otherwise. */
 function AssetFace({ slug, path, entry, small }: { slug: string; path: string; entry: AssetEntry | null; small?: boolean }) {
-  const kind = entry?.kind ?? (/\.(png|jpe?g|webp|gif|avif|svg)$/i.test(path) ? 'image' : /\.(mp4|mov|webm|m4v)$/i.test(path) ? 'video' : 'other');
+  const kind = entry?.kind ?? (isVideoFile(path) ? 'video' : /\.(png|jpe?g|webp|gif|avif|svg)$/i.test(path) ? 'image' : 'other');
   const url = api.projectFileUrl(slug, path);
   if (VISUAL.test(kind)) {
     return kind === 'video'

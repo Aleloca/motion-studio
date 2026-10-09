@@ -26,7 +26,7 @@ import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { Button, ChannelMark, Empty, Icon, Pill, Spinner, Toggle, cx } from '../ui/index.ts';
 import { useCreative } from '../useCreative.ts';
 import { boardLabel, PinBubble, SafeZoneBands, type Draft } from './CanvasBoard.tsx';
-import { pointIn, ratioText, VIDEO_FILE } from './canvasModel.ts';
+import { pointIn, ratioText } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf, lastStep } from './creativeState.ts';
 import { ExportDialog } from './ExportDialog.tsx';
@@ -36,6 +36,7 @@ import { useNewVersionNotice, VersionControl } from './VersionControl.tsx';
 import './canvas.css';
 import './format.css';
 import { message } from './common.tsx';
+import { isVideoFile } from '../media.ts';
 
 /** Frame step of ←/→ (spec: 1/30 s). */
 const FPS = 30;
@@ -143,7 +144,7 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
   const preset = presets.find((p) => p.id === format) ?? (presetsLoaded ? null : DEFAULT_FORMATS.find((p) => p.id === format) ?? null);
   const out = version?.outputs.find((o) => o.format === format) ?? null;
   const known = Boolean(detail && (detail.creative.brief.formats.includes(format) || versions.some((v) => v.outputs.some((o) => o.format === format))));
-  const video = out ? VIDEO_FILE.test(out.file) : preset?.kind === 'video';
+  const video = out ? isVideoFile(out.file) : preset?.kind === 'video';
   // Proportions: the preset, the output, or (an unknown custom preset still loading) the board it grows from.
   const width = preset?.width ?? out?.width ?? (origin?.width ? Math.round(origin.width) : 1080);
   const height = preset?.height ?? out?.height ?? (origin?.height ? Math.round(origin.height) : 1080);

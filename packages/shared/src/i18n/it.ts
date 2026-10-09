@@ -1478,6 +1478,7 @@ Variabili: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (array JSON)`,
       version: (p) => `Versione ${p.n}`,
       chosenVersion: (p) => `Versione scelta ${p.n}`,
       emptyTitle: 'Niente da mostrare',
+      noPreview: 'Anteprima non disponibile',
     },
   },
 };

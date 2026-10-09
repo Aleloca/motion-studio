@@ -10,8 +10,9 @@ import { Button, ChannelMark, CountdownRing, Empty, Icon, Pill, Segmented, Tag, 
 import { CREATIVE_FILTERS, channelOf, frames, liveCreative, matches, retryTurn, type CreativeFilter, type LiveCreative } from './creativeState.ts';
 import './creatives.css';
 import { message } from './common.tsx';
+import { CoverMedia } from '../components/MediaThumb.tsx';
+import { coverVideo } from '../media.ts';
 
-const VIDEO = /\.(mp4|webm|mov)$/i;
 /** Preview stage: frames up to 164 px tall in a row of at most 300 px (prototype CreativeCard). */
 const STAGE = { height: 164, maxWidth: 300, gap: 10 };
 /** Dashed frames drawn for a creative without output; the rest is a "+N more" note. */
@@ -201,6 +202,7 @@ function CreativeCard({ slug, c, info, presets, index, fresh }: CardProps) {
     <article
       ref={ref}
       className={cx('ms-card', 'ms-ccard', `ms-st-${state}`, state === 'needs' && 'ms-needs')}
+      data-hover-play
       data-enter={fresh ? undefined : ''}
       data-delay={index * CASCADE_MS}
     >
@@ -271,6 +273,8 @@ function Previews({ slug, c, presets, state }: { slug: string; c: CreativeSummar
     const aspect = natural ?? (preset ? preset.width / preset.height : 1);
     const h = Math.min(STAGE.height, STAGE.maxWidth / aspect);
     const src = api.fileUrl(slug, c.slug, c.cover);
+    const moving = coverVideo(c.cover);
+    const video = moving ? api.fileUrl(slug, c.slug, moving) : null;
     const onLoad = (e: SyntheticEvent<HTMLImageElement | HTMLVideoElement>) => {
       const el = e.currentTarget;
       const [w, hh] = el instanceof HTMLVideoElement ? [el.videoWidth, el.videoHeight] : [el.naturalWidth, el.naturalHeight];
@@ -279,9 +283,7 @@ function Previews({ slug, c, presets, state }: { slug: string; c: CreativeSummar
     return (
       <>
         <div className="ms-ccard-frame ms-ccard-frame-out" style={{ width: Math.round(h * aspect), height: Math.round(h) }}>
-          {VIDEO.test(c.cover)
-            ? <video src={src} muted preload="metadata" aria-hidden="true" onLoadedMetadata={onLoad} />
-            : <img src={src} alt="" onLoad={onLoad} />}
+          <CoverMedia src={src} video={video} onLoad={onLoad} />
           {state === 'running' ? <span className="ms-shimmer" aria-hidden="true" /> : null}
           {state === 'failed' || state === 'interrupted' ? <span className="ms-ccard-frame-warn" aria-hidden="true"><Icon name="warn" size={16} strokeWidth={1.6} /></span> : null}
         </div>

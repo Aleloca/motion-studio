@@ -1,7 +1,7 @@
 import type { AssetEntry, AssetKind, AssetOrigin, JobSummary } from '@motion-studio/shared';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { api } from '../api.ts';
-import { MediaThumb } from '../components/MediaThumb.tsx';
+import { MediaThumb, SafeImg } from '../components/MediaThumb.tsx';
 import type { EventsState } from '../eventsReducer.ts';
 import { formatDate, useLocale, useT } from '../i18n.tsx';
 import { brandJobFailedText, isActiveJob, isDescribeJob } from '../labels.ts';
@@ -38,6 +38,12 @@ const splitTags = (text: string) => text.split(',').map((x) => x.trim()).filter(
 const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
 /** A light logo needs a dark stage to be seen: told by its name or its tags. */
 const wantsDarkStage = (a: AssetEntry) => /\b(white|light|inverse|negative|reversed|bianco|chiaro)\b/i.test(`${a.file} ${a.tags.join(' ')}`);
+/**
+ * SVGs and formats with an alpha channel may be drawn in ink on nothing: they sit on a stage that suits them (a light,
+ * theme-invariant stage as on the Brand page, or a dark one for light logos), never on the theme's tile colour.
+ * Opaque pictures cover the stage entirely, so it only shows through transparent areas.
+ */
+const mayBeTransparent = (a: AssetEntry) => a.kind === 'svg' || /\.(png|webp|gif|avif)$/i.test(a.file);
 
 /** The newest job of this project's brand key (analysis or description). Without the key, an active brand job of the slug. */
 function brandJob(jobs: Record<string, JobSummary>, jobKey: string | null, slug: string): JobSummary | undefined {
@@ -409,8 +415,8 @@ function Thumb({ slug, asset: x, big }: { slug: string; asset: AssetEntry; big?:
   const url = api.projectFileUrl(slug, `assets/${x.file}`);
   if (x.kind === 'image' || x.kind === 'svg') {
     return (
-      <span className={cx('ms-athumb', x.kind === 'svg' && 'ms-athumb-svg', x.kind === 'svg' && wantsDarkStage(x) && 'ms-dark')}>
-        <img src={url} alt="" loading="lazy" />
+      <span className={cx('ms-athumb', x.kind === 'svg' && 'ms-athumb-svg', mayBeTransparent(x) && (wantsDarkStage(x) ? 'ms-stage-dark' : 'ms-stage-light'))}>
+        <SafeImg src={url} alt="" loading="lazy" small={!big} />
       </span>
     );
   }

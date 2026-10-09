@@ -1,5 +1,5 @@
 import { DEFAULT_FORMATS, EMPTY_BRAND_KIT, type ApprovalRequest, type JobSummary, type ProjectListItem, type RecentCreative } from '@motion-studio/shared';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
@@ -45,6 +45,21 @@ beforeEach(() => {
 afterEach(() => vi.clearAllMocks());
 
 describe('Projects · Jump back in', () => {
+  it('a video cover plays on hover in Jump back in, from the video behind the poster (point 31)', async () => {
+    Object.defineProperty(HTMLMediaElement.prototype, 'play', { configurable: true, value: vi.fn(async () => {}) });
+    Object.defineProperty(HTMLMediaElement.prototype, 'pause', { configurable: true, value: vi.fn() });
+    api.listProjects.mockResolvedValue([project('hs', 'Half Story')]);
+    api.recentCreatives.mockResolvedValue([recent('reel', 'Autumn reel', 'ready', { cover: 'outputs/v2/.previews/reel.mp4.jpg' })]);
+    en(<Projects live={live()} />);
+    const section = await screen.findByRole('region', { name: 'Jump back in' });
+    const tile = (await within(section).findByText('Autumn reel')).closest('a')!;
+    expect(tile.querySelector('video')).toBeNull();
+    fireEvent.pointerEnter(tile);
+    expect(tile.querySelector('video')!.getAttribute('src')).toBe('/files/hs/reel/outputs/v2/reel.mp4');
+    fireEvent.pointerLeave(tile);
+    expect(tile.querySelector('video')).toBeNull();
+  });
+
   it('shows the three latest creatives with their state', async () => {
     api.listProjects.mockResolvedValue([project('hs', 'Half Story')]);
     api.recentCreatives.mockResolvedValue([

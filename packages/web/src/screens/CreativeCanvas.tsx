@@ -19,7 +19,7 @@ import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { Button, ChannelMark, Empty, Icon, Input, Pill, Spinner, Tabs, Tag, Toggle, cx, toast } from '../ui/index.ts';
 import { useCreative } from '../useCreative.ts';
 import { boardLabel, CanvasBoard, type Draft, type Tool } from './CanvasBoard.tsx';
-import { boardsOf, isTall, ratioText, VIDEO_FILE, type BoardModel } from './canvasModel.ts';
+import { boardsOf, isTall, ratioText, type BoardModel } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf, lastStep } from './creativeState.ts';
 import { ExportDialog } from './ExportDialog.tsx';
@@ -28,6 +28,7 @@ import { pinsKey, usePendingPins } from './pendingPins.ts';
 import { useNewVersionNotice, VersionControl } from './VersionControl.tsx';
 import './canvas.css';
 import { message } from './common.tsx';
+import { isVideoFile } from '../media.ts';
 
 const ZOOM_MIN = 0.5;
 /** T4 only while the player's rect is fresh (boards that arrive later cascade in). */
@@ -142,7 +143,7 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
     if (draft.index === null) {
       const out = boards.find((b) => b.id === draft.format)?.out;
       // On the canvas a video comment is at 0 s; frame-accurate comments come with the format view.
-      const pin: Pin = { format: draft.format, x: draft.x, y: draft.y, timeSec: out && VIDEO_FILE.test(out.file) ? 0 : null, note };
+      const pin: Pin = { format: draft.format, x: draft.x, y: draft.y, timeSec: out && isVideoFile(out.file) ? 0 : null, note };
       if (pinSource !== null) setStored((ps) => [...ps, { pin, version: pinSource }]);
     } else {
       const at = sourcePins[draft.index]?.at;

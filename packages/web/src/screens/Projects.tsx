@@ -11,6 +11,8 @@ import { Button, Icon, Input, Pill, Select, cx, initials, toast } from '../ui/in
 import { liveCreative } from './creativeState.ts';
 import './projects.css';
 import { message } from './common.tsx';
+import { CoverMedia } from '../components/MediaThumb.tsx';
+import { coverVideo } from '../media.ts';
 
 const RECENT = 3;
 const COVERS = 3;
@@ -217,9 +219,9 @@ function JumpTile({ c, live, presets }: { c: RecentCreative; live: EventsState; 
   const width = Math.round(Math.min(120, Math.max(40, THUMB_H * (first ? first.width / first.height : 1))));
   const what = c.formats.length === 1 && first ? formatName(first, locale) : p.formats({ n: c.formats.length });
   return (
-    <a className="ms-card ms-jump-tile" href={href.creative(c.project.slug, c.slug)}>
+    <a className="ms-card ms-jump-tile" data-hover-play href={href.creative(c.project.slug, c.slug)}>
       <span className="ms-jump-thumb" style={{ width }}>
-        {c.cover ? <Cover src={api.fileUrl(c.project.slug, c.slug, c.cover)} /> : <Icon name={first?.kind === 'image' ? 'image' : 'video'} size={16} />}
+        {c.cover ? <Cover project={c.project.slug} creative={c.slug} cover={c.cover} /> : <Icon name={first?.kind === 'image' ? 'image' : 'video'} size={16} />}
       </span>
       <span className="ms-jump-text">
         <b className="ms-jump-title">{c.title}</b>
@@ -242,9 +244,10 @@ function JumpTile({ c, live, presets }: { c: RecentCreative; live: EventsState; 
   );
 }
 
-const VIDEO = /\.(mp4|webm|mov)$/i;
-function Cover({ src }: { src: string }) {
-  return VIDEO.test(src) ? <video src={src} muted preload="metadata" aria-hidden="true" /> : <img src={src} alt="" />;
+/** A creative's cover; its video plays while the card is hovered (CoverMedia). */
+function Cover({ project, creative, cover }: { project: string; creative: string; cover: string }) {
+  const video = coverVideo(cover);
+  return <CoverMedia src={api.fileUrl(project, creative, cover)} video={video ? api.fileUrl(project, creative, video) : null} />;
 }
 
 const later = (a: string, b: string) => (a.localeCompare(b) >= 0 ? a : b);
@@ -303,14 +306,14 @@ function ProjectCard({ item, live, waiting, fresh, index, onActivity }: CardProp
 
   return (
     <a
-      ref={ref} href={href.project(slug)} className="ms-card ms-pcard"
+      ref={ref} href={href.project(slug)} className="ms-card ms-pcard" data-hover-play
       data-enter={fresh ? undefined : ''} data-delay={index * CASCADE_MS}
     >
       <div
         className={cx('ms-pcover', covers.length > 0 && `ms-n${covers.length}`)}
         style={!covers.length && face ? { background: face.bg } : undefined} // color-data
       >
-        {covers.map((c) => <Cover key={c.slug} src={api.fileUrl(slug, c.slug, c.cover!)} />)}
+        {covers.map((c) => <Cover key={c.slug} project={slug} creative={c.slug} cover={c.cover!} />)}
         {!covers.length && settled ? (
           <span className={cx('ms-pcover-word', project.name.length > 18 && 'ms-long')} style={face ? { color: face.fg } : undefined}>{project.name}</span> // color-data
         ) : null}

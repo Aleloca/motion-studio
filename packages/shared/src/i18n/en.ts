@@ -1480,6 +1480,7 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
       version: (p: { n: number }) => `Version ${p.n}`,
       chosenVersion: (p: { n: number }) => `Chosen version ${p.n}`,
       emptyTitle: 'Nothing here',
+      noPreview: 'Can’t preview this file',
     },
   },
 } as const satisfies Catalog;

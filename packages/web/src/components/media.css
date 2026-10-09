@@ -1,0 +1,6 @@
+/* Shared media states (components/MediaThumb.tsx). */
+.ms-nopreview { width: 100%; height: 100%; min-height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; background: var(--field); color: var(--faint); font-size: 12px; text-align: center; padding: 8px; }
+.ms-nopreview.ms-sm { min-height: 0; padding: 0; }
+.ms-cover { position: relative; display: block; width: 100%; height: 100%; min-width: 0; overflow: hidden; }
+.ms-cover > img, .ms-cover > video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ms-cover > .ms-cover-play { position: absolute; inset: 0; }

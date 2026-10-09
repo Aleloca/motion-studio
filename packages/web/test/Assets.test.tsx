@@ -173,6 +173,27 @@ describe('Assets · library', () => {
   });
 });
 
+describe('Assets · stages and unreadable files', () => {
+  it('puts SVG and transparent formats on a stage that suits them, never on the theme tile', async () => {
+    listing.assets.push(asset({ file: 'mark.svg', kind: 'svg', tags: ['logo'] }), asset({ file: 'badge.png', tags: [] }));
+    en(<Assets slug="acme" live={live()} />);
+    await screen.findByText('Wordmark for dark backgrounds');
+    const thumb = (name: string) => card(name)!.closest('.ms-acard')!.querySelector('.ms-athumb')!;
+    expect(thumb('mark.svg').classList.contains('ms-stage-light')).toBe(true);
+    expect(thumb('logo.svg').classList.contains('ms-stage-dark')).toBe(true); // tagged "white"
+    expect(thumb('badge.png').classList.contains('ms-stage-light')).toBe(true);
+    expect(thumb('night.jpg').className).not.toMatch(/ms-stage/);
+  });
+
+  it('an unreadable image shows the designed "can\'t preview" state', async () => {
+    en(<Assets slug="acme" live={live()} />);
+    await screen.findByText('Wordmark for dark backgrounds');
+    const media = card('night.jpg')!.closest('.ms-acard')!;
+    fireEvent.error(media.querySelector('img')!);
+    expect(within(media as HTMLElement).getByRole('img', { name: 'Can’t preview this file' })).toBeTruthy();
+  });
+});
+
 describe('Assets · pending deletes across navigation', () => {
   const deleteNight = async () => {
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select night.jpg' }));

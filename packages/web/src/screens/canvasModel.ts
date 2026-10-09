@@ -1,8 +1,8 @@
 // Pure helpers of the creative canvas: what a board shows, its size on the canvas, where a click lands.
 import type { FormatPreset, OutputFileInfo, VersionEntry } from '@motion-studio/shared';
 import { api } from '../api.ts';
+import { isVideoFile } from '../media.ts';
 
-export const VIDEO_FILE = /\.(mp4|webm|mov|m4v|gif)$/i;
 
 /** A format of the creative on the canvas: its preset (null when the catalog no longer has it) and its output. */
 export interface BoardModel { id: string; preset: FormatPreset | null; out: OutputFileInfo | null }
@@ -15,7 +15,7 @@ export interface Media { src: string; video: boolean }
  */
 export function outputMedia(slug: string, creative: string, n: number, out: OutputFileInfo): Media {
   const rel = (f: string) => api.fileUrl(slug, creative, `outputs/v${n}/${f}`);
-  if (!VIDEO_FILE.test(out.file)) return { src: rel(out.file), video: false };
+  if (!isVideoFile(out.file)) return { src: rel(out.file), video: false };
   return out.preview ? { src: rel(out.preview), video: false } : { src: rel(out.file), video: true };
 }
 

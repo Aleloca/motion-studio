@@ -102,7 +102,8 @@
 .ms-athumb { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: var(--field); overflow: hidden; }
 .ms-athumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .ms-athumb-svg img { width: auto; height: auto; max-width: 72%; max-height: 64%; object-fit: contain; }
-.ms-athumb-svg.ms-dark { background: var(--term); }
+.ms-athumb.ms-stage-light { background: var(--onMedia); box-shadow: inset 0 0 0 1px var(--line2); }
+.ms-athumb.ms-stage-dark { background: var(--term); }
 .ms-athumb-video { position: relative; background: var(--term); }
 .ms-athumb-play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--mediaScrim); color: var(--onMediaScrim); }
 .ms-athumb-font { flex-direction: column; gap: 4px; padding: 0 12px; text-align: center; }
@@ -210,3 +211,6 @@
 .ms-rcard:hover .ms-rcard-remove, .ms-rcard-remove:focus-visible { opacity: 1; }
 @media (hover: none) { .ms-rcard-remove.ms-btn { opacity: 1; } }
 .ms-refs-uploading { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+
+/* An unreadable reference keeps a card-sized, designed placeholder in the masonry. */
+.ms-rcard .ms-rcard-none { height: 140px; }
