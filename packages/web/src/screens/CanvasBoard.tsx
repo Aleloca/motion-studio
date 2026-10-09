@@ -1,12 +1,16 @@
 // A board of the creative canvas (prototype CanvasView boards + PinComposer): the format in proportion with the
 // selected version's output, the generation sheen (T10), the reveal of a new picture (T11), safe zones with their
 // labels, the comment markers and the comment bubble, "Open editor" on hover/focus.
+//
+// Zoom: only the frame (media, safe zones, "Open editor") is zoomed. The label above it, the comment markers and the
+// bubble are screen-sized at any zoom (as in Figma): they sit in the frame's box, sized in screen pixels, at the
+// world point × zoom, so nothing scales them and the bubble's text field stays crisp.
 import { channelName, formatName, type FormatPreset, type Pin } from '@motion-studio/shared';
 import { useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode, type SyntheticEvent } from 'react';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { anim, D, E, isSubmitChord } from '../motion/index.ts';
 import { Button, Icon, Pill, Textarea, cx } from '../ui/index.ts';
-import { boardFrame, outputMedia, pointIn, ratioText, type BoardModel } from './canvasModel.ts';
+import { boardFrame, outputMedia, pointIn, ratioText, toScreen, type BoardModel } from './canvasModel.ts';
 
 export type Tool = 'select' | 'comment' | 'hand';
 
@@ -20,6 +24,8 @@ export interface BoardProps {
   /** The version whose outputs are shown (null before the first one). */
   n: number | null;
   tool: Tool;
+  /** The canvas zoom: the frame scales, the label, markers and bubble keep their size. */
+  zoom: number;
   selected: boolean;
   working: boolean;
   safe: boolean;
@@ -52,6 +58,12 @@ export function CanvasBoard(p: BoardProps) {
   const frame = useRef<HTMLDivElement>(null);
   const label = boardLabel(board, locale);
   const size = boardFrame(board);
+  const zoom = p.zoom;
+  // A 0–1 point of the frame on screen, from the frame box's top-left corner.
+  const at = (x: number, y: number) => {
+    const pt = toScreen({ x: x * size.width, y: y * size.height }, zoom);
+    return { left: `${pt.x}px`, top: `${pt.y}px` };
+  };
   const media = board.out && n !== null ? outputMedia(p.slug, p.creative, n, board.out) : null;
   const video = board.preset?.kind === 'video';
   const duration = board.out?.durationSec ?? null;
@@ -67,16 +79,17 @@ export function CanvasBoard(p: BoardProps) {
 
   return (
     <div className={cx('ms-cv-board', p.selected && 'ms-on')} data-board={board.id}>
-      <div className="ms-cv-board-head" style={{ maxWidth: Math.max(size.width, 220) }}>
+      <div className="ms-cv-board-head" style={{ maxWidth: Math.max(Math.round(size.width * zoom), 160) }}>
         <b className="ms-cv-board-name">{label}</b>
         {board.preset ? <span className="ms-cv-board-meta">{ratioText(board.preset)}{duration !== null ? ` · ${c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) })}` : ''}</span> : null}
         {p.working && (!board.out || video) ? <Pill spinner>{c.rendering}</Pill> : null}
         {board.out && !board.out.verified ? <Pill tone="warn">{t.web.formatUi.unverified}</Pill> : null}
       </div>
-      <div className="ms-cv-frame-wrap" style={{ width: size.width, height: size.height }}>
+      <div className="ms-cv-frame-wrap" style={{ width: size.width * zoom, height: size.height * zoom }}>
         <div
           ref={frame}
           className={cx('ms-cv-frame', !board.out && 'ms-empty-frame')}
+          style={{ width: size.width, height: size.height, zoom }}
           data-frame={board.id}
           onClick={p.onSelect}
           onDoubleClick={() => { if (board.out && frame.current) p.onOpen(frame.current); }}
@@ -103,13 +116,13 @@ export function CanvasBoard(p: BoardProps) {
           ) : null}
         </div>
         {p.pins.map(({ pin, number }) => (
-          <button key={number} type="button" className={cx('ms-cv-pin', p.draft?.index === number - 1 && 'ms-on')} style={{ left: `${pin.x * 100}%`, top: `${pin.y * 100}%` }}
+          <button key={number} type="button" className={cx('ms-cv-pin', p.draft?.index === number - 1 && 'ms-on')} style={at(pin.x, pin.y)}
             aria-label={c.pin.edit({ n: number })} title={pin.note} onClick={(e) => { e.stopPropagation(); p.onEditPin(number); }}>
             {number}
           </button>
         ))}
         {p.draft && p.draft.format === board.id ? (
-          <PinBubble draft={p.draft} number={p.draft.index === null ? p.nextNumber : p.draft.index + 1} video={video}
+          <PinBubble draft={p.draft} number={p.draft.index === null ? p.nextNumber : p.draft.index + 1} video={video} at={at(p.draft.x, p.draft.y)}
             onText={p.onDraftText} onCommit={p.onDraftCommit} onCancel={p.onDraftCancel} onDelete={p.onDraftDelete} />
         ) : null}
       </div>
@@ -140,10 +153,11 @@ export function SafeZoneBands({ preset }: { preset: FormatPreset }) {
  * The comment bubble (point 40): the text is written next to the spot; Comment adds it to the pending chips. It sits in
  * a positioned box the size of the frame and opens to the left when its scroll area (`.ms-cv-viewport` on the canvas,
  * `.ms-fv-stage` in the format view) has no room on the right. `time` replaces the canvas' "At 0:00" (the format view
- * comments on an exact frame).
+ * comments on an exact frame). `at` places it (and the new marker) in screen pixels; by default it goes at the draft's
+ * point in percent of that box.
  */
-export function PinBubble({ draft, number, video, time, onText, onCommit, onCancel, onDelete }: {
-  draft: Draft; number: number; video: boolean; time?: string; onText(t: string): void; onCommit(): void; onCancel(): void; onDelete(): void;
+export function PinBubble({ draft, number, video, time, at, onText, onCommit, onCancel, onDelete }: {
+  draft: Draft; number: number; video: boolean; time?: string; at?: { left: string; top: string }; onText(t: string): void; onCommit(): void; onCancel(): void; onDelete(): void;
 }) {
   const t = useT();
   const c = t.web.canvas.pin;
@@ -167,14 +181,15 @@ export function PinBubble({ draft, number, video, time, onText, onCommit, onCanc
     setLeft(room < el.offsetWidth + 40 && at - box.left > room);
   }, [draft.x, draft.format]);
   const empty = !draft.text.trim();
+  const pos = at ?? { left: `${draft.x * 100}%`, top: `${draft.y * 100}%` };
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onCancel(); return; }
     if (isSubmitChord(e.nativeEvent) && !e.repeat) { e.preventDefault(); if (!empty) onCommit(); }
   };
   return (
     <>
-      {draft.index === null ? <span className="ms-cv-pin ms-draft" style={{ left: `${draft.x * 100}%`, top: `${draft.y * 100}%` }} aria-hidden="true">{number}</span> : null}
-      <div ref={ref} className={cx('ms-cv-bubble', left && 'ms-left')} style={{ left: `${draft.x * 100}%`, top: `${draft.y * 100}%` }}
+      {draft.index === null ? <span className="ms-cv-pin ms-draft" style={pos} aria-hidden="true">{number}</span> : null}
+      <div ref={ref} className={cx('ms-cv-bubble', left && 'ms-left')} style={pos}
         role="group" aria-label={c.marker({ n: number })} onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
         <Textarea ref={field} rows={3} maxLength={2000} aria-label={c.field} placeholder={c.placeholder} value={draft.text}
           onChange={(e) => onText(e.target.value)} onKeyDown={onKeyDown} />

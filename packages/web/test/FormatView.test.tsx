@@ -245,6 +245,24 @@ describe('FormatView · image', () => {
     expect(result.current[0]).toEqual([{ pin: { format: IMAGE, x: 0.5, y: 0.5, timeSec: null, note: 'Più contrasto' }, version: 1 }]);
   });
 
+  it('zoom resizes the picture, never the comment bubble or the markers (screen-sized at any zoom)', async () => {
+    render(<Harness format={IMAGE} />);
+    await screen.findByRole('img', { name: 'Instagram · Post 1:1 v1' });
+    const zoom = screen.getByRole('toolbar', { name: 'Zoom' });
+    await userEvent.click(within(zoom).getByRole('button', { name: 'Dimensione reale (100%)' }));
+    await userEvent.click(within(zoom).getByRole('button', { name: 'Riduci' }));
+    expect(within(zoom).getByRole('status').textContent).toBe('75%');
+    await userEvent.click(screen.getByRole('button', { name: 'Commenta Instagram · Post 1:1' }));
+    const bubble = screen.getByRole('group', { name: 'Commento 1' });
+    const frame = bubble.closest('.ms-fv-frame') as HTMLElement;
+    expect(frame.style.width).toBe(`${Math.round(1080 * 0.75)}px`);
+    // No zoom or scale() between the bubble and the document.
+    for (let e: HTMLElement | null = bubble.parentElement; e; e = e.parentElement) {
+      expect(!e.style.zoom || e.style.zoom === '1').toBe(true);
+      expect(/scale\(/.test(e.style.transform)).toBe(false);
+    }
+  });
+
   it('a format outside the creative explains itself and goes back', async () => {
     render(<Harness format="youtube-shorts-9x16" />);
     expect(await screen.findByText(/non è un formato di questa creatività/)).toBeTruthy();

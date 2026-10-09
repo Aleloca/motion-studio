@@ -37,8 +37,12 @@
 .ms-cv-viewport.ms-tool-comment { cursor: crosshair; }
 .ms-cv-viewport.ms-tool-hand { cursor: grab; }
 .ms-cv-viewport.ms-grabbing { cursor: grabbing; user-select: none; }
-.ms-cv-world { display: flex; align-items: flex-start; gap: 40px; padding: 40px 60px 140px; width: max-content; }
-.ms-cv-stack { display: flex; flex-direction: column; gap: 44px; }
+/* Not zoomed itself (overlays stay screen-sized): its spacing scales with the zoom, the frames carry their own. */
+.ms-cv-world {
+  --cv-z: 1; display: flex; align-items: flex-start; gap: calc(40px * var(--cv-z));
+  padding: calc(40px * var(--cv-z)) calc(60px * var(--cv-z)) calc(140px * var(--cv-z)); width: max-content;
+}
+.ms-cv-stack { display: flex; flex-direction: column; gap: calc(44px * var(--cv-z)); }
 
 /* Boards. */
 .ms-cv-board { display: flex; flex-direction: column; gap: 8px; }
@@ -48,7 +52,7 @@
 .ms-cv-board-head .ms-pill { height: 20px; }
 .ms-cv-frame-wrap { position: relative; flex: none; }
 .ms-cv-frame {
-  position: absolute; inset: 0; border-radius: 4px; overflow: hidden; background: var(--field);
+  position: absolute; left: 0; top: 0; border-radius: 4px; overflow: hidden; background: var(--field);
   box-shadow: 0 8px 24px var(--shadow); transition: box-shadow var(--d-m) var(--e-std);
 }
 .ms-cv-board.ms-on .ms-cv-frame { box-shadow: 0 0 0 2px var(--accent), 0 16px 40px var(--shadow); }

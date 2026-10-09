@@ -4,7 +4,7 @@
 // Brief panel, the version history with Compare, and Export. Replaces the interim CreativePage. A board opens in the
 // format view (screens/FormatView.tsx) with T3.
 import { channelName, formatName, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type VersionEntry } from '@motion-studio/shared';
-import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api.ts';
 import { BriefEditor } from '../components/BriefEditor.tsx';
@@ -19,7 +19,7 @@ import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { Button, ChannelMark, Empty, Icon, Input, Pill, Spinner, Tabs, Tag, Toggle, cx, toast } from '../ui/index.ts';
 import { useCreative } from '../useCreative.ts';
 import { boardLabel, CanvasBoard, type Draft, type Tool } from './CanvasBoard.tsx';
-import { boardsOf, fitZoom, isTall, ratioText, worldSize, type BoardModel } from './canvasModel.ts';
+import { boardsOf, fitZoom, isTall, ratioText, worldFixed, worldSize, type BoardModel } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf, lastStep } from './creativeState.ts';
 import { ExportDialog } from './ExportDialog.tsx';
@@ -255,7 +255,7 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
     if (!v || !boards.length) return;
     const fit = () => {
       if (userZoomed.current) return;
-      const z = fitZoom(worldSize(boards), { width: v.clientWidth, height: v.clientHeight }, ZOOM_MIN);
+      const z = fitZoom(worldSize(boards), { width: v.clientWidth, height: v.clientHeight }, ZOOM_MIN, worldFixed(boards));
       if (z !== null) setZoom((cur) => (Math.abs(cur - z) < 1e-6 ? cur : z));
     };
     fit();
@@ -298,7 +298,7 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
   const zones = boards.some((b) => b.preset?.safeZone);
   const pinsOf = (id: string) => pins.map((pin, i) => ({ pin, number: i + 1 })).filter((x) => x.pin.format === id);
   const board = (b: BoardModel, first: boolean) => (
-    <CanvasBoard key={b.id} slug={slug} creative={creative} board={b} n={n} tool={tool} selected={sel === b.id} working={working} safe={safe}
+    <CanvasBoard key={b.id} slug={slug} creative={creative} board={b} n={n} tool={tool} zoom={zoom} selected={sel === b.id} working={working} safe={safe}
       pins={canComment ? pinsOf(b.id) : []} draft={canComment ? draft : null} nextNumber={pins.length + 1}
       onSelect={() => setSel(b.id)} onOpen={(el) => { if (tool === 'select') openEditor(b.id, el); }} onPlace={(x, y) => place(b.id, x, y)} onEditPin={editPin}
       onDraftText={(text) => setDraft((d) => (d ? { ...d, text } : d))} onDraftCommit={commitDraft} onDraftCancel={() => setDraft(null)}
@@ -377,7 +377,8 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
             setSel(null);
           }}
         >
-          <div className="ms-cv-world" style={{ zoom }}>
+          {/* The world is not zoomed: each board scales its frame, and its spacing follows --cv-z (canvas.css). */}
+          <div className="ms-cv-world" style={{ '--cv-z': zoom } as CSSProperties}>
             {tall.map((b, i) => board(b, i === 0))}
             {rest.length ? <div className="ms-cv-stack">{rest.map((b, i) => board(b, !tall.length && i === 0))}</div> : null}
           </div>

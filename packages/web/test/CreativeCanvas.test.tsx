@@ -85,12 +85,88 @@ describe('CreativeCanvas · fit to view', () => {
       const { container } = render(<Harness live={emptyLive()} />);
       await ready();
       expect(screen.getByRole('button', { name: /55%/ })).toBeTruthy();
-      expect((container.querySelector('.ms-cv-world') as HTMLElement).style.zoom).toBe('0.55');
+      // The boards (frames and media) scale; the world's spacing follows the same zoom.
+      expect((container.querySelector('.ms-cv-frame') as HTMLElement).style.zoom).toBe('0.55');
+      expect((container.querySelector('.ms-cv-world') as HTMLElement).style.getPropertyValue('--cv-z')).toBe('0.55');
       await userEvent.click(screen.getByRole('button', { name: /^(Zoom in|Aumenta lo zoom|Ingrandisci)/ }));
       expect(screen.getByRole('button', { name: /65%/ })).toBeTruthy();
       await userEvent.click(screen.getByRole('button', { name: /65%/ }));
       expect(screen.getByRole('button', { name: /100%,/ })).toBeTruthy();
     } finally { w.mockRestore(); h.mockRestore(); }
+  });
+});
+
+/** The product of every zoom and scale() on `el` and its ancestors (inline styles: jsdom has no layout). */
+function netScale(el: Element): number {
+  let k = 1;
+  for (let e: Element | null = el.parentElement; e; e = e.parentElement) {
+    const st = (e as HTMLElement).style;
+    if (!st) continue;
+    const z = parseFloat(st.zoom);
+    if (Number.isFinite(z) && z > 0) k *= z;
+    const m = /scale\(([^)]+)\)/.exec(st.transform);
+    if (m) k *= parseFloat(m[1]!);
+  }
+  return k;
+}
+
+describe('CreativeCanvas · overlays stay screen-sized at any zoom', () => {
+  it('at 50% the bubble, the pins and the board labels are not scaled, and sit at world point × zoom', async () => {
+    const size = (dim: 'clientWidth' | 'clientHeight', v: number) => vi.spyOn(HTMLElement.prototype, dim, 'get')
+      .mockImplementation(function (this: HTMLElement) { return this.classList.contains('ms-cv-viewport') ? v : 0; });
+    // World 808×750 at 100% → a 404 px wide viewport fits at exactly 50%.
+    const w = size('clientWidth', 404);
+    const h = size('clientHeight', 2000);
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      // The 1:1 board (344×344 at 100%) on screen at 50%: 172×172 at the origin.
+      const r = this.classList.contains('ms-cv-hit') ? { left: 0, top: 0, width: 172, height: 172 } : { left: 0, top: 0, width: 0, height: 0 };
+      return { ...r, x: r.left, y: r.top, right: r.left + r.width, bottom: r.top + r.height, toJSON: () => r } as DOMRect;
+    });
+    try {
+      const { container } = render(<Harness live={emptyLive()} />);
+      await ready();
+      expect(screen.getByRole('button', { name: /50%/ })).toBeTruthy();
+      const post = container.querySelector('[data-board="instagram-post-1x1"]') as HTMLElement;
+      // The media keeps scaling…
+      const frame = post.querySelector('.ms-cv-frame') as HTMLElement;
+      expect(frame.style.zoom).toBe('0.5');
+      expect(netScale(frame.querySelector('img')!)).toBe(0.5);
+      // …the label does not.
+      const head = post.querySelector('.ms-cv-board-head') as HTMLElement;
+      expect(head.textContent).toContain('Instagram · Post 1:1');
+      expect(netScale(head)).toBe(1);
+      expect(head.closest('[style*="zoom"]')).toBeNull();
+
+      // A comment at 25% / 50% of the board (click at 43,86 on the 172 px frame).
+      fireEvent.keyDown(window, { key: 'c' });
+      fireEvent.click(within(post).getByRole('button', { name: /^Commenta Instagram · Post 1:1/ }), { clientX: 43, clientY: 86, detail: 1 });
+      const field = await screen.findByLabelText('Testo del commento');
+      const bubble = field.closest('.ms-cv-bubble') as HTMLElement;
+      expect(netScale(bubble)).toBe(1);
+      expect(netScale(field)).toBe(1);
+      expect(bubble.closest('.ms-cv-frame')).toBeNull();
+      // Anchor: the world point (0.25 × 344, 0.5 × 344) × zoom, from the board's screen origin (the pan is the layout's).
+      const anchor = bubble.parentElement as HTMLElement;
+      expect(anchor.classList.contains('ms-cv-frame-wrap')).toBe(true);
+      expect(parseFloat(anchor.style.width)).toBeCloseTo(172);
+      expect(parseFloat(bubble.style.left)).toBeCloseTo(0.25 * 344 * 0.5);
+      expect(parseFloat(bubble.style.top)).toBeCloseTo(0.5 * 344 * 0.5);
+      expect(bubble.style.left.endsWith('px')).toBe(true);
+
+      await userEvent.type(field, 'Logo');
+      await userEvent.click(screen.getByRole('button', { name: 'Commenta' }));
+      const pin = within(post).getByRole('button', { name: 'Modifica il commento 1' });
+      expect(netScale(pin)).toBe(1);
+      expect(parseFloat(pin.style.left)).toBeCloseTo(0.25 * 344 * 0.5);
+      expect(parseFloat(pin.style.top)).toBeCloseTo(0.5 * 344 * 0.5);
+
+      // Zooming in moves the anchors with the board; the markers keep their size.
+      await userEvent.click(screen.getByRole('button', { name: /^(Zoom in|Aumenta lo zoom|Ingrandisci)/ }));
+      expect(frame.style.zoom).toBe('0.6');
+      const moved = within(post).getByRole('button', { name: 'Modifica il commento 1' });
+      expect(parseFloat(moved.style.left)).toBeCloseTo(0.25 * 344 * 0.6);
+      expect(netScale(moved)).toBe(1);
+    } finally { w.mockRestore(); h.mockRestore(); rect.mockRestore(); }
   });
 });
 

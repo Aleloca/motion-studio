@@ -62,7 +62,10 @@ const WORLD_GAP = 40;
 const STACK_GAP = 44;
 const BOARD_HEAD = 30;
 
-/** The size of the canvas world at 100%: tall boards in a row, the others stacked in a column next to them. */
+/**
+ * The size of the canvas world at 100%: tall boards in a row, the others stacked in a column next to them. It counts
+ * the board labels at their 100% height; `worldFixed` says how much of it does not scale (the labels are screen-sized).
+ */
 export function worldSize(boards: BoardModel[]): { width: number; height: number } {
   const tall = boards.filter(isTall).map(boardFrame);
   const rest = boards.filter((b) => !isTall(b)).map(boardFrame);
@@ -79,13 +82,30 @@ export function worldSize(boards: BoardModel[]): { width: number; height: number
 }
 
 /**
- * The zoom that shows every board in the viewport (the canvas opens fitted, never above 100%), rounded down to 5%
- * and kept within `min`. Null when the viewport has no size yet (not laid out).
+ * The part of `worldSize` that keeps its size at any zoom: the board labels (one per tall board, one per board of the
+ * stacked column; the tallest column counts).
  */
-export function fitZoom(world: { width: number; height: number }, view: { width: number; height: number }, min: number): number | null {
+export function worldFixed(boards: BoardModel[]): { width: number; height: number } {
+  const stacked = boards.filter((b) => !isTall(b)).length;
+  const heads = Math.max(boards.some(isTall) ? 1 : 0, stacked);
+  return { width: 0, height: heads * BOARD_HEAD };
+}
+
+/**
+ * The zoom that shows every board in the viewport (the canvas opens fitted, never above 100%), rounded down to 5%
+ * and kept within `min`. `fixed` is the part of the world that does not scale. Null when the viewport has no size yet.
+ */
+export function fitZoom(world: { width: number; height: number }, view: { width: number; height: number }, min: number,
+  fixed: { width: number; height: number } = { width: 0, height: 0 }): number | null {
   if (view.width <= 0 || view.height <= 0 || world.width <= 0 || world.height <= 0) return null;
-  const z = Math.min(1, view.width / world.width, view.height / world.height);
+  const axis = (w: number, f: number, v: number) => (w - f > 0 ? Math.max(0, v - f) / (w - f) : Infinity);
+  const z = Math.min(1, axis(world.width, fixed.width, view.width), axis(world.height, fixed.height, view.height));
   return Math.max(min, Math.floor(z * 20 + 1e-9) / 20);
+}
+
+/** A world point (canvas px at 100%) on screen: scaled by the zoom, moved by the pan (the anchor's screen origin). */
+export function toScreen(pt: { x: number; y: number }, zoom: number, pan: { x: number; y: number } = { x: 0, y: 0 }): { x: number; y: number } {
+  return { x: pt.x * zoom + pan.x, y: pt.y * zoom + pan.y };
 }
 
 /** `9:16`, or `W×H` when the reduced ratio is not a readable one. */

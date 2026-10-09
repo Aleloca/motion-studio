@@ -1,7 +1,7 @@
 import { DEFAULT_FORMATS } from '@motion-studio/shared';
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('../src/api.ts', () => ({ api: { fileUrl: () => '' } }));
-const { boardsOf, fitZoom, worldSize } = await import('../src/screens/canvasModel.ts');
+const { boardsOf, fitZoom, toScreen, worldFixed, worldSize } = await import('../src/screens/canvasModel.ts');
 
 describe('canvas fit to view (CV1)', () => {
   const boards = boardsOf(['tiktok-9x16', 'instagram-post-1x1'], DEFAULT_FORMATS, null);
@@ -17,5 +17,20 @@ describe('canvas fit to view (CV1)', () => {
     expect(fitZoom(world, { width: 2000, height: 2000 }, 0.5)).toBe(1);
     expect(fitZoom(world, { width: 100, height: 100 }, 0.5)).toBe(0.5);
     expect(fitZoom(world, { width: 0, height: 0 }, 0.5)).toBeNull();
+  });
+
+  it('keeps the board labels out of the zoom: their height is fixed, only the rest shrinks to fit', () => {
+    const world = worldSize(boards);
+    const fixed = worldFixed(boards);
+    expect(fixed).toEqual({ width: 0, height: 30 });
+    // 300 px tall: (300 − 30) / (750 − 30) = 0.375 → 35%, where scaling the labels too would give 0.4 → 40% overflowing.
+    expect(fitZoom(world, { width: 2000, height: 300 }, 0.25, fixed)).toBe(0.35);
+  });
+});
+
+describe('canvas world → screen', () => {
+  it('maps a world point by the zoom and the pan', () => {
+    expect(toScreen({ x: 86, y: 172 }, 0.5)).toEqual({ x: 43, y: 86 });
+    expect(toScreen({ x: 86, y: 172 }, 2, { x: -10, y: 5 })).toEqual({ x: 162, y: 349 });
   });
 });
