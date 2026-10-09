@@ -5,12 +5,19 @@ describe('workspaceSettingsSchema', () => {
   it('fills defaults from an empty versioned object', () => {
     expect(workspaceSettingsSchema.parse({ schemaVersion: 1 })).toEqual({
       schemaVersion: 1, maxConcurrentJobs: 2, expertMode: false, theme: 'system', model: null, sandboxMode: 'auto', extraAllowedDomains: [], confirmPaidProviders: true, autoApproveSandboxed: true,
+      exportNamePattern: '{title}-{format}-v{v}',
     });
   });
   it('autoApproveSandboxed defaults to true when absent and can be turned off', () => {
     expect(workspaceSettingsSchema.parse({ schemaVersion: 1 }).autoApproveSandboxed).toBe(true);
     expect(workspaceSettingsSchema.parse({ schemaVersion: 1, autoApproveSandboxed: false }).autoApproveSandboxed).toBe(false);
     expect(storedWorkspaceSettingsSchema.parse({ schemaVersion: 1 }).autoApproveSandboxed).toBe(true);
+  });
+  it('exportNamePattern defaults when absent (old settings) and is bounded', () => {
+    expect(storedWorkspaceSettingsSchema.parse({ schemaVersion: 1 }).exportNamePattern).toBe('{title}-{format}-v{v}');
+    expect(workspaceSettingsSchema.parse({ schemaVersion: 1, exportNamePattern: '{v}-{title}' }).exportNamePattern).toBe('{v}-{title}');
+    expect(workspaceSettingsSchema.safeParse({ schemaVersion: 1, exportNamePattern: '' }).success).toBe(false);
+    expect(workspaceSettingsSchema.safeParse({ schemaVersion: 1, exportNamePattern: 'x'.repeat(201) }).success).toBe(false);
   });
   it('rejects a concurrency outside 1..8', () => {
     expect(workspaceSettingsSchema.safeParse({ schemaVersion: 1, maxConcurrentJobs: 0 }).success).toBe(false);

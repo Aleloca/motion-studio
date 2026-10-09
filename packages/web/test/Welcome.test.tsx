@@ -16,7 +16,7 @@ vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { Welcome, normalizeSite } = await import('../src/screens/Welcome.tsx');
 const { Toasts, toast } = await import('../src/ui/index.ts');
 
-const settings = { schemaVersion: 1 as const, maxConcurrentJobs: 2, expertMode: false, theme: 'system' as const, model: null, sandboxMode: 'auto' as const, extraAllowedDomains: [] as string[], confirmPaidProviders: true, autoApproveSandboxed: true };
+const settings = { schemaVersion: 1 as const, maxConcurrentJobs: 2, expertMode: false, theme: 'system' as const, model: null, sandboxMode: 'auto' as const, extraAllowedDomains: [] as string[], confirmPaidProviders: true, autoApproveSandboxed: true, exportNamePattern: '{title}-{format}-v{v}' };
 const okChecks: DoctorCheck[] = [
   { id: 'claude', label: 'Claude Code', ok: true, required: true, version: '2.1.293', message: 'Installed' },
   { id: 'git', label: 'Git', ok: true, required: true, version: '2.47.1', message: 'Installed' },

@@ -15,6 +15,12 @@ export const briefSchema = z.object({
   durationSec: z.number().int().min(1).max(600).nullable(),
   assets: z.array(z.string()),
   notes: z.string(),
+  /**
+   * Linked formats, follower → primary (spec §2.3). A follower is not given to the agent: the core copies the primary's file
+   * for it. Absent in old briefs (no links). Kept loose on purpose: a link whose ends are not both in `formats` is ignored by
+   * consumers instead of making the creative unreadable.
+   */
+  links: z.record(z.string().min(1), z.string().min(1)).optional(),
 });
 export type Brief = z.infer<typeof briefSchema>;
 
@@ -28,6 +34,11 @@ export const creativeFileSchema = z.object({
   updatedAt: z.iso.datetime(),
   resumeFrom: z.object({ version: z.number().int().min(1), sessionId: z.string().min(1) }).nullable(),
   linkedCodebases: z.array(linkedCodebaseSchema).default([]),
+  /**
+   * Manual ★ per format: formatId → creative version `vN` to export (spec §2.2). Absent (old files) or missing for a format
+   * means the default rule (see `starOf`). Picking the latest version of a format's history clears its entry.
+   */
+  exportPicks: z.record(z.string().min(1), z.number().int().min(1)).optional(),
 });
 export type CreativeFile = z.infer<typeof creativeFileSchema>;
 
@@ -45,6 +56,19 @@ export const outputFileInfoSchema = z.object({
   format: z.string(), file: z.string(), width: z.number(), height: z.number(),
   durationSec: z.number().nullable(), verified: z.boolean(), preview: z.string().nullable(),
   warnings: z.array(outputWarningSchema).optional(),
+  /**
+   * sha256 (hex) of the file's content, the identity used by the per-format history (`formatHistory`). Always computed by
+   * the core after the turn, never taken from the agent. Optional: old versions have none and get it lazily; the computed
+   * hashes are cached in `.studio/cache/hashes/<creative>/v<N>.json`, outside `outputs/vN/`, so old versions.json files
+   * are never rewritten. A missing hash counts as "changed".
+   */
+  sha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  /**
+   * Problems of this file alone (subset of the version's `problems`), so the ★ rule can tell a clean format from a broken one
+   * in the same version; a carried-over or materialized file has `[]`. Absent in old versions: then the version-level
+   * `problems` count for every file of that version.
+   */
+  problems: z.array(z.string()).optional(),
 });
 export type OutputFileInfo = z.infer<typeof outputFileInfoSchema>;
 
@@ -76,6 +100,8 @@ export const manifestSchema = z.object({
     width: z.number().int().positive(),
     height: z.number().int().positive(),
     durationSec: z.number().positive().nullish(),
+    /** Set by the core on a follower's entry: the file is a byte-identical copy of this primary format's file. */
+    followsFormat: z.string().min(1).optional(),
   })),
   tools: z.array(z.string()).default([]),
   renderCommand: z.string().nullish(),

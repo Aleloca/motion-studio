@@ -79,7 +79,7 @@ class FakeEventsSocket {
 }
 const send = (msg: ServerMessage) => act(() => sockets.at(-1)!.onmessage!({ data: JSON.stringify(msg) }));
 const okChecks: DoctorCheck[] = [{ id: 'git', label: 'Git', ok: true, required: true, message: 'ok' }];
-const settings = { schemaVersion: 1 as const, maxConcurrentJobs: 2, expertMode: false, theme: 'system' as const, model: null, sandboxMode: 'auto' as const, extraAllowedDomains: [] as string[], confirmPaidProviders: true, autoApproveSandboxed: true };
+const settings = { schemaVersion: 1 as const, maxConcurrentJobs: 2, expertMode: false, theme: 'system' as const, model: null, sandboxMode: 'auto' as const, extraAllowedDomains: [] as string[], confirmPaidProviders: true, autoApproveSandboxed: true, exportNamePattern: '{title}-{format}-v{v}' };
 const approval = (id: string, title: string): ApprovalRequest => ({
   id, jobId: 'j1', projectSlug: 'acme', creativeSlug: 'lancio', kind: 'tool', title, detail: 'https://example.com', toolName: 'WebFetch', alwaysRule: null, explanation: null, agentReason: null,
   createdAt: '2026-10-08T10:00:00.000Z', expiresAt: '2026-10-08T10:10:00.000Z',
