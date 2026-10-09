@@ -30,6 +30,8 @@ export const worstClass = (a: PathClass, b: PathClass): PathClass => (WORST[a] >
 const MAX_BRACE_GROUPS = 4;
 const MAX_ALTERNATIVES = 32;
 const MAX_DOTDOT_GLOBS = 3;
+/** Longer than any real path (macOS PATH_MAX is 1024): such a path is unknown. Also bounds the work of long `cd a/b/…` chains. */
+export const MAX_PATH = 4096;
 
 /** `/private/tmp/x` → `/tmp/x` (macOS symlinks), so both spellings compare equal. */
 function canonical(p: string): string {
@@ -165,6 +167,7 @@ function resolveOne(p: string, cwd: string | null, d: Dirs, depth: number): Loc[
     if (cwd === null) return unknown;
     path = `${cwd}/${path}`;
   }
+  if (path.length > MAX_PATH) return unknown;
   // Split, keeping glob segments as text; a `.*`-like segment may also mean `..`.
   const segs = path.split('/');
   const extra: Loc[] = [];

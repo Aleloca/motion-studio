@@ -7,12 +7,15 @@
 // - An unmodelled subcommand is `unknown-command` (medium) too.
 // - Options known to run code or write somewhere we can't see (`git -c`, `--upload-pack`, `sed …/e`, `tar --to-command`,
 //   `curl -K`, `rg --pre`, …) give `parsed: false` (the generic "complex" phrase) or a high indicator.
-// - `any: true` is used only for read-only tools whose whole option set has no write or exec effect (ls, cat, wc, grep…).
+// - `any: true` is used only for pure readers: tools whose whole option set has no write or exec effect. Each use carries
+//   a `pure reader:` comment saying why. Anything that can write or run code through an option has an allow-list.
+// - Long options that run code are also matched by unambiguous prefix (`--upload-p`, `--to-comm`): see DANGER_OPTS.
+// - A command run by another one (`find -exec`, `xargs`) goes through the same wrapper stripping as a top-level one.
 // - The common, everyday shapes (ffmpeg encodes, pip/npm installs, sips, cwebp, mkdir/cp/mv) are modelled in full,
 //   and the "common commands" group of the table test pins their exact result.
 import type { IndicatorId, Phrase, Risk } from './types.ts';
 import type { Indicators } from './indicators.ts';
-import { isOpaqueCommand, systemCommandName, type SimpleCommand } from './tokenize.ts';
+import { commandFromArgv, isOpaqueCommand, normalizeCommandPath, systemCommandName, type SimpleCommand } from './tokenize.ts';
 import { dirnameAbs, displayLoc, isHarmlessDevice, resolveLocs, type ExplainContext, type Loc } from './paths.ts';
 import { explainWork } from './work.ts';
 
@@ -153,6 +156,14 @@ function script(st: State, word: string): void {
   add(st, 'runs-code', inProject && !st.chainNet && !fresh ? 'low' : 'medium');
   read(st, [word]);
 }
+/** A file or folder an interpreter loads code or configuration from (`-I`, `--require`, `-d auto_prepend_file`, `--env-file`). */
+function codeFrom(st: State, word: string): void {
+  const ls = locsOf(st, word);
+  if (ls.some((l) => l.cls !== 'work' && l.cls !== 'project')) add(st, 'runs-code', 'medium', { path: displayLoc(ls[0]!, st.ctx) });
+  read(st, [word]);
+}
+/** System font folders: reading a font there is expected (drawtext, -font) and adds nothing. */
+const isSystemFont = (w: string) => ['/System/Library/Fonts/', '/Library/Fonts/', '/usr/share/fonts/', '/usr/local/share/fonts/', '/opt/homebrew/share/fonts/'].some((d) => w.startsWith(d)) && !w.includes('/../');
 /** Arguments given to a script: a path outside the project may be written by it. */
 function scriptArgs(st: State, args: readonly string[]): void {
   for (const a of args) {
@@ -300,18 +311,21 @@ def(['cd', 'pushd'], (args, st) => {
 });
 def(['popd'], (_args, st) => { st.cdTarget = null; P(st, 'cd', { path: '…' }); });
 def(['ls'], (args, st) => {
+  // pure reader: ls (BSD and GNU) has no option that writes or runs anything.
   const o = opts(st, args, { any: true, v: ['-I', '--ignore', '-w', '--width', '-T', '--tabsize', '--format', '--sort', '--time-style', '-D', '--hide', '--block-size'] });
   const targets = o.operands.length ? o.operands : ['.'];
   read(st, targets);
   P(st, 'list', { paths: disp(st, targets) });
 });
 def(['cat'], (args, st) => {
+  // pure reader: cat's options only change how the text is printed.
   const o = opts(st, args, { any: true });
   const files = o.operands.filter((x) => x !== '-');
   read(st, files);
   if (files.length) P(st, 'show', { paths: disp(st, files) }); else P(st, 'filterPipe');
 });
 def(['head', 'tail'], (args, st, name) => {
+  // pure reader: head/tail options select lines or bytes, or follow a file.
   const o = opts(st, args, { any: true, num: true, v: ['-n', '-c', '-b', '--lines', '--bytes', '-s', '--sleep-interval', '--pid'] });
   const files = o.operands.filter((x) => x !== '-');
   read(st, files);
@@ -325,6 +339,7 @@ def(['file'], (args, st) => {
   P(st, 'fileType', { paths: disp(st, o.operands) });
 });
 def(['wc'], (args, st) => {
+  // pure reader: wc only counts; --files0-from reads a list (checked).
   const o = opts(st, args, { any: true, v: ['--files0-from'] });
   read(st, [...o.operands, ...vals(o, '--files0-from')]);
   if (o.operands.length) P(st, 'count', { paths: disp(st, o.operands) }); else P(st, 'countPipe');
@@ -360,8 +375,8 @@ const RM_SPEC: Record<string, Spec> = {
   rmdir: { f: ['-p', '-v', '--parents', '--verbose', '--ignore-fail-on-non-empty'] },
   unlink: { f: [] },
   shred: { f: ['-f', '-u', '-v', '-x', '-z', '--remove', '--force', '--zero', '--exact', '--verbose'], v: ['-n', '--iterations', '-s', '--size'] },
-  srm: { any: true },
-  trash: { any: true },
+  srm: { f: ['-r', '-R', '-f', '-i', '-v', '-s', '-m', '-z', '-n', '-d', '-x', '-D', '-E', '--recursive', '--force', '--verbose', '--simple', '--medium', '--zero'] },
+  trash: { f: ['-F', '-v', '-s', '-y', '-d', '-f', '-r', '-i', '-R'] },
 };
 def(Object.keys(RM_SPEC), (args, st, name) => {
   const o = opts(st, args, RM_SPEC[name]);
@@ -389,7 +404,9 @@ def(['chmod'], (args, st) => {
   P(st, 'chmod', { paths: disp(st, files) });
 });
 def(['chown', 'chgrp', 'chflags', 'xattr'], (args, st, name) => {
-  const o = opts(st, args, { any: true, v: ['--reference', '-w', '-d', '-p'] });
+  const o = opts(st, args, name === 'xattr'
+    ? { f: ['-l', '-r', '-s', '-v', '-x', '-c', '-d'], v: ['-p', '-w'] }
+    : { f: ['-R', '-h', '-v', '-f', '-H', '-L', '-P', '-c', '-x', '--recursive', '--no-dereference', '--dereference', '--verbose', '--changes', '--silent', '--quiet'], v: ['--reference', '--from'] });
   const files = has(o, '--reference') || name === 'xattr' ? o.operands : o.operands.slice(1);
   write(st, files);
   P(st, 'runs', { cmd: name });
@@ -411,6 +428,7 @@ def(['ln'], (args, st) => {
   P(st, 'link', { link: disp(st, [link]), target: fmtList(targets) });
 });
 def(['du'], (args, st) => {
+  // pure reader: du only measures.
   const o = opts(st, args, { any: true, v: ['-d', '-B', '--max-depth', '--block-size', '-t', '--threshold', '--exclude', '-I', '--files0-from'] });
   const targets = o.operands.length ? o.operands : ['.'];
   read(st, targets);
@@ -468,6 +486,12 @@ def(['find', 'gfind'], (args, st) => {
   else if (deletes) P(st, 'findDelete', { paths: disp(st, starts) });
   else P(st, 'find', { paths: disp(st, starts) });
 });
+const TAR_LONG_OK = ['--create', '--append', '--update', '--extract', '--get', '--list', '--absolute-names', '--file', '--directory', '--gzip', '--gunzip',
+  '--bzip2', '--xz', '--zstd', '--lzma', '--auto-compress', '--verbose', '--exclude', '--strip-components', '--keep-old-files', '--no-same-owner',
+  '--no-same-permissions', '--to-stdout', '--totals', '--wildcards', '--exclude-vcs', '--remove-files', '--overwrite', '--skip-old-files',
+  '--preserve-permissions', '--same-owner', '--numeric-owner', '--owner', '--group', '--mode', '--mtime', '--sort', '--format', '--transform',
+  '--exclude-from', '--files-from', '--null', '--no-recursion', '--one-file-system', '--dereference', '--hard-dereference', '--quiet', '--warning'];
+const TAR_DANGER = ['--to-command', '--checkpoint-action', '--use-compress-program', '--info-script', '--new-volume-script', '--rsh-command', '--rmt-command', '-I', '-F'];
 def(['tar', 'bsdtar', 'gtar'], (args, st) => {
   let mode: 'c' | 'x' | 't' | null = null;
   let archive: string | null = null;
@@ -497,11 +521,7 @@ def(['tar', 'bsdtar', 'gtar'], (args, st) => {
     }
     return i;
   };
-  const LONG_OK = ['--create', '--append', '--update', '--extract', '--get', '--list', '--absolute-names', '--file', '--directory', '--gzip', '--gunzip',
-    '--bzip2', '--xz', '--zstd', '--lzma', '--auto-compress', '--verbose', '--exclude', '--strip-components', '--keep-old-files', '--no-same-owner',
-    '--no-same-permissions', '--to-stdout', '--totals', '--wildcards', '--exclude-vcs', '--remove-files', '--overwrite', '--skip-old-files',
-    '--preserve-permissions', '--same-owner', '--numeric-owner', '--owner', '--group', '--mode', '--mtime', '--sort', '--format', '--transform',
-    '--exclude-from', '--files-from', '--null', '--no-recursion', '--one-file-system', '--dereference', '--hard-dereference', '--quiet', '--warning'];
+  const LONG_OK = TAR_LONG_OK;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (i === 0 && !a.startsWith('-')) { i = letters(a, i, false); if (!st.parsed) return; continue; }
@@ -599,34 +619,90 @@ const FFMPEG_VALUE = new Set([
   '-timecode', '-max_interleave_delta', '-avoid_negative_ts', '-fflags', '-flags', '-strict', '-thread_queue_size', '-filter_threads',
   '-filter_complex_threads', '-hwaccel', '-hwaccel_output_format', '-hwaccel_device', '-init_hw_device', '-stats_period', '-x', '-y_pos',
   '-alpha_quality', '-pass', '-plays', '-final_delay', '-gifflags', '-dpi', '-update', '-frame_pts', '-strftime', '-qmin', '-qmax',
-  '-allowed_extensions', '-vbr', '-application', '-cutoff', '-loop_output', '-intra_refresh', '-bsf', '-vbsf', '-absf', '-af_threads', '-bits_per_raw_sample',
+  '-allowed_extensions', '-allow_sw', '-realtime', '-vbr', '-application', '-cutoff', '-loop_output', '-intra_refresh', '-bsf', '-vbsf', '-absf', '-af_threads', '-bits_per_raw_sample',
 ]);
-const FFMPEG_READ_VALUE = new Set(['-filter_complex_script', '-filter_script', '-attach', '-i_qfactor']);
-const FFMPEG_WRITE_VALUE = new Set(['-vstats_file', '-passlogfile', '-dump_attachment', '-progress', '-sdp_file']);
+const FFMPEG_READ_VALUE = new Set(['-filter_complex_script', '-filter_script', '-attach', '-hls_key_info_file', '-key_info_file']);
+/** Options whose value is a file ffmpeg writes (muxer side files included). */
+const FFMPEG_WRITE_VALUE = new Set(['-vstats_file', '-passlogfile', '-dump_attachment', '-progress', '-sdp_file', '-hls_segment_filename',
+  '-segment_list', '-master_pl_name', '-hls_fmp4_init_filename', '-hls_base_url', '-dash_segment_filename', '-init_seg_name', '-media_seg_name',
+  '-stats_file', '-report_file']);
 const FFPROBE_VALUE = new Set(['-v', '-loglevel', '-print_format', '-of', '-output_format', '-select_streams', '-show_entries', '-read_intervals', '-i', '-o', '-f', '-analyzeduration', '-probesize', '-show_optional_fields', '-threads', '-sections']);
-/** Filters that read or load something from a path (`movie=`, `fontfile=`) or talk to the outside (`zmq`). */
-function ffmpegFilters(st: State, graph: string): void {
-  for (const key of ['movie=', 'amovie=', 'fontfile=', 'textfile=', 'filename=', 'stats_file=', 'lut3d=file=', 'file=']) {
+const FF_NET = ['http', 'https', 'tcp', 'udp', 'rtmp', 'rtmps', 'rtmpt', 'rtmpe', 'rtmpte', 'rtmpts', 'rtp', 'srt', 'ftp', 'sftp', 'tls', 'rtsp', 'rtsps',
+  'mmsh', 'mmst', 'gopher', 'gophers', 'icecast', 'smb', 'srtp', 'zmq', 'ipfs', 'ipns', 'unix', 'librist', 'rist', 'hls', 'prompeg', 'httpproxy', 'ws', 'wss'];
+/** Protocols that wrap another URL or path: `cache:x`, `async:x`, `crypto:x`, `hls+http://`. */
+const FF_WRAP = ['cache', 'async', 'crypto'];
+/**
+ * Classifies one ffmpeg input or output, protocol prefix included: `file:` and `concat:a|b` resolve to paths, network
+ * protocols use the network, `pipe:`/`data:` touch nothing. Returns false for what we can't resolve (`subfile`, `concatf`,
+ * unknown protocols), so the whole command is not modeled.
+ */
+function ffTarget(st: State, w: string, writes: boolean, depth = 0): boolean {
+  if (depth > 3) return false;
+  if (w === '-' || w === '' || w.startsWith('pipe:')) return true;
+  const colon = w.indexOf(':');
+  const slash = w.indexOf('/');
+  const scheme = colon > 1 && (slash < 0 || colon < slash) && !w.startsWith('.') && !w.startsWith('~') && !w.startsWith('$') ? w.slice(0, colon).toLowerCase() : '';
+  // `subfile,,start,0,end,10,,:path` and other protocols with options before the colon: not modeled.
+  if (scheme.includes(',')) return false;
+  if (scheme === '' || ![...scheme].every((c) => (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c === '+' || c === '-' || c === '.')) {
+    if (writes) write(st, [w]); else read(st, [w]);
+    return true;
+  }
+  const rest = w.slice(colon + 1);
+  if (scheme === 'file') return ffTarget(st, rest.startsWith('//') ? rest.slice(2) : rest, writes, depth + 1);
+  if (scheme === 'data') return true;
+  if (scheme === 'concat') {
+    const parts = rest.split('|');
+    if (parts.some((x) => x === '')) return false;
+    return parts.every((x) => ffTarget(st, x, writes, depth + 1));
+  }
+  const base = scheme.includes('+') ? scheme.slice(scheme.lastIndexOf('+') + 1) : scheme;
+  if (FF_NET.includes(base) || FF_NET.includes(scheme)) { add(st, 'uses-network', 'medium', { host: hostOf(w) }); return true; }
+  if (FF_WRAP.includes(scheme)) return ffTarget(st, rest, writes, depth + 1);
+  return false; // subfile, concatf, fd, unknown protocols
+}
+/** Filters that read or load something from a path (`movie=`, `fontfile=`) or talk to the outside (`zmq`). Returns false when unresolvable. */
+function ffmpegFilters(st: State, graph: string): boolean {
+  for (const key of ['movie=', 'amovie=', 'fontfile=', 'textfile=', 'filename=', 'stats_file=', 'file=', 'subtitles=', 'ass=', 'sub=']) {
     let from = 0;
     for (;;) {
       const at = graph.indexOf(key, from);
       if (at < 0) break;
+      // A whole key only: `file=` inside `fontfile=` is not a key of its own.
+      if (at > 0 && !':,;[=\'" \t'.includes(graph[at - 1]!)) { from = at + key.length; continue; }
       let end = at + key.length;
       while (end < graph.length && !':,;[]\'"'.includes(graph[end]!)) end++;
-      const path = graph.slice(at + key.length, end);
-      if (path) read(st, [path]);
+      // `movie=http\://…`: an escaped colon belongs to the value.
+      while (graph[end] === ':' && graph[end - 1] === '\\') { end++; while (end < graph.length && !':,;[]\'"'.includes(graph[end]!)) end++; }
+      const path = graph.slice(at + key.length, end).split('\\:').join(':');
       from = end;
+      if (!path || path.startsWith('=')) continue;
+      if ((key === 'fontfile=') && isSystemFont(path)) continue;
+      if (!ffTarget(st, path, key === 'stats_file=')) return false;
     }
   }
   for (const f of ['sendcmd', 'zmq', 'azmq', 'frei0r', 'ladspa', 'lv2', 'lensfun', 'vidstabdetect']) if (graph.includes(f)) unknownOpt(st, f);
+  return true;
 }
-function media(st: State, args: string[], kind: 'ffmpeg' | 'ffprobe'): { inputs: string[]; outputs: string[] } {
+function media(st: State, args: string[], kind: 'ffmpeg' | 'ffprobe'): { inputs: string[]; outputs: string[] } | null {
   const inputs: string[] = [];
   const outputs: string[] = [];
-  const valueReads: string[] = [];
-  const consumed = new Set<number>();
   const isFfprobeNoval = (a: string) => (a.startsWith('-show_') && a !== '-show_entries' && a !== '-show_optional_fields') || a.startsWith('-count_')
     || ['-hide_banner', '-pretty', '-unit', '-prefix', '-byte_binary_prefix', '-sexagesimal', '-bitexact', '-version', '-h', '-help'].includes(a);
+  /** `-f` applies to the next input or output. */
+  let format: string | null = null;
+  let lastConsumedIdx = -1;
+  let lastWasInput = false;
+  const target = (w: string, writes: boolean, fmt: string | null): boolean => {
+    if (fmt === 'lavfi' && !writes) return ffmpegFilters(st, w);
+    if (fmt === 'tee' && writes) {
+      return w.split('|').every((part) => {
+        const p = part.startsWith('[') ? part.slice(part.indexOf(']') + 1) : part;
+        return ffTarget(st, p, true);
+      });
+    }
+    return ffTarget(st, w, writes);
+  };
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a.startsWith('-') && a.length > 1 && !a.includes('$')) {
@@ -635,37 +711,43 @@ function media(st: State, args: string[], kind: 'ffmpeg' | 'ffprobe'): { inputs:
       const known = kind === 'ffmpeg' ? FFMPEG_VALUE.has(name) || FFMPEG_READ_VALUE.has(name) || FFMPEG_WRITE_VALUE.has(name) : FFPROBE_VALUE.has(name);
       if (!known) unknownOpt(st, name);
       const v = args[++i];
-      consumed.add(i);
+      lastConsumedIdx = i;
       if (v === undefined) continue;
-      if (name === '-i') { inputs.push(v); continue; }
-      if (kind === 'ffprobe' && name === '-o') { if (v !== '-') outputs.push(v); continue; }
+      if (name === '-f') { format = v; continue; }
+      if (name === '-i') { inputs.push(v); lastWasInput = true; if (!target(v, false, format)) return null; format = null; continue; }
+      lastWasInput = false;
+      if (kind === 'ffprobe' && name === '-o') { if (!ffTarget(st, v, true)) return null; outputs.push(v); continue; }
       if (FFMPEG_READ_VALUE.has(name)) { read(st, [v]); continue; }
-      if (FFMPEG_WRITE_VALUE.has(name)) { if (isUrl(v)) add(st, 'uses-network', 'medium', { host: hostOf(v) }); else write(st, [v]); continue; }
-      if (['-vf', '-af', '-filter', '-filter_complex', '-lavfi'].includes(name)) ffmpegFilters(st, v);
-      if (name === '-safe' && v === '0') add(st, 'reads-outside-project', 'medium');
-      if (v.startsWith('/') || v.startsWith('~') || v.startsWith('$') || v.startsWith('../')) valueReads.push(v);
+      if (FFMPEG_WRITE_VALUE.has(name)) { if (!ffTarget(st, v, true)) return null; continue; }
+      if (['-vf', '-af', '-filter', '-filter_complex', '-lavfi'].includes(name) && !ffmpegFilters(st, v)) return null;
+      if ((v.startsWith('/') || v.startsWith('~') || v.startsWith('$') || v.startsWith('../')) && !isSystemFont(v)) read(st, [v]);
       continue;
     }
-    (kind === 'ffmpeg' ? outputs : inputs).push(a);
+    lastWasInput = false;
+    if (kind === 'ffmpeg') { outputs.push(a); if (!target(a, true, format)) return null; format = null; }
+    else { inputs.push(a); if (!ffTarget(st, a, false)) return null; }
   }
   // ffmpeg's last word is always an output: catch it even after an option we don't know.
   const lastIdx = args.length - 1;
   const last = args[lastIdx];
-  if (kind === 'ffmpeg' && last !== undefined && consumed.has(lastIdx) && args[lastIdx - 1] !== '-i' && !last.startsWith('-')) outputs.push(last);
-  const net = [...inputs, ...outputs].filter(isUrl);
-  if (net.length) add(st, 'uses-network', 'medium', { host: hostOf(net[0]!) });
+  if (kind === 'ffmpeg' && last !== undefined && lastConsumedIdx === lastIdx && !lastWasInput && !last.startsWith('-')) {
+    outputs.push(last);
+    if (!ffTarget(st, last, true)) return null;
+  }
   const files = (xs: string[]) => xs.filter((x) => !isUrl(x) && x !== '-' && !x.startsWith('pipe:'));
-  read(st, [...files(inputs), ...valueReads]);
-  write(st, kind === 'ffmpeg' ? files(outputs) : outputs);
   return { inputs: files(inputs), outputs: files(outputs) };
 }
 def(['ffmpeg'], (args, st) => {
-  const { inputs, outputs } = media(st, args, 'ffmpeg');
+  const m = media(st, args, 'ffmpeg');
+  if (m === null) { st.parsed = false; return; }
+  const { inputs, outputs } = m;
   if (outputs.length) P(st, 'mediaConvert', { inputs: disp(st, inputs), outputs: disp(st, outputs) });
   else P(st, 'mediaProcess', { inputs: disp(st, inputs) });
 });
 def(['ffprobe'], (args, st) => {
-  const { inputs } = media(st, args, 'ffprobe');
+  const m = media(st, args, 'ffprobe');
+  if (m === null) { st.parsed = false; return; }
+  const { inputs } = m;
   P(st, 'mediaInfo', { paths: disp(st, inputs) });
 });
 def(['sips'], (args, st) => {
@@ -710,19 +792,27 @@ function stripCoder(w: string): string {
     s = s.slice(c + 1);
   }
 }
-/** ImageMagick options we model (the value, if any, is treated as a possible path like every other word). */
-const MAGICK_OPTS = new Set(['resize', 'crop', 'gravity', 'extent', 'background', 'flatten', 'colors', 'format', 'quality', 'strip', 'thumbnail',
-  'fill', 'font', 'pointsize', 'annotate', 'geometry', 'alpha', 'colorspace', 'depth', 'density', 'rotate', 'flip', 'flop', 'trim', 'repage',
-  'define', 'sharpen', 'blur', 'unsharp', 'modulate', 'level', 'negate', 'type', 'units', 'interlace', 'sampling-factor', 'append', 'layers',
-  'coalesce', 'delay', 'loop', 'dispose', 'deconstruct', 'scale', 'sample', 'adaptive-resize', 'auto-orient', 'bordercolor', 'border', 'frame',
-  'shadow', 'channel', 'separate', 'combine', 'compose', 'composite', 'page', 'size', 'unique-colors', 'print', 'verbose', 'quiet', 'limit',
-  'transparent', 'fuzz', 'opaque', 'threshold', 'dither', 'remap', 'posterize', 'monochrome', 'grayscale', 'normalize', 'contrast-stretch',
-  'brightness-contrast', 'gamma', 'sigmoidal-contrast', 'transpose', 'transverse', 'shave', 'chop', 'splice', 'distort', 'virtual-pixel',
-  'interpolate', 'filter', 'vignette', 'morphology', 'kernel', 'compress', 'comment', 'region', 'colorize', 'tint', 'sepia-tone', 'evaluate',
-  'clut', 'stroke', 'strokewidth', 'kerning', 'interline-spacing', 'interword-spacing', 'family', 'weight', 'style', 'stretch', 'antialias',
-  'resample', 'extract', 'orient', 'delete', 'swap', 'clone', 'duplicate', 'reverse', 'ping', 'precision', 'matte', 'liquid-rescale', 'edge',
-  'charcoal', 'paint', 'sketch', 'emboss', 'polaroid', 'roll', 'shear', 'motion-blur', 'radial-blur', 'despeckle', 'enhance', 'equalize',
-  'auto-level', 'auto-gamma', 'white-balance', 'linear-stretch', 'label', 'caption', 'mosaic', 'bordercolor', 'mattecolor', 'fx', 'write', 'draw', 'identify', 'set']);
+/**
+ * ImageMagick options we model, with how many values follow `-opt` (`+opt` forms take none, except those listed).
+ * Values are not options even when they start with `+`/`-` (`-annotate +100+200 'Hi'`, `-geometry +40+40`, `-repage +0+0`).
+ */
+const MAGICK_ARITY: Record<string, number> = {
+  resize: 1, crop: 1, gravity: 1, extent: 1, background: 1, flatten: 0, colors: 1, format: 1, quality: 1, strip: 0, thumbnail: 1, fill: 1, font: 1,
+  pointsize: 1, annotate: 2, geometry: 1, alpha: 1, colorspace: 1, depth: 1, density: 1, rotate: 1, flip: 0, flop: 0, trim: 0, repage: 1, define: 1,
+  sharpen: 1, blur: 1, unsharp: 1, modulate: 1, level: 1, negate: 0, type: 1, units: 1, interlace: 1, 'sampling-factor': 1, append: 0, layers: 1,
+  coalesce: 0, delay: 1, loop: 1, dispose: 1, deconstruct: 0, scale: 1, sample: 1, 'adaptive-resize': 1, 'auto-orient': 0, bordercolor: 1, border: 1,
+  frame: 1, shadow: 1, channel: 1, separate: 0, combine: 0, compose: 1, composite: 0, page: 1, size: 1, 'unique-colors': 0, print: 1, verbose: 0,
+  quiet: 0, limit: 2, transparent: 1, fuzz: 1, opaque: 1, threshold: 1, dither: 1, remap: 1, posterize: 1, monochrome: 0, grayscale: 1, normalize: 0,
+  'contrast-stretch': 1, 'brightness-contrast': 1, gamma: 1, 'sigmoidal-contrast': 1, transpose: 0, transverse: 0, shave: 1, chop: 1, splice: 1,
+  distort: 2, 'virtual-pixel': 1, interpolate: 1, filter: 1, vignette: 1, morphology: 2, kernel: 1, compress: 1, comment: 1, region: 1, colorize: 1,
+  tint: 1, 'sepia-tone': 1, evaluate: 2, clut: 0, stroke: 1, strokewidth: 1, kerning: 1, 'interline-spacing': 1, 'interword-spacing': 1, family: 1,
+  weight: 1, style: 1, stretch: 1, antialias: 0, resample: 1, extract: 1, orient: 1, delete: 1, swap: 1, clone: 1, duplicate: 1, reverse: 0, ping: 0,
+  precision: 1, matte: 0, 'liquid-rescale': 1, edge: 1, charcoal: 1, paint: 1, sketch: 1, emboss: 1, polaroid: 1, roll: 1, shear: 1, 'motion-blur': 1,
+  'radial-blur': 1, despeckle: 0, enhance: 0, equalize: 0, 'auto-level': 0, 'auto-gamma': 0, 'white-balance': 0, 'linear-stretch': 1, label: 1,
+  caption: 1, mosaic: 0, mattecolor: 1, fx: 1, write: 1, draw: 1, identify: 0, set: 2, encoding: 1, 'gaussian-blur': 1, 'adaptive-sharpen': 1,
+  'alpha-color': 1, 'auto-threshold': 1, 'background-color': 1, quantize: 1, 'transparent-color': 1, tile: 1, title: 1, 'fill-opacity': 1, path: 1,
+};
+const MAGICK_PLUS_ARITY: Record<string, number> = { distort: 2, level: 1, 'sigmoidal-contrast': 1, gamma: 1, write: 1 };
 def(['magick', 'convert', 'mogrify', 'identify', 'montage', 'composite'], (args, st, name) => {
   let mode = name;
   let rest = args;
@@ -736,10 +826,18 @@ def(['magick', 'convert', 'mogrify', 'identify', 'montage', 'composite'], (args,
     const a = rest[i]!;
     if ((a.startsWith('-') || a.startsWith('+')) && a.length > 1 && !a.includes('$')) {
       const opt = a.slice(1);
-      if (opt === 'write') { const v = rest[++i]; if (v !== undefined) writes.push(stripCoder(v)); continue; }
-      if (opt === 'draw') { const v = rest[i + 1] ?? ''; if (v.includes('@') || v.includes('url(') || v.includes('image')) { st.parsed = false; return; } }
       if (opt === 'script' || opt === 'process' || opt === 'monitor' || opt === 'authenticate') { st.parsed = false; return; }
-      if (!MAGICK_OPTS.has(opt)) unknownOpt(st, a);
+      const arity = a.startsWith('+') ? (MAGICK_PLUS_ARITY[opt] ?? 0) : MAGICK_ARITY[opt];
+      if (arity === undefined) { unknownOpt(st, a); continue; } // unknown: its values (if any) are classified as words
+      const values = rest.slice(i + 1, i + 1 + arity);
+      i += arity;
+      if (opt === 'write') { for (const v of values) writes.push(stripCoder(v)); continue; }
+      for (const v of values) {
+        // Text and drawing values can read files (`@file`, `image Over … 'file'`, `url(…)`): not modeled.
+        if (v.includes('@') && (opt === 'annotate' || opt === 'label' || opt === 'caption' || opt === 'comment' || opt === 'draw' || opt === 'title' || opt === 'set')) { st.parsed = false; return; }
+        if (opt === 'draw' && (v.includes('url(') || v.includes('image'))) { st.parsed = false; return; }
+        if (opt === 'font' || opt === 'remap' || opt === 'clut' || opt === 'kernel') { if (pathLike(v) && !isSystemFont(v)) read(st, [v]); }
+      }
       continue;
     }
     const w = stripCoder(a);
@@ -826,10 +924,27 @@ const DANGEROUS_ENV = new Set(['PATH', 'LD_PRELOAD', 'LD_LIBRARY_PATH', 'LD_AUDI
   'CDPATH', 'GLOBIGNORE', 'ZDOTDIR', 'EDITOR', 'VISUAL', 'PAGER', 'LESSOPEN', 'LESSCLOSE', 'MANPAGER', 'GIT_DIR', 'GIT_WORK_TREE', 'PIP_TARGET', 'PIP_PREFIX',
   'BROWSER', 'SSH_ASKPASS', 'SUDO_ASKPASS', 'FPATH', 'MAILPATH']);
 const SAFE_NPM_ENV = new Set(['npm_config_cache', 'NPM_CONFIG_CACHE', 'npm_config_yes', 'NPM_CONFIG_YES', 'npm_config_loglevel', 'NPM_CONFIG_LOGLEVEL', 'npm_config_update_notifier', 'NPM_CONFIG_UPDATE_NOTIFIER', 'npm_config_fund', 'NPM_CONFIG_FUND', 'npm_config_audit', 'NPM_CONFIG_AUDIT']);
-export const isDangerousEnv = (name: string) => DANGEROUS_ENV.has(name) || name.startsWith('DYLD_') || name.startsWith('GIT_') || name.startsWith('BASH_FUNC_')
-  || ((name.startsWith('npm_config_') || name.startsWith('NPM_CONFIG_')) && !SAFE_NPM_ENV.has(name));
+/** PYTHON* variables that only change output or caching. Every other PYTHON* variable can load code. */
+const SAFE_PYTHON_ENV = new Set(['PYTHONPATH', 'PYTHONUNBUFFERED', 'PYTHONDONTWRITEBYTECODE', 'PYTHONIOENCODING', 'PYTHONHASHSEED', 'PYTHONUTF8',
+  'PYTHONWARNINGS', 'PYTHONFAULTHANDLER', 'PYTHONNOUSERSITE', 'PYTHONOPTIMIZE', 'PYTHONVERBOSE']);
+const SAFE_PIP_ENV = new Set(['PIP_CACHE_DIR', 'PIP_NO_CACHE_DIR', 'PIP_DISABLE_PIP_VERSION_CHECK', 'PIP_QUIET', 'PIP_NO_INPUT', 'PIP_PROGRESS_BAR', 'PIP_ROOT_USER_ACTION']);
+/**
+ * Variables that change which code or which configuration a program loads. Structural: by name pattern (…CONFIG,
+ * …CONFIG_PATH, …CONFIG_FILE, …RC, …STARTUP, …_HOME, …USERCONFIG) and by tool prefix (LD_, DYLD_, GIT_, MAGICK_, PERL,
+ * RUBY, BUN_, DENO_, PYTHON* and PIP_* except a few output-only ones), plus the explicit list.
+ */
+export function isDangerousEnv(name: string): boolean {
+  if (DANGEROUS_ENV.has(name) || SAFE_NPM_ENV.has(name)) return DANGEROUS_ENV.has(name);
+  const n = name.toUpperCase();
+  if (n.startsWith('NPM_CONFIG_')) return true;
+  if (n.startsWith('PYTHON')) return !SAFE_PYTHON_ENV.has(n);
+  if (n.startsWith('PIP_')) return !SAFE_PIP_ENV.has(n);
+  if (['DYLD_', 'LD_', 'GIT_', 'BASH_FUNC_', 'MAGICK_', 'PERL', 'RUBY', 'BUN_', 'DENO_', 'FFREPORT', 'ZSH', 'LESS', 'NODE_REPL', 'RIPGREP_', 'CURL_', 'WGET', 'SSH_', 'GNUPG', 'GPG_'].some((p) => n.startsWith(p))) return true;
+  return n.endsWith('CONFIG') || n.endsWith('CONFIG_PATH') || n.endsWith('CONFIG_FILE') || n.endsWith('RC') || n.endsWith('RCFILE') || n.endsWith('STARTUP')
+    || n.endsWith('_HOME') || n.endsWith('USERCONFIG') || n.endsWith('GLOBALCONFIG') || n.endsWith('_PLUGINS') || n.endsWith('_PRELOAD');
+}
 /** Variables that make an interpreter load code from a folder: outside the project, that's code we can't see. */
-const CODE_PATH_ENV = ['PYTHONPATH', 'NODE_PATH', 'RUBYLIB', 'GEM_PATH', 'GEM_HOME', 'PYTHONUSERBASE', 'CLASSPATH'];
+const CODE_PATH_ENV = ['PYTHONPATH', 'NODE_PATH', 'GEM_PATH', 'CLASSPATH'];
 
 const PIP_INSTALL_SPEC: Spec = {
   f: ['-U', '--upgrade', '--user', '--no-deps', '--force-reinstall', '--no-cache-dir', '-q', '--quiet', '-v', '--verbose', '--pre', '--no-index',
@@ -848,7 +963,7 @@ function pip(args: string[], st: State): void {
   while (i < args.length && args[i]!.startsWith('-')) {
     const a = args[i]!;
     if (a === '-V' || a === '--version') { P(st, 'pipInfo'); return; }
-    if (GLOBAL_VALUE.includes(a)) i++;
+    if (GLOBAL_VALUE.includes(a)) { if (a === '--log' || a === '--cache-dir') write(st, [args[i + 1] ?? '']); i++; }
     else if (!GLOBAL_NOVAL.includes(a) && !GLOBAL_VALUE.includes(a.split('=')[0]!)) unknownOpt(st, a);
     i++;
   }
@@ -877,7 +992,12 @@ function pip(args: string[], st: State): void {
     return;
   }
   if (sub === undefined || ['list', 'show', 'freeze', 'check', 'help', 'inspect', 'debug'].includes(sub)) {
-    opts(st, rest, { any: true });
+    const o = opts(st, rest, {
+      f: ['--outdated', '-o', '--uptodate', '-u', '--editable', '-e', '--local', '-l', '--user', '--not-required', '--exclude-editable', '--include-editable', '--pre', '--all', '--verbose', '-v', '-f', '--files', '-q', '--quiet'],
+      v: ['--format', '--path', '--exclude', '-r', '--requirement', '--log'],
+    });
+    read(st, [...vals(o, '--path', '-r', '--requirement')]);
+    write(st, vals(o, '--log'));
     P(st, 'pipInfo'); return;
   }
   P(st, 'pkgOther', { tool: 'pip', sub });
@@ -953,6 +1073,18 @@ function node(args: string[], st: State): void {
     if (a.startsWith('--eval=') || a.startsWith('--print=')) { inlineCode(st, a.slice(a.indexOf('=') + 1)); P(st, 'nodeInline'); return; }
     if (a === '-') { runsInput(st, 'node'); return; }
     if (a === '-v' || a === '--version') { P(st, 'sysInfo'); return; }
+    if (a === '--env-file' || a.startsWith('--env-file=') || a.startsWith('--env-file-if-exists')) {
+      const v = a.includes('=') ? a.slice(a.indexOf('=') + 1) : args[++i];
+      if (v !== undefined) codeFrom(st, v); // it can set NODE_OPTIONS
+      continue;
+    }
+    if (a.startsWith('--inspect')) {
+      // `--inspect=0.0.0.0:9229` listens on the network; the default and 127.0.0.1 / localhost stay local.
+      const v = a.includes('=') ? a.slice(a.indexOf('=') + 1) : '';
+      const host = v.includes(':') ? v.slice(0, v.lastIndexOf(':')) : isDigitsStr(v) ? '' : v;
+      if (host !== '' && host !== '127.0.0.1' && host !== 'localhost' && host !== '[::1]') add(st, 'uses-network', 'medium', { host });
+      continue;
+    }
     if (NODE_VALUE.includes(a)) {
       const v = args[++i];
       if (v !== undefined && ['-r', '--require', '--import', '--loader', '--experimental-loader'].includes(a)) { if (v.includes(':')) inlineCode(st, v); else script(st, v); }
@@ -1017,9 +1149,29 @@ const NPM_SPEC: Spec = {
   v: ['--omit', '--include', '--reporter', '--loglevel', '-w', '--workspace', '-C', '--dir', '--filter', '-F', '--prefix', '--location', '--cache',
     '--registry', '--cwd', '--tag', '--network-concurrency', '--child-concurrency', '--depth'],
 };
+/** npm reads every `--option` before `--` as its own config, even after the script name: for running scripts only these are accepted. */
+const NPM_RUN_SUBS = ['run', 'run-script', 'rum', 'urn', 'test', 't', 'tst', 'start', 'stop', 'restart'];
+function npmRunOptionsSafe(st: State, args: readonly string[]): boolean {
+  const end = args.indexOf('--');
+  const own = end >= 0 ? args.slice(0, end) : args;
+  for (let i = 0; i < own.length; i++) {
+    const a = own[i]!;
+    if (!a.startsWith('-')) continue;
+    const opt = a.includes('=') ? a.slice(0, a.indexOf('=')) : a;
+    if (['--silent', '-s', '--if-present', '--workspaces', '--include-workspace-root', '-ws', '--quiet', '-q'].includes(a)) continue;
+    if (opt === '-w' || opt === '--workspace' || opt === '--prefix') {
+      const v = a.includes('=') ? a.slice(a.indexOf('=') + 1) : own[++i];
+      if (v !== undefined && locsOf(st, v).every((l) => l.cls === 'work' || l.cls === 'project')) continue;
+      if (opt !== '--prefix' && v !== undefined && !pathLike(v)) continue; // a workspace name
+    }
+    return false;
+  }
+  return true;
+}
 def(['npm', 'pnpm', 'yarn'], (args, st, name) => {
   const subAt = args.findIndex((a, k) => !a.startsWith('-') && !NPM_SPEC.v!.includes(args[k - 1] ?? ''));
   const sub = subAt >= 0 ? args[subAt]! : undefined;
+  if (name === 'npm' && sub !== undefined && NPM_RUN_SUBS.includes(sub) && !npmRunOptionsSafe(st, args)) { st.parsed = false; return; }
   // Arguments after `--` (and after the script or binary name) go to the program, not to the package manager.
   const dashdash = args.indexOf('--');
   const own = dashdash >= 0 ? args.slice(0, dashdash) : args;
@@ -1068,6 +1220,7 @@ def(['bun'], (args, st) => {
     if (v === undefined) { st.parsed = false; return; }
     inlineCode(st, v); P(st, 'inlineCode', { lang: 'bun' }); return;
   }
+  if (a0 === '-' || (a0 === 'run' && args[1] === '-')) { runsInput(st, 'node'); return; }
   if (a0 === 'install' || a0 === 'i' || a0 === 'add' || a0 === 'a') {
     const o = opts(st, args.slice(1), NPM_SPEC);
     installPkgs(st, o.operands, has(o, '-g', '--global'), false); return;
@@ -1211,8 +1364,13 @@ const GIT_SUBS: Record<string, Spec & { phrase: string; changes?: boolean; net?:
   apply: { phrase: 'gitChange', changes: true, f: ['--check', '--stat', '--numstat', '--summary', '--cached', '--index', '-3', '--3way', '-R', '--reverse', '-v', '--verbose', '--reject', '--allow-empty', '--recount', '--unidiff-zero', '-N', '--intent-to-add'], v: ['-p', '--whitespace', '--exclude', '--include', '--directory', '-C'] },
   am: { phrase: 'gitChange', changes: true, f: ['--abort', '--continue', '--skip', '--quit', '-3', '--3way', '-s', '--signoff', '-k', '--keep', '-q', '--quiet', '--show-current-patch'], v: ['-p', '--whitespace', '--directory'] },
 };
+const GIT_OK: readonly string[] = [...new Set(Object.values(GIT_SUBS).flatMap((x) => [...(x.f ?? []), ...(x.v ?? [])]))];
 const GIT_FALSE_LONG = ['--config', '--config-env', '--exec', '--upload-pack', '--receive-pack', '--template', '--ext-diff', '--open-files-in-pager',
   '--git-dir', '--work-tree', '--exec-path', '--namespace', '--super-prefix', '--separate-git-dir', '--textconv', '--strategy-option=theirs-exec'];
+/** git subcommands that run other programs or commands given on the line (`submodule foreach`, `bisect run`, difftool…). */
+const GIT_EXEC_SUBS = ['submodule', 'bisect', 'filter-branch', 'filter-repo', 'difftool', 'mergetool', 'hook', 'daemon', 'instaweb', 'credential',
+  'credential-store', 'credential-cache', 'send-email', 'svn', 'p4', 'web--browse', 'upload-pack', 'receive-pack', 'shell', 'fsmonitor--daemon',
+  'archimport', 'cvsimport', 'cvsserver', 'quiltimport', 'imap-send', 'remote-ext', 'run-command'];
 const GIT_C_OK = new Set(['commit', 'switch', 'branch', 'show', 'log', 'diff', 'checkout', 'shortlog', 'grep', 'ls-files', 'apply']);
 const GIT_U_EXEC = new Set(['clone', 'fetch', 'pull', 'ls-remote', 'archive']);
 def(['git'], (args, st) => {
@@ -1228,6 +1386,7 @@ def(['git'], (args, st) => {
   }
   const sub = args[i];
   const rest = args.slice(i + 1);
+  if (sub !== undefined && GIT_EXEC_SUBS.includes(sub)) { st.parsed = false; return; }
   // Options that run a program or read a config anywhere on the line.
   for (const a of rest) {
     const name = a.includes('=') ? a.slice(0, a.indexOf('=')) : a;
@@ -1244,8 +1403,11 @@ def(['git'], (args, st) => {
     // `--output` writes a file for any subcommand.
     for (let k = 0; k < rest.length; k++) {
       const a = rest[k]!;
-      if (a.startsWith('--output=')) write(st, [a.slice(9)]);
-      else if (a === '--output') write(st, [rest[k + 1] ?? '']);
+      if (a === '--') break;
+      const opt = a.includes('=') ? a.slice(0, a.indexOf('=')) : a;
+      const isOutput = opt === '--output' || (opt.length >= 4 && opt.startsWith('--ou') && '--output'.startsWith(opt));
+      if (!isOutput) continue;
+      write(st, [a.includes('=') ? a.slice(a.indexOf('=') + 1) : rest[k + 1] ?? '']);
     }
     if (sub === 'config') {
       const lower = rest.map((x) => x.toLowerCase());
@@ -1266,6 +1428,7 @@ def(['git'], (args, st) => {
     if (spec.changes) add(st, 'changes-git', 'medium');
     if (spec.net) add(st, 'uses-network', 'medium');
     switch (sub) {
+      case 'diff': if (has(o, '--no-index')) read(st, o.operands); P(st, 'gitDiff'); return;
       case 'add': read(st, o.operands); P(st, 'gitAdd', { paths: disp(st, o.operands.length ? o.operands : ['.']) }); return;
       case 'commit': read(st, vals(o, '-F', '--file', '-t', '--template')); P(st, 'gitCommit'); return;
       case 'clone': {
@@ -1302,7 +1465,11 @@ def(['git'], (args, st) => {
   }
 });
 def(['brew', 'apt', 'apt-get', 'port', 'yum', 'dnf', 'apk'], (args, st, name) => {
-  const o = opts(st, args, { any: true, v: ['-o', '--option', '-t', '--target-release'] });
+  const sub0 = args.find((a) => !a.startsWith('-'));
+  const installing = ['install', 'reinstall', 'upgrade', 'tap', 'bundle', 'uninstall', 'remove', 'rm', 'purge', 'autoremove'].includes(sub0 ?? '');
+  // Installs and removals are already rated high; for the read-only subcommands only listing options are accepted.
+  const o = opts(st, args, installing ? { any: true, v: ['-o', '--option', '-t', '--target-release'] }
+    : { f: ['--versions', '--json', '--formula', '--formulae', '--cask', '--casks', '-1', '-l', '--full-name', '--installed', '--upgradable', '-a', '--all', '--quiet', '-q', '-v', '--verbose', '--multiple', '--pinned', '--desc', '--eval-all'], v: [] });
   const [sub, ...rest] = o.operands;
   if (sub === 'install' || sub === 'reinstall' || sub === 'upgrade' || sub === 'tap' || (name === 'brew' && sub === 'bundle')) {
     add(st, 'installs-packages', 'medium');
@@ -1333,7 +1500,7 @@ def(['kill'], (args, st) => {
   // A negative pid is a process group (`-1` is every process); `0` is our own group.
   for (const t of targets) {
     if (t === '0' || (t.startsWith('-') && isDigitsStr(t.slice(1)))) add(st, 'kills-processes', 'high', { target: t });
-    else if (!isDigitsStr(t) && !t.startsWith('%')) unknownOpt(st, t);
+    else if (!isDigitsStr(t) && !t.startsWith('%') && !t.startsWith('$')) unknownOpt(st, t);
   }
   P(st, 'kill', { targets: fmtList(targets), n: targets.length });
 });
@@ -1359,6 +1526,7 @@ def(['printf'], (args, st) => {
   }
   if (st.stdout !== null) P(st, 'writeText', { path: st.stdout }); else P(st, 'print');
 });
+// pure reader: these only print text computed from their arguments.
 def(['basename', 'dirname', 'seq', 'expr', 'yes'], (args, st) => { opts(st, args, { any: true }); P(st, 'print'); });
 def(['jq', 'gojq'], (args, st) => {
   const two = new Set(['--arg', '--argjson', '--slurpfile', '--rawfile']);
@@ -1377,7 +1545,9 @@ def(['jq', 'gojq'], (args, st) => {
   if (files.length) P(st, 'json', { paths: disp(st, files) }); else P(st, 'jsonPipe');
 });
 def(['yq'], (args, st) => {
-  const o = opts(st, args, { any: true, v: ['-o', '--output-format', '-p', '--input-format', '--indent', '-I', '--from-file'] });
+  // `-s`/`--split-exp` writes one file per document, named by an expression: not modeled.
+  if (args.some((a) => a === '-s' || a.startsWith('--split-exp') || a.startsWith('--split'))) { st.parsed = false; return; }
+  const o = opts(st, args, { f: ['-i', '--inplace', '-e', '--exit-status', '-P', '--prettyPrint', '-C', '--colors', '-M', '--no-colors', '-n', '--null-input', '-N', '--no-doc', '-r', '--unwrapScalar', '-j', '--tojson', '-0', '--nul-output', '-v', '--verbose', '--front-matter'], v: ['-o', '--output-format', '-p', '--input-format', '--indent', '-I', '--from-file', '--expression'] });
   const files = o.operands.slice(vals(o, '--from-file').length ? 0 : 1);
   read(st, [...files, ...vals(o, '--from-file')]);
   if (has(o, '-i', '--inplace')) { write(st, files); P(st, 'editText', { paths: disp(st, files) }); return; }
@@ -1435,6 +1605,7 @@ export function sedScriptSafe(sc: string): boolean {
 def(['sed', 'gsed'], (args, st) => {
   const scripts: string[] = [];
   const operands: string[] = [];
+  const backups: string[] = [];
   let inPlace = false;
   const LONG_OK = ['--quiet', '--silent', '--regexp-extended', '--posix', '--null-data', '--separate', '--unbuffered', '--debug', '--sandbox', '--zero-terminated'];
   for (let i = 0; i < args.length; i++) {
@@ -1442,7 +1613,7 @@ def(['sed', 'gsed'], (args, st) => {
     if (a === '--') { operands.push(...args.slice(i + 1)); break; }
     if (a === '--expression') { scripts.push(args[++i] ?? ''); continue; }
     if (a.startsWith('--expression=')) { scripts.push(a.slice(13)); continue; }
-    if (a.startsWith('--in-place')) { inPlace = true; continue; }
+    if (a.startsWith('--in-place')) { inPlace = true; const suf = a.slice(a.indexOf('=') + 1); if (a.includes('=') && suf.includes('/')) backups.push(suf.split('*').join('x')); continue; }
     if (a === '--line-length') { i++; continue; }
     if (a.startsWith('--')) { if (LONG_OK.includes(a)) continue; st.parsed = false; return; }
     if (a.startsWith('-') && a !== '-' && !a.includes('$')) {
@@ -1451,8 +1622,10 @@ def(['sed', 'gsed'], (args, st) => {
         if ('nErusz'.includes(ch)) continue;
         if (ch === 'i' || ch === 'I') {
           inPlace = true;
-          // GNU `-i.bak` (attached suffix); BSD `-i ''` / `-i .bak` (next word).
-          if (k === a.length - 1) { const next = args[i + 1]; if (next !== undefined && (next === '' || (next.startsWith('.') && !next.includes('/')))) i++; }
+          // GNU `-i.bak` (attached suffix); BSD `-i ''` / `-i .bak` (next word). A suffix with `/` is a backup path (`*` = file name).
+          let suffix = a.slice(k + 1);
+          if (k === a.length - 1) { const next = args[i + 1]; if (next !== undefined && (next === '' || (next.startsWith('.') && !next.includes('/')))) { suffix = next; i++; } }
+          if (suffix.includes('/')) backups.push(suffix.split('*').join('x'));
           break;
         }
         if (ch === 'e') { const rest = a.slice(k + 1); scripts.push(rest !== '' ? rest : args[++i] ?? ''); break; }
@@ -1465,7 +1638,7 @@ def(['sed', 'gsed'], (args, st) => {
   }
   if (scripts.length === 0 && operands.length) scripts.push(operands.shift()!);
   if (scripts.length === 0 || !scripts.every(sedScriptSafe)) { st.parsed = false; return; }
-  if (inPlace) { write(st, operands); P(st, 'editText', { paths: disp(st, operands) }); return; }
+  if (inPlace) { write(st, [...operands, ...backups]); P(st, 'editText', { paths: disp(st, operands) }); return; }
   read(st, operands);
   if (operands.length) P(st, 'filter', { paths: disp(st, operands) }); else P(st, 'filterPipe');
 });
@@ -1479,10 +1652,22 @@ def(['awk', 'gawk', 'mawk', 'nawk'], (args, st) => {
   read(st, files);
   if (files.length) P(st, 'filter', { paths: disp(st, files) }); else P(st, 'filterPipe');
 });
+const RG_SPEC: Spec = {
+  f: ['-n', '-N', '-i', '-I', '-l', '-w', '-v', '-F', '-x', '-s', '-S', '-c', '-o', '-q', '-u', '-uu', '-uuu', '-U', '-P', '-L', '-H', '--line-number', '--no-line-number',
+    '--ignore-case', '--smart-case', '--case-sensitive', '--files-with-matches', '--files-without-match', '--word-regexp', '--invert-match', '--fixed-strings',
+    '--line-regexp', '--count', '--count-matches', '--only-matching', '--quiet', '--hidden', '--no-ignore', '--no-ignore-vcs', '--follow', '--files', '--json',
+    '--no-heading', '--heading', '--vimgrep', '--stats', '--multiline', '--pcre2', '--null', '-0', '--no-filename', '--with-filename', '--type-list', '--trim',
+    '--sort-files', '--column', '--no-messages', '--byte-offset', '-b', '--passthru', '--text', '-a', '--crlf', '--no-config'],
+  v: ['-e', '--regexp', '-f', '--file', '-A', '-B', '-C', '-m', '--max-count', '-g', '--glob', '--iglob', '-t', '--type', '-T', '--type-not', '--color', '--colors',
+    '-M', '--max-columns', '-j', '--threads', '--max-depth', '-d', '--sort', '--sortr', '-r', '--replace', '--max-filesize', '--context', '--after-context', '--before-context', '--type-add', '--ignore-file'],
+};
+const AG_SPEC: Spec = {
+  f: ['-i', '-s', '-S', '-l', '-L', '-w', '-v', '-Q', '-c', '-o', '-u', '-U', '-a', '-t', '--hidden', '--nocolor', '--noheading', '--nogroup', '--column', '--literal', '--files-with-matches', '--count', '--vimgrep', '--follow', '--ignore-case', '--case-sensitive', '--silent', '--stats', '--numbers', '--nonumbers'],
+  v: ['-G', '--file-search-regex', '-g', '-A', '-B', '-C', '-m', '--max-count', '--depth', '--ignore', '--ignore-dir', '--color-match'],
+};
 def(['grep', 'egrep', 'fgrep', 'ggrep', 'rg', 'ag'], (args, st, name) => {
-  // GNU/BSD grep has no option that writes or runs anything. rg and ag do: those few are refused.
-  if (args.some((a) => a === '--pre' || a.startsWith('--pre=') || a.startsWith('--pre-glob') || a.startsWith('--hostname-bin') || a.startsWith('--pager') || a === '--search-zip' || a === '-z' && name === 'rg')) { st.parsed = false; return; }
-  const o = opts(st, args, { any: true, v: ['-e', '--regexp', '-f', '--file', '-A', '-B', '-C', '-m', '--max-count', '--include', '--exclude', '--exclude-dir', '-d', '-D',
+  // pure reader: GNU/BSD grep has no option that writes or runs anything. rg and ag can (`--pre`, `--pager`): allow-lists.
+  const o = opts(st, args, name === 'rg' ? RG_SPEC : name === 'ag' ? AG_SPEC : { any: true, v: ['-e', '--regexp', '-f', '--file', '-A', '-B', '-C', '-m', '--max-count', '--include', '--exclude', '--exclude-dir', '-d', '-D',
     '--context', '--after-context', '--before-context', '--label', '--binary-files', '-g', '--glob', '-t', '--type', '-T', '--type-not', '--colors', '-M', '--max-columns', '-j', '--threads', '--ignore-file', '--max-depth', '--sort', '--sortr', '-r', '--replace'].filter((x) => !(name !== 'rg' && x === '-r')) });
   const patterns = vals(o, '-e', '--regexp', '-f', '--file');
   read(st, [...vals(o, '-f', '--file', '--ignore-file')]);
@@ -1512,6 +1697,7 @@ const FILTER_VALUES: Record<string, string[]> = {
   join: ['-1', '-2', '-t', '-o', '-j', '-e', '-a', '-v'], iconv: ['-f', '-t', '-o', '--from-code', '--to-code', '--output'], col: ['-l'], colrm: [],
 };
 def(Object.keys(FILTER_VALUES), (args, st, name) => {
+  // pure reader: text filters only transform stdin or their files; uniq's and iconv's output files are checked below.
   const o = opts(st, args, { any: true, v: FILTER_VALUES[name] });
   let files = name === 'tr' ? [] : o.operands;
   if (name === 'uniq' && files.length >= 2) { write(st, files.slice(1, 2)); files = files.slice(0, 1); }
@@ -1519,12 +1705,29 @@ def(Object.keys(FILTER_VALUES), (args, st, name) => {
   read(st, files);
   if (files.length) P(st, 'filter', { paths: disp(st, files) }); else P(st, 'filterPipe');
 });
-def(['stat', 'diff', 'cmp', 'md5', 'md5sum', 'shasum', 'sha1sum', 'sha256sum', 'sha512sum', 'cksum', 'readlink', 'realpath', 'xxd', 'od', 'hexdump',
-  'strings', 'less', 'more', 'mediainfo', 'exiv2', 'pdfinfo', 'otool', 'lipo', 'mdls', 'tree', 'base64'], (args, st, name) => {
-  const o = opts(st, args, { any: true, v: ['-f', '--format', '-c', '-n', '-s', '-l', '-L', '-o', '-i', '--input', '--output', '-a', '-I', '-P'] });
-  if (name === 'base64' || name === 'xxd' || name === 'tree' || name === 'lipo') write(st, [...vals(o, '-o', '--output'), ...(name === 'xxd' ? o.operands.slice(1, 2) : [])]);
-  if (name === 'lipo' || name === 'exiv2') unknownOpt(st, name);
-  const files = name === 'xxd' ? o.operands.slice(0, 1) : [...o.operands, ...vals(o, '-i', '--input')];
+// pure reader: hashing, inspecting and comparing tools; none of their options writes or runs anything.
+def(['stat', 'diff', 'cmp', 'md5', 'md5sum', 'shasum', 'sha1sum', 'sha256sum', 'sha512sum', 'cksum', 'readlink', 'realpath', 'od', 'hexdump',
+  'strings', 'mdls', 'pdfinfo', 'otool'], (args, st) => {
+  const o = opts(st, args, { any: true, v: ['-f', '--format', '-c', '-n', '-s', '-l', '-L', '-a', '-I', '-P', '--from-file', '--to-file', '-t', '-j', '-N', '-e'] });
+  read(st, [...o.operands, ...vals(o, '--from-file', '--to-file')]);
+  if (o.operands.length) P(st, 'readFiles', { paths: disp(st, o.operands) }); else P(st, 'filterPipe');
+});
+/** Readers that can also write (an output file) or are pagers: allow-lists. */
+const READER_SPEC: Record<string, Spec & { out?: string[]; inp?: string[] }> = {
+  xxd: { long1: true, out: [], f: ['-a', '-autoskip', '-b', '-bits', '-C', '-capitalize', '-E', '-EBCDIC', '-e', '-i', '-include', '-p', '-ps', '-postscript', '-plain', '-r', '-revert', '-u', '-uppercase', '-d', '-h', '-help', '-v', '-version'], v: ['-c', '-cols', '-g', '-groupsize', '-l', '-len', '-o', '-offset', '-s', '-seek', '-n', '-name', '-R'] },
+  base64: { out: ['-o', '--output'], inp: ['-i', '--input'], f: ['-d', '-D', '--decode', '-h', '--help', '--ignore-garbage'], v: ['-b', '--break', '-i', '--input', '-o', '--output', '-w', '--wrap'] },
+  tree: { out: ['-o'], f: ['-a', '-d', '-l', '-f', '-x', '-i', '-q', '-N', '-Q', '-p', '-u', '-g', '-s', '-h', '--du', '-D', '-F', '-v', '-t', '-c', '-U', '-r', '-C', '-n', '-A', '-S', '--dirsfirst', '--noreport', '--prune', '-J', '-X', '--gitignore', '--si'], v: ['-L', '-P', '-I', '-o', '--charset', '--filelimit', '--timefmt'] },
+  less: { f: ['-N', '-S', '-R', '-r', '-F', '-X', '-i', '-I', '-n', '-M', '-m', '-e', '-E', '-K', '-c', '-s', '-f', '-q', '-Q', '-+F'], v: ['-x', '-z', '-p', '-j', '-b', '-h', '-y'] },
+  more: { f: ['-N', '-S', '-R', '-r', '-F', '-X', '-i', '-I', '-n', '-M', '-m', '-e', '-E', '-c', '-s', '-f', '-d', '-l', '-u'], v: ['-x', '-z', '-p', '-n'] },
+  mediainfo: { inp: [], f: ['--Full', '-f', '--Help', '--Version'], v: ['--Output', '--Language', '--Inform'] },
+};
+def(Object.keys(READER_SPEC), (args, st, name) => {
+  const spec = READER_SPEC[name]!;
+  const o = opts(st, args, spec);
+  if (name === 'xxd') write(st, o.operands.slice(1, 2));
+  write(st, vals(o, ...(spec.out ?? [])));
+  for (const v of vals(o, '--Output', '--Inform')) if (v.startsWith('file://')) codeFrom(st, v.slice(7));
+  const files = name === 'xxd' ? o.operands.slice(0, 1) : [...o.operands, ...vals(o, ...(spec.inp ?? []))];
   const targets = files.length ? files : name === 'tree' ? ['.'] : [];
   read(st, targets);
   if (targets.length) P(st, 'readFiles', { paths: disp(st, targets) }); else P(st, 'filterPipe');
@@ -1580,6 +1783,7 @@ def(['open'], (args, st) => {
 def(['which', 'whereis', 'type', 'command'], (args, st) => P(st, 'which', { cmd: fmtList(args.filter((a) => !a.startsWith('-'))) }));
 def(['pwd'], (args, st) => { opts(st, args, { f: ['-L', '-P'] }); P(st, 'pwd'); });
 def(['whoami', 'uname', 'id', 'sw_vers', 'nproc', 'uptime', 'df', 'locale', 'system_profiler', 'ps', 'top', 'lsof', 'groups', 'tty', 'cal', 'vm_stat', 'xcrun'], (_args, st) => P(st, 'sysInfo'));
+// pure reader: `arch` without a command only prints the architecture (with one, the tokenizer unwraps it).
 def(['arch'], (args, st) => { opts(st, args, { any: true }); P(st, 'sysInfo'); });
 def(['caffeinate'], (args, st) => { opts(st, args, { f: ['-d', '-i', '-m', '-s', '-u'], v: ['-t', '-w'] }); P(st, 'noop'); });
 /** Commands that read system state, or change it with a flag or an operand: a change is a write outside the project. */
@@ -1588,17 +1792,19 @@ def(['date'], (args, st) => {
   read(st, vals(o, '--reference'));
   const sets = vals(o, '-s', '--set').length > 0 || (!has(o, '-j') && o.operands.some((x) => !x.startsWith('+')));
   if (sets) add(st, 'writes-outside-project', 'high');
-  P(st, 'sysInfo');
+  P(st, sets ? 'changesSystem' : 'sysInfo');
 });
 def(['hostname'], (args, st) => {
   const o = opts(st, args, { f: ['-s', '-f', '-d', '-i', '-I', '-a', '-A', '--short', '--fqdn', '--domain', '--ip-address', '--all-ip-addresses'], v: ['-F', '--file'] });
-  if (o.operands.length || vals(o, '-F', '--file').length) add(st, 'writes-outside-project', 'high');
-  P(st, 'sysInfo');
+  const sets = o.operands.length > 0 || vals(o, '-F', '--file').length > 0;
+  if (sets) add(st, 'writes-outside-project', 'high');
+  P(st, sets ? 'changesSystem' : 'sysInfo');
 });
 def(['sysctl'], (args, st) => {
   const o = opts(st, args, { f: ['-a', '-n', '-b', '-e', '-h', '-N', '-o', '-x', '-q', '-d', '-w'], v: ['-f'] });
-  if (has(o, '-w') || o.operands.some((x) => x.includes('='))) add(st, 'writes-outside-project', 'high');
-  P(st, 'sysInfo');
+  const sets = has(o, '-w') || o.operands.some((x) => x.includes('='));
+  if (sets) add(st, 'writes-outside-project', 'high');
+  P(st, sets ? 'changesSystem' : 'sysInfo');
 });
 def(['printenv'], (_args, st) => P(st, 'printEnv'));
 def(['true', 'false', ':', 'exit', 'wait'], (_args, st) => P(st, 'noop'));
@@ -1659,7 +1865,19 @@ def(['perl', 'ruby', 'php'], (args, st, name) => {
           const v = attached !== '' ? attached : args[++i];
           if (name === 'php' && ch === 'f' && v !== undefined) { script(st, v); scriptArgs(st, args.slice(i + 1)); P(st, 'runScript', { script: disp(st, [v]) }); return; }
           if (name === 'php' && ch === 'S') { add(st, 'uses-network', 'medium'); add(st, 'runs-code', 'medium'); }
-          if ((ch === 'I' || ch === 'r' || ch === 'C' || ch === 'c') && v !== undefined && pathLike(v)) read(st, [v]);
+          if (v !== undefined) {
+            // Folders and files code or settings are loaded from: outside the project, that's code we can't see.
+            if (ch === 'I' || (ch === 'r' && name === 'ruby' && pathLike(v)) || (name === 'php' && (ch === 'z' || ch === 'c'))) codeFrom(st, v);
+            if (name === 'ruby' && ch === 'C') read(st, [v]);
+            if (name === 'php' && ch === 'd') {
+              const key = v.slice(0, Math.max(0, v.indexOf('='))).trim().toLowerCase();
+              const val = v.slice(v.indexOf('=') + 1);
+              if (['auto_prepend_file', 'auto_append_file', 'extension', 'zend_extension', 'include_path', 'extension_dir', 'open_basedir', 'error_log', 'sendmail_path'].includes(key)) {
+                add(st, 'runs-code', 'medium', { option: `-d ${key}` });
+                if (val && key !== 'sendmail_path') codeFrom(st, val);
+              }
+            }
+          }
           break;
         }
         if (spec.rest.includes(ch)) break;
@@ -1704,6 +1922,13 @@ def(['lua', 'Rscript', 'tclsh', 'deno'], (args, st, name) => {
     if (a === '-') { runsInput(st, 'shell'); return; }
     if (name === 'deno' && a === 'run') continue;
     if (a.startsWith('-') && !a.includes('$')) { unknownOpt(st, a); continue; }
+    if (isUrl(a)) {
+      add(st, 'uses-network', 'medium', { host: hostOf(a) });
+      add(st, 'runs-code', 'medium');
+      scriptArgs(st, args.slice(i + 1));
+      P(st, 'runScript', { script: hostOf(a) });
+      return;
+    }
     script(st, a);
     scriptArgs(st, args.slice(i + 1));
     P(st, 'runScript', { script: disp(st, [a]) });
@@ -1719,12 +1944,51 @@ def(['bash', 'sh', 'zsh', 'dash', 'ksh', 'fish'], (args, st) => {
   const o = opts(st, args.slice(0, at), { f: ['-e', '-u', '-x', '-v', '-n', '-l', '--login', '-i', '-s', '--norc', '--noprofile', '--posix', '-r', '--restricted', '-eu', '-ex', '-eux', '-euo', '--verbose'], v: ['-o', '+o', '-O', '+O'] });
   o.operands.push(...args.slice(args[at] === '--' ? at + 1 : at));
   const first = o.operands[0];
-  if (has(o, '-s') || first === undefined || first === '-' || first === '/dev/stdin' || first === '/dev/fd/0') { runsInput(st, 'shell'); return; }
+  const firstPath = first === undefined ? '' : normalizeCommandPath(first);
+  if (has(o, '-s') || first === undefined || first === '-' || ['/dev/stdin', '/dev/fd/0', '/proc/self/fd/0'].includes(firstPath)) { runsInput(st, 'shell'); return; }
   const rest = o.operands.slice(1);
   script(st, first);
   scriptArgs(st, rest);
   P(st, 'runScript', { script: disp(st, [first]) });
 });
+
+/**
+ * Options that run a program, load a config or write somewhere we can't see → parsed false. Long options are also matched
+ * by unambiguous prefix (git parse-options, GNU getopt_long and npm's nopt accept `--upload-p`, `--to-comm`, `--script-sh`):
+ * a word of 3+ characters that is a strict prefix of one of them counts, unless it is itself an option the tool's allow-list
+ * names exactly (`git diff --text` is not `--textconv`). Checking stops at `--`.
+ */
+const NPM_DANGER = ['--script-shell', '--node-options', '--userconfig', '--globalconfig', '--init-module', '--shell', '--editor', '--browser', '--git',
+  '--onload-script', '--npmrc', '--call', '--sign-git-commit', '--sign-git-tag', '--viewer', '--node-gyp', '--prefix-dir'];
+const DANGER_OPTS: Record<string, { opts: string[]; ok?: () => readonly string[] }> = {
+  git: { opts: ['--config', '--config-env', '--exec', '--upload-pack', '--receive-pack', '--template', '--ext-diff', '--open-files-in-pager', '--git-dir',
+    '--work-tree', '--exec-path', '--namespace', '--super-prefix', '--separate-git-dir', '--textconv', '--extcmd', '--tool', '--gui'], ok: () => GIT_OK },
+  tar: { opts: TAR_DANGER, ok: () => TAR_LONG_OK }, bsdtar: { opts: TAR_DANGER, ok: () => TAR_LONG_OK }, gtar: { opts: TAR_DANGER, ok: () => TAR_LONG_OK },
+  sort: { opts: ['--compress-program'] },
+  rsync: { opts: ['-e', '--rsh', '--rsync-path', '--config', '--daemon'] },
+  ssh: { opts: ['-o', '-F', '-S', '-J', '-L', '-R', '-D', '-w'] }, scp: { opts: ['-o', '-F', '-S', '-J'] }, sftp: { opts: ['-o', '-F', '-S', '-J', '-b'] },
+  npm: { opts: NPM_DANGER, ok: () => NPM_SPEC.f!.concat(NPM_SPEC.v!) }, pnpm: { opts: NPM_DANGER, ok: () => NPM_SPEC.f!.concat(NPM_SPEC.v!) },
+  yarn: { opts: NPM_DANGER, ok: () => NPM_SPEC.f!.concat(NPM_SPEC.v!) }, npx: { opts: NPM_DANGER }, pnpx: { opts: NPM_DANGER }, bunx: { opts: NPM_DANGER },
+  curl: { opts: ['--config', '-K'] }, wget: { opts: ['--execute', '--config', '-e'] },
+  rg: { opts: ['--pre', '--pre-glob', '--hostname-bin', '--search-zip', '-z'] }, ag: { opts: ['--pager', '--search-zip', '-z'] },
+  zip: { opts: ['--unzip-command', '-TT'] }, less: { opts: ['-o', '-O', '--log-file', '--LOG-FILE', '--lesskey-file'] },
+  mediainfo: { opts: ['--LogFile', '--logfile'] },
+};
+function hasDangerOption(name: string, args: readonly string[]): boolean {
+  const d = DANGER_OPTS[name];
+  if (!d) return false;
+  const ok = d.ok ? new Set(d.ok()) : null;
+  for (const a of args) {
+    if (a === '--') return false;
+    if (!a.startsWith('-')) continue;
+    const opt = a.includes('=') ? a.slice(0, a.indexOf('=')) : a;
+    if (d.opts.includes(opt)) return true;
+    // npm/pnpm/yarn: `--config.<key>=…` and `--npm_config_<key>` set any config key, including the script shell.
+    if (d.opts === NPM_DANGER && (opt.startsWith('--config.') || opt.toLowerCase().startsWith('--npm_config'))) return true;
+    if (opt.startsWith('--') && opt.length >= 3 && !(ok?.has(opt)) && d.opts.some((x) => x.startsWith('--') && x !== opt && x.startsWith(opt))) return true;
+  }
+  return false;
+}
 
 /** Commands outside the dictionary: "Runs <cmd>", medium, and any outside path among the arguments may be written. */
 function unknown(args: readonly string[], st: State, name: string): void {
@@ -1765,6 +2029,7 @@ export function explainArgv(argv: readonly string[], st: State): void {
   }
   if (/^python\d+(\.\d+)?$/.test(name)) name = 'python3';
   else if (/^pip\d+(\.\d+)?$/.test(name)) name = 'pip';
+  if (hasDangerOption(name, args) || hasDangerOption(name.toLowerCase(), args)) { st.parsed = false; return; }
   const h = H.get(name);
   if (h) { h(args, st, name); return; }
   // A case variant of a known command (`RM` on a case-insensitive disk runs rm): its indicators, an unknown-command phrase.
@@ -1790,7 +2055,14 @@ function subExplain(argv: readonly string[], st: State, found: State['found']): 
   const prevCd = st.cdTarget;
   st.phrases = [];
   st.found = found;
-  explainArgv(argv, st);
+  // The same assignments and wrappers as at the top level (`find … -exec sudo rm {} +`, `xargs env X=1 nice rm`).
+  const c = commandFromArgv(argv);
+  if (c === null) st.parsed = false;
+  else {
+    for (const k of Object.keys(c.env)) if (isDangerousEnv(k)) st.parsed = false;
+    if (c.wrappers.includes('sudo') || c.wrappers.includes('doas')) add(st, 'elevated', 'high');
+    if (st.parsed) explainArgv(c.argv, st);
+  }
   st.phrases = phrases;
   st.cwd = cwd;
   st.found = prevFound;

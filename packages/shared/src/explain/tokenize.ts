@@ -53,7 +53,7 @@ function assignment(w: Word): [string, string] | null {
 
 interface Word { text: string; quotedAt: number }
 
-const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'fish', 'csh', 'tcsh', 'ash', 'busybox']);
+const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', 'fish', 'csh', 'tcsh', 'ash']);
 /**
  * Words that make the rest of the command impossible to analyze from its text: shell syntax, and programs that run a
  * command string or another command in ways we don't model (`su -c`, `watch`, `parallel`, debuggers, schedulers…).
@@ -132,9 +132,15 @@ function finishCommand(words: Word[], redirects: Redirect[]): SimpleCommand | nu
     const w = commandKey(raw);
     if (w === 'time') {
       wrappers.push('time'); i++;
-      while (text(i) === '-p' || text(i) === '--') i++;
+      // bash `time -p`; /usr/bin/time `-l`, `-h`, `-p`, `-a`. `-o file` writes a file: not modeled.
+      for (; i < words.length; i++) {
+        const a = text(i)!;
+        if (a === '--') { i++; break; }
+        if (!a.startsWith('-') || a === '-') break;
+        if (![...a.slice(1)].every((c) => 'plha'.includes(c))) return null;
+      }
       takeAssignments();
-    } else if (w === 'nohup' || w === 'builtin' || w === 'noglob') {
+    } else if (w === 'nohup' || w === 'builtin' || w === 'noglob' || w === 'nocorrect' || w === 'busybox') {
       wrappers.push(w); i++;
     } else if (w === 'command') {
       const next = text(i + 1);
@@ -230,6 +236,20 @@ function finishCommand(words: Word[], redirects: Redirect[]): SimpleCommand | nu
   return { argv, env, redirects, wrappers };
 }
 
+/** `[` followed (later in the word) by `$(`, a backtick or `${`. Linear: two indexOf calls. */
+export function hasSubscriptCode(word: string): boolean {
+  const open = word.indexOf('[');
+  if (open < 0) return false;
+  const rest = word.slice(open + 1);
+  return rest.includes('$(') || rest.includes('`') || rest.includes('${');
+}
+
+/** The same assignment and wrapper stripping, for a command run by another one (`find -exec`, `xargs`). */
+export function commandFromArgv(argv: readonly string[]): SimpleCommand | null {
+  if (argv.some(hasSubscriptCode)) return null;
+  return finishCommand(argv.map((text) => ({ text, quotedAt: -1 })), []);
+}
+
 /** Splits a shell command into simple commands. Any construct outside the modeled subset yields `parsed: false`. */
 export function tokenize(command: string): Tokenized {
   /** Characters visited, for the linear-work tests. */
@@ -259,6 +279,9 @@ export function tokenize(command: string): Tokenized {
   /** Ends the current word. Returns false on an error. */
   const endWord = (): boolean => {
     if (!started) return true;
+    // Arithmetic contexts evaluate `a[$(cmd)]` even from quotes (`printf %d 'a[$(cmd)]'`, `exit`, `wait -p`, `x='a[$(…)]'; printf %d x`):
+    // any word with `[` followed by a command substitution or an expansion is not modeled.
+    if (hasSubscriptCode(cur)) return false;
     const w: Word = { text: cur, quotedAt };
     cur = ''; started = false; quotedAt = -1;
     if (pending !== null) {

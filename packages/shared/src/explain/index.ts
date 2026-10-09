@@ -47,6 +47,8 @@ function explainBash(command: string, ctx: ExplainContext, ind: Indicators): { p
     ctx, cwd: normalizeAbs(ctx.cwd ?? ctx.projectDir), ind, phrases: [], parsed: true,
     pipedIn: false, pipeNet: false, usedNet: false, chainNet: false, written: [], found: null, stdout: null, stdinFile: null,
   };
+  /** A `cd` happened earlier: from the first separator other than `&&` after it, the folder is unknown. */
+  let cdSeen = false;
   tok.commands.forEach((c, i) => {
     if (!st.parsed) return;
     st.pipedIn = i > 0 && tok.separators[i - 1] === '|';
@@ -55,14 +57,14 @@ function explainBash(command: string, ctx: ExplainContext, ind: Indicators): { p
     st.cdTarget = undefined;
     explainSimple(c, st);
     if (st.usedNet) { st.pipeNet = true; st.chainNet = true; }
+    // After `cd x &&` the next command runs in x. Any other separator after a cd (`||`, `;`, `&`, newline, `|`) means
+    // the cd may or may not have happened for what follows: the folder is unknown for the rest of the chain
+    // (`cd ~/.ssh || exit; echo k >> authorized_keys`, `cd x && a || b; c`), and relative paths are rated worst case.
+    const sep = tok.separators[i];
     if (st.cdTarget !== undefined) {
-      // After `cd x &&` we are in x. After `cd x ||` (or in a pipe, a subshell) we are where we were.
-      // After `;`, `&` or a newline the cd may have failed: the folder is unknown.
-      const sep = tok.separators[i];
-      if (sep === '&&') st.cwd = st.cdTarget;
-      else if (sep === '||' || sep === '|') { /* unchanged */ }
-      else if (st.cdTarget !== st.cwd) st.cwd = null;
-    }
+      cdSeen = true;
+      st.cwd = sep === '&&' ? st.cdTarget : null;
+    } else if (cdSeen && sep !== '&&') st.cwd = null;
   });
   if (!st.parsed) return { phrases: complex(command, ind), parsed: false };
   return { phrases: st.phrases, parsed: true };
