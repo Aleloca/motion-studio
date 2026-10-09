@@ -139,7 +139,9 @@ describe('CONTEXT_MD brand section', () => {
 
 describe('CONTEXT_MD language', () => {
   it('is English', () => { expect(CONTEXT_MD).not.toMatch(/[àèéìòù]|\b(italiano|Contratto|Regole|Struttura|Strumenti|Suggerimenti|Brand e asset|progetto|cartella)\b/i); });
+});
 
+describe('buildCreativePrompt encoding guidance', () => {
   it('includes the encoding guidance for video and images in the delivery prompt', () => {
     for (const kind of ['first', 'iteration', 'fix'] as const) {
       const p = buildCreativePrompt({ ...base, kind, userText: 'x' });
@@ -152,6 +154,6 @@ describe('CONTEXT_MD language', () => {
   });
   it('lists the recommended size and bitrate of a format that has them', () => {
     const p = buildCreativePrompt({ ...base, kind: 'first' });
-    expect(p).toMatch(/instagram-post-1x1:.*recommended ≤ 15 MB.*~2000 kbps/);
+    expect(p).toMatch(/instagram-post-1x1:.*recommended ≤ 15 MB.*~1700 kbps/);
   });
 });

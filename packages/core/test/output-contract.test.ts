@@ -159,6 +159,15 @@ describe('validateOutputs', () => {
       expect(outputWarningText(r.outputs[0]!.warnings![0]!, 'en')).toBe('Large file: 78 MB (recommended ≤ 15 MB for Instagram)');
       expect(outputWarningText(r.outputs[0]!.warnings![0]!, 'it')).toContain('78 MB');
     });
+    it('a custom user video preset with maxFileMB warns instead of raising a problem', async () => {
+      const custom: FormatPreset = { id: 'mine', channel: 'Custom', name: 'Mine', width: 640, height: 360, kind: 'video', extensions: ['mp4'], maxFileMB: 1 };
+      await manifest([{ format: 'mine', file: 'mine.mp4', width: 640, height: 360, durationSec: 5 }]);
+      await writeFile(join(dir, 'mine.mp4'), '');
+      await truncate(join(dir, 'mine.mp4'), Math.round(2.55 * 1024 * 1024));
+      const r = await validateOutputs({ dir, requested: ['mine'], presets: [custom], durationSec: null, media: NoMediaTools });
+      expect(r.problems).toEqual([]);
+      expect(r.outputs[0]!.warnings).toEqual([{ key: 'outputs.largeFile', params: { sizeMB: 2.6, maxMB: 1, channel: 'Custom' } }]);
+    });
     it('does not warn under the limit', async () => {
       await manifest([reelEntry]);
       await writeFile(join(dir, 'reel.mp4'), 'small');

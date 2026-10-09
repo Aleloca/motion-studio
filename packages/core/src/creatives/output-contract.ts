@@ -52,7 +52,7 @@ export async function validateOutputs(opts: {
       // Images: maxFileMB is a hard platform limit (a problem). Video: it is a recommendation, so only a warning,
       // which never makes the version incomplete nor triggers the fix loop.
       if (preset.kind === 'image') problems.push(v.tooLarge({ file: entry.file, size: sizeMB.toFixed(1), max: preset.maxFileMB }));
-      else warnings.push({ key: 'outputs.largeFile', params: { sizeMB: Math.round(sizeMB), maxMB: preset.maxFileMB, channel: preset.channel } });
+      else warnings.push({ key: 'outputs.largeFile', params: { sizeMB: Math.round(sizeMB * 10) / 10, maxMB: preset.maxFileMB, channel: preset.channel } });
     }
 
     const probed = media.available ? await media.probe(path) : null;

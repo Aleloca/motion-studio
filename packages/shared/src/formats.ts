@@ -62,23 +62,24 @@ const i = (id: string, channel: string, name: string, width: number, height: num
 const REELS_SAFE = { top: 220, bottom: 420, left: 60, right: 120 };
 
 export const DEFAULT_FORMATS: FormatPreset[] = [
-  // Instagram: recommendation, not a platform limit. Feed video is re-encoded anyway; 15 MB at ~2 Mbps keeps 60 s fast to upload.
-  v('instagram-post-1x1', 'Instagram', 'Post 1:1', 1080, 1080, { maxDurationSec: 60, maxFileMB: 15, targetBitrateKbps: 2000 }),
-  v('instagram-post-4x5', 'Instagram', 'Post 4:5', 1080, 1350, { maxDurationSec: 60, maxFileMB: 15, targetBitrateKbps: 2000 }),
-  v('instagram-reel-9x16', 'Instagram', 'Story/Reel 9:16', 1080, 1920, { maxDurationSec: 90, safeZone: REELS_SAFE, maxFileMB: 15, targetBitrateKbps: 1500 }),
+  // Instagram: recommendation, not a platform limit. Feed video is re-encoded anyway; 15 MB caps a 60 s clip at ~1.7 Mbps video + 128 kbps audio, with ~10% headroom.
+  v('instagram-post-1x1', 'Instagram', 'Post 1:1', 1080, 1080, { maxDurationSec: 60, maxFileMB: 15, targetBitrateKbps: 1700 }),
+  v('instagram-post-4x5', 'Instagram', 'Post 4:5', 1080, 1350, { maxDurationSec: 60, maxFileMB: 15, targetBitrateKbps: 1700 }),
+  v('instagram-reel-9x16', 'Instagram', 'Story/Reel 9:16', 1080, 1920, { maxDurationSec: 90, safeZone: REELS_SAFE, maxFileMB: 15, targetBitrateKbps: 1100 }),
   i('instagram-image-1x1', 'Instagram', 'Image 1:1', 1080, 1080),
   i('instagram-image-4x5', 'Instagram', 'Image 4:5', 1080, 1350),
-  // TikTok: recommendation, not a platform limit (uploads allow far more); most clips run well under 60 s, so 25 MB at ~1.5-3 Mbps is ample.
-  v('tiktok-9x16', 'TikTok', 'Video 9:16', 1080, 1920, { maxDurationSec: 180, safeZone: REELS_SAFE, maxFileMB: 25, targetBitrateKbps: 2500 }),
+  // TikTok: recommendation, not a platform limit (uploads allow far more); 40 MB for 180 s allows ~1.5 Mbps video + audio with ~10% headroom.
+  v('tiktok-9x16', 'TikTok', 'Video 9:16', 1080, 1920, { maxDurationSec: 180, safeZone: REELS_SAFE, maxFileMB: 40, targetBitrateKbps: 1500 }),
   // YouTube: recommendation. Its published guidance for 1080p SDR is ~8 Mbps; 100 MB covers about 100 s at that rate.
   v('youtube-16x9', 'YouTube', 'Video 16:9', 1920, 1080, { maxFileMB: 100, targetBitrateKbps: 8000 }),
   v('youtube-4k-16x9', 'YouTube', 'Video 4K 16:9', 3840, 2160, { maxFileMB: 300, targetBitrateKbps: 20000 }),
-  v('youtube-shorts-9x16', 'YouTube', 'Shorts 9:16', 1080, 1920, { maxDurationSec: 60, safeZone: REELS_SAFE, maxFileMB: 30, targetBitrateKbps: 4000 }),
+  v('youtube-shorts-9x16', 'YouTube', 'Shorts 9:16', 1080, 1920, { maxDurationSec: 60, safeZone: REELS_SAFE, maxFileMB: 30, targetBitrateKbps: 3600 }),
   i('youtube-thumbnail', 'YouTube', 'Thumbnail', 1280, 720, { maxFileMB: 2 }),
+  // Sizes below follow (video + 128 kbps audio) x maxDurationSec <= maxFileMB with ~10% headroom (tested).
   // Facebook: recommendation, not a platform limit (the platform accepts much larger files).
   v('facebook-feed-1x1', 'Facebook', 'Feed 1:1', 1080, 1080, { maxFileMB: 50, targetBitrateKbps: 3500 }),
   v('facebook-feed-4x5', 'Facebook', 'Feed 4:5', 1080, 1350, { maxFileMB: 50, targetBitrateKbps: 3500 }),
-  v('facebook-story-9x16', 'Facebook', 'Story 9:16', 1080, 1920, { maxDurationSec: 60, safeZone: REELS_SAFE, maxFileMB: 15, targetBitrateKbps: 2000 }),
+  v('facebook-story-9x16', 'Facebook', 'Story 9:16', 1080, 1920, { maxDurationSec: 60, safeZone: REELS_SAFE, maxFileMB: 15, targetBitrateKbps: 1700 }),
   i('facebook-cover', 'Facebook', 'Cover', 1640, 624),
   // LinkedIn: recommendation; the official limit is far higher, but feed videos are short and re-encoded.
   v('linkedin-1x1', 'LinkedIn', 'Post 1:1', 1080, 1080, { maxFileMB: 50, targetBitrateKbps: 3500 }),

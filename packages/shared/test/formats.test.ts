@@ -25,6 +25,15 @@ describe('DEFAULT_FORMATS', () => {
   });
 });
 
+describe('video size and bitrate consistency', () => {
+  it('(bitrate + 128 kbps audio) x max duration fits maxFileMB with ~10% headroom', () => {
+    for (const f of DEFAULT_FORMATS.filter((x) => x.kind === 'video' && x.maxDurationSec && x.maxFileMB && x.targetBitrateKbps)) {
+      const mb = ((f.targetBitrateKbps! + 128) * 1000 / 8 * f.maxDurationSec!) / (1024 * 1024);
+      expect(mb * 1.1, f.id).toBeLessThanOrEqual(f.maxFileMB!);
+    }
+  });
+});
+
 describe('format and channel names', () => {
   it('has a catalog entry for every default preset and channel, in both languages', () => {
     for (const locale of ['en', 'it'] as const) {
