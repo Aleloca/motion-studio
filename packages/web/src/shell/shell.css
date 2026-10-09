@@ -1,5 +1,5 @@
 /* App shell (spec §6.1): bars, activity center, command palette. Tokens only; every class carries the ms- prefix.
-   Buttons set min-height/padding/border explicitly: the legacy global button rules still apply until Task 16. */
+   Buttons set their own min-height, padding and border (theme.css only resets font and colour). */
 
 /* Layout: a full-height grid (bar row + stage) gives PageHost's .ms-stage a definite height. */
 html, body, #root { height: 100%; }

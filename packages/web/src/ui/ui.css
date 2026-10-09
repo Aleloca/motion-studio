@@ -5,10 +5,9 @@
 .ms-page { position: absolute; inset: 0; overflow: auto; }
 
 /* ---------------------------------------------------------------------------------------------------------------
-   Base components (Task 3). Ported from docs/design/redesign-prototype/styles.css with an `ms-` prefix, so they do
-   not clash with the legacy global classes in theme.css (.card, .chip, .tabs, .warn, .mono, button.danger…). Modifier
-   classes are prefixed too (.ms-btn.ms-danger, .ms-pill.ms-warn…): every class a ui/ component emits starts with ms-. Every button-based control resets
-   the legacy `button`/`input` element rules (min-height, padding, border) explicitly.
+   Base components (Task 3). Ported from docs/design/redesign-prototype/styles.css with an `ms-` prefix. Modifier
+   classes are prefixed too (.ms-btn.ms-danger, .ms-pill.ms-warn…): every class a ui/ component emits starts with ms-.
+   Every button-based control sets its own min-height, padding and border (theme.css only resets font and colour).
    --------------------------------------------------------------------------------------------------------------- */
 
 /* Button: sm 28 / md 32 / lg 38; press scale(.97). */

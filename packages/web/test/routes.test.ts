@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { depthOf, href, parseRoute, routeKey, type Route } from '../src/routes.ts';
+import { depthOf, href, parseRoute, redirectOf, routeKey, type Route } from '../src/routes.ts';
 
 describe('parseRoute', () => {
   it.each([
@@ -7,20 +7,26 @@ describe('parseRoute', () => {
     ['#/', { name: 'projects' }],
     ['#/settings', { name: 'settings', section: 'general' }],
     ['#/p/acme', { name: 'project', slug: 'acme', tab: 'creatives' }],
-    ['#/p/acme/console', { name: 'project', slug: 'acme', tab: 'console' }],
+    // The old Agent console tab: its events live in the conversation's Activity details now.
+    ['#/p/acme/console', { name: 'project', slug: 'acme', tab: 'creatives' }],
     ['#/p/acme/new', { name: 'new-creative', slug: 'acme' }],
     ['#/p/acme/c/2026-10-07-lancio', { name: 'creative', slug: 'acme', creative: '2026-10-07-lancio' }],
     ['#/p/ACME/../x', { name: 'projects' }],
   ])('%s', (hash, route) => { expect(parseRoute(hash)).toEqual(route); });
   it('round-trips href', () => {
     expect(parseRoute(href.creative('acme', 'c-1'))).toEqual({ name: 'creative', slug: 'acme', creative: 'c-1' });
-    expect(parseRoute(href.project('acme', 'console'))).toEqual({ name: 'project', slug: 'acme', tab: 'console' });
+    expect(parseRoute(href.project('acme', 'brand'))).toEqual({ name: 'project', slug: 'acme', tab: 'brand' });
   });
 });
 
 describe('project tabs', () => {
-  it.each(['brand', 'assets', 'references', 'settings', 'console'] as const)('%s', (tab) => {
+  it.each(['brand', 'assets', 'references', 'settings'] as const)('%s', (tab) => {
     expect(parseRoute(href.project('acme', tab))).toEqual({ name: 'project', slug: 'acme', tab });
+  });
+  it('redirects the old console link to the project creatives', () => {
+    expect(redirectOf('#/p/acme/console')).toBe('#/p/acme');
+    expect(redirectOf('#/p/acme')).toBeNull();
+    expect(redirectOf('#/p/acme/brand')).toBeNull();
   });
   it('unknown tabs fall back to projects', () => {
     expect(parseRoute('#/p/acme/nope')).toEqual({ name: 'projects' });

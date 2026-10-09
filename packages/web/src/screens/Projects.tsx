@@ -31,7 +31,7 @@ export function hex6(hex: string): string | null {
 
 /** Relative luminance (WCAG) of a hex colour; an unreadable value counts as black. */
 export function luminance(hex: string): number {
-  const h = hex6(hex) ?? '#000000';
+  const h = hex6(hex) ?? '#000000'; // color-data: unreadable brand hex counts as black
   const [r, g, b] = [1, 3, 5].map((i) => {
     const c = parseInt(h.slice(i, i + 2), 16) / 255;
     return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;

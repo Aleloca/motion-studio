@@ -11,7 +11,7 @@ export const PALETTE_MAX = 50;
 type Group = 'pages' | 'projects' | 'creatives';
 export interface PaletteItem { id: string; group: Group; label: string; sub?: string; icon: IconName; hash: string }
 
-const PROJECT_TABS: Array<[ProjectTab, IconName]> = [['creatives', 'grid'], ['brand', 'drop'], ['assets', 'image'], ['references', 'link'], ['settings', 'gear'], ['console', 'terminal']];
+const PROJECT_TABS: Array<[ProjectTab, IconName]> = [['creatives', 'grid'], ['brand', 'drop'], ['assets', 'image'], ['references', 'link'], ['settings', 'gear']];
 
 /** Case- and accent-insensitive. */
 const fold = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();

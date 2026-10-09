@@ -41,7 +41,7 @@ export interface AppSettingsProps {
 /**
  * App settings (spec §6.2 #13, visual test point 1), ported from the prototype's AppSettingsPage and the AppSettings
  * boards: General (language, theme with previews), System check (the full doctor with "Check again"), Paid services
- * (keys in the Keychain, "Save and test"), Notifications and Updates. Usage arrives with Phase 8; the old expert mode
+ * (keys in the Keychain, "Save"), Notifications and Updates. Usage arrives with Phase 8; the old expert mode
  * is gone (spec §3.2).
  */
 export function AppSettings(props: AppSettingsProps) {

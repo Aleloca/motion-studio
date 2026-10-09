@@ -1,6 +1,5 @@
-import { DEFAULT_FORMATS, type ConversationEntry, type CreativeDetail } from '@motion-studio/shared';
-import { render, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { DEFAULT_FORMATS } from '@motion-studio/shared';
+import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../src/i18n.tsx';
 
@@ -14,31 +13,10 @@ const api = {
   fileUrl: (s: string, c: string, r: string) => `/f/${s}/${c}/${r}`,
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
-const { ConversationPanel } = await import('../src/components/ConversationPanel.tsx');
 const { CanvasBoard } = await import('../src/screens/CanvasBoard.tsx');
 const en = (node: React.ReactNode) => render(<I18nProvider locale="en">{node}</I18nProvider>);
 
 describe('creatives in English', () => {
-  it('shows the conversation panel in English', () => {
-    const detail: CreativeDetail = {
-      slug: 'c1', jobKey: 'k',
-      creative: { schemaVersion: 1, title: 'Launch', status: 'ready', error: null, createdAt: at, updatedAt: at, resumeFrom: null, linkedCodebases: [],
-        brief: { goal: 'g', message: '', formats: [], durationSec: null, assets: [], notes: '' } },
-      versions: [{ n: 1, commit: 'c', sessionId: 's', status: 'complete', createdAt: at, request: 'r', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: null }],
-    };
-    const conversation: ConversationEntry[] = [
-      { type: 'user', at, text: 'Bigger logo', pins: [{ format: 'f', x: 0.5, y: 0.5, timeSec: 1.5 }], attachments: [] },
-      { type: 'version', at, n: 1, status: 'complete' },
-    ];
-    en(<ConversationPanel slug="acme" detail={detail} conversation={conversation} presets={DEFAULT_FORMATS} job={undefined} liveEvents={[]} expert approvals={[]}
-      pins={[]} onRemovePin={() => {}} onSent={() => {}} onSelectVersion={() => {}} onChanged={() => {}} />);
-    expect(screen.getByRole('complementary', { name: 'Conversation' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Expert' })).toBeTruthy();
-    expect(screen.getByText('1 · f @ 1.5s')).toBeTruthy();
-    expect(screen.getByText('v1 · Ready')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'View v1' })).toBeTruthy();
-    expect(screen.getByLabelText('Request a change')).toBeTruthy();
-  });
   it('labels frames with English channel and format names', async () => {
     const banner = DEFAULT_FORMATS.find((f) => f.id === 'instagram-post-1x1')!;
     const version = { n: 1, commit: 'c', sessionId: 's', status: 'complete' as const, createdAt: at, request: 'r', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: null };

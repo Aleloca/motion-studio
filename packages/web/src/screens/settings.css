@@ -131,7 +131,7 @@
 .ms-status-head b { font-weight: 600; }
 .ms-status-head .ms-btn { margin-left: auto; color: var(--accentText); }
 .ms-status-line { font-size: 12px; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
-.ms-status .ms-blink { align-self: flex-start; padding: 0; height: auto; min-height: 0; border: 0; background: transparent; color: var(--accentText); font: inherit; font-size: 12px; cursor: pointer; }
+.ms-status .ms-blink { align-self: flex-start; padding: 0; border-radius: 4px; height: auto; min-height: 0; border: 0; background: transparent; color: var(--accentText); font: inherit; font-size: 12px; cursor: pointer; }
 .ms-status .ms-blink:hover { text-decoration: underline; }
 .ms-syscard { padding: 6px 16px; }
 

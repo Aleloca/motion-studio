@@ -22,13 +22,6 @@
   /* Settings → Theme previews: the light and dark backgrounds, the same whatever theme is on. */
   --previewLight: #F5F5F4; --previewLightPanel: #FFFFFF; --previewDark: #0F0F0F; --previewDarkPanel: #171717;
   color-scheme: light;
-
-  /* Legacy aliases for the screens not yet redesigned; Task 16 removes them. */
-  --surface: var(--panel); --surface-2: var(--field); --border: var(--line);
-  --accent-soft: var(--sel); --accent-ink: var(--accentText); --on-accent: var(--onAccent);
-  --danger: var(--warn); --warn-bg: var(--warnBg); --warn-border: var(--warnLine); --warn-text: var(--text);
-  --font: var(--sans);
-  --logo-bg-dark: #111111; --logo-bg-light: #FFFFFF;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -57,34 +50,10 @@
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 var(--sans); -webkit-font-smoothing: antialiased; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Form controls take the app's type and colour (components style the rest); a disabled button is dimmed unless its
+   component says otherwise. */
+button, input, textarea { font: inherit; color: inherit; }
+button:disabled { opacity: .55; cursor: not-allowed; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; transition-delay: 0ms !important; scroll-behavior: auto !important; }
 }
-
-/* Legacy component styles for the screens not yet redesigned; Task 16 removes them. */
-* { box-sizing: border-box; }
-button, input, textarea { font: inherit; color: inherit; }
-button { min-height: 36px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; }
-button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 700; }
-button.danger { color: var(--danger); border-color: var(--danger); font-weight: 700; }
-button:disabled { opacity: 0.55; cursor: not-allowed; }
-input, textarea { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); }
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
-.muted { color: var(--muted); }
-.mono { font-family: var(--mono); font-size: 12px; }
-.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-.stack { display: flex; flex-direction: column; gap: 12px; }
-.page { max-width: 1100px; margin: 0 auto; padding: 24px 16px; }
-.topbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
-.badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; background: var(--surface-2); }
-.badge.ok { color: var(--ok); } .badge.err { color: var(--danger); } .badge.run { background: var(--accent-soft); color: var(--accent-ink); }
-.error { color: var(--danger); }
-.warn { background: var(--warn-bg); border: 1px solid var(--warn-border); color: var(--warn-text); border-radius: 12px; padding: 12px; }
-.badge.warn-badge { background: var(--warn-bg); color: var(--warn-text); }
-.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); }
-.tabs a, .tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; padding: 8px 12px; color: var(--muted); text-decoration: none; min-height: 40px; }
-.tabs [aria-current='page'], .tabs [aria-selected='true'] { color: var(--text); border-bottom-color: var(--accent); font-weight: 700; }
-.chip { min-height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border); background: transparent; font-size: 13px; }
-.chip[aria-pressed='true'] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); font-weight: 700; }
-.dots { background-color: var(--bg); background-image: radial-gradient(var(--dot) 1px, transparent 1px); background-size: 20px 20px; }
-.topbar select { padding: 0 8px; }

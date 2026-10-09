@@ -8,7 +8,7 @@ import { setBarSlot, useBarSlots } from './barSlots.ts';
 import { ProjectSwitcher } from './ProjectSwitcher.tsx';
 import { go, isMac, useShell } from './ShellContext.tsx';
 
-/** Bar tabs (spec §6.1). The agent console stays reachable (palette, or shown while on it) until Task 16 folds it in. */
+/** Bar tabs (spec §6.1). */
 const BAR_TABS: ProjectTab[] = ['creatives', 'brand', 'assets', 'references', 'settings'];
 
 function Logo() {
@@ -134,13 +134,12 @@ export function GlobalTop({ title }: { title?: string }) {
 /** Project bar: logo, project switcher, section tabs, "N running", bell, avatar. */
 export function ProjectTop({ slug, tab }: { slug: string; tab: ProjectTab }) {
   const t = useT();
-  const tabs = tab === 'console' ? [...BAR_TABS, 'console' as const] : BAR_TABS;
   return (
     <>
       <Logo />
       <ProjectSwitcher slug={slug} />
       <nav className="ms-tabs ms-bar ms-topbar-tabs" aria-label={t.web.project.sections}>
-        {tabs.map((id) => (
+        {BAR_TABS.map((id) => (
           <a key={id} href={href.project(slug, id)} className={cx('ms-tab', tab === id && 'ms-on')} aria-current={tab === id ? 'page' : undefined}>
             {t.web.project.tabs[id]}
           </a>

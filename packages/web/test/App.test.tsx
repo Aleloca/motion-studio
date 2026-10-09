@@ -77,6 +77,13 @@ describe('App startup', () => {
     // Expert mode is gone (spec §3.2).
     expect(screen.queryByText(/esperto/i)).toBeNull();
   });
+  it('sends an old Agent console link to the project creatives, without a history entry', () => {
+    history.replaceState(null, '', '/#/p/acme/console');
+    const length = history.length;
+    start(new Promise(() => {}));
+    expect(location.hash).toBe('#/p/acme');
+    expect(history.length).toBe(length);
+  });
   it('does not show the setup when only the optional sandbox check fails', async () => {
     const checks: DoctorCheck[] = [...okChecks, { id: 'sandbox', label: 'Sandbox', ok: false, required: false, message: 'Non disponibile' }];
     start(Promise.resolve({ path: '/w', settings, error: null }), Promise.resolve(checks));

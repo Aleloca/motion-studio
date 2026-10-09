@@ -13,7 +13,6 @@ const api = {
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { ApprovalCard } = await import('../src/components/ApprovalCard.tsx');
-const { ApprovalsIndicator } = await import('../src/components/ApprovalsIndicator.tsx');
 const { AppSettings } = await import('../src/screens/AppSettings.tsx');
 const { ExportDialog } = await import('../src/screens/ExportDialog.tsx');
 const en = (node: React.ReactNode) => render(<I18nProvider locale="en">{node}</I18nProvider>);
@@ -23,13 +22,6 @@ const settings = workspaceSettingsSchema.parse({ schemaVersion: 1 });
 const checks = [{ id: 'sandbox' as const, label: 'Sandbox', ok: true, required: false, message: 'ok' }];
 
 describe('approvals, settings and export in English', () => {
-  it('labels the approval decisions and the pending count', async () => {
-    en(<ApprovalsIndicator approvals={[approval, { ...approval, id: 'a2' }]} />);
-    await userEvent.click(screen.getByRole('button', { name: '2 approvals pending' }));
-    expect(screen.getAllByRole('button', { name: 'Allow' })).toHaveLength(2);
-    expect(screen.getAllByRole('button', { name: 'Always here' })).toHaveLength(2);
-    expect(screen.getAllByRole('link', { name: 'Open' })).toHaveLength(2);
-  });
   it('says when a request was already handled', async () => {
     const { ApiError } = await import('../src/api.ts');
     api.decideApproval.mockRejectedValue(Object.assign(new ApiError(404, "x"), { status: 404 }));

@@ -11,4 +11,9 @@ describe('theme tokens', () => {
     for (const sel of [':root:not([data-theme="light"])', ':root[data-theme="dark"]']) for (const t of TOKENS.filter((x) => x !== '--accent')) expect(block(sel), sel + t).toContain(t + ':');
   });
   it('drops the old palette and font', () => { expect(css).not.toMatch(/6D28D9|Manrope/i); });
+  it('has no legacy aliases or global classes left (Task 16)', () => {
+    for (const alias of ['--surface', '--border', '--accent-soft', '--accent-ink', '--on-accent', '--danger', '--warn-bg', '--warn-border', '--warn-text', '--font:', '--logo-bg']) expect(css, alias).not.toContain(alias);
+    expect(css).not.toMatch(/^\.(card|muted|mono|row|stack|page|topbar|badge|error|warn|tabs|chip|dots)\b/m);
+    expect(css).not.toMatch(/^button\s*\{/m);
+  });
 });

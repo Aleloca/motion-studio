@@ -1,5 +1,5 @@
-export type ProjectTab = 'creatives' | 'brand' | 'assets' | 'references' | 'settings' | 'console';
-const TABS: ProjectTab[] = ['brand', 'assets', 'references', 'settings', 'console'];
+export type ProjectTab = 'creatives' | 'brand' | 'assets' | 'references' | 'settings';
+const TABS: ProjectTab[] = ['brand', 'assets', 'references', 'settings'];
 export type SettingsSection = 'general' | 'system' | 'paid' | 'notifications' | 'updates';
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = ['general', 'system', 'paid', 'notifications', 'updates'];
 export type WelcomeStep = 1 | 2 | 3;
@@ -14,6 +14,14 @@ export type Route =
   | { name: 'format'; slug: string; creative: string; format: string };
 
 const SLUG = '[a-z0-9][a-z0-9-]*';
+/** The old project "Agent console" tab: its technical events now live in the conversation's Activity details. */
+const LEGACY_CONSOLE = new RegExp(`^#/p/(${SLUG})/console$`);
+
+/** An old link that now lives elsewhere: the hash to show instead (the console opens the project's creatives). */
+export function redirectOf(hash: string): string | null {
+  const m = hash.match(LEGACY_CONSOLE);
+  return m ? `#/p/${m[1]}` : null;
+}
 
 export function parseRoute(hash: string): Route {
   if (hash === '#/settings') return { name: 'settings', section: 'general' };
@@ -31,6 +39,8 @@ export function parseRoute(hash: string): Route {
   if (m) return { name: 'creative', slug: m[1]!, creative: m[2]! };
   m = hash.match(new RegExp(`^#/p/(${SLUG})/new$`));
   if (m) return { name: 'new-creative', slug: m[1]! };
+  m = hash.match(LEGACY_CONSOLE);
+  if (m) return { name: 'project', slug: m[1]!, tab: 'creatives' };
   m = hash.match(new RegExp(`^#/p/(${SLUG})(?:/([a-z]+))?$`));
   if (m) {
     const tab = (m[2] ?? 'creatives') as ProjectTab;

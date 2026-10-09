@@ -93,7 +93,7 @@
 
 /* More options. */
 .ms-nc-options { gap: 10px; }
-.ms-nc-disclose { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 0; margin: 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; border-radius: 6px; }
+.ms-nc-disclose { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0; margin: 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; border-radius: 6px; }
 .ms-nc-disclose:hover { color: var(--text); }
 .ms-nc-options-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type 
 import { api } from './api.ts';
 import { detectedLocale, I18nProvider, useLocale, type LanguageState } from './i18n.tsx';
 import { PageHost, type PageMode } from './motion/index.ts';
-import { depthOf, href, parseRoute, projectOf, routeKey, type Route } from './routes.ts';
+import { depthOf, href, parseRoute, projectOf, redirectOf, routeKey, type Route } from './routes.ts';
 import { AppSettings } from './screens/AppSettings.tsx';
 import { Assets } from './screens/Assets.tsx';
 import { Brand } from './screens/Brand.tsx';
@@ -11,7 +11,6 @@ import { CreativeCanvas } from './screens/CreativeCanvas.tsx';
 import { FormatView } from './screens/FormatView.tsx';
 import { NewCreative } from './screens/NewCreative.tsx';
 import { Pairing } from './screens/Pairing.tsx';
-import { ProjectConsole } from './screens/ProjectConsole.tsx';
 import { ProjectCreatives } from './screens/ProjectCreatives.tsx';
 import { Projects } from './screens/Projects.tsx';
 import { ProjectSettings } from './screens/ProjectSettings.tsx';
@@ -28,10 +27,19 @@ import { usePairingNeeded } from './uiToken.ts';
 import type { EventsState } from './eventsReducer.ts';
 import { useServerEvents } from './useServerEvents.ts';
 
+/** The current hash; an old link is replaced in place (no history entry) by its new address. */
+function currentHash(): string {
+  const hash = location.hash || '#/';
+  const to = redirectOf(hash);
+  if (!to) return hash;
+  history.replaceState(history.state, '', to);
+  return to;
+}
+
 function useHashRoute(): string {
-  const [hash, setHash] = useState(location.hash || '#/');
+  const [hash, setHash] = useState(currentHash);
   useEffect(() => {
-    const on = () => setHash(location.hash || '#/');
+    const on = () => setHash(currentHash());
     addEventListener('hashchange', on);
     return () => removeEventListener('hashchange', on);
   }, []);
@@ -266,6 +274,5 @@ function ProjectTabPage({ route: { slug, tab }, live, settings, checks, onSettin
     case 'assets': return <Assets key={slug} slug={slug} live={live} />;
     case 'references': return <References key={slug} slug={slug} live={live} />;
     case 'settings': return settings ? <ProjectSettings key={slug} slug={slug} live={live} settings={settings} checks={checks} onSettings={onSettings} /> : null;
-    case 'console': return <ProjectConsole key={slug} slug={slug} live={live} />;
   }
 }
