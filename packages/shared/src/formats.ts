@@ -91,7 +91,7 @@ export const DEFAULT_FORMATS: FormatPreset[] = [
   v('youtube-16x9', 'YouTube', 'Video 16:9', 1920, 1080),
   v('youtube-4k-16x9', 'YouTube', 'Video 4K 16:9', 3840, 2160),
   v('youtube-shorts-9x16', 'YouTube', 'Shorts 9:16', 1080, 1920, { maxDurationSec: 60, safeZone: REELS_SAFE }),
-  // YouTube: 2 MB is the documented thumbnail size limit.
+  // YouTube: 2 MB thumbnail limit, per YouTube Help; not re-verified 2026-10.
   i('youtube-thumbnail', 'YouTube', 'Thumbnail', 1280, 720, { maxFileMB: 2 }),
   v('facebook-feed-1x1', 'Facebook', 'Feed 1:1', 1080, 1080),
   v('facebook-feed-4x5', 'Facebook', 'Feed 4:5', 1080, 1350),
@@ -101,7 +101,7 @@ export const DEFAULT_FORMATS: FormatPreset[] = [
   v('linkedin-4x5', 'LinkedIn', 'Post 4:5', 1080, 1350),
   v('linkedin-16x9', 'LinkedIn', 'Video 16:9', 1920, 1080),
   i('linkedin-banner', 'LinkedIn', 'Banner', 1584, 396),
-  // X: 512 MB is the documented video upload limit (X developer docs, media upload).
+  // X: 512 MB is the documented limit for videos uploaded with media_category=amplify_video (X developer docs, media upload).
   v('x-16x9', 'X', 'Video 16:9', 1600, 900, { maxFileMB: 512 }),
   v('x-1x1', 'X', 'Post 1:1', 1080, 1080, { maxFileMB: 512 }),
   i('pinterest-2x3', 'Pinterest', 'Pin 2:3', 1000, 1500),

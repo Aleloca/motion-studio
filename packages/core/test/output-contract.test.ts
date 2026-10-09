@@ -64,7 +64,7 @@ describe('validateOutputs', () => {
   });
   it('lists every kind of problem', async () => {
     await manifest([{ ...sq, file: 'sq.mov' }, { ...banner, file: 'banner.gif' }, { format: 'ghost', file: 'g.png', width: 1, height: 1 }]);
-    await writeFile(join(dir, 'banner.gif'), 'x'.repeat(2 * 1024 * 1024));
+    await writeFile(join(dir, 'banner.gif'), 'x'.repeat(2_000_000));
     const r = await validateOutputs({ dir, requested: ['sq', 'banner', 'ghost', 'missing'], presets, durationSec: null, media: NoMediaTools });
     expect(r.problems).toEqual([
       'File non trovato per sq: sq.mov',
@@ -189,6 +189,17 @@ describe('validateOutputs', () => {
       const r = await validateOutputs({ dir, requested: ['mine'], presets: [custom], durationSec: null, media: NoMediaTools });
       expect(r.problems).toEqual([]);
       expect(r.outputs[0]!.warnings?.[0]?.params).toMatchObject({ mbps: 104, targetMbps: 4 });
+    });
+    it('never warns on bitrate for GIF or WebM outputs (no H.264 target)', async () => {
+      const multi: FormatPreset = { ...reel, extensions: ['mp4', 'gif', 'webm'] };
+      for (const ext of ['gif', 'webm']) {
+        await manifest([{ ...entry(6), file: `reel.${ext}` }]);
+        await writeFile(join(dir, `reel.${ext}`), '');
+        await truncate(join(dir, `reel.${ext}`), 78_000_000);
+        const r = await validateOutputs({ dir, requested: ['reel'], presets: [multi], durationSec: null, media: NoMediaTools });
+        expect(r.problems, ext).toEqual([]);
+        expect(r.outputs[0]!.warnings, ext).toBeUndefined();
+      }
     });
     it('a documented maxFileMB stays a hard problem, for video too', async () => {
       const x: FormatPreset = { ...reel, maxFileMB: 1 };

@@ -75,11 +75,11 @@ export class BrandService {
    * Runs one agent turn with the live metadata files denied to the editing tools; whatever the outcome, files the agent
    * still managed to change (e.g. through an interpreter) are restored. `tampered` receives one note per file the agent changed, in `locale`.
    */
-  private async runAgent(ref: ProjectRef, kind: 'brand-analysis' | 'describe', prompt: string, logFile: string | null, signal: AbortSignal, jobId: string, tampered: string[], locale: Locale): Promise<{ status: 'ok' | 'cancelled'; usage: UsageSummary | undefined }> {
+  private async runAgent(ref: ProjectRef, kind: 'brand-analysis' | 'describe', prompt: string, logFile: string | null, signal: AbortSignal, jobId: string, tampered: string[], locale: Locale, sandboxed: boolean): Promise<{ status: 'ok' | 'cancelled'; usage: UsageSummary | undefined }> {
     const guard = await snapshotGuarded(ref.projectDir);
     try {
       const run = await this.deps.launcher.start({
-        kind, jobId, projectSlug: ref.projectSlug, projectDir: ref.projectDir,
+        kind, jobId, projectSlug: ref.projectSlug, projectDir: ref.projectDir, sandboxed,
         protectedFiles: await guardedPaths(ref.projectDir),
         request: { prompt, model: (await this.deps.model()) ?? undefined },
         onEvent: (event) => {
@@ -125,7 +125,8 @@ export class BrandService {
         sources: sources.map((s) => ({ id: s.id, kind: s.kind, url: s.url, file: s.file })),
       };
       const tampered: string[] = [];
-      const turn = await this.runAgent(ref, 'brand-analysis', buildBrandPrompt(block, locale, await this.deps.launcher.sandboxed()), join(dir, 'log.jsonl'), signal, jobId, tampered, locale);
+      const sandboxed = await this.deps.launcher.sandboxed();
+      const turn = await this.runAgent(ref, 'brand-analysis', buildBrandPrompt(block, locale, sandboxed), join(dir, 'log.jsonl'), signal, jobId, tampered, locale, sandboxed);
       if (turn.status === 'cancelled') {
         await rm(dir, { recursive: true, force: true });
         return 'cancelled';
@@ -258,9 +259,10 @@ export class BrandService {
           const notes: string[] = [];
           try {
             await mkdir(join(ref.projectDir, 'assets', '.describe'), { recursive: true });
-            const prompt = buildDescribePrompt({ outFile: outRel, files: targets.map((t) => `assets/${t.file}`) }, locale, await this.deps.launcher.sandboxed());
+            const sandboxed = await this.deps.launcher.sandboxed();
+            const prompt = buildDescribePrompt({ outFile: outRel, files: targets.map((t) => `assets/${t.file}`) }, locale, sandboxed);
             const tampered: string[] = [];
-            const outcome = await this.runAgent(ref, 'describe', prompt, null, signal, jobId, tampered, locale).finally(() => notes.push(...tampered));
+            const outcome = await this.runAgent(ref, 'describe', prompt, null, signal, jobId, tampered, locale, sandboxed).finally(() => notes.push(...tampered));
             if (outcome.status === 'cancelled') return 'cancelled';
             const wanted = new Set(targets.map((t) => t.file));
             const described = await readLenient(outAbs, describedAsset);

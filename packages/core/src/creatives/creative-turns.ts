@@ -158,12 +158,14 @@ export class CreativeTurnService {
       const attemptUsage: Array<UsageRecord | null | undefined> = [];
 
       for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+        // One decision per attempt, shared by the prompt's claims and the launched policy.
+        const sandboxed = await this.deps.launcher.sandboxed();
         const prompt = buildCreativePrompt({
           slug, creative, presets, version: n, kind,
           userText: kind === 'fix' ? undefined : request,
           pins: kind === 'iteration' ? message?.pins : undefined,
           attachments: kind === 'iteration' ? attachments : undefined,
-          problems, context, locale, sandboxed: await this.deps.launcher.sandboxed(),
+          problems, context, locale, sandboxed,
         });
         const snapshotsBefore = await Promise.all(existing.map((p) => codebaseSnapshot(p)));
         for (const [k, p] of existing.entries()) {
@@ -176,7 +178,7 @@ export class CreativeTurnService {
         const run = await this.deps.launcher.start({
           kind: 'creative', jobId, projectSlug: ref.projectSlug, projectDir: ref.projectDir, creativeSlug: slug, codebases: existing,
           request: { prompt, resumeSessionId, forkSession, model },
-          usage: { version: n, attempt },
+          usage: { version: n, attempt }, sandboxed,
           onEvent: (event) => {
             this.deps.broadcast({ type: 'agent', jobId, event });
             // Live usage estimates are only for the UI (up to one a second): the final usage event is the one kept.

@@ -52,6 +52,8 @@ export interface LaunchInput {
   validate?: BridgeContext['validate'];
   /** What the run's ledger line is about (a creative's version and fix-loop attempt); null for other jobs. */
   usage?: { version: number | null; attempt: number | null };
+  /** The sandbox decision the caller already put in the prompt: used as is, so prompt and policy cannot disagree. Computed when absent. */
+  sandboxed?: boolean;
 }
 
 /** The only place that starts the agent: applies the job's policy, the project's rules, the MCP server and the UI prompts. */
@@ -69,7 +71,7 @@ export class AgentLauncher {
 
   async start(i: LaunchInput): Promise<AgentRun> {
     const settings = await this.deps.settings();
-    const sandbox = settings.sandboxMode === 'auto' && (await this.deps.sandbox()).available;
+    const sandbox = i.sandboxed ?? (settings.sandboxMode === 'auto' && (await this.deps.sandbox()).available);
     const home = this.deps.home ?? homedir();
     const { configDir, bridge, mcpCommand, approvals } = this.deps;
     // The file is agent-reachable in the fallback mode: only rules that "Sempre" could have produced are honoured;

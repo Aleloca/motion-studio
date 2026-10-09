@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { workspaceSettingsSchema } from '@motion-studio/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
-import { AgentLauncher, sweepRunDir } from '../src/agent/launcher.ts';
+import { AgentLauncher, sweepRunDir, type LauncherDeps } from '../src/agent/launcher.ts';
 import type { AgentRunner } from '../src/agent/runner.ts';
 import { ApprovalBroker } from '../src/approvals/broker.ts';
 import { PermissionsStore } from '../src/approvals/permissions-store.ts';
@@ -48,10 +48,9 @@ const studioRules = (dir: string) => protectedDirRules(dir, '.studio');
 
 describe('AgentLauncher sandbox caches', () => {
   it('points the caches at <project>/.cache only when sandboxed', { timeout: 20_000 }, async () => {
-    const realHome = process.env.HOME;
-    process.env.HOME = '/fake-home-for-test';
-    let on: Awaited<ReturnType<typeof launch>>;
-    try { on = await launch({ sandbox: async () => ({ available: true, reason: 'ok' }) }); } finally { if (realHome === undefined) delete process.env.HOME; else process.env.HOME = realHome; }
+    vi.stubEnv('HOME', '/fake-home-for-test');
+    const on = await launch({ sandbox: async () => ({ available: true, reason: 'ok' }) });
+    vi.unstubAllEnvs();
     // No cache variable may point into the (fake) real HOME: every one is inside the project.
     for (const k of ['npm_config_cache', 'PIP_CACHE_DIR', 'XDG_CACHE_HOME'] as const) {
       expect(on.cacheEnv[k], k).not.toContain('/fake-home-for-test');
@@ -67,6 +66,25 @@ describe('AgentLauncher sandbox caches', () => {
     expect(off.cacheEnv.PUPPETEER_SKIP_DOWNLOAD).toBe(null);
     const sandboxOff = await launch({ sandbox: async () => ({ available: true, reason: 'ok' }), settings: { sandboxMode: 'off' } });
     expect(sandboxOff.cacheEnv.PIP_CACHE_DIR).toBe(null);
+  });
+});
+
+describe('AgentLauncher sandbox decision', () => {
+  it('a setting toggled between the prompt and start cannot make the policy disagree with the prompt', { timeout: 20_000 }, async () => {
+    const dir = await newProject();
+    const argsFile = join(dir, 'args.json');
+    process.env.FAKE_CLAUDE_ARGS_FILE = argsFile;
+    let mode: 'auto' | 'off' = 'auto';
+    const base = testLauncher(new ClaudeCodeRunner([process.execPath, FAKE]), { sandbox: async () => ({ available: true, reason: 'ok' }) });
+    const launcher = new AgentLauncher({ ...(base as unknown as { deps: LauncherDeps }).deps, settings: async () => workspaceSettingsSchema.parse({ schemaVersion: 1, sandboxMode: mode }) });
+    const decided = await launcher.sandboxed(); // what the prompt claims
+    mode = 'off'; // toggled after the prompt was built
+    const run = await launcher.start({ kind: 'creative', jobId: 'j1', projectSlug: 'acme', projectDir: dir, codebases: [], request: { prompt: 'ciao' }, onEvent: () => {}, sandboxed: decided });
+    await run.done;
+    const { cacheEnv, args } = JSON.parse(await readFile(argsFile, 'utf8'));
+    expect(decided).toBe(true);
+    expect(cacheEnv.npm_config_cache).toBe(join(dir, '.cache', 'npm'));
+    expect(args).toContain('--settings');
   });
 });
 
