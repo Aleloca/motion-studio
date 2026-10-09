@@ -101,6 +101,10 @@ describe('tokenize: env prefixes and wrappers', () => {
     expect(d.env).toEqual({ X: '1' });
     expect(d.argv).toEqual(['rm', '-rf', '/']);
   });
+  it('accepts a whole array, ${a[@]} and ${a[*]}, but no other subscript', () => {
+    expect(one('printf %s "${files[@]}" ${a[*]}').argv).toEqual(['printf', '%s', '${files[@]}', '${a[*]}']);
+    for (const c of ['echo ${a[@]x}', 'echo ${a[@}', 'echo ${a[$i]}', 'echo ${a[@]:1}']) expect(tokenize(c).parsed).toBe(false);
+  });
   it('accepts simple defaults in ${…}', () => {
     expect(one('echo ${HOME} ${X:-a/b.c} ${1} ${X:=x} ${X:+y} ${X-z}').argv).toEqual(['echo', '${HOME}', '${X:-a/b.c}', '${1}', '${X:=x}', '${X:+y}', '${X-z}']);
   });

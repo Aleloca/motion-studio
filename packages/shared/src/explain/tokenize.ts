@@ -354,6 +354,8 @@ export function tokenize(command: string): Tokenized {
     if (j < n && (isNameStart(s[j]!))) { j++; while (j < n && isNameChar(s[j]!)) j++; }
     else while (j < n && s[j]! >= '0' && s[j]! <= '9') j++;
     if (j === nameStart) return -1;
+    // `${files[@]}` and `${files[*]}`: a whole array, no arithmetic subscript.
+    if (s[j] === '[' && (s[j + 1] === '@' || s[j + 1] === '*') && s[j + 2] === ']' && s[j + 3] === '}') { steps += j + 4 - from; return j + 4; }
     if (s[j] === ':') j++;
     if (s[j] === '-' || s[j] === '=' || s[j] === '+' || s[j] === '?') {
       j++;

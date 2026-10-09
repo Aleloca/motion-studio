@@ -19,22 +19,95 @@ const phrase = (key: string, params: Record<string, string | number> = {}): Phra
 
 /** Builtins that evaluate their arguments arithmetically (bash and zsh): a subscript there runs `$(…)`. */
 const ARITH_SINKS = ['exit', 'return', 'shift', 'break', 'continue', 'repeat', 'ulimit', 'sched', 'fc', 'history', 'wait', 'unset', 'read'];
+const DECLARE = ['declare', 'typeset', 'local', 'export', 'readonly', 'integer', 'float'];
+/** Builtins whose operands are arithmetic expressions in zsh (`exit y` evaluates `y`). */
+const NUMERIC_OPERANDS = ['exit', 'return', 'shift', 'break', 'continue', 'repeat'];
+const TEST_OPS = ['-eq', '-ne', '-lt', '-le', '-gt', '-ge'];
+const NUMBER = /^[-+]?(?:0[xX][0-9a-fA-F]+|[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/;
+/** A single expansion and nothing else: `$n`, `${n}`, `$?`, `$#`, `$1`. */
+const LONE_EXPANSION = /^\$(?:[A-Za-z_][A-Za-z0-9_]*|[0-9?#!$@*-]|\{[A-Za-z_][A-Za-z0-9_]*\})$/;
+/** Special parameters that always hold a number. */
+const NUMERIC_SPECIAL = ['$?', '$#', '$!', '$$'];
+
 /**
- * Code stored as data (`'$(…)'` or a backtick in single quotes) plus any arithmetic sink in the same command:
- * `p='a['; q='$(id)]'; x=$p$q; printf %d x` runs id in zsh. Not modeled.
+ * The conversions of a printf format, in order: 'num' (evaluated arithmetically), 'str', or 'strict' (a `*` width or
+ * precision, or a `'` flag: number literals only, and for every operand). Null when the format holds an expansion.
+ * Linear: one pass.
  */
-function hasArithmeticInjection(tok: ReturnType<typeof tokenize>): boolean {
+function printfConversions(format: string): ('num' | 'str' | 'strict')[] | null {
+  if (format.includes('$')) return null;
+  const out: ('num' | 'str' | 'strict')[] = [];
+  for (let i = 0; i < format.length; i++) {
+    if (format[i] !== '%') continue;
+    i++;
+    if (format[i] === '%') continue;
+    let strict = false;
+    while (i < format.length && "-+ #0123456789.'*".includes(format[i]!)) { if (format[i] === '*' || format[i] === "'") strict = true; i++; }
+    const conv = format[i] ?? '';
+    out.push(strict ? 'strict' : 'diouxXeEfFgGaA'.includes(conv) && conv !== '' ? 'num' : 'str');
+  }
+  return out;
+}
+
+/**
+ * Arithmetic contexts evaluate their operands as expressions, and an expression with a subscript runs code
+ * (`p='a[$'; q='(id)]'; printf %d $p$q` runs id in zsh). No data flow is tracked; the rules are structural.
+ * Parsed false when:
+ * - any word holds `$(` or a backtick (code as data) and the command uses any arithmetic builtin;
+ * - an operand of an arithmetic sink (printf/`print -f` with a numeric format, exit, return, shift, break, continue,
+ *   repeat, `test -eq`…) is not a number literal and not a single expansion; a `*` or `'` format takes number literals only;
+ * - a single expansion goes to an arithmetic sink and some variable in the command was set from an expansion, a
+ *   bracket or a parenthesis, or by `read`;
+ * - declare/typeset/local/export/readonly with an integer option, `integer`, `float`, or `unset` of a subscript.
+ */
+function hasArithmeticRisk(tok: ReturnType<typeof tokenize>): boolean {
   const words = tok.commands.flatMap((c) => [...c.argv, ...Object.values(c.env), ...c.redirects.map((r) => r.target)]);
   explainWork.add(words.reduce((n, w) => n + w.length, 0));
-  if (!words.some((w) => w.includes('$(') || w.includes('`'))) return false;
+  const codeAsData = words.some((w) => w.includes('$(') || w.includes('`'));
+  // A variable whose value may hold an expression: set from anything but plain text (`x=$p$q`, `x=$1`, `read x`).
+  const risky = (v: string) => (v.includes('$') && !NUMERIC_SPECIAL.includes(v)) || v.includes('[') || v.includes('(') || v.includes('`');
+  let tainted = false;
+  for (const c of tok.commands) {
+    const name = c.argv[0];
+    if (Object.values(c.env).some(risky)) tainted = true;
+    if (name === 'read' || name === 'vared' || name === 'getopts' || name === 'mapfile' || name === 'readarray') tainted = true;
+    if (name !== undefined && DECLARE.includes(name)) for (const a of c.argv.slice(1)) if (a.includes('=') && risky(a.slice(a.indexOf('=') + 1))) tainted = true;
+  }
+  const okOperand = (a: string) => NUMBER.test(a) || (LONE_EXPANSION.test(a) && !tainted);
   return tok.commands.some((c) => {
     const name = c.argv[0] ?? '';
-    if (name === 'test' || name === '[') return c.argv.some((x) => ['-eq', '-ne', '-lt', '-le', '-gt', '-ge'].includes(x));
-    if (ARITH_SINKS.includes(name)) return true;
-    // A numeric conversion (`%d`, `%5.2f`…). Linear: the flag class can't contain `%`, so runs after each `%` are disjoint.
-    if (name === 'printf' || (name === 'print' && c.argv.includes('-f'))) return c.argv.some((a) => /%[-+ #0-9.]*[diouxXceEfgGa]/.test(a));
-    // `a[x]=…` as a command is already refused (its name has `[`); `(( ))`, `let` and `[[` are refused by the tokenizer.
-    return ['declare', 'typeset', 'local', 'export', 'readonly', 'integer', 'float'].includes(name);
+    const args = c.argv.slice(1);
+    if (codeAsData) {
+      if (name === 'test' || name === '[') { if (args.some((x) => TEST_OPS.includes(x))) return true; }
+      else if (ARITH_SINKS.includes(name) || DECLARE.includes(name)) return true;
+      else if ((name === 'printf' || name === 'print') && args.some((a) => (printfConversions(a) ?? []).some((x) => x !== 'str'))) return true;
+    }
+    if (NUMERIC_OPERANDS.includes(name)) return !args.every(okOperand);
+    if (name === 'test' || name === '[') {
+      return args.some((x, k) => TEST_OPS.includes(x) && !(okOperand(args[k - 1] ?? '') && okOperand(args[k + 1] === ']' ? '' : (args[k + 1] ?? ''))));
+    }
+    if (name === 'printf' || (name === 'print' && args.includes('-f'))) {
+      // The format is the first operand (after `-v var` for printf, after `-f` for print).
+      let k = 0;
+      if (name === 'printf') { while (args[k] === '-v') k += 2; if (args[k] === '--') k++; }
+      else k = args.indexOf('-f') + 1;
+      const format = args[k];
+      if (format === undefined) return false;
+      const operands = args.slice(k + 1);
+      if (operands.length === 0) return false;
+      const convs = printfConversions(format);
+      if (convs === null) return true; // the format itself comes from a variable
+      if (convs.includes('strict')) return !operands.every((x) => NUMBER.test(x));
+      if (!convs.includes('num')) return false;
+      // The format is reused until the operands run out: operand j goes to conversion j mod n.
+      return operands.some((x, j) => convs[j % convs.length] === 'num' && !okOperand(x));
+    }
+    if (DECLARE.includes(name)) {
+      if (name === 'integer' || name === 'float') return true;
+      return args.some((a) => (a.startsWith('-') || a.startsWith('+')) && /[iEF]/.test(a.slice(1)) && !a.includes('='));
+    }
+    if (name === 'unset') return args.some((a) => a.includes('['));
+    return false;
   });
 }
 
@@ -64,47 +137,71 @@ function complex(command: string, ind: Indicators): Phrase[] {
 function explainBash(command: string, ctx: ExplainContext, ind: Indicators): { phrases: Phrase[]; parsed: boolean } {
   const tok = tokenize(command);
   if (!tok.parsed) return { phrases: complex(command, ind), parsed: false };
-  if (hasArithmeticInjection(tok)) return { phrases: complex(command, ind), parsed: false };
+  if (hasArithmeticRisk(tok)) return { phrases: complex(command, ind), parsed: false };
   const st: State = {
     ctx, cwd: normalizeAbs(ctx.cwd ?? ctx.projectDir), altCwds: [], ind, phrases: [], parsed: true,
     pipedIn: false, pipeNet: false, usedNet: false, chainNet: false, written: [], found: null, stdout: null, stdinFile: null,
   };
   /**
-   * The folders the next command may run in. A `cd x` followed by `&&` moves there; followed by `;`, `&`, a newline or `||`
-   * it may have failed, so both folders count ({x, old}); a pipe changes nothing (a subshell). An `||` after a chain
-   * that started with `cd x &&` adds the folder from before the cd. `cd x || exit` leaves only x.
+   * The folders a command may run in, as a set that only grows (a `cd` that may have failed keeps the folder before it).
+   * Each and-or list is followed with two sets: where the shell may be if the last pipeline succeeded (`ok`) or failed
+   * (`fail`). `&&` runs the next pipeline in `ok`, `||` in `fail`, and the other branch is carried along. A `cd x` that
+   * runs alone moves `ok` to x and leaves `fail` where it was; `exit` (alone) ends both (`return` doesn't: bash goes on).
+   * `;`, a newline and `&` start a new list in `ok ∪ fail`; after `&` (the whole list ran in a subshell) the folders from the start of the list are added too.
+   * More than MAX_CWDS folders: unknown (null), so relative paths are rated worst case.
    */
-  let cur: (string | null)[] = [st.cwd];
-  let beforeCd: (string | null)[] | null = null;
-  let ifNoFailure: (string | null)[] | null = null;
-  const uniq = (xs: (string | null)[]) => [...new Set(xs)];
+  const MAX_CWDS = 8;
+  const join = (...xs: (string | null)[][]): (string | null)[] => {
+    const u = [...new Set(xs.flat())];
+    return u.length > MAX_CWDS ? [null] : u;
+  };
+  let listStart: (string | null)[] = [st.cwd];
+  let ok: (string | null)[] = [st.cwd];
+  let fail: (string | null)[] = [];
+  let inSet: (string | null)[] = [st.cwd];
+  let carryOk: (string | null)[] = [];
+  let carryFail: (string | null)[] = [];
+  let pipeStart = 0;
   tok.commands.forEach((c, i) => {
     if (!st.parsed) return;
     const sepBefore = i > 0 ? tok.separators[i - 1] : undefined;
     const sep = tok.separators[i];
+    if (sepBefore !== '|') {
+      // A new pipeline: where it runs depends on the operator before it.
+      pipeStart = i;
+      if (sepBefore === '&&') { inSet = ok; carryOk = []; carryFail = fail; }
+      else if (sepBefore === '||') { inSet = fail; carryOk = ok; carryFail = []; }
+      else {
+        const all = join(ok, fail);
+        inSet = sepBefore === '&' ? join(all, listStart) : all;
+        listStart = inSet;
+        carryOk = []; carryFail = [];
+      }
+      // A pipeline that can't run (after `exit`) is still explained, from an unknown folder.
+      if (inSet.length === 0) inSet = [null];
+    }
     st.pipedIn = sepBefore === '|';
     if (!st.pipedIn) st.pipeNet = false;
     st.usedNet = false;
     st.cdTarget = undefined;
-    st.cwd = cur[0] ?? null;
-    st.altCwds = cur.slice(1);
+    st.cwd = inSet[0] ?? null;
+    st.altCwds = inSet.slice(1);
     explainSimple(c, st);
     if (st.usedNet) { st.pipeNet = true; st.chainNet = true; }
+    if (sep === '|') return; // the pipeline goes on
+    const alone = pipeStart === i;
+    let pOk = inSet;
+    let pFail = inSet;
     if (st.cdTarget !== undefined) {
-      const target = st.cdTarget;
-      if (sep === '|') { /* a subshell: no effect */ }
-      else if (sep === '&&') { beforeCd ??= cur; cur = target; }
-      else {
-        if (sep === '||') ifNoFailure = target;
-        cur = uniq([...target, ...cur]);
-      }
-    } else if (sep === '||' && beforeCd !== null) {
-      ifNoFailure = cur;
-      cur = uniq([...cur, ...beforeCd]);
+      // Alone, a cd moves the shell on success. As the last part of a pipeline (zsh runs it in the shell) it may or may not.
+      if (alone) pOk = join(st.cdTarget);
+      else { pOk = join(inSet, st.cdTarget); pFail = pOk; }
+    } else if (alone && c.argv[0] === 'exit' && c.wrappers.length === 0) {
+      // Only `exit`: bash prints an error for a `return` outside a function and goes on.
+      pOk = []; pFail = [];
     }
-    // `… || exit`: the shell stops when the `||` branch runs, so what follows runs where the chain succeeded.
-    if (sepBefore === '||' && ifNoFailure !== null && (c.argv[0] === 'exit' || c.argv[0] === 'return')) cur = ifNoFailure;
-    if (sep === ';' || sep === '\n' || sep === '&') { beforeCd = null; ifNoFailure = null; }
+    ok = join(carryOk, pOk);
+    fail = join(carryFail, pFail);
   });
   if (!st.parsed) return { phrases: complex(command, ind), parsed: false };
   return { phrases: st.phrases, parsed: true };

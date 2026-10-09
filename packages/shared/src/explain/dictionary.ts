@@ -16,7 +16,7 @@
 import type { IndicatorId, Phrase, Risk } from './types.ts';
 import type { Indicators } from './indicators.ts';
 import { commandFromArgv, isOpaqueCommand, normalizeCommandPath, systemCommandName, type SimpleCommand } from './tokenize.ts';
-import { dirnameAbs, displayLoc, isHarmlessDevice, resolveLocs, type ExplainContext, type Loc } from './paths.ts';
+import { dirnameAbs, displayLoc, isHarmlessDevice, normalizeAbs, resolveLocs, type ExplainContext, type Loc } from './paths.ts';
 import { explainWork } from './work.ts';
 
 export interface State {
@@ -180,7 +180,12 @@ function scriptArgs(st: State, args: readonly string[]): void {
   }
 }
 /** `/dev/stdin`, `//dev/fd/0`, `/proc/self/fd/0`: a script read from stdin. */
-const isStdinPath = (w: string) => ['/dev/stdin', '/dev/fd/0', '/proc/self/fd/0'].includes(normalizeCommandPath(w));
+/** `/dev/stdin`, `//dev/stdin`, `/dev/../dev/stdin`, `/dev/fd/00`, `/proc/self/fd/0`: a script read from stdin. */
+const isStdinPath = (w: string) => {
+  if (['/dev/stdin', '/dev/fd/0', '/proc/self/fd/0'].includes(normalizeCommandPath(w))) return true;
+  if (!w.startsWith('/') || w.length > 256) return false;
+  return /^\/(?:dev\/stdin|dev\/fd\/0+|proc\/(?:self|thread-self|[0-9]+)\/fd\/0+)$/.test(normalizeAbs(w));
+};
 /** Code read from stdin (`curl … | sh`): high when the pipeline downloads it. */
 function runsInput(st: State, lang: 'python' | 'node' | 'shell'): void {
   if (st.stdinFile !== null) {
@@ -721,12 +726,12 @@ function ffPathLike(v: string): boolean {
 const FF_READ_KEYS: Record<string, string[]> = {
   movie: ['filename', '#0'], amovie: ['filename', '#0'], subtitles: ['filename', 'f', '#0', 'fontsdir'], ass: ['filename', 'f', '#0', 'fontsdir'],
   drawtext: ['textfile', 'fontfile'], lut3d: ['file', '#0'], lut1d: ['file', '#0'], haldclut: [], sendcmd: ['filename', 'f', '#0'], asendcmd: ['filename', 'f', '#0'],
-  vidstabtransform: ['input'], ocr: ['datapath'], select: [], coreimage: [], afir: [], headphone: [], sofalizer: ['sofa', '#0'], dnn_processing: ['model'],
+  vidstabtransform: ['input'], ocr: ['datapath'], select: [], coreimage: [], afir: [], headphone: [], sofalizer: ['sofa', '#0'], dnn_processing: ['model'], whisper: ['model', 'vad_model'],
 };
 /** Filter options that write a file. */
 const FF_WRITE_KEYS: Record<string, string[]> = {
   psnr: ['stats_file', 'f', '#0'], ssim: ['stats_file', 'f', '#0'], libvmaf: ['log_path'], vmaf: ['log_path'], metadata: ['file'], ametadata: ['file'],
-  signature: ['filename'], vidstabdetect: ['result'], ebur128: [], identity: ['stats_file', 'f'], msad: ['stats_file', 'f'], corr: ['stats_file', 'f'],
+  signature: ['filename'], vidstabdetect: ['result'], ebur128: [], identity: ['stats_file', 'f'], msad: ['stats_file', 'f'], corr: ['stats_file', 'f'], whisper: ['destination'],
 };
 /** Filters that load plugins or talk to the outside: not modeled. */
 const FF_OPAQUE_FILTERS = ['zmq', 'azmq', 'frei0r', 'frei0r_src', 'ladspa', 'lv2', 'lensfun'];
@@ -775,6 +780,28 @@ function ffmpegFilters(st: State, graph: string): boolean {
   }
   return true;
 }
+/**
+ * A coarse check on a whole filtergraph, before and regardless of any parsing: these filters and keys read or write files
+ * or take commands at run time, and ffmpeg's quoting levels make their values easy to misread. A graph that mentions any
+ * of them gets a generic phrase and medium, whatever the fine parser finds (which can only add to it).
+ */
+const FF_FILE_WORDS = ['sendcmd', 'zmq', 'textfile', 'metadata', 'stats_file', 'psnr', 'ssim', 'signature', 'whisper'];
+const FF_FILE_KEYS = ['file=', 'filename=', 'movie=', 'amovie=', 'destination='];
+function ffTouchesFiles(graph: string): boolean {
+  // Quotes and escapes dropped first, whatever level they belong to: `f'ile'=`, `file\=`, `m\etadata` all match.
+  let g = '';
+  for (const c of graph.toLowerCase()) if (c !== "'" && c !== '\\' && c !== '"') g += c;
+  explainWork.add(g.length * (FF_FILE_WORDS.length + FF_FILE_KEYS.length));
+  if (FF_FILE_WORDS.some((w) => g.includes(w))) return true;
+  // Whole keys only: `fontfile=` is not `file=`.
+  return FF_FILE_KEYS.some((k) => {
+    for (let at = g.indexOf(k); at >= 0; at = g.indexOf(k, at + 1)) {
+      const c = at === 0 ? '' : g[at - 1]!;
+      if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c === '_')) return true;
+    }
+    return false;
+  });
+}
 /** `-x264-params k=v:k2=v2` and friends: the keys that write or read files. */
 const CODEC_PARAM_WRITES = ['stats', 'dump-yuv', 'csv', 'analysis-save', 'analysis-reuse-file', 'recon', 'pass-stats', 'output'];
 const CODEC_PARAM_READS = ['analysis-load', 'qpfile', 'cqmfile', 'cqm-file', 'zonefile', 'dhdr10-info', 'master-display-file', 'scaling-list', 'lambda-file'];
@@ -790,7 +817,9 @@ function codecParams(st: State, v: string): boolean {
   }
   return true;
 }
-function media(st: State, args: string[], kind: 'ffmpeg' | 'ffprobe'): { inputs: string[]; outputs: string[] } | null {
+function media(st: State, args: string[], kind: 'ffmpeg' | 'ffprobe'): { inputs: string[]; outputs: string[]; fileFilters: boolean } | null {
+  /** A filtergraph mentions filters or keys that touch files (`ffTouchesFiles`), or comes from a script we can't see. */
+  let fileFilters = false;
   const inputs: string[] = [];
   const outputs: string[] = [];
   const isFfprobeNoval = (a: string) => (a.startsWith('-show_') && a !== '-show_entries' && a !== '-show_optional_fields') || a.startsWith('-count_')
@@ -800,7 +829,7 @@ function media(st: State, args: string[], kind: 'ffmpeg' | 'ffprobe'): { inputs:
   let lastConsumedIdx = -1;
   let lastWasInput = false;
   const target = (w: string, writes: boolean, fmt: string | null): boolean => {
-    if (fmt === 'lavfi' && !writes) return ffmpegFilters(st, w);
+    if (fmt === 'lavfi' && !writes) { if (ffTouchesFiles(w)) fileFilters = true; return ffmpegFilters(st, w); }
     if (fmt === 'tee' && writes) {
       return w.split('|').every((part) => {
         const p = part.startsWith('[') ? part.slice(part.indexOf(']') + 1) : part;
@@ -813,6 +842,8 @@ function media(st: State, args: string[], kind: 'ffmpeg' | 'ffprobe'): { inputs:
     const a = args[i]!;
     if (a.startsWith('-') && a.length > 1 && !a.includes('$')) {
       if (kind === 'ffmpeg' ? FFMPEG_NOVAL.has(a) : isFfprobeNoval(a)) continue;
+      // `-/filter_complex file` (ffmpeg 7): an option value read from a file we can't see.
+      if (a.startsWith('-/')) { fileFilters = true; read(st, [args[++i] ?? '']); lastConsumedIdx = i; continue; }
       const name = kind === 'ffmpeg' && a.includes(':') ? a.slice(0, a.indexOf(':')) : a;
       const known = kind === 'ffmpeg' ? FFMPEG_VALUE.has(name) || FFMPEG_READ_VALUE.has(name) || FFMPEG_WRITE_VALUE.has(name) : FFPROBE_VALUE.has(name);
       if (!known) unknownOpt(st, name);
@@ -825,15 +856,18 @@ function media(st: State, args: string[], kind: 'ffmpeg' | 'ffprobe'): { inputs:
       if (name === '-i') { inputs.push(v); lastWasInput = true; if (!target(v, false, format)) return null; format = null; continue; }
       lastWasInput = false;
       if (kind === 'ffprobe' && name === '-o') { if (!ffTarget(st, v, true)) return null; outputs.push(v); continue; }
-      if (FFMPEG_READ_VALUE.has(name)) { read(st, [v]); continue; }
+      if (FFMPEG_READ_VALUE.has(name)) { if (name.endsWith('_script')) fileFilters = true; read(st, [v]); continue; }
       if (FFMPEG_WRITE_VALUE.has(name)) { if (!ffTarget(st, v, true)) return null; continue; }
-      if (['-vf', '-af', '-filter', '-filter_complex', '-lavfi'].includes(name) && !ffmpegFilters(st, v)) return null;
+      if (['-vf', '-af', '-filter', '-filter_complex', '-lavfi'].includes(name)) {
+        if (ffTouchesFiles(v)) fileFilters = true;
+        if (!ffmpegFilters(st, v)) return null;
+      }
       if ((v.startsWith('/') || v.startsWith('~') || v.startsWith('$') || v.startsWith('../')) && !isSystemFont(v)) read(st, [v]);
       continue;
     }
     lastWasInput = false;
     if (kind === 'ffmpeg') { outputs.push(a); if (!target(a, true, format)) return null; format = null; }
-    else { inputs.push(a); if (!ffTarget(st, a, false)) return null; }
+    else { inputs.push(a); if (!target(a, false, format)) return null; }
   }
   // ffmpeg's last word is always an output: catch it even after an option we don't know.
   const lastIdx = args.length - 1;
@@ -843,12 +877,13 @@ function media(st: State, args: string[], kind: 'ffmpeg' | 'ffprobe'): { inputs:
     if (!ffTarget(st, last, true)) return null;
   }
   const files = (xs: string[]) => xs.filter((x) => !isUrl(x) && x !== '-' && !x.startsWith('pipe:'));
-  return { inputs: files(inputs), outputs: files(outputs) };
+  return { inputs: files(inputs), outputs: files(outputs), fileFilters };
 }
 def(['ffmpeg'], (args, st) => {
   const m = media(st, args, 'ffmpeg');
   if (m === null) { st.parsed = false; return; }
   const { inputs, outputs } = m;
+  if (m.fileFilters) { add(st, 'complex', 'medium'); P(st, 'filterFiles'); return; }
   if (outputs.length) P(st, 'mediaConvert', { inputs: disp(st, inputs), outputs: disp(st, outputs) });
   else P(st, 'mediaProcess', { inputs: disp(st, inputs) });
 });
@@ -856,6 +891,7 @@ def(['ffprobe'], (args, st) => {
   const m = media(st, args, 'ffprobe');
   if (m === null) { st.parsed = false; return; }
   const { inputs } = m;
+  if (m.fileFilters) { add(st, 'complex', 'medium'); P(st, 'filterFiles'); return; }
   P(st, 'mediaInfo', { paths: disp(st, inputs) });
 });
 def(['sips'], (args, st) => {
@@ -939,10 +975,18 @@ def(['magick', 'convert', 'mogrify', 'identify', 'montage', 'composite'], (args,
       if (arity === undefined) { unknownOpt(st, a); continue; } // unknown: its values (if any) are classified as words
       const values = rest.slice(i + 1, i + 1 + arity);
       i += arity;
-      if (opt === 'write') { for (const v of values) writes.push(stripCoder(v)); continue; }
-      // `-set filename:x …` names output files from image properties (`out_%[filename:x].png`): not modeled.
-      if (opt === 'set' && (values[0] ?? '').startsWith('filename:')) { st.parsed = false; return; }
-      if (opt === 'set' || opt === 'define') for (const v of values) { const pv = v.includes('=') ? v.slice(v.indexOf('=') + 1) : v; if (pathLike(pv) && !isSystemFont(pv)) read(st, [pv]); }
+      if (opt === 'write') {
+        // A run-time name (`%[filename:x]`) can point anywhere: not modeled, as for output words.
+        if (values.some((v) => v.includes('%['))) { st.parsed = false; return; }
+        for (const v of values) writes.push(stripCoder(v));
+        continue;
+      }
+      const setKey = opt === 'set' ? (values[0] ?? '').toLowerCase() : '';
+      // `-set filename:x …` (any case) names output files from image properties (`out_%[filename:x].png`): not modeled.
+      if (setKey.startsWith('filename:')) { st.parsed = false; return; }
+      // `-set comment|label|caption|title <text>`: the value is text, not a path (`@file` is still refused below).
+      const textValue = ['comment', 'label', 'caption', 'title'].includes(setKey);
+      if ((opt === 'set' && !textValue) || opt === 'define') for (const v of values) { const pv = v.includes('=') ? v.slice(v.indexOf('=') + 1) : v; if (pathLike(pv) && !isSystemFont(pv)) read(st, [pv]); }
       for (const v of values) {
         // Text and drawing values can read files (`@file`, `image Over … 'file'`, `url(…)`): not modeled.
         if (v.includes('@') && (opt === 'annotate' || opt === 'label' || opt === 'caption' || opt === 'comment' || opt === 'draw' || opt === 'title' || opt === 'set')) { st.parsed = false; return; }
@@ -1063,6 +1107,8 @@ export function isDangerousEnv(name: string): boolean {
 function isLocationEnv(name: string): boolean {
   const n = name.toUpperCase();
   if (CODE_PATH_ENV.includes(n)) return false; // PYTHONPATH, NODE_PATH…: their own rule (runs-code medium when outside)
+  // Output locations: `OUT`, `OUTPUT`, `DEST`, `DIR` and the same as suffixes (`OUT_DIR`, `RENDER_OUT`, `BUILD_DEST`).
+  if (['OUT', 'OUTPUT', 'DEST', 'DIR', 'OUTDIR'].includes(n) || ['_OUT', '_OUTPUT', '_DEST', 'OUTDIR'].some((x) => n.endsWith(x))) return true;
   return n.endsWith('CONFIG') || n.endsWith('_CONFIG_FILE') || n.endsWith('_FILE') || n.endsWith('_RC') || n.endsWith('RCFILE') || n.endsWith('_HOME')
     || n.endsWith('_DIR') || n.endsWith('_PATH') || ['XDG_', 'MAGICK_', 'RUBY', 'BUN_', 'DENO_', 'FFREPORT', 'LESS', 'RIPGREP_', 'CURL_', 'WGET', 'SSH_', 'GNUPG', 'GPG_', 'PIP_', 'GEM_', 'CARGO_', 'GO'].some((p) => n.startsWith(p));
 }
@@ -1077,6 +1123,10 @@ function envValueOutside(st: State, value: string): boolean {
 }
 /** An env assignment we refuse to model: a loader or config name, or a location name pointing outside the project. */
 export function envRisky(st: State, name: string, value: string): boolean {
+  // `GIT_PAGER=cat git log`, `PAGER=cat`: no pager at all.
+  if ((name === 'GIT_PAGER' || name === 'PAGER') && value === 'cat') return false;
+  // `TMPDIR=./tmp`: a temp folder inside the project.
+  if (name === 'TMPDIR' && value !== '' && !value.includes('$')) return locsOf(st, value).some((l) => l.cls !== 'work' && l.cls !== 'project');
   return isDangerousEnv(name) || (isLocationEnv(name) && envValueOutside(st, value));
 }
 /** Variables that make an interpreter load code from a folder: outside the project, that's code we can't see. */
@@ -1164,7 +1214,12 @@ def(['python', 'python3', 'pypy3'], (args, st) => {
           pythonModule(v, args.slice(i + 1), st);
           return;
         }
-        if (ch === 'W' || ch === 'X') { if (a.slice(k + 1) === '') i++; break; }
+        if (ch === 'W' || ch === 'X') {
+          // `-uX pycache_prefix=…` and `-uXpycache_prefix=…`: the same value checks as the separate forms.
+          const v = a.slice(k + 1) !== '' ? a.slice(k + 1) : args[++i];
+          if (ch === 'X' && v?.startsWith('pycache_prefix=')) codeFrom(st, v.slice(15));
+          break;
+        }
         if (!PY_NOVAL.includes(ch)) unknownOpt(st, `-${ch}`);
       }
       continue;
@@ -1595,6 +1650,12 @@ def(['git'], (args, st) => {
       return;
     }
     const o = opts(st, rest, { ...spec, f: [...(spec.f ?? []), '-q', '--quiet', '-h', '--help'] });
+    // Read-only listings: `git branch [-a|-r|-v] [--list <pattern>]`, `git tag [-l <pattern>]`, `git worktree list`.
+    const listing = (sub === 'branch' || sub === 'tag')
+      && !has(o, '-d', '-D', '-m', '-M', '-c', '-C', '--delete', '--move', '--copy', '-f', '--force', '-u', '--set-upstream-to', '--unset-upstream', '-t', '--track', '--no-track', '--edit-description')
+      && !(sub === 'tag' && has(o, '-a', '-s', '--annotate', '--sign', '-m', '-F', '--message', '--file', '-v', '--verify'))
+      && (o.operands.length === 0 || has(o, '-l', '--list'));
+    if (listing || (sub === 'worktree' && o.operands[0] === 'list')) { P(st, 'gitInfo'); return; }
     if (spec.changes) add(st, 'changes-git', 'medium');
     if (spec.net) add(st, 'uses-network', 'medium');
     switch (sub) {
@@ -1626,11 +1687,7 @@ def(['git'], (args, st) => {
       case 'push': case 'pull': case 'fetch': P(st, 'gitSync', { sub }); return;
       case 'rm': if (!has(o, '--cached')) del(st, o.operands); P(st, 'gitChange', { sub }); return;
       case 'clean': if (!has(o, '-n', '--dry-run')) del(st, o.operands.length ? o.operands : ['.']); P(st, 'gitChange', { sub }); return;
-      case 'branch': case 'tag': {
-        const listing = o.operands.length === 0 && !has(o, '-d', '-D', '-m', '-M', '-c', '-C', '--delete', '--move', '--copy', '-f', '--force', '-a', '-s', '-u', '--set-upstream-to');
-        if (listing) { P(st, 'gitInfo'); return; }
-        P(st, 'gitChange', { sub }); return;
-      }
+      case 'branch': case 'tag': P(st, 'gitChange', { sub }); return;
       case 'remote': {
         const op = o.operands[0];
         if (op === undefined || op === 'show' || op === 'get-url') { P(st, 'gitInfo'); return; }
@@ -1916,6 +1973,7 @@ def(['tee'], (args, st) => {
   write(st, o.operands);
   P(st, 'writeFile', { paths: disp(st, o.operands) });
 });
+const XARGS_INTERPRETERS = ['python', 'node', 'perl', 'ruby', 'php', 'bun', 'deno', 'osascript', 'lua', 'sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'pypy', 'tclsh', 'Rscript'];
 def(['xargs'], (args, st) => {
   const VALUE = ['-n', '-L', '-P', '-s', '-d', '-E', '-e', '-I', '-J', '-R', '-S', '-a', '--arg-file', '--max-args', '--max-procs', '--delimiter', '--replace', '--max-chars', '--eof', '--max-lines'];
   const NOVAL = ['-0', '-r', '-t', '-p', '-x', '-o', '--null', '--no-run-if-empty', '--verbose', '--interactive', '--exit', '--open-tty'];
@@ -1936,6 +1994,9 @@ def(['xargs'], (args, st) => {
   if (isOpaqueCommand(inner)) { st.parsed = false; return; }
   const token = replace !== null && replace !== '' && inner.some((w) => w.includes(replace!)) ? replace : PLACEHOLDER_INPUT;
   subExplain(token === PLACEHOLDER_INPUT ? [...inner, PLACEHOLDER_INPUT] : inner, st, { token, locs: [UNKNOWN_LOC('…')] });
+  // `curl … | xargs -0 python3 -c`: downloaded text handed to an interpreter as its code or arguments.
+  const prog = (commandFromArgv(inner)?.argv[0] ?? inner[0]!).replace(/^.*\//, '');
+  if (st.pipedIn && st.pipeNet && XARGS_INTERPRETERS.some((x) => prog === x || prog.startsWith(`${x}3`) || prog.startsWith(`${x}.`) || prog.startsWith(`${x}-`))) add(st, 'runs-code', 'high');
   P(st, 'xargs', { cmd: inner[0]! });
 });
 /** File types `open` hands to a viewer; anything else may be an app, a script or an installer. */
@@ -1961,7 +2022,7 @@ def(['open'], (args, st) => {
 });
 def(['which', 'whereis', 'type', 'command'], (args, st) => P(st, 'which', { cmd: fmtList(args.filter((a) => !a.startsWith('-'))) }));
 def(['pwd'], (args, st) => { opts(st, args, { f: ['-L', '-P'] }); P(st, 'pwd'); });
-def(['whoami', 'uname', 'id', 'sw_vers', 'nproc', 'uptime', 'df', 'locale', 'system_profiler', 'ps', 'top', 'lsof', 'groups', 'tty', 'cal', 'vm_stat', 'xcrun'], (_args, st) => P(st, 'sysInfo'));
+def(['whoami', 'uname', 'id', 'sw_vers', 'nproc', 'uptime', 'df', 'locale', 'system_profiler', 'ps', 'top', 'lsof', 'groups', 'tty', 'cal', 'vm_stat', 'xcrun', 'jobs'], (_args, st) => P(st, 'sysInfo'));
 // pure reader: `arch` without a command only prints the architecture (with one, the tokenizer unwraps it).
 def(['arch'], (args, st) => { opts(st, args, { any: true }); P(st, 'sysInfo'); });
 def(['caffeinate'], (args, st) => { opts(st, args, { f: ['-d', '-i', '-m', '-s', '-u'], v: ['-t', '-w'] }); P(st, 'noop'); });
@@ -2016,13 +2077,15 @@ def(['enable'], (args, st) => {
   P(st, 'shellOption');
 });
 def(['printenv'], (_args, st) => P(st, 'printEnv'));
-def(['true', 'false', ':', 'exit', 'wait'], (_args, st) => P(st, 'noop'));
+def(['true', 'false', ':', 'exit', 'wait', 'return', 'shift', 'break', 'continue'], (_args, st) => P(st, 'noop'));
 def(['set'], (_args, st) => P(st, 'shellOption'));
 def(['shopt'], (_args, st) => { st.parsed = false; });
 def(['test', '['], (args, st) => {
   // `test -v 'a[$(cmd)]'` evaluates the subscript.
   if (args.some((a) => a.includes('['))) { st.parsed = false; return; }
-  read(st, args.filter((a) => pathLike(a) && a !== ']'));
+  // The operands of `-eq`…`-ge` are numbers, not paths (`[ $# -eq 0 ]`).
+  const NUM_OPS = ['-eq', '-ne', '-lt', '-le', '-gt', '-ge'];
+  read(st, args.filter((a, k) => pathLike(a) && a !== ']' && !NUM_OPS.includes(args[k - 1] ?? '') && !NUM_OPS.includes(args[k + 1] ?? '')));
   P(st, 'check');
 });
 def(['export', 'unset', 'readonly', 'declare', 'typeset', 'local', 'read'], (args, st, name) => {
