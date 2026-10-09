@@ -314,3 +314,6 @@
 .ms-review-confirm { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
 .ms-bguide-ask { align-items: center; }
 .ms-bguide-ask .ms-bwarn { margin-right: auto; font-size: 13px; }
+
+/* Tokens of an analysis (spec §5.4): mono, tabular. */
+.ms-btokens { font-family: var(--mono); font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }

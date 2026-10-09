@@ -1,5 +1,5 @@
 // Brand page side column: proposal ready, live analysis, sources, brand health and the analyses so far.
-import type { BrandOverview, BrandProposal, BrandSource, JobSummary } from '@motion-studio/shared';
+import { shownTotal, type BrandOverview, type BrandProposal, type BrandSource, type JobSummary } from '@motion-studio/shared';
 import { useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { api } from '../api.ts';
 import { ApprovalCard } from '../components/ApprovalCard.tsx';
@@ -11,6 +11,11 @@ import { analysisSteps, healthChecks, hostOf, normalizeUrl, type HealthId } from
 import { KEEPALIVE, deferRemoval, flushDeferred, isPendingRemoval, removalKey, usePendingRemovals } from './deferred.ts';
 import { isActive, useBrand, useAppear, type SectionId } from './brandContext.tsx';
 import { message } from './common.tsx';
+import { formatTokens, TokenCount } from '../shell/Tokens.tsx';
+import { jobLiveTokens } from '../usageLive.ts';
+
+/** An analysis' tokens from its proposal; null for proposals from before usage tracking. */
+const proposalTokens = (p: BrandProposal) => (p.usage ? shownTotal(p.usage.tokens) : null);
 /* ---------- side column: analysis, sources, health, history ---------- */
 
 export function ProposalReady({ proposal, onReview }: { proposal: BrandProposal; onReview(): void }) {
@@ -22,7 +27,8 @@ export function ProposalReady({ proposal, onReview }: { proposal: BrandProposal;
   return (
     <div className="ms-bready" ref={ref}>
       <span className="ms-bready-icon" aria-hidden="true"><Icon name="sparkle" size={15} /></span>
-      <span className="ms-bready-text"><b>{a.readyTitle}</b><span className="ms-muted">{a.readySub({ count })}</span></span>
+      <span className="ms-bready-text"><b>{a.readyTitle}</b><span className="ms-muted">{a.readySub({ count })}</span>
+        <TokenCount tokens={proposalTokens(proposal)} className="ms-btokens" /></span>
       <Button variant="ink" size="sm" onClick={onReview}>{a.review}</Button>
     </div>
   );
@@ -45,6 +51,7 @@ export function AnalysisCard({ job, live }: { job: JobSummary; live: EventsState
       <div className="ms-brow">
         <Spinner decorative size={14} />
         <b id="ms-banalysis-title">{a.title}</b>
+        <TokenCount tokens={jobLiveTokens(live, job.id)} live className="ms-btokens" />
         <Button variant="ghost" size="sm" className="ms-bpush" loading={cancelling} onClick={cancel}>{a.cancel}</Button>
       </div>
       {/* report_progress carries text only: the bar is indeterminate, never a made-up percentage. */}
@@ -236,6 +243,7 @@ export function History({ proposals, undone }: { proposals: BrandProposal[]; und
       {list.map((p) => (
         <span key={p.id} className="ms-muted ms-bsmall-text">
           {`${formatWhen(locale, p.createdAt)} · ${p.status === 'applied' ? h.applied : p.status === 'discarded' ? h.discarded : h.open}${undone.has(p.id) ? ` · ${h.undone}` : ''}`}
+          {p.usage ? <span className="ms-btokens">{` · ${t.web.usage.tokens({ count: formatTokens(locale, proposalTokens(p)!) })}`}</span> : null}
         </span>
       ))}
     </section>

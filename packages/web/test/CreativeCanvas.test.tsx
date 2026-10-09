@@ -681,3 +681,56 @@ describe('CreativeCanvas · review round 1', () => {
   });
 });
 
+
+describe('CreativeCanvas · tokens (Phase 8)', () => {
+  const used = { tokens: { input: 30_000, output: 8_000, cacheRead: 900_000, cacheWrite: 400 }, costUsd: 0.42 };
+  const withUsage = (v: VersionEntry, usage = used): VersionEntry => ({ ...v, usage });
+
+  it('the version card shows tokens and cost with a breakdown and the billing note; a version without usage shows none', async () => {
+    detail = makeDetail([version(1, 'Dal brief'), withUsage(version(2, 'Più caldo'))]);
+    conversation = [
+      { type: 'version', at, n: 1, status: 'complete' },
+      { type: 'user', at, text: 'Più caldo', pins: [], attachments: [] },
+      { type: 'version', at, n: 2, status: 'complete' },
+    ];
+    const live = { ...emptyLive(), today: { day: '2026-10-09', tokens: 0, billing: 'subscription', jobs: {} } } as unknown as EventsState;
+    render(<Harness live={live} />);
+    await ready();
+    const cards = await waitFor(() => { const c = [...document.querySelectorAll('.ms-convo-version')]; expect(c).toHaveLength(2); return c as HTMLElement[]; });
+    expect(cards[0]!.textContent).not.toMatch(/token/);
+    const badge = within(cards[1]!).getByRole('button', { name: /^38,4k token · 0,42/ });
+    await userEvent.click(badge);
+    const pop = await screen.findByRole('dialog', { name: 'Dettaglio dei token' });
+    expect(within(pop).getByText('30.000')).toBeTruthy();
+    expect(within(pop).getByText('900.000')).toBeTruthy(); // cache reads only here
+    expect(pop.textContent).toContain('Rientra nel tuo piano Claude');
+  });
+
+  it('the Brief panel shows the creative total; older versions are said not to be counted', async () => {
+    detail = makeDetail([version(1, 'Dal brief'), withUsage(version(2)), withUsage(version(3), { ...used, costUsd: null } as never)]);
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
+    const value = screen.getByText('Token').closest('.ms-cv-brief-row')!;
+    expect(value.textContent).toContain('76,8k token · ≥');
+    expect(value.textContent).toContain('non sono incluse');
+  });
+
+  it('no version with usage: no total row', async () => {
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
+    expect(screen.queryByText('Token')).toBeNull();
+  });
+
+  it('a live counter sits beside the status pill while the job runs, and nothing before its first usage event', async () => {
+    const job = { id: 'j1', key: 'creative:/w:acme:lancio', kind: 'creative', label: 'x', state: 'running', createdAt: at };
+    const base = { ...emptyLive(), jobs: { j1: job } } as unknown as EventsState;
+    const { rerender } = render(<Harness live={base} />);
+    await ready();
+    const bar = document.querySelector('.ms-topbar')!;
+    expect(bar.querySelector('.ms-cv-tokens')).toBeNull();
+    await act(async () => { rerender(<Harness live={{ ...base, jobUsage: { j1: { done: 1000, runs: 1, peak: 1500 } } } as unknown as EventsState} />); });
+    expect(bar.querySelector('.ms-cv-tokens')?.textContent).toBe('1,5k token');
+  });
+});

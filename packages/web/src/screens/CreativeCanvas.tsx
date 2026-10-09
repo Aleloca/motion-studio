@@ -3,7 +3,7 @@
 // safe zones with a legend, V/C/H tools), Figma-style comments that become chips of the composer, the Chat · Comments ·
 // Brief panel, the version history with Compare, and Export. Replaces the interim CreativePage. A board opens in the
 // format view (screens/FormatView.tsx) with T3.
-import { channelName, formatName, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type VersionEntry } from '@motion-studio/shared';
+import { addTokens, channelName, formatName, shownTotal, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type VersionEntry } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api.ts';
@@ -18,6 +18,8 @@ import { setFrameOrigin, setShownVersion, takeFrameOrigin, takeShownVersion } fr
 import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { Button, ChannelMark, Empty, Icon, Input, Pill, Spinner, Tabs, Tag, Toggle, cx, toast } from '../ui/index.ts';
 import { useCreative } from '../useCreative.ts';
+import { jobLiveTokens } from '../usageLive.ts';
+import { costText, TokenCount, UsageBadge } from '../shell/Tokens.tsx';
 import { boardLabel, CanvasBoard, type Draft, type Tool } from './CanvasBoard.tsx';
 import { boardsOf, fitBoards, isTall, ratioText, type BoardModel } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
@@ -316,7 +318,11 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
     <div ref={root} className="ms-cv">
       {bar?.title ? createPortal(
         <BarTitle title={title} renaming={renaming} onStart={startRename} onChange={setRenaming} onSave={(v) => void saveTitle(v)} onCancel={() => setRenaming(null)}
-          state={<StatePill status={cr.status} needs={myApprovals.length > 0} working={working} />} />,
+          state={<>
+            <StatePill status={cr.status} needs={myApprovals.length > 0} working={working} />
+            {/* Live tokens of the job (all its runs); nothing until its first usage event, e.g. right after a reconnect. */}
+            {working && job ? <TokenCount tokens={jobLiveTokens(live, job.id)} live className="ms-cv-tokens" /> : null}
+          </>} />,
         bar.title,
       ) : null}
       {bar?.end ? createPortal(
@@ -426,7 +432,8 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
           <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={job} live={job ? live.events[job.id] ?? [] : []}
             pins={pins} onRemovePin={removePin} onEditPin={(i) => editPin(i + 1)} formatName={formatLabel}
             canGenerate={versions.length === 0} onSent={({ pins: sent }) => { setStored((ps) => ps.filter((p) => !sent.includes(p.pin))); setPicked(null); reload(); }}
-            onSelectVersion={(v) => setPicked(v)} snapshots={live.snapshots} />
+            onSelectVersion={(v) => setPicked(v)} snapshots={live.snapshots}
+            versionExtra={(n) => <UsageBadge usage={versions.find((v) => v.n === n)?.usage} billing={live.today?.billing ?? null} />} />
         ) : null}
         {tab === 'comments' ? <CommentsTab sent={sent} working={working} formatLabel={formatLabel} onStart={() => { setTool('comment'); }} /> : null}
         {/* Kept mounted while hidden, so an unsaved brief draft survives tab switches. */}
@@ -564,6 +571,37 @@ function CommentsTab({ sent, working, formatLabel, onStart }: { sent: SentCommen
   );
 }
 
+/** The creative's tokens: the sum of its versions' usage; null when no version has any (older creatives). */
+export function creativeUsage(versions: VersionEntry[]): { tokens: number; costUsd: number | null; estimated: boolean; partial: boolean } | null {
+  const tracked = versions.filter((v) => v.usage);
+  if (!tracked.length) return null;
+  const tokens = tracked.reduce((sum, v) => addTokens(sum, v.usage!.tokens), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+  const costs = tracked.map((v) => v.usage!.costUsd).filter((c): c is number => c !== null);
+  return {
+    tokens: shownTotal(tokens),
+    costUsd: costs.length ? costs.reduce((a, b) => a + b, 0) : null,
+    estimated: costs.length < tracked.length || tracked.some((v) => v.usage!.estimated),
+    partial: tracked.length < versions.length,
+  };
+}
+
+function CreativeTokens({ versions }: { versions: VersionEntry[] }) {
+  const t = useT();
+  const locale = useLocale();
+  const u = creativeUsage(versions);
+  if (!u) return null;
+  const cost = costText(t, locale, u.costUsd, u.estimated);
+  return (
+    <div className="ms-cv-brief-row">
+      <span className="ms-cap">{t.web.usage.creativeTotal}</span>
+      <div className="ms-cv-brief-value">
+        <span className="ms-cv-brief-tokens"><TokenCount tokens={u.tokens} />{cost ? ` · ${cost}` : ''}</span>
+        {u.partial ? <span className="ms-cv-brief-note">{t.web.usage.untracked}</span> : null}
+      </div>
+    </div>
+  );
+}
+
 function BriefTab({ project, detail, presets, disabled, formatLabel, onChanged }: {
   project: string; detail: NonNullable<ReturnType<typeof useCreative>['detail']>; presets: FormatPreset[]; disabled: boolean; formatLabel(id: string): string; onChanged(): void;
 }) {
@@ -591,6 +629,7 @@ function BriefTab({ project, detail, presets, disabled, formatLabel, onChanged }
       {row(c.formats, <span className="ms-cv-brief-tags">{b.formats.map((f) => <Tag key={f}>{formatLabel(f)}</Tag>)}</span>)}
       {b.assets.length ? row(c.assets, <span className="ms-cv-brief-tags">{b.assets.map((a) => <Tag key={a}>{a.replace(/^assets\//, '')}</Tag>)}</span>) : null}
       {b.notes ? row(c.notes, b.notes) : null}
+      <CreativeTokens versions={detail.versions} />
       <Button variant="outline" className="ms-cv-brief-edit-btn" onClick={() => setEditing(true)}><Icon name="edit" size={13} />{c.edit}</Button>
     </div>
   );

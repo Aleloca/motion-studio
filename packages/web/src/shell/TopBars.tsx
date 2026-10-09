@@ -7,6 +7,7 @@ import { ActivityCenter } from './ActivityCenter.tsx';
 import { setBarSlot, useBarSlots } from './barSlots.ts';
 import { ProjectSwitcher } from './ProjectSwitcher.tsx';
 import { go, useShell } from './ShellContext.tsx';
+import { TokensButton } from './Tokens.tsx';
 import { isMac } from '../platform.ts';
 
 /** Bar tabs (spec §6.1). */
@@ -86,7 +87,13 @@ function Bell() {
   );
 }
 
-/** Account menu (spec §6.1): Settings, System check, Replay setup. No token counter until Phase 8. */
+/** Today's tokens of the workspace, live (spec §5.4): "—" until the ledger's day total arrives. */
+function Tokens() {
+  const { live } = useShell();
+  return <TokensButton tokens={live.today?.tokens ?? null} />;
+}
+
+/** Account menu (spec §6.1): Settings, System check, Replay setup. */
 function AccountMenu() {
   const t = useT();
   const s = t.web.shell;
@@ -114,12 +121,13 @@ function Status({ running = true }: { running?: boolean }) {
     <div className="ms-topbar-end">
       {running ? <RunningBadge /> : null}
       <Bell />
+      <Tokens />
       <AccountMenu />
     </div>
   );
 }
 
-/** Global bar (Projects, Settings): logo, central search, "N running", bell, avatar. */
+/** Global bar (Projects, Settings): logo, central search, "N running", bell, tokens, avatar. */
 export function GlobalTop({ title }: { title?: string }) {
   return (
     <>
@@ -132,7 +140,7 @@ export function GlobalTop({ title }: { title?: string }) {
   );
 }
 
-/** Project bar: logo, project switcher, section tabs, "N running", bell, avatar. */
+/** Project bar: logo, project switcher, section tabs, "N running", bell, tokens, avatar. */
 export function ProjectTop({ slug, tab }: { slug: string; tab: ProjectTab }) {
   const t = useT();
   return (

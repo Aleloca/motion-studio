@@ -51,6 +51,8 @@ export interface ConversationProps {
   /** After a successful send, with the pins that went with it (pins added meanwhile stay pending). */
   onSent?(sent: { pins: Pin[] }): void;
   onSelectVersion?(n: number): void;
+  /** Extra content of a version card, e.g. its token usage (nothing when it returns null). */
+  versionExtra?(n: number): ReactNode;
   /** Socket snapshots received (EventsState.snapshots): a new one is the core's whole state, so stop waiting. */
   snapshots?: number;
 }
@@ -124,7 +126,7 @@ function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], r
  * only in "Activity details", the job's approvals in the flow, typing dots while the agent works (T9), and the
  * composer with the pending comment chips and ⌘↵.
  */
-export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, onSelectVersion, snapshots }: ConversationProps) {
+export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, onSelectVersion, versionExtra, snapshots }: ConversationProps) {
   const t = useT();
   const c = t.web.chat;
   const working = active(job);
@@ -234,7 +236,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
         {empty && <li className="ms-convo-empty"><Empty icon="comment" title={c.emptyTitle} sub={c.emptySub} /></li>}
         {items.map((item) => (
           <Row key={item.key} animate={mounted.current && item.kind !== 'approval'}>
-            <ItemView item={item} formatName={formatName} onToggleFold={toggleFold} onToggleDetails={toggleDetails} onOpenDetails={openDetails} onSelectVersion={onSelectVersion} onGone={gone} />
+            <ItemView item={item} formatName={formatName} onToggleFold={toggleFold} onToggleDetails={toggleDetails} onOpenDetails={openDetails} onSelectVersion={onSelectVersion} versionExtra={versionExtra} onGone={gone} />
           </Row>
         ))}
       </ol>
@@ -281,9 +283,9 @@ function PinLabel({ pin, text }: { pin: Pin; text: string }) {
   );
 }
 
-function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetails, onSelectVersion, onGone }: {
+function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetails, onSelectVersion, versionExtra, onGone }: {
   item: Item; formatName?(id: string): string; onToggleFold(jobId: string): void; onToggleDetails(jobId: string): void; onOpenDetails(jobId: string): void;
-  onSelectVersion?(n: number): void; onGone(id: string): void;
+  onSelectVersion?(n: number): void; versionExtra?(n: number): ReactNode; onGone(id: string): void;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -346,6 +348,7 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
         <div className="ms-convo-version">
           <span className={cx('ms-pill', item.complete ? 'ms-ok' : 'ms-warn')}>v{item.n} · {item.complete ? t.web.status.ready : t.web.status.incomplete}</span>
           <span className="ms-grow" />
+          {versionExtra?.(item.n) ?? null}
           <Button size="sm" variant="outline" onClick={() => onSelectVersion?.(item.n)}>{t.web.conversation.viewVersion({ n: item.n })}</Button>
         </div>
       );

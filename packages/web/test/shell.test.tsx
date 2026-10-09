@@ -126,14 +126,26 @@ describe('top bar bell', () => {
     expect(within(bell).queryByText(/\d/)).toBeNull();
   });
 
-  it('shows "N running" from the active jobs and no token counter or theme switch', async () => {
+  it('shows "N running" from the active jobs and no theme switch', async () => {
     await startApp();
     expect(screen.queryByText(/in corso$/)).toBeNull();
     send({ type: 'job', job: job('j1', 'running', 'Lancio') });
     send({ type: 'job', job: job('j2', 'queued', 'Teaser') });
     expect(screen.getByRole('button', { name: '2 in corso' })).toBeTruthy();
-    expect(screen.queryByText(/token/i)).toBeNull();
     expect(screen.queryByRole('radiogroup', { name: 'Tema' })).toBeNull();
+  });
+
+  it("shows today's tokens: \"—\" until the day total arrives, then live, and opens Settings → Usage", async () => {
+    vi.mocked(api.getUsage).mockResolvedValue({ from: '', to: '', total: { tokens: { input: 38_000, output: 200, cacheRead: 5_000_000, cacheWrite: 40 }, costUsd: 1 }, byDay: [], byProject: [], byKind: [], trackedSince: null, billing: 'subscription', utcOffsetMinutes: 0 });
+    await startApp();
+    const tokens = screen.getByRole('button', { name: 'Token usati oggi: —. Apri Utilizzo' });
+    expect(tokens.textContent).toBe('— token');
+    await act(async () => { sockets.at(-1)!.onmessage!({ data: JSON.stringify(snapshot([])) }); });
+    expect(tokens.textContent).toBe('38,2k token'); // cache reads are not in the total
+    send({ type: 'agent', jobId: 'j1', event: { kind: 'usage', live: true, tokens: { input: 1000, output: 0, cacheRead: 0, cacheWrite: 0 }, costUsd: null } });
+    expect(tokens.textContent).toBe('39,2k token');
+    fireEvent.click(tokens);
+    expect(location.hash).toBe('#/settings/usage');
   });
 
   it('keeps one bell with the right count when an approval arrives while the page changes', async () => {

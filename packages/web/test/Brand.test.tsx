@@ -367,3 +367,31 @@ describe('Brand · fix round 1', () => {
     expect(normalizeHex('12')).toBeNull();
   });
 });
+
+describe('Brand · tokens per analysis (Phase 8)', () => {
+  const proposal = (id: string, createdAt: string, over: Partial<BrandProposal> = {}): BrandProposal => ({
+    schemaVersion: 1, id, createdAt, sourceIds: ['s-1'], status: 'applied', summary: 'ok', guidelines: null, assetsAdded: [], changes: [], ...over,
+  } as BrandProposal);
+
+  it('the Analyses rows show tokens when the proposal has usage, and nothing for older ones', async () => {
+    overview.proposals = [
+      proposal('p-old', '2026-10-01T09:00:00.000Z'),
+      proposal('p-new', '2026-10-08T09:00:00.000Z', { usage: { tokens: { input: 12_000, output: 300, cacheRead: 80_000, cacheWrite: 0 }, costUsd: 0.1 } }),
+    ];
+    en(<Brand slug="acme" live={live()} />);
+    const history = await screen.findByRole('region', { name: 'Analyses' });
+    const rows = [...history.querySelectorAll('.ms-bsmall-text')];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.textContent).toContain('12.3k tokens');
+    expect(rows[1]!.textContent).not.toMatch(/token/);
+  });
+
+  it('the running analysis card shows its live tokens once known', async () => {
+    const running = job();
+    const { rerender } = en(<Brand slug="acme" live={live({ jobs: { j1: running } })} />);
+    const card = await screen.findByRole('region', { name: 'Learning the brand' });
+    expect(card.querySelector('.ms-btokens')).toBeNull();
+    rerender(<I18nProvider locale="en"><Brand slug="acme" live={live({ jobs: { j1: running }, jobUsage: { j1: { done: 0, runs: 0, peak: 2400 } } })} /></I18nProvider>);
+    await waitFor(() => expect(card.querySelector('.ms-btokens')?.textContent).toBe('2.4k tokens'));
+  });
+});
