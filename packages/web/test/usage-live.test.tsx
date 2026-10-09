@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { messages, type AgentEvent, type JobSummary, type ServerMessage, type TokenCounts, type UsageReport, type VersionEntry } from '@motion-studio/shared';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,7 +12,7 @@ const { eventsReducer, initialEventsState } = await import('../src/eventsReducer
 type EventsState = import('../src/eventsReducer.ts').EventsState;
 const { jobLiveTokens, jobFinalTokens, jobUsagePartial, localMidnightIso, localDay, todayTokens } = await import('../src/usageLive.ts');
 const { USAGE_RETRY_MS } = await import('../src/useServerEvents.ts');
-const { billingNote, formatTokens, TokensButton } = await import('../src/shell/Tokens.tsx');
+const { billingNote, formatCost, formatTokens, TokensButton } = await import('../src/shell/Tokens.tsx');
 const { useServerEvents } = await import('../src/useServerEvents.ts');
 const { VersionMenu } = await import('../src/screens/VersionMenu.tsx');
 const { ActivityCenter } = await import('../src/shell/ActivityCenter.tsx');
@@ -237,6 +240,25 @@ describe('Tokens button and formats', () => {
     expect(billingNote(en, 'en', 'api', null)).toBeNull();
     expect(billingNote(messages('it'), 'it', 'subscription', 0.42)).toContain('piano Claude');
   });
+
+  it('a partly unknown cost reads "at least $X" in the billing note, never "about ≥ $X"', () => {
+    const en = messages('en');
+    expect(billingNote(en, 'en', 'subscription', 0.2, true)).toBe('This counts toward your Claude plan. At API prices it would be at least $0.20.');
+    expect(billingNote(en, 'en', 'unknown', 0.2, true)).toBe('Estimated at API prices: at least $0.20');
+    expect(billingNote(messages('it'), 'it', 'subscription', 0.2, true)).toMatch(/^Rientra nel tuo piano Claude\. A prezzi API sarebbe almeno 0,20\s\$\.$/);
+    expect(billingNote(messages('it'), 'it', 'unknown', 0.2, true)).toMatch(/^Stima a prezzi API: almeno 0,20\s\$$/);
+    for (const l of ['en', 'it'] as const) for (const b of ['subscription', 'api', 'unknown'] as const) expect(billingNote(messages(l), l, b, 0.2, true)).not.toMatch(/(about|circa) ≥/);
+  });
+
+  it('costs: three decimals under $0.10 (trailing zero kept), two from $0.10 up', () => {
+    expect(formatCost('en', 0.01)).toBe('$0.010');
+    expect(formatCost('en', 0.015)).toBe('$0.015');
+    expect(formatCost('en', 0.0999)).toBe('$0.100');
+    expect(formatCost('en', 0.1)).toBe('$0.10');
+    expect(formatCost('en', 0.42)).toBe('$0.42');
+    expect(formatCost('en', 0)).toBe('$0.00');
+    expect(formatCost('it', 0.05)).toMatch(/^0,050\s\$$/);
+  });
 });
 
 const version = (n: number, over: Partial<VersionEntry> = {}): VersionEntry => ({
@@ -264,7 +286,12 @@ describe('activity center usage', () => {
     s = live(s);
     const { unmount } = wrap(<ActivityCenter live={s} initialTab="running" where={(p) => p} />);
     expect(screen.getByText('Today · 16.0k tokens')).toBeTruthy(); // 12000 + r's 1500 + d's final 2500
-    expect(screen.getByRole('link', { name: 'Usage' }).getAttribute('href')).toBe('#/settings/usage');
+    const link = screen.getByRole('link', { name: 'Usage' });
+    expect(link.getAttribute('href')).toBe('#/settings/usage');
+    // Never the browser's visited purple: the link keeps the accent text colour once visited.
+    expect(link.classList.contains('ms-activity-usage')).toBe(true);
+    const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/shell/shell.css'), 'utf8');
+    expect(css).toMatch(/\.ms-activity-usage,\s*\.ms-activity-usage:visited\s*\{[^}]*color:\s*var\(--accentText\)/);
     expect(within(screen.getByRole('list')).getByText('1.5k tokens', { exact: false }).textContent).toBe('1.5k tokens so far');
     unmount();
     wrap(<ActivityCenter live={s} initialTab="done" where={(p) => p} />);

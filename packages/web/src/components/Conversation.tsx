@@ -434,8 +434,8 @@ function AutoLine({ jobId, count, onOpen }: { jobId: string; count: number; onOp
   );
 }
 
-/** One command approved automatically in the sandbox: check, summary phrase and chips; the command expands below. */
-function AutoRow({ event }: { event: Extract<AgentEvent, { kind: 'auto_approved' }> }) {
+/** One command approved automatically in the sandbox: check, summary phrase and chips; the command expands below. Also the brand activity rows. */
+export function AutoRow({ event }: { event: Extract<AgentEvent, { kind: 'auto_approved' }> }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const id = useId();

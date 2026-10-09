@@ -3,7 +3,7 @@
 // safe zones with a legend, V/C/H tools), Figma-style comments that become chips of the composer, the Chat · Comments ·
 // Brief panel, the version history with Compare, and Export. Replaces the interim CreativePage. A board opens in the
 // format view (screens/FormatView.tsx) with T3.
-import { addTokens, channelName, formatName, outputWarningText, shownTotal, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type VersionEntry } from '@motion-studio/shared';
+import { addTokens, channelName, formatName, outputWarningText, shownTotal, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VersionEntry } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api.ts';
@@ -584,7 +584,7 @@ function CommentsTab({ sent, working, formatLabel, onStart }: { sent: SentCommen
   );
 }
 
-/** The creative's tokens: the sum of its versions' usage; null when no version has any (older creatives). */
+/** The versions' sum: the fallback when the ledger cannot be read (a lower bound); null when no version has usage. */
 export function creativeUsage(versions: VersionEntry[]): { tokens: number; costUsd: number | null; estimated: boolean; partial: boolean } | null {
   const tracked = versions.filter((v) => v.usage);
   if (!tracked.length) return null;
@@ -598,18 +598,37 @@ export function creativeUsage(versions: VersionEntry[]): { tokens: number; costU
   };
 }
 
-function CreativeTokens({ versions }: { versions: VersionEntry[] }) {
+/**
+ * The creative's tokens (Brief panel): the ledger total of this creative — every run, failed and cancelled ones
+ * included — from `/api/usage?project=&creative=`. "≥" when versions predate tracking or a run's figure is partial.
+ * While the ledger cannot be read, the versions' sum stands in, always as a lower bound. Nothing when no figure exists.
+ */
+function CreativeTokens({ project, creative, versions, refresh }: { project: string; creative: string; versions: VersionEntry[]; refresh: string }) {
   const t = useT();
   const locale = useLocale();
-  const u = creativeUsage(versions);
-  if (!u) return null;
-  const cost = costText(t, locale, u.costUsd, u.estimated);
+  const [ledger, setLedger] = useState<UsageReport['total'] | 'failed' | null>(null);
+  useEffect(() => {
+    let alive = true;
+    // Through a promise: even a synchronous failure lands in the fallback.
+    Promise.resolve().then(() => api.getUsage({ project, creative })).then((r) => { if (alive) setLedger(r.total); }, () => { if (alive) setLedger('failed'); });
+    return () => { alive = false; };
+  }, [project, creative, refresh]);
+  const untracked = versions.some((v) => !v.usage);
+  let shown: { tokens: number; costUsd: number | null; estimated: boolean; partial: boolean } | null = null;
+  if (ledger === 'failed') {
+    const sum = creativeUsage(versions);
+    shown = sum && { ...sum, partial: true };
+  } else if (ledger && shownTotal(ledger.tokens) > 0) {
+    shown = { tokens: shownTotal(ledger.tokens), costUsd: ledger.costUsd, estimated: ledger.estimated === true, partial: untracked || ledger.estimated === true };
+  }
+  if (!shown) return null;
+  const cost = costText(t, locale, shown.costUsd, shown.estimated);
   return (
     <div className="ms-cv-brief-row">
       <span className="ms-cap">{t.web.usage.creativeTotal}</span>
       <div className="ms-cv-brief-value">
-        <span className="ms-cv-brief-tokens"><TokenCount tokens={u.tokens} />{cost ? ` · ${cost}` : ''}</span>
-        {u.partial ? <span className="ms-cv-brief-note">{t.web.usage.untracked}</span> : null}
+        <span className="ms-cv-brief-tokens"><TokenCount tokens={shown.tokens} partial={shown.partial} />{cost ? ` · ${cost}` : ''}</span>
+        {untracked ? <span className="ms-cv-brief-note">{t.web.usage.untracked}</span> : null}
       </div>
     </div>
   );
@@ -642,7 +661,8 @@ function BriefTab({ project, detail, presets, disabled, formatLabel, onChanged }
       {row(c.formats, <span className="ms-cv-brief-tags">{b.formats.map((f) => <Tag key={f}>{formatLabel(f)}</Tag>)}</span>)}
       {b.assets.length ? row(c.assets, <span className="ms-cv-brief-tags">{b.assets.map((a) => <Tag key={a}>{a.replace(/^assets\//, '')}</Tag>)}</span>) : null}
       {b.notes ? row(c.notes, b.notes) : null}
-      <CreativeTokens versions={detail.versions} />
+      <CreativeTokens project={project} creative={detail.slug} versions={detail.versions}
+        refresh={`${detail.versions.map((v) => `${v.n}:${v.status}`).join(',')}|${detail.creative.status}|${detail.creative.updatedAt}`} />
       <Button variant="outline" className="ms-cv-brief-edit-btn" onClick={() => setEditing(true)}><Icon name="edit" size={13} />{c.edit}</Button>
     </div>
   );

@@ -19,9 +19,10 @@ export function formatTokens(locale: Locale, n: number): string {
   return `${formatNumber(locale, n / 1000, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}k`;
 }
 
-/** "$0.42" (three decimals under 10 cents). */
+/** "$0.42"; under 10 cents always three decimals ("$0.010", "$0.015"), so neighbouring small costs read alike. The one cost formatter. */
 export function formatCost(locale: Locale, usd: number): string {
-  return formatNumber(locale, usd, { style: 'currency', currency: 'USD', currencyDisplay: 'narrowSymbol', minimumFractionDigits: 2, maximumFractionDigits: usd > 0 && usd < 0.1 ? 3 : 2 });
+  const digits = usd > 0 && usd < 0.1 ? 3 : 2;
+  return formatNumber(locale, usd, { style: 'currency', currency: 'USD', currencyDisplay: 'narrowSymbol', minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 
 /** The cost, "≥ $X" when part of it is unknown; null without any cost. */
@@ -31,12 +32,14 @@ export function costText(t: Messages, locale: Locale, usd: number | null, estima
   return estimated ? t.web.usage.atLeast({ cost: c }) : c;
 }
 
-/** The cost labelled by billing method (spec §5.3); null without any cost. */
+/** The cost labelled by billing method (spec §5.3); "at least $X" in the sentence when part of it is unknown; null without any cost. */
 export function billingNote(t: Messages, locale: Locale, billing: UsageBilling, usd: number | null, estimated = false): string | null {
-  const cost = costText(t, locale, usd, estimated);
-  if (cost === null) return null;
+  if (usd === null) return null;
   const u = t.web.usage;
-  return billing === 'subscription' ? u.billingSubscription({ cost }) : billing === 'api' ? u.billingApi({ cost }) : u.billingUnknown({ cost });
+  if (billing === 'api') return costText(t, locale, usd, estimated);
+  const cost = formatCost(locale, usd);
+  if (billing === 'subscription') return estimated ? u.billingSubscriptionAtLeast({ cost }) : u.billingSubscription({ cost });
+  return estimated ? u.billingUnknownAtLeast({ cost }) : u.billingUnknown({ cost });
 }
 
 /** Top-bar button: today's tokens of the whole workspace ("—" until known); opens Settings → Usage. */

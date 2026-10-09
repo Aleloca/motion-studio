@@ -317,3 +317,12 @@
 
 /* Tokens of an analysis (spec §5.4): mono, tabular. */
 .ms-btokens { font-family: var(--mono); font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* What ran automatically during an analysis (final wave): one muted line, Details opens the Activity-details rows. */
+.ms-bhistory-item { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ms-bauto { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; font-size: 12px; line-height: 1.45; color: var(--muted); min-width: 0; }
+.ms-bauto > svg { flex: none; }
+.ms-bauto-details { white-space: nowrap; }
+.ms-bauto-pop { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; font-size: 12px; }
+.ms-bauto-pop b { font-weight: 600; }
+.ms-bauto-pop .ms-convo-log { max-height: 320px; }

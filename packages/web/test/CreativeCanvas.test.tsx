@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DEFAULT_FORMATS, type ConversationEntry, type CreativeDetail, type OutputFileInfo, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, type ConversationEntry, type CreativeDetail, type OutputFileInfo, type UsageReport, type VersionEntry } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import type { Route } from '../src/routes.ts';
@@ -32,6 +32,8 @@ const api = {
   revealVersion: vi.fn(async () => ({ ok: true })),
   exportVersion: vi.fn(async (_s: string, _c: string, _n: number, d: string, formats?: string[]) => ({ destination: d, files: (formats ?? []).map((f) => ({ from: f, to: `${d}/${f}` })), skipped: [] as string[] })),
   cancelJob: vi.fn(async () => ({ cancelled: true })),
+  // The creative's ledger total; by default unavailable (the panel then falls back to its versions).
+  getUsage: vi.fn(async (_q?: unknown): Promise<UsageReport> => { throw new Error('offline'); }),
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error { status = 0; } }));
 const { CreativeCanvas } = await import('../src/screens/CreativeCanvas.tsx');
@@ -62,6 +64,7 @@ const ready = () => screen.findByRole('img', { name: /Post 1:1 v\d/ });
 let platform: ReturnType<typeof vi.spyOn> | null = null;
 beforeEach(() => {
   vi.clearAllMocks();
+  api.getUsage.mockImplementation(async () => { throw new Error('offline'); });
   detail = makeDetail([version(1, 'Dal brief')]);
   conversation = [];
   __resetPendingPins();
@@ -706,14 +709,52 @@ describe('CreativeCanvas · tokens (Phase 8)', () => {
     expect(pop.textContent).toContain('Rientra nel tuo piano Claude');
   });
 
-  it('the Brief panel shows the creative total; older versions are said not to be counted', async () => {
+  const ledger = (tokens: Partial<UsageReport['total']['tokens']>, costUsd: number | null, estimated?: boolean): UsageReport => ({
+    from: at, to: at, total: { tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, ...tokens }, costUsd, ...(estimated ? { estimated } : {}) },
+    byDay: [], byProject: [], byKind: [], trackedSince: at, billing: 'subscription', utcOffsetMinutes: 0,
+  });
+
+  it('the Brief panel shows the ledger total of the creative (failed and cancelled runs included), asked for this creative only', async () => {
+    detail = makeDetail([withUsage(version(1, 'Dal brief')), withUsage(version(2))]);
+    // The versions sum to 76.8k; the ledger also has a failed run.
+    api.getUsage.mockResolvedValue(ledger({ input: 100_000, output: 20_000, cacheWrite: 30_000, cacheRead: 999_999 }, 0.5));
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
+    const value = (await screen.findByText('150,0k token', { exact: false })).closest('.ms-cv-brief-row')!;
+    expect(value.textContent).toContain('150,0k token · 0,50');
+    expect(value.textContent).not.toContain('≥');
+    expect(value.textContent).not.toContain('non sono incluse');
+    expect(api.getUsage).toHaveBeenCalledWith({ project: 'acme', creative: 'lancio' });
+  });
+
+  it('versions made before tracking, or a partial ledger, make the total a lower bound (≥)', async () => {
+    detail = makeDetail([version(1, 'Dal brief'), withUsage(version(2))]);
+    api.getUsage.mockResolvedValue(ledger({ input: 50_000 }, 0.2));
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
+    const value = (await screen.findByText(/≥ 50,0k token/)).closest('.ms-cv-brief-row')!;
+    expect(value.textContent).toContain('non sono incluse');
+  });
+
+  it('when the ledger cannot be read: the versions\' sum as a lower bound; older versions are said not to be counted', async () => {
     detail = makeDetail([version(1, 'Dal brief'), withUsage(version(2)), withUsage(version(3), { ...used, costUsd: null } as never)]);
     render(<Harness live={emptyLive()} />);
     await ready();
     await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
-    const value = screen.getByText('Token').closest('.ms-cv-brief-row')!;
-    expect(value.textContent).toContain('76,8k token · ≥');
+    const value = (await screen.findByText('Token')).closest('.ms-cv-brief-row')!;
+    expect(value.textContent).toContain('≥ 76,8k token · ≥');
     expect(value.textContent).toContain('non sono incluse');
+  });
+
+  it('a ledger with nothing for the creative and no version usage: no total row (no invented 0)', async () => {
+    api.getUsage.mockResolvedValue(ledger({}, null));
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
+    await waitFor(() => expect(api.getUsage).toHaveBeenCalled());
+    expect(screen.queryByText('Token')).toBeNull();
   });
 
   it('no version with usage: no total row', async () => {
@@ -750,7 +791,9 @@ describe('CreativeCanvas · large-file warnings (Phase 8)', () => {
     expect(within(document.querySelector<HTMLElement>('[data-board="instagram-post-1x1"]')!).queryByText(/pesante/)).toBeNull();
     await userEvent.click(chip);
     const pop = await screen.findByRole('dialog', { name: 'File pesante' });
-    expect(pop.textContent).toContain(full);
+    // The title says "File pesante" once; the text below gives the figures without repeating it.
+    expect(pop.textContent).toContain('78,4 MB a 24 Mbps. Circa 8 Mbps bastano per TikTok.');
+    expect(pop.textContent!.match(/File pesante/g)).toHaveLength(1);
     const card = await waitFor(() => { const c = document.querySelector<HTMLElement>('.ms-convo-version'); expect(c).toBeTruthy(); return c!; });
     expect(card.textContent).toContain(full);
   });

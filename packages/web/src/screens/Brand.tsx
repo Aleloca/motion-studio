@@ -207,12 +207,12 @@ function BrandPageBody({ slug, live, overview, setOverview, kit, saver, job, ass
           </div>
         </main>
         <aside className="ms-brand-side" aria-label={b.sources.title}>
-          {openProposal ? <ProposalReady proposal={openProposal} onReview={() => setReviewOpen(true)} /> : null}
+          {openProposal ? <ProposalReady project={slug} proposal={openProposal} onReview={() => setReviewOpen(true)} /> : null}
           {analysis && isActive(analysis) ? <AnalysisCard job={analysis} live={live} /> : null}
           <AnalysisFailure job={job} proposals={overview.proposals} onRetry={reload} />
           <Sources overview={overview} job={job} reload={reload} />
           <Health />
-          <History proposals={overview.proposals} undone={undone} />
+          <History project={slug} proposals={overview.proposals} undone={undone} />
         </aside>
         <input ref={fileInput} type="file" accept="image/*,.svg" multiple hidden aria-hidden="true" tabIndex={-1} onChange={(e) => { void onFiles(e.target.files); e.target.value = ''; }} />
       </div>

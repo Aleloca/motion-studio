@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { EMPTY_BRAND_KIT, type BrandKit, type BrandOverview, type BrandProposal, type JobSummary } from '@motion-studio/shared';
+import { EMPTY_BRAND_KIT, explainTool, type BrandKit, type BrandOverview, type BrandProposal, type JobSummary, type ProposalActivity } from '@motion-studio/shared';
 import { __resetDeferred } from '../src/screens/deferred.ts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
@@ -30,6 +30,7 @@ const api = {
     return { kit: structuredClone(overview.kit), proposal: overview.proposals[0] };
   }),
   discardProposal: vi.fn(),
+  getProposalActivity: vi.fn(async (_s: string, _id: string): Promise<ProposalActivity> => ({ hasLog: false, truncated: false, entries: [] })),
   projectFileUrl: (s: string, r: string) => `/f/${s}/${r}`,
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
@@ -393,5 +394,52 @@ describe('Brand · tokens per analysis (Phase 8)', () => {
     expect(card.querySelector('.ms-btokens')).toBeNull();
     rerender(<I18nProvider locale="en"><Brand slug="acme" live={live({ jobs: { j1: running }, jobUsage: { j1: { done: 0, runs: 0, peak: 2400 } } })} /></I18nProvider>);
     await waitFor(() => expect(card.querySelector('.ms-btokens')?.textContent).toBe('2.4k tokens so far'));
+  });
+});
+
+describe('Brand · commands that ran automatically (final wave)', () => {
+  const proposal = (id: string, createdAt: string, status: BrandProposal['status']): BrandProposal => ({
+    schemaVersion: 1, id, createdAt, sourceIds: ['s-1'], status, summary: 'ok', guidelines: null, assetsAdded: [],
+    changes: [{ id: 'colors:add:x', section: 'colors', op: 'add', after: { id: 'x', name: 'X', hex: '#112233', role: 'primary', source: site } }],
+  } as unknown as BrandProposal);
+  const ctx = { projectDir: '/w/acme', cwd: '/w/acme', home: '/Users/me', tmpDir: '/var/folders/T' };
+  const auto = (command: string) => ({ at: '2026-10-09T10:00:00.000Z', event: { kind: 'auto_approved' as const, toolName: 'Bash', command, explanation: explainTool('Bash', { command }, ctx) } });
+  const bashUse = { at: '2026-10-09T10:00:01.000Z', event: { kind: 'tool_use' as const, id: 't1', name: 'Bash', input: { command: 'ls' } } };
+
+  it('the analysis card and its Analyses row say how many ran; Details lists them as compact rows with the command behind', async () => {
+    overview.proposals = [proposal('p-new', '2026-10-09T09:00:00.000Z', 'open'), proposal('p-old', '2026-10-01T09:00:00.000Z', 'applied')];
+    api.getProposalActivity.mockImplementation(async (_s: string, id: string) => (id === 'p-new'
+      ? { hasLog: true, truncated: false, entries: [auto('ls -la'), bashUse, auto('mkdir -p brand/proposals/p-new/assets')] }
+      : { hasLog: false, truncated: false, entries: [] }));
+    en(<Brand slug="acme" live={live()} />);
+    const lines = await screen.findAllByText('2 commands ran automatically in the sandbox');
+    expect(lines).toHaveLength(2); // the ready card and the Analyses row
+    expect(api.getProposalActivity).toHaveBeenCalledWith('acme', 'p-new');
+    expect(api.getProposalActivity).toHaveBeenCalledWith('acme', 'p-old');
+    const history = screen.getByRole('region', { name: 'Analyses' });
+    expect(history.querySelectorAll('.ms-bsmall-text')).toHaveLength(2);
+    const details = within(history).getByRole('button', { name: 'Details' });
+    expect(details.getAttribute('aria-haspopup')).toBe('dialog');
+    await userEvent.click(details);
+    const pop = await screen.findByRole('dialog', { name: 'Commands that ran automatically' });
+    const rows = within(pop).getAllByRole('listitem');
+    expect(rows).toHaveLength(2);
+    expect(pop.textContent).not.toMatch(/explain\./);
+    const toggle = within(rows[0]!).getByRole('button');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    await userEvent.click(toggle);
+    expect(within(rows[0]!).getByLabelText('Full command').textContent).toBe('ls -la');
+  });
+
+  it('nothing for older proposals without a log, for logs without automatic approvals, or when the call fails', async () => {
+    overview.proposals = [proposal('p-a', '2026-10-09T09:00:00.000Z', 'applied'), proposal('p-b', '2026-10-08T09:00:00.000Z', 'applied'), proposal('p-c', '2026-10-07T09:00:00.000Z', 'applied')];
+    api.getProposalActivity.mockImplementation(async (_s: string, id: string) => {
+      if (id === 'p-c') throw new Error('offline');
+      return id === 'p-a' ? { hasLog: false, truncated: false, entries: [] } : { hasLog: true, truncated: false, entries: [bashUse] };
+    });
+    en(<Brand slug="acme" live={live()} />);
+    await screen.findByRole('region', { name: 'Analyses' });
+    await waitFor(() => expect(api.getProposalActivity).toHaveBeenCalledTimes(3));
+    expect(screen.queryByText(/ran automatically/)).toBeNull();
   });
 });

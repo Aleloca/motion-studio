@@ -152,6 +152,11 @@ export function LargeFileChip({ warning }: { warning: OutputWarning }) {
   const mb = Number(warning.params.sizeMB);
   const size = Number.isFinite(mb) ? formatNumber(locale, mb, { maximumFractionDigits: 0 }) : null;
   const text = outputWarningText(warning, locale);
+  // The popover's title already says "Large file": its text gives only the figures (the full sentence stays the tooltip).
+  const num = (k: string, digits: number) => { const v = Number(warning.params[k]); return Number.isFinite(v) ? formatNumber(locale, v, { maximumFractionDigits: digits }) : null; };
+  const [dSize, dMbps, dTarget] = [num('sizeMB', 1), num('mbps', 1), num('targetMbps', 1)];
+  const channel = typeof warning.params.channel === 'string' ? warning.params.channel : null;
+  const detail = dSize !== null && dMbps !== null && dTarget !== null && channel !== null ? c.largeDetail({ size: dSize, mbps: dMbps, target: dTarget, channel }) : text;
   return (
     <>
       <button ref={anchor} type="button" className="ms-pill ms-warn ms-cv-large" aria-haspopup="dialog" aria-expanded={open}
@@ -162,7 +167,7 @@ export function LargeFileChip({ warning }: { warning: OutputWarning }) {
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="bottom-start" width={300} label={c.largeTitle}>
         <div className="ms-cv-large-pop">
           <b>{c.largeTitle}</b>
-          <p>{text}</p>
+          <p>{detail}</p>
         </div>
       </Popover>
     </>

@@ -38,14 +38,15 @@ Se una di queste verifiche fallisce, l'approvazione automatica **non** si implem
 
 - **Impostazione** di workspace `autoApproveSandboxed: boolean`, default `true`. Oggi non esistono impostazioni per singolo progetto. Sta in Project settings → Agent and approvals, insieme alle altre impostazioni condivise ("Shared by every project"), con il testo del prototipo:
   - titolo: "Approve sandboxed commands automatically";
-  - descrizione: "Commands that stay inside this project, with no internet, run without asking. You still decide on files outside the project, paid services and new websites."
+  - descrizione (testo approvato nell'ondata finale; il prototipo diceva "with no internet", inesatto per le creatività che raggiungono registri e siti consentiti): en "Commands that stay inside this project run without asking; network access stays limited to the allowed sites. You still decide on files outside the project, paid services and new websites."; it "I comandi che restano dentro il progetto partono senza chiedere; la rete resta limitata ai siti consentiti. Decidi sempre tu su file fuori dal progetto, servizi a pagamento e siti nuovi."
 - **Quando è attiva** e il lavoro gira in sandbox (`sandboxMode: 'auto'` e sandbox disponibile):
   - `autoAllowBashIfSandboxed: true` per **tutti** i tipi di lavoro: creatività, brand, descrizione, console;
   - `approve` risponde `allow` senza chiedere all'utente quando sono vere **tutte** queste condizioni:
     - `tool_name === 'Bash'`;
     - il lavoro è registrato come in sandbox: il flag si aggiunge alla registrazione del bridge;
     - `input.dangerouslyDisableSandbox !== true`.
-  - Restano invariati e continuano a chiedere: Edit/Write/Read fuori dal progetto, WebFetch, provider a pagamento, strumenti sconosciuti. La rete fuori dall'elenco è già negata dalla sandbox senza passare da `approve`.
+  - Ondata finale: anche `Read` (esattamente) di un file regolare sotto la cartella temporanea per utente di Claude Code (`join(CLAUDE_CODE_TMPDIR || /tmp, claude-<uid>)`, mai il resto di `$TMPDIR`) è approvato automaticamente, alle stesse condizioni di Bash, con il percorso verificato com'è scritto e dopo aver risolto i link simbolici; emette `auto_approved` con `toolName: 'Read'`.
+  - Restano invariati e continuano a chiedere: Edit/Write fuori dal progetto, Read fuori dal progetto (salvo il caso sopra), WebFetch, provider a pagamento, strumenti sconosciuti. La rete fuori dall'elenco è già negata dalla sandbox senza passare da `approve`.
 - **Quando è disattivata:** `autoAllowBashIfSandboxed: false` per tutti i tipi, e ogni Bash fuori dalle regole "Always" chiede conferma. È ciò che dice il prototipo: "Every command will ask for your OK".
 - **Senza sandbox** (`sandboxMode: 'off'` o sandbox non disponibile): l'impostazione non ha effetto. L'interruttore appare disattivato con il motivo "Needs agent isolation", e si torna al comportamento attuale.
 - **Trasparenza.** Ogni comando approvato in automatico produce un evento dell'agente `auto_approved { toolName, command, explanation }`:

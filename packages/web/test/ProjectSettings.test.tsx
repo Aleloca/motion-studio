@@ -224,7 +224,7 @@ describe('Project settings · automatic approval (Phase 8)', () => {
     en(<ProjectSettings slug="acme" live={live()} settings={settings} onSettings={onSettings} checks={sandboxOk} />);
     const row = (await screen.findByText(NAME)).closest('.ms-set-row') as HTMLElement;
     expect(row.closest('.ms-set-card')!.querySelector('[role="switch"][aria-label="Confirm before using paid services"]')).toBeTruthy();
-    expect(within(row).getByText(/Commands that stay inside this project, with no internet, run without asking\. You still decide on files outside the project, paid services and new websites\./)).toBeTruthy();
+    expect(within(row).getByText(/Commands that stay inside this project run without asking; network access stays limited to the allowed sites\. You still decide on files outside the project, paid services and new websites\./)).toBeTruthy();
     expect(within(row).getByText(/Applies to new jobs/)).toBeTruthy();
     expect(within(row).getByText('Shared by every project')).toBeTruthy();
     const sw = within(row).getByRole('switch', { name: NAME });

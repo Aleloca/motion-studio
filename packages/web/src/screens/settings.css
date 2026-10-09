@@ -168,8 +168,10 @@
 .ms-usage-bar { display: block; min-height: 2px; border-radius: 4px 4px 0 0; background: var(--bar); transform-origin: bottom; }
 .ms-usage-bar.ms-today { background: var(--accent); }
 .ms-usage-bar.ms-zero { height: 1px; min-height: 1px; border-radius: 0; background: var(--line); }
+/* Today stays in accent even with no tokens yet (a hairline in accent). */
+.ms-usage-bar.ms-zero.ms-today { background: var(--accent); }
 .ms-usage-val { position: absolute; top: -16px; left: 50%; transform: translateX(-50%); font-family: var(--mono); font-size: 10px; color: var(--text); white-space: nowrap; }
-.ms-usage-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; margin-top: -6px; font-size: 11px; text-align: center; color: var(--faint); }
+.ms-usage-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; margin-top: -6px; font-size: 11px; text-align: center; color: var(--muted); }
 .ms-usage-days span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-usage-days .ms-today { color: var(--text); font-weight: 600; }
 .ms-usage-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 24px; }

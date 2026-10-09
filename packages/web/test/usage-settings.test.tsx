@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { workspaceSettingsSchema, type UsageReport } from '@motion-studio/shared';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -80,10 +83,26 @@ describe('Settings · Usage', () => {
     const projects = screen.getByRole('list', { name: 'By project' });
     expect(within(projects).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Acme7.0k tokens$0.20', 'Beta3.5k tokens']);
     const kinds = screen.getByRole('list', { name: 'By kind of work' });
-    expect(within(kinds).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Creatives9.0k tokens≥ $0.15', 'Brand analyses1.5k tokens$0.05']);
-    expect(screen.getByText('This counts toward your Claude plan. At API prices it would be about ≥ $0.20.')).toBeTruthy();
+    expect(within(kinds).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Creatives9.0k tokens≥ $0.15', 'Brand analyses1.5k tokens$0.050']);
+    expect(screen.getByText('This counts toward your Claude plan. At API prices it would be at least $0.20.')).toBeTruthy();
     expect(screen.getByText('The cost of some runs is not known, so the real figure may be higher.')).toBeTruthy();
     expect(screen.getByText('Tracked since Sep 1, 2026')).toBeTruthy();
+  });
+
+  it('today with 0 tokens keeps the accent (hairline in accent); weekday labels use --muted (AA)', async () => {
+    report = { ...full(), byDay: days.map((day, i) => ({ day, tokens: i === 6 ? 0 : perDay[i]!, costUsd: null })) };
+    const { container } = page();
+    await waitFor(() => expect(container.querySelectorAll('.ms-usage-bar')).toHaveLength(7));
+    const todayBar = container.querySelector<HTMLElement>('.ms-usage-bar[data-day="2026-10-09"]')!;
+    expect(todayBar.classList.contains('ms-zero')).toBe(true);
+    expect(todayBar.classList.contains('ms-today')).toBe(true);
+    const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/screens/settings.css'), 'utf8');
+    const rule = (sel: string) => { const m = new RegExp(`(^|\\n)${sel.replace(/[.]/g, '\\.')}\\s*\\{([^}]*)\\}`).exec(css); return m ? m[2]! : null; };
+    // Declared after .ms-zero and more specific: the accent wins over the grey hairline.
+    expect(rule('.ms-usage-bar.ms-zero.ms-today')).toMatch(/background:\s*var\(--accent\)/);
+    expect(css.indexOf('.ms-usage-bar.ms-zero.ms-today')).toBeGreaterThan(css.indexOf('.ms-usage-bar.ms-zero {'));
+    expect(rule('.ms-usage-days')).toMatch(/color:\s*var\(--muted\)/);
+    expect(rule('.ms-usage-days')).not.toMatch(/--faint/);
   });
 
   it('shows the empty state before the first generation', async () => {

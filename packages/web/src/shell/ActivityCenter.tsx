@@ -197,7 +197,7 @@ function TodayFooter({ tokens }: { tokens: number | null }) {
   return (
     <div className="ms-activity-foot">
       <span className="ms-activity-today">{tokens === null ? u.todayUnknown : u.today({ count: formatTokens(locale, tokens) })}</span>
-      <a href={href.settings('usage')}>{u.open}</a>
+      <a className="ms-activity-usage" href={href.settings('usage')}>{u.open}</a>
     </div>
   );
 }
