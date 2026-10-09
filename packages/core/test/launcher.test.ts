@@ -18,6 +18,7 @@ import { testLauncher } from './helpers/launcher.ts';
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const cleanup: string[] = [];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   delete process.env.FAKE_CLAUDE_ARGS_FILE;
   for (const d of cleanup.splice(0)) await rm(d, { recursive: true, force: true });
 });
@@ -49,8 +50,9 @@ const studioRules = (dir: string) => protectedDirRules(dir, '.studio');
 describe('AgentLauncher sandbox caches', () => {
   it('points the caches at <project>/.cache only when sandboxed', { timeout: 20_000 }, async () => {
     vi.stubEnv('HOME', '/fake-home-for-test');
-    const on = await launch({ sandbox: async () => ({ available: true, reason: 'ok' }) });
-    vi.unstubAllEnvs();
+    // Restored even when the launch throws: a stubbed HOME must never leak into later tests.
+    let on: Awaited<ReturnType<typeof launch>>;
+    try { on = await launch({ sandbox: async () => ({ available: true, reason: 'ok' }) }); } finally { vi.unstubAllEnvs(); }
     // No cache variable may point into the (fake) real HOME: every one is inside the project.
     for (const k of ['npm_config_cache', 'PIP_CACHE_DIR', 'XDG_CACHE_HOME'] as const) {
       expect(on.cacheEnv[k], k).not.toContain('/fake-home-for-test');

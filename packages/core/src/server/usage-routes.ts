@@ -4,6 +4,7 @@ import { WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import type { UsageLedger } from '../usage/usage-ledger.ts';
 import { buildUsageReport, defaultUsageRange, firstGenerationTokens, rangeEndingAt, type UsageProject } from '../usage/usage-report.ts';
 import { t } from '../i18n.ts';
+import { CREATIVE_SLUG_RE } from '../creatives/creative-store.ts';
 
 /** Longest range a report may cover (one bucket per day). */
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -26,13 +27,22 @@ function parseDate(raw: unknown): Date | null | undefined {
   return Number.isFinite(ms) ? new Date(ms) : null;
 }
 
-/** GET /api/usage?from=<iso>&to=<iso>&project=<slug>: token and cost usage from the projects' ledgers (spec §5.5). */
+/**
+ * GET /api/usage?from=<iso>&to=<iso>&project=<slug>[&creative=<slug>]: token and cost usage from the projects' ledgers
+ * (spec §5.5). `creative` (needs `project`) keeps only that creative's records; without `from`/`to` it then covers the
+ * creative's whole history (the Brief panel's total, failed and cancelled runs included).
+ */
 export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) {
-  app.get<{ Querystring: { from?: string; to?: string; project?: string } }>('/api/usage', async (req): Promise<UsageReport> => {
+  app.get<{ Querystring: { from?: string; to?: string; project?: string; creative?: string } }>('/api/usage', async (req): Promise<UsageReport> => {
     const q = req.query ?? {};
     const from = parseDate(q.from);
     const to = parseDate(q.to);
     if (from === null || to === null) throw new WorkspaceError(400, t().errors.invalidRequest);
+    const creative = q.creative === undefined || q.creative === '' ? undefined : q.creative;
+    if (creative !== undefined && (typeof creative !== 'string' || !CREATIVE_SLUG_RE.test(creative) || typeof q.project !== 'string' || q.project === '')) {
+      throw new WorkspaceError(400, t().errors.invalidRequest);
+    }
+    const allTime = creative !== undefined && !from && !to;
     const range = from && to ? { from, to } : from ? { from, to: defaultUsageRange().to } : to ? rangeEndingAt(to) : defaultUsageRange();
     if (range.from >= range.to || range.to.getTime() - range.from.getTime() > MAX_RANGE_MS) throw new WorkspaceError(400, t().errors.invalidRequest);
     // Started before the project listing and awaited together with the ledger reads: the first call does not wait for
@@ -48,7 +58,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
       // A project with an unreadable project.json still has its ledger: it is listed under its folder name.
       projects = list.map((p) => ({ slug: p.slug, name: p.ok ? p.project.name : p.slug, dir: ws.projectDir(p.slug) }));
     }
-    return buildUsageReport({ ledger: deps.ledger, projects, billing, ...range });
+    return buildUsageReport({ ledger: deps.ledger, projects, billing, ...range, ...(allTime ? { from: null } : {}), ...(creative !== undefined ? { creative } : {}) });
   });
 
   /**

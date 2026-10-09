@@ -7,6 +7,7 @@ import { ProviderError } from '../providers/http.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import type { AgentBridge, BridgeContext } from './bridge.ts';
 import { cleanProgress } from '../display-text.ts';
+import { defaultClaudeTmpRoot, isInsideClaudeTmp } from './claude-tmp.ts';
 import { t } from '../i18n.ts';
 
 export { cleanProgress };
@@ -16,6 +17,8 @@ export interface BridgeRoutesContext {
   bridge: AgentBridge; approvals: ApprovalBroker; extraTools?: Record<string, BridgeHandler>;
   /** The current workspace settings, read on every permission prompt. Absent or failing: nothing is approved automatically. */
   settings?: () => Promise<{ autoApproveSandboxed: boolean }>;
+  /** Claude Code's per-user temp root (tests only; default: claudeTmpRootFor(process.env, uid)). null: no Read is auto-allowed. */
+  claudeTmpRoot?: string | null;
 }
 
 const denyMessage = (d: 'deny' | 'expired' | 'cancelled'): string => (d === 'deny' ? t().approvals.denied : d === 'expired' ? t().approvals.expired : t().errors.jobCancelled);
@@ -29,10 +32,29 @@ const MAX_GUIDELINES = 50_000;
  * string "true" or any other value asks. A non-string command asks too.
  */
 async function autoApprovable(ctx: BridgeRoutesContext, c: BridgeContext, toolName: unknown, input: Record<string, unknown>): Promise<boolean> {
-  if (toolName !== 'Bash' || c.sandboxed !== true || c.autoApproveAtStart !== true || typeof input.command !== 'string') return false;
+  if (toolName !== 'Bash' || typeof input.command !== 'string') return false;
+  return sameConditions(ctx, c, input);
+}
+
+/** The job conditions shared by Bash and Read: sandboxed job, setting on at start and now, no request to leave the sandbox. */
+async function sameConditions(ctx: BridgeRoutesContext, c: BridgeContext, input: Record<string, unknown>): Promise<boolean> {
+  if (c.sandboxed !== true || c.autoApproveAtStart !== true) return false;
   if (Object.hasOwn(input, 'dangerouslyDisableSandbox') && input.dangerouslyDisableSandbox !== false) return false;
   if (!ctx.settings) return false;
   try { return (await ctx.settings()).autoApproveSandboxed === true; } catch { return false; }
+}
+
+/**
+ * Final-wave safety net (decisions-log): `Read` (exactly) of a regular file under Claude Code's OWN per-user temp root
+ * (/tmp/claude-<uid>, see claude-tmp.ts) — never the rest of $TMPDIR — under the same job conditions as Bash. The
+ * sandboxed agent can already read that folder with Bash; the path is checked as written and after resolving every
+ * symlink. Claude Code's own deny rules (sensitive home paths, config folder) still apply before `approve` is called.
+ */
+async function autoApprovableRead(ctx: BridgeRoutesContext, c: BridgeContext, toolName: unknown, input: Record<string, unknown>): Promise<boolean> {
+  if (toolName !== 'Read' || typeof input.file_path !== 'string') return false;
+  if (!(await sameConditions(ctx, c, input))) return false;
+  const root = ctx.claudeTmpRoot === undefined ? defaultClaudeTmpRoot() : ctx.claudeTmpRoot;
+  return isInsideClaudeTmp(input.file_path, root);
 }
 
 /** Same cap as an approval's detail; the marker says the event shows only the start of the command. */
@@ -54,13 +76,16 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
       const toolName = typeof a.tool_name === 'string' ? a.tool_name : 'unknown';
       // Provider confirmations and Motion Studio's own tools never go through the agent's permission prompts.
       if (toolName.startsWith('provider:') || toolName.startsWith(`mcp__${MCP_SERVER}__`)) return { behavior: 'deny', message: t().approvals.invalidRequest };
-      if (await autoApprovable(ctx, c, a.tool_name, input)) {
+      const auto = (await autoApprovable(ctx, c, a.tool_name, input)) ? { tool: 'Bash', shown: input.command as string }
+        : (await autoApprovableRead(ctx, c, a.tool_name, input)) ? { tool: 'Read', shown: input.file_path as string }
+          : null;
+      if (auto) {
         // The job ended while the setting was read: nothing more runs on its behalf.
         if (c.signal.aborted) return { behavior: 'deny', message: denyMessage('cancelled') };
-        const explanation = ctx.approvals.explain(c, 'Bash', input);
+        const explanation = ctx.approvals.explain(c, auto.tool, input);
         // No explanation, no silent approval: the event must say what ran.
         if (explanation) {
-          c.emit({ kind: 'auto_approved', toolName: 'Bash', command: capCommand(input.command as string), explanation });
+          c.emit({ kind: 'auto_approved', toolName: auto.tool, command: capCommand(auto.shown), explanation });
           return { behavior: 'allow', updatedInput: input };
         }
       }

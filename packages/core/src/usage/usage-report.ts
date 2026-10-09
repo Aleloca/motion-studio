@@ -2,8 +2,12 @@ import { addTokens, shownTotal, usageKindSchema, type TokenCounts, type UsageBil
 import type { UsageLedger } from './usage-ledger.ts';
 
 export interface UsageProject { slug: string; name: string; dir: string }
-/** `billing` may be a promise: it is awaited in parallel with the ledger reads. */
-export interface UsageReportInput { ledger: UsageLedger; projects: UsageProject[]; billing: UsageBilling | Promise<UsageBilling>; from: Date; to: Date }
+/**
+ * `billing` may be a promise: it is awaited in parallel with the ledger reads. `creative`: only the records of that
+ * creative slug (every run: failed, cancelled and fix rounds included). `from: null`: since the first matching record
+ * (its local day; today when there is none), for an all-time creative total.
+ */
+export interface UsageReportInput { ledger: UsageLedger; projects: UsageProject[]; billing: UsageBilling | Promise<UsageBilling>; from: Date | null; to: Date; creative?: string }
 
 const ZERO: TokenCounts = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -52,7 +56,11 @@ export async function buildUsageReport(i: UsageReportInput): Promise<UsageReport
     Promise.resolve(i.billing).catch(() => 'unknown' as const),
     Promise.all(i.projects.map((p) => i.ledger.read(p.dir))),
   ]);
-  const days = localDays(i.from, i.to);
+  const match = (r: UsageRecord) => i.creative === undefined || r.creativeSlug === i.creative;
+  let firstMs = Infinity;
+  for (const all of ledgers) for (const r of all) if (match(r)) firstMs = Math.min(firstMs, Date.parse(r.at));
+  const from = i.from ?? localMidnight(Number.isFinite(firstMs) && firstMs < i.to.getTime() ? new Date(firstMs) : new Date(i.to.getTime() - 1));
+  const days = localDays(from, i.to);
   const byDay = new Map(days.map((d) => [d, new Bucket()]));
   const byKind = new Map(usageKindSchema.options.map((k) => [k, new Bucket()]));
   const total = new Bucket();
@@ -64,7 +72,7 @@ export async function buildUsageReport(i: UsageReportInput): Promise<UsageReport
     for (const r of all) {
       const ms = Date.parse(r.at);
       if (!trackedSince || ms < trackedSince.ms) trackedSince = { at: r.at, ms };
-      if (ms < i.from.getTime() || ms >= i.to.getTime()) continue;
+      if (!match(r) || ms < from.getTime() || ms >= i.to.getTime()) continue;
       project.add(r);
       total.add(r);
       byKind.get(r.kind)!.add(r);
@@ -73,7 +81,7 @@ export async function buildUsageReport(i: UsageReportInput): Promise<UsageReport
     byProject.push({ slug: p.slug, name: p.name, ...project.view() });
   }
   return {
-    from: i.from.toISOString(), to: i.to.toISOString(),
+    from: from.toISOString(), to: i.to.toISOString(),
     total: { tokens: total.tokens, costUsd: total.costUsd, ...(total.estimated ? { estimated: true } : {}) },
     byDay: days.map((day) => ({ day, ...byDay.get(day)!.view() })),
     byProject,

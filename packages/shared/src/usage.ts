@@ -33,6 +33,12 @@ export const usageRecordSchema = z.object({
   costUsd: z.number().min(0).nullable(),
   models: z.array(modelUsageSchema),
   durationMs: z.number().min(0).nullable(),
+  /**
+   * The outcome of the `claude` run this record measures, NOT of the job: a run that succeeded and whose job then
+   * failed later (output checks, the git commit) is still 'ok'. Such a job's tokens are real, and a retry adds its own
+   * records, so the New creative estimate (first generation, every attempt summed) may be biased high for a creative
+   * whose first job failed and was retried.
+   */
   outcome: z.enum(['ok', 'error', 'cancelled']),
   estimated: z.boolean().optional(),
   sessionId: z.string().nullable().default(null),

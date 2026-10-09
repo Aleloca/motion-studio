@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,11 +9,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import type { AgentRunner } from '../src/agent/runner.ts';
 import { ApprovalBroker, cleanAgentReason } from '../src/approvals/broker.ts';
+import { displayTextWork } from '../src/display-text.ts';
 import { AgentBridge, type BridgeContext } from '../src/bridge/bridge.ts';
 import { AgentLauncher } from '../src/agent/launcher.ts';
 import { workspaceSettingsSchema, type WorkspaceSettings } from '@motion-studio/shared';
 import { mkdtempSync } from 'node:fs';
 import { registerBridgeRoutes } from '../src/bridge/bridge-routes.ts';
+import { claudeTmpRootFor } from '../src/bridge/claude-tmp.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { CreativeTurnService } from '../src/creatives/creative-turns.ts';
 import { Git } from '../src/git.ts';
@@ -32,6 +34,12 @@ let shown: ApprovalRequest[];
 let events: AgentEvent[];
 let projectDir: string;
 let autoApprove: boolean;
+/** Stands in for Claude Code's per-uid temp root (/tmp/claude-<uid>) in these tests. */
+let claudeRoot: string;
+/** Resolved by the broker's broadcast: an approval reached the user. Re-armed after each one. */
+let nextShown: Promise<void>;
+let markShown: () => void;
+const armShown = () => { nextShown = new Promise<void>((r) => { markShown = r; }); };
 
 const ctxBase = (over: Partial<BridgeContext> = {}): BridgeContext => ({
   jobId: 'j1', kind: 'creative', projectSlug: 'acme', projectDir, creativeSlug: 'c1', sandboxed: true, autoApproveAtStart: true,
@@ -42,13 +50,23 @@ beforeEach(async () => {
   projectDir = await mkdtemp(join(tmpdir(), 'ms-auto-'));
   bridge = new AgentBridge();
   shown = [];
-  approvals = new ApprovalBroker({ broadcast: (m) => { if (m.type === 'approval') shown.push(m.approval); } });
+  armShown();
+  approvals = new ApprovalBroker({ broadcast: (m) => { if (m.type === 'approval') { shown.push(m.approval); markShown(); armShown(); } } });
   events = [];
   autoApprove = true;
+  claudeRoot = await mkdtemp(join(tmpdir(), 'ms-claude-root-'));
+  await chmod(claudeRoot, 0o700);
   app = Fastify();
-  registerBridgeRoutes(app, { bridge, approvals, settings: async () => ({ autoApproveSandboxed: autoApprove }) });
+  registerBridgeRoutes(app, { bridge, approvals, settings: async () => ({ autoApproveSandboxed: autoApprove }), claudeTmpRoot: claudeRoot });
 });
-afterEach(async () => { await app.close(); approvals.cancelAll(); await rm(projectDir, { recursive: true, force: true }); });
+afterEach(async () => {
+  await app.close(); approvals.cancelAll();
+  await rm(projectDir, { recursive: true, force: true });
+  await rm(claudeRoot, { recursive: true, force: true });
+});
+
+/** Settles when the request either finished or reached the user: no fixed time budget. */
+const settled = (res: Promise<unknown>) => Promise.race([res.then(() => 'done' as const), nextShown.then(() => 'shown' as const)]);
 
 const approve = (token: string, body: unknown) =>
   app.inject({ method: 'POST', url: '/api/bridge/approve', payload: body as object, headers: { 'x-motion-studio-bridge': token } });
@@ -57,10 +75,7 @@ const approve = (token: string, body: unknown) =>
 async function outcome(token: string, body: unknown): Promise<'auto' | 'asked'> {
   const before = shown.length;
   const res = approve(token, body);
-  for (let i = 0; i < 50 && approvals.pending().length === 0; i++) {
-    const done = await Promise.race([res.then(() => true), new Promise((r) => setTimeout(() => r(false), 5))]);
-    if (done) break;
-  }
+  await settled(res);
   const pending = approvals.pending();
   if (pending.length) {
     expect(shown.length).toBe(before + 1);
@@ -112,7 +127,7 @@ describe('automatic approval in approve', () => {
     registerBridgeRoutes(app2, { bridge, approvals, settings: async () => { throw new Error('no workspace'); } });
     const token = bridge.register(ctxBase());
     const res = app2.inject({ method: 'POST', url: '/api/bridge/approve', payload: bash('ls'), headers: { 'x-motion-studio-bridge': token } });
-    await new Promise((r) => setTimeout(r, 20));
+    expect(await settled(res)).toBe('shown');
     expect(approvals.pending()).toHaveLength(1);
     approvals.cancelAll();
     expect((await res).json().behavior).toBe('deny');
@@ -123,7 +138,7 @@ describe('automatic approval in approve', () => {
     registerBridgeRoutes(app2, { bridge, approvals });
     const token = bridge.register(ctxBase());
     const res = app2.inject({ method: 'POST', url: '/api/bridge/approve', payload: bash('ls'), headers: { 'x-motion-studio-bridge': token } });
-    await new Promise((r) => setTimeout(r, 20));
+    expect(await settled(res)).toBe('shown');
     expect(approvals.pending()).toHaveLength(1);
     approvals.cancelAll();
     await res;
@@ -231,9 +246,7 @@ describe('the setting must be on at job start AND now', () => {
     registerBridgeRoutes(app2, { bridge, approvals, settings: async () => live });
     const ask = async (token: string) => {
       const res = app2.inject({ method: 'POST', url: '/api/bridge/approve', payload: bash('ls'), headers: { 'x-motion-studio-bridge': token } });
-      for (let i = 0; i < 50 && approvals.pending().length === 0; i++) {
-        if (await Promise.race([res.then(() => true), new Promise((r) => setTimeout(() => r(false), 5))])) break;
-      }
+      await settled(res);
       const p = approvals.pending()[0];
       if (p) { await approvals.decide(p.id, 'deny'); await res; return 'asked'; }
       return (await res).json().behavior === 'allow' ? 'auto' : 'denied';
@@ -331,10 +344,16 @@ describe('explained approval requests', () => {
     expect(() => encodeURIComponent(emoji)).not.toThrow();
     expect(cleanAgentReason('a\uD800b\uDC00c')).toBe('abc');
   });
-  it('agentReason cleaning is linear on hostile input', () => {
-    const t0 = performance.now();
-    cleanAgentReason(' \u202E'.repeat(10_000) + 'x' + '\t'.repeat(10_000));
-    expect(performance.now() - t0).toBeLessThan(50);
+  it('agentReason cleaning is linear on hostile input: doubling the input at most doubles the work', () => {
+    const at = (n: number) => {
+      const input = ' \u202E'.repeat(n) + 'x' + '\t\u200B'.repeat(n);
+      displayTextWork.reset();
+      cleanAgentReason(input);
+      return displayTextWork.get();
+    };
+    expect(at(10_000)).toBeGreaterThan(0);
+    expect(at(20_000)).toBeLessThanOrEqual(at(10_000) * 2 + 1);
+    expect(at(10_000)).toBeLessThanOrEqual(4 * (2 * 10_000 + 1 + 2 * 10_000));
   });
 });
 
@@ -403,5 +422,116 @@ describe('auto_approved events follow the job event path', () => {
     expect(seen.map((s) => s?.sandboxed)).toEqual(cases.map((c) => c.expected));
     expect(seen.map((s) => s?.autoApproveAtStart)).toEqual(cases.map(() => true));
     expect(seen.every((s) => s?.emit === onEvent)).toBe(true);
+  });
+});
+
+describe('automatic approval of Read under Claude Code\'s own temp root', () => {
+  const read = (file_path: unknown) => ({ tool_name: 'Read', input: { file_path }, tool_use_id: 't' });
+  const frame = async (rel = 'frame.png') => { const p = join(claudeRoot, rel); await mkdir(join(p, '..'), { recursive: true }); await writeFile(p, 'png'); return p; };
+
+  it('auto-allows a file inside the root and emits auto_approved with an explanation', async () => {
+    const p = await frame('sess/tmp/frame.png');
+    const token = bridge.register(ctxBase());
+    expect(await outcome(token, read(p))).toBe('auto');
+    expect(events).toHaveLength(1);
+    const ev = events[0]!;
+    expect(ev).toMatchObject({ kind: 'auto_approved', toolName: 'Read', command: p });
+    if (ev.kind !== 'auto_approved') throw new Error('unreachable');
+    expect(ev.explanation.summary.length).toBeGreaterThan(0);
+  });
+  it('accepts the root spelled through its real path too (/tmp vs /private/tmp)', async () => {
+    const p = await frame();
+    const token = bridge.register(ctxBase());
+    expect(await outcome(token, read(join(await realpath(claudeRoot), 'frame.png')))).toBe('auto');
+    expect(await outcome(token, read(p))).toBe('auto');
+  });
+  it('asks for a file outside the root, including elsewhere in $TMPDIR', async () => {
+    const other = await mkdtemp(join(tmpdir(), 'ms-other-'));
+    await writeFile(join(other, 'f.png'), 'x');
+    await writeFile(join(projectDir, 'p.png'), 'x');
+    const token = bridge.register(ctxBase());
+    try {
+      expect(await outcome(token, read(join(other, 'f.png')))).toBe('asked');
+      expect(await outcome(token, read(join(projectDir, 'p.png')))).toBe('asked');
+      // A sibling whose name only starts like the root.
+      await mkdir(`${claudeRoot}x`, { recursive: true });
+      await writeFile(join(`${claudeRoot}x`, 'f.png'), 'x');
+      expect(await outcome(token, read(join(`${claudeRoot}x`, 'f.png')))).toBe('asked');
+      expect(await outcome(token, read(join(claudeRoot, '..', 'ms-other-x', 'f.png')))).toBe('asked');
+      expect(await outcome(token, read(join(claudeRoot, '..', other.split('/').pop()!, 'f.png')))).toBe('asked');
+    } finally {
+      await rm(other, { recursive: true, force: true });
+      await rm(`${claudeRoot}x`, { recursive: true, force: true });
+    }
+    expect(events).toEqual([]);
+  });
+  it('asks when a symlink inside the root escapes it (file or folder)', async () => {
+    const other = await mkdtemp(join(tmpdir(), 'ms-secret-'));
+    await writeFile(join(other, 'secret.txt'), 'x');
+    await symlink(join(other, 'secret.txt'), join(claudeRoot, 'link.png'));
+    await symlink(other, join(claudeRoot, 'dir'));
+    const token = bridge.register(ctxBase());
+    try {
+      expect(await outcome(token, read(join(claudeRoot, 'link.png')))).toBe('asked');
+      expect(await outcome(token, read(join(claudeRoot, 'dir', 'secret.txt')))).toBe('asked');
+    } finally { await rm(other, { recursive: true, force: true }); }
+    expect(events).toEqual([]);
+  });
+  it('asks for a path written outside the root even when it links into it', async () => {
+    const p = await frame();
+    await symlink(p, join(projectDir, 'in.png'));
+    expect(await outcome(bridge.register(ctxBase()), read(join(projectDir, 'in.png')))).toBe('asked');
+  });
+  it('asks for a missing file, a folder, a relative or non-string path', async () => {
+    await mkdir(join(claudeRoot, 'd'));
+    const token = bridge.register(ctxBase());
+    for (const p of [join(claudeRoot, 'missing.png'), join(claudeRoot, 'd'), claudeRoot, 'frame.png', '', 42, null, [join(claudeRoot, 'x')]]) {
+      expect(await outcome(token, read(p)), String(p)).toBe('asked');
+    }
+    expect(events).toEqual([]);
+  });
+  it('asks with the setting off now, off at job start, or in an unsandboxed job', async () => {
+    const p = await frame();
+    autoApprove = false;
+    expect(await outcome(bridge.register(ctxBase()), read(p))).toBe('asked');
+    autoApprove = true;
+    expect(await outcome(bridge.register(ctxBase({ autoApproveAtStart: false })), read(p))).toBe('asked');
+    expect(await outcome(bridge.register(ctxBase({ sandboxed: false })), read(p))).toBe('asked');
+    expect(events).toEqual([]);
+  });
+  it('asks when the root is shared with other users (group or world writable)', async () => {
+    const p = await frame();
+    await chmod(claudeRoot, 0o777);
+    expect(await outcome(bridge.register(ctxBase()), read(p))).toBe('asked');
+  });
+  it('asks when there is no root (no uid, e.g. Windows) or other Read-like tools', async () => {
+    const p = await frame();
+    const app2 = Fastify();
+    registerBridgeRoutes(app2, { bridge, approvals, settings: async () => ({ autoApproveSandboxed: true }), claudeTmpRoot: null });
+    const token = bridge.register(ctxBase());
+    const res = app2.inject({ method: 'POST', url: '/api/bridge/approve', payload: read(p), headers: { 'x-motion-studio-bridge': token } });
+    expect(await settled(res)).toBe('shown');
+    approvals.cancelAll();
+    await res;
+    await app2.close();
+    for (const tool_name of ['read', 'Read ', 'Glob', 'Grep', 'NotebookRead', 'Write', 'Edit']) {
+      expect(await outcome(token, { tool_name, input: { file_path: p } }), tool_name).toBe('asked');
+    }
+    expect(events).toEqual([]);
+  });
+});
+
+describe('claudeTmpRootFor (Claude Code 2.1.x: join(CLAUDE_CODE_TMPDIR || "/tmp", "claude-<uid>"))', () => {
+  it('defaults to /tmp/claude-<uid>', () => {
+    expect(claudeTmpRootFor({}, 501)).toBe('/tmp/claude-501');
+    expect(claudeTmpRootFor({ CLAUDE_CODE_TMPDIR: '' }, 0)).toBe('/tmp/claude-0');
+  });
+  it('follows CLAUDE_CODE_TMPDIR when absolute, never $TMPDIR', () => {
+    expect(claudeTmpRootFor({ CLAUDE_CODE_TMPDIR: '/x/y/' }, 501)).toBe('/x/y/claude-501');
+    expect(claudeTmpRootFor({ TMPDIR: '/var/folders/zz/T/' }, 501)).toBe('/tmp/claude-501');
+  });
+  it('is null without a uid or with a relative override', () => {
+    expect(claudeTmpRootFor({}, undefined)).toBeNull();
+    expect(claudeTmpRootFor({ CLAUDE_CODE_TMPDIR: 'rel/dir' }, 501)).toBeNull();
   });
 });

@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { appendFile, mkdir, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -119,5 +120,58 @@ describe('GET /api/usage/first-generations', { timeout: 20_000 }, () => {
     for (const bad of ['0', '-1', 'x', '401', '1.5']) {
       expect((await app.inject({ url: `/api/usage/first-generations?days=${bad}`, headers })).statusCode).toBe(400);
     }
+  });
+});
+
+describe('GET /api/usage?creative= (the creative total)', { timeout: 20_000 }, () => {
+  const line = (over: Record<string, unknown>) => JSON.stringify({
+    at: new Date().toISOString(), jobId: 'j', kind: 'creative', creativeSlug: 'a', version: 1, attempt: 1,
+    tokens: { input: 100, output: 0, cacheRead: 0, cacheWrite: 0 }, costUsd: 0.01, models: [], durationMs: 1, outcome: 'ok', ...over,
+  });
+
+  it('sums every ledger record of the creative, failed, cancelled and older ones included, and nothing else', async () => {
+    await setup();
+    const old = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+    await mkdir(join(base, 'ws', 'acme', '.studio'), { recursive: true });
+    await appendFile(join(base, 'ws', 'acme', '.studio', 'usage.jsonl'), [
+      line({ at: old }), // first generation, a month ago (outside the default 7 days)
+      line({ attempt: 2, outcome: 'error' }), // the run whose commit failed
+      line({ version: 2, outcome: 'cancelled', costUsd: null, estimated: true, tokens: { input: 5, output: 0, cacheRead: 0, cacheWrite: 0 } }),
+      line({ creativeSlug: 'b' }), line({ kind: 'console', creativeSlug: null, version: null, attempt: null }),
+      'garbage',
+    ].join('\n') + '\n');
+    const r = (await app.inject({ url: '/api/usage?project=acme&creative=a', headers })).json() as UsageReport;
+    expect(r.total.tokens).toEqual({ input: 205, output: 0, cacheRead: 0, cacheWrite: 0 });
+    expect(r.total.costUsd).toBeCloseTo(0.02);
+    expect(r.total.estimated).toBe(true);
+    expect(r.byProject).toEqual([{ slug: 'acme', name: 'Acme', tokens: 205, costUsd: expect.closeTo(0.02), estimated: true }]);
+    expect(Date.parse(r.from)).toBeLessThanOrEqual(Date.parse(old));
+    // An explicit range still applies.
+    const week = (await app.inject({ url: `/api/usage?project=acme&creative=a&from=${encodeURIComponent(new Date(Date.now() - 86_400_000).toISOString())}`, headers })).json() as UsageReport;
+    expect(week.total.tokens.input).toBe(105);
+  });
+
+  it('needs a project and a valid creative slug; an unknown creative is zero', async () => {
+    await setup();
+    expect((await app.inject({ url: '/api/usage?creative=a', headers })).statusCode).toBe(400);
+    expect((await app.inject({ url: '/api/usage?project=acme&creative=..%2Fx', headers })).statusCode).toBe(400);
+    const r = (await app.inject({ url: '/api/usage?project=acme&creative=nobody', headers })).json() as UsageReport;
+    expect(r.total.tokens).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+    expect(r.total.costUsd).toBeNull();
+  });
+});
+
+describe('usage endpoints with a project that has no ledger file', { timeout: 20_000 }, () => {
+  it('report, project filter, creative filter and first generations answer with zeros, never an error', async () => {
+    await setup();
+    expect(existsSync(join(base, 'ws', 'acme', '.studio', 'usage.jsonl'))).toBe(false);
+    const all = await app.inject({ url: '/api/usage', headers });
+    expect(all.statusCode).toBe(200);
+    expect((all.json() as UsageReport).byProject).toEqual([{ slug: 'acme', name: 'Acme', tokens: 0, costUsd: null }]);
+    const one = (await app.inject({ url: '/api/usage?project=acme', headers })).json() as UsageReport;
+    expect(one.total).toEqual({ tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, costUsd: null });
+    expect(one.trackedSince).toBeNull();
+    expect((await app.inject({ url: '/api/usage?project=acme&creative=x', headers })).statusCode).toBe(200);
+    expect((await app.inject({ url: '/api/usage/first-generations', headers })).json()).toEqual({ tokens: [] });
   });
 });
