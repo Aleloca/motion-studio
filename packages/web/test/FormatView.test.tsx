@@ -72,7 +72,19 @@ const setTime = (video: HTMLVideoElement, t: number) => {
   Object.defineProperty(video, 'currentTime', { value: t, writable: true, configurable: true });
   fireEvent.timeUpdate(video);
 };
-const player = async () => (await screen.findByLabelText('TikTok · Video 9:16 v1', { selector: 'video' })) as HTMLVideoElement;
+/**
+ * The video and a ready view: the keyboard shortcuts only act once the creative has loaded (the transport is enabled),
+ * so a key pressed earlier is ignored by design. Wait for that, never for time.
+ */
+const player = async () => {
+  const video = (await screen.findByLabelText('TikTok · Video 9:16 v1', { selector: 'video' })) as HTMLVideoElement;
+  await waitFor(() => {
+    const btn = document.querySelector('.ms-fv-play') as HTMLButtonElement | null;
+    expect(btn).not.toBeNull();
+    expect(btn!.disabled).toBe(false);
+  });
+  return video;
+};
 const seed = (pin: { x: number; y: number; timeSec: number | null; note: string; format?: string }, v = 1) => {
   const { result } = renderHook(() => usePendingPins(pinsKey('acme', 'lancio')));
   act(() => result.current[1]((ps) => [...ps, { pin: { format: VIDEO, ...pin }, version: v }]));
