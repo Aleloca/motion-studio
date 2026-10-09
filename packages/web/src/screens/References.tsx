@@ -169,7 +169,7 @@ function ReferencesBody({ slug, listing, setListing, reload }: { slug: string; l
             <span className="ms-dot" aria-hidden="true" />
             <b>{r.feeding({ count: feeding })}</b>
             <span className="ms-lib-muted">· {r.feedingHint}</span>
-            <Button size="sm" variant="ghost" loading={analyzing} disabled={feeding === 0 || analyzing} onClick={() => void analyze()}>{r.analyze}</Button>
+            <Button size="sm" variant="ghost" className="ms-accent-link" loading={analyzing} disabled={feeding === 0 || analyzing} onClick={() => void analyze()}><Icon name="sparkle" size={12} />{r.analyze}</Button>
           </Card>
         ) : null}
         {refs.length === 0 ? (

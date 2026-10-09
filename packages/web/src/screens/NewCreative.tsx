@@ -1,5 +1,5 @@
 import { channelName, formatLabel, formatName, type AssetEntry, type BrandKit, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
-import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { api } from '../api.ts';
 import { CodebaseList } from '../components/CodebaseList.tsx';
 import { useLocale, useT } from '../i18n.tsx';
@@ -28,6 +28,8 @@ const SUGGESTIONS = ['teaser', 'feature', 'screenshots'] as const;
 const SCREENSHOT_FORMAT = 'appstore-iphone-69';
 /** Selected formats drawn in the summary bar. */
 const SUMMARY_FRAMES = 5;
+/** Format tiles per row on a wide board (newcreative.css). */
+const TILE_COLUMNS = 6;
 const VISUAL = /^(image|svg|video)$/;
 
 /**
@@ -395,11 +397,12 @@ export function NewCreative({ slug }: { slug: string }) {
             <Empty icon="search" title={n.noMatch} sub={n.noMatchBody} action={<Button size="sm" variant="outline" onClick={() => { setQuery(''); setKind('all'); }}>{n.showAllFormats}</Button>} />
           ) : null}
 
-          {visibleGroups.map(({ g, items }) => {
+          {/* Channel groups flow on one six-column grid (as on the board): a short group shares its row with the next. */}
+          {visibleGroups.length ? <div className="ms-nc-groups">{visibleGroups.map(({ g, items }) => {
             const count = items.filter((p) => selected.includes(p.id)).length;
             const name = channelName(g, locale);
             return (
-              <div key={g} className="ms-nc-group" role="group" aria-label={name} data-enter>
+              <div key={g} className="ms-nc-group" role="group" aria-label={name} data-enter style={{ '--cols': Math.min(items.length, TILE_COLUMNS) } as CSSProperties}>
                 <div className="ms-nc-ghead">
                   <ChannelMark channel={channelOf(g)} size={20} />
                   <b className="ms-nc-ell">{name}</b>
@@ -412,7 +415,7 @@ export function NewCreative({ slug }: { slug: string }) {
                 </div>
               </div>
             );
-          })}
+          })}</div> : null}
 
           {catalog.value !== null && hiddenGroups.length > 0 ? (
             <div className="ms-nc-more" data-enter>

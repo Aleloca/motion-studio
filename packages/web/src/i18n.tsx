@@ -55,6 +55,22 @@ export function formatNumber(locale: Locale, value: number, opts?: Intl.NumberFo
   return new Intl.NumberFormat(locale, opts).format(value);
 }
 
+/**
+ * A shared "when" for lists and details (spec boards: "today 14:28"): today with the time, "yesterday", then the date
+ * (with the year when it is not this year). Calendar days in the user's time zone; words from Intl, no catalog strings.
+ */
+export function formatWhen(locale: Locale, iso: string, now: number = Date.now()): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  const day = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const today = new Date(now);
+  const days = Math.round((day(today) - day(date)) / 86_400_000);
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+  if (days <= 0) return `${rtf.format(0, 'day')} ${new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', hour12: false }).format(date)}`;
+  if (days === 1) return rtf.format(-1, 'day');
+  return formatDate(locale, iso, date.getFullYear() === today.getFullYear() ? { day: 'numeric', month: 'short' } : { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
 const RELATIVE_STEPS: Array<[Intl.RelativeTimeFormatUnit, number]> = [['second', 60], ['minute', 60], ['hour', 24], ['day', 7]];
 
 /**

@@ -4,7 +4,7 @@ import { useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'reac
 import { api } from '../api.ts';
 import { ApprovalCard } from '../components/ApprovalCard.tsx';
 import type { EventsState } from '../eventsReducer.ts';
-import { formatDate, relativeTime, useLocale, useT } from '../i18n.tsx';
+import { formatWhen, relativeTime, useLocale, useT } from '../i18n.tsx';
 import { enter } from '../motion/index.ts';
 import { Button, cx, Icon, Input, Popover, Spinner, toast, Typing } from '../ui/index.ts';
 import { analysisSteps, healthChecks, hostOf, normalizeUrl, type HealthId } from './brandModel.ts';
@@ -235,7 +235,7 @@ export function History({ proposals, undone }: { proposals: BrandProposal[]; und
       <b id="ms-bhistory-title">{h.title}</b>
       {list.map((p) => (
         <span key={p.id} className="ms-muted ms-bsmall-text">
-          {`${formatDate(locale, p.createdAt, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} · ${p.status === 'applied' ? h.applied : p.status === 'discarded' ? h.discarded : h.open}${undone.has(p.id) ? ` · ${h.undone}` : ''}`}
+          {`${formatWhen(locale, p.createdAt)} · ${p.status === 'applied' ? h.applied : p.status === 'discarded' ? h.discarded : h.open}${undone.has(p.id) ? ` · ${h.undone}` : ''}`}
         </span>
       ))}
     </section>

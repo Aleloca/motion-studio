@@ -7,6 +7,7 @@ import { href, type SettingsSection } from '../routes.ts';
 import { notifyApprovalsEnabled, notifyReadyEnabled, setNotifyApprovals, setNotifyReady } from '../shell/notify.ts';
 import { go } from '../shell/ShellContext.tsx';
 import type { Theme } from '../theme.ts';
+import { desktop } from '../desktop.ts';
 import { Button, Card, Icon, Input, Select, Spinner, Toggle, cx, toast } from '../ui/index.ts';
 import { rovingIndex } from '../ui/roving.ts';
 import { Alert, Head, Row, SectionMain, message } from './common.tsx';
@@ -332,7 +333,8 @@ function Updates() {
     <div className="ms-set-narrow">
       <Head title={u.title} />
       <Card className="ms-set-card" data-enter>
-        <Row title={u.version({ version: __APP_VERSION__ })} sub={u.automatic} />
+        {/* How updates arrive is a desktop fact; in a browser the page shows only the version. */}
+        <Row title={u.version({ version: __APP_VERSION__ })} sub={desktop() ? u.automatic : undefined} />
       </Card>
     </div>
   );

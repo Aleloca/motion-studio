@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { api } from '../api.ts';
 import { MediaThumb, SafeImg } from '../components/MediaThumb.tsx';
 import type { EventsState } from '../eventsReducer.ts';
-import { formatDate, useLocale, useT } from '../i18n.tsx';
+import { formatWhen, useLocale, useT } from '../i18n.tsx';
 import { brandJobFailedText, isActiveJob, isDescribeJob } from '../labels.ts';
 import { D, enter, exit, useEnter } from '../motion/index.ts';
 import { href } from '../routes.ts';
@@ -618,7 +618,7 @@ function AssetDetail({ slug, asset: x, describing, busy, onClose, onSaved, onDes
         <div className="ms-adetail-field">
           <div className="ms-lib-row">
             <span className="ms-lib-label">{d.description}</span>
-            <span className="ms-lib-faint ms-lib-small">{d.byClaude}</span>
+            <span className="ms-lib-faint ms-lib-small">{d.descriptionHint}</span>
             <Button size="sm" variant="ghost" icon className="ms-lib-push" aria-label={a.describeAgain} title={busy ? a.describeBusy : a.describeAgain} disabled={busy} onClick={onDescribe}>
               <Icon name="refresh" size={12} />
             </Button>
@@ -648,7 +648,7 @@ function AssetDetail({ slug, asset: x, describing, busy, onClose, onSaved, onDes
         <dl className="ms-adetail-meta">
           <dt>{d.file}</dt><dd className="ms-lib-mono">{x.file}</dd>
           {x.width && x.height ? <><dt>{d.size}</dt><dd>{x.width}×{x.height}</dd></> : null}
-          <dt>{d.added}</dt><dd>{a.origins[x.origin]} · {formatDate(locale, x.addedAt)}</dd>
+          <dt>{d.added}</dt><dd>{a.origins[x.origin]} · {formatWhen(locale, x.addedAt)}</dd>
           {x.sourceUrl ? <><dt>{d.source}</dt><dd><a href={x.sourceUrl} target="_blank" rel="noreferrer" title={x.sourceUrl}>{host}</a></dd></> : null}
           {x.attribution ? <><dt>{d.credit}</dt><dd>{x.attribution}</dd></> : null}
         </dl>

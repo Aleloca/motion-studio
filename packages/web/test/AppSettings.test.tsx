@@ -180,13 +180,22 @@ describe('App settings · notifications and updates', () => {
     expect(approvals.getAttribute('aria-checked')).toBe('false');
   });
 
-  it('shows the version and how updates arrive, never claiming it is up to date, with no fake buttons', () => {
+  it('in the desktop app: the version and how updates arrive, never claiming it is up to date, with no fake buttons', () => {
+    (window as unknown as { motionStudio: object }).motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: vi.fn(), revealPath: vi.fn() };
+    try {
+      en(page('updates'));
+      expect(screen.getByText(`Motion Studio ${__APP_VERSION__}`)).toBeTruthy();
+      expect(screen.getByText('The desktop app downloads updates automatically and asks you to restart.')).toBeTruthy();
+      expect(screen.queryByText(/up to date/i)).toBeNull();
+      const main = screen.getByRole('main');
+      expect(within(main).queryAllByRole('button')).toHaveLength(0);
+    } finally { delete (window as unknown as { motionStudio?: object }).motionStudio; }
+  });
+
+  it('in a browser: only the version (AS5), no sentence about the desktop app', () => {
     en(page('updates'));
     expect(screen.getByText(`Motion Studio ${__APP_VERSION__}`)).toBeTruthy();
-    expect(screen.getByText('The desktop app downloads updates automatically and asks you to restart.')).toBeTruthy();
-    expect(screen.queryByText(/up to date/i)).toBeNull();
-    const main = screen.getByRole('main');
-    expect(within(main).queryAllByRole('button')).toHaveLength(0);
+    expect(screen.queryByText(/desktop app/i)).toBeNull();
   });
 });
 

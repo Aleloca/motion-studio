@@ -13,7 +13,7 @@
 .ms-set-cols.ms-wide-side { grid-template-columns: minmax(0, 1fr) 400px; }
 .ms-set-col { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
 .ms-set-side-top { padding-top: 52px; }
-.ms-set-narrow { display: flex; flex-direction: column; gap: 18px; max-width: 640px; min-width: 0; }
+.ms-set-narrow { display: flex; flex-direction: column; gap: 18px; max-width: 840px; min-width: 0; }
 @media (max-width: 1180px) { .ms-set-cols, .ms-set-cols.ms-wide-side { grid-template-columns: minmax(0, 1fr); } .ms-set-side-top { padding-top: 0; } }
 @media (max-width: 760px) {
   .ms-settings { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }

@@ -285,6 +285,18 @@ describe('Assets · detail', () => {
     await waitFor(() => expect(api.updateAsset).toHaveBeenLastCalledWith('acme', 'brand/logo.svg', { tags: ['logo', 'wordmark'] }));
   });
 
+  it('never claims a description was written by Claude (no provenance in the data), and dates are relative', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 9, 15, 0));
+    listing.assets[1]!.addedAt = new Date(2026, 9, 9, 14, 28).toISOString();
+    en(<Assets slug="acme" live={live()} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Open night.jpg' }));
+    const panel = screen.getByRole('complementary', { name: 'Asset details' });
+    expect(within(panel).queryByText(/by Claude/)).toBeNull();
+    expect(within(panel).getByText('Claude reads it · edit freely')).toBeTruthy();
+    expect(within(panel).getByText('Uploaded · today 14:28')).toBeTruthy();
+  });
+
   it('saves the description when the field loses focus, and never overwrites what is being typed', async () => {
     const { rerender } = en(<Assets slug="acme" live={live()} />);
     await userEvent.click(await screen.findByRole('button', { name: 'Open night.jpg' }));

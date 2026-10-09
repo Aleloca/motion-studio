@@ -3,7 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEve
 import { api, type CodebaseCheck } from '../api.ts';
 import { desktop } from '../desktop.ts';
 import type { EventsState } from '../eventsReducer.ts';
-import { formatDate, useLocale, useT } from '../i18n.tsx';
+import { formatWhen, useLocale, useT } from '../i18n.tsx';
 import { collapse, enter, useEnter } from '../motion/index.ts';
 import { Button, Card, Empty, Icon, Input, NavItem, Pill, Select, Spinner, Tag, Textarea, Toggle, cx, toast, type IconName } from '../ui/index.ts';
 import { Alert, Head, Row, SectionMain, message } from './common.tsx';
@@ -288,7 +288,7 @@ function AllowedCard({ slug, tick }: { slug: string; tick: number }) {
       {rules && shown.length === 0 ? <Empty icon="shield" title={a.emptyTitle} sub={a.emptySub} /> : null}
       <div ref={list}>
         {shown.map((r) => (
-          <RuleRow key={r.rule} rule={r} date={formatDate(locale, r.addedAt, { day: 'numeric', month: 'short' })}
+          <RuleRow key={r.rule} rule={r} date={formatWhen(locale, r.addedAt)}
             confirming={confirming === r.rule} busy={busy} error={rowErrors[r.rule]}
             onAsk={() => { setRowErrors({}); setConfirming(r.rule); }} onCancel={() => setConfirming(null)} onRevoke={() => void revoke([r])} />
         ))}

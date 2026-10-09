@@ -2,7 +2,7 @@ import { EMPTY_BRAND_KIT, type BrandOverview } from '@motion-studio/shared';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { I18nProvider } from '../src/i18n.tsx';
+import { I18nProvider, formatWhen } from '../src/i18n.tsx';
 
 const site = { kind: 'website' as const, ref: 'https://acme.example' };
 const overview: BrandOverview = {
@@ -41,7 +41,7 @@ describe('brand, assets and references in English', () => {
     expect(await screen.findByText('2 files in the assets folder are not in the library yet')).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Open logo.svg' }));
     const panel = screen.getByRole('complementary', { name: 'Asset details' });
-    expect(within(panel).getByText('Generated · 10/7/2026')).toBeTruthy();
+    expect(within(panel).getByText(`Generated · ${formatWhen('en', asset.addedAt)}`)).toBeTruthy();
     expect(within(panel).getByText('Jane')).toBeTruthy();
     expect(within(panel).getByText('10×10')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Describe it' })).toBeTruthy();

@@ -225,3 +225,8 @@
 
 /* An unreadable reference keeps a card-sized, designed placeholder in the masonry. */
 .ms-rcard .ms-rcard-none { height: 140px; }
+
+/* "Analyze brand with these" (R2): the board's accent link, not a grey text button. */
+.ms-btn.ms-accent-link { color: var(--accentText); font-weight: 600; gap: 5px; }
+.ms-btn.ms-accent-link:hover:not(:disabled) { background: var(--sel); }
+.ms-btn.ms-accent-link:disabled { color: var(--faint); }

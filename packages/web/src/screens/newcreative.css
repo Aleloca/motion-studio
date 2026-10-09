@@ -130,6 +130,14 @@
 /* Six across when the board is wide enough (the board's width, not the window's: the brief column takes its share). */
 .ms-nc-right { container-type: inline-size; }
 @container (min-width: 790px) { .ms-nc-tiles { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+/* The channel groups share one six-column grid: each group is as wide as its tiles (--cols, at most 6), so a short
+   group (TikTok) sits next to the following one instead of leaving the rest of its row empty. */
+.ms-nc-groups { display: flex; flex-wrap: wrap; gap: 18px 10px; min-width: 0; }
+.ms-nc-groups > .ms-nc-group { flex: 1 1 100%; min-width: 0; }
+@container (min-width: 790px) {
+  .ms-nc-groups > .ms-nc-group { flex: 0 0 auto; max-width: 100%; }
+  .ms-nc-groups .ms-nc-tiles { grid-template-columns: repeat(var(--cols, 6), calc((100cqw - 50px) / 6)); }
+}
 .ms-nc-tile {
   position: relative; height: 112px; min-width: 0; padding: 10px; margin: 0; border: 0; border-radius: 12px; text-align: left;
   display: flex; flex-direction: column; justify-content: space-between; background: var(--panel); color: var(--text); font: inherit; cursor: pointer;

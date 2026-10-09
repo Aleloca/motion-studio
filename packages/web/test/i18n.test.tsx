@@ -12,7 +12,7 @@ const api = {
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { App } = await import('../src/App.tsx');
-const { I18nProvider, formatDate, formatNumber, useLocale, useT } = await import('../src/i18n.tsx');
+const { I18nProvider, formatDate, formatNumber, formatWhen, useLocale, useT } = await import('../src/i18n.tsx');
 const { AppSettings } = await import('../src/screens/AppSettings.tsx');
 const { markPairingNeeded, resetUiTokenForTests } = await import('../src/uiToken.ts');
 const { browserLanguages } = await import('./setup-locale.ts');
@@ -49,6 +49,21 @@ describe('I18nProvider', () => {
     expect(formatDate('en', 'not a date')).toBe('not a date');
     expect(formatNumber('it', 2, { minimumFractionDigits: 1 })).toBe('2,0');
     expect(formatNumber('en', 2, { minimumFractionDigits: 1 })).toBe('2.0');
+  });
+});
+
+describe('formatWhen (relative dates, A4)', () => {
+  // Local times: "today" and "yesterday" are calendar days where the user is.
+  const now = new Date(2026, 9, 9, 15, 0).getTime();
+  const at = (d: number, h: number, m: number) => new Date(2026, 9, d, h, m).toISOString();
+  it('says today with the time, yesterday, then the date', () => {
+    expect(formatWhen('en', at(9, 14, 28), now)).toBe('today 14:28');
+    expect(formatWhen('it', at(9, 14, 28), now)).toBe('oggi 14:28');
+    expect(formatWhen('en', at(8, 23, 50), now)).toBe('yesterday');
+    expect(formatWhen('it', at(8, 9, 0), now)).toBe('ieri');
+    expect(formatWhen('en', at(7, 9, 0), now)).toBe(formatDate('en', at(7, 9, 0), { day: 'numeric', month: 'short' }));
+    expect(formatWhen('en', new Date(2025, 0, 3).toISOString(), now)).toBe(formatDate('en', new Date(2025, 0, 3).toISOString(), { day: 'numeric', month: 'short', year: 'numeric' }));
+    expect(formatWhen('en', 'not a date', now)).toBe('not a date');
   });
 });
 
