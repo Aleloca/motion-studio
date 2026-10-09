@@ -33,4 +33,13 @@ describe('IPC sender guard', () => {
     expect(ipcSenderTrusted({ sender: { mainFrame: main }, senderFrame: main } as never, wc, 'http://127.0.0.1:64278')).toBe(false); // another webContents
     expect(ipcSenderTrusted({ sender: wc, senderFrame: null } as never, wc, 'http://127.0.0.1:64278')).toBe(false);
   });
+
+  it('rejects a missing sender frame (null or undefined) without throwing, even when mainFrame is missing too', async () => {
+    const { ipcSenderTrusted } = await import('../src/window.ts');
+    const bare = { mainFrame: undefined };
+    expect(() => ipcSenderTrusted({ sender: bare, senderFrame: undefined }, bare, 'http://127.0.0.1:64278')).not.toThrow();
+    expect(ipcSenderTrusted({ sender: bare, senderFrame: undefined }, bare, 'http://127.0.0.1:64278')).toBe(false);
+    const gone = { mainFrame: null };
+    expect(ipcSenderTrusted({ sender: gone, senderFrame: null }, gone, 'http://127.0.0.1:64278')).toBe(false);
+  });
 });

@@ -116,7 +116,8 @@ export function showKept<N extends NativeNotification>(live: Set<N>, n: N, onCli
   return new Promise<NotifyOutcome>((resolve) => {
     let done = false;
     const settle = (o: NotifyOutcome) => { if (done) return; done = true; clearTimeout(timer); resolve(o); };
-    const timer = setTimeout(() => settle({ shown: false, reason: 'timeout' }), timeoutMs);
+    // No answer in time: the reference is dropped too, so a banner that never appears is not kept forever.
+    const timer = setTimeout(() => { drop(); settle({ shown: false, reason: 'timeout' }); }, timeoutMs);
     n.on('click', () => { drop(); onClick(); });
     n.on('close', drop);
     n.on('show', () => settle({ shown: true }));
@@ -125,7 +126,14 @@ export function showKept<N extends NativeNotification>(live: Set<N>, n: N, onCli
       const detail = typeof error === 'string' ? error.slice(0, MAX_TEXT) : '';
       settle(detail ? { shown: false, reason: 'failed', detail } : { shown: false, reason: 'failed' });
     });
-    n.show();
+    try {
+      n.show();
+    } catch (err) {
+      // A synchronous throw is a refusal too: settle now (clears the timer) and let the object go.
+      drop();
+      const detail = err instanceof Error ? err.message.slice(0, MAX_TEXT) : '';
+      settle(detail ? { shown: false, reason: 'failed', detail } : { shown: false, reason: 'failed' });
+    }
   });
 }
 

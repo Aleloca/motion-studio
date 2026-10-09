@@ -259,6 +259,28 @@ describe('notification outcome (shown or blocked by the system)', () => {
     expect(live.size).toBe(0);
   });
 
+  it('a synchronous throw from show() settles failed at once, clears the timer and drops the notification', async () => {
+    vi.useFakeTimers();
+    const live = new Set<FakeNotification>();
+    const n = new FakeNotification({});
+    n.show = () => { throw new Error('Notification center unavailable'); };
+    const p = showKept(live, n, () => {}, 5000);
+    await expect(p).resolves.toEqual({ shown: false, reason: 'failed', detail: 'Notification center unavailable' });
+    expect(live.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('a timed-out notification is no longer kept', async () => {
+    vi.useFakeTimers();
+    const live = new Set<FakeNotification>();
+    const n = new FakeNotification({});
+    const p = showKept(live, n, () => {}, 5000);
+    expect(live.has(n)).toBe(true);
+    vi.advanceTimersByTime(5000);
+    await expect(p).resolves.toEqual({ shown: false, reason: 'timeout' });
+    expect(live.size).toBe(0);
+  });
+
   it("resolves not shown when no 'show' arrives in time", async () => {
     vi.useFakeTimers();
     const n = new FakeNotification({});

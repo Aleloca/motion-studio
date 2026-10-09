@@ -353,13 +353,14 @@ function Notifications() {
       {test?.state === 'error' ? <p className="ms-set-error" role="alert">{n.testFailed({ detail: test.detail })}</p> : null}
       {test?.state === 'blocked' ? (
         <div className="ms-set-error" role="alert">
-          <p>{desktop() ? n.testBlocked : n.testBlockedWeb}</p>
+          <p>{!desktop() ? n.testBlockedWeb : test.reason === 'timeout' ? n.testTimeout : test.reason === 'unsupported' ? n.unsupported : n.testBlocked}</p>
           {test.detail ? <p className="ms-set-small">{n.testReason({ detail: test.detail })}</p> : null}
         </div>
       ) : null}
       {test?.state === 'sent' ? <p className="ms-set-sub ms-set-small" role="status">{n.testSent}</p> : null}
       {test?.state === 'unconfirmed' ? <p className="ms-set-sub ms-set-small" role="status">{n.testUnconfirmed}</p> : null}
-      {desktop() ? <p className="ms-set-faint">{n.howTo}</p> : null}
+      {/* Where to allow them, only while it may help: not after a "sent", and not under a refusal that already says it. */}
+      {desktop() && test?.state !== 'sent' && !(test?.state === 'blocked' && test.reason === 'failed') ? <p className="ms-set-faint">{n.howTo}</p> : null}
     </div>
   );
 }

@@ -201,22 +201,47 @@ describe('App settings · notifications and updates', () => {
       await waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
       expect(notify).toHaveBeenCalledWith({ title: 'Motion Studio: approval needed', body: 'Send a test notification', sound: false });
       expect((await screen.findByRole('status')).textContent).toBe('Sent: the system showed the notification.');
-      expect(screen.getByText(/System Settings → Notifications → Motion Studio \(or Electron in development\)/)).toBeTruthy();
+      // No "how to allow" under a notification the system did show.
+      expect(screen.queryByText(/Development builds can't show system notifications/)).toBeNull();
     });
 
-    it.each([
-      ['failed', { shown: false, reason: 'failed', detail: 'The operation couldn’t be completed. (UNErrorDomain error 1.)' }],
-      ['timeout', { shown: false, reason: 'timeout' }],
-      ['unsupported', { shown: false, reason: 'unsupported' }],
-    ])('desktop: %s → "blocked or not shown", with where to allow it', async (_name, outcome) => {
-      setBridge({ notify: vi.fn(async () => outcome), notifyStatus: async () => ({ supported: true }) });
+    const HOW = "macOS shows notifications only for the installed (signed) Motion Studio app: System Settings → Notifications → Motion Studio → Allow notifications. Development builds can't show system notifications.";
+    it('desktop: before any test, the hint says where to allow them and that dev builds cannot', async () => {
+      setBridge({ notify: vi.fn(), notifyStatus: async () => ({ supported: true }) });
+      en(page('notifications'));
+      expect(await screen.findByText(HOW)).toBeTruthy();
+      expect(screen.queryByText(/Electron/)).toBeNull();
+    });
+
+    it('desktop: failed → a refusal with where to allow it and the system message (the hint is not repeated)', async () => {
+      setBridge({ notify: vi.fn(async () => ({ shown: false, reason: 'failed', detail: 'The operation couldn’t be completed. (UNErrorDomain error 1.)' })), notifyStatus: async () => ({ supported: true }) });
       en(page('notifications'));
       await userEvent.click(screen.getByRole('button', { name: 'Send a test notification' }));
       const alert = await screen.findByRole('alert');
-      expect(alert.textContent).toContain('The system blocked the notification or did not show it. Allow it in System Settings → Notifications → Motion Studio (or Electron in development) → Allow notifications.');
-      if ('detail' in outcome) expect(alert.textContent).toContain('System message: The operation couldn’t be completed. (UNErrorDomain error 1.)');
-      else expect(alert.textContent).not.toContain('System message');
+      expect(alert.textContent).toContain(`The system refused the notification. ${HOW}`);
+      expect(alert.textContent).toContain('System message: The operation couldn’t be completed. (UNErrorDomain error 1.)');
+      expect(screen.getAllByText(HOW, { exact: false })).toHaveLength(1);
       expect(screen.queryByText(/^Sent/)).toBeNull();
+    });
+
+    it('desktop: timeout → "no answer", told apart from a refusal', async () => {
+      setBridge({ notify: vi.fn(async () => ({ shown: false, reason: 'timeout' })), notifyStatus: async () => ({ supported: true }) });
+      en(page('notifications'));
+      await userEvent.click(screen.getByRole('button', { name: 'Send a test notification' }));
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toContain('No answer from the system. If macOS asked for permission, answer the prompt and try again.');
+      expect(alert.textContent).not.toContain('refused');
+      expect(alert.textContent).not.toContain('System message');
+      expect(screen.getByText(HOW)).toBeTruthy();
+    });
+
+    it('desktop: unsupported → the system cannot show notifications', async () => {
+      setBridge({ notify: vi.fn(async () => ({ shown: false, reason: 'unsupported' })), notifyStatus: async () => ({ supported: true }) });
+      en(page('notifications'));
+      await userEvent.click(screen.getByRole('button', { name: 'Send a test notification' }));
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toContain('This system reports that it cannot show notifications.');
+      expect(alert.textContent).not.toContain('refused');
     });
 
     it('desktop: an older desktop app that answers nothing is "sent, not confirmed"', async () => {

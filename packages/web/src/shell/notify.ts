@@ -59,15 +59,18 @@ function quietly(call: () => unknown): void {
  * there is one), `unconfirmed` (a desktop app older than this check answers nothing), `skipped` (web: a focused page
  * already has the toast).
  */
-export type NotificationResult = { state: 'sent' } | { state: 'blocked'; detail?: string } | { state: 'unconfirmed' } | { state: 'skipped' };
+export type NotificationResult = { state: 'sent' } | { state: 'blocked'; detail?: string; /** Desktop: why (a refusal, no answer in time, no support); absent on the web. */ reason?: BlockedReason } | { state: 'unconfirmed' } | { state: 'skipped' };
+export type BlockedReason = 'failed' | 'timeout' | 'unsupported';
 /** How long the web Notification may take to report 'show' (the desktop main process has its own, shorter wait). */
 export const WEB_SHOW_TIMEOUT_MS = 5000;
 
 function desktopResult(o: unknown): NotificationResult {
   if (!o || typeof o !== 'object' || !('shown' in o)) return { state: 'unconfirmed' };
   if ((o as { shown: unknown }).shown === true) return { state: 'sent' };
-  const detail = (o as { detail?: unknown }).detail;
-  return typeof detail === 'string' && detail ? { state: 'blocked', detail } : { state: 'blocked' };
+  const { detail, reason } = o as { detail?: unknown; reason?: unknown };
+  // An unknown reason from a newer or damaged main process is treated as a refusal.
+  const why: BlockedReason = reason === 'timeout' || reason === 'unsupported' ? reason : 'failed';
+  return typeof detail === 'string' && detail ? { state: 'blocked', reason: why, detail } : { state: 'blocked', reason: why };
 }
 
 /** A web Notification's outcome: 'show' → sent; 'error' or nothing within the timeout → blocked. */
