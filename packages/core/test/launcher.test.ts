@@ -211,10 +211,17 @@ describe('AgentLauncher', () => {
         const globs = (d: string) => [...['conversation.jsonl', 'versions.json', 'creative.json'].map((n) => `${escapeGlob(join(d, 'creatives'))}/*/${n}`), `${escapeGlob(join(d, 'brand', 'proposals'))}/*/log.jsonl`];
         for (const d of [linked, realDir]) for (const g of globs(d)) expect(args).toEqual(expect.arrayContaining(tools.map((t) => `${t}(/${g})`)));
         // The agent's own folders stay writable.
-        expect(args.some((a) => /\/outputs|\/work/.test(a) && a.startsWith('Edit('))).toBe(false);
+        const globToRe = (g: string) => new RegExp(`^${g.replace(/\\(.)/g, '\u0000$1').split('*').map((x) => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*').replace(/\u0000(.)/g, (_m, c: string) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))}$`);
+        const rules = args.filter((a) => /^(Edit|Write|MultiEdit|NotebookEdit)\(/.test(a));
+        const sbDeny: string[] = available ? JSON.parse(args[args.indexOf('--settings') + 1]!).sandbox.filesystem.denyWrite : [];
+        for (const f of [join(linked, 'creatives', 'x', 'outputs', 'v1', 'a.png'), join(linked, 'creatives', 'x', 'work', 'a')]) {
+          for (const r of rules) { const g = /^\w+\(\/(.*)\)$/.exec(r)![1]!; expect(globToRe(g.replace(/\/\*\*$/, '/**')).test(f) && !g.endsWith('/**') ? r : null, r).toBeNull(); expect(g.endsWith('/**') && f.startsWith(g.slice(0, -2).replace(/\\(.)/g, '$1')) ? r : null, r).toBeNull(); }
+          for (const d of sbDeny) { expect(globToRe(d).test(f) ? d : null).toBeNull(); expect(f.startsWith(`${d}/`) ? d : null).toBeNull(); }
+        }
         if (available) {
           const settings = JSON.parse(args[args.indexOf('--settings') + 1]!);
           const deny: string[] = settings.sandbox.filesystem.denyWrite;
+          expect(deny).toEqual(expect.arrayContaining([join(linked, 'creatives', '*', 'conversation.jsonl'), join(realDir, 'brand', 'proposals', '*', 'log.jsonl')]));
           for (const d of [linked, realDir]) {
             expect(deny).toEqual(expect.arrayContaining([join(d, 'creatives', 'other-1', 'conversation.jsonl'), join(d, 'creatives', 'other-1', 'versions.json'), join(d, 'creatives', 'other-1', 'creative.json'), join(d, 'brand', 'proposals', 'p-1', 'log.jsonl')]));
           }

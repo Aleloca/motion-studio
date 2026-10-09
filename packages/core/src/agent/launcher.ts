@@ -70,10 +70,15 @@ export interface LaunchInput {
 
 async function existingLogFiles(root: string, creativeSlug?: string | null): Promise<string[]> {
   const out: string[] = [];
-  const slugs = new Set((await readdir(join(root, 'creatives')).catch(() => [])).filter((n) => !n.startsWith('.')));
+  const dirs = async (parent: string) => {
+    const names = (await readdir(parent).catch(() => [])).filter((n) => !n.startsWith('.'));
+    const checked = await Promise.all(names.map(async (n) => ((await lstat(join(parent, n)).catch(() => null))?.isDirectory() ? n : null)));
+    return checked.filter((n): n is string => n !== null);
+  };
+  const slugs = new Set(await dirs(join(root, 'creatives')));
   if (creativeSlug) slugs.add(creativeSlug);
   for (const s of slugs) for (const n of CREATIVE_CORE_FILES) out.push(join(root, 'creatives', s, n));
-  for (const id of await readdir(join(root, 'brand', 'proposals')).catch(() => [])) out.push(join(root, 'brand', 'proposals', id, PROPOSAL_LOG));
+  for (const id of await dirs(join(root, 'brand', 'proposals'))) out.push(join(root, 'brand', 'proposals', id, PROPOSAL_LOG));
   return out;
 }
 
@@ -114,8 +119,14 @@ export class AgentLauncher {
       ...CREATIVE_CORE_FILES.map((n) => `${escapeGlob(join(d, 'creatives'))}/*/${n}`),
       `${escapeGlob(join(d, 'brand', 'proposals'))}/*/${PROPOSAL_LOG}`,
     ]);
-    // The sandbox's denyWrite takes paths, not globs: list what exists now (plus this job's own creative) and
-    // let the glob rules above cover the Edit/Write tools for anything created later.
+    // Sandbox denyWrite: the concrete files that exist now (plus this job's own creative) work everywhere. macOS also
+    // expands globs there (seatbelt regex), Linux/WSL skip them, so the globs are added too, only for roots without glob
+    // metacharacters (the sandbox may not honour escapes); other roots keep the concrete list. The Edit/Write rules use globs always.
+    const plain = (d: string) => !/[[\]*?]/.test(d);
+    const sandboxGlobs = roots.filter(plain).flatMap((d) => [
+      ...CREATIVE_CORE_FILES.map((n) => join(d, 'creatives', '*', n)),
+      join(d, 'brand', 'proposals', '*', PROPOSAL_LOG),
+    ]);
     const logFiles = (await Promise.all(roots.map((d) => existingLogFiles(d, i.creativeSlug)))).flat();
     protectedFiles.push(...logFiles);
     const mcpOn = this.mcpActive();
@@ -123,7 +134,7 @@ export class AgentLauncher {
     const abort = new AbortController();
     const policy = buildAgentPolicy({
       kind: i.kind, sandbox, projectDir: i.projectDir, home, configDir,
-      codebases: i.codebases ?? [], protectedFiles, protectedDirs, protectedGlobs: logGlobs,
+      codebases: i.codebases ?? [], protectedFiles, protectedDirs, protectedGlobs: logGlobs, sandboxGlobs,
       extraDomains: settings.extraAllowedDomains, projectAllowRules: rules,
       mcpTools: mcpOn ? MCP_TOOLS[i.kind].map((t) => `mcp__${MCP_SERVER}__${t}`) : [],
       autoApproveSandboxed: autoApproveAtStart,
