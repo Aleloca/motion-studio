@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, symlink, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { FormatPreset } from '@motion-studio/shared';
+import { outputWarningText, versionEntrySchema, type FormatPreset } from '@motion-studio/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { validateOutputs } from '../src/creatives/output-contract.ts';
 import { NoMediaTools, type MediaInfo, type MediaTools } from '../src/media/media-tools.ts';
@@ -144,5 +144,40 @@ describe('validateOutputs', () => {
       media: fakeMedia({ 'sq.mp4': null }) });
     expect(r.problems).toEqual(['sq.mp4: file non leggibile come media']);
     expect(r.outputs[0]).toMatchObject({ verified: false, preview: null });
+  });
+
+  describe('large-file warnings', () => {
+    const reel: FormatPreset = { id: 'reel', channel: 'Instagram', name: 'Reel', width: 1080, height: 1920, kind: 'video', extensions: ['mp4'], maxFileMB: 15 };
+    const reelEntry = { format: 'reel', file: 'reel.mp4', width: 1080, height: 1920, durationSec: 10 };
+    it('warns (never a problem) about a 78 MB file on a reel with max 15', async () => {
+      await manifest([reelEntry]);
+      await writeFile(join(dir, 'reel.mp4'), '');
+      await truncate(join(dir, 'reel.mp4'), 78 * 1024 * 1024);
+      const r = await validateOutputs({ dir, requested: ['reel'], presets: [reel], durationSec: null, media: NoMediaTools });
+      expect(r.problems).toEqual([]);
+      expect(r.outputs[0]!.warnings).toEqual([{ key: 'outputs.largeFile', params: { sizeMB: 78, maxMB: 15, channel: 'Instagram' } }]);
+      expect(outputWarningText(r.outputs[0]!.warnings![0]!, 'en')).toBe('Large file: 78 MB (recommended ≤ 15 MB for Instagram)');
+      expect(outputWarningText(r.outputs[0]!.warnings![0]!, 'it')).toContain('78 MB');
+    });
+    it('does not warn under the limit', async () => {
+      await manifest([reelEntry]);
+      await writeFile(join(dir, 'reel.mp4'), 'small');
+      const r = await validateOutputs({ dir, requested: ['reel'], presets: [reel], durationSec: null, media: NoMediaTools });
+      expect(r.problems).toEqual([]);
+      expect(r.outputs[0]!.warnings).toBeUndefined();
+    });
+    it('an oversized image stays a hard problem, not a warning', async () => {
+      await manifest([banner]);
+      await writeFile(join(dir, 'banner.png'), '');
+      await truncate(join(dir, 'banner.png'), 3 * 1024 * 1024);
+      const r = await validateOutputs({ dir, requested: ['banner'], presets, durationSec: null, media: NoMediaTools });
+      expect(r.problems).toHaveLength(1);
+      expect(r.outputs[0]!.warnings).toBeUndefined();
+    });
+    it('old versions without warnings still parse', () => {
+      const old = { n: 1, commit: null, sessionId: null, status: 'complete', createdAt: '2026-10-07T10:00:00.000Z', request: 'x',
+        outputs: [{ format: 'sq', file: 'sq.mp4', width: 1, height: 1, durationSec: null, verified: true, preview: null }], problems: [], tools: [], renderCommand: null, basedOn: null };
+      expect(versionEntrySchema.safeParse(old).success).toBe(true);
+    });
   });
 });

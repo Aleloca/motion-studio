@@ -212,6 +212,9 @@ export const en = {
     durationOverMax: (p: { file: string; duration: string; max: number }) => `${p.file}: duration ${p.duration}s exceeds the maximum of ${p.max}s`,
     durationOffTarget: (p: { file: string; duration: string; target: number }) => `${p.file}: duration ${p.duration}s, about ${p.target}s requested`,
   },
+  outputs: {
+    largeFile: (p: { sizeMB: number; maxMB: number; channel: string }) => `Large file: ${p.sizeMB} MB (recommended ≤ ${p.maxMB} MB for ${p.channel})`,
+  },
   export: {
     absoluteDestination: 'Choose a destination folder (absolute path)',
     outsideWorkspace: 'Choose a folder outside the Motion Studio workspace',

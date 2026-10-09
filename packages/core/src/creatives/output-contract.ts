@@ -1,6 +1,6 @@
 import { lstat } from 'node:fs/promises';
 import { basename, extname, join } from 'node:path';
-import { formatLabel, manifestSchema, messages, type Locale, type FormatPreset, type OutputFileInfo } from '@motion-studio/shared';
+import { formatLabel, manifestSchema, messages, type Locale, type FormatPreset, type OutputFileInfo, type OutputWarning } from '@motion-studio/shared';
 import { findPreset } from '../formats/format-catalog.ts';
 import { JsonFileError, readJsonFile } from '../json-file.ts';
 import type { MediaTools } from '../media/media-tools.ts';
@@ -47,8 +47,12 @@ export async function validateOutputs(opts: {
       problems.push(v.badExtension({ file: entry.file, ext, id, allowed: preset.extensions.join(', ') }));
     }
     const sizeMB = info.size / (1024 * 1024);
+    const warnings: OutputWarning[] = [];
     if (preset.maxFileMB !== undefined && sizeMB > preset.maxFileMB) {
-      problems.push(v.tooLarge({ file: entry.file, size: sizeMB.toFixed(1), max: preset.maxFileMB }));
+      // Images: maxFileMB is a hard platform limit (a problem). Video: it is a recommendation, so only a warning,
+      // which never makes the version incomplete nor triggers the fix loop.
+      if (preset.kind === 'image') problems.push(v.tooLarge({ file: entry.file, size: sizeMB.toFixed(1), max: preset.maxFileMB }));
+      else warnings.push({ key: 'outputs.largeFile', params: { sizeMB: Math.round(sizeMB), maxMB: preset.maxFileMB, channel: preset.channel } });
     }
 
     const probed = media.available ? await media.probe(path) : null;
@@ -114,7 +118,7 @@ export async function validateOutputs(opts: {
         }
       }
     }
-    outputs.push({ format: id, file: entry.file, width, height, durationSec, verified, preview });
+    outputs.push({ format: id, file: entry.file, width, height, durationSec, verified, preview, ...(warnings.length ? { warnings } : {}) });
   }
   return { outputs, problems, tools: manifest.tools, renderCommand: manifest.renderCommand ?? null, unknownPresets };
 }

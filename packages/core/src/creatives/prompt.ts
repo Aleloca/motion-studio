@@ -23,6 +23,14 @@ export interface StudioBlock {
   formats: Array<{ id: string; width: number; height: number; kind: 'video' | 'image'; extensions: string[] }>;
 }
 
+/** Self-contained section: encoding guidance for the delivered files (prompts are English; only the reply is localized). */
+const ENCODING_SECTION = [
+  '## Encoding',
+  '- Video: H.264 (libx264), `-pix_fmt yuv420p`, CRF 18-23, `-movflags +faststart`; AAC 128k audio only when the video has sound.',
+  '- Images: optimized PNG, or JPEG at quality 85-90.',
+  '- Keep files light: stay under the recommended size of each format when listed, raising the CRF rather than lowering the resolution.',
+];
+
 function contextSections(c: CreativeContext): string[] {
   const k = c.kit;
   const brand = [
@@ -64,7 +72,7 @@ export function buildCreativePrompt(i: PromptInput): string {
   };
   // Agent-facing text: format names are always the English ones, whatever the user's language; the id identifies the preset.
   const formatLines = known.map(([id, p]) => p
-    ? `- ${p.id}: ${formatLabel(p, 'en')} — ${p.width}×${p.height}, ${p.kind}${p.maxDurationSec ? `, max ${p.maxDurationSec}s` : ''}${p.safeZone ? `, safe zone px (top ${p.safeZone.top}, bottom ${p.safeZone.bottom}, left ${p.safeZone.left}, right ${p.safeZone.right})` : ''} — extensions: ${p.extensions.join(', ')}`
+    ? `- ${p.id}: ${formatLabel(p, 'en')} — ${p.width}×${p.height}, ${p.kind}${p.maxDurationSec ? `, max ${p.maxDurationSec}s` : ''}${p.safeZone ? `, safe zone px (top ${p.safeZone.top}, bottom ${p.safeZone.bottom}, left ${p.safeZone.left}, right ${p.safeZone.right})` : ''}${p.kind === 'video' && p.maxFileMB ? `, recommended ≤ ${p.maxFileMB} MB${p.targetBitrateKbps ? ` (~${p.targetBitrateKbps} kbps)` : ''}` : ''} — extensions: ${p.extensions.join(', ')}`
     : `- ${id}: unknown preset, ignore it and mention it in your reply`);
 
   const parts: string[] = [];
@@ -94,6 +102,7 @@ export function buildCreativePrompt(i: PromptInput): string {
   if (i.context && i.kind !== 'fix') parts.push(...contextSections(i.context));
   parts.push(
     '', '## Required formats', ...formatLines,
+    '', ...ENCODING_SECTION,
     '', '## Where to work',
     `- Workspace: ${base}/work/ (sources, scripts, local dependencies)`,
     `- Delivery: ${outputDir}/ with one file per format (\`<id>.<extension>\`) and manifest.json, as per the contract in .studio/context.md`,

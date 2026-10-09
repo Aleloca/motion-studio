@@ -210,6 +210,9 @@ export const it: Messages = {
     durationOverMax: (p) => `${p.file}: durata ${p.duration}s oltre il massimo di ${p.max}s`,
     durationOffTarget: (p) => `${p.file}: durata ${p.duration}s, richiesta circa ${p.target}s`,
   },
+  outputs: {
+    largeFile: (p) => `File pesante: ${p.sizeMB} MB (consigliato ≤ ${p.maxMB} MB per ${p.channel})`,
+  },
   export: {
     absoluteDestination: 'Scegli una cartella di destinazione (percorso assoluto)',
     outsideWorkspace: 'Scegli una cartella fuori dal workspace di Motion Studio',
