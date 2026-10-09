@@ -15,6 +15,9 @@ let projectDir: string;
 let ctx: BridgeContext;
 let messages: ServerMessage[];
 let approvals: ApprovalBroker;
+
+// Waits until the tool has registered its approval request (no fixed sleep).
+const waitForPending = () => vi.waitFor(() => expect(approvals.pending()).toHaveLength(1), { timeout: 10_000 });
 let controller: AbortController;
 let sent: string[];
 const png = Buffer.from('png-bytes');
@@ -70,15 +73,14 @@ describe('generate_image', () => {
     await mkdir(join(projectDir, '.studio'), { recursive: true });
     await writeFile(join(projectDir, '.studio', 'permissions.json'), '{ not json');
     const pending = tools().generate_image!(ctx, { prompt: 'x', width: 1024, height: 1024 });
-    await new Promise((r) => setTimeout(r, 20));
-    expect(approvals.pending()).toHaveLength(1);
+    await waitForPending();
     await approvals.decide(approvals.pending()[0]!.id, 'deny');
     expect(await pending.catch(status)).toBe(403);
   });
   it('refuses when denied, without a key, for other job kinds and for outside references', async () => {
     const t = tools();
     const denied = t.generate_image!(ctx, { prompt: 'x', width: 1024, height: 1024 });
-    await new Promise((r) => setTimeout(r, 20));
+    await waitForPending();
     await approvals.decide(approvals.pending()[0]!.id, 'deny');
     expect(await denied.catch((e) => e.statusCode ?? e.status)).toBe(403);
     expect(await tools({}, {}).generate_image!(ctx, { prompt: 'x', width: 1, height: 1 }).catch((e) => e.message)).toBe('Configura la chiave OpenAI nelle Impostazioni di Motion Studio');
@@ -133,13 +135,20 @@ describe('availableTools', () => {
 
 describe('cancellation before asking', () => {
   it('never creates an approval when the job is cancelled while settings are read', async () => {
+    // The settings read is held open until the test has aborted the job, so the
+    // ordering does not depend on timer precision under load.
+    let readStarted!: () => void;
+    const started = new Promise<void>((r) => { readStarted = r; });
+    let releaseSettings!: () => void;
+    const gate = new Promise<void>((r) => { releaseSettings = r; });
     const t = providerTools({
       vault: new MemoryVault({ OPENAI_API_KEY: 'sk' }), approvals, media: NoMediaTools, fetch: fakeFetch, lookup: publicLookup, broadcast: () => {},
-      settings: async () => { await new Promise((r) => setTimeout(r, 30)); return workspaceSettingsSchema.parse({ schemaVersion: 1 }); },
+      settings: async () => { readStarted(); await gate; return workspaceSettingsSchema.parse({ schemaVersion: 1 }); },
     });
     const pending = t.generate_image!(ctx, { prompt: 'x', width: 1024, height: 1024 });
-    await new Promise((r) => setTimeout(r, 5));
+    await started;
     controller.abort();
+    releaseSettings();
     const err = await pending.catch((e) => e) as { status: number; message: string };
     expect(err).toMatchObject({ status: 499, message: 'Il lavoro è stato annullato.' });
     expect(approvals.pending()).toEqual([]);
@@ -182,7 +191,7 @@ describe('tts', () => {
   it('falls back to ElevenLabs and asks with the provider rule', async () => {
     const t = tools({}, { ELEVENLABS_API_KEY: 'e' });
     const pending = t.tts!(ctx, { text: 'Ciao mondo', name: 'voce' });
-    await new Promise((r) => setTimeout(r, 20));
+    await waitForPending();
     expect(approvals.pending()[0]).toMatchObject({ kind: 'provider', toolName: 'provider:tts-elevenlabs' });
     await approvals.decide(approvals.pending()[0]!.id, 'once');
     expect(await pending).toEqual({ file: 'assets/audio/voce.mp3', provider: 'elevenlabs', voice: 'v1' });
