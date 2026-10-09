@@ -2,12 +2,15 @@ import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { checkLink, effectiveLinks, formatHistory, starOf, type CreativeFile, type FormatPreset, type FormatSummary, type VersionEntry } from '@motion-studio/shared';
 
-/** The output file of `formatId` in version `n` is a regular file on disk (never followed through a symlink). */
+/**
+ * The output file of `formatId` in version `n` is usable: a regular, single-linked file on disk (a symlink or a hard link is
+ * refused, as by the hashing and the export).
+ */
 export async function outputFileExists(creativeDir: string, versions: VersionEntry[], n: number, formatId: string): Promise<boolean> {
   const file = versions.find((v) => v.n === n)?.outputs.find((o) => o.format === formatId)?.file;
   if (!file) return false;
   const info = await lstat(join(creativeDir, 'outputs', `v${n}`, file)).catch(() => null);
-  return Boolean(info?.isFile());
+  return Boolean(info?.isFile() && info.nlink === 1);
 }
 
 /** One summary per brief format, in the brief's order (spec §2.1–2.3): history, ★ (effective links) and linkable primaries. */

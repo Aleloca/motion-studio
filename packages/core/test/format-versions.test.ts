@@ -10,7 +10,8 @@ import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AppConfigStore } from '../src/app-config.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { CreativeTurnService, type CreativeRef } from '../src/creatives/creative-turns.ts';
-import { clearHashMemory, hashCachePath, withLazyHashes } from '../src/creatives/output-hashes.ts';
+import { clearHashMemory, hashCachePath, hashTesting, hashVersionOutputs, withLazyHashes } from '../src/creatives/output-hashes.ts';
+import { hashConfinedFile } from '../src/brand/agent-guard.ts';
 import { execCommand } from '../src/exec.ts';
 import { Git } from '../src/git.ts';
 import { JobQueue } from '../src/jobs/job-queue.ts';
@@ -27,7 +28,7 @@ const TIKTOK = 'tiktok-9x16';
 const SHORTS = 'youtube-shorts-9x16';
 const POST = 'instagram-post-1x1';
 
-afterEach(() => { delete process.env.FAKE_CLAUDE_SCENARIO; clearHashMemory(); vi.restoreAllMocks(); });
+afterEach(() => { delete process.env.FAKE_CLAUDE_SCENARIO; clearHashMemory(); hashTesting.setHasher(null); hashTesting.setMemoryMax(500); vi.restoreAllMocks(); });
 
 const output = (format: string, file: string, durationSec: number | null = 20): OutputFileInfo =>
   ({ format, file, width: 1080, height: format === POST ? 1080 : 1920, durationSec, verified: true, preview: null });
@@ -250,6 +251,14 @@ describe('format routes', { timeout: 20_000 }, () => {
     expect([res.statusCode, res.json().code]).toEqual([409, 'pick-file-missing']);
   });
 
+  it('refuses a pick on a hard-linked file', async () => {
+    await seed();
+    const file = join(projectDir, 'creatives', slug, 'outputs', 'v1', 'reel.mp4');
+    await link(file, join(projectDir, 'reel-copy.mp4'));
+    const res = await pick(REEL, 1);
+    expect([res.statusCode, res.json().code]).toEqual([409, 'pick-file-missing']);
+  });
+
   it('links and unlinks formats, refusing self-links, chains and incompatible pairs', async () => {
     let res = await linkTo(SHORTS, null);
     expect(res.statusCode).toBe(200);
@@ -286,7 +295,8 @@ describe('format routes', { timeout: 20_000 }, () => {
     process.env.FAKE_CLAUDE_SCENARIO = 'hang';
     const job = (await app.inject({ method: 'POST', url: `${url}/turns`, payload: {} })).json();
     await new Promise((r) => setTimeout(r, 300));
-    expect((await linkTo(SHORTS, null)).statusCode).toBe(409);
+    const busy = await linkTo(SHORTS, null);
+    expect([busy.statusCode, busy.json().code]).toEqual([409, 'job-running']);
     await app.inject({ method: 'POST', url: `/api/jobs/${job.id}/cancel` });
     for (let i = 0; i < 500; i++) {
       const jobs = (await app.inject('/api/jobs')).json() as Array<{ state: string }>;
@@ -298,5 +308,130 @@ describe('format routes', { timeout: 20_000 }, () => {
   it('refuses unknown creatives and bad bodies', async () => {
     expect((await app.inject({ method: 'PUT', url: '/api/projects/acme/creatives/2020-01-01-nope/links', payload: { follower: SHORTS, primary: null } })).statusCode).toBe(404);
     expect((await app.inject({ method: 'PUT', url: `${url}/links`, payload: { follower: '' } })).statusCode).toBe(400);
+  });
+});
+
+/** A fake hasher: each call waits for its gate (open by default when `gated` is false) and is recorded in order. */
+function fakeHasher(gated: boolean) {
+  const calls: string[] = [];
+  const gates: Array<() => void> = [];
+  hashTesting.setHasher(async (base, rel) => {
+    calls.push(rel);
+    if (gated) await new Promise<void>((r) => gates.push(r));
+    else await new Promise((r) => setTimeout(r, 30));
+    return hashConfinedFile(base, rel);
+  });
+  return { calls, release: () => { for (const g of gates.splice(0)) g(); }, waitCalls: async (n: number) => {
+    for (let i = 0; i < 500 && calls.length < n; i++) await new Promise((r) => setTimeout(r, 5));
+  } };
+}
+
+describe('hashing: scheduling, de-duplication and safety', () => {
+  let projectDir: string;
+  let store: CreativeStore;
+  let slug: string;
+  beforeEach(async () => {
+    projectDir = await mkdtemp(join(tmpdir(), 'ms-fv-sched-'));
+    store = new CreativeStore(projectDir);
+    slug = (await store.create({ title: 'Old', brief: { goal: 'x', message: '', formats: ['a', 'b', 'c', 'd'], durationSec: null, assets: [], notes: '' } })).slug;
+  });
+  const addVersion = async (n: number, names: string[]) => {
+    await mkdir(store.outputsDir(slug, n), { recursive: true });
+    for (const f of names) await writeFile(join(store.outputsDir(slug, n), `${f}.mp4`), `${f}-${n}`);
+    await store.appendVersion(slug, version(n, names.map((f) => output(f, `${f}.mp4`))));
+  };
+  const lazy = async (budgetMs = 10_000) => withLazyHashes({ projectDir, creativeSlug: slug, creativeDir: store.dir(slug), versions: await store.readVersions(slug), budgetMs });
+
+  it('runs one hashing per file for concurrent requests', async () => {
+    await addVersion(1, ['a', 'b']);
+    const h = fakeHasher(false);
+    const [x, y] = await Promise.all([lazy(), lazy()]);
+    expect(h.calls).toHaveLength(2);
+    expect(x[0]!.outputs.map((o) => o.sha256)).toEqual([sha('a-1'), sha('b-1')]);
+    expect(y[0]!.outputs.map((o) => o.sha256)).toEqual([sha('a-1'), sha('b-1')]);
+  });
+
+  it('gives the hashes of a turn being finalized priority over a lazy backlog', async () => {
+    await addVersion(1, ['a', 'b', 'c', 'd']);
+    await mkdir(store.outputsDir(slug, 2), { recursive: true });
+    await writeFile(join(store.outputsDir(slug, 2), 'new.mp4'), 'new');
+    const h = fakeHasher(true);
+    await lazy(0);
+    await h.waitCalls(2);
+    const recorded = hashVersionOutputs(store.dir(slug), 2, [output('a', 'new.mp4')]);
+    await new Promise((r) => setTimeout(r, 20));
+    for (let i = 0; i < 5; i++) { h.release(); await new Promise((r) => setTimeout(r, 20)); }
+    expect((await recorded)[0]!.sha256).toBe(sha('new'));
+    expect(h.calls[2]).toBe('outputs/v2/new.mp4');
+  });
+
+  it('discards an incoming sha256 and recomputes it from the file', async () => {
+    await addVersion(1, ['a']);
+    const [o] = await hashVersionOutputs(store.dir(slug), 1, [{ ...output('a', 'a.mp4'), sha256: 'f'.repeat(64) }]);
+    expect(o!.sha256).toBe(sha('a-1'));
+  });
+
+  it('warns once per file state for a symlinked output', async () => {
+    await addVersion(1, ['a']);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await rm(join(store.outputsDir(slug, 1), 'a.mp4'));
+    await writeFile(join(projectDir, 'elsewhere.txt'), 'x');
+    await symlink(join(projectDir, 'elsewhere.txt'), join(store.outputsDir(slug, 1), 'a.mp4'));
+    await lazy();
+    await lazy();
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the in-memory cache within its bound', async () => {
+    hashTesting.setMemoryMax(2);
+    for (const n of [1, 2, 3]) await addVersion(n, ['a']);
+    await lazy();
+    expect(hashTesting.memorySize()).toBe(2);
+  });
+
+  it('refuses `..` segments and symlinked folders in the exact confined hash', async () => {
+    await addVersion(1, ['a']);
+    await writeFile(join(store.dir(slug), 'outside.mp4'), 'x');
+    expect(await hashConfinedFile(store.dir(slug), 'outputs/v1/../../outside.mp4')).toEqual({ skipped: 'outside' });
+    await symlink(store.outputsDir(slug, 1), join(store.dir(slug), 'outputs', 'v9'));
+    expect(await hashConfinedFile(store.dir(slug), 'outputs/v9/a.mp4')).toEqual({ skipped: 'outside' });
+    expect(await hashConfinedFile(store.dir(slug), 'outputs/v1/a.mp4')).toMatchObject({ sha256: sha('a-1') });
+  });
+});
+
+describe('export picks do not hold the creative lock while hashing', { timeout: 20_000 }, () => {
+  it('lets a brief update through while a pick waits for slow hashes', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'ms-fv-lock-'));
+    const git = new Git();
+    const ws = await WorkspaceStore.open(join(base, 'ws'), git);
+    const { slug: project } = await ws.createProject({ name: 'Acme' });
+    const projectDir = ws.projectDir(project);
+    const store = new CreativeStore(projectDir);
+    const created = await store.create({ title: 'Lancio', brief: { goal: 'x', message: '', formats: [REEL], durationSec: null, assets: [], notes: '' } });
+    const ref: CreativeRef = { root: ws.root, projectSlug: project, projectDir, creativeSlug: created.slug };
+    for (const n of [1, 2]) {
+      await mkdir(store.outputsDir(created.slug, n), { recursive: true });
+      await writeFile(join(store.outputsDir(created.slug, n), 'reel.mp4'), `reel-${n}`);
+      await store.appendVersion(created.slug, version(n, [output(REEL, 'reel.mp4')]));
+    }
+    const service = new CreativeTurnService({
+      queue: new JobQueue({ concurrency: 1 }), git, media: NoMediaTools, vault: new MemoryVault(),
+      launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
+      presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
+    });
+    const h = fakeHasher(true);
+    const picked = service.setExportPick(ref, REEL, 1);
+    await h.waitCalls(1);
+    const edited = await Promise.race([
+      service.updateBrief(ref, { title: 'Nuovo' }).then((c) => c.title),
+      new Promise((r) => setTimeout(() => r('blocked'), 3000)),
+    ]);
+    expect(edited).toBe('Nuovo');
+    h.release();
+    await h.waitCalls(2);
+    h.release();
+    expect((await picked).exportPicks).toEqual({ [REEL]: 1 });
+    // The pass under the lock was served by the cache: one hashing per file.
+    expect(h.calls).toHaveLength(2);
   });
 });

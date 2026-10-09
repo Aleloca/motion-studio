@@ -102,7 +102,7 @@ export const en = {
     },
     pickFollower: (p: { format: string; primary: string }) => `${p.format} follows ${p.primary}: it uses the ★ of ${p.primary}`,
     pickNoFile: (p: { format: string; n: number }) => `Version ${p.n} has no file for ${p.format}`,
-    pickFileMissing: (p: { format: string; n: number }) => `The ${p.format} file of version ${p.n} is missing on disk`,
+    pickFileMissing: (p: { format: string; n: number }) => `The ${p.format} file of version ${p.n} is missing on disk or cannot be used (a link)`,
     approvalNotFound: 'Approval request not found or already handled',
     invalidRule: 'Invalid permission rule',
     tooManyPermissions: 'Too many saved permissions: revoke some in the project settings',

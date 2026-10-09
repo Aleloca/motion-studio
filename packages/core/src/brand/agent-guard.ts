@@ -128,11 +128,12 @@ export async function readConfinedFile(projectDir: string, rel: string, maxBytes
  * Opens `rel` under `base` for reading with the confined-read checks and passes the open handle to `use`: never through a
  * symlink (O_NOFOLLOW, non-blocking so a FIFO cannot hang the core), a regular single-linked file (a hard link made by the
  * agent can point at any file of the user's on the same volume) whose real path is under `base`'s real path and is the
- * opened inode. `exact`: the real path must be exactly `<real base>/<rel>`, which also refuses a symlinked folder inside
- * `base`. null when missing; `{ skipped }` when refused.
+ * opened inode. `exact`: `rel` has no `..` segment and the real path must be exactly `<real base>/<rel>`, which also
+ * refuses a symlinked folder inside `base`. null when missing; `{ skipped }` when refused.
  */
 async function withConfinedFile<T>(base: string, rel: string, exact: boolean,
   use: (fh: FileHandle, info: Stats) => Promise<T | { skipped: SkipReason }>): Promise<T | { skipped: SkipReason } | null> {
+  if (exact && rel.split(/[/\\]/).includes('..')) return { skipped: 'outside' };
   const abs = absOf(base, rel);
   let fh: FileHandle;
   try {
@@ -145,7 +146,7 @@ async function withConfinedFile<T>(base: string, rel: string, exact: boolean,
     if (!info.isFile()) return { skipped: 'not-regular' };
     if (info.nlink > 1) return { skipped: 'linked' };
     const [real, realBase] = await Promise.all([realpath(abs).catch(() => null), realpath(base).catch(() => null)]);
-    if (!real || !realBase || !(exact ? real === absOf(realBase, rel) : real.startsWith(realBase + sep))) return { skipped: 'outside' };
+    if (!real || !realBase || !real.startsWith(realBase + sep) || (exact && real !== absOf(realBase, rel))) return { skipped: 'outside' };
     const check = await stat(real).catch(() => null);
     if (!check || check.ino !== info.ino || check.dev !== info.dev) return { skipped: 'outside' };
     return await use(fh, info);

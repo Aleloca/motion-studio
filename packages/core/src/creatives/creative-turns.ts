@@ -17,7 +17,7 @@ import { CodedError, WorkspaceError } from '../workspace-store.ts';
 import { CreativeStore } from './creative-store.ts';
 import { validateOutputs } from './output-contract.ts';
 import { outputFileExists } from './format-summary.ts';
-import { hashVersionOutputs, withLazyHashes } from './output-hashes.ts';
+import { hashVersionOutputs, LAZY_HASH_BUDGET_MS, withLazyHashes } from './output-hashes.ts';
 import { buildCreativePrompt, type CreativeContext, type PromptKind } from './prompt.ts';
 import { sumUsage } from '../usage/usage-tracker.ts';
 import { currentLocale, t } from '../i18n.ts';
@@ -47,6 +47,8 @@ function addFormatsRequest(formats: string[], base: VersionEntry | undefined): s
     + ` ${j.redeliverAll}`;
 }
 const now = () => new Date().toISOString();
+/** How long an export pick waits for its format's hashes before taking the creative's lock (generous: it is not locked). */
+export const PICK_HASH_BUDGET_MS = 60_000;
 
 class AgentFailure extends Error {}
 
@@ -91,6 +93,13 @@ export class CreativeTurnService {
    * file missing on disk (409).
    */
   async setExportPick(ref: CreativeRef, format: string, version: number | null): Promise<CreativeFile> {
+    // The default rule needs this format's hashes. They are computed before taking the creative's lock (hashing can be
+    // slow and must not block turns, restores or brief edits), bounded; the pass under the lock is then served by the cache.
+    const pre = new CreativeStore(ref.projectDir);
+    const hashed = (versions: VersionEntry[], budgetMs: number) => withLazyHashes({
+      projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir: pre.dir(ref.creativeSlug), versions, formats: [format], budgetMs,
+    });
+    await hashed(await pre.readVersions(ref.creativeSlug), PICK_HASH_BUDGET_MS);
     return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), async () => {
       const store = new CreativeStore(ref.projectDir);
       const creative = await store.get(ref.creativeSlug);
@@ -100,11 +109,8 @@ export class CreativeTurnService {
       if (!creative.brief.formats.includes(format)) throw new CodedError(400, e.formatNotInBrief({ format: label(format) }), 'format-not-in-brief');
       const links = effectiveLinks(creative.brief.links, creative.brief.formats);
       if (Object.hasOwn(links, format)) throw new CodedError(400, e.pickFollower({ format: label(format), primary: label(links[format]!) }), 'pick-follower');
-      // The default rule needs the full history: wait for every hash here.
-      const versions = await withLazyHashes({
-        projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir: store.dir(ref.creativeSlug),
-        versions: await store.readVersions(ref.creativeSlug), budgetMs: Number.POSITIVE_INFINITY,
-      });
+      // Re-read under the lock (a version may have been added meanwhile); the hashes come from the cache, bounded.
+      const versions = await hashed(await store.readVersions(ref.creativeSlug), LAZY_HASH_BUDGET_MS);
       if (version !== null) {
         const entry = versions.find((v) => v.n === version);
         if (!entry) throw new CodedError(404, e.versionNNotFound({ n: version }), 'version-not-found');

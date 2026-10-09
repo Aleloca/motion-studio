@@ -163,7 +163,7 @@ export interface FormatSummary {
   /** `formatHistory`: the versions where this format's file is new or changed. */
   history: number[];
   star: Star;
-  /** The ★ version's file of this format is missing on disk (e.g. deleted by hand): export will skip it. */
+  /** The ★ version's file of this format is missing on disk (e.g. deleted by hand) or is a symlink/hard link: export will skip it. */
   starFileMissing: boolean;
   /** Each other format of the brief as a possible primary for this one (`checkLink`). */
   linkable: Array<{ primary: string; ok: boolean; reason?: LinkReason }>;

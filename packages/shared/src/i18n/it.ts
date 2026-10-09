@@ -100,7 +100,7 @@ export const it: Messages = {
     },
     pickFollower: (p) => `${p.format} segue ${p.primary}: usa la ★ di ${p.primary}`,
     pickNoFile: (p) => `La versione ${p.n} non ha un file per ${p.format}`,
-    pickFileMissing: (p) => `Il file ${p.format} della versione ${p.n} non è più sul disco`,
+    pickFileMissing: (p) => `Il file ${p.format} della versione ${p.n} non è più sul disco o non si può usare (è un collegamento)`,
     approvalNotFound: 'Richiesta di approvazione non trovata o già gestita',
     invalidRule: 'Regola di permesso non valida',
     tooManyPermissions: 'Troppi permessi salvati: revocane qualcuno nelle impostazioni del progetto',
