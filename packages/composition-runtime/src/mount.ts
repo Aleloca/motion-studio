@@ -56,13 +56,18 @@ interface Mounted {
   content: HTMLDivElement;
   anims: Array<{ anim: Animation; start: number }>;
   video?: HTMLVideoElement;
+  /** Render mode: where the video's frame is drawn (see `drawVideoFrame`). */
+  canvas?: HTMLCanvasElement;
   layer?: LayerHost;
   prepare: Promise<void>;
   muted: boolean;
+  /** Shown at the current time. */
+  visible: boolean;
 }
 interface MountedAudio { clip: AudioClip; el: HTMLAudioElement; muted: boolean }
 
 const DEFAULTS = { load: 120_000, seek: 60_000, layer: 60_000 };
+
 const FALLBACK_FONT = 'sans-serif';
 
 /** Registers the animated custom properties once per document (they must interpolate; see animations.ts). */
@@ -186,6 +191,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
 
     let prepare: Promise<void> = Promise.resolve();
     let video: HTMLVideoElement | undefined;
+    let canvas: HTMLCanvasElement | undefined;
     let layer: LayerHost | undefined;
     let media: Element | undefined;
     const muted = opts.mode === 'render' || !!track.muted;
@@ -235,8 +241,16 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
         video.playsInline = true;
         video.preload = 'auto';
         video.disablePictureInPicture = true;
-        Object.assign(video.style, { display: 'block', width: '100%', height: '100%', objectFit: 'cover' });
         video.src = url;
+        if (opts.mode === 'render') {
+          // Render: the frame is drawn into a canvas after each seek (drawVideoFrame), never composited as a video layer.
+          video.style.display = 'none';
+          canvas = doc.createElement('canvas');
+          Object.assign(canvas.style, { display: 'block', width: '100%', height: '100%' });
+          content.appendChild(canvas);
+        } else {
+          Object.assign(video.style, { display: 'block', width: '100%', height: '100%', objectFit: 'cover' });
+        }
         content.appendChild(video);
         prepare = loadMedia(video, clip.id, clip.src);
         break;
@@ -279,7 +293,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
       }
     }
     stage.appendChild(box);
-    mounted.push({ clip, box, content, anims, ...(video ? { video } : {}), ...(layer ? { layer } : {}), prepare, muted });
+    mounted.push({ clip, box, content, anims, ...(video ? { video } : {}), ...(canvas ? { canvas } : {}), ...(layer ? { layer } : {}), prepare, muted, visible: false });
   };
 
   for (const track of c.tracks) {
@@ -316,10 +330,63 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
   const applyStatic = (t: number) => {
     for (const m of mounted) {
       const on = isClipVisible(m.clip, t, c.duration);
+      m.visible = on;
       m.box.style.display = on ? '' : 'none';
       if (!on) continue;
       const local = t - m.clip.start;
       for (const { anim, start } of m.anims) anim.currentTime = (local - start) * 1000;
+    }
+  };
+
+  /**
+   * Render mode draws a video's frame into its canvas after each seek instead of compositing the `<video>`. Measured in
+   * Chrome 154 (4 pages seeking at once, load ≈150): a video layer that is shown for the first time attaches to the
+   * compositor asynchronously, and until it does a screenshot shows the frame decoded at load (source frame 0), even
+   * after `seeked`, two animation frames, and `requestVideoFrameCallback` reporting the right frame as presented: 11–13 of
+   * ~100 first-visible frames were wrong; extra animation frames or keeping the layer at opacity 0 did not help. A canvas
+   * is painted by the main thread like the rest of the page, so the two frames after a seek carry it. The preview keeps
+   * the `<video>` (it plays).
+   */
+  const drawVideoFrame = (m: Mounted, source: CanvasImageSource, vw: number, vh: number) => {
+    const cv = m.canvas!;
+    if (!(vw > 0 && vh > 0)) return;
+    const w = Math.max(1, Math.round(m.content.clientWidth || vw)), h = Math.max(1, Math.round(m.content.clientHeight || vh));
+    if (cv.width !== w) cv.width = w;
+    if (cv.height !== h) cv.height = h;
+    const ctx = cv.getContext('2d');
+    if (!ctx) return;
+    // object-fit: cover
+    const k = Math.max(w / vw, h / vh);
+    const sw = w / k, sh = h / k;
+    ctx.drawImage(source, (vw - sw) / 2, (vh - sh) / 2, sw, sh, 0, 0, w, h);
+  };
+
+  /**
+   * Draws the frame shown at `target` into the clip's canvas. `drawImage(video)` right after `seeked` can still read the
+   * previous frame (1 frame in ~1000 here), so the frame is taken as a WebCodecs `VideoFrame`, whose `timestamp` says
+   * which frame it is: with a known `span` (one source frame) it must start within `span` before the target; without one
+   * (VFR) it must read the same twice, one native animation frame apart. Until then it is read again after a native
+   * animation frame; past the seek time limit the last one is drawn and `videoSeekTimeout` reported.
+   */
+  const paintVideo = async (m: Mounted, target: number, span: number | null) => {
+    const v = m.video!;
+    const VF = (globalThis as { VideoFrame?: new (s: HTMLVideoElement) => { timestamp: number; displayWidth: number; displayHeight: number; close(): void } }).VideoFrame;
+    if (typeof VF !== 'function') { drawVideoFrame(m, v, v.videoWidth, v.videoHeight); return; }
+    const deadline = n.performanceNow() + timeouts.seek;
+    let previous: number | null = null;
+    for (;;) {
+      let f: InstanceType<typeof VF> | null = null;
+      try { f = new VF(v); } catch { f = null; }
+      const ts = f ? f.timestamp / 1e6 : NaN;
+      const ok = f !== null && (span !== null ? ts <= target + 1e-3 && ts > target - span - 1e-3 : ts === previous);
+      if (ok || n.performanceNow() > deadline) {
+        if (!ok) report('videoSeekTimeout', `video ${m.clip.type === 'video' ? m.clip.src : ''} showed no frame at ${target}`, m.clip.id);
+        if (f) { drawVideoFrame(m, f as unknown as CanvasImageSource, f.displayWidth, f.displayHeight); f.close(); } else drawVideoFrame(m, v, v.videoWidth, v.videoHeight);
+        return;
+      }
+      previous = ts;
+      f?.close();
+      await new Promise<void>((resolve) => { n.requestAnimationFrame(() => resolve()); });
     }
   };
 
@@ -328,11 +395,13 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     if (m.clip.type !== 'video') return;
     const target = videoSourceTime(m.clip, t, v.duration);
     if (!v.paused) v.pause();
-    if (Math.abs(v.currentTime - target) < 1e-6 && !v.seeking && v.readyState >= 2) return;
-    const seeked = new Promise<void>((resolve) => v.addEventListener('seeked', () => resolve(), { once: true }));
-    v.currentTime = target;
-    await withTimeout(seeked, timeouts.seek, n, `video ${m.clip.src} did not seek to ${target}`)
-      .catch((e: unknown) => report('videoSeekTimeout', String(e instanceof Error ? e.message : e), m.clip.id));
+    if (!(Math.abs(v.currentTime - target) < 1e-6 && !v.seeking && v.readyState >= 2)) {
+      const seeked = new Promise<void>((resolve) => v.addEventListener('seeked', () => resolve(), { once: true }));
+      v.currentTime = target;
+      await withTimeout(seeked, timeouts.seek, n, `video ${m.clip.src} did not seek to ${target}`)
+        .catch((e: unknown) => report('videoSeekTimeout', String(e instanceof Error ? e.message : e), m.clip.id));
+    }
+    if (m.canvas) await paintVideo(m, target, m.clip.sourceFps ? 1 / m.clip.sourceFps : null);
   };
 
   const doSeek = async (t: number) => {
@@ -507,7 +576,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     selectedBounds() {
       if (!selected) return null;
       const m = mounted.find((x) => x.clip.id === selected);
-      if (!m || m.box.style.display === 'none') return null;
+      if (!m || !m.visible) return null;
       const r = m.content.getBoundingClientRect();
       return { x: r.x, y: r.y, width: r.width, height: r.height };
     },

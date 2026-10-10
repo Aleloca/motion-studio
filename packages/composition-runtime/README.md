@@ -86,6 +86,14 @@ Everything lives under one token prefix on the composition server's own origin (
      `i = floor((trimStart + t − start) × sourceFps)`. Without `sourceFps` (VFR or unknown), it seeks to the source time plus
      1 ms. The last frame is held past the end of the source. Each seek awaits `seeked`, with no `requestVideoFrameCallback`
      (spike §1);
+   - **render mode draws each video's frame into a `<canvas>`** (the `<video>` itself stays hidden). Measured in Chrome 154
+     with 4 pages seeking at once: a video layer shown for the first time attaches to the compositor asynchronously, and a
+     screenshot then showed the frame decoded at load (source frame 0) in 11–13 of ~100 first-visible frames, even after
+     `seeked`, two animation frames and `requestVideoFrameCallback` reporting the right frame; extra frames or keeping the
+     layer at opacity 0 did not help. The frame is read as a WebCodecs `VideoFrame`, whose timestamp must be the target's
+     source frame (one source frame before the target at most; with no `sourceFps`, the same timestamp twice, one animation
+     frame apart), because `drawImage` right after `seeked` can still read the previous frame. 0 wrong in 480 such frames
+     and in every render test. The preview keeps the `<video>` (it plays);
    - every visible layer gets `seek(t − clip.start)` (see 4).
 5. Two **native** animation frames.
    - **Render mode:** each frame may take as long as the seek timeout. If the native frame never arrives, the runtime

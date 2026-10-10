@@ -3,9 +3,9 @@
  * own client is Task 4). Chrome runs headless (`--headless=new`) with a temporary profile under the OS temp folder and
  * in its own process group, which `close()` kills as a whole.
  */
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
@@ -127,9 +127,24 @@ export class Page {
   }
 }
 
+/**
+ * On Apple Silicon, whether to start `exe` through `arch -arm64`: a universal Chrome started by a process running under
+ * Rosetta gets its x86_64 slice, which is slow and fragile (the core renderer does the same, render/arch.ts).
+ */
+function nativeArm64(exe: string): boolean {
+  if (process.platform !== 'darwin' || !existsSync('/usr/bin/arch')) return false;
+  try {
+    if (execFileSync('/usr/sbin/sysctl', ['-n', 'hw.optional.arm64'], { encoding: 'utf8' }).trim() !== '1') return false;
+    const head = readFileSync(exe).subarray(0, 8);
+    return head.readUInt32BE(0) === 0xcafebabe || (head.readUInt32LE(0) === 0xfeedfacf && head.readUInt32LE(4) === 0x0100000c);
+  } catch { return false; }
+}
+
 export async function launchChrome(exe: string): Promise<Browser> {
   const profile = mkdtempSync(join(tmpdir(), 'ms-runtime-chrome-'));
-  const proc = spawn(exe, [...FLAGS, `--user-data-dir=${profile}`, '--remote-debugging-pipe', 'about:blank'], {
+  const args = [...FLAGS, `--user-data-dir=${profile}`, '--remote-debugging-pipe', 'about:blank'];
+  const native = nativeArm64(exe);
+  const proc = spawn(native ? '/usr/bin/arch' : exe, native ? ['-arm64', exe, ...args] : args, {
     stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'], detached: true,
   });
   proc.stderr!.on('data', (d: Buffer) => { if (process.env.MS_CHROME_LOG) process.stderr.write(d); });
