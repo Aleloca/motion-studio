@@ -174,8 +174,12 @@ describe('followerVersion (decisions log 140)', () => {
     ['the primary version itself holds the follower', [ver(1, [out(R, 'a'), out(T, 'a')])], 1, 1],
     ['the latest qualifying version wins', [ver(1, [out(R, 'a'), out(T, 'a')]), ver(2, [out(R, 'a'), out(T, 'a')])], 1, 2],
     ['a later version with a different primary file does not count', [ver(1, [out(R, 'a'), out(T, 'a')]), ver(2, [out(R, 'z'), out(T, 'z')])], 1, 1],
-    ['a missing hash on the candidate counts as not identical', [ver(1, [out(R, 'a')]), ver(2, [out(R, undefined), out(T, 'a')])], 1, null],
-    ['a missing hash on the ★ file: only the ★ version itself can match', [ver(1, [out(R, undefined), out(T, 'x')]), ver(2, [out(R, undefined), out(T, 'y')])], 1, 1],
+    ['a later version where the follower is still the same copy counts, even if the primary changed there', [ver(1, [out(R, 'a'), out(T, 'a')]), ver(2, [out(R, 'z'), out(T, 'a')])], 1, 2],
+    ['a missing hash on the follower file counts as not identical', [ver(1, [out(R, 'a')]), ver(2, [out(R, 'a'), out(T, undefined)])], 1, null],
+    ['a missing hash on the ★ file: nothing qualifies, not even the ★ version', [ver(1, [out(R, undefined), out(T, 'x')]), ver(2, [out(R, undefined), out(T, 'y')])], 1, null],
+    ['linked after a dedicated render: the dedicated TikTok in the ★ version does not qualify', [ver(1, [out(R, 'a'), out(T, 'b')])], 1, null],
+    ['unlink, dedicated turn, relink: only the copy of the Reel ★ qualifies', [ver(1, [out(R, 'a'), out(T, 'a')]), ver(2, [out(R, 'a'), out(T, 'd')])], 1, 1],
+    ['unlink, dedicated turn, relink, no copy left: missing', [ver(1, [out(R, 'a'), out(T, 'd1')]), ver(2, [out(R, 'a'), out(T, 'd2')])], 1, null],
     ['the primary ★ version does not exist', live, 9, null],
     ['no primary ★', live, null, null],
   ] as const)('%s', (_name, vs, primaryN, expected) => {
@@ -200,7 +204,10 @@ describe('followerMatches', () => {
   ] as const)('%s', (_name, n, p, expected) => {
     expect(followerMatches(vs, T, n, p, links)).toBe(expected);
   });
-  it('the old rule (same version) holds without hashes', () => {
-    expect(followerMatches([ver(1, [out(R, undefined), out(T, undefined)])], T, 1, 1, links)).toBe(true);
+  it('the same version needs proven, identical hashes too', () => {
+    expect(followerMatches([ver(1, [out(R, undefined), out(T, undefined)])], T, 1, 1, links)).toBe(false);
+    expect(followerMatches([ver(1, [out(R, 'a'), out(T, undefined)])], T, 1, 1, links)).toBe(false);
+    expect(followerMatches([ver(1, [out(R, 'a'), out(T, 'b')])], T, 1, 1, links)).toBe(false);
+    expect(followerMatches([ver(1, [out(R, 'a'), out(T, 'a')])], T, 1, 1, links)).toBe(true);
   });
 });

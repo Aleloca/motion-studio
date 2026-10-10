@@ -50,6 +50,10 @@ describe('formatStates', () => {
     s = formatStates(detailOf(added, { exportPicks: { [REEL]: 1 } }), DEFAULT_FORMATS);
     expect(s[TIKTOK]).toMatchObject({ exportVersion: null, starFileMissing: true });
   });
+  it('a follower linked after a dedicated render is missing, never its dedicated file (C1)', () => {
+    const dedicated = [version(1, [out(REEL, 'a'), out(POST, 'b'), out(TIKTOK, 'd')])];
+    expect(formatStates(detailOf(dedicated), DEFAULT_FORMATS)[TIKTOK]).toMatchObject({ exportVersion: null, starFileMissing: true });
+  });
   it('takes the follower export version from the core summary when sent', () => {
     const d = { ...detailOf(versions), formats: [{ id: TIKTOK, history: [], star: { version: null, manual: false, newer: null, follows: REEL }, exportVersion: 2, starFileMissing: false, linkable: [] }] };
     expect(formatStates(d, DEFAULT_FORMATS)[TIKTOK]!.exportVersion).toBe(2);

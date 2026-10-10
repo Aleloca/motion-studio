@@ -284,6 +284,31 @@ describe('format routes', { timeout: 20_000 }, () => {
     expect(of(s, TIKTOK)).toMatchObject({ exportVersion: null, starFileMissing: true });
   });
 
+  it('unlink, dedicated render, relink: the dedicated follower file is never exported as the primary (C1)', async () => {
+    const store = await seed();
+    const put = async (n: number, files: Record<string, string>, outs: VersionEntry['outputs']) => {
+      await mkdir(store.outputsDir(slug, n), { recursive: true });
+      for (const [f, c] of Object.entries(files)) await writeFile(join(store.outputsDir(slug, n), f), c);
+      await store.appendVersion(slug, version(n, outs));
+    };
+    expect((await linkTo(TIKTOK, null)).statusCode).toBe(200);
+    // v4: a dedicated TikTok rendered while unlinked; the Reel is the same as v2.
+    await put(4, { 'reel.mp4': 'reel-b', 'tiktok.mp4': 'tiktok-own', 'post.mp4': 'post-b' },
+      [output(REEL, 'reel.mp4', 20), output(TIKTOK, 'tiktok.mp4', 20), output(POST, 'post.mp4')]);
+    expect(of(await summary(), TIKTOK)).toMatchObject({ star: { version: 4, follows: null }, exportVersion: 4 });
+    // Relinked: v4's TikTok is not a copy of the Reel ★ (v2): missing, never "TikTok v2 = Reel v2".
+    expect((await linkTo(TIKTOK, REEL)).statusCode).toBe(200);
+    let s = await summary();
+    expect(of(s, REEL)).toMatchObject({ star: { version: 2 }, exportVersion: 2 });
+    expect(of(s, TIKTOK)).toMatchObject({ star: { follows: REEL }, exportVersion: null, starFileMissing: true });
+    // A later turn materializes TikTok as a copy of the new Reel: that one qualifies.
+    await put(5, { 'reel.mp4': 'reel-c', 'tiktok.mp4': 'reel-c', 'post.mp4': 'post-b' },
+      [output(REEL, 'reel.mp4', 20), output(TIKTOK, 'tiktok.mp4', 20), output(POST, 'post.mp4')]);
+    s = await summary();
+    expect(of(s, REEL)).toMatchObject({ star: { version: 5 }, exportVersion: 5 });
+    expect(of(s, TIKTOK)).toMatchObject({ exportVersion: 5, starFileMissing: false });
+  });
+
   it('refuses a pick on a hard-linked file', async () => {
     await seed();
     const file = join(projectDir, 'creatives', slug, 'outputs', 'v1', 'reel.mp4');

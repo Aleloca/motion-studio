@@ -124,13 +124,12 @@ export function starOf(versions: VersionEntry[], formatId: string, picks: Record
 }
 
 /**
- * The version whose own file a follower exports (decisions log 140): the LATEST creative version that (a) holds the
- * follower's own file and (b) whose primary file is byte-identical (same `sha256`) to the primary's file in
- * `primaryVersion` (the primary's ★, or the primary version an export picks). The follower's file there is a copy of the
- * primary's, so it is the ★ content under the follower's name. This covers followers added without the agent: they exist
- * only in a later version where the primary is an identical repeat, outside the primary's history.
- * - A missing `sha256` counts as not identical (equality must be proven); `primaryVersion` itself always matches its own
- *   primary file, so the old rule (the follower's file in the primary's version) still resolves without hashes.
+ * The version whose own file a follower exports (decisions log 140): the LATEST creative version whose follower file is
+ * byte-identical (same `sha256`) to the primary's ★ file, i.e. the primary's file in `primaryVersion` (the primary's ★, or
+ * the primary version an export picks). That file is then the ★ content under the follower's name. This covers followers
+ * added without the agent (they exist only in a later version where the primary is an identical repeat) and never resolves
+ * to a dedicated render of the follower (e.g. a render made before the link, or while it was unlinked).
+ * - A missing `sha256` on either side counts as not identical (equality must be proven), in `primaryVersion` too.
  * - null when `follower` follows nothing (`effectiveLinks(links)`), `primaryVersion` is null or unknown, or no version
  *   qualifies (the follower is then "missing").
  */
@@ -143,19 +142,20 @@ export function followerVersion(versions: VersionEntry[], follower: string, prim
   return null;
 }
 
-/** Whether a follower may be exported from version `n` while its primary is exported from `primaryVersion` (the rule of `followerVersion`). */
+/**
+ * Whether a follower may be exported from version `n` while its primary is exported from `primaryVersion` (the rule of
+ * `followerVersion`): `n` holds the follower's own file and its `sha256` equals the `sha256` of the primary's file in
+ * `primaryVersion`. Both hashes must be present.
+ */
 export function followerMatches(versions: VersionEntry[], follower: string, n: number, primaryVersion: number,
   links: Record<string, string> | undefined): boolean {
   const active = effectiveLinks(links);
   if (!Object.hasOwn(active, follower)) return false;
   const primary = active[follower]!;
   const at = (k: number) => versions.find((v) => v.n === k);
-  const base = at(primaryVersion)?.outputs.find((o) => o.format === primary);
-  const v = at(n);
-  if (!base || !v?.outputs.some((o) => o.format === follower)) return false;
-  if (n === primaryVersion) return true;
-  const p = v.outputs.find((o) => o.format === primary)?.sha256;
-  return base.sha256 !== undefined && p !== undefined && base.sha256 === p;
+  const base = at(primaryVersion)?.outputs.find((o) => o.format === primary)?.sha256;
+  const own = at(n)?.outputs.find((o) => o.format === follower)?.sha256;
+  return base !== undefined && own !== undefined && base === own;
 }
 
 /**

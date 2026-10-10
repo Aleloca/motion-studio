@@ -1,6 +1,6 @@
 // Export the ★ versions (spec §3.3, prototype ExportDialog): one row per format with its thumbnail, final file name,
 // "★ vN" (and "vM newer" after a manual pick), a check, and "follows Reel ★ vN" for followers, which export their own
-// file from the latest version whose primary file is identical to the primary's ★ (decisions log 140), named with that ★. The file name pattern has token chips, a live preview, an inline collision error and
+// file from the latest version where that file is byte-identical to the primary's ★ file (decisions log 140), named with that ★. The file name pattern has token chips, a live preview, an inline collision error and
 // "Save as default" (the workspace's `exportNamePattern`). The destination (native picker on desktop, a field on the web)
 // is remembered; progress, then a success screen with Show in Finder. File sizes are not shown: the API does not report
 // them (ruling R6).
@@ -66,8 +66,8 @@ interface Row {
   /** The ★ shown and named (`{v}`): the format's ★; a follower: its primary's ★ (decisions log 140). */
   n: number;
   /**
-   * The version whose file is copied: `n`, or for a follower its resolved `exportVersion` (a later version where the primary
-   * is byte-identical, e.g. a follower added without the agent); null when it has none.
+   * The version whose file is copied: `n`, or for a follower its resolved `exportVersion` (the latest version where its file
+   * is byte-identical to the primary's ★ file, e.g. a follower added without the agent); null when it has none.
    */
   fileN: number | null;
   /** This format's own file in version `fileN`; null when it has none. */

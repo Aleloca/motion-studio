@@ -151,13 +151,13 @@ const isVersionNumber = (n: unknown): n is number => typeof n === 'number' && Nu
  * Exports the ★ versions (spec §3.3): `picks` gives the version of each format; `follow` lists followers, exported with
  * their own file (`outputs/vN/<follower file>`, named after the follower). The primary version is the primary's pick in
  * this export, else its stored ★ (`storedPicks`, default rule); the follower's version is `followerVersion` of it (decisions
- * log 140: the latest version with the follower's file and an identical primary file). As a record, `follow` carries the
+ * log 140: the latest version whose follower file is byte-identical to the primary's ★ file). As a record, `follow` carries the
  * follower version the client showed, which must satisfy that rule for the primary version. `{v}` in the name is the
  * primary's version number. Refused (coded errors, nothing copied):
  * - `export-invalid-picks` (400): no format, a version that is not a positive integer, a `follow` entry that is not a follower;
  * - `export-pick-follower` (400): a pick for a follower (its version is its primary's);
  * - `export-pick-no-file` (400): the version does not exist or has no file of the format;
- * - `export-follow-mismatch` (400): a follower version (record) whose primary file differs from the primary version exported;
+ * - `export-follow-mismatch` (400): a follower version (record) whose follower file is not byte-identical to the primary file exported;
  * - `export-file-missing` (409): the file is missing on disk or refused by the confined read;
  * - `export-name-empty`, `export-name-collision` (400): the pattern gives an empty name, or the same name twice.
  */
@@ -198,13 +198,14 @@ export async function exportPicks(opts: ExportCommon & { versions: VersionEntry[
       if (!isVersionNumber(n)) throw new CodedError(400, t().export.invalidPicks, 'export-invalid-picks');
       if (!opts.versions.some((v) => v.n === n)) throw new CodedError(400, t().export.pickNoFile({ format: label(format), n }), 'export-pick-no-file');
     } else {
-      // Decisions log 140: the latest version with the follower's own file and a primary identical to `primaryN`.
+      // Decisions log 140: the latest version whose follower file is byte-identical to the primary's file in `primaryN`.
       n = followerVersion(opts.versions, format, primaryN, links);
     }
     const it = n === null ? null : itemOf(format, n);
-    // No version holds the follower with this primary file (e.g. the primary's ★ predates the follower): nothing to copy.
+    // No version holds a copy of this primary file under the follower's name (e.g. the ★ predates the follower, or the
+    // follower was rendered on its own): nothing to copy.
     if (!it) throw new CodedError(409, t().export.filesMissing({ list: `${label(format)}${(n ?? primaryN) === null ? '' : ` v${n ?? primaryN}`}` }), 'export-file-missing');
-    // A version the client showed must still carry the primary file exported now (the ★ may have changed since).
+    // A version the client showed must still hold a copy of the primary file exported now (the ★ may have changed since).
     if (primaryN === null) throw new CodedError(409, t().export.filesMissing({ list: `${label(format)} v${it.n}` }), 'export-file-missing');
     if (shown && !followerMatches(opts.versions, format, it.n, primaryN, links)) {
       throw new CodedError(400, t().export.followMismatch({ format: label(format), primary: label(primary), n: it.n, p: primaryN }), 'export-follow-mismatch');

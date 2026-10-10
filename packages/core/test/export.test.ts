@@ -146,7 +146,9 @@ describe('exportPicks', () => {
   const date = new Date(2026, 9, 10, 12);
   const files = (r: { files: Array<{ to: string }> }) => r.files.map((f) => f.to.split('/').pop());
   beforeEach(async () => {
-    versions = [ver(3, [out(reel, 'mp4'), out(tiktok, 'mp4'), out(post, 'png')]), ver(5, [out(reel, 'mp4'), out(tiktok, 'mp4'), out(post, 'png')])];
+    // Each version's TikTok is a copy of its Reel (same sha256), as the core materializes a follower.
+    const sha = (o: ReturnType<typeof out>, c: string) => ({ ...o, sha256: c.repeat(64) });
+    versions = [3, 5].map((n) => ver(n, [sha(out(reel, 'mp4'), String(n)), sha(out(tiktok, 'mp4'), String(n)), sha(out(post, 'png'), 'f')]));
     for (const v of versions) {
       await mkdir(join(creativeDir, 'outputs', `v${v.n}`), { recursive: true });
       for (const o of v.outputs) await writeFile(join(creativeDir, 'outputs', `v${v.n}`, o.file), `${o.format}@v${v.n}`);
@@ -240,10 +242,10 @@ describe('exportPicks', () => {
     await expect(readFile(target)).rejects.toThrow();
   });
   it('exports a follower at the version the client showed (follow as a record) while it still carries the primary file exported now', async () => {
-    // The dialog showed TikTok v3; the Reel's ★ is v5. Without hashes v3's Reel cannot be proven identical: refused.
+    // The dialog showed TikTok v3; the Reel's ★ is v5, a different file: TikTok v3 is no copy of it, refused.
     const e = await exportPicks({ ...base0(), picks: {}, follow: { [tiktok]: 3 }, links: { [tiktok]: reel }, storedPicks: {} }).catch((x) => x);
     expect(e).toMatchObject({ status: 400, apiCode: 'export-follow-mismatch' });
-    // With the stored ★ on v3 it is the old rule (same version): accepted.
+    // With the stored ★ on v3, TikTok v3 is a byte-identical copy of the Reel ★: accepted.
     const r = await exportPicks({ ...base0(), picks: {}, follow: { [tiktok]: 3 }, links: { [tiktok]: reel }, storedPicks: { [reel]: 3 } });
     expect(files(r)).toEqual(['autumn-launch-tiktok-9x16-v3.mp4']);
     expect(await readFile(join(dest, 'autumn-launch-tiktok-9x16-v3.mp4'), 'utf8')).toBe(`${tiktok}@v3`);
@@ -277,6 +279,16 @@ describe('exportPicks', () => {
       const r = await exportPicks({ ...base0(), picks: {}, follow: [tiktok], links: { [tiktok]: reel }, storedPicks: { [reel]: 1 } });
       expect(files(r)).toEqual(['autumn-launch-tiktok-9x16-v1.mp4']);
       expect(await readFile(join(dest, 'autumn-launch-tiktok-9x16-v1.mp4'), 'utf8')).toBe(`${tiktok}@v4`);
+    });
+    it('linked after a dedicated render: the dedicated follower file is never exported as the primary\'s copy (C1)', async () => {
+      // v2 holds the Reel ★ and a TikTok rendered on its own (unlinked then); the link is added afterwards.
+      versions[1] = ver(2, [hashed(reel, 'mp4', 'b'), hashed(tiktok, 'mp4', 'd')]);
+      versions.pop();
+      const e = await exportPicks({ ...base0(), picks: { [reel]: 2 }, follow: [tiktok], links: { [tiktok]: reel } }).catch((x) => x);
+      expect(e).toMatchObject({ status: 409, apiCode: 'export-file-missing' });
+      const m = await exportPicks({ ...base0(), picks: {}, follow: { [tiktok]: 2 }, links: { [tiktok]: reel } }).catch((x) => x);
+      expect(m).toMatchObject({ status: 400, apiCode: 'export-follow-mismatch' });
+      expect(await readdir(base)).toEqual(['creative']);
     });
     it('no version with an identical primary: missing (409), with a list or a record', async () => {
       const e = await exportPicks({ ...base0(), picks: { [reel]: 1 }, follow: [tiktok], links: { [tiktok]: reel } }).catch((x) => x);

@@ -23,7 +23,7 @@ export async function formatSummaries(creativeDir: string, creative: CreativeFil
   const links = effectiveLinks(brief.links, brief.formats);
   return Promise.all(brief.formats.map(async (id) => {
     const star = starOf(versions, id, creative.exportPicks, links);
-    // A follower is exported as its own file in the latest version whose primary file is identical to the primary's ★.
+    // A follower is exported as its own file in the latest version where that file is byte-identical to the primary's ★ file.
     const primaryStar = star.follows !== null ? starOf(versions, star.follows, creative.exportPicks, links).version : null;
     const exported = star.follows !== null ? followerVersion(versions, id, primaryStar, links) : star.version;
     const missing = star.follows !== null

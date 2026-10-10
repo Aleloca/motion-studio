@@ -12,7 +12,7 @@ export interface FormatState {
   defaultVersion: number | null;
   /**
    * The version whose own file of this format the export copies: the ★ for a primary; for a follower the latest version
-   * with its own file and a primary identical to the primary's ★ (`followerVersion`, decisions log 140). null when none.
+   * whose own file is byte-identical to the primary's ★ file (`followerVersion`, decisions log 140). null when none.
    */
   exportVersion: number | null;
   starFileMissing: boolean;
