@@ -700,7 +700,7 @@ export class CreativeTurnService {
     const manifestProblems = targets.length > 0 && !agentManifest ? (result?.outputs.length === 0 ? result.problems.filter((x) => !final.problems.includes(x)) : []) : [];
     // A note only where the core's copy is really there: a carried format kept its previous file; a follower got a fresh
     // copy of its primary (not "the previous one").
-    const note = (f: string) => (Object.hasOwn(materialized, f)
+    const note = (f: string): { key: string; params: Record<string, string> } => (Object.hasOwn(materialized, f)
       ? { key: 'outputs.followerReplaced', params: { format: f, primary: materialized[f]! } }
       : { key: 'outputs.keptUnchanged', params: { format: f } });
     const outputs = final.outputs.map((o) => (touched.has(o.format) && copied.has(o.format)
