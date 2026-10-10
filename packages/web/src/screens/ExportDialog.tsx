@@ -1,6 +1,6 @@
 // Export the ★ versions (spec §3.3, prototype ExportDialog): one row per format with its thumbnail, final file name,
-// "★ vN" (and "vM newer" after a manual pick), a check, and "follows Reel" for followers, which export their own file in
-// their primary's ★ version. The file name pattern has token chips, a live preview, an inline collision error and
+// "★ vN" (and "vM newer" after a manual pick), a check, and "follows Reel ★ vN" for followers, which export their own
+// file from the latest version whose primary file is identical to the primary's ★ (decisions log 140), named with that ★. The file name pattern has token chips, a live preview, an inline collision error and
 // "Save as default" (the workspace's `exportNamePattern`). The destination (native picker on desktop, a field on the web)
 // is remembered; progress, then a success screen with Show in Finder. File sizes are not shown: the API does not report
 // them (ruling R6).
@@ -63,9 +63,14 @@ type SaveState = { kind: 'idle' | 'saving' | 'saved' } | { kind: 'failed'; detai
 interface Row {
   id: string;
   preset: FormatPreset | null;
-  /** The version exported: the format's ★ (a follower: its primary's ★). */
+  /** The ★ shown and named (`{v}`): the format's ★; a follower: its primary's ★ (decisions log 140). */
   n: number;
-  /** This format's own file in version `n`; null when it has none. */
+  /**
+   * The version whose file is copied: `n`, or for a follower its resolved `exportVersion` (a later version where the primary
+   * is byte-identical, e.g. a follower added without the agent); null when it has none.
+   */
+  fileN: number | null;
+  /** This format's own file in version `fileN`; null when it has none. */
   output: VersionEntry['outputs'][number] | null;
   /** The primary's short name, for a follower. */
   follows: string | null;
@@ -83,13 +88,14 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
   const rows = useMemo<Row[]>(() => Object.values(states).flatMap((s): Row[] => {
     const n = s.follows ? (states[s.follows]?.star.version ?? null) : s.star.version;
     if (n === null) return [];
-    const output = versions.find((v) => v.n === n)?.outputs.find((o) => o.format === s.id) ?? null;
+    const fileN = s.follows ? s.exportVersion : n;
+    const output = fileN === null ? null : versions.find((v) => v.n === fileN)?.outputs.find((o) => o.format === s.id) ?? null;
     const primaryPreset = s.follows ? presets.find((pr) => pr.id === s.follows) : undefined;
     const follows = s.follows ? (primaryPreset ? formatName(primaryPreset, locale) : s.follows) : null;
     const blocked = !output
       ? (follows !== null ? x.noFollowerFile({ n, primary: follows }) : x.fileMissing({ n }))
-      : s.starFileMissing ? x.fileMissing({ n }) : null;
-    return [{ id: s.id, preset: presets.find((pr) => pr.id === s.id) ?? null, n, output, follows, newer: follows === null ? s.star.newer : null, blocked }];
+      : s.starFileMissing ? x.fileMissing({ n: fileN ?? n }) : null;
+    return [{ id: s.id, preset: presets.find((pr) => pr.id === s.id) ?? null, n, fileN, output, follows, newer: follows === null ? s.star.newer : null, blocked }];
   }), [states, versions, presets, x, locale]);
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(rows.map((r) => [r.id, r.blocked === null])));
   const [pattern, setPattern] = useState(initialPattern);
@@ -157,11 +163,11 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
     if (!canRun) return;
     setError(null);
     setPhase({ kind: 'run' });
-    // Followers are never picked on their own: they go with the version shown (their primary's ★), which the core checks
-    // against the primary's pick.
+    // Followers are never picked on their own: they go with the version whose file the row shows (resolved from their
+    // primary's ★), which the core checks against the primary version it exports.
     const picks: Record<string, number> = {};
     const follow: Record<string, number> = {};
-    for (const c of chosen) { if (c.row.follows !== null) follow[c.row.id] = c.row.n; else picks[c.row.id] = c.row.n; }
+    for (const c of chosen) { if (c.row.follows !== null) follow[c.row.id] = c.row.fileN ?? c.row.n; else picks[c.row.id] = c.row.n; }
     try {
       const r = await api.exportPicks(slug, creative, { destination: dest, picks, ...(Object.keys(follow).length ? { follow } : {}), pattern, date });
       writeFolder(dest);
@@ -213,7 +219,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
           <div className="ms-exp-row ms-exp-cols ms-cap" aria-hidden="true"><span /><span /><span>{x.format}</span><span>{x.version}</span></div>
           {named.map(({ row: r, name }) => {
             const label = boardLabel({ id: r.id, preset: r.preset, out: r.output }, locale);
-            const media = r.output ? outputMedia(slug, creative, r.n, r.output) : null;
+            const media = r.output && r.fileN !== null ? outputMedia(slug, creative, r.fileN, r.output) : null;
             const aspect = r.preset ? r.preset.width / r.preset.height : r.output ? r.output.width / r.output.height : 1;
             const blocked = r.blocked !== null;
             return (

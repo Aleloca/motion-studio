@@ -27,7 +27,7 @@ const out = (format: string, file: string, durationSec: number | null = null): O
 const version = (n: number, outputs: OutputFileInfo[], request = `change ${n}`): VersionEntry =>
   ({ n, commit: 'c', sessionId: 's', status: 'complete', createdAt: at, request, outputs, problems: [], tools: [], renderCommand: null, basedOn: null });
 const state = (id: string, history: number[], star: number, over: Partial<FormatState> = {}): FormatState => ({
-  id, history, defaultVersion: history.at(-1) ?? null, starFileMissing: false, linkable: [], follows: null,
+  id, history, defaultVersion: history.at(-1) ?? null, exportVersion: star, starFileMissing: false, linkable: [], follows: null,
   star: { version: star, manual: star !== history.at(-1), newer: star !== history.at(-1) ? history.at(-1)! : null, follows: null } as FormatState['star'],
   ...over,
 });

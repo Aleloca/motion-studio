@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canFollow, checkLink, defaultLinks, effectiveLinks, latestDurationOf, DEFAULT_FORMATS, formatHistory, starOf, type FormatPreset, type OutputFileInfo, type VersionEntry } from '../src/index.ts';
+import { canFollow, checkLink, defaultLinks, effectiveLinks, latestDurationOf, DEFAULT_FORMATS, followerMatches, followerVersion, formatHistory, starOf, type FormatPreset, type OutputFileInfo, type VersionEntry } from '../src/index.ts';
 
 const preset = (id: string): FormatPreset => DEFAULT_FORMATS.find((f) => f.id === id)!;
 const REEL = preset('instagram-reel-9x16');
@@ -154,5 +154,53 @@ describe('latestDurationOf and checkLink', () => {
     ['different size', 'instagram-post-1x1', 'instagram-reel-9x16', [], { ok: false, reason: 'size' }],
   ] as const)('%s', (_name, follower, primary, versions, expected) => {
     expect(checkLink(brief, [...versions], presets, follower, primary)).toEqual(expected);
+  });
+});
+
+describe('followerVersion (decisions log 140)', () => {
+  const R = 'instagram-reel-9x16';
+  const T = 'tiktok-9x16';
+  const links = { [T]: R };
+  // The live case: Reel history [1, 2]; v3 changes another format; v4 adds TikTok without the agent (a copy of the Reel).
+  const live = [
+    ver(1, [out(R, 'a')]),
+    ver(2, [out(R, 'b')]),
+    ver(3, [out(R, 'b'), out(POST.id, 'p')]),
+    ver(4, [out(R, 'b'), out(T, 'b')]),
+  ];
+  it.each([
+    ['added without the agent: the Reel ★ v2 resolves to v4 (same Reel bytes, has TikTok)', live, 2, 4],
+    ['manual ★ on v1: no version with TikTok has the v1 Reel → missing', live, 1, null],
+    ['the primary version itself holds the follower', [ver(1, [out(R, 'a'), out(T, 'a')])], 1, 1],
+    ['the latest qualifying version wins', [ver(1, [out(R, 'a'), out(T, 'a')]), ver(2, [out(R, 'a'), out(T, 'a')])], 1, 2],
+    ['a later version with a different primary file does not count', [ver(1, [out(R, 'a'), out(T, 'a')]), ver(2, [out(R, 'z'), out(T, 'z')])], 1, 1],
+    ['a missing hash on the candidate counts as not identical', [ver(1, [out(R, 'a')]), ver(2, [out(R, undefined), out(T, 'a')])], 1, null],
+    ['a missing hash on the ★ file: only the ★ version itself can match', [ver(1, [out(R, undefined), out(T, 'x')]), ver(2, [out(R, undefined), out(T, 'y')])], 1, 1],
+    ['the primary ★ version does not exist', live, 9, null],
+    ['no primary ★', live, null, null],
+  ] as const)('%s', (_name, vs, primaryN, expected) => {
+    expect(followerVersion([...vs], T, primaryN, links)).toBe(expected);
+  });
+  it('a format that follows nothing resolves to null', () => {
+    expect(followerVersion(live, T, 2, {})).toBeNull();
+    expect(followerVersion(live, R, 2, links)).toBeNull();
+  });
+});
+
+describe('followerMatches', () => {
+  const R = 'instagram-reel-9x16';
+  const T = 'tiktok-9x16';
+  const links = { [T]: R };
+  const vs = [ver(1, [out(R, 'a')]), ver(2, [out(R, 'b')]), ver(4, [out(R, 'b'), out(T, 'b')])];
+  it.each([
+    ['v4 for the Reel v2 (identical Reel)', 4, 2, true],
+    ['v4 for the Reel v1 (different Reel)', 4, 1, false],
+    ['v2 has no TikTok file', 2, 2, false],
+    ['an unknown version', 7, 2, false],
+  ] as const)('%s', (_name, n, p, expected) => {
+    expect(followerMatches(vs, T, n, p, links)).toBe(expected);
+  });
+  it('the old rule (same version) holds without hashes', () => {
+    expect(followerMatches([ver(1, [out(R, undefined), out(T, undefined)])], T, 1, 1, links)).toBe(true);
   });
 });

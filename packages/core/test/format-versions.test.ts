@@ -265,6 +265,25 @@ describe('format routes', { timeout: 20_000 }, () => {
     expect(of(await summary(), TIKTOK).starFileMissing).toBe(true);
   });
 
+  it('a follower added without the agent exports from the later version where the primary is identical (decisions log 140)', async () => {
+    const store = await seed();
+    // v4: the Reel repeated byte for byte (outside its history), TikTok materialized as its copy.
+    await mkdir(store.outputsDir(slug, 4), { recursive: true });
+    await writeFile(join(store.outputsDir(slug, 4), 'reel.mp4'), 'reel-b');
+    await writeFile(join(store.outputsDir(slug, 4), 'tiktok.mp4'), 'reel-b');
+    await writeFile(join(store.outputsDir(slug, 4), 'post.mp4'), 'post-b');
+    await store.appendVersion(slug, version(4, [output(REEL, 'reel.mp4', 20), output(TIKTOK, 'tiktok.mp4', 20), output(POST, 'post.mp4')]));
+    let s = await summary();
+    expect(of(s, REEL)).toMatchObject({ history: [1, 2], star: { version: 2 }, exportVersion: 2 });
+    expect(of(s, TIKTOK)).toMatchObject({ star: { version: null, follows: REEL }, exportVersion: 4, starFileMissing: false });
+    // Shorts follows the Reel too but has no file in any version: missing.
+    expect(of(s, SHORTS)).toMatchObject({ exportVersion: null, starFileMissing: true });
+    // A manual ★ on the Reel v1: no version with TikTok has that Reel file.
+    await pick(REEL, 1);
+    s = await summary();
+    expect(of(s, TIKTOK)).toMatchObject({ exportVersion: null, starFileMissing: true });
+  });
+
   it('refuses a pick on a hard-linked file', async () => {
     await seed();
     const file = join(projectDir, 'creatives', slug, 'outputs', 'v1', 'reel.mp4');

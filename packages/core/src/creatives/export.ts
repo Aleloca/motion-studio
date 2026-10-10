@@ -1,6 +1,6 @@
 import { access, constants, lstat, mkdir, realpath, rm, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { DEFAULT_EXPORT_NAME_PATTERN, exportExtension, exportNameCollisions, exportNameVars, renderName, starOf, type FormatPreset, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_NAME_PATTERN, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, renderName, starOf, type FormatPreset, type VersionEntry } from '@motion-studio/shared';
 import { copyConfinedFile, probeConfinedFile } from '../brand/agent-guard.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
 import { t } from '../i18n.ts';
@@ -62,8 +62,11 @@ async function resolveLoose(p: string): Promise<string> {
   }
 }
 
-/** One file to export: the output `file` of `format` in version `n`. */
-interface ExportItem { format: string; n: number; file: string; width: number; height: number }
+/**
+ * One file to export: the output `file` of `format` in version `n`. `v` is the number the name's `{v}` shows when it
+ * differs from `n`: a follower is named after its primary's version (decisions log 140), whose file is byte-identical.
+ */
+interface ExportItem { format: string; n: number; v?: number; file: string; width: number; height: number }
 
 interface ExportCommon {
   creativeDir: string;
@@ -113,7 +116,7 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
   const pattern = opts.pattern ?? DEFAULT_EXPORT_NAME_PATTERN;
   const named = ok.map((it) => {
     const r = renderName(pattern, exportNameVars({ title: opts.title, slug: opts.slug, format: it.format, preset: opts.presets?.find((p) => p.id === it.format),
-      size: { width: it.width, height: it.height }, version: it.n, date }));
+      size: { width: it.width, height: it.height }, version: it.v ?? it.n, date }));
     if (!r.ok) throw new CodedError(400, t().export.nameEmpty, 'export-name-empty');
     return { ...it, stem: r.name, ext: exportExtension(it.file) };
   });
@@ -146,11 +149,15 @@ const isVersionNumber = (n: unknown): n is number => typeof n === 'number' && Nu
 
 /**
  * Exports the ★ versions (spec §3.3): `picks` gives the version of each format; `follow` lists followers, exported with
- * their own file (`outputs/vN/<follower file>`, named after the follower) in their primary's version: the primary's pick
- * in this export, else its stored ★ (`storedPicks`, default rule). Refused (coded errors, nothing copied):
+ * their own file (`outputs/vN/<follower file>`, named after the follower). The primary version is the primary's pick in
+ * this export, else its stored ★ (`storedPicks`, default rule); the follower's version is `followerVersion` of it (decisions
+ * log 140: the latest version with the follower's file and an identical primary file). As a record, `follow` carries the
+ * follower version the client showed, which must satisfy that rule for the primary version. `{v}` in the name is the
+ * primary's version number. Refused (coded errors, nothing copied):
  * - `export-invalid-picks` (400): no format, a version that is not a positive integer, a `follow` entry that is not a follower;
  * - `export-pick-follower` (400): a pick for a follower (its version is its primary's);
  * - `export-pick-no-file` (400): the version does not exist or has no file of the format;
+ * - `export-follow-mismatch` (400): a follower version (record) whose primary file differs from the primary version exported;
  * - `export-file-missing` (409): the file is missing on disk or refused by the confined read;
  * - `export-name-empty`, `export-name-collision` (400): the pattern gives an empty name, or the same name twice.
  */
@@ -183,21 +190,27 @@ export async function exportPicks(opts: ExportCommon & { versions: VersionEntry[
     if (Object.hasOwn(opts.picks, format)) continue; // already refused above when it is a follower
     const primary = Object.hasOwn(links, format) ? links[format]! : null;
     if (primary === null) throw new CodedError(400, t().export.invalidPicks, 'export-invalid-picks');
+    // The primary version exported: its pick in this export, else its stored ★ (manual pick or default rule).
+    const primaryN = Object.hasOwn(opts.picks, primary) ? opts.picks[primary]! : starOf(opts.versions, primary, opts.storedPicks, links).version;
     let n: number | null;
     if (shown) {
       n = shown[format]!;
       if (!isVersionNumber(n)) throw new CodedError(400, t().export.invalidPicks, 'export-invalid-picks');
-      if (Object.hasOwn(opts.picks, primary) && opts.picks[primary] !== n) {
-        throw new CodedError(400, t().export.followMismatch({ format: label(format), primary: label(primary), n, p: opts.picks[primary]! }), 'export-follow-mismatch');
-      }
       if (!opts.versions.some((v) => v.n === n)) throw new CodedError(400, t().export.pickNoFile({ format: label(format), n }), 'export-pick-no-file');
     } else {
-      n = Object.hasOwn(opts.picks, primary) ? opts.picks[primary]! : starOf(opts.versions, primary, opts.storedPicks, links).version;
+      // Decisions log 140: the latest version with the follower's own file and a primary identical to `primaryN`.
+      n = followerVersion(opts.versions, format, primaryN, links);
     }
     const it = n === null ? null : itemOf(format, n);
-    // The primary's version has no file of the follower (e.g. it was added later): nothing to copy for it.
-    if (!it) throw new CodedError(409, t().export.filesMissing({ list: `${label(format)}${n === null ? '' : ` v${n}`}` }), 'export-file-missing');
-    items.push(it);
+    // No version holds the follower with this primary file (e.g. the primary's ★ predates the follower): nothing to copy.
+    if (!it) throw new CodedError(409, t().export.filesMissing({ list: `${label(format)}${(n ?? primaryN) === null ? '' : ` v${n ?? primaryN}`}` }), 'export-file-missing');
+    // A version the client showed must still carry the primary file exported now (the ★ may have changed since).
+    if (primaryN === null) throw new CodedError(409, t().export.filesMissing({ list: `${label(format)} v${it.n}` }), 'export-file-missing');
+    if (shown && !followerMatches(opts.versions, format, it.n, primaryN, links)) {
+      throw new CodedError(400, t().export.followMismatch({ format: label(format), primary: label(primary), n: it.n, p: primaryN }), 'export-follow-mismatch');
+    }
+    // Named after the primary's version: "Reel v2" and "TikTok v2" are the same bytes.
+    items.push(primaryN !== it.n ? { ...it, v: primaryN } : it);
   }
   return runExport(items, opts, 'refuse', Math.max(0, ...items.map((i) => i.n)));
 }

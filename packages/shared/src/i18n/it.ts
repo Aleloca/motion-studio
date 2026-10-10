@@ -1205,7 +1205,7 @@ Variabili: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (array JSON)`,
       linkTo: (p) => `Collega a ${p.primary}`,
       linkHint: 'Stessa misura e stesso tipo: può usare lo stesso file, senza costi.',
       linked: (p) => `Ora ${p.label} segue ${p.primary}`,
-      fileMissing: (p) => `Il file della v${p.n} manca sul disco: l’export lo salterà.`,
+      fileMissing: (p) => `Il file della v${p.n} manca sul disco, quindi Esporta non può includere questo formato. Metti la ★ su un’altra versione.`,
       errors: {
         hashesPending: 'Sto ancora calcolando le versioni: riprova fra un momento',
         pickFollower: (p) => `${p.label} segue ${p.primary}: si esporta con la ★ di ${p.primary}.`,

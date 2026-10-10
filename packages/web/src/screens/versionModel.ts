@@ -1,7 +1,7 @@
 // Per-format versions on the web side (spec §2.1–2.5): the history, ★ and links of each format (from the core's summary,
 // or computed with the shared rules when an older core sends none), what a board shows, which boards a running job
 // renders, and the default "Applies to" of a change.
-import { checkLink, effectiveLinks, formatHistory, starOf, type CreativeDetail, type FormatPreset, type FormatSummary, type JobSummary, type Star, type VersionEntry } from '@motion-studio/shared';
+import { checkLink, effectiveLinks, followerVersion, formatHistory, starOf, type CreativeDetail, type FormatPreset, type FormatSummary, type JobSummary, type Star, type VersionEntry } from '@motion-studio/shared';
 
 export interface FormatState {
   id: string;
@@ -10,6 +10,11 @@ export interface FormatState {
   star: Star;
   /** The version the default rule stars (spec §2.2: the newest without problems), whatever the manual pick; null for a follower. */
   defaultVersion: number | null;
+  /**
+   * The version whose own file of this format the export copies: the ★ for a primary; for a follower the latest version
+   * with its own file and a primary identical to the primary's ★ (`followerVersion`, decisions log 140). null when none.
+   */
+  exportVersion: number | null;
   starFileMissing: boolean;
   linkable: FormatSummary['linkable'];
   /** The primary this format follows (it then has no ★ and no history of its own to pick from). */
@@ -25,15 +30,21 @@ export function formatStates(detail: CreativeDetail, presets: FormatPreset[]): R
   const links = effectiveLinks(brief.links, brief.formats);
   const out: Record<string, FormatState> = {};
   const summaries = new Map((detail.formats ?? []).map((s) => [s.id, s]));
+  const starOfId = (id: string) => summaries.get(id)?.star ?? starOf(detail.versions, id, exportPicks, links);
   for (const id of brief.formats) {
     const s = summaries.get(id);
-    const star = s?.star ?? starOf(detail.versions, id, exportPicks, links);
+    const star = starOfId(id);
+    // Older cores send no `exportVersion`: the same shared rule, on the hashes the versions carry.
+    const primaryStar = star.follows !== null ? starOfId(star.follows).version : null;
+    const exportVersion = s?.exportVersion !== undefined ? s.exportVersion
+      : star.follows !== null ? followerVersion(detail.versions, id, primaryStar, links) : star.version;
     out[id] = {
       id,
       history: s?.history ?? formatHistory(detail.versions, id),
       star,
       defaultVersion: starOf(detail.versions, id, undefined, links).version,
-      starFileMissing: s?.starFileMissing ?? false,
+      exportVersion,
+      starFileMissing: s?.starFileMissing ?? (star.follows !== null && primaryStar !== null && exportVersion === null),
       linkable: s?.linkable ?? brief.formats.filter((p) => p !== id).map((primary) => {
         const c = checkLink(brief, detail.versions, presets, id, primary);
         return c.ok ? { primary, ok: true } : { primary, ok: false, reason: c.reason };
@@ -45,7 +56,7 @@ export function formatStates(detail: CreativeDetail, presets: FormatPreset[]): R
     for (const o of v.outputs) {
       if (out[o.format]) continue;
       const star = starOf(detail.versions, o.format, undefined, undefined);
-      out[o.format] = { id: o.format, history: formatHistory(detail.versions, o.format), star, defaultVersion: star.version, starFileMissing: false, linkable: [], follows: null };
+      out[o.format] = { id: o.format, history: formatHistory(detail.versions, o.format), star, defaultVersion: star.version, exportVersion: star.version, starFileMissing: false, linkable: [], follows: null };
     }
   }
   return out;

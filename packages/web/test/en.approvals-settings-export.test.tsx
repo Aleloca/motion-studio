@@ -44,7 +44,7 @@ describe('approvals, settings and export in English', () => {
     const out = (format: string, file: string) => ({ format, file, width: 1080, height: 1080, durationSec: null, verified: true, preview: null });
     const version = { n: 2, commit: 'c', sessionId: 's', status: 'complete' as const, createdAt: at, request: '', outputs: [out('instagram-post-1x1', 'a.png'), out('tiktok-9x16', 'b.mp4')], problems: [], tools: [], renderCommand: null, basedOn: null };
     const star = (n: number) => ({ version: n, manual: false, newer: null, follows: null });
-    const st = (id: string) => ({ id, history: [2], star: star(2), defaultVersion: 2, starFileMissing: false, linkable: [], follows: null });
+    const st = (id: string) => ({ id, history: [2], star: star(2), defaultVersion: 2, exportVersion: 2, starFileMissing: false, linkable: [], follows: null });
     const states = { 'instagram-post-1x1': st('instagram-post-1x1'), 'tiktok-9x16': st('tiktok-9x16') };
     en(<ExportDialog open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: [version], states }} presets={DEFAULT_FORMATS} pattern="{title}-{format}-v{v}" />);
     expect(screen.getByRole('dialog', { name: 'Export the starred versions of “Summer launch”' })).toBeTruthy();

@@ -1210,7 +1210,7 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
       linkTo: (p: { primary: string }) => `Link to ${p.primary}`,
       linkHint: 'Same size and kind: it can use the same file, at no cost.',
       linked: (p: { label: string; primary: string }) => `${p.label} now follows ${p.primary}`,
-      fileMissing: (p: { n: number }) => `The v${p.n} file is missing on disk: the export will skip it.`,
+      fileMissing: (p: { n: number }) => `The v${p.n} file is missing on disk, so Export can’t include this format. Star another version.`,
       errors: {
         hashesPending: 'Still computing versions, try again in a moment',
         pickFollower: (p: { label: string; primary: string }) => `${p.label} follows ${p.primary}: it is exported with the ★ of ${p.primary}.`,

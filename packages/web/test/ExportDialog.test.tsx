@@ -22,11 +22,11 @@ const ver = (n: number, outputs: VersionEntry['outputs']): VersionEntry =>
   ({ n, commit: 'c', sessionId: 's', status: 'complete', createdAt: '2026-10-08T10:00:00.000Z', request: '', outputs, problems: [], tools: [], renderCommand: null, basedOn: null });
 const versions = [ver(5, [out(REEL, 'mp4', 1920), out(TIKTOK, 'mp4', 1920), out(POST, 'png')]), ver(7, [out(REEL, 'mp4', 1920), out(TIKTOK, 'mp4', 1920), out(POST, 'png')])];
 const state = (id: string, s: Partial<FormatState>): FormatState => ({
-  id, history: [5, 7], star: { version: 7, manual: false, newer: null, follows: null }, defaultVersion: 7, starFileMissing: false, linkable: [], follows: null, ...s,
+  id, history: [5, 7], star: { version: 7, manual: false, newer: null, follows: null }, defaultVersion: 7, exportVersion: 7, starFileMissing: false, linkable: [], follows: null, ...s,
 });
 const states = (over: Record<string, Partial<FormatState>> = {}) => ({
-  [REEL]: state(REEL, { star: { version: 5, manual: true, newer: 7, follows: null }, ...over[REEL] }),
-  [TIKTOK]: state(TIKTOK, { history: [], star: { version: null, manual: false, newer: null, follows: REEL }, defaultVersion: null, follows: REEL, ...over[TIKTOK] }),
+  [REEL]: state(REEL, { star: { version: 5, manual: true, newer: 7, follows: null }, exportVersion: 5, ...over[REEL] }),
+  [TIKTOK]: state(TIKTOK, { history: [], star: { version: null, manual: false, newer: null, follows: REEL }, defaultVersion: null, exportVersion: 5, follows: REEL, ...over[TIKTOK] }),
   [POST]: state(POST, { ...over[POST] }),
 });
 const onSettings = vi.fn();
@@ -72,7 +72,7 @@ describe('ExportDialog · the starred versions', () => {
     const v5 = ver(5, [out(REEL, 'mp4', 1920), out(POST, 'png')]);
     render(
       <I18nProvider locale="en">
-        <ExportDialog open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: [v5, versions[1]!], states: states() }} presets={DEFAULT_FORMATS} pattern="{title}-{format}-v{v}" />
+        <ExportDialog open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: [v5, versions[1]!], states: states({ [TIKTOK]: { exportVersion: null, starFileMissing: true } }) }} presets={DEFAULT_FORMATS} pattern="{title}-{format}-v{v}" />
       </I18nProvider>,
     );
     expect((screen.getByRole('checkbox', { name: /^Export TikTok/ }) as HTMLButtonElement).disabled).toBe(true);
@@ -102,6 +102,28 @@ describe('ExportDialog · the starred versions', () => {
     // Only the picture and label of a blocked row are dimmed, not the row (and so not the reason).
     expect(reason.closest('.ms-exp-row')!.classList.contains('ms-blocked')).toBe(true);
     expect(reason.closest('.ms-exp-row')!.classList.contains('ms-off')).toBe(false);
+  });
+
+  it('a follower added without the agent exports its own later file, named and shown with its primary’s ★ (decisions log 140)', async () => {
+    // Reel ★ v5; TikTok exists only in v7, where the Reel is an identical repeat.
+    const v5 = ver(5, [out(REEL, 'mp4', 1920), out(POST, 'png')]);
+    render(
+      <I18nProvider locale="en">
+        <ExportDialog open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: [v5, versions[1]!], states: states({ [TIKTOK]: { exportVersion: 7 } }) }} presets={DEFAULT_FORMATS} pattern="{title}-{format}-v{v}" />
+      </I18nProvider>,
+    );
+    const check = screen.getByRole('checkbox', { name: /^Export TikTok/ }) as HTMLButtonElement;
+    expect(check.disabled).toBe(false);
+    expect(screen.getByText('summer-launch-tiktok-9x16-v5.mp4')).toBeTruthy();
+    expect(document.querySelector('.ms-exp-follows')!.textContent).toBe('follows Story/Reel 9:16★ v5');
+    // The thumbnail is the follower's own file, from v7.
+    expect(check.closest('.ms-exp-row')!.querySelector('video')!.getAttribute('src')).toContain('outputs/v7/');
+  });
+
+  it('a follower added without the agent sends its resolved version', async () => {
+    open(states({ [TIKTOK]: { exportVersion: 7 } }));
+    await userEvent.click(screen.getByRole('button', { name: 'Export 3 files' }));
+    await waitFor(() => expect(api.exportPicks).toHaveBeenCalledWith('acme', 'c1', { destination: '/out', picks: { [REEL]: 5, [POST]: 7 }, follow: { [TIKTOK]: 7 }, pattern: '{title}-{format}-v{v}', date: DAY }));
   });
 
   it('shows a mapped message for a coded refusal', async () => {

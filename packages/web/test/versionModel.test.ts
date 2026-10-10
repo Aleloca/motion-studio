@@ -41,6 +41,19 @@ describe('formatStates', () => {
     expect(s[REEL]!.star).toMatchObject({ version: 1, manual: true });
     expect(s[REEL]!.defaultVersion).toBe(3);
   });
+  it('resolves a follower added without the agent to the later identical version, without a core summary (decisions log 140)', () => {
+    // Reel history [1, 2]; v3 repeats the Reel and adds TikTok (no agent).
+    const added = [version(1, [out(REEL, 'a'), out(POST, 'b')]), version(2, [out(REEL, 'c'), out(POST, 'b')]), version(3, [out(REEL, 'c'), out(POST, 'b'), out(TIKTOK, 'c')])];
+    let s = formatStates(detailOf(added), DEFAULT_FORMATS);
+    expect(s[REEL]).toMatchObject({ history: [1, 2], exportVersion: 2 });
+    expect(s[TIKTOK]).toMatchObject({ follows: REEL, exportVersion: 3, starFileMissing: false });
+    s = formatStates(detailOf(added, { exportPicks: { [REEL]: 1 } }), DEFAULT_FORMATS);
+    expect(s[TIKTOK]).toMatchObject({ exportVersion: null, starFileMissing: true });
+  });
+  it('takes the follower export version from the core summary when sent', () => {
+    const d = { ...detailOf(versions), formats: [{ id: TIKTOK, history: [], star: { version: null, manual: false, newer: null, follows: REEL }, exportVersion: 2, starFileMissing: false, linkable: [] }] };
+    expect(formatStates(d, DEFAULT_FORMATS)[TIKTOK]!.exportVersion).toBe(2);
+  });
   it('prefers the core summary', () => {
     const d = { ...detailOf(versions), formats: [{ id: REEL, history: [1], star: { version: 1, manual: true, newer: 3, follows: null }, starFileMissing: true, linkable: [] }] };
     const s = formatStates(d, DEFAULT_FORMATS);

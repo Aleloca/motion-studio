@@ -124,6 +124,41 @@ export function starOf(versions: VersionEntry[], formatId: string, picks: Record
 }
 
 /**
+ * The version whose own file a follower exports (decisions log 140): the LATEST creative version that (a) holds the
+ * follower's own file and (b) whose primary file is byte-identical (same `sha256`) to the primary's file in
+ * `primaryVersion` (the primary's ★, or the primary version an export picks). The follower's file there is a copy of the
+ * primary's, so it is the ★ content under the follower's name. This covers followers added without the agent: they exist
+ * only in a later version where the primary is an identical repeat, outside the primary's history.
+ * - A missing `sha256` counts as not identical (equality must be proven); `primaryVersion` itself always matches its own
+ *   primary file, so the old rule (the follower's file in the primary's version) still resolves without hashes.
+ * - null when `follower` follows nothing (`effectiveLinks(links)`), `primaryVersion` is null or unknown, or no version
+ *   qualifies (the follower is then "missing").
+ */
+export function followerVersion(versions: VersionEntry[], follower: string, primaryVersion: number | null,
+  links: Record<string, string> | undefined): number | null {
+  if (primaryVersion === null) return null;
+  for (const v of byNumber(versions).reverse()) {
+    if (followerMatches(versions, follower, v.n, primaryVersion, links)) return v.n;
+  }
+  return null;
+}
+
+/** Whether a follower may be exported from version `n` while its primary is exported from `primaryVersion` (the rule of `followerVersion`). */
+export function followerMatches(versions: VersionEntry[], follower: string, n: number, primaryVersion: number,
+  links: Record<string, string> | undefined): boolean {
+  const active = effectiveLinks(links);
+  if (!Object.hasOwn(active, follower)) return false;
+  const primary = active[follower]!;
+  const at = (k: number) => versions.find((v) => v.n === k);
+  const base = at(primaryVersion)?.outputs.find((o) => o.format === primary);
+  const v = at(n);
+  if (!base || !v?.outputs.some((o) => o.format === follower)) return false;
+  if (n === primaryVersion) return true;
+  const p = v.outputs.find((o) => o.format === primary)?.sha256;
+  return base.sha256 !== undefined && p !== undefined && base.sha256 === p;
+}
+
+/**
  * Duration (seconds) of `formatId`'s file in the latest version that has it, when known (a positive finite number);
  * `undefined` otherwise (no render yet, an image, or a duration the probe could not read).
  */
@@ -163,7 +198,14 @@ export interface FormatSummary {
   /** `formatHistory`: the versions where this format's file is new or changed. */
   history: number[];
   star: Star;
-  /** The file export would copy (a follower: its own file in its primary's ★ version) is missing on disk (e.g. deleted by hand) or is a symlink/hard link: export refuses it. */
+  /**
+   * The version whose own file of this format the export copies: the ★ for a primary; for a follower `followerVersion` of
+   * its primary's ★ (decisions log 140), which may differ from the primary's ★ number (e.g. a follower added without the
+   * agent lives only in a later, identical version). null when there is none (a follower is then missing). Optional: older
+   * cores do not send it and clients compute it with `followerVersion`.
+   */
+  exportVersion?: number | null;
+  /** The file export would copy (`exportVersion`) is missing: no version qualifies for a follower, or the file is missing on disk (e.g. deleted by hand) or is a symlink/hard link: export refuses it. */
   starFileMissing: boolean;
   /** Each other format of the brief as a possible primary for this one (`checkLink`). */
   linkable: Array<{ primary: string; ok: boolean; reason?: LinkReason }>;

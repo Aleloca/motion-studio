@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { CreativeTurnService, type CreativeRef } from '../src/creatives/creative-turns.ts';
+import { exportPicks } from '../src/creatives/export.ts';
+import { formatSummaries } from '../src/creatives/format-summary.ts';
 import { parseStudioBlock } from '../src/creatives/prompt.ts';
 import { execCommand } from '../src/exec.ts';
 import { Git } from '../src/git.ts';
@@ -118,6 +120,30 @@ describe('formats added without the agent (spec §2.4)', { timeout: 30_000 }, ()
     const log = await execCommand('git', ['log', '--format=%s'], { cwd: ref.projectDir });
     expect(log.stdout).toContain('Lancio: v2');
     expect((await store.get(ref.creativeSlug)).status).toBe('ready');
+  });
+
+  it('names the primary by its own history entry, and the followers export with the primary ★ (decisions log 140)', async () => {
+    setLocale('en');
+    await setup(brief);
+    await run(service.start(ref));
+    // v2 changes the post only: the Reel is carried (identical), so its history stays [1].
+    expect(await run(service.start(ref, { text: 'post only', pins: [] }, { formats: [POST] }))).toBe('succeeded');
+    await service.updateBrief(ref, { brief: { ...brief, formats: [REEL, POST, TIKTOK, SHORTS] } });
+    expect(await run(service.start(ref))).toBe('succeeded');
+    const vs = await versions();
+    expect(formatHistory(vs, REEL)).toEqual([1]);
+    // The copy came from v2, but the Reel the user knows is v1.
+    expect(vs[2]!.request).toBe('Added TikTok · Video 9:16 and YouTube · Shorts 9:16 using the Instagram · Story/Reel 9:16 (v1)');
+    const creative = await store.get(ref.creativeSlug);
+    const summaries = await formatSummaries(store.dir(ref.creativeSlug), creative, vs, DEFAULT_FORMATS);
+    const of = (id: string) => summaries.find((x) => x.id === id)!;
+    expect(of(REEL)).toMatchObject({ star: { version: 1 }, exportVersion: 1, starFileMissing: false });
+    for (const f of [TIKTOK, SHORTS]) expect(of(f)).toMatchObject({ star: { version: null, follows: REEL }, exportVersion: 3, starFileMissing: false });
+    const dest = join(await mkdtemp(join(tmpdir(), 'ms-add-exp-')), 'out');
+    const r = await exportPicks({ creativeDir: store.dir(ref.creativeSlug), destination: dest, slug: ref.creativeSlug, title: 'Lancio', presets: DEFAULT_FORMATS,
+      pattern: '{format}-v{v}', versions: vs, picks: { [REEL]: 1 }, follow: { [TIKTOK]: 3, [SHORTS]: 3 }, links: creative.brief.links, storedPicks: creative.exportPicks });
+    expect(r.files.map((f) => f.to.split('/').pop())).toEqual([`${REEL}-v1.mp4`, `${TIKTOK}-v1.mp4`, `${SHORTS}-v1.mp4`]);
+    expect(r.files.map((f) => f.from.split('/').slice(-2).join('/'))).toEqual([`v1/${REEL}.mp4`, `v3/${TIKTOK}.mp4`, `v3/${SHORTS}.mp4`]);
   });
 
   it('runs the agent for the 16:9 only and materializes TikTok when TikTok and a 16:9 are added', async () => {

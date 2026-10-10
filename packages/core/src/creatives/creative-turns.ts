@@ -1,6 +1,6 @@
 import { lstat, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative } from 'node:path';
-import { checkLink, defaultLinks, effectiveLinks, formatLabel, manifestSchema, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionEntry } from '@motion-studio/shared';
+import { checkLink, defaultLinks, effectiveLinks, formatHistory, formatLabel, manifestSchema, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionEntry } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { BrandStore } from '../brand/brand-store.ts';
 import { assertCodebasesOutside, checkCodebases, codebaseOverlaps, codebaseOverlapMessage, codebaseSnapshot, normalizeCodebaseList } from '../codebases.ts';
@@ -320,7 +320,7 @@ export class CreativeTurnService {
       // duration) or a part of the brief without one (added formats): the summary says what really renders.
       this.deps.queue.patch(jobId, { formats: targets.length > 0 && targets.length < primaries.length ? [...targets] : undefined });
       const request = message?.text || (message?.pins.length ? j.pinsOnlyRequest : versions.length === 0 ? undefined
-        : noAgent ? this.addedFollowersRequest(plan, base!, label, locale)
+        : noAgent ? this.addedFollowersRequest(plan, base!, versions, label, locale)
           : (addFormatsRequest(targets.filter((f) => plan.added.includes(f)), base, n)
             ?? (targets.length < primaries.length ? j.regenerateFormatsRequest({ formats: listText(targets.map(label), locale) }) : j.regenerateRequest)));
 
@@ -554,14 +554,20 @@ export class CreativeTurnService {
     return store.update(slug, { brief: { ...fresh.brief, links } });
   }
 
-  /** "Added TikTok and Shorts using the Reel (v5)": the request of a version made without the agent (spec §2.4). */
-  private addedFollowersRequest(plan: TurnPlan, base: VersionEntry, label: (id: string) => string, locale: Locale): string {
+  /**
+   * "Added TikTok and Shorts using the Reel (v5)": the request of a version made without the agent (spec §2.4). The number
+   * is the primary's own history entry for the file copied (the latest history version ≤ `base`, i.e. where those bytes
+   * first appeared), the version the user knows the primary by, not the creative version the copy came from.
+   */
+  private addedFollowersRequest(plan: TurnPlan, base: VersionEntry, versions: VersionEntry[], label: (id: string) => string, locale: Locale): string {
     const byPrimary = new Map<string, string[]>();
     for (const f of plan.added) {
       const p = plan.links[f];
       if (p !== undefined) byPrimary.set(p, [...(byPrimary.get(p) ?? []), label(f)]);
     }
-    return [...byPrimary].map(([p, fs]) => t().jobs.addedFollowers({ formats: listText(fs, locale), primary: label(p), n: base.n })).join('; ');
+    const upToBase = versions.filter((v) => v.n <= base.n);
+    const entryOf = (p: string) => formatHistory(upToBase, p).at(-1) ?? base.n;
+    return [...byPrimary].map(([p, fs]) => t().jobs.addedFollowers({ formats: listText(fs, locale), primary: label(p), n: entryOf(p) })).join('; ');
   }
 
   /**
