@@ -1,3 +1,4 @@
+import { assertNotRealUserData } from './app-config.ts';
 import { access, constants, mkdir, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize, resolve, sep } from 'node:path';
@@ -111,6 +112,7 @@ export class WorkspaceStore {
 
   /** `create: false` (used at startup) refuses to recreate a workspace folder that disappeared. */
   static async open(root: string, git: Git, opts: { create?: boolean } = {}): Promise<WorkspaceStore> {
+    assertNotRealUserData(root);
     const info = await stat(root).catch(() => null);
     if (info && !info.isDirectory()) throw new WorkspaceError(400, t().errors.pathIsFile({ path: root }), 'not-found');
     if (!info && opts.create === false) throw new WorkspaceError(404, t().errors.workspaceNotFound({ path: root }), 'not-found');

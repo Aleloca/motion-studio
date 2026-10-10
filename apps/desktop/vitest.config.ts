@@ -1,5 +1,5 @@
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
-  test: { setupFiles: ['../../packages/core/test/setup-locale.ts'] },
+  test: { setupFiles: ['../../test-support/isolate-user-data.ts', '../../packages/core/test/setup-locale.ts'] },
 });

@@ -119,3 +119,11 @@ export interface WorkspaceInfo {
 
 /** GET /api/projects/:slug. `jobKey` is the key of this project's agent jobs (to find an active one). */
 export interface ProjectDetail { slug: string; project: ProjectFile; jobKey: string }
+/** A protected project file that differs from the state Motion Studio recorded (decisions log 141). */
+export interface IntegrityFileChange { path: string; change: 'changed' | 'added' | 'removed' }
+/**
+ * The project's integrity state: a quarantine (no agent, no git) the user may lift by accepting the listed changes as
+ * their own, and a git problem that is never acceptable (a config key, an attributes driver, a commondir/gitdir layout),
+ * shown with its remedy. `token` identifies the listed state: accepting refuses when the files changed since.
+ */
+export interface ProjectIntegrity { quarantined: boolean; files: IntegrityFileChange[]; gitProblem: string | null; token: string }

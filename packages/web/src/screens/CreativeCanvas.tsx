@@ -3,6 +3,7 @@
 // safe zones with a legend, V/C/H tools), Figma-style comments that become chips of the composer, the Chat · Comments ·
 // Brief panel, the version history with Compare, and Export. Replaces the interim CreativePage. A board opens in the
 // format view (screens/FormatView.tsx) with T3.
+import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
 import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, formatName, outputWarningText, shownTotal, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -53,6 +54,7 @@ export interface CreativeCanvasProps {
 
 export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSettings }: CreativeCanvasProps) {
   const t = useT();
+  const integrity = useIntegrity(slug, live);
   const c = t.web.canvas;
   const locale = useLocale();
   const shell = useContext(ShellContext);
@@ -438,6 +440,7 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
 
       <main className="ms-cv-main" aria-label={c.canvasAria}>
         <Notes>
+          {integrity.state ? <IntegrityNotice key="integrity" slug={slug} state={integrity.state} reload={integrity.reload} /> : null}
           {presetsFailure ? <p role="alert" className="ms-cv-note ms-err">{t.web.creative.formatsLoadFailed({ detail: presetsFailure })}</p> : null}
           {catalogError ? <p className="ms-cv-note">{catalogError}</p> : null}
           {cr.resumeFrom ? <p className="ms-cv-note ms-info">{t.web.creative.resumeNote({ n: cr.resumeFrom.version })}</p> : null}

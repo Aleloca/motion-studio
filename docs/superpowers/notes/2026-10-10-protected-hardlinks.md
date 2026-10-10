@@ -252,4 +252,25 @@ Tokens: 8 input, 1,216 output, 19,976 cache write, 108,859 cache read; 21,200 sh
   - `diff --no-ext-diff --no-textconv`;
   - `hash-object --no-filters`;
   - no `GIT_EXTERNAL_DIFF`.
-- **Residual.** A deliberate user edit to a protected file between runs locks the project until it is undone. There is no "accept current state" action yet.
+- **Residual (closed in round 5).** A deliberate user edit to a protected file between runs locks the project until it is undone or accepted.
+
+## Fifth round (test isolation, accept action)
+
+- **Test isolation.** Every package's vitest config loads `test-support/isolate-user-data.ts`. Per test file, it points these at a temp folder:
+  - `MOTION_STUDIO_CONFIG_DIR`, `HOME` and `USERPROFILE`;
+  - `XDG_CONFIG_HOME` and `APPDATA`.
+- **Refusals under vitest.**
+  - `defaultConfigDir()` throws instead of returning a real path.
+  - `AppConfigStore`, `IntegrityStore` and `WorkspaceStore.open` refuse the real config folder and `~/MotionStudio`. The home they compare against is the account's home from the user database, not `$HOME`.
+  - `test/test-isolation.test.ts` guards all of this.
+- **Integrity routes.**
+  - `GET /api/projects/:slug/integrity` returns `{ quarantined, files: [{ path, change }], gitProblem, token }`.
+  - `POST /api/projects/:slug/integrity/accept` takes `{ token }`. It needs the UI token and passes the same origin checks as the other routes.
+  - It refuses with 409 `integrity-changed` when the files changed after the list was shown.
+  - It refuses with 409 `git-unsafe` while a git problem remains: a key outside the allowlist, an attributes driver, a `commondir`, a `config.worktree` or a `gitdir:` file. Those are never acceptable.
+  - Otherwise the current snapshot becomes the new baseline and the quarantine is cleared.
+- **UI.** `components/IntegrityNotice.tsx` (`useIntegrity`) shows on the project page, the brand page, the creative canvas and the format view.
+  - It lists the changed, added and removed files, then offers "Accept these changes".
+  - The confirmation dialog shows "Only accept if you made these changes yourself" (it: "Accetta solo se hai fatto tu queste modifiche").
+  - A git problem is shown in its own box, with the remedy and no accept action.
+  - The notice is re-checked when a job ends or the project changes.

@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { lstat, mkdir, readdir, readFile, readlink, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { assertNotRealUserData } from './app-config.ts';
 import { t } from './i18n.ts';
 import { KeyedMutex } from './keyed-mutex.ts';
 
@@ -142,6 +143,8 @@ export async function noteCoreFile(file: string, content: string | Buffer): Prom
   }
 }
 
+export interface IntegrityChange { path: string; change: 'changed' | 'added' | 'removed' }
+
 export class ProjectQuarantinedError extends Error {
   constructor(message: string, readonly files: string[]) {
     super(message);
@@ -174,7 +177,7 @@ export function activeIntegrityStore(): IntegrityStore { return activeStore ?? (
 export class IntegrityStore {
   private readonly lock = new KeyedMutex();
   private readonly memory = new Map<string, IntegrityRecord>();
-  constructor(private readonly configDir: string | null) {}
+  constructor(private readonly configDir: string | null) { if (configDir !== null) assertNotRealUserData(configDir); }
 
   /** Makes this the store Git consults before every operation. */
   activate(): this { activeStore = this; return this; }
@@ -275,6 +278,35 @@ export class IntegrityStore {
       const shown = still.slice(0, 5).join(', ') + (still.length > 5 ? ', …' : '');
       throw new ProjectQuarantinedError(t().errors.projectQuarantined({ list: shown }), still);
     });
+  }
+
+  /**
+   * What the user sees on a blocked project: the protected files that differ from the recorded state, each with its kind
+   * of change, and the current snapshot they were computed from. Clears a quarantine whose files already match again.
+   * An unreadable record counts as quarantined with nothing listed (fail closed; an accept rewrites it).
+   */
+  async status(projectDir: string): Promise<{ quarantined: boolean; files: IntegrityChange[]; snapshot: IntegritySnapshot }> {
+    const key = await this.key(projectDir);
+    return this.lock.run(key, async () => {
+      const snapshot = await snapshotProtected(projectDir);
+      let rec: IntegrityRecord;
+      try { rec = await this.load(key); } catch { return { quarantined: true, files: [], snapshot }; }
+      if (!rec.quarantine) return { quarantined: false, files: [], snapshot };
+      const expected = rec.quarantine.expected;
+      const files = snapshotDiff(projectDir, expected, snapshot).map((path): IntegrityChange => ({
+        path, change: expected[path] === undefined ? 'added' : snapshot[path] === undefined ? 'removed' : 'changed',
+      }));
+      if (files.length === 0) {
+        await this.save(key, { schemaVersion: 1, projectDir: key, lastGood: snapshot });
+        return { quarantined: false, files, snapshot };
+      }
+      return { quarantined: true, files, snapshot };
+    });
+  }
+
+  /** The user accepted the current protected files as their own: they become the recorded state and the quarantine ends. */
+  accept(projectDir: string, snapshot: IntegritySnapshot): Promise<void> {
+    return this.key(projectDir).then((key) => this.lock.run(key, () => this.save(key, { schemaVersion: 1, projectDir: key, lastGood: snapshot })));
   }
 
   /** True while a quarantine record exists (no re-check). */
