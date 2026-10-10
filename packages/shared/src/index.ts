@@ -12,3 +12,4 @@ export * from './issues.ts';
 export * from './usage.ts';
 export * from './explain/index.ts';
 export * from './export-name.ts';
+export * from './composition/index.ts';

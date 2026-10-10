@@ -70,20 +70,69 @@ export function effectiveLinks(links: Record<string, string> | undefined, format
 const byNumber = (versions: VersionEntry[]) => [...versions].sort((a, b) => a.n - b.n);
 
 /**
- * Per-format history (spec §2.1): the creative versions `vN`, ascending, where the file of `formatId` is new or differs from
- * the previous version's. The first version with the format is included; a version without the format breaks the chain
- * (the next one that has it counts as new). A missing `sha256` on either side counts as changed: equality must be proven.
+ * What identifies a format's content in a version:
+ * - v2 (the version has a composition for the format): the composition hash;
+ * - legacy (no composition): the file's `sha256`, which may be missing (not computed yet);
+ * - null: the version does not have the format at all.
+ */
+type Identity = { kind: 'composition'; hash: string; followsFormat: string | undefined } | { kind: 'file'; sha256: string | undefined };
+
+function identityOf(v: VersionEntry | undefined, formatId: string): Identity | null {
+  if (!v) return null;
+  const comp = v.compositions?.find((c) => c.format === formatId);
+  if (comp) return { kind: 'composition', hash: comp.hash, followsFormat: comp.followsFormat };
+  const out = v.outputs.find((o) => o.format === formatId);
+  return out ? { kind: 'file', sha256: out.sha256 } : null;
+}
+
+/**
+ * Whether two identities prove the same content: two compositions with the same hash, or two files with the same (present)
+ * `sha256`. A composition against a file (the legacy → v2 boundary) is never the same: it counts as changed.
+ */
+function sameContent(a: Identity, b: Identity): boolean {
+  if (a.kind === 'composition' && b.kind === 'composition') return a.hash === b.hash;
+  if (a.kind === 'file' && b.kind === 'file') return a.sha256 !== undefined && a.sha256 === b.sha256;
+  return false;
+}
+
+/** Whether version `v` delivers `formatId`: a composition for it (v2) or its file (legacy, or a v2 render). */
+export function hasFormat(v: VersionEntry, formatId: string): boolean {
+  return identityOf(v, formatId) !== null;
+}
+
+/**
+ * Per-format history (spec §2.1): the creative versions `vN`, ascending, where the content of `formatId` is new or differs
+ * from the previous version's. The first version with the format is included; a version without the format breaks the
+ * chain (the next one that has it counts as new). Content is compared by composition hash when both versions have a
+ * composition for the format (v2), by file `sha256` when neither has (legacy; a missing `sha256` on either side counts as
+ * changed: equality must be proven), and a legacy version next to a v2 one always counts as changed.
  */
 export function formatHistory(versions: VersionEntry[], formatId: string): number[] {
   const history: number[] = [];
-  let previous: string | null | undefined = null; // null: no file in the previous version
+  let previous: Identity | null = null; // null: the previous version does not have the format
   for (const v of byNumber(versions)) {
-    const out = v.outputs.find((o) => o.format === formatId);
-    if (!out) { previous = null; continue; }
-    if (previous === null || previous === undefined || out.sha256 === undefined || out.sha256 !== previous) history.push(v.n);
-    previous = out.sha256;
+    const current = identityOf(v, formatId);
+    if (!current) { previous = null; continue; }
+    if (previous === null || !sameContent(previous, current)) history.push(v.n);
+    previous = current;
   }
   return history;
+}
+
+/**
+ * Render state of `formatId` in version `v` (decisions R2):
+ * - legacy (no composition for the format): `rendered` when the version has the file (the media is the result), else `none`;
+ * - v2: `rendered` when an output with a `sha256` exists and its `fromComposition` equals the version's composition hash for
+ *   the format; `stale` when such an output exists but was rendered from another composition; `none` otherwise.
+ * Old renders are never deleted: an edit always makes a new version, so a render stays valid in its own version.
+ */
+export type RenderState = 'none' | 'rendered' | 'stale';
+export function renderState(v: VersionEntry, formatId: string): RenderState {
+  const comp = v.compositions?.find((c) => c.format === formatId);
+  const out = v.outputs.find((o) => o.format === formatId);
+  if (!comp) return out ? 'rendered' : 'none';
+  if (!out || out.sha256 === undefined) return 'none';
+  return out.fromComposition === comp.hash ? 'rendered' : 'stale';
 }
 
 /**
@@ -100,7 +149,7 @@ export interface Star { version: number | null; manual: boolean; newer: number |
 /**
  * The ★ (version to export) of `formatId` (spec §2.2):
  * - a follower (`links[formatId]` set) has no ★ of its own: `follows` names its primary, `version` is null;
- * - a manual pick (`picks[formatId]`) on a version that has the format's file is kept, and `newer` is the latest version of
+ * - a manual pick (`picks[formatId]`) on a version that has the format (`hasFormat`) is kept, and `newer` is the latest version of
  *   the history when it is newer than the pick. A pick on a version without the file is ignored (default rule);
  * - otherwise the latest version of the history whose file has no problems, or the latest one if none is clean;
  * - no history: `version` null.
@@ -116,7 +165,7 @@ export function starOf(versions: VersionEntry[], formatId: string, picks: Record
   const history = formatHistory(versions, formatId);
   const latest = history.at(-1) ?? null;
   const pick = picks && Object.hasOwn(picks, formatId) ? picks[formatId]! : undefined;
-  if (pick !== undefined && versions.some((v) => v.n === pick && v.outputs.some((o) => o.format === formatId))) {
+  if (pick !== undefined && versions.some((v) => v.n === pick && hasFormat(v, formatId))) {
     return { version: pick, manual: true, newer: latest !== null && latest > pick ? latest : null, follows: null };
   }
   const clean = [...history].reverse().find((n) => !hasProblems(versions.find((v) => v.n === n)!, formatId));
@@ -124,11 +173,12 @@ export function starOf(versions: VersionEntry[], formatId: string, picks: Record
 }
 
 /**
- * The version whose own file a follower exports (decisions log 140): the LATEST creative version whose follower file is
- * byte-identical (same `sha256`) to the primary's ★ file, i.e. the primary's file in `primaryVersion` (the primary's ★, or
- * the primary version an export picks). That file is then the ★ content under the follower's name. This covers followers
- * added without the agent (they exist only in a later version where the primary is an identical repeat) and never resolves
- * to a dedicated render of the follower (e.g. a render made before the link, or while it was unlinked).
+ * The version whose own file a follower exports (decisions log 140): the LATEST creative version whose follower content is
+ * identical to the primary's ★ content, i.e. the primary's content in `primaryVersion` (the primary's ★, or the primary
+ * version an export picks). That file is then the ★ content under the follower's name. This covers followers added without
+ * the agent (they exist only in a later version where the primary is an identical repeat) and never resolves to a dedicated
+ * render of the follower (e.g. a render made before the link, or while it was unlinked).
+ * - "Identical" is `followerMatches`: same file `sha256` for legacy versions, same composition hash for v2 ones.
  * - A missing `sha256` on either side counts as not identical (equality must be proven), in `primaryVersion` too.
  * - null when `follower` follows nothing (`effectiveLinks(links)`), `primaryVersion` is null or unknown, or no version
  *   qualifies (the follower is then "missing").
@@ -144,8 +194,12 @@ export function followerVersion(versions: VersionEntry[], follower: string, prim
 
 /**
  * Whether a follower may be exported from version `n` while its primary is exported from `primaryVersion` (the rule of
- * `followerVersion`): `n` holds the follower's own file and its `sha256` equals the `sha256` of the primary's file in
- * `primaryVersion`. Both hashes must be present.
+ * `followerVersion`), comparing the follower's content in `n` with the primary's in `primaryVersion`:
+ * - both legacy (files): `n` holds the follower's own file and its `sha256` equals the primary file's; both hashes must be
+ *   present;
+ * - both v2 (compositions): the follower's entry in `n` follows the primary (`followsFormat`) and its composition hash
+ *   equals the primary's;
+ * - one legacy and one v2: never (the content cannot be proven identical across the boundary).
  */
 export function followerMatches(versions: VersionEntry[], follower: string, n: number, primaryVersion: number,
   links: Record<string, string> | undefined): boolean {
@@ -153,19 +207,23 @@ export function followerMatches(versions: VersionEntry[], follower: string, n: n
   if (!Object.hasOwn(active, follower)) return false;
   const primary = active[follower]!;
   const at = (k: number) => versions.find((v) => v.n === k);
-  const base = at(primaryVersion)?.outputs.find((o) => o.format === primary)?.sha256;
-  const own = at(n)?.outputs.find((o) => o.format === follower)?.sha256;
-  return base !== undefined && own !== undefined && base === own;
+  const base = identityOf(at(primaryVersion), primary);
+  const own = identityOf(at(n), follower);
+  if (!base || !own) return false;
+  if (own.kind === 'composition' && own.followsFormat !== primary) return false;
+  return sameContent(base, own);
 }
 
 /**
- * Duration (seconds) of `formatId`'s file in the latest version that has it, when known (a positive finite number);
- * `undefined` otherwise (no render yet, an image, or a duration the probe could not read).
+ * Duration (seconds) of `formatId`'s file in the latest version that has the format, when known (a positive finite number);
+ * `undefined` otherwise (no render yet, an image, or a duration the probe could not read). For a v2 version only a current
+ * render counts (`renderState` is `rendered`): an unrendered or stale composition has no known duration.
  */
 export function latestDurationOf(versions: VersionEntry[], formatId: string): number | undefined {
   for (const v of byNumber(versions).reverse()) {
+    if (!hasFormat(v, formatId)) continue;
     const out = v.outputs.find((o) => o.format === formatId);
-    if (!out) continue;
+    if (!out || renderState(v, formatId) !== 'rendered') return undefined;
     return typeof out.durationSec === 'number' && Number.isFinite(out.durationSec) && out.durationSec > 0 ? out.durationSec : undefined;
   }
   return undefined;
