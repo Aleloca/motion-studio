@@ -57,7 +57,7 @@ describe.skipIf(!tools.ok)('renderer: processes, cancel, crash, watchdog', () =>
   const layerTrack = (src: string, duration: number) => ({ id: 'l', kind: 'visual', clips: [{ id: 'l', type: 'html', src, start: 0, duration, props: { x: 0, y: 0, width: 80, height: 80 } }] });
 
   beforeAll(async () => {
-    work = mkdtempSync(join(tmpdir(), 'ms-render-proc-'));
+    work = mkdtempSync(join(tmpdir(), 'ms-test-render-proc-'));
     dist = join(work, 'dist');
     await buildRuntime(dist);
     creative = join(work, 'creative');

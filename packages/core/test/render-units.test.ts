@@ -12,7 +12,7 @@ import { startWatchdog, type GroupMemory } from '../src/render/watchdog.ts';
 import { chromeCandidates, findSystemChrome } from '../src/render/system-chrome.ts';
 import { ChromeProvider } from '../src/render/chromium-provider.ts';
 
-const work = mkdtempSync(join(tmpdir(), 'ms-render-units-'));
+const work = mkdtempSync(join(tmpdir(), 'ms-test-render-units-'));
 afterAll(() => rmSync(work, { recursive: true, force: true }));
 
 const TOKEN = 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abcd';

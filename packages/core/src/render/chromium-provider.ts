@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { markOwned } from './owner.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
@@ -272,6 +273,7 @@ export class ChromeProvider implements ChromiumProvider {
 
   private async launch(origin: string): Promise<Launched> {
     const profile = mkdtempSync(join(this.o.tempDir ?? tmpdir(), 'ms-render-chrome-'));
+    markOwned(profile);
     const args = [
       ...BASE_FLAGS, ...networkLockdownFlags(origin),
       `--user-data-dir=${profile}`, '--remote-debugging-pipe', `--js-flags=--max-old-space-size=${this.o.heapMB ?? 512}`,

@@ -8,6 +8,8 @@ import type { Composition, FormatPreset } from '@motion-studio/shared';
 import { RUNTIME_DIST_DIR } from '@motion-studio/composition-runtime/dist';
 import { startCompositionServer, type CompositionServer, type CompositionSession, type SessionMedia } from '../compositions/composition-server.ts';
 import { readRegularFile } from '../safe-read.ts';
+import { noteCoreTemp } from '../core-temps.ts';
+import { markOwned } from './owner.ts';
 import { mixAudio, mixClips } from './audio-mix.ts';
 import { CdpError } from './cdp-pipe.ts';
 import { captureFrame, captureSegment, splitSegments, writeWithBackpressure } from './capture.ts';
@@ -80,12 +82,13 @@ export interface RenderCompositionOptions {
    * files, with the trusted source fields. The audio mix still reads the composition's own sources.
    */
   media?: SessionMedia;
+  /** Called with the finished temp file just before it is renamed to `out` (render jobs note its stamp first, Task 5 M1). */
+  beforeRename?: (temp: string) => Promise<void>;
 }
 
 /** The hidden temp file a render writes next to its output (`.<name>.render-<hex>.tmp`): the startup sweep removes old ones. */
 export const RENDER_TEMP_RE = /^\..+\.render-[0-9a-f]{12}\.tmp$/;
-/** The work folder of a render in the temp folder holds this file with the core's pid (the startup sweep skips live ones). */
-export const RENDER_OWNER_FILE = 'owner.pid';
+export { RENDER_OWNER_FILE } from './owner.ts';
 
 export const DEFAULT_PARALLEL = 4;
 /** Runtime reports that never fail a render: `audioBlocked` (preview only) and `videoFrameMismatch` (a warning). */
@@ -134,6 +137,7 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
   const frames = still ? 1 : Math.max(1, Math.round(c.duration * c.fps));
   const deadline = setTimeout(() => ctl.abort(new RenderError('timeLimit', 'the render took too long')), o.timeLimitMs ?? 300_000 + frames * 5_000);
   const tempOut = join(dirname(o.out), `.${basename(o.out)}.render-${randomBytes(6).toString('hex')}.tmp`);
+  noteCoreTemp(tempOut);
   let work: string | null = null;
   let server: CompositionServer | null = null;
   let session: CompositionSession | null = null;
@@ -184,7 +188,7 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
       await writeFile(tempOut, buf, { flag: 'wx', mode: 0o644 });
     } else {
       work = await mkdtemp(join(o.tempDir ?? tmpdir(), 'ms-render-'));
-      await writeFile(join(work, RENDER_OWNER_FILE), String(process.pid));
+      markOwned(work);
       const kbps = targetKbps(o.format, c.fps);
       const encoder = await chooseEncoder(ff!, o.encoder ?? 'auto', c.width, c.height, c.fps, kbps);
       const segments = splitSegments(frames, Math.min(16, Math.max(1, Math.floor(o.parallel ?? DEFAULT_PARALLEL))));
@@ -233,10 +237,12 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
         throw new RenderError('ffmpegFailed', `the output has ${check ? `${check.frames} frames at ${check.width}×${check.height}` : 'no readable video'}, expected ${frames} at ${c.width}×${c.height}`);
       }
       const sha256 = await sha256File(tempOut);
+      await o.beforeRename?.(tempOut);
       await rename(tempOut, o.out);
       return { file: o.out, sha256, width: c.width, height: c.height, durationSec: c.duration, frames, encoder, audio: hasAudio, warnings };
     }
     const sha256 = await sha256File(tempOut);
+    await o.beforeRename?.(tempOut);
     await rename(tempOut, o.out);
     return { file: o.out, sha256, width: c.width, height: c.height, durationSec: null, frames: 1, encoder: null, audio: false, warnings };
   } catch (e) {

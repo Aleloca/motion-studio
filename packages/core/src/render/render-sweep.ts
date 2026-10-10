@@ -2,8 +2,9 @@ import { lstat, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { noteCoreChange } from '../core-changes.ts';
-import { MEDIA_TEMP_RE, mediaCacheDir } from './media-normalize.ts';
-import { RENDER_OWNER_FILE, RENDER_TEMP_RE } from './renderer.ts';
+import { MEDIA_TEMP_RE, mediaCacheDir, pruneMediaCache, type PruneOptions } from './media-normalize.ts';
+import { RENDER_OWNER_FILE, RENDER_TEMP_DIR_RE } from './owner.ts';
+import { RENDER_TEMP_RE } from './renderer.ts';
 import { listProcesses } from './watchdog.ts';
 
 /**
@@ -11,15 +12,17 @@ import { listProcesses } from './watchdog.ts';
  * quit cancels them and removes their files: the job queue's cancel on close). Only names the core makes, only in the
  * core's own folders, only when older than `minAgeMs` (default 10 min):
  * - in a project: hidden render temp outputs `outputs/vN/.<name>.render-<hex>.tmp` (also in `.previews/`) and media temp
- *   files `.studio/cache/media/.<key>.<hex>.tmp`;
- * - in the OS temp folder: render work folders and browser profiles `ms-render-*`, unless a live process still names the
- *   folder on its command line, or its `owner.pid` is a live process.
+ *   files `.studio/cache/media/.<key>.<hex>.tmp`; never through a linked creative or version folder. Then the media
+ *   cache is pruned (`pruneMediaCache`: older recipes, unused for 30 days, the size cap), never a file in use;
+ * - in the OS temp folder: exactly the renderer's temp folder names (`RENDER_TEMP_DIR_RE`) that hold its owner marker
+ *   (`owner.pid`) whose pid is gone, and that no live process names on its command line.
+ * The project part runs at startup AND on a workspace switch (`recoverWorkspace`), when renders may be running: the age
+ * gate, `skipCreative` (a creative with an active render job) and `inUse` keep their files.
  */
 
 export const SWEEP_MIN_AGE_MS = 10 * 60 * 1000;
 const CREATIVE_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const VERSION_RE = /^v\d{1,6}$/;
-const TEMP_DIR_RE = /^ms-render-[A-Za-z0-9_-]{6,}$/;
 
 const oldEnough = async (p: string, minAgeMs: number, now: number) => {
   const st = await lstat(p).catch(() => null);
@@ -41,13 +44,15 @@ async function sweepFiles(dir: string, re: RegExp, minAgeMs: number, now: number
 }
 
 /** Removes old render and media temp files of one project (see the module comment). Returns the paths removed. */
-export async function sweepProjectRenders(projectDir: string, o: { minAgeMs?: number; now?: number } = {}): Promise<string[]> {
+export async function sweepProjectRenders(projectDir: string, o: { minAgeMs?: number; now?: number; skipCreative?: (slug: string) => boolean; media?: PruneOptions } = {}): Promise<string[]> {
   const minAgeMs = o.minAgeMs ?? SWEEP_MIN_AGE_MS;
   const now = o.now ?? Date.now();
   const removed: string[] = [];
   const creatives = join(projectDir, 'creatives');
   for (const slug of await readdir(creatives).catch(() => [] as string[])) {
-    if (!CREATIVE_SLUG_RE.test(slug)) continue;
+    if (!CREATIVE_SLUG_RE.test(slug) || o.skipCreative?.(slug)) continue;
+    // A creative folder reached through a link is not ours to clean (M6).
+    if (!(await lstat(join(creatives, slug)).catch(() => null))?.isDirectory()) continue;
     const outputs = join(creatives, slug, 'outputs');
     if (!(await lstat(outputs).catch(() => null))?.isDirectory()) continue;
     for (const v of await readdir(outputs).catch(() => [] as string[])) {
@@ -60,7 +65,10 @@ export async function sweepProjectRenders(projectDir: string, o: { minAgeMs?: nu
     }
   }
   const media = mediaCacheDir(projectDir);
-  if ((await lstat(media).catch(() => null))?.isDirectory()) removed.push(...await sweepFiles(media, MEDIA_TEMP_RE, minAgeMs, now));
+  if ((await lstat(media).catch(() => null))?.isDirectory()) {
+    removed.push(...await sweepFiles(media, MEDIA_TEMP_RE, minAgeMs, now));
+    removed.push(...await pruneMediaCache(media, { now, ...o.media }));
+  }
   return removed;
 }
 
@@ -77,7 +85,7 @@ export async function sweepRenderTempDirs(o: { root?: string; minAgeMs?: number;
   const now = o.now ?? Date.now();
   const candidates: string[] = [];
   for (const name of await readdir(root).catch(() => [] as string[])) {
-    if (!TEMP_DIR_RE.test(name)) continue;
+    if (!RENDER_TEMP_DIR_RE.test(name)) continue;
     const p = join(root, name);
     const st = await oldEnough(p, minAgeMs, now);
     if (st?.isDirectory()) candidates.push(p);
@@ -87,8 +95,9 @@ export async function sweepRenderTempDirs(o: { root?: string; minAgeMs?: number;
   const removed: string[] = [];
   for (const p of candidates) {
     if (commands.some((c) => c.includes(p))) continue;
+    // Only a folder the renderer marked as its own, whose owner is gone.
     const owner = Number((await readFile(join(p, RENDER_OWNER_FILE), 'utf8').catch(() => '')).trim());
-    if (owner && alive(owner)) continue;
+    if (!(owner > 1) || alive(owner)) continue;
     await rm(p, { recursive: true, force: true, maxRetries: 2 }).then(() => removed.push(p), () => {});
   }
   return removed;

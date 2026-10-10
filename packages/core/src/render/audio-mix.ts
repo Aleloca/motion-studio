@@ -5,6 +5,7 @@ import type { Composition } from '@motion-studio/shared';
 import { copyConfinedFile, withConfinedFile } from '../brand/agent-guard.ts';
 import { RenderError } from './errors.ts';
 import { runFfmpeg, type FfmpegInfo } from './encode.ts';
+import { probeJson } from './media-normalize.ts';
 
 /**
  * The audio of a composition (spec §5.3; spike §5), mixed sample-accurately with ffmpeg:
@@ -91,6 +92,30 @@ async function openConfined(compDir: string, rel: string): Promise<FileHandle> {
   return r;
 }
 
+/**
+ * A video clip's time 0 is its source's first VIDEO frame (the runtime's `sourceStart`, the normalised file's first frame),
+ * while the mix trims from the first AUDIO sample. When the streams start at different times (`starts`), the audio is
+ * offset by `audioStart − videoStart` (M12): trimmed further when the audio starts first, delayed (and shortened) when it
+ * starts later. Null when nothing of the clip is left to mix.
+ */
+export function alignVideoAudio(clip: MixClip, starts: { video: number; audio: number } | null): MixClip | null {
+  if (!starts) return clip;
+  const pos = clip.trimStart + (starts.video - starts.audio);
+  if (pos >= 0) return { ...clip, trimStart: pos };
+  const delay = -pos;
+  if (delay >= clip.duration) return null;
+  return { ...clip, start: clip.start + delay, duration: clip.duration - delay, trimStart: 0 };
+}
+
+/** The start times (s) of the first video and the first audio stream of an input; null when unknown. */
+async function streamStarts(ff: FfmpegInfo, input: { fd: number } | { file: string }, signal: AbortSignal): Promise<{ video: number; audio: number } | null> {
+  const j = await probeJson(ff, ['-show_entries', 'stream=codec_type,start_time', ...('fd' in input ? ['-fd', '3', 'fd:'] : [input.file])], { signal, fds: 'fd' in input ? [input.fd] : [] });
+  const streams = Array.isArray(j?.streams) ? j.streams as Array<{ codec_type?: string; start_time?: string }> : [];
+  const v = Number(streams.find((x) => x.codec_type === 'video')?.start_time);
+  const a = Number(streams.find((x) => x.codec_type === 'audio')?.start_time);
+  return Number.isFinite(v) && Number.isFinite(a) ? { video: v, audio: a } : null;
+}
+
 /** Whether ffmpeg finds an audio stream in the input (`-fd 3 -i fd:` with `fd`, else `file`). */
 async function hasAudio(ff: FfmpegInfo, input: { fd: number } | { file: string }, signal: AbortSignal): Promise<boolean> {
   const src = 'fd' in input ? ['-fd', '3', '-i', 'fd:'] : ['-i', input.file];
@@ -114,16 +139,24 @@ export async function mixAudio(o: { ff: FfmpegInfo; compDir: string; clips: MixC
       copy = join(o.workDir, `audio-${i}`);
       await copyConfinedFile(o.compDir, clip.src, copy).catch(() => { throw new RenderError('runtimeErrors', `audio source refused: ${clip.src}`); });
     }
+    let mixed = clip;
     if (clip.fromVideo) {
       let sound: boolean;
-      if (copy) sound = await hasAudio(o.ff, { file: copy }, o.signal);
-      else {
+      let starts: { video: number; audio: number } | null;
+      if (copy) { sound = await hasAudio(o.ff, { file: copy }, o.signal); starts = sound ? await streamStarts(o.ff, { file: copy }, o.signal) : null; } else {
         const h = await openConfined(o.compDir, clip.src);
         try { sound = await hasAudio(o.ff, { fd: h.fd }, o.signal); } finally { await h.close().catch(() => {}); }
+        if (sound) {
+          const h2 = await openConfined(o.compDir, clip.src);
+          try { starts = await streamStarts(o.ff, { fd: h2.fd }, o.signal); } finally { await h2.close().catch(() => {}); }
+        } else starts = null;
       }
       if (!sound) continue;
+      const aligned = alignVideoAudio(clip, starts);
+      if (!aligned) continue;
+      mixed = aligned;
     }
-    kept.push({ clip, ...(copy ? { copy } : {}) });
+    kept.push({ clip: mixed, ...(copy ? { copy } : {}) });
   }
   if (kept.length === 0) return false;
   const handles: FileHandle[] = [];

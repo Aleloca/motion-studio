@@ -43,7 +43,7 @@ const TOKEN = 'naked-token-0123456789abcdef';
 
 /** A Chrome without our provider (flags chosen by the test), with its own profile and process group. */
 async function rawChrome(exe: string, flags: string[]) {
-  const profile = mkdtempSync(join(tmpdir(), 'ms-render-iso-'));
+  const profile = mkdtempSync(join(tmpdir(), 'ms-test-render-iso-'));
   const args = [...BASE_FLAGS, ...flags, '--headless=new', `--user-data-dir=${profile}`, '--remote-debugging-pipe', 'about:blank'];
   const native = await nativeLauncher(exe);
   const proc = spawn(native ? '/usr/bin/arch' : exe, native ? ['-arm64', exe, ...args] : args, { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'], detached: true });
@@ -122,7 +122,7 @@ describe.skipIf(!tools.chrome)('render isolation in headless Chrome', () => {
   let udp: UdpCanary;
 
   beforeAll(async () => {
-    work = mkdtempSync(join(tmpdir(), 'ms-render-isolation-'));
+    work = mkdtempSync(join(tmpdir(), 'ms-test-render-isolation-'));
     dist = join(work, 'dist');
     await buildRuntime(dist);
     canary = await startCanary();

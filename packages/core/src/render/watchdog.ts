@@ -29,6 +29,9 @@ export function trackGroup(pgid: number): () => void {
   return () => { liveGroups.delete(pgid); };
 }
 
+/** How many process groups the core started that still run (tests: nothing may outlive a cancel or a close). */
+export function liveGroupCount(): number { return liveGroups.size; }
+
 /** SIGKILLs a whole process group; never throws (the group may be gone already). Windows: kills the process tree. */
 export function killGroup(pgid: number): void {
   if (!(pgid > 1)) return;

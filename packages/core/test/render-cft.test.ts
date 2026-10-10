@@ -66,7 +66,7 @@ const guardedFetch: typeof fetch = async (input, init) => {
 };
 
 beforeAll(async () => {
-  work = mkdtempSync(join(tmpdir(), 'ms-render-cft-'));
+  work = mkdtempSync(join(tmpdir(), 'ms-test-render-cft-'));
   server = createServer((req, res) => {
     hits.push(`${req.method} ${req.url}`);
     if (req.url === '/manifest.json') {

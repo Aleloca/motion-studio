@@ -6,18 +6,19 @@
  */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Composition } from '@motion-studio/shared';
 import { RenderError } from '../src/render/errors.ts';
-import { findFfmpeg, type FfmpegInfo } from '../src/render/encode.ts';
+import { findFfmpeg, h264Args, runFfmpeg, type FfmpegInfo } from '../src/render/encode.ts';
+import { alignVideoAudio, mixAudio } from '../src/render/audio-mix.ts';
 import {
-  clipScaleBound, MAX_MEDIA_DIM, MEDIA_TEMP_RE, MediaNormalizer, normalisedFieldsOf, targetSize, videoNeeds,
+  clipScaleBound, hdrFilter, MAX_MEDIA_DIM, MEDIA_TEMP_RE, MediaNormalizer, normalisedFieldsOf, normalizeArgs, pruneMediaCache, targetSize, videoNeeds,
 } from '../src/render/media-normalize.ts';
-import { listProcesses } from '../src/render/watchdog.ts';
-import { decodeStrips, frameCodedVideo, readCode } from './helpers/render-env.ts';
+import { listProcesses, liveGroupCount } from '../src/render/watchdog.ts';
+import { burstWav, decodeAudio, decodeStrips, frameCodedVideo, onset, readCode } from './helpers/render-env.ts';
 
 const ffmpeg = await findFfmpeg();
 if (!ffmpeg) {
@@ -112,7 +113,7 @@ describe.skipIf(!ffmpeg)('normalisation with ffmpeg', () => {
     expect([r.made, r.cached]).toEqual([1, 0]);
     expect(progress).toEqual(['0/1', '1/1']);
     const m = r.media.clips.get('assets/hd.mp4')!;
-    expect(m.file).toBe(join(cache, `${sha(join(compDir, 'assets', 'hd.mp4'))}-30-320.mp4`));
+    expect(m.file).toBe(join(cache, `${sha(join(compDir, 'assets', 'hd.mp4'))}-30-320x180-n1.mp4`));
     const s = JSON.parse(probe(m.file, ['-count_packets', '-show_entries', 'stream=codec_type,codec_name,pix_fmt,width,height,r_frame_rate,avg_frame_rate,nb_read_packets,color_primaries,color_transfer,color_space,color_range,has_b_frames', '-of', 'json'])).streams as Array<Record<string, unknown>>;
     expect(s).toHaveLength(1); // no audio
     expect(s[0]).toMatchObject({ codec_type: 'video', codec_name: 'h264', pix_fmt: 'yuv420p', width: 320, height: 180, r_frame_rate: '30/1', avg_frame_rate: '30/1',
@@ -144,13 +145,13 @@ describe.skipIf(!ffmpeg)('normalisation with ffmpeg', () => {
   it('a source of 10 s or more gets a key frame every half second; a scale animation raises the size, still never upscaled', async () => {
     const r = await prepare(normalizer(), comp([video('assets/long.mp4', { props: { width: 40, height: 22 }, animations: [{ prop: 'scale', from: 1, to: 2 }] })]));
     const m = r.media.clips.get('assets/long.mp4')!;
-    expect(m.file.endsWith('-30-80.mp4')).toBe(true); // 40 × 2 wide
+    expect(m.file.endsWith('-30-80x46-n1.mp4')).toBe(true); // 40 × 2 wide (cover: 22 × 2 high → 80×46 keeps the aspect)
     const keys = probe(m.file, ['-select_streams', 'v', '-show_entries', 'frame=key_frame', '-of', 'csv=p=0']).trim().split('\n').map((l) => parseInt(l, 10));
     expect(keys.length).toBe(360);
     expect(keys.flatMap((k, i) => (k ? [i] : []))).toEqual(Array.from({ length: 24 }, (_, i) => i * 15));
     expect(m.sourceVideoEnd).toBeCloseTo(12, 6);
     const big = await prepare(normalizer(), comp([video('assets/long.mp4', { props: { width: 320, height: 180, scale: 4 } })], { fps: 25 }));
-    expect(big.media.clips.get('assets/long.mp4')!.file.endsWith('-25-160.mp4')).toBe(true); // the source is 160 wide
+    expect(big.media.clips.get('assets/long.mp4')!.file.endsWith('-25-160x90-n1.mp4')).toBe(true); // the source is 160 wide
   }, 300_000);
 
   it('cache: a second preparation finds the file (no new encode); a new source content is a new name', async () => {
@@ -161,7 +162,9 @@ describe.skipIf(!ffmpeg)('normalisation with ffmpeg', () => {
     const again = await prepare(normalizer(), c);
     expect([again.made, again.cached]).toEqual([0, 1]);
     expect(again.media.clips.get('assets/hd.mp4')).toEqual(first.media.clips.get('assets/hd.mp4'));
-    expect(statSync(file).mtimeMs).toBe(before.mtimeMs);
+    // Not encoded again (same inode); its mtime is touched on use (the cache's LRU clock).
+    expect(statSync(file).ino).toBe(before.ino);
+    expect(statSync(file).mtimeMs).toBeGreaterThanOrEqual(before.mtimeMs);
     // Two clips of one composition on the same source share one file.
     const two = await prepare(normalizer(), comp([video('assets/hd.mp4'), video('assets/hd.mp4', { start: 1, duration: 1 })]));
     expect(two.media.clips.size).toBe(1);
@@ -218,11 +221,214 @@ describe.skipIf(!ffmpeg)('normalisation with ffmpeg', () => {
       expect((e as RenderError).code, how).toBe('cancelled');
       expect(await encoders(), how).toEqual([]);
       expect(readdirSync(cache).filter((f) => f.startsWith('.')), how).toEqual([]);
-      expect(readdirSync(cache).some((f) => f.endsWith('-60-1920.mp4')), how).toBe(false);
+      expect(readdirSync(cache).some((f) => f.endsWith('-60-1920x1080-n1.mp4')), how).toBe(false);
     }
     // After close() the normaliser refuses new work.
     const closed = normalizer();
     await closed.close();
     await expect(prepare(closed, comp([video('assets/hd.mp4')]))).rejects.toMatchObject({ code: 'cancelled' });
   }, 600_000);
+});
+
+describe('cache maintenance (pure files)', () => {
+  const NAME = (c: string, recipe = 1) => `${c.repeat(64)}-30-320x180-n${recipe}.mp4`;
+  it('prunes older recipes, files unused for 30 days, and the least recently used above the cap; never in use, links or recent files', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ms-test-media-prune-'));
+    try {
+      const now = Date.now();
+      const put = (name: string, bytes: number, ageMs: number) => { const p = join(dir, name); writeFileSync(p, Buffer.alloc(bytes)); const t = new Date(now - ageMs); utimesSync(p, t, t); return p; };
+      const DAY = 24 * 3600 * 1000;
+      const oldRecipe = put(NAME('a', 0), 10, DAY);
+      const stale = put(NAME('b'), 10, 31 * DAY);
+      const lru1 = put(NAME('c'), 400, 5 * DAY);
+      const lru2 = put(NAME('d'), 400, 4 * DAY);
+      const used = put(NAME('e'), 400, 6 * DAY);
+      const recent = put(NAME('f'), 400, 60_000);
+      const other = put('notes.txt', 10, 40 * DAY);
+      linkSync(lru2, join(dir, NAME('g'))); // a hard link: never touched (both names then have nlink 2)
+      symlinkSync(lru1, join(dir, NAME('h')));
+      const removed = await pruneMediaCache(dir, { maxBytes: 1000, now, inUse: (f) => f === used });
+      // c and f count (800 bytes ≤ 1000): d is hard-linked, e in use, h a symlink, notes.txt not a cache name.
+      expect(removed.sort()).toEqual([oldRecipe, stale].sort());
+      for (const f of [lru1, lru2, used, recent, other]) expect(existsSync(f), f).toBe(true);
+      rmSync(join(dir, NAME('g')));
+      const again = await pruneMediaCache(dir, { maxBytes: 1000, now, inUse: (f) => f === used });
+      // c, d and f now count (1200 > 1000): the least recently used goes first (c); f is recent, e in use.
+      expect(again).toEqual([lru1]);
+      expect(existsSync(lru2) && existsSync(used) && existsSync(recent)).toBe(true);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('HDR: tone-mapped when zscale and tonemap exist, else the colorspace filter with the approximate flag', () => {
+    const hlg = { primaries: 'bt2020', transfer: 'arib-std-b67', space: 'bt2020nc' };
+    expect(hdrFilter(hlg, new Set(['zscale', 'tonemap']))).toMatchObject({ approximate: false, vf: expect.stringContaining('tonemap=hable') });
+    expect(hdrFilter(hlg, new Set(['colorspace', 'tonemap']))).toEqual({ approximate: true, vf: 'colorspace=all=bt709:iprimaries=bt2020:ispace=bt2020ncl:itrc=bt2020-10:format=yuv420p,' });
+    expect(normalizeArgs({ fps: 30, width: 64, height: 36, allIntra: true, hdrVf: 'X,' }).join(' ')).toContain('round=up,X,scale=64:36:flags=lanczos:in_color_matrix=bt709');
+  });
+
+  it('a video clip\'s sound is aligned to its first video frame (M12)', () => {
+    const clip = { src: 'assets/v.mp4', start: 1, duration: 2, trimStart: 0.5, volume: 1, fadeIn: 0, fadeOut: 0, fromVideo: true };
+    expect(alignVideoAudio(clip, { video: 0.1, audio: 0 })).toEqual({ ...clip, trimStart: 0.6 });
+    expect(alignVideoAudio(clip, { video: 0, audio: 0.8 })).toEqual({ ...clip, start: 1.3, duration: 1.7, trimStart: 0 });
+    expect(alignVideoAudio(clip, { video: 0, audio: 3 })).toBeNull();
+    expect(alignVideoAudio(clip, null)).toEqual(clip);
+  });
+});
+
+describe.skipIf(!ffmpeg)('normalisation: sharing, slots, failures, HDR, memo, audio, final tags', () => {
+  let work: string;
+  let project: string;
+  let compDir: string;
+  let cache: string;
+  const prep = (n: MediaNormalizer, c: Composition, signal = new AbortController().signal) => n.prepare({ projectDir: project, compDir, composition: c, signal });
+  const encoders = async () => (await listProcesses()).filter((r) => /ffmpeg/.test(r.command) && r.command.includes(cache));
+  const waitFor = async (cond: () => Promise<boolean>, ms = 120_000) => { const t0 = Date.now(); while (!(await cond()) && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 100)); };
+  const heavyComp = () => comp([video('assets/heavy.mp4', { props: { width: 1280, height: 720 } })], { width: 1280, height: 720, fps: 60 });
+
+  beforeAll(() => {
+    work = mkdtempSync(join(tmpdir(), 'ms-test-media-fix-'));
+    project = join(work, 'project');
+    compDir = join(project, 'creatives', 'c', 'outputs', 'v1', 'compositions', 'story');
+    cache = join(project, '.studio', 'cache', 'media');
+    mkdirSync(join(compDir, 'assets'), { recursive: true });
+    ff(['-f', 'lavfi', '-i', 'testsrc2=s=1280x720:r=60:d=20', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '30', join(compDir, 'assets', 'heavy.mp4')]);
+    ff(['-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=30:d=1', '-c:v', 'libx264', '-preset', 'ultrafast', join(compDir, 'assets', 'small.mp4')]);
+    ff(['-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=30:d=1', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '20', join(compDir, 'assets', 'small2.mp4')]);
+    // 10-bit BT.2020 HLG.
+    ff(['-f', 'lavfi', '-i', 'testsrc2=s=320x180:r=30:d=1', '-vf', 'format=yuv420p10le,setparams=color_primaries=bt2020:color_trc=arib-std-b67:colorspace=bt2020nc:range=tv',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-color_primaries', 'bt2020', '-color_trc', 'arib-std-b67', '-colorspace', 'bt2020nc', join(compDir, 'assets', 'hlg.mp4')]);
+  }, 300_000);
+  afterAll(() => { if (work) rmSync(work, { recursive: true, force: true }); });
+
+  it('a shared encode survives the cancel of one of its waiters; the other completes (I1)', async () => {
+    const n = new MediaNormalizer({ ffmpeg: async () => ffmpeg as FfmpegInfo });
+    const a = new AbortController();
+    const first = prep(n, heavyComp(), a.signal);
+    first.catch(() => {});
+    await waitFor(async () => (await encoders()).length > 0);
+    const second = prep(n, heavyComp());
+    await new Promise((r) => setTimeout(r, 300));
+    a.abort();
+    expect(await first.catch((e: RenderError) => e.code)).toBe('cancelled');
+    const r = await second;
+    expect([r.made + r.cached, r.warnings]).toEqual([1, []]);
+    expect(existsSync(r.media.clips.get('assets/heavy.mp4')!.file)).toBe(true);
+    // Only one encode ran: no second one was started for the second job.
+    r.release();
+    await n.close();
+    expect(liveGroupCount()).toBe(0);
+  }, 600_000);
+
+  it('a cache hit never waits for a busy slot, and a waiter for a slot leaves on cancel (M11)', async () => {
+    // veryslow: the heavy encode holds the only slot for the whole test.
+    const n = new MediaNormalizer({ ffmpeg: async () => ffmpeg as FfmpegInfo, parallel: 1, x264Preset: 'veryslow' });
+    rmSync(cache, { recursive: true, force: true });
+    (await prep(n, comp([video('assets/small.mp4')]))).release(); // cached now
+    const busy = new AbortController();
+    const heavy = prep(n, heavyComp(), busy.signal);
+    heavy.catch(() => {});
+    await waitFor(async () => (await encoders()).length > 0);
+    const t0 = Date.now();
+    const hit = await prep(n, comp([video('assets/small.mp4')]));
+    expect(hit.cached).toBe(1);
+    expect((await encoders()).length).toBeGreaterThan(0); // the heavy encode still holds the only slot
+    hit.release();
+    const waiting = new AbortController();
+    const queued = prep(n, comp([video('assets/small2.mp4')]), waiting.signal);
+    await new Promise((r) => setTimeout(r, 1500));
+    waiting.abort();
+    expect(await queued.catch((e: RenderError) => e.code)).toBe('cancelled');
+    expect(Date.now() - t0).toBeLessThan(60_000);
+    expect((await encoders()).length).toBeGreaterThan(0);
+    busy.abort();
+    await heavy.catch(() => {});
+    await n.close();
+    expect(await encoders()).toEqual([]);
+    expect(liveGroupCount()).toBe(0);
+  }, 600_000);
+
+  it('an unreadable source fails the preparation and cancels its siblings; close() waits for them (M2)', async () => {
+    rmSync(cache, { recursive: true, force: true });
+    const n = new MediaNormalizer({ ffmpeg: async () => ffmpeg as FfmpegInfo });
+    const c = comp([video('assets/heavy.mp4', { props: { width: 1280, height: 720 } }), video('assets/nope.mp4')], { width: 1280, height: 720, fps: 60 });
+    expect(await prep(n, c).catch((e: RenderError) => e.code)).toBe('mediaUnreadable');
+    await n.close();
+    expect(await encoders()).toEqual([]);
+    expect(liveGroupCount()).toBe(0);
+    expect(readdirSync(cache).filter((f) => f.startsWith('.'))).toEqual([]);
+  }, 600_000);
+
+  it('a damaged cached file in use is left alone (warning); once released it is made again (I2)', async () => {
+    const n = new MediaNormalizer({ ffmpeg: async () => ffmpeg as FfmpegInfo });
+    const held = await prep(n, comp([video('assets/small.mp4')]));
+    const file = held.media.clips.get('assets/small.mp4')!.file;
+    writeFileSync(file, 'damaged');
+    const again = await prep(n, comp([video('assets/small.mp4')]));
+    expect(again.media.clips.size).toBe(0);
+    expect(again.warnings[0]).toMatchObject({ kind: 'notNormalised', message: expect.stringContaining('damaged') });
+    expect(readFileSync(file, 'utf8')).toBe('damaged');
+    held.release();
+    const fixed = await prep(n, comp([video('assets/small.mp4')]));
+    expect(fixed.made).toBe(1);
+    fixed.release();
+    await n.close();
+  }, 600_000);
+
+  it('an HLG source is converted (no zscale here: colorspace filter), stays trusted, and warns that its colours are approximate (I4)', async () => {
+    const n = new MediaNormalizer({ ffmpeg: async () => ffmpeg as FfmpegInfo });
+    const r = await prep(n, comp([video('assets/hlg.mp4')]));
+    const m = r.media.clips.get('assets/hlg.mp4')!;
+    expect(m).toMatchObject({ sourceFps: 30, sourceStart: 0 });
+    const expectApprox = !(ffmpeg!.filters?.has('zscale') && ffmpeg!.filters.has('tonemap'));
+    expect(r.warnings).toEqual(expectApprox ? [{ src: 'assets/hlg.mp4', kind: 'hdrApproximate', message: expect.stringContaining('HDR') }] : []);
+    const s = JSON.parse(probe(m.file, ['-show_entries', 'stream=pix_fmt,color_primaries,color_transfer,color_space', '-of', 'json'])).streams[0];
+    expect(s).toEqual({ pix_fmt: 'yuv420p', color_primaries: 'bt709', color_transfer: 'iec61966-2-1', color_space: 'bt709' });
+    // Converted, not relabelled: the mean of the frame differs from the same source with its BT.2020 tags ignored.
+    const mean = (f: string, vf: string) => execFileSync(ffmpeg!.path, ['-v', 'error', '-i', f, '-frames:v', '1', '-vf', `${vf}scale=8:8,format=rgb24`, '-f', 'rawvideo', '-'] , { maxBuffer: 1 << 20 });
+    const converted = mean(m.file, '');
+    const relabelled = mean(join(compDir, 'assets', 'hlg.mp4'), 'setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709,');
+    const diff = converted.reduce((a, v, i) => a + Math.abs(v - relabelled[i]!), 0) / converted.length;
+    expect(diff).toBeGreaterThan(2);
+    r.release();
+    await n.close();
+  }, 600_000);
+
+  it('source hashes are remembered under .studio/cache by path, size, mtime and inode (M10)', async () => {
+    const memoFile = join(project, '.studio', 'cache', 'source-hashes.json');
+    const memo = JSON.parse(readFileSync(memoFile, 'utf8')) as { entries: Record<string, string> };
+    const key = Object.keys(memo.entries).find((k) => k.endsWith(join(compDir, 'assets', 'small.mp4')))!;
+    expect(memo.entries[key]).toBe(sha(join(compDir, 'assets', 'small.mp4')));
+    // A new normaliser (a new app start) uses the remembered hash: a planted one names the cache file.
+    const planted = 'f'.repeat(64);
+    writeFileSync(memoFile, JSON.stringify({ schemaVersion: 1, entries: { ...memo.entries, [key]: planted } }));
+    const n = new MediaNormalizer({ ffmpeg: async () => ffmpeg as FfmpegInfo });
+    const r = await prep(n, comp([video('assets/small.mp4')]));
+    expect(r.media.clips.get('assets/small.mp4')!.file).toContain(`${planted}-30-`);
+    r.release();
+    await n.close();
+  }, 600_000);
+
+  it('the mix aligns a video clip\'s sound to its first video frame when the streams start apart (M12)', async () => {
+    // Video starts at 0.1 s, audio at 0 with a beep at 0.5 s: 0.4 s after the first video frame.
+    const src = join(compDir, 'assets', 'apart.mp4');
+    const wav = join(work, 'beep.wav');
+    burstWav(ffmpeg!, wav, { seconds: 2, at: 0.5, burst: 0.2 });
+    ff(['-f', 'lavfi', '-i', 'testsrc2=s=64x36:r=30:d=2', '-i', wav, '-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'pcm_s16le', '-output_ts_offset', '0', src.replace('.mp4', '.mov')]);
+    ff(['-itsoffset', '0.1', '-i', src.replace('.mp4', '.mov'), '-i', src.replace('.mp4', '.mov'), '-map', '0:v', '-map', '1:a', '-c', 'copy', src.replace('.mp4', '2.mov')]);
+    const starts = JSON.parse(probe(src.replace('.mp4', '2.mov'), ['-show_entries', 'stream=codec_type,start_time', '-of', 'json'])).streams as Array<{ codec_type: string; start_time: string }>;
+    const v0 = Number(starts.find((s) => s.codec_type === 'video')!.start_time), a0 = Number(starts.find((s) => s.codec_type === 'audio')!.start_time);
+    expect(v0 - a0).toBeCloseTo(0.1, 2);
+    const out = join(work, 'mix.wav');
+    const clip = { src: 'assets/apart2.mov', start: 0, duration: 1.5, trimStart: 0, volume: 1, fadeIn: 0, fadeOut: 0, fromVideo: true };
+    expect(await mixAudio({ ff: ffmpeg!, compDir, clips: [clip], durationSec: 1.5, outWav: out, workDir: work, signal: new AbortController().signal })).toBe(true);
+    const at = onset(decodeAudio(ffmpeg!, out), 0);
+    expect(Math.abs(at - Math.round((0.5 - (v0 - a0)) * 48000))).toBeLessThan(48 * 3);
+  }, 600_000);
+
+  it('final renders are tagged full BT.709, limited range (ruling)', async () => {
+    const out = join(work, 'final.mp4');
+    await runFfmpeg(ffmpeg!, ['-f', 'lavfi', '-i', 'testsrc2=s=320x180:r=30:d=0.5', ...h264Args('libx264', 800, 30), '-f', 'mp4', out]);
+    const s = JSON.parse(probe(out, ['-show_entries', 'stream=color_primaries,color_transfer,color_space,color_range', '-of', 'json'])).streams[0];
+    expect(s).toEqual({ color_range: 'tv', color_space: 'bt709', color_transfer: 'bt709', color_primaries: 'bt709' });
+  }, 300_000);
 });

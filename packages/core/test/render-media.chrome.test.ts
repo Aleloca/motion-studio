@@ -59,7 +59,7 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
   const loads: number[] = [];
 
   beforeAll(async () => {
-    work = mkdtempSync(join(tmpdir(), 'ms-render-media-'));
+    work = mkdtempSync(join(tmpdir(), 'ms-test-render-media-'));
     dist = join(work, 'dist');
     await buildRuntime(dist);
     creative = join(work, 'creative');

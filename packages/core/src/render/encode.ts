@@ -8,6 +8,7 @@ import { videoTargetBitrateKbps, type FormatPreset } from '@motion-studio/shared
 import { RenderError } from './errors.ts';
 import { binaryArch, hostArch, type BinaryArch } from './arch.ts';
 import { killGroup, trackGroup } from './watchdog.ts';
+import { markOwned } from './owner.ts';
 
 export { binaryArch, hostArch, type BinaryArch } from './arch.ts';
 
@@ -30,6 +31,8 @@ export interface FfmpegInfo {
   encoders: ReadonlySet<string>;
   /** Supports `-fd N -i fd:` (seekable input from an open file descriptor). */
   fdProtocol: boolean;
+  /** The filters of this build (e.g. `zscale`, `tonemap`, `colorspace`); absent: unknown. */
+  filters?: ReadonlySet<string>;
 }
 
 const run = (cmd: string, args: string[], timeoutMs = 60_000): Promise<{ code: number; stdout: string; stderr: string }> => new Promise((resolve) => {
@@ -57,15 +60,18 @@ export function findFfmpeg(env: NodeJS.ProcessEnv = process.env): Promise<Ffmpeg
     p = (async () => {
       const v = await run(path, ['-hide_banner', '-version'], 60_000);
       if (v.code !== 0) return null;
-      const [enc, prot, arch, host] = await Promise.all([
+      const [enc, prot, arch, host, flt] = await Promise.all([
         run(path, ['-hide_banner', '-encoders'], 60_000), run(path, ['-hide_banner', '-protocols'], 60_000), binaryArch(path), hostArch(),
+        run(path, ['-hide_banner', '-filters'], 60_000),
       ]);
+      const filters = new Set<string>();
+      for (const line of flt.stdout.split('\n')) { const m = /^\s*[TSC.]{2,3}\s+(\S+)\s+\S+->\S+/.exec(line); if (m) filters.add(m[1]!); }
       const encoders = new Set<string>();
       for (const line of enc.stdout.split('\n')) { const m = /^\s*[VAS][A-Z.]{5}\s+(\S+)/.exec(line); if (m) encoders.add(m[1]!); }
       const input = prot.stdout.split(/Output:/)[0] ?? '';
       return {
         path, version: /ffmpeg version (\S+)/.exec(v.stdout)?.[1] ?? 'unknown', arch, hostArch: host,
-        translated: host === 'arm64' && arch === 'x86_64', encoders, fdProtocol: /^\s*fd\s*$/m.test(input),
+        translated: host === 'arm64' && arch === 'x86_64', encoders, filters, fdProtocol: /^\s*fd\s*$/m.test(input),
       };
     })();
     infoCache.set(path, p);
@@ -131,9 +137,15 @@ export type VideoEncoder = 'libx264' | 'h264_videotoolbox';
  * H.264 output settings (phase 8, `prompt.ts` `encodeFlags`): `yuv420p`, CRF 20 capped at 1.5× the target bitrate with a
  * 2× buffer (VideoToolbox has no CRF: the target bitrate with the same cap). BT.709, limited range, converted explicitly
  * from the full-range BT.601 JPEG frames (or RGB PNG frames) Chromium captures. A key frame every 2 s.
+ *
+ * Tags (orchestrator ruling, Task 5): full BT.709 (primaries, transfer and matrix), limited range, pixel values unchanged.
+ * ffmpeg 8 takes the stream's colour properties from the frames, so `setparams` sets them in the chain (the `-color_*`
+ * options alone left primaries and transfer `unknown`). Known effect: Chrome's `<video>` converts the BT.709 transfer, so a
+ * final file played in Chrome shows mid-tones about 8 levels lighter than the preview canvas (measured; platforms and
+ * phone players show BT.709 SDR as display-referred, i.e. as designed).
  */
 export function h264Args(encoder: VideoEncoder, kbps: number, fps: number, preset = 'fast'): string[] {
-  const color = ['-vf', 'scale=out_color_matrix=bt709:out_range=tv,format=yuv420p', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv'];
+  const color = ['-vf', 'scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv'];
   const common = ['-r', String(fps), '-g', String(fps * 2), '-maxrate', `${Math.round(kbps * 1.5)}k`, '-bufsize', `${Math.round(kbps * 2)}k`, '-profile:v', 'high'];
   if (encoder === 'h264_videotoolbox') return [...color, '-c:v', 'h264_videotoolbox', '-b:v', `${kbps}k`, '-allow_sw', '0', '-realtime', '0', ...common];
   return [...color, '-c:v', 'libx264', '-preset', preset, '-crf', '20', '-pix_fmt', 'yuv420p', ...common];
@@ -166,6 +178,7 @@ export function checkVideotoolbox(ff: FfmpegInfo, width: number, height: number,
   if (!p) {
     p = (async (): Promise<VideotoolboxCheck> => {
       const dir = await mkdtemp(join(tmpdir(), 'ms-render-vtcheck-'));
+      markOwned(dir);
       try {
         const src = vtTestPattern(width, height, fps);
         const out = join(dir, 'vt.mp4');
