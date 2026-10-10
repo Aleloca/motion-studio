@@ -180,7 +180,9 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     await queue.whenIdle();
   });
 
-  it('restores work/ to a past version and forks its session for the next turn', async () => {
+  // Three full turns (each a fake claude run plus git commits) and a restore: under heavy machine load
+  // this exceeds the 20 s default, so it gets an explicit generous timeout.
+  it('restores work/ to a past version and forks its session for the next turn', { timeout: 60_000 }, async () => {
     await finalState((await service.start(ref)).id);
     const v1Scene = await readFile(join(store.workDir(ref.creativeSlug), 'scene.txt'), 'utf8');
     await finalState((await service.start(ref, { text: 'cambia', pins: [] })).id);

@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "motion-studio/composition@0",
+  "title": "Motion Studio composition (draft 0, spike)",
+  "type": "object",
+  "required": ["width", "height", "fps", "duration", "tracks"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "const": "motion-studio/composition@0" },
+    "width": { "type": "integer", "minimum": 16, "maximum": 4096 },
+    "height": { "type": "integer", "minimum": 16, "maximum": 4096 },
+    "fps": { "enum": [24, 25, 30, 50, 60] },
+    "duration": { "type": "number", "exclusiveMinimum": 0, "maximum": 600, "description": "seconds" },
+    "background": { "$ref": "#/$defs/color" },
+    "fonts": { "type": "array", "items": { "type": "object", "required": ["family", "src"], "additionalProperties": false,
+      "properties": { "family": { "type": "string" }, "src": { "$ref": "#/$defs/path" }, "weight": { "type": ["string", "integer"] }, "style": { "enum": ["normal", "italic"] } } } },
+    "scenes": { "type": "array", "description": "Named time ranges; the editor shows them as segments. Clips may reference a scene so moving a scene moves its clips.",
+      "items": { "type": "object", "required": ["id", "start", "duration"], "additionalProperties": false,
+        "properties": { "id": { "$ref": "#/$defs/id" }, "name": { "type": "string" }, "start": { "type": "number", "minimum": 0 }, "duration": { "type": "number", "exclusiveMinimum": 0 } } } },
+    "tracks": { "type": "array", "description": "Order = stacking order (first is at the bottom). Audio tracks do not render.",
+      "items": { "type": "object", "required": ["id", "kind", "clips"], "additionalProperties": false,
+        "properties": { "id": { "$ref": "#/$defs/id" }, "kind": { "enum": ["visual", "video", "text", "audio"] }, "name": { "type": "string" },
+          "muted": { "type": "boolean" }, "hidden": { "type": "boolean" }, "locked": { "type": "boolean" },
+          "clips": { "type": "array", "items": { "$ref": "#/$defs/clip" } } } } }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
+    "path": { "type": "string", "pattern": "^(assets|layers)/[^\\\\:]+$", "description": "relative to the composition folder; no '..', no scheme" },
+    "color": { "type": "string", "pattern": "^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$" },
+    "clipBase": { "type": "object", "required": ["id", "type", "start", "duration"],
+      "properties": { "id": { "$ref": "#/$defs/id" }, "scene": { "$ref": "#/$defs/id" }, "name": { "type": "string" },
+        "start": { "type": "number", "minimum": 0, "description": "seconds, absolute on the composition timeline" },
+        "duration": { "type": "number", "exclusiveMinimum": 0 } } },
+    "box": { "type": "object", "description": "composition pixels; transforms are relative to the box centre",
+      "properties": { "x": { "type": "number" }, "y": { "type": "number" }, "width": { "type": "number" }, "height": { "type": "number" },
+        "rotation": { "type": "number" }, "scale": { "type": "number" }, "opacity": { "type": "number", "minimum": 0, "maximum": 1 } } },
+    "animation": { "type": "object", "additionalProperties": false, "description": "either a preset or prop+from/to or prop+keyframes; times relative to clip start",
+      "properties": {
+        "preset": { "enum": ["fadeIn", "fadeOut", "slideUp", "popIn"] },
+        "prop": { "enum": ["opacity", "x", "y", "scale", "rotation", "color", "blur"] },
+        "from": {}, "to": {},
+        "keyframes": { "type": "array", "items": { "type": "object", "required": ["t", "v"], "properties": { "t": { "type": "number", "minimum": 0, "maximum": 1 }, "v": {}, "ease": { "type": "string" } } } },
+        "start": { "type": "number", "minimum": 0 }, "duration": { "type": "number", "exclusiveMinimum": 0 },
+        "ease": { "type": "string", "description": "CSS easing: linear, ease-out, cubic-bezier(...), steps(...)" } } },
+    "clip": { "allOf": [{ "$ref": "#/$defs/clipBase" }], "oneOf": [
+      { "properties": { "type": { "const": "text" }, "props": { "allOf": [{ "$ref": "#/$defs/box" }], "properties": {
+          "text": { "type": "string" }, "fontFamily": { "type": "string" }, "fontSize": { "type": "number" }, "fontWeight": { "type": ["integer", "string"] },
+          "color": { "$ref": "#/$defs/color" }, "align": { "enum": ["left", "center", "right"] } }, "required": ["text"] },
+          "animations": { "type": "array", "items": { "$ref": "#/$defs/animation" } } }, "required": ["props"] },
+      { "properties": { "type": { "const": "shape" }, "props": { "allOf": [{ "$ref": "#/$defs/box" }], "properties": { "fill": { "$ref": "#/$defs/color" }, "radius": { "type": "number" } } },
+          "animations": { "type": "array", "items": { "$ref": "#/$defs/animation" } } } },
+      { "properties": { "type": { "enum": ["image", "svg"] }, "src": { "$ref": "#/$defs/path" }, "props": { "allOf": [{ "$ref": "#/$defs/box" }], "properties": {
+          "fit": { "enum": ["cover", "contain", "fill"] },
+          "kenBurns": { "type": "object", "properties": { "from": { "type": "object" }, "to": { "type": "object" } } } } },
+          "animations": { "type": "array", "items": { "$ref": "#/$defs/animation" } } }, "required": ["src"] },
+      { "properties": { "type": { "const": "video" }, "src": { "$ref": "#/$defs/path" }, "trimStart": { "type": "number", "minimum": 0 }, "sourceFps": { "type": "number" },
+          "volume": { "type": "number", "minimum": 0, "maximum": 2 }, "props": { "$ref": "#/$defs/box" },
+          "animations": { "type": "array", "items": { "$ref": "#/$defs/animation" } } }, "required": ["src"] },
+      { "properties": { "type": { "const": "html" }, "src": { "$ref": "#/$defs/path" }, "props": { "$ref": "#/$defs/box" },
+          "params": { "type": "object", "description": "editable values passed to the layer as window.msParams (text, colours...): the only way the editor reaches inside free HTML" },
+          "animations": { "type": "array", "items": { "$ref": "#/$defs/animation" } } }, "required": ["src"] },
+      { "properties": { "type": { "const": "audio" }, "src": { "$ref": "#/$defs/path" }, "trimStart": { "type": "number", "minimum": 0 },
+          "volume": { "type": "number", "minimum": 0, "maximum": 2 }, "fadeIn": { "type": "number", "minimum": 0 }, "fadeOut": { "type": "number", "minimum": 0 },
+          "role": { "enum": ["voice", "music", "sfx"], "description": "lets the mixer duck music under voice" } }, "required": ["src"] }
+    ] }
+  }
+}
