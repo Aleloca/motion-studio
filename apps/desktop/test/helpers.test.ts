@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AppConfigStore, defaultConfigDir, t } from '@motion-studio/core';
+import { AppConfigStore, t } from '@motion-studio/core';
 import { absolutePathArg, attachedGone, attachedGoneAction, attachedLocale, bootLocale, focusOnReady, readSavedLanguage, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, userDataDir } from '../src/helpers.ts';
 
 describe('desktop helpers', () => {
@@ -43,9 +43,8 @@ describe('desktop helpers', () => {
   it('keeps Electron\'s own data outside the Motion Studio config folder', () => {
     const appData = join(homedir(), 'Library', 'Application Support');
     expect(userDataDir(appData)).toBe(join(appData, 'Motion Studio Electron'));
-    const saved = process.env.MOTION_STUDIO_CONFIG_DIR;
-    delete process.env.MOTION_STUDIO_CONFIG_DIR;
-    try { expect(userDataDir(appData)).not.toBe(defaultConfigDir()); } finally { if (saved !== undefined) process.env.MOTION_STUDIO_CONFIG_DIR = saved; }
+    // The macOS default of defaultConfigDir() (which refuses to compute a real path under vitest, test isolation).
+    expect(userDataDir(appData)).not.toBe(join(appData, 'Motion Studio'));
   });
   it('remembers a focus request that arrives before the window is ready', () => {
     const calls: string[] = [];

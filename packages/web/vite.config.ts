@@ -29,5 +29,5 @@ export default defineConfig({
       },
     },
   },
-  test: { environment: 'jsdom', setupFiles: ['./test/setup-locale.ts', './test/setup.ts'], testTimeout: 20_000 },
+  test: { environment: 'jsdom', setupFiles: ['../../test-support/isolate-user-data.ts', './test/setup-locale.ts', './test/setup.ts'], testTimeout: 20_000 },
 });

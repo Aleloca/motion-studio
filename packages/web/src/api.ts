@@ -1,4 +1,4 @@
-import type { ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, PermissionsFile, ProjectListItem, SecretStatus, ProviderId, UsageReport, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
+import type { ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, ProviderId, UsageReport, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, uiToken } from './uiToken.ts';
 
@@ -89,6 +89,8 @@ export const api = {
   createProject: (name: string, description?: string) =>
     request<{ slug: string; project: ProjectFile }>('POST', '/api/projects', { name, description }),
   getProject: (slug: string) => request<ProjectDetail>('GET', `/api/projects/${encodeURIComponent(slug)}`),
+  getIntegrity: (slug: string) => request<ProjectIntegrity>('GET', `${p(slug)}/integrity`),
+  acceptIntegrity: (slug: string, token: string) => request<ProjectIntegrity>('POST', `${p(slug)}/integrity/accept`, { token }),
   updateProject: (slug: string, body: { name?: string; description?: string; linkedCodebases?: LinkedCodebase[] }) => request<ProjectDetail>('PUT', p(slug), body),
   getCodebases: (slug: string) => request<CodebaseCheck[]>('GET', `${p(slug)}/codebases`),
   getBrand: (slug: string) => request<BrandOverview>('GET', `${p(slug)}/brand`),

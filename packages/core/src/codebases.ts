@@ -35,10 +35,10 @@ export type Snapshot = { value: string } | { unavailable: 'not-git' | 'failed' }
 export interface HashedRun { code: number; hash: string; stderr: string; timedOut: boolean }
 export type HashedExec = (args: string[]) => Promise<HashedRun>;
 
-/** Hooks and an fsmonitor command configured in a linked repository must never run from Motion Studio. */
+/** Hooks and an fsmonitor command configured in a linked repository must never run from Motion Studio; nor an external diff, a textconv or a clean filter (`--no-ext-diff --no-textconv`, `--no-filters`, decisions log 141). */
 const GIT_SAFE = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
 // Stable, untranslated git output whatever the user's locale.
-const GIT_ENV = () => ({ ...process.env, LC_ALL: 'C' });
+const GIT_ENV = () => ({ ...process.env, GIT_EXTERNAL_DIFF: undefined, LC_ALL: 'C' });
 
 /** Runs git without a shell, streaming stdout into a sha256 (no size limit); killed after the timeout. */
 export const gitHashed = (path: string, timeoutMs = 30_000): HashedExec => (args) => new Promise((resolve) => {
@@ -66,7 +66,7 @@ export const untrackedContentHash = (path: string, timeoutMs = 30_000) => (): Pr
   let settled = false;
   const codes: Array<number | null> = [];
   const list = spawn('git', [...GIT_SAFE, '-C', path, 'ls-files', '-o', '--exclude-standard', '-z', '--', '.'], { stdio: ['ignore', 'pipe', 'pipe'], env: GIT_ENV() });
-  const hasher = spawn('git', [...GIT_SAFE, '-C', path, 'hash-object', '--stdin-paths'], { stdio: ['pipe', 'pipe', 'pipe'], env: GIT_ENV() });
+  const hasher = spawn('git', [...GIT_SAFE, '-C', path, 'hash-object', '--no-filters', '--stdin-paths'], { stdio: ['pipe', 'pipe', 'pipe'], env: GIT_ENV() });
   const finish = (code: number) => { if (!settled) { settled = true; clearTimeout(timer); resolve({ code, hash: hash.digest('hex'), stderr, timedOut }); } };
   const timer = setTimeout(() => { timedOut = true; list.kill('SIGKILL'); hasher.kill('SIGKILL'); }, timeoutMs);
   const onClose = (code: number | null) => { codes.push(code); if (codes.length === 2) finish(codes.every((c) => c === 0) ? 0 : 1); };
@@ -98,8 +98,8 @@ export async function codebaseSnapshot(path: string, run: HashedExec = gitHashed
   const status = await run(['status', '--porcelain=v1', '-uall', '--ignored=traditional', '--', '.']);
   if (status.timedOut) return { unavailable: 'failed' };
   if (status.code !== 0) return { unavailable: /not a git repository/i.test(status.stderr) ? 'not-git' : 'failed' };
-  let diff = await run(['diff', 'HEAD', '--binary', '--', '.']);
-  if (!diff.timedOut && diff.code !== 0) diff = await run(['diff', '--binary', '--', '.']); // repository without commits
+  let diff = await run(['diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--binary', '--', '.']);
+  if (!diff.timedOut && diff.code !== 0) diff = await run(['diff', '--no-ext-diff', '--no-textconv', '--binary', '--', '.']); // repository without commits
   if (diff.timedOut || diff.code !== 0) return { unavailable: 'failed' };
   const extra = await untracked();
   if (extra.timedOut || extra.code !== 0) return { unavailable: 'failed' };

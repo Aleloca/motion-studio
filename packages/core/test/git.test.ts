@@ -1,12 +1,13 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { execCommand, type CommandExec } from '../src/exec.ts';
 import { Git } from '../src/git.ts';
+import { IntegrityStore, snapshotProtected } from '../src/project-integrity.ts';
 
 describe('Git', () => {
   it('inits a repo and commits all files, returning the sha', async () => {
@@ -229,5 +230,52 @@ describe('Git.commitAll and the sandbox cache', () => {
     const text = await readFile(join(dir, '.git', 'info', 'exclude'), 'utf8');
     expect(text).toContain('/.cache/\n');
     expect(text).toContain('/creatives/*/work/tmp/\n');
+  });
+});
+
+describe('Git hardening (decisions log 141)', () => {
+  const freshCommit = async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-git-safe-'));
+    const git = new Git();
+    await git.init(dir);
+    await writeFile(join(dir, 'a.txt'), 'x');
+    return { dir, git };
+  };
+  it('refuses to commit when .git/config carries a key the core never sets', async () => {
+    const { dir, git } = await freshCommit();
+    await appendFile(join(dir, '.git', 'config'), '\n[filter "lfs"]\n\tclean = run-me\n');
+    await expect(git.commitAll(dir, 'c')).rejects.toThrow();
+    // Nothing was committed.
+    const log = await execCommand('git', ['log', '--oneline'], { cwd: dir });
+    expect(log.code).not.toBe(0);
+  });
+  it('refuses to commit when .gitattributes carries a filter/diff driver (but allows merge=union)', async () => {
+    const ok = await freshCommit();
+    await writeFile(join(ok.dir, '.gitattributes'), '.studio/usage.jsonl merge=union\n');
+    await expect(ok.git.commitAll(ok.dir, 'c')).resolves.toMatch(/^[0-9a-f]{40}$/);
+    const bad = await freshCommit();
+    await writeFile(join(bad.dir, '.gitattributes'), '*.c filter=indent\n');
+    await expect(bad.git.commitAll(bad.dir, 'c')).rejects.toThrow();
+  });
+  it('refuses every operation on a quarantined repo and commits again once the protected files are restored', async () => {
+    const { dir, git } = await freshCommit();
+    const store = new IntegrityStore(await mkdtemp(join(tmpdir(), 'ms-integrity-'))).activate();
+    await writeFile(join(dir, 'CLAUDE.md'), '# ok');
+    const before = await snapshotProtected(dir);
+    await writeFile(join(dir, 'CLAUDE.md'), '# tampered');
+    await store.quarantine(dir, 'tampered', ['CLAUDE.md'], before);
+    await expect(git.commitAll(dir, 'c')).rejects.toThrow('CLAUDE.md');
+    await expect(git.restorePath(dir, 'abcdef1', 'a.txt')).rejects.toThrow('CLAUDE.md');
+    await writeFile(join(dir, 'CLAUDE.md'), '# ok');
+    await expect(git.commitAll(dir, 'c')).resolves.toMatch(/^[0-9a-f]{40}$/);
+    expect(await store.isQuarantined(dir)).toBe(false);
+    new IntegrityStore(null).activate();
+  });
+  it('commits with the Motion Studio identity even with no global config (GIT_CONFIG_GLOBAL=/dev/null)', async () => {
+    const { dir, git } = await freshCommit();
+    const sha = await git.commitAll(dir, 'c');
+    expect(sha).toMatch(/^[0-9a-f]{40}$/);
+    const who = await execCommand('git', ['log', '-1', '--format=%an <%ae>'], { cwd: dir });
+    expect(who.stdout.trim()).toBe('Motion Studio <motion-studio@localhost>');
   });
 });

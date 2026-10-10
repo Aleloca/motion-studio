@@ -1,5 +1,7 @@
 import { lstat, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { noteCoreChange } from './core-changes.ts';
+import { noteCoreFile } from './project-integrity.ts';
 
 const PART_MAX_AGE_MS = 3600_000;
 const PART_RE = /^\..+\.part$/;
@@ -11,7 +13,7 @@ const ADDED_IGNORES = ['.*.part', 'assets/.describe/', '.cache/', 'creatives/*/w
 const ADDED_ATTRIBUTES = ['.studio/usage.jsonl merge=union'];
 
 /** Appends the missing lines to a text file; `createMissing` decides whether a missing file is created or left alone. */
-async function appendMissingLines(path: string, lines: readonly string[], createMissing: boolean): Promise<boolean> {
+async function appendMissingLines(path: string, lines: readonly string[], createMissing: boolean, note = false): Promise<boolean> {
   let text: string;
   try { text = await readFile(path, 'utf8'); } catch (e) {
     if (!isMissing(e)) throw e;
@@ -20,7 +22,12 @@ async function appendMissingLines(path: string, lines: readonly string[], create
   }
   const present = new Set(text.split(/\r?\n/).map((l) => l.trim()));
   const missing = lines.filter((l) => !present.has(l));
-  if (missing.length > 0) await writeFile(path, `${text}${text === '' || text.endsWith('\n') ? '' : '\n'}${missing.join('\n')}\n`);
+  if (missing.length > 0) {
+    const next = `${text}${text === '' || text.endsWith('\n') ? '' : '\n'}${missing.join('\n')}\n`;
+    // `.gitattributes` is a protected file (decisions log 141): the core notes its own write so the integrity check accepts it.
+    if (note) await noteCoreFile(path, next);
+    await writeFile(path, next);
+  }
   return true;
 }
 
@@ -30,7 +37,7 @@ async function appendMissingLines(path: string, lines: readonly string[], create
  */
 export async function completeGitignore(projectDir: string): Promise<void> {
   if (!(await appendMissingLines(join(projectDir, '.gitignore'), ADDED_IGNORES, false))) return;
-  await appendMissingLines(join(projectDir, '.gitattributes'), ADDED_ATTRIBUTES, true);
+  await appendMissingLines(join(projectDir, '.gitattributes'), ADDED_ATTRIBUTES, true, true);
 }
 
 /**
@@ -48,11 +55,13 @@ export async function sweepProject(projectDir: string, brandJobIdle: boolean): P
     }
   }
   if (!brandJobIdle) return;
+  let removedProposal = false;
   for (const e of await entries(join(projectDir, 'brand', 'proposals'))) {
     if (!e.isDirectory()) continue;
     const dir = join(projectDir, 'brand', 'proposals', e.name);
-    if (!(await lstat(join(dir, 'proposal.json')).catch(() => null))) await rm(dir, { recursive: true, force: true });
+    if (!(await lstat(join(dir, 'proposal.json')).catch(() => null))) { await rm(dir, { recursive: true, force: true }); removedProposal = true; }
   }
+  if (removedProposal) await noteCoreChange(join(projectDir, 'brand', 'proposals'));
   for (const e of await entries(join(projectDir, 'assets', '.describe'))) {
     await rm(join(projectDir, 'assets', '.describe', e.name), { recursive: true, force: true });
   }

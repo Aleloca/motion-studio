@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { DEFAULT_FORMATS, explainTool, type AgentEvent, type ApprovalRequest, type Brief } from '@motion-studio/shared';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import type { AgentRunner } from '../src/agent/runner.ts';
 import { ApprovalBroker, cleanAgentReason } from '../src/approvals/broker.ts';
@@ -306,6 +306,10 @@ describe('LaunchInput.sandboxed can only downgrade', () => {
 describe('explained approval requests', () => {
   const base = () => ({ jobId: 'j1', projectSlug: 'acme', projectDir, creativeSlug: 'c1', kind: 'tool' as const });
   it('the request carries the explanation, computed with the job context, and the agent reason', async () => {
+    // A home outside the temp folder, as on a real machine (the test isolation puts HOME under the OS temp folder, which
+    // the explainer treats as scratch space).
+    vi.stubEnv('HOME', '/Users/ms-fake-home-for-test');
+    onTestFinished(() => { vi.unstubAllEnvs(); });
     const input = { command: 'rm -rf ~/Documents', description: '  Clean up old files  ' };
     void approvals.request({ ...base(), toolName: 'Bash', input });
     const [req] = approvals.pending();

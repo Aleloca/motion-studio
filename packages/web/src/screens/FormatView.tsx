@@ -10,6 +10,7 @@
 // The playhead moves at frame rate: its time lives in a small store (`Clock`, ui/clock.ts) that only the transport
 // (Transport.tsx, shared with Compare), the comment layer and the hint read, so the page (bar, chat) does not
 // re-render while the video plays.
+import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
 import { channelName, DEFAULT_EXPORT_NAME_PATTERN, DEFAULT_FORMATS, formatName, type FormatPreset, type Pin, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import {
   useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState,
@@ -65,6 +66,7 @@ export interface FormatViewProps {
 
 export function FormatView({ slug, creative, format, live, exportNamePattern, onSettings }: FormatViewProps) {
   const t = useT();
+  const integrity = useIntegrity(slug, live);
   const f = t.web.formatView;
   const c = t.web.canvas;
   const locale = useLocale();
@@ -438,6 +440,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
 
       <main className="ms-fv-main" aria-label={label}>
         <div className="ms-fv-notes">
+          {integrity.state ? <IntegrityNotice slug={slug} state={integrity.state} reload={integrity.reload} /> : null}
           {presetsFailure ? <p role="alert" className="ms-cv-note ms-err">{t.web.creative.formatsLoadFailed({ detail: presetsFailure })}</p> : null}
           {cr?.resumeFrom ? <p className="ms-cv-note ms-info">{t.web.creative.resumeNote({ n: cr.resumeFrom.version })}</p> : null}
           {cr && (cr.status === 'error' || cr.status === 'interrupted') && cr.error && !working ? <p role="alert" className="ms-cv-note ms-err">{cr.error}</p> : null}

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { lstat, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { appendFile, link, lstat, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -434,3 +434,25 @@ describe('carry-over safety (review fixes)', { timeout: 30_000 }, () => {
   });
 });
 
+
+describe('hard links to earlier versions (decisions log 141)', { timeout: 30_000 }, () => {
+  it('a link left to an earlier output is detached before the agent starts, with a warning; the earlier file stays as it was', async () => {
+    setLocale('en');
+    await setup(baseBrief);
+    expect(await run(service.start(ref))).toBe('succeeded');
+    const v1Reel = fileOf(1, `${REEL}.mp4`);
+    const before = await readFile(v1Reel);
+    // Stands in for a link the agent made during the v1 turn, when outputs/v1 was still writable (the sandbox refuses new ones).
+    const planted = join(store.dir(ref.creativeSlug), 'work', 'pre-v1');
+    await link(v1Reel, planted);
+    expect(await run(service.start(ref, { text: 'reel', pins: [] }, { formats: [REEL] }))).toBe('succeeded');
+    expect((await stat(v1Reel)).nlink).toBe(1);
+    await appendFile(planted, 'forged');
+    expect(await readFile(v1Reel)).toEqual(before);
+    const warnings = (await store.readConversation(ref.creativeSlug)).filter((e) => e.type === 'system' && e.level === 'warning').map((e) => (e as { text: string }).text);
+    expect(warnings).toEqual([expect.stringContaining(join('outputs', 'v1', `${REEL}.mp4`))]);
+    expect(warnings[0]).toContain('hard link');
+    // The detach is not reported as a change made by the turn.
+    expect(warnings.some((w) => w.includes('changed during this turn'))).toBe(false);
+  });
+});

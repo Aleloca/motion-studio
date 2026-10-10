@@ -1,3 +1,4 @@
+import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
 import { formatName, type CreativeListItem, type CreativeSummary, type FormatPreset } from '@motion-studio/shared';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react';
 import { api } from '../api.ts';
@@ -30,6 +31,7 @@ const ratio = (p: FormatPreset) => { const d = gcd(p.width, p.height); return `$
  */
 export function ProjectCreatives({ slug, live }: { slug: string; live: EventsState }) {
   const t = useT();
+  const integrity = useIntegrity(slug, live);
   const c = t.web.creatives;
   const [items, setItems] = useState<CreativeListItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -76,6 +78,7 @@ export function ProjectCreatives({ slug, live }: { slug: string; live: EventsSta
   if (items && items.length === 0) {
     return (
       <div className="ms-creatives ms-creatives-empty" ref={root}>
+        {integrity.state ? <IntegrityNotice slug={slug} state={integrity.state} reload={integrity.reload} /> : null}
         <section className="ms-card ms-cempty" data-enter aria-labelledby="ms-cempty-title">
           <span className="ms-cempty-icon" aria-hidden="true"><Icon name="sparkle" size={18} /></span>
           <h1 id="ms-cempty-title">{c.emptyTitle}</h1>
@@ -112,6 +115,7 @@ export function ProjectCreatives({ slug, live }: { slug: string; live: EventsSta
         <Button variant="ink" onClick={() => go(href.newCreative(slug))}><Icon name="plus" size={13} strokeWidth={1.8} />{c.newCreative}</Button>
       </div>
 
+      {integrity.state ? <IntegrityNotice slug={slug} state={integrity.state} reload={integrity.reload} /> : null}
       {error ? (
         <div className="ms-creatives-alert" role="alert">
           <Icon name="warn" size={16} />

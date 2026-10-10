@@ -12,6 +12,7 @@ import { CreativeTurnService } from '../creatives/creative-turns.ts';
 import { FormatCatalog } from '../formats/format-catalog.ts';
 import { NoMediaTools, type MediaTools } from '../media/media-tools.ts';
 import { AgentLauncher } from '../agent/launcher.ts';
+import { IntegrityStore } from '../project-integrity.ts';
 import type { AgentRunner } from '../agent/runner.ts';
 import { cachedSandboxDetection, type SandboxSupport } from '../agent/sandbox.ts';
 import { defaultConfigDir, type AppConfigStore } from '../app-config.ts';
@@ -43,7 +44,7 @@ export interface ServerDeps {
   git: Git;
   runner: AgentRunner;
   /** Receives the server's (cached) sandbox detection, so the report includes the sandbox check. */
-  doctor: (extra: { sandbox: () => Promise<SandboxSupport> }) => Promise<DoctorCheck[]>;
+  doctor: (extra: { sandbox: () => Promise<SandboxSupport>; workspacePath?: string | null }) => Promise<DoctorCheck[]>;
   webDir?: string;
   media?: MediaTools;
   openPath?: (path: string) => Promise<void>;
@@ -155,6 +156,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // Without startServer, an explicit saved language is applied here ('system' keeps the current locale: no system languages known).
   if (!deps.language && appConfig.language !== 'system') language.apply();
   const languageLock = new KeyedMutex();
+  // One integrity store (quarantine and last-good state, decisions log 141) for git and the launcher, active before the
+  // workspace recovery so the core's own maintenance writes already update it. Persisted only in an explicit config folder
+  // (startServer always passes one): a buildServer without it (tests, tools) keeps the records in memory and never writes
+  // into the user's real config folder.
+  const configDir = deps.configDir ?? defaultConfigDir();
+  const integrity = new IntegrityStore(deps.configDir ?? null).activate();
   const configured = appConfig.workspacePath;
   if (configured) {
     try {
@@ -186,7 +193,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const launcher = new AgentLauncher({
     runner: deps.runner, bridge, approvals, sandbox, usageLedger,
     settings: currentSettings,
-    configDir: deps.configDir ?? defaultConfigDir(),
+    configDir, integrity,
     mcpCommand: deps.mcpCommand ?? null,
     ...(deps.mcpEnv ? { mcpEnv: deps.mcpEnv } : {}),
   });
@@ -244,7 +251,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // pid: lets a second launch check that the recorded server.json pid is really this server (pids get reused).
   app.get('/api/health', async () => ({ ok: true, pid: process.pid }));
-  app.get('/api/doctor', async () => deps.doctor({ sandbox: effectiveSandbox }));
+  app.get('/api/doctor', async () => deps.doctor({ sandbox: effectiveSandbox, workspacePath: workspace?.root ?? null }));
 
   app.get('/api/workspace', async (): Promise<WorkspaceInfo> => {
     if (!workspace) return { path: workspaceProblem?.path ?? null, settings: null, error: workspaceProblem?.error ?? null };

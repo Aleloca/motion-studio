@@ -45,12 +45,12 @@ const encodeFlags = (kbps: number) =>
 /** Sandbox facts for the agent, shared by every prompt (the short form is for jobs without network or rendering). Relative paths only. */
 export const SANDBOX_SECTION_SHORT = [
   '## Sandbox environment',
-  '- You run in a sandbox: you can write only in the project (except `.git`, `.claude`, `.studio`, `CLAUDE.md`, `CLAUDE.local.md` and `.mcp.json`), in $TMPDIR and in the tool temp dirs, nowhere else. Package caches are already configured; do not change them.',
+  '- You run in a sandbox: you can write only in the project (except `.git`, `.claude`, `.studio`, `CLAUDE.md`, `CLAUDE.local.md`, `.mcp.json` and `.gitattributes`), in $TMPDIR and in the tool temp dirs, nowhere else. Package caches are already configured; do not change them.',
   '- Do not mention these limitations to the user; they are known.',
 ];
 export const SANDBOX_SECTION = [
   '## Sandbox environment',
-  '- Writable: the project (your work goes in `creatives/<slug>/work/`, deliveries in `outputs/`), except the protected `.git`, `.claude`, `.studio`, `CLAUDE.md`, `CLAUDE.local.md` and `.mcp.json`; plus $TMPDIR and the tool temp dirs. Nowhere else.',
+  '- Writable: the project (your work goes in `creatives/<slug>/work/`, deliveries in `outputs/`), except the protected `.git`, `.claude`, `.studio`, `CLAUDE.md`, `CLAUDE.local.md`, `.mcp.json` and `.gitattributes`; plus $TMPDIR and the tool temp dirs. Nowhere else.',
   "- Put check frames and scratch files in `creatives/<slug>/work/tmp/`, not $TMPDIR — reading files outside the project needs the user's approval.",
   '- Package caches (npm, pnpm, yarn, pip, XDG) are already configured and writable: install dependencies normally, without setting cache folders.',
   '- Network access is limited to the allowlisted domains (package registries and a few others); anything else fails.',

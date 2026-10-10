@@ -1,12 +1,14 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { existsSync, linkSync, readFileSync } from 'node:fs';
+import { appendFile, chmod, link, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { workspaceSettingsSchema } from '@motion-studio/shared';
+import { workspaceSettingsSchema, type AgentEvent } from '@motion-studio/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AgentLauncher, sweepRunDir, type LauncherDeps } from '../src/agent/launcher.ts';
+import { ProjectQuarantinedError } from '../src/project-integrity.ts';
+import { Git } from '../src/git.ts';
 import type { AgentRunner } from '../src/agent/runner.ts';
 import { ApprovalBroker } from '../src/approvals/broker.ts';
 import { PermissionsStore } from '../src/approvals/permissions-store.ts';
@@ -270,13 +272,13 @@ describe('AgentLauncher', () => {
         const { args } = await launch({ sandbox: async () => ({ available, reason: 'x' }) }, kind, linked);
         for (const d of [linked, realDir]) {
           expect(args).toEqual(expect.arrayContaining([...protectedDirRules(d, '.git'), ...protectedDirRules(d, '.claude')]));
-          for (const f of ['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json']) {
+          for (const f of ['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json', '.gitattributes']) {
             expect(args).toEqual(expect.arrayContaining(tools.map((t) => `${t}(/${escapeGlob(join(d, f))})`)));
           }
           if (available) {
             const settings = JSON.parse(args[args.indexOf('--settings') + 1]!);
             expect(settings.sandbox.filesystem.denyWrite).toEqual(expect.arrayContaining(
-              ['.git', '.claude', '.studio', 'CLAUDE.md', 'CLAUDE.local.md', '.mcp.json'].map((n) => join(d, n)),
+              ['.git', '.claude', '.studio', 'CLAUDE.md', 'CLAUDE.local.md', '.mcp.json', '.gitattributes'].map((n) => join(d, n)),
             ));
           }
         }
@@ -428,5 +430,229 @@ describe('AgentLauncher', () => {
       await (await launcher.start({ kind: 'creative', jobId: 'j7', projectSlug: 'acme', projectDir, request: { prompt: 'x' }, onEvent: (e) => got.push(e) })).done.catch(() => {});
       expect(got.slice(0, 2)).toEqual([{ kind: 'session', sessionId: 's1', model: 'haiku', sandboxed: expected }, { kind: 'text', text: 'hi' }]);
     }
+  });
+});
+
+describe('AgentLauncher protected files under a root with glob characters (decisions log 141)', () => {
+  it('sends the sandbox the escaped roots: concrete entries and the log globs both match the real paths', { timeout: 20_000 }, async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-launch [x] *? '));
+    cleanup.push(dir);
+    await mkdir(join(dir, 'creatives', 'c1'), { recursive: true });
+    const { args } = await launch({ sandbox: async () => ({ available: true, reason: 'x' }) }, 'console', dir);
+    const deny: string[] = JSON.parse(args[args.indexOf('--settings') + 1]!).sandbox.filesystem.denyWrite;
+    // Claude Code's glob → regex (see policy.test.ts): `[` must not survive as an open class.
+    const toRe = (g: string) => new RegExp(`^${g.replace(/[.^$+{}()|\\]/g, '\\$&').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]')}(/.*)?$`);
+    const covered = (f: string) => deny.some((d) => (/[*?[\]]/.test(d) ? toRe(d).test(f) : f === d || f.startsWith(`${d}/`)));
+    const realDir = await realpath(dir);
+    for (const root of [dir, realDir]) {
+      for (const f of [join(root, '.studio', 'usage.jsonl'), join(root, 'creatives', 'c1', 'conversation.jsonl'), join(root, 'creatives', 'made-later', 'versions.json'), join(root, 'brand', 'proposals', 'p', 'log.jsonl')]) {
+        expect(covered(f), f).toBe(true);
+      }
+      expect(covered(join(root, 'creatives', 'c1', 'work', 'a.txt'))).toBe(false);
+    }
+    expect(deny.some((d) => d.includes('[x]'))).toBe(false);
+  });
+});
+
+describe('AgentLauncher hard links to protected files', () => {
+  /** A runner that runs `during` while the "agent" works, then succeeds. */
+  const stubRunner = (during: () => Promise<void>): AgentRunner => ({
+    start: () => ({ done: during().then(() => ({ status: 'succeeded' as const })), cancel: () => {} }),
+  });
+  it('detaches a linked log before the run and one linked during the run, with a warning each time', { timeout: 20_000 }, async () => {
+    const dir = await newProject();
+    const c = join(dir, 'creatives', 'c1');
+    await mkdir(join(c, 'work'), { recursive: true });
+    await writeFile(join(c, 'conversation.jsonl'), 'core\n');
+    await mkdir(join(dir, '.studio'), { recursive: true });
+    await writeFile(join(dir, '.studio', 'usage.jsonl'), '');
+    await link(join(c, 'conversation.jsonl'), join(c, 'work', 'x'));
+    let nlinkAtStart = 0;
+    const launcher = testLauncher(stubRunner(async () => {
+      nlinkAtStart = (await stat(join(c, 'conversation.jsonl'))).nlink;
+      await link(join(dir, '.studio', 'usage.jsonl'), join(c, 'work', 'u'));
+    }));
+    const warnings: string[] = [];
+    const run = await launcher.start({ kind: 'console', jobId: 'j1', projectSlug: 'acme', projectDir: dir, request: { prompt: 'x' }, onEvent: () => {}, onWarning: (w) => { warnings.push(w); } });
+    await run.done;
+    expect(nlinkAtStart).toBe(1);
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toContain(join('creatives', 'c1', 'conversation.jsonl'));
+    expect(warnings[1]).toContain(join('.studio', 'usage.jsonl'));
+    expect((await stat(join(dir, '.studio', 'usage.jsonl'))).nlink).toBe(1);
+    await appendFile(join(c, 'work', 'x'), 'forged\n');
+    expect(await readFile(join(c, 'conversation.jsonl'), 'utf8')).toBe('core\n');
+  });
+  it('without onWarning the warning is a progress event of the run', { timeout: 20_000 }, async () => {
+    const dir = await newProject();
+    await mkdir(join(dir, 'brand', 'proposals', 'p1'), { recursive: true });
+    await writeFile(join(dir, 'brand', 'proposals', 'p1', 'log.jsonl'), '');
+    await link(join(dir, 'brand', 'proposals', 'p1', 'log.jsonl'), join(dir, 'l'));
+    const events: AgentEvent[] = [];
+    const run = await testLauncher(stubRunner(async () => {})).start({ kind: 'brand-analysis', jobId: 'j1', projectSlug: 'acme', projectDir: dir, request: { prompt: 'x' }, onEvent: (e) => events.push(e) });
+    await run.done;
+    expect(events.filter((e) => e.kind === 'progress').map((e) => (e as { text: string }).text)).toEqual([expect.stringContaining('log.jsonl')]);
+  });
+});
+
+describe('AgentLauncher after-run checks (review of decisions log 141)', () => {
+  it('kills leftover processes before the after-run detach: a link made by a leftover until the kill is still caught', { timeout: 20_000 }, async () => {
+    const dir = await newProject();
+    await mkdir(join(dir, '.studio'), { recursive: true });
+    await writeFile(join(dir, '.studio', 'usage.jsonl'), '');
+    const order: string[] = [];
+    const runner: AgentRunner = {
+      start: () => ({
+        done: Promise.resolve({ status: 'succeeded' as const }),
+        cancel: () => {},
+        // The leftover's last act happens right before it is killed.
+        killGroup: () => { order.push('kill'); linkSync(join(dir, '.studio', 'usage.jsonl'), join(dir, 'leftover-link')); },
+      }),
+    };
+    const run = await testLauncher(runner).start({ kind: 'brand-analysis', jobId: 'j1', projectSlug: 'acme', projectDir: dir, request: { prompt: 'x' }, onEvent: () => {}, onWarning: (w) => { order.push(w.includes('usage.jsonl') ? 'detached' : 'other'); } });
+    await run.done;
+    expect(order).toEqual(['kill', 'detached']);
+    expect((await stat(join(dir, '.studio', 'usage.jsonl'))).nlink).toBe(1);
+  });
+  it('under a path with glob characters: one warning per job, and a creative moved out and back during the run is reported', { timeout: 20_000 }, async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-launch [x] '));
+    cleanup.push(dir);
+    const c = join(dir, 'creatives', 'c1');
+    await mkdir(c, { recursive: true });
+    await writeFile(join(c, 'conversation.jsonl'), '{"a":1}\n');
+    let move = true;
+    const runner: AgentRunner = {
+      start: () => ({
+        done: (async () => {
+          await new Promise((r) => setTimeout(r, 15));
+          if (move) {
+            await rename(c, join(dir, 'out'));
+            await writeFile(join(dir, 'out', 'conversation.jsonl'), '{"forged":1}\n');
+            await rename(join(dir, 'out'), c);
+          }
+          return { status: 'succeeded' as const };
+        })(),
+        cancel: () => {},
+      }),
+    };
+    const launcher = testLauncher(runner);
+    const warnings: string[] = [];
+    const start = (jobId: string) => launcher.start({ kind: 'creative', jobId, projectSlug: 'acme', projectDir: dir, creativeSlug: 'c1', request: { prompt: 'x' }, onEvent: () => {}, onWarning: (w) => { warnings.push(w); } });
+    await (await start('j1')).done;
+    expect(warnings).toHaveLength(3);
+    expect(warnings[0]).toContain('[ ] * o ?');
+    expect(warnings[1]).toContain(join('creatives', 'c1'));
+    expect(warnings[2]).toContain(join('creatives', 'c1', 'conversation.jsonl'));
+    move = false;
+    warnings.length = 0;
+    await (await start('j1')).done; // second attempt of the same job: no repeat, nothing moved
+    expect(warnings).toEqual([]);
+    await (await start('j2')).done;
+    expect(warnings).toHaveLength(1);
+  });
+});
+
+describe('AgentLauncher integrity tripwire fails the job (decisions log 141)', () => {
+  it('a protected config file changed during the run fails the job, warns, and quarantines the repo', { timeout: 20_000 }, async () => {
+    const dir = await newProject();
+    await mkdir(join(dir, '.git', 'info'), { recursive: true });
+    await writeFile(join(dir, '.git', 'config'), '[core]\n\tfilemode = true\n');
+    await writeFile(join(dir, 'CLAUDE.md'), '# ok');
+    const runner: AgentRunner = {
+      start: () => ({
+        done: (async () => { await writeFile(join(dir, '.git', 'config'), '[filter "lfs"]\n\tclean = evil\n'); return { status: 'succeeded' as const }; })(),
+        cancel: () => {},
+      }),
+    };
+    const warnings: string[] = [];
+    const launcher = testLauncher(runner);
+    const run = await launcher.start({ kind: 'creative', jobId: 'j1', projectSlug: 'acme', projectDir: dir, creativeSlug: 'c1', request: { prompt: 'x' }, onEvent: () => {}, onWarning: (w) => { warnings.push(w); } });
+    await expect(run.done).rejects.toThrow();
+    expect(warnings.some((w) => w.includes('.git/config'))).toBe(true);
+    expect(await launcher.integrity.isQuarantined(dir)).toBe(true);
+  });
+  it('does not kill the process group at the end of a console turn, but still runs the detach', { timeout: 20_000 }, async () => {
+    const dir = await newProject();
+    await mkdir(join(dir, '.studio'), { recursive: true });
+    await writeFile(join(dir, '.studio', 'usage.jsonl'), '');
+    let killed = false;
+    const runner: AgentRunner = { start: () => ({ done: Promise.resolve({ status: 'succeeded' as const }), cancel: () => {}, killGroup: () => { killed = true; } }) };
+    const run = await testLauncher(runner).start({ kind: 'console', jobId: 'j1', projectSlug: 'acme', projectDir: dir, request: { prompt: 'x' }, onEvent: () => {} });
+    await run.done;
+    expect(killed).toBe(false);
+  });
+});
+
+describe('Integrity with the sandbox off (decisions log 141, round 4)', () => {
+  /** A runner whose "agent" runs `act` in the project, as an unsandboxed agent could. */
+  const acting = (act: () => Promise<void>): AgentRunner => ({
+    start: () => ({ done: (async () => { await act(); return { status: 'succeeded' as const }; })(), cancel: () => {} }),
+  });
+  const off = { settings: { sandboxMode: 'off' as const } };
+  async function gitProject() {
+    const dir = await newProject();
+    await new Git().init(dir);
+    await writeFile(join(dir, 'CLAUDE.md'), '# ok');
+    await writeFile(join(dir, 'a.txt'), 'x');
+    return dir;
+  }
+  const start = (launcher: AgentLauncher, dir: string, jobId = 'j1') => launcher.start({ kind: 'creative', jobId, projectSlug: 'acme', projectDir: dir, creativeSlug: 'c1', request: { prompt: 'x' }, onEvent: () => {}, onWarning: () => {} });
+
+  it('an agent creating .claude/settings.json fails the job and quarantines the project; launches and git are refused until it is removed, across a restart', { timeout: 30_000 }, async () => {
+    const dir = await gitProject();
+    let act = async () => { await mkdir(join(dir, '.claude'), { recursive: true }); await writeFile(join(dir, '.claude', 'settings.json'), '{"hooks":{"Stop":[]}}'); };
+    const configDir = await mkdtemp(join(tmpdir(), 'ms-cfg-q-'));
+    cleanup.push(configDir);
+    const launcher = testLauncher(acting(() => act()), { ...off, configDir });
+    await expect((await start(launcher, dir)).done).rejects.toThrow('.claude/settings.json');
+    expect(await launcher.integrity.isQuarantined(dir)).toBe(true);
+    act = async () => {};
+    await expect(start(launcher, dir, 'j2')).rejects.toBeInstanceOf(ProjectQuarantinedError);
+    await expect(new Git().commitAll(dir, 'c')).rejects.toThrow('.claude/settings.json');
+    // A restart (a new launcher on the same config folder) still refuses.
+    const restarted = testLauncher(acting(() => act()), { ...off, configDir });
+    await expect(start(restarted, dir, 'j3')).rejects.toThrow('.claude/settings.json');
+    // Restored: the quarantine clears by itself.
+    await rm(join(dir, '.claude'), { recursive: true });
+    await (await start(restarted, dir, 'j4')).done;
+    expect(await restarted.integrity.isQuarantined(dir)).toBe(false);
+    await expect(new Git().commitAll(dir, 'c')).resolves.toMatch(/^[0-9a-f]{40}$/);
+  });
+  it('an agent creating .git/commondir fails the job, and git refuses the repo', { timeout: 30_000 }, async () => {
+    const dir = await gitProject();
+    const launcher = testLauncher(acting(async () => { await writeFile(join(dir, '.git', 'commondir'), '/tmp/evil\n'); }), off);
+    await expect((await start(launcher, dir)).done).rejects.toThrow('.git/commondir');
+    expect(await launcher.integrity.isQuarantined(dir)).toBe(true);
+    await expect(new Git().commitAll(dir, 'c')).rejects.toThrow();
+  });
+  it('a check() that throws fails the job and quarantines the project (fail closed)', { timeout: 30_000 }, async () => {
+    const dir = await gitProject();
+    const locked = join(dir, '.claude', 'locked');
+    const launcher = testLauncher(acting(async () => { await mkdir(locked, { recursive: true }); await chmod(locked, 0o000); }), off);
+    try {
+      await expect((await start(launcher, dir)).done).rejects.toThrow();
+      expect(await launcher.integrity.isQuarantined(dir)).toBe(true);
+    } finally { await chmod(locked, 0o700).catch(() => {}); }
+  });
+  it('a change between runs (e.g. a leftover process) is caught at the next arm against the last good state', { timeout: 30_000 }, async () => {
+    const dir = await gitProject();
+    const launcher = testLauncher(acting(async () => {}), off);
+    await (await start(launcher, dir)).done;
+    await writeFile(join(dir, '.mcp.json'), '{"mcpServers":{"x":{"command":"evil"}}}');
+    await expect(start(launcher, dir, 'j2')).rejects.toThrow('.mcp.json');
+    expect(await launcher.integrity.isQuarantined(dir)).toBe(true);
+    await rm(join(dir, '.mcp.json'));
+    await (await start(launcher, dir, 'j3')).done;
+  });
+  it('permissions.json: a core write during the run stays quiet, a foreign write trips', { timeout: 30_000 }, async () => {
+    const dir = await gitProject();
+    const quiet = testLauncher(acting(async () => { await new PermissionsStore(dir).add('Bash(ls:*)', 'x'); }), off);
+    await (await start(quiet, dir)).done;
+    // Between runs the core writes again: still quiet at the next arm.
+    await new PermissionsStore(dir).remove('Bash(ls:*)');
+    await (await start(quiet, dir, 'j2')).done;
+    const forged = JSON.stringify({ schemaVersion: 1, allow: [{ rule: 'WebFetch(domain:evil.example)', label: 'x', addedAt: new Date().toISOString() }] });
+    const loud = testLauncher(acting(async () => { await writeFile(join(dir, '.studio', 'permissions.json'), forged); }), off);
+    await expect((await start(loud, dir)).done).rejects.toThrow('.studio/permissions.json');
   });
 });

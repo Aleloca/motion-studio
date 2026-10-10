@@ -3,6 +3,7 @@ import { copyFile, lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises'
 import { join } from 'node:path';
 import { canFollow, type FollowCheck, type FormatPreset, type OutputFileInfo } from '@motion-studio/shared';
 import { hashConfinedFile } from '../brand/agent-guard.ts';
+import { noteCoreChange } from '../core-changes.ts';
 
 /**
  * Carry-over and linked formats (spec §2.3–2.5): the core, not the agent, puts the files of the formats a turn does not
@@ -56,7 +57,11 @@ export async function versionDirReady(creativeDir: string, n: number): Promise<b
   const info = await lstat(dir).catch(() => null);
   const replaced = info !== null && !info.isDirectory();
   if (replaced) await rm(dir, { force: true });
-  if (!info || replaced) await mkdir(dir, { recursive: true });
+  if (!info || replaced) {
+    await mkdir(dir, { recursive: true });
+    await noteCoreChange(creativeDir);
+    await noteCoreChange(join(creativeDir, 'outputs'));
+  }
   const [real, realBase] = await Promise.all([realpath(dir).catch(() => null), realpath(creativeDir).catch(() => null)]);
   if (!real || !realBase || real !== join(realBase, 'outputs', `v${n}`)) throw new Error(`outputs/v${n} is not a folder of the creative`);
   return replaced;

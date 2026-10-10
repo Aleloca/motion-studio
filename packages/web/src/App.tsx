@@ -146,6 +146,8 @@ function AppBody({ live, language, systemLocale, onLanguage }: Props) {
   const onWorkspace = useCallback((next: { path: string; settings: WorkspaceSettings }) => {
     applyTheme(next.settings.theme);
     setWs({ path: next.path, settings: next.settings, error: null });
+    // The `workspace-path` check depends on the chosen folder: reload the doctor so a path with `[ ] * ?` is flagged at once.
+    api.getDoctor().then(setChecks).catch(() => { /* keep the previous checks */ });
   }, []);
   const setup: SetupProps = {
     checks, checking, checksRun: checkRun, loadError, workspace: ws, canLeave: loaded && !needsSetup,

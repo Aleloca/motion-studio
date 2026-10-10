@@ -105,6 +105,15 @@ describe('runDoctor', () => {
     });
     expect(hasBlockingFailure(fallback)).toBe(false);
   });
+  it('flags a workspace path with glob characters as an optional failed check (decisions log 141)', async () => {
+    const base = { exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0' };
+    for (const p of [null, '/Users/me/Motion Studio', '/Users/me/a (1)']) expect((await runDoctor({ ...base, workspacePath: p })).some((c) => c.id === 'workspace-path')).toBe(false);
+    for (const p of ['/Users/me/ws [x]', '/Users/me/a*b', '/Users/me/what?']) {
+      const checks = await runDoctor({ ...base, workspacePath: p });
+      expect(checks.find((c) => c.id === 'workspace-path')).toMatchObject({ required: false, ok: false, label: 'Percorso della cartella di lavoro' });
+      expect(hasBlockingFailure(checks)).toBe(false);
+    }
+  });
 });
 
 describe('billing', () => {

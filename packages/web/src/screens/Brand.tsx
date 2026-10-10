@@ -1,3 +1,4 @@
+import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
 import type { AssetEntry, BrandKit, BrandLogo, BrandOverview, BrandProposal, JobSummary, ReferenceEntry } from '@motion-studio/shared';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode, type UIEvent } from 'react';
 import { api } from '../api.ts';
@@ -75,6 +76,7 @@ interface BodyProps {
 
 function BrandPageBody({ slug, live, overview, setOverview, kit, saver, job, assets, setAssets, references, projectName, reload }: BodyProps) {
   const t = useT();
+  const integrity = useIntegrity(slug, live);
   const b = t.web.brand;
   const root = useEnter<HTMLDivElement>([]);
   const scroller = useRef<HTMLElement>(null);
@@ -194,6 +196,7 @@ function BrandPageBody({ slug, live, overview, setOverview, kit, saver, job, ass
         </nav>
         <main className="ms-brand-main" ref={scroller} onScroll={onScroll}>
           <SavePill saver={saver} />
+          {integrity.state ? <IntegrityNotice slug={slug} state={integrity.state} reload={integrity.reload} /> : null}
           {overview.kitError ? <Alert>{b.kitUnreadable({ error: overview.kitError })} {b.kitLocked}</Alert> : null}
           {overview.sourcesError ? <Alert>{overview.sourcesError}</Alert> : null}
           <Overview overview={overview} projectName={projectName} />

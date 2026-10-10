@@ -1,3 +1,4 @@
+import { assertNotRealUserData } from './app-config.ts';
 import { access, constants, mkdir, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize, resolve, sep } from 'node:path';
@@ -15,6 +16,7 @@ import {
 import type { Git } from './git.ts';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from './json-file.ts';
 import { KeyedMutex } from './keyed-mutex.ts';
+import { noteCoreChange } from './core-changes.ts';
 import { CLAUDE_MD, CONTEXT_MD, GITATTRIBUTES, GITIGNORE, PROJECT_DIRS } from './project-template.ts';
 import { t } from './i18n.ts';
 
@@ -110,6 +112,7 @@ export class WorkspaceStore {
 
   /** `create: false` (used at startup) refuses to recreate a workspace folder that disappeared. */
   static async open(root: string, git: Git, opts: { create?: boolean } = {}): Promise<WorkspaceStore> {
+    assertNotRealUserData(root);
     const info = await stat(root).catch(() => null);
     if (info && !info.isDirectory()) throw new WorkspaceError(400, t().errors.pathIsFile({ path: root }), 'not-found');
     if (!info && opts.create === false) throw new WorkspaceError(404, t().errors.workspaceNotFound({ path: root }), 'not-found');
@@ -203,6 +206,9 @@ export class WorkspaceStore {
       await writeJsonFileAtomic(join(dir, 'project.json'), project);
       await this.git.init(dir);
       await this.git.commitAll(dir, t().jobs.createProjectCommit({ name }));
+      // The new project folder and the workspace root both gained an entry: a later tripwire must not read this as a move.
+      await noteCoreChange(this.root);
+      await noteCoreChange(dir);
     } catch (err) {
       // Only the folder created above: never leave a half-built project behind.
       await rm(dir, { recursive: true, force: true }).catch(() => {});

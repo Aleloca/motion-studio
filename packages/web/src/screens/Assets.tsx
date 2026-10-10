@@ -1,3 +1,4 @@
+import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
 import type { AssetEntry, AssetKind, AssetOrigin, JobSummary } from '@motion-studio/shared';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { api } from '../api.ts';
@@ -103,6 +104,7 @@ interface BodyProps {
 
 function AssetsBody({ slug, live, listing, setListing, reload, job, projectName }: BodyProps) {
   const t = useT();
+  const integrity = useIntegrity(slug, live);
   const a = t.web.library.assets;
   const root = useEnter<HTMLDivElement>([]);
   const [type, setType] = useState<AssetKind | 'all'>('all');
@@ -343,6 +345,7 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
         {listing.unregistered.length > 0 ? (
           <Alert action={<Button size="sm" variant="outline" onClick={() => void register()}>{a.register}</Button>}>{a.unregistered({ count: listing.unregistered.length })}</Alert>
         ) : null}
+        {integrity.state ? <IntegrityNotice slug={slug} state={integrity.state} reload={integrity.reload} /> : null}
         {lastJobFailed ? <Alert>{brandJobFailedText(job, t)}</Alert> : null}
         {job && !running && isDescribeJob(job) ? (job.notes ?? []).map((n) => <Alert key={n}>{n}</Alert>) : null}
 
