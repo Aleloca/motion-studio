@@ -601,3 +601,69 @@ describe('mergeJobEvents', () => {
     expect(mergeJobEvents([text('a'), text('b')], [text('b'), text('c')]).map((e) => (e.kind === 'text' ? e.text : ''))).toEqual(['a', 'b', 'c']);
   });
 });
+
+describe('Conversation · "Applies to" and warnings (Phase 9)', () => {
+  const pin = (format: string): Pin => ({ format, x: 0.5, y: 0.5, timeSec: null, note: 'n' });
+  // The Reel and the Post are primaries; TikTok follows the Reel.
+  const appliesTo = {
+    primaries: [{ id: 'reel', label: 'Reel', followers: ['TikTok'] }, { id: 'post', label: 'Post', followers: [] }],
+    followerOf: (id: string) => (id === 'tiktok' ? 'reel' : null),
+  };
+  const group = () => screen.getByRole('group', { name: 'Applies to' });
+  const chip = (name: string) => within(group()).getByRole('button', { name });
+
+  it('defaults to All formats without comments and sends no formats', async () => {
+    render(view({ entries: [], appliesTo } as Props));
+    expect(chip('All formats').getAttribute('aria-pressed')).toBe('true');
+    await userEvent.type(screen.getByRole('textbox'), 'Warmer');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'c1', { text: 'Warmer', pins: [] }));
+  });
+
+  it('defaults to the formats of the attached comments (a follower stands for its primary) and sends them', async () => {
+    render(view({ entries: [], appliesTo, pins: [pin('tiktok')] } as Props));
+    expect(chip('Reel').getAttribute('aria-pressed')).toBe('true');
+    expect(chip('All formats').getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByText('TikTok follows Reel: the change applies to both')).toBeTruthy();
+    await userEvent.type(screen.getByRole('textbox'), 'Bigger logo');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'c1', { text: 'Bigger logo', pins: [pin('tiktok')], formats: ['reel'] }));
+  });
+
+  it('chips choose the primaries; a follower cannot be chosen and says why', async () => {
+    render(view({ entries: [], appliesTo } as Props));
+    await userEvent.click(chip('Post'));
+    expect(chip('Post').getAttribute('aria-pressed')).toBe('true');
+    expect(chip('All formats').getAttribute('aria-pressed')).toBe('false');
+    const follower = chip('TikTok');
+    expect(follower.getAttribute('aria-disabled')).toBe('true');
+    expect(follower.getAttribute('title')).toBe('TikTok follows Reel: the change applies to both');
+    await userEvent.click(follower);
+    expect(follower.getAttribute('aria-pressed')).not.toBe('true');
+    // Choosing every primary is "All formats" again.
+    await userEvent.click(chip('Reel'));
+    expect(chip('All formats').getAttribute('aria-pressed')).toBe('true');
+    await userEvent.click(chip('Post'));
+    await userEvent.type(screen.getByRole('textbox'), 'x');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'c1', { text: 'x', pins: [], formats: ['post'] }));
+  });
+
+  it('no choice without appliesTo (one primary, no version yet)', () => {
+    render(view({ entries: [] }));
+    expect(screen.queryByRole('group', { name: 'Applies to' })).toBeNull();
+  });
+
+  it('a warning line is set apart from info, never an alert', () => {
+    render(view({ entries: [
+      { type: 'system', at: at(1), level: 'info', text: 'Restarted from v1' },
+      { type: 'system', at: at(2), level: 'warning', text: 'TikTok was unlinked: it is longer than its limit' },
+    ] }));
+    const warning = screen.getByText('TikTok was unlinked: it is longer than its limit').closest('p')!;
+    expect(warning.classList.contains('ms-warning')).toBe(true);
+    expect(warning.getAttribute('role')).toBeNull();
+    expect(warning.querySelector('svg')).not.toBeNull();
+    expect(screen.getByText('Restarted from v1').classList.contains('ms-warning')).toBe(false);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+});

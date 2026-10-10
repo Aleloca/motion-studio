@@ -6,7 +6,7 @@
 // bubble are screen-sized at any zoom (as in Figma): they sit in the frame's box, sized in screen pixels, at the
 // world point × zoom, so nothing scales them and the bubble's text field stays crisp.
 import { channelName, formatName, outputWarningText, type FormatPreset, type OutputWarning, type Pin } from '@motion-studio/shared';
-import { useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type SyntheticEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode, type SyntheticEvent } from 'react';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { anim, D, E, isSubmitChord } from '../motion/index.ts';
 import { Button, Icon, Pill, Popover, Textarea, cx } from '../ui/index.ts';
@@ -21,13 +21,22 @@ export interface BoardProps {
   slug: string;
   creative: string;
   board: BoardModel;
-  /** The version whose outputs are shown (null before the first one). */
+  /** The version whose file is shown (null before the first one): the ★ of the format, or the one being viewed. */
   n: number | null;
+  /** When `n` is null although the creative has versions: the latest one, which has no file for this format. */
+  missing?: number | null;
   tool: Tool;
   /** The canvas zoom: the frame scales, the label, markers and bubble keep their size. */
   zoom: number;
   selected: boolean;
-  working: boolean;
+  /** A running job renders this format (its targets and their followers, or every board for an untargeted job). */
+  rendering: boolean;
+  /** Comments can be placed on this board (its file is the one comments are cropped from). */
+  commentable?: boolean;
+  /** The version badge (line 1), e.g. "★ v5 ▾", or a follower's "Linked to Reel" chip. */
+  badge?: ReactNode;
+  /** A note on line 2, e.g. "follows Reel ★ v5". */
+  note?: ReactNode;
   safe: boolean;
   /** Pending comments of the creative with their global numbers (chips use the same numbers). */
   pins: Array<{ pin: Pin; number: number }>;
@@ -86,14 +95,15 @@ export function CanvasBoard(p: BoardProps) {
       <div className="ms-cv-board-head" style={{ maxWidth: Math.max(Math.round(size.width * zoom), LABEL_MIN) }}>
         <div className="ms-cv-board-line">
           <b className="ms-cv-board-name" title={label}>{label}</b>
-          {/* Reserved for the version badge. */}
-          <span className="ms-cv-board-slot" />
+          {/* The version badge, or a follower's link chip. */}
+          <span className="ms-cv-board-slot">{p.badge}</span>
         </div>
         <div className="ms-cv-board-line ms-cv-board-sub">
           {board.preset ? <span className="ms-cv-board-meta">{ratioText(board.preset)}{duration !== null ? ` · ${c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) })}` : ''}</span> : null}
-          {p.working ? <span className="ms-cv-board-state">{c.renderingState}</span>
-            : board.out && board.out.verified && !largeFile.length ? <span className="ms-cv-board-state">{c.boardReady}</span> : null}
-          {!p.working && board.out && !board.out.verified ? <Pill tone="warn">{t.web.formatUi.unverified}</Pill> : null}
+          {p.rendering ? <span className="ms-cv-board-state">{c.renderingState}</span>
+            : p.note ? <span className="ms-cv-board-state">{p.note}</span>
+              : board.out && board.out.verified && !largeFile.length ? <span className="ms-cv-board-state">{c.boardReady}</span> : null}
+          {!p.rendering && board.out && !board.out.verified ? <Pill tone="warn">{t.web.formatUi.unverified}</Pill> : null}
           {largeFile.map((w, i) => <LargeFileChip key={i} warning={w} />)}
         </div>
       </div>
@@ -112,12 +122,12 @@ export function CanvasBoard(p: BoardProps) {
               : <img key={media.src} src={media.src} alt={`${label} v${n}`} onLoad={reveal} draggable={false} />
           ) : (
             <span className="ms-cv-frame-note">
-              {!board.preset ? t.web.formatUi.unknownPreset({ id: board.id }) : n === null ? c.notGenerated : t.web.formatUi.missingIn({ n })}
+              {!board.preset ? t.web.formatUi.unknownPreset({ id: board.id }) : n !== null ? t.web.formatUi.missingIn({ n }) : p.missing ? t.web.formatUi.missingIn({ n: p.missing }) : c.notGenerated}
             </span>
           )}
-          {p.working ? <span className="ms-shimmer" aria-hidden="true" /> : null}
+          {p.rendering ? <span className="ms-shimmer" aria-hidden="true" /> : null}
           {p.safe && board.preset ? <SafeZoneBands preset={board.preset} /> : null}
-          {p.tool === 'comment' && board.out ? (
+          {p.tool === 'comment' && board.out && p.commentable !== false ? (
             <button type="button" className="ms-cv-hit" aria-label={c.commentOn({ label })} onClick={(e) => { e.stopPropagation(); place(e); }} />
           ) : null}
         </div>

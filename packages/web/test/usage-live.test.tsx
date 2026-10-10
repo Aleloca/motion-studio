@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { messages, type AgentEvent, type JobSummary, type ServerMessage, type TokenCounts, type UsageReport, type VersionEntry } from '@motion-studio/shared';
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = { getUsage: vi.fn(async (): Promise<UsageReport> => report(0)), getConversation: vi.fn(async () => []) };
@@ -14,7 +14,7 @@ const { jobLiveTokens, jobFinalTokens, jobUsagePartial, localMidnightIso, localD
 const { USAGE_RETRY_MS } = await import('../src/useServerEvents.ts');
 const { billingNote, formatCost, formatTokens, TokensButton } = await import('../src/shell/Tokens.tsx');
 const { useServerEvents } = await import('../src/useServerEvents.ts');
-const { VersionMenu } = await import('../src/screens/VersionMenu.tsx');
+const { VersionTimeline } = await import('../src/screens/FormatVersions.tsx');
 const { ActivityCenter } = await import('../src/shell/ActivityCenter.tsx');
 const { I18nProvider } = await import('../src/i18n.tsx');
 
@@ -266,9 +266,14 @@ const version = (n: number, over: Partial<VersionEntry> = {}): VersionEntry => (
 });
 
 describe('per-version tokens', () => {
-  it('the version menu shows tokens per version; a version without usage shows none', () => {
+  it('the version timeline shows tokens per version; a version without usage shows none', async () => {
     const versions = [version(1), version(2, { usage: { tokens: { input: 30_000, output: 8_000, cacheRead: 900_000, cacheWrite: 400 }, costUsd: 0.42 } })];
-    wrap(<VersionMenu slug="acme" creative="c" versions={versions} shown={2} resumeFrom={null} onPick={() => {}} onCompare={() => {}} onRestart={() => {}} onReveal={() => {}} />);
+    const noop = () => {};
+    const ref = { current: null as HTMLButtonElement | null };
+    wrap(<VersionTimeline slug="acme" creative="c" versions={versions} resumeFrom={null} buttonRef={ref}
+      actions={{ star: noop, link: noop, unlink: noop, restart: noop, reveal: noop }} />);
+    fireEvent.click(ref.current!);
+    await waitFor(() => expect(document.querySelectorAll('.ms-vmenu-row').length).toBe(2));
     const rows = [...document.querySelectorAll('.ms-vmenu-row')];
     const v2 = rows.find((r) => r.textContent?.includes('v2'))!;
     const v1 = rows.find((r) => r.textContent?.includes('v1'))!;

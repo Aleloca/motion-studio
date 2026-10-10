@@ -2,9 +2,19 @@ import type { ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetti
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, uiToken } from './uiToken.ts';
 
-/** `code`: the stable machine-readable reason some routes add (e.g. `link-chain`, `pick-file-missing`). */
+/**
+ * `code`: the stable machine-readable reason some routes add (e.g. `link-chain`, `pick-file-missing`); `retryAfterSec`: the
+ * response's `Retry-After` in seconds, when it has one (e.g. `hashes-pending`).
+ */
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string, public readonly code?: string) { super(message); this.name = 'ApiError'; }
+  constructor(public readonly status: number, message: string, public readonly code?: string, public readonly retryAfterSec?: number) { super(message); this.name = 'ApiError'; }
+}
+
+/** `Retry-After` as seconds (the delay form only; a date or a bad value is ignored). */
+function retryAfter(res: Response): number | undefined {
+  const raw = res.headers?.get?.('retry-after');
+  if (!raw || !/^\d{1,6}$/.test(raw.trim())) return undefined;
+  return Number(raw.trim());
 }
 
 /** Headers of every API call: the UI token (the server refuses calls without it). */
@@ -18,7 +28,7 @@ async function parse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     if (res.status === 401 && (data as { code?: string }).code === 'ui-token') markPairingNeeded();
     const code = (data as { code?: unknown }).code;
-    throw new ApiError(res.status, (data as { error?: string }).error ?? currentMessages().web.api.httpError({ status: res.status }), typeof code === 'string' ? code : undefined);
+    throw new ApiError(res.status, (data as { error?: string }).error ?? currentMessages().web.api.httpError({ status: res.status }), typeof code === 'string' ? code : undefined, retryAfter(res));
   }
   return data as T;
 }
@@ -115,7 +125,8 @@ export const api = {
   setFormatLink: (slug: string, creative: string, follower: string, primary: string | null) =>
     request<CreativeDetail>('PUT', `${c(slug, creative)}/links`, { follower, primary }),
   getConversation: (slug: string, creative: string) => request<ConversationEntry[]>('GET', `${c(slug, creative)}/conversation`),
-  sendCreativeTurn: (slug: string, creative: string, body: { text?: string; pins?: Pin[] }) => request<JobSummary>('POST', `${c(slug, creative)}/turns`, body),
+  /** `formats`: the formats the change applies to (spec §2.5); absent means all of them. */
+  sendCreativeTurn: (slug: string, creative: string, body: { text?: string; pins?: Pin[]; formats?: string[] }) => request<JobSummary>('POST', `${c(slug, creative)}/turns`, body),
   restoreVersion: (slug: string, creative: string, n: number) => request<CreativeFile>('POST', `${c(slug, creative)}/versions/${n}/restore`),
   revealVersion: (slug: string, creative: string, n: number) => request<{ ok: true }>('POST', `${c(slug, creative)}/versions/${n}/reveal`),
   exportVersion: (slug: string, creative: string, n: number, destination: string, formats?: string[]) =>

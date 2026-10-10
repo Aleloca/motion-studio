@@ -1,4 +1,4 @@
-import { channelName, formatLabel, formatName, type AssetEntry, type Locale, type BrandKit, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
+import { canFollow, channelName, formatLabel, formatName, type AssetEntry, type FollowCheck, type Locale, type BrandKit, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { api } from '../api.ts';
 import { CodebaseList } from '../components/CodebaseList.tsx';
@@ -92,7 +92,34 @@ export function similarRange(tokens: number[], locale: Locale): string | null {
   return `${a === b ? a : `${a}–${b}`}${k ? 'k' : ''}`;
 }
 
-const is916Video = (p: FormatPreset) => p.kind === 'video' && ratioLabel(p.width, p.height) === '9:16';
+/**
+ * The links of a new brief (spec §2.3), follower → primary, as the core's `defaultLinks` makes them, in the order the
+ * formats were chosen: each format follows the first earlier primary it can follow, unless the user switched that link off
+ * (`off`); otherwise it is a primary. `candidates`: every format that can follow, with its primary (its toggle);
+ * `blocked`: a format of the same size as an earlier primary that cannot follow it, with the reason (said on its tile).
+ * `durationSec`: the brief's video length when known (undefined skips the duration check, re-done on the real file).
+ */
+export function planLinks(chosen: FormatPreset[], off: ReadonlySet<string>, durationSec: number | undefined): {
+  links: Record<string, string>; candidates: Record<string, string>; blocked: Record<string, { primary: string; reason: Extract<FollowCheck, { ok: false }>['reason'] }>;
+} {
+  const links: Record<string, string> = {};
+  const candidates: Record<string, string> = {};
+  const blocked: Record<string, { primary: string; reason: Extract<FollowCheck, { ok: false }>['reason'] }> = {};
+  const primaries: FormatPreset[] = [];
+  for (const f of chosen) {
+    const primary = primaries.find((p) => canFollow(p, f, durationSec).ok);
+    if (primary) {
+      candidates[f.id] = primary.id;
+      if (!off.has(f.id)) { links[f.id] = primary.id; continue; }
+    } else {
+      const near = primaries.find((p) => p.width === f.width && p.height === f.height);
+      const check = near ? canFollow(near, f, durationSec) : null;
+      if (near && check && !check.ok) blocked[f.id] = { primary: near.id, reason: check.reason };
+    }
+    primaries.push(f);
+  }
+  return { links, candidates, blocked };
+}
 const baseName = (path: string) => path.split('/').pop() ?? path;
 /** Brief paths are project paths; the library lists files inside `assets/`. */
 const assetPath = (file: string) => `assets/${file}`;
@@ -182,13 +209,14 @@ export function NewCreative({ slug }: { slug: string }) {
   const chosen = useMemo(() => selected.flatMap((id) => presets.filter((p) => p.id === id)), [selected, presets]);
   const videos = chosen.filter((p) => p.kind === 'video');
   const images = chosen.filter((p) => p.kind === 'image');
-  // The first selected 9:16 video in catalog order: the others are marked as the same file (linking: Phase 9).
-  const firstVertical = presets.find((p) => selected.includes(p.id) && is916Video(p)) ?? null;
-  const verticals = chosen.filter(is916Video).length;
-  const linked = (p: FormatPreset) => verticals > 1 && is916Video(p) && selected.includes(p.id) && p.id !== firstVertical?.id;
 
   const durationSec = length === 'custom' ? Number(customSec) : Number(length);
   const durationValid = Number.isInteger(durationSec) && durationSec >= 1 && durationSec <= 600;
+  // Linked formats (spec §2.3): on by default for every format that can share an earlier one's file; a toggle on its tile.
+  const [linkOff, setLinkOff] = useState<ReadonlySet<string>>(() => new Set());
+  const plan = useMemo(() => planLinks(chosen, linkOff, durationValid ? durationSec : undefined), [chosen, linkOff, durationValid, durationSec]);
+  const toggleLink = (id: string) => setLinkOff((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const presetLabel = (id: string) => { const p = presets.find((x) => x.id === id); return p ? formatLabel(p, locale) : id; };
   const tooLong = videos.find((p) => p.maxDurationSec !== undefined && durationValid && durationSec > p.maxDurationSec) ?? null;
   const title = titleFromBrief(goal, n.untitled);
 
@@ -245,7 +273,7 @@ export function NewCreative({ slug }: { slug: string }) {
         title,
         brief: {
           goal: goal.trim(), message: message.trim(), formats: chosen.map((p) => p.id),
-          durationSec: videos.length > 0 ? durationSec : null, assets: picked, notes: notes.trim(),
+          durationSec: videos.length > 0 ? durationSec : null, assets: picked, notes: notes.trim(), links: plan.links,
         },
         generate,
         linkedCodebases: codebases,
@@ -450,7 +478,9 @@ export function NewCreative({ slug }: { slug: string }) {
                 </div>
                 <div className="ms-nc-tiles">
                   {items.map((p) => (
-                    <Tile key={p.id} preset={p} on={selected.includes(p.id)} linked={linked(p)} onClick={() => toggle(p.id)} />
+                    <Tile key={p.id} preset={p} on={selected.includes(p.id)} onClick={() => toggle(p.id)}
+                      link={selected.includes(p.id) && plan.candidates[p.id] ? { primary: presetLabel(plan.candidates[p.id]!), on: !linkOff.has(p.id), onToggle: () => toggleLink(p.id) } : null}
+                      blocked={selected.includes(p.id) && plan.blocked[p.id] ? { primary: presetLabel(plan.blocked[p.id]!.primary), reason: t.errors.followReason[plan.blocked[p.id]!.reason] } : null} />
                   ))}
                 </div>
               </div>
@@ -551,8 +581,16 @@ function AssetFace({ slug, path, entry, small }: { slug: string; path: string; e
   return <span className="ms-nc-face ms-nc-face-file" aria-hidden="true"><Icon name={kind === 'audio' ? 'play' : 'folder'} size={14} /><span>{baseName(path)}</span></span>;
 }
 
-/** One format of the board (prototype Tile): drawn proportion with the kind icon, name, ratio and maximum length. */
-function Tile({ preset: p, on, linked, onClick }: { preset: FormatPreset; on: boolean; linked: boolean; onClick(): void }) {
+/**
+ * One format of the board (prototype Tile): drawn proportion with the kind icon, name, ratio and maximum length. A chosen
+ * format that can share an earlier one's file has a link toggle (`link`, a sibling of the tile button, never inside it);
+ * one of the same size that cannot says why (`blocked`).
+ */
+function Tile({ preset: p, on, onClick, link, blocked }: {
+  preset: FormatPreset; on: boolean; onClick(): void;
+  link: { primary: string; on: boolean; onToggle(): void } | null;
+  blocked: { primary: string; reason: string } | null;
+}) {
   const t = useT();
   const n = t.web.newCreative;
   const locale = useLocale();
@@ -568,19 +606,31 @@ function Tile({ preset: p, on, linked, onClick }: { preset: FormatPreset; on: bo
   const fh = Math.min(h, Math.round((w * p.height) / p.width));
   const video = p.kind === 'video';
   const note = p.maxDurationSec !== undefined ? maxLengthNote(p.maxDurationSec) : video ? t.web.formatUi.video : t.web.formatUi.image;
+  const label = formatLabel(p, locale);
+  const why = blocked ? n.notLinkable(blocked) : null;
   return (
-    <button ref={ref} type="button" className={cx('ms-nc-tile', on && 'ms-on')} aria-pressed={on} onClick={onClick} title={`${p.width}×${p.height}`}>
-      <span className="ms-nc-tile-top">
-        <span className="ms-nc-frame" style={{ width: w, height: fh }} aria-hidden="true">
-          <Icon name={video ? 'play' : 'image'} size={video ? 10 : 12} fill={video} />
+    <div className="ms-nc-tile-wrap">
+      <button ref={ref} type="button" className={cx('ms-nc-tile', on && 'ms-on')} aria-pressed={on} onClick={onClick} title={`${p.width}×${p.height}`}>
+        <span className="ms-nc-tile-top">
+          <span className="ms-nc-frame" style={{ width: w, height: fh }} aria-hidden="true">
+            <Icon name={video ? 'play' : 'image'} size={video ? 10 : 12} fill={video} />
+          </span>
         </span>
-        {linked ? <span className="ms-nc-link" title={n.linkLater} aria-hidden="true"><Icon name="link" size={13} /></span> : null}
-      </span>
-      <span className="ms-nc-tile-text">
-        <b className="ms-nc-ell">{formatName(p, locale)}</b>
-        <span className="ms-nc-tile-meta ms-nc-ell">{ratioLabel(p.width, p.height)} · {note}</span>
-      </span>
-      {on ? <span className="ms-nc-tick" aria-hidden="true"><Icon name="check" size={10} strokeWidth={2.4} /></span> : null}
-    </button>
+        <span className="ms-nc-tile-text">
+          <b className="ms-nc-ell">{formatName(p, locale)}</b>
+          <span className="ms-nc-tile-meta ms-nc-ell">{ratioLabel(p.width, p.height)} · {note}</span>
+        </span>
+        {on ? <span className="ms-nc-tick" aria-hidden="true"><Icon name="check" size={10} strokeWidth={2.4} /></span> : null}
+      </button>
+      {link ? (
+        <button type="button" className={cx('ms-nc-link', link.on && 'ms-on')} aria-pressed={link.on}
+          aria-label={n.linkToggle({ label, primary: link.primary })} title={link.on ? n.linkOn({ primary: link.primary }) : n.linkOff({ primary: link.primary })}
+          onClick={link.onToggle}>
+          <Icon name="link" size={13} />
+        </button>
+      ) : why ? (
+        <span className="ms-nc-link ms-nc-link-no" role="img" aria-label={why} title={why}><Icon name="link" size={13} /></span>
+      ) : null}
+    </div>
   );
 }

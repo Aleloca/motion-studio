@@ -32,6 +32,8 @@ const api = {
   revealVersion: vi.fn(async () => ({ ok: true })),
   exportVersion: vi.fn(async (_s: string, _c: string, _n: number, d: string, formats?: string[]) => ({ destination: d, files: (formats ?? []).map((f) => ({ from: f, to: `${d}/${f}` })), skipped: [] as string[] })),
   cancelJob: vi.fn(async () => ({ cancelled: true })),
+  setExportPick: vi.fn(async (..._a: unknown[]) => detail),
+  setFormatLink: vi.fn(async (..._a: unknown[]) => detail),
   // The creative's ledger total; by default unavailable (the panel then falls back to its versions).
   getUsage: vi.fn(async (_q?: unknown): Promise<UsageReport> => { throw new Error('offline'); }),
 };
@@ -279,6 +281,8 @@ describe('CreativeCanvas · comments', () => {
       text: 'Ritmo più veloce',
       // A video board on the canvas comments at 0 s (frame-accurate pins come with the format view).
       pins: [{ format: 'tiktok-9x16', x: 0.5, y: 0.5, timeSec: 0, note: 'Titolo più in alto' }],
+      // "Applies to" defaults to the formats of the comments (spec §2.5).
+      formats: ['tiktok-9x16'],
     });
     // Sent: the chips are gone.
     await waitFor(() => expect(screen.queryByRole('button', { name: /Modifica il commento 1/ })).toBeNull());
@@ -302,8 +306,19 @@ describe('CreativeCanvas · comments', () => {
   });
 });
 
+/** Opens the ★ badge of a board (its versions popover). */
+const openBadge = async (label: RegExp) => {
+  await userEvent.click(screen.getByRole('button', { name: label }));
+  return screen.findByRole('dialog', { name: /^Versioni di / });
+};
+/** Views version `n` on the post board (its badge popover). */
+const viewOnPost = async (n: number) => {
+  const pop = await openBadge(/^Instagram · Post 1:1: si esporta la v\d/);
+  await userEvent.click(within(pop).getByRole('button', { name: new RegExp(`^Guarda la v${n} `) }));
+};
+
 describe('CreativeCanvas · versions', () => {
-  it('follows new versions with a toast, and picking v2 in the version menu changes the board images', async () => {
+  it('follows new versions with a toast, and viewing v1 on a board changes only that board, also when a new version lands', async () => {
     detail = makeDetail([version(1, 'Dal brief')]);
     const { rerender } = render(<Harness live={emptyLive()} />);
     expect(((await ready()) as HTMLImageElement).getAttribute('src')).toBe('/f/acme/lancio/outputs/v1/post.png');
@@ -313,41 +328,40 @@ describe('CreativeCanvas · versions', () => {
     // The video board shows its poster.
     expect(screen.getByRole('img', { name: /TikTok.* v2/ }).getAttribute('src')).toBe('/f/acme/lancio/outputs/v2/.previews/tiktok.mp4.jpg');
 
-    // Back to v1 from the history.
-    await userEvent.click(screen.getByRole('button', { name: 'Versione 2 di 2, apri la cronologia' }));
-    const menu = await screen.findByRole('dialog', { name: 'Versioni' });
-    expect(within(menu).getByText('Logo più piccolo')).toBeTruthy();
-    await userEvent.click(within(menu).getByRole('button', { name: /^Versione 1/ }));
+    // Back to v1 on the post board, from its history.
+    const pop = await openBadge(/^Instagram · Post 1:1: si esporta la v2/);
+    expect(within(pop).getByText('Logo più piccolo')).toBeTruthy();
+    await userEvent.click(within(pop).getByRole('button', { name: /^Guarda la v1 / }));
     await waitFor(() => expect(screen.getByRole('img', { name: /Post 1:1 v1/ }).getAttribute('src')).toBe('/f/acme/lancio/outputs/v1/post.png'));
-    // A new version no longer steals the explicit pick.
+    expect(screen.getByRole('img', { name: /TikTok.* v2/ })).toBeTruthy();
+    // A new version moves the ★ but does not steal the view.
     detail = makeDetail([version(1), version(2), version(3)]);
     await act(async () => { rerender(<Harness live={{ ...emptyLive(), creativeTicks: { 'acme/lancio': 2 } } as unknown as EventsState} />); });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Versione 1 di 3, apri la cronologia' })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('img', { name: /TikTok.* v3/ })).toBeTruthy());
     expect(screen.getByRole('img', { name: /Post 1:1 v1/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Instagram · Post 1:1: si esporta la v3/ })).toBeTruthy();
+    expect(screen.getByText('stai guardando la v1')).toBeTruthy();
   });
 
-  it('Restart from here and Show in Finder call the API for the version', async () => {
+  it('Restart from here (a board’s version) and Show in Finder (the timeline) call the API for the version', async () => {
     detail = makeDetail([version(1), version(2)]);
     render(<Harness live={emptyLive()} />);
     await ready();
-    await userEvent.click(screen.getByRole('button', { name: /apri la cronologia/ }));
-    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Versioni' })).getByRole('button', { name: /^Versione 1/ }));
-    await userEvent.click(screen.getByRole('button', { name: /apri la cronologia/ }));
-    const menu = await screen.findByRole('dialog', { name: 'Versioni' });
-    expect(within(menu).getByText('La prossima modifica parte dalla v1. Le versioni successive restano nella cronologia.')).toBeTruthy();
-    await userEvent.click(within(menu).getByRole('button', { name: 'Mostra nel Finder' }));
-    expect(api.revealVersion).toHaveBeenCalledWith('acme', 'lancio', 1);
-    await userEvent.click(screen.getByRole('button', { name: /apri la cronologia/ }));
-    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Versioni' })).getByRole('button', { name: 'Riparti da qui' }));
+    await viewOnPost(1);
+    const pop = await openBadge(/^Instagram · Post 1:1: si esporta la v2/);
+    expect(within(pop).getByText('La prossima modifica parte dalla v1. Le versioni successive restano nella cronologia.')).toBeTruthy();
+    await userEvent.click(within(pop).getByRole('button', { name: 'Riparti da qui' }));
     expect(api.restoreVersion).toHaveBeenCalledWith('acme', 'lancio', 1);
+    await userEvent.click(screen.getByRole('button', { name: /apri la cronologia della creatività/ }));
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Versioni' })).getByRole('button', { name: 'Mostra nel Finder' }));
+    expect(api.revealVersion).toHaveBeenCalledWith('acme', 'lancio', 2);
   });
 
-  it('Compare opens the slider between two versions', async () => {
+  it('Compare (a board’s versions) opens the slider between two versions of that format', async () => {
     detail = makeDetail([version(1), version(2)]);
     render(<Harness live={emptyLive()} />);
     await ready();
-    await userEvent.click(screen.getByRole('button', { name: /apri la cronologia/ }));
-    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Versioni' })).getByRole('button', { name: 'Confronta' }));
+    await userEvent.click(within(await openBadge(/^Instagram · Post 1:1: si esporta la v2/)).getByRole('button', { name: 'Confronta' }));
     const dialog = await screen.findByRole('dialog', { name: 'Confronta le versioni' });
     const slider = within(dialog).getByRole('slider', { name: 'Posizione del divisore' });
     expect(slider.getAttribute('aria-valuenow')).toBe('50');
@@ -469,18 +483,17 @@ describe('CreativeCanvas · ported checks', () => {
     expect(screen.getByText('non verificato')).toBeTruthy();
   });
 
-  it('follows new versions again after the user sends a message', async () => {
+  it('shows the ★ of every board again after the user sends a message', async () => {
     detail = makeDetail([version(1), version(2)]);
     const { rerender } = render(<Harness live={emptyLive()} />);
     await ready();
-    await userEvent.click(screen.getByRole('button', { name: /apri la cronologia/ }));
-    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Versioni' })).getByRole('button', { name: /^Versione 1/ }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Versione 1 di 2, apri la cronologia' })).toBeTruthy());
+    await viewOnPost(1);
+    await waitFor(() => expect(screen.getByRole('img', { name: /Post 1:1 v1/ })).toBeTruthy());
     await userEvent.type(screen.getByLabelText('Chiedi una modifica'), 'Più luce');
     await userEvent.click(screen.getByRole('button', { name: 'Invia' }));
     detail = makeDetail([version(1), version(2), version(3)]);
     await act(async () => { rerender(<Harness live={{ ...emptyLive(), creativeTicks: { 'acme/lancio': 5 } } as unknown as EventsState} />); });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Versione 3 di 3, apri la cronologia' })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('img', { name: /Post 1:1 v3/ })).toBeTruthy());
   });
 
   it('keeps the export on the version it was opened for when a new version arrives', async () => {
@@ -491,7 +504,7 @@ describe('CreativeCanvas · ported checks', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Esporta “Lancio estivo”' });
     detail = makeDetail([version(1), version(2)]);
     await act(async () => { rerender(<Harness live={{ ...emptyLive(), creativeTicks: { 'acme/lancio': 1 } } as unknown as EventsState} />); });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Versione 2 di 2, apri la cronologia' })).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole('img', { name: /Post 1:1 v2/ })).toBeTruthy());
     expect(within(dialog).getByText('La versione 1 di ogni formato, pronta da pubblicare.')).toBeTruthy();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Esporta 2 file' }));
     await waitFor(() => expect(api.exportVersion).toHaveBeenCalledWith('acme', 'lancio', 1, '/d', ['instagram-post-1x1', 'tiktok-9x16']));
@@ -518,12 +531,9 @@ describe('CreativeCanvas · review round 1', () => {
     await userEvent.type(await screen.findByLabelText('Testo del commento'), text);
     await userEvent.click(screen.getByRole('button', { name: 'Commenta' }));
   };
-  const pickVersion = async (n: number) => {
-    await userEvent.click(screen.getByRole('button', { name: /apri la cronologia/ }));
-    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Versioni' })).getByRole('button', { name: new RegExp(`^Versione ${n}`) }));
-  };
+  const pickVersion = viewOnPost;
 
-  it('comments only on the core pin source (the latest): another version disables C and hides its pins', async () => {
+  it('comments only on the core pin source (the latest): a board viewing another version takes none and hides its pins', async () => {
     detail = makeDetail([version(1), version(2)]);
     render(<Harness live={emptyLive()} />);
     await ready();
@@ -531,28 +541,34 @@ describe('CreativeCanvas · review round 1', () => {
     expect(screen.getByRole('button', { name: 'Modifica il commento 1' })).toBeTruthy();
     await pickVersion(1);
     await waitFor(() => expect(screen.getByRole('img', { name: /Post 1:1 v1/ })).toBeTruthy());
-    const tool = screen.getByRole('button', { name: 'Commenta (C)' }) as HTMLButtonElement;
-    expect(tool.disabled).toBe(true);
     expect(screen.getByText('I commenti valgono per la v2: usa Riparti da qui per commentare questa versione.')).toBeTruthy();
-    fireEvent.keyDown(window, { key: 'c' });
-    expect(tool.getAttribute('aria-pressed')).toBe('false');
-    // The v2 pin is not drawn on v1's boards, but it is still pending for v2 (its chip stays).
+    // The TikTok board still shows v2: C stays, but the post board takes no comment.
+    await userEvent.click(screen.getByRole('button', { name: 'Commenta (C)' }));
+    expect(screen.queryByRole('button', { name: /^Commenta Instagram · Post 1:1/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /^Commenta TikTok/ })).toBeTruthy();
+    // The v2 pin is not drawn on the v1 board, but it is still pending for v2 (its chip stays).
     expect(screen.queryByRole('button', { name: 'Modifica il commento 1' })).toBeNull();
     expect(screen.getByRole('button', { name: /^Modifica il commento 1 ·/ })).toBeTruthy();
+    // Its chip brings the board back to the file the comment is on.
+    await userEvent.click(screen.getByRole('button', { name: /^Modifica il commento 1 ·/ }));
+    await waitFor(() => expect(screen.getByRole('img', { name: /Post 1:1 v2/ })).toBeTruthy());
+    expect(within(screen.getByRole('group', { name: 'Commento 1' })).getByRole('textbox')).toBeTruthy();
   });
 
   it('with a resume point, comments go on that version and not on the latest', async () => {
     detail = makeDetail([version(1), version(2)], { resumeFrom: { version: 1, sessionId: 's' } });
     render(<Harness live={emptyLive()} />);
     await ready();
-    // The latest (v2) is on screen: not the pin source.
+    // The ★ (the latest, v2) is on every board: not the pin source.
     expect((screen.getByRole('button', { name: 'Commenta (C)' }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText('I commenti valgono per la v1: usa Riparti da qui per commentare questa versione.')).toBeTruthy();
     await pickVersion(1);
     await waitFor(() => expect((screen.getByRole('button', { name: 'Commenta (C)' }) as HTMLButtonElement).disabled).toBe(false));
     await pinOnPost('Tieni questo');
     await userEvent.click(screen.getByRole('button', { name: 'Invia' }));
-    await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'lancio', { text: '', pins: [expect.objectContaining({ note: 'Tieni questo', format: 'instagram-post-1x1' })] }));
+    await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'lancio', {
+      text: '', pins: [expect.objectContaining({ note: 'Tieni questo', format: 'instagram-post-1x1' })], formats: ['instagram-post-1x1'],
+    }));
   });
 
   it('a failed send keeps the pins', async () => {
@@ -627,8 +643,7 @@ describe('CreativeCanvas · review round 1', () => {
     const { __resetToasts, getToasts } = await import('../src/ui/toast.tsx');
     const restart = async (pick: number) => {
       await pickVersion(pick);
-      await userEvent.click(screen.getByRole('button', { name: /apri la cronologia/ }));
-      await userEvent.click(within(await screen.findByRole('dialog', { name: 'Versioni' })).getByRole('button', { name: 'Riparti da qui' }));
+      await userEvent.click(within(await openBadge(/^Instagram · Post 1:1: si esporta/)).getByRole('button', { name: 'Riparti da qui' }));
       await waitFor(() => expect(getToasts().some((x) => x.text === `Le prossime modifiche partono dalla v${pick}`)).toBe(true));
       return getToasts().find((x) => x.text === `Le prossime modifiche partono dalla v${pick}`)!;
     };
@@ -655,14 +670,12 @@ describe('CreativeCanvas · review round 1', () => {
     detail = makeDetail([version(1), version(2)], { resumeFrom: { version: 1, sessionId: 's' } });
     render(<Harness live={emptyLive()} />);
     await ready();
-    // v2 (the latest) is on screen.
-    await userEvent.click(screen.getByRole('button', { name: 'Versione 2 di 2, apri la cronologia' }));
-    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Versioni' })).getByRole('button', { name: 'Riparti da qui' }));
+    // v2 (the latest, the ★) is on screen.
+    await userEvent.click(within(await openBadge(/^Instagram · Post 1:1: si esporta la v2/)).getByRole('button', { name: 'Riparti da qui' }));
     expect(api.restoreVersion).toHaveBeenCalledWith('acme', 'lancio', 2);
     // On the resume version itself there is nothing to restart.
     await pickVersion(1);
-    await userEvent.click(screen.getByRole('button', { name: /apri la cronologia/ }));
-    expect(within(await screen.findByRole('dialog', { name: 'Versioni' })).queryByRole('button', { name: 'Riparti da qui' })).toBeNull();
+    expect(within(await openBadge(/^Instagram · Post 1:1: si esporta/)).queryByRole('button', { name: 'Riparti da qui' })).toBeNull();
   });
 
   it('edits the brief with ui controls: length segments, format chips, same save semantics', async () => {
@@ -845,5 +858,196 @@ describe('CreativeCanvas · two-line board headers', () => {
       expect(b.querySelector('.ms-cv-board-sub')!.textContent).toContain('In render…');
       expect(b.querySelector('.ms-cv-board-sub')!.textContent).not.toContain('Pronto');
     }
+  });
+});
+
+describe('CreativeCanvas · per-format versions (Phase 9)', () => {
+  const REEL = 'instagram-reel-9x16';
+  const POST = 'instagram-post-1x1';
+  const TIKTOK = 'tiktok-9x16';
+  const REEL_LABEL = 'Instagram · Story/Reel 9:16';
+  const hx = (c: string) => c.repeat(64);
+  const vout = (format: string, sha: string): OutputFileInfo => ({ format, file: `${format}.mp4`, width: 1080, height: format === POST ? 1080 : 1920, durationSec: 6, verified: true, preview: `.previews/${format}.jpg`, sha256: hx(sha) });
+  const pv = (n: number, request: string, outs: OutputFileInfo[]): VersionEntry => ({ ...version(n, request, outs) });
+  // The reel changes in v1 and v3; the post only in v1; TikTok follows the reel.
+  const history = () => [
+    pv(1, 'Dal brief', [vout(REEL, 'a'), vout(POST, 'b'), vout(TIKTOK, 'a')]),
+    pv(2, 'Solo il post', [vout(REEL, 'a'), vout(POST, 'b'), vout(TIKTOK, 'a')]),
+    pv(3, 'Logo più grande', [vout(REEL, 'c'), vout(POST, 'b'), vout(TIKTOK, 'c')]),
+  ];
+  const linked = (over: Partial<CreativeDetail['creative']> = {}, links: Record<string, string> = { [TIKTOK]: REEL }): CreativeDetail => {
+    const d = makeDetail(history(), { brief: { goal: 'g', message: '', formats: [REEL, POST, TIKTOK], durationSec: 6, assets: [], notes: '', links }, ...over });
+    return d;
+  };
+  const head = (id: string) => document.querySelector<HTMLElement>(`[data-board="${id}"] .ms-cv-board-head`)!;
+  const boardImg = (id: string) => document.querySelector<HTMLImageElement>(`[data-board="${id}"] .ms-cv-frame img`)!;
+  const loaded = () => screen.findByRole('img', { name: /Story\/Reel 9:16 v\d/ });
+  const badge = (label: string) => screen.getByRole('button', { name: new RegExp(`^${label.replace(/[/.*+?^${}()|[\]\\]/g, '\\$&')}: si esporta la v\\d`) });
+
+  it('every board has its own ★ badge; its popover lists only that format’s history', async () => {
+    detail = linked();
+    render(<Harness live={emptyLive()} />);
+    await loaded();
+    expect(within(head(REEL)).getByRole('button', { name: `${REEL_LABEL}: si esporta la v3. Apri le sue versioni` }).textContent).toContain('★ v3');
+    expect(within(head(POST)).getByRole('button', { name: /si esporta la v1/ }).textContent).toContain('★ v1');
+    await userEvent.click(badge(REEL_LABEL));
+    const pop = await screen.findByRole('dialog', { name: `Versioni di ${REEL_LABEL}` });
+    const rows = within(pop).getAllByRole('button', { name: /^Guarda la v/ });
+    expect(rows.map((r) => r.getAttribute('aria-label')!.slice(0, 13))).toEqual(['Guarda la v3 ', 'Guarda la v1 ']);
+    expect(within(pop).getByRole('button', { name: 'Si esporta la v3' }).getAttribute('aria-pressed')).toBe('true');
+    expect(within(pop).getByRole('button', { name: 'Usa la v1 per l’export' }).getAttribute('aria-pressed')).toBe('false');
+    expect(within(pop).getByRole('button', { name: 'Confronta' })).toBeTruthy();
+  });
+
+  it('a ★ click calls the API for that format and says which version will be exported', async () => {
+    const { __resetToasts, getToasts } = await import('../src/ui/toast.tsx');
+    __resetToasts();
+    detail = linked();
+    render(<Harness live={emptyLive()} />);
+    await loaded();
+    const loads = api.getCreative.mock.calls.length;
+    await userEvent.click(badge(REEL_LABEL));
+    await userEvent.click(within(await screen.findByRole('dialog', { name: `Versioni di ${REEL_LABEL}` })).getByRole('button', { name: 'Usa la v1 per l’export' }));
+    await waitFor(() => expect(api.setExportPick).toHaveBeenCalledWith('acme', 'lancio', REEL, 1));
+    await waitFor(() => expect(getToasts().some((x) => x.text === `Per ${REEL_LABEL} si esporterà la v1`)).toBe(true));
+    await waitFor(() => expect(api.getCreative.mock.calls.length).toBeGreaterThan(loads));
+  });
+
+  it('viewing another version changes only that board and says "viewing", the ★ stays', async () => {
+    detail = linked();
+    render(<Harness live={emptyLive()} />);
+    await loaded();
+    expect(boardImg(REEL).getAttribute('src')).toBe(`/f/acme/lancio/outputs/v3/.previews/${REEL}.jpg`);
+    await userEvent.click(badge(REEL_LABEL));
+    await userEvent.click(within(await screen.findByRole('dialog', { name: `Versioni di ${REEL_LABEL}` })).getByRole('button', { name: /^Guarda la v1/ }));
+    await waitFor(() => expect(boardImg(REEL).getAttribute('src')).toBe(`/f/acme/lancio/outputs/v1/.previews/${REEL}.jpg`));
+    expect(head(REEL).textContent).toContain('stai guardando la v1');
+    expect(within(head(REEL)).getByRole('button', { name: /si esporta la v3/ })).toBeTruthy();
+    // The follower shows its primary's file, so it follows the view; the post is untouched.
+    expect(boardImg(TIKTOK).getAttribute('src')).toBe(`/f/acme/lancio/outputs/v1/.previews/${REEL}.jpg`);
+    expect(boardImg(POST).getAttribute('src')).toBe(`/f/acme/lancio/outputs/v1/.previews/${POST}.jpg`);
+    expect(head(POST).textContent).not.toContain('stai guardando');
+  });
+
+  it('a follower board shows its primary’s file, "follows … ★ vN", and the chip unlinks it', async () => {
+    const { __resetToasts, getToasts } = await import('../src/ui/toast.tsx');
+    __resetToasts();
+    detail = linked();
+    render(<Harness live={emptyLive()} />);
+    await loaded();
+    expect(boardImg(TIKTOK).getAttribute('src')).toBe(`/f/acme/lancio/outputs/v3/.previews/${REEL}.jpg`);
+    expect(head(TIKTOK).textContent).toContain(`segue ${REEL_LABEL} ★ v3`);
+    // The format column says it too.
+    const column = screen.getByRole('complementary', { name: 'Formati di questa creatività' });
+    expect(within(column).getByRole('button', { name: /^Video 9:16/ }).textContent).toContain('segue Story/Reel 9:16');
+    expect(within(column).getByRole('button', { name: /^Story\/Reel/ }).textContent).toContain('★ v3');
+    await userEvent.click(within(head(TIKTOK)).getByRole('button', { name: `Collegato a ${REEL_LABEL}: apri il menu del collegamento` }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Scollega: crea una versione dedicata' }));
+    await waitFor(() => expect(api.setFormatLink).toHaveBeenCalledWith('acme', 'lancio', TIKTOK, null));
+    await waitFor(() => expect(getToasts().some((x) => /TikTok · Video 9:16 è scollegato/.test(x.text))).toBe(true));
+  });
+
+  it('an unlinked compatible format offers "Link to …"', async () => {
+    detail = { ...linked({}, {}), formats: [
+      { id: REEL, history: [1, 3], star: { version: 3, manual: false, newer: null, follows: null }, starFileMissing: false, linkable: [{ primary: TIKTOK, ok: true }, { primary: POST, ok: false, reason: 'size' }] },
+      { id: POST, history: [1], star: { version: 1, manual: false, newer: null, follows: null }, starFileMissing: false, linkable: [] },
+      { id: TIKTOK, history: [1, 3], star: { version: 3, manual: false, newer: null, follows: null }, starFileMissing: false, linkable: [{ primary: REEL, ok: true }, { primary: POST, ok: false, reason: 'size' }] },
+    ] };
+    render(<Harness live={emptyLive()} />);
+    await loaded();
+    await userEvent.click(badge('TikTok · Video 9:16'));
+    const pop = await screen.findByRole('dialog', { name: 'Versioni di TikTok · Video 9:16' });
+    expect(within(pop).queryByRole('button', { name: /Collega a Instagram · Post/ })).toBeNull();
+    await userEvent.click(within(pop).getByRole('button', { name: `Collega a ${REEL_LABEL}` }));
+    await waitFor(() => expect(api.setFormatLink).toHaveBeenCalledWith('acme', 'lancio', TIKTOK, REEL));
+  });
+
+  it('maps a refused ★ to a clear message', async () => {
+    detail = linked();
+    api.setExportPick.mockRejectedValueOnce(Object.assign(new Error('raw'), { code: 'pick-file-missing' }));
+    render(<Harness live={emptyLive()} />);
+    await loaded();
+    await userEvent.click(badge(REEL_LABEL));
+    await userEvent.click(within(await screen.findByRole('dialog', { name: `Versioni di ${REEL_LABEL}` })).getByRole('button', { name: 'Usa la v1 per l’export' }));
+    expect((await screen.findByText(new RegExp(`Il file ${REEL_LABEL.replace('/', '\\/')} della v1 manca sul disco`))).closest('[role="alert"]')).not.toBeNull();
+  });
+
+  it('retries a ★ while the versions are being hashed, then says so calmly', async () => {
+    const { __resetToasts, getToasts } = await import('../src/ui/toast.tsx');
+    __resetToasts();
+    detail = linked();
+    api.setExportPick.mockRejectedValue(Object.assign(new Error('raw'), { code: 'hashes-pending', retryAfterSec: 0 }));
+    try {
+      render(<Harness live={emptyLive()} />);
+      await loaded();
+      await userEvent.click(badge(REEL_LABEL));
+      await userEvent.click(within(await screen.findByRole('dialog', { name: `Versioni di ${REEL_LABEL}` })).getByRole('button', { name: 'Usa la v1 per l’export' }));
+      await waitFor(() => expect(getToasts().some((x) => x.text === 'Sto ancora calcolando le versioni: riprova fra un momento')).toBe(true));
+      expect(api.setExportPick).toHaveBeenCalledTimes(3);
+      expect(screen.queryByRole('alert')).toBeNull();
+    } finally { api.setExportPick.mockReset(); api.setExportPick.mockImplementation(async () => detail); }
+  });
+
+  it('hashes finished in the background arrive with the creative broadcast: the history is refetched', async () => {
+    const unhashed = linked();
+    unhashed.versions = unhashed.versions.map((v) => ({ ...v, outputs: v.outputs.map(({ sha256: _s, ...o }) => o) }));
+    detail = unhashed;
+    const { rerender } = render(<Harness live={emptyLive()} />);
+    await loaded();
+    await userEvent.click(badge(REEL_LABEL));
+    // Without hashes every version counts as a change.
+    expect(within(await screen.findByRole('dialog', { name: `Versioni di ${REEL_LABEL}` })).getAllByRole('button', { name: /^Guarda la v/ })).toHaveLength(3);
+    await userEvent.keyboard('{Escape}');
+    detail = linked();
+    await act(async () => { rerender(<Harness live={{ ...emptyLive(), creativeTicks: { 'acme/lancio': 1 } } as unknown as EventsState} />); });
+    await waitFor(() => expect(api.getCreative.mock.calls.length).toBeGreaterThanOrEqual(2));
+    await userEvent.click(badge(REEL_LABEL));
+    await waitFor(async () => expect(within(await screen.findByRole('dialog', { name: `Versioni di ${REEL_LABEL}` })).getAllByRole('button', { name: /^Guarda la v/ })).toHaveLength(2));
+  });
+
+  it('a targeted job renders only its formats and their followers', async () => {
+    detail = linked();
+    const job = { id: 'j1', key: 'creative:/w:acme:lancio', kind: 'creative', label: 'x', state: 'running', createdAt: at, formats: [REEL] };
+    render(<Harness live={{ ...emptyLive(), jobs: { j1: job } } as unknown as EventsState} />);
+    await loaded();
+    expect(head(REEL).textContent).toContain('In render…');
+    expect(head(TIKTOK).textContent).toContain('In render…');
+    expect(head(POST).textContent).not.toContain('In render…');
+    expect(document.querySelector(`[data-board="${POST}"] .ms-shimmer`)).toBeNull();
+    expect(document.querySelector(`[data-board="${REEL}"] .ms-shimmer`)).not.toBeNull();
+  });
+
+  it('the bar’s "Versions" opens the creative timeline with Restart from here and Show in Finder', async () => {
+    detail = linked();
+    render(<Harness live={emptyLive()} />);
+    await loaded();
+    const button = screen.getByRole('button', { name: 'Versioni (3): apri la cronologia della creatività' });
+    expect(button.textContent).toContain('Versioni');
+    // Clickable inside the title bar's drag region (desktop): a no-drag control in a bar slot; its popover is portalled.
+    expect(button.classList.contains('ms-no-drag')).toBe(true);
+    expect(button.closest('.ms-bar-slot')).not.toBeNull();
+    await userEvent.click(button);
+    const menu = await screen.findByRole('dialog', { name: 'Versioni' });
+    expect(within(menu).getByText('Solo il post')).toBeTruthy();
+    await userEvent.click(within(menu).getByRole('button', { name: /^Versione 1 ·/ }));
+    expect(within(menu).getByText('La prossima modifica parte dalla v1. Le versioni successive restano nella cronologia.')).toBeTruthy();
+    await userEvent.click(within(menu).getByRole('button', { name: 'Mostra nel Finder' }));
+    expect(api.revealVersion).toHaveBeenCalledWith('acme', 'lancio', 1);
+    await userEvent.click(button);
+    const again = await screen.findByRole('dialog', { name: 'Versioni' });
+    await userEvent.click(within(again).getByRole('button', { name: /^Versione 2 ·/ }));
+    await userEvent.click(within(again).getByRole('button', { name: 'Riparti da qui' }));
+    expect(api.restoreVersion).toHaveBeenCalledWith('acme', 'lancio', 2);
+  });
+});
+
+describe('CreativeCanvas · board header styles', () => {
+  it('a control in a clipped header line draws its focus ring inside itself', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { dirname, join } = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/screens/canvas.css'), 'utf8');
+    expect(css).toMatch(/\.ms-cv-board-line \{[^}]*overflow: hidden/);
+    expect(css).toMatch(/\.ms-cv-board-line :focus-visible \{ outline-offset: -2px; \}/);
   });
 });

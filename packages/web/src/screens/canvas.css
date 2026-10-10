@@ -50,6 +50,8 @@
 .ms-cv-board.ms-drafting { position: relative; z-index: 5; }
 .ms-cv-board-head { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
 .ms-cv-board-line { display: flex; align-items: center; gap: 6px; height: 20px; min-width: 0; overflow: hidden; }
+/* The line clips (ellipsis): a control in it draws its focus ring inside its own box, never cut by the line. */
+.ms-cv-board-line :focus-visible { outline-offset: -2px; }
 .ms-cv-board-name { color: var(--text); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-cv-board-slot { display: contents; }
 .ms-cv-board-sub { font-size: 11px; color: var(--muted); white-space: nowrap; }
@@ -195,6 +197,31 @@
 .ms-vmenu-note { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-vmenu-explain { margin: 6px 8px 0; font-size: 11.5px; line-height: 1.45; color: var(--muted); text-wrap: pretty; }
 .ms-vmenu-foot { display: flex; gap: 6px; padding: 8px 4px 2px; margin-top: 6px; border-top: 1px solid var(--line2); }
+
+/* Per-format versions (Phase 9): the board's "★ v5 ▾" badge, "viewing v3", the follower's link chip and the popover's ★. */
+.ms-fvb { cursor: pointer; }
+.ms-fvb svg { transition: transform var(--d-s) var(--e-std); }
+.ms-fvb.ms-open svg { transform: rotate(180deg); }
+.ms-fvb-viewing { font-size: 11px; color: var(--accentText); white-space: nowrap; flex: none; }
+.ms-fv-linkchip { height: 20px; padding: 0 7px; font-size: 11px; gap: 4px; flex: none; }
+.ms-fvpop-row { display: flex; align-items: center; gap: 2px; border-radius: 8px; }
+.ms-fvpop-row > .ms-vmenu-row { flex: 1; min-width: 0; }
+.ms-fvpop-star {
+  flex: none; width: 28px; height: 28px; margin: 0; padding: 0; border: 0; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; color: var(--muted); cursor: pointer; transition: background var(--d-s) var(--e-std), color var(--d-s) var(--e-std);
+}
+.ms-fvpop-star:hover { background: var(--field); color: var(--text); }
+.ms-fvpop-star.ms-on, .ms-fvpop-star.ms-on:hover { color: var(--accentText); background: transparent; cursor: default; }
+.ms-fvpop-warn { display: flex; align-items: flex-start; gap: 6px; padding: 6px 8px; margin: 0 4px 6px; border-radius: 8px; color: var(--text); background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); }
+.ms-fvpop-warn svg { color: var(--warn); flex: none; margin-top: 2px; }
+.ms-fvpop-links { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 0 0 2px; }
+.ms-fvpop-links .ms-btn { margin: 0 8px; }
+.ms-fvlink { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 6px 8px; font-size: 12px; line-height: 1.45; }
+.ms-fvlink p { margin: 0; color: var(--muted); text-wrap: pretty; }
+.ms-fvlink-star { font-size: 11.5px; color: var(--accentText); }
+.ms-cv-vbtn-count { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ms-fv-badge { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.ms-fv-follows { font-size: 11.5px; color: var(--muted); white-space: nowrap; }
 
 /* Panel tabs. */
 .ms-cv-tabbody { flex: 1; min-height: 0; overflow: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }

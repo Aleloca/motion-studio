@@ -36,6 +36,25 @@ export function boardsOf(formats: string[], presets: FormatPreset[], version: Ve
 }
 
 /**
+ * The boards of a creative with per-format versions (spec §3.1): the brief's formats in order, then outputs of the latest
+ * version outside the brief. Each board shows the file of `source(id)` (a follower: its primary's) at that version.
+ */
+export function boardsWith(formats: string[], presets: FormatPreset[], versions: VersionEntry[], source: (id: string) => { format: string; n: number | null }):
+  Array<BoardModel & { n: number | null }> {
+  const latest = versions.at(-1) ?? null;
+  const ids = [...formats, ...(latest?.outputs.map((o) => o.format).filter((f) => !formats.includes(f)) ?? [])];
+  return [...new Set(ids)].map((id) => {
+    const src = source(id);
+    return {
+      id,
+      preset: presets.find((p) => p.id === id) ?? null,
+      out: src.n === null ? null : versions.find((v) => v.n === src.n)?.outputs.find((o) => o.format === src.format) ?? null,
+      n: src.n,
+    };
+  });
+}
+
+/**
  * Board size at 100% zoom (prototype layout): tall formats 540 px high (a 9:16 is 304×540), other portraits 300 px
  * wide, squares and landscapes 344–420 px wide, banners 520 px wide.
  */
