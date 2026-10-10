@@ -235,6 +235,7 @@ export const it: Messages = {
   outputs: {
     largeFile: (p) => `File pesante: ${p.sizeMB} MB a ${p.mbps} Mbps (circa ${p.targetMbps} Mbps bastano per ${p.channel})`,
     keptUnchanged: (p) => `${p.format} non faceva parte di questa richiesta: il file dell’agente è stato scartato e quello precedente è rimasto invariato`,
+    followerReplaced: (p) => `${p.format}: il file dell’agente è stato scartato; Motion Studio ha copiato al suo posto ${p.primary}`,
   },
   export: {
     absoluteDestination: 'Scegli una cartella di destinazione (percorso assoluto)',

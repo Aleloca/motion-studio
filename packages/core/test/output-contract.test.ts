@@ -283,6 +283,15 @@ describe('outputWarningText outputs.keptUnchanged', () => {
   });
 });
 
+describe('outputWarningText outputs.followerReplaced', () => {
+  it('names the follower and the primary it was copied from', () => {
+    const w = { key: 'outputs.followerReplaced', params: { format: 'tiktok-9x16', primary: 'instagram-reel-9x16' } };
+    expect(outputWarningText(w, 'en')).toMatch(/: the agent’s file was discarded; Motion Studio copied the .+ instead$/);
+    expect(outputWarningText(w, 'en')).not.toContain('kept unchanged');
+    expect(outputWarningText(w, 'it')).toMatch(/Motion Studio ha copiato al suo posto/);
+  });
+});
+
 describe('validateOutputs carried problems and reserved names (review fixes)', () => {
   it('a carried file keeps its inherited problems, also in the version list (once)', async () => {
     await manifest([sq, banner]);

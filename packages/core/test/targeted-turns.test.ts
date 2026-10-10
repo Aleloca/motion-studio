@@ -142,6 +142,17 @@ describe('targeted turns (spec §2.5)', { timeout: 30_000 }, () => {
     expect(v2!.status).toBe('complete');
   });
 
+  it('a follower the agent overwrote is a fresh copy of the new primary: its own note, never "kept unchanged" (I2)', async () => {
+    await setup({ ...baseBrief, formats: [REEL, POST, TIKTOK], links: { [TIKTOK]: REEL } });
+    await run(service.start(ref));
+    process.env.FAKE_CLAUDE_EXTRA_FILES = JSON.stringify([{ format: TIKTOK, file: `${TIKTOK}.mp4`, width: 1080, height: 1920, durationSec: 10 }]);
+    await run(service.start(ref, { text: 'ritocca', pins: [] }, { formats: [REEL] }));
+    const [, v2] = await versions();
+    expect(out(v2!, TIKTOK)!.sha256).toBe(out(v2!, REEL)!.sha256);
+    expect(out(v2!, TIKTOK)!.warnings).toEqual([{ key: 'outputs.followerReplaced', params: { format: TIKTOK, primary: REEL } }]);
+    expect(out(v2!, REEL)!.warnings).toBeUndefined();
+  });
+
   it('"overwrote" also means a file at the carried name the manifest does not list, or a manifest entry under another name', async () => {
     await setup(baseBrief);
     await run(service.start(ref));

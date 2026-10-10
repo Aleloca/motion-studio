@@ -695,9 +695,13 @@ export class CreativeTurnService {
     });
     // An unreadable agent manifest: its own problem says more than "missing format" for each target.
     const manifestProblems = targets.length > 0 && !agentManifest ? (result?.outputs.length === 0 ? result.problems.filter((x) => !final.problems.includes(x)) : []) : [];
-    // "Kept unchanged" only where the core's copy is really there.
+    // A note only where the core's copy is really there: a carried format kept its previous file; a follower got a fresh
+    // copy of its primary (not "the previous one").
+    const note = (f: string) => (Object.hasOwn(materialized, f)
+      ? { key: 'outputs.followerReplaced', params: { format: f, primary: materialized[f]! } }
+      : { key: 'outputs.keptUnchanged', params: { format: f } });
     const outputs = final.outputs.map((o) => (touched.has(o.format) && copied.has(o.format)
-      ? { ...o, warnings: [...(o.warnings ?? []), { key: 'outputs.keptUnchanged', params: { format: o.format } }] } : o));
+      ? { ...o, warnings: [...(o.warnings ?? []), note(o.format)] } : o));
     return {
       outputs, copied,
       // A format the core could not deliver is a problem of the version (a brief format is missing), not of any file.

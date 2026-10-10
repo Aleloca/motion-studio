@@ -237,6 +237,7 @@ export const en = {
   outputs: {
     largeFile: (p: { sizeMB: number; mbps: number; targetMbps: number; channel: string }) => `Large file: ${p.sizeMB} MB at ${p.mbps} Mbps (about ${p.targetMbps} Mbps is plenty for ${p.channel})`,
     keptUnchanged: (p: { format: string }) => `${p.format} was not part of this request: the agent’s file was discarded and the previous one kept unchanged`,
+    followerReplaced: (p: { format: string; primary: string }) => `${p.format}: the agent’s file was discarded; Motion Studio copied the ${p.primary} instead`,
   },
   export: {
     absoluteDestination: 'Choose a destination folder (absolute path)',

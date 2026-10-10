@@ -45,7 +45,7 @@ export type CreativeFile = z.infer<typeof creativeFileSchema>;
 
 /**
  * A non-blocking note on an output file: never a problem, never triggers the fix loop. `key` is an i18n key
- * (today only `outputs.largeFile`) and `params` its values, so the web renders it in the user's language
+ * (`outputs.largeFile`, `outputs.keptUnchanged`, `outputs.followerReplaced`) and `params` its values, so the web renders it in the user's language
  * (see `outputWarningText`). Old versions.json files have none.
  */
 export const outputWarningSchema = z.object({
@@ -144,11 +144,9 @@ export function outputWarningText(w: OutputWarning, locale: Locale): string {
     if (![sizeMB, mbps, targetMbps].every(Number.isFinite)) return w.key;
     return messages(locale).outputs.largeFile({ sizeMB, mbps, targetMbps, channel: channelName(String(w.params.channel ?? ''), locale) });
   }
-  if (w.key === 'outputs.keptUnchanged') {
-    // A catalog format is named in the reader's language; any other id is shown as stored.
-    const id = String(w.params.format ?? '');
-    const preset = DEFAULT_FORMATS.find((p) => p.id === id);
-    return messages(locale).outputs.keptUnchanged({ format: preset ? formatLabel(preset, locale) : id });
-  }
+  // A catalog format is named in the reader's language; any other id is shown as stored.
+  const name = (v: unknown) => { const id = String(v ?? ''); const preset = DEFAULT_FORMATS.find((p) => p.id === id); return preset ? formatLabel(preset, locale) : id; };
+  if (w.key === 'outputs.keptUnchanged') return messages(locale).outputs.keptUnchanged({ format: name(w.params.format) });
+  if (w.key === 'outputs.followerReplaced') return messages(locale).outputs.followerReplaced({ format: name(w.params.format), primary: name(w.params.primary) });
   return w.key;
 }
