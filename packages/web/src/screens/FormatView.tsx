@@ -43,8 +43,6 @@ import { isVideoFile } from '../media.ts';
 import { createClock, useClock, type Clock } from '../ui/clock.ts';
 import { FPS, PLAYER_CONTROLS, round3, timecode, Transport, type Mark, type Speed } from './Transport.tsx';
 
-export { timecode };
-
 /** A comment shows on the picture within this distance of its time (point 38). */
 const PIN_WINDOW = 0.5;
 const ZOOMS = [0.1, 0.25, 0.33, 0.5, 0.67, 0.75, 1, 1.25, 1.5, 2, 3, 4];

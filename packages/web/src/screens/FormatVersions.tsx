@@ -23,8 +23,11 @@ function useWhen() {
 }
 
 export interface VersionActions {
-  /** ★ version `n` of `format` for export (the version the default rule gives clears a manual pick: the core decides). */
-  star(format: string, n: number): void;
+  /**
+   * ★ version `n` of `format` for export (the version the default rule gives clears a manual pick: the core decides).
+   * `done` runs once it is saved; `fail` takes the error message instead of the page (a dialog that stays open shows it).
+   */
+  star(format: string, n: number, opts?: { done?(): void; fail?(text: string): void }): void;
   /** Clears the manual ★ of `format`: back to the default rule ("Auto"). */
   resetStar(format: string): void;
   /** A ★ change of `format` is in flight (its retries included): its ★ buttons and "Reset to Auto" wait. */
@@ -68,7 +71,7 @@ export function useVersionActions({ slug, creative, states, labelOf, resumeFrom,
     if (on) inFlight.current.add(format); else inFlight.current.delete(format);
     if (!life.current.signal.aborted) setPendingTick((x) => x + 1);
   };
-  const run = (call: () => Promise<unknown>, ctx: VersionErrorContext, done?: () => void, pendingFormat?: string) => {
+  const run = (call: () => Promise<unknown>, ctx: VersionErrorContext, done?: () => void, pendingFormat?: string, fail: (text: string) => void = onError) => {
     if (pendingFormat !== undefined) {
       if (inFlight.current.has(pendingFormat)) return;
       setPending(pendingFormat, true);
@@ -82,7 +85,7 @@ export function useVersionActions({ slug, creative, states, labelOf, resumeFrom,
     }).catch((e: unknown) => {
       if (signal.aborted) return;
       if (errorCode(e) === 'hashes-pending') toast.show(fv.errors.hashesPending);
-      else onError(versionErrorText(e, t, ctx));
+      else fail(versionErrorText(e, t, ctx));
     }).finally(() => { if (pendingFormat !== undefined) setPending(pendingFormat, false); });
   };
   const restore = (n: number, done: () => void) => {
@@ -91,11 +94,11 @@ export function useVersionActions({ slug, creative, states, labelOf, resumeFrom,
       .catch((e: unknown) => onError(v.actionFailed({ detail: message(e) })));
   };
   return {
-    star: (format, n) => {
+    star: (format, n, opts) => {
       const label = labelOf(format);
       const follows = states[format]?.follows;
       run(() => api.setExportPick(slug, creative, format, n), { label, n, primary: follows ? labelOf(follows) : undefined },
-        () => toast.show(fv.starToast({ n, label }), { tone: 'ok' }), format);
+        () => { toast.show(fv.starToast({ n, label }), { tone: 'ok' }); opts?.done?.(); }, format, opts?.fail);
     },
     resetStar: (format) => {
       const label = labelOf(format);

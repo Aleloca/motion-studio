@@ -95,7 +95,7 @@ describe('useSyncedMedia', () => {
     act(() => { result.current.seek(-4); });
     expect(a.currentTime).toBe(0);
     act(() => { result.current.seek(99); });
-    expect(a.currentTime).toBe(6);
+    expect(a.currentTime).toBeCloseTo(6 - 0.001, 6);
   });
 
   it('the rate goes to both players', () => {
@@ -149,7 +149,7 @@ describe('useSyncedMedia', () => {
     expect(result.current.duration).toBe(6);
     // A seek past the left's end: the left holds its last frame, paused; the right goes there.
     act(() => { result.current.seek(5); });
-    expect(a.currentTime).toBe(4);
+    expect(a.currentTime).toBeCloseTo(4 - 0.001, 6);
     expect(b.currentTime).toBe(5);
     await act(async () => { result.current.play(); });
     expect(a.play).not.toHaveBeenCalled();
@@ -189,7 +189,8 @@ describe('useSyncedMedia', () => {
     b.currentTime = 3;
     act(() => a.fire('timeupdate'));
     // No "correction" past its end: it holds.
-    expect(b.currentTime).toBe(3);
+    // Already on its last frame (within 1 ms): not sought again.
+    expect(b.currentTime).toBeCloseTo(3, 2);
     expect(b.paused).toBe(true);
     expect(result.current.playing).toBe(true);
   });
@@ -289,12 +290,64 @@ describe('useSyncedMedia', () => {
     const { a, b } = loaded(6, 6);
     const { result, rerender } = setup(a, b);
     await act(async () => { result.current.play(); });
+    a.currentTime = 2;
     const c = new FakeMedia();
     c.load(6);
+    // A new element may arrive mid-way and playing (autoplay, a cached element): it is reset too.
+    c.currentTime = 2;
+    c.paused = false;
     rerender({ a, b: c });
     expect(b.attached()).toBe(0);
+    expect(c.attached()).toBeGreaterThan(0);
     expect(result.current.playing).toBe(false);
-    expect(a.paused).toBe(true);
+    expect([a.paused, c.paused]).toEqual([true, true]);
+    expect([a.currentTime, c.currentTime]).toEqual([0, 0]);
     expect(result.current.clock.get().time).toBe(0);
+    // The new element follows the transport.
+    await act(async () => { result.current.play(); });
+    expect(c.play).toHaveBeenCalledOnce();
+    act(() => { result.current.seek(1.5); });
+    expect(c.currentTime).toBe(1.5);
+  });
+
+  it('at the very end the longer one keeps the time (no jump back to the shorter one’s end)', async () => {
+    const { a, b } = loaded(4, 6);
+    const { result } = setup(a, b);
+    await act(async () => { result.current.play(); });
+    a.currentTime = 4;
+    act(() => { a.paused = true; a.fire('ended'); });
+    b.currentTime = 5;
+    act(flushFrame);
+    expect(result.current.clock.get().time).toBe(5);
+    // Within half a frame of the end both sides are past theirs: still the right one's time.
+    b.currentTime = 5.99;
+    act(flushFrame);
+    expect(result.current.clock.get().time).toBe(5.99);
+  });
+
+  it('a held video is not sought again on every timeupdate', async () => {
+    const { a, b } = loaded(6, 3);
+    const { result } = setup(a, b);
+    await act(async () => { result.current.play(); });
+    a.currentTime = 3.4;
+    b.currentTime = 3;
+    act(() => a.fire('timeupdate'));
+    let seeks = 0;
+    let t = b.currentTime;
+    Object.defineProperty(b, 'currentTime', { get: () => t, set: (v: number) => { seeks += 1; t = v; }, configurable: true });
+    for (const at of [3.6, 3.9, 4.2]) { a.currentTime = at; act(() => a.fire('timeupdate')); }
+    expect(seeks).toBe(0);
+  });
+
+  it('loop keeps a rate other than 1', async () => {
+    const { a, b } = loaded(4, 6);
+    const { result } = setup(a, b, { loop: true, rate: 1.5 });
+    await act(async () => { result.current.play(); });
+    a.currentTime = 4;
+    act(() => { a.paused = true; a.fire('ended'); });
+    b.currentTime = 6;
+    act(() => { b.paused = true; b.fire('ended'); });
+    expect(result.current.playing).toBe(true);
+    expect([a.playbackRate, b.playbackRate]).toEqual([1.5, 1.5]);
   });
 });

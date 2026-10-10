@@ -1164,7 +1164,6 @@ Variabili: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (array JSON)`,
       compare: {
         title: (p) => `Confronta ${p.label}`,
         label: 'Confronta le versioni',
-        format: 'Formato',
         left: 'Sinistra',
         right: 'Destra',
         slider: 'Posizione del divisore',

@@ -4,12 +4,11 @@
 // one leads), or "Overlay": the slider over the two paused frames. "★ Use vN for export" stars either side.
 import type { FormatPreset, VersionEntry } from '@motion-studio/shared';
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
-import { api } from '../api.ts';
 import { useLocale, useT } from '../i18n.tsx';
 import { isVideoFile } from '../media.ts';
 import { Button, Chip, Icon, Modal, Pill, Segmented, cx } from '../ui/index.ts';
 import { useSyncedMedia } from '../ui/useSyncedMedia.ts';
-import { boardSize } from './canvasModel.ts';
+import { boardSize, outputUrl } from './canvasModel.ts';
 import { boardLabel } from './CanvasBoard.tsx';
 import type { VersionActions } from './FormatVersions.tsx';
 import { activatesControl, bare, isTyping } from './keys.ts';
@@ -68,7 +67,7 @@ function CompareBody({ onClose, slug, creative, versions, presets, states, forma
   const media = (n: number): Side | null => {
     const out = versions.find((x) => x.n === n)?.outputs.find((o) => o.format === format);
     if (!out) return null;
-    const rel = (file: string) => api.fileUrl(slug, creative, `outputs/v${n}/${file}`);
+    const rel = (file: string) => outputUrl(slug, creative, n, file);
     return { video: isVideoFile(out.file), src: rel(out.file), poster: out.preview ? rel(out.preview) : undefined, duration: out.durationSec };
   };
   const sides = [media(a), media(b)] as const;
@@ -141,6 +140,7 @@ function CompareBody({ onClose, slug, creative, versions, presets, states, forma
   const tag = (i: 0 | 1, n: number) => (
     <span className={cx('ms-cmp-tag', overlay && i === 1 ? 'ms-cmp-tag-r' : 'ms-cmp-tag-l')} aria-hidden="true">v{n}{n === star ? ' ★' : ''}</span>
   );
+  const failure = (i: 0 | 1, n: number) => (sides[i]?.video && sync.failed[i] ? <span className="ms-cmp-failed" role="alert">{c.videoFailed({ n })}</span> : null);
   // The same two panes in both views (the players are not reloaded): next to each other, or stacked with the left one
   // on top, cut at the divider.
   const pane = (i: 0 | 1, n: number) => {
@@ -154,7 +154,7 @@ function CompareBody({ onClose, slug, creative, versions, presets, states, forma
             <video key={m.src} ref={i === 0 ? setLeft : setRight} src={m.src} poster={m.poster} muted={i === 1} playsInline preload="auto"
               aria-label={`${label} v${n}`} />
           ) : <img key={m.src} src={m.src} alt={`${label} v${n}`} draggable={false} />}
-        {m?.video && sync.failed[i] ? <span className="ms-cmp-failed" role="alert">{c.videoFailed({ n })}</span> : null}
+        {overlay ? null : failure(i, n)}
         {overlay ? null : tag(i, n)}
       </div>
     );
@@ -178,6 +178,12 @@ function CompareBody({ onClose, slug, creative, versions, presets, states, forma
   // ★ either side: the right one first (usually the newer), each version once.
   const starable = state && !state.follows ? [...new Set([b, a])].filter((n) => media(n) !== null) : [];
   const pending = actions.pending(format);
+  // The dialog closes once the ★ is saved; a refusal stays here, in the dialog.
+  const [starError, setStarError] = useState<string | null>(null);
+  const starSide = (n: number) => {
+    setStarError(null);
+    actions.star(format, n, { done: onClose, fail: setStarError });
+  };
 
   return (
     <div ref={root} className="ms-cmp">
@@ -203,6 +209,8 @@ function CompareBody({ onClose, slug, creative, versions, presets, states, forma
                 </div>
                 {tag(0, a)}
                 {tag(1, b)}
+                {/* Over both panes, never under the left one's cut: a failing side says so wherever the divider is. */}
+                {sync.failed[0] || sync.failed[1] ? <div className="ms-cmp-failures">{failure(0, a)}{failure(1, b)}</div> : null}
               </>
             ) : null}
           </div>
@@ -228,10 +236,11 @@ function CompareBody({ onClose, slug, creative, versions, presets, states, forma
         <span className="ms-grow" />
         {starable.length ? (
           <div className="ms-cmp-actions">
+            {starError ? <p role="alert" className="ms-cmp-error">{starError}</p> : null}
             {starable.map((n, i) => (n === star ? (
               <Button key={n} disabled>{c.usedForExport({ n })}</Button>
             ) : (
-              <Button key={n} variant={i === 0 ? 'ink' : 'default'} disabled={pending} onClick={() => { actions.star(format, n); onClose(); }}>{c.useForExport({ n })}</Button>
+              <Button key={n} variant={i === 0 ? 'ink' : 'default'} disabled={pending} onClick={() => starSide(n)}>{c.useForExport({ n })}</Button>
             )))}
           </div>
         ) : null}

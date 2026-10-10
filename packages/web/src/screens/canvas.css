@@ -263,6 +263,9 @@
 .ms-cmp-pane img, .ms-cmp-pane video { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
 .ms-cmp-none { font-size: 12px; color: var(--muted); padding: 12px; text-align: center; }
 .ms-cmp-failed { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 1; padding: 8px 10px; border-radius: 8px; background: var(--mediaScrim); color: var(--onMediaScrim); font-size: 12px; overflow-wrap: anywhere; }
+.ms-cmp-failures { position: absolute; left: 0; right: 0; bottom: 0; z-index: 4; }
+.ms-cmp-failures .ms-cmp-failed { position: static; display: block; margin: 0 8px 8px; }
+.ms-cmp-error { margin: 0; font-size: 12px; color: var(--danger); overflow-wrap: anywhere; }
 .ms-cmp-divider { position: absolute; top: 0; bottom: 0; z-index: 2; width: 2px; margin-left: -1px; background: var(--onMedia); box-shadow: 0 0 8px var(--mediaScrim); outline: none; }
 .ms-cmp-knob {
   position: absolute; top: 50%; left: -13px; width: 28px; height: 28px; margin-top: -14px; border-radius: 50%; background: var(--onMedia); color: var(--onMediaText);

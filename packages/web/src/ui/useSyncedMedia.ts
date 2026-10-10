@@ -12,6 +12,8 @@ export const FRAME_SEC = 1 / 30;
 export const DRIFT_THROTTLE_MS = 250;
 /** Within half a frame of its end a video counts as ended. */
 const EPS = FRAME_SEC / 2;
+/** A held video shows the frame this long before its end. */
+const HOLD_BEFORE_END = 0.001;
 
 /** What the hook uses of a media element (a `<video>`, or a fake in tests). */
 export interface SyncMedia {
@@ -99,20 +101,28 @@ function attach(els: Pair<SyncMedia | null>, env: Env): Controller {
   /** Timeline time `t` is past side i's end: it holds its last frame there. */
   const past = (i: 0 | 1, t: number) => { const d = durOf(i); return d > 0 && t >= d - EPS; };
   /** Whose time is the timeline's: the leader while it runs, else the follower. */
-  const driver = (): 0 | 1 | null => SIDES.find((i) => usable(i) && !past(i, time)) ?? SIDES.find(usable) ?? null;
+  // When every side is past its end (the very end of the timeline), the longer one keeps the time: falling back to the
+  // leader would show the shorter one's end for a frame.
+  const longest = (): 0 | 1 | null => SIDES.filter(usable).reduce<0 | 1 | null>((best, i) => (best === null || durOf(i) > durOf(best) ? i : best), null);
+  const driver = (): 0 | 1 | null => SIDES.find((i) => usable(i) && !past(i, time)) ?? longest();
   const read = () => {
     const d = driver();
     if (d !== null) time = els[d]!.currentTime;
     return d;
   };
-  /** Puts side i at timeline time t; past its end it holds its last frame, paused. Says whether it runs there. */
+  /**
+   * Puts side i at timeline time t; past its end it holds its last frame, paused (just before `duration`: some browsers
+   * show nothing at exactly the end). A held side already there is not sought again. Says whether it runs there.
+   */
   const place = (i: 0 | 1, t: number) => {
     const e = els[i]!;
     const d = durOf(i);
     const held = d > 0 && t >= d - EPS;
-    const at = held ? d : t;
-    if (e.currentTime !== at) e.currentTime = at;
-    if (held && !e.paused) e.pause();
+    if (held) {
+      const at = Math.max(0, d - HOLD_BEFORE_END);
+      if (Math.abs(e.currentTime - at) > HOLD_BEFORE_END) e.currentTime = at;
+      if (!e.paused) e.pause();
+    } else if (e.currentTime !== t) e.currentTime = t;
     return !held;
   };
   const start = (i: 0 | 1) => {

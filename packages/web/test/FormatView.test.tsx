@@ -424,6 +424,28 @@ describe('FormatView · fix round 1', () => {
   });
 });
 
+describe('FormatView · Compare', () => {
+  it('Space and the arrows drive the Compare players, never the page’s video behind the dialog', async () => {
+    detail = makeDetail([version(1), version(2)]);
+    render(<Harness format={VIDEO} />);
+    await screen.findByLabelText('TikTok · Video 9:16 v2', { selector: 'video' });
+    const page = document.querySelector('.ms-fv-media video') as HTMLVideoElement;
+    const bar = document.querySelector('.ms-topbar') as HTMLElement;
+    await userEvent.click(within(bar).getByRole('button', { name: 'TikTok · Video 9:16: si esporta la v2. Apri le sue versioni' }));
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Versioni di TikTok · Video 9:16' })).getByRole('button', { name: 'Confronta' }));
+    const d = await screen.findByRole('dialog', { name: 'Confronta le versioni' });
+    await waitFor(() => expect((within(d).getByRole('button', { name: 'Riproduci (Spazio)' }) as HTMLButtonElement).disabled).toBe(false));
+    play.mockClear();
+    fireEvent.keyDown(d, { key: ' ', code: 'Space' });
+    expect(play.mock.contexts.length).toBe(2);
+    expect(play.mock.contexts).not.toContain(page);
+    fireEvent.keyDown(d, { key: 'ArrowRight' });
+    expect(page.currentTime).toBe(0);
+    // The page's own transport did not move.
+    expect(document.querySelector('.ms-fv-main .ms-fv-play')?.getAttribute('aria-label')).toBe('Riproduci (Spazio)');
+  });
+});
+
 describe('FormatView · per-format versions (Phase 9)', () => {
   const REEL = 'instagram-reel-9x16';
   const REEL_LABEL = 'Instagram · Story/Reel 9:16';

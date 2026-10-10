@@ -104,6 +104,20 @@ describe('CompareDialog · images', () => {
     await waitFor(() => expect(api.setExportPick).toHaveBeenCalledWith('acme', 'lancio', POST, 1));
   });
 
+  it('closes only once the ★ is saved; a refusal stays in the dialog', async () => {
+    api.setExportPick.mockRejectedValueOnce(new Error('disco pieno'));
+    render(<Harness format={POST} initial={[1, 3]} />);
+    const d = await dialog();
+    await userEvent.click(within(d).getByRole('button', { name: '★ Usa la v1 per l’export' }));
+    expect((await within(d).findByRole('alert')).textContent).toContain('disco pieno');
+    expect(screen.getByRole('dialog', { name: 'Confronta le versioni' })).toBe(d);
+    // Nothing went to the page behind it.
+    expect(screen.getAllByRole('alert').every((el) => d.contains(el))).toBe(true);
+    await userEvent.click(within(d).getByRole('button', { name: '★ Usa la v1 per l’export' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Confronta le versioni' })).toBeNull());
+    expect(api.setExportPick).toHaveBeenCalledTimes(2);
+  });
+
   it('a manual ★ says so, and the default version keeps its Auto mark', async () => {
     states[POST] = state(POST, [1, 3], 1);
     render(<Harness format={POST} initial={[1, 3]} />);
@@ -179,6 +193,20 @@ describe('CompareDialog · videos', () => {
     expect(within(d).getByRole('slider', { name: 'Posizione del divisore' })).toBeTruthy();
     // Same players (no reload): still the two versions.
     expect(videos(d).map((v) => v.getAttribute('src'))).toEqual(['/f/acme/lancio/outputs/v1/reel.mp4', '/f/acme/lancio/outputs/v2/reel.mp4']);
+  });
+
+  it('in Overlay a failing side’s message sits above both panes, wherever the divider is', async () => {
+    render(<Harness format={REEL} initial={[1, 2]} />);
+    const d = await dialog();
+    await transportReady(d);
+    await userEvent.click(within(d).getByRole('radio', { name: 'Sovrapposte' }));
+    fireEvent.error(videos(d)[1]!);
+    const alert = await within(d).findByRole('alert');
+    expect(alert.textContent).toBe('Impossibile riprodurre la v2. Il file potrebbe essere stato spostato.');
+    expect(alert.closest('.ms-cmp-pane')).toBeNull();
+    const slider = within(d).getByRole('slider', { name: 'Posizione del divisore' });
+    fireEvent.keyDown(slider, { key: 'End' });
+    expect(within(d).getByRole('alert')).toBe(alert);
   });
 
   it('on a follower it compares and stars its primary’s history', async () => {
