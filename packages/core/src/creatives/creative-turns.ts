@@ -316,6 +316,9 @@ export class CreativeTurnService {
       const j = t().jobs;
       const noAgent = targets.length === 0;
       const primaries = creative.brief.formats.filter((f) => !Object.hasOwn(plan.links, f));
+      // The plan may target more than the request (a primary that cannot be carried, a follower unlinked by its real
+      // duration) or a part of the brief without one (added formats): the summary says what really renders.
+      this.deps.queue.patch(jobId, { formats: targets.length > 0 && targets.length < primaries.length ? [...targets] : undefined });
       const request = message?.text || (message?.pins.length ? j.pinsOnlyRequest : versions.length === 0 ? undefined
         : noAgent ? this.addedFollowersRequest(plan, base!, label, locale)
           : (addFormatsRequest(targets.filter((f) => plan.added.includes(f)), base, n)

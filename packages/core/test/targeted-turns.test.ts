@@ -278,8 +278,12 @@ describe('carry-over safety (review fixes)', { timeout: 30_000 }, () => {
     await setup(baseBrief);
     await run(service.start(ref));
     await writeFile(fileOf(1, `${POST}.mp4`), 'manomesso');
-    await run(service.start(ref, { text: 'solo reel', pins: [] }, { formats: [REEL] }));
+    const started = await service.start(ref, { text: 'solo reel', pins: [] }, { formats: [REEL] });
+    expect(started.formats).toEqual([REEL]);
+    await run(Promise.resolve(started));
     expect(blockFormats((await prompts()).at(-1)!.prompt)).toEqual([REEL, POST]);
+    // The job's summary follows the plan: the post is a target too, so every board renders (no formats).
+    expect(queue.list().find((j) => j.id === started.id)!.formats).toBeUndefined();
     expect((await versions())[1]!.status).toBe('complete');
   });
 

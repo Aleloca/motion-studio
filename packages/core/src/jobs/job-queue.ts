@@ -86,10 +86,13 @@ export class JobQueue {
   }
 
   /** Records agent-neutral details learnt while the job runs (e.g. the session id) and broadcasts them. */
-  patch(id: string, fields: Partial<Pick<JobSummary, 'sessionId' | 'notes'>>): void {
+  patch(id: string, fields: Partial<Pick<JobSummary, 'sessionId' | 'notes' | 'formats'>>): void {
     const entry = this.entries.find((e) => e.summary.id === id);
-    if (!entry || (Object.keys(fields) as Array<keyof typeof fields>).every((k) => entry.summary[k] === fields[k])) return;
+    const same = (k: keyof typeof fields) => JSON.stringify(entry!.summary[k]) === JSON.stringify(fields[k]);
+    if (!entry || (Object.keys(fields) as Array<keyof typeof fields>).every(same)) return;
     Object.assign(entry.summary, fields);
+    // An absent value is removed, never kept as `undefined` (the summary's fields are optional).
+    for (const k of Object.keys(fields) as Array<keyof typeof fields>) if (fields[k] === undefined) delete entry.summary[k];
     this.update(entry);
   }
 
