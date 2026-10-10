@@ -271,7 +271,7 @@ describe('per-version tokens', () => {
     const noop = () => {};
     const ref = { current: null as HTMLButtonElement | null };
     wrap(<VersionTimeline slug="acme" creative="c" versions={versions} resumeFrom={null} buttonRef={ref}
-      actions={{ star: noop, link: noop, unlink: noop, restart: noop, reveal: noop }} />);
+      actions={{ star: noop, resetStar: noop, pending: () => false, link: noop, unlink: noop, restart: noop, reveal: noop }} />);
     fireEvent.click(ref.current!);
     await waitFor(() => expect(document.querySelectorAll('.ms-vmenu-row').length).toBe(2));
     const rows = [...document.querySelectorAll('.ms-vmenu-row')];

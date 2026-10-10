@@ -8,6 +8,8 @@ export interface FormatState {
   /** Creative versions where this format's file is new or changed, ascending. */
   history: number[];
   star: Star;
+  /** The version the default rule stars (spec §2.2: the newest without problems), whatever the manual pick; null for a follower. */
+  defaultVersion: number | null;
   starFileMissing: boolean;
   linkable: FormatSummary['linkable'];
   /** The primary this format follows (it then has no ★ and no history of its own to pick from). */
@@ -30,6 +32,7 @@ export function formatStates(detail: CreativeDetail, presets: FormatPreset[]): R
       id,
       history: s?.history ?? formatHistory(detail.versions, id),
       star,
+      defaultVersion: starOf(detail.versions, id, undefined, links).version,
       starFileMissing: s?.starFileMissing ?? false,
       linkable: s?.linkable ?? brief.formats.filter((p) => p !== id).map((primary) => {
         const c = checkLink(brief, detail.versions, presets, id, primary);
@@ -42,7 +45,7 @@ export function formatStates(detail: CreativeDetail, presets: FormatPreset[]): R
     for (const o of v.outputs) {
       if (out[o.format]) continue;
       const star = starOf(detail.versions, o.format, undefined, undefined);
-      out[o.format] = { id: o.format, history: formatHistory(detail.versions, o.format), star, starFileMissing: false, linkable: [], follows: null };
+      out[o.format] = { id: o.format, history: formatHistory(detail.versions, o.format), star, defaultVersion: star.version, starFileMissing: false, linkable: [], follows: null };
     }
   }
   return out;

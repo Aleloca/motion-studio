@@ -1,10 +1,10 @@
 import { DEFAULT_FORMATS } from '@motion-studio/shared';
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('../src/api.ts', () => ({ api: { fileUrl: () => '' } }));
-const { boardsOf, fitBoards, fitZoom, toScreen, worldAt, worldSize } = await import('../src/screens/canvasModel.ts');
+const { boardsWith, fitBoards, fitZoom, toScreen, worldAt, worldSize } = await import('../src/screens/canvasModel.ts');
 
 describe('canvas fit to view (CV1)', () => {
-  const boards = boardsOf(['tiktok-9x16', 'instagram-post-1x1'], DEFAULT_FORMATS, null);
+  const boards = boardsWith(['tiktok-9x16', 'instagram-post-1x1'], DEFAULT_FORMATS, [], () => ({ format: '', n: null }));
 
   it('measures the world at 100%: tall boards in a row, the others stacked, with padding', () => {
     // 9:16 → 304×540 (+50 head: two 20 px lines, 2 px between, 8 px gap); 1:1 → 344×344 (+50); gap 40; padding 60 each side, 40 top, 140 bottom.

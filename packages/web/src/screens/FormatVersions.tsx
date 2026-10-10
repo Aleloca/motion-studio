@@ -12,7 +12,7 @@ import { isMac } from '../platform.ts';
 import { formatTokens, TokenCount } from '../shell/Tokens.tsx';
 import { Button, Icon, Pill, Popover, cx, toast } from '../ui/index.ts';
 import { outputMedia } from './canvasModel.ts';
-import type { FormatState } from './versionModel.ts';
+import { entryAt, type FormatState } from './versionModel.ts';
 import { errorCode, versionErrorText, withHashRetry, type VersionErrorContext } from './versionErrors.ts';
 import { message } from './common.tsx';
 
@@ -25,6 +25,10 @@ function useWhen() {
 export interface VersionActions {
   /** ★ version `n` of `format` for export (the version the default rule gives clears a manual pick: the core decides). */
   star(format: string, n: number): void;
+  /** Clears the manual ★ of `format`: back to the default rule ("Auto"). */
+  resetStar(format: string): void;
+  /** A ★ change of `format` is in flight (its retries included): its ★ buttons and "Reset to Auto" wait. */
+  pending(format: string): boolean;
   link(follower: string, primary: string): void;
   unlink(follower: string): void;
   /** Restart from version `n` (the whole creative), with Undo back to the previous resume point. */
@@ -43,12 +47,36 @@ export function useVersionActions({ slug, creative, states, labelOf, resumeFrom,
   const t = useT();
   const fv = t.web.formatVersions;
   const v = t.web.canvas.versions;
-  const run = (call: () => Promise<unknown>, ctx: VersionErrorContext, done?: () => void) => {
+  // Leaving the page cancels a retry's wait and silences what is still in flight (no late toast or message).
+  const [life] = useState(() => new AbortController());
+  useEffect(() => () => life.abort(), [life]);
+  const wait = (ms: number) => new Promise<void>((resolve, reject) => {
+    if (life.signal.aborted) { reject(life.signal.reason); return; }
+    const id = setTimeout(resolve, ms);
+    life.signal.addEventListener('abort', () => { clearTimeout(id); reject(life.signal.reason); }, { once: true });
+  });
+  // Formats whose ★ change is in flight: a ref for the synchronous guard (a double click), state to re-render.
+  const inFlight = useRef(new Set<string>());
+  const [, setPendingTick] = useState(0);
+  const setPending = (format: string, on: boolean) => {
+    if (on) inFlight.current.add(format); else inFlight.current.delete(format);
+    if (!life.signal.aborted) setPendingTick((x) => x + 1);
+  };
+  const run = (call: () => Promise<unknown>, ctx: VersionErrorContext, done?: () => void, pendingFormat?: string) => {
+    if (pendingFormat !== undefined) {
+      if (inFlight.current.has(pendingFormat)) return;
+      setPending(pendingFormat, true);
+    }
     onError(null);
-    Promise.resolve().then(() => withHashRetry(call)).then(() => { done?.(); onChanged(); }).catch((e: unknown) => {
+    Promise.resolve().then(() => withHashRetry(call, wait)).then(() => {
+      if (life.signal.aborted) return;
+      done?.();
+      onChanged();
+    }).catch((e: unknown) => {
+      if (life.signal.aborted) return;
       if (errorCode(e) === 'hashes-pending') toast.show(fv.errors.hashesPending);
       else onError(versionErrorText(e, t, ctx));
-    });
+    }).finally(() => { if (pendingFormat !== undefined) setPending(pendingFormat, false); });
   };
   const restore = (n: number, done: () => void) => {
     onError(null);
@@ -60,8 +88,13 @@ export function useVersionActions({ slug, creative, states, labelOf, resumeFrom,
       const label = labelOf(format);
       const follows = states[format]?.follows;
       run(() => api.setExportPick(slug, creative, format, n), { label, n, primary: follows ? labelOf(follows) : undefined },
-        () => toast.show(fv.starToast({ n, label }), { tone: 'ok' }));
+        () => toast.show(fv.starToast({ n, label }), { tone: 'ok' }), format);
     },
+    resetStar: (format) => {
+      const label = labelOf(format);
+      run(() => api.setExportPick(slug, creative, format, null), { label }, () => toast.show(fv.resetToast({ label }), { tone: 'ok' }), format);
+    },
+    pending: (format) => inFlight.current.has(format),
     link: (follower, primary) => {
       const label = labelOf(follower);
       const reason = states[follower]?.linkable.find((l) => l.primary === primary)?.reason;
@@ -147,7 +180,10 @@ function VersionsPopover({ slug, creative, label, state, versions, shown, resume
     const out = ver?.outputs.find((o) => o.format === state.id);
     return ver && out ? [{ ver, out }] : [];
   });
-  const canRestart = shown !== null && shown !== (resumeFrom ?? latest);
+  // Restarting is offered when the file on screen is not the one the next change starts from: compared as history entries,
+  // so a format carried unchanged since its last change (its file is the same in the resume version) offers none.
+  const canRestart = shown !== null && shown !== entryAt(versions, state, resumeFrom ?? latest);
+  const pending = actions.pending(state.id);
   const links = state.linkable.filter((l) => l.ok);
   return (
     <div className="ms-vmenu ms-fvpop">
@@ -162,11 +198,12 @@ function VersionsPopover({ slug, creative, label, state, versions, shown, resume
           const note = ver.request.trim() || v.fromBrief;
           const isStar = ver.n === star;
           const on = ver.n === shown;
+          const auto = ver.n === state.defaultVersion;
           const tokens = ver.usage ? t.web.usage.tokens({ count: formatTokens(locale, shownTotal(ver.usage.tokens)) }) : null;
           return (
             <div key={ver.n} data-row="" className={cx('ms-fvpop-row', on && 'ms-on')}>
               <button type="button" className={cx('ms-vmenu-row', on && 'ms-on')} aria-pressed={on}
-                aria-label={[fv.viewRow({ n: ver.n, when: when(ver.createdAt), note }), tokens].filter(Boolean).join(' · ')}
+                aria-label={[fv.viewRow({ n: ver.n, when: when(ver.createdAt), note }), tokens, auto ? fv.autoTip : null].filter(Boolean).join(' · ')}
                 onClick={() => { onView(ver.n); close(); }}>
                 <span className="ms-vmenu-thumb" aria-hidden="true">
                   {thumb.video ? <video src={thumb.src} muted preload="metadata" /> : <img src={thumb.src} alt="" />}
@@ -175,12 +212,13 @@ function VersionsPopover({ slug, creative, label, state, versions, shown, resume
                   <span className="ms-vmenu-line"><b>v{ver.n}</b><span className="ms-vmenu-when">{when(ver.createdAt)}</span>
                     {on && !isStar ? <Pill>{fv.viewingTag}</Pill> : null}
                     {isStar && state.star.manual ? <Pill tone="accent">{fv.manual}</Pill> : null}
+                    {auto ? <span className="ms-fvpop-auto" title={fv.autoTip}><Pill>{fv.auto}</Pill></span> : null}
                     {ver.status === 'incomplete' ? <Pill tone="warn">{v.incomplete}</Pill> : null}
                     <TokenCount tokens={ver.usage ? shownTotal(ver.usage.tokens) : null} className="ms-vmenu-tokens" /></span>
                   <span className="ms-vmenu-note">{note}</span>
                 </span>
               </button>
-              <button type="button" className={cx('ms-fvpop-star', isStar && 'ms-on')} aria-pressed={isStar}
+              <button type="button" className={cx('ms-fvpop-star', isStar && 'ms-on')} aria-pressed={isStar} disabled={pending && !isStar} aria-busy={pending || undefined}
                 aria-label={isStar ? fv.starred({ n: ver.n }) : fv.star({ n: ver.n })} title={isStar ? fv.starred({ n: ver.n }) : fv.star({ n: ver.n })}
                 onClick={() => { if (!isStar) actions.star(state.id, ver.n); }}>
                 <Icon name="star" size={14} fill={isStar} />
@@ -203,6 +241,9 @@ function VersionsPopover({ slug, creative, label, state, versions, shown, resume
       <div className="ms-vmenu-foot">
         <Button size="sm" className="ms-grow" disabled={rows.length < 2} onClick={() => { close(); onCompare(); }}>{v.compare}</Button>
         {canRestart ? <Button size="sm" className="ms-grow" onClick={() => { close(); actions.restart(shown); }}>{v.restart}</Button> : null}
+        {state.star.manual ? (
+          <Button size="sm" className="ms-grow" title={fv.autoTip} loading={pending} onClick={() => actions.resetStar(state.id)}>{fv.resetAuto}</Button>
+        ) : null}
       </div>
     </div>
   );

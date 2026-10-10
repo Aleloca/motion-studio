@@ -1005,6 +1005,95 @@ describe('CreativeCanvas · per-format versions (Phase 9)', () => {
     await waitFor(async () => expect(within(await screen.findByRole('dialog', { name: `Versioni di ${REEL_LABEL}` })).getAllByRole('button', { name: /^Guarda la v/ })).toHaveLength(2));
   });
 
+  it('marks the default-rule entry "Auto" with its tooltip; a manual pick offers Reset to Auto', async () => {
+    const { __resetToasts, getToasts } = await import('../src/ui/toast.tsx');
+    __resetToasts();
+    detail = { ...linked({ exportPicks: { [REEL]: 1 } }), formats: [
+      { id: REEL, history: [1, 3], star: { version: 1, manual: true, newer: 3, follows: null }, starFileMissing: false, linkable: [] },
+    ] };
+    render(<Harness live={emptyLive()} />);
+    await loaded();
+    await userEvent.click(badge(REEL_LABEL));
+    const pop = await screen.findByRole('dialog', { name: `Versioni di ${REEL_LABEL}` });
+    const auto = within(pop).getByText('Auto').closest('[title]')!;
+    expect(auto.getAttribute('title')).toBe('Stella automatica: la versione più recente senza problemi');
+    expect(auto.closest('.ms-fvpop-row')!.textContent).toContain('v3');
+    expect(within(pop).getByRole('button', { name: /^Guarda la v3 .*Stella automatica/ })).toBeTruthy();
+    await userEvent.click(within(pop).getByRole('button', { name: 'Torna ad Auto' }));
+    await waitFor(() => expect(api.setExportPick).toHaveBeenCalledWith('acme', 'lancio', REEL, null));
+    await waitFor(() => expect(getToasts().some((x) => x.text === `${REEL_LABEL} torna ad avere la stella automatica`)).toBe(true));
+  });
+
+  it('without a manual pick there is no Reset to Auto', async () => {
+    detail = linked();
+    render(<Harness live={emptyLive()} />);
+    await loaded();
+    await userEvent.click(badge(REEL_LABEL));
+    const pop = await screen.findByRole('dialog', { name: `Versioni di ${REEL_LABEL}` });
+    expect(within(pop).queryByRole('button', { name: 'Torna ad Auto' })).toBeNull();
+    expect(within(pop).getByText('Auto')).toBeTruthy();
+  });
+
+  it('a carried format (unchanged since v1, latest v3) offers no Restart from here', async () => {
+    detail = linked();
+    render(<Harness live={emptyLive()} />);
+    await loaded();
+    await userEvent.click(badge('Instagram · Post 1:1'));
+    const pop = await screen.findByRole('dialog', { name: 'Versioni di Instagram · Post 1:1' });
+    expect(within(pop).queryByRole('button', { name: 'Riparti da qui' })).toBeNull();
+    expect(within(pop).queryByText(/La prossima modifica parte dalla v1/)).toBeNull();
+  });
+
+  it('a ★ in flight disables the ★ buttons: a double click makes one request', async () => {
+    detail = linked();
+    let release!: () => void;
+    api.setExportPick.mockImplementationOnce(() => new Promise((r) => { release = () => r(detail); }));
+    render(<Harness live={emptyLive()} />);
+    await loaded();
+    await userEvent.click(badge(REEL_LABEL));
+    const pop = await screen.findByRole('dialog', { name: `Versioni di ${REEL_LABEL}` });
+    const star = within(pop).getByRole('button', { name: 'Usa la v1 per l’export' }) as HTMLButtonElement;
+    fireEvent.click(star);
+    fireEvent.click(star);
+    await waitFor(() => expect(star.disabled).toBe(true));
+    fireEvent.click(star);
+    expect(api.setExportPick).toHaveBeenCalledTimes(1);
+    await act(async () => { release(); });
+    await waitFor(() => expect(star.disabled).toBe(false));
+  });
+
+  it('leaving the page during a hashes-pending retry stops it: no more requests, no late toast', async () => {
+    const { __resetToasts, getToasts } = await import('../src/ui/toast.tsx');
+    __resetToasts();
+    detail = linked();
+    api.setExportPick.mockRejectedValue(Object.assign(new Error('raw'), { code: 'hashes-pending', retryAfterSec: 1 }));
+    try {
+      const { unmount } = render(<Harness live={emptyLive()} />);
+      await loaded();
+      await userEvent.click(badge(REEL_LABEL));
+      await userEvent.click(within(await screen.findByRole('dialog', { name: `Versioni di ${REEL_LABEL}` })).getByRole('button', { name: 'Usa la v1 per l’export' }));
+      await waitFor(() => expect(api.setExportPick).toHaveBeenCalledTimes(1));
+      unmount();
+      await new Promise((r) => setTimeout(r, 1300));
+      expect(api.setExportPick).toHaveBeenCalledTimes(1);
+      expect(getToasts().some((x) => /calcolando|esporterà/.test(x.text))).toBe(false);
+    } finally { api.setExportPick.mockReset(); api.setExportPick.mockImplementation(async () => detail); }
+  });
+
+  it('"View vN" on a version card shows every board as it was in vN', async () => {
+    detail = linked();
+    conversation = [{ type: 'version', at, n: 1, status: 'complete' }];
+    render(<Harness live={emptyLive()} />);
+    await loaded();
+    await userEvent.click(screen.getByRole('button', { name: 'Vedi v1' }));
+    await waitFor(() => expect(boardImg(REEL).getAttribute('src')).toBe(`/f/acme/lancio/outputs/v1/.previews/${REEL}.jpg`));
+    expect(boardImg(TIKTOK).getAttribute('src')).toBe(`/f/acme/lancio/outputs/v1/.previews/${REEL}.jpg`);
+    // The post's v1 file is its ★: nothing to say.
+    expect(boardImg(POST).getAttribute('src')).toBe(`/f/acme/lancio/outputs/v1/.previews/${POST}.jpg`);
+    expect(head(REEL).textContent).toContain('stai guardando la v1');
+    expect(head(POST).textContent).not.toContain('stai guardando');
+  });
+
   it('a targeted job renders only its formats and their followers', async () => {
     detail = linked();
     const job = { id: 'j1', key: 'creative:/w:acme:lancio', kind: 'creative', label: 'x', state: 'running', createdAt: at, formats: [REEL] };

@@ -6,6 +6,7 @@ import { enter, isSubmitChord } from '../motion/index.ts';
 import { isMac } from '../platform.ts';
 import { Button, Chip, Empty, Icon, Markdown, Textarea, Typing, cx, type IconName } from '../ui/index.ts';
 import { defaultTargets } from '../screens/versionModel.ts';
+import { errorCode, versionErrorText } from '../screens/versionErrors.ts';
 import { message } from '../errors.ts';
 import { ApprovalCard } from './ApprovalCard.tsx';
 import { explanationView, RiskChips } from './RiskChips.tsx';
@@ -548,8 +549,18 @@ function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemoveP
   const [choice, setChoice] = useState<string[] | null | undefined>(undefined);
   const primaryIds = appliesTo?.primaries.map((p) => p.id) ?? [];
   const primaryOf = (id: string) => appliesTo?.followerOf(id) ?? id;
-  const fromPins = appliesTo ? (pins.length ? defaultTargets(pins.map((p) => p.format), primaryOf, primaryIds) : appliesTo.fallback ?? null) : null;
-  const targets = appliesTo ? (choice !== undefined ? choice : fromPins) : null;
+  const fromPins = appliesTo ? (pins.length ? defaultTargets(pins.map((p) => p.format), primaryOf, primaryIds) : appliesTo.fallback?.filter((id) => primaryIds.includes(id)) ?? null) : null;
+  // A chosen format that is no longer a primary of the brief (removed, or now linked) is dropped; nothing left: the default.
+  const kept = Array.isArray(choice) ? choice.filter((id) => primaryIds.includes(id)) : choice;
+  const targets = appliesTo ? (kept === undefined || (Array.isArray(kept) && kept.length === 0) ? (fromPins?.length ? fromPins : null) : kept) : null;
+  const primaryKey = primaryIds.join(',');
+  useEffect(() => {
+    setChoice((ch) => {
+      if (!Array.isArray(ch)) return ch;
+      const next = ch.filter((id) => primaryKey.split(',').includes(id));
+      return next.length === ch.length ? ch : next.length ? next : undefined;
+    });
+  }, [primaryKey]);
   const toggleTarget = (id: string) => {
     const now = targets ?? [];
     const next = now.includes(id) ? now.filter((x) => x !== id) : primaryIds.filter((x) => x === id || now.includes(x));
@@ -569,7 +580,8 @@ function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemoveP
       onSent?.({ pins: body.pins ?? [] });
     } catch (e) {
       // The text stays in the box: explain and say what to do; a 409 means a turn is already running.
-      setError(e instanceof ApiError && e.status === 409 ? c.sendBusy : c.sendFailed({ detail: message(e) }));
+      // A coded refusal (e.g. `formats-not-in-brief`) has its own clear message; a 409 means a turn is already running.
+      setError(errorCode(e) ? versionErrorText(e, t, { label: '' }) : e instanceof ApiError && e.status === 409 ? c.sendBusy : c.sendFailed({ detail: message(e) }));
       inFlight.current = false;
     } finally { setSending(false); }
   };

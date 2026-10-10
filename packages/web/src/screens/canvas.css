@@ -179,7 +179,7 @@
 /* Version history popover. */
 .ms-vmenu { display: flex; flex-direction: column; }
 .ms-vmenu-head { display: flex; align-items: baseline; justify-content: space-between; padding: 4px 8px 8px; }
-.ms-vmenu-count { font-size: 11px; color: var(--faint); }
+.ms-vmenu-count { font-size: 11px; color: var(--muted); }
 .ms-vmenu-list { display: flex; flex-direction: column; gap: 2px; max-height: 360px; overflow: auto; }
 .ms-vmenu-row {
   display: flex; align-items: center; gap: 10px; width: 100%; min-height: 0; padding: 6px 8px; margin: 0; border: 0; border-radius: 8px;
@@ -192,7 +192,7 @@
 .ms-vmenu-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .ms-vmenu-line { display: flex; align-items: center; gap: 6px; }
 .ms-vmenu-line .ms-pill { height: 18px; font-size: 10px; }
-.ms-vmenu-when { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.ms-vmenu-when { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .ms-vmenu-tokens { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--muted); }
 .ms-vmenu-note { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-vmenu-explain { margin: 6px 8px 0; font-size: 11.5px; line-height: 1.45; color: var(--muted); text-wrap: pretty; }
@@ -211,6 +211,8 @@
   background: transparent; color: var(--muted); cursor: pointer; transition: background var(--d-s) var(--e-std), color var(--d-s) var(--e-std);
 }
 .ms-fvpop-star:hover { background: var(--field); color: var(--text); }
+.ms-fvpop-star:disabled { cursor: progress; background: transparent; color: var(--muted); }
+.ms-fvpop-auto { display: inline-flex; cursor: help; }
 .ms-fvpop-star.ms-on, .ms-fvpop-star.ms-on:hover { color: var(--accentText); background: transparent; cursor: default; }
 .ms-fvpop-warn { display: flex; align-items: flex-start; gap: 6px; padding: 6px 8px; margin: 0 4px 6px; border-radius: 8px; color: var(--text); background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); }
 .ms-fvpop-warn svg { color: var(--warn); flex: none; margin-top: 2px; }

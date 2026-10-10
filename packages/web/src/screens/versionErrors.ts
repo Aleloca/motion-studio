@@ -56,6 +56,8 @@ export function versionErrorText(e: unknown, t: T, ctx: VersionErrorContext): st
   switch (errorCode(e)) {
     case 'hashes-pending': return x.hashesPending;
     case 'pick-follower': return x.pickFollower({ label: ctx.label, primary });
+    case 'format-not-in-brief': return x.notInBrief({ label: ctx.label });
+    case 'pick-no-file': return x.pickNoFile({ label: ctx.label, n: ctx.n ?? 0 });
     case 'pick-file-missing': return x.pickFileMissing({ label: ctx.label, n: ctx.n ?? 0 });
     case 'version-not-found': return ctx.n !== undefined ? x.versionNotFound({ n: ctx.n }) : x.failed({ detail: message(e) });
     case 'link-self': return x.linkSelf;

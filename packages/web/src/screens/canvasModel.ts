@@ -19,22 +19,6 @@ export function outputMedia(slug: string, creative: string, n: number, out: Outp
   return out.preview ? { src: rel(out.preview), video: false } : { src: rel(out.file), video: true };
 }
 
-/** The version's thumbnail (the core's cover rule: the first output, its poster when it has one). */
-export function versionThumb(slug: string, creative: string, v: VersionEntry): Media | null {
-  const first = v.outputs[0];
-  return first ? outputMedia(slug, creative, v.n, first) : null;
-}
-
-/** The boards of a creative: the brief's formats in order, then outputs of the version outside the brief. */
-export function boardsOf(formats: string[], presets: FormatPreset[], version: VersionEntry | null): BoardModel[] {
-  const ids = [...formats, ...(version?.outputs.map((o) => o.format).filter((f) => !formats.includes(f)) ?? [])];
-  return [...new Set(ids)].map((id) => ({
-    id,
-    preset: presets.find((p) => p.id === id) ?? null,
-    out: version?.outputs.find((o) => o.format === id) ?? null,
-  }));
-}
-
 /**
  * The boards of a creative with per-format versions (spec §3.1): the brief's formats in order, then outputs of the latest
  * version outside the brief. Each board shows the file of `source(id)` (a follower: its primary's) at that version.

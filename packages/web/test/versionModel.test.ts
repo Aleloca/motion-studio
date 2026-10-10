@@ -34,6 +34,12 @@ describe('formatStates', () => {
     expect(s[REEL]!.star.version).toBe(3);
     expect(s[TIKTOK]!.follows).toBe(REEL);
     expect(s[TIKTOK]!.star.version).toBeNull();
+    expect(s[REEL]!.defaultVersion).toBe(3);
+  });
+  it('the default-rule version stays known under a manual pick', () => {
+    const s = formatStates(detailOf(versions, { exportPicks: { [REEL]: 1 } }), DEFAULT_FORMATS);
+    expect(s[REEL]!.star).toMatchObject({ version: 1, manual: true });
+    expect(s[REEL]!.defaultVersion).toBe(3);
   });
   it('prefers the core summary', () => {
     const d = { ...detailOf(versions), formats: [{ id: REEL, history: [1], star: { version: 1, manual: true, newer: 3, follows: null }, starFileMissing: true, linkable: [] }] };
@@ -100,6 +106,8 @@ describe('version action errors', () => {
     expect(versionErrorText(coded('link-chain'), t, ctx)).toMatch(/^TikTok can’t follow Reel: a linked format/);
     expect(versionErrorText(coded('link-incompatible'), t, { ...ctx, reason: 'duration' })).toBe('TikTok can’t follow Reel: the main format is longer than its maximum duration.');
     expect(versionErrorText(coded('link-incompatible'), t, ctx)).toBe('server text');
+    expect(versionErrorText(coded('format-not-in-brief'), t, ctx)).toBe('TikTok is no longer in the brief. Reload the creative.');
+    expect(versionErrorText(coded('pick-no-file'), t, ctx)).toBe('v3 has no TikTok file: it can’t be used for export.');
     expect(versionErrorText(coded('job-running'), t, ctx)).toMatch(/^Wait for the current generation/);
     expect(versionErrorText(coded('formats-not-in-brief'), t, ctx)).toMatch(/^None of the chosen formats/);
     expect(versionErrorText(new Error('boom'), t, ctx)).toBe('That didn’t work: boom');

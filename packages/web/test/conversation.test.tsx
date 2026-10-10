@@ -624,7 +624,7 @@ describe('Conversation · "Applies to" and warnings (Phase 9)', () => {
     render(view({ entries: [], appliesTo, pins: [pin('tiktok')] } as Props));
     expect(chip('Reel').getAttribute('aria-pressed')).toBe('true');
     expect(chip('All formats').getAttribute('aria-pressed')).toBe('false');
-    expect(screen.getByText('TikTok follows Reel: the change applies to both')).toBeTruthy();
+    expect(screen.getByText('TikTok follows Reel: the change applies to both', { selector: 'p' })).toBeTruthy();
     await userEvent.type(screen.getByRole('textbox'), 'Bigger logo');
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'c1', { text: 'Bigger logo', pins: [pin('tiktok')], formats: ['reel'] }));
@@ -647,6 +647,33 @@ describe('Conversation · "Applies to" and warnings (Phase 9)', () => {
     await userEvent.type(screen.getByRole('textbox'), 'x');
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'c1', { text: 'x', pins: [], formats: ['post'] }));
+  });
+
+  it('a follower chip carries its reason as its accessible description', () => {
+    render(view({ entries: [], appliesTo } as Props));
+    const follower = chip('TikTok');
+    const id = follower.getAttribute('aria-describedby')!;
+    expect(document.getElementById(id)!.textContent).toBe('TikTok follows Reel: the change applies to both');
+  });
+
+  it('a chosen format that is no longer a primary is dropped, before sending too', async () => {
+    const { rerender } = render(view({ entries: [], appliesTo } as Props));
+    await userEvent.click(chip('Post'));
+    // The post now follows the reel: only the reel is left, the choice falls back to the default (All).
+    const linked = { primaries: [{ id: 'reel', label: 'Reel', followers: ['TikTok', 'Post'] }, { id: 'story', label: 'Story', followers: [] }], followerOf: (id: string) => (id === 'tiktok' || id === 'post' ? 'reel' : null) };
+    rerender(view({ entries: [], appliesTo: linked } as Props));
+    expect(chip('All formats').getAttribute('aria-pressed')).toBe('true');
+    await userEvent.type(screen.getByRole('textbox'), 'x');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'c1', { text: 'x', pins: [] }));
+  });
+
+  it('a coded send refusal gets its clear message', async () => {
+    api.sendCreativeTurn.mockRejectedValueOnce(Object.assign(new ApiError(400, 'raw'), { code: 'formats-not-in-brief' }));
+    render(view({ entries: [], appliesTo } as Props));
+    await userEvent.type(screen.getByRole('textbox'), 'x');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('None of the chosen formats is in the brief any more: choose them again.');
   });
 
   it('no choice without appliesTo (one primary, no version yet)', () => {
