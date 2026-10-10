@@ -251,6 +251,20 @@ describe('format routes', { timeout: 20_000 }, () => {
     expect([res.statusCode, res.json().code]).toEqual([409, 'pick-file-missing']);
   });
 
+  it('a follower\'s starFileMissing is about its own file in its primary\'s ★ version', async () => {
+    const store = await seed();
+    // The Reel's ★ is v2, which has no TikTok file.
+    expect(of(await summary(), TIKTOK)).toMatchObject({ star: { follows: REEL }, starFileMissing: true });
+    await mkdir(store.outputsDir(slug, 4), { recursive: true });
+    await writeFile(join(store.outputsDir(slug, 4), 'reel.mp4'), 'reel-c');
+    await writeFile(join(store.outputsDir(slug, 4), 'tiktok.mp4'), 'reel-c');
+    await store.appendVersion(slug, version(4, [output(REEL, 'reel.mp4', 20), output(TIKTOK, 'tiktok.mp4', 20), output(POST, 'post.mp4')]));
+    await writeFile(join(store.outputsDir(slug, 4), 'post.mp4'), 'post-b');
+    expect(of(await summary(), TIKTOK).starFileMissing).toBe(false);
+    await rm(join(store.outputsDir(slug, 4), 'tiktok.mp4'));
+    expect(of(await summary(), TIKTOK).starFileMissing).toBe(true);
+  });
+
   it('refuses a pick on a hard-linked file', async () => {
     await seed();
     const file = join(projectDir, 'creatives', slug, 'outputs', 'v1', 'reel.mp4');

@@ -13,17 +13,22 @@ export async function outputFileExists(creativeDir: string, versions: VersionEnt
   return Boolean(info?.isFile() && info.nlink === 1);
 }
 
-/** One summary per brief format, in the brief's order (spec §2.1–2.3): history, ★ (effective links) and linkable primaries. */
+/**
+ * One summary per brief format, in the brief's order (spec §2.1–2.3): history, ★ (effective links) and linkable primaries.
+ * `starFileMissing`: the file export would copy is unusable (a follower: its own file in its primary's ★ version).
+ */
 export async function formatSummaries(creativeDir: string, creative: CreativeFile, versions: VersionEntry[], presets: FormatPreset[]): Promise<FormatSummary[]> {
   const { brief } = creative;
   const links = effectiveLinks(brief.links, brief.formats);
   return Promise.all(brief.formats.map(async (id) => {
     const star = starOf(versions, id, creative.exportPicks, links);
+    // A follower is exported as its own file in its primary's ★ version: that is the file that must be usable.
+    const exported = star.follows !== null ? starOf(versions, star.follows, creative.exportPicks, links).version : star.version;
     return {
       id,
       history: formatHistory(versions, id),
       star,
-      starFileMissing: star.version !== null && !(await outputFileExists(creativeDir, versions, star.version, id)),
+      starFileMissing: exported !== null && !(await outputFileExists(creativeDir, versions, exported, id)),
       linkable: brief.formats.filter((p) => p !== id).map((primary) => {
         const c = checkLink(brief, versions, presets, id, primary);
         return c.ok ? { primary, ok: true } : { primary, ok: false, reason: c.reason };

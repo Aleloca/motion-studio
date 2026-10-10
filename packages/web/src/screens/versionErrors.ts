@@ -74,14 +74,19 @@ export function versionErrorText(e: unknown, t: T, ctx: VersionErrorContext): st
 /** A clear, translated message for a failed export (the core's `export-*` codes); other errors keep the server's explanation. */
 export function exportErrorText(e: unknown, t: T): string {
   const x = t.web.exportUi.errors;
+  // The server's own sentence (in the user's language) names the files or names involved: kept, with the hint.
+  const detail = message(e);
   switch (errorCode(e)) {
     case 'export-invalid-picks': return x.invalidPicks;
     case 'export-pick-follower': return x.pickFollower;
-    case 'export-pick-no-file': return x.pickNoFile;
-    case 'export-file-missing': return x.fileMissing;
-    case 'export-name-collision': return x.nameCollision;
+    case 'export-pick-no-file': return x.pickNoFile({ detail });
+    case 'export-follow-mismatch': return x.followMismatch({ detail });
+    case 'export-file-missing': return x.fileMissing({ detail });
+    case 'export-name-collision': return x.nameCollision({ detail });
     case 'export-name-empty': return x.nameEmpty;
     case 'export-invalid-pattern': return x.invalidPattern;
-    default: return message(e);
+    case 'export-invalid-destination': return x.invalidDestination;
+    case 'export-invalid-date': return x.invalidDate;
+    default: return detail;
   }
 }

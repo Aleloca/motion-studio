@@ -19,7 +19,7 @@ const isSafe = (c: string) => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') |
 
 /** A token value as a slug: accents dropped, lowercase, runs of other characters as one `-`, no `-` at the ends. */
 export function slugToken(value: string): string {
-  return trimSeps(value.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-'));
+  return trimSeps(value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-'));
 }
 
 /** Drops separators (`-`, `_`, `.`) at both ends (a loop: no backtracking). */
@@ -48,29 +48,42 @@ function cut(s: string, max: number): string {
  * - an empty result is `{ ok: false, error: 'empty' }`.
  */
 export function renderName(pattern: string, vars: ExportNameVars): RenderedName {
-  const unknown: string[] = [];
+  const unknown = new Set<string>();
   let raw = '';
-  let close = -1; // the first `}` at or after i (cached: each `{` must not rescan, keeping this linear)
   for (let i = 0; i < pattern.length; i++) {
     const c = pattern[i]!;
     if (c === '{') {
-      if (close !== -2 && close < i) close = pattern.indexOf('}', i);
-      if (close === -1) close = -2; // no `}` left: the rest is literal
-      if (close >= 0) {
-        const name = pattern.slice(i + 1, close);
-        if (/^[A-Za-z]+$/.test(name)) {
-          if ((EXPORT_NAME_TOKENS as readonly string[]).includes(name)) raw += slugToken(String(vars[name as ExportNameToken]));
-          else if (!unknown.includes(name)) unknown.push(name);
-          i = close;
-          continue;
-        }
+      // A variable is `{` + letters + `}`: the letters are scanned once (the scan stops at the first non-letter, and the
+      // next `{` starts after it), so the whole loop stays linear.
+      let j = i + 1;
+      while (j < pattern.length && isLetter(pattern[j]!)) j++;
+      if (j > i + 1 && pattern[j] === '}') {
+        const name = pattern.slice(i + 1, j);
+        if ((EXPORT_NAME_TOKENS as readonly string[]).includes(name)) raw += slugToken(String(vars[name as ExportNameToken]));
+        else unknown.add(name);
+        i = j;
+        continue;
       }
     }
     raw += isSafe(c) ? c : '-';
   }
   const collapsed = raw.replace(/[-_.]{2,}/g, (run) => run[0]!);
-  const name = trimSeps(cut(trimSeps(collapsed), EXPORT_NAME_MAX));
-  return name ? { ok: true, name, unknown } : { ok: false, error: 'empty', unknown };
+  const name = notReserved(trimSeps(cut(trimSeps(collapsed), EXPORT_NAME_MAX)));
+  return name ? { ok: true, name, unknown: [...unknown] } : { ok: false, error: 'empty', unknown: [...unknown] };
+}
+
+const isLetter = (c: string) => (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+const RESERVED = new Set(['con', 'prn', 'aux', 'nul', ...[1, 2, 3, 4, 5, 6, 7, 8, 9].flatMap((n) => [`com${n}`, `lpt${n}`])]); // i18n-ignore Windows device names, not text
+
+/**
+ * Windows reserved device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9, any case) as the part before the first dot get a `_`:
+ * `con` → `con_`, `nul.final` → `nul_final` (same length, so the cap still holds).
+ */
+function notReserved(name: string): string {
+  const dot = name.indexOf('.');
+  const head = dot === -1 ? name : name.slice(0, dot);
+  if (!RESERVED.has(head.toLowerCase())) return name;
+  return dot === -1 ? `${name}_` : `${head}_${name.slice(dot + 1)}`;
 }
 
 /** Names that occur more than once, compared case-insensitively (macOS and Windows file systems), lowercased. */
@@ -82,6 +95,14 @@ export function exportNameCollisions(names: string[]): string[] {
     if (seen.has(k)) twice.add(k); else seen.add(k);
   }
   return [...twice];
+}
+
+/** Whether `s` is a real calendar date written `YYYY-MM-DD`. */
+export function isExportDate(s: unknown): s is string {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const [y, m, d] = s.split('-').map(Number) as [number, number, number];
+  const date = new Date(y, m - 1, d);
+  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
 }
 
 /** `YYYY-MM-DD` of `d` in local time. */
@@ -118,7 +139,7 @@ function titleBase(title: string | undefined): string | null {
  * channel and ratio (the output's size when the format is not in the catalog), the format id, the version and the date.
  */
 export function exportNameVars(o: { title?: string; slug: string; format: string; preset: Pick<FormatPreset, 'channel' | 'width' | 'height'> | undefined;
-  size?: { width: number; height: number }; version: number; date: Date }): ExportNameVars {
+  size?: { width: number; height: number }; version: number; date: Date | string }): ExportNameVars {
   const size = o.preset ?? o.size;
   return {
     title: titleBase(o.title) ?? slugToken(o.slug),
@@ -126,6 +147,6 @@ export function exportNameVars(o: { title?: string; slug: string; format: string
     format: o.format,
     ratio: size ? ratioToken(size.width, size.height) : '',
     v: o.version,
-    date: exportDate(o.date),
+    date: typeof o.date === 'string' ? o.date : exportDate(o.date),
   };
 }

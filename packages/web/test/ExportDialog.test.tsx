@@ -30,6 +30,7 @@ const states = (over: Record<string, Partial<FormatState>> = {}) => ({
   [POST]: state(POST, { ...over[POST] }),
 });
 const onSettings = vi.fn();
+const DAY = expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/);
 const open = (s = states(), pattern = '{title}-{format}-v{v}') => render(
   <I18nProvider locale="en">
     <ExportDialog open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions, states: s }} presets={DEFAULT_FORMATS}
@@ -48,11 +49,12 @@ describe('ExportDialog · the starred versions', () => {
     expect(within(dialog).getByRole('heading', { name: 'Export the starred versions' })).toBeTruthy();
     // The row's name, and the live preview of the first one.
     expect(within(dialog).getAllByText('summer-launch-instagram-reel-9x16-v5.mp4')).toHaveLength(2);
-    expect(within(dialog).getByText('★ v5')).toBeTruthy();
+    // The Reel's ★, and the same ★ on its follower.
+    expect(within(dialog).getAllByText('★ v5')).toHaveLength(2);
     expect(within(dialog).getByText('v7 newer')).toBeTruthy();
     // The follower: its own file, in the Reel's ★ (v5), and "follows" instead of a ★.
     expect(within(dialog).getByText('summer-launch-tiktok-9x16-v5.mp4')).toBeTruthy();
-    expect(within(dialog).getByText('follows Story/Reel 9:16')).toBeTruthy();
+    expect(dialog.querySelector('.ms-exp-follows')!.textContent).toBe('follows Story/Reel 9:16★ v5');
     expect(within(dialog).getByText('summer-launch-instagram-post-1x1-v7.png')).toBeTruthy();
     expect(within(dialog).getByRole('button', { name: 'Export 3 files' })).toBeTruthy();
   });
@@ -81,15 +83,32 @@ describe('ExportDialog · the starred versions', () => {
     open();
     await userEvent.click(screen.getByRole('button', { name: 'Export 3 files' }));
     await waitFor(() => expect(api.exportPicks).toHaveBeenCalledOnce());
-    expect(api.exportPicks).toHaveBeenCalledWith('acme', 'c1', { destination: '/out', picks: { [REEL]: 5, [POST]: 7 }, follow: [TIKTOK], pattern: '{title}-{format}-v{v}' });
+    expect(api.exportPicks).toHaveBeenCalledWith('acme', 'c1', { destination: '/out', picks: { [REEL]: 5, [POST]: 7 }, follow: { [TIKTOK]: 5 }, pattern: '{title}-{format}-v{v}', date: DAY });
     expect((await screen.findByRole('status')).textContent).toContain('1 file exported');
   });
 
+  it('a follower exported without its primary sends the version it shows, not a pick', async () => {
+    open();
+    await userEvent.click(screen.getByRole('checkbox', { name: /^Export Instagram · Story\/Reel/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Export 2 files' }));
+    await waitFor(() => expect(api.exportPicks).toHaveBeenCalledWith('acme', 'c1', { destination: '/out', picks: { [POST]: 7 }, follow: { [TIKTOK]: 5 }, pattern: '{title}-{format}-v{v}', date: DAY }));
+  });
+
+  it('a follower whose file in the primary’s ★ is missing is disabled with the reason, which keeps full contrast', () => {
+    open(states({ [TIKTOK]: { starFileMissing: true } }));
+    const check = screen.getByRole('checkbox', { name: /^Export TikTok/ }) as HTMLButtonElement;
+    expect(check.disabled).toBe(true);
+    const reason = screen.getByText('The file of v5 is missing or cannot be read safely');
+    // Only the picture and label of a blocked row are dimmed, not the row (and so not the reason).
+    expect(reason.closest('.ms-exp-row')!.classList.contains('ms-blocked')).toBe(true);
+    expect(reason.closest('.ms-exp-row')!.classList.contains('ms-off')).toBe(false);
+  });
+
   it('shows a mapped message for a coded refusal', async () => {
-    api.exportPicks.mockRejectedValueOnce(new ApiError(409, 'raw', 'export-file-missing'));
+    api.exportPicks.mockRejectedValueOnce(new ApiError(409, 'These files are missing or cannot be read safely, nothing was exported: TikTok · Video 9:16 v5', 'export-file-missing'));
     open();
     await userEvent.click(screen.getByRole('button', { name: 'Export 3 files' }));
-    expect((await screen.findByRole('alert')).textContent).toBe('Some files are missing or cannot be read safely, so nothing was exported. Reopen Export to see which.');
+    expect((await screen.findByRole('alert')).textContent).toBe('These files are missing or cannot be read safely, nothing was exported: TikTok · Video 9:16 v5. Reopen Export to refresh the list.');
   });
 });
 
@@ -122,11 +141,12 @@ describe('ExportDialog · name pattern', () => {
     expect((screen.getByRole('button', { name: 'Export 2 files' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it('refuses a pattern that gives an empty name', async () => {
+  it('refuses a pattern that gives an empty name, and cannot save it as default', async () => {
     open();
     await setPattern('!!!');
     expect(screen.getByRole('alert').textContent).toBe('This pattern gives an empty file name');
     expect((screen.getByRole('button', { name: 'Export 3 files' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Save as default' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('“Save as default” saves the workspace pattern', async () => {

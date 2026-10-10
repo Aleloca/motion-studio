@@ -177,7 +177,8 @@ export function probeConfinedFile(base: string, rel: string): Promise<true | Con
 
 /**
  * Copies `rel` under `base` (confined read, exact real path) to `to`, which must not exist (EEXIST otherwise: never
- * overwrites). A source refused or gone since it was checked throws with code `ECONFINED`.
+ * overwrites). A source refused or gone since it was checked throws with code `ECONFINED`, before `to` is created. A failure
+ * after `to` was created carries `targetCreated: true`.
  */
 export async function copyConfinedFile(base: string, rel: string, to: string): Promise<void> {
   const r = await withConfinedFile(base, rel, true, async (fh) => {
@@ -185,6 +186,9 @@ export async function copyConfinedFile(base: string, rel: string, to: string): P
     try {
       // The write stream closes `out` when done (with autoClose off it never emits `close` and the pipeline would hang).
       await pipeline(fh.createReadStream({ start: 0, autoClose: false }), out.createWriteStream());
+    } catch (e) {
+      // `to` was created by this call (O_EXCL): the caller may remove the partial file.
+      throw Object.assign(e as object, { targetCreated: true });
     } finally {
       await out.close().catch(() => {});
     }

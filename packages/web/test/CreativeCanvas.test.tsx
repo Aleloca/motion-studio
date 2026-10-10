@@ -388,7 +388,7 @@ describe('CreativeCanvas · export', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: 'Scegli…' }));
     await userEvent.click(within(dialog).getByRole('button', { name: 'Esporta 1 file' }));
     await waitFor(() => expect(api.exportPicks).toHaveBeenCalledOnce());
-    expect(api.exportPicks).toHaveBeenCalledWith('acme', 'lancio', { destination: '/Users/me/Consegna', picks: { 'instagram-post-1x1': 1 }, pattern: '{title}-{format}-v{v}' });
+    expect(api.exportPicks).toHaveBeenCalledWith('acme', 'lancio', { destination: '/Users/me/Consegna', picks: { 'instagram-post-1x1': 1 }, pattern: '{title}-{format}-v{v}', date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) });
     expect(await within(dialog).findByText('1 file esportato')).toBeTruthy();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Mostra nel Finder' }));
     expect(revealPath).toHaveBeenCalledWith('/Users/me/Consegna');
@@ -408,7 +408,7 @@ describe('CreativeCanvas · export', () => {
     expect(folder.value).toBe('/Users/me/Ultima');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Esporta 2 file' }));
     expect((await within(dialog).findByRole('alert')).textContent).toContain('Cartella non scrivibile');
-    expect(api.exportPicks).toHaveBeenCalledWith('acme', 'lancio', { destination: '/Users/me/Ultima', picks: { 'instagram-post-1x1': 1, 'tiktok-9x16': 1 }, pattern: '{title}-{format}-v{v}' });
+    expect(api.exportPicks).toHaveBeenCalledWith('acme', 'lancio', { destination: '/Users/me/Ultima', picks: { 'instagram-post-1x1': 1, 'tiktok-9x16': 1 }, pattern: '{title}-{format}-v{v}', date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) });
     // No bridge: no Finder button anywhere.
     expect(within(dialog).queryByRole('button', { name: 'Scegli…' })).toBeNull();
   });
@@ -508,7 +508,7 @@ describe('CreativeCanvas · ported checks', () => {
     // The rows keep the ★ the dialog opened with (v1), not the new version.
     expect(within(dialog).getAllByText('★ v1', { selector: '.ms-exp-ver' })).toHaveLength(2);
     await userEvent.click(within(dialog).getByRole('button', { name: 'Esporta 2 file' }));
-    await waitFor(() => expect(api.exportPicks).toHaveBeenCalledWith('acme', 'lancio', { destination: '/d', picks: { 'instagram-post-1x1': 1, 'tiktok-9x16': 1 }, pattern: '{title}-{format}-v{v}' }));
+    await waitFor(() => expect(api.exportPicks).toHaveBeenCalledWith('acme', 'lancio', { destination: '/d', picks: { 'instagram-post-1x1': 1, 'tiktok-9x16': 1 }, pattern: '{title}-{format}-v{v}', date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) }));
   });
 
   it('ignores canvas shortcuts from a page that is leaving', async () => {

@@ -15,6 +15,10 @@ const isInside = (p: string, base: string) => {
   return a === b || a.startsWith(b.endsWith(sep) ? b : b + sep);
 };
 
+/**
+ * Copies `from` to `to` without overwriting (EEXIST when `to` exists). On a failure after creating `to`, the error carries
+ * `targetCreated: true` so the export removes the partial file; without it nothing is removed.
+ */
 type CopyFn = (from: string, to: string, mode: number) => Promise<void>;
 
 /** Copies without overwriting; null when the computed target would not be a direct child of `dir`. */
@@ -24,7 +28,11 @@ async function copyUnique(copy: CopyFn, from: string, dir: string, stem: string,
     if (dirname(to) !== dir) return null;
     try { await copy(from, to, constants.COPYFILE_EXCL); return to; }
     catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') { (e as { target?: string }).target = to; throw e; }
+      if ((e as NodeJS.ErrnoException).code === 'EEXIST') continue;
+      // Only a file this copy created may be removed: never one that was already there (e.g. the source was refused
+      // before the target was opened).
+      if ((e as { targetCreated?: boolean }).targetCreated) (e as { target?: string }).target = to;
+      throw e;
     }
   }
 }
@@ -67,8 +75,8 @@ interface ExportCommon {
   presets?: FormatPreset[];
   /** The name pattern (`renderName`); the default `{title}-{format}-v{v}` when omitted. */
   pattern?: string;
-  /** The export date (`{date}`); now when omitted. */
-  now?: Date;
+  /** The export date (`{date}`): a Date (local day) or `YYYY-MM-DD`; now when omitted. */
+  now?: Date | string;
   /** A format's display name in messages; its id when omitted. */
   label?: (format: string) => string;
   copy?: CopyFn;
@@ -84,7 +92,7 @@ const plainName = (f: string) => Boolean(f) && f !== '.' && f !== '..' && f === 
  */
 async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refuse' | 'skip', emptyN: number): Promise<ExportResult> {
   const dest = opts.destination.trim();
-  if (!isAbsolute(dest)) throw new WorkspaceError(400, t().export.absoluteDestination);
+  if (!isAbsolute(dest)) throw new CodedError(400, t().export.absoluteDestination, 'export-invalid-destination');
   if (opts.forbiddenRoot) {
     const root = await resolveLoose(opts.forbiddenRoot);
     if (isInside(await resolveLoose(dest), root)) throw new WorkspaceError(400, t().export.outsideWorkspace);
@@ -146,11 +154,14 @@ const isVersionNumber = (n: unknown): n is number => typeof n === 'number' && Nu
  * - `export-file-missing` (409): the file is missing on disk or refused by the confined read;
  * - `export-name-empty`, `export-name-collision` (400): the pattern gives an empty name, or the same name twice.
  */
-export async function exportPicks(opts: ExportCommon & { versions: VersionEntry[]; picks: Record<string, number>; follow?: string[];
+export async function exportPicks(opts: ExportCommon & { versions: VersionEntry[]; picks: Record<string, number>; follow?: string[] | Record<string, number>;
   links?: Record<string, string>; storedPicks?: Record<string, number> }): Promise<ExportResult> {
   const links = opts.links ?? {};
   const label = opts.label ?? ((f: string) => f);
-  const follow = [...new Set(opts.follow ?? [])];
+  // `follow` as a record carries the version the client showed for each follower; a list (older clients) lets the core
+  // resolve it from the primary.
+  const shown: Record<string, number> | null = Array.isArray(opts.follow) || opts.follow === undefined ? null : opts.follow;
+  const follow = shown ? Object.keys(shown) : [...new Set(opts.follow as string[] | undefined ?? [])];
   const pickIds = Object.keys(opts.picks);
   if (!pickIds.length && !follow.length) throw new CodedError(400, t().export.invalidPicks, 'export-invalid-picks');
   const items: ExportItem[] = [];
@@ -172,7 +183,17 @@ export async function exportPicks(opts: ExportCommon & { versions: VersionEntry[
     if (Object.hasOwn(opts.picks, format)) continue; // already refused above when it is a follower
     const primary = Object.hasOwn(links, format) ? links[format]! : null;
     if (primary === null) throw new CodedError(400, t().export.invalidPicks, 'export-invalid-picks');
-    const n = Object.hasOwn(opts.picks, primary) ? opts.picks[primary]! : starOf(opts.versions, primary, opts.storedPicks, links).version;
+    let n: number | null;
+    if (shown) {
+      n = shown[format]!;
+      if (!isVersionNumber(n)) throw new CodedError(400, t().export.invalidPicks, 'export-invalid-picks');
+      if (Object.hasOwn(opts.picks, primary) && opts.picks[primary] !== n) {
+        throw new CodedError(400, t().export.followMismatch({ format: label(format), primary: label(primary), n, p: opts.picks[primary]! }), 'export-follow-mismatch');
+      }
+      if (!opts.versions.some((v) => v.n === n)) throw new CodedError(400, t().export.pickNoFile({ format: label(format), n }), 'export-pick-no-file');
+    } else {
+      n = Object.hasOwn(opts.picks, primary) ? opts.picks[primary]! : starOf(opts.versions, primary, opts.storedPicks, links).version;
+    }
     const it = n === null ? null : itemOf(format, n);
     // The primary's version has no file of the follower (e.g. it was added later): nothing to copy for it.
     if (!it) throw new CodedError(409, t().export.filesMissing({ list: `${label(format)}${n === null ? '' : ` v${n}`}` }), 'export-file-missing');

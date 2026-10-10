@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EXPORT_NAME_MAX, exportDate, exportExtension, exportNameCollisions, exportNameVars, ratioToken, renderName } from '../src/export-name.ts';
+import { EXPORT_NAME_MAX, exportDate, isExportDate, exportExtension, exportNameCollisions, exportNameVars, ratioToken, renderName } from '../src/export-name.ts';
 
 const vars = { title: 'Autumn Sourdough!', channel: 'Instagram', format: 'instagram-reel-9x16', ratio: '9x16', v: 5, date: '2026-10-10' };
 
@@ -45,11 +45,32 @@ describe('renderName', () => {
     expect(r.ok && r.name).toBe('etc-x-y');
     expect(r.ok && /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(r.name)).toBe(true);
   });
-  it('runs in linear time on hostile patterns', () => {
-    const hostile = `${'{'.repeat(50_000)}${'-.'.repeat(50_000)}${'{x'.repeat(50_000)}`;
-    const t0 = performance.now();
-    renderName(hostile, vars);
-    expect(performance.now() - t0).toBeLessThan(500);
+  it('reads each pattern character a bounded number of times on hostile inputs (linear work)', () => {
+    // Work count, not timing: every indexed read of the pattern goes through this proxy. A rescan per `{` (quadratic)
+    // would read the long runs below thousands of times over.
+    const reads = (p: string) => {
+      let count = 0;
+      const proxy = new Proxy(new String(p), {
+        get(target, key) {
+          if (typeof key === 'string' && /^\d+$/.test(key)) count++;
+          const v = Reflect.get(target, key, target);
+          return typeof v === 'function' ? v.bind(target) : v;
+        },
+      });
+      renderName(proxy as unknown as string, vars);
+      return count;
+    };
+    expect(reads('ab{v}')).toBeGreaterThanOrEqual(5); // the proxy does see the reads
+    const n = 5_000;
+    for (const hostile of [`${'{'.repeat(n)}}`, `${'{a'.repeat(n)}}`, `{${'a'.repeat(n)}`, `${'{abc'.repeat(n)}}`, `${'{x}'.repeat(n)}`, '-.'.repeat(n)]) {
+      expect(reads(hostile)).toBeLessThanOrEqual(3 * hostile.length);
+    }
+  });
+  it('suffixes Windows reserved device names, any case', () => {
+    for (const [pattern, name] of [['CON', 'CON_'], ['nul.final', 'nul_final'], ['Com1', 'Com1_'], ['lpt9.x', 'lpt9_x'], ['console', 'console'], ['com0', 'com0'], ['aux-1', 'aux-1']]) {
+      expect(renderName(pattern!, vars)).toEqual({ ok: true, name, unknown: [] });
+    }
+    expect(renderName('{channel}', { ...vars, channel: 'PRN' })).toEqual({ ok: true, name: 'prn_', unknown: [] });
   });
 });
 
@@ -58,8 +79,10 @@ describe('export name helpers', () => {
     expect(exportNameCollisions(['A-v1.mp4', 'a-v1.MP4', 'a-v1.png', 'b.mp4'])).toEqual(['a-v1.mp4']);
     expect(exportNameCollisions(['a.mp4', 'b.mp4'])).toEqual([]);
   });
-  it('exportDate is the local YYYY-MM-DD', () => {
+  it('exportDate is the local YYYY-MM-DD; isExportDate accepts only real dates in that form', () => {
     expect(exportDate(new Date(2026, 0, 5, 23, 59))).toBe('2026-01-05');
+    expect(isExportDate('2026-02-28')).toBe(true);
+    for (const bad of ['2026-02-30', '2026-2-28', '26-02-28', '2026-02-28T00', 20260228, null]) expect(isExportDate(bad)).toBe(false);
   });
   it('exportExtension keeps the phase 7 rule', () => {
     expect(exportExtension('a.MP4')).toBe('.mp4');

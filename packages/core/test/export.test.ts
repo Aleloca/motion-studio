@@ -88,7 +88,7 @@ describe('exportVersion', () => {
     const { copyFile } = await import('node:fs/promises');
     let calls = 0;
     const copy = async (f: string, t: string, m: number) => {
-      if (++calls === 2) { await writeFile(t, 'par'); throw Object.assign(new Error(`ENOSPC: no space left, copyfile '${f}' -> '${t}'`), { code: 'ENOSPC' }); }
+      if (++calls === 2) { await writeFile(t, 'par'); throw Object.assign(new Error(`ENOSPC: no space left, copyfile '${f}' -> '${t}'`), { code: 'ENOSPC', targetCreated: true }); }
       await copyFile(f, t, m);
     };
     const err = await exportVersion({ creativeDir, version, destination: dest, slug: 'x', copy }).catch((e) => e);
@@ -213,6 +213,60 @@ describe('exportPicks', () => {
   it('refuses a pattern that renders an empty name', async () => {
     const e = await exportPicks({ ...base0(), picks: { [reel]: 5 }, pattern: '{nope}!!' }).catch((x) => x);
     expect(e).toMatchObject({ status: 400, apiCode: 'export-name-empty' });
+  });
+  it('never removes a destination file it did not create when a copy fails (source refused after the check)', async () => {
+    await mkdir(dest, { recursive: true });
+    await writeFile(join(dest, 'autumn-launch-instagram-reel-9x16-v5.mp4'), 'mine');
+    const refused = async () => { throw Object.assign(new Error('The source file cannot be read safely'), { code: 'ECONFINED' }); };
+    const e = await exportPicks({ ...base0(), picks: { [reel]: 5 }, copy: refused }).catch((x) => x);
+    expect(e.status).toBe(500);
+    expect(await readFile(join(dest, 'autumn-launch-instagram-reel-9x16-v5.mp4'), 'utf8')).toBe('mine');
+    // The phase 7 path shares the same copy loop.
+    await writeFile(join(dest, 'x-instagram-reel-9x16-v2.mp4'), 'mine too');
+    const old = await exportVersion({ creativeDir, version, destination: dest, slug: 'x', copy: refused }).catch((x) => x);
+    expect(old.status).toBe(500);
+    expect(await readFile(join(dest, 'x-instagram-reel-9x16-v2.mp4'), 'utf8')).toBe('mine too');
+  });
+  it('the real confined copy refuses a source swapped for a symlink after the check, leaving the destination alone', async () => {
+    await mkdir(dest, { recursive: true });
+    const { copyConfinedFile } = await import('../src/brand/agent-guard.ts');
+    const src = join(creativeDir, 'outputs', 'v5', `${reel}.mp4`);
+    await rm(src);
+    await symlink('/etc/hosts', src);
+    const target = join(dest, 'x.mp4');
+    const err = await copyConfinedFile(creativeDir, `outputs/v5/${reel}.mp4`, target).catch((x) => x);
+    expect(err.code).toBe('ECONFINED');
+    expect(err.targetCreated).toBeUndefined();
+    await expect(readFile(target)).rejects.toThrow();
+  });
+  it('exports a follower at the version the client showed (follow as a record), even if the ★ changed since', async () => {
+    // The dialog showed the Reel's ★ v3; the stored ★ is now v5; the Reel itself is not exported.
+    const r = await exportPicks({ ...base0(), picks: {}, follow: { [tiktok]: 3 }, links: { [tiktok]: reel }, storedPicks: {} });
+    expect(files(r)).toEqual(['autumn-launch-tiktok-9x16-v3.mp4']);
+    expect(await readFile(join(dest, 'autumn-launch-tiktok-9x16-v3.mp4'), 'utf8')).toBe(`${tiktok}@v3`);
+  });
+  it('refuses a follower version that differs from its primary\'s pick, or names no version', async () => {
+    const e = await exportPicks({ ...base0(), picks: { [reel]: 5 }, follow: { [tiktok]: 3 }, links: { [tiktok]: reel } }).catch((x) => x);
+    expect(e).toMatchObject({ status: 400, apiCode: 'export-follow-mismatch' });
+    const v = await exportPicks({ ...base0(), picks: {}, follow: { [tiktok]: 9 }, links: { [tiktok]: reel } }).catch((x) => x);
+    expect(v).toMatchObject({ status: 400, apiCode: 'export-pick-no-file' });
+    const bad = await exportPicks({ ...base0(), picks: {}, follow: { [tiktok]: 0 }, links: { [tiktok]: reel } }).catch((x) => x);
+    expect(bad).toMatchObject({ status: 400, apiCode: 'export-invalid-picks' });
+    expect(await readdir(base)).toEqual(['creative']);
+  });
+  it('a name taken in the destination gets -2, and a later name equal to that suffix gets its own suffix: nothing is overwritten', async () => {
+    const channels = [{ ...presets[0]!, channel: 'x' }, { ...presets[1]!, channel: 'x 2' }, presets[2]!];
+    await mkdir(dest, { recursive: true });
+    await writeFile(join(dest, 'x.mp4'), 'mine');
+    const r = await exportPicks({ ...base0(), presets: channels, picks: { [reel]: 5, [tiktok]: 5 }, pattern: '{channel}' });
+    expect(files(r)).toEqual(['x-2.mp4', 'x-2-2.mp4']);
+    expect(await readFile(join(dest, 'x.mp4'), 'utf8')).toBe('mine');
+    expect(await readFile(join(dest, 'x-2.mp4'), 'utf8')).toBe(`${reel}@v5`);
+    expect(await readFile(join(dest, 'x-2-2.mp4'), 'utf8')).toBe(`${tiktok}@v5`);
+  });
+  it('uses the date the client previewed when given', async () => {
+    const r = await exportPicks({ ...base0(), now: '2025-12-31', picks: { [reel]: 5 }, pattern: '{date}-{format}' });
+    expect(files(r)).toEqual(['2025-12-31-instagram-reel-9x16.mp4']);
   });
   it('keeps the safety rules: no overwrite, destinations inside the workspace refused', async () => {
     await exportPicks({ ...base0(), picks: { [reel]: 5 } });

@@ -130,10 +130,11 @@ export const api = {
   restoreVersion: (slug: string, creative: string, n: number) => request<CreativeFile>('POST', `${c(slug, creative)}/versions/${n}/restore`),
   revealVersion: (slug: string, creative: string, n: number) => request<{ ok: true }>('POST', `${c(slug, creative)}/versions/${n}/reveal`),
   /**
-   * Exports the ★ versions (spec §3.3): `picks` format → vN, `follow` the followers (exported in their primary's version),
-   * `pattern` the file name pattern (the workspace default when omitted). Refusals carry an `export-*` code.
+   * Exports the ★ versions (spec §3.3): `picks` format → vN, `follow` follower → the version shown (its primary's ★),
+   * `pattern` the file name pattern (the workspace default when omitted), `date` the `{date}` previewed (YYYY-MM-DD).
+   * Refusals carry an `export-*` code.
    */
-  exportPicks: (slug: string, creative: string, body: { destination: string; picks: Record<string, number>; follow?: string[]; pattern?: string }) =>
+  exportPicks: (slug: string, creative: string, body: { destination: string; picks: Record<string, number>; follow?: Record<string, number>; pattern?: string; date?: string }) =>
     request<{ destination: string; files: Array<{ from: string; to: string }>; skipped: string[] }>('POST', `${c(slug, creative)}/export`, body),
   fileUrl: (slug: string, creative: string, rel: string) => `${c(slug, creative)}/files/${rel.split('/').map(encodeURIComponent).join('/')}`,
 };

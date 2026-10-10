@@ -1,7 +1,7 @@
 import { lstat, realpath } from 'node:fs/promises';
 import { dirname, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { briefSchema, checkLink, defaultLinks, effectiveLinks, formatLabel, issuesText, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
+import { briefSchema, checkLink, defaultLinks, effectiveLinks, formatLabel, isExportDate, issuesText, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -38,11 +38,17 @@ const pickBody = z.object({ format: z.string().min(1).max(200), version: z.numbe
  * Export of the ★ versions (spec §3.3): `picks` (format → vN), `follow` (followers, exported in their primary's version),
  * `pattern` (else the workspace's `exportNamePattern`). `version` alone is the older payload: every output of that version.
  */
+const MAX_EXPORT_FORMATS = 100;
 const exportBody = z.object({
-  destination: z.string().max(4096),
-  picks: z.record(z.string().min(1).max(200), z.unknown()).optional(),
-  follow: z.array(z.string().min(1).max(200)).max(100).optional(),
+  destination: z.unknown().optional(),
+  picks: z.record(z.string().min(1).max(200), z.unknown()).refine((r) => Object.keys(r).length <= MAX_EXPORT_FORMATS).optional(),
+  // A record: the version the client showed for each follower; a list (older clients): the core resolves it.
+  follow: z.union([
+    z.array(z.string().min(1).max(200)).max(MAX_EXPORT_FORMATS),
+    z.record(z.string().min(1).max(200), z.unknown()).refine((r) => Object.keys(r).length <= MAX_EXPORT_FORMATS),
+  ]).optional(),
   pattern: z.unknown().optional(),
+  date: z.unknown().optional(),
   version: z.number().int().min(1).optional(),
 });
 const linkBody = z.object({ follower: z.string().min(1).max(200), primary: z.string().min(1).max(200).nullable() });
@@ -236,27 +242,35 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
 
   app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/export', async (req) => {
     const ref = await refOf(req.params.slug, req.params.c);
-    const r = exportBody.safeParse(req.body ?? {});
+    const raw = (req.body ?? {}) as { destination?: unknown };
+    if (typeof raw.destination !== 'string' || !raw.destination.trim() || raw.destination.length > 4096) {
+      throw new CodedError(400, t().export.invalidDestination, 'export-invalid-destination');
+    }
+    const r = exportBody.safeParse(req.body);
     if (!r.success) throw new CodedError(400, t().export.invalidPicks, 'export-invalid-picks');
     const body = r.data;
-    const destination = expandHome(body.destination.trim());
+    if (body.pattern !== undefined && (typeof body.pattern !== 'string' || !body.pattern.trim() || body.pattern.length > 200)) {
+      throw new CodedError(400, t().export.invalidPattern, 'export-invalid-pattern');
+    }
+    if (body.date !== undefined && !isExportDate(body.date)) throw new CodedError(400, t().export.invalidDate, 'export-invalid-date');
+    const destination = expandHome(raw.destination.trim());
     const creative = await ref.store.get(ref.creativeSlug);
     const creativeDir = ref.store.dir(ref.creativeSlug);
     const presets = (await catalog().load()).presets;
-    const common = { creativeDir, destination, slug: ref.creativeSlug, title: creative.title, forbiddenRoot: ref.root, presets,
+    // The pattern sent (else the workspace's) and the date the client previewed (else today) apply to both payloads.
+    const pattern = typeof body.pattern === 'string' ? body.pattern : (await ctx.requireWorkspace().readSettings()).exportNamePattern;
+    const common = { creativeDir, destination, slug: ref.creativeSlug, title: creative.title, forbiddenRoot: ref.root, presets, pattern,
+      ...(typeof body.date === 'string' ? { now: body.date } : {}),
       label: (id: string) => { const p = presets.find((x) => x.id === id); return p ? formatLabel(p, currentLocale()) : id; } };
     if (body.picks === undefined && body.follow === undefined && body.version !== undefined) {
+      // The older single-version payload: every output of that version.
       const version = (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === body.version);
       if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
       return exportVersion({ ...common, version });
     }
-    if (body.pattern !== undefined && (typeof body.pattern !== 'string' || !body.pattern.trim() || body.pattern.length > 200)) {
-      throw new CodedError(400, t().export.invalidPattern, 'export-invalid-pattern');
-    }
-    const pattern = typeof body.pattern === 'string' ? body.pattern : (await ctx.requireWorkspace().readSettings()).exportNamePattern;
     // The same hashed versions as the creative GET, so a follower's ★ here is the one the dialog showed.
     const { versions } = await withLazyHashes({ projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir, versions: await ref.store.readVersions(ref.creativeSlug) });
-    return exportPicks({ ...common, versions, picks: (body.picks ?? {}) as Record<string, number>, follow: body.follow, pattern,
+    return exportPicks({ ...common, versions, picks: (body.picks ?? {}) as Record<string, number>, follow: body.follow as string[] | Record<string, number> | undefined,
       links: effectiveLinks(creative.brief.links, creative.brief.formats), storedPicks: creative.exportPicks });
   });
 

@@ -5,7 +5,7 @@
 // is remembered; progress, then a success screen with Show in Finder. File sizes are not shown: the API does not report
 // them (ruling R6).
 import {
-  EXPORT_NAME_TOKENS, exportExtension, exportNameCollisions, exportNameVars, formatName, renderName,
+  EXPORT_NAME_TOKENS, exportDate, exportExtension, exportNameCollisions, exportNameVars, formatName, renderName,
   type FormatPreset, type VersionEntry, type WorkspaceSettings,
 } from '@motion-studio/shared';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -88,14 +88,15 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
     const follows = s.follows ? (primaryPreset ? formatName(primaryPreset, locale) : s.follows) : null;
     const blocked = !output
       ? (follows !== null ? x.noFollowerFile({ n, primary: follows }) : x.fileMissing({ n }))
-      : follows === null && s.starFileMissing ? x.fileMissing({ n }) : null;
+      : s.starFileMissing ? x.fileMissing({ n }) : null;
     return [{ id: s.id, preset: presets.find((pr) => pr.id === s.id) ?? null, n, output, follows, newer: follows === null ? s.star.newer : null, blocked }];
   }), [states, versions, presets, x, locale]);
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(rows.map((r) => [r.id, r.blocked === null])));
   const [pattern, setPattern] = useState(initialPattern);
   const [savedPattern, setSavedPattern] = useState(initialPattern);
   const [save, setSave] = useState<SaveState>({ kind: 'idle' });
-  const [date] = useState(() => new Date());
+  // One date for the preview and the export (sent along, so a dialog left open past midnight keeps its names).
+  const [date] = useState(() => exportDate(new Date()));
   const [folder, setFolder] = useState(readFolder);
   const remembered = folder !== '' && folder === readFolder();
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
@@ -116,10 +117,11 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
     return { row: r, name: rendered?.ok && r.output ? `${rendered.name}${exportExtension(r.output.file)}` : null };
   });
   // Unknown variables are the same on every row: they are left out of the names and flagged here.
-  const unknown = rows[0] ? renderName(pattern, vars(rows[0])).unknown : [];
+  const first = rows[0] ? renderName(pattern, vars(rows[0])) : null;
+  const unknown = first?.unknown ?? [];
   const chosen = named.filter((c) => c.row.blocked === null && on[c.row.id]);
   const tooLong = pattern.length > PATTERN_MAX;
-  const empty = !pattern.trim() || chosen.some((c) => c.name === null);
+  const empty = !pattern.trim() || first?.ok === false || chosen.some((c) => c.name === null);
   const collisions = exportNameCollisions(chosen.flatMap((c) => (c.name ? [c.name] : [])));
   const nameProblem = tooLong ? x.errors.invalidPattern : empty ? x.emptyName : collisions.length ? x.collision({ list: collisions.join(', ') }) : null;
   const preview = (chosen[0] ?? named.find((c) => c.name !== null))?.name ?? null;
@@ -155,12 +157,13 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
     if (!canRun) return;
     setError(null);
     setPhase({ kind: 'run' });
-    // Followers are exported in their primary's ★: the core resolves it, they are never picked on their own.
+    // Followers are never picked on their own: they go with the version shown (their primary's ★), which the core checks
+    // against the primary's pick.
     const picks: Record<string, number> = {};
-    const follow: string[] = [];
-    for (const c of chosen) { if (c.row.follows !== null) follow.push(c.row.id); else picks[c.row.id] = c.row.n; }
+    const follow: Record<string, number> = {};
+    for (const c of chosen) { if (c.row.follows !== null) follow[c.row.id] = c.row.n; else picks[c.row.id] = c.row.n; }
     try {
-      const r = await api.exportPicks(slug, creative, { destination: dest, picks, ...(follow.length ? { follow } : {}), pattern });
+      const r = await api.exportPicks(slug, creative, { destination: dest, picks, ...(Object.keys(follow).length ? { follow } : {}), pattern, date });
       writeFolder(dest);
       setPhase({ kind: 'done', destination: r.destination, count: r.files.length, skipped: r.skipped ?? [] });
     } catch (e) {
@@ -214,7 +217,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
             const aspect = r.preset ? r.preset.width / r.preset.height : r.output ? r.output.width / r.output.height : 1;
             const blocked = r.blocked !== null;
             return (
-              <div key={r.id} className={cx('ms-exp-row', (blocked || !on[r.id]) && 'ms-off')}>
+              <div key={r.id} className={cx('ms-exp-row', blocked ? 'ms-blocked' : !on[r.id] && 'ms-off')}>
                 <Check on={!blocked && Boolean(on[r.id])} label={x.include({ label })} disabled={running || blocked} onChange={(v) => setOn((s) => ({ ...s, [r.id]: v }))} />
                 <span className={cx('ms-exp-thumb', aspect > 1.05 ? 'ms-wide' : aspect < 0.95 ? 'ms-tall' : 'ms-square')} aria-hidden="true">
                   {media ? (media.video ? <video src={media.src} muted preload="metadata" /> : <img src={media.src} alt="" />) : null}
@@ -224,7 +227,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
                   {blocked ? <span className="ms-exp-blocked">{r.blocked}</span> : <span className="ms-exp-file">{name ?? '—'}</span>}
                 </span>
                 {r.follows !== null ? (
-                  <span className="ms-exp-follows">{x.follows({ primary: r.follows })}</span>
+                  <span className="ms-exp-follows">{x.follows({ primary: r.follows })}<span className="ms-exp-ver">{x.star({ n: r.n })}</span></span>
                 ) : (
                   <span className="ms-exp-ver">{x.star({ n: r.n })}{r.newer !== null ? <span className="ms-exp-newer">{x.newer({ n: r.newer })}</span> : null}</span>
                 )}
@@ -254,7 +257,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
             <Input ref={field} aria-label={x.pattern} aria-describedby={previewId} aria-invalid={nameProblem !== null || undefined} value={pattern}
               disabled={running} spellCheck={false} autoComplete="off" className="ms-exp-pattern-field"
               onChange={(e) => { setPattern(e.target.value); setSave((s) => (s.kind === 'saving' ? s : { kind: 'idle' })); }} />
-            <Button variant="outline" disabled={running || save.kind === 'saving' || pattern === savedPattern || tooLong || !pattern.trim()}
+            <Button variant="outline" disabled={running || save.kind === 'saving' || pattern === savedPattern || tooLong || !pattern.trim() || first?.ok === false}
               loading={save.kind === 'saving'} onClick={() => void saveDefault()}>{x.saveDefault}</Button>
           </div>
           <div className="ms-exp-tokens" role="group" aria-labelledby={namesId}>
