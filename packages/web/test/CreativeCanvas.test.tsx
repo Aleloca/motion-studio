@@ -30,7 +30,7 @@ const api = {
   updateCreative: vi.fn(async () => detail.creative),
   restoreVersion: vi.fn(async () => detail.creative),
   revealVersion: vi.fn(async () => ({ ok: true })),
-  exportVersion: vi.fn(async (_s: string, _c: string, _n: number, d: string, formats?: string[]) => ({ destination: d, files: (formats ?? []).map((f) => ({ from: f, to: `${d}/${f}` })), skipped: [] as string[] })),
+  exportPicks: vi.fn(async (_s: string, _c: string, body: { destination: string; picks: Record<string, number> }) => ({ destination: body.destination, files: Object.keys(body.picks).map((f) => ({ from: f, to: `${body.destination}/${f}` })), skipped: [] as string[] })),
   cancelJob: vi.fn(async () => ({ cancelled: true })),
   setExportPick: vi.fn(async (..._a: unknown[]) => detail),
   setFormatLink: vi.fn(async (..._a: unknown[]) => detail),
@@ -380,15 +380,15 @@ describe('CreativeCanvas · export', () => {
     render(<Harness live={emptyLive()} />);
     await ready();
     await userEvent.click(screen.getByRole('button', { name: 'Esporta' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Esporta “Lancio estivo”' });
+    const dialog = await screen.findByRole('dialog', { name: 'Esporta le versioni ★ di “Lancio estivo”' });
     // One row per format with its final name.
-    expect(within(dialog).getByText('lancio-estivo-instagram-post-1x1-v1.png')).toBeTruthy();
+    expect(within(dialog).getByText('lancio-estivo-instagram-post-1x1-v1.png', { selector: '.ms-exp-row .ms-exp-file' })).toBeTruthy();
     expect(within(dialog).getByText('lancio-estivo-tiktok-9x16-v1.mp4')).toBeTruthy();
     await userEvent.click(within(dialog).getByRole('checkbox', { name: /^Esporta TikTok/ }));
     await userEvent.click(within(dialog).getByRole('button', { name: 'Scegli…' }));
     await userEvent.click(within(dialog).getByRole('button', { name: 'Esporta 1 file' }));
-    await waitFor(() => expect(api.exportVersion).toHaveBeenCalledOnce());
-    expect(api.exportVersion).toHaveBeenCalledWith('acme', 'lancio', 1, '/Users/me/Consegna', ['instagram-post-1x1']);
+    await waitFor(() => expect(api.exportPicks).toHaveBeenCalledOnce());
+    expect(api.exportPicks).toHaveBeenCalledWith('acme', 'lancio', { destination: '/Users/me/Consegna', picks: { 'instagram-post-1x1': 1 }, pattern: '{title}-{format}-v{v}' });
     expect(await within(dialog).findByText('1 file esportato')).toBeTruthy();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Mostra nel Finder' }));
     expect(revealPath).toHaveBeenCalledWith('/Users/me/Consegna');
@@ -399,16 +399,16 @@ describe('CreativeCanvas · export', () => {
 
   it('on the web takes a typed folder, shows errors in place and keeps the folder for next time', async () => {
     localStorage.setItem('ms.exportFolder', '/Users/me/Ultima');
-    api.exportVersion.mockRejectedValueOnce(new Error('Cartella non scrivibile'));
+    api.exportPicks.mockRejectedValueOnce(new Error('Cartella non scrivibile'));
     render(<Harness live={emptyLive()} />);
     await ready();
     await userEvent.click(screen.getByRole('button', { name: 'Esporta' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Esporta “Lancio estivo”' });
+    const dialog = await screen.findByRole('dialog', { name: 'Esporta le versioni ★ di “Lancio estivo”' });
     const folder = within(dialog).getByLabelText('Cartella di destinazione') as HTMLInputElement;
     expect(folder.value).toBe('/Users/me/Ultima');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Esporta 2 file' }));
     expect((await within(dialog).findByRole('alert')).textContent).toContain('Cartella non scrivibile');
-    expect(api.exportVersion).toHaveBeenCalledWith('acme', 'lancio', 1, '/Users/me/Ultima', ['instagram-post-1x1', 'tiktok-9x16']);
+    expect(api.exportPicks).toHaveBeenCalledWith('acme', 'lancio', { destination: '/Users/me/Ultima', picks: { 'instagram-post-1x1': 1, 'tiktok-9x16': 1 }, pattern: '{title}-{format}-v{v}' });
     // No bridge: no Finder button anywhere.
     expect(within(dialog).queryByRole('button', { name: 'Scegli…' })).toBeNull();
   });
@@ -501,13 +501,14 @@ describe('CreativeCanvas · ported checks', () => {
     const { rerender } = render(<Harness live={emptyLive()} />);
     await ready();
     await userEvent.click(screen.getByRole('button', { name: 'Esporta' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Esporta “Lancio estivo”' });
+    const dialog = await screen.findByRole('dialog', { name: 'Esporta le versioni ★ di “Lancio estivo”' });
     detail = makeDetail([version(1), version(2)]);
     await act(async () => { rerender(<Harness live={{ ...emptyLive(), creativeTicks: { 'acme/lancio': 1 } } as unknown as EventsState} />); });
     await waitFor(() => expect(screen.getByRole('img', { name: /Post 1:1 v2/ })).toBeTruthy());
-    expect(within(dialog).getByText('La versione 1 di ogni formato, pronta da pubblicare.')).toBeTruthy();
+    // The rows keep the ★ the dialog opened with (v1), not the new version.
+    expect(within(dialog).getAllByText('★ v1', { selector: '.ms-exp-ver' })).toHaveLength(2);
     await userEvent.click(within(dialog).getByRole('button', { name: 'Esporta 2 file' }));
-    await waitFor(() => expect(api.exportVersion).toHaveBeenCalledWith('acme', 'lancio', 1, '/d', ['instagram-post-1x1', 'tiktok-9x16']));
+    await waitFor(() => expect(api.exportPicks).toHaveBeenCalledWith('acme', 'lancio', { destination: '/d', picks: { 'instagram-post-1x1': 1, 'tiktok-9x16': 1 }, pattern: '{title}-{format}-v{v}' }));
   });
 
   it('ignores canvas shortcuts from a page that is leaving', async () => {
@@ -621,22 +622,22 @@ describe('CreativeCanvas · review round 1', () => {
   it('cannot close the export while it runs', async () => {
     localStorage.setItem('ms.exportFolder', '/d');
     let finish!: () => void;
-    api.exportVersion.mockImplementationOnce((_s, _c, _n, d) => new Promise((r) => { finish = () => r({ destination: d, files: [{ from: 'a', to: 'b' }], skipped: [] }); }));
+    api.exportPicks.mockImplementationOnce((_s, _c, body) => new Promise((r) => { finish = () => r({ destination: body.destination, files: [{ from: 'a', to: 'b' }], skipped: [] }); }));
     render(<Harness live={emptyLive()} />);
     await ready();
     await userEvent.click(screen.getByRole('button', { name: 'Esporta' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Esporta “Lancio estivo”' });
+    const dialog = await screen.findByRole('dialog', { name: 'Esporta le versioni ★ di “Lancio estivo”' });
     await userEvent.click(within(dialog).getByRole('button', { name: 'Esporta 2 file' }));
     expect((within(dialog).getByRole('button', { name: 'Annulla' }) as HTMLButtonElement).disabled).toBe(true);
     expect((within(dialog).getByRole('button', { name: 'Chiudi' }) as HTMLButtonElement).disabled).toBe(true);
     await userEvent.keyboard('{Escape}');
     fireEvent.click(document.querySelector('.ms-scrim')!);
-    expect(screen.getByRole('dialog', { name: 'Esporta “Lancio estivo”' })).toBe(dialog);
+    expect(screen.getByRole('dialog', { name: 'Esporta le versioni ★ di “Lancio estivo”' })).toBe(dialog);
     await act(async () => { finish(); });
     expect(await within(dialog).findByText('1 file esportato')).toBeTruthy();
     // Done: closing works again.
     await userEvent.keyboard('{Escape}');
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Esporta “Lancio estivo”' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Esporta le versioni ★ di “Lancio estivo”' })).toBeNull());
   });
 
   it('Restart from here: Undo only when there was a resume point, restoring exactly that version', async () => {

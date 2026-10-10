@@ -284,7 +284,7 @@
 .ms-exp-sub { color: var(--muted); }
 .ms-exp-rows { padding: 8px 12px; overflow: auto; min-height: 0; }
 .ms-exp-row {
-  display: grid; grid-template-columns: 28px 52px minmax(0, 1fr) 72px; gap: 0 12px; align-items: center; padding: 8px 10px; border-radius: 10px;
+  display: grid; grid-template-columns: 28px 52px minmax(0, 1fr) 150px; gap: 0 12px; align-items: center; padding: 8px 10px; border-radius: 10px;
   transition: opacity var(--d-s) var(--e-std), background var(--d-m) var(--e-std);
 }
 .ms-exp-row:not(.ms-exp-cols):hover { background: var(--field); }
@@ -297,8 +297,21 @@
 .ms-exp-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .ms-exp-label { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .ms-exp-label b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ms-exp-file { font-family: var(--mono); font-size: 11px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-exp-file { font-family: var(--mono); font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-exp-ver { justify-self: start; height: 26px; padding: 0 10px; border-radius: 7px; background: var(--panel); box-shadow: 0 0 0 1px var(--line); font-weight: 600; display: inline-flex; align-items: center; font-variant-numeric: tabular-nums; }
+.ms-exp-ver { gap: 6px; }
+.ms-exp-newer { font-weight: 400; font-size: 11px; color: var(--accentText); }
+.ms-exp-follows { font-size: 12px; color: var(--muted); }
+.ms-exp-blocked { font-size: 11px; color: var(--warn); overflow-wrap: anywhere; }
+.ms-exp-pattern { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ms-exp-pattern-field { font-family: var(--mono); font-size: 12px; }
+.ms-exp-tokens { display: flex; flex-wrap: wrap; gap: 6px; }
+.ms-exp-token { font-family: var(--mono); font-size: 11px; }
+.ms-exp-preview { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 12px; }
+.ms-exp-preview-line { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.ms-exp-preview-label { color: var(--muted); flex: none; }
+.ms-exp-preview .ms-exp-file { color: var(--text); }
+.ms-exp-hint { color: var(--muted); overflow-wrap: anywhere; }
 .ms-exp-empty { margin: 0; padding: 24px 22px; color: var(--muted); }
 .ms-exp-dest { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 10px; align-items: center; padding: 14px 22px; border-top: 1px solid var(--line2); }
 .ms-exp-dest-label { font-weight: 600; }
@@ -318,7 +331,7 @@
 .ms-exp-done-mark { width: 54px; height: 54px; border-radius: 50%; background: var(--okBg); color: var(--ok); display: flex; align-items: center; justify-content: center; }
 .ms-exp-skipped { font-size: 12px; color: var(--warn); overflow-wrap: anywhere; }
 .ms-exp-done-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; justify-content: center; }
-@media (max-width: 640px) { .ms-exp-dest { grid-template-columns: 1fr; } .ms-exp-row { grid-template-columns: 28px 44px minmax(0, 1fr); } .ms-exp-ver { display: none; } }
+@media (max-width: 640px) { .ms-exp-dest { grid-template-columns: 1fr; } .ms-exp-row { grid-template-columns: 28px 44px minmax(0, 1fr); } .ms-exp-ver, .ms-exp-follows { display: none; } }
 
 /* Narrow windows: the formats column folds first, then the panel goes under the canvas. */
 @media (max-width: 1180px) { .ms-cv { grid-template-columns: 200px minmax(0, 1fr) 340px; } }

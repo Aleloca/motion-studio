@@ -129,7 +129,11 @@ export const api = {
   sendCreativeTurn: (slug: string, creative: string, body: { text?: string; pins?: Pin[]; formats?: string[] }) => request<JobSummary>('POST', `${c(slug, creative)}/turns`, body),
   restoreVersion: (slug: string, creative: string, n: number) => request<CreativeFile>('POST', `${c(slug, creative)}/versions/${n}/restore`),
   revealVersion: (slug: string, creative: string, n: number) => request<{ ok: true }>('POST', `${c(slug, creative)}/versions/${n}/reveal`),
-  exportVersion: (slug: string, creative: string, n: number, destination: string, formats?: string[]) =>
-    request<{ destination: string; files: Array<{ from: string; to: string }>; skipped: string[] }>('POST', `${c(slug, creative)}/versions/${n}/export`, { destination, ...(formats ? { formats } : {}) }),
+  /**
+   * Exports the ★ versions (spec §3.3): `picks` format → vN, `follow` the followers (exported in their primary's version),
+   * `pattern` the file name pattern (the workspace default when omitted). Refusals carry an `export-*` code.
+   */
+  exportPicks: (slug: string, creative: string, body: { destination: string; picks: Record<string, number>; follow?: string[]; pattern?: string }) =>
+    request<{ destination: string; files: Array<{ from: string; to: string }>; skipped: string[] }>('POST', `${c(slug, creative)}/export`, body),
   fileUrl: (slug: string, creative: string, rel: string) => `${c(slug, creative)}/files/${rel.split('/').map(encodeURIComponent).join('/')}`,
 };

@@ -3,7 +3,7 @@
 // safe zones with a legend, V/C/H tools), Figma-style comments that become chips of the composer, the Chat · Comments ·
 // Brief panel, the version history with Compare, and Export. Replaces the interim CreativePage. A board opens in the
 // format view (screens/FormatView.tsx) with T3.
-import { addTokens, channelName, formatName, outputWarningText, shownTotal, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VersionEntry } from '@motion-studio/shared';
+import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, formatName, outputWarningText, shownTotal, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api.ts';
@@ -24,7 +24,7 @@ import { boardLabel, CanvasBoard, type Draft, type Tool } from './CanvasBoard.ts
 import { boardsWith, fitBoards, isTall, ratioText, type BoardModel } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf } from './creativeState.ts';
-import { ExportDialog } from './ExportDialog.tsx';
+import { ExportDialog, type ExportSnapshot } from './ExportDialog.tsx';
 import { activatesControl, bare, inOverlay, isTyping } from './keys.ts';
 import { pinsKey, usePendingPins } from './pendingPins.ts';
 import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from './FormatVersions.tsx';
@@ -45,9 +45,13 @@ export interface CreativeCanvasProps {
   slug: string;
   creative: string;
   live: EventsState;
+  /** The workspace's export file name pattern (Export starts with it); the default one when unknown. */
+  exportNamePattern?: string;
+  /** The workspace settings after Export's "Save as default". */
+  onSettings?(next: WorkspaceSettings): void;
 }
 
-export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
+export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSettings }: CreativeCanvasProps) {
   const t = useT();
   const c = t.web.canvas;
   const locale = useLocale();
@@ -235,7 +239,7 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
     const other = s.history[i - 1] ?? s.history[i + 1]!;
     setCompare({ open: true, init: other < shown ? [other, shown] : [shown, other], format });
   };
-  const [exporting, setExporting] = useState<{ open: boolean; version: VersionEntry } | null>(null);
+  const [exporting, setExporting] = useState<{ open: boolean; snapshot: ExportSnapshot } | null>(null);
 
   // Open a board in the format view (T3): its rect goes along for the shared-element transition.
   const openEditor = (id: string, frame: HTMLElement) => {
@@ -390,7 +394,7 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
           {versions.length ? (
             <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={actions} buttonRef={versionButton} />
           ) : null}
-          <Button variant="ink" className="ms-cv-export" disabled={!version} onClick={() => { if (version) setExporting({ open: true, version }); }}>
+          <Button variant="ink" className="ms-cv-export" disabled={!version} onClick={() => { if (version) setExporting({ open: true, snapshot: { versions, states } }); }}>
             <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
           </Button>
         </>,
@@ -508,7 +512,7 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
           versions={versions} presets={presets} formats={comparable} initialFormat={compare.format} initial={compare.init} />
       ) : null}
       <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
-        title={title} version={exporting?.version ?? null} presets={presets} />
+        title={title} snapshot={exporting?.snapshot ?? null} presets={presets} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} />
     </div>
   );
 }

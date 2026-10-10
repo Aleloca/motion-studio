@@ -237,8 +237,8 @@ function AppShell({ route, live, settings, checks, activity, setActivity, langua
       case 'projects': return <Projects live={live} />;
       case 'project': return <ProjectHost route={r} live={live} settings={settings} checks={checks} onSettings={onSettings} />;
       case 'new-creative': return <NewCreative key={r.slug} slug={r.slug} />;
-      case 'creative': return <CreativeCanvas key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} />;
-      case 'format': return <FormatView key={`${r.slug}/${r.creative}/${r.format}`} slug={r.slug} creative={r.creative} format={r.format} live={live} />;
+      case 'creative': return <CreativeCanvas key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} exportNamePattern={settings?.exportNamePattern} onSettings={onSettings} />;
+      case 'format': return <FormatView key={`${r.slug}/${r.creative}/${r.format}`} slug={r.slug} creative={r.creative} format={r.format} live={live} exportNamePattern={settings?.exportNamePattern} onSettings={onSettings} />;
       case 'settings': return settings ? (
         <AppSettings section={r.section} settings={settings} checks={checks} checking={Boolean(setup.checking)} checksRun={setup.checksRun ?? 0}
           loadError={setup.loadError ?? null} onRecheck={setup.onRecheck} language={language} systemLocale={systemLocale} onLanguage={onLanguage} onSettings={onSettings} />

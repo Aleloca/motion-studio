@@ -9,7 +9,7 @@
 //
 // The playhead moves at frame rate: its time lives in a small store (`Clock`) that only the transport, the comment
 // layer and the hint read, so the page (bar, chat) does not re-render while the video plays.
-import { channelName, DEFAULT_FORMATS, formatName, type FormatPreset, type Pin, type VersionEntry } from '@motion-studio/shared';
+import { channelName, DEFAULT_EXPORT_NAME_PATTERN, DEFAULT_FORMATS, formatName, type FormatPreset, type Pin, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import {
   useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore,
   type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type PointerEvent,
@@ -30,7 +30,7 @@ import { boardLabel, PinBubble, SafeZoneBands, type Draft } from './CanvasBoard.
 import { pointIn, ratioText } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf, lastStep } from './creativeState.ts';
-import { ExportDialog } from './ExportDialog.tsx';
+import { ExportDialog, type ExportSnapshot } from './ExportDialog.tsx';
 import { activatesControl, bare, inOverlay, isTyping } from './keys.ts';
 import { pinsKey, usePendingPins } from './pendingPins.ts';
 import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from './FormatVersions.tsx';
@@ -91,9 +91,13 @@ export interface FormatViewProps {
   creative: string;
   format: string;
   live: EventsState;
+  /** The workspace's export file name pattern (Export starts with it); the default one when unknown. */
+  exportNamePattern?: string;
+  /** The workspace settings after Export's "Save as default". */
+  onSettings?(next: WorkspaceSettings): void;
 }
 
-export function FormatView({ slug, creative, format, live }: FormatViewProps) {
+export function FormatView({ slug, creative, format, live, exportNamePattern, onSettings }: FormatViewProps) {
   const t = useT();
   const f = t.web.formatView;
   const c = t.web.canvas;
@@ -385,7 +389,7 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
     setCompare({ open: true, init: other < shown ? [other, shown] : [shown, other] });
   };
   // Export keeps the version it opened with, even if a new one lands meanwhile.
-  const [exporting, setExporting] = useState<{ open: boolean; version: VersionEntry } | null>(null);
+  const [exporting, setExporting] = useState<{ open: boolean; snapshot: ExportSnapshot } | null>(null);
 
   if (error && !detail) {
     return (
@@ -450,7 +454,7 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
           {versions.length && cr ? (
             <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={actions} buttonRef={versionButton} />
           ) : null}
-          <Button variant="ink" className="ms-cv-export" disabled={!latest} onClick={() => { if (latest) setExporting({ open: true, version: latest }); }}>
+          <Button variant="ink" className="ms-cv-export" disabled={!latest} onClick={() => { if (latest) setExporting({ open: true, snapshot: { versions, states } }); }}>
             <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
           </Button>
         </>,
@@ -559,7 +563,7 @@ export function FormatView({ slug, creative, format, live }: FormatViewProps) {
           versions={versions} presets={presets} formats={comparable ? [format] : []} initialFormat={format} initial={compare.init} />
       ) : null}
       <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
-        title={cr?.title ?? ''} version={exporting?.version ?? null} presets={presets} />
+        title={cr?.title ?? ''} snapshot={exporting?.snapshot ?? null} presets={presets} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} />
     </div>
   );
 }

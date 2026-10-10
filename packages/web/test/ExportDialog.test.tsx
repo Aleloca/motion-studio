@@ -1,0 +1,143 @@
+import { DEFAULT_FORMATS, workspaceSettingsSchema, type VersionEntry } from '@motion-studio/shared';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { I18nProvider } from '../src/i18n.tsx';
+import type { FormatState } from '../src/screens/versionModel.ts';
+
+const api = {
+  fileUrl: (s: string, c: string, rel: string) => `/f/${s}/${c}/${rel}`,
+  exportPicks: vi.fn(async (_s: string, _c: string, body: { destination: string }) => ({ destination: body.destination, files: [{ from: 'a', to: 'b' }], skipped: [] as string[] })),
+  updateSettings: vi.fn(async (patch: { exportNamePattern?: string }) => workspaceSettingsSchema.parse({ schemaVersion: 1, ...patch })),
+};
+class ApiError extends Error { constructor(public status: number, msg: string, public code?: string) { super(msg); } }
+vi.mock('../src/api.ts', () => ({ api, ApiError }));
+const { ExportDialog } = await import('../src/screens/ExportDialog.tsx');
+
+const REEL = 'instagram-reel-9x16';
+const TIKTOK = 'tiktok-9x16';
+const POST = 'instagram-post-1x1';
+const out = (format: string, ext: string, size = 1080) => ({ format, file: `${format}.${ext}`, width: 1080, height: size, durationSec: null, verified: true, preview: null });
+const ver = (n: number, outputs: VersionEntry['outputs']): VersionEntry =>
+  ({ n, commit: 'c', sessionId: 's', status: 'complete', createdAt: '2026-10-08T10:00:00.000Z', request: '', outputs, problems: [], tools: [], renderCommand: null, basedOn: null });
+const versions = [ver(5, [out(REEL, 'mp4', 1920), out(TIKTOK, 'mp4', 1920), out(POST, 'png')]), ver(7, [out(REEL, 'mp4', 1920), out(TIKTOK, 'mp4', 1920), out(POST, 'png')])];
+const state = (id: string, s: Partial<FormatState>): FormatState => ({
+  id, history: [5, 7], star: { version: 7, manual: false, newer: null, follows: null }, defaultVersion: 7, starFileMissing: false, linkable: [], follows: null, ...s,
+});
+const states = (over: Record<string, Partial<FormatState>> = {}) => ({
+  [REEL]: state(REEL, { star: { version: 5, manual: true, newer: 7, follows: null }, ...over[REEL] }),
+  [TIKTOK]: state(TIKTOK, { history: [], star: { version: null, manual: false, newer: null, follows: REEL }, defaultVersion: null, follows: REEL, ...over[TIKTOK] }),
+  [POST]: state(POST, { ...over[POST] }),
+});
+const onSettings = vi.fn();
+const open = (s = states(), pattern = '{title}-{format}-v{v}') => render(
+  <I18nProvider locale="en">
+    <ExportDialog open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions, states: s }} presets={DEFAULT_FORMATS}
+      pattern={pattern} onSettings={onSettings} />
+  </I18nProvider>,
+);
+const patternField = () => screen.getByLabelText('File name pattern') as HTMLInputElement;
+const setPattern = async (v: string) => { await userEvent.clear(patternField()); if (v) await userEvent.type(patternField(), v.replace(/[{[]/g, (c) => c + c)); };
+
+beforeEach(() => { localStorage.setItem('ms.exportFolder', '/out'); api.exportPicks.mockClear(); api.updateSettings.mockClear(); onSettings.mockClear(); });
+
+describe('ExportDialog · the starred versions', () => {
+  it('shows each format at its ★, the newer version, and followers named after themselves in their primary’s ★', () => {
+    open();
+    const dialog = screen.getByRole('dialog', { name: 'Export the starred versions of “Summer launch”' });
+    expect(within(dialog).getByRole('heading', { name: 'Export the starred versions' })).toBeTruthy();
+    // The row's name, and the live preview of the first one.
+    expect(within(dialog).getAllByText('summer-launch-instagram-reel-9x16-v5.mp4')).toHaveLength(2);
+    expect(within(dialog).getByText('★ v5')).toBeTruthy();
+    expect(within(dialog).getByText('v7 newer')).toBeTruthy();
+    // The follower: its own file, in the Reel's ★ (v5), and "follows" instead of a ★.
+    expect(within(dialog).getByText('summer-launch-tiktok-9x16-v5.mp4')).toBeTruthy();
+    expect(within(dialog).getByText('follows Story/Reel 9:16')).toBeTruthy();
+    expect(within(dialog).getByText('summer-launch-instagram-post-1x1-v7.png')).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: 'Export 3 files' })).toBeTruthy();
+  });
+
+  it('a ★ whose file is missing is unchecked and disabled, with the reason', () => {
+    open(states({ [POST]: { starFileMissing: true } }));
+    const check = screen.getByRole('checkbox', { name: /^Export Instagram · Post/ }) as HTMLButtonElement;
+    expect(check.disabled).toBe(true);
+    expect(check.getAttribute('aria-checked')).toBe('false');
+    expect(screen.getByText('The file of v7 is missing or cannot be read safely')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Export 2 files' })).toBeTruthy();
+  });
+
+  it('a follower without its own file in the primary’s ★ is disabled with the reason', () => {
+    const v5 = ver(5, [out(REEL, 'mp4', 1920), out(POST, 'png')]);
+    render(
+      <I18nProvider locale="en">
+        <ExportDialog open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: [v5, versions[1]!], states: states() }} presets={DEFAULT_FORMATS} pattern="{title}-{format}-v{v}" />
+      </I18nProvider>,
+    );
+    expect((screen.getByRole('checkbox', { name: /^Export TikTok/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText('v5 of the Story/Reel 9:16 has no file for this format')).toBeTruthy();
+  });
+
+  it('sends the ★ picks, the followers apart, and the pattern', async () => {
+    open();
+    await userEvent.click(screen.getByRole('button', { name: 'Export 3 files' }));
+    await waitFor(() => expect(api.exportPicks).toHaveBeenCalledOnce());
+    expect(api.exportPicks).toHaveBeenCalledWith('acme', 'c1', { destination: '/out', picks: { [REEL]: 5, [POST]: 7 }, follow: [TIKTOK], pattern: '{title}-{format}-v{v}' });
+    expect((await screen.findByRole('status')).textContent).toContain('1 file exported');
+  });
+
+  it('shows a mapped message for a coded refusal', async () => {
+    api.exportPicks.mockRejectedValueOnce(new ApiError(409, 'raw', 'export-file-missing'));
+    open();
+    await userEvent.click(screen.getByRole('button', { name: 'Export 3 files' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('Some files are missing or cannot be read safely, so nothing was exported. Reopen Export to see which.');
+  });
+});
+
+describe('ExportDialog · name pattern', () => {
+  it('updates the names and the preview live, and inserts tokens from the chips', async () => {
+    open();
+    await setPattern('{channel}_{ratio}_');
+    expect(screen.getByText('instagram_9x16.mp4', { selector: '.ms-exp-preview .ms-exp-file' })).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: '{v}' }));
+    expect(patternField().value).toBe('{channel}_{ratio}_{v}');
+    expect(screen.getByText('instagram_1x1_7.png')).toBeTruthy();
+    expect(screen.getByText('tiktok_9x16_5.mp4')).toBeTruthy();
+  });
+
+  it('flags unknown variables (left out of the names)', async () => {
+    open();
+    await setPattern('{title}-{client}-v{v}');
+    expect(screen.getByText('Unknown variables are left out: {client}')).toBeTruthy();
+    expect(screen.getByText('summer-launch-v7.png')).toBeTruthy();
+  });
+
+  it('shows a collision inline, suggesting {format}, and blocks the export', async () => {
+    open();
+    await setPattern('{title}-v{v}');
+    expect(screen.getByRole('alert').textContent).toBe('Two formats would get the same file name (summer-launch-v5.mp4). Add {format} to the pattern.');
+    expect((screen.getByRole('button', { name: 'Export 3 files' }) as HTMLButtonElement).disabled).toBe(true);
+    // Unchecking one of the two lifts it.
+    await userEvent.click(screen.getByRole('checkbox', { name: /^Export TikTok/ }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Export 2 files' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('refuses a pattern that gives an empty name', async () => {
+    open();
+    await setPattern('!!!');
+    expect(screen.getByRole('alert').textContent).toBe('This pattern gives an empty file name');
+    expect((screen.getByRole('button', { name: 'Export 3 files' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('“Save as default” saves the workspace pattern', async () => {
+    open();
+    const saveButton = screen.getByRole('button', { name: 'Save as default' }) as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(true);
+    await setPattern('{date}-{format}-v{v}');
+    await userEvent.click(saveButton);
+    await waitFor(() => expect(api.updateSettings).toHaveBeenCalledWith({ exportNamePattern: '{date}-{format}-v{v}' }));
+    expect(await screen.findByText('Saved as the workspace default')).toBeTruthy();
+    expect(onSettings).toHaveBeenCalledWith(expect.objectContaining({ exportNamePattern: '{date}-{format}-v{v}' }));
+    expect(saveButton.disabled).toBe(true);
+  });
+});
