@@ -36,6 +36,24 @@ describe('Git', () => {
     const results = await Promise.all([git.commitAll(dir, 'c1'), git.commitAll(dir, 'c2')]);
     expect(results.filter((r) => r !== null)).toHaveLength(1);
   });
+  it('commits only the given paths, leaving other changes (staged or not) out of the commit', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-git-'));
+    const git = new Git();
+    await git.init(dir);
+    await mkdir(join(dir, 'c', 'work'), { recursive: true });
+    await writeFile(join(dir, 'c', 'creative.json'), '{}');
+    await git.commitAll(dir, 'first');
+    await writeFile(join(dir, 'c', 'creative.json'), '{"a":1}');
+    await writeFile(join(dir, 'c', 'work', 'half.ts'), 'half-written');
+    await execCommand('git', ['add', '--', 'c/work/half.ts'], { cwd: dir });
+    const sha = await git.commitPaths(dir, ['c/creative.json'], 'state');
+    expect(sha).toMatch(/^[0-9a-f]{40}$/);
+    const files = await execCommand('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: dir });
+    expect(files.stdout.trim().split('\n')).toEqual(['c/creative.json']);
+    await expect(git.commitPaths(dir, ['c/creative.json'], 'again')).resolves.toBeNull();
+    // The other change is still there, for the next full commit.
+    expect((await execCommand('git', ['status', '--porcelain'], { cwd: dir })).stdout).toContain('c/work/half.ts');
+  });
 });
 
 describe('Git errors and locking', () => {

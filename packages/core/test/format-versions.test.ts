@@ -592,6 +592,35 @@ describe('export picks are never decided on partial hashes', { timeout: 20_000 }
     } finally { await chmod(locked, 0o644); }
   });
 
+  it('commits only creative.json: what an agent is writing in work/ during a turn is never committed (I1)', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'ms-fv-commit-'));
+    const git = new Git();
+    const ws = await WorkspaceStore.open(join(base, 'ws'), git);
+    const { slug: project } = await ws.createProject({ name: 'Acme' });
+    const projectDir = ws.projectDir(project);
+    const store = new CreativeStore(projectDir);
+    const created = await store.create({ title: 'Lancio', brief: { goal: 'x', message: '', formats: [REEL], durationSec: null, assets: [], notes: '' } });
+    const ref: CreativeRef = { root: ws.root, projectSlug: project, projectDir, creativeSlug: created.slug };
+    for (const n of [1, 2]) {
+      await mkdir(store.outputsDir(created.slug, n), { recursive: true });
+      await writeFile(join(store.outputsDir(created.slug, n), 'reel.mp4'), `reel-${n}`);
+      await store.appendVersion(created.slug, version(n, [output(REEL, 'reel.mp4')]));
+    }
+    await git.commitAll(projectDir, 'seed');
+    const service = new CreativeTurnService({
+      queue: new JobQueue({ concurrency: 1 }), git, media: NoMediaTools, vault: new MemoryVault(),
+      launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
+      presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
+    });
+    // The agent's half-written source, mid-turn.
+    await mkdir(store.workDir(created.slug), { recursive: true });
+    await writeFile(join(store.workDir(created.slug), 'scene.tsx'), 'export const half = ');
+    expect((await service.setExportPick(ref, REEL, 1)).exportPicks).toEqual({ [REEL]: 1 });
+    const files = (await execCommand('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: projectDir })).stdout.trim().split('\n');
+    expect(files).toEqual([`creatives/${created.slug}/creative.json`]);
+    expect((await execCommand('git', ['status', '--porcelain'], { cwd: projectDir })).stdout).toContain('scene.tsx');
+  });
+
   it('sends Retry-After with the 503', async () => {
     const app = (await import('fastify')).default();
     app.setErrorHandler((await import('../src/server/app.ts')).errorReply);

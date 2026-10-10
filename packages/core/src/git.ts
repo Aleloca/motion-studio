@@ -67,6 +67,24 @@ export class Git {
   }
 
   /**
+   * Commits only `relPaths` (relative to `dir`, literal pathspecs), whatever else is changed or staged in the tree: used
+   * for the creative's own metadata while an agent may be writing elsewhere (its half-written sources are never
+   * committed). Returns the sha, or null when those paths have no change.
+   */
+  commitPaths(dir: string, relPaths: string[], message: string): Promise<string | null> {
+    return this.lock.run(resolve(dir), async () => {
+      if (relPaths.length === 0) return null;
+      await ensureLocalExcludes(dir);
+      const specs = relPaths.map((p) => `:(literal)${p}`);
+      await this.must(dir, ['add', '--', ...specs]);
+      const status = await this.must(dir, ['status', '--porcelain', '--', ...specs]);
+      if (status.trim() === '') return null;
+      await this.must(dir, [...IDENTITY, 'commit', '-q', '--only', '-m', message, '--', ...specs]);
+      return (await this.must(dir, ['rev-parse', 'HEAD'])).trim();
+    });
+  }
+
+  /**
    * Brings relPath back to `commit` and deletes the untracked, non-ignored files below it (ignored ones such as
    * node_modules/ or .venv/ survive). Returns how many entries were deleted (an untracked folder counts as one).
    */

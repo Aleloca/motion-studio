@@ -1,5 +1,5 @@
 import { lstat, rm, writeFile } from 'node:fs/promises';
-import { extname, join, relative } from 'node:path';
+import { extname, join, relative, sep } from 'node:path';
 import { checkLink, defaultLinks, effectiveLinks, formatHistory, formatLabel, manifestSchema, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionEntry } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { BrandStore } from '../brand/brand-store.ts';
@@ -192,7 +192,8 @@ export class CreativeTurnService {
       if (version === null || version === starOf(versions, format, undefined, links).version) delete picks[format];
       else picks[format] = version;
       const updated = await store.update(ref.creativeSlug, { exportPicks: Object.keys(picks).length > 0 ? picks : undefined });
-      await this.commitState(ref, t().jobs.stateCommit({ title: updated.title }));
+      // A pick is allowed while a turn runs: only creative.json is committed, never what the agent is writing in work/.
+      await this.commitCreativeFile(ref, store, t().jobs.stateCommit({ title: updated.title }));
       this.changed(ref);
       return updated;
     });
@@ -228,7 +229,8 @@ export class CreativeTurnService {
         links[follower] = primary;
       }
       const updated = await store.update(ref.creativeSlug, { brief: { ...brief, links } });
-      await this.commitState(ref, t().jobs.briefUpdatedCommit({ title: updated.title }));
+      // Refused while a turn runs (above); still, only creative.json changes here, so only it is committed.
+      await this.commitCreativeFile(ref, store, t().jobs.briefUpdatedCommit({ title: updated.title }));
       this.changed(ref);
       return updated;
     });
@@ -747,6 +749,12 @@ export class CreativeTurnService {
   /** Best-effort commit of the creative's metadata: never throws, so it cannot change the outcome of a turn. */
   private async commitState(ref: CreativeRef, message: string): Promise<void> {
     try { await this.deps.git.commitAll(ref.projectDir, message); } catch { /* the tree stays dirty until the next commit */ }
+  }
+
+  /** Commits the creative's creative.json alone (by path): safe while an agent writes elsewhere in the project. */
+  private async commitCreativeFile(ref: CreativeRef, store: CreativeStore, message: string): Promise<void> {
+    const rel = relative(ref.projectDir, join(store.dir(ref.creativeSlug), 'creative.json')).split(sep).join('/');
+    try { await this.deps.git.commitPaths(ref.projectDir, [rel], message); } catch { /* picked up by the next commit */ }
   }
 
   private async titleOf(store: CreativeStore, slug: string): Promise<string> {
