@@ -7,7 +7,9 @@
  *   stylesheet, image, file://, form, popup, top navigation, top/parent document access, cross-origin pushState). It paints
  *   itself green, or red when a synchronous attempt did not throw. Nothing may reach the canary, in any mode.
  * - `selfNavigationLayer`: a layer that navigates its own frame (`location.href`, `<meta http-equiv=refresh>`, an anchor
- *   `.click()`, a nested `<iframe src>`). The layer's own CSP and sandbox stop only the nested iframe. Measured in Chrome:
+ *   `.click()`, `location.replace`, `open(url, '_self')`, a `location.href` 1.5 s later, from a timer) or a nested
+ *   `<iframe src>`. The delayed one uses a timer, which the virtual clock freezes in render mode; the clock is pumped
+ *   while a layer seeks, so it fires once the render has seeked past 1.5 s. The layer's own CSP and sandbox stop only the nested iframe. Measured in Chrome:
  *   - **through the runtime page**, the runtime page's `default-src 'self'` (its `frame-src`) blocks every self-navigation
  *     of its child frames, in render and in preview, so nothing reaches the canary. Task 3 asserts this;
  *   - **a layer URL framed directly** by a page without our CSP (which needs the token) reaches the canary with href, meta
@@ -20,7 +22,9 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /** Canary path of every `hostileLayer` attempt starts with one of these; the self-navigation ones with `/selfnav-`. */
-export const SELF_NAVIGATION_CASES = ['href', 'meta', 'anchor', 'iframe'] as const;
+export const SELF_NAVIGATION_CASES = ['href', 'meta', 'anchor', 'iframe', 'replace', 'open-self', 'delayed-href'] as const;
+/** The cases that navigate the layer's own frame (all but the nested iframe, which the layer's own CSP stops). */
+export const OWN_FRAME_NAVIGATION_CASES = SELF_NAVIGATION_CASES.filter((c) => c !== 'iframe');
 export type SelfNavigationCase = (typeof SELF_NAVIGATION_CASES)[number];
 export const selfNavigationPath = (c: SelfNavigationCase) => `/selfnav-${c}`;
 
@@ -65,6 +69,10 @@ export function selfNavigationLayer(canary: string, c: SelfNavigationCase): stri
     meta: `<meta http-equiv="refresh" content="0;url=${url}"><script>window.msReady = Promise.resolve();</script>`,
     anchor: `<a id="a" href="${url}">x</a><script>window.msReady = Promise.resolve(); document.getElementById('a').click();</script>`,
     iframe: `<iframe src="${url}"></iframe><script>window.msReady = Promise.resolve();</script>`,
+    replace: `<script>window.msReady = Promise.resolve(); location.replace(${JSON.stringify(url)});</script>`,
+    'open-self': `<script>window.msReady = Promise.resolve(); window.open(${JSON.stringify(url)}, '_self');</script>`,
+    // Later than load and ready, while frames are being captured.
+    'delayed-href': `<script>window.msReady = Promise.resolve(); setTimeout(() => { location.href = ${JSON.stringify(url)}; }, 1500);</script>`,
   };
   return `<!doctype html><html><head><meta charset="utf-8"></head><body>${body[c]}</body></html>`;
 }

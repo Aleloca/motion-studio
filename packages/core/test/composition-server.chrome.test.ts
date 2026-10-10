@@ -20,7 +20,7 @@ import { findChrome, launchChrome, type Browser, type Page } from '../../composi
 import { COMP_PATH, findFfmpeg, H, LAYER, VIDEO, W, writeFixture } from '../../composition-runtime/test/support/fixture.ts';
 import { decodePng, meanGrey, type Image } from '../../composition-runtime/test/support/png.ts';
 import { sourceFrameIndex, videoSourceTime } from '../../composition-runtime/src/timing.ts';
-import { HOSTILE_BOX as HOSTILE, hostileTrack, SELF_NAVIGATION_CASES, selfNavigationPath, selfNavigationTrack, writeHostileLayers } from './helpers/hostile-layers.ts';
+import { HOSTILE_BOX as HOSTILE, hostileTrack, OWN_FRAME_NAVIGATION_CASES, SELF_NAVIGATION_CASES, selfNavigationPath, selfNavigationTrack, writeHostileLayers } from './helpers/hostile-layers.ts';
 import { startCompositionServer, type CompositionServer } from '../src/compositions/composition-server.ts';
 
 const chrome = findChrome();
@@ -217,7 +217,8 @@ describe.skipIf(!chrome)('composition server in headless Chrome', () => {
 
   /*
    * KNOWN RESIDUAL. A layer URL framed DIRECTLY by a page without our CSP, not through the runtime page, can navigate
-   * itself to the canary with location.href, a meta refresh or an anchor click. Its nested iframe stays blocked by the
+   * itself to the canary with location.href, a meta refresh, an anchor click, location.replace, open(url, '_self') or a
+   * delayed location.href. Its nested iframe stays blocked by the
    * layer's own CSP. Such a page needs the session token, and the UI never frames a layer directly. The headers alone
    * cannot close this. Task 4 (CDP interception) and Task 7 (webRequest filter) close it where they own the browser. The
    * web preview in the user's browser keeps it (documented; layers load only when the user starts the preview). If this
@@ -232,7 +233,9 @@ describe.skipIf(!chrome)('composition server in headless Chrome', () => {
       const frames = SELF_NAVIGATION_CASES.map((c) => `${server.origin}/${s.token}/${versionDir}/compositions/${format}/layers/selfnav-${c}.html`);
       await page.goto(`${ui}/`);
       await page.eval(`for (const src of ${JSON.stringify(frames)}) { const f = document.createElement('iframe'); f.sandbox = 'allow-scripts'; f.src = src; document.body.appendChild(f); } true`);
-      const reached = ['href', 'meta', 'anchor'].map((c) => selfNavigationPath(c as 'href'));
+      // Every case that navigates the layer's own frame gets out (the delayed one after 1.5 s of real time: a layer framed
+      // directly has no runtime, so nothing freezes or pumps its clock beyond layer.js's own).
+      const reached = OWN_FRAME_NAVIGATION_CASES.map((c) => selfNavigationPath(c));
       const t0 = Date.now();
       while (!reached.every((p) => canaryHits.includes(p)) && Date.now() - t0 < 30_000) await new Promise((r) => setTimeout(r, 100));
       await new Promise((r) => setTimeout(r, 1000));
