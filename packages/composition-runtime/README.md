@@ -66,8 +66,8 @@ Everything lives under one token prefix on the composition server's own origin (
 
 | Member | Meaning |
 |---|---|
-| `__ms.ready(): Promise<{ duration, fps, width, height, frames, errors }>` | Resolves when all of this is done: mounted, every declared font `FontFace.load()`ed, images decoded, videos loaded (`loadeddata`), every layer connected with its fonts loaded and `msReady` awaited, and t = 0 shown. It rejects only on a fatal error (no composition data, a bad base, a malformed composition). Asset problems appear in `errors`: Task 4 decides whether they fail the render. |
-| `__ms.seek(t): Promise<void>` | Shows composition time `t` in seconds, clamped to `[0, duration]` (a still is always 0). See "Seek" below. |
+| `__ms.ready(): Promise<{ duration, fps, width, height, frames, errors }>` | Resolves when all of this is done: mounted, every declared font `FontFace.load()`ed, images decoded, videos loaded (`loadeddata`), every layer connected with its fonts loaded and `msReady` awaited, and t = 0 shown. It rejects only on a fatal error (no composition data, a bad base, a malformed composition or one the mount cannot handle, or a `frameTimeout` on the first frame). Asset problems appear in `errors`: Task 4 decides whether they fail the render. |
+| `__ms.seek(t): Promise<void>` | Shows composition time `t` in seconds, clamped to `[0, duration]` (a still is always 0). See "Seek" below. It rejects with `frameTimeout` when no frame was painted; the renderer must then fail, never capture. |
 | `__ms.duration`, `__ms.fps`, `__ms.width`, `__ms.height` | From the composition. `duration` is 0 for a still. |
 | `__ms.mode` | `'render'` or `'preview'`. |
 | `__ms.errors` | Every `RuntimeError` reported so far. |
@@ -87,7 +87,11 @@ Everything lives under one token prefix on the composition server's own origin (
      1 ms. The last frame is held past the end of the source. Each seek awaits `seeked`, with no `requestVideoFrameCallback`
      (spike §1);
    - every visible layer gets `seek(t − clip.start)` (see 4).
-5. Two **native** animation frames, each with a 100 ms native-timer fallback.
+5. Two **native** animation frames.
+   - **Render mode:** each frame may take as long as the seek timeout. If the native frame never arrives, the runtime
+     reports `frameTimeout` and `seek(t)` rejects, so the renderer never captures a frame that was not painted. A layer
+     does the same inside its own frame, with half the layer timeout, and its `frameTimeout` fails the seek too.
+   - **Preview:** each frame falls back to a 100 ms native timer, because a hidden or throttled frame produces none.
 
 **Time limits.** The runtime has generous native-time limits: load 120 s, video seek 60 s, layer 60 s. When one runs out, the
 runtime reports an error and goes on. It never hangs. Task 4 still puts its own timeout on each `Runtime.evaluate`.
@@ -99,8 +103,7 @@ runtime reports an error and goes on. It never hangs. Task 4 still puts its own 
 - `advanceTo(ms)` fires the timers that are due, in order, then one animation frame at `ms`.
 - String timer handlers are ignored.
 - **No deadlock.** The runtime and `layer.js` keep the native functions and never wait on virtual ones. The two animation
-  frames after a seek are native, and their fallback timers are native too, so a frozen clock cannot stall a seek even in a
-  throttled frame.
+  frames after a seek are native, and so are their time limits, so a frozen clock cannot stall a seek.
 
 ### 3. html layers (spec §3.2 contract)
 
@@ -118,6 +121,9 @@ runtime reports an error and goes on. It never hangs. Task 4 still puts its own 
   Task 4 may also inject `clock.js` with `Page.addScriptToEvaluateOnNewDocument`. Installing the clock is idempotent.
 - **The private channel.** After the iframe's `load`, the runtime posts `{ type: 'ms-layer-connect', v: 1 }` with a
   transferred `MessagePort`. `layer.js` accepts it only from `window.parent` and answers `hello`.
+  - The runtime validates every reply with `parseLayerReply`: `ok` must be a boolean, and `warnings` must hold at most 20
+    strings, each cut to 300 characters. Anything else is ignored, and the request times out like an unanswered one.
+  - So a hostile layer can only spoil its own clip. It cannot make `__ms.ready()` reject.
 - **Ready.** Every font face of the layer (its own `@font-face` rules and the composition fonts) is `FontFace.load()`ed, then
   `msReady` is awaited.
 - **Seek(t),** where `t` is the layer's local time in seconds:
@@ -127,11 +133,30 @@ runtime reports an error and goes on. It never hangs. Task 4 still puts its own 
   4. `msSeek(t)` is awaited;
   5. then two native animation frames.
 
-  While `msSeek` or `msReady` is pending, the frozen clock is **pumped at the current time**: timers that are due and one
-  animation frame fire on each native macrotask. So layer code that awaits `setTimeout(0)` or `requestAnimationFrame` cannot
-  deadlock, and time does not move.
-- **Time-purity.** Layers must be time-pure. State that builds up from timer or rAF history depends on the seek history.
-  Renders seek forward within each segment.
+  While `msSeek` or `msReady` is pending, the frozen clock is **pumped at the current time**, once per native macrotask:
+  - the timers that are due fire first;
+  - an animation frame fires only after a macrotask in which no timer fired.
+
+  So layer code that awaits `setTimeout(0)` or `requestAnimationFrame` cannot deadlock, and time does not move.
+- **What is deterministic:**
+  - CSS animations and transitions, WAAPI animations that exist when a seek starts, `msTimeline`, and `msSeek` are set from `t` alone;
+  - `Date`, `performance.now`, timers and rAF read the virtual clock;
+  - code that only depends on these values is deterministic. Pumping fires timers and frames at the same `t`, so a time-pure
+    callback draws the same thing however many times it runs.
+- **What is not deterministic:**
+  - state that builds up from timer or rAF history (counters, simulations, a flag set by a timer). It depends on the seek
+    history and on how many pump rounds an `msSeek` needed. Renders seek forward within each segment, but layers must still
+    be **time-pure**;
+  - **animations created after the seek began.** `layer.js` sets every animation found at the start of the seek and after
+    `msSeek`, and nothing later. A layer that creates animations late, from a timer, a rAF or an event, must drive them
+    itself through `msTimeline` or `msSeek(t)`.
+- **Clock bypasses.** These are residuals, and each one only affects the layer's own rendering: a layer is a sandboxed
+  frame with its own opaque origin, so it can never reach the runtime, the composition timeline or the UI.
+  - `window.__msClock.native` exposes the real timing functions, and code that uses them is not frozen;
+  - a nested `srcdoc` or `about:blank` iframe inside a layer has a fresh, unpatched realm. Task 4's CDP
+    `addScriptToEvaluateOnNewDocument(clock.js)` also covers nested frames;
+  - Workers, AudioContext time, media playback, `requestIdleCallback` and `document.timeline` are not virtualised. The
+    spec forbids Workers, AudioContext and autoplaying media in layers, and `staticLayerCheck` flags them.
 
 ### 4. Preview `postMessage` protocol (Task 8)
 
@@ -158,6 +183,10 @@ The types and validators are in `src/protocol.ts`, imported as `@motion-studio/c
 | out | `{ type: 'ready', version: 1, duration, fps, width, height, scenes, errors }`, once, after loading. Load errors are in `errors`. Nothing except fatal errors goes out before `ready`, and commands sent before it are dropped. |
 | out | `{ type: 'time', t, playing }`, on every animation frame while playing, and after each seek or pause. |
 | out | `{ type: 'error', error: { code, message, clipId? } }`. `code` is one of `RUNTIME_ERROR_CODES`; the UI translates it, and `message` is an English developer detail. |
+
+`parseOutgoing` returns a clean copy of each message: it drops unknown keys and checks every string's type. Error messages are
+cut to 2000 characters. An id longer than 64 characters or a scene name longer than 200 rejects the message, and so do more
+than 200 scenes or errors.
 | out | `{ type: 'clipBounds', clipId, bounds: { x, y, width, height } \| null, scale }`, in iframe CSS pixels, with animations included. It is sent after `select`, after each seek or pause, and on a scale or viewport change. |
 | in | `{ type: 'seek', t }` pauses, then does a full deterministic seek. Seeks coalesce to the latest. |
 | in | `{ type: 'play', loop?: boolean = true, rate?: 0.1–4 = 1 }` plays in real time. Video and audio are synced to the timeline within one frame, and audio volume follows `volume` and the fades, clamped to 1. |
@@ -202,3 +231,5 @@ backwards, so a delayed `fadeIn` keeps the clip hidden, and a later `fadeOut` ne
   `--user-data-dir` under the OS temp folder, network lockdown flags, and its own process group, which is killed afterwards.
   - Without Chrome, the test is skipped with a message. **`MS_REQUIRE_CHROME=1`** (CI) turns the skip into a failure.
   - The video check also needs ffmpeg: `FFMPEG_PATH` or the usual places.
+  - The test font is vendored: `test/fixtures/fonts/jetbrains-mono-latin-400-normal.woff2`, JetBrains Mono, SIL Open Font
+    License 1.1. Its licence is in `test/fixtures/fonts/OFL.txt`.

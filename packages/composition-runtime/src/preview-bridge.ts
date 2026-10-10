@@ -23,7 +23,7 @@ export function createPreviewBridge(o: { parent: { postMessage(msg: unknown, tar
       const cmd = parseIncoming(ev.data);
       if (!cmd) return;
       switch (cmd.type) {
-        case 'seek': void o.player.seek(cmd.t); break;
+        case 'seek': o.player.seek(cmd.t).catch(() => {}); break; // failures are reported as error messages
         case 'play': o.player.play({ loop: cmd.loop ?? true, rate: cmd.rate ?? 1 }); break;
         case 'pause': o.player.pause(); break;
         case 'select': o.player.select(cmd.clipId); break;

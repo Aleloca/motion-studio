@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { COMPOSITION_DATA_ID, COMPOSITION_PLACEHOLDER, injectLayerBootstrap, readCompositionData, renderRuntimePage } from '../src/page.ts';
+import { COMPOSITION_DATA_ID, COMPOSITION_PLACEHOLDER, injectLayerBootstrap, layerBootstrapScanWork, readCompositionData, renderRuntimePage } from '../src/page.ts';
 
 const INDEX = `<!doctype html><html><head>${COMPOSITION_PLACEHOLDER}</head><body><script src="runtime.js"></script></body></html>`;
 
@@ -45,10 +45,13 @@ describe('layer bootstrap injection', () => {
     expect(() => injectLayerBootstrap('<p>', '/x" onload="y')).toThrow();
     expect(() => injectLayerBootstrap('<p>', 'https://evil/layer.js')).toThrow();
   });
-  it('is linear on hostile input', () => {
-    const hostile = '<!--'.repeat(200_000);
-    const t0 = performance.now();
-    injectLayerBootstrap(hostile, '/tok/runtime/layer.js');
-    expect(performance.now() - t0).toBeLessThan(5000);
+  it('is linear on hostile input (work count, not wall clock)', () => {
+    for (const unit of ['<!--', '<!---->', ' ', '<!-- -->\n', '<!doctype']) {
+      for (const n of [1_000, 100_000]) {
+        const hostile = unit.repeat(n);
+        expect(layerBootstrapScanWork(hostile)).toBeLessThanOrEqual(2 * hostile.length + 16);
+        expect(injectLayerBootstrap(hostile, '/tok/runtime/layer.js').length).toBeGreaterThan(hostile.length);
+      }
+    }
   });
 });

@@ -1,8 +1,8 @@
 import type { Clip, Composition, Track } from '@motion-studio/shared';
 import { compileAnimations, compileKenBurns, REGISTERED_PROPERTIES, type CompiledAnimation } from './animations.ts';
 import type { Natives, VirtualClock } from './clock.ts';
-import { twoFrames, withTimeout } from './frames.ts';
-import { connectLayer, type LayerHost } from './layer-host.ts';
+import { FrameTimeoutError, twoFrames, withTimeout } from './frames.ts';
+import { connectLayer, LayerRequestError, type LayerHost } from './layer-host.ts';
 import { encodeLayerConfig, type LayerFont } from './layer-protocol.ts';
 import type { Rect, RuntimeError, RuntimeErrorCode, RuntimeMode } from './protocol.ts';
 import { audioGain, frameCount, isClipVisible, needsResync, videoSourceTime } from './timing.ts';
@@ -252,7 +252,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
         frame.setAttribute('sandbox', 'allow-scripts');
         frame.setAttribute('scrolling', 'no');
         frame.tabIndex = -1;
-        frame.name = encodeLayerConfig({ v: 1, mode: opts.mode, clipId: clip.id, params, fonts: layerFonts });
+        frame.name = encodeLayerConfig({ v: 1, mode: opts.mode, clipId: clip.id, params, fonts: layerFonts, frameTimeoutMs: Math.max(1, Math.floor(timeouts.layer / 2)) });
         Object.assign(frame.style, { display: 'block', width: '100%', height: '100%', border: '0', background: 'transparent', colorScheme: 'normal' });
         layer = connectLayer(frame, n, timeouts.layer);
         frame.src = url;
@@ -345,12 +345,28 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
       if (!isClipVisible(m.clip, time, c.duration)) continue;
       if (m.video) work.push(seekVideo(m, time));
       if (m.layer) {
-        work.push(m.layer.seek(time - m.clip.start).catch((e: unknown) => report('layerError', `layer seek: ${String(e instanceof Error ? e.message : e)}`, m.clip.id)));
+        work.push(m.layer.seek(time - m.clip.start).catch((e: unknown) => {
+          if (e instanceof LayerRequestError && e.code === 'frameTimeout') {
+            report('frameTimeout', `html layer painted no frame after seeking to ${time}: ${e.message}`, m.clip.id);
+            throw e; // render: fail the seek rather than capture a stale layer
+          }
+          report('layerError', `layer seek: ${String(e instanceof Error ? e.message : e)}`, m.clip.id);
+        }));
       }
     }
     for (const a of audios) if (!a.el.paused) a.el.pause();
     await Promise.all(work);
-    await twoFrames(n);
+    if (opts.mode === 'render') {
+      // Render: wait as long as a seek may take; no frame means the seek fails (a capture now could be stale).
+      try {
+        await twoFrames(n, { strict: true, timeoutMs: timeouts.seek });
+      } catch (e) {
+        if (e instanceof FrameTimeoutError) report('frameTimeout', `no animation frame after seeking to ${time}: ${e.message}`);
+        throw e;
+      }
+    } else {
+      await twoFrames(n);
+    }
   };
 
   let seekLoop: Promise<void> | null = null;
@@ -366,6 +382,9 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
             pendingSeek = null;
             await doSeek(next);
           }
+        } catch (e) {
+          pendingSeek = null; // a failed seek drops the queued ones; the caller sees the failure
+          throw e;
         } finally {
           seekLoop = null;
         }
@@ -421,7 +440,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
       } else {
         time = c.duration;
         stopPlayback();
-        void seek(c.duration);
+        seek(c.duration).catch(() => {});
         return;
       }
     }
@@ -481,7 +500,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     pause() {
       if (!playing) return;
       stopPlayback();
-      void seek(time);
+      seek(time).catch(() => {});
     },
     select(clipId) { selected = clipId; player.onBounds?.(); },
     setScale(s) { scaleMode = s; applyScale(); player.onBounds?.(); },

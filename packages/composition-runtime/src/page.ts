@@ -74,21 +74,34 @@ export function injectLayerBootstrap(html: string, src: string): string {
   return at < 0 ? tag + html : html.slice(0, at) + tag + html.slice(at);
 }
 
+/** Characters the doctype scan examines for `html`: at most about twice its length (a linear scan; tested). */
+export function layerBootstrapScanWork(html: string): number {
+  return scanDoctype(html).work;
+}
+
 /** Index just after a leading doctype, or -1. Skips a BOM, whitespace and complete comments. */
 function doctypeEnd(html: string): number {
+  return scanDoctype(html).at;
+}
+
+function scanDoctype(html: string): { at: number; work: number } {
   let i = 0;
+  let work = 0;
   if (html.charCodeAt(0) === 0xfeff) i = 1;
   for (;;) {
-    while (i < html.length && /\s/.test(html[i]!)) i++;
+    while (i < html.length && /\s/.test(html[i]!)) { i++; work++; }
     if (html.startsWith('<!--', i)) {
       const close = html.indexOf('-->', i + 4);
-      if (close < 0) return -1;
+      work += (close < 0 ? html.length : close + 3) - i;
+      if (close < 0) return { at: -1, work };
       i = close + 3;
       continue;
     }
     break;
   }
-  if (html.slice(i, i + 9).toLowerCase() !== '<!doctype') return -1;
+  work += 9;
+  if (html.slice(i, i + 9).toLowerCase() !== '<!doctype') return { at: -1, work };
   const end = html.indexOf('>', i);
-  return end < 0 ? -1 : end + 1;
+  work += (end < 0 ? html.length : end + 1) - i;
+  return { at: end < 0 ? -1 : end + 1, work };
 }

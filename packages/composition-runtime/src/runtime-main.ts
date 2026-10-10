@@ -64,7 +64,12 @@ export function startRuntime(w: Window & typeof globalThis): RuntimeApi {
   }
 
   const root = w.document.getElementById('ms-root') ?? w.document.body;
-  const player: Player = mount(root, comp as Composition, { mode, base: base.href, natives, clock, report });
+  let player: Player;
+  try {
+    player = mount(root, comp as Composition, { mode, base: base.href, natives, clock, report });
+  } catch (e) {
+    return fail('compositionInvalid', `the composition could not be mounted: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`);
+  }
   const ready = player.ready().then((info) => ({ ...info, errors: [...errors] }));
   ready.catch(() => {});
 

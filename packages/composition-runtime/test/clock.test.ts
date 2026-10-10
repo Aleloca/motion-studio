@@ -87,4 +87,19 @@ describe('virtual clock', () => {
     expect(n.performanceNow()).toBeGreaterThanOrEqual(0);
     expect(typeof n.setTimeout).toBe('function');
   });
+
+  it('runDueTimers fires only timers due now, runFrame one frame, and neither moves time', () => {
+    const w = freshWindow();
+    const clock = installVirtualClock(w);
+    clock.advanceTo(500);
+    const log: string[] = [];
+    w.setTimeout(() => log.push('now'), 0);
+    w.setTimeout(() => log.push('later'), 10);
+    w.requestAnimationFrame((ts) => log.push(`raf@${ts}`));
+    expect(clock.runDueTimers()).toBe(1);
+    expect(clock.runDueTimers()).toBe(0);
+    clock.runFrame();
+    expect(log).toEqual(['now', 'raf@500']);
+    expect(w.performance.now()).toBe(500);
+  });
 });

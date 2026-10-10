@@ -2,7 +2,7 @@ import type { Composition } from '@motion-studio/shared';
 import { JSDOM } from 'jsdom';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { installVirtualClock, type Natives } from '../src/clock.ts';
-import { twoFrames } from '../src/frames.ts';
+import { FrameTimeoutError, twoFrames } from '../src/frames.ts';
 import { decodeLayerConfig } from '../src/layer-protocol.ts';
 import { mount } from '../src/mount.ts';
 import type { RuntimeError } from '../src/protocol.ts';
@@ -143,6 +143,7 @@ describe('mount', () => {
       v: 1, mode: 'preview', clipId: 'outro',
       params: { headline: 'Thanks', accent: '#fbbf24', n: 3, photo: `${BASE}assets/p.jpg` },
       fonts: [{ family: 'Brand', url: `${BASE}assets/brand.woff2` }],
+      frameTimeoutMs: 25, // half the layer timeout: the layer fails its own frame wait before the runtime gives up on it
     });
   });
 
@@ -160,7 +161,30 @@ describe('frames under the virtual clock', () => {
     const clock = installVirtualClock(w);
     let fired = false;
     w.requestAnimationFrame(() => { fired = true; }); // frozen: never fires until the clock advances
-    await expect(twoFrames(clock.native, 20)).resolves.toBeUndefined();
+    await expect(twoFrames(clock.native, { strict: false, timeoutMs: 20 })).resolves.toBeUndefined();
     expect(fired).toBe(false);
+  });
+});
+
+describe('render mode never captures an unpainted frame', () => {
+  const silent: Natives = { ...natives, requestAnimationFrame: () => 0 }; // a native rAF that never fires
+
+  it('strict frame waits reject with frameTimeout; preview waits fall back', async () => {
+    await expect(twoFrames(silent, { strict: true, timeoutMs: 20 })).rejects.toBeInstanceOf(FrameTimeoutError);
+    await expect(twoFrames(silent, { strict: false, timeoutMs: 20 })).resolves.toBeUndefined();
+  });
+
+  it('a render seek with no animation frame fails and reports frameTimeout', async () => {
+    const errors: RuntimeError[] = [];
+    const root = document.getElementById('ms-root')!;
+    const player = mount(root, comp(), { mode: 'render', base: BASE, natives: silent, report: (e) => errors.push(e), timeouts: { load: 50, seek: 30, layer: 50 } });
+    await expect(player.seek(1)).rejects.toBeInstanceOf(FrameTimeoutError);
+    expect(errors.map((e) => e.code)).toContain('frameTimeout');
+  });
+
+  it('the same in preview resolves after the short fallback', async () => {
+    const root = document.getElementById('ms-root')!;
+    const player = mount(root, comp(), { mode: 'preview', base: BASE, natives: silent, report: () => {}, timeouts: { load: 50, seek: 30, layer: 50 } });
+    await expect(player.seek(1)).resolves.toBeUndefined();
   });
 });

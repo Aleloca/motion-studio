@@ -22,6 +22,8 @@ export type RuntimeMode = 'preview' | 'render';
 export const RUNTIME_ERROR_CODES = [
   'compositionMissing', 'compositionInvalid', 'baseNotAllowed', 'assetPathRejected', 'assetLoadFailed', 'fontMissing',
   'fontLoadFailed', 'videoSeekTimeout', 'layerTimeout', 'layerError', 'badAnimation', 'audioBlocked', 'unknownClipType',
+  /** Render mode: no animation frame was painted after a seek; the seek fails rather than capture a stale frame. */
+  'frameTimeout',
 ] as const;
 export type RuntimeErrorCode = (typeof RUNTIME_ERROR_CODES)[number];
 /** A problem the runtime met. `message` is a developer detail in English; the UI shows its own text for `code`. */
@@ -92,26 +94,57 @@ export function parseIncoming(data: unknown): PreviewIncoming | null {
   }
 }
 
-const isRect = (v: unknown): v is Rect => isObj(v) && finite(v.x) && finite(v.y) && finite(v.width) && finite(v.height);
-const isError = (v: unknown): v is RuntimeError => isObj(v) && (RUNTIME_ERROR_CODES as readonly unknown[]).includes(v.code) && typeof v.message === 'string'
-  && (v.clipId === undefined || typeof v.clipId === 'string');
-const isScene = (v: unknown): v is SceneInfo => isObj(v) && typeof v.id === 'string' && finite(v.start) && finite(v.duration);
+/** Caps on what `parseOutgoing` accepts (the UI side never trusts sizes blindly). */
+export const OUTGOING_LIMITS = { message: 2000, id: 64, name: 200, scenes: 200, errors: 200 } as const;
 
-/** Validates a message from the runtime (for the UI side). Null when it is not a well-formed outgoing message. */
+const str = (v: unknown, max: number): v is string => typeof v === 'string' && v.length <= max;
+const rect = (v: unknown): Rect | null => (isObj(v) && finite(v.x) && finite(v.y) && finite(v.width) && finite(v.height)
+  ? { x: v.x, y: v.y, width: v.width, height: v.height } : null);
+const runtimeError = (v: unknown): RuntimeError | null => {
+  if (!isObj(v) || !(RUNTIME_ERROR_CODES as readonly unknown[]).includes(v.code) || typeof v.message !== 'string') return null;
+  if (v.clipId !== undefined && !str(v.clipId, OUTGOING_LIMITS.id)) return null;
+  return { code: v.code as RuntimeErrorCode, message: v.message.slice(0, OUTGOING_LIMITS.message), ...(v.clipId !== undefined ? { clipId: v.clipId } : {}) };
+};
+const scene = (v: unknown): SceneInfo | null => {
+  if (!isObj(v) || !str(v.id, OUTGOING_LIMITS.id) || !finite(v.start) || !finite(v.duration)) return null;
+  if (v.name !== undefined && !str(v.name, OUTGOING_LIMITS.name)) return null;
+  return { id: v.id, ...(v.name !== undefined ? { name: v.name } : {}), start: v.start, duration: v.duration };
+};
+/** Maps every element with `f`; null when the value is not an array, is longer than `max`, or any element is invalid. */
+function all<T>(v: unknown, max: number, f: (x: unknown) => T | null): T[] | null {
+  if (!Array.isArray(v) || v.length > max) return null;
+  const out: T[] = [];
+  for (const x of v) { const y = f(x); if (y === null) return null; out.push(y); }
+  return out;
+}
+
+/**
+ * Validates a message from the runtime (for the UI side) and returns a clean copy: unknown keys are dropped, strings are
+ * type-checked and bounded (an error message is cut to `OUTGOING_LIMITS.message`; an over-long id or name rejects the
+ * message). Null when it is not a well-formed outgoing message.
+ */
 export function parseOutgoing(data: unknown): PreviewOutgoing | null {
   if (!isObj(data)) return null;
   switch (data.type) {
-    case 'ready':
-      return data.version === PREVIEW_PROTOCOL_VERSION && finite(data.duration) && finite(data.fps) && finite(data.width) && finite(data.height)
-        && Array.isArray(data.scenes) && data.scenes.every(isScene) && Array.isArray(data.errors) && data.errors.every(isError)
-        ? data as PreviewOutgoing : null;
+    case 'ready': {
+      if (data.version !== PREVIEW_PROTOCOL_VERSION || !finite(data.duration) || !finite(data.fps) || !finite(data.width) || !finite(data.height)) return null;
+      const scenes = all(data.scenes, OUTGOING_LIMITS.scenes, scene);
+      const errors = all(data.errors, OUTGOING_LIMITS.errors, runtimeError);
+      if (!scenes || !errors) return null;
+      return { type: 'ready', version: PREVIEW_PROTOCOL_VERSION, duration: data.duration, fps: data.fps, width: data.width, height: data.height, scenes, errors };
+    }
     case 'time':
       return finite(data.t) && typeof data.playing === 'boolean' ? { type: 'time', t: data.t, playing: data.playing } : null;
-    case 'error':
-      return isError(data.error) ? data as PreviewOutgoing : null;
-    case 'clipBounds':
-      return (data.clipId === null || typeof data.clipId === 'string') && (data.bounds === null || isRect(data.bounds)) && finite(data.scale)
-        ? data as PreviewOutgoing : null;
+    case 'error': {
+      const error = runtimeError(data.error);
+      return error ? { type: 'error', error } : null;
+    }
+    case 'clipBounds': {
+      if (!(data.clipId === null || str(data.clipId, OUTGOING_LIMITS.id)) || !finite(data.scale)) return null;
+      const bounds = data.bounds === null ? null : rect(data.bounds);
+      if (data.bounds !== null && !bounds) return null;
+      return { type: 'clipBounds', clipId: data.clipId, bounds, scale: data.scale };
+    }
     default:
       return null;
   }

@@ -18,7 +18,8 @@ import { startCompositionServer, startUiServer, type TestServer } from './suppor
 const chrome = findChrome();
 const ffmpeg = findFfmpeg();
 const required = process.env.MS_REQUIRE_CHROME === '1';
-const FONT = join(import.meta.dirname, '../../web/node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2');
+// A vendored OFL font (JetBrains Mono, latin 400; licence in test/fixtures/fonts/OFL.txt).
+const FONT = join(import.meta.dirname, 'fixtures/fonts/jetbrains-mono-latin-400-normal.woff2');
 
 if (!chrome) {
   if (required) {

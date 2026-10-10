@@ -25,10 +25,37 @@ export interface LayerConfig {
   params: Record<string, string | number>;
   /** The composition's fonts, preloaded into the layer with `FontFace.load()`. */
   fonts: LayerFont[];
+  /** Render mode: how long the layer waits for each native animation frame after a seek before failing it. */
+  frameTimeoutMs?: number;
 }
 
 export type LayerRequest = { id: number; op: 'ready' } | { id: number; op: 'seek'; t: number } | { op: 'tick'; t: number };
-export interface LayerResult { id: number; ok: boolean; error?: string; warnings?: string[] }
+export interface LayerResult { id: number; ok: boolean; error?: string; /** `frameTimeout` when no frame was painted. */ code?: 'frameTimeout'; warnings?: string[] }
+
+/** Caps on what a layer may send back (a layer is untrusted code). */
+export const LAYER_REPLY_LIMITS = { warnings: 20, text: 300 } as const;
+
+/**
+ * Validates a reply from a layer: a hello, or `{ id, ok: boolean, error?: string, code?: 'frameTimeout', warnings?: string[] }`.
+ * Strings are cut to `LAYER_REPLY_LIMITS.text`; more than `LAYER_REPLY_LIMITS.warnings` warnings, a wrong type or an
+ * unknown shape gives null (the reply is ignored and the request times out like an unanswered one).
+ */
+export function parseLayerReply(d: unknown): LayerReply | null {
+  if (typeof d !== 'object' || d === null || Array.isArray(d)) return null;
+  const o = d as Record<string, unknown>;
+  if (o.type === 'hello') return typeof o.v === 'number' ? { type: 'hello', v: o.v } : null;
+  if (typeof o.id !== 'number' || !Number.isInteger(o.id) || typeof o.ok !== 'boolean') return null;
+  if (o.error !== undefined && typeof o.error !== 'string') return null;
+  if (o.code !== undefined && o.code !== 'frameTimeout') return null;
+  if (o.warnings !== undefined && !(Array.isArray(o.warnings) && o.warnings.length <= LAYER_REPLY_LIMITS.warnings && o.warnings.every((w) => typeof w === 'string'))) return null;
+  const cut = (s: string) => s.slice(0, LAYER_REPLY_LIMITS.text);
+  return {
+    id: o.id, ok: o.ok,
+    ...(typeof o.error === 'string' ? { error: cut(o.error) } : {}),
+    ...(o.code === 'frameTimeout' ? { code: 'frameTimeout' as const } : {}),
+    ...(Array.isArray(o.warnings) ? { warnings: (o.warnings as string[]).map(cut) } : {}),
+  };
+}
 export type LayerReply = { type: 'hello'; v: number } | LayerResult;
 
 export function encodeLayerConfig(c: LayerConfig): string {
@@ -42,7 +69,8 @@ export function decodeLayerConfig(name: string): LayerConfig | null {
     if (v.v !== LAYER_PROTOCOL_VERSION || (v.mode !== 'render' && v.mode !== 'preview') || typeof v.clipId !== 'string') return null;
     const params = typeof v.params === 'object' && v.params !== null ? v.params : {};
     const fonts = Array.isArray(v.fonts) ? v.fonts.filter((f) => f && typeof f.family === 'string' && typeof f.url === 'string') : [];
-    return { v: LAYER_PROTOCOL_VERSION, mode: v.mode, clipId: v.clipId, params, fonts };
+    const frameTimeoutMs = typeof v.frameTimeoutMs === 'number' && v.frameTimeoutMs > 0 ? v.frameTimeoutMs : undefined;
+    return { v: LAYER_PROTOCOL_VERSION, mode: v.mode, clipId: v.clipId, params, fonts, ...(frameTimeoutMs ? { frameTimeoutMs } : {}) };
   } catch {
     return null;
   }

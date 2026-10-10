@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { parseLayerReply } from '../src/layer-protocol.ts';
 import { parseIncoming, parseOutgoing, parseParentOrigin } from '../src/protocol.ts';
 import { createPreviewBridge } from '../src/preview-bridge.ts';
 
@@ -31,6 +32,19 @@ describe('outgoing messages (for the UI side)', () => {
     expect(parseOutgoing({ type: 'clipBounds', clipId: 'a', bounds: { x: 0, y: 0, width: 1, height: 1 }, scale: 1 })).not.toBeNull();
     expect(parseOutgoing({ type: 'ready', version: 1, duration: 6, fps: 30, width: 1080, height: 1920, scenes: [], errors: [] })).not.toBeNull();
     expect(parseOutgoing({ type: 'seek', t: 1 })).toBeNull();
+    expect(parseOutgoing({ type: 'time', t: 1, playing: true, html: '<img>' })).toEqual({ type: 'time', t: 1, playing: true });
+    expect(parseOutgoing({ type: 'error', error: { code: 'layerError', message: 'x'.repeat(5000), extra: 1 }, more: 2 }))
+      .toEqual({ type: 'error', error: { code: 'layerError', message: 'x'.repeat(2000) } });
+    expect(parseOutgoing({ type: 'error', error: { code: 'nope', message: 'x' } })).toBeNull();
+    expect(parseOutgoing({ type: 'error', error: { code: 'layerError', message: 'x', clipId: 7 } })).toBeNull();
+    const ready = { type: 'ready', version: 1, duration: 6, fps: 30, width: 1, height: 1, errors: [] };
+    expect(parseOutgoing({ ...ready, scenes: [{ id: 's', name: 'A', start: 0, duration: 6, x: 1 }] }))
+      .toEqual({ ...ready, scenes: [{ id: 's', name: 'A', start: 0, duration: 6 }] });
+    expect(parseOutgoing({ ...ready, scenes: [{ id: 's', name: 5, start: 0, duration: 6 }] })).toBeNull();
+    expect(parseOutgoing({ ...ready, scenes: [{ id: 's', name: 'n'.repeat(201), start: 0, duration: 6 }] })).toBeNull();
+    expect(parseOutgoing({ ...ready, scenes: Array.from({ length: 201 }, (_, i) => ({ id: `s${i}`, start: i, duration: 1 })) })).toBeNull();
+    expect(parseOutgoing({ type: 'clipBounds', clipId: 'a', bounds: { x: 0, y: 0, width: 1, height: 1, z: 9 }, scale: 1, k: 1 }))
+      .toEqual({ type: 'clipBounds', clipId: 'a', bounds: { x: 0, y: 0, width: 1, height: 1 }, scale: 1 });
     expect(parseOutgoing({ type: 'time', t: 'x', playing: true })).toBeNull();
   });
 });
@@ -81,5 +95,20 @@ describe('preview bridge', () => {
     bridge.post({ type: 'time', t: 1, playing: false });
     expect(parent.postMessage).toHaveBeenCalledWith({ type: 'time', t: 1, playing: false }, ORIGIN);
     expect(() => bridge.post({ type: 'seek', t: 1 } as never)).toThrow();
+  });
+});
+
+describe('layer replies (untrusted)', () => {
+  it('accepts well-formed replies and cuts long strings', () => {
+    expect(parseLayerReply({ type: 'hello', v: 1 })).toEqual({ type: 'hello', v: 1 });
+    expect(parseLayerReply({ id: 3, ok: true, warnings: ['a', 'b'.repeat(400)] })).toEqual({ id: 3, ok: true, warnings: ['a', 'b'.repeat(300)] });
+    expect(parseLayerReply({ id: 4, ok: false, error: 'boom', code: 'frameTimeout', junk: 1 })).toEqual({ id: 4, ok: false, error: 'boom', code: 'frameTimeout' });
+  });
+  it('ignores anything else', () => {
+    for (const bad of [null, 'x', [], { id: 1 }, { id: 1, ok: 'yes' }, { id: '1', ok: true }, { id: 1.5, ok: true },
+      { id: 1, ok: true, warnings: 'w' }, { id: 1, ok: true, warnings: [1] }, { id: 1, ok: true, warnings: Array(21).fill('w') },
+      { id: 1, ok: false, error: {} }, { id: 1, ok: false, code: 'other' }, { type: 'hello' }]) {
+      expect(parseLayerReply(bad)).toBeNull();
+    }
   });
 });

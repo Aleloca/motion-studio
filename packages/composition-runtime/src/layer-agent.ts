@@ -1,5 +1,5 @@
 import { installVirtualClock, type VirtualClock } from './clock.ts';
-import { twoFrames } from './frames.ts';
+import { FrameTimeoutError, PREVIEW_FRAME_WAIT, twoFrames, type FrameWait } from './frames.ts';
 import { decodeLayerConfig, LAYER_PROTOCOL_VERSION, type LayerConfig, type LayerRequest } from './layer-protocol.ts';
 
 /**
@@ -28,6 +28,8 @@ export function startLayerAgent(w: Window & typeof globalThis): void {
   const config: LayerConfig | null = decodeLayerConfig(w.name);
   if (!config) return; // not a Motion Studio layer frame (opened on its own): leave the page alone
   const clock: VirtualClock = installVirtualClock(w);
+  // Render: a missing frame fails the seek (never a stale capture); preview: a short fallback.
+  const frameWait: FrameWait = config.mode === 'render' ? { strict: true, timeoutMs: config.frameTimeoutMs ?? 30_000 } : PREVIEW_FRAME_WAIT;
   const lw = w as unknown as LayerWindow;
   Object.defineProperty(lw, 'msParams', { value: Object.freeze({ ...config.params }), writable: false, configurable: false, enumerable: true });
 
@@ -59,18 +61,22 @@ export function startLayerAgent(w: Window & typeof globalThis): void {
     }
   };
   /**
-   * Awaits a promise of layer code while pumping the frozen clock at the current time: timers already due and one
-   * animation frame fire on every native macrotask. Without it, `msSeek` or `msReady` code that awaits a `setTimeout(0)`
-   * or a `requestAnimationFrame` would wait forever on the virtual clock. Time does not move.
+   * Awaits a promise of layer code while pumping the frozen clock at the current time. On every native macrotask the
+   * timers already due fire; only after a macrotask in which no timer fired does one animation frame fire (at the same
+   * time). Without it, `msSeek` or `msReady` code that awaits a `setTimeout(0)` or a `requestAnimationFrame` would wait
+   * forever on the virtual clock. Time never moves.
    */
   const pumping = async <T>(value: T): Promise<Awaited<T>> => {
     if (!value || typeof (value as { then?: unknown }).then !== 'function') return value as Awaited<T>;
     let done = false;
     const p = Promise.resolve(value).finally(() => { done = true; });
     p.catch(() => {});
+    let idle = false; // the previous macrotask fired no timer
     for (let i = 0; !done && i < MAX_PUMPS; i++) {
       await new Promise<void>((r) => clock.native.setTimeout(r, 0));
-      if (!done) clock.advanceTo(clock.now);
+      if (done) break;
+      if (idle) { clock.runFrame(); idle = false; continue; }
+      idle = clock.runDueTimers() === 0;
     }
     return p;
   };
@@ -104,11 +110,11 @@ export function startLayerAgent(w: Window & typeof globalThis): void {
       } else if (req.op === 'seek') {
         applyTime(req.t);
         await callSeek(req.t);
-        await twoFrames(clock.native);
+        await twoFrames(clock.native, frameWait);
         port?.postMessage({ id: req.id, ok: true });
       }
     } catch (err) {
-      port?.postMessage({ id: req.id, ok: false, error: err instanceof Error ? err.message : String(err) });
+      port?.postMessage({ id: req.id, ok: false, error: err instanceof Error ? err.message : String(err), ...(err instanceof FrameTimeoutError ? { code: 'frameTimeout' } : {}) });
     }
   }
 

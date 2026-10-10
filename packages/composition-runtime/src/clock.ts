@@ -29,6 +29,10 @@ export interface Natives {
 export interface VirtualClock {
   readonly now: number;
   advanceTo(ms: number): void;
+  /** Fires the timers due at or before `now`, without moving time and without an animation frame. Returns how many fired. */
+  runDueTimers(): number;
+  /** Fires one animation frame at `now`, without moving time. */
+  runFrame(): void;
   readonly native: Natives;
 }
 
@@ -92,24 +96,36 @@ export function installVirtualClock(w: Window & typeof globalThis): VirtualClock
   w.requestAnimationFrame = (fn: FrameRequestCallback) => { const id = ++seq; frames.set(id, fn); return id; };
   w.cancelAnimationFrame = (id: number) => { frames.delete(id); };
 
+  /** Fires the timers due at or before `target` in due order (bounded); returns how many fired. */
+  const runTimers = (target: number): number => {
+    let fired = 0;
+    for (; fired < MAX_TIMER_FIRINGS; fired++) {
+      let nextId = -1; let next: Timer | undefined;
+      for (const [id, tm] of timers) if (tm.due <= target && (!next || tm.due < next.due)) { nextId = id; next = tm; }
+      if (!next) break;
+      if (next.due > now) now = next.due;
+      if (next.interval) next.due += next.interval; else timers.delete(nextId);
+      call(next.fn, next.args);
+    }
+    return fired;
+  };
+  const runFrame = () => {
+    const due = frames;
+    frames = new Map();
+    for (const fn of due.values()) call(fn, [now]);
+  };
+
   const clock: VirtualClock = {
     get now() { return now; },
     native,
     advanceTo(target: number) {
       if (!Number.isFinite(target)) return;
-      for (let fired = 0; fired < MAX_TIMER_FIRINGS; fired++) {
-        let nextId = -1; let next: Timer | undefined;
-        for (const [id, tm] of timers) if (tm.due <= target && (!next || tm.due < next.due)) { nextId = id; next = tm; }
-        if (!next) break;
-        if (next.due > now) now = next.due;
-        if (next.interval) next.due += next.interval; else timers.delete(nextId);
-        call(next.fn, next.args);
-      }
+      runTimers(target);
       now = target;
-      const due = frames;
-      frames = new Map();
-      for (const fn of due.values()) call(fn, [target]);
+      runFrame();
     },
+    runDueTimers: () => runTimers(now),
+    runFrame,
   };
   Object.defineProperty(win, '__msClock', { value: clock, configurable: false, enumerable: false, writable: false });
   return clock;

@@ -26,7 +26,8 @@ const PROBE_LAYER = `<!doctype html>
 <script>
   const bar = document.getElementById('bar');
   bar.style.background = window.msParams.accent;
-  window.msSeek = (t) => new Promise((resolve) => { setTimeout(() => { bar.style.width = Math.round(t * 50) + 'px'; resolve(); }, 0); });
+  // Awaits a timer, then an animation frame: both only fire because layer.js pumps the frozen clock.
+  window.msSeek = (t) => new Promise((resolve) => { setTimeout(() => requestAnimationFrame(() => { bar.style.width = Math.round(t * 50) + 'px'; resolve(); }), 0); });
   const ctx = document.getElementById('c').getContext('2d');
   const t0 = performance.now();
   const d0 = Date.now();

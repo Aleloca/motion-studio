@@ -1,6 +1,11 @@
 import type { Natives } from './clock.ts';
 import { withTimeout } from './frames.ts';
-import { LAYER_PROTOCOL_VERSION, type LayerReply, type LayerResult } from './layer-protocol.ts';
+import { LAYER_PROTOCOL_VERSION, parseLayerReply, type LayerResult } from './layer-protocol.ts';
+
+/** A failed layer request; `code` is `frameTimeout` when the layer painted no frame after a render-mode seek. */
+export class LayerRequestError extends Error {
+  constructor(message: string, readonly code?: 'frameTimeout') { super(message); this.name = 'LayerRequestError'; }
+}
 
 /** The runtime side of one html layer (see layer-protocol.ts). */
 export interface LayerHost {
@@ -28,10 +33,10 @@ export function connectLayer(frame: HTMLIFrameElement, natives: Natives, timeout
     port?.close();
     port = channel.port1;
     port.onmessage = (m: MessageEvent) => {
-      const d = m.data as LayerReply;
-      if (!d || typeof d !== 'object') return;
-      if ('type' in d && d.type === 'hello' && d.v === LAYER_PROTOCOL_VERSION) { onHello?.(); return; }
-      if ('id' in d && typeof d.id === 'number') { const p = pending.get(d.id); pending.delete(d.id); p?.resolve(d); }
+      const d = parseLayerReply(m.data);
+      if (!d) return; // malformed (a layer is untrusted): ignored, the request times out
+      if ('type' in d) { if (d.v === LAYER_PROTOCOL_VERSION) onHello?.(); return; }
+      const p = pending.get(d.id); pending.delete(d.id); p?.resolve(d);
     };
     w.postMessage({ type: 'ms-layer-connect', v: LAYER_PROTOCOL_VERSION }, '*', [channel.port2]);
   };
@@ -46,7 +51,7 @@ export function connectLayer(frame: HTMLIFrameElement, natives: Natives, timeout
     const reply = new Promise<LayerResult>((resolve) => { pending.set(id, { resolve }); });
     port!.postMessage(op === 'seek' ? { id, op, t } : { id, op });
     const r = await withTimeout(reply, timeoutMs, natives, `layer ${op} timed out`).finally(() => pending.delete(id));
-    if (!r.ok) throw new Error(r.error ?? `layer ${op} failed`);
+    if (!r.ok) throw new LayerRequestError(r.error ?? `layer ${op} failed`, r.code);
     return r;
   };
 
