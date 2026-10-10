@@ -176,6 +176,28 @@ describe('mount', () => {
     }
   });
 
+  it('preview: a derived sound that cannot load is the warning clipAudioFailed and holds ready() at most ~3 s', async () => {
+    const vproto = HTMLVideoElement.prototype as unknown as object;
+    const saved = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'readyState');
+    Object.defineProperty(vproto, 'readyState', { configurable: true, get: () => 4 }); // videos are loaded, audio never
+    try {
+      const c = comp({ fonts: [], tracks: [{ id: 'v', kind: 'video', clips: [
+        { id: 'n', type: 'video', src: 'media/0.mp4', audioSrc: 'assets/v.mp4', audioStart: 0, start: 0, duration: 5, props: {} },
+      ] }] } as unknown as Partial<Composition>);
+      const errors: RuntimeError[] = [];
+      const root = document.getElementById('ms-root')!;
+      const player = mount(root, c, { mode: 'preview', base: BASE, natives, report: (e) => errors.push(e), timeouts: { load: 20_000, seek: 50, layer: 50 } });
+      const t0 = Date.now();
+      await player.ready();
+      expect(Date.now() - t0).toBeLessThan(6000);
+      expect(errors.filter((e) => e.code === 'clipAudioFailed').map((e) => e.clipId)).toEqual(['n']);
+      expect(errors.some((e) => e.code === 'assetLoadFailed')).toBe(false);
+    } finally {
+      delete (vproto as Record<string, unknown>).readyState;
+      if (saved) Object.defineProperty(HTMLMediaElement.prototype, 'readyState', saved);
+    }
+  }, 15_000);
+
   it('html layers are sandboxed iframes that get their params and fonts through window.name', () => {
     const c = comp({ tracks: [{ id: 'v', kind: 'visual', clips: [
       { id: 'outro', type: 'html', src: 'layers/outro.html', start: 0, duration: 2, props: {}, params: {

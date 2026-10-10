@@ -5,7 +5,7 @@ import { FrameTimeoutError, twoFrames, withTimeout } from './frames.ts';
 import { connectLayer, LayerRequestError, type LayerHost } from './layer-host.ts';
 import { encodeLayerConfig, type LayerFont } from './layer-protocol.ts';
 import type { Rect, RuntimeError, RuntimeErrorCode, RuntimeMode } from './protocol.ts';
-import { audioGain, frameCount, isClipVisible, needsResync, pickVideoFrame, sourceTrustedOf, sourceVideoEndOf, videoSourceTime } from './timing.ts';
+import { audioGain, frameCount, isClipVisible, needsAudioResync, needsResync, pickVideoFrame, sourceTrustedOf, sourceVideoEndOf, videoSourceTime } from './timing.ts';
 
 export interface MountOptions {
   mode: RuntimeMode;
@@ -64,7 +64,10 @@ interface Mounted {
   /** Shown at the current time. */
   visible: boolean;
 }
-interface MountedAudio { clip: AudioClip; el: HTMLAudioElement; muted: boolean }
+/** `derived`: the sound of a normalised video clip (its `audioSrc`), not an audio clip of the composition. */
+interface MountedAudio { clip: AudioClip; el: HTMLAudioElement; muted: boolean; derived?: boolean }
+/** How long `ready()` waits for a video clip's derived sound before going on without it (`clipAudioFailed`). */
+const DERIVED_AUDIO_WAIT_MS = 3000;
 
 const DEFAULTS = { load: 120_000, seek: 60_000, layer: 60_000 };
 
@@ -169,6 +172,14 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     el.addEventListener('loadeddata', () => resolve(), { once: true });
     el.addEventListener('error', () => reject(new Error(`cannot load ${src}`)), { once: true });
   }), timeouts.load, n, `loading ${src} timed out`).catch((e: unknown) => report('assetLoadFailed', String(e instanceof Error ? e.message : e), clipId));
+
+  /** A derived sound (see MountedAudio): a short, bounded wait; a failure is only a warning, the clip plays silent. */
+  const loadDerivedAudio = (a: MountedAudio) => withTimeout(new Promise<void>((resolve, reject) => {
+    if (a.el.readyState >= 2) { resolve(); return; }
+    a.el.addEventListener('loadeddata', () => resolve(), { once: true });
+    a.el.addEventListener('error', () => reject(new Error(`cannot load ${a.clip.src}`)), { once: true });
+  }), Math.min(DERIVED_AUDIO_WAIT_MS, timeouts.load), n, `loading ${a.clip.src} timed out`)
+    .catch((e: unknown) => report('clipAudioFailed', String(e instanceof Error ? e.message : e), a.clip.id));
 
   const mountVisual = (clip: VisualClip, track: Track) => {
     const p = clip.props as Record<string, unknown> & { x?: number; y?: number; width?: number; height?: number; rotation?: number; scale?: number; opacity?: number };
@@ -275,7 +286,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
             el.src = aurl;
             audioBin.appendChild(el);
             const sound = { id: clip.id, type: 'audio', src: audioSrc, start: clip.start, duration: clip.duration, trimStart: offset + (clip.trimStart ?? 0), volume } as AudioClip;
-            audios.push({ clip: sound, el, muted: !!track.muted });
+            audios.push({ clip: sound, el, muted: !!track.muted, derived: true });
           }
         }
         break;
@@ -560,7 +571,8 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
       el.muted = a.muted;
       el.playbackRate = rate;
       const target = (a.clip.trimStart ?? 0) + local;
-      if (el.paused) { el.currentTime = target; playMedia(el); } else if (needsResync(el.currentTime, target, c.fps)) el.currentTime = target;
+      // Audio tolerates more drift than video before a jump (each jump clicks): about 3 frames, at least 50 ms.
+      if (el.paused) { el.currentTime = target; playMedia(el); } else if (needsAudioResync(el.currentTime, target, c.fps)) el.currentTime = target;
     }
   };
   const playMedia = (el: HTMLMediaElement, clipId?: string) => {
@@ -623,7 +635,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     get selected() { return selected; },
     ready() {
       readyPromise ??= (async () => {
-        await Promise.all([fontsLoaded, ...mounted.map((m) => m.prepare), ...audios.map((a) => loadMedia(a.el, a.clip.id, a.clip.src))]);
+        await Promise.all([fontsLoaded, ...mounted.map((m) => m.prepare), ...audios.map((a) => (a.derived ? loadDerivedAudio(a) : loadMedia(a.el, a.clip.id, a.clip.src)))]);
         await seek(0);
         return { duration: player.duration, fps: c.fps, width: c.width, height: c.height, frames: frameCount(c.duration, c.fps) };
       })();

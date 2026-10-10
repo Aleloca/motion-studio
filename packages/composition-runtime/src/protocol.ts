@@ -30,6 +30,11 @@ export const RUNTIME_ERROR_CODES = [
    * timestamp was stable. The renderer does not fail on it.
    */
   'videoFrameMismatch',
+  /**
+   * Preview, a warning: the sound of a normalised video clip (its original asset, `audioSrc`) could not be loaded in time;
+   * the clip plays silent. Never holds up `ready()` for more than a short bound.
+   */
+  'clipAudioFailed',
 ] as const;
 export type RuntimeErrorCode = (typeof RUNTIME_ERROR_CODES)[number];
 /** A problem the runtime met. `message` is a developer detail in English; the UI shows its own text for `code`. */

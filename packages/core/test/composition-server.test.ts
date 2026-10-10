@@ -498,7 +498,7 @@ describe('normalised media (Task 5)', () => {
       { id: 'd', type: 'image', src: 'assets/big.png', start: 0, duration: 1, props: {} },
     ] }],
   };
-  const fields = { sourceFps: 30, sourceStart: 0, sourceVideoEnd: 2.5, originalVideoStart: 0.25 };
+  const fields = { sourceFps: 30, sourceStart: 0, sourceVideoEnd: 2.5, originalVideoStart: 0.25, originalAudio: true };
 
   beforeAll(() => {
     mediaDir = join(work, 'project', '.studio', 'cache', 'media');
@@ -507,7 +507,7 @@ describe('normalised media (Task 5)', () => {
     writeFileSync(join(mediaDir, `${'b'.repeat(64)}-30-640x360-n1.mp4`), Buffer.from('OTHER'));
     writeFileSync(join(mediaDir, 'notes.txt'), SECRET);
   });
-  const media = (clips: Array<[string, { file: string; sourceFps: number; sourceStart: number; sourceVideoEnd: number; originalVideoStart?: number }]>, dir = mediaDir) => ({ dir, clips: new Map(clips) });
+  const media = (clips: Array<[string, { file: string; sourceFps: number; sourceStart: number; sourceVideoEnd: number; originalVideoStart?: number; originalAudio?: boolean }]>, dir = mediaDir) => ({ dir, clips: new Map(clips) });
   const inlined = (html: string) => JSON.parse(/<script type="application\/json" id="ms-composition">(.*?)<\/script>/s.exec(html)![1]!) as { composition: typeof VIDEO_COMP };
 
   it('rewrites the mapped video clips to media/<i>.mp4 with the probed fields and sourceTrusted, in the inlined copy only', async () => {
@@ -523,6 +523,11 @@ describe('normalised media (Task 5)', () => {
       expect(clips[3]).toEqual(VIDEO_COMP.tracks[0]!.clips[3]);
     }
     expect(VIDEO_COMP).toEqual(original); // the caller's composition (the agent's, hashed) is never changed
+    // A source without an audio stream gets no audioSrc (nothing to play in the preview).
+    const silent = await mint({ composition: VIDEO_COMP, media: media([['assets/clip.mp4', { file: join(mediaDir, NAME), ...fields, originalAudio: false }]]) });
+    const clip0 = inlined((await send(new URL(silent.url).pathname)).body.toString('utf8')).composition.tracks[0]!.clips[0] as Record<string, unknown>;
+    expect(clip0.src).toBe('media/0.mp4');
+    expect(clip0.audioSrc).toBeUndefined();
   });
 
   it('serves exactly the mapped files, with the composition headers and byte ranges; anything else under media/ is 404', async () => {

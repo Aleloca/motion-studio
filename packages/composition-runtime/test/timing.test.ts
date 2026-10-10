@@ -221,3 +221,14 @@ describe('pickVideoFrame (the read loop)', () => {
     expect(r).toEqual({ frame: null, verdict: 'none', tsUs: null });
   });
 });
+
+describe('audio resync threshold', () => {
+  it('audio jumps only past about 3 frames or 50 ms, whichever is larger; video past one frame', async () => {
+    const { needsAudioResync, needsResync } = await import('../src/timing.ts');
+    expect(needsResync(1, 1.04, 30)).toBe(true);
+    expect(needsAudioResync(1, 1.04, 30)).toBe(false);
+    expect(needsAudioResync(1, 1.11, 30)).toBe(true); // 3 frames at 30 fps = 100 ms
+    expect(needsAudioResync(1, 1.045, 60)).toBe(false); // 3 frames at 60 fps = 50 ms
+    expect(needsAudioResync(1, 1.06, 60)).toBe(true);
+  });
+});

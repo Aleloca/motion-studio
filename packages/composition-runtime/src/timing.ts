@@ -170,6 +170,11 @@ export function needsResync(current: number, target: number, fps: number): boole
   return Math.abs(current - target) > 1 / fps;
 }
 
+/** An audio element is moved only past about 3 frames or 50 ms of drift, whichever is larger: every jump is audible. */
+export function needsAudioResync(current: number, target: number, fps: number): boolean {
+  return Math.abs(current - target) > Math.max(3 / fps, 0.05);
+}
+
 /**
  * Preview gain of an audio clip at composition time `t`: `volume` (clamped to 1, the most an element can play)
  * times the linear fade-in and fade-out. 0 outside the clip.

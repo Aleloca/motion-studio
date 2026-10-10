@@ -140,6 +140,8 @@ export interface SessionMediaFile {
    * original asset (`audioSrc`) in an `<audio>` element started at that offset (the normalised file has no audio).
    */
   originalVideoStart?: number;
+  /** The original has an audio stream: only then is it named as the clip's sound (`audioSrc`). */
+  originalAudio?: boolean;
 }
 
 export interface SessionMedia {
@@ -215,8 +217,10 @@ export function withSessionMedia(composition: unknown, srcIndex: ReadonlyMap<str
       for (const k of VIDEO_SOURCE_FIELDS) delete clip[k];
       const m = typeof clip.src === 'string' ? srcIndex.get(clip.src) : undefined;
       if (!m) continue;
-      clip.audioSrc = clip.src;
-      clip.audioStart = m.media.originalVideoStart ?? 0;
+      if (m.media.originalAudio === true) {
+        clip.audioSrc = clip.src;
+        clip.audioStart = m.media.originalVideoStart ?? 0;
+      }
       clip.src = `media/${m.index}.mp4`;
       clip.sourceFps = m.media.sourceFps;
       clip.sourceStart = m.media.sourceStart;
