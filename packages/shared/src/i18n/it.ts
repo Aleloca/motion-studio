@@ -276,6 +276,8 @@ export const it: Messages = {
     copyChangedAfter: (p) => `${p.format}: il file è cambiato dopo la copia di Motion Studio`,
     copyUnverified: (p) => `${p.format}: il file copiato da Motion Studio non può essere verificato (non è leggibile come file normale)`,
     earlierOutputsChanged: (p) => `Attenzione: durante questo turno sono cambiati file di versioni precedenti (${p.list}). La loro cronologia registrata non cambia; controllali prima di esportare.`,
+    earlierLinksDetached: (p) => `Attenzione: alcuni file di versioni precedenti avevano un secondo nome sul disco (un hard link) attraverso cui questo turno avrebbe potuto modificarli (${p.list}). Motion Studio li ha staccati prima dell'avvio dell'agente, quindi le versioni precedenti restano in sola lettura.`,
+    protectedLinksDetached: (p) => `Attenzione: alcuni registri di Motion Studio avevano un secondo nome sul disco (un hard link), quindi potevano essere modificati a sua insaputa (${p.list}). Motion Studio li ha staccati e ne ha tenuto il contenuto così com'era, che potrebbe essere già stato modificato.`,
     followerNotDelivered: (p) => `${p.follower} non è stato consegnato: non può seguire ${p.primary} (${p.reason}). Non è più collegato, quindi il prossimo turno ne fa una versione dedicata.`,
     versionFolderUnsafe: (p) => `La cartella outputs/v${p.n} non è una cartella della creatività (un collegamento?): la versione non può essere salvata`,
     updateProjectCommit: 'Progetto aggiornato',

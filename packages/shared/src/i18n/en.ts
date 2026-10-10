@@ -278,6 +278,8 @@ export const en = {
     copyChangedAfter: (p: { format: string }) => `${p.format}: the file changed after Motion Studio copied it`,
     copyUnverified: (p: { format: string }) => `${p.format}: the file Motion Studio copied could not be verified (it cannot be read as a regular file)`,
     earlierOutputsChanged: (p: { list: string }) => `Warning: files of earlier versions changed during this turn (${p.list}). Their recorded history is unchanged; check them before exporting.`,
+    earlierLinksDetached: (p: { list: string }) => `Warning: files of earlier versions had a second name on disk (a hard link) that this turn could have written through (${p.list}). Motion Studio detached them before the agent started, so earlier versions stay read-only.`,
+    protectedLinksDetached: (p: { list: string }) => `Warning: Motion Studio's own records had a second name on disk (a hard link), so they could be changed without Motion Studio knowing (${p.list}). Motion Studio detached them and kept their content as it was, which may already have been changed.`,
     followerNotDelivered: (p: { follower: string; primary: string; reason: string }) => `${p.follower} was not delivered: it cannot follow ${p.primary} (${p.reason}). It is no longer linked, so the next turn makes a dedicated version.`,
     versionFolderUnsafe: (p: { n: number }) => `The folder outputs/v${p.n} is not a folder of the creative (a link?): the version cannot be saved`,
     updateProjectCommit: 'Project updated',

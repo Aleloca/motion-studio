@@ -2,6 +2,7 @@ import { lstat, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
 import { checkLink, defaultLinks, effectiveLinks, formatHistory, formatLabel, manifestSchema, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionEntry } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
+import { detachLinksUnder } from '../agent/protected-links.ts';
 import { BrandStore } from '../brand/brand-store.ts';
 import { assertCodebasesOutside, checkCodebases, codebaseOverlaps, codebaseOverlapMessage, codebaseSnapshot, normalizeCodebaseList } from '../codebases.ts';
 import { readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
@@ -350,6 +351,14 @@ export class CreativeTurnService {
         });
         // Earlier versions are read-only for the agent (sandbox and Edit/Write rules); any change is still detected after.
         const earlier = await earlierOutputDirs(creativeDir, n);
+        // A hard link made while a version folder was still writable (during its own turn) would stay a writable second
+        // name for its files: the sandbox only refuses new links. Detached before the snapshot, so the check below sees
+        // only this turn's changes (decisions log 141).
+        const linked = (await Promise.all(earlier.map((d) => detachLinksUnder(join(creativeDir, 'outputs', d), creativeDir)))).flat();
+        if (linked.length > 0) {
+          const list = linked.slice(0, 5).join(', ') + (linked.length > 5 ? ', …' : '');
+          await store.appendConversation(slug, { type: 'system', at: now(), level: 'warning', text: j.earlierLinksDetached({ list }) });
+        }
         const earlierBefore = await snapshotOutputs(creativeDir, earlier);
 
         for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
@@ -375,6 +384,11 @@ export class CreativeTurnService {
             protectedDirs: earlier.map((d) => join(creativeDir, 'outputs', d)),
             request: { prompt, resumeSessionId, forkSession, model },
             usage: { version: n, attempt }, sandboxed,
+            // After the agent's events written so far, so the chat keeps its order.
+            onWarning: (text) => {
+              lastWrite = lastWrite.then(() => store.appendConversation(slug, { type: 'system', at: now(), level: 'warning', text }));
+              return lastWrite;
+            },
             onEvent: (event) => {
               this.deps.broadcast({ type: 'agent', jobId, event });
               // Live usage estimates are only for the UI (up to one a second): the final usage event is the one kept.

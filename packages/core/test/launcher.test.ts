@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, link, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { workspaceSettingsSchema } from '@motion-studio/shared';
+import { workspaceSettingsSchema, type AgentEvent } from '@motion-studio/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AgentLauncher, sweepRunDir, type LauncherDeps } from '../src/agent/launcher.ts';
@@ -428,5 +428,67 @@ describe('AgentLauncher', () => {
       await (await launcher.start({ kind: 'creative', jobId: 'j7', projectSlug: 'acme', projectDir, request: { prompt: 'x' }, onEvent: (e) => got.push(e) })).done.catch(() => {});
       expect(got.slice(0, 2)).toEqual([{ kind: 'session', sessionId: 's1', model: 'haiku', sandboxed: expected }, { kind: 'text', text: 'hi' }]);
     }
+  });
+});
+
+describe('AgentLauncher protected files under a root with glob characters (decisions log 141)', () => {
+  it('sends the sandbox the escaped roots: concrete entries and the log globs both match the real paths', { timeout: 20_000 }, async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-launch [x] *? '));
+    cleanup.push(dir);
+    await mkdir(join(dir, 'creatives', 'c1'), { recursive: true });
+    const { args } = await launch({ sandbox: async () => ({ available: true, reason: 'x' }) }, 'console', dir);
+    const deny: string[] = JSON.parse(args[args.indexOf('--settings') + 1]!).sandbox.filesystem.denyWrite;
+    // Claude Code's glob → regex (see policy.test.ts): `[` must not survive as an open class.
+    const toRe = (g: string) => new RegExp(`^${g.replace(/[.^$+{}()|\\]/g, '\\$&').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]')}(/.*)?$`);
+    const covered = (f: string) => deny.some((d) => (/[*?[\]]/.test(d) ? toRe(d).test(f) : f === d || f.startsWith(`${d}/`)));
+    const realDir = await realpath(dir);
+    for (const root of [dir, realDir]) {
+      for (const f of [join(root, '.studio', 'usage.jsonl'), join(root, 'creatives', 'c1', 'conversation.jsonl'), join(root, 'creatives', 'made-later', 'versions.json'), join(root, 'brand', 'proposals', 'p', 'log.jsonl')]) {
+        expect(covered(f), f).toBe(true);
+      }
+      expect(covered(join(root, 'creatives', 'c1', 'work', 'a.txt'))).toBe(false);
+    }
+    expect(deny.some((d) => d.includes('[x]'))).toBe(false);
+  });
+});
+
+describe('AgentLauncher hard links to protected files', () => {
+  /** A runner that runs `during` while the "agent" works, then succeeds. */
+  const stubRunner = (during: () => Promise<void>): AgentRunner => ({
+    start: () => ({ done: during().then(() => ({ status: 'succeeded' as const })), cancel: () => {} }),
+  });
+  it('detaches a linked log before the run and one linked during the run, with a warning each time', { timeout: 20_000 }, async () => {
+    const dir = await newProject();
+    const c = join(dir, 'creatives', 'c1');
+    await mkdir(join(c, 'work'), { recursive: true });
+    await writeFile(join(c, 'conversation.jsonl'), 'core\n');
+    await mkdir(join(dir, '.studio'), { recursive: true });
+    await writeFile(join(dir, '.studio', 'usage.jsonl'), '');
+    await link(join(c, 'conversation.jsonl'), join(c, 'work', 'x'));
+    let nlinkAtStart = 0;
+    const launcher = testLauncher(stubRunner(async () => {
+      nlinkAtStart = (await stat(join(c, 'conversation.jsonl'))).nlink;
+      await link(join(dir, '.studio', 'usage.jsonl'), join(c, 'work', 'u'));
+    }));
+    const warnings: string[] = [];
+    const run = await launcher.start({ kind: 'console', jobId: 'j1', projectSlug: 'acme', projectDir: dir, request: { prompt: 'x' }, onEvent: () => {}, onWarning: (w) => { warnings.push(w); } });
+    await run.done;
+    expect(nlinkAtStart).toBe(1);
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toContain(join('creatives', 'c1', 'conversation.jsonl'));
+    expect(warnings[1]).toContain(join('.studio', 'usage.jsonl'));
+    expect((await stat(join(dir, '.studio', 'usage.jsonl'))).nlink).toBe(1);
+    await appendFile(join(c, 'work', 'x'), 'forged\n');
+    expect(await readFile(join(c, 'conversation.jsonl'), 'utf8')).toBe('core\n');
+  });
+  it('without onWarning the warning is a progress event of the run', { timeout: 20_000 }, async () => {
+    const dir = await newProject();
+    await mkdir(join(dir, 'brand', 'proposals', 'p1'), { recursive: true });
+    await writeFile(join(dir, 'brand', 'proposals', 'p1', 'log.jsonl'), '');
+    await link(join(dir, 'brand', 'proposals', 'p1', 'log.jsonl'), join(dir, 'l'));
+    const events: AgentEvent[] = [];
+    const run = await testLauncher(stubRunner(async () => {})).start({ kind: 'brand-analysis', jobId: 'j1', projectSlug: 'acme', projectDir: dir, request: { prompt: 'x' }, onEvent: (e) => events.push(e) });
+    await run.done;
+    expect(events.filter((e) => e.kind === 'progress').map((e) => (e as { text: string }).text)).toEqual([expect.stringContaining('log.jsonl')]);
   });
 });

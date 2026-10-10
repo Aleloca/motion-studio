@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildAgentPolicy, type PolicyInput } from '../src/agent/policy.ts';
+import { buildAgentPolicy, sandboxPath, type PolicyInput } from '../src/agent/policy.ts';
 import { AGENT_ALLOWED_TOOLS, BRAND_ANALYSIS_TOOLS, DESCRIBE_TOOLS } from '../src/agent/runner.ts';
 
 const base: PolicyInput = {
@@ -15,7 +15,7 @@ describe('buildAgentPolicy with sandbox', () => {
     const s = p.settings as Sb;
     expect(s.sandbox).toMatchObject({ enabled: true, autoAllowBashIfSandboxed: true });
     expect(s.sandbox.filesystem.denyRead).toEqual(expect.arrayContaining(['/Users/me/.ssh', base.configDir]));
-    expect(s.sandbox.filesystem.denyWrite).toEqual(['/Users/me/dev/app [ios]']);
+    expect(s.sandbox.filesystem.denyWrite).toEqual(['/Users/me/dev/app [[]ios]']);
     expect(s.sandbox.network!.allowedDomains).toEqual(expect.arrayContaining(['registry.npmjs.org', 'api.acme.io']));
     expect(p.addDirs).toEqual(['/Users/me/dev/app [ios]']);
     expect(p.disallowedTools[0]).toBe('Edit(//Users/me/dev/app \\[ios\\]/**)');
@@ -93,7 +93,7 @@ describe('buildAgentPolicy protected folders', () => {
       for (const sandbox of [true, false]) {
         const p = buildAgentPolicy({ ...base, kind, sandbox, codebases: [], protectedDirs: ['/p/acme [1]/.studio'] });
         expect(p.disallowedTools).toEqual(expect.arrayContaining(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].map((t) => `${t}(//p/acme \\[1\\]/.studio/**)`)));
-        if (sandbox) expect((p.settings as Sb).sandbox.filesystem.denyWrite).toEqual(['/p/acme [1]/.studio']);
+        if (sandbox) expect((p.settings as Sb).sandbox.filesystem.denyWrite).toEqual(['/p/acme [[]1]/.studio']);
         else expect(p.settings).toBeNull();
       }
     }
@@ -158,5 +158,44 @@ describe('transparency log protection', () => {
       expect(denied(t, '/w/acme [1]/brand/proposals/p-3/log.jsonl')).toBe(true);
       expect(denied(t, '/w/acme [1]/creatives/any-2/outputs/v1/a.png')).toBe(false);
     }
+  });
+});
+
+/**
+ * Claude Code 2.1.295's glob → seatbelt regex for denyWrite entries (read from the installed binary, decisions log 141):
+ * an entry with any of `* ? [ ]` is a glob; `[.^$+{}()|\\]` are escaped, `*` → `[^/]*`, `?` → `[^/]`, `[`/`]` are left as
+ * a character class. Reproduced here so the escaping is checked against the real conversion, not against itself.
+ */
+const claudeGlobToRegex = (g: string) => new RegExp(`^${g.replace(/[.^$+{}()|\\]/g, '\\$&').replace(/\[([^\]]*?)$/g, '\\[$1')
+  .replace(/\*\*\//g, '__GLOBSTAR_SLASH__').replace(/\*\*/g, '__GLOBSTAR__').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]')
+  .replace(/__GLOBSTAR_SLASH__/g, '(.*/)?').replace(/__GLOBSTAR__/g, '.*')}$`);
+const isGlob = (p: string) => /[*?[\]]/.test(p);
+
+describe('sandboxPath', () => {
+  it('leaves plain paths unchanged (they stay literal in the sandbox)', () => {
+    for (const p of ['/Users/me/Motion Studio/acme/.studio', '/w/a (1)/b{c}.d+e^f$g|h']) {
+      expect(sandboxPath(p)).toBe(p);
+      expect(isGlob(sandboxPath(p))).toBe(false);
+    }
+  });
+  it('a path with [ ] * ? still matches itself once the sandbox reads it as a glob, and not its bracket-less twin', () => {
+    const cases = ['/w/ws[x]/demo/.studio', '/w/a]b[c/x', '/w/[[x]]/y', '/w/a*b/c', '/w/a?b/c', '/w/[a-z]/x', '/w/[!x]/x', '/w/x[/y'];
+    for (const p of cases) {
+      const re = claudeGlobToRegex(sandboxPath(p));
+      expect(re.test(p), p).toBe(true);
+      // Unescaped, the same path does not protect itself (the bug): `[x]` is a class matching "x".
+    }
+    for (const p of ['/w/ws[x]/demo/.studio', '/w/[a-z]/x', '/w/[!x]/x']) expect(claudeGlobToRegex(p).test(p), p).toBe(false);
+    expect(claudeGlobToRegex(sandboxPath('/w/ws[x]/demo/.studio')).test('/w/wsx/demo/.studio')).toBe(false);
+  });
+  it('a glob built on an escaped root matches the files under the real root', () => {
+    const root = '/w/Work [x] *1?/demo';
+    const re = claudeGlobToRegex(`${sandboxPath(`${root}/creatives`)}/*/conversation.jsonl`);
+    expect(re.test(`${root}/creatives/2026-10-10-b/conversation.jsonl`)).toBe(true);
+    expect(re.test(`${root}/creatives/b/work/conversation.jsonl`)).toBe(false);
+  });
+  it('the policy sends every concrete denyWrite entry through it, and the globs as given', () => {
+    const p = buildAgentPolicy({ ...base, codebases: ['/c/[a]'], protectedFiles: ['/w/[x]/f'], protectedDirs: ['/w/[x]/.studio'], sandboxGlobs: ['/w/[[]x]/creatives/*/log'] });
+    expect((p.settings as Sb).sandbox.filesystem.denyWrite).toEqual(['/c/[[]a]', '/w/[[]x]/f', '/w/[[]x]/.studio', '/w/[[]x]/creatives/*/log']);
   });
 });

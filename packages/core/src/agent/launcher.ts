@@ -9,7 +9,9 @@ import type { ApprovalBroker } from '../approvals/broker.ts';
 import { isAllowedRule, PermissionsStore } from '../approvals/permissions-store.ts';
 import type { AgentBridge, BridgeContext } from '../bridge/bridge.ts';
 import { escapeGlob } from '../codebases.ts';
-import { buildAgentPolicy, type AgentJobKind } from './policy.ts';
+import { t } from '../i18n.ts';
+import { buildAgentPolicy, sandboxPath, type AgentJobKind } from './policy.ts';
+import { CREATIVE_CORE_FILES, detachProtectedLinks, PROPOSAL_LOG } from './protected-links.ts';
 import type { AgentRun, AgentRunner, AgentTurnRequest } from './runner.ts';
 import type { SandboxSupport } from './sandbox.ts';
 import { UsageLedger } from '../usage/usage-ledger.ts';
@@ -27,13 +29,11 @@ export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
 /** Project entries the agent may never write, whatever the job or sandbox mode. */
 const PROTECTED_PROJECT_DIRS = ['.git', '.claude', '.studio'];
 const PROTECTED_PROJECT_FILES = ['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json'];
-/**
+/*
  * Transparency logs the UI shows as facts ("N commands ran in the sandbox", Activity): the core writes them from outside
- * the sandbox, the agent must never alter them. Per creative: conversation.jsonl plus the metadata the core owns (the agent
- * only writes outputs/vN/ and work/). Per brand proposal: log.jsonl. Protected for every job, for every creative and proposal.
+ * the sandbox, the agent must never alter them. Per creative: CREATIVE_CORE_FILES; per brand proposal: PROPOSAL_LOG.
+ * Protected for every job, for every creative and proposal.
  */
-const CREATIVE_CORE_FILES = ['conversation.jsonl', 'versions.json', 'creative.json'];
-const PROPOSAL_LOG = 'log.jsonl';
 /** Secrets the core reads from its own environment: never inherited by the agent (nor by the MCP server it starts). */
 const AGENT_UNSET_ENV = [...Object.values(PROVIDER_ENV), 'MOTION_STUDIO_BRIDGE_TOKEN'];
 
@@ -68,6 +68,11 @@ export interface LaunchInput {
    * so a prompt never says "sandboxed" for a job that is not (if the sandbox vanished meanwhile, the job runs without it).
    */
   sandboxed?: boolean;
+  /**
+   * Where a warning about this run goes (e.g. the creative's chat): today, protected files found with a second name on disk
+   * (a hard link) before or after the run, which the launcher detached. Without it the warning is sent as a progress event.
+   */
+  onWarning?: (text: string) => void | Promise<void>;
 }
 
 async function existingLogFiles(root: string, creativeSlug?: string | null): Promise<string[]> {
@@ -123,12 +128,12 @@ export class AgentLauncher {
       `${escapeGlob(join(d, 'brand', 'proposals'))}/*/${PROPOSAL_LOG}`,
     ]);
     // Sandbox denyWrite: the concrete files that exist now (plus this job's own creative) work everywhere. macOS also
-    // expands globs there (seatbelt regex), Linux/WSL skip them, so the globs are added too, only for roots without glob
-    // metacharacters (the sandbox may not honour escapes); other roots keep the concrete list. The Edit/Write rules use globs always.
-    const plain = (d: string) => !/[[\]*?]/.test(d);
-    const sandboxGlobs = roots.filter(plain).flatMap((d) => [
-      ...CREATIVE_CORE_FILES.map((n) => join(d, 'creatives', '*', n)),
-      join(d, 'brand', 'proposals', '*', PROPOSAL_LOG),
+    // expands globs there (seatbelt regex), Linux/WSL skip them, so the globs are added too. Any `[ ] * ?` in a path makes
+    // the sandbox read it as a glob, so every literal part goes through sandboxPath (concrete paths in the policy, here the
+    // roots of the globs). The Edit/Write rules use escaped globs always.
+    const sandboxGlobs = roots.flatMap((d) => [
+      ...CREATIVE_CORE_FILES.map((n) => `${sandboxPath(join(d, 'creatives'))}/*/${n}`),
+      `${sandboxPath(join(d, 'brand', 'proposals'))}/*/${PROPOSAL_LOG}`,
     ]);
     const logFiles = (await Promise.all(roots.map((d) => existingLogFiles(d, i.creativeSlug)))).flat();
     protectedFiles.push(...logFiles);
@@ -195,6 +200,18 @@ export class AgentLauncher {
         const out = tracker.observe(e);
         if (out) i.onEvent(out.kind === 'session' ? { ...out, sandboxed: sandbox } : out);
       };
+      // Protected files with a second name (a hard link) are detached before and after every run, with a warning.
+      const detachLinks = async () => {
+        const found = await detachProtectedLinks(i.projectDir).catch(() => [] as string[]);
+        if (found.length === 0) return;
+        const list = found.slice(0, 5).join(', ') + (found.length > 5 ? ', …' : '');
+        const text = t().jobs.protectedLinksDetached({ list });
+        try {
+          if (i.onWarning) await i.onWarning(text);
+          else i.onEvent({ kind: 'progress', text });
+        } catch { /* a faulty listener must not stop the run */ }
+      };
+      await detachLinks();
       const run = this.deps.runner.start({
         cwd: i.projectDir, ...i.request,
         addDirs: policy.addDirs, allowedTools: policy.allowedTools, disallowedTools: policy.disallowedTools,
@@ -202,6 +219,7 @@ export class AgentLauncher {
         env: { MCP_TOOL_TIMEOUT: '900000', ...policy.env }, unsetEnv: AGENT_UNSET_ENV,
       }, forward);
       const done = run.done.then(async (r) => {
+        await detachLinks();
         const { record, event } = await tracker.finish(r.status);
         if (event) { try { i.onEvent(event); } catch { /* a faulty listener must not lose the outcome */ } }
         return { ...r, usage: record };
