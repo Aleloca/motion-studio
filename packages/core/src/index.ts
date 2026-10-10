@@ -49,3 +49,12 @@ export * from './providers/stock.ts';
 export * from './providers/google-fonts.ts';
 export * from './server/ui-token.ts';
 export * from './shell-path.ts';
+// Renderer (phase 10a, Task 4). Task 7 injects its Electron provider with `startServer({ renderProvider })`; it implements
+// `ChromiumProvider` by wrapping `webContents.debugger` as a `CdpClient` and calling `openCdpRenderPage`.
+export * from './render/renderer.ts';
+export * from './render/chromium-provider.ts';
+export { CdpPipe, CdpError, waitForEvent, type CdpClient, type CdpEvent, type CdpSendOptions } from './render/cdp-pipe.ts';
+export { interceptRequests, allowedPrefix, isAllowedRequest, networkLockdownFlags, DEAD_PROXY, type Interception } from './render/isolation.ts';
+export { findSystemChrome, MIN_CHROME_MAJOR, type ChromeInstall } from './render/system-chrome.ts';
+export { cftDownloadInfo, installCft, findInstalledCft, cftPlatform, CftError, CFT_ENDPOINT, type CftDownloadInfo, type CftPlatform } from './render/cft-download.ts';
+export { findFfmpeg, checkVideotoolbox, type FfmpegInfo, type VideoEncoder } from './render/encode.ts';

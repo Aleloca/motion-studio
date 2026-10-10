@@ -1,3 +1,5 @@
+import { createRenderEngine } from '../render/renderer.ts';
+import type { ChromiumProviderFactory } from '../render/chromium-provider.ts';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { LanguageSetting, Locale } from '@motion-studio/shared';
@@ -66,6 +68,11 @@ export interface StartServerOptions {
   bootLockWaitMs?: number;
   /** The user's preferred languages (first match wins) for the 'system' language setting. Default: detectSystemLocales(). */
   systemLocales?: string[];
+  /**
+   * The Chromium that renders compositions (spec §5.3): the desktop app injects its Electron provider here (Task 7).
+   * Without it the core uses system Chrome, else a Chrome for Testing installed in `<configDir>/chromium/`.
+   */
+  renderProvider?: ChromiumProviderFactory;
 }
 
 export async function startServer(opts: StartServerOptions = {}) {
@@ -130,6 +137,7 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
     webDir: opts.webDir,
     vault: opts.vault ?? new KeyringVault(),
     media: await createFfmpegTools(),
+    render: createRenderEngine({ ...(opts.renderProvider ? { provider: opts.renderProvider } : {}), appDataDir: configDir }),
     openPath: revealFolder,
   });
   const host = opts.host ?? '127.0.0.1';

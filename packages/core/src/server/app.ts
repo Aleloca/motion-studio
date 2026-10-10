@@ -1,3 +1,4 @@
+import type { RenderEngine } from '../render/renderer.ts';
 import { stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
@@ -68,6 +69,8 @@ export interface ServerDeps {
   language?: LanguageController;
   /** How Claude Code is paid for (doctor's auth check); cached by the server. Defaults to 'unknown'. */
   billing?: () => Promise<UsageBilling>;
+  /** The composition renderer and its Chromium (injected provider, system Chrome or Chrome for Testing); render jobs use it (Task 5). */
+  render?: RenderEngine;
 }
 
 /** How long the billing method (one `claude auth status`) is reused; 'unknown' is retried sooner. */

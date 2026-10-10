@@ -1,0 +1,245 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, describe, expect, it } from 'vitest';
+import type { Composition } from '@motion-studio/shared';
+import type { CdpClient, CdpEvent } from '../src/render/cdp-pipe.ts';
+import { allowedPrefix, BASE_FLAGS, interceptRequests, isAllowedRequest, networkLockdownFlags } from '../src/render/isolation.ts';
+import { imageSize, splitSegments } from '../src/render/capture.ts';
+import { mixClips, mixGraph } from '../src/render/audio-mix.ts';
+import { binaryArch, concatLine, h264Args, targetKbps } from '../src/render/encode.ts';
+import { startWatchdog, type GroupMemory } from '../src/render/watchdog.ts';
+import { chromeCandidates, findSystemChrome } from '../src/render/system-chrome.ts';
+import { ChromeProvider } from '../src/render/chromium-provider.ts';
+
+const work = mkdtempSync(join(tmpdir(), 'ms-render-units-'));
+afterAll(() => rmSync(work, { recursive: true, force: true }));
+
+const TOKEN = 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abcd';
+const ORIGIN = 'http://127.0.0.1:43210';
+const PAGE = `${ORIGIN}/${TOKEN}/runtime/index.html?mode=render`;
+
+describe('isolation rules', () => {
+  it('the allowlist is exactly the page origin and token prefix', () => {
+    const prefix = allowedPrefix(PAGE);
+    expect(prefix).toBe(`${ORIGIN}/${TOKEN}/`);
+    for (const ok of [`${ORIGIN}/${TOKEN}/runtime/runtime.js`, `${ORIGIN}/${TOKEN}/v1/compositions/f/assets/a.png?x=1`]) expect(isAllowedRequest(ok, prefix)).toBe(true);
+    for (const bad of [
+      `${ORIGIN}/other/x`, `${ORIGIN}/${TOKEN}`, `http://127.0.0.1:43211/${TOKEN}/x`, `http://localhost:43210/${TOKEN}/x`,
+      `https://127.0.0.1:43210/${TOKEN}/x`, `ws://127.0.0.1:43210/${TOKEN}/x`, `http://user:pw@127.0.0.1:43210/${TOKEN}/x`,
+      'file:///etc/hosts', 'data:text/plain,x', `http://canary.test/${TOKEN}/x`, 'not a url',
+    ]) expect(isAllowedRequest(bad, prefix), bad).toBe(false);
+    expect(() => allowedPrefix('http://example.com/x/y')).toThrow();
+    expect(() => allowedPrefix(`${ORIGIN}/short/runtime/index.html`)).toThrow();
+  });
+
+  it('the launch flags lock the network to the server port and never disable the sandbox', () => {
+    const f = networkLockdownFlags(ORIGIN);
+    expect(f).toContain('--proxy-server=http://127.0.0.1:9');
+    expect(f).toContain('--proxy-bypass-list=<-loopback>;127.0.0.1:43210');
+    expect(f).toContain('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1');
+    expect([...BASE_FLAGS, ...f].some((x) => /no-sandbox|disable-setuid-sandbox|remote-debugging-port|disable-web-security/.test(x))).toBe(false);
+    expect(BASE_FLAGS).toEqual(expect.arrayContaining(['--disable-background-networking', '--disable-extensions', '--disable-sync', '--no-first-run']));
+    expect(() => networkLockdownFlags('http://localhost:4000')).toThrow();
+    expect(() => new ChromeProvider({ exe: 'x', kind: 'system', limits: { timeLimitMs: 1 }, extraFlags: ['--no-sandbox'] })).toThrow(/not allowed/);
+    expect(() => new ChromeProvider({ exe: 'x', kind: 'system', limits: { timeLimitMs: 1 }, extraFlags: ['--proxy-server=direct://'] })).toThrow(/not allowed/);
+  });
+});
+
+/** A fake CDP transport: records calls, lets the test emit events, fails chosen calls. */
+function fakeClient(fail: (method: string, sessionId?: string) => boolean = () => false) {
+  const calls: Array<{ method: string; params: Record<string, unknown>; sessionId?: string }> = [];
+  const listeners = new Set<(e: CdpEvent) => void>();
+  const client: CdpClient = {
+    closed: null,
+    async send(method, params = {}, o = {}) {
+      calls.push({ method, params: params as Record<string, unknown>, ...(o.sessionId ? { sessionId: o.sessionId } : {}) });
+      if (fail(method, o.sessionId)) throw new Error(`${method} failed`);
+      return {} as never;
+    },
+    onEvent(l) { listeners.add(l); return () => listeners.delete(l); },
+    onClose() { return () => {}; },
+  };
+  const emit = (e: CdpEvent) => { for (const l of [...listeners]) l(e); };
+  return { client, calls, emit };
+}
+const flush = () => new Promise((r) => setTimeout(r, 10));
+
+describe('request interception (fake CDP)', () => {
+  it('enables Fetch on the page and on every child before resuming it; continues allowed requests and fails the rest', async () => {
+    const { client, calls, emit } = fakeClient();
+    const prefix = allowedPrefix(PAGE);
+    const order: string[] = [];
+    const ic = await interceptRequests(client, 'P', prefix, { clockSource: '/*clock*/', resume: async () => { order.push(`resume after ${calls.length} calls`); } });
+    // The page (a fresh about:blank) runs first; then Fetch and the recursive auto-attach, then the rest.
+    expect(order).toEqual(['resume after 0 calls']);
+    expect(calls.map((c) => `${c.sessionId}:${c.method}`)).toEqual(['P:Fetch.enable', 'P:Target.setAutoAttach', 'P:Page.enable', 'P:Page.addScriptToEvaluateOnNewDocument']);
+    expect(calls[1]!.params).toEqual({ autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
+    calls.length = 0;
+
+    // A child (an out-of-process layer) is intercepted and auto-attaching BEFORE it is resumed.
+    emit({ method: 'Target.attachedToTarget', sessionId: 'P', params: { sessionId: 'L', targetInfo: { type: 'iframe' } } });
+    await flush();
+    expect(calls.map((c) => `${c.sessionId}:${c.method}`)).toEqual(['L:Fetch.enable', 'L:Target.setAutoAttach', 'L:Runtime.runIfWaitingForDebugger', 'L:Page.enable', 'L:Page.addScriptToEvaluateOnNewDocument']);
+    calls.length = 0;
+
+    emit({ method: 'Fetch.requestPaused', sessionId: 'L', params: { requestId: 'r1', resourceType: 'Script', request: { url: `${prefix}runtime/layer.js` } } });
+    emit({ method: 'Fetch.requestPaused', sessionId: 'L', params: { requestId: 'r2', resourceType: 'Document', request: { url: 'http://127.0.0.1:5555/selfnav-replace' } } });
+    emit({ method: 'Fetch.requestPaused', sessionId: 'X', params: { requestId: 'r3', request: { url: 'http://evil/' } } }); // not our session: ignored
+    emit({ method: 'Page.javascriptDialogOpening', sessionId: 'L', params: {} });
+    await flush();
+    expect(calls).toEqual([
+      { method: 'Fetch.continueRequest', params: { requestId: 'r1' }, sessionId: 'L' },
+      { method: 'Fetch.failRequest', params: { requestId: 'r2', errorReason: 'BlockedByClient' }, sessionId: 'L' },
+      { method: 'Page.handleJavaScriptDialog', params: { accept: false }, sessionId: 'L' },
+    ]);
+    expect(ic.blocked).toEqual([{ url: 'http://127.0.0.1:5555/selfnav-replace', type: 'Document' }]);
+    expect(ic.failure).toBeNull();
+  });
+
+  it('a frame that cannot be intercepted is never resumed and fails the render (fail closed); a worker needs no Fetch', async () => {
+    const { client, calls, emit } = fakeClient((m, s) => m === 'Fetch.enable' && s !== 'P');
+    const failures: Error[] = [];
+    const ic = await interceptRequests(client, 'P', allowedPrefix(PAGE), { onFailure: (e) => failures.push(e) });
+    calls.length = 0;
+    emit({ method: 'Target.attachedToTarget', sessionId: 'P', params: { sessionId: 'W', targetInfo: { type: 'worker' } } });
+    emit({ method: 'Target.attachedToTarget', sessionId: 'P', params: { sessionId: 'F', targetInfo: { type: 'iframe' } } });
+    await flush();
+    expect(calls.filter((c) => c.method === 'Runtime.runIfWaitingForDebugger').map((c) => c.sessionId)).toEqual(['W']);
+    expect(ic.failure?.message).toMatch(/could not intercept a iframe/);
+    expect(failures).toHaveLength(1);
+  });
+});
+
+describe('segments, frames, encoding', () => {
+  it('splits frames into contiguous, non-empty segments covering every frame once', () => {
+    for (const [frames, n] of [[69, 4], [1, 4], [3, 4], [90, 1], [100, 16], [7, 3]] as const) {
+      const segs = splitSegments(frames, n);
+      expect(segs.length).toBe(Math.min(n, frames));
+      expect(segs[0]!.from).toBe(0);
+      expect(segs.at(-1)!.to).toBe(frames);
+      for (let i = 1; i < segs.length; i++) expect(segs[i]!.from).toBe(segs[i - 1]!.to);
+      expect(segs.every((s) => s.to > s.from)).toBe(true);
+    }
+  });
+
+  it('reads PNG and JPEG sizes', () => {
+    const png = Buffer.alloc(24); png.writeUInt32BE(0x89504e47, 0); png.write('IHDR', 12, 'latin1'); png.writeUInt32BE(320, 16); png.writeUInt32BE(180, 20);
+    expect(imageSize(png)).toEqual({ width: 320, height: 180 });
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x00, 0x00, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0xb4, 0x01, 0x40, 0x03, 0, 0, 0, 0, 0]);
+    expect(imageSize(jpeg)).toEqual({ width: 320, height: 180 });
+    expect(imageSize(Buffer.from('nope'))).toBeNull();
+  });
+
+  it('H.264 settings follow phase 8 (CRF 20, 1.5x maxrate, 2x buffer, yuv420p, BT.709)', () => {
+    const fmt = { width: 1080, height: 1920, targetBitrateKbps: 4000 };
+    expect(targetKbps(fmt, 30)).toBe(4000);
+    expect(targetKbps(fmt, 60)).toBe(6000);
+    const a = h264Args('libx264', 4000, 30).join(' ');
+    expect(a).toContain('-c:v libx264');
+    expect(a).toContain('-crf 20');
+    expect(a).toContain('-maxrate 6000k -bufsize 8000k');
+    expect(a).toContain('-pix_fmt yuv420p');
+    expect(a).toContain('-colorspace bt709');
+    expect(h264Args('h264_videotoolbox', 4000, 30).join(' ')).toContain('-c:v h264_videotoolbox -b:v 4000k');
+    expect(concatLine("/tmp/a'b/seg.mp4")).toBe("file '/tmp/a'\\''b/seg.mp4'");
+  });
+
+  it('reads the CPU architecture of Mach-O (thin and universal) and ELF binaries', async () => {
+    const write = (name: string, b: Buffer) => { const p = join(work, name); writeFileSync(p, Buffer.concat([b, Buffer.alloc(64)])); return p; };
+    const macho = (cpu: number) => { const b = Buffer.alloc(8); b.writeUInt32LE(0xfeedfacf, 0); b.writeUInt32LE(cpu, 4); return b; };
+    expect(await binaryArch(write('x86', macho(0x01000007)))).toBe('x86_64');
+    expect(await binaryArch(write('arm', macho(0x0100000c)))).toBe('arm64');
+    const fat = Buffer.alloc(48); fat.writeUInt32BE(0xcafebabe, 0); fat.writeUInt32BE(2, 4); fat.writeUInt32BE(0x01000007, 8); fat.writeUInt32BE(0x0100000c, 28);
+    expect(await binaryArch(write('fat', fat))).toBe('universal');
+    const elf = Buffer.alloc(20); elf.writeUInt32BE(0x7f454c46, 0); elf[5] = 1; elf.writeUInt16LE(62, 18);
+    expect(await binaryArch(write('elf', elf))).toBe('x86_64');
+    expect(await binaryArch(join(work, 'missing'))).toBe('unknown');
+  });
+});
+
+describe('audio graph', () => {
+  const comp = (tracks: unknown[]): Composition => ({ $schema: 'motion-studio/composition@1', width: 320, height: 180, fps: 30, duration: 3, background: '#000000', fonts: [], scenes: [], tracks } as unknown as Composition);
+  it('takes audio clips and video clips with sound from unmuted tracks, cut at the composition end', () => {
+    const clips = mixClips(comp([
+      { id: 'a', kind: 'audio', clips: [
+        { id: 'm', type: 'audio', src: 'assets/m.wav', start: 2, duration: 5, volume: 0.5, fadeIn: 0.2, fadeOut: 9 },
+        { id: 's', type: 'audio', src: 'assets/s.wav', start: 0.5, duration: 1, volume: 0 },
+      ] },
+      { id: 'v', kind: 'video', clips: [{ id: 'v', type: 'video', src: 'assets/v.mp4', start: 0, duration: 1, trimStart: 0.25, props: {} }] },
+      { id: 'mute', kind: 'audio', muted: true, clips: [{ id: 'x', type: 'audio', src: 'assets/x.wav', start: 0, duration: 1 }] },
+    ]));
+    expect(clips).toEqual([
+      { src: 'assets/v.mp4', start: 0, duration: 1, trimStart: 0.25, volume: 1, fadeIn: 0, fadeOut: 0, fromVideo: true },
+      { src: 'assets/m.wav', start: 2, duration: 1, trimStart: 0, volume: 0.5, fadeIn: 0.2, fadeOut: 1, fromVideo: false },
+    ]);
+    expect(mixClips({ ...comp([]), duration: 0 })).toEqual([]);
+  });
+
+  it('places clips in samples and mixes without normalisation, then limits, at exactly the composition length', () => {
+    const g = mixGraph([{ start: 0.5, duration: 1, trimStart: 0.25, volume: 0.8, fadeIn: 0.1, fadeOut: 0.2 }], 3 * 48_000);
+    expect(g).toContain('atrim=start_sample=12000:end_sample=60000');
+    expect(g).toContain('afade=t=in:start_sample=0:nb_samples=4800');
+    expect(g).toContain('afade=t=out:start_sample=38400:nb_samples=9600');
+    expect(g).toContain('adelay=delays=24000S:all=1');
+    expect(g).toContain('amix=inputs=1:duration=longest:dropout_transition=0:normalize=0');
+    expect(g).toContain('apad=whole_len=144000,alimiter=limit=0.89:level=false:latency=1,atrim=end_sample=144000');
+  });
+});
+
+describe('watchdog', () => {
+  it('trips on a process over its memory limit, on the group total, and on time', async () => {
+    const run = (sample: GroupMemory, limits: { maxProcessMB?: number; maxGroupMB?: number; timeLimitMs: number }) => new Promise((resolve) => {
+      const w = startWatchdog({ pgid: 1, limits: { intervalMs: 10, ...limits }, onTrip: (t) => { w.stop(); resolve(t); }, sample: async () => sample });
+    });
+    expect(await run({ totalMB: 2100, maxMB: 2050, pids: 5 }, { timeLimitMs: 60_000 })).toEqual({ reason: 'memory', memoryMB: 2050, limitMB: 1536 });
+    expect(await run({ totalMB: 7000, maxMB: 900, pids: 9 }, { timeLimitMs: 60_000 })).toEqual({ reason: 'memory', memoryMB: 7000, limitMB: 6144 });
+    expect(await run({ totalMB: 10, maxMB: 5, pids: 1 }, { timeLimitMs: 50 })).toMatchObject({ reason: 'time', limitMs: 50 });
+  });
+});
+
+describe('system Chrome discovery', () => {
+  it('lists the standard places per platform and honours CHROME_PATH strictly', async () => {
+    expect(chromeCandidates('darwin', { HOME: '/Users/x' })[0]).toBe('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
+    expect(chromeCandidates('darwin', { HOME: '/Users/x' })).toContain('/Users/x/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
+    expect(chromeCandidates('win32', { PROGRAMFILES: 'C:\\Program Files', LOCALAPPDATA: 'C:\\L' })).toContain('C:\\L\\Google\\Chrome\\Application\\chrome.exe');
+    expect(chromeCandidates('linux', { PATH: '/opt/x' })).toContain('/opt/x/google-chrome');
+    expect(await findSystemChrome({ env: { CHROME_PATH: join(work, 'no-such-chrome') } })).toBeNull();
+    const fake = join(work, 'old-chrome');
+    writeFileSync(fake, '#!/bin/sh\necho "Google Chrome 99.0.1.2"\n', { mode: 0o755 });
+    expect(await findSystemChrome({ env: { CHROME_PATH: fake } })).toBeNull(); // too old
+    const ok = join(work, 'new-chrome');
+    writeFileSync(ok, '#!/bin/sh\necho "Google Chrome 154.0.8037.98"\n', { mode: 0o755 });
+    if (process.platform !== 'win32') expect(await findSystemChrome({ env: { CHROME_PATH: ok } })).toEqual({ exe: ok, version: '154.0.8037.98', major: 154, source: 'env' });
+  });
+});
+
+describe('render engine: provider injection and resolution', () => {
+  it('an injected provider wins; else system Chrome; else an installed Chrome for Testing; else none', async () => {
+    const { createRenderEngine } = await import('../src/render/renderer.ts');
+    const { cftExecutableRel, cftPlatform } = await import('../src/render/cft-download.ts');
+    const { hostArch } = await import('../src/render/encode.ts');
+    const injected = { kind: 'electron' as const, open: async () => { throw new Error('x'); }, close: async () => {} };
+    const e1 = createRenderEngine({ provider: async () => injected, env: { CHROME_PATH: join(work, 'no-chrome') } });
+    expect(await e1.info()).toEqual({ kind: 'injected' });
+    expect(await e1.provider()).toBe(injected);
+
+    const none = createRenderEngine({ env: { CHROME_PATH: join(work, 'no-chrome') }, appDataDir: join(work, 'empty-app-data') });
+    expect(await none.info()).toEqual({ kind: null });
+    await expect(none.provider()).rejects.toMatchObject({ code: 'noBrowser' });
+
+    const appData = join(work, 'app-data');
+    const platform = cftPlatform(process.platform, await hostArch());
+    const exe = join(appData, 'chromium', '154.0.8037.98', ...cftExecutableRel(platform).split('/'));
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(join(exe, '..'), { recursive: true });
+    writeFileSync(exe, '', { mode: 0o755 });
+    const cft = createRenderEngine({ env: { CHROME_PATH: join(work, 'no-chrome') }, appDataDir: appData });
+    expect(await cft.info()).toEqual({ kind: 'cft', exe, version: '154.0.8037.98' });
+    expect((await cft.provider()).kind).toBe('cft');
+
+    const ok = join(work, 'sys-chrome');
+    writeFileSync(ok, '#!/bin/sh\necho "Google Chrome 154.0.8037.98"\n', { mode: 0o755 });
+    if (process.platform !== 'win32') expect(await createRenderEngine({ env: { CHROME_PATH: ok }, appDataDir: appData }).info()).toEqual({ kind: 'system', exe: ok, version: '154.0.8037.98' });
+  });
+});
