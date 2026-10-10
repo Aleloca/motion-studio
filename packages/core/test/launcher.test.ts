@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { appendFile, chmod, link, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { existsSync, linkSync, readFileSync } from 'node:fs';
+import { appendFile, chmod, link, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -490,5 +490,62 @@ describe('AgentLauncher hard links to protected files', () => {
     const run = await testLauncher(stubRunner(async () => {})).start({ kind: 'brand-analysis', jobId: 'j1', projectSlug: 'acme', projectDir: dir, request: { prompt: 'x' }, onEvent: (e) => events.push(e) });
     await run.done;
     expect(events.filter((e) => e.kind === 'progress').map((e) => (e as { text: string }).text)).toEqual([expect.stringContaining('log.jsonl')]);
+  });
+});
+
+describe('AgentLauncher after-run checks (review of decisions log 141)', () => {
+  it('kills leftover processes before the after-run detach: a link made by a leftover until the kill is still caught', { timeout: 20_000 }, async () => {
+    const dir = await newProject();
+    await mkdir(join(dir, '.studio'), { recursive: true });
+    await writeFile(join(dir, '.studio', 'usage.jsonl'), '');
+    const order: string[] = [];
+    const runner: AgentRunner = {
+      start: () => ({
+        done: Promise.resolve({ status: 'succeeded' as const }),
+        cancel: () => {},
+        // The leftover's last act happens right before it is killed.
+        killGroup: () => { order.push('kill'); linkSync(join(dir, '.studio', 'usage.jsonl'), join(dir, 'leftover-link')); },
+      }),
+    };
+    const run = await testLauncher(runner).start({ kind: 'console', jobId: 'j1', projectSlug: 'acme', projectDir: dir, request: { prompt: 'x' }, onEvent: () => {}, onWarning: (w) => { order.push(w.includes('usage.jsonl') ? 'detached' : 'other'); } });
+    await run.done;
+    expect(order).toEqual(['kill', 'detached']);
+    expect((await stat(join(dir, '.studio', 'usage.jsonl'))).nlink).toBe(1);
+  });
+  it('under a path with glob characters: one warning per job, and a creative moved out and back during the run is reported', { timeout: 20_000 }, async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ms-launch [x] '));
+    cleanup.push(dir);
+    const c = join(dir, 'creatives', 'c1');
+    await mkdir(c, { recursive: true });
+    await writeFile(join(c, 'conversation.jsonl'), '{"a":1}\n');
+    let move = true;
+    const runner: AgentRunner = {
+      start: () => ({
+        done: (async () => {
+          await new Promise((r) => setTimeout(r, 15));
+          if (move) {
+            await rename(c, join(dir, 'out'));
+            await writeFile(join(dir, 'out', 'conversation.jsonl'), '{"forged":1}\n');
+            await rename(join(dir, 'out'), c);
+          }
+          return { status: 'succeeded' as const };
+        })(),
+        cancel: () => {},
+      }),
+    };
+    const launcher = testLauncher(runner);
+    const warnings: string[] = [];
+    const start = (jobId: string) => launcher.start({ kind: 'creative', jobId, projectSlug: 'acme', projectDir: dir, creativeSlug: 'c1', request: { prompt: 'x' }, onEvent: () => {}, onWarning: (w) => { warnings.push(w); } });
+    await (await start('j1')).done;
+    expect(warnings).toHaveLength(3);
+    expect(warnings[0]).toContain('[ ] * o ?');
+    expect(warnings[1]).toContain(join('creatives', 'c1'));
+    expect(warnings[2]).toContain(join('creatives', 'c1', 'conversation.jsonl'));
+    move = false;
+    warnings.length = 0;
+    await (await start('j1')).done; // second attempt of the same job: no repeat, nothing moved
+    expect(warnings).toEqual([]);
+    await (await start('j2')).done;
+    expect(warnings).toHaveLength(1);
   });
 });

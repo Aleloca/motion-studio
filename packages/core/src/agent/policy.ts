@@ -36,12 +36,16 @@ export function sandboxCacheEnv(projectDir: string): Record<string, string> {
 }
 
 /**
- * A literal path as Claude Code's sandbox must receive it in denyWrite. Any `[ ] * ?` makes the sandbox read the entry as a
+ * A literal path as Claude Code's sandbox must receive it in denyWrite or denyRead. Any `[ ] * ?` makes the sandbox read the entry as a
  * glob, which becomes a seatbelt regex on macOS: `[` and `]` are left as a character class and a backslash escape does not
  * survive (it becomes a literal backslash), so before this an entry under a root like `…/Work [x]/` matched nothing and
  * protected nothing, concrete paths included (verified live, decisions log 141). Here `[` becomes `[[]`, a class holding
  * only `[` (exact in the seatbelt and JS regex engines); a `]` outside a class is already literal; `*` and `?` become `?`,
  * one non-slash character: a match only one character wider, never narrower. Other paths are returned unchanged.
+ *
+ * Limit: a glob entry gets no ancestor pins past its first glob character, so under such a root the agent can still move
+ * a protected file's folder (a creative, `creatives/`, `outputs/`) out, edit it and move it back. The launcher warns about
+ * such roots and checks the record folders after each run (run-tripwire.ts).
  */
 export const sandboxPath = (p: string): string => p.replace(/[[*?]/g, (c) => (c === '[' ? '[[]' : '?'));
 
@@ -79,7 +83,7 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
       // AUTO_BASH table is gone. Every kind follows the workspace setting `autoApproveSandboxed`: brand and describe jobs
       // too, since their sandbox has no network, writes stay in the project and the configuration files are protected.
       autoAllowBashIfSandboxed: i.autoApproveSandboxed,
-      filesystem: { denyRead: [...sensitiveHomePaths(i.home), i.configDir], denyWrite: [...[...i.codebases, ...i.protectedFiles, ...i.protectedDirs].map(sandboxPath), ...(i.sandboxGlobs ?? [])] },
+      filesystem: { denyRead: [...sensitiveHomePaths(i.home), i.configDir].map(sandboxPath), denyWrite: [...[...i.codebases, ...i.protectedFiles, ...i.protectedDirs].map(sandboxPath), ...(i.sandboxGlobs ?? [])] },
       ...(network ? { network } : {}),
     },
   };

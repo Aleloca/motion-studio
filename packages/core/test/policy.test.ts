@@ -162,13 +162,13 @@ describe('transparency log protection', () => {
 });
 
 /**
- * Claude Code 2.1.295's glob → seatbelt regex for denyWrite entries (read from the installed binary, decisions log 141):
- * an entry with any of `* ? [ ]` is a glob; `[.^$+{}()|\\]` are escaped, `*` → `[^/]*`, `?` → `[^/]`, `[`/`]` are left as
- * a character class. Reproduced here so the escaping is checked against the real conversion, not against itself.
+ * Claude Code 2.1.295's write-deny form of a glob entry (read from the installed binary, decisions log 141): `K9t`, that is
+ * `q9t` (`[.^$+{}()|\\]` escaped, `*` → `[^/]*`, `?` → `[^/]`, `[`/`]` left as a character class) with `(/.*)?$` at the
+ * end, so the entry and everything below it. Reproduced so the escaping is checked against the real conversion.
  */
 const claudeGlobToRegex = (g: string) => new RegExp(`^${g.replace(/[.^$+{}()|\\]/g, '\\$&').replace(/\[([^\]]*?)$/g, '\\[$1')
   .replace(/\*\*\//g, '__GLOBSTAR_SLASH__').replace(/\*\*/g, '__GLOBSTAR__').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]')
-  .replace(/__GLOBSTAR_SLASH__/g, '(.*/)?').replace(/__GLOBSTAR__/g, '.*')}$`);
+  .replace(/__GLOBSTAR_SLASH__/g, '(.*/)?').replace(/__GLOBSTAR__/g, '.*')}(/.*)?$`);
 const isGlob = (p: string) => /[*?[\]]/.test(p);
 
 describe('sandboxPath', () => {
@@ -193,9 +193,16 @@ describe('sandboxPath', () => {
     const re = claudeGlobToRegex(`${sandboxPath(`${root}/creatives`)}/*/conversation.jsonl`);
     expect(re.test(`${root}/creatives/2026-10-10-b/conversation.jsonl`)).toBe(true);
     expect(re.test(`${root}/creatives/b/work/conversation.jsonl`)).toBe(false);
+    expect(re.test(`${root}/creatives/b/work/a.txt`)).toBe(false);
   });
   it('the policy sends every concrete denyWrite entry through it, and the globs as given', () => {
     const p = buildAgentPolicy({ ...base, codebases: ['/c/[a]'], protectedFiles: ['/w/[x]/f'], protectedDirs: ['/w/[x]/.studio'], sandboxGlobs: ['/w/[[]x]/creatives/*/log'] });
     expect((p.settings as Sb).sandbox.filesystem.denyWrite).toEqual(['/c/[[]a]', '/w/[[]x]/f', '/w/[[]x]/.studio', '/w/[[]x]/creatives/*/log']);
+    // denyRead goes through the same glob conversion on macOS.
+    const r = buildAgentPolicy({ ...base, home: '/Users/me [1]', configDir: '/cfg [x]/Motion Studio' });
+    const denyRead = (r.settings as Sb).sandbox.filesystem.denyRead;
+    expect(denyRead).toContain('/cfg [[]x]/Motion Studio');
+    expect(denyRead).toContain('/Users/me [[]1]/.ssh');
+    expect(denyRead.some((d) => /\[x\]|\[1\]/.test(d))).toBe(false);
   });
 });

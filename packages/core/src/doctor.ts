@@ -17,6 +17,8 @@ export interface ShellPathOrigin { source: 'login-shell' | 'fallback'; error?: s
 
 export async function runDoctor(opts: {
   exec: CommandExec; claudeCommand: string[]; nodeVersion?: string; sandbox?: () => Promise<SandboxSupport>; shellPath?: ShellPathOrigin;
+  /** The chosen workspace folder: a path with `[ ] * ?` weakens the sandbox's protection of the records (decisions log 141). */
+  workspacePath?: string | null;
 }): Promise<DoctorCheck[]> {
   const { exec } = opts;
   const [claudeBin, ...claudePrefix] = opts.claudeCommand;
@@ -83,6 +85,9 @@ export async function runDoctor(opts: {
         id: 'shell-path', label: d.shellPathLabel, required: false, ok, message: d.shellPathFallback({ reason: opts.shellPath.error ?? d.unknownReason }),
         fix: d.shellPathFix,
       });
+  }
+  if (opts.workspacePath && /[[\]*?]/.test(opts.workspacePath)) {
+    checks.push({ id: 'workspace-path', label: d.workspacePathLabel, required: false, ok: false, message: d.workspacePathGlob, fix: d.workspacePathFix });
   }
   return checks;
 }

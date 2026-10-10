@@ -96,3 +96,65 @@ describe('detachLinksUnder', () => {
     expect(await readFile(join(c, 'outputs', 'v1', 'a.mp4'), 'utf8')).toBe('a');
   });
 });
+
+describe('detachProtectedLinks after review (decisions log 141)', () => {
+  it('also covers CLAUDE.md, CLAUDE.local.md, .mcp.json, .claude/**, .git/config and .git/hooks/**, but not .git/objects', async () => {
+    const p = await tmp();
+    const outside = await tmp();
+    for (const d of ['.claude/commands', '.git/hooks', '.git/objects/ab']) await mkdir(join(p, d), { recursive: true });
+    const files = ['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json', '.claude/settings.json', '.claude/commands/x.md', '.git/config', '.git/hooks/pre-commit', '.git/objects/ab/cdef'];
+    for (const [k, f] of files.entries()) {
+      await writeFile(join(p, f), f);
+      await link(join(p, f), join(outside, `l${k}`));
+    }
+    expect((await detachProtectedLinks(p)).sort()).toEqual(files.filter((f) => !f.startsWith('.git/objects')).map((f) => join(...f.split('/'))).sort());
+    expect((await stat(join(p, '.git/objects/ab/cdef'))).nlink).toBe(2);
+  });
+  it('never walks a creatives/, brand/proposals/ or .studio that is a symlink to a real folder elsewhere', async () => {
+    const p = await tmp();
+    const outside = await tmp();
+    await mkdir(join(outside, 'c1'), { recursive: true });
+    await writeFile(join(outside, 'c1', 'conversation.jsonl'), 'x');
+    await link(join(outside, 'c1', 'conversation.jsonl'), join(outside, 'second'));
+    await symlink(outside, join(p, 'creatives'));
+    await mkdir(join(p, 'brand'));
+    await symlink(outside, join(p, 'brand', 'proposals'));
+    expect(await detachProtectedLinks(p)).toEqual([]);
+    expect((await stat(join(outside, 'c1', 'conversation.jsonl'))).nlink).toBe(2);
+  });
+  it('removes the temp files a crashed detach left behind, and only those', async () => {
+    const p = await tmp();
+    const c = join(p, 'creatives', 'c1');
+    await mkdir(join(p, '.studio'), { recursive: true });
+    await mkdir(c, { recursive: true });
+    const leftovers = [join(c, '.conversation.jsonl.detach-0123456789ab'), join(p, '.studio', '.usage.jsonl.detach-abcdefabcdef')];
+    for (const f of leftovers) await writeFile(f, 'half');
+    await writeFile(join(c, '.notes.detach-zz'), 'keep');
+    await detachProtectedLinks(p);
+    expect((await readdir(c)).sort()).toEqual(['.notes.detach-zz']);
+    expect(await readdir(join(p, '.studio'))).toEqual([]);
+  });
+});
+
+describe('detachLinksUnder after review', () => {
+  it('refuses a folder reached through a symlinked parent (outputs/ as a link)', async () => {
+    const c = await tmp();
+    const outside = await tmp();
+    await mkdir(join(outside, 'v1'));
+    await writeFile(join(outside, 'v1', 'a.mp4'), 'a');
+    await link(join(outside, 'v1', 'a.mp4'), join(outside, 'b'));
+    await symlink(outside, join(c, 'outputs'));
+    expect(await detachLinksUnder(join(c, 'outputs', 'v1'), c)).toEqual([]);
+    expect((await stat(join(outside, 'v1', 'a.mp4'))).nlink).toBe(2);
+  });
+  it('clones a large file (same bytes, new inode)', async () => {
+    const c = await tmp();
+    await mkdir(join(c, 'outputs', 'v1'), { recursive: true });
+    const big = Buffer.alloc(2 * 1024 * 1024, 7);
+    await writeFile(join(c, 'outputs', 'v1', 'big.mp4'), big);
+    await link(join(c, 'outputs', 'v1', 'big.mp4'), join(c, 'l'));
+    expect(await detachLinksUnder(join(c, 'outputs', 'v1'), c)).toEqual([join('outputs', 'v1', 'big.mp4')]);
+    expect((await readFile(join(c, 'outputs', 'v1', 'big.mp4'))).equals(big)).toBe(true);
+    expect((await stat(join(c, 'outputs', 'v1', 'big.mp4'))).nlink).toBe(1);
+  });
+});

@@ -12,6 +12,7 @@ import { escapeGlob } from '../codebases.ts';
 import { t } from '../i18n.ts';
 import { buildAgentPolicy, sandboxPath, type AgentJobKind } from './policy.ts';
 import { CREATIVE_CORE_FILES, detachProtectedLinks, PROPOSAL_LOG } from './protected-links.ts';
+import { armTripwire } from './run-tripwire.ts';
 import type { AgentRun, AgentRunner, AgentTurnRequest } from './runner.ts';
 import type { SandboxSupport } from './sandbox.ts';
 import { UsageLedger } from '../usage/usage-ledger.ts';
@@ -26,6 +27,8 @@ export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
   describe: ['report_progress'],
 };
 
+/** Characters that make Claude Code's sandbox read a path as a glob. */
+export const GLOB_CHARS = /[[\]*?]/;
 /** Project entries the agent may never write, whatever the job or sandbox mode. */
 const PROTECTED_PROJECT_DIRS = ['.git', '.claude', '.studio'];
 const PROTECTED_PROJECT_FILES = ['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json'];
@@ -92,6 +95,8 @@ async function existingLogFiles(root: string, creativeSlug?: string | null): Pro
 /** The only place that starts the agent: applies the job's policy, the project's rules, the MCP server and the UI prompts. */
 export class AgentLauncher {
   private readonly usageLedger: UsageLedger;
+  /** Jobs already told that their workspace path has glob characters (a creative job launches once per attempt). */
+  private readonly weakRootWarned = new Set<string>();
   constructor(private readonly deps: LauncherDeps) { this.usageLedger = deps.usageLedger ?? new UsageLedger(); }
 
   /** True when agents get the `studio` MCP server (bridge listening and a command to start it). */
@@ -200,18 +205,28 @@ export class AgentLauncher {
         const out = tracker.observe(e);
         if (out) i.onEvent(out.kind === 'session' ? { ...out, sandboxed: sandbox } : out);
       };
-      // Protected files with a second name (a hard link) are detached before and after every run, with a warning.
-      const detachLinks = async () => {
-        const found = await detachProtectedLinks(i.projectDir).catch(() => [] as string[]);
-        if (found.length === 0) return;
-        const list = found.slice(0, 5).join(', ') + (found.length > 5 ? ', …' : '');
-        const text = t().jobs.protectedLinksDetached({ list });
+      const warn = async (text: string) => {
         try {
           if (i.onWarning) await i.onWarning(text);
           else i.onEvent({ kind: 'progress', text });
         } catch { /* a faulty listener must not stop the run */ }
       };
+      const list = (xs: string[]) => xs.slice(0, 5).join(', ') + (xs.length > 5 ? ', …' : '');
+      // Protected files with a second name (a hard link) are detached before and after every run, with a warning.
+      const detachLinks = async () => {
+        const found = await detachProtectedLinks(i.projectDir).catch(() => [] as string[]);
+        if (found.length > 0) await warn(t().jobs.protectedLinksDetached({ list: list(found) }));
+      };
       await detachLinks();
+      // Under a path with `[ ] * ?` the sandbox cannot pin the record folders (decisions log 141): said once per job,
+      // and the logs' history is checked too.
+      const weakRoot = roots.some((d) => GLOB_CHARS.test(d));
+      if (weakRoot && !this.weakRootWarned.has(i.jobId)) {
+        if (this.weakRootWarned.size > 200) this.weakRootWarned.clear();
+        this.weakRootWarned.add(i.jobId);
+        await warn(t().jobs.workspacePathGlob);
+      }
+      const tripwire = await armTripwire(i.projectDir, { logs: weakRoot });
       const run = this.deps.runner.start({
         cwd: i.projectDir, ...i.request,
         addDirs: policy.addDirs, allowedTools: policy.allowedTools, disallowedTools: policy.disallowedTools,
@@ -219,7 +234,12 @@ export class AgentLauncher {
         env: { MCP_TOOL_TIMEOUT: '900000', ...policy.env }, unsetEnv: AGENT_UNSET_ENV,
       }, forward);
       const done = run.done.then(async (r) => {
+        // Whatever the agent left running stops before the checks: nothing can make a link or move a folder after them.
+        run.killGroup?.();
         await detachLinks();
+        const { moved, rewritten } = await tripwire.check().catch(() => ({ moved: [] as string[], rewritten: [] as string[] }));
+        if (moved.length > 0) await warn(t().jobs.recordFoldersMoved({ list: list(moved) }));
+        if (rewritten.length > 0) await warn(t().jobs.logHistoryRewritten({ list: list(rewritten) }));
         const { record, event } = await tracker.finish(r.status);
         if (event) { try { i.onEvent(event); } catch { /* a faulty listener must not lose the outcome */ } }
         return { ...r, usage: record };

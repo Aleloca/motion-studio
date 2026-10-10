@@ -43,7 +43,7 @@ export interface ServerDeps {
   git: Git;
   runner: AgentRunner;
   /** Receives the server's (cached) sandbox detection, so the report includes the sandbox check. */
-  doctor: (extra: { sandbox: () => Promise<SandboxSupport> }) => Promise<DoctorCheck[]>;
+  doctor: (extra: { sandbox: () => Promise<SandboxSupport>; workspacePath?: string | null }) => Promise<DoctorCheck[]>;
   webDir?: string;
   media?: MediaTools;
   openPath?: (path: string) => Promise<void>;
@@ -244,7 +244,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // pid: lets a second launch check that the recorded server.json pid is really this server (pids get reused).
   app.get('/api/health', async () => ({ ok: true, pid: process.pid }));
-  app.get('/api/doctor', async () => deps.doctor({ sandbox: effectiveSandbox }));
+  app.get('/api/doctor', async () => deps.doctor({ sandbox: effectiveSandbox, workspacePath: workspace?.root ?? null }));
 
   app.get('/api/workspace', async (): Promise<WorkspaceInfo> => {
     if (!workspace) return { path: workspaceProblem?.path ?? null, settings: null, error: workspaceProblem?.error ?? null };

@@ -1,8 +1,9 @@
-import { lstat, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
 import { checkLink, defaultLinks, effectiveLinks, formatHistory, formatLabel, manifestSchema, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionEntry } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { detachLinksUnder } from '../agent/protected-links.ts';
+import { noteCoreChange } from '../core-changes.ts';
 import { BrandStore } from '../brand/brand-store.ts';
 import { assertCodebasesOutside, checkCodebases, codebaseOverlaps, codebaseOverlapMessage, codebaseSnapshot, normalizeCodebaseList } from '../codebases.ts';
 import { readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
@@ -350,6 +351,12 @@ export class CreativeTurnService {
           reservedOwner: plan.reservedOwner,
         });
         // Earlier versions are read-only for the agent (sandbox and Edit/Write rules); any change is still detected after.
+        // `outputs/` exists before the agent runs: making it is then never a change to the creative's folder that the
+        // after-run check (run-tripwire.ts) would have to tell from a move.
+        if (!(await lstat(join(creativeDir, 'outputs')).catch(() => null))) {
+          await mkdir(join(creativeDir, 'outputs'), { recursive: true });
+          noteCoreChange(creativeDir);
+        }
         const earlier = await earlierOutputDirs(creativeDir, n);
         // A hard link made while a version folder was still writable (during its own turn) would stay a writable second
         // name for its files: the sandbox only refuses new links. Detached before the snapshot, so the check below sees

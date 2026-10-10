@@ -8,6 +8,7 @@ import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.t
 import { fileLock } from '../file-locks.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import { currentLocale, t } from '../i18n.ts';
+import { noteCoreChange } from '../core-changes.ts';
 
 const PROPOSAL_RE = /^p-\d{8}-\d{6}(-\d+)?$/;
 
@@ -241,7 +242,7 @@ export class BrandStore {
       await mkdir(join(this.dir, 'proposals'), { recursive: true });
       for (let i = 1; ; i++) {
         const id = i === 1 ? base : `${base}-${i}`;
-        try { await mkdir(join(this.dir, 'proposals', id)); return id; }
+        try { await mkdir(join(this.dir, 'proposals', id)); noteCoreChange(join(this.dir, 'proposals')); return id; }
         catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; }
       }
     });

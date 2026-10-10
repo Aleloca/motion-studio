@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import type { z } from 'zod';
 import { currentLocale, t } from './i18n.ts';
 import { issuesText } from '@motion-studio/shared';
+import { noteCoreChange } from './core-changes.ts';
 
 export type JsonFileErrorReason = 'missing' | 'invalid-json' | 'schema';
 
@@ -42,6 +43,7 @@ export async function writeJsonFileAtomic(path: string, data: unknown): Promise<
   try {
     await writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
     await rename(tmp, path);
+    noteCoreChange(dirname(path));
   } catch (err) {
     await unlink(tmp).catch(() => { /* never created or already gone */ });
     throw err;

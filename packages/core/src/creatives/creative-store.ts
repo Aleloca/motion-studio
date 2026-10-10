@@ -9,6 +9,7 @@ import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.t
 import { KeyedMutex } from '../keyed-mutex.ts';
 import { slugify, WorkspaceError } from '../workspace-store.ts';
 import { currentLocale, t } from '../i18n.ts';
+import { noteCoreChange } from '../core-changes.ts';
 
 export const CREATIVE_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
 
@@ -44,6 +45,7 @@ export class CreativeStore {
         const candidate = n === 1 ? base : `${base}-${n}`;
         try {
           await mkdir(join(this.root, candidate));
+          noteCoreChange(this.root);
           return candidate;
         } catch (e) {
           if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
@@ -55,6 +57,7 @@ export class CreativeStore {
     await writeJsonFileAtomic(this.file(slug, 'creative.json'), creative);
     await writeJsonFileAtomic(this.file(slug, 'versions.json'), { schemaVersion: 1, versions: [] });
     await writeFile(this.file(slug, 'conversation.jsonl'), '');
+    noteCoreChange(this.dir(slug));
     return { slug, creative };
   }
 

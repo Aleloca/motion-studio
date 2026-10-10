@@ -94,7 +94,7 @@ export type ServerMessage =
   | { type: 'project'; project: string };
 
 export interface DoctorCheck {
-  id: 'node' | 'git' | 'ffmpeg' | 'claude' | 'claude-auth' | 'sandbox' | 'shell-path';
+  id: 'node' | 'git' | 'ffmpeg' | 'claude' | 'claude-auth' | 'sandbox' | 'shell-path' | 'workspace-path';
   label: string;
   ok: boolean;
   required: boolean;
