@@ -74,14 +74,15 @@ export function framePts(ffmpeg: FfmpegInfo, file: string): number[] {
 }
 
 /**
- * A mono 48 kHz WAV of `seconds`: silence, then from sample `at` a 1 kHz cosine of amplitude `amp` (so the very first
+ * A mono WAV (48 kHz, or `rate`) of `seconds`: silence, then from sample `at` a 1 kHz cosine of amplitude `amp` (so the very first
  * sample of the burst is at full amplitude: a sharp, exactly placed onset), lasting `burst` seconds (or to the end).
  */
-export function burstWav(ffmpeg: FfmpegInfo, file: string, o: { seconds: number; at: number; burst?: number; amp?: number }): void {
-  const s = Math.round(o.at * 48000);
-  const e = o.burst ? s + Math.round(o.burst * 48000) : 1e12;
+export function burstWav(ffmpeg: FfmpegInfo, file: string, o: { seconds: number; at: number; burst?: number; amp?: number; rate?: number }): void {
+  const rate = o.rate ?? 48000;
+  const s = Math.round(o.at * rate);
+  const e = o.burst ? s + Math.round(o.burst * rate) : 1e12;
   const amp = o.amp ?? 0.5;
-  ff(ffmpeg, ['-f', 'lavfi', '-i', `aevalsrc='if(between(n,${s},${e - 1}),${amp}*cos(2*PI*1000*(n-${s})/48000),0)':s=48000:d=${o.seconds}`, '-c:a', 'pcm_s16le', file]);
+  ff(ffmpeg, ['-f', 'lavfi', '-i', `aevalsrc='if(between(n,${s},${e - 1}),${amp}*cos(2*PI*1000*(n-${s})/${rate}),0)':s=${rate}:d=${o.seconds}`, '-c:a', 'pcm_s16le', file]);
 }
 
 /** Decodes the left channel of `file`'s audio as 48 kHz float samples. */
@@ -125,4 +126,16 @@ export async function leftovers(o: { pgids?: number[]; markers?: string[] }): Pr
 export function put(file: string, data: string | Buffer): void {
   mkdirSync(join(file, '..'), { recursive: true });
   writeFileSync(file, data);
+}
+
+export interface UdpCanary { port: number; packets: Array<{ bytes: number; from: number }>; close(): Promise<void> }
+
+/** A loopback UDP socket that records every datagram (WebRTC STUN/TURN, WebTransport QUIC) it receives. */
+export async function startUdpCanary(): Promise<UdpCanary> {
+  const { createSocket } = await import('node:dgram');
+  const sock = createSocket('udp4');
+  const packets: Array<{ bytes: number; from: number }> = [];
+  sock.on('message', (m, r) => packets.push({ bytes: m.length, from: r.port }));
+  await new Promise<void>((r) => sock.bind(0, '127.0.0.1', () => r()));
+  return { port: sock.address().port, packets, close: () => new Promise((r) => sock.close(() => r())) };
 }

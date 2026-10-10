@@ -4,6 +4,7 @@ import { lstat, mkdir, open, readdir, rename, rm, symlink } from 'node:fs/promis
 import type { FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
 import { crc32, createInflateRaw } from 'node:zlib';
+import { hostArch } from './arch.ts';
 
 /**
  * Chrome for Testing (chrome-headless-shell), on demand only (spec §5.3; global constraints): the CLI's fallback when no
@@ -37,8 +38,11 @@ export class CftError extends Error {
   }
 }
 
-/** The Chrome for Testing platform of this machine (`hostArch` from `encode.hostArch()`: Apple Silicon under Rosetta is arm64). */
-export function cftPlatform(platform: NodeJS.Platform = process.platform, arch: string = process.arch): CftPlatform {
+/**
+ * The Chrome for Testing platform for `platform`/`arch`. Callers pass the machine's architecture (`hostArch()`): Apple
+ * Silicon is `mac-arm64` even when Node itself runs under Rosetta. The download and the lookup both use it.
+ */
+export function cftPlatform(platform: NodeJS.Platform, arch: string): CftPlatform {
   if (platform === 'darwin') return arch === 'arm64' ? 'mac-arm64' : 'mac-x64';
   if (platform === 'linux' && (arch === 'x64' || arch === 'x86_64')) return 'linux64';
   if (platform === 'win32') return arch === 'ia32' ? 'win32' : 'win64';
@@ -47,7 +51,8 @@ export function cftPlatform(platform: NodeJS.Platform = process.platform, arch: 
 
 export const cftExecutableRel = (platform: CftPlatform) => `${CFT_PRODUCT}-${platform}/${CFT_PRODUCT}${platform.startsWith('win') ? '.exe' : ''}`;
 
-export interface CftDownloadInfo { version: string; platform: CftPlatform; url: string; sizeBytes: number | null }
+/** What the UI shows before asking for consent: the size is always known (a download of unknown size is never offered). */
+export interface CftDownloadInfo { version: string; platform: CftPlatform; url: string; sizeBytes: number }
 
 function checkUrl(raw: string): URL {
   let u: URL;
@@ -63,7 +68,7 @@ type FetchLike = typeof fetch;
 export async function cftDownloadInfo(o: { endpoint?: string; channel?: string; platform?: CftPlatform; fetchImpl?: FetchLike; signal?: AbortSignal } = {}): Promise<CftDownloadInfo> {
   const f = o.fetchImpl ?? fetch;
   const endpoint = checkUrl(o.endpoint ?? CFT_ENDPOINT);
-  const platform = o.platform ?? cftPlatform();
+  const platform = o.platform ?? cftPlatform(process.platform, await hostArch());
   const res = await f(endpoint, { signal: o.signal, redirect: 'error' }).catch((e: Error) => { throw new CftError('download', `manifest: ${e.message}`); });
   if (!res.ok) throw new CftError('download', `manifest: HTTP ${res.status}`);
   const text = await res.text();
@@ -79,11 +84,14 @@ export async function cftDownloadInfo(o: { endpoint?: string; channel?: string; 
   const url = checkUrl(entry.url).href;
   const head = await f(url, { method: 'HEAD', signal: o.signal, redirect: 'error' }).catch(() => null);
   const len = Number(head?.ok ? head.headers.get('content-length') : NaN);
-  return { version, platform, url, sizeBytes: Number.isSafeInteger(len) && len > 0 ? len : null };
+  // The user must see the size before agreeing (Task 8): no size, no offer.
+  if (!Number.isSafeInteger(len) || len <= 0) throw new CftError('sizeMismatch', 'the download size is unknown');
+  return { version, platform, url, sizeBytes: len };
 }
 
 /** The newest installed Chrome for Testing under `<appDataDir>/chromium/`, or null. */
-export async function findInstalledCft(appDataDir: string, platform: CftPlatform = cftPlatform()): Promise<{ exe: string; version: string } | null> {
+export async function findInstalledCft(appDataDir: string, platformArg?: CftPlatform): Promise<{ exe: string; version: string } | null> {
+  const platform = platformArg ?? cftPlatform(process.platform, await hostArch());
   const root = join(appDataDir, 'chromium');
   const versions = (await readdir(root).catch(() => [] as string[])).filter((v) => VERSION_RE.test(v))
     .sort((a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 4; i++) if (x[i] !== y[i]) return y[i]! - x[i]!; return 0; });
@@ -100,7 +108,7 @@ export interface InstallCftOptions {
   consent: boolean;
   /** The app data folder (`<appData>/chromium/<version>/`). */
   appDataDir: string;
-  /** What the user agreed to (from `cftDownloadInfo`); fetched when missing. Its `sizeBytes` must match the download. */
+  /** What the user agreed to (from `cftDownloadInfo`, size included); fetched when missing. The download must have exactly that size. */
   info?: CftDownloadInfo;
   endpoint?: string;
   fetchImpl?: FetchLike;
@@ -114,6 +122,7 @@ export async function installCft(o: InstallCftOptions): Promise<{ exe: string; v
   if (o.consent !== true) throw new CftError('consentRequired', 'Chrome for Testing is downloaded only after the user agrees');
   const info = o.info ?? await cftDownloadInfo({ endpoint: o.endpoint, fetchImpl: o.fetchImpl, signal: o.signal });
   if (!VERSION_RE.test(info.version)) throw new CftError('badManifest', 'bad version');
+  if (!Number.isSafeInteger(info.sizeBytes) || info.sizeBytes <= 0) throw new CftError('sizeMismatch', 'the size shown to the user is unknown');
   const root = join(o.appDataDir, 'chromium');
   const target = join(root, info.version);
   const exeRel = cftExecutableRel(info.platform);
@@ -138,7 +147,7 @@ export async function installCft(o: InstallCftOptions): Promise<{ exe: string; v
   }
 }
 
-async function download(url: string, to: string, o: InstallCftOptions & { expected: number | null }): Promise<void> {
+async function download(url: string, to: string, o: InstallCftOptions & { expected: number }): Promise<void> {
   const f = o.fetchImpl ?? fetch;
   const max = o.maxBytes ?? CFT_MAX_DOWNLOAD_BYTES;
   const res = await f(url, { signal: o.signal, redirect: 'error' }).catch((e: Error) => { throw new CftError('download', e.message); });
@@ -146,7 +155,7 @@ async function download(url: string, to: string, o: InstallCftOptions & { expect
   const len = Number(res.headers.get('content-length'));
   if (!Number.isSafeInteger(len) || len <= 0) throw new CftError('sizeMismatch', 'no Content-Length');
   if (len > max) throw new CftError('tooLarge', `${len} bytes > ${max}`);
-  if (o.expected !== null && o.expected !== len) throw new CftError('sizeMismatch', `expected ${o.expected} bytes, the server sends ${len}`);
+  if (o.expected !== len) throw new CftError('sizeMismatch', `expected ${o.expected} bytes, the server sends ${len}`);
   const fh = await open(to, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
   let bytes = 0;
   try {

@@ -3,7 +3,7 @@ import type { FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Composition } from '@motion-studio/shared';
 import { copyConfinedFile, withConfinedFile } from '../brand/agent-guard.ts';
-import { RenderError } from './chromium-provider.ts';
+import { RenderError } from './errors.ts';
 import { runFfmpeg, type FfmpegInfo } from './encode.ts';
 
 /**

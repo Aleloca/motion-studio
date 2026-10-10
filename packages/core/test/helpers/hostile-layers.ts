@@ -4,7 +4,9 @@
  * asserts which canary paths were (not) requested.
  *
  * - `hostileLayer`: everything the headers must block (fetch, WebSocket, EventSource, beacon, Worker, import(), script,
- *   stylesheet, image, file://, form, popup, top navigation, top/parent document access, cross-origin pushState). It paints
+ *   stylesheet, image, file://, form, popup, top navigation, top/parent document access, cross-origin pushState), workers
+ *   that really fetch (blob, same-folder script, SharedWorker, service worker), and, given a UDP canary port, WebRTC
+ *   STUN/TURN and WebTransport. It paints
  *   itself green, or red when a synchronous attempt did not throw. Nothing may reach the canary, in any mode.
  * - `selfNavigationLayer`: a layer that navigates its own frame (`location.href`, `<meta http-equiv=refresh>`, an anchor
  *   `.click()`, `location.replace`, `open(url, '_self')`, a `location.href` 1.5 s later, from a timer) or a nested
@@ -31,7 +33,7 @@ export const selfNavigationPath = (c: SelfNavigationCase) => `/selfnav-${c}`;
 /** Where the hostile clip sits in a 320×180 composition: on top, in the bottom-right corner. */
 export const HOSTILE_BOX = { x: 280, y: 140, width: 40, height: 40 } as const;
 
-export const hostileLayer = (canary: string) => `<!doctype html>
+export const hostileLayer = (canary: string, udpPort?: number) => `<!doctype html>
 <html><head><meta charset="utf-8">
 <style>html,body{margin:0;width:100%;height:100%;background:#00ff00;overflow:hidden}img,form{position:absolute;left:-1000px;top:0}</style>
 <link rel="stylesheet" href="${canary}/css">
@@ -53,6 +55,21 @@ export const hostileLayer = (canary: string) => `<!doctype html>
   try { new EventSource(C + '/es'); } catch (e) {}
   try { navigator.sendBeacon(C + '/beacon', 'x'); } catch (e) {}
   try { new Worker(C + '/worker.js'); } catch (e) {}
+  // Workers that really run and fetch: a blob worker, a same-folder worker script, a shared worker, a service worker.
+  try { new Worker(URL.createObjectURL(new Blob(["fetch('" + C + "/blob-worker-fetch').catch(() => {});"], { type: 'text/javascript' }))); } catch (e) {}
+  try { new Worker('worker.js'); } catch (e) {}
+  try { new SharedWorker('shared.js'); } catch (e) {}
+  try { navigator.serviceWorker.register('sw.js').catch(() => {}); } catch (e) {}
+  // Not HTTP: WebRTC (STUN and TURN) and WebTransport (QUIC) to a UDP canary. Neither Fetch nor (for WebRTC) the CSP sees them.
+  const U = ${JSON.stringify(udpPort ?? null)};
+  if (U) {
+    try {
+      const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:127.0.0.1:' + U }, { urls: 'turn:127.0.0.1:' + U + '?transport=udp', username: 'u', credential: 'c' }] });
+      pc.createDataChannel('x');
+      pc.createOffer().then((o) => pc.setLocalDescription(o)).catch(() => {});
+    } catch (e) {}
+    try { const wt = new WebTransport('https://127.0.0.1:' + U + '/wt'); wt.ready.catch(() => {}); wt.closed.catch(() => {}); } catch (e) {}
+  }
   import(C + '/mod.js').catch(() => {});
   const s = document.createElement('script'); s.src = C + '/script.js'; document.head.appendChild(s);
   try { document.getElementById('f').submit(); } catch (e) {}
@@ -78,8 +95,19 @@ export function selfNavigationLayer(canary: string, c: SelfNavigationCase): stri
 }
 
 /** Writes `layers/hostile.html` and `layers/selfnav-<case>.html` into a composition folder. */
-export function writeHostileLayers(compDir: string, canary: string): void {
-  writeFileSync(join(compDir, 'layers', 'hostile.html'), hostileLayer(canary));
+/** Worker scripts the hostile layer starts (written next to it): each one fetches the canary. */
+export const hostileWorkerScripts = (canary: string): Record<string, string> => ({
+  'worker.js': `fetch(${JSON.stringify(`${canary}/worker-fetch`)}).catch(() => {});`,
+  'shared.js': `fetch(${JSON.stringify(`${canary}/shared-fetch`)}).catch(() => {});`,
+  'sw.js': `fetch(${JSON.stringify(`${canary}/sw-fetch`)}).catch(() => {}); self.addEventListener('install', () => { fetch(${JSON.stringify(`${canary}/sw-install-fetch`)}).catch(() => {}); });`,
+});
+
+/** Canary paths a worker of the fixture would hit. */
+export const WORKER_CANARY_PATHS = ['/worker-fetch', '/blob-worker-fetch', '/shared-fetch', '/sw-fetch', '/sw-install-fetch'];
+
+export function writeHostileLayers(compDir: string, canary: string, udpPort?: number): void {
+  writeFileSync(join(compDir, 'layers', 'hostile.html'), hostileLayer(canary, udpPort));
+  for (const [name, body] of Object.entries(hostileWorkerScripts(canary))) writeFileSync(join(compDir, 'layers', name), body);
   for (const c of SELF_NAVIGATION_CASES) writeFileSync(join(compDir, 'layers', `selfnav-${c}.html`), selfNavigationLayer(canary, c));
 }
 

@@ -21,21 +21,19 @@ export interface ChromeInstall {
   source: 'env' | 'system';
 }
 
-/** Standard locations, best first, for `platform` (Chrome, then Chromium, Edge and Brave as fallbacks). */
+/** Standard locations, best first, for `platform`: Google Chrome, then Chromium (orchestrator ruling: no other browsers). */
 export function chromeCandidates(platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): string[] {
   if (platform === 'darwin') {
-    const apps = ['Google Chrome.app/Contents/MacOS/Google Chrome', 'Chromium.app/Contents/MacOS/Chromium',
-      'Microsoft Edge.app/Contents/MacOS/Microsoft Edge', 'Brave Browser.app/Contents/MacOS/Brave Browser'];
+    const apps = ['Google Chrome.app/Contents/MacOS/Google Chrome', 'Chromium.app/Contents/MacOS/Chromium'];
     const roots = ['/Applications', ...(env.HOME ? [join(env.HOME, 'Applications')] : [])];
     return apps.flatMap((a) => roots.map((r) => join(r, a)));
   }
   if (platform === 'win32') {
     const roots = [env.PROGRAMFILES, env['PROGRAMFILES(X86)'], env.LOCALAPPDATA].filter((r): r is string => !!r);
-    const rel = ['Google\\Chrome\\Application\\chrome.exe', 'Chromium\\Application\\chrome.exe', 'Microsoft\\Edge\\Application\\msedge.exe',
-      'BraveSoftware\\Brave-Browser\\Application\\brave.exe'];
+    const rel = ['Google\\Chrome\\Application\\chrome.exe', 'Chromium\\Application\\chrome.exe'];
     return rel.flatMap((r) => roots.map((root) => `${root}\\${r}`));
   }
-  const names = ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', 'microsoft-edge', 'brave-browser'];
+  const names = ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser'];
   const dirs = (env.PATH ?? '').split(delimiter).filter(Boolean);
   const fixed = ['/usr/bin', '/usr/local/bin', '/snap/bin', '/opt/google/chrome'];
   const seen = new Set<string>();
@@ -47,6 +45,20 @@ export function chromeCandidates(platform: NodeJS.Platform = process.platform, e
 const VERSION_RE = /(\d+)\.(\d+)\.(\d+)\.(\d+)/;
 
 /** `exe --version` (macOS, Linux), or the version folder next to `chrome.exe` (Windows, where `--version` prints nothing). */
+const versionCache = new Map<string, { key: string; version: Promise<string | null> }>();
+
+/** `chromeVersion`, cached per path while the executable's size and mtime stay the same (it runs on every engine query). */
+export function cachedChromeVersion(exe: string): Promise<string | null> {
+  let key: string;
+  try { const st = statSync(exe); key = `${st.size}:${st.mtimeMs}`; } catch { return Promise.resolve(null); }
+  const hit = versionCache.get(exe);
+  if (hit && hit.key === key) return hit.version;
+  const version = chromeVersion(exe);
+  versionCache.set(exe, { key, version });
+  void version.then((v) => { if (v === null && versionCache.get(exe)?.version === version) versionCache.delete(exe); });
+  return version;
+}
+
 export function chromeVersion(exe: string, timeoutMs = 60_000): Promise<string | null> {
   if (process.platform === 'win32') {
     try {
@@ -69,7 +81,7 @@ export async function findSystemChrome(o: { env?: NodeJS.ProcessEnv; platform?: 
   const env = o.env ?? process.env;
   const check = async (exe: string, source: ChromeInstall['source']): Promise<ChromeInstall | null> => {
     if (!existsSync(exe)) return null;
-    const version = await chromeVersion(exe);
+    const version = await cachedChromeVersion(exe);
     if (!version) return null;
     const major = Number(version.split('.')[0]);
     return major >= MIN_CHROME_MAJOR ? { exe, version, major, source } : null;

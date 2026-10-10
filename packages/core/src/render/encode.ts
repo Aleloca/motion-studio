@@ -1,12 +1,15 @@
 import { execFile, spawn, type ChildProcess, type StdioOptions } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { open, mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import type { Writable } from 'node:stream';
 import { videoTargetBitrateKbps, type FormatPreset } from '@motion-studio/shared';
-import { RenderError } from './chromium-provider.ts';
+import { RenderError } from './errors.ts';
+import { binaryArch, hostArch, type BinaryArch } from './arch.ts';
 import { killGroup, trackGroup } from './watchdog.ts';
+
+export { binaryArch, hostArch, type BinaryArch } from './arch.ts';
 
 /**
  * ffmpeg for the renderer (spec §5.3): discovery with the binary's CPU architecture (an x86_64 ffmpeg under Rosetta on
@@ -14,8 +17,6 @@ import { killGroup, trackGroup } from './watchdog.ts';
  * cancel and failure), the H.264 settings of phase 8, the optional VideoToolbox encoder behind a quality check, and the
  * final concat + mux.
  */
-
-export type BinaryArch = 'arm64' | 'x86_64' | 'universal' | 'unknown';
 
 export interface FfmpegInfo {
   path: string;
@@ -36,43 +37,6 @@ const run = (cmd: string, args: string[], timeoutMs = 60_000): Promise<{ code: n
     resolve({ code: err ? (typeof err.code === 'number' ? err.code : 1) : 0, stdout: stdout ?? '', stderr: stderr ?? '' });
   });
 });
-
-/** The CPU architecture of an executable from its header: Mach-O (thin or universal) and ELF. */
-export async function binaryArch(path: string): Promise<BinaryArch> {
-  let head: Buffer;
-  try {
-    const fh = await open(path, 'r');
-    try {
-      head = Buffer.alloc(4096);
-      const { bytesRead } = await fh.read(head, 0, 4096, 0);
-      head = head.subarray(0, bytesRead);
-    } finally { await fh.close(); }
-  } catch { return 'unknown'; }
-  if (head.length < 20) return 'unknown';
-  const cpu = (t: number): BinaryArch => (t === 0x01000007 ? 'x86_64' : t === 0x0100000c ? 'arm64' : 'unknown');
-  if (head.readUInt32LE(0) === 0xfeedfacf) return cpu(head.readUInt32LE(4));
-  if (head.readUInt32BE(0) === 0xcafebabe) {
-    const n = head.readUInt32BE(4);
-    const archs = new Set<BinaryArch>();
-    for (let i = 0; i < n && 8 + i * 20 + 4 <= head.length; i++) archs.add(cpu(head.readUInt32BE(8 + i * 20)));
-    return archs.has('arm64') && archs.has('x86_64') ? 'universal' : archs.size === 1 ? [...archs][0]! : 'unknown';
-  }
-  if (head.readUInt32BE(0) === 0x7f454c46) {
-    const machine = head[5] === 2 ? head.readUInt16BE(18) : head.readUInt16LE(18);
-    return machine === 62 ? 'x86_64' : machine === 183 ? 'arm64' : 'unknown';
-  }
-  return 'unknown';
-}
-
-/** The machine's CPU architecture (`arm64` for Apple Silicon even under Rosetta). */
-export async function hostArch(): Promise<string> {
-  if (process.platform === 'darwin') {
-    const r = await run('/usr/sbin/sysctl', ['-n', 'hw.optional.arm64'], 10_000);
-    if (r.stdout.trim() === '1') return 'arm64';
-    return 'x86_64';
-  }
-  return process.arch === 'x64' ? 'x86_64' : process.arch;
-}
 
 /** `name` on PATH (or the usual install places), or null. */
 function which(name: string, env: NodeJS.ProcessEnv): string | null {
@@ -130,14 +94,14 @@ export function spawnFfmpeg(ff: FfmpegInfo, args: string[], o: { signal?: AbortS
   proc.stderr!.on('data', (d: Buffer) => { tail = (tail + d.toString('utf8')).slice(-4000); });
   proc.stdin?.on('error', () => { /* ffmpeg exited early: reported by `done` */ });
   let cancelled = false;
-  const kill = () => { if (proc.pid) killGroup(proc.pid); else proc.kill('SIGKILL'); };
+  // Only while the leader runs: ffmpeg starts no children, and once it is reaped its pid may be reused.
+  const kill = () => { if (proc.exitCode === null && proc.signalCode === null) { if (proc.pid) killGroup(proc.pid); else proc.kill('SIGKILL'); } };
   const onAbort = () => { cancelled = true; kill(); };
   if (o.signal?.aborted) onAbort(); else o.signal?.addEventListener('abort', onAbort, { once: true });
   const done = new Promise<void>((resolve, reject) => {
     const finish = (code: number | null, sig: NodeJS.Signals | null, err?: Error) => {
       o.signal?.removeEventListener('abort', onAbort);
       untrack();
-      if (proc.pid) killGroup(proc.pid); // nothing of the group may outlive it
       if (cancelled) reject(new RenderError('cancelled', 'cancelled'));
       else if (err) reject(new RenderError('ffmpegFailed', `ffmpeg could not start: ${err.message}`));
       else if (code !== 0) reject(new RenderError('ffmpegFailed', `ffmpeg exited with ${code ?? sig}: ${tail.trim().slice(-1500)}`));
@@ -177,34 +141,47 @@ export function h264Args(encoder: VideoEncoder, kbps: number, fps: number, prese
 
 /** The minimum SSIM a VideoToolbox test encode must reach against its source (libx264 at the same cap scores ≈0.98+). */
 export const VIDEOTOOLBOX_MIN_SSIM = 0.97;
-const vtCache = new Map<string, Promise<{ ok: boolean; ssim: number | null; reason?: string }>>();
+export interface VideotoolboxCheck { ok: boolean; ssim: number | null; reason?: string; transient?: boolean }
+const vtCache = new Map<string, Promise<VideotoolboxCheck>>();
+
+/**
+ * The test pattern: seven-segment counters at two sizes over colour bars (`testsrc`, a quarter-size one overlaid), closer to
+ * the text of motion graphics than `testsrc2`. Only lavfi sources: `drawtext` needs a freetype build.
+ */
+export const vtTestPattern = (w: number, h: number, fps: number) => {
+  const qw = Math.max(16, Math.round(w / 4 / 2) * 2), qh = Math.max(16, Math.round(h / 4 / 2) * 2);
+  return `testsrc=size=${w}x${h}:rate=${fps}:duration=2[a];testsrc=size=${qw}x${qh}:rate=${fps}:duration=2[b];[a][b]overlay=16:16[out0]`;
+};
 
 /**
  * Whether `h264_videotoolbox` is usable for this size: macOS only, the encoder present, and a 2 s test pattern encoded at
- * the format's target bitrate reaches `VIDEOTOOLBOX_MIN_SSIM` against the source. Cached per ffmpeg, size and fps.
+ * the format's target bitrate reaches `VIDEOTOOLBOX_MIN_SSIM` against the source. A real quality result is cached per
+ * ffmpeg, size, fps and bitrate; a transient failure (the encoder or the comparison did not run, e.g. under load or with
+ * the hardware busy) is not, so the next render checks again.
  */
-export function checkVideotoolbox(ff: FfmpegInfo, width: number, height: number, fps: number, kbps: number): Promise<{ ok: boolean; ssim: number | null; reason?: string }> {
+export function checkVideotoolbox(ff: FfmpegInfo, width: number, height: number, fps: number, kbps: number): Promise<VideotoolboxCheck> {
   if (process.platform !== 'darwin' || !ff.encoders.has('h264_videotoolbox')) return Promise.resolve({ ok: false, ssim: null, reason: 'unavailable' });
   const key = `${ff.path}|${width}x${height}@${fps}|${kbps}`;
   let p = vtCache.get(key);
   if (!p) {
-    p = (async () => {
+    p = (async (): Promise<VideotoolboxCheck> => {
       const dir = await mkdtemp(join(tmpdir(), 'ms-render-vtcheck-'));
       try {
-        const src = `testsrc2=size=${width}x${height}:rate=${fps}:duration=2`;
+        const src = vtTestPattern(width, height, fps);
         const out = join(dir, 'vt.mp4');
         const enc = await run(ff.path, ['-hide_banner', '-nostdin', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', src, ...h264Args('h264_videotoolbox', kbps, fps), '-f', 'mp4', out], 300_000);
-        if (enc.code !== 0) return { ok: false, ssim: null, reason: enc.stderr.trim().slice(-300) || 'encode failed' };
+        if (enc.code !== 0) return { ok: false, ssim: null, reason: enc.stderr.trim().slice(-300) || 'encode failed', transient: true };
         const cmp = await run(ff.path, ['-hide_banner', '-nostdin', '-loglevel', 'info', '-i', out, '-f', 'lavfi', '-i', src,
           '-lavfi', '[0:v]format=yuv420p[a];[1:v]scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[b];[a][b]ssim', '-f', 'null', '-'], 300_000);
         const ssim = Number(/All:([\d.]+)/.exec(cmp.stderr)?.[1]);
-        if (!Number.isFinite(ssim)) return { ok: false, ssim: null, reason: 'no SSIM' };
+        if (!Number.isFinite(ssim)) return { ok: false, ssim: null, reason: 'no SSIM', transient: true };
         return { ok: ssim >= VIDEOTOOLBOX_MIN_SSIM, ssim, ...(ssim < VIDEOTOOLBOX_MIN_SSIM ? { reason: 'quality' } : {}) };
       } finally {
         await rm(dir, { recursive: true, force: true });
       }
     })();
     vtCache.set(key, p);
+    void p.then((r) => { if (r.transient) vtCache.delete(key); }, () => vtCache.delete(key));
   }
   return p;
 }

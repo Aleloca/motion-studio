@@ -4,7 +4,7 @@
  * - videos at 24 and 25 fps and a variable-frame-rate one in a 30 fps composition, a `trimStart`, and a clip ending exactly
  *   at the composition end: every output frame shows the expected source frame (frame-coded sources);
  * - 69 frames over 4 parallel segments: the output has exactly 69 frames, each the right one (no duplicate, no gap);
- * - audio placed to the sample (onsets within 1 sample after AAC), cut at the clip end when the source is longer, fine
+ * - audio placed to the sample (onsets within 1 sample after AAC, a 44.1 kHz source included), cut at the clip end when the source is longer, fine
  *   when it is shorter, and a clip ending exactly at the composition end;
  * - a still (`duration` 0) gives a PNG;
  * - nothing is left behind: no process of the browser group, no ffmpeg, no temp file.
@@ -76,6 +76,8 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
     burstWav(ff, join(compDir, 'assets', 'a1.wav'), { seconds: 1, at: 0.25, burst: 0.05 });
     burstWav(ff, join(compDir, 'assets', 'a2.wav'), { seconds: 2, at: 1.0, burst: 0.6 });
     burstWav(ff, join(compDir, 'assets', 'a3.wav'), { seconds: 0.2, at: 0.1 });
+    // A 44.1 kHz source (resampled to 48 kHz by the mix): its burst starts at 0.3 s, exactly sample 13230.
+    burstWav(ff, join(compDir, 'assets', 'a4.wav'), { seconds: 1, at: 0.3, burst: 0.05, rate: 44_100 });
     readdirSync(compDir); // exists
   }, 600_000);
 
@@ -94,6 +96,7 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
           { id: 'a1', type: 'audio', src: 'assets/a1.wav', start: 0.5, duration: 1 },
           { id: 'a2', type: 'audio', src: 'assets/a2.wav', start: 1.2, duration: 0.5, trimStart: 0.6 },
           { id: 'a3', type: 'audio', src: 'assets/a3.wav', start: 1.9, duration: 0.4 },
+          { id: 'a4', type: 'audio', src: 'assets/a4.wav', start: 0.85, duration: 0.6 },
         ] },
       ],
     } as unknown as Composition;
@@ -112,7 +115,7 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
       ffmpeg: tools.ffmpeg!, encoder: 'libx264', tempDir: renderTemp,
     }).catch((e) => { console.error('STDERR', provider.stderr.slice(-4000)); throw e; });
     loads.push(loadavg()[0]!);
-    console.info(`[render] ${FRAMES} frames ${W}x${H}, 4 pages: ${((Date.now() - t0) / 1000).toFixed(1)} s, load ${loads.map((l) => l.toFixed(0)).join('→')}`);
+    if (process.env.MS_RENDER_DEBUG) console.info(`[render] ${FRAMES} frames ${W}x${H}, 4 pages: ${((Date.now() - t0) / 1000).toFixed(1)} s, load ${loads.map((l) => l.toFixed(0)).join('→')}`);
     expect(result).toMatchObject({ file: join(creative, VERSION_DIR, `${FORMAT.id}.mp4`), width: W, height: H, durationSec: DURATION, frames: FRAMES, encoder: 'libx264', audio: true });
     expect(result.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(progress.at(-1)).toBe(FRAMES);
@@ -163,11 +166,12 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
     const sr = 48_000;
     const at = (sec: number) => Math.round(sec * sr);
     const quiet = (a: number, b: number) => { let m = 0; for (let i = at(a); i < at(b); i++) m = Math.max(m, Math.abs(x[i]!)); return m; };
-    const onsets = { a1: onset(x, at(0.6)) - at(0.75), a2: onset(x, at(1.5)) - at(1.6), a3: onset(x, at(1.9)) - at(2.0) };
-    console.info(`[render] audio onset errors (samples): ${JSON.stringify(onsets)}; decoded length ${x.length} (expected ${at(DURATION)})`);
+    const onsets = { a1: onset(x, at(0.6)) - at(0.75), a4: onset(x, at(1.0)) - at(1.15), a2: onset(x, at(1.5)) - at(1.6), a3: onset(x, at(1.9)) - at(2.0) };
+    if (process.env.MS_RENDER_DEBUG) console.info(`[render] audio onset errors (samples): ${JSON.stringify(onsets)}; decoded length ${x.length} (expected ${at(DURATION)})`);
     for (const err of Object.values(onsets)) expect(Math.abs(err)).toBeLessThanOrEqual(1);
     expect(quiet(0, 0.7)).toBeLessThan(0.05); // nothing before the first burst
-    expect(quiet(0.85, 1.55)).toBeLessThan(0.05); // a1's burst is 50 ms
+    expect(quiet(0.85, 1.1)).toBeLessThan(0.05); // a1's burst is 50 ms
+    expect(quiet(1.25, 1.55)).toBeLessThan(0.05); // so is a4's (44.1 kHz) at 1.15 s
     // a2's source keeps bursting until 1.6 s of the file (= 2.2 s of the composition): cut at its clip end, 1.7 s.
     expect(quiet(1.72, 1.98)).toBeLessThan(0.05);
     // a3 is 0.2 s long in a 0.4 s clip: its burst plays from 2.0 to 2.1 s, then silence to the end.
@@ -188,7 +192,7 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
   it('macOS: with `auto`, VideoToolbox is used only behind its quality check; its segments join exactly too', async () => {
     const ff = tools.ffmpeg!;
     const check = await checkVideotoolbox(ff, W, H, FPS, 800);
-    console.info(`[render] ffmpeg ${ff.version} ${ff.arch}${ff.translated ? ' (Rosetta)' : ''}; VideoToolbox check: ${JSON.stringify(check)}`);
+    if (process.env.MS_RENDER_DEBUG) console.info(`[render] ffmpeg ${ff.version} ${ff.arch}${ff.translated ? ' (Rosetta)' : ''}; VideoToolbox check: ${JSON.stringify(check)}`);
     const p = new ChromeProvider({ exe: tools.chrome!.exe, kind: 'system', limits: { timeLimitMs: 30 * 60_000 } });
     const out = join(creative, VERSION_DIR, `${FORMAT.id}-auto.mp4`);
     const r = await renderComposition({ dir: creative, versionDir: VERSION_DIR, composition: composition(), format: FORMAT, out, provider: p, parallel: 3, signal: new AbortController().signal, distDir: dist, ffmpeg: ff, encoder: 'auto' });

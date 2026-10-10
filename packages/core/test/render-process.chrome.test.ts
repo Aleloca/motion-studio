@@ -37,7 +37,7 @@ window.msSeek = (t) => { if (t >= 0.1) { for (;;) {} } };
 /** A layer whose every seek burns CPU for a while (a busy loop: timers and clocks are virtual in a layer). */
 const SLOW_LAYER = `<!doctype html><html><body><script>
 window.msReady = Promise.resolve();
-window.msSeek = () => { let x = 0; for (let i = 0; i < 3e8; i++) x += i; window.__x = x; };
+window.msSeek = () => { let x = 0; for (let i = 0; i < 2e9; i++) x += i; window.__x = x; };
 </script></body></html>`;
 
 describe.skipIf(!tools.ok)('renderer: processes, cancel, crash, watchdog', () => {
@@ -142,12 +142,12 @@ describe.skipIf(!tools.ok)('renderer: processes, cancel, crash, watchdog', () =>
   it('a 2 GB ArrayBuffer in a layer trips the memory watchdog, which kills the browser group', async () => {
     const r = await attempt('mem', composition(1, [layerTrack('layers/mem.html', 1)]));
     expect((r.error as RenderError).code).toBe('memoryLimit');
-    console.info(`[render] memory watchdog: ${(r.error as Error).message}; peak ${JSON.stringify(r.provider.peakMemory)}`);
+    if (process.env.MS_RENDER_DEBUG) console.info(`[render] memory watchdog: ${(r.error as Error).message}; peak ${JSON.stringify(r.provider.peakMemory)}`);
     await expectClean(r, 'mem');
   }, 900_000);
 
   it('an infinite loop in a layer: the frame times out (Runtime.evaluate timeout), and nothing is left', async () => {
-    const provider = new ChromeProvider({ exe: tools.chrome!.exe, kind: 'system', limits: { timeLimitMs: 20 * 60_000 }, timeouts: { frameMs: 20_000 } });
+    const provider = new ChromeProvider({ exe: tools.chrome!.exe, kind: 'system', limits: { timeLimitMs: 20 * 60_000 }, timeouts: { frameMs: 20_000, callMs: 120_000, loadMs: 300_000, readyMs: 300_000 } });
     const t0 = Date.now();
     const r = await attempt('cpu', composition(1, [layerTrack('layers/cpu.html', 1)]), { provider });
     expect((r.error as RenderError).code).toBe('frameTimeout');
@@ -157,7 +157,7 @@ describe.skipIf(!tools.ok)('renderer: processes, cancel, crash, watchdog', () =>
 
   it('the time limit of a render fails it as timeLimit, and a retry starts clean and succeeds', async () => {
     let capturing = false;
-    const r = await attempt('retry', composition(3, [layerTrack('layers/slow.html', 3)]), { timeLimitMs: 25_000, onFrame: (n) => { if (n > 0) capturing = true; } });
+    const r = await attempt('retry', composition(3, [layerTrack('layers/slow.html', 3)]), { timeLimitMs: 60_000, onFrame: (n) => { if (n > 0) capturing = true; } });
     expect((r.error as RenderError).code).toBe('timeLimit');
     expect(capturing).toBe(true); // it stopped a render that was running
     await expectClean(r, 'retry');

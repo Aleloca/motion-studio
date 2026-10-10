@@ -1,5 +1,6 @@
 import type { Writable } from 'node:stream';
-import { RenderError, type CaptureFormat, type RenderPage } from './chromium-provider.ts';
+import type { CaptureFormat, RenderPage } from './chromium-provider.ts';
+import { RenderError } from './errors.ts';
 
 /**
  * Frame capture (spec §5.3; spike §2): `seek(i / fps)` then `Page.captureScreenshot`, frame by frame. A video is split into
@@ -87,13 +88,6 @@ export async function captureSegment(page: RenderPage, seg: Segment, o: {
   fps: number; format: CaptureFormat; quality?: number; width: number; height: number; signal: AbortSignal;
   sink: (frame: Buffer, index: number) => Promise<void>; onFrame?: () => void;
 }): Promise<void> {
-  // Pre-roll: a later segment first seeks to the frame before its own, uncaptured. Measured in Chrome 154: the very first
-  // seek after `ready` can show a video's source frame 0 when the clip becomes visible at that time (1 render in 2 at a
-  // segment start); every later seek is exact. So every captured frame follows a seek, as in a single-page render.
-  if (seg.from > 0) {
-    if (o.signal.aborted) throw new RenderError('cancelled', 'cancelled');
-    await page.seek((seg.from - 1) / o.fps);
-  }
   for (let i = seg.from; i < seg.to; i++) {
     if (o.signal.aborted) throw new RenderError('cancelled', 'cancelled');
     const buf = await captureFrame(page, i / o.fps, o);

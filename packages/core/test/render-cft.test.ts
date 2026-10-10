@@ -154,6 +154,15 @@ describe('Chrome for Testing download (fake endpoint)', () => {
     }
   });
 
+  it('never offers a download of unknown size: no size from HEAD, or none in what the user agreed to', async () => {
+    served.headLength = 0;
+    await expect(cftDownloadInfo({ endpoint: `${base}/manifest.json`, platform: PLATFORM, fetchImpl: guardedFetch })).rejects.toMatchObject({ code: 'sizeMismatch' });
+    hits.length = 0;
+    const info = { version: VERSION, platform: PLATFORM, url: `${base}/dl.zip`, sizeBytes: null as unknown as number };
+    await expect(install('nosize', { info })).rejects.toMatchObject({ code: 'sizeMismatch' });
+    expect(hits).toEqual([]); // refused before any download
+  });
+
   it('refuses a version that is not a version (it becomes a folder name)', async () => {
     await expect(install('evil-version', { endpoint: `${base}/evil-manifest.json` })).rejects.toMatchObject({ code: 'badManifest' });
   });

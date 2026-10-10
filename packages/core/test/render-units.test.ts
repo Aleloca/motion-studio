@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { Composition } from '@motion-studio/shared';
 import type { CdpClient, CdpEvent } from '../src/render/cdp-pipe.ts';
-import { allowedPrefix, BASE_FLAGS, interceptRequests, isAllowedRequest, networkLockdownFlags } from '../src/render/isolation.ts';
+import { allowedPrefix, BASE_FLAGS, interceptRequests, isAllowedRequest, NETWORK_API_GUARD, networkLockdownFlags } from '../src/render/isolation.ts';
 import { imageSize, splitSegments } from '../src/render/capture.ts';
 import { mixClips, mixGraph } from '../src/render/audio-mix.ts';
 import { binaryArch, concatLine, h264Args, targetKbps } from '../src/render/encode.ts';
@@ -43,6 +43,11 @@ describe('isolation rules', () => {
     expect(() => networkLockdownFlags('http://localhost:4000')).toThrow();
     expect(() => new ChromeProvider({ exe: 'x', kind: 'system', limits: { timeLimitMs: 1 }, extraFlags: ['--no-sandbox'] })).toThrow(/not allowed/);
     expect(() => new ChromeProvider({ exe: 'x', kind: 'system', limits: { timeLimitMs: 1 }, extraFlags: ['--proxy-server=direct://'] })).toThrow(/not allowed/);
+    // An allowlist: single-dash and unlisted network or debugging switches are refused too.
+    for (const f of ['-no-sandbox', '--no-proxy-server', '--proxy-pac-url=http://x/p.pac', '--proxy-auto-detect', '--remote-debugging-address=0.0.0.0', '--disable-gpu --no-sandbox', '--enable-gpu=1']) {
+      expect(() => new ChromeProvider({ exe: 'x', kind: 'system', limits: { timeLimitMs: 1 }, extraFlags: [f] }), f).toThrow(/not allowed/);
+    }
+    expect(() => new ChromeProvider({ exe: 'x', kind: 'system', limits: { timeLimitMs: 1 }, extraFlags: ['--disable-gpu', '--use-angle=metal'] })).not.toThrow();
   });
 });
 
@@ -73,14 +78,16 @@ describe('request interception (fake CDP)', () => {
     const ic = await interceptRequests(client, 'P', prefix, { clockSource: '/*clock*/', resume: async () => { order.push(`resume after ${calls.length} calls`); } });
     // The page (a fresh about:blank) runs first; then Fetch and the recursive auto-attach, then the rest.
     expect(order).toEqual(['resume after 0 calls']);
-    expect(calls.map((c) => `${c.sessionId}:${c.method}`)).toEqual(['P:Fetch.enable', 'P:Target.setAutoAttach', 'P:Page.enable', 'P:Page.addScriptToEvaluateOnNewDocument']);
-    expect(calls[1]!.params).toEqual({ autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
+    expect(calls.map((c) => `${c.sessionId}:${c.method}`)).toEqual(['P:Fetch.enable', 'P:Page.addScriptToEvaluateOnNewDocument', 'P:Target.setAutoAttach', 'P:Page.enable']);
+    expect(calls[2]!.params).toEqual({ autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
+    // The injected script disables WebRTC and WebTransport before the clock.
+    expect(calls[1]!.params.source).toBe(`${NETWORK_API_GUARD}\n/*clock*/`);
     calls.length = 0;
 
     // A child (an out-of-process layer) is intercepted and auto-attaching BEFORE it is resumed.
     emit({ method: 'Target.attachedToTarget', sessionId: 'P', params: { sessionId: 'L', targetInfo: { type: 'iframe' } } });
     await flush();
-    expect(calls.map((c) => `${c.sessionId}:${c.method}`)).toEqual(['L:Fetch.enable', 'L:Target.setAutoAttach', 'L:Runtime.runIfWaitingForDebugger', 'L:Page.enable', 'L:Page.addScriptToEvaluateOnNewDocument']);
+    expect(calls.map((c) => `${c.sessionId}:${c.method}`)).toEqual(['L:Fetch.enable', 'L:Page.addScriptToEvaluateOnNewDocument', 'L:Target.setAutoAttach', 'L:Runtime.runIfWaitingForDebugger', 'L:Page.enable']);
     calls.length = 0;
 
     emit({ method: 'Fetch.requestPaused', sessionId: 'L', params: { requestId: 'r1', resourceType: 'Script', request: { url: `${prefix}runtime/layer.js` } } });
@@ -102,12 +109,34 @@ describe('request interception (fake CDP)', () => {
     const failures: Error[] = [];
     const ic = await interceptRequests(client, 'P', allowedPrefix(PAGE), { onFailure: (e) => failures.push(e) });
     calls.length = 0;
-    emit({ method: 'Target.attachedToTarget', sessionId: 'P', params: { sessionId: 'W', targetInfo: { type: 'worker' } } });
-    emit({ method: 'Target.attachedToTarget', sessionId: 'P', params: { sessionId: 'F', targetInfo: { type: 'iframe' } } });
+    emit({ method: 'Target.attachedToTarget', sessionId: 'P', params: { sessionId: 'W', targetInfo: { type: 'worker', targetId: 'tw' } } });
+    emit({ method: 'Target.attachedToTarget', sessionId: 'P', params: { sessionId: 'F', targetInfo: { type: 'iframe', targetId: 'tf' } } });
     await flush();
     expect(calls.filter((c) => c.method === 'Runtime.runIfWaitingForDebugger').map((c) => c.sessionId)).toEqual(['W']);
+    expect(calls.filter((c) => c.method === 'Target.closeTarget').map((c) => c.params.targetId)).toEqual(['tf']);
     expect(ic.failure?.message).toMatch(/could not intercept a iframe/);
     expect(failures).toHaveLength(1);
+  });
+
+  it('service and shared workers (and any unknown target type) are closed while paused, never resumed', async () => {
+    const { client, calls, emit } = fakeClient();
+    const ic = await interceptRequests(client, 'P', allowedPrefix(PAGE));
+    calls.length = 0;
+    for (const [sid, type] of [['S', 'service_worker'], ['H', 'shared_worker'], ['X', 'auction_worklet']] as const) {
+      emit({ method: 'Target.attachedToTarget', sessionId: 'P', params: { sessionId: sid, targetInfo: { type, targetId: `t-${sid}`, url: `${ORIGIN}/${TOKEN}/sw.js` } } });
+    }
+    await flush();
+    expect(calls).toEqual(['S', 'H', 'X'].map((sid) => ({ method: 'Target.closeTarget', params: { targetId: `t-${sid}` } })));
+    expect(ic.refused.map((r) => r.type)).toEqual(['service_worker', 'shared_worker', 'auction_worklet']);
+    expect(ic.failure).toBeNull();
+  });
+
+  it('a refused target that cannot be closed fails the render', async () => {
+    const { client, emit } = fakeClient((m) => m === 'Target.closeTarget');
+    const ic = await interceptRequests(client, 'P', allowedPrefix(PAGE));
+    emit({ method: 'Target.attachedToTarget', sessionId: 'P', params: { sessionId: 'S', targetInfo: { type: 'service_worker', targetId: 't' } } });
+    await flush();
+    expect(ic.failure?.message).toMatch(/service_worker target .* could not be closed/);
   });
 });
 
@@ -198,6 +227,38 @@ describe('watchdog', () => {
   });
 });
 
+describe('memory limits', () => {
+  it('scale with the page size and the open pages, capped at 75 % of the machine', async () => {
+    const { scaledMemoryLimits } = await import('../src/render/watchdog.ts');
+    expect(scaledMemoryLimits(1080, 1920, 1, 16_384)).toEqual({ maxProcessMB: 1536, maxGroupMB: 2560 });
+    expect(scaledMemoryLimits(320, 180, 4, 16_384)).toEqual({ maxProcessMB: 1536, maxGroupMB: 7168 });
+    expect(scaledMemoryLimits(3840, 2160, 4, 16_384)).toEqual({ maxProcessMB: 3072, maxGroupMB: 12_288 });
+  });
+
+  it('reads function limits at every sample and samples faster near a limit', async () => {
+    let limit = 10_000;
+    const intervals: number[] = [];
+    let w!: ReturnType<typeof startWatchdog>;
+    let n = 0;
+    const trip = await new Promise((resolve) => {
+      w = startWatchdog({
+        pgid: 1, limits: { intervalMs: 400, timeLimitMs: 60_000, maxProcessMB: () => limit },
+        onTrip: (t) => { w.stop(); resolve(t); },
+        sample: async () => {
+          if (n > 0) intervals.push(w.nextSampleMs); // the delay chosen after the previous sample
+          n++;
+          if (n === 3) limit = 1000;
+          const mb = n >= 4 ? 1100 : 900;
+          return { totalMB: mb, maxMB: mb, pids: 1 };
+        },
+      });
+    });
+    // 900 MB: far from 10 000 (every 400 ms), then within 75 % of 1000 (every 250 ms), then 1100 MB trips it.
+    expect(trip).toEqual({ reason: 'memory', memoryMB: 1100, limitMB: 1000 });
+    expect(intervals).toEqual([400, 400, 250]);
+  });
+});
+
 describe('system Chrome discovery', () => {
   it('lists the standard places per platform and honours CHROME_PATH strictly', async () => {
     expect(chromeCandidates('darwin', { HOME: '/Users/x' })[0]).toBe('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
@@ -211,6 +272,24 @@ describe('system Chrome discovery', () => {
     const ok = join(work, 'new-chrome');
     writeFileSync(ok, '#!/bin/sh\necho "Google Chrome 154.0.8037.98"\n', { mode: 0o755 });
     if (process.platform !== 'win32') expect(await findSystemChrome({ env: { CHROME_PATH: ok } })).toEqual({ exe: ok, version: '154.0.8037.98', major: 154, source: 'env' });
+  });
+
+  it('only Google Chrome and Chromium; the version is cached per path until the file changes', async () => {
+    for (const p of ['darwin', 'win32', 'linux'] as const) {
+      expect(chromeCandidates(p, { HOME: '/h', PROGRAMFILES: 'C:\\P', PATH: '/b' }).some((c) => /edge|brave/i.test(c)), p).toBe(false);
+    }
+    if (process.platform === 'win32') return;
+    const exe = join(work, 'cached-chrome');
+    const calls = `${exe}.calls`;
+    writeFileSync(exe, `#!/bin/sh\necho x >> "${calls}"\necho "Google Chrome 154.0.1.1"\n`, { mode: 0o755 });
+    const { readFileSync: read } = await import('node:fs');
+    const count = () => read(calls, 'utf8').split('\n').filter(Boolean).length;
+    expect((await findSystemChrome({ env: { CHROME_PATH: exe } }))?.version).toBe('154.0.1.1');
+    expect((await findSystemChrome({ env: { CHROME_PATH: exe } }))?.version).toBe('154.0.1.1');
+    expect(count()).toBe(1);
+    writeFileSync(exe, `#!/bin/sh\necho x >> "${calls}"\necho "Google Chrome 155.0.22.333"\n`, { mode: 0o755 }); // an update: new size
+    expect((await findSystemChrome({ env: { CHROME_PATH: exe } }))?.version).toBe('155.0.22.333');
+    expect(count()).toBe(2);
   });
 });
 
@@ -241,5 +320,42 @@ describe('render engine: provider injection and resolution', () => {
     const ok = join(work, 'sys-chrome');
     writeFileSync(ok, '#!/bin/sh\necho "Google Chrome 154.0.8037.98"\n', { mode: 0o755 });
     if (process.platform !== 'win32') expect(await createRenderEngine({ env: { CHROME_PATH: ok }, appDataDir: appData }).info()).toEqual({ kind: 'system', exe: ok, version: '154.0.8037.98' });
+  });
+});
+
+describe('process groups: no blind kill after the leader is gone', () => {
+  it('killGroupIfMarked kills a group only when ps shows our marker in it', async () => {
+    if (process.platform === 'win32') return;
+    const { spawn } = await import('node:child_process');
+    const { killGroupIfMarked, groupMembers } = await import('../src/render/watchdog.ts');
+    const marker = join(work, 'marker-profile-0123456789');
+    const p = spawn('/bin/sh', ['-c', 'sleep 60; true', marker], { detached: true, stdio: 'ignore' });
+    const exited = new Promise((r) => p.once('exit', r));
+    expect(await killGroupIfMarked(p.pid!, join(work, 'some-other-profile-xyz'))).toBe(false);
+    expect(await groupMembers(p.pid!)).toContain(p.pid);
+    expect(await killGroupIfMarked(p.pid!, marker)).toBe(true);
+    await exited;
+    expect(await groupMembers(p.pid!)).toEqual([]);
+  });
+});
+
+describe('VideoToolbox quality check caching', () => {
+  it.skipIf(process.platform !== 'darwin')('retries after a transient failure, caches a real quality failure', async () => {
+    const { checkVideotoolbox } = await import('../src/render/encode.ts');
+    const { readFileSync: read } = await import('node:fs');
+    const fake = (name: string, body: string) => { const p = join(work, name); writeFileSync(p, `#!/bin/sh\necho x >> "${p}.calls"\n${body}\n`, { mode: 0o755 }); return p; };
+    const calls = (p: string) => { try { return read(`${p}.calls`, 'utf8').split('\n').filter(Boolean).length; } catch { return 0; } };
+    const info = (path: string) => ({ path, version: 'fake', arch: 'arm64' as const, hostArch: 'arm64', translated: false, encoders: new Set(['h264_videotoolbox']), fdProtocol: true });
+
+    const broken = fake('ff-broken', 'echo "VT session failed" >&2; exit 1');
+    expect(await checkVideotoolbox(info(broken), 64, 64, 30, 500)).toMatchObject({ ok: false, transient: true });
+    expect(await checkVideotoolbox(info(broken), 64, 64, 30, 500)).toMatchObject({ ok: false, transient: true });
+    expect(calls(broken)).toBe(2); // not cached: tried again
+
+    const poor = fake('ff-poor', 'case "$*" in *ssim*) echo "SSIM Y:0.5 All:0.500000 (3.0)" >&2;; esac; exit 0');
+    expect(await checkVideotoolbox(info(poor), 64, 64, 30, 500)).toEqual({ ok: false, ssim: 0.5, reason: 'quality' });
+    const after = calls(poor);
+    expect(await checkVideotoolbox(info(poor), 64, 64, 30, 500)).toEqual({ ok: false, ssim: 0.5, reason: 'quality' });
+    expect(calls(poor)).toBe(after); // cached
   });
 });

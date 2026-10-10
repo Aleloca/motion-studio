@@ -74,14 +74,30 @@ export function isAllowedRequest(url: string, prefix: string): boolean {
   return u.protocol === 'http:' && u.host === p.host && u.username === '' && u.password === '' && u.pathname.startsWith(p.pathname);
 }
 
-/** Target types whose requests are intercepted in their own session; workers are covered by the frame that owns them. */
+/** Target types whose requests are intercepted in their own session (`Fetch.enable`). */
 const FETCH_TARGETS = new Set(['page', 'iframe']);
+/**
+ * Child target types that may run once secured: pages and frames (their own Fetch), and dedicated workers, whose requests
+ * go through the Fetch of the frame that owns them (measured in Chrome 154; Fetch has no worker support of its own).
+ * Anything else (`service_worker`, `shared_worker`, …) has requests no Fetch session of ours sees: it is never resumed,
+ * it is closed while still paused.
+ */
+const RESUMABLE_TARGETS = new Set(['page', 'iframe', 'worker']);
 const MAX_BLOCKED_LOG = 200;
+
+/**
+ * Added before any page script of every page and frame (with the clock, when given): WebRTC and WebTransport are not
+ * HTTP, so neither the CSP (for WebRTC) nor Fetch interception sees them. The network flags are what stops them; this is a
+ * second layer, never the only one (a worker still has WebTransport).
+ */
+export const NETWORK_API_GUARD = "(() => { for (const k of ['RTCPeerConnection', 'webkitRTCPeerConnection', 'RTCDataChannel', 'RTCIceTransport', 'RTCRtpSender', 'RTCRtpReceiver', 'WebTransport']) { try { Object.defineProperty(globalThis, k, { value: undefined, writable: false, configurable: false }); } catch (e) {} } })();";
 
 export interface Interception {
   /** URLs refused so far (the first 200), with their resource type: diagnostics and tests. */
   readonly blocked: ReadonlyArray<{ url: string; type: string }>;
-  /** Set when a child target could not be put under interception: the render must fail (fail closed). */
+  /** Child targets closed before they ran (types that cannot be intercepted, or that failed to be secured). */
+  readonly refused: ReadonlyArray<{ type: string; url: string }>;
+  /** Set when a frame could not be put under interception, or a refused target could not be closed: the render fails. */
   readonly failure: Error | null;
   /** Stops listening (the browser is about to close). */
   dispose(): void;
@@ -89,34 +105,49 @@ export interface Interception {
 
 /**
  * Puts the page session `sessionId` and every target it creates under request interception, before anything loads:
- * - `Fetch.enable` on every page and iframe target (Fetch has no worker support; a dedicated worker's requests are
- *   intercepted through its frame, measured in Chrome 154);
+ * - `Fetch.enable` on every page and iframe target;
  * - `Target.setAutoAttach` with `waitForDebuggerOnStart`, recursively, so a child (an out-of-process layer iframe, a worker)
- *   stays paused until it is intercepted, then resumes;
+ *   stays paused until it is secured. Only pages, frames and dedicated workers are then resumed; any other child
+ *   (service or shared worker), and any child that could not be secured, is closed without ever running (fail closed);
  * - `resume`, when given, resumes the page target itself first (a target auto-attached paused): it is a fresh
  *   `about:blank` that loads nothing before `Page.navigate`;
- * - `clockSource`, when given, is added to every new document of every target (`Page.addScriptToEvaluateOnNewDocument`):
- *   it also covers nested `srcdoc`/`about:blank` frames of a layer (runtime README, "Clock bypasses");
+ * - `NETWORK_API_GUARD`, plus `clockSource` when given, is added to every new document of every page and frame
+ *   (`Page.addScriptToEvaluateOnNewDocument`, before a child runs): the clock also covers nested `srcdoc`/`about:blank`
+ *   frames of a layer (runtime README, "Clock bypasses");
  * - JavaScript dialogs are dismissed at once (an `alert()` would otherwise block the frame).
  * Call it on a fresh `about:blank` target, before `Page.navigate`.
+ *
+ * Every event is matched by its `sessionId`: a transport must report a real flat session id for the page (Electron's
+ * `webContents.debugger` reports its own target with an empty one: attach with `Target.attachToTarget({ flatten: true })`
+ * and pass that session id).
  */
 export async function interceptRequests(client: CdpClient, sessionId: string, prefix: string, o: { clockSource?: string; timeoutMs?: number; onFailure?: (e: Error) => void; resume?: () => Promise<void> } = {}): Promise<Interception> {
   const timeoutMs = o.timeoutMs ?? 30_000;
   const blocked: Array<{ url: string; type: string }> = [];
+  const refused: Array<{ type: string; url: string }> = [];
   const sessions = new Set<string>([sessionId]);
   let failure: Error | null = null;
   const fail = (e: Error) => { if (!failure) { failure = e; o.onFailure?.(e); } };
+  const injected = o.clockSource ? `${NETWORK_API_GUARD}\n${o.clockSource}` : NETWORK_API_GUARD;
 
-  // Only browser-side commands while a target is paused (Fetch.enable, setAutoAttach): renderer-side ones such as
-  // Page.enable can hang until it runs (measured with pages created paused). The rest follows the resume.
+  // While a target is paused only commands that do not need it to run: Fetch.enable, setAutoAttach and the new-document
+  // script. Page.enable can hang until a page runs (measured with pages created paused), so it follows the resume.
   const secure = async (sid: string, type: string) => {
-    if (FETCH_TARGETS.has(type)) await client.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] }, { sessionId: sid, timeoutMs });
+    if (FETCH_TARGETS.has(type)) {
+      await client.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] }, { sessionId: sid, timeoutMs });
+      await client.send('Page.addScriptToEvaluateOnNewDocument', { source: injected, runImmediately: true }, { sessionId: sid, timeoutMs });
+    }
     await client.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, { sessionId: sid, timeoutMs });
   };
   const extras = async (sid: string, type: string) => {
-    if (!FETCH_TARGETS.has(type)) return;
-    await client.send('Page.enable', {}, { sessionId: sid, timeoutMs });
-    if (o.clockSource) await client.send('Page.addScriptToEvaluateOnNewDocument', { source: o.clockSource, runImmediately: true }, { sessionId: sid, timeoutMs });
+    if (FETCH_TARGETS.has(type)) await client.send('Page.enable', {}, { sessionId: sid, timeoutMs });
+  };
+  /** Closes a paused child that must not run; failing that, the render fails. */
+  const refuse = (targetId: string, type: string, url: string, why: string) => {
+    refused.push({ type, url: url.slice(0, 300) });
+    void client.send('Target.closeTarget', { targetId }, { timeoutMs }).catch((err: Error) => {
+      fail(new Error(`render isolation: a ${type} target (${why}) could not be closed: ${err.message}`));
+    });
   };
 
   const onEvent = (e: CdpEvent) => {
@@ -139,16 +170,21 @@ export async function interceptRequests(client: CdpClient, sessionId: string, pr
     }
     if (e.method === 'Target.attachedToTarget') {
       const child = e.params.sessionId;
-      const info = e.params.targetInfo as { type?: unknown } | undefined;
+      const info = e.params.targetInfo as { type?: unknown; targetId?: unknown; url?: unknown } | undefined;
       if (typeof child !== 'string') return;
       const type = typeof info?.type === 'string' ? info.type : '';
+      const targetId = typeof info?.targetId === 'string' ? info.targetId : '';
+      const url = typeof info?.url === 'string' ? info.url : '';
       sessions.add(child);
+      if (!RESUMABLE_TARGETS.has(type)) { refuse(targetId, type, url, 'not interceptable'); return; }
       void (async () => {
         try {
           await secure(child, type);
         } catch (err) {
-          // A frame that cannot be intercepted must never run: fail the render; the browser is closed by the caller.
-          if (FETCH_TARGETS.has(type)) { fail(new Error(`render isolation: could not intercept a ${type} target: ${(err as Error).message}`)); return; }
+          // Never resumed. A frame that cannot be intercepted also fails the render; the caller closes the browser.
+          if (FETCH_TARGETS.has(type)) fail(new Error(`render isolation: could not intercept a ${type} target: ${(err as Error).message}`));
+          refuse(targetId, type, url, 'not secured');
+          return;
         }
         await client.send('Runtime.runIfWaitingForDebugger', {}, { sessionId: child, timeoutMs }).catch(() => {});
         await extras(child, type).catch(() => {});
@@ -168,8 +204,93 @@ export async function interceptRequests(client: CdpClient, sessionId: string, pr
     throw err;
   }
   return {
-    blocked,
+    blocked, refused,
     get failure() { return failure; },
     dispose: off,
   };
+}
+
+/**
+ * The browser-level half of interception: every new target of the browser (a page, a popup, a service or shared worker,
+ * which no page session sees) is auto-attached paused (`waitForDebuggerOnStart`). Our own pages, created through
+ * `createPage`, are handed over; anything else is closed without ever running.
+ *
+ * Pages are created one at a time, up to the moment they run under interception (`release`): several pages paused at
+ * start deadlocked each other in Chrome 154 (even `runIfWaitingForDebugger` never answered). Each one gets its own window:
+ * a background tab produces no frames (resizes and screenshots would wait forever).
+ */
+export class TargetGate {
+  private readonly own = new Set<string>();
+  private readonly pending = new Map<string, (sessionId: string) => void>();
+  private readonly unclaimed = new Map<string, string>();
+  private creating = 0;
+  private chain: Promise<void> = Promise.resolve();
+  /** Targets closed before they ran (diagnostics and tests). */
+  readonly refused: Array<{ type: string; url: string }> = [];
+
+  constructor(private readonly client: CdpClient, private readonly timeoutMs = 30_000) {}
+
+  /** Starts gating: call once, right after the browser answers. */
+  async start(): Promise<void> {
+    this.client.onEvent((e) => this.onEvent(e));
+    await this.client.send('Target.setDiscoverTargets', { discover: true }, { timeoutMs: this.timeoutMs });
+    await this.client.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, { timeoutMs: this.timeoutMs });
+  }
+
+  private onEvent(e: CdpEvent): void {
+    if (e.sessionId !== undefined || e.method !== 'Target.attachedToTarget') return;
+    const info = e.params.targetInfo as { targetId?: unknown; type?: unknown; url?: unknown } | undefined;
+    const sid = e.params.sessionId;
+    const id = typeof info?.targetId === 'string' ? info.targetId : '';
+    if (typeof sid !== 'string' || !id) return;
+    const waiter = this.pending.get(id);
+    if (waiter) { this.pending.delete(id); waiter(sid); return; }
+    if (this.own.has(id)) return;
+    const closeIt = () => {
+      this.refused.push({ type: String(info?.type ?? ''), url: String(info?.url ?? '').slice(0, 300) });
+      void this.client.send('Target.closeTarget', { targetId: id }, { timeoutMs: this.timeoutMs }).catch(() => {});
+    };
+    // While one of our pages is being created, this may be that page (its createTarget has not answered yet): hold it.
+    if (this.creating > 0) {
+      this.unclaimed.set(id, sid);
+      setTimeout(() => { if (this.unclaimed.delete(id)) closeIt(); }, 30_000).unref();
+    } else closeIt();
+  }
+
+  /**
+   * Creates one of our pages (`about:blank`, its own window), still paused. Call `release` once it runs under
+   * interception (or on failure) so the next page can be created.
+   */
+  async createPage(): Promise<{ targetId: string; sessionId: string; release: () => void }> {
+    let release!: () => void;
+    const previous = this.chain;
+    this.chain = new Promise<void>((r) => { release = r; });
+    await previous;
+    try {
+      this.creating++;
+      let targetId: string;
+      try {
+        ({ targetId } = await this.client.send<{ targetId: string }>('Target.createTarget', { url: 'about:blank', newWindow: true }, { timeoutMs: this.timeoutMs }));
+      } finally {
+        this.creating--;
+      }
+      this.own.add(targetId);
+      let sessionId = this.unclaimed.get(targetId);
+      if (sessionId !== undefined) this.unclaimed.delete(targetId);
+      else {
+        sessionId = await new Promise<string>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            // No auto-attach event (an older browser): attach explicitly.
+            this.pending.delete(targetId);
+            this.client.send<{ sessionId: string }>('Target.attachToTarget', { targetId, flatten: true }, { timeoutMs: this.timeoutMs }).then((r) => resolve(r.sessionId), reject);
+          }, 10_000);
+          this.pending.set(targetId, (sid) => { clearTimeout(timer); resolve(sid); });
+        });
+      }
+      return { targetId, sessionId, release };
+    } catch (e) {
+      release();
+      throw e;
+    }
+  }
 }

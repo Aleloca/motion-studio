@@ -8,11 +8,15 @@
  *    popup, top navigation, top/parent access, cross-origin pushState) and the seven self-navigating layers
  *    (`location.href`, meta refresh, anchor click, nested iframe, `location.replace`, `open(url, '_self')`, a delayed
  *    `location.href`) reach nothing, while frames are seeked past the delayed one.
- * B. **Interception alone**, on a page and layers served WITHOUT any CSP and a browser WITHOUT the network flags: the same
+ * B. **Interception alone** (the browser-level `TargetGate` plus `interceptRequests`, as the provider uses them), on a page
+ *    and layers served WITHOUT any CSP and a browser WITHOUT the network flags: the same
  *    layers, the direct-framing residual of Task 3. A positive control without interception reaches the canary; with it,
  *    nothing does except a WebSocket (CDP Fetch does not see WebSockets, measured in the spike; C and A stop it).
- * C. **Network flags alone** (dead proxy with `<-loopback>`, NOTFOUND resolver), no interception, no CSP: nothing at all
- *    reaches the canary on another loopback port, the WebSocket included.
+ * C. **Network flags alone** (dead proxy with `<-loopback>`, NOTFOUND resolver, WebRTC policy), no interception, no CSP:
+ *    nothing at all reaches the canaries on other loopback ports: WebSocket, workers, WebRTC STUN/TURN and WebTransport to
+ *    a UDP canary included.
+ * Workers: in A the layers are opaque origins, so every worker attempt fails; B and C start real ones from a same-origin
+ * top-level page (service worker, SharedWorker, a same-origin and a blob dedicated worker), all fetching the canary.
  * Skipped without Chrome, unless MS_REQUIRE_CHROME=1 (CI).
  */
 import { spawn } from 'node:child_process';
@@ -25,11 +29,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Composition } from '@motion-studio/shared';
 import { CdpPipe, waitForEvent } from '../src/render/cdp-pipe.ts';
 import { ChromeProvider, nativeLauncher } from '../src/render/chromium-provider.ts';
-import { BASE_FLAGS, interceptRequests, networkLockdownFlags } from '../src/render/isolation.ts';
+import { BASE_FLAGS, interceptRequests, networkLockdownFlags, TargetGate } from '../src/render/isolation.ts';
 import { killGroup, sweepByMarker } from '../src/render/watchdog.ts';
 import { startCompositionServer } from '../src/compositions/composition-server.ts';
-import { hostileLayer, hostileTrack, OWN_FRAME_NAVIGATION_CASES, SELF_NAVIGATION_CASES, selfNavigationLayer, selfNavigationPath, selfNavigationTrack, writeHostileLayers } from './helpers/hostile-layers.ts';
-import { buildRuntime, leftovers, renderTools, startCanary, type Canary } from './helpers/render-env.ts';
+import { hostileLayer, hostileTrack, hostileWorkerScripts, OWN_FRAME_NAVIGATION_CASES, SELF_NAVIGATION_CASES, selfNavigationLayer, selfNavigationPath, selfNavigationTrack, writeHostileLayers } from './helpers/hostile-layers.ts';
+import { buildRuntime, leftovers, renderTools, startCanary, startUdpCanary, type Canary, type UdpCanary } from './helpers/render-env.ts';
 
 const tools = await renderTools('renderer isolation tests');
 const W = 320, H = 180;
@@ -68,19 +72,34 @@ async function rawChrome(exe: string, flags: string[]) {
   };
 }
 
-/** A server WITHOUT any CSP that mimics the token layout: a page framing every hostile and self-navigating layer. */
-async function nakedServer(canary: string): Promise<{ origin: string; close(): Promise<void> }> {
-  const layers: Record<string, string> = { hostile: hostileLayer(canary) };
+/**
+ * A server WITHOUT any CSP that mimics the token layout: a top-level page (same origin as the token) that registers a
+ * service worker, starts a SharedWorker, a same-origin worker and a blob worker (each fetching the canary), and frames
+ * every hostile and self-navigating layer.
+ */
+async function nakedServer(canary: string, udpPort: number): Promise<{ origin: string; close(): Promise<void> }> {
+  const layers: Record<string, string> = { hostile: hostileLayer(canary, udpPort) };
   for (const c of SELF_NAVIGATION_CASES) layers[`selfnav-${c}`] = selfNavigationLayer(canary, c);
+  const scripts = hostileWorkerScripts(canary);
   const page = `<!doctype html><html><body>${Object.keys(layers).map((k) => `<iframe sandbox="allow-scripts" src="/${TOKEN}/layers/${k}.html"></iframe>`).join('')}
-<script>fetch(${JSON.stringify(`${canary}/top-fetch`)}).catch(() => {});</script></body></html>`;
+<script>
+fetch(${JSON.stringify(`${canary}/top-fetch`)}).catch(() => {});
+try { navigator.serviceWorker.register('/${TOKEN}/sw.js').catch(() => {}); } catch (e) {}
+try { new SharedWorker('/${TOKEN}/shared.js'); } catch (e) {}
+try { new Worker('/${TOKEN}/worker.js'); } catch (e) {}
+try { new Worker(URL.createObjectURL(new Blob([${JSON.stringify(`fetch('${canary}/blob-worker-fetch').catch(() => {});`)}], { type: 'text/javascript' }))); } catch (e) {}
+</script></body></html>`;
   const s: Server = createServer((req, res) => {
-    const url = req.url ?? '';
-    const m = new RegExp(`^/${TOKEN}/layers/([\\w-]+)\\.html$`).exec(url);
-    const body = url === `/${TOKEN}/page.html` ? page : m && layers[m[1]!] ? layers[m[1]!] : null;
-    if (body === null) { res.writeHead(404); res.end(); return; }
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    res.end(body);
+    const url = (req.url ?? '').split('?')[0]!;
+    const html = new RegExp(`^/${TOKEN}/layers/([\\w-]+)\\.html$`).exec(url);
+    const js = new RegExp(`^/${TOKEN}/(?:layers/)?([\\w-]+\\.js)$`).exec(url);
+    if (url === `/${TOKEN}/page.html` || (html && layers[html[1]!])) {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(url === `/${TOKEN}/page.html` ? page : layers[html![1]!]);
+    } else if (js && scripts[js[1]!]) {
+      res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' });
+      res.end(scripts[js[1]!]);
+    } else { res.writeHead(404); res.end(); }
   });
   await new Promise<void>((r) => s.listen(0, '127.0.0.1', () => r()));
   return { origin: `http://127.0.0.1:${(s.address() as { port: number }).port}`, close: () => new Promise((r) => { s.closeAllConnections(); s.close(() => r()); }) };
@@ -92,16 +111,19 @@ describe.skipIf(!tools.chrome)('render isolation in headless Chrome', () => {
   let work: string;
   let dist: string;
   let canary: Canary;
+  let udp: UdpCanary;
 
   beforeAll(async () => {
     work = mkdtempSync(join(tmpdir(), 'ms-render-isolation-'));
     dist = join(work, 'dist');
     await buildRuntime(dist);
     canary = await startCanary();
+    udp = await startUdpCanary();
   }, 600_000);
 
   afterAll(async () => {
     await canary?.close();
+    await udp?.close();
     if (work) rmSync(work, { recursive: true, force: true });
   });
 
@@ -109,7 +131,7 @@ describe.skipIf(!tools.chrome)('render isolation in headless Chrome', () => {
     const creative = join(work, 'creative');
     const compDir = join(creative, 'outputs', 'v1', 'compositions', 'iso');
     mkdirSync(join(compDir, 'layers'), { recursive: true });
-    writeHostileLayers(compDir, canary.origin);
+    writeHostileLayers(compDir, canary.origin, udp.port);
     const composition = {
       $schema: 'motion-studio/composition@1', width: W, height: H, fps: 30, duration: 2, background: '#000000', fonts: [],
       scenes: [{ id: 'all', start: 0, duration: 2 }], tracks: [selfNavigationTrack(2), hostileTrack(2)],
@@ -117,13 +139,22 @@ describe.skipIf(!tools.chrome)('render isolation in headless Chrome', () => {
     const server = await startCompositionServer({ uiOrigins: [], distDir: dist });
     const provider = new ChromeProvider({ exe: tools.chrome!.exe, kind: 'system', limits: { timeLimitMs: 20 * 60_000 } });
     const before = canary.hits.length;
+    const udpBefore = udp.packets.length;
     try {
       const session = await server.mintSession({ creativeDir: creative, versionDir: 'outputs/v1', format: 'iso', composition, mode: 'render' });
+      let t0 = Date.now();
       const page = await provider.open({ width: W, height: H, url: session.url, signal: new AbortController().signal });
+      const timings = [`ready ${Date.now() - t0} ms ${JSON.stringify(page.info.errors.map((e) => `${e.code}:${e.clipId ?? ''}`))}`];
       // Seek past the delayed navigation (1.5 s of the frozen clock, fired by the pump while the layer seeks).
-      for (const t of [0, 1, 1.6, 1.9]) await page.seek(t).catch(() => {});
+      for (const t of [0, 1, 1.6, 1.9]) {
+        t0 = Date.now();
+        const r = await page.seek(t).then(() => 'ok', (e: Error) => e.message.slice(0, 80));
+        timings.push(`seek ${t}: ${Date.now() - t0} ms ${r}`);
+      }
+      if (process.env.MS_RENDER_DEBUG) console.info(`[render] A: ${timings.join('; ')}`);
       await settle(3000);
       expect(canary.hits.slice(before)).toEqual([]);
+      expect(udp.packets.slice(udpBefore)).toEqual([]); // WebRTC STUN/TURN and WebTransport
       expect(provider.failure).toBeNull();
     } finally {
       await provider.close();
@@ -133,29 +164,43 @@ describe.skipIf(!tools.chrome)('render isolation in headless Chrome', () => {
   }, 900_000);
 
   it('B. interception alone (no CSP anywhere, no network flags): a control without it leaks; with it nothing but a WebSocket gets out', async () => {
-    const naked = await nakedServer(canary.origin);
+    const naked = await nakedServer(canary.origin, udp.port);
     try {
       // Positive control: the same browser set-up without interception reaches the canary through every layer.
       const control = await rawChrome(tools.chrome!.exe, []);
       try {
         const before = canary.hits.length;
+        const udpBefore = udp.packets.length;
         await control.navigate(await control.page(), `${naked.origin}/${TOKEN}/page.html`);
-        await settle(4000);
+        await settle(5000);
         const hits = canary.hits.slice(before);
         for (const c of OWN_FRAME_NAVIGATION_CASES) expect(hits, c).toContain(selfNavigationPath(c));
-        expect(hits).toContain('/top-fetch');
-        expect(hits).toContain('/fetch');
+        for (const p of ['/top-fetch', '/fetch', '/worker-fetch', '/blob-worker-fetch', '/shared-fetch', '/sw-fetch']) expect(hits, p).toContain(p);
+        expect(udp.packets.length - udpBefore).toBeGreaterThan(0); // WebRTC/WebTransport reach the UDP canary
       } finally { await control.close(); }
 
       const chrome = await rawChrome(tools.chrome!.exe, []);
       try {
         const before = canary.hits.length;
-        const sessionId = await chrome.page();
-        const ic = await interceptRequests(chrome.cdp, sessionId, `${naked.origin}/${TOKEN}/`);
+        // The production interception layer: the browser-level gate (new targets paused; workers and popups closed)
+        // plus Fetch interception of the page and its children.
+        const gate = new TargetGate(chrome.cdp);
+        await gate.start();
+        const { sessionId, release } = await gate.createPage();
+        const ic = await interceptRequests(chrome.cdp, sessionId, `${naked.origin}/${TOKEN}/`, {
+          resume: () => chrome.cdp.send('Runtime.runIfWaitingForDebugger', {}, { sessionId }).then(() => {}),
+        });
+        release();
         await chrome.navigate(sessionId, `${naked.origin}/${TOKEN}/page.html`);
-        await settle(4000);
+        await settle(5000);
         expect(canary.hits.slice(before)).toEqual(['upgrade /ws']);
         const blocked = ic.blocked.map((b) => b.url);
+        // The dedicated workers (same-origin and blob) ran and their fetches were intercepted; the service and shared
+        // workers were closed before they ran.
+        for (const p of ['/worker-fetch', '/blob-worker-fetch']) expect(blocked, p).toContain(`${canary.origin}${p}`);
+        expect([...ic.refused, ...gate.refused].map((r) => r.type)).toEqual(expect.arrayContaining(['service_worker', 'shared_worker']));
+        // The injected guard (defence in depth) took WebRTC and WebTransport away from the page.
+        expect(await chrome.cdp.send<{ result: { value: string } }>('Runtime.evaluate', { expression: 'typeof RTCPeerConnection + typeof WebTransport', returnByValue: true }, { sessionId }).then((r) => r.result.value)).toBe('undefinedundefined');
         for (const c of OWN_FRAME_NAVIGATION_CASES) expect(blocked, c).toContain(`${canary.origin}${selfNavigationPath(c)}`);
         expect(ic.blocked.filter((b) => b.url.includes('/selfnav-')).every((b) => b.type === 'Document')).toBe(true);
       } finally { await chrome.close(); }
@@ -164,14 +209,16 @@ describe.skipIf(!tools.chrome)('render isolation in headless Chrome', () => {
     }
   }, 900_000);
 
-  it('C. network flags alone (no interception, no CSP): nothing reaches a service on another loopback port, WebSocket included', async () => {
-    const naked = await nakedServer(canary.origin);
+  it('C. network flags alone (no interception, no CSP): nothing reaches a service on another loopback port, WebSocket, workers, WebRTC and WebTransport included', async () => {
+    const naked = await nakedServer(canary.origin, udp.port);
     const chrome = await rawChrome(tools.chrome!.exe, networkLockdownFlags(naked.origin));
     try {
       const before = canary.hits.length;
+      const udpBefore = udp.packets.length;
       await chrome.navigate(await chrome.page(), `${naked.origin}/${TOKEN}/page.html`);
-      await settle(4000);
+      await settle(5000);
       expect(canary.hits.slice(before)).toEqual([]);
+      expect(udp.packets.slice(udpBefore)).toEqual([]); // WebRTC STUN/TURN and WebTransport: no injected guard here
     } finally {
       await chrome.close();
       await naked.close();
