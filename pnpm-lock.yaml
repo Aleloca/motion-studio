@@ -100,6 +100,9 @@ importers:
       '@fastify/websocket':
         specifier: ^11.3.3
         version: 11.3.3
+      '@motion-studio/composition-runtime':
+        specifier: workspace:*
+        version: link:../composition-runtime
       '@motion-studio/shared':
         specifier: workspace:*
         version: link:../shared

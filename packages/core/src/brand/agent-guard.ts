@@ -133,7 +133,7 @@ export async function readConfinedFile(projectDir: string, rel: string, maxBytes
  * opened inode. `exact`: `rel` has no `..` segment and the real path must be exactly `<real base>/<rel>`, which also
  * refuses a symlinked folder inside `base`. null when missing; `{ skipped }` when refused.
  */
-async function withConfinedFile<T>(base: string, rel: string, exact: boolean,
+export async function withConfinedFile<T>(base: string, rel: string, exact: boolean,
   use: (fh: FileHandle, info: Stats) => Promise<T | { skipped: SkipReason }>): Promise<T | ConfinedSkip | null> {
   if (exact && rel.split(/[/\\]/).includes('..')) return { skipped: 'outside' };
   const abs = absOf(base, rel);
