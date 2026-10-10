@@ -78,8 +78,8 @@ const setTime = (video: HTMLVideoElement, t: number) => {
  * The video and a ready view: the keyboard shortcuts only act once the creative has loaded (the transport is enabled),
  * so a key pressed earlier is ignored by design. Wait for that, never for time.
  */
-const player = async () => {
-  const video = (await screen.findByLabelText('TikTok · Video 9:16 v1', { selector: 'video' })) as HTMLVideoElement;
+const player = async (label = 'TikTok · Video 9:16 v1') => {
+  const video = (await screen.findByLabelText(label, { selector: 'video' })) as HTMLVideoElement;
   await waitFor(() => {
     const btn = document.querySelector('.ms-fv-play') as HTMLButtonElement | null;
     expect(btn).not.toBeNull();
@@ -183,7 +183,7 @@ describe('FormatView · video', () => {
   it('comments only on the pin source version, and says why', async () => {
     detail = makeDetail([version(1), version(2)], { resumeFrom: { version: 1, sessionId: 's' } });
     render(<Harness format={VIDEO} />);
-    await screen.findByLabelText('TikTok · Video 9:16 v2', { selector: 'video' });
+    await player('TikTok · Video 9:16 v2');
     expect(screen.getByText('I commenti valgono per la v1: usa Riparti da qui per commentare questa versione.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Commenta il fotogramma/ })).toBeNull();
   });
@@ -275,18 +275,18 @@ describe('FormatView · image', () => {
 describe('FormatView · English', () => {
   it('speaks English: transport, Scenes note, frame comments', async () => {
     render(<I18nProvider locale="en"><Harness format={VIDEO} /></I18nProvider>);
-    const video = (await screen.findByLabelText('TikTok · Video 9:16 v1', { selector: 'video' })) as HTMLVideoElement;
+    const video = await player();
     setTime(video, 5);
     expect(screen.getByRole('button', { name: 'Play (Space)' })).toBeTruthy();
     expect(screen.getByText('Edit scenes, text and timing directly — coming with the timeline')).toBeTruthy();
-    expect(screen.getByText('Click the spot of the frame at 00:05.00')).toBeTruthy();
+    expect(await screen.findByText('Click the spot of the frame at 00:05.00')).toBeTruthy();
     expect(within(document.querySelector('.ms-topbar') as HTMLElement).getByRole('button', { name: 'All formats' })).toBeTruthy();
   });
 });
 
 describe('FormatView · loop and speed (visual test point 39)', () => {
   const en = () => render(<I18nProvider locale="en"><Harness format={VIDEO} /></I18nProvider>);
-  const video = async () => (await screen.findByLabelText('TikTok · Video 9:16 v1', { selector: 'video' })) as HTMLVideoElement;
+  const video = () => player();
 
   it('loop is a pressed/unpressed toggle that sets the video to loop', async () => {
     en();
@@ -394,23 +394,23 @@ describe('FormatView · fix round 1', () => {
     detail = makeDetail([version(1), version(2)], { resumeFrom: { version: 1, sessionId: 's' } });
     seed({ x: 0.4, y: 0.3, timeSec: 5, note: 'Logo' });
     render(<Harness format={VIDEO} />);
-    const v2 = (await screen.findByLabelText('TikTok · Video 9:16 v2', { selector: 'video' })) as HTMLVideoElement;
+    const v2 = await player('TikTok · Video 9:16 v2');
     setTime(v2, 5);
     expect(screen.queryByRole('button', { name: 'Modifica il commento 1' })).toBeNull();
     expect(screen.queryByRole('button', { name: /Commento 1 a/ })).toBeNull();
     expect(screen.getByText('Spazio riproduce · ← → un fotogramma')).toBeTruthy();
     // The chip (comments go out on v1) still opens: the view switches to v1 with the bubble.
     await userEvent.click(screen.getByRole('button', { name: /Modifica il commento 1 · Logo/ }));
-    expect(await screen.findByLabelText('TikTok · Video 9:16 v1', { selector: 'video' })).toBeTruthy();
-    expect(within(screen.getByRole('group', { name: 'Commento 1' })).getByRole('textbox')).toBeTruthy();
+    await player();
+    expect(within(await screen.findByRole('group', { name: 'Commento 1' })).getByRole('textbox')).toBeTruthy();
   });
 
   it('the version on screen travels with T3 and T4', async () => {
     detail = makeDetail([version(1), version(2)]);
     setShownVersions('acme/lancio', { [VIDEO]: 1 });
     render(<Harness format={VIDEO} />);
-    expect(await screen.findByLabelText('TikTok · Video 9:16 v1', { selector: 'video' })).toBeTruthy();
-    expect(screen.getByText('stai guardando la v1')).toBeTruthy();
+    await player();
+    expect(await screen.findByText('stai guardando la v1')).toBeTruthy();
     await userEvent.click(within(document.querySelector('.ms-topbar') as HTMLElement).getByRole('button', { name: 'Tutti i formati' }));
     expect(takeShownVersions('acme/lancio')).toEqual({ [VIDEO]: 1 });
   });
@@ -463,13 +463,13 @@ describe('FormatView · per-format versions (Phase 9)', () => {
     render(<Harness format={REEL} />);
     expect(await screen.findByLabelText(`${REEL_LABEL} v2`, { selector: 'video' })).toBeTruthy();
     const bar = document.querySelector('.ms-topbar') as HTMLElement;
-    await userEvent.click(within(bar).getByRole('button', { name: `${REEL_LABEL}: si esporta la v2. Apri le sue versioni` }));
+    await userEvent.click(await within(bar).findByRole('button', { name: `${REEL_LABEL}: si esporta la v2. Apri le sue versioni` }));
     const pop = await screen.findByRole('dialog', { name: `Versioni di ${REEL_LABEL}` });
     await userEvent.click(within(pop).getByRole('button', { name: 'Usa la v1 per l’export' }));
     await waitFor(() => expect(api.setExportPick).toHaveBeenCalledWith('acme', 'lancio', REEL, 1));
     await userEvent.click(within(pop).getByRole('button', { name: /^Guarda la v1 / }));
     expect(await screen.findByLabelText(`${REEL_LABEL} v1`, { selector: 'video' })).toBeTruthy();
-    expect(within(bar).getByText('stai guardando la v1')).toBeTruthy();
+    expect(await within(bar).findByText('stai guardando la v1')).toBeTruthy();
   });
 
   it('a follower plays its primary’s file and offers Unlink from its chip', async () => {
@@ -478,9 +478,9 @@ describe('FormatView · per-format versions (Phase 9)', () => {
     const video = await screen.findByLabelText('TikTok · Video 9:16 v2', { selector: 'video' });
     expect(video.getAttribute('src')).toBe(`/f/acme/lancio/outputs/v2/${REEL}.mp4`);
     const bar = document.querySelector('.ms-topbar') as HTMLElement;
-    expect(within(bar).getByText(`segue ${REEL_LABEL} ★ v2`)).toBeTruthy();
+    expect(await within(bar).findByText(`segue ${REEL_LABEL} ★ v2`)).toBeTruthy();
     expect(within(bar).queryByRole('button', { name: /si esporta la v/ })).toBeNull();
-    await userEvent.click(within(bar).getByRole('button', { name: `Collegato a ${REEL_LABEL}: apri il menu del collegamento` }));
+    await userEvent.click(await within(bar).findByRole('button', { name: `Collegato a ${REEL_LABEL}: apri il menu del collegamento` }));
     await userEvent.click(await screen.findByRole('button', { name: 'Scollega: crea una versione dedicata' }));
     await waitFor(() => expect(api.setFormatLink).toHaveBeenCalledWith('acme', 'lancio', VIDEO, null));
   });
