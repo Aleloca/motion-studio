@@ -34,10 +34,10 @@ window.msReady = Promise.resolve();
 window.msSeek = (t) => { if (t >= 0.1) { for (;;) {} } };
 </script></body></html>`;
 
-/** A layer whose every seek burns CPU for a while (a busy loop: timers and clocks are virtual in a layer). */
-const SLOW_LAYER = `<!doctype html><html><body><script>
+/** A layer whose seek never resolves once past 0.1 s: the first frames are captured, then every seek waits (≥ 60 s). */
+const STALL_LAYER = `<!doctype html><html><body><script>
 window.msReady = Promise.resolve();
-window.msSeek = () => { let x = 0; for (let i = 0; i < 2e9; i++) x += i; window.__x = x; };
+window.msSeek = (t) => (t >= 0.1 ? new Promise(() => {}) : undefined);
 </script></body></html>`;
 
 describe.skipIf(!tools.ok)('renderer: processes, cancel, crash, watchdog', () => {
@@ -68,7 +68,7 @@ describe.skipIf(!tools.ok)('renderer: processes, cancel, crash, watchdog', () =>
     }
     put(join(creative, VERSION_DIR, 'compositions', 'mem', 'layers', 'mem.html'), MEM_LAYER);
     put(join(creative, VERSION_DIR, 'compositions', 'cpu', 'layers', 'cpu.html'), CPU_LAYER);
-    put(join(creative, VERSION_DIR, 'compositions', 'retry', 'layers', 'slow.html'), SLOW_LAYER);
+    put(join(creative, VERSION_DIR, 'compositions', 'retry', 'layers', 'stall.html'), STALL_LAYER);
   }, 600_000);
 
   afterAll(() => { if (work) rmSync(work, { recursive: true, force: true }); });
@@ -157,7 +157,9 @@ describe.skipIf(!tools.ok)('renderer: processes, cancel, crash, watchdog', () =>
 
   it('the time limit of a render fails it as timeLimit, and a retry starts clean and succeeds', async () => {
     let capturing = false;
-    const r = await attempt('retry', composition(3, [layerTrack('layers/slow.html', 3)]), { timeLimitMs: 60_000, onFrame: (n) => { if (n > 0) capturing = true; } });
+    // The provider's own frame timeout is far away, so only the render's time limit can stop it, mid-capture.
+    const provider = new ChromeProvider({ exe: tools.chrome!.exe, kind: 'system', limits: { timeLimitMs: 20 * 60_000 }, timeouts: { frameMs: 600_000 } });
+    const r = await attempt('retry', composition(3, [layerTrack('layers/stall.html', 3)]), { provider, timeLimitMs: 120_000, onFrame: (n) => { if (n > 0) capturing = true; } });
     expect((r.error as RenderError).code).toBe('timeLimit');
     expect(capturing).toBe(true); // it stopped a render that was running
     await expectClean(r, 'retry');
