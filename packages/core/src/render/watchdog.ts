@@ -175,6 +175,12 @@ export const DEFAULT_MAX_GROUP_MB = 6144;
  *   machine's memory.
  * The limits are soft: the footprint is sampled (every second, every 250 ms within 75 % of a limit), so a fast allocation
  * can overshoot before the kill (the 2 GB ArrayBuffer test peaked at 2.1–3.1 GB against 1536 MB).
+ *
+ * The size of the source media is deliberately not an input (Task 5 decision): every video clip plays its normalised file
+ * (media-normalize.ts), whose size is capped to what the clip's box needs at composition size (scale included) and to
+ * 4096 px on the long side, and whose decoded frames are drawn into a canvas no larger than the region shown. A 4K source
+ * in a small box costs what the box costs. What stays unbounded by this is the fallback: a clip whose normalisation
+ * failed plays its original file (untrusted); the per-process cap still stops a source that makes a renderer explode.
  */
 export function scaledMemoryLimits(width: number, height: number, pages: number, totalMemMB = totalmem() / (1024 * 1024)): { maxProcessMB: number; maxGroupMB: number } {
   const units = Math.max(1, (width * height) / (1080 * 1920));

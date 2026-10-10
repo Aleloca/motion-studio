@@ -58,3 +58,9 @@ export { interceptRequests, allowedPrefix, isAllowedRequest, networkLockdownFlag
 export { findSystemChrome, MIN_CHROME_MAJOR, type ChromeInstall } from './render/system-chrome.ts';
 export { cftDownloadInfo, installCft, findInstalledCft, cftPlatform, CftError, CFT_ENDPOINT, type CftDownloadInfo, type CftPlatform } from './render/cft-download.ts';
 export { findFfmpeg, checkVideotoolbox, type FfmpegInfo, type VideoEncoder } from './render/encode.ts';
+// Render jobs and normalised media (phase 10a, Task 5a).
+export { MediaNormalizer, mediaCacheDir, clipScaleBound, videoNeeds, targetSize, type PrepareMediaOptions, type PreparedMedia, type MediaWarning } from './render/media-normalize.ts';
+export { sweepProjectRenders, sweepRenderTempDirs } from './render/render-sweep.ts';
+export { RenderJobService, renderJobKey, renderPlan, renderExtension, type RenderJobDeps, type RenderPlan } from './creatives/render-jobs.ts';
+export { loadComposition, readCompositionFolder, CompositionFolderError, type CompositionFolder, type LoadedComposition } from './compositions/composition-files.ts';
+export type { SessionMedia, SessionMediaFile } from './compositions/composition-server.ts';

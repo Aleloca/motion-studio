@@ -342,8 +342,8 @@ export class MediaNormalizer {
       return result;
     }
     await mkdir(cacheDir, { recursive: true });
-    await noteCoreChange(cacheDir);
-    await noteCoreChange(dirname(cacheDir));
+    // The folders mkdir may have created (`.studio/cache/media`): the core's own change, never a move (run-tripwire.ts).
+    for (const d of [cacheDir, dirname(cacheDir), dirname(dirname(cacheDir))]) await noteCoreChange(d);
     await Promise.all([...needs].map(([src, need]) => this.slot(async () => {
       if (signal.aborted) throw new RenderError('cancelled', 'cancelled');
       const r = await this.one(ff, p, cacheDir, src, need, signal);
