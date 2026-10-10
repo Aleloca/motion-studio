@@ -43,7 +43,13 @@ Everything lives under one token prefix on the composition server's own origin (
   - `renderRuntimePage` writes them into an inert `<script type="application/json" id="ms-composition">`. The block is never
     executed, so it needs no CSP exception. `<`, `>`, `&`, U+2028 and U+2029 are escaped.
 - **Assets resolve against `base`.** The runtime refuses any `src` that does not resolve inside `base` on the page origin.
-  This gives the error `assetPathRejected`.
+  This gives the error `assetPathRejected`. A `src` must start with `assets/` or `layers/`; a video clip may also start
+  with `media/`.
+- **Normalised media** (Task 5). The core prepares a render version of every video clip source and the composition
+  server rewrites the clip in the inlined copy (never in the agent's `composition.json`): `src` becomes
+  `media/<i>.mp4`, with the probed `sourceFps`, `sourceStart`, `sourceVideoEnd` and `sourceTrusted: true`. The server maps
+  exactly those paths, under `base`, to the session's files in `<project>/.studio/cache/media/`. `media/` is never a
+  composition path (those start with `assets/` or `layers/`), so it cannot collide with the agent's files.
 - **No `<base>` element** is used, so `base-uri 'none'` stays.
 
 ### Headers the runtime needs (learned in real Chrome, see the integration test)
@@ -123,9 +129,13 @@ Everything lives under one token prefix on the composition server's own origin (
      - `sourceTrusted` (`true`): the core probed the source and vouches for these values. It counts only together with a
        usable `sourceVideoEnd` (`sourceTrustedOf`): a trusted clip without it would fail for targets between the end of
        its video and the end of a longer audio track, so it gets the lenient rule instead. The core always sets both;
-   - **colour:** an untagged source (no colour primaries or matrix) is converted with Chromium's default both when drawn
-     into the render canvas and in the preview `<video>`, which can differ slightly between the two paths. Tagged sources
-     are converted as tagged. Task 5 may tag or normalise sources on ingest (e.g. BT.709 for HD) to remove the ambiguity;
+   - **colour:** measured in Chrome 154 (a one-off check of a `<video>` element against `drawImage(VideoFrame)` into a
+     canvas, four flat patches). Chrome reads an untagged source as BT.709, and its two paths differ: the `<video>`
+     (preview) converts the BT.709 transfer to sRGB, the canvas (render) does not, so mid-tones were up to 10 levels apart
+     (red patch 211 vs 205; a BT.709-tagged file: 198 vs 190). The core's normalised files (Task 5) are therefore read as
+     BT.709 when untagged (Chrome's own assumption: the result shows exactly what the render canvas showed for the
+     original) and tagged BT.709 matrix and primaries, limited range, with an **sRGB transfer** (IEC 61966-2-1). With that
+     tag both paths show the same values (0 difference measured);
    - every visible layer gets `seek(t − clip.start)` (see 4).
 5. Two **native** animation frames.
    - **Render mode:** each frame may take as long as the seek timeout. If the native frame never arrives, the runtime

@@ -18,7 +18,10 @@ import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { readCompositionFolder } from '../src/compositions/composition-files.ts';
 import { noteCoreOutputWrite, snapshotChanges, snapshotOutputs, withoutCoreWrites } from '../src/creatives/carry-over.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
-import { renderPlan } from '../src/creatives/render-jobs.ts';
+import { renderPlan, RenderJobService } from '../src/creatives/render-jobs.ts';
+import { JobQueue } from '../src/jobs/job-queue.ts';
+import { NoMediaTools } from '../src/media/media-tools.ts';
+import type { MediaNormalizer } from '../src/render/media-normalize.ts';
 import { Git } from '../src/git.ts';
 import { RenderError } from '../src/render/errors.ts';
 import { sweepProjectRenders, sweepRenderTempDirs } from '../src/render/render-sweep.ts';
@@ -330,6 +333,34 @@ describe('render jobs', { timeout: 60_000 }, () => {
     expect(readdirSync(join(dir, 'outputs', 'v1')).sort()).toEqual(['compositions', 'manifest.json']);
     app = await build();
     expect((await app.inject({ url: '/api/jobs', headers: H })).json()).toEqual([]);
+  });
+});
+
+describe('progress events and warnings', { timeout: 30_000 }, () => {
+  it('per format: media (sources done of total), frames, finishing (the follower copies); media warnings become notes and chat warnings', async () => {
+    const { slug, store } = await v2Creative({ formats: ['test-wide', 'test-wide-b'] });
+    const updates: JobSummary[] = [];
+    const queue = new JobQueue({ concurrency: 1, onUpdate: (j) => updates.push(j) });
+    const normalizer = {
+      prepare: async (p: { onProgress?(x: { done: number; total: number }): void }) => {
+        for (const done of [0, 1, 2]) p.onProgress?.({ done, total: 2 });
+        return { media: { dir: join(projectDir(), '.studio', 'cache', 'media'), clips: new Map() }, warnings: [{ src: 'assets/v.mp4', message: 'x' }], made: 0, cached: 0 };
+      },
+    } as unknown as MediaNormalizer;
+    const svc = new RenderJobService({ queue, engine: fake.engine, media: NoMediaTools, normalizer, presets: async () => PRESETS, broadcast: () => {}, progressIntervalMs: 0 });
+    const job = await svc.start({ root: ws, projectSlug: 'acme', projectDir: projectDir(), creativeSlug: slug }, 1);
+    await queue.whenIdle();
+    const mine = updates.filter((u) => u.id === job.id);
+    expect(mine.at(-1)!.state).toBe('succeeded');
+    // Every job update carries the current progress (a note is an update too): consecutive repeats are one state.
+    const seq = mine.map((u) => u.progress).filter((p) => p !== undefined).map((p) => `${p.phase} ${p.done}/${p.total}`).filter((x, i, a) => x !== a[i - 1]);
+    expect(seq.slice(0, 5)).toEqual(['media 0/0', 'media 0/2', 'media 1/2', 'media 2/2', 'frames 0/30']);
+    expect(seq).toContain('frames 30/30');
+    expect(seq.slice(-2)).toEqual(['finishing 0/2', 'finishing 1/2']);
+    expect(mine.at(-1)!.progress).toBeUndefined();
+    expect(mine.at(-1)!.notes).toEqual([expect.stringContaining('assets/v.mp4')]);
+    const chat = await store.readConversation(slug);
+    expect(chat.at(-1)).toMatchObject({ type: 'system', level: 'warning', text: expect.stringContaining('assets/v.mp4') });
   });
 });
 

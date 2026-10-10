@@ -357,8 +357,8 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
    * Draws `source` (`vw`×`vh`, a VideoFrame or the video) into the clip's canvas, `object-fit: cover`. The canvas gets the
    * pixels of the source region it shows times the clip's effective on-screen scale (its `scale` and animations included,
    * so a zoomed video stays sharp), never more than that source region holds; CSS stretches it to the box.
-   * Colour: an untagged source is converted by Chromium's own default here and in the preview `<video>`, which can differ
-   * slightly (README "Colour"); Task 5 may tag or normalise sources on ingest.
+   * Colour: this path ignores a video's transfer tag while the preview `<video>` converts it; the core's normalised files are
+   * tagged so that both show the same values (README "colour").
    */
   const drawVideoFrame = (m: Mounted, source: CanvasImageSource, vw: number, vh: number) => {
     const cv = m.canvas!;

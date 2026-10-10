@@ -19,9 +19,12 @@ import { killGroup, trackGroup } from './watchdog.ts';
  * a render version of every video clip source, so the runtime can apply its strict frame rule to it.
  *
  * - **What:** H.264 `yuv420p`, constant frame rate equal to the composition's (`fps` filter, first frame at 0), no B-frames,
- *   a key frame every half second (all-intra when the source is under 10 s), no audio (the mix reads the ORIGINAL source),
- *   tagged BT.709 limited range (an untagged source is converted with ffmpeg's default for its size, then tagged, so the
- *   render canvas and the preview `<video>` decode it the same way; README "Colour"). Its size is what the clip's box needs
+ *   a key frame every half second (all-intra when the source is under 10 s), no audio (the mix reads the ORIGINAL source).
+ *   Colour (measured in Chrome 154, README "Colour"): an untagged source is read as BT.709 (what Chrome assumes for it: the
+ *   normalised file then shows exactly what the render canvas showed for the original), a tagged one as tagged; the output
+ *   is tagged BT.709 matrix and primaries, limited range, and **sRGB transfer** (IEC 61966-2-1): with a BT.709 transfer tag
+ *   Chrome's `<video>` path converts the transfer and shows mid-tones up to ~10 levels brighter than the canvas path, which
+ *   ignores it; with the sRGB tag the preview `<video>` and the render canvas agree exactly. Its size is what the clip's box needs
  *   at composition size, the clip's `scale` and scale animations included (`clipScaleBound`), never more than the source
  *   (no upscaling) nor `MAX_MEDIA_DIM` on the long side.
  * - **Where:** `<project>/.studio/cache/media/<sha256 of the source>-<fps>-<long side>.mp4`, out of the agent's reach, outside
@@ -101,15 +104,18 @@ export function targetSize(source: { width: number; height: number }, need: { wi
 }
 
 /** The ffmpeg arguments of a normalisation (input given separately), into `out` (an mp4). */
-export function normalizeArgs(o: { fps: number; width: number; height: number; allIntra: boolean; preset?: string }): string[] {
+export function normalizeArgs(o: { fps: number; width: number; height: number; allIntra: boolean; untagged?: boolean; preset?: string }): string[] {
   const gop = o.allIntra ? 1 : Math.max(1, Math.round(o.fps / 2));
+  const input = o.untagged ? 'in_color_matrix=bt709:in_range=tv:' : '';
   return [
     '-map', '0:v:0', '-an', '-sn', '-dn',
-    '-vf', `setpts=PTS-STARTPTS,fps=${o.fps},scale=${o.width}:${o.height}:flags=lanczos:out_color_matrix=bt709:out_range=tv,format=yuv420p,setsar=1,`
-      + 'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv',
+    // round=up: output frame j (at j/fps) shows the source frame on screen at that time (the last one starting at or before
+    // it), the frame the runtime would pick from the source itself; the default (near) can show the next one early.
+    '-vf', `setpts=PTS-STARTPTS,fps=fps=${o.fps}:round=up,scale=${o.width}:${o.height}:flags=lanczos:${input}out_color_matrix=bt709:out_range=tv,format=yuv420p,setsar=1,`
+      + 'setparams=color_primaries=bt709:color_trc=iec61966-2-1:colorspace=bt709:range=tv',
     '-c:v', 'libx264', '-preset', o.preset ?? 'veryfast', '-crf', '16', '-pix_fmt', 'yuv420p',
     '-g', String(gop), '-keyint_min', String(gop), '-sc_threshold', '0', '-bf', '0',
-    '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv',
+    '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'iec61966-2-1', '-color_range', 'tv',
     '-video_track_timescale', '90000', '-movflags', '+faststart', '-f', 'mp4',
   ];
 }
@@ -159,7 +165,11 @@ const ratio = (r: string | undefined): number | null => {
   return a && b && Number.isFinite(a / b) && a / b > 0 ? a / b : null;
 };
 
-export interface SourceInfo { width: number; height: number; durationSec: number | null }
+export interface SourceInfo {
+  width: number; height: number; durationSec: number | null;
+  /** No colour matrix in the stream: read as BT.709, Chrome's assumption. */
+  untagged: boolean;
+}
 
 /** Display size (sample aspect ratio and a 90° rotation applied) and duration of a source's first video stream. */
 export function sourceInfoOf(j: Record<string, unknown> | null): SourceInfo | null {
@@ -170,7 +180,8 @@ export function sourceInfoOf(j: Record<string, unknown> | null): SourceInfo | nu
   const rot = Number(v.side_data_list?.find((d) => typeof d.rotation === 'number')?.rotation ?? v.tags?.rotate ?? 0);
   if (Math.abs(rot) % 180 === 90) [w, h] = [h, w];
   const d = Number(v.duration ?? (j?.format as { duration?: string } | undefined)?.duration);
-  return { width: Math.round(w), height: Math.round(h), durationSec: Number.isFinite(d) && d > 0 ? d : null };
+  const untagged = !v.color_space || v.color_space === 'unknown' || v.color_space === 'unspecified';
+  return { width: Math.round(w), height: Math.round(h), durationSec: Number.isFinite(d) && d > 0 ? d : null, untagged };
 }
 
 /**
@@ -188,7 +199,7 @@ export function normalisedFieldsOf(j: Record<string, unknown> | null, want: { fp
   if (s.width !== want.width || s.height !== want.height) return { problem: `${s.width}×${s.height}, not ${want.width}×${want.height}` };
   const fps = ratio(s.r_frame_rate);
   if (fps === null || Math.abs(fps - want.fps) > 1e-6) return { problem: `frame rate ${s.r_frame_rate}` };
-  if (s.color_primaries !== 'bt709' || s.color_transfer !== 'bt709' || s.color_space !== 'bt709' || s.color_range !== 'tv') return { problem: 'colour tags' };
+  if (s.color_primaries !== 'bt709' || s.color_transfer !== 'iec61966-2-1' || s.color_space !== 'bt709' || s.color_range !== 'tv') return { problem: 'colour tags' };
   const frames = Number(s.nb_read_packets);
   const start = Number(s.start_time ?? 0);
   if (!(frames > 0) || !Number.isFinite(start) || start < 0) return { problem: 'no frames' };
@@ -197,7 +208,7 @@ export function normalisedFieldsOf(j: Record<string, unknown> | null, want: { fp
 
 const NORMALISED_PROBE = ['-count_packets', '-show_entries',
   'stream=codec_type,codec_name,pix_fmt,width,height,r_frame_rate,start_time,nb_read_packets,color_primaries,color_transfer,color_space,color_range'];
-const SOURCE_PROBE = ['-show_entries', 'stream=codec_type,width,height,sample_aspect_ratio,duration:stream_side_data=rotation:stream_tags=rotate:format=duration'];
+const SOURCE_PROBE = ['-show_entries', 'stream=codec_type,width,height,sample_aspect_ratio,duration,color_space:stream_side_data=rotation:stream_tags=rotate:format=duration'];
 
 // ---------- inputs ----------
 
@@ -375,7 +386,7 @@ export class MediaNormalizer {
       if (existing) return { file: { file: final, ...existing }, cached: true };
       let pending = this.inflight.get(final);
       if (!pending) {
-        pending = this.make(ff, input, final, want, (info.durationSec ?? Infinity) < ALL_INTRA_UNDER_SEC, signal);
+        pending = this.make(ff, input, final, want, { allIntra: (info.durationSec ?? Infinity) < ALL_INTRA_UNDER_SEC, untagged: info.untagged }, signal);
         this.inflight.set(final, pending);
         void pending.catch(() => {}).finally(() => { if (this.inflight.get(final) === pending) this.inflight.delete(final); });
       }
@@ -414,11 +425,11 @@ export class MediaNormalizer {
 
   /** Encodes into a hidden temp file next to `final`, then renames it; the temp file is removed on any failure. */
   private async make(ff: FfmpegInfo, input: <T>(use: (args: string[], fds: number[]) => Promise<T>) => Promise<T>, final: string,
-    want: { fps: number; width: number; height: number }, allIntra: boolean, signal: AbortSignal): Promise<void> {
+    want: { fps: number; width: number; height: number }, how: { allIntra: boolean; untagged: boolean }, signal: AbortSignal): Promise<void> {
     const name = final.slice(dirname(final).length + 1);
     const temp = join(dirname(final), `.${name.slice(0, -'.mp4'.length)}.${randomBytes(6).toString('hex')}.tmp`);
     try {
-      await input((args, fds) => spawnFfmpeg(ff, [...args, ...normalizeArgs({ ...want, allIntra, ...(this.o.x264Preset ? { preset: this.o.x264Preset } : {}) }), temp], { signal, fds }).done);
+      await input((args, fds) => spawnFfmpeg(ff, [...args, ...normalizeArgs({ ...want, ...how, ...(this.o.x264Preset ? { preset: this.o.x264Preset } : {}) }), temp], { signal, fds }).done);
       if (signal.aborted) throw new RenderError('cancelled', 'cancelled');
       await rename(temp, final);
       await noteCoreChange(dirname(final));

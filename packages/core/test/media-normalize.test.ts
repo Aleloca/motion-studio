@@ -17,6 +17,7 @@ import {
   clipScaleBound, MAX_MEDIA_DIM, MEDIA_TEMP_RE, MediaNormalizer, normalisedFieldsOf, targetSize, videoNeeds,
 } from '../src/render/media-normalize.ts';
 import { listProcesses } from '../src/render/watchdog.ts';
+import { decodeStrips, frameCodedVideo, readCode } from './helpers/render-env.ts';
 
 const ffmpeg = await findFfmpeg();
 if (!ffmpeg) {
@@ -64,10 +65,10 @@ describe('sizes and fields (pure)', () => {
 
   it('a normalised file is trusted only when it is exactly what was asked', () => {
     const want = { fps: 30, width: 320, height: 180 };
-    const good = { streams: [{ codec_type: 'video', codec_name: 'h264', pix_fmt: 'yuv420p', width: 320, height: 180, r_frame_rate: '30/1', start_time: '0.000000', nb_read_packets: '60', color_primaries: 'bt709', color_transfer: 'bt709', color_space: 'bt709', color_range: 'tv' }] };
+    const good = { streams: [{ codec_type: 'video', codec_name: 'h264', pix_fmt: 'yuv420p', width: 320, height: 180, r_frame_rate: '30/1', start_time: '0.000000', nb_read_packets: '60', color_primaries: 'bt709', color_transfer: 'iec61966-2-1', color_space: 'bt709', color_range: 'tv' }] };
     expect(normalisedFieldsOf(good, want)).toEqual({ sourceFps: 30, sourceStart: 0, sourceVideoEnd: 2 });
     const bad = (patch: Record<string, unknown>, extra: unknown[] = []) => normalisedFieldsOf({ streams: [{ ...good.streams[0], ...patch }, ...extra] }, want);
-    for (const p of [{ r_frame_rate: '25/1' }, { pix_fmt: 'yuv444p' }, { codec_name: 'hevc' }, { width: 640 }, { color_primaries: 'unknown' }, { nb_read_packets: '0' }]) expect(bad(p)).toHaveProperty('problem');
+    for (const p of [{ r_frame_rate: '25/1' }, { pix_fmt: 'yuv444p' }, { codec_name: 'hevc' }, { width: 640 }, { color_primaries: 'unknown' }, { color_transfer: 'bt709' }, { nb_read_packets: '0' }]) expect(bad(p)).toHaveProperty('problem');
     expect(bad({}, [{ codec_type: 'audio' }])).toHaveProperty('problem');
     expect(normalisedFieldsOf(null, want)).toHaveProperty('problem');
   });
@@ -104,7 +105,7 @@ describe.skipIf(!ffmpeg)('normalisation with ffmpeg', () => {
   const prepare = (n: MediaNormalizer, c: Composition, signal = new AbortController().signal, onProgress?: (p: { done: number; total: number }) => void) =>
     n.prepare({ projectDir: project, compDir, composition: c, signal, ...(onProgress ? { onProgress } : {}) });
 
-  it('makes an H.264 yuv420p CFR file at the composition fps, all-intra under 10 s, no audio, capped to the box, tagged BT.709', async () => {
+  it('makes an H.264 yuv420p CFR file at the composition fps, all-intra under 10 s, no audio, capped to the box, tagged BT.709 (sRGB transfer)', async () => {
     const progress: string[] = [];
     const r = await prepare(normalizer(), comp([video('assets/hd.mp4')]), undefined, (p) => progress.push(`${p.done}/${p.total}`));
     expect(r.warnings).toEqual([]);
@@ -115,7 +116,7 @@ describe.skipIf(!ffmpeg)('normalisation with ffmpeg', () => {
     const s = JSON.parse(probe(m.file, ['-count_packets', '-show_entries', 'stream=codec_type,codec_name,pix_fmt,width,height,r_frame_rate,avg_frame_rate,nb_read_packets,color_primaries,color_transfer,color_space,color_range,has_b_frames', '-of', 'json'])).streams as Array<Record<string, unknown>>;
     expect(s).toHaveLength(1); // no audio
     expect(s[0]).toMatchObject({ codec_type: 'video', codec_name: 'h264', pix_fmt: 'yuv420p', width: 320, height: 180, r_frame_rate: '30/1', avg_frame_rate: '30/1',
-      color_primaries: 'bt709', color_transfer: 'bt709', color_space: 'bt709', color_range: 'tv', has_b_frames: 0 });
+      color_primaries: 'bt709', color_transfer: 'iec61966-2-1', color_space: 'bt709', color_range: 'tv', has_b_frames: 0 });
     // Every frame at i/30 from 0, every one a key frame (the source is under 10 s).
     const frames = probe(m.file, ['-select_streams', 'v', '-show_entries', 'frame=pts_time,key_frame', '-of', 'csv=p=0']).trim().split('\n').map((l) => l.split(','));
     expect(frames.length).toBe(90);
@@ -124,6 +125,20 @@ describe.skipIf(!ffmpeg)('normalisation with ffmpeg', () => {
     expect(m.sourceVideoEnd).toBeCloseTo(3, 6);
     expect(r.media.dir).toBe(cache);
     expect(readdirSync(cache).filter((f) => f.startsWith('.'))).toEqual([]);
+  }, 300_000);
+
+  it('frame j of the normalised file shows the source frame on screen at j / fps (25 → 30 fps and 30 → 24 fps, first frame at 0.1 s)', async () => {
+    frameCodedVideo(ffmpeg!, join(compDir, 'assets', 'code25.mp4'), { fps: 25, frames: 50, offset: 0.1 });
+    frameCodedVideo(ffmpeg!, join(compDir, 'assets', 'code30.mp4'), { fps: 30, frames: 60 });
+    for (const [src, from, to] of [['assets/code25.mp4', 25, 30], ['assets/code30.mp4', 30, 24]] as const) {
+      const r = await prepare(normalizer(), comp([video(src, { props: { width: 64, height: 32 } })], { fps: to }));
+      const m = r.media.clips.get(src)!;
+      const codes = decodeStrips(ffmpeg!, m.file, { x: 0, y: 0, width: 64, height: 32 }, 2).map(readCode);
+      const frames = from === 25 ? 50 : 60;
+      expect(codes.length, src).toBe(Math.ceil((frames * to) / from));
+      codes.forEach((code, j) => expect(code - 1, `${src} frame ${j}`).toBe(Math.floor((j * from) / to + 1e-9)));
+      expect(m.sourceVideoEnd).toBeCloseTo(codes.length / to, 6);
+    }
   }, 300_000);
 
   it('a source of 10 s or more gets a key frame every half second; a scale animation raises the size, still never upscaled', async () => {
