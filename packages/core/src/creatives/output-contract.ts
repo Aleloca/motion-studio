@@ -19,6 +19,21 @@ function videoTargetKbps(preset: FormatPreset, fps: number | undefined): number 
   return fps !== undefined && fps > 45 ? base * 1.5 : base;
 }
 
+/**
+ * The phase 8 bitrate warning (never a problem): the effective bitrate of a video file above 1.5× its target. Needs a known
+ * duration; the target is an H.264 one, so GIF and WebM files never get it.
+ */
+export function largeFileWarning(preset: FormatPreset, ext: string, sizeBytes: number, durationSec: number | null, fps: number | undefined): OutputWarning | null {
+  if (preset.kind !== 'video' || !H264_EXTENSIONS.has(ext) || durationSec === null || !(durationSec > 0)) return null;
+  const target = videoTargetKbps(preset, fps);
+  const mbps = (sizeBytes * 8) / durationSec / 1e6;
+  if (mbps <= (target / 1000) * 1.5) return null;
+  return { key: 'outputs.largeFile', params: {
+    sizeMB: Math.round(sizeBytes / 1e5) / 10, mbps: mbps >= 10 ? Math.round(mbps) : Math.round(mbps * 10) / 10,
+    targetMbps: Math.round(target / 100) / 10, channel: preset.channel,
+  } };
+}
+
 export async function validateOutputs(opts: {
   dir: string; requested: string[]; presets: FormatPreset[]; durationSec: number | null; media: MediaTools;
   /** Language of the problems: the job's, captured at start (default: the current one). */
@@ -124,18 +139,8 @@ export async function validateOutputs(opts: {
       }
     }
 
-    // Bitrate-based warning (never a problem): effective bitrate above 1.5x the target. Needs a known duration.
-    // The target is an H.264 one: GIF and WebM outputs have none, so they never get this warning.
-    if (preset.kind === 'video' && H264_EXTENSIONS.has(ext) && durationSec !== null && durationSec > 0) {
-      const target = videoTargetKbps(preset, probed?.fps);
-      const mbps = (info.size * 8) / durationSec / 1e6;
-      if (mbps > (target / 1000) * 1.5) {
-        warnings.push({ key: 'outputs.largeFile', params: {
-          sizeMB: Math.round(info.size / 1e5) / 10, mbps: mbps >= 10 ? Math.round(mbps) : Math.round(mbps * 10) / 10,
-          targetMbps: Math.round(target / 100) / 10, channel: preset.channel,
-        } });
-      }
-    }
+    const large = largeFileWarning(preset, ext, info.size, durationSec, probed?.fps);
+    if (large) warnings.push(large);
 
     let preview: string | null = null;
     if (preset.kind === 'video' && media.available && probed !== null) {

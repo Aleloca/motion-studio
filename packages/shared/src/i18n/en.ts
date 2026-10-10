@@ -308,6 +308,22 @@ export const en = {
     layerWorker: (p: { file: string; line: number; api: string }) => `${p.file}, line ${p.line}: ${p.api} is not allowed in html layers: run the code in the layer itself`,
     layerAudio: (p: { file: string; line: number; api: string }) => `${p.file}, line ${p.line}: ${p.api} is not allowed in html layers: put sound on an audio track of the composition`,
     layerAutoplay: (p: { file: string; line: number; api: string }) => `${p.file}, line ${p.line}: media must not play on its own (${p.api}) in html layers: use a video or audio clip of the composition`,
+    jsonMissing: 'composition.json is missing or cannot be read safely: write the composition as a regular file in the composition folder',
+    folderUnreadable: (p: { path: string }) => `The composition folder cannot be read safely (${p.path}): remove links, hard links and special files, and keep it within the limits`,
+  },
+  /** Render jobs (Task 5): the core renders a v2 version's compositions on demand. */
+  render: {
+    jobLabel: (p: { title: string; n: number }) => `Render · ${p.title} v${p.n}`,
+    notV2: (p: { n: number }) => `v${p.n} has no compositions to render: its media files are the result`,
+    formatsNotInVersion: (p: { list: string }) => `Formats not in this version: ${p.list}`,
+    noRenderer: 'Rendering is not available in this Motion Studio',
+    noBrowser: 'No Chromium to render with: install Google Chrome, or download Chrome for Testing from the System check',
+    compositionChanged: (p: { format: string }) => `${p.format}: the composition changed after the version was saved, so it was not rendered`,
+    compositionProblems: (p: { format: string; list: string }) => `${p.format}: the composition has problems: ${p.list}`,
+    formatFailed: (p: { format: string; reason: string }) => `${p.format}: ${p.reason}`,
+    someFailed: (p: { list: string }) => `Render failed: ${p.list}`,
+    mediaNotNormalised: (p: { format: string; src: string }) => `${p.format}: ${p.src} could not be prepared for rendering; it is used as is, and some of its frames may be off by one`,
+    frameWarnings: (p: { format: string; count: number }) => `${p.format}: ${p.count} video frames were drawn from a source whose timing could not be verified`,
   },
   export: {
     absoluteDestination: 'Choose a destination folder (absolute path)',

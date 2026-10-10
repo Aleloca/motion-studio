@@ -122,12 +122,51 @@ export async function snapshotOutputs(creativeDir: string, dirs: string[]): Prom
       const child = `${rel}/${name}`;
       const info = await lstat(join(creativeDir, ...child.split('/'))).catch(() => null);
       if (!info) continue;
-      out.set(child, `${info.isDirectory() ? 'd' : info.isSymbolicLink() ? 'l' : 'f'}:${info.size}:${info.mtimeMs}:${info.ino}`);
+      out.set(child, stampOf(info));
       if (info.isDirectory() && depth < 4) await walk(child, depth + 1);
     }
   };
   for (const d of dirs) await walk(`outputs/${d}`, 0);
   return out;
+}
+
+/** An output entry's fingerprint as `snapshotOutputs` records it. */
+const stampOf = (info: { isDirectory(): boolean; isSymbolicLink(): boolean; size: number; mtimeMs: number; ino: number }) =>
+  `${info.isDirectory() ? 'd' : info.isSymbolicLink() ? 'l' : 'f'}:${info.size}:${info.mtimeMs}:${info.ino}`;
+
+/**
+ * Entries of `outputs/v<k>` the core itself wrote (render jobs, Task 5: a render, a follower copy, the manifest, a poster and
+ * its folder), by absolute path → the fingerprint the core left. A render may run while a turn runs on the same creative,
+ * so the turn's check of earlier versions leaves these out (`withoutCoreWrites`). In memory: the turn and the render
+ * both run in this process.
+ */
+const coreOutputWrites = new Map<string, string>();
+const MAX_CORE_OUTPUT_WRITES = 2000;
+
+/** Call right after the core wrote `rel` (`outputs/v<k>/…`) under `creativeDir`: records the entry as it is now. */
+export async function noteCoreOutputWrite(creativeDir: string, rel: string): Promise<void> {
+  const abs = join(creativeDir, ...rel.split('/'));
+  const info = await lstat(abs).catch(() => null);
+  if (!info) return;
+  coreOutputWrites.delete(abs);
+  coreOutputWrites.set(abs, stampOf(info));
+  while (coreOutputWrites.size > MAX_CORE_OUTPUT_WRITES) coreOutputWrites.delete(coreOutputWrites.keys().next().value!);
+}
+
+/** The core's own temp files in an output folder (a render's `.<name>.render-<hex>.tmp`, an atomic write's `<name>.<hex>.tmp`). */
+const CORE_TEMP_RE = /(?:^\..+\.render-[0-9a-f]{12}|\.[0-9a-f]{12})\.tmp$/;
+
+/**
+ * `changes` (from `snapshotChanges`) without the entries the core wrote itself: those whose fingerprint in `after` is the
+ * one the core recorded, and the core's own temp files (they come and go while a render runs).
+ */
+export function withoutCoreWrites(creativeDir: string, changes: string[], after: Map<string, string>): string[] {
+  return changes.filter((rel) => {
+    const name = rel.slice(rel.lastIndexOf('/') + 1);
+    if (CORE_TEMP_RE.test(name)) return false;
+    const now = after.get(rel);
+    return now === undefined || coreOutputWrites.get(join(creativeDir, ...rel.split('/'))) !== now;
+  });
 }
 
 /** The paths that differ between two snapshots (changed, added or removed), sorted. */

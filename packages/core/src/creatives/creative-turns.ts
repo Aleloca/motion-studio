@@ -19,7 +19,7 @@ import { CONTEXT_MD } from '../project-template.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
 import { CreativeStore } from './creative-store.ts';
 import { validateOutputs, type ValidationResult } from './output-contract.ts';
-import { confinedSha, copyVerified, earlierOutputDirs, followCheck, isConfinedFile, normalizeTargets, snapshotChanges, snapshotOutputs, versionDirReady, type FollowFailure } from './carry-over.ts';
+import { confinedSha, copyVerified, earlierOutputDirs, followCheck, isConfinedFile, normalizeTargets, snapshotChanges, snapshotOutputs, versionDirReady, withoutCoreWrites, type FollowFailure } from './carry-over.ts';
 import { outputFileExists } from './format-summary.ts';
 import { hashVersionOutputs, LAZY_HASH_BUDGET_MS, withLazyHashes } from './output-hashes.ts';
 import { legacyProblemsOf } from './legacy-problems.ts';
@@ -443,7 +443,9 @@ export class CreativeTurnService {
           this.changed(ref);
           kind = 'fix';
         }
-        const changedEarlier = snapshotChanges(earlierBefore, await snapshotOutputs(creativeDir, earlier));
+        // A render job may record a render in an earlier version meanwhile (Task 5): the core's own writes are left out.
+        const earlierAfter = await snapshotOutputs(creativeDir, earlier);
+        const changedEarlier = withoutCoreWrites(creativeDir, snapshotChanges(earlierBefore, earlierAfter), earlierAfter);
         if (changedEarlier.length > 0) {
           const list = changedEarlier.slice(0, 5).join(', ') + (changedEarlier.length > 5 ? ', …' : '');
           await store.appendConversation(slug, { type: 'system', at: now(), level: 'warning', text: j.earlierOutputsChanged({ list }) });

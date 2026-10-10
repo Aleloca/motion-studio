@@ -6,7 +6,7 @@ import { basename, dirname, extname, join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { Composition, FormatPreset } from '@motion-studio/shared';
 import { RUNTIME_DIST_DIR } from '@motion-studio/composition-runtime/dist';
-import { startCompositionServer, type CompositionServer, type CompositionSession } from '../compositions/composition-server.ts';
+import { startCompositionServer, type CompositionServer, type CompositionSession, type SessionMedia } from '../compositions/composition-server.ts';
 import { readRegularFile } from '../safe-read.ts';
 import { mixAudio, mixClips } from './audio-mix.ts';
 import { CdpError } from './cdp-pipe.ts';
@@ -75,7 +75,17 @@ export interface RenderCompositionOptions {
   timeLimitMs?: number;
   /** Where the work folder goes; default the OS temp folder. */
   tempDir?: string;
+  /**
+   * The normalised video media (`MediaNormalizer.prepare`), given to the composition server session: the page plays those
+   * files, with the trusted source fields. The audio mix still reads the composition's own sources.
+   */
+  media?: SessionMedia;
 }
+
+/** The hidden temp file a render writes next to its output (`.<name>.render-<hex>.tmp`): the startup sweep removes old ones. */
+export const RENDER_TEMP_RE = /^\..+\.render-[0-9a-f]{12}\.tmp$/;
+/** The work folder of a render in the temp folder holds this file with the core's pid (the startup sweep skips live ones). */
+export const RENDER_OWNER_FILE = 'owner.pid';
 
 export const DEFAULT_PARALLEL = 4;
 /** Runtime reports that never fail a render: `audioBlocked` (preview only) and `videoFrameMismatch` (a warning). */
@@ -149,7 +159,7 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
     if (!still && !ff) throw new RenderError('noFfmpeg', 'ffmpeg is needed to render a video');
     const distDir = o.distDir ?? RUNTIME_DIST_DIR;
     server = o.server ?? await startCompositionServer({ uiOrigins: [], distDir });
-    session = await server.mintSession({ creativeDir: o.dir, versionDir: o.versionDir, format: o.format.id, composition: c, mode: 'render', ttlMs: (o.timeLimitMs ?? 300_000 + frames * 5_000) + 60_000 });
+    session = await server.mintSession({ creativeDir: o.dir, versionDir: o.versionDir, format: o.format.id, composition: c, mode: 'render', ttlMs: (o.timeLimitMs ?? 300_000 + frames * 5_000) + 60_000, ...(o.media ? { media: o.media } : {}) });
     const clock = await clockSource(distDir);
     const openPage = async () => {
       const p = await o.provider.open({ width: c.width, height: c.height, url: session!.url, signal: ctl.signal, ...(clock ? { clockSource: clock } : {}) });
@@ -174,6 +184,7 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
       await writeFile(tempOut, buf, { flag: 'wx', mode: 0o644 });
     } else {
       work = await mkdtemp(join(o.tempDir ?? tmpdir(), 'ms-render-'));
+      await writeFile(join(work, RENDER_OWNER_FILE), String(process.pid));
       const kbps = targetKbps(o.format, c.fps);
       const encoder = await chooseEncoder(ff!, o.encoder ?? 'auto', c.width, c.height, c.fps, kbps);
       const segments = splitSegments(frames, Math.min(16, Math.max(1, Math.floor(o.parallel ?? DEFAULT_PARALLEL))));

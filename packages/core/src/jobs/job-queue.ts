@@ -86,7 +86,7 @@ export class JobQueue {
   }
 
   /** Records agent-neutral details learnt while the job runs (e.g. the session id) and broadcasts them. */
-  patch(id: string, fields: Partial<Pick<JobSummary, 'sessionId' | 'notes' | 'formats'>>): void {
+  patch(id: string, fields: Partial<Pick<JobSummary, 'sessionId' | 'notes' | 'formats' | 'progress'>>): void {
     const entry = this.entries.find((e) => e.summary.id === id);
     const same = (k: keyof typeof fields) => JSON.stringify(entry!.summary[k]) === JSON.stringify(fields[k]);
     if (!entry || (Object.keys(fields) as Array<keyof typeof fields>).every(same)) return;

@@ -25,6 +25,7 @@ describe('Activity center · what happened (AC2)', () => {
     expect(jobHref(job({ id: 'c', key: 'brand:/w:acme', kind: 'brand-analysis' }))).toBe('#/p/acme/brand');
     expect(jobHref(job({ id: 'd', key: 'brand:/w:acme', kind: 'asset-description' }))).toBe('#/p/acme/assets');
     expect(jobHref(job({ id: 'e', key: 'project:/w:acme', kind: 'console' }))).toBe('#/p/acme');
+    expect(jobHref(job({ id: 'g', key: 'render:C:\\Users\\me\\ws:acme:lancio:v3', kind: 'render' }))).toBe('#/p/acme/c/lancio');
     expect(jobHref(job({ id: 'f', key: 'something-else' }))).toBeNull();
   });
 

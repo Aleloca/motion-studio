@@ -1,4 +1,7 @@
-import type { RenderEngine } from '../render/renderer.ts';
+import type { RenderCompositionOptions, RenderEngine } from '../render/renderer.ts';
+import { findFfmpeg } from '../render/encode.ts';
+import { MediaNormalizer } from '../render/media-normalize.ts';
+import { RenderJobService } from '../creatives/render-jobs.ts';
 import { stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
@@ -71,6 +74,8 @@ export interface ServerDeps {
   billing?: () => Promise<UsageBilling>;
   /** The composition renderer and its Chromium (injected provider, system Chrome or Chrome for Testing); render jobs use it (Task 5). */
   render?: RenderEngine;
+  /** Options of every render job's render (tests: a built runtime, a temp folder, fewer pages, the encoder). */
+  renderOptions?: Partial<Pick<RenderCompositionOptions, 'distDir' | 'tempDir' | 'parallel' | 'encoder' | 'x264Preset' | 'timeLimitMs' | 'jpegQuality'>>;
 }
 
 /** How long the billing method (one `claude auth status`) is reused; 'unknown' is retried sooner. */
@@ -209,6 +214,15 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     broadcast: (msg) => hub.broadcast(msg),
   });
 
+  // Video sources are normalised for the renderer (and, Task 5b/8, the preview); close() kills whatever still runs.
+  const normalizer = new MediaNormalizer({ ffmpeg: () => findFfmpeg() });
+  const renders = new RenderJobService({
+    queue, engine: deps.render, media, normalizer,
+    presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
+    broadcast: (msg) => hub.broadcast(msg),
+    ...(deps.renderOptions ? { renderOptions: deps.renderOptions } : {}),
+  });
+
   const brandService = new BrandService({
     queue, launcher, git: deps.git, media,
     model: async () => (await requireWorkspace().readSettings()).model,
@@ -245,7 +259,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // receive the final 'cancelled' job updates before their sockets are closed.
   app.addHook('preClose', async () => {
     approvals.cancelAll();
+    // Render jobs too: each kills its browser and ffmpeg groups and removes its temp files before it settles.
     for (const j of queue.list()) queue.cancel(j.id);
+    await normalizer.close();
     await queue.whenIdle();
   });
 
@@ -368,7 +384,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     hub.send(socket, { type: 'snapshot', jobs: queue.list(), approvals: approvals.pending(), ...languageState() });
   });
 
-  registerCreativeRoutes(app, { requireWorkspace, turns, media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m) });
+  registerCreativeRoutes(app, { requireWorkspace, turns, renders, media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m) });
 
   const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m) };
   registerBrandRoutes(app, routeCtx);

@@ -31,7 +31,14 @@ export type AgentEvent =
 export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
 /** What a job does: logic and the UI branch on this, never on the (localized) label. */
-export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console';
+export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console' | 'render';
+
+/**
+ * Progress of a render job (Task 5), per format: `media` while the video sources are normalised ("Preparing media…",
+ * sources done out of the total), `frames` while frames are captured (frames done out of the total), `finishing` while
+ * the file is muxed, checked and recorded (and followers copied).
+ */
+export interface JobProgress { format: string; phase: 'media' | 'frames' | 'finishing'; done: number; total: number }
 
 export interface JobSummary {
   id: string;
@@ -53,6 +60,8 @@ export interface JobSummary {
    * primary (their followers are materialized from them). Absent: the turn is not targeted (every format may change).
    */
   formats?: string[];
+  /** Render jobs: where the current format is (see `JobProgress`); absent before the first format starts and once done. */
+  progress?: JobProgress;
 }
 
 export type ApprovalKind = 'tool' | 'provider';

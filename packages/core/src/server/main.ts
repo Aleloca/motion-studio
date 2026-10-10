@@ -6,6 +6,7 @@ import type { LanguageSetting, Locale } from '@motion-studio/shared';
 import type { FastifyInstance } from 'fastify';
 import open from 'open';
 import { sweepRunDir } from '../agent/launcher.ts';
+import { sweepRenderTempDirs } from '../render/render-sweep.ts';
 import { ClaudeCodeRunner, claudeCommandFromEnv } from '../agent/claude-code-runner.ts';
 import { cachedSandboxDetection } from '../agent/sandbox.ts';
 import { AppConfigStore, defaultConfigDir } from '../app-config.ts';
@@ -115,6 +116,8 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
   const claudeCommand = opts.claudeCommand ?? claudeCommandFromEnv();
   // Leftovers (config and token files) of a run that was killed with the app; no other instance is alive here.
   await sweepRunDir(configDir).catch(() => {});
+  // Render work folders and browser profiles a killed render left in the OS temp folder (only unused, old `ms-render-*`).
+  void sweepRenderTempDirs().catch(() => {});
   const bridge = new AgentBridge();
   const mcpServerPath = opts.mcpServerPath ?? DEV_MCP_SERVER;
   // Without the server file the agent runs as in phase 3 (anything that would prompt is denied) instead of failing to start.

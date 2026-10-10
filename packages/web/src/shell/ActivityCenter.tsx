@@ -29,13 +29,15 @@ export function activityLists(live: EventsState) {
 }
 
 /**
- * Where a job belongs, from its key. The core's keys are `creative:<root>:<project>:<creative>`, `brand:<root>:<project>`
- * (analysis and asset descriptions) and `project:<root>:<project>`; the root may contain ':' (Windows), slugs never do.
+ * Where a job belongs, from its key. The core's keys are `creative:<root>:<project>:<creative>`,
+ * `render:<root>:<project>:<creative>:v<n>`, `brand:<root>:<project>` (analysis and asset descriptions) and
+ * `project:<root>:<project>`; the root may contain ':' (Windows), slugs never do.
  */
 export function jobPlace(job: JobSummary): { project: string; creative: string | null } | null {
   const parts = job.key.split(':');
   const kind = parts[0];
   if (kind === 'creative' && parts.length >= 4) return { project: parts.at(-2)!, creative: parts.at(-1)! };
+  if (kind === 'render' && parts.length >= 5) return { project: parts.at(-3)!, creative: parts.at(-2)! };
   if ((kind === 'brand' || kind === 'project') && parts.length >= 3) return { project: parts.at(-1)!, creative: null };
   return null;
 }

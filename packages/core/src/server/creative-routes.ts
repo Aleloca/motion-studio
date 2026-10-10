@@ -10,6 +10,8 @@ import { exportPicks, exportVersion } from '../creatives/export.ts';
 import { formatSummaries } from '../creatives/format-summary.ts';
 import { withLazyHashes } from '../creatives/output-hashes.ts';
 import { creativeJobKey, PICK_RETRY_AFTER_SEC, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
+import type { RenderJobService } from '../creatives/render-jobs.ts';
+import { sweepProjectRenders } from '../render/render-sweep.ts';
 import { FormatCatalog } from '../formats/format-catalog.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { completeGitignore, sweepProject } from '../project-maintenance.ts';
@@ -25,6 +27,8 @@ export interface CreativeRoutesContext {
   isJobActive: (key: string) => boolean;
   /** Tells the clients a creative changed (e.g. lazy hashes finished after the GET answered). */
   broadcast?: (msg: ServerMessage) => void;
+  /** Render jobs of v2 versions (Task 5). */
+  renders: RenderJobService;
 }
 
 const isInsideDir = (p: string, base: string | null) => Boolean(base && p.startsWith(base.endsWith(sep) ? base : base + sep));
@@ -52,6 +56,8 @@ const exportBody = z.object({
   version: z.number().int().min(1).optional(),
 });
 const linkBody = z.object({ follower: z.string().min(1).max(200), primary: z.string().min(1).max(200).nullable() });
+/** A render request (Task 5): `formats` to render (a follower stands for its primary); absent or empty: every primary. */
+const renderBody = z.object({ formats: z.array(z.string().min(1).max(200)).max(100).optional() }).strict();
 
 /**
  * The links a new creative starts with: the ones sent (sanitized, each pair checked with `checkLink`; the duration is not
@@ -90,6 +96,8 @@ export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: st
     await new CreativeStore(dir).recoverInterrupted((slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug))).catch((err: Error) => {
       console.warn(`Motion Studio: creative recovery failed in project ${p.slug}: ${err.message}`);
     });
+    // Render and media temp files left by a render the app was killed during (no render job runs before this recovery).
+    await sweepProjectRenders(dir).catch((err: Error) => console.warn(`Motion Studio: render cleanup failed in project ${p.slug}: ${err.message}`));
     await Promise.all([sweepProject(dir, !isJobActive(brandJobKey(ws.root, p.slug))), completeGitignore(dir)]).catch((err: Error) => {
       console.warn(`Motion Studio: cleanup failed in project ${p.slug}: ${err.message}`);
     });
@@ -211,6 +219,15 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   app.post<{ Params: { slug: string; c: string; n: string } }>('/api/projects/:slug/creatives/:c/versions/:n/restore', async (req) => {
     const ref = await refOf(req.params.slug, req.params.c);
     return ctx.turns.restore(ref, Number(req.params.n));
+  });
+
+  // Renders a v2 version's compositions (Task 5): one job per request, 202 with the job.
+  app.post<{ Params: { slug: string; c: string; n: string } }>('/api/projects/:slug/creatives/:c/versions/:n/render', async (req, reply) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const n = Number(req.params.n);
+    if (!Number.isInteger(n) || n < 1) throw new WorkspaceError(404, t().errors.versionNotFound);
+    const body = parse(renderBody, req.body);
+    return reply.status(202).send(await ctx.renders.start(ref, n, body.formats));
   });
 
   app.post<{ Params: { slug: string; c: string; n: string } }>('/api/projects/:slug/creatives/:c/versions/:n/reveal', async (req) => {
