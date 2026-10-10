@@ -324,7 +324,7 @@ export class ChromeProvider implements ChromiumProvider {
       if (!proc.pid) throw new RenderError('noBrowser', 'could not start Chromium');
       await cdp.send('Browser.getVersion', {}, { timeoutMs: this.o.timeouts?.loadMs ?? DEFAULT_TIMEOUTS.loadMs });
       cdp.onEvent((e) => this.onBrowserEvent(e));
-      this.gate = new TargetGate(cdp, this.o.timeouts?.callMs ?? DEFAULT_TIMEOUTS.callMs);
+      this.gate = new TargetGate(cdp, this.o.timeouts?.callMs ?? DEFAULT_TIMEOUTS.callMs, (e) => this.fail({ code: 'isolation', message: e.message }));
       await this.gate.start();
     } catch (e) {
       await this.close();

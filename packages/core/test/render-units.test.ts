@@ -87,7 +87,7 @@ describe('request interception (fake CDP)', () => {
     // A child (an out-of-process layer) is intercepted and auto-attaching BEFORE it is resumed.
     emit({ method: 'Target.attachedToTarget', sessionId: 'P', params: { sessionId: 'L', targetInfo: { type: 'iframe' } } });
     await flush();
-    expect(calls.map((c) => `${c.sessionId}:${c.method}`)).toEqual(['L:Fetch.enable', 'L:Page.addScriptToEvaluateOnNewDocument', 'L:Target.setAutoAttach', 'L:Runtime.runIfWaitingForDebugger', 'L:Page.enable']);
+    expect(calls.map((c) => `${c.sessionId}:${c.method}`)).toEqual(['L:Fetch.enable', 'L:Page.enable', 'L:Page.addScriptToEvaluateOnNewDocument', 'L:Target.setAutoAttach', 'L:Runtime.runIfWaitingForDebugger', 'L:Page.enable']);
     calls.length = 0;
 
     emit({ method: 'Fetch.requestPaused', sessionId: 'L', params: { requestId: 'r1', resourceType: 'Script', request: { url: `${prefix}runtime/layer.js` } } });
@@ -357,5 +357,20 @@ describe('VideoToolbox quality check caching', () => {
     const after = calls(poor);
     expect(await checkVideotoolbox(info(poor), 64, 64, 30, 500)).toEqual({ ok: false, ssim: 0.5, reason: 'quality' });
     expect(calls(poor)).toBe(after); // cached
+  });
+});
+
+describe('TargetGate', () => {
+  it('closes a target that is not ours and fails the render when it cannot', async () => {
+    const { TargetGate } = await import('../src/render/isolation.ts');
+    const { client, calls, emit } = fakeClient((m) => m === 'Target.closeTarget');
+    const failures: Error[] = [];
+    const gate = new TargetGate(client, 1000, (e) => failures.push(e));
+    await gate.start();
+    emit({ method: 'Target.attachedToTarget', params: { sessionId: 'S', targetInfo: { targetId: 'popup', type: 'shared_worker', url: 'x' } } });
+    await flush();
+    expect(calls.filter((c) => c.method === 'Target.closeTarget').map((c) => c.params.targetId)).toEqual(['popup']);
+    expect(gate.refused.map((r) => r.type)).toEqual(['shared_worker']);
+    expect(failures[0]?.message).toMatch(/shared_worker target that is not ours could not be closed/);
   });
 });

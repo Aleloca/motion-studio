@@ -176,7 +176,10 @@ describe.skipIf(!tools.chrome)('render isolation in headless Chrome', () => {
         const hits = canary.hits.slice(before);
         for (const c of OWN_FRAME_NAVIGATION_CASES) expect(hits, c).toContain(selfNavigationPath(c));
         for (const p of ['/top-fetch', '/fetch', '/worker-fetch', '/blob-worker-fetch', '/shared-fetch', '/sw-fetch']) expect(hits, p).toContain(p);
-        expect(udp.packets.length - udpBefore).toBeGreaterThan(0); // WebRTC/WebTransport reach the UDP canary
+        // Both probes really fire: WebRTC's STUN/TURN (small, 20–28 B here) and WebTransport's QUIC Initial (≥ 1200 B).
+        const sizes = udp.packets.slice(udpBefore).map((x) => x.bytes);
+        expect(sizes.some((b) => b < 100), `STUN/TURN in ${sizes.join(',')}`).toBe(true);
+        expect(sizes.some((b) => b >= 1200), `QUIC Initial in ${sizes.join(',')}`).toBe(true);
       } finally { await control.close(); }
 
       const chrome = await rawChrome(tools.chrome!.exe, []);
@@ -187,6 +190,7 @@ describe.skipIf(!tools.chrome)('render isolation in headless Chrome', () => {
         const gate = new TargetGate(chrome.cdp);
         await gate.start();
         const { sessionId, release } = await gate.createPage();
+        const udpBefore = udp.packets.length;
         const ic = await interceptRequests(chrome.cdp, sessionId, `${naked.origin}/${TOKEN}/`, {
           resume: () => chrome.cdp.send('Runtime.runIfWaitingForDebugger', {}, { sessionId }).then(() => {}),
         });
@@ -194,6 +198,8 @@ describe.skipIf(!tools.chrome)('render isolation in headless Chrome', () => {
         await chrome.navigate(sessionId, `${naked.origin}/${TOKEN}/page.html`);
         await settle(5000);
         expect(canary.hits.slice(before)).toEqual(['upgrade /ws']);
+        // No flags here: the injected guard alone keeps WebRTC and WebTransport from every page and frame (defence in depth).
+        expect(udp.packets.slice(udpBefore)).toEqual([]);
         const blocked = ic.blocked.map((b) => b.url);
         // The dedicated workers (same-origin and blob) ran and their fetches were intercepted; the service and shared
         // workers were closed before they ran.

@@ -30,10 +30,15 @@ import type { WatchdogLimits } from './watchdog.ts';
  * - **Still** (`duration` 0): one capture at t = 0, PNG (or JPEG/WebP when `out` asks for it).
  * - Everything is written to temp files; the output is renamed to `out` only on success. On cancel, a time limit, a crash,
  *   a watchdog trip or an ffmpeg failure, the browser group and every ffmpeg are killed and the temp files removed.
- * - Any runtime error (missing asset, font, layer timeout…) fails the render, except `audioBlocked` (preview only).
+ * - Any runtime error (missing asset, font, layer timeout…) fails the render, except `audioBlocked` (preview only) and
+ *   `videoFrameMismatch` (a warning: a declared `sourceFps`/`sourceStart` looks wrong), returned in `warnings`.
  */
 
-export interface RenderResult { file: string; sha256: string; width: number; height: number; durationSec: number | null; frames: number; encoder: VideoEncoder | null; audio: boolean }
+export interface RenderResult {
+  file: string; sha256: string; width: number; height: number; durationSec: number | null; frames: number; encoder: VideoEncoder | null; audio: boolean;
+  /** Non-fatal runtime reports (`videoFrameMismatch`: a declared `sourceFps`/`sourceStart` looks wrong), at most 50. */
+  warnings: RuntimeErrorInfo[];
+}
 
 export interface RenderProgress { frames: number; total: number }
 
@@ -71,7 +76,8 @@ export interface RenderCompositionOptions {
 }
 
 export const DEFAULT_PARALLEL = 4;
-const IGNORED_RUNTIME_ERRORS = new Set(['audioBlocked']);
+/** Runtime reports that never fail a render: `audioBlocked` (preview only) and `videoFrameMismatch` (a warning). */
+const IGNORED_RUNTIME_ERRORS = new Set(['audioBlocked', 'videoFrameMismatch']);
 const VIDEO_EXT: Record<string, string> = { '.mp4': 'mp4', '.m4v': 'mp4', '.mov': 'mov' };
 const STILL_EXT: Record<string, CaptureFormat> = { '.png': 'png', '.jpg': 'jpeg', '.jpeg': 'jpeg', '.webp': 'webp' };
 
@@ -83,6 +89,10 @@ export function toRenderError(e: unknown): RenderError {
 }
 
 const failing = (errors: RuntimeErrorInfo[]) => errors.filter((e) => !IGNORED_RUNTIME_ERRORS.has(e.code));
+const warningsOf = (lists: RuntimeErrorInfo[][]) => {
+  const seen = new Set<string>();
+  return lists.flat().filter((e) => e.code === 'videoFrameMismatch' && !seen.has(e.message) && (seen.add(e.message), true)).slice(0, 50);
+};
 
 async function sha256File(file: string): Promise<string> {
   const h = createHash('sha256');
@@ -116,6 +126,7 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
   let server: CompositionServer | null = null;
   let session: CompositionSession | null = null;
   const pages: RenderPage[] = [];
+  let warnings: RuntimeErrorInfo[] = [];
   /** The error the render reports: the browser's own failure, a user cancel, the time limit, else the first error. */
   const reason = (e: unknown): RenderError => {
     const f = o.provider.failure;
@@ -153,8 +164,10 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
     if (still) {
       const page = await openPage();
       const buf = await captureFrame(page, 0, { format: STILL_EXT[ext]!, ...(ext === '.png' ? {} : { quality: 95 }), width: c.width, height: c.height });
-      const bad = failing(await page.errors());
+      const all = await page.errors();
+      const bad = failing(all);
       if (bad.length) throw new RenderError('runtimeErrors', `the composition has errors: ${bad.map((e) => e.code).join(', ')}`, bad);
+      warnings = warningsOf([all]);
       tick();
       await writeFile(tempOut, buf, { flag: 'wx', mode: 0o644 });
     } else {
@@ -187,10 +200,14 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
         }
         return file;
       }));
+      const reports: RuntimeErrorInfo[][] = [];
       for (const p of pages) {
-        const bad = failing(await p.errors());
+        const all = await p.errors();
+        reports.push(all);
+        const bad = failing(all);
         if (bad.length) throw new RenderError('runtimeErrors', `the composition has errors: ${bad.map((e) => e.code).join(', ')}`, bad);
       }
+      warnings = warningsOf(reports);
       await Promise.all(pages.splice(0).map((p) => p.close().catch(() => {})));
       const hasAudio = await audio;
       const list = join(work, 'segments.txt');
@@ -204,11 +221,11 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
       }
       const sha256 = await sha256File(tempOut);
       await rename(tempOut, o.out);
-      return { file: o.out, sha256, width: c.width, height: c.height, durationSec: c.duration, frames, encoder, audio: hasAudio };
+      return { file: o.out, sha256, width: c.width, height: c.height, durationSec: c.duration, frames, encoder, audio: hasAudio, warnings };
     }
     const sha256 = await sha256File(tempOut);
     await rename(tempOut, o.out);
-    return { file: o.out, sha256, width: c.width, height: c.height, durationSec: null, frames: 1, encoder: null, audio: false };
+    return { file: o.out, sha256, width: c.width, height: c.height, durationSec: null, frames: 1, encoder: null, audio: false, warnings };
   } catch (e) {
     const err = reason(e);
     // Failed: the browser goes first, as a whole group (a page may be stuck in a loop; closing it politely would wait).

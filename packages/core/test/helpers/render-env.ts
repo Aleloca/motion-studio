@@ -55,14 +55,16 @@ const ff = (ffmpeg: FfmpegInfo, args: string[]) => execFileSync(ffmpeg.path, ['-
 /**
  * A 64×32 H.264 video whose frame n shows two grey blocks coding n + 1 (left: units, right: tens; luma 16 + 20 × digit;
  * so an all-black area reads 0, "not visible"),
- * `frames` frames. `pts` (seconds per frame index) makes it variable-frame-rate; otherwise constant at `fps`.
+ * `frames` frames. `pts` (seconds per frame index) makes it variable-frame-rate; otherwise constant at `fps`. `offset`
+ * shifts every timestamp (a first frame at 0.1 s).
  */
-export function frameCodedVideo(ffmpeg: FfmpegInfo, file: string, o: { fps: number; frames: number; pts?: string }): void {
+export function frameCodedVideo(ffmpeg: FfmpegInfo, file: string, o: { fps: number; frames: number; pts?: string; offset?: number }): void {
   mkdirSync(join(file, '..'), { recursive: true });
   const code = "geq=lum='16+20*if(lt(X,32),mod(N+1,10),floor((N+1)/10))':cb=128:cr=128";
   const vf = o.pts ? `${code},setpts='(${o.pts})/TB',format=yuv420p` : `${code},format=yuv420p`;
   ff(ffmpeg, ['-f', 'lavfi', '-i', `color=c=black:s=64x32:r=${o.fps}`, '-frames:v', String(o.frames), '-vf', vf,
     ...(o.pts ? ['-fps_mode', 'passthrough', '-video_track_timescale', '90000'] : []),
+    ...(o.offset ? ['-output_ts_offset', String(o.offset)] : []),
     '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '4', '-g', '12', '-movflags', '+faststart', file]);
 }
 
@@ -70,7 +72,7 @@ export function frameCodedVideo(ffmpeg: FfmpegInfo, file: string, o: { fps: numb
 export function framePts(ffmpeg: FfmpegInfo, file: string): number[] {
   const probe = join(ffmpeg.path, '..', 'ffprobe');
   const out = execFileSync(probe, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'frame=pts_time', '-of', 'csv=p=0', file], { encoding: 'utf8' });
-  return out.split('\n').filter(Boolean).map(Number);
+  return out.split('\n').filter(Boolean).map((l) => parseFloat(l));
 }
 
 /**

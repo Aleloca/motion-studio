@@ -135,6 +135,8 @@ export async function interceptRequests(client: CdpClient, sessionId: string, pr
   const secure = async (sid: string, type: string) => {
     if (FETCH_TARGETS.has(type)) {
       await client.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] }, { sessionId: sid, timeoutMs });
+      // A paused frame (not our page, which runs first) needs the Page domain for the script to reach its first document.
+      if (type === 'iframe') await client.send('Page.enable', {}, { sessionId: sid, timeoutMs });
       await client.send('Page.addScriptToEvaluateOnNewDocument', { source: injected, runImmediately: true }, { sessionId: sid, timeoutMs });
     }
     await client.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, { sessionId: sid, timeoutMs });
@@ -228,7 +230,8 @@ export class TargetGate {
   /** Targets closed before they ran (diagnostics and tests). */
   readonly refused: Array<{ type: string; url: string }> = [];
 
-  constructor(private readonly client: CdpClient, private readonly timeoutMs = 30_000) {}
+  /** `onFailure`: a target that must not run could not be closed; the render fails (as in `interceptRequests`). */
+  constructor(private readonly client: CdpClient, private readonly timeoutMs = 30_000, private readonly onFailure?: (e: Error) => void) {}
 
   /** Starts gating: call once, right after the browser answers. */
   async start(): Promise<void> {
@@ -248,7 +251,10 @@ export class TargetGate {
     if (this.own.has(id)) return;
     const closeIt = () => {
       this.refused.push({ type: String(info?.type ?? ''), url: String(info?.url ?? '').slice(0, 300) });
-      void this.client.send('Target.closeTarget', { targetId: id }, { timeoutMs: this.timeoutMs }).catch(() => {});
+      const type = String(info?.type ?? '');
+      void this.client.send('Target.closeTarget', { targetId: id }, { timeoutMs: this.timeoutMs }).catch((err: Error) => {
+        this.onFailure?.(new Error(`render isolation: a ${type} target that is not ours could not be closed: ${err.message}`));
+      });
     };
     // While one of our pages is being created, this may be that page (its createTarget has not answered yet): hold it.
     if (this.creating > 0) {

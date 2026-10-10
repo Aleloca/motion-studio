@@ -118,6 +118,7 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
     if (process.env.MS_RENDER_DEBUG) console.info(`[render] ${FRAMES} frames ${W}x${H}, 4 pages: ${((Date.now() - t0) / 1000).toFixed(1)} s, load ${loads.map((l) => l.toFixed(0)).join('→')}`);
     expect(result).toMatchObject({ file: join(creative, VERSION_DIR, `${FORMAT.id}.mp4`), width: W, height: H, durationSec: DURATION, frames: FRAMES, encoder: 'libx264', audio: true });
     expect(result.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(result.warnings).toEqual([]); // every declared sourceFps is right (the VFR clip declares none)
     expect(progress.at(-1)).toBe(FRAMES);
 
     const ff = tools.ffmpeg!;
@@ -198,6 +199,46 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
     const r = await renderComposition({ dir: creative, versionDir: VERSION_DIR, composition: composition(), format: FORMAT, out, provider: p, parallel: 3, signal: new AbortController().signal, distDir: dist, ffmpeg: ff, encoder: 'auto' });
     expect(r.encoder).toBe(check.ok ? 'h264_videotoolbox' : 'libx264');
     expect(decodeStrips(ff, out, BOXES.seam, 2).map(readCode)).toEqual(Array.from({ length: FRAMES }, (_, i) => i + 1));
+    rmSync(out);
+  }, 1_800_000);
+
+  it('a wrong declared sourceFps or a source starting at 0.1 s render the frames Chrome shows, with a warning, never a stall', async () => {
+    // A: a 25 fps file declared as 30 fps. B: a file whose first frame is at 0.1 s, declared without sourceStart.
+    // C: the same file with sourceStart 0.1 (what the core will set from ffprobe, Task 5): exact.
+    const ff = tools.ffmpeg!;
+    const id = 'test-declared';
+    const dir = join(creative, VERSION_DIR, 'compositions', id);
+    frameCodedVideo(ff, join(dir, 'assets', 'v25.mp4'), { fps: 25, frames: 40 });
+    frameCodedVideo(ff, join(dir, 'assets', 'late.mp4'), { fps: 30, frames: 45, offset: 0.1 });
+    const late = framePts(ff, join(dir, 'assets', 'late.mp4'));
+    expect(late[0]).toBeCloseTo(0.1, 6);
+    const D = 1;
+    const comp = {
+      $schema: 'motion-studio/composition@1', width: W, height: H, fps: FPS, duration: D, background: '#000000', fonts: [],
+      scenes: [{ id: 'all', start: 0, duration: D }],
+      tracks: [{ id: 'v', kind: 'video', clips: [
+        { id: 'a', type: 'video', src: 'assets/v25.mp4', start: 0, duration: D, sourceFps: 30, props: { ...BOXES.v24 } },
+        { id: 'b', type: 'video', src: 'assets/late.mp4', start: 0, duration: D, sourceFps: 30, props: { ...BOXES.v25 } },
+        { id: 'c', type: 'video', src: 'assets/late.mp4', start: 0, duration: D, sourceFps: 30, sourceStart: 0.1, props: { ...BOXES.vfr } },
+      ] }],
+    } as unknown as Composition;
+    const p = new ChromeProvider({ exe: tools.chrome!.exe, kind: 'system', limits: { timeLimitMs: 30 * 60_000 } });
+    const out = join(creative, VERSION_DIR, `${id}.mp4`);
+    const r = await renderComposition({ dir: creative, versionDir: VERSION_DIR, composition: comp, format: { ...FORMAT, id }, out, provider: p, parallel: 2, signal: new AbortController().signal, distDir: dist, ffmpeg: ff, encoder: 'libx264' });
+    const frames = Array.from({ length: Math.round(D * FPS) }, (_, i) => i);
+    const target = (i: number) => (i + 0.5) / FPS; // what the declared 30 fps (and no sourceStart) asks for
+    // A: Chrome shows the 25 fps frame containing the target.
+    expect(decodeStrips(ff, out, BOXES.v24, 2).map(readCode)).toEqual(frames.map((i) => Math.floor(target(i) * 25 + 1e-9) + 1));
+    // B: the frame at or before the target on the media timeline (the first one before 0.1 s).
+    const shownLate = (t: number) => { let k = 0; for (let j = 0; j < late.length; j++) if (late[j]! <= t + 1e-9) k = j; return k + 1; };
+    if (process.env.MS_RENDER_DEBUG) console.info('[render] B got', decodeStrips(ff, out, BOXES.v25, 2).map(readCode).join(','), 'exp', frames.map((i) => shownLate(target(i))).join(','), 'warnings', JSON.stringify(r.warnings.map((w) => `${w.clipId}:${w.message}`)));
+    expect(decodeStrips(ff, out, BOXES.v25, 2).map(readCode)).toEqual(frames.map((i) => shownLate(target(i))));
+    // C: sourceStart puts every frame where it belongs.
+    expect(decodeStrips(ff, out, BOXES.vfr, 2).map(readCode)).toEqual(frames.map((i) => i + 1));
+    const warned = new Set(r.warnings.map((w) => w.clipId));
+    expect(r.warnings.every((w) => w.code === 'videoFrameMismatch')).toBe(true);
+    expect(warned.has('a') && warned.has('b')).toBe(true);
+    expect(warned.has('c')).toBe(false);
     rmSync(out);
   }, 1_800_000);
 
