@@ -1,9 +1,19 @@
 import type { BrowserWindowConstructorOptions } from 'electron';
+import { overlayOptions, TITLEBAR_COLORS, TITLEBAR_HEIGHT, TRAFFIC_LIGHT_SIZE, TRAFFIC_LIGHT_X } from './titlebar.ts';
 
-export function windowOptions(preloadPath: string, dark = true): BrowserWindowConstructorOptions {
+/**
+ * The window controls live in the app's own top bar: on macOS the traffic lights are inset and vertically centred in
+ * it; on Windows and Linux the system draws its buttons as an overlay as tall as the bar, in the theme's colours.
+ */
+export function windowOptions(preloadPath: string, dark = true, platform: string = process.platform): BrowserWindowConstructorOptions {
+  const theme = dark ? 'dark' : 'light';
+  const frame: BrowserWindowConstructorOptions = platform === 'darwin'
+    ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: TRAFFIC_LIGHT_X, y: (TITLEBAR_HEIGHT - TRAFFIC_LIGHT_SIZE) / 2 } }
+    : { titleBarStyle: 'hidden', titleBarOverlay: overlayOptions(theme) };
   return {
     width: 1440, height: 900, minWidth: 1024, minHeight: 700, title: 'Motion Studio', show: false,
-    backgroundColor: dark ? '#0E0F12' : '#F4F4F1',
+    backgroundColor: TITLEBAR_COLORS[theme].background,
+    ...frame,
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, preload: preloadPath },
   };
 }

@@ -22,7 +22,7 @@ describe('creatives in English', () => {
     const version = { n: 1, commit: 'c', sessionId: 's', status: 'complete' as const, createdAt: at, request: 'r', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: null };
     const noop = () => {};
     const board = (n: number, withOutput: boolean) => (
-      <CanvasBoard slug="acme" creative="c1" n={n} tool="select" zoom={1} selected={false} working={false} safe={false} pins={[]} draft={null} nextNumber={1}
+      <CanvasBoard slug="acme" creative="c1" n={n} tool="select" zoom={1} selected={false} rendering={false} safe={false} pins={[]} draft={null} nextNumber={1}
         board={{ id: banner.id, preset: banner, out: withOutput ? { format: banner.id, file: 'a.png', width: 1080, height: 1080, durationSec: null, verified: true, preview: null } : null }}
         onSelect={noop} onOpen={noop} onPlace={noop} onEditPin={noop} onDraftText={noop} onDraftCommit={noop} onDraftCancel={noop} onDraftDelete={noop} />
     );

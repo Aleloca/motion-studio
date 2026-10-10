@@ -48,6 +48,11 @@ export interface JobSummary {
   sessionId?: string;
   /** Informational notes the job reported (e.g. a change by the agent that was undone). */
   notes?: string[];
+  /**
+   * The formats a creative turn targets when the request named some (spec §2.5): primaries only, followers resolved to their
+   * primary (their followers are materialized from them). Absent: the turn is not targeted (every format may change).
+   */
+  formats?: string[];
 }
 
 export type ApprovalKind = 'tool' | 'provider';

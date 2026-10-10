@@ -24,6 +24,14 @@ describe('JobQueue', () => {
     await q.whenIdle();
     expect(q.list().every((j) => j.state === 'succeeded')).toBe(true);
   });
+  it('keeps the formats a job targets in its summary', async () => {
+    const q = new JobQueue({ concurrency: 1 });
+    const job = q.enqueue({ key: 'f', kind: 'creative', label: 'f', formats: ['reel'], run: async () => {} });
+    expect(job.formats).toEqual(['reel']);
+    expect(q.enqueue({ key: 'g', kind: 'creative', label: 'g', run: async () => {} }).formats).toBeUndefined();
+    await q.whenIdle();
+    expect(q.list().find((j) => j.id === job.id)?.formats).toEqual(['reel']);
+  });
   it('rejects a second active job with the same key', () => {
     const q = new JobQueue({ concurrency: 1 });
     q.enqueue({ key: 'same', kind: 'creative', label: 'a', run: () => deferred().promise });

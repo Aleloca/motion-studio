@@ -2,8 +2,19 @@ import type { ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetti
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, uiToken } from './uiToken.ts';
 
+/**
+ * `code`: the stable machine-readable reason some routes add (e.g. `link-chain`, `pick-file-missing`); `retryAfterSec`: the
+ * response's `Retry-After` in seconds, when it has one (e.g. `hashes-pending`).
+ */
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string) { super(message); this.name = 'ApiError'; }
+  constructor(public readonly status: number, message: string, public readonly code?: string, public readonly retryAfterSec?: number) { super(message); this.name = 'ApiError'; }
+}
+
+/** `Retry-After` as seconds (the delay form only; a date or a bad value is ignored). */
+function retryAfter(res: Response): number | undefined {
+  const raw = res.headers?.get?.('retry-after');
+  if (!raw || !/^\d{1,6}$/.test(raw.trim())) return undefined;
+  return Number(raw.trim());
 }
 
 /** Headers of every API call: the UI token (the server refuses calls without it). */
@@ -16,7 +27,8 @@ async function parse<T>(res: Response): Promise<T> {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     if (res.status === 401 && (data as { code?: string }).code === 'ui-token') markPairingNeeded();
-    throw new ApiError(res.status, (data as { error?: string }).error ?? currentMessages().web.api.httpError({ status: res.status }));
+    const code = (data as { code?: unknown }).code;
+    throw new ApiError(res.status, (data as { error?: string }).error ?? currentMessages().web.api.httpError({ status: res.status }), typeof code === 'string' ? code : undefined, retryAfter(res));
   }
   return data as T;
 }
@@ -106,11 +118,23 @@ export const api = {
     request<{ slug: string; creative: CreativeFile; job: JobSummary | null }>('POST', `${p(slug)}/creatives`, body),
   getCreative: (slug: string, creative: string) => request<CreativeDetail>('GET', c(slug, creative)),
   updateCreative: (slug: string, creative: string, body: { title?: string; brief?: Brief; linkedCodebases?: LinkedCodebase[] }) => request<CreativeFile>('PUT', c(slug, creative), body),
+  /** Manual ★ of a format (`null` clears it; the version the default rule gives also clears it). */
+  setExportPick: (slug: string, creative: string, format: string, version: number | null) =>
+    request<CreativeDetail>('PUT', `${c(slug, creative)}/export-picks`, { format, version }),
+  /** Links `follower` to `primary`, or unlinks it with `null`. */
+  setFormatLink: (slug: string, creative: string, follower: string, primary: string | null) =>
+    request<CreativeDetail>('PUT', `${c(slug, creative)}/links`, { follower, primary }),
   getConversation: (slug: string, creative: string) => request<ConversationEntry[]>('GET', `${c(slug, creative)}/conversation`),
-  sendCreativeTurn: (slug: string, creative: string, body: { text?: string; pins?: Pin[] }) => request<JobSummary>('POST', `${c(slug, creative)}/turns`, body),
+  /** `formats`: the formats the change applies to (spec §2.5); absent means all of them. */
+  sendCreativeTurn: (slug: string, creative: string, body: { text?: string; pins?: Pin[]; formats?: string[] }) => request<JobSummary>('POST', `${c(slug, creative)}/turns`, body),
   restoreVersion: (slug: string, creative: string, n: number) => request<CreativeFile>('POST', `${c(slug, creative)}/versions/${n}/restore`),
   revealVersion: (slug: string, creative: string, n: number) => request<{ ok: true }>('POST', `${c(slug, creative)}/versions/${n}/reveal`),
-  exportVersion: (slug: string, creative: string, n: number, destination: string, formats?: string[]) =>
-    request<{ destination: string; files: Array<{ from: string; to: string }>; skipped: string[] }>('POST', `${c(slug, creative)}/versions/${n}/export`, { destination, ...(formats ? { formats } : {}) }),
+  /**
+   * Exports the ★ versions (spec §3.3): `picks` format → vN, `follow` follower → the version shown (its primary's ★),
+   * `pattern` the file name pattern (the workspace default when omitted), `date` the `{date}` previewed (YYYY-MM-DD).
+   * Refusals carry an `export-*` code.
+   */
+  exportPicks: (slug: string, creative: string, body: { destination: string; picks: Record<string, number>; follow?: Record<string, number>; pattern?: string; date?: string }) =>
+    request<{ destination: string; files: Array<{ from: string; to: string }>; skipped: string[] }>('POST', `${c(slug, creative)}/export`, body),
   fileUrl: (slug: string, creative: string, rel: string) => `${c(slug, creative)}/files/${rel.split('/').map(encodeURIComponent).join('/')}`,
 };

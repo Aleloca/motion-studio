@@ -9,11 +9,12 @@ const IDENTITY = ['-c', 'user.name=Motion Studio', '-c', 'user.email=motion-stud
 const HARDENED = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
 
 /**
- * Never versioned, whatever the project's .gitignore says: the sandbox caches and the agent's scratch folders. They go
+ * Never versioned, whatever the project's .gitignore says: the sandbox caches, the agent's scratch folders and the
+ * core's caches (`.studio/cache/`, e.g. output hashes). They go
  * into `.git/info/exclude` (the agent cannot write `.git/`) rather than an exclude pathspec: git 2.50 makes
  * `git add -A -- . ':(exclude).cache'` exit 1 when `.cache/` is also gitignored and present.
  */
-export const LOCAL_EXCLUDES = ['/.cache/', '/creatives/*/work/tmp/'] as const;
+export const LOCAL_EXCLUDES = ['/.cache/', '/creatives/*/work/tmp/', '/.studio/cache/'] as const;
 
 /**
  * Appends the missing LOCAL_EXCLUDES to `<dir>/.git/info/exclude`, keeping its other lines. Skipped when `<dir>/.git`
@@ -61,6 +62,24 @@ export class Git {
       const status = await this.must(dir, ['status', '--porcelain']);
       if (status.trim() === '') return null;
       await this.must(dir, [...IDENTITY, 'commit', '-q', '-m', message]);
+      return (await this.must(dir, ['rev-parse', 'HEAD'])).trim();
+    });
+  }
+
+  /**
+   * Commits only `relPaths` (relative to `dir`, literal pathspecs), whatever else is changed or staged in the tree: used
+   * for the creative's own metadata while an agent may be writing elsewhere (its half-written sources are never
+   * committed). Returns the sha, or null when those paths have no change.
+   */
+  commitPaths(dir: string, relPaths: string[], message: string): Promise<string | null> {
+    return this.lock.run(resolve(dir), async () => {
+      if (relPaths.length === 0) return null;
+      await ensureLocalExcludes(dir);
+      const specs = relPaths.map((p) => `:(literal)${p}`);
+      await this.must(dir, ['add', '--', ...specs]);
+      const status = await this.must(dir, ['status', '--porcelain', '--', ...specs]);
+      if (status.trim() === '') return null;
+      await this.must(dir, [...IDENTITY, 'commit', '-q', '--only', '-m', message, '--', ...specs]);
       return (await this.must(dir, ['rev-parse', 'HEAD'])).trim();
     });
   }

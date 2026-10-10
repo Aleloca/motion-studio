@@ -47,3 +47,27 @@ describe('versionsFileSchema', () => {
     expect(versionsFileSchema.parse({ schemaVersion: 1 })).toEqual({ schemaVersion: 1, versions: [] });
   });
 });
+
+describe('phase 9 optional fields', () => {
+  it('old creative, versions and manifest files still parse without the new fields', () => {
+    const c = creativeFileSchema.parse(creative);
+    expect(c.exportPicks).toBeUndefined();
+    expect(c.brief.links).toBeUndefined();
+    const v = versionsFileSchema.parse({ schemaVersion: 1, versions: [{ n: 1, commit: null, sessionId: null, status: 'complete', createdAt: now, request: 'x',
+      outputs: [{ format: 'a', file: 'a.png', width: 1, height: 1, durationSec: null, verified: true, preview: null }], problems: [], tools: [], renderCommand: null, basedOn: null }] });
+    expect(v.versions[0]!.outputs[0]!.sha256).toBeUndefined();
+    expect(manifestSchema.parse({ schemaVersion: 1, files: [{ format: 'a', file: 'a.png', width: 1, height: 1 }] }).files[0]!.followsFormat).toBeUndefined();
+  });
+  it('accepts exportPicks, brief links, sha256, per-file problems and followsFormat', () => {
+    const c = { ...creative, exportPicks: { 'instagram-post-1x1': 2 }, brief: { ...creative.brief, links: { 'tiktok-9x16': 'instagram-reel-9x16' } } };
+    expect(creativeFileSchema.parse(c)).toEqual(c);
+    expect(creativeFileSchema.safeParse({ ...c, exportPicks: { a: 0 } }).success).toBe(false);
+    const sha = 'ab'.repeat(32);
+    const out = { format: 'a', file: 'a.png', width: 1, height: 1, durationSec: null, verified: true, preview: null, sha256: sha, problems: [] };
+    const entry = { n: 1, commit: null, sessionId: null, status: 'complete', createdAt: now, request: 'x', outputs: [out], problems: [], tools: [], renderCommand: null, basedOn: null };
+    expect(versionsFileSchema.parse({ schemaVersion: 1, versions: [entry] }).versions[0]!.outputs[0]).toEqual(out);
+    expect(versionsFileSchema.safeParse({ schemaVersion: 1, versions: [{ ...entry, outputs: [{ ...out, sha256: 'xyz' }] }] }).success).toBe(false);
+    const m = { schemaVersion: 1, files: [{ format: 'b', file: 'b.mp4', width: 1, height: 1, followsFormat: 'a' }], tools: [] };
+    expect(manifestSchema.parse(m)).toEqual(m);
+  });
+});

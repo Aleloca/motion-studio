@@ -6,7 +6,7 @@ const PART_RE = /^\..+\.part$/;
 const isMissing = (e: unknown) => (e as NodeJS.ErrnoException).code === 'ENOENT';
 
 /** Lines added to the project template after phase 2: appended to older projects' .gitignore (other lines are the user's call). */
-const ADDED_IGNORES = ['.*.part', 'assets/.describe/', '.cache/', 'creatives/*/work/tmp/'];
+const ADDED_IGNORES = ['.*.part', 'assets/.describe/', '.cache/', 'creatives/*/work/tmp/', '.studio/cache/'];
 /** Phase 8: the usage ledger merges by union (append-only JSONL). Older projects have no .gitattributes at all. */
 const ADDED_ATTRIBUTES = ['.studio/usage.jsonl merge=union'];
 

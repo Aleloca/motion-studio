@@ -74,17 +74,18 @@ export function takeFrameOrigin(key: string): DOMRect | null {
   return rect;
 }
 
-// The version on screen travels with T3/T4: a version picked on the canvas is the one the format view opens on, and
-// back. Keyed by `<project>/<creative>`; the next page takes it once, on mount.
-const shownVersions = new Map<string, number>();
+// The versions on screen travel with T3/T4: the version viewed on each board of the canvas (format → vN, only where it is
+// not the ★) is the one the format view opens on, and back. Keyed by `<project>/<creative>`; the next page takes it once,
+// on mount.
+const shownVersions = new Map<string, Record<string, number>>();
 
-export function setShownVersion(key: string, n: number | null): void {
-  if (n === null) shownVersions.delete(key); else shownVersions.set(key, n);
+export function setShownVersions(key: string, viewing: Record<string, number>): void {
+  if (Object.keys(viewing).length === 0) shownVersions.delete(key); else shownVersions.set(key, { ...viewing });
 }
 
-/** The version picked on the page left behind, removed (null: follow the newest). */
-export function takeShownVersion(key: string): number | null {
-  const n = shownVersions.get(key) ?? null;
+/** The versions viewed on the page left behind, removed (empty: every format shows its ★). */
+export function takeShownVersions(key: string): Record<string, number> {
+  const v = shownVersions.get(key) ?? {};
   shownVersions.delete(key);
-  return n;
+  return v;
 }

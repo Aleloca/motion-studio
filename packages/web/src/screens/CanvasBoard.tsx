@@ -9,7 +9,7 @@ import { channelName, formatName, outputWarningText, type FormatPreset, type Out
 import { useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode, type SyntheticEvent } from 'react';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { anim, D, E, isSubmitChord } from '../motion/index.ts';
-import { Button, Icon, Pill, Popover, Textarea, cx } from '../ui/index.ts';
+import { Button, ChannelMark, Icon, Pill, Popover, Textarea, channelOf, cx } from '../ui/index.ts';
 import { boardFrame, LABEL_MIN, outputMedia, pointIn, ratioText, toScreen, type BoardModel } from './canvasModel.ts';
 
 export type Tool = 'select' | 'comment' | 'hand';
@@ -21,13 +21,22 @@ export interface BoardProps {
   slug: string;
   creative: string;
   board: BoardModel;
-  /** The version whose outputs are shown (null before the first one). */
+  /** The version whose file is shown (null before the first one): the ★ of the format, or the one being viewed. */
   n: number | null;
+  /** When `n` is null although the creative has versions: the latest one, which has no file for this format. */
+  missing?: number | null;
   tool: Tool;
   /** The canvas zoom: the frame scales, the label, markers and bubble keep their size. */
   zoom: number;
   selected: boolean;
-  working: boolean;
+  /** A running job renders this format (its targets and their followers, or every board for an untargeted job). */
+  rendering: boolean;
+  /** Comments can be placed on this board (its file is the one comments are cropped from). */
+  commentable?: boolean;
+  /** The version badge (line 1), e.g. "★ v5 ▾", or a follower's "Linked to Reel" chip. */
+  badge?: ReactNode;
+  /** A note on line 2, e.g. "follows Reel ★ v5". */
+  note?: ReactNode;
   safe: boolean;
   /** Pending comments of the creative with their global numbers (chips use the same numbers). */
   pins: Array<{ pin: Pin; number: number }>;
@@ -42,8 +51,6 @@ export interface BoardProps {
   onDraftCommit(): void;
   onDraftCancel(): void;
   onDraftDelete(): void;
-  /** Extra content under the frame (the generation progress of the first board). */
-  footer?: ReactNode;
 }
 
 const NARROW_BOARD = 170;
@@ -72,6 +79,7 @@ export function CanvasBoard(p: BoardProps) {
   const media = board.out && n !== null ? outputMedia(p.slug, p.creative, n, board.out) : null;
   const video = board.preset?.kind === 'video';
   const duration = board.out?.durationSec ?? null;
+  const largeFile = board.out?.warnings?.filter((w) => w.key === 'outputs.largeFile') ?? [];
 
   // T11: every new picture arrives from blurred to sharp.
   const reveal = (e: SyntheticEvent<HTMLElement>) => {
@@ -85,11 +93,21 @@ export function CanvasBoard(p: BoardProps) {
   return (
     <div className={cx('ms-cv-board', p.selected && 'ms-on', drafting && 'ms-drafting')} data-board={board.id}>
       <div className="ms-cv-board-head" style={{ maxWidth: Math.max(Math.round(size.width * zoom), LABEL_MIN) }}>
-        <b className="ms-cv-board-name" title={label}>{label}</b>
-        {board.preset ? <span className="ms-cv-board-meta">{ratioText(board.preset)}{duration !== null ? ` · ${c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) })}` : ''}</span> : null}
-        {p.working && (!board.out || video) ? <Pill spinner>{c.rendering}</Pill> : null}
-        {board.out && !board.out.verified ? <Pill tone="warn">{t.web.formatUi.unverified}</Pill> : null}
-        {board.out?.warnings?.filter((w) => w.key === 'outputs.largeFile').map((w, i) => <LargeFileChip key={i} warning={w} />)}
+        <div className="ms-cv-board-line">
+          {/* The format's name only, whole first; the channel is its mark (the full label is the tooltip and the accessible name). */}
+          {board.preset ? <ChannelMark channel={channelOf(board.preset.channel)} /> : null}
+          <b className="ms-cv-board-name" title={label}>{board.preset ? formatName(board.preset, locale) : label}</b>
+          {/* The version badge, or a follower's link chip. */}
+          <span className="ms-cv-board-slot">{p.badge}</span>
+        </div>
+        <div className="ms-cv-board-line ms-cv-board-sub">
+          {board.preset ? <span className="ms-cv-board-meta">{ratioText(board.preset)}{duration !== null ? ` · ${c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) })}` : ''}</span> : null}
+          {p.rendering ? <span className="ms-cv-board-state">{c.renderingState}</span>
+            : p.note ? <span className="ms-cv-board-state">{p.note}</span>
+              : board.out && board.out.verified && !largeFile.length ? <span className="ms-cv-board-state">{c.boardReady}</span> : null}
+          {!p.rendering && board.out && !board.out.verified ? <Pill tone="warn">{t.web.formatUi.unverified}</Pill> : null}
+          {largeFile.map((w, i) => <LargeFileChip key={i} warning={w} />)}
+        </div>
       </div>
       <div className={cx('ms-cv-frame-wrap', narrow && 'ms-narrow')} style={{ width: size.width * zoom, height: size.height * zoom }}>
         <div
@@ -106,12 +124,12 @@ export function CanvasBoard(p: BoardProps) {
               : <img key={media.src} src={media.src} alt={`${label} v${n}`} onLoad={reveal} draggable={false} />
           ) : (
             <span className="ms-cv-frame-note">
-              {!board.preset ? t.web.formatUi.unknownPreset({ id: board.id }) : n === null ? c.notGenerated : t.web.formatUi.missingIn({ n })}
+              {!board.preset ? t.web.formatUi.unknownPreset({ id: board.id }) : n !== null ? t.web.formatUi.missingIn({ n }) : p.missing ? t.web.formatUi.missingIn({ n: p.missing }) : c.notGenerated}
             </span>
           )}
-          {p.working ? <span className="ms-shimmer" aria-hidden="true" /> : null}
+          {p.rendering ? <span className="ms-shimmer" aria-hidden="true" /> : null}
           {p.safe && board.preset ? <SafeZoneBands preset={board.preset} /> : null}
-          {p.tool === 'comment' && board.out ? (
+          {p.tool === 'comment' && board.out && p.commentable !== false ? (
             <button type="button" className="ms-cv-hit" aria-label={c.commentOn({ label })} onClick={(e) => { e.stopPropagation(); place(e); }} />
           ) : null}
         </div>
@@ -134,7 +152,6 @@ export function CanvasBoard(p: BoardProps) {
             onText={p.onDraftText} onCommit={p.onDraftCommit} onCancel={p.onDraftCancel} onDelete={p.onDraftDelete} />
         ) : null}
       </div>
-      {p.footer}
     </div>
   );
 }

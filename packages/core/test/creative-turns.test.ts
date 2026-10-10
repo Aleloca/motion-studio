@@ -216,7 +216,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     await store.update(ref.creativeSlug, { brief: { ...brief, formats: [...brief.formats, 'instagram-reel-9x16'] } });
     await finalState((await service.start(ref)).id);
     expect((await store.readVersions(ref.creativeSlug)).at(-1)!.request)
-      .toBe('Add the formats instagram-reel-9x16, reusing the existing sources in work/ and the same style as version 1. The render command of version 1 was: node render.js. Deliver all the requested formats again.');
+      .toBe('Add the formats instagram-reel-9x16, reusing the existing sources in work/ and the same style as version 1. The render command of version 1 was: node render.js.');
     await store.update(ref.creativeSlug, { brief });
     await finalState((await service.start(ref, { text: '', pins: [] })).id);
     expect((await store.readVersions(ref.creativeSlug)).at(-1)!.request).toBe('Regenerate all formats from the updated brief.');

@@ -9,30 +9,36 @@ export interface BoardModel { id: string; preset: FormatPreset | null; out: Outp
 
 export interface Media { src: string; video: boolean }
 
+/** The URL of a file of version `n`'s outputs. */
+export const outputUrl = (slug: string, creative: string, n: number, file: string): string => api.fileUrl(slug, creative, `outputs/v${n}/${file}`);
+
 /**
  * The picture of an output: images as they are; videos by their poster (`.previews/<file>.jpg`, made by the core with
  * ffmpeg) when there is one, otherwise the video itself paused on its first frame.
  */
 export function outputMedia(slug: string, creative: string, n: number, out: OutputFileInfo): Media {
-  const rel = (f: string) => api.fileUrl(slug, creative, `outputs/v${n}/${f}`);
+  const rel = (f: string) => outputUrl(slug, creative, n, f);
   if (!isVideoFile(out.file)) return { src: rel(out.file), video: false };
   return out.preview ? { src: rel(out.preview), video: false } : { src: rel(out.file), video: true };
 }
 
-/** The version's thumbnail (the core's cover rule: the first output, its poster when it has one). */
-export function versionThumb(slug: string, creative: string, v: VersionEntry): Media | null {
-  const first = v.outputs[0];
-  return first ? outputMedia(slug, creative, v.n, first) : null;
-}
-
-/** The boards of a creative: the brief's formats in order, then outputs of the version outside the brief. */
-export function boardsOf(formats: string[], presets: FormatPreset[], version: VersionEntry | null): BoardModel[] {
-  const ids = [...formats, ...(version?.outputs.map((o) => o.format).filter((f) => !formats.includes(f)) ?? [])];
-  return [...new Set(ids)].map((id) => ({
-    id,
-    preset: presets.find((p) => p.id === id) ?? null,
-    out: version?.outputs.find((o) => o.format === id) ?? null,
-  }));
+/**
+ * The boards of a creative with per-format versions (spec §3.1): the brief's formats in order, then outputs of the latest
+ * version outside the brief. Each board shows the file of `source(id)` (a follower: its primary's) at that version.
+ */
+export function boardsWith(formats: string[], presets: FormatPreset[], versions: VersionEntry[], source: (id: string) => { format: string; n: number | null }):
+  Array<BoardModel & { n: number | null }> {
+  const latest = versions.at(-1) ?? null;
+  const ids = [...formats, ...(latest?.outputs.map((o) => o.format).filter((f) => !formats.includes(f)) ?? [])];
+  return [...new Set(ids)].map((id) => {
+    const src = source(id);
+    return {
+      id,
+      preset: presets.find((p) => p.id === id) ?? null,
+      out: src.n === null ? null : versions.find((v) => v.n === src.n)?.outputs.find((o) => o.format === src.format) ?? null,
+      n: src.n,
+    };
+  });
 }
 
 /**
@@ -55,23 +61,23 @@ export function boardFrame(b: BoardModel): { width: number; height: number } {
 }
 
 // The canvas world's layout at 100% (canvas.css: .ms-cv-world padding and gap, .ms-cv-stack gap; all scale with the
-// zoom). The board label does not scale (CanvasBoard): one 22 px line + the 8 px board gap, two lines (22 + 6 + 22)
-// when its board is narrower than LABEL_ONE_LINE on screen, and never narrower than LABEL_MIN (its max-width floor).
+// zoom). The board label does not scale (CanvasBoard): always two 20 px lines (title, subtitle) 2 px apart + the 8 px board gap
+// (BOARD_HEAD), and never narrower than LABEL_MIN (its max-width floor). Both lines ellipsize instead of wrapping.
 const WORLD_PAD_X = 60;
 const WORLD_PAD_TOP = 40;
 const WORLD_PAD_BOTTOM = 140;
 const WORLD_GAP = 40;
 const STACK_GAP = 44;
-const BOARD_HEAD = 30;
-const BOARD_HEAD_WRAPPED = 58;
-export const LABEL_MIN = 160;
-const LABEL_ONE_LINE = 240;
+const BOARD_HEAD = 50;
+// 176: the channel mark, a common format name ("Story/Reel 9:16", ~100 px) and its "★ vN" badge fit on the first line
+// (phase 9 live checks: 160 cut the name); a longer name is the last thing to give way (a follower's chip shrinks first).
+export const LABEL_MIN = 176;
 
 /** The canvas world on screen at zoom `z`: tall boards in a row, the others stacked in a column next to them. */
 export function worldAt(boards: BoardModel[], z: number): { width: number; height: number } {
   const board = (f: { width: number; height: number }) => {
     const w = f.width * z;
-    return { width: Math.max(w, LABEL_MIN), height: (w < LABEL_ONE_LINE ? BOARD_HEAD_WRAPPED : BOARD_HEAD) + f.height * z };
+    return { width: Math.max(w, LABEL_MIN), height: BOARD_HEAD + f.height * z };
   };
   const columns = boards.filter(isTall).map(boardFrame).map(board);
   const rest = boards.filter((b) => !isTall(b)).map(boardFrame).map(board);

@@ -19,9 +19,20 @@ import { CLAUDE_MD, CONTEXT_MD, GITATTRIBUTES, GITIGNORE, PROJECT_DIRS } from '.
 import { t } from './i18n.ts';
 
 export class WorkspaceError extends Error {
-  constructor(public readonly status: 400 | 404 | 409 | 413 | 422 | 500, message: string, public readonly code?: WorkspaceProblemCode) {
+  constructor(public readonly status: 400 | 404 | 409 | 413 | 422 | 500 | 503, message: string, public readonly code?: WorkspaceProblemCode) {
     super(message);
     this.name = 'WorkspaceError';
+  }
+}
+
+/**
+ * A WorkspaceError whose response also carries a stable machine-readable `code` (e.g. `link-chain`), for the UI to branch on;
+ * `retryAfterSec` adds a `Retry-After` header (503).
+ */
+export class CodedError extends WorkspaceError {
+  constructor(status: 400 | 404 | 409 | 503, message: string, public readonly apiCode: string, public readonly retryAfterSec?: number) {
+    super(status, message);
+    this.name = 'CodedError';
   }
 }
 

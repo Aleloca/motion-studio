@@ -109,6 +109,8 @@
 .ms-chip { height: 24px; min-height: 0; padding: 0 9px; margin: 0; border-radius: 999px; border: 0; box-shadow: inset 0 0 0 1px var(--line); font: inherit; font-size: 12px; display: inline-flex; align-items: center; gap: 5px; background: transparent; color: var(--text); white-space: nowrap; max-width: 100%; transition: background var(--d-s) var(--e-std), box-shadow var(--d-s) var(--e-std); }
 button.ms-chip { cursor: pointer; }
 button.ms-chip:hover { box-shadow: inset 0 0 0 1px var(--faint); }
+/* Not choosable (its title says why): muted text (AA on --panel and --bg), no hover. */
+button.ms-chip.ms-disabled, button.ms-chip.ms-disabled:hover { color: var(--muted); cursor: default; box-shadow: inset 0 0 0 1px var(--line); }
 .ms-chip.ms-on, button.ms-chip.ms-on:hover { background: var(--sel); box-shadow: inset 0 0 0 1px var(--accent); }
 .ms-tag { height: 20px; padding: 0 7px; border-radius: 5px; background: var(--field); color: var(--text); font-size: 11px; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; flex: none; font-variant-numeric: tabular-nums; }
 .ms-tag.ms-mono { font-family: var(--mono); }
@@ -247,6 +249,9 @@ button.ms-avatar:active { transform: scale(.95); }
 
 /* Toasts (T7): pill stack at the top centre. */
 .ms-toasts { position: fixed; left: 50%; top: 62px; transform: translateX(-50%); z-index: 80; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; max-width: calc(100vw - 32px); }
+/* Overlays are portalled to <body>, outside the desktop title bar; where they cover it they must stay clickable (a drag
+   region swallows clicks): shell.css .ms-titlebar. */
+.ms-pop, .ms-modal, .ms-toasts { -webkit-app-region: no-drag; }
 .ms-toast { pointer-events: auto; display: flex; align-items: center; gap: 10px; min-height: 38px; max-width: 100%; padding: 0 6px 0 14px; border-radius: 999px; background: var(--panel); color: var(--text); font-size: 13px; box-shadow: 0 0 0 1px var(--line), 0 12px 30px var(--shadowLg); }
 .ms-toast-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-toast-ok { display: inline-flex; color: var(--ok); flex: none; }

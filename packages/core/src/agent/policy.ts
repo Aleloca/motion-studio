@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { dirDenyRules, fileDenyRules, readOnlyRules } from '../codebases.ts';
+import { dirDenyRules, fileDenyRules, globDenyRules, readOnlyRules } from '../codebases.ts';
 import { AGENT_ALLOWED_TOOLS, BRAND_ANALYSIS_TOOLS, DESCRIBE_TOOLS } from './runner.ts';
 import { DEFAULT_ALLOWED_DOMAINS, sensitiveHomeEntries, sensitiveHomePaths } from './sandbox.ts';
 
@@ -9,6 +9,10 @@ export interface PolicyInput {
   codebases: string[]; protectedFiles: string[];
   /** Folders the agent must never write, whatever the job (e.g. `<project>/.studio`, where its permissions live). */
   protectedDirs: string[];
+  /** Glob patterns (absolute, literal parts already escaped) the Edit/Write tools must never touch: the transparency logs of every creative and proposal. The sandbox gets the concrete files in `protectedFiles` (works everywhere) plus `sandboxGlobs` (macOS expands globs in denyWrite; Linux/WSL skip them). */
+  protectedGlobs?: string[];
+  /** Unescaped glob paths added to the sandbox denyWrite; only for roots without glob metacharacters. */
+  sandboxGlobs?: string[];
   extraDomains: string[]; projectAllowRules: string[]; mcpTools: string[];
   /** Workspace setting: sandboxed Bash runs without asking (only meaningful with `sandbox`). */
   autoApproveSandboxed: boolean;
@@ -45,6 +49,7 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
     ...fileDenyRules(['Read'], sensitive.files),
     ...(i.protectedFiles.length ? fileDenyRules(EDIT_TOOLS, i.protectedFiles) : []),
     ...dirDenyRules(EDIT_TOOLS, i.protectedDirs),
+    ...globDenyRules(EDIT_TOOLS, i.protectedGlobs ?? []),
   ];
   const extra = [...i.projectAllowRules, ...i.mcpTools];
   if (!i.sandbox) {
@@ -64,7 +69,7 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
       // AUTO_BASH table is gone. Every kind follows the workspace setting `autoApproveSandboxed`: brand and describe jobs
       // too, since their sandbox has no network, writes stay in the project and the configuration files are protected.
       autoAllowBashIfSandboxed: i.autoApproveSandboxed,
-      filesystem: { denyRead: [...sensitiveHomePaths(i.home), i.configDir], denyWrite: [...i.codebases, ...i.protectedFiles, ...i.protectedDirs] },
+      filesystem: { denyRead: [...sensitiveHomePaths(i.home), i.configDir], denyWrite: [...i.codebases, ...i.protectedFiles, ...i.protectedDirs, ...(i.sandboxGlobs ?? [])] },
       ...(network ? { network } : {}),
     },
   };

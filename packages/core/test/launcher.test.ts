@@ -29,7 +29,7 @@ async function newProject() {
   return projectDir;
 }
 
-async function launch(over: Parameters<typeof testLauncher>[1], kind: 'creative' | 'brand-analysis' | 'describe' | 'console' = 'creative', projectDir?: string) {
+async function launch(over: Parameters<typeof testLauncher>[1], kind: 'creative' | 'brand-analysis' | 'describe' | 'console' = 'creative', projectDir?: string, protectedDirs?: string[]) {
   const dir = projectDir ?? await newProject();
   if (!projectDir) {
     await new PermissionsStore(dir).add('Bash(ls:*)', 'x');
@@ -38,7 +38,7 @@ async function launch(over: Parameters<typeof testLauncher>[1], kind: 'creative'
   const argsFile = join(dir, 'args.json');
   process.env.FAKE_CLAUDE_ARGS_FILE = argsFile;
   const launcher = testLauncher(new ClaudeCodeRunner([process.execPath, FAKE]), over);
-  const run = await launcher.start({ kind, jobId: 'j1', projectSlug: 'acme', projectDir: dir, codebases: [], request: { prompt: 'ciao' }, onEvent: () => {} });
+  const run = await launcher.start({ kind, jobId: 'j1', projectSlug: 'acme', projectDir: dir, codebases: [], request: { prompt: 'ciao' }, onEvent: () => {}, ...(protectedDirs ? { protectedDirs } : {}) });
   await run.done;
   const { args, env, mcpTimeout, mcpConfigFile, tokenFile, envKeys, cacheEnv } = JSON.parse(await readFile(argsFile, 'utf8'));
   return { cacheEnv: cacheEnv as Record<string, string | null>, args: args as string[], env, mcpTimeout, envKeys: envKeys as string[], tokenFile: tokenFile as { path: string; mode: number; content: string } | null, mcpConfigFile: mcpConfigFile as { path: string; mode: number | null; content: string | null } | null, launcher, projectDir: dir };
@@ -194,6 +194,55 @@ describe('AgentLauncher', () => {
           expect(settings.sandbox.filesystem.denyWrite).toEqual(expect.arrayContaining([join(linked, '.studio'), join(realDir, '.studio')]));
         }
       }
+    }
+  });
+  it('protects every creative\'s conversation/versions/creative files and every proposal log, plain and realpath, sandbox or not', { timeout: 30_000 }, async () => {
+    const real = await newProject();
+    const linkParent = await newProject();
+    const linked = join(linkParent, 'link');
+    await symlink(real, linked);
+    const realDir = await realpath(linked);
+    await mkdir(join(real, 'creatives', 'other-1'), { recursive: true });
+    await mkdir(join(real, 'brand', 'proposals', 'p-1'), { recursive: true });
+    const tools = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
+    for (const kind of ['creative', 'brand-analysis'] as const) {
+      for (const available of [false, true]) {
+        const { args } = await launch({ sandbox: async () => ({ available, reason: 'x' }) }, kind, linked);
+        const globs = (d: string) => [...['conversation.jsonl', 'versions.json', 'creative.json'].map((n) => `${escapeGlob(join(d, 'creatives'))}/*/${n}`), `${escapeGlob(join(d, 'brand', 'proposals'))}/*/log.jsonl`];
+        for (const d of [linked, realDir]) for (const g of globs(d)) expect(args).toEqual(expect.arrayContaining(tools.map((t) => `${t}(/${g})`)));
+        // The agent's own folders stay writable.
+        const globToRe = (g: string) => new RegExp(`^${g.replace(/\\(.)/g, '\u0000$1').split('*').map((x) => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*').replace(/\u0000(.)/g, (_m, c: string) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))}$`);
+        const rules = args.filter((a) => /^(Edit|Write|MultiEdit|NotebookEdit)\(/.test(a));
+        const sbDeny: string[] = available ? JSON.parse(args[args.indexOf('--settings') + 1]!).sandbox.filesystem.denyWrite : [];
+        for (const f of [join(linked, 'creatives', 'x', 'outputs', 'v1', 'a.png'), join(linked, 'creatives', 'x', 'work', 'a')]) {
+          for (const r of rules) { const g = /^\w+\(\/(.*)\)$/.exec(r)![1]!; expect(globToRe(g.replace(/\/\*\*$/, '/**')).test(f) && !g.endsWith('/**') ? r : null, r).toBeNull(); expect(g.endsWith('/**') && f.startsWith(g.slice(0, -2).replace(/\\(.)/g, '$1')) ? r : null, r).toBeNull(); }
+          for (const d of sbDeny) { expect(globToRe(d).test(f) ? d : null).toBeNull(); expect(f.startsWith(`${d}/`) ? d : null).toBeNull(); }
+        }
+        if (available) {
+          const settings = JSON.parse(args[args.indexOf('--settings') + 1]!);
+          const deny: string[] = settings.sandbox.filesystem.denyWrite;
+          expect(deny).toEqual(expect.arrayContaining([join(linked, 'creatives', '*', 'conversation.jsonl'), join(realDir, 'brand', 'proposals', '*', 'log.jsonl')]));
+          for (const d of [linked, realDir]) {
+            expect(deny).toEqual(expect.arrayContaining([join(d, 'creatives', 'other-1', 'conversation.jsonl'), join(d, 'creatives', 'other-1', 'versions.json'), join(d, 'creatives', 'other-1', 'creative.json'), join(d, 'brand', 'proposals', 'p-1', 'log.jsonl')]));
+          }
+        }
+      }
+    }
+  });
+  it('protects the caller\'s extra folders (earlier outputs/v*), plain and realpath, sandbox or not; the new one stays writable', { timeout: 30_000 }, async () => {
+    const real = await newProject();
+    const linkParent = await newProject();
+    const linked = join(linkParent, 'link');
+    await symlink(real, linked);
+    const realDir = await realpath(linked);
+    const v1 = (d: string) => join(d, 'creatives', 'c', 'outputs', 'v1');
+    for (const available of [false, true]) {
+      const { args } = await launch({ sandbox: async () => ({ available, reason: 'x' }) }, 'creative', linked, [v1(linked)]);
+      for (const d of [linked, realDir]) {
+        expect(args).toEqual(expect.arrayContaining(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].map((t) => `${t}(/${escapeGlob(v1(d))}/**)`)));
+        if (available) expect(JSON.parse(args[args.indexOf('--settings') + 1]!).sandbox.filesystem.denyWrite).toEqual(expect.arrayContaining([v1(d)]));
+      }
+      expect(args.some((a) => a.includes(join('outputs', 'v2')))).toBe(false);
     }
   });
   it('never passes the provider keys or the bridge token from the environment to the agent', { timeout: 20_000 }, async () => {

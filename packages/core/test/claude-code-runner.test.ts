@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AgentEvent } from '@motion-studio/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildClaudeArgs, claudeCommandFromEnv, ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
+import { buildClaudeArgs, claudeCommandFromEnv, ClaudeCodeRunner, treeKillCommand } from '../src/agent/claude-code-runner.ts';
 import { AGENT_ALLOWED_TOOLS } from '../src/agent/runner.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
@@ -92,6 +92,12 @@ describe('buildClaudeArgs', () => {
     const args = buildClaudeArgs({ cwd: '/x', prompt: 'p', addDirs: ['/a b'], disallowedTools: ['Edit(//a b/**)'], allowedTools: ['Bash(node:*)'] });
     expect(args.slice(-4)).toEqual(['--disallowedTools', 'Edit(//a b/**)', '--allowedTools', 'Bash(node:*)']);
     expect(args).toContain('--add-dir');
+  });
+});
+
+describe('treeKillCommand', () => {
+  it('force-kills the process and its whole tree on Windows', () => {
+    expect(treeKillCommand(4242)).toEqual(['taskkill', ['/PID', '4242', '/T', '/F']]);
   });
 });
 

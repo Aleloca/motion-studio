@@ -55,7 +55,7 @@ const send = (msg: ServerMessage) => act(() => sockets.at(-1)!.onmessage!({ data
 
 const at = '2026-10-08T10:00:00.000Z';
 const okChecks: DoctorCheck[] = [{ id: 'git', label: 'Git', ok: true, required: true, message: 'ok' }];
-const settings = { schemaVersion: 1 as const, maxConcurrentJobs: 2, expertMode: false, theme: 'system' as const, model: null, sandboxMode: 'auto' as const, extraAllowedDomains: [] as string[], confirmPaidProviders: true, autoApproveSandboxed: true };
+const settings = { schemaVersion: 1 as const, maxConcurrentJobs: 2, expertMode: false, theme: 'system' as const, model: null, sandboxMode: 'auto' as const, extraAllowedDomains: [] as string[], confirmPaidProviders: true, autoApproveSandboxed: true, exportNamePattern: '{title}-{format}-v{v}' };
 const detail: CreativeDetail = {
   slug: 'lancio', jobKey: 'creative:/w:acme:lancio',
   versions: [{ n: 1, commit: 'c', sessionId: 's', status: 'complete', createdAt: at, request: '', outputs: [{ format: 'instagram-post-1x1', file: 'post.png', width: 1080, height: 1080, durationSec: null, verified: true, preview: null }], problems: [], tools: [], renderCommand: null, basedOn: null }],

@@ -3,7 +3,9 @@
   --bg: #F5F5F4; --panel: #FFFFFF; --line: #E5E5E3; --line2: #EFEFED;
   --text: #171717; --muted: #6B6B6B; --faint: #A3A3A3;
   --field: #F2F2F1; --dot: #DEDEDB; --ink: #171717; --inkText: #FFFFFF; --sel: #FFF1EA;
-  --ok: #2E7A4C; --okBg: #E4F3EA; --warn: #D9480F; --warnBg: #FFF5EF; --warnLine: #FFD3C0;
+  --ok: #2E7A4C; --okBg: #E4F3EA; --warnBg: #FFF5EF; --warnLine: #FFD3C0;
+  /* Warning text (the "Incomplete" pill, errors, notes): AA (4.5:1) on --warnBg, --panel, --bg and --field in every theme. */
+  --warn: #C2410C;
   /* High risk on approval chips (Phase 8): always with an icon and a text prefix, AA on --dangerBg and --panel. */
   --danger: #B42318; --dangerBg: #FEF3F2;
   --scrim: rgba(23, 23, 23, .32); --shadow: rgba(0, 0, 0, .10); --shadowLg: rgba(0, 0, 0, .22); --bar: #DADAD7;

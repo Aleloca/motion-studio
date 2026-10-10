@@ -2,6 +2,7 @@ import { LOCALES, type DoctorCheck, type LanguageSetting, type Locale, type Mess
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api.ts';
 import { desktop } from '../desktop.ts';
+import { useTitleBarClass } from '../titleBar.ts';
 import { useT, type LanguageState } from '../i18n.tsx';
 import { enter, exit, pop, reducedMotion, useEnter } from '../motion/index.ts';
 import { href, type WelcomeStep } from '../routes.ts';
@@ -69,6 +70,7 @@ export function Welcome(props: WelcomeProps) {
   const { checks, loadError, workspace, canLeave, onFinish } = props;
   const t = useT();
   const w = t.web.welcome;
+  const titleBar = useTitleBarClass();
   const blocking = !checks || Boolean(loadError) || checks.some((c) => c.required && !c.ok);
   // Saved here at step 2: the parent's workspace may arrive later.
   const [savedPath, setSavedPath] = useState<string | null>(null);
@@ -135,7 +137,7 @@ export function Welcome(props: WelcomeProps) {
 
   return (
     <div className="ms-welcome" ref={root}>
-      <header className="ms-welcome-top">
+      <header className={cx('ms-welcome-top', titleBar)}>
         {canLeave ? (
           <a className="ms-logo" href={href.projects()} aria-label={t.web.shell.home} onClick={(e) => { e.preventDefault(); onFinish(href.projects()); }}>
             <LogoGlyph />

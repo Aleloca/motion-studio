@@ -28,8 +28,10 @@ const api = {
   sendCreativeTurn: vi.fn(async () => ({ id: 'j9', key: 'k', kind: 'creative', label: 'x', state: 'queued', createdAt: at })),
   restoreVersion: vi.fn(async () => detail.creative),
   revealVersion: vi.fn(async () => ({ ok: true })),
-  exportVersion: vi.fn(async () => ({ destination: '/d', files: [], skipped: [] })),
+  exportPicks: vi.fn(async () => ({ destination: '/d', files: [], skipped: [] })),
   cancelJob: vi.fn(async () => ({ cancelled: true })),
+  setExportPick: vi.fn(async (..._a: unknown[]) => detail),
+  setFormatLink: vi.fn(async (..._a: unknown[]) => detail),
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error { status = 0; } }));
 const flip = vi.fn(async () => undefined);
@@ -43,7 +45,7 @@ const { FormatView } = await import('../src/screens/FormatView.tsx');
 const { TopBar } = await import('../src/shell/TopBars.tsx');
 const { ShellContext } = await import('../src/shell/ShellContext.tsx');
 const { __resetPendingPins, pinsKey, usePendingPins } = await import('../src/screens/pendingPins.ts');
-const { setFrameOrigin, setShownVersion, takeFrameOrigin, takeShownVersion } = await import('../src/shell/intents.ts');
+const { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } = await import('../src/shell/intents.ts');
 const { D } = await import('../src/motion/motion.ts');
 const { I18nProvider } = await import('../src/i18n.tsx');
 
@@ -209,18 +211,19 @@ describe('FormatView · shared element and bar', () => {
   it('"← All formats" goes back to the creative route, keeping the player rect for T4', async () => {
     render(<Harness format={VIDEO} />);
     await player();
-    await userEvent.click(screen.getByRole('button', { name: 'Tutti i formati' }));
+    await userEvent.click(within(document.querySelector('.ms-topbar') as HTMLElement).getByRole('button', { name: 'Tutti i formati' }));
     expect(location.hash).toBe('#/p/acme/c/lancio');
     expect(takeFrameOrigin('canvas:acme/lancio/tiktok-9x16')).not.toBeNull();
   });
 
-  it('puts the format, the version menu and Export in the bar', async () => {
+  it('puts the format, its ★ badge, the Versions timeline and Export in the bar', async () => {
     render(<Harness format={VIDEO} />);
     await player();
     const bar = document.querySelector('.ms-topbar') as HTMLElement;
     expect(within(bar).getByText('Video 9:16')).toBeTruthy();
     expect(within(bar).getByText(/1080×1920 · 9:16 · 8 s/)).toBeTruthy();
-    expect(within(bar).getByRole('button', { name: 'Versione 1 di 1, apri la cronologia' })).toBeTruthy();
+    expect(within(bar).getByRole('button', { name: 'TikTok · Video 9:16: si esporta la v1. Apri le sue versioni' }).textContent).toContain('★ v1');
+    expect(within(bar).getByRole('button', { name: 'Versioni (1): apri la cronologia della creatività' })).toBeTruthy();
     await userEvent.click(within(bar).getByRole('button', { name: 'Esporta' }));
     expect(await screen.findByRole('dialog', { name: /Esporta/ })).toBeTruthy();
   });
@@ -277,7 +280,7 @@ describe('FormatView · English', () => {
     expect(screen.getByRole('button', { name: 'Play (Space)' })).toBeTruthy();
     expect(screen.getByText('Edit scenes, text and timing directly — coming with the timeline')).toBeTruthy();
     expect(screen.getByText('Click the spot of the frame at 00:05.00')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'All formats' })).toBeTruthy();
+    expect(within(document.querySelector('.ms-topbar') as HTMLElement).getByRole('button', { name: 'All formats' })).toBeTruthy();
   });
 });
 
@@ -404,18 +407,93 @@ describe('FormatView · fix round 1', () => {
 
   it('the version on screen travels with T3 and T4', async () => {
     detail = makeDetail([version(1), version(2)]);
-    setShownVersion('acme/lancio', 1);
+    setShownVersions('acme/lancio', { [VIDEO]: 1 });
     render(<Harness format={VIDEO} />);
     expect(await screen.findByLabelText('TikTok · Video 9:16 v1', { selector: 'video' })).toBeTruthy();
-    await userEvent.click(screen.getByRole('button', { name: 'Tutti i formati' }));
-    expect(takeShownVersion('acme/lancio')).toBe(1);
+    expect(screen.getByText('stai guardando la v1')).toBeTruthy();
+    await userEvent.click(within(document.querySelector('.ms-topbar') as HTMLElement).getByRole('button', { name: 'Tutti i formati' }));
+    expect(takeShownVersions('acme/lancio')).toEqual({ [VIDEO]: 1 });
   });
 
-  it('Export opens on the version shown (snapshot taken on open)', async () => {
+  it('Export opens on the latest version (snapshot taken on open)', async () => {
     render(<Harness format={VIDEO} />);
     await player();
     await userEvent.click(within(document.querySelector('.ms-topbar') as HTMLElement).getByRole('button', { name: 'Esporta' }));
     expect(await screen.findByRole('dialog', { name: /Esporta/ })).toBeTruthy();
     expect(screen.getAllByText(/v1/).length).toBeGreaterThan(0);
+  });
+});
+
+describe('FormatView · Compare', () => {
+  it('Space and the arrows drive the Compare players, never the page’s video behind the dialog', async () => {
+    detail = makeDetail([version(1), version(2)]);
+    render(<Harness format={VIDEO} />);
+    await screen.findByLabelText('TikTok · Video 9:16 v2', { selector: 'video' });
+    const page = document.querySelector('.ms-fv-media video') as HTMLVideoElement;
+    const bar = document.querySelector('.ms-topbar') as HTMLElement;
+    await userEvent.click(within(bar).getByRole('button', { name: 'TikTok · Video 9:16: si esporta la v2. Apri le sue versioni' }));
+    await userEvent.click(within(await screen.findByRole('dialog', { name: 'Versioni di TikTok · Video 9:16' })).getByRole('button', { name: 'Confronta' }));
+    const d = await screen.findByRole('dialog', { name: 'Confronta le versioni' });
+    await waitFor(() => expect((within(d).getByRole('button', { name: 'Riproduci (Spazio)' }) as HTMLButtonElement).disabled).toBe(false));
+    play.mockClear();
+    fireEvent.keyDown(d, { key: ' ', code: 'Space' });
+    expect(play.mock.contexts.length).toBe(2);
+    expect(play.mock.contexts).not.toContain(page);
+    fireEvent.keyDown(d, { key: 'ArrowRight' });
+    expect(page.currentTime).toBe(0);
+    // The page's own transport did not move.
+    expect(document.querySelector('.ms-fv-main .ms-fv-play')?.getAttribute('aria-label')).toBe('Riproduci (Spazio)');
+  });
+});
+
+describe('FormatView · per-format versions (Phase 9)', () => {
+  const REEL = 'instagram-reel-9x16';
+  const REEL_LABEL = 'Instagram · Story/Reel 9:16';
+  const hx = (c: string) => c.repeat(64);
+  const vout = (format: string, sha: string): OutputFileInfo => ({ format, file: `${format}.mp4`, width: 1080, height: 1920, durationSec: 8, verified: true, preview: null, sha256: hx(sha) });
+  const pv = (n: number, request: string, outs: OutputFileInfo[]): VersionEntry =>
+    ({ n, commit: 'c', sessionId: 's', status: 'complete', createdAt: at, request, outputs: outs, problems: [], tools: [], renderCommand: null, basedOn: null });
+  const linked = () => makeDetail([
+    pv(1, 'Dal brief', [vout(REEL, 'a'), vout(VIDEO, 'a')]),
+    pv(2, 'Più veloce', [vout(REEL, 'b'), vout(VIDEO, 'b')]),
+  ], { brief: { goal: 'g', message: 'm', formats: [REEL, VIDEO], durationSec: 8, assets: [], notes: '', links: { [VIDEO]: REEL } } });
+
+  it('the same badge and popover as the canvas: ★ calls the API, a row views that version', async () => {
+    detail = linked();
+    render(<Harness format={REEL} />);
+    expect(await screen.findByLabelText(`${REEL_LABEL} v2`, { selector: 'video' })).toBeTruthy();
+    const bar = document.querySelector('.ms-topbar') as HTMLElement;
+    await userEvent.click(within(bar).getByRole('button', { name: `${REEL_LABEL}: si esporta la v2. Apri le sue versioni` }));
+    const pop = await screen.findByRole('dialog', { name: `Versioni di ${REEL_LABEL}` });
+    await userEvent.click(within(pop).getByRole('button', { name: 'Usa la v1 per l’export' }));
+    await waitFor(() => expect(api.setExportPick).toHaveBeenCalledWith('acme', 'lancio', REEL, 1));
+    await userEvent.click(within(pop).getByRole('button', { name: /^Guarda la v1 / }));
+    expect(await screen.findByLabelText(`${REEL_LABEL} v1`, { selector: 'video' })).toBeTruthy();
+    expect(within(bar).getByText('stai guardando la v1')).toBeTruthy();
+  });
+
+  it('a follower plays its primary’s file and offers Unlink from its chip', async () => {
+    detail = linked();
+    render(<Harness format={VIDEO} />);
+    const video = await screen.findByLabelText('TikTok · Video 9:16 v2', { selector: 'video' });
+    expect(video.getAttribute('src')).toBe(`/f/acme/lancio/outputs/v2/${REEL}.mp4`);
+    const bar = document.querySelector('.ms-topbar') as HTMLElement;
+    expect(within(bar).getByText(`segue ${REEL_LABEL} ★ v2`)).toBeTruthy();
+    expect(within(bar).queryByRole('button', { name: /si esporta la v/ })).toBeNull();
+    await userEvent.click(within(bar).getByRole('button', { name: `Collegato a ${REEL_LABEL}: apri il menu del collegamento` }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Scollega: crea una versione dedicata' }));
+    await waitFor(() => expect(api.setFormatLink).toHaveBeenCalledWith('acme', 'lancio', VIDEO, null));
+  });
+
+  it('a change from the editor applies to its format by default', async () => {
+    detail = makeDetail([version(1)]);
+    render(<Harness format={VIDEO} />);
+    await player();
+    const group = screen.getByRole('group', { name: 'Si applica a' });
+    expect(within(group).getByRole('button', { name: 'TikTok · Video 9:16' }).getAttribute('aria-pressed')).toBe('true');
+    expect(within(group).getByRole('button', { name: 'Tutti i formati' }).getAttribute('aria-pressed')).toBe('false');
+    await userEvent.type(screen.getByLabelText('Chiedi una modifica'), 'Più ritmo');
+    await userEvent.click(screen.getByRole('button', { name: 'Invia' }));
+    await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'lancio', { text: 'Più ritmo', pins: [], formats: [VIDEO] }));
   });
 });

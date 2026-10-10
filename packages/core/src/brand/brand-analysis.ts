@@ -80,7 +80,8 @@ export class BrandService {
     try {
       const run = await this.deps.launcher.start({
         kind, jobId, projectSlug: ref.projectSlug, projectDir: ref.projectDir, sandboxed,
-        protectedFiles: await guardedPaths(ref.projectDir),
+        // The running proposal's log is passed explicitly: it may not exist yet at launch (it is created by the first event), so the launcher's directory scan could miss it.
+        protectedFiles: [...(await guardedPaths(ref.projectDir)), ...(logFile ? [logFile] : [])],
         request: { prompt, model: (await this.deps.model()) ?? undefined },
         onEvent: (event) => {
           this.deps.broadcast({ type: 'agent', jobId, event });

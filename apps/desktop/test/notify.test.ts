@@ -5,7 +5,7 @@ import { ATTENTION_CLICK, attentionHandlers, badgeArg, notificationOptions, noti
 
 vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld: vi.fn() },
-  ipcRenderer: { invoke: vi.fn(() => Promise.resolve()) },
+  ipcRenderer: { invoke: vi.fn(() => Promise.resolve()), on: vi.fn(), removeListener: vi.fn() },
 }));
 
 describe('preload', () => {
@@ -216,14 +216,15 @@ describe('notification clicks (D1)', () => {
     const cb = vi.fn();
     const off = bridge.onAttentionClick(cb);
     expect(on).toHaveBeenCalledWith('ms:attention-click', expect.any(Function));
-    const listener = on.mock.calls[0]![1] as (...a: unknown[]) => void;
+    const attention = () => on.mock.calls.filter((c) => c[0] === 'ms:attention-click');
+    const listener = attention()[0]![1] as (...a: unknown[]) => void;
     listener({ sender: 'secret' }, 'x');
     expect(cb).toHaveBeenCalledWith();
     off();
     expect(removeListener).toHaveBeenCalledWith('ms:attention-click', listener);
     // A non-function is ignored.
     expect(typeof bridge.onAttentionClick('nope')).toBe('function');
-    expect(on).toHaveBeenCalledTimes(1);
+    expect(attention()).toHaveLength(1);
   });
 });
 

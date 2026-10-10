@@ -50,6 +50,11 @@ export interface AgentRunResult {
 export interface AgentRun {
   done: Promise<AgentRunResult>;
   cancel(): void;
+  /**
+   * SIGKILLs whatever is left of the run's process group (descendants that outlived the agent), also after a normal exit.
+   * Called by the core once a run is over and before it touches the run's files. Optional: runners without groups omit it.
+   */
+  killGroup?(): void;
 }
 
 /** Agent-neutral contract; ClaudeCodeRunner is the first implementation. */

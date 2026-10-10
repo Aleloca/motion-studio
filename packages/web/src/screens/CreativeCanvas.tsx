@@ -3,7 +3,7 @@
 // safe zones with a legend, V/C/H tools), Figma-style comments that become chips of the composer, the Chat · Comments ·
 // Brief panel, the version history with Compare, and Export. Replaces the interim CreativePage. A board opens in the
 // format view (screens/FormatView.tsx) with T3.
-import { addTokens, channelName, formatName, outputWarningText, shownTotal, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VersionEntry } from '@motion-studio/shared';
+import { addTokens, channelName, DEFAULT_EXPORT_NAME_PATTERN, formatName, outputWarningText, shownTotal, type ConversationEntry, type CreativeStatus, type FormatPreset, type Pin, type UsageReport, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api.ts';
@@ -14,20 +14,21 @@ import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.
 import { D, enter, flip, pulse, stagger, usePageShortcut } from '../motion/index.ts';
 import { href, routeKey } from '../routes.ts';
 import { useBarClaim } from '../shell/barSlots.ts';
-import { setFrameOrigin, setShownVersion, takeFrameOrigin, takeShownVersion } from '../shell/intents.ts';
+import { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } from '../shell/intents.ts';
 import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { Button, ChannelMark, Empty, Icon, Input, Pill, Spinner, Tabs, Tag, Toggle, cx, toast } from '../ui/index.ts';
 import { useCreative } from '../useCreative.ts';
 import { jobLiveTokens, jobUsagePartial } from '../usageLive.ts';
 import { costText, TokenCount, UsageBadge } from '../shell/Tokens.tsx';
 import { boardLabel, CanvasBoard, type Draft, type Tool } from './CanvasBoard.tsx';
-import { boardsOf, fitBoards, isTall, ratioText, type BoardModel } from './canvasModel.ts';
+import { boardsWith, fitBoards, isTall, ratioText, type BoardModel } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
-import { channelOf, lastStep } from './creativeState.ts';
-import { ExportDialog } from './ExportDialog.tsx';
+import { channelOf } from './creativeState.ts';
+import { ExportDialog, type ExportSnapshot } from './ExportDialog.tsx';
 import { activatesControl, bare, inOverlay, isTyping } from './keys.ts';
 import { pinsKey, usePendingPins } from './pendingPins.ts';
-import { useNewVersionNotice, VersionControl } from './VersionControl.tsx';
+import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from './FormatVersions.tsx';
+import { boardSource, entryAt, followersOf, formatStates, isRendering, renderingOf, shownOf, type FormatState } from './versionModel.ts';
 import './canvas.css';
 import { message } from './common.tsx';
 import { isVideoFile } from '../media.ts';
@@ -44,9 +45,13 @@ export interface CreativeCanvasProps {
   slug: string;
   creative: string;
   live: EventsState;
+  /** The workspace's export file name pattern (Export starts with it); the default one when unknown. */
+  exportNamePattern?: string;
+  /** The workspace settings after Export's "Save as default". */
+  onSettings?(next: WorkspaceSettings): void;
 }
 
-export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
+export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSettings }: CreativeCanvasProps) {
   const t = useT();
   const c = t.web.canvas;
   const locale = useLocale();
@@ -72,12 +77,29 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
     return () => { alive = false; };
   }, []);
 
-  // Versions: the canvas follows the newest until the user picks one (sending a change follows again). A version picked
-  // in the format view comes back with T4.
+  // Versions (spec §3.1): every board shows its format's ★ (a follower: its primary's), or the version the user views on
+  // it (`viewing`, format → vN, never the ★ itself). Sending a change shows the ★s again. What is viewed in the format view
+  // comes back with T4.
   const versions = useMemo(() => detail?.versions ?? [], [detail]);
   const latest = versions.at(-1) ?? null;
-  const [picked, setPicked] = useState<number | null>(() => takeShownVersion(`${slug}/${creative}`));
-  const version = (picked !== null ? versions.find((v) => v.n === picked) : undefined) ?? latest;
+  const states = useMemo<Record<string, FormatState>>(() => (detail ? formatStates(detail, presets) : {}), [detail, presets]);
+  const [viewing, setViewing] = useState<Record<string, number>>(() => takeShownVersions(`${slug}/${creative}`));
+  const view = (format: string, n: number) => setViewing((v) => {
+    const next = { ...v };
+    if (n === states[format]?.star.version) delete next[format]; else next[format] = n;
+    return next;
+  });
+  /** "View vN" of a version card: every board shows its file as it was in vN (formats vN does not have keep theirs). */
+  const viewAll = (n: number) => setViewing((v) => {
+    const next = { ...v };
+    for (const s of Object.values(states)) {
+      if (s.follows) continue;
+      const entry = entryAt(versions, s, n);
+      if (entry === null) continue;
+      if (entry === s.star.version) delete next[s.id]; else next[s.id] = entry;
+    }
+    return next;
+  });
   const versionButton = useRef<HTMLButtonElement>(null);
   // T11: a new version → toast and a spring on the version badge (the frames reveal themselves on load).
   useNewVersionNotice(Boolean(detail), latest?.n ?? null, active, versionButton);
@@ -89,13 +111,14 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
     return mine.find((j) => j.state === 'queued' || j.state === 'running') ?? mine.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   }, [live.jobs, detail]);
   const working = job?.state === 'queued' || job?.state === 'running';
-  const step = job && working ? (job.state === 'queued' ? t.web.creatives.queued : lastStep(live.events[job.id]) ?? t.web.creatives.working) : null;
+  // Per board: a targeted job renders its formats and their followers only (spec §2.5).
+  const rendering = useMemo(() => renderingOf(job, states), [job, states]);
 
   // Boards.
-  const boards = useMemo<BoardModel[]>(() => {
+  const boards = useMemo(() => {
     if (!detail || !presetsLoaded || presetsFailure) return [];
-    return boardsOf(detail.creative.brief.formats, presets, version ?? null);
-  }, [detail, presets, presetsLoaded, presetsFailure, version]);
+    return boardsWith(detail.creative.brief.formats, presets, versions, (id) => boardSource(states, id, viewing));
+  }, [detail, presets, presetsLoaded, presetsFailure, versions, states, viewing]);
   const [sel, setSel] = useState<string | null>(null);
 
   // Tools, zoom, safe zones.
@@ -108,7 +131,13 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
   // sent only on that version. `sourcePins` are the pending pins of the source, with their place in the store; a draft's
   // `index` is a position in `sourcePins`.
   const pinSource = detail ? detail.creative.resumeFrom?.version ?? latest?.n ?? null : null;
-  const canComment = version !== null && version.n === pinSource;
+  // A board takes comments when its file is the one the pin source has for its format (a follower: its primary's).
+  const commentable = useMemo(() => new Set(boards.filter((b) => {
+    const src = boardSource(states, b.id, viewing);
+    return b.out !== null && b.n !== null && entryAt(versions, states[src.format], pinSource) === b.n;
+  }).map((b) => b.id)), [boards, states, viewing, versions, pinSource]);
+  const canComment = commentable.size > 0;
+  const commentLock = pinSource !== null && boards.some((b) => b.out !== null && !commentable.has(b.id));
   const [stored, setStored] = usePendingPins(pinsKey(slug, creative));
   const sourcePins = useMemo(() => stored.flatMap((p, i) => (p.version === pinSource ? [{ pin: p.pin, at: i }] : [])), [stored, pinSource]);
   const pins = useMemo(() => sourcePins.map((p) => p.pin), [sourcePins]);
@@ -120,6 +149,8 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
     setTool((tl) => (tl === 'comment' ? 'select' : tl));
   }, [canComment]);
   useEffect(() => { setDraft(null); }, [pinSource]);
+  // A bubble on a board that no longer takes comments (another version viewed there) closes.
+  useEffect(() => { setDraft((d) => (d && !commentable.has(d.format) ? null : d)); }, [commentable]);
   const boardEl = (id: string) => [...(root.current?.querySelectorAll<HTMLElement>('[data-board]') ?? [])].find((el) => el.dataset.board === id) ?? null;
   const reveal = (id: string) => {
     const el = boardEl(id);
@@ -132,8 +163,14 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
   };
   const editPin = (number: number) => {
     const pin = pins[number - 1];
-    if (!canComment) return;
-    if (!pin) return;
+    if (!pin || pinSource === null) return;
+    // Its board shows another version: back to the file the comment is on, then open it there.
+    if (!commentable.has(pin.format)) {
+      const src = boardSource(states, pin.format, viewing).format;
+      const entry = entryAt(versions, states[src], pinSource);
+      if (entry === null) return;
+      view(src, entry);
+    }
     setSel(pin.format);
     setDraft({ format: pin.format, x: pin.x, y: pin.y, text: pin.note ?? '', index: number - 1 });
     reveal(pin.format);
@@ -189,22 +226,24 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
 
   // Version actions.
   const [actionError, setActionError] = useState<string | null>(null);
+  const formatLabel = (id: string) => boardLabel({ id, preset: presets.find((p) => p.id === id) ?? null, out: null }, locale);
+  const actions = useVersionActions({ slug, creative, states, labelOf: formatLabel, resumeFrom: detail?.creative.resumeFrom?.version ?? null, onChanged: reload, onError: setActionError });
   const [compare, setCompare] = useState<{ open: boolean; init: [number, number]; format: string } | null>(null);
-  const comparable = useMemo(() => boards.filter((b) => versions.some((v) => v.outputs.some((o) => o.format === b.id))).map((b) => b.id), [boards, versions]);
-  const openCompare = () => {
-    if (!version || versions.length < 2) return;
-    const i = versions.findIndex((v) => v.n === version.n);
-    const other = versions[i - 1] ?? versions[i + 1]!;
-    const format = sel && comparable.includes(sel) ? sel : version.outputs[0]?.format ?? comparable[0] ?? '';
-    const pair: [number, number] = other.n < version.n ? [other.n, version.n] : [version.n, other.n];
-    setCompare({ open: true, init: pair, format });
+  /** Compare of a format (its badge): the version on screen against the entry before it in the format's history. */
+  const openCompare = (format: string) => {
+    const s = states[format];
+    const shown = shownOf(s, viewing[format]);
+    if (!s || shown === null || s.history.length < 2) return;
+    const i = s.history.indexOf(shown);
+    const other = s.history[i - 1] ?? s.history[i + 1]!;
+    setCompare({ open: true, init: other < shown ? [other, shown] : [shown, other], format });
   };
-  const [exporting, setExporting] = useState<{ open: boolean; version: VersionEntry } | null>(null);
+  const [exporting, setExporting] = useState<{ open: boolean; snapshot: ExportSnapshot } | null>(null);
 
   // Open a board in the format view (T3): its rect goes along for the shared-element transition.
   const openEditor = (id: string, frame: HTMLElement) => {
     setFrameOrigin(`format:${slug}/${creative}/${id}`, frame.getBoundingClientRect());
-    setShownVersion(`${slug}/${creative}`, picked !== null && version?.n === picked ? picked : null);
+    setShownVersions(`${slug}/${creative}`, viewing);
     go(href.format(slug, creative, id));
   };
 
@@ -274,12 +313,11 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
   const generate = () => {
     setStarting(true);
     Promise.resolve().then(() => api.sendCreativeTurn(slug, creative, {}))
-      .then(() => { setPicked(null); reload(); })
+      .then(() => { setViewing({}); reload(); })
       .catch((e: unknown) => toast.show(c.generateFailed({ detail: message(e) })))
       .finally(() => setStarting(false));
   };
 
-  const formatLabel = (id: string) => boardLabel({ id, preset: presets.find((p) => p.id === id) ?? null, out: null }, locale);
   const [tab, setTab] = useState<'chat' | 'comments' | 'brief'>('chat');
   const sent = useMemo(() => sentComments(conversation), [conversation]);
 
@@ -294,23 +332,58 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
   if (!detail) return <div className="ms-cv-state" aria-busy="true"><Spinner size={18} label={c.loading} /></div>;
 
   const cr = detail.creative;
-  const n = version?.n ?? null;
+  const version = latest;
+  const busyLinks = working;
+  /** The format column (spec §3.1): "★ v5", or "—" before the format has a version. A follower has none (see `followsOf`). */
+  const formatSide = (id: string, preset: FormatPreset | null) => {
+    const s = states[id];
+    if (s?.star.version != null) return `★ v${s.star.version}`;
+    return versions.length ? '—' : preset ? ratioText(preset) : '';
+  };
+  /** "follows Story/Reel 9:16": a follower's second, muted line in the format column, under its never-truncated name. */
+  const followsOf = (id: string) => {
+    const primary = states[id]?.follows;
+    if (!primary) return null;
+    const p = presets.find((x) => x.id === primary);
+    return t.web.formatVersions.follows({ primary: p ? formatName(p, locale) : primary });
+  };
+  const primaries = cr.brief.formats.filter((f) => states[f] && !states[f]!.follows);
+  const appliesTo = versions.length && primaries.length > 1 ? {
+    primaries: primaries.map((id) => ({ id, label: formatLabel(id), followers: followersOf(states, id).map(formatLabel) })),
+    followerOf: (id: string) => states[id]?.follows ?? null,
+  } : undefined;
   const tall = boards.filter(isTall);
   const rest = boards.filter((b) => !isTall(b));
   const zones = boards.some((b) => b.preset?.safeZone);
   const pinsOf = (id: string) => pins.map((pin, i) => ({ pin, number: i + 1 })).filter((x) => x.pin.format === id);
-  const board = (b: BoardModel, first: boolean) => (
-    <CanvasBoard key={b.id} slug={slug} creative={creative} board={b} n={n} tool={tool} zoom={zoom} selected={sel === b.id} working={working} safe={safe}
-      pins={canComment ? pinsOf(b.id) : []} draft={canComment ? draft : null} nextNumber={pins.length + 1}
+  const badgeOf = (b: BoardModel & { n: number | null }) => {
+    const s = states[b.id];
+    if (!s) return { badge: null, note: null };
+    if (s.follows) {
+      const primary = formatLabel(s.follows);
+      // In the narrow header the primary goes by its format name, as the column does (the menu keeps the full label).
+      const pp = presets.find((p) => p.id === s.follows);
+      const short = pp ? formatName(pp, locale) : primary;
+      const star = states[s.follows]?.star.version ?? null;
+      return {
+        badge: <FollowerChip label={formatLabel(b.id)} primary={primary} short={short} primaryStar={star} follower={b.id} actions={actions} busy={busyLinks}
+          missing={s.starFileMissing} />,
+        note: star !== null ? t.web.formatVersions.followsStar({ primary: short, n: star }) : t.web.formatVersions.follows({ primary: short }),
+      };
+    }
+    return {
+      badge: <FormatBadge slug={slug} creative={creative} label={formatLabel(b.id)} state={s} versions={versions} shown={b.n} resumeFrom={cr.resumeFrom?.version ?? null}
+        labelOf={formatLabel} actions={actions} busy={busyLinks} onView={(v) => view(b.id, v)} onCompare={() => openCompare(b.id)} />,
+      note: null,
+    };
+  };
+  const board = (b: BoardModel & { n: number | null }) => (
+    <CanvasBoard key={b.id} slug={slug} creative={creative} board={b} n={b.n} tool={tool} zoom={zoom} selected={sel === b.id} rendering={isRendering(rendering, b.id)} safe={safe}
+      commentable={commentable.has(b.id)} missing={b.n === null ? latest?.n ?? null : null} {...badgeOf(b)}
+      pins={commentable.has(b.id) ? pinsOf(b.id) : []} draft={commentable.has(b.id) ? draft : null} nextNumber={pins.length + 1}
       onSelect={() => setSel(b.id)} onOpen={(el) => { if (tool === 'select') openEditor(b.id, el); }} onPlace={(x, y) => place(b.id, x, y)} onEditPin={editPin}
       onDraftText={(text) => setDraft((d) => (d ? { ...d, text } : d))} onDraftCommit={commitDraft} onDraftCancel={() => setDraft(null)}
       onDraftDelete={() => { if (draft?.index !== null && draft?.index !== undefined) removePin(draft.index); }}
-      footer={first && working && step ? (
-        <div className="ms-cv-gen">
-          <div className="ms-progress ms-indet" role="progressbar" aria-label={t.web.ui.progress}><i /></div>
-          <span className="ms-cv-gen-step">{step}</span>
-        </div>
-      ) : null}
     />
   );
 
@@ -327,11 +400,10 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
       ) : null}
       {bar?.end ? createPortal(
         <>
-          {version ? (
-            <VersionControl slug={slug} creative={creative} versions={versions} version={version} resumeFrom={cr.resumeFrom?.version ?? null} buttonRef={versionButton}
-              onPick={setPicked} onCompare={openCompare} onChanged={reload} onError={setActionError} />
+          {versions.length ? (
+            <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={actions} buttonRef={versionButton} />
           ) : null}
-          <Button variant="ink" className="ms-cv-export" disabled={!version} onClick={() => { if (version) setExporting({ open: true, version }); }}>
+          <Button variant="ink" className="ms-cv-export" disabled={!version} onClick={() => { if (version) setExporting({ open: true, snapshot: { versions, states } }); }}>
             <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
           </Button>
         </>,
@@ -344,11 +416,20 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
           <div key={channel} className="ms-cv-group">
             <div className="ms-cap ms-cv-group-head">{channel !== '' ? <ChannelMark channel={channelOf(channel)} /> : null}{channel !== '' ? channelName(channel, locale) : t.web.formatUi.other}</div>
             {items.map((b) => (
-              <button key={b.id} type="button" className={cx('ms-navitem ms-cv-fmt', sel === b.id && 'ms-on')} aria-pressed={sel === b.id}
+              <button key={b.id} type="button" className={cx('ms-navitem ms-cv-fmt', sel === b.id && 'ms-on', followsOf(b.id) && 'ms-follower')} aria-pressed={sel === b.id}
                 onClick={() => { setSel(b.id); reveal(b.id); }}>
                 <Icon name={b.preset?.kind === 'image' ? 'image' : 'video'} size={14} />
-                <span className="ms-navitem-label">{b.preset ? formatName(b.preset, locale) : b.id}</span>
-                <span className="ms-cv-fmt-side">{b.out || !n ? (b.preset ? ratioText(b.preset) : '') : '—'}</span>
+                {followsOf(b.id) ? (
+                  <span className="ms-cv-fmt-text">
+                    <span className="ms-navitem-label">{b.preset ? formatName(b.preset, locale) : b.id}</span>
+                    <span className="ms-cv-fmt-follows"><Icon name="link" size={11} />{followsOf(b.id)}</span>
+                  </span>
+                ) : (
+                  <>
+                    <span className="ms-navitem-label">{b.preset ? formatName(b.preset, locale) : b.id}</span>
+                    <span className="ms-cv-fmt-side">{formatSide(b.id, b.preset)}</span>
+                  </>
+                )}
               </button>
             ))}
           </div>
@@ -384,9 +465,10 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
           }}
         >
           {/* The world is not zoomed: each board scales its frame, and its spacing follows --cv-z (canvas.css). */}
-          <div className="ms-cv-world" style={{ '--cv-z': zoom } as CSSProperties}>
-            {tall.map((b, i) => board(b, i === 0))}
-            {rest.length ? <div className="ms-cv-stack">{rest.map((b, i) => board(b, !tall.length && i === 0))}</div> : null}
+          <div className="ms-cv-world" style={{ '--cv-z': zoom } as CSSProperties}
+            aria-busy={rendering === 'all' || rendering.size > 0 ? true : undefined}>
+            {tall.map(board)}
+            {rest.length ? <div className="ms-cv-stack">{rest.map(board)}</div> : null}
           </div>
         </div>
         {!versions.length && !working ? (
@@ -400,9 +482,10 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
           </div>
         ) : null}
         {tool === 'comment' ? <div className="ms-cv-hint" role="status">{c.commentHint}</div> : null}
-        {!canComment && version && pinSource !== null ? <div className="ms-cv-hint ms-lock" id="ms-cv-comment-lock" role="status">{c.versions.commentsOn({ n: pinSource })}</div> : null}
+        {/* A compact pill just above the tool bar, never over the boards' headers (live checks of phase 9). */}
+        {commentLock && version && pinSource !== null ? <div className="ms-cv-lockpill" id="ms-cv-comment-lock" role="status" title={c.versions.commentsOn({ n: pinSource })}>{c.versions.commentsOn({ n: pinSource })}</div> : null}
         {safe ? (
-          <div className="ms-cv-legend" role="note">
+          <div className={cx('ms-cv-legend', commentLock && version && pinSource !== null && 'ms-above-lock')} role="note">
             <b>{c.safeTitle}</b>
             <span>{zones ? c.safeBody : c.safeNone}</span>
             {zones ? <span className="ms-cv-legend-keys"><i aria-hidden="true" />{c.safeTop} · {c.safeBottom} · {c.safeSide}</span> : null}
@@ -431,8 +514,9 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
         {tab === 'chat' ? (
           <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={job} live={job ? live.events[job.id] ?? [] : []}
             pins={pins} onRemovePin={removePin} onEditPin={(i) => editPin(i + 1)} formatName={formatLabel}
-            canGenerate={versions.length === 0} onSent={({ pins: sent }) => { setStored((ps) => ps.filter((p) => !sent.includes(p.pin))); setPicked(null); reload(); }}
-            onSelectVersion={(v) => setPicked(v)} snapshots={live.snapshots}
+            canGenerate={versions.length === 0} onSent={({ pins: sent }) => { setStored((ps) => ps.filter((p) => !sent.includes(p.pin))); setViewing({}); reload(); }}
+            onSelectVersion={viewAll} snapshots={live.snapshots}
+            appliesTo={appliesTo}
             versionExtra={(n) => <UsageBadge usage={versions.find((v) => v.n === n)?.usage} billing={live.today?.billing ?? null} />}
             versionNote={(n) => <OutputWarnings outputs={versions.find((v) => v.n === n)?.outputs ?? []} formatLabel={formatLabel} />} />
         ) : null}
@@ -445,10 +529,10 @@ export function CreativeCanvas({ slug, creative, live }: CreativeCanvasProps) {
 
       {compare ? (
         <CompareDialog open={compare.open} onClose={() => setCompare((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
-          versions={versions} presets={presets} formats={comparable} initialFormat={compare.format} initial={compare.init} />
+          versions={versions} presets={presets} states={states} format={compare.format} initial={compare.init} actions={actions} />
       ) : null}
       <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
-        title={title} version={exporting?.version ?? null} presets={presets} />
+        title={title} snapshot={exporting?.snapshot ?? null} presets={presets} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} />
     </div>
   );
 }

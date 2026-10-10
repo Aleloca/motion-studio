@@ -7,6 +7,9 @@
 .ms-welcome .ms-muted { color: var(--muted); }
 .ms-welcome .ms-faint { color: var(--faint); }
 .ms-welcome-top { height: 52px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 20px; }
+/* Desktop: the bar takes the colours of the window controls overlay (--panel, apps/desktop/src/titlebar.ts) and the app
+   bar's bottom border, which the 51 px overlay leaves visible. */
+.ms-welcome-top.ms-titlebar { background: var(--panel); border-bottom: 1px solid var(--line); }
 .ms-welcome-brand { font-weight: 700; font-size: 14px; }
 .ms-welcome-lang { min-width: 0; max-width: 220px; }
 .ms-welcome-version { font-family: var(--mono); font-size: 11px; color: var(--faint); }

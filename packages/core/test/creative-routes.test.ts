@@ -191,9 +191,9 @@ describe('recoverWorkspace', { timeout: 20_000 }, () => {
     expect(await readdir(join(dir, 'assets', '.describe'))).toEqual([]);
     expect(await readdir(join(dir, 'references'))).toEqual(['.gitkeep']);
     expect(await readdir(join(dir, 'brand', 'proposals'))).toEqual(['p-20260101-000001']);
-    expect((await readFile(join(dir, '.gitignore'), 'utf8')).split('\n')).toEqual(['outputs/', '.*.part', 'assets/.describe/', '.cache/', 'creatives/*/work/tmp/', '']);
+    expect((await readFile(join(dir, '.gitignore'), 'utf8')).split('\n')).toEqual(['outputs/', '.*.part', 'assets/.describe/', '.cache/', 'creatives/*/work/tmp/', '.studio/cache/', '']);
     await recoverWorkspace(ws);
-    expect((await readFile(join(dir, '.gitignore'), 'utf8')).split('\n')).toEqual(['outputs/', '.*.part', 'assets/.describe/', '.cache/', 'creatives/*/work/tmp/', '']);
+    expect((await readFile(join(dir, '.gitignore'), 'utf8')).split('\n')).toEqual(['outputs/', '.*.part', 'assets/.describe/', '.cache/', 'creatives/*/work/tmp/', '.studio/cache/', '']);
     // Older projects also get the union merge for the usage ledger, once.
     expect(await readFile(join(dir, '.gitattributes'), 'utf8')).toBe('.studio/usage.jsonl merge=union\n');
   });
@@ -296,6 +296,59 @@ describe('creative export', { timeout: 20_000 }, () => {
     const again = await app.inject({ method: 'POST', url, payload: { destination: dest, formats: ['instagram-post-1x1'] } });
     expect((again.json().files as Array<{ to: string }>)[0]!.to).toBe(join(dest, `autumn-sourdough-launch-instagram-post-1x1-v1-2${ext}`));
     expect((await readdir(dest)).sort()).toEqual([`autumn-sourdough-launch-instagram-post-1x1-v1-2${ext}`, `autumn-sourdough-launch-instagram-post-1x1-v1${ext}`].sort());
+  });
+  it('exports per-format picks with the workspace name pattern (or the one sent)', async () => {
+    const { slug } = await createCreative();
+    await waitJobs();
+    const url = `/api/projects/acme/creatives/${slug}/export`;
+    const dest = join(base, 'picks');
+    await app.inject({ method: 'PUT', url: '/api/settings', payload: { exportNamePattern: '{channel}_{title}_v{v}' } });
+    const r = await app.inject({ method: 'POST', url, payload: { destination: dest, picks: { 'instagram-post-1x1': 1 } } });
+    expect(r.statusCode).toBe(200);
+    expect(await readdir(dest)).toEqual(['instagram_lancio_v1.mp4']);
+    const sent = await app.inject({ method: 'POST', url, payload: { destination: dest, picks: { 'web-banner-300x250': 1 }, pattern: 'x-{format}' } });
+    expect((sent.json().files as Array<{ to: string }>)[0]!.to.split('/').pop()).toMatch(/^x-web-banner-300x250\./);
+    const bad = async (payload: object) => { const x = await app.inject({ method: 'POST', url, payload: { destination: dest, ...payload } }); return [x.statusCode, x.json().code]; };
+    expect(await bad({ picks: {} })).toEqual([400, 'export-invalid-picks']);
+    const many = Object.fromEntries(Array.from({ length: 101 }, (_, i) => [`f${i}`, 1]));
+    expect(await bad({ picks: many })).toEqual([400, 'export-invalid-picks']);
+    expect(await bad({ picks: { 'instagram-post-1x1': 1 }, date: '2026-13-01' })).toEqual([400, 'export-invalid-date']);
+    for (const destination of [undefined, '', '   ', 42]) {
+      const x = await app.inject({ method: 'POST', url, payload: { destination, picks: { 'instagram-post-1x1': 1 } } });
+      expect([x.statusCode, x.json().code]).toEqual([400, 'export-invalid-destination']);
+    }
+    expect(await bad({ destination: 'relative/dir', picks: { 'instagram-post-1x1': 1 } })).toEqual([400, 'export-invalid-destination']);
+    expect(await bad({ picks: { 'instagram-post-1x1': 'v1' } })).toEqual([400, 'export-invalid-picks']);
+    expect(await bad({ picks: { 'instagram-post-1x1': 7 } })).toEqual([400, 'export-pick-no-file']);
+    expect(await bad({ picks: { 'instagram-post-1x1': 1 }, pattern: 42 })).toEqual([400, 'export-invalid-pattern']);
+    expect(await bad({ picks: { 'instagram-post-1x1': 1 }, pattern: '{nope}' })).toEqual([400, 'export-name-empty']);
+    await rm(join(base, 'ws', 'acme', 'creatives', slug, 'outputs', 'v1', (await readdir(join(base, 'ws', 'acme', 'creatives', slug, 'outputs', 'v1'))).find((f) => f.startsWith('web-banner'))!));
+    expect(await bad({ picks: { 'instagram-post-1x1': 1, 'web-banner-300x250': 1 } })).toEqual([409, 'export-file-missing']);
+    expect((await readdir(dest)).length).toBe(2);
+  });
+  it('refuses colliding names at the server, before copying', async () => {
+    const created = (await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'Lancio', brief: { ...brief, formats: ['instagram-post-1x1', 'instagram-reel-9x16'] }, generate: true } })).json();
+    await waitJobs();
+    const dest = join(base, 'collide');
+    const r = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${created.slug}/export`,
+      payload: { destination: dest, picks: { 'instagram-post-1x1': 1, 'instagram-reel-9x16': 1 }, pattern: '{title}-v{v}' } });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().code).toBe('export-name-collision');
+    expect(r.json().error).toContain('lancio-v1.mp4');
+    await expect(readdir(dest)).rejects.toThrow();
+  });
+  it('accepts the older single-version payload: every output of that version', async () => {
+    const { slug } = await createCreative();
+    await waitJobs();
+    const dest = join(base, 'old');
+    const r = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, payload: { destination: dest, version: 1 } });
+    expect(r.statusCode).toBe(200);
+    expect((await readdir(dest)).sort().map((f) => f.replace(/\.[a-z0-9]+$/, ''))).toEqual(['lancio-instagram-post-1x1-v1', 'lancio-web-banner-300x250-v1']);
+    expect((await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, payload: { destination: dest, version: 9 } })).statusCode).toBe(404);
+    // A pattern (and the previewed date) apply to the older payload too.
+    const named = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, payload: { destination: join(base, 'old2'), version: 1, pattern: '{date}_{channel}', date: '2026-01-02' } });
+    expect(named.statusCode).toBe(200);
+    expect((await readdir(join(base, 'old2'))).sort().map((f) => f.replace(/\.[a-z0-9]+$/, ''))).toEqual(['2026-01-02_instagram', '2026-01-02_web']);
   });
   it('requires the UI token', async () => {
     const guarded = await buildServer({ uiToken: 'ab'.repeat(32), sandbox: async () => ({ available: false, reason: 'test' }),

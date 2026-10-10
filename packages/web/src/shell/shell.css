@@ -125,3 +125,16 @@ input.ms-palette-input::placeholder { color: var(--faint); }
 
 /* Slots the creative page fills (barSlots.ts): its title and state after the breadcrumb, version menu and Export at the end. */
 .ms-bar-slot { display: contents; }
+
+/* Integrated desktop title bar (desktop app only: titleBar.ts adds the classes). The bar is the window's drag region and
+   a double-click on its empty area keeps the system behaviour (zoom / maximize); everything interactive in it stays
+   clickable (a drag region swallows clicks), including what the pages portal into its slots. The left padding clears the
+   macOS traffic lights (apps/desktop/src/titlebar.ts: x 18, three 14 px buttons 20 px apart, then 8 px), dropped in full
+   screen; the right one the Windows/Linux controls overlay (its width from the Window Controls Overlay geometry), dropped in
+   full screen too. The project tabs scroller is no-drag as well: inside a drag region it would never get the trackpad. */
+.ms-titlebar { -webkit-app-region: drag; user-select: none; }
+.ms-titlebar .ms-topbar-tabs, .ms-titlebar a, .ms-titlebar button, .ms-titlebar input, .ms-titlebar select, .ms-titlebar textarea, .ms-titlebar label, .ms-titlebar [tabindex], .ms-titlebar [role="button"], .ms-titlebar [contenteditable], .ms-titlebar .ms-bar-slot > *, .ms-titlebar .ms-no-drag { -webkit-app-region: no-drag; }
+.ms-titlebar.ms-tb-mac { padding-left: 80px; }
+.ms-titlebar.ms-tb-overlay { padding-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, calc(100vw - 138px)) + 14px); }
+/* Screens without a top bar (boot, Pairing; DragStrip.tsx): an empty strip as tall as the bar, only to move the window. */
+.ms-drag-strip { position: fixed; top: 0; left: 0; right: 0; height: 52px; z-index: 30; }

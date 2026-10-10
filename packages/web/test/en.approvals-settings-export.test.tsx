@@ -9,7 +9,7 @@ const api = {
   getSecrets: vi.fn(async () => [{ provider: 'openai', configured: true, source: 'keychain' }, { provider: 'pexels', configured: true, source: 'env' }]),
   setSecret: vi.fn(), deleteSecret: vi.fn(), updateSettings: vi.fn(), setLanguage: vi.fn(),
   fileUrl: (s: string, c: string, rel: string) => `/f/${s}/${c}/${rel}`,
-  exportVersion: vi.fn(async () => ({ destination: '/out', files: [{ from: 'a', to: 'b' }, { from: 'c', to: 'd' }], skipped: ['x.mov'] })),
+  exportPicks: vi.fn(async () => ({ destination: '/out', files: [{ from: 'a', to: 'b' }, { from: 'c', to: 'd' }], skipped: ['x.mov'] })),
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { ApprovalCard } = await import('../src/components/ApprovalCard.tsx');
@@ -43,10 +43,13 @@ describe('approvals, settings and export in English', () => {
     const at = '2026-10-08T10:00:00.000Z';
     const out = (format: string, file: string) => ({ format, file, width: 1080, height: 1080, durationSec: null, verified: true, preview: null });
     const version = { n: 2, commit: 'c', sessionId: 's', status: 'complete' as const, createdAt: at, request: '', outputs: [out('instagram-post-1x1', 'a.png'), out('tiktok-9x16', 'b.mp4')], problems: [], tools: [], renderCommand: null, basedOn: null };
-    en(<ExportDialog open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" version={version} presets={DEFAULT_FORMATS} />);
-    expect(screen.getByRole('dialog', { name: 'Export “Summer launch”' })).toBeTruthy();
-    expect(screen.getByText('Version 2 of each format, ready to post.')).toBeTruthy();
-    expect(screen.getByText('summer-launch-instagram-post-1x1-v2.png')).toBeTruthy();
+    const star = (n: number) => ({ version: n, manual: false, newer: null, follows: null });
+    const st = (id: string) => ({ id, history: [2], star: star(2), defaultVersion: 2, exportVersion: 2, starFileMissing: false, linkable: [], follows: null });
+    const states = { 'instagram-post-1x1': st('instagram-post-1x1'), 'tiktok-9x16': st('tiktok-9x16') };
+    en(<ExportDialog open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: [version], states }} presets={DEFAULT_FORMATS} pattern="{title}-{format}-v{v}" />);
+    expect(screen.getByRole('dialog', { name: 'Export the starred versions of “Summer launch”' })).toBeTruthy();
+    expect(screen.getByText('“Summer launch”: each format at its ★ version, ready to post.')).toBeTruthy();
+    expect(screen.getAllByText('summer-launch-instagram-post-1x1-v2.png').length).toBeGreaterThan(0);
     await userEvent.type(screen.getByLabelText('Destination folder'), '/out');
     await userEvent.click(screen.getByRole('checkbox', { name: /^Export TikTok/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Export 1 file' }));

@@ -19,6 +19,7 @@ import { References } from './screens/References.tsx';
 import { Welcome, type WelcomeProps } from './screens/Welcome.tsx';
 import { useCatalog } from './shell/catalog.ts';
 import { CommandPalette } from './shell/CommandPalette.tsx';
+import { DragStrip } from './shell/DragStrip.tsx';
 import { go, ShellContext, type ActivityTab, type Shell } from './shell/ShellContext.tsx';
 import { isMac } from './platform.ts';
 import { TopBar } from './shell/TopBars.tsx';
@@ -151,9 +152,9 @@ function AppBody({ live, language, systemLocale, onLanguage }: Props) {
     language, systemLocale, onLanguage, onRecheck: refresh, onWorkspace, onFinish: finishSetup,
   };
 
-  if (pairing) return <Pairing />;
+  if (pairing) return <><DragStrip /><Pairing /></>;
   // First load: nothing to show yet (no flash of the setup when everything is in place).
-  if (shown.name !== 'welcome' && (!checks || !ws?.settings)) return <div className="ms-boot"><Spinner size={18} /></div>;
+  if (shown.name !== 'welcome' && (!checks || !ws?.settings)) return <><DragStrip /><div className="ms-boot"><Spinner size={18} /></div></>;
   return (
     // The workspace folder: where the conversation and the brand log judge the paths of commands the core did not explain.
     <WorkspacePathContext.Provider value={ws?.path ?? null}>
@@ -237,8 +238,8 @@ function AppShell({ route, live, settings, checks, activity, setActivity, langua
       case 'projects': return <Projects live={live} />;
       case 'project': return <ProjectHost route={r} live={live} settings={settings} checks={checks} onSettings={onSettings} />;
       case 'new-creative': return <NewCreative key={r.slug} slug={r.slug} />;
-      case 'creative': return <CreativeCanvas key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} />;
-      case 'format': return <FormatView key={`${r.slug}/${r.creative}/${r.format}`} slug={r.slug} creative={r.creative} format={r.format} live={live} />;
+      case 'creative': return <CreativeCanvas key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} exportNamePattern={settings?.exportNamePattern} onSettings={onSettings} />;
+      case 'format': return <FormatView key={`${r.slug}/${r.creative}/${r.format}`} slug={r.slug} creative={r.creative} format={r.format} live={live} exportNamePattern={settings?.exportNamePattern} onSettings={onSettings} />;
       case 'settings': return settings ? (
         <AppSettings section={r.section} settings={settings} checks={checks} checking={Boolean(setup.checking)} checksRun={setup.checksRun ?? 0}
           loadError={setup.loadError ?? null} onRecheck={setup.onRecheck} language={language} systemLocale={systemLocale} onLanguage={onLanguage} onSettings={onSettings} />

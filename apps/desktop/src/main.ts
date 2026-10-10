@@ -8,7 +8,8 @@ import { absolutePathArg, attachedGone, attachedGoneAction, attachedLocale, boot
 import { menuTemplate } from './menu.ts';
 import { notificationOptions, registerAttention, sendAttentionClick, showKept } from './notify.ts';
 import { setupUpdates } from './updater.ts';
-import { externalUrlAllowed, ipcSenderTrusted, isAppUrl, windowOptions } from './window.ts';
+import { registerFullscreenQuery, registerTitleBar, sendFullscreen } from './titlebar.ts';
+import { externalUrlAllowed, ipcSenderTrusted, isAppUrl, windowOptions, type IpcSender } from './window.ts';
 
 const REPO_URL = 'https://github.com/Aleloca/motion-studio';
 const smokeArg = process.argv.find((a) => a === '--smoke-test' || a.startsWith('--smoke-test='));
@@ -153,6 +154,25 @@ async function run() {
     },
     dock: app.dock,
     invalid: () => new Error(t().desktop.invalidRequest),
+  });
+  // Integrated title bar: the page reports its resolved theme (overlay and background colours), and learns when the
+  // window enters or leaves full screen (no traffic lights there, so no room kept for them).
+  registerTitleBar(ipcMain, {
+    trusted,
+    platform: process.platform,
+    setOverlay: (o) => { if (!win.isDestroyed()) win.setTitleBarOverlay(o); },
+    setBackground: (c) => { if (!win.isDestroyed()) win.setBackgroundColor(c); },
+    invalid: () => new Error(t().desktop.invalidRequest),
+  });
+  const fullscreen = () => { if (!win.isDestroyed()) sendFullscreen(win.webContents, win.isFullScreen(), (url) => isAppUrl(url, origin)); };
+  win.on('enter-full-screen', fullscreen);
+  win.on('leave-full-screen', fullscreen);
+  // A (re)loaded page starts from the current state (the preload remembers it until the page subscribes).
+  win.webContents.on('dom-ready', fullscreen);
+  // ...and a page that renders before that message can ask synchronously (its first frame).
+  registerFullscreenQuery(ipcMain as unknown as Parameters<typeof registerFullscreenQuery>[0], {
+    trusted: (e) => ipcSenderTrusted(e as IpcSender, win.webContents, origin),
+    isFullScreen: () => !win.isDestroyed() && win.isFullScreen(),
   });
 
   const allowed = (permission: string, requestingUrl: string) => permission === 'notifications' && isAppUrl(requestingUrl, origin);

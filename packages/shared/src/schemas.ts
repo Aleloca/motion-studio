@@ -36,6 +36,8 @@ export const workspaceSettingsSchema = z.object({
   confirmPaidProviders: z.boolean().default(true),
   /** Allow Bash in a sandboxed job without asking; absent in an old settings.json means on. */
   autoApproveSandboxed: z.boolean().default(true),
+  /** File name pattern of exports; tokens `{title} {channel} {format} {ratio} {v} {date}`. Absent in an old settings.json: the default. */
+  exportNamePattern: z.string().min(1).max(200).default('{title}-{format}-v{v}'),
 });
 export type WorkspaceSettings = z.infer<typeof workspaceSettingsSchema>;
 

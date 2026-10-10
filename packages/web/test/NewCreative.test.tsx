@@ -64,7 +64,7 @@ describe('NewCreative · generate', () => {
     await waitFor(() => expect(createCreative).toHaveBeenCalledOnce());
     expect(createCreative.mock.calls[0]).toEqual(['acme', {
       title: 'Lancio della nuova app',
-      brief: { goal: 'Lancio della nuova app. Mostra che prenotare è immediato', message: '', formats: ['instagram-post-1x1', 'tiktok-9x16'], durationSec: 6, assets: [], notes: '' },
+      brief: { goal: 'Lancio della nuova app. Mostra che prenotare è immediato', message: '', formats: ['instagram-post-1x1', 'tiktok-9x16'], durationSec: 6, assets: [], notes: '', links: {} },
       generate: true,
       linkedCodebases: [],
     }]);
@@ -232,18 +232,48 @@ describe('NewCreative · format board', () => {
     expect(screen.queryByRole('group', { name: 'Instagram' })).toBeNull();
   });
 
-  it('marks the 9:16 videos after the first with the link note, indication only', async () => {
+  it('the link icon of a linkable tile is a real toggle, on by default, and is sent as brief.links', async () => {
     render(<NewCreative slug="acme" />);
     await board();
+    await userEvent.type(brief(), 'Lancio');
     const reel = within(screen.getByRole('group', { name: 'Instagram' })).getByRole('button', { name: /Story\/Reel 9:16/ });
-    const tiktok = within(screen.getByRole('group', { name: 'TikTok' })).getByRole('button', { name: /Video 9:16/ });
     await userEvent.click(reel);
-    await userEvent.click(tiktok);
-    expect(reel.querySelector('.ms-nc-link')).toBeNull();
-    const link = tiktok.querySelector('.ms-nc-link')!;
-    expect(link.getAttribute('title')).toMatch(/collegamento arriva/);
-    // Not a control: still one render per format.
-    expect(screen.getByText(/^2 formati · 2 render video/)).toBeTruthy();
+    await userEvent.click(within(screen.getByRole('group', { name: 'TikTok' })).getByRole('button', { name: /^Video 9:16/ }));
+    // The first 9:16 is the primary: no toggle on it.
+    expect(screen.queryByRole('button', { name: /^Collega Instagram · Story\/Reel/ })).toBeNull();
+    const toggle = screen.getByRole('button', { name: 'Collega TikTok · Video 9:16 a Instagram · Story/Reel 9:16' });
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    expect(toggle.getAttribute('title')).toMatch(/usa lo stesso file di Instagram · Story\/Reel 9:16/);
+    await userEvent.click(screen.getByRole('button', { name: 'Genera' }));
+    await waitFor(() => expect(createCreative).toHaveBeenCalledOnce());
+    expect((createCreative.mock.calls[0]![1] as { brief: { links: Record<string, string> } }).brief.links).toEqual({ 'tiktok-9x16': 'instagram-reel-9x16' });
+  });
+
+  it('switching the link off sends no link (a dedicated version)', async () => {
+    render(<NewCreative slug="acme" />);
+    await board();
+    await userEvent.type(brief(), 'Lancio');
+    await userEvent.click(within(screen.getByRole('group', { name: 'Instagram' })).getByRole('button', { name: /Story\/Reel 9:16/ }));
+    await userEvent.click(within(screen.getByRole('group', { name: 'TikTok' })).getByRole('button', { name: /^Video 9:16/ }));
+    const toggle = screen.getByRole('button', { name: 'Collega TikTok · Video 9:16 a Instagram · Story/Reel 9:16' });
+    await userEvent.click(toggle);
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    // The tile itself stays selected.
+    expect(within(screen.getByRole('group', { name: 'TikTok' })).getByRole('button', { name: /^Video 9:16/ }).getAttribute('aria-pressed')).toBe('true');
+    await userEvent.click(screen.getByRole('button', { name: 'Genera' }));
+    await waitFor(() => expect(createCreative).toHaveBeenCalledOnce());
+    expect((createCreative.mock.calls[0]![1] as { brief: { links: Record<string, string> } }).brief.links).toEqual({});
+  });
+
+  it('a tile that cannot share the file says why', async () => {
+    render(<NewCreative slug="acme" />);
+    await board();
+    await userEvent.click(within(screen.getByRole('group', { name: 'Instagram' })).getByRole('button', { name: /Story\/Reel 9:16/ }));
+    await userEvent.type(screen.getByLabelText('Cerca formati'), 'telefono');
+    await userEvent.click(within(screen.getByRole('group', { name: 'Play Store' })).getByRole('button', { name: /Screenshot telefono 9:16/ }));
+    const why = screen.getByRole('img', { name: /^Non può usare il file di Instagram · Story\/Reel 9:16: uno è un video/ });
+    expect(why.getAttribute('title')).toBe(why.getAttribute('aria-label'));
+    expect(screen.queryByRole('button', { name: /^Collega Play Store/ })).toBeNull();
   });
 
   it('turns the video length off without video formats', async () => {

@@ -45,6 +45,9 @@ export function claudeCommandFromEnv(): string[] {
 
 const STDERR_TAIL = 20;
 
+/** Windows: the command that force-kills `pid` and all its descendants. */
+export const treeKillCommand = (pid: number): [string, string[]] => ['taskkill', ['/PID', String(pid), '/T', '/F']];
+
 export class ClaudeCodeRunner implements AgentRunner {
   private readonly killGraceMs: number;
   private readonly drainMs: number;
@@ -158,6 +161,14 @@ export class ClaudeCodeRunner implements AgentRunner {
         // Unconditional: descendants can ignore SIGTERM even when the leader is gone.
         setTimeout(() => signal('SIGKILL'), this.killGraceMs).unref();
         if (exited) finish({ abandonPipes: true });
+      },
+      // POSIX: the whole group, also after the leader exited. Windows has no groups: a tree kill reaches the descendants
+      // only while the leader is alive (after it exits they are orphaned and out of reach; documented limit).
+      killGroup: () => {
+        if (posix) return signal('SIGKILL');
+        if (!child.pid || exited) return;
+        const [cmd, args] = treeKillCommand(child.pid);
+        try { spawn(cmd, args, { stdio: 'ignore', windowsHide: true }).on('error', () => {}); } catch { /* best effort */ }
       },
     };
   }

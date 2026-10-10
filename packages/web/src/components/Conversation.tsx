@@ -4,7 +4,9 @@ import { api, ApiError } from '../api.ts';
 import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
 import { enter, isSubmitChord } from '../motion/index.ts';
 import { isMac } from '../platform.ts';
-import { Button, Empty, Icon, Markdown, Textarea, Typing, cx, type IconName } from '../ui/index.ts';
+import { Button, Chip, Empty, Icon, Markdown, Textarea, Typing, cx, type IconName } from '../ui/index.ts';
+import { defaultTargets } from '../screens/versionModel.ts';
+import { errorCode, versionErrorText } from '../screens/versionErrors.ts';
 import { message } from '../errors.ts';
 import { ApprovalCard } from './ApprovalCard.tsx';
 import { explanationView, RiskChips } from './RiskChips.tsx';
@@ -58,6 +60,17 @@ export interface ConversationProps {
   versionNote?(n: number): ReactNode;
   /** Socket snapshots received (EventsState.snapshots): a new one is the core's whole state, so stop waiting. */
   snapshots?: number;
+  /** The composer's "Applies to" (spec §2.5): absent when there is nothing to choose (one primary, no version yet). */
+  appliesTo?: AppliesTo;
+}
+
+/** What a change can apply to: the primary formats (with their followers' labels) and how a format maps to its primary. */
+export interface AppliesTo {
+  primaries: Array<{ id: string; label: string; followers: string[] }>;
+  /** The primary a format follows, or null. */
+  followerOf(id: string): string | null;
+  /** The default when there are no comments (null: "All formats"); e.g. the format view's own format. */
+  fallback?: string[] | null;
 }
 
 type Item =
@@ -69,7 +82,7 @@ type Item =
   | { key: string; kind: 'details'; jobId: string; entries: DetailEntry[]; open: boolean }
   | { key: string; kind: 'autoline'; jobId: string; log: CommandLog }
   | { key: string; kind: 'version'; at: string; n: number; complete: boolean }
-  | { key: string; kind: 'system'; at: string; error: boolean; text: string }
+  | { key: string; kind: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string }
   | { key: string; kind: 'approval'; shown: ShownApproval }
   | { key: string; kind: 'typing' }
   | { key: string; kind: 'retried'; at: string };
@@ -142,7 +155,7 @@ function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], r
  * only in "Activity details", the job's approvals in the flow, typing dots while the agent works (T9), and the
  * composer with the pending comment chips and ⌘↵.
  */
-export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, onSelectVersion, versionExtra, versionNote, snapshots }: ConversationProps) {
+export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, onSelectVersion, versionExtra, versionNote, snapshots, appliesTo }: ConversationProps) {
   const t = useT();
   const c = t.web.chat;
   const working = active(job);
@@ -215,7 +228,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
         out.push({ key, kind: 'version', at: e.at, n: e.n, complete: e.status === 'complete' });
       } else {
         if (lastUser && e.level === 'error') lastUser.failed = true;
-        out.push({ key, kind: 'system', at: e.at, error: e.level === 'error', text: e.text });
+        out.push({ key, kind: 'system', at: e.at, level: e.level, text: e.text });
       }
     });
     // A job with nothing persisted yet (only live events) comes last.
@@ -270,7 +283,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
           </Row>
         ))}
       </ol>
-      <Composer slug={slug} creative={creative} job={working ? job : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} onEditPin={onEditPin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} />
+      <Composer slug={slug} creative={creative} job={working ? job : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} onEditPin={onEditPin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} appliesTo={appliesTo} />
     </div>
   );
 }
@@ -384,9 +397,10 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
         </div>
       );
     case 'system':
-      return item.error
-        ? <p role="alert" className="ms-convo-system ms-error">{item.text}</p>
-        : <p className="ms-convo-system">{item.text}</p>;
+      if (item.level === 'error') return <p role="alert" className="ms-convo-system ms-error">{item.text}</p>;
+      // Something to know that did not fail the turn (an unlinked follower, earlier outputs that changed): set apart.
+      if (item.level === 'warning') return <p className="ms-convo-system ms-warning"><Icon name="warn" size={13} /><span>{item.text}</span></p>;
+      return <p className="ms-convo-system">{item.text}</p>;
     case 'approval':
       return (
         <div className="ms-convo-approval">
@@ -492,11 +506,15 @@ export function CommandRowView({ row }: { row: CommandRow }) {
   );
 }
 
+/** Coded refusals of a turn that have their own message (versionErrorText); any other keeps the generic handling. */
+const SEND_CODES = new Set(['formats-not-in-brief', 'job-running']);
+
 /** Longest wait for the job a send started before the composer unlocks anyway. */
 export const AWAIT_JOB_MS = 10_000;
 
-function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemovePin, onEditPin, formatName, canGenerate, onSent }: {
+function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemovePin, onEditPin, formatName, canGenerate, onSent, appliesTo }: {
   slug: string; creative: string; job: JobSummary | undefined; latestJobId: string | undefined; snapshots: number | undefined; pins: Pin[]; onRemovePin?(i: number): void; onEditPin?(i: number): void; formatName?(id: string): string; canGenerate?: boolean; onSent?(sent: { pins: Pin[] }): void;
+  appliesTo?: AppliesTo;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -530,7 +548,29 @@ function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemoveP
   const busy = Boolean(job) || sending || awaiting !== null;
   const canSend = !busy && (text.trim().length > 0 || pins.length > 0);
 
-  const send = async (body: { text?: string; pins?: Pin[] }) => {
+  // "Applies to": the user's choice (null: All formats) or, until they choose, the comments' formats (else the fallback).
+  const [choice, setChoice] = useState<string[] | null | undefined>(undefined);
+  const primaryIds = appliesTo?.primaries.map((p) => p.id) ?? [];
+  const primaryOf = (id: string) => appliesTo?.followerOf(id) ?? id;
+  const fromPins = appliesTo ? (pins.length ? defaultTargets(pins.map((p) => p.format), primaryOf, primaryIds) : appliesTo.fallback?.filter((id) => primaryIds.includes(id)) ?? null) : null;
+  // A chosen format that is no longer a primary of the brief (removed, or now linked) is dropped; nothing left: the default.
+  const kept = Array.isArray(choice) ? choice.filter((id) => primaryIds.includes(id)) : choice;
+  const targets = appliesTo ? (kept === undefined || (Array.isArray(kept) && kept.length === 0) ? (fromPins?.length ? fromPins : null) : kept) : null;
+  const primaryKey = primaryIds.join(',');
+  useEffect(() => {
+    setChoice((ch) => {
+      if (!Array.isArray(ch)) return ch;
+      const next = ch.filter((id) => primaryKey.split(',').includes(id));
+      return next.length === ch.length ? ch : next.length ? next : undefined;
+    });
+  }, [primaryKey]);
+  const toggleTarget = (id: string) => {
+    const now = targets ?? [];
+    const next = now.includes(id) ? now.filter((x) => x !== id) : primaryIds.filter((x) => x === id || now.includes(x));
+    setChoice(next.length === 0 || next.length === primaryIds.length ? null : next);
+  };
+
+  const send = async (body: { text?: string; pins?: Pin[]; formats?: string[] }) => {
     if (busy || inFlight.current) return;
     inFlight.current = true;
     setError(null); setSending(true);
@@ -539,14 +579,16 @@ function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemoveP
       if (started && typeof started.id === 'string' && started.id !== latestJobId) setAwaiting(started.id);
       else inFlight.current = false;
       setText('');
+      setChoice(undefined);
       onSent?.({ pins: body.pins ?? [] });
     } catch (e) {
       // The text stays in the box: explain and say what to do; a 409 means a turn is already running.
-      setError(e instanceof ApiError && e.status === 409 ? c.sendBusy : c.sendFailed({ detail: message(e) }));
+      // A coded refusal (e.g. `formats-not-in-brief`) has its own clear message; a 409 means a turn is already running.
+      setError(SEND_CODES.has(errorCode(e) ?? '') ? versionErrorText(e, t, { label: '' }) : e instanceof ApiError && e.status === 409 ? c.sendBusy : c.sendFailed({ detail: message(e) }));
       inFlight.current = false;
     } finally { setSending(false); }
   };
-  const submit = () => { if (canSend) void send({ text: text.trim(), pins }); };
+  const submit = () => { if (canSend) void send({ text: text.trim(), pins, ...(targets ? { formats: targets } : {}) }); };
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     // The app-wide submit chord: ⌘↵ on macOS, Ctrl+↵ elsewhere (a held key does not send twice).
     if (isSubmitChord(e.nativeEvent) && !e.repeat) { e.preventDefault(); submit(); }
@@ -571,6 +613,23 @@ function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemoveP
             ))}
           </div>
         )}
+        {appliesTo ? (
+          <div className="ms-composer-applies" role="group" aria-label={c.appliesTo} title={c.appliesHint}>
+            <span className="ms-composer-applies-label" aria-hidden="true">{c.appliesTo}</span>
+            <Chip on={targets === null} onClick={() => setChoice(null)}>{c.appliesAll}</Chip>
+            {appliesTo.primaries.map((p) => (
+              <span key={p.id} className="ms-composer-applies-group">
+                <Chip on={targets?.includes(p.id) ?? false} onClick={() => toggleTarget(p.id)}>{p.label}</Chip>
+                {p.followers.map((f) => (
+                  <Chip key={f} disabled onClick={() => {}} icon="link" title={c.followsBoth({ follower: f, primary: p.label })}>{f}</Chip>
+                ))}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {appliesTo && targets ? appliesTo.primaries.filter((p) => targets.includes(p.id)).flatMap((p) => p.followers.map((f) => (
+          <p key={`${p.id}:${f}`} className="ms-composer-follows"><Icon name="link" size={11} />{c.followsBoth({ follower: f, primary: p.label })}</p>
+        ))) : null}
         <label htmlFor={id} className="ms-composer-label">{t.web.conversation.requestChange}</label>
         <Textarea id={id} rows={2} maxLength={10_000} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={onKeyDown}
           placeholder={job ? c.busyPlaceholder : c.placeholder} aria-keyshortcuts={isMac() ? 'Meta+Enter' : 'Control+Enter'} />

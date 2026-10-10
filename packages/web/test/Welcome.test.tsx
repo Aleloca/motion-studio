@@ -16,7 +16,7 @@ vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { Welcome, normalizeSite } = await import('../src/screens/Welcome.tsx');
 const { Toasts, toast } = await import('../src/ui/index.ts');
 
-const settings = { schemaVersion: 1 as const, maxConcurrentJobs: 2, expertMode: false, theme: 'system' as const, model: null, sandboxMode: 'auto' as const, extraAllowedDomains: [] as string[], confirmPaidProviders: true, autoApproveSandboxed: true };
+const settings = { schemaVersion: 1 as const, maxConcurrentJobs: 2, expertMode: false, theme: 'system' as const, model: null, sandboxMode: 'auto' as const, extraAllowedDomains: [] as string[], confirmPaidProviders: true, autoApproveSandboxed: true, exportNamePattern: '{title}-{format}-v{v}' };
 const okChecks: DoctorCheck[] = [
   { id: 'claude', label: 'Claude Code', ok: true, required: true, version: '2.1.293', message: 'Installed' },
   { id: 'git', label: 'Git', ok: true, required: true, version: '2.47.1', message: 'Installed' },
@@ -319,5 +319,18 @@ describe('Welcome · header (W1, W2)', () => {
     expect(list.textContent).toContain('System (English)');
     await userEvent.click(screen.getByRole('option', { name: 'Italiano' }));
     await waitFor(() => expect(onLanguage).toHaveBeenCalledWith({ locale: 'it', setting: 'it', systemLocale: 'en' }));
+  });
+});
+
+describe('Welcome · integrated desktop title bar', () => {
+  it('its bar is a drag region with room for the traffic lights on macOS, unchanged in the browser', () => {
+    const view = setup({ onLanguage: vi.fn() });
+    expect(document.querySelector('.ms-welcome-top')!.className).toBe('ms-welcome-top');
+    view.view.unmount();
+    (window as unknown as { motionStudio: unknown }).motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: async () => null, revealPath: async () => {} };
+    setup({ onLanguage: vi.fn() });
+    const top = document.querySelector('.ms-welcome-top')!;
+    expect(top.classList).toContain('ms-titlebar');
+    expect(top.classList).toContain('ms-tb-mac');
   });
 });
