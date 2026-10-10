@@ -21,6 +21,13 @@ export const HASH_RETRIES = 2;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+/** A wait for `withHashRetry` that an abort (the page or the dialog going away) cuts short, rejecting with its reason. */
+export const abortableWait = (signal: AbortSignal) => (ms: number) => new Promise<void>((resolve, reject) => {
+  if (signal.aborted) { reject(signal.reason); return; }
+  const id = setTimeout(resolve, ms);
+  signal.addEventListener('abort', () => { clearTimeout(id); reject(signal.reason); }, { once: true });
+});
+
 /**
  * Runs `fn`, retrying it after the server's `Retry-After` (at most HASH_RETRIES times) while it answers `hashes-pending`
  * (the core is still hashing old versions in the background). The last error is thrown when it never succeeds.
@@ -77,6 +84,7 @@ export function exportErrorText(e: unknown, t: T): string {
   // The server's own sentence (in the user's language) names the files or names involved: kept, with the hint.
   const detail = message(e);
   switch (errorCode(e)) {
+    case 'hashes-pending': return t.web.formatVersions.errors.hashesPending;
     case 'export-invalid-picks': return x.invalidPicks;
     case 'export-pick-follower': return x.pickFollower;
     case 'export-pick-no-file': return x.pickNoFile({ detail });

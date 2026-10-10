@@ -13,7 +13,7 @@ import { formatTokens, TokenCount } from '../shell/Tokens.tsx';
 import { Button, Icon, Pill, Popover, cx, toast } from '../ui/index.ts';
 import { outputMedia } from './canvasModel.ts';
 import { entryAt, type FormatState } from './versionModel.ts';
-import { errorCode, versionErrorText, withHashRetry, type VersionErrorContext } from './versionErrors.ts';
+import { abortableWait, errorCode, versionErrorText, withHashRetry, type VersionErrorContext } from './versionErrors.ts';
 import { message } from './common.tsx';
 
 const sameDay = (iso: string) => new Date(iso).toDateString() === new Date().toDateString();
@@ -59,11 +59,6 @@ export function useVersionActions({ slug, creative, states, labelOf, resumeFrom,
     life.current = c;
     return () => c.abort();
   }, []);
-  const waitFor = (signal: AbortSignal) => (ms: number) => new Promise<void>((resolve, reject) => {
-    if (signal.aborted) { reject(signal.reason); return; }
-    const id = setTimeout(resolve, ms);
-    signal.addEventListener('abort', () => { clearTimeout(id); reject(signal.reason); }, { once: true });
-  });
   // Formats whose ★ change is in flight: a ref for the synchronous guard (a double click), state to re-render.
   const inFlight = useRef(new Set<string>());
   const [, setPendingTick] = useState(0);
@@ -78,7 +73,7 @@ export function useVersionActions({ slug, creative, states, labelOf, resumeFrom,
     }
     onError(null);
     const signal = life.current.signal;
-    Promise.resolve().then(() => withHashRetry(call, waitFor(signal))).then(() => {
+    Promise.resolve().then(() => withHashRetry(call, abortableWait(signal))).then(() => {
       if (signal.aborted) return;
       done?.();
       onChanged();
@@ -90,8 +85,12 @@ export function useVersionActions({ slug, creative, states, labelOf, resumeFrom,
   };
   const restore = (n: number, done: () => void) => {
     onError(null);
-    Promise.resolve().then(() => api.restoreVersion(slug, creative, n)).then(() => { onChanged(); done(); })
-      .catch((e: unknown) => onError(v.actionFailed({ detail: message(e) })));
+    // Like `run`: nothing fires once the page is gone.
+    const signal = life.current.signal;
+    Promise.resolve().then(() => api.restoreVersion(slug, creative, n)).then(() => {
+      if (signal.aborted) return;
+      onChanged(); done();
+    }).catch((e: unknown) => { if (!signal.aborted) onError(v.actionFailed({ detail: message(e) })); });
   };
   return {
     star: (format, n, opts) => {

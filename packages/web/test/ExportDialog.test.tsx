@@ -31,9 +31,9 @@ const states = (over: Record<string, Partial<FormatState>> = {}) => ({
 });
 const onSettings = vi.fn();
 const DAY = expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/);
-const open = (s = states(), pattern = '{title}-{format}-v{v}') => render(
+const open = (s = states(), pattern = '{title}-{format}-v{v}', presets = DEFAULT_FORMATS) => render(
   <I18nProvider locale="en">
-    <ExportDialog open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions, states: s }} presets={DEFAULT_FORMATS}
+    <ExportDialog open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions, states: s }} presets={presets}
       pattern={pattern} onSettings={onSettings} />
   </I18nProvider>,
 );
@@ -126,6 +126,32 @@ describe('ExportDialog · the starred versions', () => {
     await waitFor(() => expect(api.exportPicks).toHaveBeenCalledWith('acme', 'c1', { destination: '/out', picks: { [REEL]: 5, [POST]: 7 }, follow: { [TIKTOK]: 7 }, pattern: '{title}-{format}-v{v}', date: DAY }));
   });
 
+  it('retries an export refused while old versions are hashed (hashes-pending), then succeeds (M9)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      api.exportPicks.mockRejectedValueOnce(Object.assign(new ApiError(503, 'Still computing', 'hashes-pending'), { retryAfterSec: 1 }));
+      open();
+      await userEvent.click(screen.getByRole('button', { name: 'Export 3 files' }));
+      await waitFor(() => expect(api.exportPicks).toHaveBeenCalledTimes(1));
+      await vi.advanceTimersByTimeAsync(1100);
+      await waitFor(() => expect(api.exportPicks).toHaveBeenCalledTimes(2));
+      expect(await screen.findByText('1 file exported')).toBeTruthy();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('stops retrying when the dialog closes (M9)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      api.exportPicks.mockRejectedValue(Object.assign(new ApiError(503, 'Still computing', 'hashes-pending'), { retryAfterSec: 1 }));
+      const view = open();
+      await userEvent.click(screen.getByRole('button', { name: 'Export 3 files' }));
+      await waitFor(() => expect(api.exportPicks).toHaveBeenCalledTimes(1));
+      view.unmount();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(api.exportPicks).toHaveBeenCalledTimes(1);
+    } finally { api.exportPicks.mockReset(); api.exportPicks.mockImplementation(async (_s, _c, body) => ({ destination: body.destination, files: [{ from: 'a', to: 'b' }], skipped: [] })); vi.useRealTimers(); }
+  });
+
   it('shows a mapped message for a coded refusal', async () => {
     api.exportPicks.mockRejectedValueOnce(new ApiError(409, 'These files are missing or cannot be read safely, nothing was exported: TikTok · Video 9:16 v5', 'export-file-missing'));
     open();
@@ -168,6 +194,17 @@ describe('ExportDialog · name pattern', () => {
     await setPattern('!!!');
     expect(screen.getByRole('alert').textContent).toBe('This pattern gives an empty file name');
     expect((screen.getByRole('button', { name: 'Export 3 files' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Save as default' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('an empty name on a row not chosen blocks only “Save as default”, not the export (M4)', async () => {
+    // The Reel (row 0) has a channel that slugs to nothing: `{channel}` names it empty.
+    open(states(), '{title}-{format}-v{v}', DEFAULT_FORMATS.map((p) => (p.id === REEL ? { ...p, channel: '***' } : p)));
+    await setPattern('{channel}');
+    expect((screen.getByRole('button', { name: 'Export 3 files' }) as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.click(screen.getByRole('checkbox', { name: /^Export .*Story/ }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Export 2 files' }) as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole('button', { name: 'Save as default' }) as HTMLButtonElement).disabled).toBe(true);
   });
 

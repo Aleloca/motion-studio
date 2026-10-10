@@ -9,7 +9,7 @@ import { CreativeStore } from '../creatives/creative-store.ts';
 import { exportPicks, exportVersion } from '../creatives/export.ts';
 import { formatSummaries } from '../creatives/format-summary.ts';
 import { withLazyHashes } from '../creatives/output-hashes.ts';
-import { creativeJobKey, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
+import { creativeJobKey, PICK_RETRY_AFTER_SEC, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
 import { FormatCatalog } from '../formats/format-catalog.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { completeGitignore, sweepProject } from '../project-maintenance.ts';
@@ -269,7 +269,10 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       return exportVersion({ ...common, version });
     }
     // The same hashed versions as the creative GET, so a follower's ★ here is the one the dialog showed.
-    const { versions } = await withLazyHashes({ projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir, versions: await ref.store.readVersions(ref.creativeSlug) });
+    const { versions, complete } = await withLazyHashes({ projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir, versions: await ref.store.readVersions(ref.creativeSlug) });
+    // A follower's version is decided on hashes: never on partial ones (a refusal now would only mean "not hashed yet").
+    // The hashing goes on; the client retries after Retry-After, as for a ★ pick.
+    if (!complete && body.follow !== undefined) throw new CodedError(503, t().errors.hashesPending, 'hashes-pending', PICK_RETRY_AFTER_SEC);
     return exportPicks({ ...common, versions, picks: (body.picks ?? {}) as Record<string, number>, follow: body.follow as string[] | Record<string, number> | undefined,
       links: effectiveLinks(creative.brief.links, creative.brief.formats), storedPicks: creative.exportPicks });
   });

@@ -309,6 +309,24 @@ describe('format routes', { timeout: 20_000 }, () => {
     expect(of(s, TIKTOK)).toMatchObject({ exportVersion: 5, starFileMissing: false });
   });
 
+  it('an export with followers answers hashes-pending (503, Retry-After) while hashes are missing, then succeeds (M9)', async () => {
+    const store = await seed();
+    await mkdir(store.outputsDir(slug, 4), { recursive: true });
+    await writeFile(join(store.outputsDir(slug, 4), 'reel.mp4'), 'reel-b');
+    await writeFile(join(store.outputsDir(slug, 4), 'tiktok.mp4'), 'reel-b');
+    await store.appendVersion(slug, version(4, [output(REEL, 'reel.mp4', 20), output(TIKTOK, 'tiktok.mp4', 20)]));
+    const h = fakeHasher(true);
+    const exp = () => app.inject({ method: 'POST', url: `${url}/export`, payload: { destination: join(base, 'out'), picks: {}, follow: [TIKTOK] } });
+    const res = await exp();
+    expect([res.statusCode, res.headers['retry-after'], res.json().code]).toEqual([503, String(PICK_RETRY_AFTER_SEC), 'hashes-pending']);
+    hashTesting.setHasher(null);
+    h.release();
+    let ok = await exp();
+    for (let i = 0; i < 200 && ok.statusCode === 503; i++) { await new Promise((r) => setTimeout(r, 20)); ok = await exp(); }
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().files.map((f: { to: string }) => f.to.split('/').pop())).toEqual([expect.stringContaining('tiktok')]);
+  });
+
   it('refuses a pick on a hard-linked file', async () => {
     await seed();
     const file = join(projectDir, 'creatives', slug, 'outputs', 'v1', 'reel.mp4');

@@ -19,7 +19,7 @@ import { boardLabel } from './CanvasBoard.tsx';
 import { outputMedia } from './canvasModel.ts';
 import { channelOf } from './creativeState.ts';
 import { message } from './common.tsx';
-import { exportErrorText } from './versionErrors.ts';
+import { abortableWait, exportErrorText, withHashRetry } from './versionErrors.ts';
 import type { FormatState } from './versionModel.ts';
 
 /** The last destination folder, kept in this browser only. */
@@ -114,6 +114,14 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
   const previewId = useId();
   useEffect(() => { onBusy(running); }, [running, onBusy]);
   useEffect(() => () => onBusy(false), [onBusy]);
+  // Closing the dialog cancels a retry's wait (an export refused while old versions are hashed) and silences its result.
+  // One controller per mount, made by the effect (StrictMode mounts twice).
+  const life = useRef(new AbortController());
+  useEffect(() => {
+    const c = new AbortController();
+    life.current = c;
+    return () => c.abort();
+  }, []);
   const reveal = isMac() ? x.showInFinder : x.showInFolder;
 
   // The final names: the pattern rendered per row with the same shared code as the core, extension added.
@@ -122,12 +130,14 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
     const rendered = r.output ? renderName(pattern, vars(r)) : null;
     return { row: r, name: rendered?.ok && r.output ? `${rendered.name}${exportExtension(r.output.file)}` : null };
   });
-  // Unknown variables are the same on every row: they are left out of the names and flagged here.
-  const first = rows[0] ? renderName(pattern, vars(rows[0])) : null;
-  const unknown = first?.unknown ?? [];
   const chosen = named.filter((c) => c.row.blocked === null && on[c.row.id]);
+  // Unknown variables are the same on every row: they are left out of the names and flagged here.
+  const firstRow = chosen[0]?.row ?? rows[0];
+  const unknown = firstRow ? renderName(pattern, vars(firstRow)).unknown : [];
   const tooLong = pattern.length > PATTERN_MAX;
-  const empty = !pattern.trim() || first?.ok === false || chosen.some((c) => c.name === null);
+  // Export needs a name for each chosen row only; a default pattern must name every row (blocked or not chosen too).
+  const empty = !pattern.trim() || chosen.some((c) => c.name === null);
+  const anyRowEmpty = rows.some((r) => !renderName(pattern, vars(r)).ok);
   const collisions = exportNameCollisions(chosen.flatMap((c) => (c.name ? [c.name] : [])));
   const nameProblem = tooLong ? x.errors.invalidPattern : empty ? x.emptyName : collisions.length ? x.collision({ list: collisions.join(', ') }) : null;
   const preview = (chosen[0] ?? named.find((c) => c.name !== null))?.name ?? null;
@@ -168,11 +178,17 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
     const picks: Record<string, number> = {};
     const follow: Record<string, number> = {};
     for (const c of chosen) { if (c.row.follows !== null) follow[c.row.id] = c.row.fileN ?? c.row.n; else picks[c.row.id] = c.row.n; }
+    const signal = life.current.signal;
     try {
-      const r = await api.exportPicks(slug, creative, { destination: dest, picks, ...(Object.keys(follow).length ? { follow } : {}), pattern, date });
+      // A follower's version is decided on hashes: while old versions are still hashed the core answers hashes-pending,
+      // retried after its Retry-After (bounded, like a ★ pick).
+      const r = await withHashRetry(() => api.exportPicks(slug, creative, { destination: dest, picks, ...(Object.keys(follow).length ? { follow } : {}), pattern, date }),
+        abortableWait(signal));
+      if (signal.aborted) return;
       writeFolder(dest);
       setPhase({ kind: 'done', destination: r.destination, count: r.files.length, skipped: r.skipped ?? [] });
     } catch (e) {
+      if (signal.aborted) return;
       setError(exportErrorText(e, t));
       setPhase({ kind: 'idle' });
     }
@@ -263,7 +279,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
             <Input ref={field} aria-label={x.pattern} aria-describedby={previewId} aria-invalid={nameProblem !== null || undefined} value={pattern}
               disabled={running} spellCheck={false} autoComplete="off" className="ms-exp-pattern-field"
               onChange={(e) => { setPattern(e.target.value); setSave((s) => (s.kind === 'saving' ? s : { kind: 'idle' })); }} />
-            <Button variant="outline" disabled={running || save.kind === 'saving' || pattern === savedPattern || tooLong || !pattern.trim() || first?.ok === false}
+            <Button variant="outline" disabled={running || save.kind === 'saving' || pattern === savedPattern || tooLong || !pattern.trim() || anyRowEmpty}
               loading={save.kind === 'saving'} onClick={() => void saveDefault()}>{x.saveDefault}</Button>
           </div>
           <div className="ms-exp-tokens" role="group" aria-labelledby={namesId}>
