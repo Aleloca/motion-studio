@@ -1,0 +1,166 @@
+import type { Composition } from '@motion-studio/shared';
+import { JSDOM } from 'jsdom';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { installVirtualClock, type Natives } from '../src/clock.ts';
+import { twoFrames } from '../src/frames.ts';
+import { decodeLayerConfig } from '../src/layer-protocol.ts';
+import { mount } from '../src/mount.ts';
+import type { RuntimeError } from '../src/protocol.ts';
+
+/** jsdom has no WAAPI, FontFace or media loading: minimal stand-ins record what the mount asks for. */
+interface FakeAnimation { keyframes: unknown; options: KeyframeAnimationOptions; currentTime: number | null; pause(): void }
+const created: Array<{ el: Element } & FakeAnimation> = [];
+const BASE = 'http://127.0.0.1:9999/tok/v1/compositions/story/';
+const natives: Natives = {
+  setTimeout: (fn, ms) => setTimeout(fn, ms) as unknown as number,
+  clearTimeout: (id) => clearTimeout(id),
+  requestAnimationFrame: (fn) => setTimeout(() => fn(0), 1) as unknown as number,
+  performanceNow: () => performance.now(),
+};
+
+beforeEach(() => {
+  created.length = 0;
+  document.body.innerHTML = '<div id="ms-root"></div>';
+  (Element.prototype as unknown as { animate: unknown }).animate = function (this: Element, keyframes: unknown, options: KeyframeAnimationOptions) {
+    const a = { el: this, keyframes, options, currentTime: 0 as number | null, pause() {} };
+    created.push(a);
+    return a;
+  };
+  (globalThis as unknown as { FontFace: unknown }).FontFace = class { constructor(readonly family: string, readonly src: string) {} load() { return Promise.resolve(this); } };
+  Object.defineProperty(document, 'fonts', { value: { add() {} }, configurable: true });
+  (HTMLImageElement.prototype as unknown as { decode: () => Promise<void> }).decode = () => Promise.resolve();
+});
+afterEach(() => { delete (Element.prototype as unknown as { animate?: unknown }).animate; });
+
+function comp(over: Partial<Composition> = {}): Composition {
+  return {
+    $schema: 'motion-studio/composition@1', width: 1000, height: 500, fps: 30, duration: 6, background: '#000000',
+    fonts: [{ family: 'Brand', src: 'assets/brand.woff2' }], scenes: [{ id: 's', start: 0, duration: 6 }],
+    tracks: [
+      { id: 'bg', kind: 'visual', clips: [{ id: 'card', type: 'shape', start: 0, duration: 6, props: { fill: '#ff0000', radius: 8 } }] },
+      { id: 'hid', kind: 'visual', hidden: true, clips: [{ id: 'ghost', type: 'shape', start: 0, duration: 6, props: {} }] },
+      { id: 'txt', kind: 'text', clips: [
+        { id: 'title', type: 'text', start: 1, duration: 2, props: { text: 'Hello', x: 10, y: 20, width: 300, rotation: 5, opacity: 0.5 }, animations: [{ preset: 'fadeIn', duration: 0.5 }, { prop: 'x', from: -50, to: 0, start: 0.25, duration: 1 }] },
+        { id: 'other', type: 'text', start: 4, duration: 2, props: { text: 'x', fontFamily: 'Nope' } },
+      ] },
+      { id: 'aud', kind: 'audio', clips: [{ id: 'music', type: 'audio', src: 'assets/m.wav', start: 0, duration: 6 }] },
+    ],
+    ...over,
+  } as Composition;
+}
+
+function run(c: Composition, mode: 'render' | 'preview' = 'render') {
+  const errors: RuntimeError[] = [];
+  const root = document.getElementById('ms-root')!;
+  const player = mount(root, c, { mode, base: BASE, natives, report: (e) => errors.push(e), timeouts: { load: 50, seek: 50, layer: 50 } });
+  const box = (id: string) => root.querySelector<HTMLElement>(`[data-clip-id="${id}"]`);
+  return { player, errors, root, box };
+}
+
+describe('mount', () => {
+  it('stacks clips in track order, skips hidden tracks and (in render mode) audio', () => {
+    const { root, box } = run(comp());
+    const ids = [...root.querySelectorAll<HTMLElement>('.ms-clip')].map((e) => [e.dataset.clipId, Number(e.style.zIndex)]);
+    expect(ids).toEqual([['card', 1], ['title', 2], ['other', 3]]);
+    expect(box('ghost')).toBeNull();
+    expect(root.querySelector('audio')).toBeNull();
+  });
+
+  it('puts the static box on the clip element and the animated values on its content', () => {
+    const { box } = run(comp());
+    const title = box('title')!;
+    expect(title.style.left).toBe('10px');
+    expect(title.style.width).toBe('300px');
+    expect(title.style.opacity).toBe('0.5');
+    const content = title.querySelector<HTMLElement>('.ms-content')!;
+    expect(content.textContent).toBe('Hello');
+    expect(content.style.fontFamily).toContain('Brand'); // fonts[0] when the clip names none
+    const anims = created.filter((a) => a.el === content);
+    expect(anims.map((a) => [Object.keys((a.keyframes as object[])[0]!)[0], a.options.fill])).toEqual([['opacity', 'both'], ['--ms-x', 'both']]);
+    const shape = box('card')!.querySelector<HTMLElement>('.ms-content')!;
+    expect(shape.style.backgroundColor).toBe('currentcolor');
+  });
+
+  it('reports a font that is not declared and falls back', () => {
+    const { errors, box } = run(comp());
+    expect(errors).toContainEqual(expect.objectContaining({ code: 'fontMissing', clipId: 'other' }));
+    expect(box('other')!.querySelector<HTMLElement>('.ms-content')!.style.fontFamily).toContain('sans-serif');
+  });
+
+  it('seek shows clips start-inclusive, end-exclusive and drives the animations by clip-local time', async () => {
+    const { player, box } = run(comp());
+    const content = box('title')!.querySelector('.ms-content')!;
+    const [fade, slide] = created.filter((a) => a.el === content);
+    await player.seek(0.999);
+    expect(box('title')!.style.display).toBe('none');
+    await player.seek(1);
+    expect(box('title')!.style.display).toBe('');
+    await player.seek(1.5);
+    expect(fade!.currentTime).toBeCloseTo(500, 6);
+    expect(slide!.currentTime).toBeCloseTo(250, 6);
+    await player.seek(3);
+    expect(box('title')!.style.display).toBe('none');
+    await player.seek(6);
+    expect(box('other')!.style.display).toBe(''); // ends with the composition: visible at the very end
+    expect(box('card')!.style.display).toBe('');
+    expect(player.time).toBe(6);
+    await player.seek(99);
+    expect(player.time).toBe(6);
+  });
+
+  it('a still shows every clip at t = 0 and ignores animations and audio', async () => {
+    const { player, box, root } = run(comp({ duration: 0, scenes: [] }), 'preview');
+    expect(created).toHaveLength(0);
+    expect(root.querySelector('audio')).toBeNull();
+    await player.seek(3);
+    expect(player.time).toBe(0);
+    for (const id of ['card', 'title', 'other']) expect(box(id)!.style.display).toBe('');
+  });
+
+  it('rejects asset paths that leave the composition folder', () => {
+    const c = comp({ tracks: [{ id: 'v', kind: 'visual', clips: [
+      { id: 'a', type: 'image', src: 'assets/../../../secret.png', start: 0, duration: 1, props: {} },
+      { id: 'b', type: 'image', src: 'http://evil.test/x.png', start: 0, duration: 1, props: {} },
+      { id: 'c', type: 'image', src: 'assets/ok.png', start: 0, duration: 1, props: {} },
+    ] }] } as Partial<Composition>);
+    const { errors, root } = run(c);
+    expect(errors.filter((e) => e.code === 'assetPathRejected').map((e) => e.clipId)).toEqual(['a', 'b']);
+    expect([...root.querySelectorAll('img')].map((i) => i.getAttribute('src'))).toEqual([`${BASE}assets/ok.png`]);
+  });
+
+  it('html layers are sandboxed iframes that get their params and fonts through window.name', () => {
+    const c = comp({ tracks: [{ id: 'v', kind: 'visual', clips: [
+      { id: 'outro', type: 'html', src: 'layers/outro.html', start: 0, duration: 2, props: {}, params: {
+        headline: { type: 'text', value: 'Thanks' }, accent: { type: 'color', value: '#fbbf24' }, n: { type: 'number', value: 3 },
+        photo: { type: 'image', value: 'assets/p.jpg' },
+      } },
+    ] }] } as Partial<Composition>);
+    const { root } = run(c, 'preview');
+    const frame = root.querySelector('iframe')!;
+    expect(frame.getAttribute('sandbox')).toBe('allow-scripts');
+    expect(frame.getAttribute('src')).toBe(`${BASE}layers/outro.html`);
+    expect(decodeLayerConfig(frame.name)).toEqual({
+      v: 1, mode: 'preview', clipId: 'outro',
+      params: { headline: 'Thanks', accent: '#fbbf24', n: 3, photo: `${BASE}assets/p.jpg` },
+      fonts: [{ family: 'Brand', url: `${BASE}assets/brand.woff2` }],
+    });
+  });
+
+  it('a layer without the bootstrap is reported, and seeking does not hang', async () => {
+    const c = comp({ tracks: [{ id: 'v', kind: 'visual', clips: [{ id: 'l', type: 'html', src: 'layers/x.html', start: 0, duration: 2, props: {} }] }] } as Partial<Composition>);
+    const { player, errors } = run(c);
+    await player.ready();
+    expect(errors.map((e) => e.code)).toEqual(expect.arrayContaining(['layerTimeout']));
+  });
+});
+
+describe('frames under the virtual clock', () => {
+  it('the two frames after a seek use native time, so they resolve while the clock is frozen', async () => {
+    const w = new JSDOM('<!doctype html>', { pretendToBeVisual: true }).window;
+    const clock = installVirtualClock(w);
+    let fired = false;
+    w.requestAnimationFrame(() => { fired = true; }); // frozen: never fires until the clock advances
+    await expect(twoFrames(clock.native, 20)).resolves.toBeUndefined();
+    expect(fired).toBe(false);
+  });
+});
