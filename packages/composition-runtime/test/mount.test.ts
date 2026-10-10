@@ -128,6 +128,17 @@ describe('mount', () => {
     expect([...root.querySelectorAll('img')].map((i) => i.getAttribute('src'))).toEqual([`${BASE}assets/ok.png`]);
   });
 
+  it('a video clip may use a core media path (media/<id>.mp4, README "normalised media"); nothing else may', () => {
+    const c = comp({ tracks: [{ id: 'v', kind: 'video', clips: [
+      { id: 'v1', type: 'video', src: 'media/0.mp4', start: 0, duration: 1, props: {} },
+      { id: 'v2', type: 'video', src: 'media/../../x.mp4', start: 0, duration: 1, props: {} },
+      { id: 'i1', type: 'image', src: 'media/0.png', start: 0, duration: 1, props: {} },
+    ] }] } as Partial<Composition>);
+    const { errors, root } = run(c, 'preview');
+    expect(errors.filter((e) => e.code === 'assetPathRejected').map((e) => e.clipId)).toEqual(['v2', 'i1']);
+    expect([...root.querySelectorAll('video')].map((v) => v.getAttribute('src'))).toEqual([`${BASE}media/0.mp4`]);
+  });
+
   it('html layers are sandboxed iframes that get their params and fonts through window.name', () => {
     const c = comp({ tracks: [{ id: 'v', kind: 'visual', clips: [
       { id: 'outro', type: 'html', src: 'layers/outro.html', start: 0, duration: 2, props: {}, params: {

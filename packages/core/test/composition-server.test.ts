@@ -484,3 +484,127 @@ describe('closing', () => {
     await expect(startCompositionServer({ uiOrigins: ["http://a.example 'unsafe-inline'"], distDir: dist })).rejects.toThrow();
   });
 });
+
+describe('normalised media (Task 5)', () => {
+  const SHA = 'a'.repeat(64);
+  const NAME = `${SHA}-30-640.mp4`;
+  let mediaDir: string;
+  const VIDEO_COMP = {
+    ...COMPOSITION, tracks: [{ id: 't', kind: 'video', clips: [
+      { id: 'a', type: 'video', src: 'assets/clip.mp4', start: 0, duration: 1, sourceFps: 24, props: {} },
+      { id: 'b', type: 'video', src: 'assets/clip.mp4', start: 1, duration: 1, props: {} },
+      { id: 'c', type: 'video', src: 'assets/other.mp4', start: 2, duration: 1, sourceTrusted: true, sourceVideoEnd: 9, sourceStart: 0.5, props: {} },
+      { id: 'd', type: 'image', src: 'assets/big.png', start: 0, duration: 1, props: {} },
+    ] }],
+  };
+  const fields = { sourceFps: 30, sourceStart: 0, sourceVideoEnd: 2.5 };
+
+  beforeAll(() => {
+    mediaDir = join(work, 'project', '.studio', 'cache', 'media');
+    mkdirSync(mediaDir, { recursive: true });
+    writeFileSync(join(mediaDir, NAME), Buffer.from('NORMALISED-0123456789'));
+    writeFileSync(join(mediaDir, `${'b'.repeat(64)}-30-640.mp4`), Buffer.from('OTHER'));
+    writeFileSync(join(mediaDir, 'notes.txt'), SECRET);
+  });
+  const media = (clips: Array<[string, { file: string; sourceFps: number; sourceStart: number; sourceVideoEnd: number }]>, dir = mediaDir) => ({ dir, clips: new Map(clips) });
+  const inlined = (html: string) => JSON.parse(/<script type="application\/json" id="ms-composition">(.*?)<\/script>/s.exec(html)![1]!) as { composition: typeof VIDEO_COMP };
+
+  it('rewrites the mapped video clips to media/<i>.mp4 with the probed fields and sourceTrusted, in the inlined copy only', async () => {
+    const original = structuredClone(VIDEO_COMP);
+    for (const mode of ['render', 'preview'] as const) {
+      const s = await mint({ composition: VIDEO_COMP, mode, ...(mode === 'render' ? { parentOrigin: undefined } : {}), media: media([['assets/clip.mp4', { file: join(mediaDir, NAME), ...fields }]]) });
+      const page = await send(new URL(s.url).pathname);
+      const clips = inlined(page.body.toString('utf8')).composition.tracks[0]!.clips as Array<Record<string, unknown>>;
+      expect(clips[0]).toMatchObject({ src: 'media/0.mp4', sourceFps: 30, sourceStart: 0, sourceVideoEnd: 2.5, sourceTrusted: true });
+      expect(clips[1]).toMatchObject({ src: 'media/0.mp4', sourceTrusted: true });
+      // Not mapped (its normalisation failed): its own file, and no core-only field survives (the lenient rule).
+      expect(clips[2]).toEqual({ id: 'c', type: 'video', src: 'assets/other.mp4', start: 2, duration: 1, props: {} });
+      expect(clips[3]).toEqual(VIDEO_COMP.tracks[0]!.clips[3]);
+    }
+    expect(VIDEO_COMP).toEqual(original); // the caller's composition (the agent's, hashed) is never changed
+  });
+
+  it('serves exactly the mapped files, with the composition headers and byte ranges; anything else under media/ is 404', async () => {
+    const s = await mint({ composition: VIDEO_COMP, media: media([['assets/clip.mp4', { file: join(mediaDir, NAME), ...fields }]]) });
+    const r = await send(`${prefix(s)}/media/0.mp4`);
+    expect(r.status).toBe(200);
+    expect(r.body.toString()).toBe('NORMALISED-0123456789');
+    expect(r.headers['content-type']).toBe('video/mp4');
+    expect(all(r, 'content-security-policy')).toEqual([CSP, 'sandbox allow-scripts']);
+    expect(r.headers['cross-origin-resource-policy']).toBe('cross-origin');
+    expect(r.headers['x-content-type-options']).toBe('nosniff');
+    expect(r.headers['cache-control']).toBe('no-store');
+    expect(r.headers['accept-ranges']).toBe('bytes');
+    const part = await send(`${prefix(s)}/media/0.mp4`, { headers: { range: 'bytes=11-14' } });
+    expect(part.status).toBe(206);
+    expect(part.body.toString()).toBe('0123');
+    expect(part.headers['content-range']).toBe('bytes 11-14/21');
+    expect((await send(`${prefix(s)}/media/0.mp4`, { method: 'HEAD' })).status).toBe(200);
+    for (const p of ['media/1.mp4', 'media/notes.txt', `media/${NAME}`, 'media/0.mp4/x', 'media/..%2fnotes.txt', 'media/%2e%2e/notes.txt', 'media/', 'media']) {
+      const x = await send(`${prefix(s)}/${p}`);
+      expect(x.status, p).toBe(404);
+      expect(x.body.toString()).not.toContain(SECRET);
+    }
+    // Another version or format of the same token: nothing.
+    expect((await send(`/${s.token}/outputs/v2/compositions/story/media/0.mp4`)).status).toBe(404);
+    expect((await send(`/${s.token}/media/0.mp4`)).status).toBe(404);
+    // A session without media serves no media.
+    const plain = await mint();
+    expect((await send(`${prefix(plain)}/media/0.mp4`)).status).toBe(404);
+  });
+
+  it('refuses a media file that became a symlink or a hard link, or a media folder swapped after the mint', async () => {
+    const dir = join(work, 'project2', '.studio', 'cache', 'media');
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, NAME);
+    writeFileSync(file, 'GOOD');
+    const s = await mint({ composition: VIDEO_COMP, media: media([['assets/clip.mp4', { file, ...fields }]], dir) });
+    expect((await send(`${prefix(s)}/media/0.mp4`)).status).toBe(200);
+    rmSync(file);
+    symlinkSync(join(work, 'outside', 'secret.txt'), file);
+    expect((await send(`${prefix(s)}/media/0.mp4`)).status).toBe(404);
+    rmSync(file);
+    linkSync(join(work, 'outside', 'secret.txt'), file);
+    const hard = await send(`${prefix(s)}/media/0.mp4`);
+    expect(hard.status).toBe(404);
+    expect(hard.body.toString()).not.toContain(SECRET);
+    rmSync(file);
+    writeFileSync(file, 'GOOD');
+    expect((await send(`${prefix(s)}/media/0.mp4`)).status).toBe(200);
+    // The whole media folder swapped for another real folder at the same path (dev/ino): refused.
+    renameSync(dir, `${dir}-old`);
+    mkdirSync(dir);
+    writeFileSync(join(dir, NAME), SECRET);
+    const swapped = await send(`${prefix(s)}/media/0.mp4`);
+    expect(swapped.status).toBe(404);
+    expect(swapped.body.toString()).not.toContain(SECRET);
+  });
+
+  it('mintSession refuses bad media: outside the folder, a bad name, links, a linked folder, bad source fields', async () => {
+    const good = { file: join(mediaDir, NAME), ...fields };
+    const bad = async (m: ReturnType<typeof media>) => expect(mint({ composition: VIDEO_COMP, media: m })).rejects.toThrow(/composition server|ENOENT/);
+    await bad(media([['assets/clip.mp4', { ...good, file: join(work, 'outside', 'secret.txt') }]]));
+    await bad(media([['assets/clip.mp4', { ...good, file: join(mediaDir, 'notes.txt') }]]));
+    await bad(media([['assets/clip.mp4', { ...good, file: `${mediaDir}/../media/${NAME}` }]]));
+    await bad(media([['assets/clip.mp4', { ...good, file: join(mediaDir, `${'c'.repeat(64)}-30-640.mp4`) }]])); // missing
+    await bad(media([['../clip.mp4', good]]));
+    await bad(media([['layers/x.mp4', good]]));
+    for (const f of [{ sourceFps: 0 }, { sourceFps: Number.NaN }, { sourceVideoEnd: 0 }, { sourceStart: -1 }, { sourceStart: '0' }]) {
+      await bad(media([['assets/clip.mp4', { ...good, ...f } as typeof good]]));
+    }
+    const hardName = `${'d'.repeat(64)}-30-640.mp4`;
+    writeFileSync(join(work, 'hard-media.mp4'), 'X');
+    linkSync(join(work, 'hard-media.mp4'), join(mediaDir, hardName));
+    await bad(media([['assets/clip.mp4', { ...good, file: join(mediaDir, hardName) }]]));
+    const linkName = `${'e'.repeat(64)}-30-640.mp4`;
+    symlinkSync(join(mediaDir, NAME), join(mediaDir, linkName));
+    await bad(media([['assets/clip.mp4', { ...good, file: join(mediaDir, linkName) }]]));
+    // Not the media cache, or the cache reached through a link below the project folder.
+    await bad(media([['assets/clip.mp4', { ...good, file: join(work, 'outside', NAME) }]], join(work, 'outside')));
+    mkdirSync(join(work, 'project3'));
+    symlinkSync(join(work, 'project', '.studio'), join(work, 'project3', '.studio'));
+    const aliasDir = join(work, 'project3', '.studio', 'cache', 'media');
+    await bad(media([['assets/clip.mp4', { ...good, file: join(aliasDir, NAME) }]], aliasDir));
+    await expect(mint({ composition: VIDEO_COMP, media: { dir: mediaDir, clips: {} as never } })).rejects.toThrow();
+  });
+});

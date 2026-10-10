@@ -93,8 +93,14 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
   const report = (code: RuntimeErrorCode, message: string, clipId?: string) => opts.report({ code, message, ...(clipId ? { clipId } : {}) });
   registerProperties(w);
 
-  const assetUrl = (src: unknown, clipId?: string): string | null => {
-    if (typeof src !== 'string' || src.length === 0 || /[?#\\]/.test(src) || !(src.startsWith('assets/') || src.startsWith('layers/'))) {
+  /**
+   * The URL of a composition file (under `assets/` or `layers/`), confined to the composition folder. `media` also allows the
+   * core's normalised video files, `media/<id>.mp4` (README "normalised media"): the core rewrites a video clip's `src` to
+   * one when it mints the session, and the server maps it to the file in its media cache. Never a composition path.
+   */
+  const assetUrl = (src: unknown, clipId?: string, media = false): string | null => {
+    const prefixed = typeof src === 'string' && (src.startsWith('assets/') || src.startsWith('layers/') || (media && src.startsWith('media/')));
+    if (typeof src !== 'string' || src.length === 0 || /[?#\\]/.test(src) || !prefixed) {
       report('assetPathRejected', `asset path rejected: ${String(src).slice(0, 200)}`, clipId);
       return null;
     }
@@ -233,7 +239,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
       }
       case 'video': {
         content.style.overflow = 'hidden';
-        const url = assetUrl(clip.src, clip.id);
+        const url = assetUrl(clip.src, clip.id, true);
         if (!url) break;
         video = doc.createElement('video');
         video.muted = muted || (clip.volume ?? 1) === 0;

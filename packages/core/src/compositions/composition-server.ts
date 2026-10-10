@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { lstat, realpath } from 'node:fs/promises';
-import { join, posix } from 'node:path';
+import { basename, dirname, join, posix } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { FileHandle } from 'node:fs/promises';
 import type { Stats } from 'node:fs';
@@ -38,6 +38,14 @@ import { SessionTokens } from './serve-token.ts';
  *   origin: Chrome checks the embedder's frame-src on every child navigation (tested in real Chrome). Keep it.
  * - a layer (`layers/*.html`) is served only into an iframe (`Sec-Fetch-Dest: iframe`, which Chrome sends to 127.0.0.1),
  *   with the runtime's `layer.js` injected as its first script.
+ * - **normalised media** (Task 5, README "normalised media"): a session may map video clip sources to the core's normalised
+ *   files (`mintSession({ media })`, made by `media-normalize.ts` in `<project>/.studio/cache/media/`). The inlined
+ *   composition then names them `media/<i>.mp4` (with the probed `sourceFps`, `sourceStart`, `sourceVideoEnd` and
+ *   `sourceTrusted`), and exactly those files are served at `/<token>/<versionDir>/compositions/<format>/media/<i>.mp4`:
+ *   under the composition base, because the runtime confines every asset URL to it, and never a composition path (those
+ *   start with `assets/` or `layers/`). There is no general route into `.studio`. A media file gets the same checks as a
+ *   composition file: the media folder must still be the real folder minted (dev, ino), and the file a regular,
+ *   single-linked file directly in it, opened `O_NOFOLLOW`, with the same headers and byte ranges.
  */
 
 /** The CSP of every response (spec §5.2). `frame-ancestors` is appended on the runtime page only (README "Headers"). */
@@ -69,6 +77,10 @@ const VERSION_SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const FORMAT_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const ENCODED_SEPARATOR_RE = /%(?:2f|5c|00)/i;
 const RANGE_RE = /^bytes=(\d{0,15})-(\d{0,15})$/;
+/** A normalised media file of the cache (`<sha256 of the source>-<fps>-<max dimension>.mp4`, media-normalize.ts). */
+export const MEDIA_FILE_RE = /^[0-9a-f]{64}-\d{1,3}-\d{1,5}\.mp4$/;
+/** The served name of the i-th media file of a session. */
+const MEDIA_SEGMENT_RE = /^(\d{1,4})\.mp4$/;
 
 export type CompositionMode = 'render' | 'preview';
 
@@ -108,6 +120,28 @@ export interface MintSessionOptions {
   parentOrigin?: string;
   /** This session's lifetime in ms (default: the server's). */
   ttlMs?: number;
+  /**
+   * The normalised media of the composition's video clips (render and preview alike; see the module comment). With it, a
+   * video clip whose `src` is not in `clips` keeps its own file and loses any core-only source field it carries (the
+   * lenient rule). Without it the composition is inlined as given (the agent's schema forbids those fields anyway).
+   */
+  media?: SessionMedia;
+}
+
+/** One normalised video file and the values ffprobe read from it (media-normalize.ts). */
+export interface SessionMediaFile {
+  /** Absolute path: a file directly in `SessionMedia.dir`, named like `MEDIA_FILE_RE`. */
+  file: string;
+  sourceFps: number;
+  sourceStart: number;
+  sourceVideoEnd: number;
+}
+
+export interface SessionMedia {
+  /** The media cache folder, `<project>/.studio/cache/media`: no link from the project folder down. */
+  dir: string;
+  /** Normalised file by video clip `src` (`assets/…`). */
+  clips: ReadonlyMap<string, SessionMediaFile>;
 }
 
 export interface CompositionSession {
@@ -153,6 +187,66 @@ interface Session {
   frameAncestors: string;
   /** Preview: the runtime page also gets the sandbox CSP, so it is opaque even when opened top-level. */
   sandboxed: boolean;
+  /** The normalised media served to this session: the real media folder (and its identity) and the file names by index. */
+  media: { dir: string; dev: number; ino: number; names: string[] } | null;
+}
+
+const VIDEO_SOURCE_FIELDS = ['sourceStart', 'sourceVideoEnd', 'sourceTrusted'] as const;
+
+/**
+ * The composition the runtime page inlines: a copy whose video clips use the session's media (`media/<i>.mp4` and the
+ * probed source fields, `sourceTrusted: true`); any other video clip loses the core-only source fields it may carry.
+ */
+export function withSessionMedia(composition: unknown, srcIndex: ReadonlyMap<string, { index: number; media: SessionMediaFile }>): unknown {
+  const copy = structuredClone(composition) as { tracks?: unknown };
+  if (!Array.isArray(copy.tracks)) return copy;
+  for (const track of copy.tracks as unknown[]) {
+    const clips = (track as { clips?: unknown } | null)?.clips;
+    if (!Array.isArray(clips)) continue;
+    for (const clip of clips as Array<Record<string, unknown> | null>) {
+      if (!clip || clip.type !== 'video') continue;
+      for (const k of VIDEO_SOURCE_FIELDS) delete clip[k];
+      const m = typeof clip.src === 'string' ? srcIndex.get(clip.src) : undefined;
+      if (!m) continue;
+      clip.src = `media/${m.index}.mp4`;
+      clip.sourceFps = m.media.sourceFps;
+      clip.sourceStart = m.media.sourceStart;
+      clip.sourceVideoEnd = m.media.sourceVideoEnd;
+      clip.sourceTrusted = true;
+    }
+  }
+  return copy;
+}
+
+const finitePositive = (n: unknown, max: number) => typeof n === 'number' && Number.isFinite(n) && n > 0 && n <= max;
+
+/** Checks a session's media and indexes it: the real folder, each file's served index, the clip map. Throws when refused. */
+async function checkedMedia(m: SessionMedia): Promise<{ session: NonNullable<Session['media']>; bySrc: Map<string, { index: number; media: SessionMediaFile }> }> {
+  if (typeof m !== 'object' || m === null || typeof m.dir !== 'string' || !(m.clips instanceof Map)) throw new Error('composition server: bad media');
+  if (m.clips.size > 1000) throw new Error('composition server: too many media files');
+  // Only the core's media cache, `<project>/.studio/cache/media`, with no link from the project folder down.
+  const tail = ['.studio', 'cache', 'media'];
+  if (!m.dir.endsWith(join('', ...tail)) || basename(dirname(dirname(m.dir))) !== '.studio') throw new Error('composition server: not a media cache folder');
+  const real = await realpath(m.dir);
+  if (real !== join(await realpath(join(m.dir, '..', '..', '..')), ...tail)) throw new Error('composition server: the media folder is reached through a link');
+  const info = await lstat(real);
+  if (!info.isDirectory()) throw new Error('composition server: the media folder is not a directory');
+  const names: string[] = [];
+  const bySrc = new Map<string, { index: number; media: SessionMediaFile }>();
+  for (const [src, f] of m.clips) {
+    if (typeof src !== 'string' || !isCompositionPath(src) || !src.startsWith('assets/')) throw new Error('composition server: bad media clip source');
+    if (typeof f?.file !== 'string' || dirname(f.file) !== m.dir || !MEDIA_FILE_RE.test(basename(f.file))) throw new Error('composition server: bad media file');
+    if (!finitePositive(f.sourceFps, 240) || !finitePositive(f.sourceVideoEnd, 36_000) || typeof f.sourceStart !== 'number' || !(f.sourceStart >= 0 && f.sourceStart <= 36_000)) {
+      throw new Error('composition server: bad media source fields');
+    }
+    const st = await lstat(f.file);
+    if (!st.isFile() || st.nlink !== 1) throw new Error('composition server: a media file is not a single-linked regular file');
+    const name = basename(f.file);
+    let index = names.indexOf(name);
+    if (index < 0) { index = names.length; names.push(name); }
+    bySrc.set(src, { index, media: f });
+  }
+  return { session: { dir: real, dev: info.dev, ino: info.ino, names }, bySrc };
 }
 
 /** An exact serialized http(s) origin (`http://127.0.0.1:4318`), nothing more. */
@@ -286,6 +380,24 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
     return r === true;
   }
 
+  /** A session's normalised media file `media/<i>.mp4` (see the module comment); 404 for anything else. */
+  async function serveMedia(req: IncomingMessage, res: ServerResponse, session: Session, segment: string, headers: Record<string, string | string[]>): Promise<void> {
+    const m = MEDIA_SEGMENT_RE.exec(segment);
+    const name = m && session.media ? session.media.names[Number(m[1])] : undefined;
+    if (!name || !session.media) return send(res, 404, headers);
+    const media = session.media;
+    const stillThere = async () => {
+      if ((await realpath(media.dir).catch(() => null)) !== media.dir) return false;
+      const st = await lstat(media.dir).catch(() => null);
+      return st !== null && st.isDirectory() && st.dev === media.dev && st.ino === media.ino;
+    };
+    if (!(await stillThere())) return send(res, 404, headers);
+    const ok = await serveFile(req, res, media.dir, name, {
+      ...headers, 'content-security-policy': [COMPOSITION_CSP, SANDBOX_CSP], 'content-type': 'video/mp4',
+    }, { maxBytes: maxFileBytes, ranges: true, check: stillThere });
+    if (!ok) send(res, 404, headers);
+  }
+
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const headers = baseHeaders();
     if (req.headers.host !== expectedHost) return send(res, 421, headers);
@@ -322,6 +434,7 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
     const prefix = [...session.versionSegments, 'compositions', session.format];
     if (rest.length <= prefix.length || prefix.some((s, i) => rest[i] !== s)) return notFound();
     const rel = rest.slice(prefix.length).join('/');
+    if (rest.length === prefix.length + 2 && rest[prefix.length] === 'media') return serveMedia(req, res, session, rest[prefix.length + 1]!, headers);
     if (!isCompositionPath(rel)) return notFound();
     const ext = posix.extname(rel).toLowerCase();
     const fileHeaders: Record<string, string | string[]> = {
@@ -396,10 +509,12 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
       if (compDir !== join(realCreative, ...segs, 'compositions', o.format)) throw new Error('composition server: the composition folder is reached through a link');
       const dirInfo = await lstat(compDir);
       if (!dirInfo.isDirectory()) throw new Error('composition server: the composition folder is not a directory');
+      const media = o.media === undefined ? null : await checkedMedia(o.media);
       if (closed) throw new Error('composition server: closed');
       const { token, expiresAt } = tokens.mint({
         versionSegments: segs, versionDir: segs.join('/'), format: o.format, compDir, compDev: dirInfo.dev, compIno: dirInfo.ino,
-        composition: o.composition, frameAncestors, sandboxed: o.mode === 'preview',
+        composition: media ? withSessionMedia(o.composition, media.bySrc) : o.composition, frameAncestors, sandboxed: o.mode === 'preview',
+        media: media?.session ?? null,
       }, ttl);
       const query = o.mode === 'preview' ? `mode=preview&parentOrigin=${encodeURIComponent(frameAncestors)}` : 'mode=render';
       return {
