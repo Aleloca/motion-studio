@@ -5,7 +5,7 @@ import { FrameTimeoutError, twoFrames, withTimeout } from './frames.ts';
 import { connectLayer, LayerRequestError, type LayerHost } from './layer-host.ts';
 import { encodeLayerConfig, type LayerFont } from './layer-protocol.ts';
 import type { Rect, RuntimeError, RuntimeErrorCode, RuntimeMode } from './protocol.ts';
-import { audioGain, frameCount, isClipVisible, needsResync, pickVideoFrame, videoSourceTime } from './timing.ts';
+import { audioGain, frameCount, isClipVisible, needsResync, pickVideoFrame, sourceTrustedOf, sourceVideoEndOf, videoSourceTime } from './timing.ts';
 
 export interface MountOptions {
   mode: RuntimeMode;
@@ -377,59 +377,70 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     if (typeof VideoFrameCtor !== 'function' || v.readyState < 2) return null;
     try { return new VideoFrameCtor(v); } catch { return null; }
   };
-  /** The timestamp of each video's first frame: the one it holds before its first seek (decoded at load). */
-  const firstStamps = new WeakMap<HTMLVideoElement, number>();
-  /** Distinct frame timestamps seen per video (the last 64): the fallback stale rule's evidence (no frame duration). */
-  const seenStamps = new WeakMap<HTMLVideoElement, number[]>();
-  const remember = (v: HTMLVideoElement, ts: number) => {
-    const list = seenStamps.get(v) ?? [];
-    if (!list.includes(ts)) { list.push(ts); if (list.length > 64) list.shift(); seenStamps.set(v, list); }
-  };
-  /** Native time a frame outside the predicted window must stay the same before it is drawn anyway. */
-  const SETTLE_MS = 300;
+  /** The timestamp (µs) of each video's load frame: the one it holds before its first seek (decoded at load). */
+  const loadStamps = new WeakMap<HTMLVideoElement, number>();
+  /** Videos that have drawn a frame after a seek: their load frame is no longer suspect. */
+  const drawnOnce = new WeakSet<HTMLVideoElement>();
 
   /**
    * Draws the frame shown at `target` into the clip's canvas. `drawImage(video)` right after `seeked` can still read the
    * previous frame, so the frame is taken as a WebCodecs `VideoFrame` and checked by its timestamp and duration
-   * (`frameVerdict`, timing.ts): it must cover the target; the source's first frame is accepted, with a non-fatal
-   * `videoFrameMismatch`, for a target before the source starts; a frame that ended before the target is never drawn, and
-   * if no better one comes before the seek's deadline the seek fails (`videoSeekTimeout`).
+   * (`frameVerdict`, timing.ts). A core-probed source (`sourceTrusted`) gets the strict rule: a frame that ended before
+   * the target is never drawn, and if no right one comes before the seek's deadline the seek fails (`videoSeekTimeout`).
+   * An untrusted source gets the lenient rule: the covering frame, else a stable one with a non-fatal
+   * `videoFrameMismatch`. Returns false when nothing was drawn.
    */
-  const paintVideo = async (m: Mounted, target: number, span: number | null, before: number | null, deadline: number) => {
+  const paintVideo = async (m: Mounted, target: number, deadline: number): Promise<boolean> => {
     const v = m.video!;
-    const src = m.clip.type === 'video' ? m.clip.src : '';
-    if (typeof VideoFrameCtor !== 'function') { drawVideoFrame(m, v, v.videoWidth, v.videoHeight); return; }
+    if (m.clip.type !== 'video') return true;
+    const clip = m.clip;
+    if (typeof VideoFrameCtor !== 'function') { drawVideoFrame(m, v, v.videoWidth, v.videoHeight); return true; }
+    const span = clip.sourceFps ? 1 / clip.sourceFps : null;
+    const videoEnd = sourceVideoEndOf(clip);
     const r = await pickVideoFrame<Frame>({
       read: () => grabFrame(v),
-      stamp: (f) => ({ ts: f.timestamp / 1e6, duration: typeof f.duration === 'number' && f.duration > 0 ? f.duration / 1e6 : null }),
+      stamp: (f) => ({ tsUs: Math.round(f.timestamp), durUs: typeof f.duration === 'number' && f.duration > 0 ? Math.round(f.duration) : null }),
       close: (f) => f.close(),
       nextFrame: () => new Promise<void>((resolve) => { n.requestAnimationFrame(() => resolve()); }),
       now: () => n.performanceNow(), deadline,
-      target, span, before, firstTs: firstStamps.get(v) ?? null, seen: () => seenStamps.get(v) ?? [], settleMs: SETTLE_MS,
+      targetUs: Math.round(target * 1e6), trusted: sourceTrustedOf(clip),
+      videoEndUs: videoEnd === null ? null : Math.round(videoEnd * 1e6),
+      // At the end of the media: the target sits in the last (declared or nominal 1/30 s) frame of the element's duration.
+      atEnd: () => Number.isFinite(v.duration) && !v.seeking && v.currentTime >= v.duration - (span ?? 1 / 30) - 1e-3,
+      loadTsUs: drawnOnce.has(v) ? null : (loadStamps.get(v) ?? null), spanUs: span === null ? null : Math.round(span * 1e6),
     });
+    const at = (us: number) => (us / 1e6).toFixed(3);
     if (r.frame) {
-      remember(v, r.ts!);
-      if (r.verdict === 'warn') report('videoFrameMismatch', `video ${src}: first frame at ${r.ts!.toFixed(3)} s drawn for ${target.toFixed(3)} s, before the source starts (sourceStart missing or wrong)`, m.clip.id);
+      drawnOnce.add(v);
+      if (r.verdict === 'warn') {
+        report('videoFrameMismatch', r.tsUs! > Math.round(target * 1e6)
+          ? `video ${clip.src}: frame at ${at(r.tsUs!)} s drawn for ${target.toFixed(3)} s, before the source starts (sourceStart missing or wrong)`
+          : `video ${clip.src}: frame at ${at(r.tsUs!)} s drawn for ${target.toFixed(3)} s although its duration does not reach it (untrusted source)`, clip.id);
+      }
       drawVideoFrame(m, r.frame as unknown as CanvasImageSource, r.frame.displayWidth, r.frame.displayHeight);
       r.frame.close();
-      return;
+      return true;
     }
     // Not drawn: the render fails rather than capture a frame that is not the target's.
-    report('videoSeekTimeout', r.ts === null ? `video ${src} gave no frame at ${target.toFixed(3)} s`
-      : `video ${src} still showed the frame at ${r.ts.toFixed(3)} s (${r.verdict}), not ${target.toFixed(3)} s`, m.clip.id);
+    report('videoSeekTimeout', r.tsUs === null ? `video ${clip.src} gave no frame at ${target.toFixed(3)} s`
+      : `video ${clip.src} still showed the frame at ${at(r.tsUs)} s (${r.verdict}), not ${target.toFixed(3)} s`, clip.id);
+    return false;
   };
 
-  /** Seeks one video: the `seeked` wait and the frame check share one deadline (`timeouts.seek`). */
+  /**
+   * Seeks one video: the `seeked` wait and the frame check share one deadline (`timeouts.seek`). Render mode fails fast:
+   * a frame that could not be drawn rejects the seek (`videoSeekTimeout`), so the renderer stops at once instead of
+   * waiting out the deadline of every later seek.
+   */
   const seekVideo = async (m: Mounted, t: number) => {
     const v = m.video!;
     if (m.clip.type !== 'video') return;
     const deadline = n.performanceNow() + timeouts.seek;
     const target = videoSourceTime(m.clip, t, v.duration);
     if (!v.paused) v.pause();
-    let before: number | null = null;
-    if (m.canvas) {
+    if (m.canvas && !loadStamps.has(v)) {
       const f = grabFrame(v);
-      if (f) { before = f.timestamp / 1e6; remember(v, before); if (!firstStamps.has(v)) firstStamps.set(v, before); f.close(); }
+      if (f) { loadStamps.set(v, Math.round(f.timestamp)); f.close(); }
     }
     if (!(Math.abs(v.currentTime - target) < 1e-6 && !v.seeking && v.readyState >= 2)) {
       const seeked = new Promise<void>((resolve) => v.addEventListener('seeked', () => resolve(), { once: true }));
@@ -437,7 +448,9 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
       await withTimeout(seeked, Math.max(1, deadline - n.performanceNow()), n, `video ${m.clip.src} did not seek to ${target}`)
         .catch((e: unknown) => report('videoSeekTimeout', String(e instanceof Error ? e.message : e), m.clip.id));
     }
-    if (m.canvas) await paintVideo(m, target, m.clip.sourceFps ? 1 / m.clip.sourceFps : null, before, deadline);
+    if (m.canvas && !(await paintVideo(m, target, deadline))) {
+      throw new Error(`videoSeekTimeout: video ${m.clip.src} has no frame for ${target.toFixed(3)} s`);
+    }
   };
 
   const doSeek = async (t: number) => {

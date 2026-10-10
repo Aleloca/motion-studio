@@ -54,90 +54,109 @@ export function sourceStartOf(clip: { sourceStart?: unknown }): number {
  * - with `sourceFps`, the centre of that source frame, `sourceStart + (i + 0.5) / sourceFps`. Seeking exactly to a frame
  *   boundary shows the previous frame about one time in three (spike §1); the centre never does;
  * - without it (variable or unknown frame rate), `VFR_NUDGE` past the source time;
- * - never past the end of the source (`sourceDuration`, the media timeline's end, when known): the last frame is held.
+ * - never past the end of the video: the last frame is held. The end is `sourceVideoEnd` (the video track's end, which
+ *   can be earlier than the media's when the audio is longer) when given, else `sourceDuration` (the media timeline's end).
  */
-export function videoSourceTime(clip: { start: number; trimStart?: number; sourceFps?: number; sourceStart?: unknown }, t: number, sourceDuration?: number): number {
+export function videoSourceTime(clip: { start: number; trimStart?: number; sourceFps?: number; sourceStart?: unknown; sourceVideoEnd?: unknown }, t: number, sourceDuration?: number): number {
   const base = sourceStartOf(clip);
   const s = (clip.trimStart ?? 0) + Math.max(0, t - clip.start);
-  const known = sourceDuration !== undefined && Number.isFinite(sourceDuration) && sourceDuration > base;
+  const end = sourceVideoEndOf(clip) ?? sourceDuration;
+  const known = end !== undefined && Number.isFinite(end) && end > base;
   const fps = clip.sourceFps;
   if (fps !== undefined && fps > 0) {
     let i = sourceFrameIndex(s, fps);
-    if (known) i = Math.min(i, Math.max(0, Math.ceil((sourceDuration - base) * fps - TIME_EPS) - 1));
+    if (known) i = Math.min(i, Math.max(0, Math.ceil((end - base) * fps - TIME_EPS) - 1));
     return base + (i + 0.5) / fps;
   }
   const target = base + s + VFR_NUDGE;
-  return known ? Math.min(target, Math.max(base, sourceDuration - VFR_NUDGE)) : target;
+  return known ? Math.min(target, Math.max(base, end - VFR_NUDGE)) : target;
 }
 
-/** Tolerance on frame timestamps and durations (s): well under any frame, above float noise of µs timestamps. */
-export const FRAME_EPS = 1e-4;
+/** A usable `sourceVideoEnd` (seconds, the end of the video track on the media timeline, from ffprobe), else null. */
+export function sourceVideoEndOf(clip: object): number | null {
+  const s = (clip as { sourceVideoEnd?: unknown }).sourceVideoEnd;
+  return typeof s === 'number' && Number.isFinite(s) && s > 0 && s <= 36_000 ? s : null;
+}
+
+/** Whether the core probed the source and vouches for its metadata (`sourceTrusted: true`, Task 5): the strict rule. */
+export function sourceTrustedOf(clip: object): boolean {
+  return (clip as { sourceTrusted?: unknown }).sourceTrusted === true;
+}
+
+/** Tolerance on frame timestamps and durations, in whole microseconds (WebCodecs units): above µs rounding noise. */
+export const FRAME_EPS_US = 100;
+
+export type FrameVerdict = 'draw' | 'warn' | 'stale' | 'wait' | 'hold';
 
 /**
- * Render mode: what to do with the frame a video holds after a seek (`pickVideoFrame`), from its timestamp `ts` and
- * `duration` (WebCodecs `VideoFrame`; Chrome 154 fills `duration` with each frame's real duration from the file: measured
- * right for 25 fps, a 0.1 s start and VFR):
- * - `draw`: the frame covers the target, `ts ≤ target` and `ts + duration > target`. No declared value is involved, so a
- *   wrong declared `sourceFps` (a 25 fps file declared as 30) changes nothing;
- * - `warn`: `ts > target` and it is the source's first frame (`firstTs`, the frame decoded at load): the target lies before
- *   the source's first frame (a source starting at 0.1 s without `sourceStart`). Drawn with a non-fatal
- *   `videoFrameMismatch`;
- * - `stale`: the frame ended before the target, `ts + duration ≤ target`: provably old. Never drawn; read again until
- *   the seek's deadline, then the seek fails (`videoSeekTimeout`);
- * - `wait`: anything else (a later frame than the target, not the first): read again.
- * Without a usable `duration` (null or 0) the older rules apply: inside the window the declared `sourceFps` predicts
- * (`span`) → `draw`; stable (the same `ts` as `previous`, for `settleMs` when `span` is set) → `warn`, or `draw` without
- * `span` (VFR: stability, not correctness); unchanged since `before` although a frame already `seen` starts after it and
- * by the target → `stale`.
+ * Render mode: what to do with the frame a video holds after a seek (`pickVideoFrame`). Everything is in whole
+ * microseconds (`VideoFrame.timestamp`/`duration` units); a frame covers [ts, ts + dur).
+ * - `draw` when the frame **covers** the target: `ts ≤ target + ε` and `ts + dur > target − ε` (only with a positive
+ *   `dur`). A frame is past only when it ended at least ε before the target.
+ * - `draw` for the **last video frame**: with `videoEndUs` (`sourceVideoEnd`), a frame at or before the target that reaches
+ *   the end of the video track (`ts + dur ≥ videoEnd − ε`); without it, a frame at or before the target, `stable` (the same
+ *   on two reads) while the element sits at the end of the media (`atEnd`). Targets past the video's end (audio longer
+ *   than video) show the last frame.
+ * - **Strict** (`trusted`, the core probed the source, and a positive `dur`): a frame that ended before the target is
+ *   `stale`, never drawn; anything else (a later frame) is `wait`. At the seek's deadline the seek fails.
+ * - **Lenient** (untrusted: agent-declared, normalisation failed, or no duration): container durations can be wrong
+ *   (WebM reports its default duration for frames that last longer), so a correct frame must never fail the render. A
+ *   frame that does not cover the target is drawn once `stable`, as `warn` (non-fatal `videoFrameMismatch`). The one
+ *   exception is the **load frame** (`loadFrame`: the frame held before the video's first seek, the first-seek bug):
+ *   when the target is more than one frame after it, `hold`: read again until it changes or the deadline passes, then
+ *   draw it with a warning.
  */
 export function frameVerdict(o: {
-  ts: number; duration: number | null; target: number; firstTs: number | null;
-  previous: number | null; stableMs: number; span: number | null; before: number | null; seen: readonly number[]; settleMs: number;
-}): 'draw' | 'warn' | 'stale' | 'wait' {
-  const { ts, target, span } = o;
-  if (o.duration !== null && o.duration > 0) {
-    // A frame covers [ts, ts + duration): one that ends at the target already belongs to the past.
-    if (ts <= target + FRAME_EPS && ts + o.duration > target + FRAME_EPS) return 'draw';
-    if (ts + o.duration <= target + FRAME_EPS) return 'stale';
-    if (ts > target && o.firstTs !== null && Math.abs(ts - o.firstTs) <= 1e-6) return 'warn';
-    return 'wait';
-  }
-  if (span !== null && ts <= target + 1e-3 && ts > target - span - 1e-3) return 'draw';
-  if (o.before !== null && ts === o.before && o.seen.some((x) => x > ts + 1e-6 && x <= target + 1e-6)) return 'stale';
-  const stable = ts === o.previous && (span === null || o.stableMs >= o.settleMs);
-  if (!stable) return 'wait';
-  return span === null ? 'draw' : 'warn';
+  tsUs: number; durUs: number | null; targetUs: number; trusted: boolean;
+  videoEndUs: number | null; atEnd: boolean; stable: boolean; loadFrame: boolean; spanUs: number | null;
+}): FrameVerdict {
+  const { tsUs: ts, targetUs: target } = o;
+  const E = FRAME_EPS_US;
+  const dur = o.durUs !== null && o.durUs > 0 ? o.durUs : null;
+  const notAfter = ts <= target + E;
+  if (dur !== null && notAfter && ts + dur > target - E) return 'draw';
+  if (notAfter && (o.videoEndUs !== null ? dur !== null && ts + dur >= o.videoEndUs - E : o.stable && o.atEnd)) return 'draw';
+  if (o.trusted && dur !== null) return ts + dur <= target - E ? 'stale' : 'wait';
+  // Lenient. Without a duration, the declared frame (span) before the target counts as covering.
+  if (dur === null && o.spanUs !== null && notAfter && ts + o.spanUs > target - E) return 'draw';
+  if (!o.stable) return 'wait';
+  if (o.loadFrame && target > ts + Math.max(dur ?? 0, o.spanUs ?? 0) + E) return 'hold';
+  return 'warn';
 }
 
 /**
- * Reads the frame a video holds until `frameVerdict` accepts it (`draw` or `warn`), one native animation frame apart, up
- * to `deadline` (native ms). Returns the accepted frame (the caller draws and closes it); at the deadline, `stale` or
- * `wait` (the last verdict) with no frame: a frame that is not accepted is never drawn. DOM-free, so it is unit tested.
+ * Reads the frame a video holds until `frameVerdict` accepts it (`draw`, or `warn` in lenient mode), one native animation
+ * frame apart, up to `deadline` (native ms). `stable` is the same timestamp as the previous read. Returns the accepted
+ * frame (the caller draws and closes it). At the deadline: a `hold` frame (lenient load frame) is returned as `warn`;
+ * otherwise no frame and the last verdict (`stale`, `wait` or `none`): a frame that is not accepted is never drawn.
+ * DOM-free, so it is unit tested.
  */
 export async function pickVideoFrame<F>(o: {
-  read(): F | null; stamp(f: F): { ts: number; duration: number | null }; close(f: F): void;
+  read(): F | null; stamp(f: F): { tsUs: number; durUs: number | null }; close(f: F): void;
   nextFrame(): Promise<void>; now(): number; deadline: number;
-  target: number; span: number | null; before: number | null; firstTs: number | null; seen: () => readonly number[]; settleMs: number;
-}): Promise<{ frame: F | null; verdict: 'draw' | 'warn' | 'stale' | 'wait' | 'none'; ts: number | null }> {
+  targetUs: number; trusted: boolean; videoEndUs: number | null; atEnd(): boolean; loadTsUs: number | null; spanUs: number | null;
+}): Promise<{ frame: F | null; verdict: FrameVerdict | 'none'; tsUs: number | null }> {
   let previous: number | null = null;
-  let since = 0;
-  let last: { verdict: 'stale' | 'wait' | 'none'; ts: number | null } = { verdict: 'none', ts: null };
+  let last: { verdict: 'stale' | 'wait' | 'none'; tsUs: number | null } = { verdict: 'none', tsUs: null };
   for (;;) {
     const f = o.read();
-    const now = o.now();
+    const late = o.now() > o.deadline;
     if (f) {
-      const { ts, duration } = o.stamp(f);
-      if (ts !== previous) since = now;
-      const verdict = frameVerdict({ ts, duration, target: o.target, firstTs: o.firstTs, previous, stableMs: now - since, span: o.span, before: o.before, seen: o.seen(), settleMs: o.settleMs });
-      if (verdict === 'draw' || verdict === 'warn') return { frame: f, verdict, ts };
+      const { tsUs, durUs } = o.stamp(f);
+      const verdict = frameVerdict({
+        tsUs, durUs, targetUs: o.targetUs, trusted: o.trusted, videoEndUs: o.videoEndUs, atEnd: o.atEnd(),
+        stable: tsUs === previous, loadFrame: o.loadTsUs !== null && tsUs === o.loadTsUs, spanUs: o.spanUs,
+      });
+      if (verdict === 'draw' || verdict === 'warn') return { frame: f, verdict, tsUs };
+      if (verdict === 'hold' && late) return { frame: f, verdict: 'warn', tsUs };
       o.close(f);
-      previous = ts;
-      last = { verdict, ts };
+      previous = tsUs;
+      last = { verdict: verdict === 'hold' ? 'wait' : verdict, tsUs };
     } else {
       previous = null;
-      last = { verdict: 'none', ts: null };
+      last = { verdict: 'none', tsUs: null };
     }
-    if (now > o.deadline) return { frame: null, ...last };
+    if (late) return { frame: null, ...last };
     await o.nextFrame();
   }
 }

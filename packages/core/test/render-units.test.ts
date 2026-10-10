@@ -52,7 +52,7 @@ describe('isolation rules', () => {
 });
 
 /** A fake CDP transport: records calls, lets the test emit events, fails chosen calls. */
-function fakeClient(fail: (method: string, sessionId?: string) => boolean = () => false) {
+function fakeClient(fail: (method: string, sessionId?: string) => boolean = () => false, reply: (method: string, sessionId?: string) => unknown = (m) => (m === 'Runtime.evaluate' ? { result: { value: true } } : {})) {
   const calls: Array<{ method: string; params: Record<string, unknown>; sessionId?: string }> = [];
   const listeners = new Set<(e: CdpEvent) => void>();
   const client: CdpClient = {
@@ -60,7 +60,7 @@ function fakeClient(fail: (method: string, sessionId?: string) => boolean = () =
     async send(method, params = {}, o = {}) {
       calls.push({ method, params: params as Record<string, unknown>, ...(o.sessionId ? { sessionId: o.sessionId } : {}) });
       if (fail(method, o.sessionId)) throw new Error(`${method} failed`);
-      return {} as never;
+      return reply(method, o.sessionId) as never;
     },
     onEvent(l) { listeners.add(l); return () => listeners.delete(l); },
     onClose() { return () => {}; },
@@ -131,12 +131,58 @@ describe('request interception (fake CDP)', () => {
     expect(ic.failure).toBeNull();
   });
 
+  it('a dedicated worker gets the guard while paused; if it throws, reports an exception or does not end with every API gone, the worker is closed, never resumed', async () => {
+    const cases: Array<[string, (m: string, s?: string) => boolean, (m: string, s?: string) => unknown]> = [
+      ['the evaluation fails', (m) => m === 'Runtime.evaluate', () => ({})],
+      ['an exception', () => false, (m) => (m === 'Runtime.evaluate' ? { exceptionDetails: { text: 'boom' } } : {})],
+      ['false: a failure swallowed by its own try/catch', () => false, (m) => (m === 'Runtime.evaluate' ? { result: { value: false } } : {})],
+      ['no value', () => false, () => ({})],
+    ];
+    for (const [name, fail, reply] of cases) {
+      const { client, calls, emit } = fakeClient(fail, reply);
+      const ic = await interceptRequests(client, 'P', allowedPrefix(PAGE));
+      calls.length = 0;
+      emit({ method: 'Target.attachedToTarget', sessionId: 'P', params: { sessionId: 'W', targetInfo: { type: 'worker', targetId: 'tw' } } });
+      await flush();
+      expect(calls.find((c) => c.method === 'Runtime.evaluate')?.params.expression, name).toBe(NETWORK_API_GUARD);
+      expect(calls.some((c) => c.method === 'Runtime.runIfWaitingForDebugger'), name).toBe(false);
+      expect(calls.filter((c) => c.method === 'Target.closeTarget').map((c) => c.params.targetId), name).toEqual(['tw']);
+      expect(ic.refused, name).toEqual([{ type: 'worker', url: '' }]);
+    }
+    // The guard itself evaluates to true once every API is gone.
+    const scope: Record<string, unknown> = { RTCPeerConnection: class {}, WebTransport: class {} };
+    expect(new Function('globalThis', `return ${NETWORK_API_GUARD.replace(/;$/, '')}`)(scope)).toBe(true);
+    expect(scope.RTCPeerConnection).toBeUndefined();
+    const frozen = Object.freeze({ WebTransport: class {} });
+    expect(new Function('globalThis', `return ${NETWORK_API_GUARD.replace(/;$/, '')}`)(frozen)).toBe(false);
+  });
+
+  it('a refused target that is already gone counts as closed', async () => {
+    const { client, emit } = fakeClient(() => false, (m) => { if (m === 'Target.closeTarget') throw new Error('Target.closeTarget: No target with given id found'); return {}; });
+    const ic = await interceptRequests(client, 'P', allowedPrefix(PAGE));
+    emit({ method: 'Target.attachedToTarget', sessionId: 'P', params: { sessionId: 'S', targetInfo: { type: 'service_worker', targetId: 't' } } });
+    await flush();
+    expect(ic.refused.map((r) => r.type)).toEqual(['service_worker']);
+    expect(ic.failure).toBeNull();
+  });
+
   it('a refused target that cannot be closed fails the render', async () => {
     const { client, emit } = fakeClient((m) => m === 'Target.closeTarget');
     const ic = await interceptRequests(client, 'P', allowedPrefix(PAGE));
     emit({ method: 'Target.attachedToTarget', sessionId: 'P', params: { sessionId: 'S', targetInfo: { type: 'service_worker', targetId: 't' } } });
     await flush();
     expect(ic.failure?.message).toMatch(/service_worker target .* could not be closed/);
+  });
+});
+
+describe('page evaluation errors', () => {
+  it('a seek the runtime failed fast on a video frame is a runtimeErrors failure carrying videoSeekTimeout', async () => {
+    const { evaluate } = await import('../src/render/chromium-provider.ts');
+    const thrower = (description: string) => fakeClient(() => false, () => ({ exceptionDetails: { exception: { description } } })).client;
+    const e = await evaluate(thrower('Error: videoSeekTimeout: video assets/v.mp4 has no frame for 2.217 s'), 'P', 'x', 1000).catch((x: unknown) => x);
+    expect(e).toMatchObject({ code: 'runtimeErrors', details: [{ code: 'videoSeekTimeout' }] });
+    await expect(evaluate(thrower('FrameTimeoutError: frameTimeout'), 'P', 'x', 1000)).rejects.toMatchObject({ code: 'frameTimeout' });
+    await expect(evaluate(thrower('TypeError: x'), 'P', 'x', 1000)).rejects.toMatchObject({ code: 'loadFailed' });
   });
 });
 

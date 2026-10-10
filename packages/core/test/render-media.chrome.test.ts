@@ -235,10 +235,69 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
     expect(decodeStrips(ff, out, BOXES.v25, 2).map(readCode)).toEqual(frames.map((i) => shownLate(target(i))));
     // C: sourceStart puts every frame where it belongs.
     expect(decodeStrips(ff, out, BOXES.vfr, 2).map(readCode)).toEqual(frames.map((i) => i + 1));
-    // Frames are checked by their own duration: the wrong declared rate (A) is not even a warning. Only B's targets before
-    // its first frame (0.1 s) warn: the first frame is drawn for them.
+    // Untrusted (lenient): frames are checked by their own duration, so the wrong declared rate (A) is not even a warning.
+    // Only B's targets before its first frame (0.1 s) warn: the first frame is drawn for them.
     expect(r.warnings.length).toBeGreaterThan(0);
-    expect(r.warnings.every((w) => w.code === 'videoFrameMismatch' && w.clipId === 'b' && /first frame at 0\.100/.test(w.message))).toBe(true);
+    expect(r.warnings.every((w) => w.code === 'videoFrameMismatch' && w.clipId === 'b' && /frame at 0\.100 s drawn for 0\.0\d\d s, before the source starts/.test(w.message))).toBe(true);
+    rmSync(out);
+  }, 1_800_000);
+
+  it('strict (sourceTrusted): a CFR MP4 at the composition fps, short GOP, audio longer than video: exact frames, the last one held, no warnings', async () => {
+    // What the core's normalisation gives (Task 5): H.264, 30 fps = the composition's, GOP 15, probed values set. The file
+    // has 1.0 s of video and 1.3 s of audio, so the media ends after the video: past 1.0 s the last frame is held
+    // (sourceVideoEnd). Clip b first shows mid-segment (the first-seek case).
+    const ff = tools.ffmpeg!;
+    const id = 'test-trusted';
+    const dir = join(creative, VERSION_DIR, 'compositions', id);
+    frameCodedVideo(ff, join(dir, 'assets', 'n.mp4'), { fps: FPS, frames: 30, gop: 15, audioSeconds: 1.3 });
+    const D = 1.3, N = Math.round(D * FPS);
+    const probed = { sourceFps: FPS, sourceStart: 0, sourceVideoEnd: 1.0, sourceTrusted: true };
+    const comp = {
+      $schema: 'motion-studio/composition@1', width: W, height: H, fps: FPS, duration: D, background: '#000000', fonts: [],
+      scenes: [{ id: 'all', start: 0, duration: D }],
+      tracks: [{ id: 'v', kind: 'video', clips: [
+        { id: 'a', type: 'video', src: 'assets/n.mp4', start: 0, duration: D, ...probed, props: { ...BOXES.v24 } },
+        { id: 'b', type: 'video', src: 'assets/n.mp4', start: 0.5, duration: D - 0.5, ...probed, props: { ...BOXES.v25 } },
+      ] }],
+    } as unknown as Composition;
+    const p = new ChromeProvider({ exe: tools.chrome!.exe, kind: 'system', limits: { timeLimitMs: 30 * 60_000 } });
+    const out = join(creative, VERSION_DIR, `${id}.mp4`);
+    const t0 = Date.now();
+    const r = await renderComposition({ dir: creative, versionDir: VERSION_DIR, composition: comp, format: { ...FORMAT, id }, out, provider: p, parallel: 2, signal: new AbortController().signal, distDir: dist, ffmpeg: ff, encoder: 'libx264' });
+    if (process.env.MS_RENDER_DEBUG) console.info(`[render] trusted: ${Date.now() - t0} ms`);
+    const frames = Array.from({ length: N }, (_, i) => i);
+    expect(decodeStrips(ff, out, BOXES.v24, 2).map(readCode)).toEqual(frames.map((i) => Math.min(i, 29) + 1));
+    expect(decodeStrips(ff, out, BOXES.v25, 2).map(readCode)).toEqual(frames.map((i) => (i < 15 ? 0 : Math.min(i - 15, 29) + 1)));
+    expect(r.warnings).toEqual([]);
+    expect(await leftovers({ pgids: [p.pgid!], markers: [p.profileDir!] })).toEqual([]);
+    rmSync(out);
+  }, 1_800_000);
+
+  it('lenient (untrusted): a VFR WebM, whose frames Chrome reports with the container default duration, renders and never fails', async () => {
+    // Untrusted = the core could not normalise it (Task 5). Frames last 1/24 to 1/6 s; Chrome reports most as 1/30 s.
+    const ff = tools.ffmpeg!;
+    const id = 'test-webm';
+    const dir = join(creative, VERSION_DIR, 'compositions', id);
+    const file = join(dir, 'assets', 'vfr.webm');
+    frameCodedVideo(ff, file, { fps: 30, frames: 30, pts: 'if(lt(N,10),N/24,if(lt(N,20),10/24+(N-10)/12,10/24+10/12+(N-20)/6))' });
+    const times = framePts(ff, file);
+    const D = 2, N = Math.round(D * FPS);
+    const comp = {
+      $schema: 'motion-studio/composition@1', width: W, height: H, fps: FPS, duration: D, background: '#000000', fonts: [],
+      scenes: [{ id: 'all', start: 0, duration: D }],
+      tracks: [{ id: 'v', kind: 'video', clips: [{ id: 'w', type: 'video', src: 'assets/vfr.webm', start: 0, duration: D, props: { ...BOXES.v24 } }] }],
+    } as unknown as Composition;
+    const p = new ChromeProvider({ exe: tools.chrome!.exe, kind: 'system', limits: { timeLimitMs: 30 * 60_000 } });
+    const out = join(creative, VERSION_DIR, `${id}.mp4`);
+    const t0 = Date.now();
+    const r = await renderComposition({ dir: creative, versionDir: VERSION_DIR, composition: comp, format: { ...FORMAT, id }, out, provider: p, parallel: 2, signal: new AbortController().signal, distDir: dist, ffmpeg: ff, encoder: 'libx264' });
+    const elapsed = Date.now() - t0;
+    const shown = (t: number) => { let k = 0; for (let j = 0; j < times.length; j++) if (times[j]! <= Math.min(t, times.at(-1)!) + 1e-9) k = j; return k + 1; };
+    const got = decodeStrips(ff, out, BOXES.v24, 2).map(readCode);
+    if (process.env.MS_RENDER_DEBUG) console.info(`[render] webm: ${elapsed} ms, ${r.warnings.length} warnings`, got.join(','));
+    expect(got).toEqual(Array.from({ length: N }, (_, i) => shown(i / FPS + VFR_NUDGE)));
+    expect(r.warnings.every((w) => w.code === 'videoFrameMismatch' && w.clipId === 'w')).toBe(true);
+    expect(elapsed).toBeLessThan(45_000); // no seek waits out its 60 s deadline
     rmSync(out);
   }, 1_800_000);
 

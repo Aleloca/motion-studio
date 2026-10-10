@@ -25,8 +25,9 @@ export const RUNTIME_ERROR_CODES = [
   /** Render mode: no animation frame was painted after a seek; the seek fails rather than capture a stale frame. */
   'frameTimeout',
   /**
-   * Render mode, a warning: a video showed a frame outside the window its declared `sourceFps`/`sourceStart` predict (a
-   * wrong frame rate or start), drawn once its timestamp was stable. The renderer does not fail on it.
+   * Render mode, a warning (untrusted sources only, the lenient rule): a video showed a frame whose own timestamp and
+   * duration do not cover the target (a wrong container duration, or a target before the source starts), drawn once its
+   * timestamp was stable. The renderer does not fail on it.
    */
   'videoFrameMismatch',
 ] as const;

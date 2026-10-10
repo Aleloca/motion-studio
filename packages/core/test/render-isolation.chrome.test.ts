@@ -17,7 +17,7 @@
  *    a UDP canary included.
  * Workers: in A the layers are opaque origins, so every worker attempt fails; B and C start real ones from a same-origin
  * top-level page (service worker, SharedWorker, a same-origin and a blob dedicated worker), all fetching the canary, and
- * a dedicated worker opening WebTransport to the UDP canary (the control sees its QUIC packets; B none: the guard is
+ * a dedicated worker opening WebTransport to the UDP canary (the control sees its QUIC packets, on a page of its own too; B none: the guard is
  * installed in the paused worker; C none: the flags).
  * Skipped without Chrome, unless MS_REQUIRE_CHROME=1 (CI).
  */
@@ -92,13 +92,18 @@ try { new Worker('/${TOKEN}/worker.js'); } catch (e) {}
 try { new Worker(URL.createObjectURL(new Blob([${JSON.stringify(`fetch('${canary}/blob-worker-fetch').catch(() => {});`)}], { type: 'text/javascript' }))); } catch (e) {}
 try { new Worker(URL.createObjectURL(new Blob([${JSON.stringify(workerTransportProbe(udpPort))}], { type: 'text/javascript' }))); } catch (e) {}
 </script></body></html>`;
+  // Only the dedicated worker's WebTransport probe: the control proves this probe alone sends UDP.
+  const workerOnly = `<!doctype html><html><body><script>
+try { new Worker(URL.createObjectURL(new Blob([${JSON.stringify(workerTransportProbe(udpPort))}], { type: 'text/javascript' }))); } catch (e) {}
+</script></body></html>`;
+  const pages: Record<string, string> = { [`/${TOKEN}/page.html`]: page, [`/${TOKEN}/worker-only.html`]: workerOnly };
   const s: Server = createServer((req, res) => {
     const url = (req.url ?? '').split('?')[0]!;
     const html = new RegExp(`^/${TOKEN}/layers/([\\w-]+)\\.html$`).exec(url);
     const js = new RegExp(`^/${TOKEN}/(?:layers/)?([\\w-]+\\.js)$`).exec(url);
-    if (url === `/${TOKEN}/page.html` || (html && layers[html[1]!])) {
+    if (pages[url] || (html && layers[html[1]!])) {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      res.end(url === `/${TOKEN}/page.html` ? page : layers[html![1]!]);
+      res.end(pages[url] ?? layers[html![1]!]);
     } else if (js && scripts[js[1]!]) {
       res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' });
       res.end(scripts[js[1]!]);
@@ -172,6 +177,13 @@ describe.skipIf(!tools.chrome)('render isolation in headless Chrome', () => {
       // Positive control: the same browser set-up without interception reaches the canary through every layer.
       const control = await rawChrome(tools.chrome!.exe, []);
       try {
+        // The dedicated worker's probe alone (a page with nothing else): its QUIC Initial reaches the UDP canary.
+        const workerUdpBefore = udp.packets.length;
+        await control.navigate(await control.page(), `${naked.origin}/${TOKEN}/worker-only.html`);
+        await settle(3000);
+        const workerSizes = udp.packets.slice(workerUdpBefore).map((x) => x.bytes);
+        expect(workerSizes.some((b) => b >= 1200), `worker QUIC Initial in ${workerSizes.join(',')}`).toBe(true);
+        expect(workerSizes.every((b) => b >= 1200), `only QUIC from the worker page: ${workerSizes.join(',')}`).toBe(true);
         const before = canary.hits.length;
         const udpBefore = udp.packets.length;
         await control.navigate(await control.page(), `${naked.origin}/${TOKEN}/page.html`);

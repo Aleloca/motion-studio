@@ -98,6 +98,8 @@ export async function evaluate(client: CdpClient, sessionId: string | undefined,
   const r = await client.send<EvalResult>('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, timeout: timeoutMs }, { sessionId, timeoutMs: timeoutMs + 5_000 });
   if (r.exceptionDetails) {
     const text = r.exceptionDetails.exception?.description ?? r.exceptionDetails.text ?? 'exception';
+    // A seek the runtime failed fast on a video frame (`videoSeekTimeout`) is a runtime error of the composition.
+    if (/videoSeekTimeout/.test(text)) throw new RenderError('runtimeErrors', `the composition has errors: videoSeekTimeout`, [{ code: 'videoSeekTimeout', message: text.slice(0, 500) }]);
     throw new RenderError(/frameTimeout/.test(text) ? 'frameTimeout' : 'loadFailed', `page: ${text.slice(0, 500)}`);
   }
   return r.result?.value;

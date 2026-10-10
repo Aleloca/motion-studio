@@ -56,16 +56,21 @@ const ff = (ffmpeg: FfmpegInfo, args: string[]) => execFileSync(ffmpeg.path, ['-
  * A 64×32 H.264 video whose frame n shows two grey blocks coding n + 1 (left: units, right: tens; luma 16 + 20 × digit;
  * so an all-black area reads 0, "not visible"),
  * `frames` frames. `pts` (seconds per frame index) makes it variable-frame-rate; otherwise constant at `fps`. `offset`
- * shifts every timestamp (a first frame at 0.1 s).
+ * shifts every timestamp (a first frame at 0.1 s). `gop`: keyframe interval (default 12). `audioSeconds` adds a silent audio
+ * track of that length (media longer than its video). A `.webm` file is lossless VP9 (Opus audio) instead.
  */
-export function frameCodedVideo(ffmpeg: FfmpegInfo, file: string, o: { fps: number; frames: number; pts?: string; offset?: number }): void {
+export function frameCodedVideo(ffmpeg: FfmpegInfo, file: string, o: { fps: number; frames: number; pts?: string; offset?: number; gop?: number; audioSeconds?: number }): void {
   mkdirSync(join(file, '..'), { recursive: true });
   const code = "geq=lum='16+20*if(lt(X,32),mod(N+1,10),floor((N+1)/10))':cb=128:cr=128";
   const vf = o.pts ? `${code},setpts='(${o.pts})/TB',format=yuv420p` : `${code},format=yuv420p`;
-  ff(ffmpeg, ['-f', 'lavfi', '-i', `color=c=black:s=64x32:r=${o.fps}`, '-frames:v', String(o.frames), '-vf', vf,
-    ...(o.pts ? ['-fps_mode', 'passthrough', '-video_track_timescale', '90000'] : []),
+  const webm = file.endsWith('.webm');
+  ff(ffmpeg, ['-f', 'lavfi', '-i', `color=c=black:s=64x32:r=${o.fps}`,
+    ...(o.audioSeconds ? ['-f', 'lavfi', '-i', `anullsrc=r=48000:cl=mono:d=${o.audioSeconds}`, '-map', '0:v', '-map', '1:a', '-c:a', webm ? 'libopus' : 'aac'] : []),
+    '-frames:v', String(o.frames), '-vf', vf,
+    ...(o.pts ? ['-fps_mode', 'passthrough', ...(webm ? [] : ['-video_track_timescale', '90000'])] : []),
     ...(o.offset ? ['-output_ts_offset', String(o.offset)] : []),
-    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '4', '-g', '12', '-movflags', '+faststart', file]);
+    ...(webm ? ['-c:v', 'libvpx-vp9', '-lossless', '1', '-g', String(o.gop ?? 12)]
+      : ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '4', '-g', String(o.gop ?? 12), '-movflags', '+faststart']), file]);
 }
 
 /** The presentation times (s) of every frame of `file`. */

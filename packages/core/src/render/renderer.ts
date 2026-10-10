@@ -31,12 +31,14 @@ import type { WatchdogLimits } from './watchdog.ts';
  * - Everything is written to temp files; the output is renamed to `out` only on success. On cancel, a time limit, a crash,
  *   a watchdog trip or an ffmpeg failure, the browser group and every ffmpeg are killed and the temp files removed.
  * - Any runtime error (missing asset, font, layer timeout…) fails the render, except `audioBlocked` (preview only) and
- *   `videoFrameMismatch` (a warning: a declared `sourceFps`/`sourceStart` looks wrong), returned in `warnings`.
+ *   `videoFrameMismatch` (a warning: an untrusted source showed a frame its metadata does not place at the target),
+ *   returned in `warnings`. A video frame that cannot be drawn (`videoSeekTimeout`) rejects the seek at once, so the
+ *   render stops on it instead of waiting out every later seek.
  */
 
 export interface RenderResult {
   file: string; sha256: string; width: number; height: number; durationSec: number | null; frames: number; encoder: VideoEncoder | null; audio: boolean;
-  /** Non-fatal runtime reports (`videoFrameMismatch`: a declared `sourceFps`/`sourceStart` looks wrong), at most 50. */
+  /** Non-fatal runtime reports (`videoFrameMismatch`: an untrusted source's frame drawn on stability), at most 50. */
   warnings: RuntimeErrorInfo[];
 }
 

@@ -188,3 +188,55 @@ describe('render mode never captures an unpainted frame', () => {
     await expect(player.seek(1)).resolves.toBeUndefined();
   });
 });
+
+describe('render mode video frames (fake VideoFrame)', () => {
+  /** The frame the fake video holds (µs), whatever its currentTime: a decoder that never moves. */
+  let held = { timestamp: 0, duration: 33_333 };
+  const restore: Array<() => void> = [];
+  const define = (proto: object, key: string, desc: PropertyDescriptor) => {
+    const old = Object.getOwnPropertyDescriptor(proto, key);
+    Object.defineProperty(proto, key, { configurable: true, ...desc });
+    restore.push(() => { if (old) Object.defineProperty(proto, key, old); else delete (proto as Record<string, unknown>)[key]; });
+  };
+  beforeEach(() => {
+    held = { timestamp: 0, duration: 33_333 };
+    const times = new WeakMap<HTMLMediaElement, number>();
+    define(HTMLMediaElement.prototype, 'readyState', { get: () => 4 });
+    define(HTMLMediaElement.prototype, 'duration', { get: () => 10 });
+    define(HTMLCanvasElement.prototype, 'getContext', { value: () => null, writable: true });
+    define(HTMLMediaElement.prototype, 'currentTime', {
+      get(this: HTMLMediaElement) { return times.get(this) ?? 0; },
+      set(this: HTMLMediaElement, t: number) { times.set(this, t); setTimeout(() => this.dispatchEvent(new Event('seeked')), 1); },
+    });
+    (globalThis as unknown as { VideoFrame: unknown }).VideoFrame = class {
+      timestamp = held.timestamp; duration = held.duration; displayWidth = 16; displayHeight = 16; close() {}
+    };
+    restore.push(() => { delete (globalThis as { VideoFrame?: unknown }).VideoFrame; });
+  });
+  afterEach(() => { while (restore.length) restore.pop()!(); });
+
+  const videoComp = (extra: Record<string, unknown>) => comp({
+    fonts: [], tracks: [{ id: 'v', kind: 'video', clips: [{ id: 'vid', type: 'video', src: 'assets/v.mp4', start: 0, duration: 6, sourceFps: 30, ...extra, props: {} }] }],
+  } as unknown as Partial<Composition>);
+
+  it('trusted source: a stale frame is never drawn and the seek fails fast with videoSeekTimeout', async () => {
+    const { player, errors } = run(videoComp({ sourceTrusted: true }));
+    await expect(player.seek(1)).rejects.toThrow(/videoSeekTimeout/);
+    expect(errors.find((e) => e.code === 'videoSeekTimeout')?.message).toMatch(/still showed the frame at 0\.000 s \(stale\)/);
+    expect(errors.some((e) => e.code === 'videoFrameMismatch')).toBe(false);
+  });
+
+  it('untrusted source: the same stable frame is drawn with a videoFrameMismatch warning, the seek resolves', async () => {
+    const { player, errors } = run(videoComp({}));
+    await player.seek(0); // the first seek: the load frame (ts 0) covers the target
+    held = { timestamp: 400_000, duration: 33_333 }; // e.g. a WebM frame whose real duration is longer than reported
+    await player.seek(0.5);
+    expect(errors.map((e) => e.code)).toEqual(['videoFrameMismatch']);
+  });
+
+  it('untrusted source: a load frame far before the target is held to the deadline, then drawn with a warning', async () => {
+    const { player, errors } = run(videoComp({}));
+    await player.seek(2);
+    expect(errors.map((e) => e.code)).toEqual(['videoFrameMismatch']);
+  });
+});

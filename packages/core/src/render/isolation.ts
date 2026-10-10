@@ -85,12 +85,16 @@ const FETCH_TARGETS = new Set(['page', 'iframe']);
 const RESUMABLE_TARGETS = new Set(['page', 'iframe', 'worker']);
 const MAX_BLOCKED_LOG = 200;
 
+/** Chromium's answer to `Target.closeTarget` for a target that no longer exists. */
+const TARGET_GONE_RE = /No target with given id found/i;
+
 /**
  * Added before any page script of every page and frame (with the clock, when given): WebRTC and WebTransport are not
  * HTTP, so neither the CSP (for WebRTC) nor Fetch interception sees them. The network flags are what stops them; this is a
  * second layer, never the only one (a worker still has WebTransport).
+ * It evaluates to true only when every one of those APIs is gone afterwards (checked where it is evaluated directly).
  */
-export const NETWORK_API_GUARD = "(() => { for (const k of ['RTCPeerConnection', 'webkitRTCPeerConnection', 'RTCDataChannel', 'RTCIceTransport', 'RTCRtpSender', 'RTCRtpReceiver', 'WebTransport']) { try { Object.defineProperty(globalThis, k, { value: undefined, writable: false, configurable: false }); } catch (e) {} } })();";
+export const NETWORK_API_GUARD = "(() => { const ks = ['RTCPeerConnection', 'webkitRTCPeerConnection', 'RTCDataChannel', 'RTCIceTransport', 'RTCRtpSender', 'RTCRtpReceiver', 'WebTransport']; for (const k of ks) { try { Object.defineProperty(globalThis, k, { value: undefined, writable: false, configurable: false }); } catch (e) {} } return ks.every((k) => globalThis[k] === undefined); })();";
 
 export interface Interception {
   /** URLs refused so far (the first 200), with their resource type: diagnostics and tests. */
@@ -142,8 +146,9 @@ export async function interceptRequests(client: CdpClient, sessionId: string, pr
     if (type === 'worker') {
       // A dedicated worker has WebTransport too and gets no new-document script: install the guard in its global scope
       // while it is still paused, before any of its code runs.
-      const r = await client.send<{ exceptionDetails?: unknown }>('Runtime.evaluate', { expression: NETWORK_API_GUARD, returnByValue: true }, { sessionId: sid, timeoutMs });
-      if (r.exceptionDetails) throw new Error('the guard did not run in the worker');
+      // It returns true only when every API is gone afterwards: a failure its own try/catch swallowed closes the worker too.
+      const r = await client.send<{ exceptionDetails?: unknown; result?: { value?: unknown } }>('Runtime.evaluate', { expression: NETWORK_API_GUARD, returnByValue: true }, { sessionId: sid, timeoutMs });
+      if (r.exceptionDetails || r.result?.value !== true) throw new Error('the guard did not run in the worker');
     }
     await client.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, { sessionId: sid, timeoutMs });
   };
@@ -154,6 +159,7 @@ export async function interceptRequests(client: CdpClient, sessionId: string, pr
   const refuse = (targetId: string, type: string, url: string, why: string) => {
     refused.push({ type, url: url.slice(0, 300) });
     void client.send('Target.closeTarget', { targetId }, { timeoutMs }).catch((err: Error) => {
+      if (TARGET_GONE_RE.test(err.message)) return; // already gone (it ended, or its owner closed): that is closed
       fail(new Error(`render isolation: a ${type} target (${why}) could not be closed: ${err.message}`));
     });
   };
@@ -227,9 +233,6 @@ export async function interceptRequests(client: CdpClient, sessionId: string, pr
  * start deadlocked each other in Chrome 154 (even `runIfWaitingForDebugger` never answered). Each one gets its own window:
  * a background tab produces no frames (resizes and screenshots would wait forever).
  */
-/** Chromium's answer to `Target.closeTarget` for a target that no longer exists. */
-const TARGET_GONE_RE = /No target with given id found/i;
-
 export class TargetGate {
   private readonly own = new Set<string>();
   private readonly pending = new Map<string, (sessionId: string) => void>();

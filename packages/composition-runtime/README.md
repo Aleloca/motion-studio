@@ -84,28 +84,45 @@ Everything lives under one token prefix on the composition server's own origin (
 4. In parallel:
    - every visible video seeks to the **centre of its source frame**: `(i + 0.5) / sourceFps`, where
      `i = floor((trimStart + t − start) × sourceFps)`. Without `sourceFps` (VFR or unknown), it seeks to the source time plus
-     1 ms. The last frame is held past the end of the source. Each seek awaits `seeked`, with no `requestVideoFrameCallback`
-     (spike §1);
+     1 ms. The last video frame is held past the end of the video: the end is `sourceVideoEnd` when given (the video
+     track can end before the audio), else the element's duration. Each seek awaits `seeked`, with no
+     `requestVideoFrameCallback` (spike §1);
    - **render mode draws each video's frame into a `<canvas>`** (the `<video>` itself stays hidden). Measured in Chrome 154
      with 4 pages seeking at once: a video layer shown for the first time attaches to the compositor asynchronously, and a
      screenshot then showed the frame decoded at load (source frame 0) in 11–13 of ~100 first-visible frames, even after
      `seeked`, two animation frames and `requestVideoFrameCallback` reporting the right frame; extra frames or keeping the
      layer at opacity 0 did not help. The canvas holds the source region shown (`object-fit: cover`) at the clip's
      effective on-screen scale, never more pixels than that region has. The preview keeps the `<video>` (it plays);
-   - **which frame is drawn** (`frameVerdict` in `timing.ts`): the frame is read as a WebCodecs `VideoFrame` and checked by
-     its timestamp, because `drawImage` right after `seeked` can still read the previous frame:
-     - inside the window the declared `sourceFps`/`sourceStart` predict (one declared frame before the target at most):
-       drawn at once;
-     - outside it but stable (the same timestamp for 300 ms): drawn, with a **non-fatal `videoFrameMismatch`** warning (the
-       renderer ignores it and returns it in `warnings`). A wrong declared frame rate (a 25 fps file declared as 30) or a
-       first frame not at 0 makes correct frames fall outside the window; they are still the frames Chrome shows;
-     - without `sourceFps` (VFR) a frame read twice, one animation frame apart, is drawn: this proves the frame stopped
-       changing, not that it is the right one;
-     - the only failure: still the frame shown before the seek although a frame already seen in this video starts after it
-       and by the target (so Chrome must show that later one), when the seek's time limit passes: `videoSeekTimeout`;
-   - **`sourceStart`** (seconds, optional, next to `sourceFps`): where the source's first frame sits on the media timeline
-     (a file whose first timestamp is 0.1 s). Not in the agent's schema: the core sets both `sourceFps` and `sourceStart`
-     from ffprobe after validation, overriding what the agent declared (Task 5), so the window above is exact;
+   - **which frame is drawn** (`frameVerdict` and `pickVideoFrame` in `timing.ts`): the frame is read as a WebCodecs
+     `VideoFrame` and checked by its timestamp and duration, in whole microseconds, because `drawImage` right after
+     `seeked` can still read the previous frame. A frame covers `[ts, ts + duration)`:
+     - **drawn** when it covers the target (`ts ≤ target + ε` and `ts + duration > target − ε`, ε = 100 µs): a frame is
+       past only when it ended at least ε before the target;
+     - **the last video frame is drawn** for a target past the video's end: with `sourceVideoEnd`, a frame at or before
+       the target that reaches it; without it, a frame at or before the target that is the same on two reads while the
+       element sits at the end of the media;
+     - **strict rule, trusted sources** (`sourceTrusted: true` and a positive frame duration): a frame that ended before
+       the target is never drawn. If no right frame comes before the seek's deadline, the runtime reports
+       `videoSeekTimeout` and `seek(t)` **rejects at once** (fail fast): the renderer stops on the first such seek instead
+       of waiting out the 60 s deadline of every later one;
+     - **lenient rule, untrusted sources** (no `sourceTrusted`: agent-declared values, a source the core could not
+       normalise, or a frame with no duration): container durations can be wrong (Chrome reports a WebM's default frame
+       duration, 1/30 s, for frames that last longer), so a correct frame must never fail the render. A frame that does
+       not cover the target is drawn once it reads the same twice, one animation frame apart, with a **non-fatal
+       `videoFrameMismatch`** warning (the renderer returns it in `warnings`). This proves the frame stopped changing,
+       not that it is the right one. The first-seek protection still holds: the frame held before a video's first seek
+       (the load frame) is recognised by its timestamp, and while the target is more than one frame after it the frame is
+       read again until it changes; only at the seek's deadline is it drawn, with a warning, instead of failing;
+   - **source fields** (all optional, next to `sourceFps`; not in the agent's schema). From Task 5 the core normalises
+     every video clip (H.264, constant frame rate equal to the composition's, short GOP), probes the result with ffprobe
+     and sets them after validation, overriding anything the agent declared, so every normalised clip gets the strict
+     rule:
+     - `sourceStart` (seconds): where the source's first frame sits on the media timeline (a file whose first timestamp
+       is 0.1 s);
+     - `sourceVideoEnd` (seconds): the end of the video track on the media timeline;
+     - `sourceTrusted` (`true`): the core probed the source and vouches for these values. A trusted clip without
+       `sourceVideoEnd` whose audio is longer than its video fails for targets between the two ends, so the core always
+       sets both;
    - **colour:** an untagged source (no colour primaries or matrix) is converted with Chromium's default both when drawn
      into the render canvas and in the preview `<video>`, which can differ slightly between the two paths. Tagged sources
      are converted as tagged. Task 5 may tag or normalise sources on ingest (e.g. BT.709 for HD) to remove the ambiguity;
@@ -118,7 +135,8 @@ Everything lives under one token prefix on the composition server's own origin (
 
 **Time limits.** The runtime has generous native-time limits: load 120 s, video seek 60 s (one deadline for the `seeked`
 wait and the frame check together), layer 60 s. When one runs out, the
-runtime reports an error and goes on. It never hangs. Task 4 still puts its own timeout on each `Runtime.evaluate`.
+runtime reports an error and goes on (render mode: a video frame that could not be drawn rejects the seek, see above). It
+never hangs. Task 4 still puts its own timeout on each `Runtime.evaluate`.
 
 **The virtual clock** (`clock.ts`):
 - In render mode, `runtime.js` installs it as its very first statement. It is the only script of the page.
