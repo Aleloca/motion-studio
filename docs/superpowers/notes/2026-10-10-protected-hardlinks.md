@@ -146,9 +146,69 @@ Chat: "Warning: files of earlier versions had a second name on disk (a hard link
 
 ## Concerns
 
-- **Renaming a creative folder.** In the proof turn, `mv creatives/<b> creatives/<b>-moved` succeeded for a creative created during the job. The write was still refused, because `creatives/*/` matches any name. A move **out** of `creatives/` (e.g. `mv creatives/b tmp-b`) would leave the glob behind. That was not tried, but nothing in `denyWrite` covers it.
-  - Concrete entries are safe from this: Claude Code also denies unlink/create on their ancestors.
-  - This applies to plain roots too: it predates this branch (Phase 9 Task 0c).
+- **Moving a record folder out and back (corrected after review).** The sandbox denies writes by path, so a folder that is not pinned can be moved out, edited and moved back. No `denyWrite` entry can pin a folder alone: a glob deny always covers the folder and everything below it.
+  - **Plain roots.** Concrete entries are pinned: Claude Code also denies unlink/create on their ancestors. A creative created during the job has only the glob, which pins `creatives/` but not `creatives/<new>`. This predates this branch (Phase 9 Task 0c).
+  - **Roots with `[ ] * ?`.** After `sandboxPath` every concrete entry is a glob, and Claude Code pins ancestors only up to the first glob character. Every creative, `creatives/` itself and `outputs/` can be moved out and back, existing creatives included. Confirmed live after the review (section 5).
+  - What the core does about it is in "Fixes after review" below: a warning for such roots, and an after-run check of the record folders and of the logs' history.
 - **The earlier-versions warning only runs on the success path.** A failed or cancelled turn never compares the earlier-version snapshot. The detach in this branch makes the planted-link route harmless anyway.
 - **Linux/WSL.** Globs are skipped there, so a root with `[ ] * ?` still has no sandbox cover on Linux, as before. Only the Edit/Write rules and the core-side checks apply. Not testable here.
-- **`denyRead`** (config dir, sensitive home paths) is not rewritten. It goes through a different expansion in Claude Code, and none of those paths normally contains `[`.
+- **`denyRead` (corrected after review).** It goes through the same glob conversion as `denyWrite` on macOS, so a config dir or home path with `[` was not protected either. It now goes through `sandboxPath` too.
+
+## Fixes after review
+
+- **`[ ] * ?` roots.**
+  - Once per job, the chat (or a progress event) says the workspace path weakens the sandbox (`jobs.workspacePathGlob`).
+  - The doctor has a new optional check, `workspace-path`, that fails for such a path.
+  - `sandboxPath` also rewrites `denyRead`.
+- **After-run tripwire** (`packages/core/src/agent/run-tripwire.ts`, every job). It is armed before the run and checked after the leftover processes are killed.
+  - It records the inode, mtime and ctime of `creatives/`, `brand/proposals/` and each `creatives/<slug>/`. A move out and back changes the moved folder's ctime and its parent's mtime (measured on APFS).
+  - The core records its own changes to those folders (`noteCoreChange`):
+    - atomic JSON writes;
+    - creating a creative or a proposal;
+    - making `outputs/`, which a creative turn now makes before the agent runs;
+    - detaching a link.
+
+    A folder whose new times are not later than the core's last change (5 ms slack) counts as explained.
+  - Any other change is reported: `jobs.recordFoldersMoved`.
+  - Known limits:
+    - a move followed by a later core change to the same folder is not seen;
+    - a file the agent writes at the top of a creative folder (outside `work/` and `outputs/`) is reported too.
+- **Log history** (only for roots with `[ ] * ?`, where the move works on every creative). The size and sha256 of each `conversation.jsonl` and proposal `log.jsonl` are taken at the start, and the same byte range is compared at the end.
+  - A rewrite or a cut is reported: `jobs.logHistoryRewritten`.
+  - New forged lines after that range are not detected.
+  - **Not restored.** A restore needs a byte copy of every log at every run start, plus a record of the core's own appends. That was left out as too heavy for this fix.
+- **Order.** The launcher calls `killGroup` at the end of every run, for every job kind, before the after-run detach and the tripwire. Before, brand and console jobs never called it, and creative turns called it only after the launcher's checks.
+- **More files detached:**
+  - `CLAUDE.md`, `CLAUDE.local.md`, `.mcp.json`;
+  - `.claude/**`;
+  - `.git/config` and `.git/hooks/**`.
+
+  `.git/objects` is skipped: `git clone --local` hard-links it on purpose.
+- **Detach hardening:**
+  - the source is opened with `O_NOFOLLOW` and must be the inode that was `lstat`-ed;
+  - before the rename, the name is `lstat`-ed again (inode, size, mtime), and the copy is redone (up to 3 tries) if anything changed;
+  - files of 1 MiB and more are cloned with `COPYFILE_FICLONE`, then checked against the open handle (Node cannot clone from a handle);
+  - smaller files are copied from the handle;
+  - parent folders must be real folders: `creatives/`, `brand/`, `brand/proposals/`, and each folder from the creative down to `outputs/vN`;
+  - temp files (`.<name>.detach-<12 hex>`) left by a crash are removed on the next pass.
+- **Not changed (M8).** A console job's warning is a progress event: it is broadcast live but not kept.
+
+## 5. Live check after the review (one creative turn, `[x]` workspace)
+
+- **Doctor:** the `workspace-path` check failed, as intended, with "The path contains [ ] * or ?: …".
+- **Turn:** creatives `probe-a` and `probe-b` existed before the job. `probe-b` had one line of earlier history, written from outside.
+
+| Command | Output | Outside check |
+|---|---|---|
+| `sh -c 'mv creatives/probe-a moved-a && echo HLM1 >> moved-a/conversation.jsonl && mv moved-a creatives/probe-a'` | exit 0 | `HLM1` is in `probe-a`'s log: the attack works, as the review predicted |
+| `sh -c 'mv creatives/probe-b moved-b && : > moved-b/conversation.jsonl && mv moved-b creatives/probe-b'` | exit 0 | `probe-b`'s earlier history is gone |
+| `sh -c 'echo HLM3 >> creatives/probe-a/conversation.jsonl'` (direct) | `Operation not permitted`, exit 1 | — |
+
+The chat of `probe-a` then showed three warnings:
+1. the workspace path warning;
+2. "folders that hold Motion Studio's records changed in a way Motion Studio did not make (creatives, creatives/…-probe-a, creatives/…-probe-b)";
+3. "earlier lines of creatives/…-probe-b/conversation.jsonl were changed or removed".
+
+The appended `HLM1` line is caught only by the folder warning, not by the history check, as documented.
+
+Tokens: 8 input, 1,216 output, 19,976 cache write, 108,859 cache read; 21,200 shown; $0.0057. User folder mtimes were unchanged (1791461297, 1791538433), and the scratch folder was deleted.
