@@ -373,4 +373,21 @@ describe('TargetGate', () => {
     expect(gate.refused.map((r) => r.type)).toEqual(['shared_worker']);
     expect(failures[0]?.message).toMatch(/shared_worker target that is not ours could not be closed/);
   });
+
+  it('a target already gone when it is closed counts as closed, not as an isolation failure', async () => {
+    const { TargetGate } = await import('../src/render/isolation.ts');
+    const failures: Error[] = [];
+    const client: CdpClient = {
+      closed: null, onClose: () => () => {},
+      async send(method) { if (method === 'Target.closeTarget') throw new Error('Target.closeTarget: No target with given id found'); return {} as never; },
+      onEvent(l) { listeners.push(l); return () => {}; },
+    };
+    const listeners: Array<(e: CdpEvent) => void> = [];
+    const gate = new TargetGate(client, 1000, (e) => failures.push(e));
+    await gate.start();
+    for (const l of listeners) l({ method: 'Target.attachedToTarget', params: { sessionId: 'S', targetInfo: { targetId: 'gone', type: 'service_worker' } } });
+    await flush();
+    expect(gate.refused).toHaveLength(1);
+    expect(failures).toEqual([]);
+  });
 });

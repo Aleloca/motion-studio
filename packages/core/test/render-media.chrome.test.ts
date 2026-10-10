@@ -202,7 +202,7 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
     rmSync(out);
   }, 1_800_000);
 
-  it('a wrong declared sourceFps or a source starting at 0.1 s render the frames Chrome shows, with a warning, never a stall', async () => {
+  it('a wrong declared sourceFps or a source starting at 0.1 s render the frames Chrome shows, never a stall; only a target before the first frame warns', async () => {
     // A: a 25 fps file declared as 30 fps. B: a file whose first frame is at 0.1 s, declared without sourceStart.
     // C: the same file with sourceStart 0.1 (what the core will set from ffprobe, Task 5): exact.
     const ff = tools.ffmpeg!;
@@ -235,10 +235,10 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
     expect(decodeStrips(ff, out, BOXES.v25, 2).map(readCode)).toEqual(frames.map((i) => shownLate(target(i))));
     // C: sourceStart puts every frame where it belongs.
     expect(decodeStrips(ff, out, BOXES.vfr, 2).map(readCode)).toEqual(frames.map((i) => i + 1));
-    const warned = new Set(r.warnings.map((w) => w.clipId));
-    expect(r.warnings.every((w) => w.code === 'videoFrameMismatch')).toBe(true);
-    expect(warned.has('a') && warned.has('b')).toBe(true);
-    expect(warned.has('c')).toBe(false);
+    // Frames are checked by their own duration: the wrong declared rate (A) is not even a warning. Only B's targets before
+    // its first frame (0.1 s) warn: the first frame is drawn for them.
+    expect(r.warnings.length).toBeGreaterThan(0);
+    expect(r.warnings.every((w) => w.code === 'videoFrameMismatch' && w.clipId === 'b' && /first frame at 0\.100/.test(w.message))).toBe(true);
     rmSync(out);
   }, 1_800_000);
 

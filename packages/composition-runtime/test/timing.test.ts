@@ -108,38 +108,71 @@ describe('videoSourceTime with sourceStart (a source whose first frame is not at
   });
 });
 
-describe('frameVerdict (render: accept the frame a video shows after a seek)', () => {
-  const base = { previous: null, stableMs: 0, before: null, seen: [] as number[], settleMs: 300 } as const;
-  it('draws a frame inside the declared window at once', async () => {
+describe('frameVerdict (render: which frame a video may show after a seek)', () => {
+  const fallback = { previous: null, stableMs: 0, span: null, before: null, seen: [] as number[], settleMs: 300 };
+  const v = async (ts: number, duration: number | null, target: number, firstTs: number | null = 0) => {
     const { frameVerdict } = await import('../src/timing.ts');
-    expect(frameVerdict({ ...base, ts: 0.5, target: 0.5 + 0.5 / 30, span: 1 / 30 })).toBe('draw');
-  });
-  it('a 25 fps file declared as 30 fps: an out-of-window frame that stays put is drawn with a warning, after settling', async () => {
-    const { frameVerdict } = await import('../src/timing.ts');
-    // target (i + 0.5) / 30 for i = 15 is 0.5167; Chrome shows the 25 fps frame 12 at 0.48 (it is also the previous seek's frame).
-    const o = { ...base, ts: 0.48, target: 15.5 / 30, span: 1 / 30, before: 0.48, seen: [0.4, 0.44, 0.48, 0.52] };
-    expect(frameVerdict({ ...o, previous: null })).toBe('wait');
-    expect(frameVerdict({ ...o, previous: 0.48, stableMs: 100 })).toBe('wait');
-    expect(frameVerdict({ ...o, previous: 0.48, stableMs: 300 })).toBe('warn');
-  });
-  it('a first frame at 0.1 s without sourceStart: targets before it are drawn with a warning, not stalled', async () => {
-    const { frameVerdict } = await import('../src/timing.ts');
-    const o = { ...base, ts: 0.1, target: 0.5 / 30, span: 1 / 30, before: 0.1, seen: [0.1, 0.1333] };
-    expect(frameVerdict({ ...o, previous: 0.1, stableMs: 400 })).toBe('warn');
-  });
-  it('stale only with evidence: a frame already seen starts after the shown one and by the target', async () => {
-    const { frameVerdict } = await import('../src/timing.ts');
-    const o = { ...base, ts: 0.8, target: 0.85, span: 1 / 30, before: 0.8, previous: 0.8, stableMs: 10_000 };
-    expect(frameVerdict({ ...o, seen: [0.7667, 0.8, 0.8333] })).toBe('stale');
-    expect(frameVerdict({ ...o, seen: [0.7667, 0.8] })).toBe('warn'); // nothing later seen yet: cannot tell, drawn with a warning
-    // VFR: a long frame (1/12 s) shown for a target inside it is not stale, though shorter frames were seen earlier.
-    expect(frameVerdict({ ...o, span: null, ts: 0.9, before: 0.9, previous: 0.9, target: 0.95, seen: [0.8, 0.8333, 0.8667, 0.9, 0.9833] })).toBe('draw');
-    expect(frameVerdict({ ...o, ts: 0.8, target: 0.85, before: null, seen: [0.8, 0.8333] })).toBe('warn'); // not unchanged
+    return frameVerdict({ ...fallback, ts, duration, target, firstTs });
+  };
+  it.each([
+    // [case, ts, duration, target, firstTs, verdict]
+    ['30 fps, the frame covering the target', 0.8333, 1 / 30, 0.85, 0, 'draw'],
+    ['30 fps, the previous frame ended before the target: stale', 0.8, 1 / 30, 0.85, 0, 'stale'],
+    ['25 fps declared as 30: target 15.5/30 lies in the 25 fps frame at 0.48', 0.48, 0.04, 15.5 / 30, 0, 'draw'],
+    ['25 fps declared as 30: the frame before it is stale', 0.44, 0.04, 15.5 / 30, 0, 'stale'],
+    ['a source starting at 0.1 without sourceStart: its first frame for an earlier target', 0.1, 1 / 30, 0.5 / 30, 0.1, 'warn'],
+    ['the same with sourceStart: the target is inside the frame', 0.1, 1 / 30, 0.1 + 0.5 / 30, 0.1, 'draw'],
+    ['a later frame that is not the first: wait', 0.9, 1 / 30, 0.85, 0, 'wait'],
+    ['VFR: a 1/12 s frame covering the target', 0.9, 1 / 12, 0.95, 0, 'draw'],
+    ['VFR: a short frame that ended before the target', 0.8667, 1 / 30, 0.95, 0, 'stale'],
+    ['exactly at the frame end belongs to the next frame', 0.8, 0.05, 0.85, 0, 'stale'],
+  ] as const)('%s → %s', async (_name, ts, duration, target, firstTs, verdict) => {
+    expect(await v(ts, duration, target, firstTs)).toBe(verdict);
   });
 
-  it('VFR (no sourceFps): drawn once stable, without a warning', async () => {
+  it('without a frame duration: the older window and stability rules (documented fallback)', async () => {
     const { frameVerdict } = await import('../src/timing.ts');
-    expect(frameVerdict({ ...base, ts: 0.3, target: 0.31, span: null })).toBe('wait');
-    expect(frameVerdict({ ...base, ts: 0.3, target: 0.31, span: null, previous: 0.3 })).toBe('draw');
+    const o = { ...fallback, duration: null, firstTs: null };
+    expect(frameVerdict({ ...o, ts: 0.5, target: 0.5 + 0.5 / 30, span: 1 / 30 })).toBe('draw');
+    expect(frameVerdict({ ...o, ts: 0.48, target: 15.5 / 30, span: 1 / 30, previous: 0.48, stableMs: 300 })).toBe('warn');
+    expect(frameVerdict({ ...o, ts: 0.3, target: 0.31, previous: 0.3 })).toBe('draw'); // VFR: stability only
+    expect(frameVerdict({ ...o, ts: 0.8, target: 0.85, span: 1 / 30, before: 0.8, previous: 0.8, stableMs: 10_000, seen: [0.8, 0.8333] })).toBe('stale');
+  });
+});
+
+describe('pickVideoFrame (the read loop)', () => {
+  type F = { ts: number; duration: number | null; closed?: boolean };
+  const run = async (reads: Array<F | null>, o: { target: number; deadlineReads?: number; firstTs?: number | null }) => {
+    const { pickVideoFrame } = await import('../src/timing.ts');
+    let i = 0, clock = 0;
+    const handed: F[] = [];
+    const r = await pickVideoFrame<F>({
+      read: () => { const f = reads[Math.min(i, reads.length - 1)]; i++; if (f) { const c = { ...f }; handed.push(c); return c; } return null; },
+      stamp: (f) => ({ ts: f.ts, duration: f.duration }), close: (f) => { f.closed = true; },
+      nextFrame: async () => { clock += 16; }, now: () => clock, deadline: 16 * (o.deadlineReads ?? 50),
+      target: o.target, span: 1 / 30, before: null, firstTs: o.firstTs ?? null, seen: () => [], settleMs: 300,
+    });
+    return { r, handed, reads: i };
+  };
+  it('a stale frame (it ended before the target) is never drawn: re-read until the right one comes', async () => {
+    const stale = { ts: 0.8, duration: 1 / 30 }, right = { ts: 0.8333, duration: 1 / 30 };
+    const { r, handed } = await run([stale, stale, stale, right], { target: 0.85 });
+    expect(r.verdict).toBe('draw');
+    expect(r.frame?.ts).toBe(0.8333);
+    expect(handed.slice(0, 3).every((f) => f.closed)).toBe(true);
+  });
+  it('a frame that stays stale until the deadline is not drawn: no frame, verdict stale (the seek fails)', async () => {
+    const { r, handed } = await run([{ ts: 0.8, duration: 1 / 30 }], { target: 0.85, deadlineReads: 5 });
+    expect(r).toEqual({ frame: null, verdict: 'stale', ts: 0.8 });
+    expect(handed.every((f) => f.closed)).toBe(true);
+  });
+  it('the first frame for a target before the source starts: drawn with a warning at once', async () => {
+    const { r, reads } = await run([{ ts: 0.1, duration: 1 / 30 }], { target: 0.5 / 30, firstTs: 0.1 });
+    expect(r.verdict).toBe('warn');
+    expect(reads).toBe(1);
+  });
+  it('no frame at all until the deadline: none', async () => {
+    const { r } = await run([null], { target: 0.5, deadlineReads: 3 });
+    expect(r).toEqual({ frame: null, verdict: 'none', ts: null });
   });
 });

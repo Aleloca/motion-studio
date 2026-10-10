@@ -6,7 +6,7 @@
  * - `hostileLayer`: everything the headers must block (fetch, WebSocket, EventSource, beacon, Worker, import(), script,
  *   stylesheet, image, file://, form, popup, top navigation, top/parent document access, cross-origin pushState), workers
  *   that really fetch (blob, same-folder script, SharedWorker, service worker), and, given a UDP canary port, WebRTC
- *   STUN/TURN and WebTransport. It paints
+ *   STUN/TURN and WebTransport, from the page and from a dedicated worker. It paints
  *   itself green, or red when a synchronous attempt did not throw. Nothing may reach the canary, in any mode.
  * - `selfNavigationLayer`: a layer that navigates its own frame (`location.href`, `<meta http-equiv=refresh>`, an anchor
  *   `.click()`, `location.replace`, `open(url, '_self')`, a `location.href` 1.5 s later, from a timer) or a nested
@@ -32,6 +32,10 @@ export const selfNavigationPath = (c: SelfNavigationCase) => `/selfnav-${c}`;
 
 /** Where the hostile clip sits in a 320×180 composition: on top, in the bottom-right corner. */
 export const HOSTILE_BOX = { x: 280, y: 140, width: 40, height: 40 } as const;
+
+/** A dedicated worker's script that opens WebTransport (QUIC over UDP) to `127.0.0.1:<port>`. */
+export const workerTransportProbe = (port: string | number) =>
+  `try { const wt = new WebTransport('https://127.0.0.1:${port}/worker-wt'); wt.ready.catch(() => {}); wt.closed.catch(() => {}); } catch (e) {}`;
 
 export const hostileLayer = (canary: string, udpPort?: number) => `<!doctype html>
 <html><head><meta charset="utf-8">
@@ -69,6 +73,8 @@ export const hostileLayer = (canary: string, udpPort?: number) => `<!doctype htm
       pc.createOffer().then((o) => pc.setLocalDescription(o)).catch(() => {});
     } catch (e) {}
     try { const wt = new WebTransport('https://127.0.0.1:' + U + '/wt'); wt.ready.catch(() => {}); wt.closed.catch(() => {}); } catch (e) {}
+    // A dedicated worker has WebTransport too (no RTCPeerConnection there): the same probe from a worker.
+    try { new Worker(URL.createObjectURL(new Blob([${JSON.stringify(workerTransportProbe('U_PLACEHOLDER'))}.replace('U_PLACEHOLDER', String(U))], { type: 'text/javascript' }))); } catch (e) {}
   }
   import(C + '/mod.js').catch(() => {});
   const s = document.createElement('script'); s.src = C + '/script.js'; document.head.appendChild(s);

@@ -70,28 +70,76 @@ export function videoSourceTime(clip: { start: number; trimStart?: number; sourc
   return known ? Math.min(target, Math.max(base, sourceDuration - VFR_NUDGE)) : target;
 }
 
+/** Tolerance on frame timestamps and durations (s): well under any frame, above float noise of µs timestamps. */
+export const FRAME_EPS = 1e-4;
+
 /**
- * Render mode: what to do with the frame a video holds after a seek (mount.ts `paintVideo`), from its timestamp `ts`:
- * - `draw`: it starts within one declared frame (`span`) before `target`;
- * - `stale`: still the frame shown before the seek (`before`) although a frame already seen in this video (`seen`)
- *   starts after it and at or before the target: Chrome must show that one, so this one is provably old. Never drawn
- *   before the deadline (then `videoSeekTimeout`). Evidence from the file itself, not from a frame rate: a VFR file or a
- *   wrong declared rate cannot make a correct frame look stale;
- * - `warn`: draw it with a `videoFrameMismatch` warning: outside the window but stable (the same timestamp as the
- *   previous read, for `settleMs`): a wrong declared `sourceFps`/`sourceStart` (it is still the frame Chrome shows at
- *   `target`). Without `span` (VFR) a stable frame is drawn without a warning: stability, not correctness;
- * - `wait`: read again after an animation frame.
+ * Render mode: what to do with the frame a video holds after a seek (`pickVideoFrame`), from its timestamp `ts` and
+ * `duration` (WebCodecs `VideoFrame`; Chrome 154 fills `duration` with each frame's real duration from the file: measured
+ * right for 25 fps, a 0.1 s start and VFR):
+ * - `draw`: the frame covers the target, `ts ≤ target` and `ts + duration > target`. No declared value is involved, so a
+ *   wrong declared `sourceFps` (a 25 fps file declared as 30) changes nothing;
+ * - `warn`: `ts > target` and it is the source's first frame (`firstTs`, the frame decoded at load): the target lies before
+ *   the source's first frame (a source starting at 0.1 s without `sourceStart`). Drawn with a non-fatal
+ *   `videoFrameMismatch`;
+ * - `stale`: the frame ended before the target, `ts + duration ≤ target`: provably old. Never drawn; read again until
+ *   the seek's deadline, then the seek fails (`videoSeekTimeout`);
+ * - `wait`: anything else (a later frame than the target, not the first): read again.
+ * Without a usable `duration` (null or 0) the older rules apply: inside the window the declared `sourceFps` predicts
+ * (`span`) → `draw`; stable (the same `ts` as `previous`, for `settleMs` when `span` is set) → `warn`, or `draw` without
+ * `span` (VFR: stability, not correctness); unchanged since `before` although a frame already `seen` starts after it and
+ * by the target → `stale`.
  */
 export function frameVerdict(o: {
-  ts: number; previous: number | null; stableMs: number; target: number; span: number | null; before: number | null;
-  seen: readonly number[]; settleMs: number;
+  ts: number; duration: number | null; target: number; firstTs: number | null;
+  previous: number | null; stableMs: number; span: number | null; before: number | null; seen: readonly number[]; settleMs: number;
 }): 'draw' | 'warn' | 'stale' | 'wait' {
   const { ts, target, span } = o;
+  if (o.duration !== null && o.duration > 0) {
+    // A frame covers [ts, ts + duration): one that ends at the target already belongs to the past.
+    if (ts <= target + FRAME_EPS && ts + o.duration > target + FRAME_EPS) return 'draw';
+    if (ts + o.duration <= target + FRAME_EPS) return 'stale';
+    if (ts > target && o.firstTs !== null && Math.abs(ts - o.firstTs) <= 1e-6) return 'warn';
+    return 'wait';
+  }
   if (span !== null && ts <= target + 1e-3 && ts > target - span - 1e-3) return 'draw';
   if (o.before !== null && ts === o.before && o.seen.some((x) => x > ts + 1e-6 && x <= target + 1e-6)) return 'stale';
   const stable = ts === o.previous && (span === null || o.stableMs >= o.settleMs);
   if (!stable) return 'wait';
   return span === null ? 'draw' : 'warn';
+}
+
+/**
+ * Reads the frame a video holds until `frameVerdict` accepts it (`draw` or `warn`), one native animation frame apart, up
+ * to `deadline` (native ms). Returns the accepted frame (the caller draws and closes it); at the deadline, `stale` or
+ * `wait` (the last verdict) with no frame: a frame that is not accepted is never drawn. DOM-free, so it is unit tested.
+ */
+export async function pickVideoFrame<F>(o: {
+  read(): F | null; stamp(f: F): { ts: number; duration: number | null }; close(f: F): void;
+  nextFrame(): Promise<void>; now(): number; deadline: number;
+  target: number; span: number | null; before: number | null; firstTs: number | null; seen: () => readonly number[]; settleMs: number;
+}): Promise<{ frame: F | null; verdict: 'draw' | 'warn' | 'stale' | 'wait' | 'none'; ts: number | null }> {
+  let previous: number | null = null;
+  let since = 0;
+  let last: { verdict: 'stale' | 'wait' | 'none'; ts: number | null } = { verdict: 'none', ts: null };
+  for (;;) {
+    const f = o.read();
+    const now = o.now();
+    if (f) {
+      const { ts, duration } = o.stamp(f);
+      if (ts !== previous) since = now;
+      const verdict = frameVerdict({ ts, duration, target: o.target, firstTs: o.firstTs, previous, stableMs: now - since, span: o.span, before: o.before, seen: o.seen(), settleMs: o.settleMs });
+      if (verdict === 'draw' || verdict === 'warn') return { frame: f, verdict, ts };
+      o.close(f);
+      previous = ts;
+      last = { verdict, ts };
+    } else {
+      previous = null;
+      last = { verdict: 'none', ts: null };
+    }
+    if (now > o.deadline) return { frame: null, ...last };
+    await o.nextFrame();
+  }
 }
 
 /** Preview playback: whether a media element drifted more than one composition frame from where it should be. */

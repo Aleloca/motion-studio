@@ -139,6 +139,12 @@ export async function interceptRequests(client: CdpClient, sessionId: string, pr
       if (type === 'iframe') await client.send('Page.enable', {}, { sessionId: sid, timeoutMs });
       await client.send('Page.addScriptToEvaluateOnNewDocument', { source: injected, runImmediately: true }, { sessionId: sid, timeoutMs });
     }
+    if (type === 'worker') {
+      // A dedicated worker has WebTransport too and gets no new-document script: install the guard in its global scope
+      // while it is still paused, before any of its code runs.
+      const r = await client.send<{ exceptionDetails?: unknown }>('Runtime.evaluate', { expression: NETWORK_API_GUARD, returnByValue: true }, { sessionId: sid, timeoutMs });
+      if (r.exceptionDetails) throw new Error('the guard did not run in the worker');
+    }
     await client.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, { sessionId: sid, timeoutMs });
   };
   const extras = async (sid: string, type: string) => {
@@ -221,6 +227,9 @@ export async function interceptRequests(client: CdpClient, sessionId: string, pr
  * start deadlocked each other in Chrome 154 (even `runIfWaitingForDebugger` never answered). Each one gets its own window:
  * a background tab produces no frames (resizes and screenshots would wait forever).
  */
+/** Chromium's answer to `Target.closeTarget` for a target that no longer exists. */
+const TARGET_GONE_RE = /No target with given id found/i;
+
 export class TargetGate {
   private readonly own = new Set<string>();
   private readonly pending = new Map<string, (sessionId: string) => void>();
@@ -253,6 +262,8 @@ export class TargetGate {
       this.refused.push({ type: String(info?.type ?? ''), url: String(info?.url ?? '').slice(0, 300) });
       const type = String(info?.type ?? '');
       void this.client.send('Target.closeTarget', { targetId: id }, { timeoutMs: this.timeoutMs }).catch((err: Error) => {
+        // Already gone (it ended or the browser closed it): that is closed. Anything else fails the render.
+        if (TARGET_GONE_RE.test(err.message)) return;
         this.onFailure?.(new Error(`render isolation: a ${type} target that is not ours could not be closed: ${err.message}`));
       });
     };

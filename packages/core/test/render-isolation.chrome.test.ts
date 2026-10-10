@@ -16,7 +16,9 @@
  *    nothing at all reaches the canaries on other loopback ports: WebSocket, workers, WebRTC STUN/TURN and WebTransport to
  *    a UDP canary included.
  * Workers: in A the layers are opaque origins, so every worker attempt fails; B and C start real ones from a same-origin
- * top-level page (service worker, SharedWorker, a same-origin and a blob dedicated worker), all fetching the canary.
+ * top-level page (service worker, SharedWorker, a same-origin and a blob dedicated worker), all fetching the canary, and
+ * a dedicated worker opening WebTransport to the UDP canary (the control sees its QUIC packets; B none: the guard is
+ * installed in the paused worker; C none: the flags).
  * Skipped without Chrome, unless MS_REQUIRE_CHROME=1 (CI).
  */
 import { spawn } from 'node:child_process';
@@ -32,7 +34,7 @@ import { ChromeProvider, nativeLauncher } from '../src/render/chromium-provider.
 import { BASE_FLAGS, interceptRequests, networkLockdownFlags, TargetGate } from '../src/render/isolation.ts';
 import { killGroup, sweepByMarker } from '../src/render/watchdog.ts';
 import { startCompositionServer } from '../src/compositions/composition-server.ts';
-import { hostileLayer, hostileTrack, hostileWorkerScripts, OWN_FRAME_NAVIGATION_CASES, SELF_NAVIGATION_CASES, selfNavigationLayer, selfNavigationPath, selfNavigationTrack, writeHostileLayers } from './helpers/hostile-layers.ts';
+import { hostileLayer, hostileTrack, hostileWorkerScripts, workerTransportProbe, OWN_FRAME_NAVIGATION_CASES, SELF_NAVIGATION_CASES, selfNavigationLayer, selfNavigationPath, selfNavigationTrack, writeHostileLayers } from './helpers/hostile-layers.ts';
 import { buildRuntime, leftovers, renderTools, startCanary, startUdpCanary, type Canary, type UdpCanary } from './helpers/render-env.ts';
 
 const tools = await renderTools('renderer isolation tests');
@@ -88,6 +90,7 @@ try { navigator.serviceWorker.register('/${TOKEN}/sw.js').catch(() => {}); } cat
 try { new SharedWorker('/${TOKEN}/shared.js'); } catch (e) {}
 try { new Worker('/${TOKEN}/worker.js'); } catch (e) {}
 try { new Worker(URL.createObjectURL(new Blob([${JSON.stringify(`fetch('${canary}/blob-worker-fetch').catch(() => {});`)}], { type: 'text/javascript' }))); } catch (e) {}
+try { new Worker(URL.createObjectURL(new Blob([${JSON.stringify(workerTransportProbe(udpPort))}], { type: 'text/javascript' }))); } catch (e) {}
 </script></body></html>`;
   const s: Server = createServer((req, res) => {
     const url = (req.url ?? '').split('?')[0]!;
@@ -198,7 +201,8 @@ describe.skipIf(!tools.chrome)('render isolation in headless Chrome', () => {
         await chrome.navigate(sessionId, `${naked.origin}/${TOKEN}/page.html`);
         await settle(5000);
         expect(canary.hits.slice(before)).toEqual(['upgrade /ws']);
-        // No flags here: the injected guard alone keeps WebRTC and WebTransport from every page and frame (defence in depth).
+        // No flags here: the guard alone keeps WebRTC and WebTransport from every page, frame and dedicated worker (it is
+        // evaluated in a worker while it is still paused). Recorded here; the flags are what A and C rely on.
         expect(udp.packets.slice(udpBefore)).toEqual([]);
         const blocked = ic.blocked.map((b) => b.url);
         // The dedicated workers (same-origin and blob) ran and their fetches were intercepted; the service and shared
