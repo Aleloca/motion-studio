@@ -245,10 +245,14 @@ export class CreativeTurnService {
     if (message) await store.appendConversation(ref.creativeSlug, { type: 'user', at: now(), text: message.text, pins: message.pins, attachments: [] });
     await store.update(ref.creativeSlug, { status: 'working', error: null });
     this.changed(ref);
+    // What the turn targets, said up front (the web marks only those boards and their followers as rendering): the same
+    // resolution `planTurn` makes (a first generation targets every primary). Untargeted: absent.
+    const targets = formats?.length && (await store.readVersions(ref.creativeSlug)).length > 0 ? normalizeTargets(formats, before.brief.formats, effectiveLinks(before.brief.links, before.brief.formats)) : undefined;
     return this.deps.queue.enqueue({
       key,
       kind: 'creative',
       label: t().jobs.creativeLabel({ title: before.title }),
+      ...(targets ? { formats: targets } : {}),
       run: (signal, jobId) => this.run(ref, store, before.status, message, signal, jobId, formats),
       onCancelledBeforeStart: () => this.locks.run(key, async () => {
         // A new start() may have won the lock after the cancel: the creative belongs to that job now.

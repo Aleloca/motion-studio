@@ -112,11 +112,21 @@ describe('targeted turns (spec §2.5)', { timeout: 30_000 }, () => {
   it('a follower in formats stands for its primary', async () => {
     await setup({ ...baseBrief, formats: [REEL, POST, TIKTOK], links: { [TIKTOK]: REEL } });
     await run(service.start(ref));
-    await run(service.start(ref, { text: 'più veloce', pins: [] }, { formats: [TIKTOK] }));
+    const started = await service.start(ref, { text: 'più veloce', pins: [] }, { formats: [TIKTOK] });
+    // The job says what it targets (followers resolved to their primaries), for the web's per-board "Rendering…".
+    expect(started.formats).toEqual([REEL]);
+    await run(Promise.resolve(started));
     expect(blockFormats((await prompts()).at(-1)!.prompt)).toEqual([REEL]);
     const [v1, v2] = await versions();
     expect(out(v2!, POST)!.sha256).toBe(out(v1!, POST)!.sha256);
     expect(out(v2!, TIKTOK)!.sha256).toBe(out(v2!, REEL)!.sha256);
+  });
+
+  it('an untargeted job carries no formats (every board renders)', async () => {
+    await setup(baseBrief);
+    const started = await service.start(ref);
+    expect(started.formats).toBeUndefined();
+    await run(Promise.resolve(started));
   });
 
   it('keeps the carried post when the agent overwrites it, with a note (the agent file is discarded)', async () => {

@@ -21,6 +21,8 @@ export interface JobSpec {
   key: string;
   kind: JobKind;
   label: string;
+  /** The formats the job targets (creative turns, see JobSummary.formats); copied into the summary. */
+  formats?: string[];
   /**
    * Outcome contract: resolving means the work completed ('succeeded'), even if an abort arrived late;
    * resolving to 'cancelled' reports an explicit cancellation; rejecting means 'failed', or 'cancelled'
@@ -59,7 +61,10 @@ export class JobQueue {
     const entry: Entry = {
       spec,
       controller: new AbortController(),
-      summary: { id: randomUUID(), key: spec.key, kind: spec.kind, label: spec.label, state: 'queued', createdAt: new Date().toISOString() },
+      summary: {
+        id: randomUUID(), key: spec.key, kind: spec.kind, label: spec.label, state: 'queued', createdAt: new Date().toISOString(),
+        ...(spec.formats ? { formats: [...spec.formats] } : {}),
+      },
     };
     this.entries.unshift(entry);
     this.trim();
