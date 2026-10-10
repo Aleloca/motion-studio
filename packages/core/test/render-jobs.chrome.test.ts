@@ -26,6 +26,7 @@ import { createFfmpegTools } from '../src/media/media-tools.ts';
 import { ChromeProvider } from '../src/render/chromium-provider.ts';
 import { countVideoFrames } from '../src/render/encode.ts';
 import { createRenderEngine } from '../src/render/renderer.ts';
+import { liveGroupCount } from '../src/render/watchdog.ts';
 import { buildServer } from '../src/server/app.ts';
 import { buildRuntime, decodeStrips, frameCodedVideo, leftovers, readCode, renderTools } from './helpers/render-env.ts';
 
@@ -71,7 +72,7 @@ describe.skipIf(!tools.ok)('render jobs in real Chrome', () => {
   });
 
   beforeAll(async () => {
-    work = mkdtempSync(join(tmpdir(), 'ms-render-jobs-chrome-'));
+    work = mkdtempSync(join(tmpdir(), 'ms-test-render-jobs-chrome-'));
     dist = join(work, 'dist');
     renderTemp = join(work, 'render-tmp');
     mkdirSync(renderTemp);
@@ -140,7 +141,7 @@ describe.skipIf(!tools.ok)('render jobs in real Chrome', () => {
     // The normalised file is in the media cache; the agent's folder is untouched and keeps its hash.
     const sha = createHash('sha256').update(readFileSync(join(dir, 'assets', 'code25.mp4'))).digest('hex');
     const legacySha = createHash('sha256').update(readFileSync(join(dir, 'assets', 'legacy.mp4'))).digest('hex');
-    expect(readdirSync(join(ws, 'acme', '.studio', 'cache', 'media')).sort()).toEqual([`${sha}-30-64.mp4`, `${legacySha}-30-64.mp4`].sort());
+    expect(readdirSync(join(ws, 'acme', '.studio', 'cache', 'media')).sort()).toEqual([`${sha}-30-64x32-n1.mp4`, `${legacySha}-30-64x32-n1.mp4`].sort());
     expect(readFileSync(join(dir, 'composition.json'))).toEqual(before);
     expect((await readCompositionFolder(dir)).hash).toBe(hash);
     const v = (await store.readVersions(slug))[0]!;
@@ -168,6 +169,8 @@ describe.skipIf(!tools.ok)('render jobs in real Chrome', () => {
     expect(await leftovers({ pgids: [pgid], markers: [profile, renderTemp, join(ws, 'acme', '.studio', 'cache', 'media')] })).toEqual([]);
     expect(readdirSync(vdir).sort()).toEqual(['compositions', 'manifest.json']);
     expect(readdirSync(renderTemp)).toEqual([]);
+    // Every ffmpeg and ffprobe the core started (they read their input by fd, so no path marker shows them) is gone.
+    expect(liveGroupCount()).toBe(0);
     expect((await store.readVersions(slug))[0]!.outputs).toEqual([]);
     // A new server (the app restarted): the retry renders it.
     app = await build();

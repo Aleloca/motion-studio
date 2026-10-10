@@ -6,7 +6,7 @@
  * the turn's earlier-output check, and the startup sweep of leftovers.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { rename, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -17,6 +17,7 @@ import { AppConfigStore } from '../src/app-config.ts';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { readCompositionFolder } from '../src/compositions/composition-files.ts';
 import { noteCoreOutputWrite, snapshotChanges, snapshotOutputs, withoutCoreWrites } from '../src/creatives/carry-over.ts';
+import { noteCoreTemp } from '../src/core-temps.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { renderPlan, RenderJobService } from '../src/creatives/render-jobs.ts';
 import { JobQueue } from '../src/jobs/job-queue.ts';
@@ -35,6 +36,8 @@ const PRESETS: FormatPreset[] = [
   { id: 'test-wide-b', channel: 'Test', name: 'Wide B', width: 320, height: 180, kind: 'video', extensions: ['mp4'], targetBitrateKbps: 800 },
   { id: 'test-tall', channel: 'Test', name: 'Tall', width: 180, height: 320, kind: 'video', extensions: ['mp4', 'webm'] },
   { id: 'test-still', channel: 'Test', name: 'Still', width: 320, height: 180, kind: 'image', extensions: ['png', 'jpg'] },
+  // A follower with its own, stricter limits (M4): another container and a tiny size cap.
+  { id: 'test-wide-c', channel: 'Other', name: 'Wide C', width: 320, height: 180, kind: 'video', extensions: ['mp4', 'mov'], maxFileMB: 0.00001 },
 ];
 const comp = (w: number, h: number, duration: number, fill = '#ff0000') => ({
   $schema: 'motion-studio/composition@1', width: w, height: h, fps: 30, duration, background: '#101010', fonts: [],
@@ -49,9 +52,11 @@ interface Fake {
   gate: Promise<void> | null;
   fail: Record<string, string>;
   kind: 'injected' | null;
+  /** Runs right after a render's file is in place (before the job records it). */
+  after: ((o: RenderCompositionOptions) => void | Promise<void>) | null;
 }
 function fakeEngine(): Fake {
-  const f: Fake = { calls: [], gate: null, fail: {}, kind: 'injected', engine: null as unknown as RenderEngine };
+  const f: Fake = { calls: [], gate: null, fail: {}, kind: 'injected', after: null, engine: null as unknown as RenderEngine };
   f.engine = {
     info: async () => ({ kind: f.kind }),
     provider: async () => { throw new Error('not used'); },
@@ -62,6 +67,7 @@ function fakeEngine(): Fake {
       o.onProgress?.({ frames: 0, total });
       o.onProgress?.({ frames: 1, total });
       const temp = join(dirname(o.out), `.${basename(o.out)}.render-${randomBytes(6).toString('hex')}.tmp`);
+      noteCoreTemp(temp); // as the real renderer does
       await writeFile(temp, `partial ${o.format.id}`);
       try {
         if (f.gate) {
@@ -74,7 +80,9 @@ function fakeEngine(): Fake {
         for (let i = 2; i <= total; i++) o.onProgress?.({ frames: i, total });
         const body = `render of ${o.format.id} at ${Date.now()} ${randomBytes(4).toString('hex')}`;
         await writeFile(temp, body);
+        await o.beforeRename?.(temp);
         await rename(temp, o.out);
+        await f.after?.(o as RenderCompositionOptions);
         return { file: o.out, sha256: createHash('sha256').update(body).digest('hex'), width: o.composition.width, height: o.composition.height,
           durationSec: still ? null : o.composition.duration, frames: total, encoder: still ? null : 'libx264', audio: false, warnings: [] };
       } finally {
@@ -98,7 +106,7 @@ const build = (o: { engine?: RenderEngine | null } = {}) => buildServer({
 });
 
 beforeEach(async () => {
-  base = mkdtempSync(join(tmpdir(), 'ms-render-jobs-'));
+  base = mkdtempSync(join(tmpdir(), 'ms-test-render-jobs-'));
   fake = fakeEngine();
   app = await build();
   ws = join(base, 'ws');
@@ -340,11 +348,12 @@ describe('progress events and warnings', { timeout: 30_000 }, () => {
   it('per format: media (sources done of total), frames, finishing (the follower copies); media warnings become notes and chat warnings', async () => {
     const { slug, store } = await v2Creative({ formats: ['test-wide', 'test-wide-b'] });
     const updates: JobSummary[] = [];
+    let released = 0;
     const queue = new JobQueue({ concurrency: 1, onUpdate: (j) => updates.push(j) });
     const normalizer = {
       prepare: async (p: { onProgress?(x: { done: number; total: number }): void }) => {
         for (const done of [0, 1, 2]) p.onProgress?.({ done, total: 2 });
-        return { media: { dir: join(projectDir(), '.studio', 'cache', 'media'), clips: new Map() }, warnings: [{ src: 'assets/v.mp4', message: 'x' }], made: 0, cached: 0 };
+        return { media: { dir: join(projectDir(), '.studio', 'cache', 'media'), clips: new Map() }, warnings: [{ src: 'assets/v.mp4', kind: 'notNormalised', message: 'x' }], made: 0, cached: 0, release: () => { released++; } };
       },
     } as unknown as MediaNormalizer;
     const svc = new RenderJobService({ queue, engine: fake.engine, media: NoMediaTools, normalizer, presets: async () => PRESETS, broadcast: () => {}, progressIntervalMs: 0 });
@@ -359,8 +368,112 @@ describe('progress events and warnings', { timeout: 30_000 }, () => {
     expect(seq.slice(-2)).toEqual(['finishing 0/2', 'finishing 1/2']);
     expect(mine.at(-1)!.progress).toBeUndefined();
     expect(mine.at(-1)!.notes).toEqual([expect.stringContaining('assets/v.mp4')]);
+    expect(released).toBe(1); // the media lease ends with the render
     const chat = await store.readConversation(slug);
     expect(chat.at(-1)).toMatchObject({ type: 'system', level: 'warning', text: expect.stringContaining('assets/v.mp4') });
+  });
+});
+
+describe('fix round: records always written, follower limits, the render lane', { timeout: 60_000 }, () => {
+  it('a cancel after a render is in place still records it (I3); the next format is not rendered', async () => {
+    const { slug, store, dir } = await v2Creative({ formats: ['test-wide', 'test-still', 'test-wide-b'] });
+    let id = '';
+    fake.after = async (o) => { if (o.format.id === 'test-wide') await app.inject({ method: 'POST', url: `/api/jobs/${id}/cancel`, headers: H }); };
+    id = (await post(slug, 1)).json().id;
+    expect((await waitJob(id)).state).toBe('cancelled');
+    expect(fake.calls.map((c) => c.format.id)).toEqual(['test-wide']);
+    const v = await versionOf(store, slug, 1);
+    const sha = (f: string) => createHash('sha256').update(readFileSync(join(dir, 'outputs', 'v1', f))).digest('hex');
+    // The primary and its follower are recorded with exactly what is on disk.
+    expect(v.outputs.map((o) => [o.format, o.sha256]).sort()).toEqual([['test-wide', sha('test-wide.mp4')], ['test-wide-b', sha('test-wide-b.mp4')]]);
+    expect(manifestOf(dir, 1).renders.map((r) => r.format).sort()).toEqual(['test-wide', 'test-wide-b']);
+    expect(renderState(v, 'test-still')).toBe('none');
+  });
+
+  it('a follower that cannot be copied is left out; the primary is recorded and the job fails (I3)', async () => {
+    const { slug, store, dir } = await v2Creative({ formats: ['test-wide', 'test-wide-b'] });
+    mkdirSync(join(dir, 'outputs', 'v1', 'test-wide-b.mp4', 'blocker'), { recursive: true });
+    const job = await waitJob((await post(slug, 1)).json().id);
+    expect(job.state).toBe('failed');
+    const v = await versionOf(store, slug, 1);
+    expect(v.outputs.map((o) => o.format)).toEqual(['test-wide']);
+    expect(renderState(v, 'test-wide')).toBe('rendered');
+    expect(readdirSync(join(dir, 'outputs', 'v1')).filter((f) => f.startsWith('.'))).toEqual([]);
+  });
+
+  it('a follower is checked against its own preset: its size limit (M4)', async () => {
+    const { slug, store } = await v2Creative({ formats: ['test-wide', 'test-wide-c'], links: { 'test-wide-c': 'test-wide' } });
+    expect((await waitJob((await post(slug, 1)).json().id)).state).toBe('succeeded');
+    const v = await versionOf(store, slug, 1);
+    expect(v.outputs.find((o) => o.format === 'test-wide')!.problems).toEqual([]);
+    const c = v.outputs.find((o) => o.format === 'test-wide-c')!;
+    expect(c.file).toBe('test-wide-c.mp4');
+    expect(c.problems).toEqual([expect.stringContaining('MB')]);
+  });
+
+  it('renders have their own lane of one: queued renders show their position and never block a main-lane job (M3)', async () => {
+    const updates: JobSummary[] = [];
+    const queue = new JobQueue({ concurrency: 1, lanes: { render: 1 }, onUpdate: (j) => updates.push(j) });
+    const gates: Array<() => void> = [];
+    const blocked = () => new Promise<void>((r) => gates.push(r));
+    const r1 = queue.enqueue({ key: 'render:a', kind: 'render', label: 'r1', lane: 'render', run: blocked });
+    const r2 = queue.enqueue({ key: 'render:b', kind: 'render', label: 'r2', lane: 'render', run: blocked });
+    const r3 = queue.enqueue({ key: 'render:c', kind: 'render', label: 'r3', lane: 'render', run: blocked });
+    expect([r1.queuePosition, r2.queuePosition, r3.queuePosition]).toEqual([undefined, 1, 2]);
+    const turn = queue.enqueue({ key: 'creative:x', kind: 'creative', label: 't', run: blocked });
+    const state = (id: string) => queue.list().find((j) => j.id === id)!;
+    await new Promise((r) => setTimeout(r, 10));
+    expect(state(turn.id).state).toBe('running'); // the render lane is busy, the main lane is not
+    expect(state(r1.id).state).toBe('running');
+    gates.shift()!(); // r1 done
+    await new Promise((r) => setTimeout(r, 10));
+    expect(state(r2.id)).toMatchObject({ state: 'running' });
+    expect(state(r2.id).queuePosition).toBeUndefined();
+    expect(state(r3.id).queuePosition).toBe(1);
+    expect(updates.some((u) => u.id === r3.id && u.queuePosition === 1)).toBe(true);
+    for (const id of [r2.id, r3.id, turn.id]) queue.cancel(id);
+    gates.forEach((g) => g());
+    await queue.whenIdle();
+  });
+});
+
+describe('a turn and a render on the same creative (M9)', { timeout: 120_000 }, () => {
+  it('both versions.json writes are kept and the turn reports no earlier-output change', async () => {
+    const { slug, store } = await v2Creative({ formats: ['test-wide'], links: {} });
+    await app.close();
+    const wait = join(base, 'go');
+    process.env.FAKE_CLAUDE_SCENARIO = 'render';
+    process.env.FAKE_CLAUDE_WAIT_FILE_CREATIVE = wait;
+    try {
+      app = await buildServer({
+        uiToken: TOKEN, sandbox: async () => ({ available: false, reason: 'test' }),
+        appConfig: new AppConfigStore(join(base, 'config')), git: new Git(),
+        runner: new ClaudeCodeRunner([process.execPath, join(import.meta.dirname, 'fixtures', 'fake-claude.mjs')], { killGraceMs: 200 }), doctor: async () => [],
+        render: fake.engine,
+      });
+      let release!: () => void;
+      fake.gate = new Promise((r) => { release = r; });
+      const render = (await post(slug, 1)).json() as JobSummary;
+      await waitJob(render.id, (j) => j.progress?.phase === 'frames');
+      const turn = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/turns`, headers: H, payload: { text: 'more contrast' } });
+      expect(turn.statusCode, turn.body).toBe(202);
+      const turnId = turn.json().id as string;
+      await waitJob(turnId, (j) => j.state === 'running');
+      await new Promise((r) => setTimeout(r, 300)); // the turn's snapshot of earlier outputs is taken
+      release();
+      expect((await waitJob(render.id)).state).toBe('succeeded'); // written into v1 while the turn runs
+      writeFileSync(wait, 'go');
+      const t = await waitJob(turnId);
+      expect(t.state, t.error).toBe('succeeded');
+      const versions = await store.readVersions(slug);
+      expect(versions.map((v) => v.n)).toEqual([1, 2]);
+      expect(renderState(versions[0]!, 'test-wide')).toBe('rendered');
+      const warnings = (await store.readConversation(slug)).filter((e) => e.type === 'system' && e.level !== 'info').map((e) => (e as { text: string }).text);
+      expect(warnings).toEqual([]);
+    } finally {
+      delete process.env.FAKE_CLAUDE_SCENARIO;
+      delete process.env.FAKE_CLAUDE_WAIT_FILE_CREATIVE;
+    }
   });
 });
 
@@ -401,14 +514,17 @@ describe('versions.json and the turn\'s earlier-output check while a render runs
     const before = await snapshotOutputs(dir, ['v1']);
     writeFileSync(join(dir, 'outputs', 'v1', 'render.mp4'), 'core');
     await noteCoreOutputWrite(dir, 'outputs/v1/render.mp4');
+    noteCoreTemp(join(dir, 'outputs', 'v1', '.render.mp4.render-0123456789ab.tmp'));
     writeFileSync(join(dir, 'outputs', 'v1', '.render.mp4.render-0123456789ab.tmp'), 'temp');
+    // A temp-looking name the core did not create in this process is reported (M5).
+    writeFileSync(join(dir, 'outputs', 'v1', '.x.mp4.render-abcdefabcdef.tmp'), 'agent temp');
     writeFileSync(join(dir, 'outputs', 'v1', 'agent.mp4'), 'agent');
     const after = await snapshotOutputs(dir, ['v1']);
-    expect(withoutCoreWrites(dir, snapshotChanges(before, after), after)).toEqual(['outputs/v1/agent.mp4']);
+    expect(withoutCoreWrites(dir, snapshotChanges(before, after), after)).toEqual(['outputs/v1/.x.mp4.render-abcdefabcdef.tmp', 'outputs/v1/agent.mp4']);
     // Rewritten after the core's note: reported again.
     writeFileSync(join(dir, 'outputs', 'v1', 'render.mp4'), 'someone else, longer');
     const later = await snapshotOutputs(dir, ['v1']);
-    expect(withoutCoreWrites(dir, snapshotChanges(before, later), later)).toEqual(['outputs/v1/agent.mp4', 'outputs/v1/render.mp4']);
+    expect(withoutCoreWrites(dir, snapshotChanges(before, later), later)).toEqual(['outputs/v1/.x.mp4.render-abcdefabcdef.tmp', 'outputs/v1/agent.mp4', 'outputs/v1/render.mp4']);
   });
 });
 
@@ -423,26 +539,42 @@ describe('startup sweep', () => {
     const files = {
       oldRender: join(v, '.sq.mp4.render-0123456789ab.tmp'), newRender: join(v, '.tall.mp4.render-0123456789ab.tmp'),
       oldPreview: join(v, '.previews', '.sq.mp4.jpg.render-abcdefabcdef.tmp'), output: join(v, 'sq.mp4'), agentTmp: join(v, 'agent.tmp'),
-      oldMedia: join(media, `.${'a'.repeat(64)}-30-320.0123456789ab.tmp`), cached: join(media, `${'a'.repeat(64)}-30-320.mp4`), other: join(media, '.other.tmp'),
+      oldMedia: join(media, `.${'a'.repeat(64)}-30-320x180-n1.0123456789ab.tmp`), cached: join(media, `${'a'.repeat(64)}-30-320x180-n1.mp4`), other: join(media, '.other.tmp'),
+      oldRecipe: join(media, `${'b'.repeat(64)}-30-320x180-n0.mp4`),
     };
     for (const f of Object.values(files)) writeFileSync(f, 'x');
-    for (const k of ['oldRender', 'oldPreview', 'output', 'agentTmp', 'oldMedia', 'cached', 'other'] as const) old(files[k]);
-    const removed = await sweepProjectRenders(p);
-    expect(removed.sort()).toEqual([files.oldMedia, files.oldPreview, files.oldRender].sort());
+    for (const k of ['oldRender', 'oldPreview', 'output', 'agentTmp', 'oldMedia', 'cached', 'other', 'oldRecipe'] as const) old(files[k]);
+    // A creative reached through a link is never swept (M6); neither is one with an active render job.
+    const elsewhere = join(base, 'elsewhere', 'outputs', 'v1');
+    mkdirSync(elsewhere, { recursive: true });
+    writeFileSync(join(elsewhere, '.sq.mp4.render-0123456789ab.tmp'), 'x');
+    old(join(elsewhere, '.sq.mp4.render-0123456789ab.tmp'));
+    symlinkSync(join(base, 'elsewhere'), join(p, 'creatives', 'linked'));
+    const busy = join(p, 'creatives', 'busy', 'outputs', 'v1');
+    mkdirSync(busy, { recursive: true });
+    writeFileSync(join(busy, '.sq.mp4.render-0123456789ab.tmp'), 'x');
+    old(join(busy, '.sq.mp4.render-0123456789ab.tmp'));
+    const removed = await sweepProjectRenders(p, { skipCreative: (slug) => slug === 'busy' });
+    expect(removed.sort()).toEqual([files.oldMedia, files.oldPreview, files.oldRender, files.oldRecipe].sort());
+    expect(readdirSync(elsewhere)).toHaveLength(1);
+    expect(readdirSync(busy)).toHaveLength(1);
     for (const k of ['newRender', 'output', 'agentTmp', 'cached', 'other'] as const) expect(lstatSync(files[k]).isFile(), k).toBe(true);
   });
 
-  it('removes old, unused ms-render-* folders of the temp folder; keeps live, recent and foreign ones', async () => {
+  it('removes only the renderer\'s own temp folders (exact names, owner marker, owner gone); never test fixtures or live ones (I5)', async () => {
     const root = mkdtempSync(join(base, 'tmp-'));
     const mk = (name: string, owner?: number) => { const d = join(root, name); mkdirSync(d); if (owner !== undefined) writeFileSync(join(d, 'owner.pid'), String(owner)); return d; };
-    const dead = mk('ms-render-abc123', 999_999);
-    const profile = mk('ms-render-chrome-xyz789');
+    const dead = mk('ms-render-Ab12cD', 999_999);
+    const profile = mk('ms-render-chrome-xyz789', 999_999);
+    const media = mk('ms-render-media-q1W2e3', 999_999);
+    const unmarked = mk('ms-render-zzzzzz');
     const live = mk('ms-render-live01', process.pid);
-    const recent = mk('ms-render-new001');
-    const foreign = mk('something-else');
-    for (const d of [dead, profile, live, foreign]) old(d);
+    const recent = mk('ms-render-new001', 999_999);
+    // Test fixtures and other tools: never, marker or not.
+    const fixtures = ['ms-render-jobs-AbCdEf', 'ms-render-proc-AbCdEf', 'ms-render-media-AbCdEfG', 'ms-test-render-AbCdEf', 'something-else'].map((n) => mk(n, 999_999));
+    for (const d of [dead, profile, media, unmarked, live, ...fixtures]) old(d);
     const removed = await sweepRenderTempDirs({ root });
-    expect(removed.sort()).toEqual([dead, profile].sort());
-    expect(readdirSync(root).sort()).toEqual([basename(live), basename(recent), basename(foreign)].sort());
+    expect(removed.sort()).toEqual([dead, profile, media].sort());
+    expect(readdirSync(root).sort()).toEqual([unmarked, live, recent, ...fixtures].map((d) => basename(d)).sort());
   });
 });

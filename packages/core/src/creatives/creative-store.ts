@@ -19,6 +19,8 @@ const pad2 = (n: number) => String(n).padStart(2, '0');
  * render in an earlier one, each through its own `CreativeStore`, and neither may lose the other's write.
  */
 const versionsLock = new KeyedMutex();
+/** conversation.jsonl appends, by file, for the whole process (same reason). */
+const conversationLock = new KeyedMutex();
 /** yyyy-mm-dd in the user's local time zone (a creative made at 23:30 belongs to that day). */
 const localDay = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
@@ -148,7 +150,8 @@ export class CreativeStore {
   }
 
   appendConversation(slug: string, entry: ConversationEntry): Promise<void> {
-    return this.lock.run(`l:${slug}`, async () => {
+    // Process-wide per file (M7): a render job and a turn append through their own stores.
+    return conversationLock.run(this.file(slug, 'conversation.jsonl'), async () => {
       const file = this.file(slug, 'conversation.jsonl');
       // Creating the log (an old or hand-made creative, or one git removed) adds an entry to the creative folder: note it
       // so the post-run tripwire does not read it as a move (FP3).

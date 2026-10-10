@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { canFollow, type FollowCheck, type FormatPreset, type OutputFileInfo } from '@motion-studio/shared';
 import { hashConfinedFile } from '../brand/agent-guard.ts';
 import { noteCoreChange } from '../core-changes.ts';
+import { isCoreTemp } from '../core-temps.ts';
 
 /**
  * Carry-over and linked formats (spec §2.3–2.5): the core, not the agent, puts the files of the formats a turn does not
@@ -143,29 +144,31 @@ const stampOf = (info: { isDirectory(): boolean; isSymbolicLink(): boolean; size
 const coreOutputWrites = new Map<string, string>();
 const MAX_CORE_OUTPUT_WRITES = 2000;
 
-/** Call right after the core wrote `rel` (`outputs/v<k>/…`) under `creativeDir`: records the entry as it is now. */
-export async function noteCoreOutputWrite(creativeDir: string, rel: string): Promise<void> {
+/**
+ * Records the core's write of `rel` (`outputs/v<k>/…`) under `creativeDir`: the entry as it is now, or, given `from` (the
+ * temp file about to be renamed to it), that file's fingerprint, which a rename keeps (size, mtime, inode). Called BEFORE
+ * the rename, so a turn's check landing between the two never sees an unexplained change (Task 5 M1).
+ */
+export async function noteCoreOutputWrite(creativeDir: string, rel: string, from?: string): Promise<void> {
   const abs = join(creativeDir, ...rel.split('/'));
-  const info = await lstat(abs).catch(() => null);
+  const info = await lstat(from ?? abs).catch(() => null);
   if (!info) return;
   coreOutputWrites.delete(abs);
   coreOutputWrites.set(abs, stampOf(info));
   while (coreOutputWrites.size > MAX_CORE_OUTPUT_WRITES) coreOutputWrites.delete(coreOutputWrites.keys().next().value!);
 }
 
-/** The core's own temp files in an output folder (a render's `.<name>.render-<hex>.tmp`, an atomic write's `<name>.<hex>.tmp`). */
-const CORE_TEMP_RE = /(?:^\..+\.render-[0-9a-f]{12}|\.[0-9a-f]{12})\.tmp$/;
-
 /**
  * `changes` (from `snapshotChanges`) without the entries the core wrote itself: those whose fingerprint in `after` is the
- * one the core recorded, and the core's own temp files (they come and go while a render runs).
+ * one the core recorded, and the temp files the core created in this process (`isCoreTemp`: they come and go while a
+ * render runs). A temp-looking name the core did not create is still reported.
  */
 export function withoutCoreWrites(creativeDir: string, changes: string[], after: Map<string, string>): string[] {
   return changes.filter((rel) => {
-    const name = rel.slice(rel.lastIndexOf('/') + 1);
-    if (CORE_TEMP_RE.test(name)) return false;
+    const abs = join(creativeDir, ...rel.split('/'));
+    if (isCoreTemp(abs)) return false;
     const now = after.get(rel);
-    return now === undefined || coreOutputWrites.get(join(creativeDir, ...rel.split('/'))) !== now;
+    return now === undefined || coreOutputWrites.get(abs) !== now;
   });
 }
 

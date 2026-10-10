@@ -89,15 +89,27 @@ function parse<T>(schema: z.ZodType<T>, body: unknown): T {
  * In every readable project: marks as interrupted the creatives left in `working` by a previous run, sweeps leftovers
  * of interrupted uploads and brand jobs, and completes the .gitignore.
  */
-export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: string) => boolean = () => false): Promise<void> {
+export interface RecoverOptions {
+  /** Whether a creative has a queued or running render job (its render temp files are left alone). */
+  renderActive?: (projectSlug: string, creativeSlug: string) => boolean;
+  /** Media cache files a live session uses, and the cache cap (`pruneMediaCache`). */
+  mediaInUse?: (file: string) => boolean;
+  mediaCacheMaxBytes?: number;
+}
+
+export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: string) => boolean = () => false, ro: RecoverOptions = {}): Promise<void> {
   for (const p of await ws.listProjects()) {
     if (!p.ok) continue;
     const dir = ws.projectDir(p.slug);
     await new CreativeStore(dir).recoverInterrupted((slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug))).catch((err: Error) => {
       console.warn(`Motion Studio: creative recovery failed in project ${p.slug}: ${err.message}`);
     });
-    // Render and media temp files left by a render the app was killed during (no render job runs before this recovery).
-    await sweepProjectRenders(dir).catch((err: Error) => console.warn(`Motion Studio: render cleanup failed in project ${p.slug}: ${err.message}`));
+    // Render and media temp files left by a render the app was killed during, and the media cache's garbage. This also runs
+    // on a workspace switch, when renders may run: their creatives are skipped and files in use are kept.
+    await sweepProjectRenders(dir, {
+      skipCreative: (slug) => ro.renderActive?.(p.slug, slug) ?? false,
+      media: { ...(ro.mediaInUse ? { inUse: ro.mediaInUse } : {}), ...(ro.mediaCacheMaxBytes !== undefined ? { maxBytes: ro.mediaCacheMaxBytes } : {}) },
+    }).catch((err: Error) => console.warn(`Motion Studio: render cleanup failed in project ${p.slug}: ${err.message}`));
     await Promise.all([sweepProject(dir, !isJobActive(brandJobKey(ws.root, p.slug))), completeGitignore(dir)]).catch((err: Error) => {
       console.warn(`Motion Studio: cleanup failed in project ${p.slug}: ${err.message}`);
     });

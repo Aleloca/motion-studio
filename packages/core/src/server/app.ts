@@ -32,7 +32,7 @@ import { MemoryVault, type SecretsVault } from '../secrets/vault.ts';
 import { ApprovalBroker } from '../approvals/broker.ts';
 import { registerSettingsRoutes } from './settings-routes.ts';
 import { CodedError, expandHome, WorkspaceError, WorkspaceStore } from '../workspace-store.ts';
-import { recoverWorkspace, registerCreativeRoutes } from './creative-routes.ts';
+import { recoverWorkspace, registerCreativeRoutes, type RecoverOptions } from './creative-routes.ts';
 import { registerBrandRoutes } from './brand-routes.ts';
 import { EventHub } from './event-hub.ts';
 import { registerLibraryRoutes } from './library-routes.ts';
@@ -75,6 +75,8 @@ export interface ServerDeps {
   /** The composition renderer and its Chromium (injected provider, system Chrome or Chrome for Testing); render jobs use it (Task 5). */
   render?: RenderEngine;
   /** Options of every render job's render (tests: a built runtime, a temp folder, fewer pages, the encoder). */
+  /** Per-project cap of the normalised media cache (default 5 GB). */
+  mediaCacheMaxBytes?: number;
   renderOptions?: Partial<Pick<RenderCompositionOptions, 'distDir' | 'tempDir' | 'parallel' | 'encoder' | 'x264Preset' | 'timeLimitMs' | 'jpegQuality'>>;
 }
 
@@ -152,9 +154,17 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, requestTimeout: 0, connectionTimeout: 0 });
   const hub = new EventHub();
   const approvals = deps.approvals ?? new ApprovalBroker({ broadcast: (m) => hub.broadcast(m) });
-  const queue = new JobQueue({ concurrency: 2, onUpdate: (job) => hub.broadcast({ type: 'job', job }) });
+  // Render jobs have their own lane of one slot (Task 5 M3): a render never blocks an agent turn, nor waits for one.
+  const queue = new JobQueue({ concurrency: 2, lanes: { render: 1 }, onUpdate: (job) => hub.broadcast({ type: 'job', job }) });
   const media = deps.media ?? NoMediaTools;
   const isJobActive = (key: string) => queue.list().some((j) => j.key === key && (j.state === 'queued' || j.state === 'running'));
+  // Video sources are normalised for the renderer (and, Task 5b/8, the preview); close() kills whatever still runs.
+  const normalizer = new MediaNormalizer({ ffmpeg: () => findFfmpeg(), ...(deps.mediaCacheMaxBytes !== undefined ? { maxCacheBytes: deps.mediaCacheMaxBytes } : {}) });
+  const recoverOptions = (root: string): RecoverOptions => ({
+    renderActive: (project, creative) => queue.list().some((j) => (j.state === 'queued' || j.state === 'running') && j.key.startsWith(`render:${root}:${project}:${creative}:`)),
+    mediaInUse: normalizer.inUse,
+    ...(deps.mediaCacheMaxBytes !== undefined ? { mediaCacheMaxBytes: deps.mediaCacheMaxBytes } : {}),
+  });
   let workspace: WorkspaceStore | null = null;
   // Why the configured workspace could not be opened at startup (shown by the onboarding).
   let workspaceProblem: { path: string; error: WorkspaceProblem } | null = null;
@@ -177,7 +187,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       const ws = await WorkspaceStore.open(configured, deps.git, { create: false });
       queue.setConcurrency((await ws.readSettings()).maxConcurrentJobs);
       workspace = ws;
-      await recoverWorkspace(ws, isJobActive);
+      await recoverWorkspace(ws, isJobActive, recoverOptions(ws.root));
     } catch (err) {
       workspaceProblem = { path: configured, error: describeWorkspaceProblem(err) };
     }
@@ -214,8 +224,6 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     broadcast: (msg) => hub.broadcast(msg),
   });
 
-  // Video sources are normalised for the renderer (and, Task 5b/8, the preview); close() kills whatever still runs.
-  const normalizer = new MediaNormalizer({ ffmpeg: () => findFfmpeg() });
   const renders = new RenderJobService({
     queue, engine: deps.render, media, normalizer,
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
@@ -289,7 +297,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const settings = await ws.readSettings(); // corrupt settings → 422 before the choice is persisted
     await deps.appConfig.setWorkspacePath(path);
     // Re-selecting the workspace in use must not mark its running creatives as interrupted.
-    if (workspace?.root !== ws.root) await recoverWorkspace(ws, isJobActive);
+    if (workspace?.root !== ws.root) await recoverWorkspace(ws, isJobActive, recoverOptions(ws.root));
     workspace = ws;
     workspaceProblem = null;
     queue.setConcurrency(settings.maxConcurrentJobs);

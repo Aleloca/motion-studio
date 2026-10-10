@@ -83,6 +83,8 @@ rl.once('line', async (line) => {
     if (process.env.FAKE_CLAUDE_SYMLINK_AT) { const [name, target] = process.env.FAKE_CLAUDE_SYMLINK_AT.split('='); symlinkSync(target, join(block.outputDir, name)); }
     if (process.env.FAKE_CLAUDE_BG_WRITE) spawn('sh', ['-c', `sleep 1; echo late > "$0"`, process.env.FAKE_CLAUDE_BG_WRITE], { stdio: 'ignore' });
   };
+  // Holds a creative turn until the file exists (a test runs something else meanwhile).
+  if (block && process.env.FAKE_CLAUDE_WAIT_FILE_CREATIVE) { while (!existsSync(process.env.FAKE_CLAUDE_WAIT_FILE_CREATIVE)) await sleep(20); }
   if (block && scenario === 'render') render(false);
   if (scenario === 'render_touch' && block) { render(false); if (process.env.FAKE_CLAUDE_TOUCH) writeFileSync(process.env.FAKE_CLAUDE_TOUCH, 'modified'); if (process.env.FAKE_CLAUDE_GIT_INIT) spawnSync('git', ['init', '-q'], { cwd: process.env.FAKE_CLAUDE_GIT_INIT }); }
   const brandBlock = (() => { const m = prompt.match(/```motion-studio-brand\n([\s\S]*?)\n```/); return m ? JSON.parse(m[1]) : null; })();

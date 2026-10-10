@@ -319,6 +319,7 @@ export const it: Messages = {
     formatFailed: (p) => `${p.format}: ${p.reason}`,
     someFailed: (p) => `Render non riuscito: ${p.list}`,
     mediaNotNormalised: (p) => `${p.format}: non è stato possibile preparare ${p.src} per il render; viene usato così com'è e alcuni suoi fotogrammi potrebbero essere sfasati di uno`,
+    hdrApproximate: (p) => `${p.format}: ${p.src} è una sorgente HDR; i suoi colori sono approssimati nel render e nell'anteprima`,
     frameWarnings: (p) => `${p.format}: ${p.count} fotogrammi video provengono da una sorgente di cui non si è potuto verificare il timing`,
   },
   export: {

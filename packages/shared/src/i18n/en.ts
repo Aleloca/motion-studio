@@ -323,6 +323,7 @@ export const en = {
     formatFailed: (p: { format: string; reason: string }) => `${p.format}: ${p.reason}`,
     someFailed: (p: { list: string }) => `Render failed: ${p.list}`,
     mediaNotNormalised: (p: { format: string; src: string }) => `${p.format}: ${p.src} could not be prepared for rendering; it is used as is, and some of its frames may be off by one`,
+    hdrApproximate: (p: { format: string; src: string }) => `${p.format}: ${p.src} is an HDR source; its colours are approximate in the render and the preview`,
     frameWarnings: (p: { format: string; count: number }) => `${p.format}: ${p.count} video frames were drawn from a source whose timing could not be verified`,
   },
   export: {

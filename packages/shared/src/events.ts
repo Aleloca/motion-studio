@@ -62,6 +62,8 @@ export interface JobSummary {
   formats?: string[];
   /** Render jobs: where the current format is (see `JobProgress`); absent before the first format starts and once done. */
   progress?: JobProgress;
+  /** Queued render jobs: how many render jobs are ahead of this one in the render lane (running or queued earlier). */
+  queuePosition?: number;
 }
 
 export type ApprovalKind = 'tool' | 'provider';
