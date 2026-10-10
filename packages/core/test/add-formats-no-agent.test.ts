@@ -95,8 +95,11 @@ describe('formats added without the agent (spec §2.4)', { timeout: 30_000 }, ()
     expect(await claudeRuns()).toBe(1);
     await service.updateBrief(ref, { brief: { ...brief, formats: [REEL, POST, TIKTOK, SHORTS] } });
     const start = vi.spyOn(launcher, 'start');
+    const patch = vi.spyOn(queue, 'patch');
     expect(await run(service.start(ref))).toBe('succeeded');
     expect(start).not.toHaveBeenCalled();
+    // Only the added boards show "Rendering…" (M10).
+    expect(patch.mock.calls.map(([, p]) => p).filter((p) => 'formats' in p)).toEqual([{ formats: [TIKTOK, SHORTS] }]);
     expect(await claudeRuns()).toBe(1);
     expect(await prompts()).toHaveLength(1);
 

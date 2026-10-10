@@ -20,6 +20,7 @@ import { validateOutputs, type ValidationResult } from './output-contract.ts';
 import { confinedSha, copyVerified, earlierOutputDirs, followCheck, isConfinedFile, normalizeTargets, snapshotChanges, snapshotOutputs, versionDirReady, type FollowFailure } from './carry-over.ts';
 import { outputFileExists } from './format-summary.ts';
 import { hashVersionOutputs, LAZY_HASH_BUDGET_MS, withLazyHashes } from './output-hashes.ts';
+import { legacyProblemsOf } from './legacy-problems.ts';
 import { buildCreativePrompt, type CreativeContext, type PromptKind } from './prompt.ts';
 import { sumUsage } from '../usage/usage-tracker.ts';
 import { currentLocale, t } from '../i18n.ts';
@@ -320,7 +321,11 @@ export class CreativeTurnService {
       const primaries = creative.brief.formats.filter((f) => !Object.hasOwn(plan.links, f));
       // The plan may target more than the request (a primary that cannot be carried, a follower unlinked by its real
       // duration) or a part of the brief without one (added formats): the summary says what really renders.
-      this.deps.queue.patch(jobId, { formats: targets.length > 0 && targets.length < primaries.length ? [...targets] : undefined });
+      // No agent: only the added followers are made (copies), so only their boards render.
+      this.deps.queue.patch(jobId, {
+        formats: noAgent && plan.added.length > 0 ? [...plan.added]
+          : targets.length > 0 && targets.length < primaries.length ? [...targets] : undefined,
+      });
       const request = message?.text || (message?.pins.length ? j.pinsOnlyRequest : versions.length === 0 ? undefined
         : noAgent ? this.addedFollowersRequest(plan, base!, versions, label, locale)
           : (addFormatsRequest(targets.filter((f) => plan.added.includes(f)), base, n)
@@ -684,10 +689,8 @@ export class CreativeTurnService {
     const requested = formats.filter((f) => targets.includes(f) || carriedOk.includes(f) || Object.hasOwn(materialized, f));
     // A carried file keeps the problems it had in the base. Old versions have no per-file problems: only the version's
     // problems that name this format's file, id or label are its own; the others belong to other formats.
-    const legacyProblems = (f: string) => {
-      const names = [baseOut(f)!.file, f, label(f)];
-      return base!.problems.filter((p) => names.some((x) => p.includes(x)));
-    };
+    // Matched as whole tokens (`legacyProblemsOf`): an id that is a prefix of another never takes its problems.
+    const legacyProblems = (f: string) => legacyProblemsOf(base!.problems, f, baseOut(f)!.file, label(f));
     const inherited = Object.fromEntries(carriedOk.map((f) => [f, baseOut(f)!.problems ?? legacyProblems(f)] as const));
     const final = await validateOutputs({
       dir, requested, presets, durationSec: creative.brief.durationSec, media: this.deps.media, locale,
