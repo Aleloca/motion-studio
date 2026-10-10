@@ -15,7 +15,7 @@ import { readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import { RenderError } from './errors.ts';
 import { spawnFfmpeg, type FfmpegInfo } from './encode.ts';
 import { killGroup, trackGroup } from './watchdog.ts';
-import { markOwned } from './owner.ts';
+import { makeOwnedTempDir } from './owner.ts';
 
 /**
  * Video media normalisation (Task 5, orchestrator decision): before a composition is rendered or previewed, the core makes
@@ -43,7 +43,7 @@ import { markOwned } from './owner.ts';
  *   clip on its original file, untrusted (the runtime's lenient rule), with a warning.
  * - **Inputs** pass the confined-read checks (regular file, `nlink === 1`, real path exactly inside the composition folder);
  *   ffmpeg and ffprobe get the verified open file (`-fd N -i fd:`), or a confined copy when ffmpeg has no `fd` protocol.
- *   Source hashes are remembered in `.studio/cache/source-hashes.json` by path, size, mtime and inode.
+ *   Source hashes are remembered in `.studio/cache/source-hashes.json` by path, size, mtime, ctime and inode.
  * - **Processes:** at most `parallel` encodes at once in the whole normaliser (a cache hit never waits for one). Two
  *   preparations that need the same file share one encode, which runs under its own controller and is cancelled only when
  *   every waiter has gone (or on `close()`). Every ffmpeg/ffprobe leads its own process group, killed as a group; temp
@@ -124,10 +124,18 @@ export function targetSize(source: { width: number; height: number }, need: { wi
   return { width: even(source.width * f), height: even(source.height * f) };
 }
 
-/** What the source probe says about HDR: PQ or HLG transfer, or BT.2020 primaries. */
+/** The colour description of a source stream (ffprobe names). */
 export interface HdrInfo { primaries: string; transfer: string; space: string }
 
-/** The colour stage of the chain for an HDR source, and whether its colours are only approximate. */
+const ISPACE: Record<string, string> = { bt2020nc: 'bt2020ncl', bt2020c: 'bt2020ncl', bt709: 'bt709', smpte170m: 'smpte170m', bt470bg: 'bt470bg' };
+const ITRC: Record<string, string> = { bt709: 'bt709', 'bt2020-10': 'bt2020-10', 'bt2020-12': 'bt2020-12', smpte170m: 'smpte170m', bt470bg: 'bt470bg' };
+
+/** A wide-gamut SDR source (BT.2020 primaries, an SDR transfer): a gamut conversion to BT.709, no tone mapping, exact. */
+export function gamutFilter(c: HdrInfo): string {
+  return `colorspace=all=bt709:iprimaries=bt2020:ispace=${ISPACE[c.space] ?? 'bt2020ncl'}:itrc=${ITRC[c.transfer] ?? 'bt709'}:format=yuv420p,`;
+}
+
+/** The colour stage of the chain for an HDR source (PQ or HLG transfer), and whether its colours are only approximate. */
 export function hdrFilter(hdr: HdrInfo, filters: ReadonlySet<string> | undefined): { vf: string; approximate: boolean } {
   if (filters?.has('zscale') && filters.has('tonemap')) {
     return { vf: 'zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p,', approximate: false };
@@ -206,8 +214,12 @@ export interface SourceInfo {
   width: number; height: number; durationSec: number | null;
   /** No colour matrix in the stream: read as BT.709, Chrome's assumption. */
   untagged: boolean;
-  /** PQ or HLG transfer, or BT.2020 primaries; null for SDR. */
+  /** A PQ or HLG transfer (HDR); null for SDR. */
   hdr: HdrInfo | null;
+  /** BT.2020 primaries with an SDR transfer: converted to BT.709 without tone mapping. */
+  wideGamut: HdrInfo | null;
+  /** The source has an audio stream (the preview then plays it from the original). */
+  audio: boolean;
   /** Where the first video frame sits on the media timeline (the preview's `<audio>` of the original starts there). */
   videoStart: number;
 }
@@ -223,9 +235,12 @@ export function sourceInfoOf(j: Record<string, unknown> | null): SourceInfo | nu
   const d = Number(v.duration ?? (j?.format as { duration?: string } | undefined)?.duration);
   const untagged = !v.color_space || v.color_space === 'unknown' || v.color_space === 'unspecified';
   const transfer = v.color_transfer ?? '', primaries = v.color_primaries ?? '';
-  const hdr = transfer === 'smpte2084' || transfer === 'arib-std-b67' || primaries === 'bt2020' ? { primaries, transfer, space: v.color_space ?? '' } : null;
+  const colour = { primaries, transfer, space: v.color_space ?? '' };
+  const hdr = transfer === 'smpte2084' || transfer === 'arib-std-b67' ? colour : null;
+  const wideGamut = !hdr && primaries === 'bt2020' ? colour : null;
   const start = Number(v.start_time);
-  return { width: Math.round(w), height: Math.round(h), durationSec: Number.isFinite(d) && d > 0 ? d : null, untagged, hdr, videoStart: Number.isFinite(start) && start > 0 ? start : 0 };
+  const audio = streamsOf(j).some((x) => x.codec_type === 'audio');
+  return { width: Math.round(w), height: Math.round(h), durationSec: Number.isFinite(d) && d > 0 ? d : null, untagged, hdr, wideGamut, audio, videoStart: Number.isFinite(start) && start > 0 ? start : 0 };
 }
 
 /**
@@ -284,13 +299,13 @@ async function withSource<T>(compDir: string, src: string, expect: Identity | nu
 
 /**
  * Source hashes, remembered per project in `.studio/cache/source-hashes.json` (and in memory) by the file's path, size,
- * mtime and inode (device too): a multi-GB source is hashed once, not at every app start. `.studio` is out of the agent's
+ * mtime, ctime and inode (device too): a multi-GB source is hashed once, not at every app start. `.studio` is out of the agent's
  * reach; a stale or corrupt memo only costs a new hash.
  */
 const HASH_MEMO_MAX = 2000;
 const hashMemoSchema = z.object({ schemaVersion: z.literal(1), entries: z.record(z.string(), z.string().regex(/^[0-9a-f]{64}$/)) });
 export const sourceHashMemoPath = (projectDir: string) => join(projectDir, '.studio', 'cache', 'source-hashes.json');
-const memoKey = (path: string, id: Identity) => `${id.dev}:${id.ino}:${id.size}:${id.mtimeMs}:${path}`;
+const memoKey = (path: string, id: Identity) => `${id.dev}:${id.ino}:${id.size}:${id.mtimeMs}:${id.ctimeMs}:${path}`;
 
 class HashMemo {
   private loaded = new Map<string, Promise<Map<string, string>>>();
@@ -365,7 +380,7 @@ export async function pruneMediaCache(dir: string, o: PruneOptions = {}): Promis
   const maxBytes = o.maxBytes ?? DEFAULT_MEDIA_CACHE_MAX_BYTES;
   const maxUnused = o.maxUnusedMs === undefined ? MEDIA_UNUSED_MS : o.maxUnusedMs;
   const inUse = o.inUse ?? (() => false);
-  const files: Array<{ path: string; size: number; mtimeMs: number }> = [];
+  const files: Array<{ path: string; size: number; mtimeMs: number; used: boolean }> = [];
   const removed: string[] = [];
   const remove = async (path: string) => { await rm(path, { force: true }).then(() => removed.push(path), () => {}); };
   for (const name of await readdir(dir).catch(() => [] as string[])) {
@@ -373,15 +388,17 @@ export async function pruneMediaCache(dir: string, o: PruneOptions = {}): Promis
     if (recipe === null) continue;
     const path = join(dir, name);
     const st = await lstat(path).catch(() => null);
-    if (!st || !st.isFile() || st.nlink !== 1 || inUse(path)) continue;
-    if ((o.oldRecipes ?? true) && recipe !== MEDIA_RECIPE_VERSION) { await remove(path); continue; }
-    if (maxUnused !== null && now - st.mtimeMs > maxUnused) { await remove(path); continue; }
-    files.push({ path, size: st.size, mtimeMs: st.mtimeMs });
+    if (!st || !st.isFile() || st.nlink !== 1) continue;
+    // A file in use is never removed, but it counts toward the cap.
+    const used = inUse(path);
+    if (!used && (o.oldRecipes ?? true) && recipe !== MEDIA_RECIPE_VERSION) { await remove(path); continue; }
+    if (!used && maxUnused !== null && now - st.mtimeMs > maxUnused) { await remove(path); continue; }
+    files.push({ path, size: st.size, mtimeMs: st.mtimeMs, used });
   }
   let total = files.reduce((a, f) => a + f.size, 0);
   for (const f of files.sort((a, b) => a.mtimeMs - b.mtimeMs)) {
     if (total <= maxBytes) break;
-    if (now - f.mtimeMs < MEDIA_EVICT_GRACE_MS) continue;
+    if (f.used || now - f.mtimeMs < MEDIA_EVICT_GRACE_MS) continue;
     await remove(f.path);
     if (removed.at(-1) === f.path) total -= f.size;
   }
@@ -462,6 +479,10 @@ export class MediaNormalizer {
   private readonly leases = new Map<string, number>();
   private readonly memo = new HashMemo();
   private closed = false;
+  /** Encodes started by this normaliser (tests: a shared encode runs once). */
+  readonly stats = { encodes: 0 };
+  /** Preparations waiting on shared encodes right now (tests). */
+  sharedWaiters(): number { let n = 0; for (const e of this.shared.values()) n += e.waiters; return n; }
 
   constructor(private readonly o: MediaNormalizerOptions) {
     this.slot = limiter(Math.max(1, Math.min(8, Math.floor(o.parallel ?? DEFAULT_MEDIA_PARALLEL))));
@@ -489,13 +510,15 @@ export class MediaNormalizer {
     return job;
   }
 
-  private lease(files: string[]): () => void {
-    for (const f of files) this.leases.set(f, (this.leases.get(f) ?? 0) + 1);
+  /** Takes one lease on `file`; the returned function gives it back (idempotent). */
+  private hold(file: string): () => void {
+    this.leases.set(file, (this.leases.get(file) ?? 0) + 1);
     let done = false;
     return () => {
       if (done) return;
       done = true;
-      for (const f of files) { const n = (this.leases.get(f) ?? 1) - 1; if (n > 0) this.leases.set(f, n); else this.leases.delete(f); }
+      const n = (this.leases.get(file) ?? 1) - 1;
+      if (n > 0) this.leases.set(file, n); else this.leases.delete(file);
     };
   }
 
@@ -510,7 +533,11 @@ export class MediaNormalizer {
     const total = needs.size;
     let done = 0;
     p.onProgress?.({ done, total });
-    const result = (made: number, cached: number): PreparedMedia => ({ media: { dir: cacheDir, clips }, warnings, made, cached, release: this.lease([...new Set([...clips.values()].map((c) => c.file))]) });
+    // Each file is leased the moment it is picked (a hit) or about to be made, so no prune or damage check elsewhere can
+    // remove it while the composition's other sources are still being prepared; all leases go back if this throws.
+    const held: Array<() => void> = [];
+    const releaseAll = () => { for (const r of held.splice(0)) r(); };
+    const result = (made: number, cached: number): PreparedMedia => ({ media: { dir: cacheDir, clips }, warnings, made, cached, release: releaseAll });
     if (total === 0) return result(0, 0);
     if (signal.aborted) throw cancelled();
     const ff = await this.o.ffmpeg();
@@ -525,7 +552,7 @@ export class MediaNormalizer {
     let hard: unknown = null;
     const settled = await Promise.allSettled([...needs].map(async ([src, need]) => {
       try {
-        const r = await this.one(ff, p, cacheDir, src, need, signal);
+        const r = await this.one(ff, p, cacheDir, src, need, signal, (file) => { const r2 = this.hold(file); held.push(r2); return r2; });
         if ('file' in r) { clips.set(src, r.file); if (r.cached) cached++; else made++; }
         warnings.push(...r.warnings.map((w) => ({ src, ...w })));
         p.onProgress?.({ done: ++done, total });
@@ -535,13 +562,13 @@ export class MediaNormalizer {
       }
     }));
     await this.memo.flush(p.projectDir);
-    if (hard !== null) throw hard;
-    if (settled.some((r) => r.status === 'rejected')) throw cancelled();
+    if (hard !== null) { releaseAll(); throw hard; }
+    if (settled.some((r) => r.status === 'rejected')) { releaseAll(); throw cancelled(); }
     return result(made, cached);
   }
 
   /** One source: hash, probe, then the cached file (no slot needed) or a shared encode, probed. */
-  private async one(ff: FfmpegInfo, p: PrepareMediaOptions, cacheDir: string, src: string, need: { width: number; height: number }, signal: AbortSignal):
+  private async one(ff: FfmpegInfo, p: PrepareMediaOptions, cacheDir: string, src: string, need: { width: number; height: number }, signal: AbortSignal, hold: (file: string) => () => void):
     Promise<{ file: SessionMediaFile; cached: boolean; warnings: Array<Omit<MediaWarning, 'src'>> } | { warnings: Array<Omit<MediaWarning, 'src'>> }> {
     const fps = p.composition.fps;
     const useFd = ff.fdProtocol && process.platform !== 'win32';
@@ -554,8 +581,7 @@ export class MediaNormalizer {
         input = (use) => withSource(p.compDir, src, hashed.id, (args, fds) => use(args, fds));
       } else {
         // No `fd` protocol (Windows): a confined copy in a private temp folder is what ffmpeg reads.
-        copyDir = await mkdtemp(join(this.o.tempDir ?? tmpdir(), 'ms-render-media-'));
-        markOwned(copyDir);
+        copyDir = await makeOwnedTempDir(join(this.o.tempDir ?? tmpdir(), 'ms-render-media-'));
         const copy = join(copyDir, 'source');
         await copyConfinedFile(p.compDir, src, copy).catch((e: { code?: string }) => { throw unreadable(src, e.code ?? 'refused'); });
         const h = createHash('sha256');
@@ -571,21 +597,24 @@ export class MediaNormalizer {
       if (!MEDIA_FILE_RE.test(name)) return { warnings: [{ kind: 'notNormalised', message: `video ${src} is not normalised: unexpected cache name` }] };
       const final = join(cacheDir, name);
       const want = { fps, ...size };
-      const hdr = info.hdr ? hdrFilter(info.hdr, ff.filters) : null;
+      const hdr = info.hdr ? hdrFilter(info.hdr, ff.filters) : info.wideGamut ? { vf: gamutFilter(info.wideGamut), approximate: false } : null;
       const notes: Array<Omit<MediaWarning, 'src'>> = hdr?.approximate ? [{ kind: 'hdrApproximate', message: `video ${src} is an HDR source: its colours are approximate` }] : [];
-      const fields = (f: Pick<SessionMediaFile, 'sourceFps' | 'sourceStart' | 'sourceVideoEnd'>): SessionMediaFile => ({ file: final, ...f, originalVideoStart: info.videoStart });
-      const existing = await this.probeCached(ff, final, want, signal);
-      if (existing === 'damaged') return { warnings: [{ kind: 'notNormalised', message: `video ${src} is not normalised: its cached file is damaged and in use` }] };
+      const fields = (f: Pick<SessionMediaFile, 'sourceFps' | 'sourceStart' | 'sourceVideoEnd'>): SessionMediaFile => ({ file: final, ...f, originalVideoStart: info.videoStart, originalAudio: info.audio });
+      // Leased from here: a hit, or the file about to be made, cannot be pruned or removed by anyone else meanwhile.
+      const unhold = hold(final);
+      const existing = await this.probeCached(ff, final, want, signal, 1);
+      if (existing === 'damaged') { unhold(); return { warnings: [{ kind: 'notNormalised', message: `video ${src} is not normalised: its cached file is damaged and in use` }] }; }
       if (existing) { await this.touch(final); return { file: fields(existing), cached: true, warnings: notes }; }
       try {
         await this.encode(name, (sig) => this.make(ff, input, final, want, { allIntra: (info.durationSec ?? Infinity) < ALL_INTRA_UNDER_SEC, untagged: info.untagged, ...(hdr ? { hdrVf: hdr.vf } : {}) }, sig), signal);
       } catch (e) {
         if (isCancel(e) || (e instanceof RenderError && e.code === 'mediaUnreadable')) throw e;
         if (signal.aborted) throw cancelled();
+        unhold();
         return { warnings: [{ kind: 'notNormalised', message: `video ${src} is not normalised: ${(e as Error).message.slice(0, 300)}` }] };
       }
-      const made = await this.probeCached(ff, final, want, signal);
-      if (!made || made === 'damaged') return { warnings: [{ kind: 'notNormalised', message: `video ${src} is not normalised: the result could not be verified` }] };
+      const made = await this.probeCached(ff, final, want, signal, 1);
+      if (!made || made === 'damaged') { unhold(); return { warnings: [{ kind: 'notNormalised', message: `video ${src} is not normalised: the result could not be verified` }] }; }
       await this.touch(final);
       void this.prune(cacheDir);
       return { file: fields(made), cached: false, warnings: notes };
@@ -649,7 +678,7 @@ export class MediaNormalizer {
    * The source fields of a cached file that is a single-linked regular file and probes as wanted; null when it is missing or
    * was damaged and is removed (to be made again); `damaged` when it is damaged but a live session uses it (left alone).
    */
-  private async probeCached(ff: FfmpegInfo, file: string, want: { fps: number; width: number; height: number }, signal: AbortSignal): Promise<Pick<SessionMediaFile, 'sourceFps' | 'sourceStart' | 'sourceVideoEnd'> | null | 'damaged'> {
+  private async probeCached(ff: FfmpegInfo, file: string, want: { fps: number; width: number; height: number }, signal: AbortSignal, own = 0): Promise<Pick<SessionMediaFile, 'sourceFps' | 'sourceStart' | 'sourceVideoEnd'> | null | 'damaged'> {
     const st = await lstat(file).catch(() => null);
     if (!st) return null;
     const fields = st.isFile() && st.nlink === 1 ? await withConfinedFile(dirname(file), file.slice(dirname(file).length + 1), true, async (fh) => {
@@ -663,7 +692,7 @@ export class MediaNormalizer {
     const value = fields && 'value' in fields ? fields.value as Pick<SessionMediaFile, 'sourceFps' | 'sourceStart' | 'sourceVideoEnd'> | { problem: string } : null;
     if (value && !('problem' in value)) return value;
     // The name says exactly what the file must be, so a mismatch is damage: made again, unless a session is serving it.
-    if (this.inUse(file)) return 'damaged';
+    if ((this.leases.get(file) ?? 0) > own) return 'damaged';
     await rm(file, { force: true }).catch(() => {});
     return null;
   }
@@ -673,6 +702,7 @@ export class MediaNormalizer {
     want: { fps: number; width: number; height: number }, how: { allIntra: boolean; untagged: boolean; hdrVf?: string }, signal: AbortSignal): Promise<{ approximate: boolean }> {
     const name = final.slice(dirname(final).length + 1);
     const temp = join(dirname(final), `.${name.slice(0, -'.mp4'.length)}.${randomBytes(6).toString('hex')}.tmp`);
+    this.stats.encodes++;
     try {
       await input((args, fds) => spawnFfmpeg(ff, [...args, ...normalizeArgs({ ...want, ...how, ...(this.o.x264Preset ? { preset: this.o.x264Preset } : {}) }), temp], { signal, fds }).done);
       if (signal.aborted) throw cancelled();

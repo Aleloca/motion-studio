@@ -25,11 +25,13 @@ export async function createFfmpegTools(exec: CommandExec = execCommand): Promis
 
   const grab = async (video: string, out: string, atSec: number) => {
     await mkdir(dirname(out), { recursive: true });
-    const r = await exec('ffmpeg', ['-y', '-loglevel', 'error', '-ss', String(atSec), '-i', video, '-frames:v', '1', '-q:v', '3', out], { timeoutMs: 60_000 });
+    // A temp name (`….tmp`, renamed into place by the caller) has no image extension: the JPEG muxer is named explicitly.
+    const fmt = out.endsWith('.tmp') ? ['-f', 'mjpeg'] : [];
+    const r = await exec('ffmpeg', ['-y', '-loglevel', 'error', '-ss', String(atSec), '-i', video, '-frames:v', '1', '-q:v', '3', ...fmt, out], { timeoutMs: 60_000 });
     if (r.code === 0) return true;
     if (atSec === 0) return false;
     // Clips shorter than atSec: fall back to the first frame.
-    return (await exec('ffmpeg', ['-y', '-loglevel', 'error', '-i', video, '-frames:v', '1', '-q:v', '3', out], { timeoutMs: 60_000 })).code === 0;
+    return (await exec('ffmpeg', ['-y', '-loglevel', 'error', '-i', video, '-frames:v', '1', '-q:v', '3', ...fmt, out], { timeoutMs: 60_000 })).code === 0;
   };
 
   return {

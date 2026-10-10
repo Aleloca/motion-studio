@@ -11,8 +11,9 @@ import { listProcesses } from './watchdog.ts';
  * The startup sweep of render leftovers (Task 5): what a render or a normalisation leaves when the app is killed (a clean
  * quit cancels them and removes their files: the job queue's cancel on close). Only names the core makes, only in the
  * core's own folders, only when older than `minAgeMs` (default 10 min):
- * - in a project: hidden render temp outputs `outputs/vN/.<name>.render-<hex>.tmp` (also in `.previews/`) and media temp
- *   files `.studio/cache/media/.<key>.<hex>.tmp`; never through a linked creative or version folder. Then the media
+ * - in a project: hidden render temp outputs `outputs/vN/.<name>.render-<hex>.tmp` (also in `.previews/`), media temp
+ *   files `.studio/cache/media/.<key>.<hex>.tmp`, and the atomic JSON writes' temps (`manifest.json`, `versions.json`,
+ *   `creative.json`, `source-hashes.json` + `.<12 hex>.tmp`) in their own folders; never through a linked creative or version folder. Then the media
  *   cache is pruned (`pruneMediaCache`: older recipes, unused for 30 days, the size cap), never a file in use;
  * - in the OS temp folder: exactly the renderer's temp folder names (`RENDER_TEMP_DIR_RE`) that hold its owner marker
  *   (`owner.pid`) whose pid is gone, and that no live process names on its command line.
@@ -23,6 +24,9 @@ import { listProcesses } from './watchdog.ts';
 export const SWEEP_MIN_AGE_MS = 10 * 60 * 1000;
 const CREATIVE_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const VERSION_RE = /^v\d{1,6}$/;
+/** A `writeJsonFileAtomic` temp of `name` (`<name>.<12 hex>.tmp`), left by a killed app. */
+const jsonTemp = (name: string) => new RegExp(`^${name.replace(/\./g, '\\.')}\\.[0-9a-f]{12}\\.tmp$`);
+const JSON_TEMPS_CREATIVE = /^(?:versions|creative)\.json\.[0-9a-f]{12}\.tmp$/;
 
 const oldEnough = async (p: string, minAgeMs: number, now: number) => {
   const st = await lstat(p).catch(() => null);
@@ -53,6 +57,7 @@ export async function sweepProjectRenders(projectDir: string, o: { minAgeMs?: nu
     if (!CREATIVE_SLUG_RE.test(slug) || o.skipCreative?.(slug)) continue;
     // A creative folder reached through a link is not ours to clean (M6).
     if (!(await lstat(join(creatives, slug)).catch(() => null))?.isDirectory()) continue;
+    removed.push(...await sweepFiles(join(creatives, slug), JSON_TEMPS_CREATIVE, minAgeMs, now));
     const outputs = join(creatives, slug, 'outputs');
     if (!(await lstat(outputs).catch(() => null))?.isDirectory()) continue;
     for (const v of await readdir(outputs).catch(() => [] as string[])) {
@@ -60,10 +65,13 @@ export async function sweepProjectRenders(projectDir: string, o: { minAgeMs?: nu
       const dir = join(outputs, v);
       if (!(await lstat(dir).catch(() => null))?.isDirectory()) continue;
       removed.push(...await sweepFiles(dir, RENDER_TEMP_RE, minAgeMs, now));
+      removed.push(...await sweepFiles(dir, jsonTemp('manifest.json'), minAgeMs, now));
       const previews = join(dir, '.previews');
       if ((await lstat(previews).catch(() => null))?.isDirectory()) removed.push(...await sweepFiles(previews, RENDER_TEMP_RE, minAgeMs, now));
     }
   }
+  const cache = join(projectDir, '.studio', 'cache');
+  if ((await lstat(cache).catch(() => null))?.isDirectory()) removed.push(...await sweepFiles(cache, jsonTemp('source-hashes.json'), minAgeMs, now));
   const media = mediaCacheDir(projectDir);
   if ((await lstat(media).catch(() => null))?.isDirectory()) {
     removed.push(...await sweepFiles(media, MEDIA_TEMP_RE, minAgeMs, now));
@@ -95,9 +103,14 @@ export async function sweepRenderTempDirs(o: { root?: string; minAgeMs?: number;
   const removed: string[] = [];
   for (const p of candidates) {
     if (commands.some((c) => c.includes(p))) continue;
-    // Only a folder the renderer marked as its own, whose owner is gone.
-    const owner = Number((await readFile(join(p, RENDER_OWNER_FILE), 'utf8').catch(() => '')).trim());
-    if (!(owner > 1) || alive(owner)) continue;
+    // Only a folder the renderer marked as its own, whose owner is gone; or one still empty (made, never marked: a crash
+    // between the two).
+    const entries = await readdir(p).catch(() => null);
+    if (entries === null) continue;
+    if (entries.length > 0) {
+      const owner = Number((await readFile(join(p, RENDER_OWNER_FILE), 'utf8').catch(() => '')).trim());
+      if (!(owner > 1) || alive(owner)) continue;
+    }
     await rm(p, { recursive: true, force: true, maxRetries: 2 }).then(() => removed.push(p), () => {});
   }
   return removed;

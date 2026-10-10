@@ -8,7 +8,7 @@ import { videoTargetBitrateKbps, type FormatPreset } from '@motion-studio/shared
 import { RenderError } from './errors.ts';
 import { binaryArch, hostArch, type BinaryArch } from './arch.ts';
 import { killGroup, trackGroup } from './watchdog.ts';
-import { markOwned } from './owner.ts';
+import { makeOwnedTempDir } from './owner.ts';
 
 export { binaryArch, hostArch, type BinaryArch } from './arch.ts';
 
@@ -177,8 +177,7 @@ export function checkVideotoolbox(ff: FfmpegInfo, width: number, height: number,
   let p = vtCache.get(key);
   if (!p) {
     p = (async (): Promise<VideotoolboxCheck> => {
-      const dir = await mkdtemp(join(tmpdir(), 'ms-render-vtcheck-'));
-      markOwned(dir);
+      const dir = await makeOwnedTempDir(join(tmpdir(), 'ms-render-vtcheck-'));
       try {
         const src = vtTestPattern(width, height, fps);
         const out = join(dir, 'vt.mp4');

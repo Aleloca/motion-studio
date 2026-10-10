@@ -15,7 +15,7 @@ import { RenderError } from '../src/render/errors.ts';
 import { findFfmpeg, h264Args, runFfmpeg, type FfmpegInfo } from '../src/render/encode.ts';
 import { alignVideoAudio, mixAudio } from '../src/render/audio-mix.ts';
 import {
-  clipScaleBound, hdrFilter, MAX_MEDIA_DIM, MEDIA_TEMP_RE, MediaNormalizer, normalisedFieldsOf, normalizeArgs, pruneMediaCache, targetSize, videoNeeds,
+  clipScaleBound, gamutFilter, hdrFilter, MAX_MEDIA_DIM, MEDIA_TEMP_RE, MediaNormalizer, normalisedFieldsOf, normalizeArgs, pruneMediaCache, targetSize, videoNeeds,
 } from '../src/render/media-normalize.ts';
 import { listProcesses, liveGroupCount } from '../src/render/watchdog.ts';
 import { burstWav, decodeAudio, decodeStrips, frameCodedVideo, onset, readCode } from './helpers/render-env.ts';
@@ -248,19 +248,21 @@ describe('cache maintenance (pure files)', () => {
       linkSync(lru2, join(dir, NAME('g'))); // a hard link: never touched (both names then have nlink 2)
       symlinkSync(lru1, join(dir, NAME('h')));
       const removed = await pruneMediaCache(dir, { maxBytes: 1000, now, inUse: (f) => f === used });
-      // c and f count (800 bytes ≤ 1000): d is hard-linked, e in use, h a symlink, notes.txt not a cache name.
-      expect(removed.sort()).toEqual([oldRecipe, stale].sort());
-      for (const f of [lru1, lru2, used, recent, other]) expect(existsSync(f), f).toBe(true);
+      // c, e (in use: counted, never removed) and f count: 1200 > 1000, so the least recently used removable one (c) goes.
+      // d is hard-linked, h a symlink, notes.txt not a cache name: none of them counts.
+      expect(removed.sort()).toEqual([oldRecipe, stale, lru1].sort());
+      for (const f of [lru2, used, recent, other]) expect(existsSync(f), f).toBe(true);
       rmSync(join(dir, NAME('g')));
       const again = await pruneMediaCache(dir, { maxBytes: 1000, now, inUse: (f) => f === used });
-      // c, d and f now count (1200 > 1000): the least recently used goes first (c); f is recent, e in use.
-      expect(again).toEqual([lru1]);
-      expect(existsSync(lru2) && existsSync(used) && existsSync(recent)).toBe(true);
+      // d, e and f now count (1200 > 1000): d goes; f is recent, e in use.
+      expect(again).toEqual([lru2]);
+      expect(existsSync(used) && existsSync(recent)).toBe(true);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
   it('HDR: tone-mapped when zscale and tonemap exist, else the colorspace filter with the approximate flag', () => {
     const hlg = { primaries: 'bt2020', transfer: 'arib-std-b67', space: 'bt2020nc' };
+    expect(gamutFilter({ primaries: 'bt2020', transfer: 'bt709', space: 'bt2020nc' })).toBe('colorspace=all=bt709:iprimaries=bt2020:ispace=bt2020ncl:itrc=bt709:format=yuv420p,');
     expect(hdrFilter(hlg, new Set(['zscale', 'tonemap']))).toMatchObject({ approximate: false, vf: expect.stringContaining('tonemap=hable') });
     expect(hdrFilter(hlg, new Set(['colorspace', 'tonemap']))).toEqual({ approximate: true, vf: 'colorspace=all=bt709:iprimaries=bt2020:ispace=bt2020ncl:itrc=bt2020-10:format=yuv420p,' });
     expect(normalizeArgs({ fps: 30, width: 64, height: 36, allIntra: true, hdrVf: 'X,' }).join(' ')).toContain('round=up,X,scale=64:36:flags=lanczos:in_color_matrix=bt709');
@@ -297,6 +299,9 @@ describe.skipIf(!ffmpeg)('normalisation: sharing, slots, failures, HDR, memo, au
     // 10-bit BT.2020 HLG.
     ff(['-f', 'lavfi', '-i', 'testsrc2=s=320x180:r=30:d=1', '-vf', 'format=yuv420p10le,setparams=color_primaries=bt2020:color_trc=arib-std-b67:colorspace=bt2020nc:range=tv',
       '-c:v', 'libx264', '-preset', 'ultrafast', '-color_primaries', 'bt2020', '-color_trc', 'arib-std-b67', '-colorspace', 'bt2020nc', join(compDir, 'assets', 'hlg.mp4')]);
+    // BT.2020 primaries with an SDR (BT.709) transfer: wide gamut, not HDR.
+    ff(['-f', 'lavfi', '-i', 'testsrc2=s=320x180:r=30:d=1', '-vf', 'format=yuv420p10le,setparams=color_primaries=bt2020:color_trc=bt709:colorspace=bt2020nc:range=tv',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-color_primaries', 'bt2020', '-color_trc', 'bt709', '-colorspace', 'bt2020nc', join(compDir, 'assets', 'wide.mp4')]);
   }, 300_000);
   afterAll(() => { if (work) rmSync(work, { recursive: true, force: true }); });
 
@@ -307,11 +312,12 @@ describe.skipIf(!ffmpeg)('normalisation: sharing, slots, failures, HDR, memo, au
     first.catch(() => {});
     await waitFor(async () => (await encoders()).length > 0);
     const second = prep(n, heavyComp());
-    await new Promise((r) => setTimeout(r, 300));
+    await waitFor(async () => n.sharedWaiters() >= 2); // the second job waits on the same encode
     a.abort();
     expect(await first.catch((e: RenderError) => e.code)).toBe('cancelled');
     const r = await second;
     expect([r.made + r.cached, r.warnings]).toEqual([1, []]);
+    expect(n.stats.encodes).toBe(1); // exactly one encode ran, shared by both jobs
     expect(existsSync(r.media.clips.get('assets/heavy.mp4')!.file)).toBe(true);
     // Only one encode ran: no second one was started for the second job.
     r.release();
@@ -391,6 +397,40 @@ describe.skipIf(!ffmpeg)('normalisation: sharing, slots, failures, HDR, memo, au
     expect(diff).toBeGreaterThan(2);
     r.release();
     await n.close();
+  }, 600_000);
+
+  it('BT.2020 primaries with an SDR transfer get a gamut conversion and no HDR warning (I4)', async () => {
+    const n = new MediaNormalizer({ ffmpeg: async () => ffmpeg as FfmpegInfo });
+    const r = await prep(n, comp([video('assets/wide.mp4')]));
+    expect(r.warnings).toEqual([]);
+    const m = r.media.clips.get('assets/wide.mp4')!;
+    const s = JSON.parse(probe(m.file, ['-show_entries', 'stream=color_primaries,color_space', '-of', 'json'])).streams[0];
+    expect(s).toEqual({ color_primaries: 'bt709', color_space: 'bt709' });
+    r.release();
+    await n.close();
+  }, 600_000);
+
+  it('files are leased as soon as they are picked: a cap prune during a long sibling encode keeps the early hit (lease window)', async () => {
+    rmSync(cache, { recursive: true, force: true });
+    const n = new MediaNormalizer({ ffmpeg: async () => ffmpeg as FfmpegInfo, x264Preset: 'veryslow' });
+    const first = await prep(n, comp([video('assets/small.mp4', { props: { width: 160, height: 90 } })], { width: 1280, height: 720, fps: 60 }));
+    const hit = first.media.clips.get('assets/small.mp4')!.file;
+    first.release();
+    const long = new AbortController();
+    const both = prep(n, comp([video('assets/small.mp4', { props: { width: 160, height: 90 } }), video('assets/heavy.mp4', { props: { width: 1280, height: 720 } })], { width: 1280, height: 720, fps: 60 }), long.signal);
+    both.catch(() => {});
+    await waitFor(async () => (await encoders()).length > 0);
+    await new Promise((r) => setTimeout(r, 500)); // the hit was picked (and leased) meanwhile
+    const later = Date.now() + 20 * 60_000; // as if the sibling encode had run for 20 minutes
+    const pruned = await pruneMediaCache(cache, { maxBytes: 1, maxUnusedMs: null, inUse: n.inUse, now: later });
+    expect(pruned, `${hit} ${readdirSync(cache).join(',')}`).toEqual([]);
+    expect(existsSync(hit)).toBe(true);
+    long.abort();
+    expect(await both.catch((e: RenderError) => e.code)).toBe('cancelled');
+    // A preparation that throws gives its leases back: the same prune now removes the file.
+    expect(await pruneMediaCache(cache, { maxBytes: 1, maxUnusedMs: null, inUse: n.inUse, now: later })).toEqual([hit]);
+    await n.close();
+    expect(liveGroupCount()).toBe(0);
   }, 600_000);
 
   it('source hashes are remembered under .studio/cache by path, size, mtime and inode (M10)', async () => {

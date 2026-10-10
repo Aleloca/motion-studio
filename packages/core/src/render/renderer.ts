@@ -9,7 +9,7 @@ import { RUNTIME_DIST_DIR } from '@motion-studio/composition-runtime/dist';
 import { startCompositionServer, type CompositionServer, type CompositionSession, type SessionMedia } from '../compositions/composition-server.ts';
 import { readRegularFile } from '../safe-read.ts';
 import { noteCoreTemp } from '../core-temps.ts';
-import { markOwned } from './owner.ts';
+import { makeOwnedTempDir } from './owner.ts';
 import { mixAudio, mixClips } from './audio-mix.ts';
 import { CdpError } from './cdp-pipe.ts';
 import { captureFrame, captureSegment, splitSegments, writeWithBackpressure } from './capture.ts';
@@ -187,8 +187,7 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
       tick();
       await writeFile(tempOut, buf, { flag: 'wx', mode: 0o644 });
     } else {
-      work = await mkdtemp(join(o.tempDir ?? tmpdir(), 'ms-render-'));
-      markOwned(work);
+      work = await makeOwnedTempDir(join(o.tempDir ?? tmpdir(), 'ms-render-'));
       const kbps = targetKbps(o.format, c.fps);
       const encoder = await chooseEncoder(ff!, o.encoder ?? 'auto', c.width, c.height, c.fps, kbps);
       const segments = splitSegments(frames, Math.min(16, Math.max(1, Math.floor(o.parallel ?? DEFAULT_PARALLEL))));
