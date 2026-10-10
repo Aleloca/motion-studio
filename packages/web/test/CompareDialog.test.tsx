@@ -130,6 +130,17 @@ describe('CompareDialog · images', () => {
     expect(api.setExportPick).toHaveBeenCalledTimes(2);
   });
 
+  it('a refusal clears when another version chip is chosen (M5)', async () => {
+    api.setExportPick.mockRejectedValueOnce(new Error('disco pieno'));
+    render(<Harness format={POST} initial={[1, 3]} />);
+    const d = await dialog();
+    await userEvent.click(within(d).getByRole('button', { name: '★ Usa la v1 per l’export' }));
+    expect((await within(d).findByRole('alert')).textContent).toContain('disco pieno');
+    const [sideA] = within(d).getAllByRole('group').filter((g) => g.classList.contains('ms-cmp-chips'));
+    await userEvent.click(within(sideA!).getByRole('button', { name: /^v3/ }));
+    expect(within(d).queryByRole('alert')).toBeNull();
+  });
+
   it('a manual ★ says so, and the default version keeps its Auto mark', async () => {
     states[POST] = state(POST, [1, 3], 1);
     render(<Harness format={POST} initial={[1, 3]} />);

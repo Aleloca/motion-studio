@@ -181,6 +181,8 @@ function CompareBody({ onClose, slug, creative, versions, presets, states, forma
   const pending = actions.pending(format);
   // The dialog closes once the ★ is saved; a refusal stays here, in the dialog.
   const [starError, setStarError] = useState<string | null>(null);
+  // A refusal is about the versions it was for: another chip on either side clears it.
+  useEffect(() => { setStarError(null); }, [a, b]);
   const starSide = (n: number) => {
     setStarError(null);
     actions.star(format, n, { done: onClose, fail: setStarError });

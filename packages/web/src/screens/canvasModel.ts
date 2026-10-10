@@ -9,13 +9,13 @@ export interface BoardModel { id: string; preset: FormatPreset | null; out: Outp
 
 export interface Media { src: string; video: boolean }
 
+/** The URL of a file of version `n`'s outputs. */
+export const outputUrl = (slug: string, creative: string, n: number, file: string): string => api.fileUrl(slug, creative, `outputs/v${n}/${file}`);
+
 /**
  * The picture of an output: images as they are; videos by their poster (`.previews/<file>.jpg`, made by the core with
  * ffmpeg) when there is one, otherwise the video itself paused on its first frame.
  */
-/** The URL of a file of version `n`'s outputs. */
-export const outputUrl = (slug: string, creative: string, n: number, file: string): string => api.fileUrl(slug, creative, `outputs/v${n}/${file}`);
-
 export function outputMedia(slug: string, creative: string, n: number, out: OutputFileInfo): Media {
   const rel = (f: string) => outputUrl(slug, creative, n, f);
   if (!isVideoFile(out.file)) return { src: rel(out.file), video: false };

@@ -959,6 +959,27 @@ describe('CreativeCanvas · per-format versions (Phase 9)', () => {
     await waitFor(() => expect(getToasts().some((x) => /TikTok · Video 9:16 è scollegato/.test(x.text))).toBe(true));
   });
 
+  it('a follower with no identical copy of its primary’s ★ says so on its chip and in its menu (M6)', async () => {
+    // v3's TikTok is a dedicated render, not a copy of the Reel ★ (v3): nothing to export for it.
+    const vs = history();
+    vs[2] = pv(3, 'Logo più grande', [vout(REEL, 'c'), vout(POST, 'b'), vout(TIKTOK, 'd')]);
+    detail = { ...linked(), versions: vs };
+    render(<Harness live={emptyLive()} />);
+    await loaded();
+    const chip = within(head(TIKTOK)).getByRole('button', { name: `Collegato a ${REEL_LABEL}: apri il menu del collegamento · Non esportabile` });
+    await userEvent.click(chip);
+    expect((await screen.findByRole('note')).textContent).toBe(`Nessuna copia identica di ${REEL_LABEL} ★ v3 da esportare. Metti la ★ su una versione di ${REEL_LABEL} che ce l’ha, oppure Scollega.`);
+  });
+
+  it('a follower that can be exported shows no warning', async () => {
+    detail = linked();
+    render(<Harness live={emptyLive()} />);
+    await loaded();
+    await userEvent.click(within(head(TIKTOK)).getByRole('button', { name: `Collegato a ${REEL_LABEL}: apri il menu del collegamento` }));
+    await screen.findByRole('button', { name: 'Scollega: crea una versione dedicata' });
+    expect(screen.queryByRole('note')).toBeNull();
+  });
+
   it('an unlinked compatible format offers "Link to …"', async () => {
     detail = { ...linked({}, {}), formats: [
       { id: REEL, history: [1, 3], star: { version: 3, manual: false, newer: null, follows: null }, starFileMissing: false, linkable: [{ primary: TIKTOK, ok: true }, { primary: POST, ok: false, reason: 'size' }] },
@@ -1138,6 +1159,15 @@ describe('CreativeCanvas · per-format versions (Phase 9)', () => {
     expect(head(POST).textContent).not.toContain('In render…');
     expect(document.querySelector(`[data-board="${POST}"] .ms-shimmer`)).toBeNull();
     expect(document.querySelector(`[data-board="${REEL}"] .ms-shimmer`)).not.toBeNull();
+    // The canvas says it is busy while a board renders (M13).
+    expect(document.querySelector('.ms-cv-world')!.getAttribute('aria-busy')).toBe('true');
+  });
+
+  it('the canvas is not busy when nothing renders (M13)', async () => {
+    detail = linked();
+    render(<Harness live={emptyLive()} />);
+    await loaded();
+    expect(document.querySelector('.ms-cv-world')!.hasAttribute('aria-busy')).toBe(false);
   });
 
   it('the bar’s "Versions" opens the creative timeline with Restart from here and Show in Finder', async () => {

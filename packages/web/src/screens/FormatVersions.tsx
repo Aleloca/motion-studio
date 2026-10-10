@@ -262,23 +262,29 @@ function VersionsPopover({ slug, creative, label, state, versions, shown, resume
  * A follower's "Linked to Reel ▾" chip (spec §2.3): its menu says it uses the primary's file and ★, and offers
  * "Unlink — make a dedicated version".
  */
-export function FollowerChip({ label, primary, short, primaryStar, actions, follower, busy }: {
+export function FollowerChip({ label, primary, short, primaryStar, actions, follower, busy, missing }: {
   /** `short`: the primary's name shown on the chip itself (its format name in a board header); `primary` everywhere else. */
   label: string; primary: string; short?: string; primaryStar: number | null; follower: string; actions: VersionActions; busy?: boolean;
+  /** No version holds a byte-identical copy of the primary's ★ file (decisions log 140): Export cannot include it. */
+  missing?: boolean;
 }) {
   const fv = useT().web.formatVersions;
   const anchor = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
+  const warn = Boolean(missing) && primaryStar !== null;
   return (
     <>
       <button ref={anchor} type="button" className={cx('ms-chip ms-fv-linkchip', open && 'ms-on')} aria-haspopup="dialog" aria-expanded={open}
-        aria-label={fv.linkedMenu({ primary })} onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}>
-        <Icon name="link" size={11} /><span className="ms-fv-linkchip-text">{fv.linkedTo({ primary: short ?? primary })}</span>
+        aria-label={[fv.linkedMenu({ primary }), warn ? fv.followerMissingShort : null].filter(Boolean).join(' · ')}
+        title={warn ? fv.followerMissing({ primary, n: primaryStar! }) : undefined} onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}>
+        <Icon name={warn ? 'warn' : 'link'} size={11} className={warn ? 'ms-fv-linkchip-warn' : undefined} />
+        <span className="ms-fv-linkchip-text">{fv.linkedTo({ primary: short ?? primary })}</span>
       </button>
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="bottom-start" width={280} label={fv.linkedTo({ primary })}>
         <div className="ms-fvlink">
           <p>{fv.followsNote({ label, primary })}</p>
           {primaryStar !== null ? <span className="ms-fvlink-star">{fv.followsStar({ primary, n: primaryStar })}</span> : null}
+          {warn ? <p className="ms-fvpop-warn ms-fvlink-warn" role="note"><Icon name="warn" size={12} />{fv.followerMissing({ primary, n: primaryStar! })}</p> : null}
           <Button size="sm" variant="outline" disabled={busy} onClick={() => { setOpen(false); actions.unlink(follower); }}>{fv.unlink}</Button>
         </div>
       </Popover>

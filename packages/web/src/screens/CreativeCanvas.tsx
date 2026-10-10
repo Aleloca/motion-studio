@@ -366,7 +366,8 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
       const short = pp ? formatName(pp, locale) : primary;
       const star = states[s.follows]?.star.version ?? null;
       return {
-        badge: <FollowerChip label={formatLabel(b.id)} primary={primary} short={short} primaryStar={star} follower={b.id} actions={actions} busy={busyLinks} />,
+        badge: <FollowerChip label={formatLabel(b.id)} primary={primary} short={short} primaryStar={star} follower={b.id} actions={actions} busy={busyLinks}
+          missing={s.starFileMissing} />,
         note: star !== null ? t.web.formatVersions.followsStar({ primary: short, n: star }) : t.web.formatVersions.follows({ primary: short }),
       };
     }
@@ -464,7 +465,8 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
           }}
         >
           {/* The world is not zoomed: each board scales its frame, and its spacing follows --cv-z (canvas.css). */}
-          <div className="ms-cv-world" style={{ '--cv-z': zoom } as CSSProperties}>
+          <div className="ms-cv-world" style={{ '--cv-z': zoom } as CSSProperties}
+            aria-busy={rendering === 'all' || rendering.size > 0 ? true : undefined}>
             {tall.map(board)}
             {rest.length ? <div className="ms-cv-stack">{rest.map(board)}</div> : null}
           </div>

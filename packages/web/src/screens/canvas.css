@@ -128,7 +128,7 @@
 .ms-cv-bubble-foot { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .ms-cv-bubble-time { font-size: 11px; color: var(--faint); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Generation (T10): thin bar and the agent's latest step under the first board. */
+/* Generation: the agent's latest step next to the thin bar in the format view's notes (FormatView). */
 .ms-cv-gen-step { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Nothing generated yet. */
@@ -242,6 +242,9 @@
 .ms-fvlink { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 6px 8px; font-size: 12px; line-height: 1.45; }
 .ms-fvlink p { margin: 0; color: var(--muted); text-wrap: pretty; }
 .ms-fvlink-star { font-size: 11.5px; color: var(--accentText); }
+/* A follower with nothing to export (decisions log 140): the warn line of the version popover, full width, text in --text. */
+.ms-fvlink p.ms-fvlink-warn { margin: 0; align-self: stretch; color: var(--text); }
+.ms-fv-linkchip-warn { color: var(--warn); }
 .ms-cv-vbtn-count { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .ms-fv-badge { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 .ms-fv-follows { font-size: 11.5px; color: var(--muted); white-space: nowrap; }

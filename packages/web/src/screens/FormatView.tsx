@@ -28,7 +28,7 @@ import { go, ShellContext } from '../shell/ShellContext.tsx';
 import { Button, ChannelMark, Empty, Icon, Pill, Spinner, Toggle, cx } from '../ui/index.ts';
 import { useCreative } from '../useCreative.ts';
 import { boardLabel, PinBubble, SafeZoneBands, type Draft } from './CanvasBoard.tsx';
-import { pointIn, ratioText } from './canvasModel.ts';
+import { outputUrl, pointIn, ratioText } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf, lastStep } from './creativeState.ts';
 import { ExportDialog, type ExportSnapshot } from './ExportDialog.tsx';
@@ -130,8 +130,8 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   const width = preset?.width ?? out?.width ?? (origin?.width ? Math.round(origin.width) : 1080);
   const height = preset?.height ?? out?.height ?? (origin?.height ? Math.round(origin.height) : 1080);
   const label = boardLabel({ id: format, preset, out: null }, locale);
-  const src = out && version ? api.fileUrl(slug, creative, `outputs/v${version.n}/${out.file}`) : null;
-  const poster = out?.preview && version ? api.fileUrl(slug, creative, `outputs/v${version.n}/${out.preview}`) : undefined;
+  const src = out && version ? outputUrl(slug, creative, version.n, out.file) : null;
+  const poster = out?.preview && version ? outputUrl(slug, creative, version.n, out.preview) : undefined;
 
   // Comments: the pending pins of the creative (shared with the canvas and the composer). The core crops pin frames
   // from its pin source (the version resumed from, else the latest): comments are placed only on that version.
