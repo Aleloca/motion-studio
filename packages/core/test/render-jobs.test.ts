@@ -6,7 +6,7 @@
  * the turn's earlier-output check, and the startup sweep of leftovers.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { rename, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -437,6 +437,61 @@ describe('fix round: records always written, follower limits, the render lane', 
   });
 });
 
+describe('round 2: the record follows the disk', { timeout: 60_000 }, () => {
+  it('the primary is recorded right after its rename, before posters and followers (crash window)', async () => {
+    const { slug, store, dir } = await v2Creative({ formats: ['test-wide', 'test-wide-b'] });
+    let openPoster!: () => void;
+    const posterGate = new Promise<void>((r) => { openPoster = r; });
+    const media = {
+      available: true,
+      probe: async () => ({ width: 320, height: 180, durationSec: 1 }),
+      poster: async (_v: string, out: string) => { await posterGate; writeFileSync(out, 'jpeg'); return true; },
+      frame: async () => false,
+    };
+    const queue = new JobQueue({ concurrency: 1, lanes: { render: 1 } });
+    const normalizer = { prepare: async () => ({ media: { dir: join(projectDir(), '.studio', 'cache', 'media'), clips: new Map() }, warnings: [], made: 0, cached: 0, release: () => {} }) } as unknown as MediaNormalizer;
+    const svc = new RenderJobService({ queue, engine: fake.engine, media, normalizer, presets: async () => PRESETS, broadcast: () => {} });
+    await svc.start({ root: ws, projectSlug: 'acme', projectDir: projectDir(), creativeSlug: slug }, 1);
+    const sha = (f: string) => createHash('sha256').update(readFileSync(join(dir, 'outputs', 'v1', f))).digest('hex');
+    // While the poster hangs (a crash here would lose nothing): the primary is already recorded with its true hash.
+    for (let i = 0; i < 500 && (await versionOf(store, slug, 1)).outputs.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    const early = await versionOf(store, slug, 1);
+    expect(early.outputs.map((o) => [o.format, o.sha256])).toEqual([['test-wide', sha('test-wide.mp4')]]);
+    expect(renderState(early, 'test-wide')).toBe('rendered');
+    openPoster();
+    await queue.whenIdle();
+    const v = await versionOf(store, slug, 1);
+    expect(v.outputs.map((o) => [o.format, o.preview]).sort()).toEqual([['test-wide', '.previews/test-wide.mp4.jpg'], ['test-wide-b', '.previews/test-wide-b.mp4.jpg']]);
+    // The poster went through a temp file: none is left.
+    expect(readdirSync(join(dir, 'outputs', 'v1', '.previews')).sort()).toEqual(['test-wide-b.mp4.jpg', 'test-wide.mp4.jpg']);
+  });
+
+  it('a render whose file changed after it was recorded is re-hashed and corrected when the creative is read', async () => {
+    const { slug, store, dir } = await v2Creative({ formats: ['test-wide'], links: {} });
+    expect((await waitJob((await post(slug, 1)).json().id)).state).toBe('succeeded');
+    const file = join(dir, 'outputs', 'v1', 'test-wide.mp4');
+    writeFileSync(file, 'bytes the record does not know (a crash between rename and record)');
+    const sha = createHash('sha256').update(readFileSync(file)).digest('hex');
+    expect((await versionOf(store, slug, 1)).outputs[0]!.sha256).not.toBe(sha);
+    const detail = (await app.inject({ url: `/api/projects/acme/creatives/${slug}`, headers: H })).json() as { versions: VersionEntry[] };
+    expect(detail.versions[0]!.outputs[0]!.sha256).toBe(sha);
+    expect((await versionOf(store, slug, 1)).outputs[0]!.sha256).toBe(sha);
+    expect(manifestOf(dir, 1).renders[0]!.sha256).toBe(sha);
+    // A second read with nothing changed does not hash again (the stamp matches): same answer.
+    expect(((await app.inject({ url: `/api/projects/acme/creatives/${slug}`, headers: H })).json() as { versions: VersionEntry[] }).versions[0]!.outputs[0]!.sha256).toBe(sha);
+  });
+
+  it('a re-render replaces the follower\'s record with its new copy (never a stale entry)', async () => {
+    const { slug, store, dir } = await v2Creative({ formats: ['test-wide', 'test-wide-b'] });
+    expect((await waitJob((await post(slug, 1)).json().id)).state).toBe('succeeded');
+    const before = (await versionOf(store, slug, 1)).outputs.find((o) => o.format === 'test-wide-b')!.sha256;
+    expect((await waitJob((await post(slug, 1)).json().id)).state).toBe('succeeded');
+    const after = (await versionOf(store, slug, 1)).outputs.find((o) => o.format === 'test-wide-b')!.sha256;
+    expect(after).not.toBe(before);
+    expect(after).toBe(createHash('sha256').update(readFileSync(join(dir, 'outputs', 'v1', 'test-wide-b.mp4'))).digest('hex'));
+  });
+});
+
 describe('a turn and a render on the same creative (M9)', { timeout: 120_000 }, () => {
   it('both versions.json writes are kept and the turn reports no earlier-output change', async () => {
     const { slug, store } = await v2Creative({ formats: ['test-wide'], links: {} });
@@ -541,9 +596,11 @@ describe('startup sweep', () => {
       oldPreview: join(v, '.previews', '.sq.mp4.jpg.render-abcdefabcdef.tmp'), output: join(v, 'sq.mp4'), agentTmp: join(v, 'agent.tmp'),
       oldMedia: join(media, `.${'a'.repeat(64)}-30-320x180-n1.0123456789ab.tmp`), cached: join(media, `${'a'.repeat(64)}-30-320x180-n1.mp4`), other: join(media, '.other.tmp'),
       oldRecipe: join(media, `${'b'.repeat(64)}-30-320x180-n0.mp4`),
+      oldManifestTmp: join(v, 'manifest.json.0123456789ab.tmp'), oldVersionsTmp: join(p, 'creatives', 'c1', 'versions.json.abcdef012345.tmp'),
+      oldHashesTmp: join(p, '.studio', 'cache', 'source-hashes.json.0123456789ab.tmp'), notOurs: join(v, 'manifest.json.xyz.tmp'),
     };
     for (const f of Object.values(files)) writeFileSync(f, 'x');
-    for (const k of ['oldRender', 'oldPreview', 'output', 'agentTmp', 'oldMedia', 'cached', 'other', 'oldRecipe'] as const) old(files[k]);
+    for (const k of ['oldRender', 'oldPreview', 'output', 'agentTmp', 'oldMedia', 'cached', 'other', 'oldRecipe', 'oldManifestTmp', 'oldVersionsTmp', 'oldHashesTmp', 'notOurs'] as const) old(files[k]);
     // A creative reached through a link is never swept (M6); neither is one with an active render job.
     const elsewhere = join(base, 'elsewhere', 'outputs', 'v1');
     mkdirSync(elsewhere, { recursive: true });
@@ -555,7 +612,8 @@ describe('startup sweep', () => {
     writeFileSync(join(busy, '.sq.mp4.render-0123456789ab.tmp'), 'x');
     old(join(busy, '.sq.mp4.render-0123456789ab.tmp'));
     const removed = await sweepProjectRenders(p, { skipCreative: (slug) => slug === 'busy' });
-    expect(removed.sort()).toEqual([files.oldMedia, files.oldPreview, files.oldRender, files.oldRecipe].sort());
+    expect(removed.sort()).toEqual([files.oldMedia, files.oldPreview, files.oldRender, files.oldRecipe, files.oldManifestTmp, files.oldVersionsTmp, files.oldHashesTmp].sort());
+    expect(existsSync(files.notOurs)).toBe(true);
     expect(readdirSync(elsewhere)).toHaveLength(1);
     expect(readdirSync(busy)).toHaveLength(1);
     for (const k of ['newRender', 'output', 'agentTmp', 'cached', 'other'] as const) expect(lstatSync(files[k]).isFile(), k).toBe(true);
@@ -568,13 +626,15 @@ describe('startup sweep', () => {
     const profile = mk('ms-render-chrome-xyz789', 999_999);
     const media = mk('ms-render-media-q1W2e3', 999_999);
     const unmarked = mk('ms-render-zzzzzz');
+    writeFileSync(join(unmarked, 'something'), 'x'); // not empty and no marker: not provably ours
+    const emptyCrash = mk('ms-render-e0e0e0'); // made, never marked (a crash between the two): empty, removed
     const live = mk('ms-render-live01', process.pid);
     const recent = mk('ms-render-new001', 999_999);
     // Test fixtures and other tools: never, marker or not.
     const fixtures = ['ms-render-jobs-AbCdEf', 'ms-render-proc-AbCdEf', 'ms-render-media-AbCdEfG', 'ms-test-render-AbCdEf', 'something-else'].map((n) => mk(n, 999_999));
-    for (const d of [dead, profile, media, unmarked, live, ...fixtures]) old(d);
+    for (const d of [dead, profile, media, unmarked, emptyCrash, live, ...fixtures]) old(d);
     const removed = await sweepRenderTempDirs({ root });
-    expect(removed.sort()).toEqual([dead, profile, media].sort());
+    expect(removed.sort()).toEqual([dead, profile, media, emptyCrash].sort());
     expect(readdirSync(root).sort()).toEqual([unmarked, live, recent, ...fixtures].map((d) => basename(d)).sort());
   });
 });

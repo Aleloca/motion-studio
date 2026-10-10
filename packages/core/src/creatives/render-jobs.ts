@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { constants } from 'node:fs';
-import { copyFile, lstat, rename, rm } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   anyManifestSchema, compositionProblemText, effectiveLinks, formatLabel, messages,
@@ -22,6 +22,7 @@ import type { RenderCompositionOptions, RenderEngine, RenderResult } from '../re
 import { CodedError } from '../workspace-store.ts';
 import { noteCoreOutputWrite } from './carry-over.ts';
 import { CreativeStore } from './creative-store.ts';
+import { noteRenderStamps } from './render-stamps.ts';
 import type { CreativeRef } from './creative-turns.ts';
 import { largeFileWarning } from './output-contract.ts';
 
@@ -244,7 +245,10 @@ export class RenderJobService {
       prepared.release();
     }
     // From here the new file is in place: the record is always written, with what is on disk (I3), whatever happens next
-    // (a cancel waits for these few steps; a failing follower is left out and reported).
+    // (a cancel waits for these few steps; a failing follower is left out and reported). First the primary alone, at once,
+    // with the renderer's own hash (a crash during the steps below then leaves a true record), then everything.
+    const bare: OutputFileInfo = { format, file, width: result.width, height: result.height, durationSec: result.durationSec, verified: false, preview: null, sha256: result.sha256, problems: [], fromComposition: loaded.hash };
+    await this.record(store, ref, n, [bare], o.plan.fixFollows, o.comps);
     const infos: OutputFileInfo[] = [];
     let failure: unknown = null;
     try {
@@ -254,7 +258,7 @@ export class RenderJobService {
       const info = await this.describe({ creativeDir, versionDir, n, preset, file, composition, sha256: result.sha256, hash: loaded.hash, locale: o.locale, poster: true })
         .catch((e: unknown) => {
           failure = e;
-          return { format, file, width: result.width, height: result.height, durationSec: result.durationSec, verified: false, preview: null, sha256: result.sha256, problems: [], fromComposition: loaded.hash } satisfies OutputFileInfo;
+          return bare;
         });
       infos.push(info);
       for (const [i, f] of o.followers.entries()) {
@@ -283,26 +287,34 @@ export class RenderJobService {
     const fPreset = findPreset(o.presets, o.f) ?? { ...o.fallback, id: o.f };
     const fFile = `${o.f}.${o.ext}`;
     await copyInto(join(o.versionDir, o.primary.file), o.versionDir, fFile, (temp) => noteCoreOutputWrite(o.creativeDir, `outputs/v${o.n}/${fFile}`, temp));
-    const h = await hashConfinedFile(o.creativeDir, `outputs/v${o.n}/${fFile}`);
-    const sha256 = h && 'sha256' in h ? h.sha256 : undefined;
-    const own = await this.describe({ creativeDir: o.creativeDir, versionDir: o.versionDir, n: o.n, preset: fPreset, file: fFile, composition: o.composition, sha256, hash: '', locale: o.locale, poster: false });
-    const problems = [...(o.primary.problems ?? [])];
-    for (const p of own.problems ?? []) if (!problems.includes(p)) problems.push(p);
-    if (!fPreset.extensions.includes(o.ext)) problems.push(v.badExtension({ file: fFile, ext: o.ext, id: o.f, allowed: fPreset.extensions.join(', ') }));
-    let preview: string | null = null;
-    if (o.primary.preview) {
-      const pv = `.previews/${fFile}.jpg`;
-      const ok = await copyInto(join(o.versionDir, o.primary.preview), join(o.versionDir, '.previews'), `${fFile}.jpg`,
-        (temp) => noteCoreOutputWrite(o.creativeDir, `outputs/v${o.n}/${pv}`, temp)).then(() => true, () => false);
-      if (ok) { preview = pv; await noteCoreOutputWrite(o.creativeDir, `outputs/v${o.n}/.previews`); }
-    }
+    // The copy is in place: from here it is always recorded (never a stale entry). It is a byte copy of the primary, so
+    // the primary's hash; it is checked, and an entry that could not be checked is marked unverified.
     const fEntry = o.comps.find((c) => c.format === o.f);
-    const { sha256: _drop, fromComposition: _fc, ...rest } = own;
-    return {
-      ...rest, preview, problems,
-      ...(sha256 ? { sha256 } : {}),
-      ...(fEntry ? { fromComposition: fEntry.hash } : o.primary.fromComposition ? { fromComposition: o.primary.fromComposition } : {}),
+    const fromComposition = fEntry?.hash ?? o.primary.fromComposition;
+    const base: OutputFileInfo = {
+      ...o.primary, format: o.f, file: fFile, preview: null, verified: false, problems: [...(o.primary.problems ?? [])],
+      ...(o.primary.sha256 ? { sha256: o.primary.sha256 } : {}), ...(fromComposition ? { fromComposition } : {}),
     };
+    try {
+      const h = await hashConfinedFile(o.creativeDir, `outputs/v${o.n}/${fFile}`);
+      const sha256 = h && 'sha256' in h ? h.sha256 : undefined;
+      if (sha256 !== undefined && o.primary.sha256 !== undefined && sha256 !== o.primary.sha256) return { ...base, sha256 };
+      const own = await this.describe({ creativeDir: o.creativeDir, versionDir: o.versionDir, n: o.n, preset: fPreset, file: fFile, composition: o.composition, sha256, hash: '', locale: o.locale, poster: false });
+      const problems = [...(o.primary.problems ?? [])];
+      for (const p of own.problems ?? []) if (!problems.includes(p)) problems.push(p);
+      if (!fPreset.extensions.includes(o.ext)) problems.push(v.badExtension({ file: fFile, ext: o.ext, id: o.f, allowed: fPreset.extensions.join(', ') }));
+      let preview: string | null = null;
+      if (o.primary.preview) {
+        const pv = `.previews/${fFile}.jpg`;
+        const ok = await copyInto(join(o.versionDir, o.primary.preview), join(o.versionDir, '.previews'), `${fFile}.jpg`,
+          (temp) => noteCoreOutputWrite(o.creativeDir, `outputs/v${o.n}/${pv}`, temp)).then(() => true, () => false);
+        if (ok) { preview = pv; await noteCoreOutputWrite(o.creativeDir, `outputs/v${o.n}/.previews`); }
+      }
+      const { sha256: _drop, fromComposition: _fc, ...rest } = own;
+      return { ...rest, verified: own.verified && sha256 !== undefined, preview, problems, ...(base.sha256 ? { sha256: base.sha256 } : {}), ...(fromComposition ? { fromComposition } : {}) };
+    } catch {
+      return base;
+    }
   }
 
   /** The output entry of a render: checked like an agent's file (ffprobe size and duration, limits, bitrate), with its poster. */
@@ -334,11 +346,20 @@ export class RenderJobService {
       const d = await lstat(dir).catch(() => null);
       const t = await lstat(target).catch(() => null);
       if ((d === null || d.isDirectory()) && (t === null || t.isFile())) {
-        const made = await media.poster(path, target).catch(() => false);
-        if (made) {
-          preview = `.previews/${file}.jpg`;
-          await noteCoreOutputWrite(o.creativeDir, `outputs/v${o.n}/.previews`);
-          await noteCoreOutputWrite(o.creativeDir, `outputs/v${o.n}/${preview}`);
+        // Into a temp file, noted, then renamed (M1): a turn's check never sees a half-written poster or an unnoted one.
+        const temp = join(dir, tempName(`${file}.jpg`));
+        noteCoreTemp(temp);
+        try {
+          await mkdir(dir, { recursive: true });
+          const made = await media.poster(path, temp).catch(() => false);
+          if (made) {
+            preview = `.previews/${file}.jpg`;
+            await noteCoreOutputWrite(o.creativeDir, `outputs/v${o.n}/${preview}`, temp);
+            await rename(temp, target);
+            await noteCoreOutputWrite(o.creativeDir, `outputs/v${o.n}/.previews`);
+          }
+        } catch { preview = null; } finally {
+          await rm(temp, { force: true }).catch(() => {});
         }
       }
     }
@@ -375,5 +396,6 @@ export class RenderJobService {
       ],
     };
     await writeJsonFileAtomic(path, manifest, { beforeRename: (tmp) => noteCoreOutputWrite(store.dir(ref.creativeSlug), `outputs/v${n}/manifest.json`, tmp) });
+    await noteRenderStamps(ref.projectDir, store.dir(ref.creativeSlug), ref.creativeSlug, n, infos).catch(() => {});
   }
 }

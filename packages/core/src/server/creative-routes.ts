@@ -11,6 +11,7 @@ import { formatSummaries } from '../creatives/format-summary.ts';
 import { withLazyHashes } from '../creatives/output-hashes.ts';
 import { creativeJobKey, PICK_RETRY_AFTER_SEC, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
 import type { RenderJobService } from '../creatives/render-jobs.ts';
+import { reconcileRenders } from '../creatives/render-stamps.ts';
 import { sweepProjectRenders } from '../render/render-sweep.ts';
 import { FormatCatalog } from '../formats/format-catalog.ts';
 import type { MediaTools } from '../media/media-tools.ts';
@@ -179,6 +180,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   const detailOf = async (ref: CreativeRef & { store: CreativeStore }): Promise<CreativeDetail> => {
     const creative = await ref.store.get(ref.creativeSlug);
     const creativeDir = ref.store.dir(ref.creativeSlug);
+    // Render records whose file changed since it was recorded are corrected first (render-stamps.ts).
+    await reconcileRenders({ projectDir: ref.projectDir, store: ref.store, creativeSlug: ref.creativeSlug }).catch(() => false);
     const { versions } = await withLazyHashes({
       projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir, versions: await ref.store.readVersions(ref.creativeSlug),
       onBackgroundDone: () => ctx.broadcast?.({ type: 'creative', project: ref.projectSlug, creative: ref.creativeSlug }),
@@ -298,6 +301,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       return exportVersion({ ...common, version });
     }
     // The same hashed versions as the creative GET, so a follower's ★ here is the one the dialog showed.
+    await reconcileRenders({ projectDir: ref.projectDir, store: ref.store, creativeSlug: ref.creativeSlug }).catch(() => false);
     const { versions, complete } = await withLazyHashes({ projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir, versions: await ref.store.readVersions(ref.creativeSlug) });
     // A follower's version is decided on hashes: never on partial ones (a refusal now would only mean "not hashed yet").
     // The hashing goes on; the client retries after Retry-After, as for a ★ pick.
