@@ -225,7 +225,7 @@ function VersionsPopover({ slug, creative, label, state, versions, shown, resume
                     {auto ? <span className="ms-fvpop-auto" title={fv.autoTip}><Pill>{fv.auto}</Pill></span> : null}
                     {ver.status === 'incomplete' ? <Pill tone="warn">{v.incomplete}</Pill> : null}
                     <TokenCount tokens={ver.usage ? shownTotal(ver.usage.tokens) : null} className="ms-vmenu-tokens" /></span>
-                  <span className="ms-vmenu-note">{note}</span>
+                  <span className="ms-vmenu-note ms-clamp2" title={note}>{note}</span>
                 </span>
               </button>
               <button type="button" className={cx('ms-fvpop-star', isStar && 'ms-on')} aria-pressed={isStar} disabled={pending && !isStar} aria-busy={pending || undefined}
@@ -273,7 +273,7 @@ export function FollowerChip({ label, primary, primaryStar, actions, follower, b
     <>
       <button ref={anchor} type="button" className={cx('ms-chip ms-fv-linkchip', open && 'ms-on')} aria-haspopup="dialog" aria-expanded={open}
         aria-label={fv.linkedMenu({ primary })} onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}>
-        <Icon name="link" size={11} />{fv.linkedTo({ primary })}
+        <Icon name="link" size={11} /><span className="ms-fv-linkchip-text">{fv.linkedTo({ primary })}</span>
       </button>
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="bottom-start" width={280} label={fv.linkedTo({ primary })}>
         <div className="ms-fvlink">
@@ -332,7 +332,7 @@ export function VersionTimeline({ slug, creative, versions, resumeFrom, actions,
                       {ver.status === 'incomplete' ? <Pill tone="warn">{v.incomplete}</Pill> : null}
                       {/* Versions from before usage tracking have no `usage`: no figure rather than a 0. */}
                       <TokenCount tokens={ver.usage ? shownTotal(ver.usage.tokens) : null} className="ms-vmenu-tokens" /></span>
-                    <span className="ms-vmenu-note">{note}</span>
+                    <span className="ms-vmenu-note ms-clamp2" title={note}>{note}</span>
                   </span>
                 </button>
               );

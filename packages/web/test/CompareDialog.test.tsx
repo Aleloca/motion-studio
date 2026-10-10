@@ -87,6 +87,18 @@ describe('CompareDialog · images', () => {
     expect(within(d).queryByRole('region', { name: 'Riproduzione' })).toBeNull();
   });
 
+  it('clamps each request note to two lines and keeps the ★ actions outside the scrolling settings', async () => {
+    render(<Harness format={POST} initial={[1, 3]} />);
+    const d = await dialog();
+    const note = within(d).getByText('change 3');
+    expect(note.classList.contains('ms-clamp2')).toBe(true);
+    expect(note.closest('.ms-reqnote')).not.toBeNull();
+    const actions = d.querySelector('.ms-cmp-actions')!;
+    expect(actions.closest('.ms-cmp-side-scroll')).toBeNull();
+    expect(note.closest('.ms-cmp-side-scroll')).not.toBeNull();
+    expect(actions.parentElement!.classList.contains('ms-cmp-side-col')).toBe(true);
+  });
+
   it('"Side by side" shows both pictures without the slider', async () => {
     render(<Harness format={POST} initial={[1, 3]} />);
     const d = await dialog();

@@ -138,7 +138,10 @@ describe('CreativeCanvas · overlays stay screen-sized at any zoom', () => {
       expect(netScale(frame.querySelector('img')!)).toBe(0.5);
       // …the label does not.
       const head = post.querySelector('.ms-cv-board-head') as HTMLElement;
-      expect(head.textContent).toContain('Instagram · Post 1:1');
+      // Only the format's name; the channel is its mark (accessible name), the full label the tooltip.
+      expect(head.querySelector('.ms-cv-board-name')!.textContent).toBe('Post 1:1');
+      expect(head.textContent).not.toContain('Instagram · ');
+      expect(head.querySelector('.ms-ch[role="img"]')!.getAttribute('aria-label')).toBe('Instagram');
       expect(netScale(head)).toBe(1);
       expect(head.closest('[style*="zoom"]')).toBeNull();
       // The ellipsized name says itself in full on hover.
@@ -542,7 +545,9 @@ describe('CreativeCanvas · review round 1', () => {
     expect(screen.getByRole('button', { name: 'Modifica il commento 1' })).toBeTruthy();
     await pickVersion(1);
     await waitFor(() => expect(screen.getByRole('img', { name: /Post 1:1 v1/ })).toBeTruthy());
-    expect(screen.getByText('I commenti valgono per la v2: usa Riparti da qui per commentare questa versione.')).toBeTruthy();
+    // A compact pill above the tool bar, not the floating banner over the boards' headers.
+    expect(screen.getByText('I commenti valgono per la v2: usa Riparti da qui per commentare questa versione.').classList.contains('ms-cv-lockpill')).toBe(true);
+    expect(document.querySelector('.ms-cv-hint.ms-lock')).toBeNull();
     // The TikTok board still shows v2: C stays, but the post board takes no comment.
     await userEvent.click(screen.getByRole('button', { name: 'Commenta (C)' }));
     expect(screen.queryByRole('button', { name: /^Commenta Instagram · Post 1:1/ })).toBeNull();
@@ -940,7 +945,12 @@ describe('CreativeCanvas · per-format versions (Phase 9)', () => {
     expect(head(TIKTOK).textContent).toContain(`segue ${REEL_LABEL} ★ v3`);
     // The format column says it too.
     const column = screen.getByRole('complementary', { name: 'Formati di questa creatività' });
-    expect(within(column).getByRole('button', { name: /^Video 9:16/ }).textContent).toContain('segue Story/Reel 9:16');
+    const follower = within(column).getByRole('button', { name: /^Video 9:16/ });
+    expect(follower.textContent).toContain('segue Story/Reel 9:16');
+    // The name first and whole; "follows …" on its own muted second line.
+    expect(follower.querySelector('.ms-cv-fmt-text .ms-navitem-label')!.textContent).toBe('Video 9:16');
+    expect(follower.querySelector('.ms-cv-fmt-follows')!.textContent).toBe('segue Story/Reel 9:16');
+    expect(follower.querySelector('.ms-cv-fmt-side')).toBeNull();
     expect(within(column).getByRole('button', { name: /^Story\/Reel/ }).textContent).toContain('★ v3');
     await userEvent.click(within(head(TIKTOK)).getByRole('button', { name: `Collegato a ${REEL_LABEL}: apri il menu del collegamento` }));
     await userEvent.click(await screen.findByRole('button', { name: 'Scollega: crea una versione dedicata' }));
@@ -958,6 +968,12 @@ describe('CreativeCanvas · per-format versions (Phase 9)', () => {
     await loaded();
     await userEvent.click(badge('TikTok · Video 9:16'));
     const pop = await screen.findByRole('dialog', { name: 'Versioni di TikTok · Video 9:16' });
+    // Request notes: two lines at most, the full text as the tooltip; the time stays on one line.
+    for (const note of pop.querySelectorAll('.ms-vmenu-note')) {
+      expect(note.classList.contains('ms-clamp2')).toBe(true);
+      expect(note.getAttribute('title')).toBe(note.textContent);
+    }
+    expect(pop.querySelectorAll('.ms-vmenu-note').length).toBeGreaterThan(0);
     expect(within(pop).queryByRole('button', { name: /Collega a Instagram · Post/ })).toBeNull();
     await userEvent.click(within(pop).getByRole('button', { name: `Collega a ${REEL_LABEL}` }));
     await waitFor(() => expect(api.setFormatLink).toHaveBeenCalledWith('acme', 'lancio', TIKTOK, REEL));

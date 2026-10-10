@@ -334,12 +334,18 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
   const cr = detail.creative;
   const version = latest;
   const busyLinks = working;
-  /** The format column (spec §3.1): "★ v5", "follows Reel", or "—" before the format has a version. */
+  /** The format column (spec §3.1): "★ v5", or "—" before the format has a version. A follower has none (see `followsOf`). */
   const formatSide = (id: string, preset: FormatPreset | null) => {
     const s = states[id];
-    if (s?.follows) return t.web.formatVersions.follows({ primary: presets.find((p) => p.id === s.follows) ? formatName(presets.find((p) => p.id === s.follows)!, locale) : s.follows });
     if (s?.star.version != null) return `★ v${s.star.version}`;
     return versions.length ? '—' : preset ? ratioText(preset) : '';
+  };
+  /** "follows Story/Reel 9:16": a follower's second, muted line in the format column, under its never-truncated name. */
+  const followsOf = (id: string) => {
+    const primary = states[id]?.follows;
+    if (!primary) return null;
+    const p = presets.find((x) => x.id === primary);
+    return t.web.formatVersions.follows({ primary: p ? formatName(p, locale) : primary });
   };
   const primaries = cr.brief.formats.filter((f) => states[f] && !states[f]!.follows);
   const appliesTo = versions.length && primaries.length > 1 ? {
@@ -406,11 +412,20 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
           <div key={channel} className="ms-cv-group">
             <div className="ms-cap ms-cv-group-head">{channel !== '' ? <ChannelMark channel={channelOf(channel)} /> : null}{channel !== '' ? channelName(channel, locale) : t.web.formatUi.other}</div>
             {items.map((b) => (
-              <button key={b.id} type="button" className={cx('ms-navitem ms-cv-fmt', sel === b.id && 'ms-on')} aria-pressed={sel === b.id}
+              <button key={b.id} type="button" className={cx('ms-navitem ms-cv-fmt', sel === b.id && 'ms-on', followsOf(b.id) && 'ms-follower')} aria-pressed={sel === b.id}
                 onClick={() => { setSel(b.id); reveal(b.id); }}>
                 <Icon name={b.preset?.kind === 'image' ? 'image' : 'video'} size={14} />
-                <span className="ms-navitem-label">{b.preset ? formatName(b.preset, locale) : b.id}</span>
-                <span className="ms-cv-fmt-side">{formatSide(b.id, b.preset)}</span>
+                {followsOf(b.id) ? (
+                  <span className="ms-cv-fmt-text">
+                    <span className="ms-navitem-label">{b.preset ? formatName(b.preset, locale) : b.id}</span>
+                    <span className="ms-cv-fmt-follows"><Icon name="link" size={11} />{followsOf(b.id)}</span>
+                  </span>
+                ) : (
+                  <>
+                    <span className="ms-navitem-label">{b.preset ? formatName(b.preset, locale) : b.id}</span>
+                    <span className="ms-cv-fmt-side">{formatSide(b.id, b.preset)}</span>
+                  </>
+                )}
               </button>
             ))}
           </div>
@@ -462,9 +477,10 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
           </div>
         ) : null}
         {tool === 'comment' ? <div className="ms-cv-hint" role="status">{c.commentHint}</div> : null}
-        {commentLock && version && pinSource !== null ? <div className="ms-cv-hint ms-lock" id="ms-cv-comment-lock" role="status">{c.versions.commentsOn({ n: pinSource })}</div> : null}
+        {/* A compact pill just above the tool bar, never over the boards' headers (live checks of phase 9). */}
+        {commentLock && version && pinSource !== null ? <div className="ms-cv-lockpill" id="ms-cv-comment-lock" role="status" title={c.versions.commentsOn({ n: pinSource })}>{c.versions.commentsOn({ n: pinSource })}</div> : null}
         {safe ? (
-          <div className="ms-cv-legend" role="note">
+          <div className={cx('ms-cv-legend', commentLock && version && pinSource !== null && 'ms-above-lock')} role="note">
             <b>{c.safeTitle}</b>
             <span>{zones ? c.safeBody : c.safeNone}</span>
             {zones ? <span className="ms-cv-legend-keys"><i aria-hidden="true" />{c.safeTop} · {c.safeBottom} · {c.safeSide}</span> : null}

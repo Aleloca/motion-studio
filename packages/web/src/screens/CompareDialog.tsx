@@ -12,6 +12,7 @@ import { boardSize, outputUrl } from './canvasModel.ts';
 import { boardLabel } from './CanvasBoard.tsx';
 import type { VersionActions } from './FormatVersions.tsx';
 import { activatesControl, bare, isTyping } from './keys.ts';
+import { RequestNote } from './RequestNote.tsx';
 import { PLAYER_CONTROLS, Transport, type Speed } from './Transport.tsx';
 import type { FormatState } from './versionModel.ts';
 
@@ -171,7 +172,7 @@ function CompareBody({ onClose, slug, creative, versions, presets, states, forma
           {history.map((n) => <Chip key={n} on={n === value} onClick={() => set(n)}>v{n}{n === star ? ' ★' : ''}</Chip>)}
         </div>
         {marks ? <span className="ms-cmp-marks">{marks}</span> : null}
-        {v ? <span className="ms-cmp-note">{v.request.trim() || t.web.canvas.versions.fromBrief}</span> : null}
+        {v ? <RequestNote className="ms-cmp-note" text={v.request.trim() || t.web.canvas.versions.fromBrief} /> : null}
       </div>
     );
   };
@@ -222,6 +223,8 @@ function CompareBody({ onClose, slug, creative, versions, presets, states, forma
         ) : null}
       </div>
       <div className="ms-cmp-side-col">
+        {/* The settings scroll; the ★ actions below stay in view whatever the notes' length. */}
+        <div className="ms-cmp-side-scroll">
         <div className="ms-cmp-head">
           <b>{c.title({ label })}</b>
           <Button size="sm" variant="ghost" icon aria-label={t.common.close} onClick={onClose}><Icon name="close" size={12} /></Button>
@@ -233,7 +236,7 @@ function CompareBody({ onClose, slug, creative, versions, presets, states, forma
         </div>
         {side(c.left, a, setA)}
         {side(c.right, b, setB)}
-        <span className="ms-grow" />
+        </div>
         {starable.length ? (
           <div className="ms-cmp-actions">
             {starError ? <p role="alert" className="ms-cmp-error">{starError}</p> : null}
