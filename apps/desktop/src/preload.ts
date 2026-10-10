@@ -28,6 +28,16 @@ contextBridge.exposeInMainWorld('motionStudio', {
   setTitleBarTheme: (theme: 'light' | 'dark'): Promise<void> => ipcRenderer.invoke('ms:titlebar-theme', theme),
   // Calls `cb` with true or false when the window enters or leaves full screen (and at once with the state already
   // known). Only a boolean reaches the page, never the IPC event. Returns the unsubscribe.
+  // The full-screen state now, for the page's first frame: the last one the main process sent, else asked once
+  // synchronously (a reload while in full screen renders before ms:fullscreen arrives). A plain boolean.
+  isFullscreen: (): boolean => {
+    if (fullscreen !== null) return fullscreen;
+    try {
+      const v: unknown = ipcRenderer.sendSync('ms:fullscreen-now');
+      if (typeof v === 'boolean') fullscreen = v;
+    } catch { /* an older main process: not in full screen as far as the page knows */ }
+    return fullscreen === true;
+  },
   onFullscreenChange: (cb: (fullscreen: boolean) => void): (() => void) => {
     if (typeof cb !== 'function') return () => {};
     const call = (v: boolean) => { try { cb(v); } catch { /* the page's own error */ } };

@@ -5,7 +5,7 @@ import { externalUrlAllowed, isAppUrl, windowOptions } from '../src/window.ts';
 
 vi.mock('electron', () => ({
   contextBridge: { exposeInMainWorld: vi.fn() },
-  ipcRenderer: { invoke: vi.fn(() => Promise.resolve()), on: vi.fn(), removeListener: vi.fn() },
+  ipcRenderer: { invoke: vi.fn(() => Promise.resolve()), on: vi.fn(), removeListener: vi.fn(), sendSync: vi.fn(() => undefined) },
 }));
 
 describe('window security', () => {
@@ -63,15 +63,17 @@ describe('integrated title bar', () => {
     expect(p.y).toBe((TITLEBAR_HEIGHT - TRAFFIC_LIGHT_SIZE) / 2);
   });
 
-  it('Windows and Linux: hidden title bar with an overlay in the theme colours, as tall as the app bar', async () => {
-    const { TITLEBAR_COLORS, TITLEBAR_HEIGHT } = await import('../src/titlebar.ts');
+  it('Windows and Linux: hidden title bar with an overlay in the theme colours, 51 px: the bar minus its bottom border', async () => {
+    const { TITLEBAR_COLORS, TITLEBAR_HEIGHT, OVERLAY_HEIGHT } = await import('../src/titlebar.ts');
+    expect(OVERLAY_HEIGHT).toBe(51);
+    expect(OVERLAY_HEIGHT).toBe(TITLEBAR_HEIGHT - 1);
     for (const platform of ['win32', 'linux'] as const) {
       const dark = windowOptions('/p/preload.cjs', true, platform);
       expect(dark.titleBarStyle).toBe('hidden');
       expect(dark.trafficLightPosition).toBeUndefined();
-      expect(dark.titleBarOverlay).toEqual({ color: TITLEBAR_COLORS.dark.bar, symbolColor: TITLEBAR_COLORS.dark.symbol, height: TITLEBAR_HEIGHT });
+      expect(dark.titleBarOverlay).toEqual({ color: TITLEBAR_COLORS.dark.bar, symbolColor: TITLEBAR_COLORS.dark.symbol, height: 51 });
       const light = windowOptions('/p/preload.cjs', false, platform);
-      expect(light.titleBarOverlay).toEqual({ color: TITLEBAR_COLORS.light.bar, symbolColor: TITLEBAR_COLORS.light.symbol, height: TITLEBAR_HEIGHT });
+      expect(light.titleBarOverlay).toEqual({ color: TITLEBAR_COLORS.light.bar, symbolColor: TITLEBAR_COLORS.light.symbol, height: 51 });
     }
   });
 
@@ -118,13 +120,13 @@ describe('ms:titlebar-theme', () => {
   });
 
   it('Windows: updates the overlay and the background for a valid theme', async () => {
-    const { TITLEBAR_COLORS, TITLEBAR_HEIGHT } = await import('../src/titlebar.ts');
+    const { TITLEBAR_COLORS } = await import('../src/titlebar.ts');
     const s = await setup('win32');
     s.call('light');
-    expect(s.setOverlay).toHaveBeenLastCalledWith({ color: TITLEBAR_COLORS.light.bar, symbolColor: TITLEBAR_COLORS.light.symbol, height: TITLEBAR_HEIGHT });
+    expect(s.setOverlay).toHaveBeenLastCalledWith({ color: TITLEBAR_COLORS.light.bar, symbolColor: TITLEBAR_COLORS.light.symbol, height: 51 });
     expect(s.setBackground).toHaveBeenLastCalledWith(TITLEBAR_COLORS.light.background);
     s.call('dark');
-    expect(s.setOverlay).toHaveBeenLastCalledWith({ color: TITLEBAR_COLORS.dark.bar, symbolColor: TITLEBAR_COLORS.dark.symbol, height: TITLEBAR_HEIGHT });
+    expect(s.setOverlay).toHaveBeenLastCalledWith({ color: TITLEBAR_COLORS.dark.bar, symbolColor: TITLEBAR_COLORS.dark.symbol, height: 51 });
   });
 
   it('macOS: no overlay to update, only the background', async () => {
@@ -162,13 +164,31 @@ describe('ms:fullscreen', () => {
   });
 });
 
+describe('ms:fullscreen-now', () => {
+  it('answers the current state to the app only, as a plain boolean', async () => {
+    const { FULLSCREEN_NOW, registerFullscreenQuery } = await import('../src/titlebar.ts');
+    const handlers: Record<string, (e: { returnValue: unknown }) => void> = {};
+    let trusted = true;
+    let full = true;
+    registerFullscreenQuery({ on: (ch, fn) => { handlers[ch] = fn; } }, { trusted: () => trusted, isFullScreen: () => full });
+    const ask = () => { const e = { returnValue: undefined as unknown }; handlers[FULLSCREEN_NOW]!(e); return e.returnValue; };
+    expect(FULLSCREEN_NOW).toBe('ms:fullscreen-now');
+    expect(ask()).toBe(true);
+    full = false;
+    expect(ask()).toBe(false);
+    full = true;
+    trusted = false;
+    expect(ask()).toBe(false);
+  });
+});
+
 describe('preload: title bar', () => {
   afterEach(() => { vi.resetModules(); vi.clearAllMocks(); });
   async function bridge() {
     const electron = await import('electron');
     await import('../src/preload.ts');
     const b = vi.mocked(electron.contextBridge.exposeInMainWorld).mock.calls.at(-1)![1] as {
-      onFullscreenChange(cb: unknown): () => void; setTitleBarTheme(t: unknown): Promise<void>;
+      onFullscreenChange(cb: unknown): () => void; setTitleBarTheme(t: unknown): Promise<void>; isFullscreen(): boolean;
     };
     return { b, ipc: vi.mocked(electron.ipcRenderer) };
   }
@@ -206,6 +226,24 @@ describe('preload: title bar', () => {
     const cb = vi.fn();
     b.onFullscreenChange(cb);
     expect(cb).toHaveBeenCalledWith(true);
+  });
+
+  it('isFullscreen seeds the first frame: the state already sent, else one synchronous question (M12)', async () => {
+    const { b, ipc } = await bridge();
+    ipc.sendSync.mockReturnValueOnce(true);
+    expect(b.isFullscreen()).toBe(true);
+    expect(ipc.sendSync).toHaveBeenCalledWith('ms:fullscreen-now');
+    // Remembered: no second question.
+    expect(b.isFullscreen()).toBe(true);
+    expect(ipc.sendSync).toHaveBeenCalledTimes(1);
+    for (const l of listeners(ipc)) l({}, false);
+    expect(b.isFullscreen()).toBe(false);
+  });
+
+  it('isFullscreen is false when the main process cannot answer', async () => {
+    const { b, ipc } = await bridge();
+    ipc.sendSync.mockImplementationOnce(() => { throw new Error('no handler'); });
+    expect(b.isFullscreen()).toBe(false);
   });
 
   it('rejects a non-function callback', async () => {

@@ -19,6 +19,7 @@ import { References } from './screens/References.tsx';
 import { Welcome, type WelcomeProps } from './screens/Welcome.tsx';
 import { useCatalog } from './shell/catalog.ts';
 import { CommandPalette } from './shell/CommandPalette.tsx';
+import { DragStrip } from './shell/DragStrip.tsx';
 import { go, ShellContext, type ActivityTab, type Shell } from './shell/ShellContext.tsx';
 import { isMac } from './platform.ts';
 import { TopBar } from './shell/TopBars.tsx';
@@ -151,9 +152,9 @@ function AppBody({ live, language, systemLocale, onLanguage }: Props) {
     language, systemLocale, onLanguage, onRecheck: refresh, onWorkspace, onFinish: finishSetup,
   };
 
-  if (pairing) return <Pairing />;
+  if (pairing) return <><DragStrip /><Pairing /></>;
   // First load: nothing to show yet (no flash of the setup when everything is in place).
-  if (shown.name !== 'welcome' && (!checks || !ws?.settings)) return <div className="ms-boot"><Spinner size={18} /></div>;
+  if (shown.name !== 'welcome' && (!checks || !ws?.settings)) return <><DragStrip /><div className="ms-boot"><Spinner size={18} /></div></>;
   return (
     // The workspace folder: where the conversation and the brand log judge the paths of commands the core did not explain.
     <WorkspacePathContext.Provider value={ws?.path ?? null}>

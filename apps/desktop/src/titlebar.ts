@@ -17,6 +17,11 @@ export const TITLEBAR_COLORS = {
 
 /** Height of the app's top bar (.ms-topbar in packages/web/src/shell/shell.css; the test compares them). */
 export const TITLEBAR_HEIGHT = 52;
+/**
+ * Height of the Windows/Linux controls overlay: the bar minus its 1 px bottom border (.ms-topbar's border-bottom), which
+ * the overlay would otherwise cover on the right.
+ */
+export const OVERLAY_HEIGHT = TITLEBAR_HEIGHT - 1;
 /** Height of the macOS traffic-light buttons, to centre them in the bar. */
 export const TRAFFIC_LIGHT_SIZE = 14;
 /** Left inset of the traffic lights; the page leaves room for them (packages/web/src/shell/shell.css .ms-tb-mac). */
@@ -24,7 +29,7 @@ export const TRAFFIC_LIGHT_X = 18;
 
 export function overlayOptions(theme: TitleBarTheme): TitleBarOverlay {
   const c = TITLEBAR_COLORS[theme];
-  return { color: c.bar, symbolColor: c.symbol, height: TITLEBAR_HEIGHT };
+  return { color: c.bar, symbolColor: c.symbol, height: OVERLAY_HEIGHT };
 }
 
 /** Exactly 'light' or 'dark', else null. */
@@ -54,6 +59,17 @@ export function registerTitleBar(ipc: { handle(channel: string, fn: (e: IpcMainI
 
 /** Main → page: the window entered (true) or left (false) full screen. */
 export const FULLSCREEN = 'ms:fullscreen';
+/**
+ * Page → main, synchronous: is the window in full screen right now? The preload asks once when the page first needs it
+ * (a reload while in full screen), so the first frame already has the right padding.
+ */
+export const FULLSCREEN_NOW = 'ms:fullscreen-now';
+
+/** Answers FULLSCREEN_NOW with a plain boolean, `false` for an untrusted sender. */
+export function registerFullscreenQuery(ipc: { on(channel: string, fn: (e: { returnValue: unknown }) => void): void },
+  d: { trusted(e: unknown): boolean; isFullScreen(): boolean }): void {
+  ipc.on(FULLSCREEN_NOW, (e) => { e.returnValue = d.trusted(e) ? d.isFullScreen() === true : false; });
+}
 
 export interface FullscreenTarget { isDestroyed(): boolean; getURL(): string; send(channel: string, value: boolean): void }
 

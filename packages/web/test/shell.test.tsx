@@ -619,12 +619,59 @@ describe('integrated desktop title bar', () => {
     expect(bar().classList).toContain('ms-tb-mac');
   });
 
-  it('Windows and Linux: room on the right for the window controls overlay', async () => {
-    titleBridge('win32');
+  it('Windows and Linux: room on the right for the window controls overlay, dropped in full screen', async () => {
+    const b = titleBridge('win32');
     await startApp();
     expect(bar().classList).toContain('ms-titlebar');
     expect(bar().classList).toContain('ms-tb-overlay');
     expect(bar().classList).not.toContain('ms-tb-mac');
+    b.fullscreen(true);
+    expect(bar().classList).toContain('ms-titlebar');
+    expect(bar().classList).not.toContain('ms-tb-overlay');
+    b.fullscreen(false);
+    expect(bar().classList).toContain('ms-tb-overlay');
+  });
+
+  it('a reload in full screen renders its first frame without the padding (seeded synchronously)', async () => {
+    const { titleBarClass } = await import('../src/titleBar.ts');
+    expect(titleBarClass('darwin', true)).toBe('ms-titlebar');
+    expect(titleBarClass('linux', true)).toBe('ms-titlebar');
+    (window as unknown as { motionStudio: unknown }).motionStudio = {
+      isDesktop: true, platform: 'darwin', pickFolder: async () => null, revealPath: async () => {}, isFullscreen: () => true,
+      // The subscription says nothing yet: only the synchronous state can avoid the padding.
+      onFullscreenChange: () => () => {},
+    };
+    const { useTitleBarClass } = await import('../src/titleBar.ts');
+    const seen: string[] = [];
+    // The very first render (no effect has run).
+    function Probe() { seen.push(useTitleBarClass()); return null; }
+    render(<Probe />);
+    expect(seen[0]).toBe('ms-titlebar');
+  });
+
+  it('screens without a top bar (boot, Pairing) get a drag strip on the desktop only', async () => {
+    const { DragStrip } = await import('../src/shell/DragStrip.tsx');
+    const web = render(<DragStrip />);
+    expect(web.container.innerHTML).toBe('');
+    web.unmount();
+    titleBridge('win32');
+    render(<DragStrip />);
+    const strip = document.querySelector('.ms-drag-strip')!;
+    expect(strip.classList).toContain('ms-titlebar');
+    expect(strip.getAttribute('aria-hidden')).toBe('true');
+    expect(css('shell/shell.css')).toMatch(/\.ms-drag-strip \{[^}]*position: fixed;[^}]*height: 52px/);
+    const app = css('App.tsx');
+    expect(app).toContain('<DragStrip /><Pairing />');
+    expect(app).toMatch(/<DragStrip \/><div className="ms-boot">/);
+  });
+
+  it('the project tabs scroller is no-drag (trackpad scrolling of overflowing tabs)', () => {
+    const noDrag = regionSelector('shell/shell.css', 'no-drag', '.ms-titlebar');
+    expect(noDrag).toContain('.ms-titlebar .ms-topbar-tabs');
+  });
+
+  it('the Welcome bar takes the overlay colour (--panel) and the bar border on the desktop', () => {
+    expect(css('screens/welcome.css')).toMatch(/\.ms-welcome-top\.ms-titlebar \{[^}]*background: var\(--panel\);[^}]*border-bottom: 1px solid var\(--line\)/);
   });
 
   it('CSS: the bar drags, the left padding clears the traffic lights, the right one the overlay', () => {

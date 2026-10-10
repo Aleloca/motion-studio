@@ -1,20 +1,26 @@
 // Integrated desktop title bar: the native window controls sit inside the app's top bar. In the desktop app every top bar
 // is a drag region (its controls are not: shell.css), with room kept for the macOS traffic lights (left, except in full
-// screen, where they are gone) or the Windows/Linux controls overlay (right). In a plain browser nothing changes.
+// screen, where they are gone) or the Windows/Linux controls overlay (right, also gone in full screen). In a plain
+// browser nothing changes.
 import { useEffect, useState } from 'react';
 import { desktop } from './desktop.ts';
 
 /** Classes for a top bar: `ms-titlebar` (drag region) plus the room for the window controls. Empty in the browser. */
 export function titleBarClass(platform: string | null, fullscreen: boolean): string {
   if (platform === null) return '';
-  if (platform === 'darwin') return fullscreen ? 'ms-titlebar' : 'ms-titlebar ms-tb-mac';
-  return 'ms-titlebar ms-tb-overlay';
+  if (fullscreen) return 'ms-titlebar';
+  return platform === 'darwin' ? 'ms-titlebar ms-tb-mac' : 'ms-titlebar ms-tb-overlay';
 }
 
-/** The classes for the current window, following its full-screen state. */
+/** The full-screen state the bridge knows now (a reload while in full screen), false without it. */
+function fullscreenNow(): boolean {
+  try { return desktop()?.isFullscreen?.() === true; } catch { return false; }
+}
+
+/** The classes for the current window, following its full-screen state (seeded synchronously: no padding flash). */
 export function useTitleBarClass(): string {
   const bridge = desktop();
-  const [fullscreen, setFullscreen] = useState(false);
+  const [fullscreen, setFullscreen] = useState(fullscreenNow);
   useEffect(() => {
     const off = bridge?.onFullscreenChange?.((v) => { setFullscreen(v === true); });
     return typeof off === 'function' ? off : undefined;

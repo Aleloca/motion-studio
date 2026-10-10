@@ -21,6 +21,8 @@ export interface DesktopBridge {
   setTitleBarTheme?(theme: 'light' | 'dark'): Promise<void>;
   /** Calls `cb` when the window enters (true) or leaves (false) full screen; returns the unsubscribe. Missing before Phase 9. */
   onFullscreenChange?(cb: (fullscreen: boolean) => void): () => void;
+  /** The full-screen state now (synchronous), for the first frame after a reload. Missing in early Phase 9 builds. */
+  isFullscreen?(): boolean;
 }
 
 /** The Electron preload bridge, or null in a plain browser (or when the bridge is malformed). */
