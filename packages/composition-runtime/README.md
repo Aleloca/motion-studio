@@ -120,9 +120,9 @@ Everything lives under one token prefix on the composition server's own origin (
      - `sourceStart` (seconds): where the source's first frame sits on the media timeline (a file whose first timestamp
        is 0.1 s);
      - `sourceVideoEnd` (seconds): the end of the video track on the media timeline;
-     - `sourceTrusted` (`true`): the core probed the source and vouches for these values. A trusted clip without
-       `sourceVideoEnd` whose audio is longer than its video fails for targets between the two ends, so the core always
-       sets both;
+     - `sourceTrusted` (`true`): the core probed the source and vouches for these values. It counts only together with a
+       usable `sourceVideoEnd` (`sourceTrustedOf`): a trusted clip without it would fail for targets between the end of
+       its video and the end of a longer audio track, so it gets the lenient rule instead. The core always sets both;
    - **colour:** an untagged source (no colour primaries or matrix) is converted with Chromium's default both when drawn
      into the render canvas and in the preview `<video>`, which can differ slightly between the two paths. Tagged sources
      are converted as tagged. Task 5 may tag or normalise sources on ingest (e.g. BT.709 for HD) to remove the ambiguity;

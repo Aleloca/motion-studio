@@ -220,10 +220,18 @@ describe('render mode video frames (fake VideoFrame)', () => {
   } as unknown as Partial<Composition>);
 
   it('trusted source: a stale frame is never drawn and the seek fails fast with videoSeekTimeout', async () => {
-    const { player, errors } = run(videoComp({ sourceTrusted: true }));
+    const { player, errors } = run(videoComp({ sourceTrusted: true, sourceVideoEnd: 6 }));
     await expect(player.seek(1)).rejects.toThrow(/videoSeekTimeout/);
     expect(errors.find((e) => e.code === 'videoSeekTimeout')?.message).toMatch(/still showed the frame at 0\.000 s \(stale\)/);
     expect(errors.some((e) => e.code === 'videoFrameMismatch')).toBe(false);
+  });
+
+  it('sourceTrusted without sourceVideoEnd is untrusted: the lenient rule draws the stable frame with a warning', async () => {
+    const { player, errors } = run(videoComp({ sourceTrusted: true }));
+    await player.seek(0);
+    held = { timestamp: 400_000, duration: 33_333 };
+    await player.seek(0.5);
+    expect(errors.map((e) => e.code)).toEqual(['videoFrameMismatch']);
   });
 
   it('untrusted source: the same stable frame is drawn with a videoFrameMismatch warning, the seek resolves', async () => {

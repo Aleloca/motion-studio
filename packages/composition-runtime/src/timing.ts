@@ -78,9 +78,13 @@ export function sourceVideoEndOf(clip: object): number | null {
   return typeof s === 'number' && Number.isFinite(s) && s > 0 && s <= 36_000 ? s : null;
 }
 
-/** Whether the core probed the source and vouches for its metadata (`sourceTrusted: true`, Task 5): the strict rule. */
+/**
+ * Whether the core probed the source and vouches for its metadata (`sourceTrusted: true`, Task 5): the strict rule. A clip
+ * counts as trusted only with a usable `sourceVideoEnd` too: without it a trusted clip whose audio outlasts its video would
+ * fail for targets between the two ends (README "source fields"), so such a clip gets the lenient rule instead.
+ */
 export function sourceTrustedOf(clip: object): boolean {
-  return (clip as { sourceTrusted?: unknown }).sourceTrusted === true;
+  return (clip as { sourceTrusted?: unknown }).sourceTrusted === true && sourceVideoEndOf(clip) !== null;
 }
 
 /** Tolerance on frame timestamps and durations, in whole microseconds (WebCodecs units): above µs rounding noise. */

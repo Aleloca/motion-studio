@@ -116,8 +116,14 @@ describe('sourceVideoEnd: the last video frame is held when the audio is longer'
     expect(vst({ start: 0, sourceFps: 30, sourceVideoEnd: 2.0 }, 2.2, 2.3)).toBeCloseTo(59.5 / 30, 9);
     expect(vst({ start: 0, sourceVideoEnd: 2.0 }, 2.2, 2.3)).toBeCloseTo(1.999, 9);
     for (const bad of [0, -1, Number.NaN, '2', 1e9, undefined]) expect(sourceVideoEndOf({ sourceVideoEnd: bad })).toBeNull();
-    expect(sourceTrustedOf({ sourceTrusted: true })).toBe(true);
-    for (const bad of ['true', 1, undefined, false]) expect(sourceTrustedOf({ sourceTrusted: bad })).toBe(false);
+    expect(sourceTrustedOf({ sourceTrusted: true, sourceVideoEnd: 2.0 })).toBe(true);
+    for (const bad of ['true', 1, undefined, false]) expect(sourceTrustedOf({ sourceTrusted: bad, sourceVideoEnd: 2.0 })).toBe(false);
+  });
+
+  it('a clip is trusted only with sourceVideoEnd too: the core always sets both (README "source fields")', async () => {
+    const { sourceTrustedOf } = await import('../src/timing.ts');
+    expect(sourceTrustedOf({ sourceTrusted: true })).toBe(false);
+    for (const bad of [0, -1, Number.NaN, '2', 1e9, null]) expect(sourceTrustedOf({ sourceTrusted: true, sourceVideoEnd: bad })).toBe(false);
   });
 });
 
