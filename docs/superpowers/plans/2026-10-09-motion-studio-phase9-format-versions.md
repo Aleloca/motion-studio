@@ -30,7 +30,7 @@
 
 - **Version identity.** `vN` (the creative version number) stays the only version identifier everywhere: UI, API, export names. No per-format renumbering.
 - **No migration rewrites.**
-  - `sha256` is optional, computed lazily for old versions, and cached in memory and in a sidecar file `outputs/vN/.hashes.json`, written by the core and ignored by validation.
+  - `sha256` is optional, computed lazily for old versions, and cached in memory and in a sidecar file `.studio/cache/hashes/<slug>/v<N>.json` (never in `outputs/vN/`), written by the core and ignored by validation. *(Amended by the orchestrator decision, decisions log 128: the first draft put the cache in `outputs/vN/.hashes.json`, within the agent's reach.)*
   - Old `versions.json`, `creative.json` and briefs stay valid.
 - **Copies, never hard links.** The `nlink > 1` checks of confined reads stay unchanged.
 - **Carry-over and materialization.**
@@ -204,7 +204,7 @@ export function starOf(versions: VersionEntry[], formatId: string, picks: Record
   - store it in `OutputFileInfo`.
 - For old versions, `GET` of a creative fills the missing hashes lazily:
   - in parallel, limited to 2;
-  - cached in `.hashes.json`, keyed by file size and mtime;
+  - cached in `.studio/cache/hashes/<slug>/v<N>.json`, keyed by file size and mtime *(amended by the orchestrator decision, decisions log 128; first draft: `outputs/vN/.hashes.json`)*;
   - a missing file gets `sha256: null`.
 - Routes:
   - `PUT /api/projects/:slug/creatives/:c/export-picks`, body `{ format, version | null }`:
