@@ -57,9 +57,32 @@ describe('staticLayerCheck: clean layers', () => {
     ['an autoplay word outside a media tag', `<p>autoplay is not used here</p>`],
     ['identifiers containing a forbidden word', `<script>const myfetcher = 1; const prefetch = 2; const WorkerPool = 3; const importScriptsNot = 4;</script>`],
     ['a JS line comment', `<script>// a comment\nconst a = 1; // another</script>`],
+    ['an HTML comment', `<!-- fetch('/api') new Worker(x) http://example.com -->\n<p>ok</p>`],
+    ['a JS line comment hiding an API', `<script>const a = 1; // fetch('/api') or new WebSocket(u)\nconst b = 2;</script>`],
+    ['a JS block comment hiding an API', `<script>/* new Worker('w.js')\n new AudioContext() */ const a = 1;</script>`],
+    ['a CSS comment hiding a URL', `<style>/* background: url(http://example.com/x.png) */ body { margin: 0 }</style>`],
+    ['autoplay switched off from script', `<script>v.autoplay = false; w.autoplay=0; x.autoplay = null;</script>`],
     ['an SVG namespace is a URL in an attribute, but only xmlns', `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"></svg>`],
   ])('%s → no problems', (_name, html) => {
     expect(staticLayerCheck(html)).toEqual([]);
+  });
+});
+
+describe('staticLayerCheck: comments do not hide code around them', () => {
+  it.each([
+    ['comment markers inside a script string are not comments', `<script>const s = "// not a comment"; fetch(u)</script>`, 'fetch'],
+    ['a block-comment opener inside a string', `<script>const s = '/*'; fetch(u); const t = '*/';</script>`, 'fetch'],
+    ['code before a line comment', `<script>fetch(a) // why</script>`, 'fetch'],
+    ['code after a closed block comment', `<script>/* note */ new WebSocket(u)</script>`, 'WebSocket'],
+    ['code after an HTML comment', `<!-- note --><img src="http://example.com/x.png">`, 'http://'],
+    ['code after the script ends', `<script>// x</script><img src="https://example.com/a.png">`, 'https://'],
+    ['autoplay switched on from script', `<script>v.autoplay = true</script>`, 'autoplay'],
+    ['a comparison is not an assignment', `<script>if (v.autoplay == false) {}</script>`, 'autoplay'],
+  ])('%s', (_name, html, api) => {
+    expect(apis(html)).toContain(api);
+  });
+  it('lines are still counted across skipped comments', () => {
+    expect(staticLayerCheck('<!--\n\n-->\n<script>/*\n*/\nfetch(u)</script>')[0]!.params.line).toBe(6);
   });
 });
 
@@ -100,6 +123,10 @@ describe('staticLayerCheck: bounded, linear work', () => {
     ['repeated "new" before spaces', 'new      '],
     ['repeated "<" ', '<'],
     ['a long unterminated tag full of attributes', '<video ' + 'data-x=1 '.repeat(10)],
+    ['repeated HTML comment openers', '<!--'],
+    ['repeated script tags with block comments', '<script>/*'],
+    ['repeated script tags with line comments', '<script>//x\n'],
+    ['repeated quotes and escapes in a script', `<script>'\\"\\\``],
   ];
   it.each(hostile)('%s: 1 MB costs at most a few steps per character', (_name, unit) => {
     const html = unit.repeat(Math.ceil(MB / unit.length)).slice(0, MB);

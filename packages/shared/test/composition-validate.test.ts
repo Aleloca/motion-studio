@@ -91,12 +91,57 @@ describe('validateComposition', () => {
     expect(validateComposition(still, ctx({ format: STORY_IMAGE })).problems).toEqual([]);
     expect(keysOf(validateComposition(spike, ctx({ format: STORY_IMAGE })))).toContain('composition.durationForImage');
   });
-  it('a still has no scenes, every clip starts at 0 and has no audio', () => {
+  it('a still: scenes, animations and audio are warnings (ignored); a clip that starts later is a problem', () => {
     const still = mutate((x) => { x.duration = 0; for (const t of x.tracks) for (const k of t.clips) k.duration = 0; });
-    const keys = keysOf(validateComposition(still, ctx({ format: STORY_IMAGE })));
-    expect(keys).toContain('composition.stillScenes');
-    expect(keys).toContain('composition.clipStill');
-    expect(keys).toContain('composition.stillAudio');
+    const r = validateComposition(still, ctx({ format: STORY_IMAGE }));
+    const warnings = r.warnings.map((w) => w.key);
+    expect(warnings).toContain('composition.stillScenes');
+    expect(warnings).toContain('composition.stillAudio');
+    expect(warnings).toContain('composition.stillAnimations');
+    expect(keysOf(r)).not.toContain('composition.stillScenes');
+    expect(keysOf(r)).not.toContain('composition.stillAudio');
+    expect(keysOf(r)).toContain('composition.clipStill');
+  });
+  it('a still whose clips all start at 0 is ok with only warnings', () => {
+    const still = mutate((x) => { x.duration = 0; for (const t of x.tracks) for (const k of t.clips) { k.duration = 0; k.start = 0; } });
+    const r = validateComposition(still, ctx({ format: STORY_IMAGE }));
+    expect(r.problems).toEqual([]);
+    expect(r.ok).toBe(true);
+    expect(r.warnings.length).toBeGreaterThan(0);
+  });
+  it('a valid video has no warnings', () => {
+    expect(validateComposition(spike, ctx()).warnings).toEqual([]);
+  });
+  it('a text clip without fontFamily uses fonts[0]; with no fonts at all it is a problem', () => {
+    const noFamily = mutate((x) => { delete clip(x, 2, 0).props!.fontFamily; });
+    expect(validateComposition(noFamily, ctx()).problems).toEqual([]);
+    const noFonts = mutate((x) => { x.fonts = []; for (const k of x.tracks[2]!.clips) delete (k as unknown as AnyClip).props!.fontFamily; });
+    expect(keysOf(validateComposition(noFonts, ctx()))).toContain('composition.fontMissing');
+  });
+  it('a video without scenes has one implicit scene', () => {
+    const c = mutate((x) => { x.scenes = []; for (const t of x.tracks) for (const k of t.clips) delete (k as unknown as AnyClip).scene; });
+    expect(validateComposition(c, ctx()).problems).toEqual([]);
+  });
+  it('scenes listed out of time order are checked in time order', () => {
+    const c = mutate((x) => { x.scenes = [x.scenes[2]!, x.scenes[0]!, x.scenes[1]!]; });
+    expect(validateComposition(c, ctx()).problems).toEqual([]);
+  });
+  it('an animation may run past its clip by up to one frame', () => {
+    const within = mutate((x) => { clip(x, 2, 0).animations![0]!.duration = 1.8 + 1 / 30 - 0.001; });
+    expect(keysOf(validateComposition(within, ctx()))).not.toContain('composition.animationOutside');
+    const beyond = mutate((x) => { clip(x, 2, 0).animations![0]!.duration = 1.8 + 1 / 30 + 0.01; });
+    expect(keysOf(validateComposition(beyond, ctx()))).toContain('composition.animationOutside');
+  });
+  it('a bad param name gets its own message (zod invalid_key)', () => {
+    const c = mutate((x) => { Object.assign(clip(x, 1, 2), { params: { 'bad-key': { type: 'text', value: 'x' } } }); });
+    expect(validateComposition(c, ctx()).problems).toContainEqual({ key: 'composition.badParamKey', params: { path: 'tracks[1].clips[2].params.bad-key' } });
+  });
+  it('long strings from the input are clamped in problems', () => {
+    const field = 'x'.repeat(500);
+    const r = validateComposition(mutate((x) => { (x as unknown as Record<string, unknown>)[field] = 1; }), ctx());
+    const value = String(r.problems[0]!.params.field);
+    expect(value.length).toBe(121);
+    expect(value.endsWith('\u2026')).toBe(true);
   });
 
   it.each([

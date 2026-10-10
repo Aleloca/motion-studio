@@ -136,11 +136,11 @@ export function renderState(v: VersionEntry, formatId: string): RenderState {
 }
 
 /**
- * Whether the file of `formatId` in version `v` has problems: its own `problems` when recorded, else (old versions) the
- * version-level `problems`, which then count for every file of the version.
+ * Whether `formatId` in version `v` has problems: the problems of its composition when recorded (v2), else those of its file
+ * when recorded, else (old versions) the version-level `problems`, which then count for every format of that version.
  */
 function hasProblems(v: VersionEntry, formatId: string): boolean {
-  const own = v.outputs.find((o) => o.format === formatId)?.problems;
+  const own = v.compositions?.find((c) => c.format === formatId)?.problems ?? v.outputs.find((o) => o.format === formatId)?.problems;
   return own !== undefined ? own.length > 0 : v.problems.length > 0;
 }
 

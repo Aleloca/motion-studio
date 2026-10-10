@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "motion-studio/composition@1",
   "title": "Motion Studio composition",
-  "description": "One composition.json per format. Semantic rules beyond this schema: scenes are contiguous from 0 to duration; clips lie inside the duration (and inside their scene); every fontFamily is declared in fonts[] with a font file under assets/; every referenced file exists; html layers live in layers/ and never use the network, Workers, AudioContext or autoplaying media.",
+  "description": "One composition.json per format. Semantic rules beyond this schema: scenes are contiguous from 0 to duration (a video with no scenes gets one implicit scene); clips lie inside the duration (and inside their scene); every fontFamily is declared in fonts[] with a font file under assets/ (a text clip without fontFamily uses fonts[0]); every referenced file exists; html layers live in layers/ and never use the network, Workers, AudioContext or autoplaying media. A still (duration 0, image formats) shows t = 0 only: its scenes, animations and audio are ignored.",
   "type": "object",
   "properties": {
     "$schema": {
@@ -116,7 +116,7 @@
     "path": {
       "type": "string",
       "maxLength": 512,
-      "pattern": "^(?:assets|layers)\\/[^\\\\:%?#]+$",
+      "pattern": "^(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\/\\/)(?!.*\\/$)(?![\\s\\S]*[\\u0000-\\u001f\\u007f-\\u009f])(?:assets|layers)\\/[^\\\\:%?#]+$",
       "description": "Relative to the composition folder, under assets/ or layers/; no scheme, no \"..\", no backslash."
     },
     "fontWeight": {

@@ -1,5 +1,6 @@
 import type { FormatPreset } from '../formats.ts';
-import type { CompositionProblem } from './problems.ts';
+import { compositionProblem, type CompositionProblem } from './problems.ts';
+import { implicitSceneId } from './normalize.ts';
 import { COMPOSITION_LIMITS, compositionSchema, type Composition } from './schema.ts';
 
 /** Default size limit of a composition folder (every file together): 500 MB. Callers may pass another `maxBytes`. */
@@ -18,9 +19,13 @@ export interface CompositionContext {
   /** Size limit of the whole folder in bytes; default `COMPOSITION_MAX_BYTES`. */
   maxBytes?: number;
 }
-export interface CompositionValidation { ok: boolean; problems: CompositionProblem[] }
+/**
+ * `ok` is true when there are no `problems`. `warnings` never block: things the runtime ignores (scenes, animations and audio
+ * on a still), shown to the agent and the user so they can tidy up.
+ */
+export interface CompositionValidation { ok: boolean; problems: CompositionProblem[]; warnings: CompositionProblem[] }
 
-const p = (key: string, params: CompositionProblem['params'] = {}): CompositionProblem => ({ key: `composition.${key}`, params });
+const p = (key: string, params: CompositionProblem['params'] = {}): CompositionProblem => compositionProblem(`composition.${key}`, params);
 const round1 = (n: number) => Math.round(n * 10) / 10;
 const secs = (n: number) => Math.round(n * 1000) / 1000;
 
@@ -50,14 +55,18 @@ export function parseCompositionText(bytes: Uint8Array): { ok: true; value: unkn
 /**
  * Validates a parsed composition for one format: structure (the zod schema) then the semantic rules the schema cannot say.
  * Bounded: the array sizes of `COMPOSITION_LIMITS` are checked first without walking the arrays, and at most
- * `COMPOSITION_LIMITS.problems` problems are returned (plus `composition.moreProblems`). Semantic rules:
+ * `COMPOSITION_LIMITS.problems` problems (and as many warnings) are returned (plus `composition.moreProblems`). It accepts
+ * what `normalizeComposition` would fill in (a text clip without `fontFamily` uses `fonts[0]`; a video without scenes has
+ * one implicit scene), so normalizing first changes nothing here. Semantic rules:
  * - ids are unique across scenes, tracks and clips;
- * - scenes are listed in time order, the first starts at 0, each starts where the previous ends (no gap, no overlap) and the
- *   last ends at `duration`; a video needs at least one scene, a still (duration 0) has none;
- * - each clip lies inside the duration (a still: starts at 0, no audio) and inside its scene; a clip's scene exists;
- *   audio clips are on audio tracks and only there;
- * - animations end within their clip; keyframe times go up; `color` animates colours and every other prop numbers;
- * - every text clip names a `fontFamily` declared in `fonts[]`; every font is a font file under `assets/`;
+ * - scenes, taken in time order, start at 0, each starts where the previous ends (no gap, no overlap) and the last ends at
+ *   `duration`;
+ * - each clip lies inside the duration and inside its scene; a clip's scene exists; audio clips are on audio tracks and only
+ *   there. In a still (duration 0) every clip starts at 0; its scenes, animations and audio are only warnings (ignored);
+ * - animations end within their clip (one frame of tolerance); keyframe times go up; `color` animates colours and every
+ *   other prop numbers;
+ * - every text clip's font (its `fontFamily`, or `fonts[0]`) is declared in `fonts[]`; generic CSS families are not fonts;
+ *   every font is a font file under `assets/`;
  * - html clips point to an `.html` file under `layers/`, media clips (and image params) to a file under `assets/`;
  *   every referenced file exists in `ctx.files` (paths compared in NFC);
  * - the folder is within `ctx.maxBytes`;
@@ -65,10 +74,12 @@ export function parseCompositionText(bytes: Uint8Array): { ok: true; value: unkn
  */
 export function validateComposition(c: unknown, ctx: CompositionContext): CompositionValidation {
   const limit = preflight(c);
-  if (limit) return { ok: false, problems: [limit] };
+  if (limit) return { ok: false, problems: [limit], warnings: [] };
   const parsed = compositionSchema.safeParse(c);
-  const problems = parsed.success ? semantic(parsed.data, ctx) : structural(parsed.error.issues as unknown as Issue[], c);
-  return { ok: problems.length === 0, problems: cap(dedupe(problems)) };
+  const { problems, warnings } = parsed.success
+    ? semantic(parsed.data, ctx)
+    : { problems: structural(parsed.error.issues as unknown as Issue[], c), warnings: [] };
+  return { ok: problems.length === 0, problems: cap(dedupe(problems)), warnings: cap(dedupe(warnings)) };
 }
 
 function cap(problems: CompositionProblem[]): CompositionProblem[] {
@@ -159,6 +170,9 @@ function mapIssue(issue: Issue, root: unknown, path: PropertyKey[]): Composition
       if (issue.origin === 'array') return [p('limit', { path: at, max: Number(issue.maximum) })];
       if (issue.origin === 'string') return [p('tooLong', { path: at, max: Number(issue.maximum) })];
       return [p('tooBig', { path: at, max: Number(issue.maximum) })];
+    case 'invalid_key':
+      // A record key that failed its own schema (e.g. a param name): report the key's own issues, custom messages included.
+      return structural((issue.issues as Issue[]) ?? [], root, path);
     case 'too_small':
       return [p(issue.inclusive === false ? 'notAbove' : 'tooSmall', { path: at, min: Number(issue.minimum) })];
     case 'invalid_union': {
@@ -183,9 +197,12 @@ function mapIssue(issue: Issue, root: unknown, path: PropertyKey[]): Composition
 
 // ---------- semantic rules ----------
 
-function semantic(c: Composition, ctx: CompositionContext): CompositionProblem[] {
+function semantic(c: Composition, ctx: CompositionContext): { problems: CompositionProblem[]; warnings: CompositionProblem[] } {
   const out: CompositionProblem[] = [];
+  const warnings: CompositionProblem[] = [];
   const still = c.duration === 0;
+  /** One frame: the tolerance for an animation running past its clip. */
+  const frame = 1 / c.fps;
 
   // Ids.
   const ids = new Set<string>();
@@ -194,25 +211,26 @@ function semantic(c: Composition, ctx: CompositionContext): CompositionProblem[]
   for (const s of c.scenes) seeId(s.id);
   for (const t of c.tracks) { seeId(t.id); for (const k of t.clips) seeId(k.id); }
 
-  // Scenes.
+  // Scenes, in time order (a copy: the file's order is kept). A video without scenes has one implicit scene (see
+  // `normalizeComposition`), so it is contiguous by definition.
+  const ordered = c.scenes.length === 0 && !still
+    ? [{ id: implicitSceneId(c), start: 0, duration: c.duration }]
+    : [...c.scenes].sort((a, b) => a.start - b.start);
   const scenes = new Map<string, { start: number; end: number }>();
-  for (const s of c.scenes) if (!scenes.has(s.id)) scenes.set(s.id, { start: s.start, end: s.start + s.duration });
+  for (const s of ordered) if (!scenes.has(s.id)) scenes.set(s.id, { start: s.start, end: s.start + s.duration });
   if (still) {
-    if (c.scenes.length > 0) out.push(p('stillScenes'));
-  } else if (c.scenes.length === 0) {
-    out.push(p('scenesEnd', { end: 0, duration: c.duration }));
+    if (c.scenes.length > 0) warnings.push(p('stillScenes'));
   } else {
-    const first = c.scenes[0]!;
+    const first = ordered[0]!;
     if (first.start > EPS) out.push(p('sceneStart', { scene: first.id, start: secs(first.start) }));
-    for (let i = 1; i < c.scenes.length; i++) {
-      const prev = c.scenes[i - 1]!; const s = c.scenes[i]!;
+    for (let i = 1; i < ordered.length; i++) {
+      const prev = ordered[i - 1]!; const s = ordered[i]!;
       const prevEnd = prev.start + prev.duration;
       const params = { scene: s.id, previous: prev.id, from: secs(prevEnd), to: secs(s.start) };
       if (s.start < prevEnd - EPS) out.push(p('sceneOverlap', params));
       else if (s.start > prevEnd + EPS) out.push(p('sceneGap', params));
     }
-    const last = c.scenes.at(-1)!;
-    const end = last.start + last.duration;
+    const end = ordered.reduce((m, s) => Math.max(m, s.start + s.duration), 0);
     if (Math.abs(end - c.duration) > EPS) out.push(p('scenesEnd', { end: secs(end), duration: c.duration }));
   }
 
@@ -233,7 +251,8 @@ function semantic(c: Composition, ctx: CompositionContext): CompositionProblem[]
       if ((t.kind === 'audio') !== (k.type === 'audio')) out.push(p('trackKind', { track: t.id, clip: k.id, kind: t.kind, type: k.type }));
       const end = k.start + k.duration;
       if (still) {
-        if (k.type === 'audio' && !audioReported) { audioReported = true; out.push(p('stillAudio', { track: t.id })); }
+        if (k.type === 'audio' && !audioReported) { audioReported = true; warnings.push(p('stillAudio', { track: t.id })); }
+        if (k.type !== 'audio' && k.animations && k.animations.length > 0) warnings.push(p('stillAnimations', { clip: k.id }));
         if (k.start > EPS) out.push(p('clipStill', { clip: k.id }));
       } else if (k.duration <= 0) {
         out.push(p('clipZero', { clip: k.id }));
@@ -245,9 +264,9 @@ function semantic(c: Composition, ctx: CompositionContext): CompositionProblem[]
         if (!s) out.push(p('unknownScene', { clip: k.id, scene: k.scene }));
         else if (!still && (k.start < s.start - EPS || end > s.end + EPS)) out.push(p('clipOutsideScene', { clip: k.id, scene: k.scene, start: secs(s.start), end: secs(s.end) }));
       }
-      if (!still && k.type !== 'audio' && k.animations) checkAnimations(k.id, k.duration, k.animations, out);
+      if (!still && k.type !== 'audio' && k.animations) checkAnimations(k.id, k.duration, k.animations, frame, out);
       if (k.type === 'text') {
-        const family = k.props.fontFamily;
+        const family = k.props.fontFamily ?? c.fonts[0]?.family;
         if (family === undefined) out.push(p('fontMissing', { clip: k.id }));
         else if (!families.has(family.toLowerCase())) out.push(p('unknownFont', { clip: k.id, family }));
       }
@@ -291,16 +310,16 @@ function semantic(c: Composition, ctx: CompositionContext): CompositionProblem[]
   } else if (!still) {
     out.push(p('durationForImage', { format: f.id, duration: c.duration }));
   }
-  return out;
+  return { problems: out, warnings };
 }
 
 type Anim = NonNullable<Extract<Composition['tracks'][number]['clips'][number], { animations?: unknown }>['animations']>[number];
 
-function checkAnimations(clip: string, clipDuration: number, animations: Anim[], out: CompositionProblem[]): void {
+function checkAnimations(clip: string, clipDuration: number, animations: Anim[], frame: number, out: CompositionProblem[]): void {
   let outside = false; let order = false; let value = false;
   for (const a of animations) {
     const end = (a.start ?? 0) + a.duration;
-    if (!outside && end > clipDuration + EPS) { outside = true; out.push(p('animationOutside', { clip, end: secs(end), duration: secs(clipDuration) })); }
+    if (!outside && end > clipDuration + frame + EPS) { outside = true; out.push(p('animationOutside', { clip, end: secs(end), duration: secs(clipDuration) })); }
     if (!('prop' in a)) continue;
     const wantColor = a.prop === 'color';
     const values = 'keyframes' in a ? a.keyframes.map((kf) => kf.v) : [a.from, a.to];

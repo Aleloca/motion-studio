@@ -1,4 +1,4 @@
-import type { CompositionProblem } from './problems.ts';
+import { compositionProblem, type CompositionProblem } from './problems.ts';
 
 /**
  * Advisory static check of an html layer (spec §3.2, "forbidden"). It is defence in depth only: obfuscated code
@@ -13,8 +13,13 @@ import type { CompositionProblem } from './problems.ts';
  * - audio (`composition.layerAudio`): `AudioContext`, `webkitAudioContext`, `OfflineAudioContext`;
  * - autoplay (`composition.layerAutoplay`): an `autoplay` attribute on `<video>`/`<audio>` (any case), or `.autoplay` in script.
  *
+ * Not checked: the bodies of HTML comments, and of `//` and `/* … *\/` comments inside `<script>` (`/* … *\/` inside
+ * `<style>`). Comment markers inside script strings are not comments (strings are tracked; regex literals are not, so a
+ * quote inside one can shift the string state until the end of the line). `.autoplay = false` (or `0`, `null`) is fine.
+ *
  * Words are matched whole (`prefetch`, `WorkerPool` are fine). The scan is one pass over the text with bounded look-ahead,
- * so the work is linear in the input size and there is no regex on the input (see `staticLayerCheckWork`).
+ * and comments are skipped forward, so the work is linear in the input size and there is no regex on the input (see
+ * `staticLayerCheckWork`).
  */
 export function staticLayerCheck(html: string, file = 'layer'): CompositionProblem[] {
   return staticLayerCheckWork(html, file).problems;
@@ -49,7 +54,7 @@ export function staticLayerCheckWork(html: string, file = 'layer'): { problems: 
   const report = (category: Category, api: string) => {
     if (seen.has(api) || problems.length >= MAX_PROBLEMS) return;
     seen.add(api);
-    problems.push({ key: `composition.${category}`, params: { file, line, api } });
+    problems.push(compositionProblem(`composition.${category}`, { file, line, api }));
   };
   /** Index of the next non-space character from `i`, within the look-ahead bound (or -1). */
   const skipSpace = (i: number): number => {
@@ -81,27 +86,79 @@ export function staticLayerCheckWork(html: string, file = 'layer'): { problems: 
   // Tag state, for autoplay attributes: inside `<video …>` / `<audio …>` until the next `>`.
   let inTag = false;
   let mediaTag = false;
+  // Raw text elements: inside `<script>` or `<style>` until their end tag; `pendingRaw` is set while their start tag is open.
+  let raw: '' | 'script' | 'style' = '';
+  let pendingRaw: '' | 'script' | 'style' = '';
+  // String state inside a script (0 or the quote character), so comment markers inside strings are not comments.
+  let quote = 0;
   let lastWordLower = '';
   let lastWordEnd = -1;
   let prevWord = '';
   let prevWordEnd = -1;
 
   let i = 0;
+  /** Moves `i` to `to` (exclusive), counting lines and steps: comment bodies are skipped without being checked. */
+  const skipTo = (to: number) => {
+    for (; i < to; i++) { steps++; if (html.charCodeAt(i) === 0x0a) line++; }
+  };
+  /** Skips from `i` past the next `marker` (or to the end of the input when it is missing). */
+  const skipPast = (marker: string) => {
+    const at = html.indexOf(marker, i);
+    skipTo(at < 0 ? n : at + marker.length);
+  };
+  /**
+   * Skips a comment inside a script or style: past `marker` (`*\/`), or up to the newline for a line comment (`marker`
+   * '\n', not consumed). It also stops before `</script` / `</style`, which ends the element even inside a comment.
+   */
+  const skipRawComment = (marker: string) => {
+    const end = `</${raw}`;
+    while (i < n) {
+      steps++;
+      const ch = html.charCodeAt(i);
+      if (ch === 0x3c && html.slice(i, i + end.length).toLowerCase() === end) return;
+      if (html.startsWith(marker, i)) { if (marker !== '\n') i += marker.length; return; }
+      if (ch === 0x0a) line++;
+      i++;
+    }
+  };
+
   while (i < n && problems.length < MAX_PROBLEMS) {
     steps++;
     const c = html.charCodeAt(i);
-    if (c === 0x0a) { line++; i++; continue; }
+    if (c === 0x0a) { line++; i++; if (quote === 0x27 || quote === 0x22) quote = 0; continue; }
     if (c === 0x3c /* < */) {
+      if (raw !== '') {
+        // Only the matching end tag leaves a script or style; any other `<` is text.
+        const end = `</${raw}`;
+        if (html.slice(i, i + end.length).toLowerCase() === end) { steps += end.length; i += end.length; raw = ''; quote = 0; inTag = true; mediaTag = false; continue; }
+        i++;
+        continue;
+      }
+      if (html.startsWith('<!--', i)) { i += 4; skipPast('-->'); continue; }
       let j = i + 1;
       let tag = '';
       while (j < n && isAlnum(html.charCodeAt(j)) && tag.length < 16) { steps++; tag += html[j]; j++; }
       tag = tag.toLowerCase();
       inTag = tag !== '';
       mediaTag = tag === 'video' || tag === 'audio';
+      pendingRaw = tag === 'script' || tag === 'style' ? tag : '';
       i = j;
       continue;
     }
-    if (c === 0x3e /* > */) { inTag = false; mediaTag = false; i++; continue; }
+    if (c === 0x3e /* > */ && raw === '') {
+      if (inTag && pendingRaw !== '') raw = pendingRaw;
+      inTag = false; mediaTag = false; pendingRaw = '';
+      i++;
+      continue;
+    }
+    if (raw === 'script') {
+      if (quote !== 0) {
+        if (c === 0x5c /* \ */) { steps++; if (html.charCodeAt(i + 1) === 0x0a) line++; i += 2; continue; }
+        if (c === quote) { quote = 0; i++; continue; }
+      } else if (c === 0x27 || c === 0x22 || c === 0x60) {
+        quote = c; i++; continue;
+      }
+    }
     if (c === 0x3a /* : */ && html.charCodeAt(i + 1) === 0x2f && html.charCodeAt(i + 2) === 0x2f && lastWordEnd === i && SCHEMES.has(lastWordLower)) {
       const start = i - lastWordLower.length;
       const allowed = ALLOWED_URL_PREFIXES.some((p) => html.length - start >= p.length && html.slice(start, start + p.length).toLowerCase() === p);
@@ -109,10 +166,16 @@ export function staticLayerCheckWork(html: string, file = 'layer'): { problems: 
       i += 3;
       continue;
     }
-    if (c === 0x2f && html.charCodeAt(i + 1) === 0x2f && isAlnum(html.charCodeAt(i + 2))) {
-      const before = i > 0 ? html.charCodeAt(i - 1) : -1;
-      if (before === 0x22 || before === 0x27 || before === 0x28) report('layerNetwork', '//');
-      i += 2;
+    if (c === 0x2f /* / */) {
+      const next = html.charCodeAt(i + 1);
+      if (next === 0x2f && isAlnum(html.charCodeAt(i + 2))) {
+        const before = i > 0 ? html.charCodeAt(i - 1) : -1;
+        if (before === 0x22 || before === 0x27 || before === 0x28) { report('layerNetwork', '//'); i += 2; continue; }
+      }
+      // Comments: `//` to the end of the line in scripts, `/* … */` in scripts and styles (not inside a script string).
+      if (raw === 'script' && quote === 0 && next === 0x2f) { i += 2; skipRawComment('\n'); continue; }
+      if (raw !== '' && quote === 0 && next === 0x2a) { i += 2; skipRawComment('*/'); continue; }
+      i += next === 0x2f ? 2 : 1;
       continue;
     }
     if (isIdent(c) && !(c >= 0x30 && c <= 0x39)) {
@@ -130,11 +193,24 @@ export function staticLayerCheckWork(html: string, file = 'layer'): { problems: 
   }
   return { problems, steps };
 
+  /** After `.autoplay`: is it set to a false value (`= false`, `= 0`, `= null`)? Bounded look-ahead. */
+  function setFalse(end: number): boolean {
+    const eq = skipSpace(end);
+    if (eq < 0 || html.charCodeAt(eq) !== 0x3d || html.charCodeAt(eq + 1) === 0x3d) return false;
+    const v = skipSpace(eq + 1);
+    if (v < 0) return false;
+    for (const lit of ['false', '0', 'null']) {
+      if (html.startsWith(lit, v) && !isIdent(html.charCodeAt(v + lit.length))) return true;
+    }
+    return false;
+  }
+
   function checkWord(word: string, start: number, end: number): void {
     const always = ALWAYS.get(word);
     if (always) { report(always, word); return; }
     if (word.toLowerCase() === 'autoplay') {
-      if ((inTag && mediaTag) || prevNonSpace(start) === 0x2e /* . */) report('layerAutoplay', 'autoplay');
+      if (inTag && mediaTag) report('layerAutoplay', 'autoplay');
+      else if (prevNonSpace(start) === 0x2e /* . */ && !setFalse(end)) report('layerAutoplay', 'autoplay');
       return;
     }
     if (word === 'fetch') {

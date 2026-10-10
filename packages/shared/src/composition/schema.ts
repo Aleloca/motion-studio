@@ -41,8 +41,13 @@ const FAMILY_RE = /^[A-Za-z0-9][A-Za-z0-9 _-]{0,79}$/;
 /** CSS easing keywords and functions (`ease-out`, `cubic-bezier(.3,1.5,.6,1)`, `steps(4, end)`): a safe character set only. */
 const EASE_RE = /^[a-z][a-z0-9(),. -]{0,63}$/;
 const PARAM_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
-/** Path shape for the JSON Schema; the authoritative check is `isCompositionPath` (refine below). */
-const PATH_RE = /^(?:assets|layers)\/[^\\:%?#]+$/;
+/**
+ * Path shape for the JSON Schema, so the agent's own validator agrees with `isCompositionPath` in the common cases: no `.`
+ * or `..` segment, no empty segment or trailing slash, no control characters. The authoritative check is still
+ * `isCompositionPath` (refine below), which also rejects invisible characters, unpaired surrogates and blank segments.
+ * Linear: the lookaheads are anchored at the start and each scans the (at most 512-character) string once.
+ */
+const PATH_RE = /^(?!.*(?:^|\/)\.{1,2}(?:\/|$))(?!.*\/\/)(?!.*\/$)(?![\s\S]*[\u0000-\u001f\u007f-\u009f])(?:assets|layers)\/[^\\:%?#]+$/;
 
 const id = z.string().max(COMPOSITION_LIMITS.id).regex(ID_RE, 'composition.badId')
   .describe('Lowercase letters, digits and hyphens; unique in the composition.');
@@ -209,7 +214,10 @@ export function compositionJsonSchema(): Record<string, unknown> {
   ];
   for (const [schema, name] of named) defs.add(schema, { id: name });
   // The generator only reads metadata with `get`: merge the local ids over the global registry so `.describe()` texts stay.
-  // (If a zod update changes this, the checked-in file test fails rather than silently dropping the descriptions.)
+  // UPGRADE CHECKLIST (zod): this shim relies on a zod internal, namely that `z.toJSONSchema` reads the `metadata` registry
+  // only through `.get(schema)` (zod 4.6, core/to-json-schema.js). After any zod upgrade, run
+  // `pnpm --filter @motion-studio/shared gen:composition-schema` and check that the diff of composition.schema.json still has
+  // the named $defs and the descriptions; the "equals the generated one" test catches a silent change in CI.
   const metadata = { get: (s: z.ZodType) => { const g = z.globalRegistry.get(s); const l = defs.get(s); return g || l ? { ...g, ...l } : undefined; } };
   const generated = z.toJSONSchema(compositionSchema, {
     target: 'draft-2020-12', io: 'input', unrepresentable: 'any', metadata: metadata as unknown as typeof defs,
@@ -219,10 +227,11 @@ export function compositionJsonSchema(): Record<string, unknown> {
     $schema,
     $id: COMPOSITION_SCHEMA_ID,
     title: 'Motion Studio composition',
-    description: 'One composition.json per format. Semantic rules beyond this schema: scenes are contiguous from 0 to duration; '
-      + 'clips lie inside the duration (and inside their scene); every fontFamily is declared in fonts[] with a font file under '
-      + 'assets/; every referenced file exists; html layers live in layers/ and never use the network, Workers, AudioContext or '
-      + 'autoplaying media.',
+    description: 'One composition.json per format. Semantic rules beyond this schema: scenes are contiguous from 0 to duration '
+      + '(a video with no scenes gets one implicit scene); clips lie inside the duration (and inside their scene); every '
+      + 'fontFamily is declared in fonts[] with a font file under assets/ (a text clip without fontFamily uses fonts[0]); every '
+      + 'referenced file exists; html layers live in layers/ and never use the network, Workers, AudioContext or autoplaying '
+      + 'media. A still (duration 0, image formats) shows t = 0 only: its scenes, animations and audio are ignored.',
     ...rest,
   };
 }

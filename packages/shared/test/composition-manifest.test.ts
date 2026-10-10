@@ -33,6 +33,7 @@ describe('manifest v2', () => {
     const base = { n: 1, commit: null, sessionId: null, status: 'complete', createdAt: '2026-10-10T10:00:00.000Z', request: 'r', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: null };
     expect(versionEntrySchema.safeParse(base).success).toBe(true);
     expect(versionEntrySchema.safeParse({ ...base, compositions: manifest.compositions }).success).toBe(true);
+    expect(versionEntrySchema.safeParse({ ...base, compositions: [{ ...manifest.compositions[0], problems: ['x'] }] }).success).toBe(true);
     const o = { format: 'x', file: 'x.mp4', width: 1, height: 1, durationSec: null, verified: true, preview: null };
     expect(outputFileInfoSchema.safeParse(o).success).toBe(true);
     expect(outputFileInfoSchema.safeParse({ ...o, fromComposition: h('a') }).success).toBe(true);

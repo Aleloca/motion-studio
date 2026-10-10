@@ -42,6 +42,20 @@ describe('isCompositionPath', () => {
     ['assets/x.png?v=1', false],
     ['assets/x.png#frag', false],
     [`assets/${'a'.repeat(600)}`, false],
+    ['assets/emoji-\u{1F600}.png', true],
+    ['assets/ /x.png', false],
+    ['assets/\t/x.png', false],
+    ['assets/\u00a0/x.png', false],
+    ['assets/x\u200b.png', false],
+    ['assets/x\u200f.png', false],
+    ['assets/x\u202a.png', false],
+    ['assets/x\u202e.png', false],
+    ['assets/x\u2060.png', false],
+    ['assets/x\u206f.png', false],
+    ['assets/x\ufeff.png', false],
+    ['assets/x\ud800.png', false],
+    ['assets/x\udc00.png', false],
+    ['assets/x\ud800', false],
   ])('%j → %s', (p, expected) => {
     expect(isCompositionPath(p)).toBe(expected);
   });

@@ -215,9 +215,11 @@ describe('followerMatches', () => {
 // ---------- v2 versions (compositions) and the legacy → v2 boundary (decisions R1, R2) ----------
 
 /** A v2 version: a composition per format (`[format, hash, followsFormat?]`), plus optional renders. */
-const v2 = (n: number, comps: Array<[string, string, string?]>, outputs: OutputFileInfo[] = [], problems: string[] = []): VersionEntry => ({
+const v2 = (n: number, comps: Array<[string, string, string?, string[]?]>, outputs: OutputFileInfo[] = [], problems: string[] = []): VersionEntry => ({
   ...ver(n, outputs, problems),
-  compositions: comps.map(([format, hash, followsFormat]) => ({ format, dir: `compositions/${followsFormat ?? format}`, hash: h(hash), ...(followsFormat ? { followsFormat } : {}) })),
+  compositions: comps.map(([format, hash, followsFormat, own]) => ({
+    format, dir: `compositions/${followsFormat ?? format}`, hash: h(hash), ...(followsFormat ? { followsFormat } : {}), ...(own ? { problems: own } : {}),
+  })),
 });
 const rendered = (format: string, fileSha: string, fromComp: string | undefined): OutputFileInfo => ({ ...out(format, h(fileSha)), ...(fromComp ? { fromComposition: h(fromComp) } : {}) });
 
@@ -244,7 +246,17 @@ describe('starOf with compositions', () => {
     expect(starOf(vs, 'reel', { reel: 1 }, undefined)).toEqual({ version: 1, manual: true, newer: 2, follows: null });
     expect(starOf(vs, 'reel', { reel: 2 }, undefined)).toEqual({ version: 2, manual: true, newer: null, follows: null });
   });
-  it('version-level problems still count for a v2 format without per-file data', () => {
+  it('per-format problems of a v2 version: a broken format does not push a clean one off the version', () => {
+    // v2: format A (post) is broken, format B (reel) is clean, in the same version.
+    const vs = [v2(1, [['reel', 'a', undefined, []], ['post', 'p', undefined, []]]), v2(2, [['reel', 'b', undefined, []], ['post', 'q', undefined, ['post broken']]], [], ['post broken'])];
+    expect(starOf(vs, 'reel', undefined, undefined).version).toBe(2);
+    expect(starOf(vs, 'post', undefined, undefined).version).toBe(1);
+  });
+  it('the composition\'s own problems win over its render\'s', () => {
+    const vs = [v2(1, [['reel', 'a', undefined, []]]), v2(2, [['reel', 'b', undefined, ['bad']]], [{ ...rendered('reel', 'f', 'b'), problems: [] }], ['bad'])];
+    expect(starOf(vs, 'reel', undefined, undefined).version).toBe(1);
+  });
+  it('old v2 data without per-format problems falls back to the version-level problems', () => {
     const vs = [v2(1, [['reel', 'a']]), v2(2, [['reel', 'b']], [], ['broken'])];
     expect(starOf(vs, 'reel', undefined, undefined).version).toBe(1);
   });

@@ -93,6 +93,11 @@ export const versionCompositionSchema = z.object({
   dir: z.string().regex(COMPOSITION_DIR),
   hash: z.string().regex(HEX64),
   followsFormat: z.string().min(1).optional(),
+  /**
+   * Problems of this format's composition alone (a subset of the version's `problems`), so the ★ rule can tell a clean
+   * format from a broken one in the same v2 version (`starOf`). Absent: the version-level `problems` count for it.
+   */
+  problems: z.array(z.string()).optional(),
 });
 export type VersionComposition = z.infer<typeof versionCompositionSchema>;
 
