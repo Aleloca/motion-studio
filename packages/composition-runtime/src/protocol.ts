@@ -24,6 +24,11 @@ export const RUNTIME_ERROR_CODES = [
   'fontLoadFailed', 'videoSeekTimeout', 'layerTimeout', 'layerError', 'badAnimation', 'audioBlocked', 'unknownClipType',
   /** Render mode: no animation frame was painted after a seek; the seek fails rather than capture a stale frame. */
   'frameTimeout',
+  /**
+   * Render mode, a warning: a video showed a frame outside the window its declared `sourceFps`/`sourceStart` predict (a
+   * wrong frame rate or start), drawn once its timestamp was stable. The renderer does not fail on it.
+   */
+  'videoFrameMismatch',
 ] as const;
 export type RuntimeErrorCode = (typeof RUNTIME_ERROR_CODES)[number];
 /** A problem the runtime met. `message` is a developer detail in English; the UI shows its own text for `code`. */

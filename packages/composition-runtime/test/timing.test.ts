@@ -93,3 +93,53 @@ describe('preview media sync', () => {
     expect(audioGain({ start: 0, duration: 2, volume: 2 }, 1)).toBe(1); // an element cannot go above 1
   });
 });
+
+describe('videoSourceTime with sourceStart (a source whose first frame is not at 0)', () => {
+  it('offsets the target by sourceStart and holds the last frame against the media end', async () => {
+    const { videoSourceTime: vst, sourceStartOf } = await import('../src/timing.ts');
+    const clip = { start: 1, trimStart: 0.5, sourceFps: 25, sourceStart: 0.1 };
+    // t = 1.2: 0.7 s into the source → frame 17 → its centre 17.5/25 = 0.7 s, plus 0.1.
+    expect(vst(clip, 1.2)).toBeCloseTo(0.1 + 17.5 / 25, 9);
+    // Media timeline ends at 2.1 s (2 s of frames after 0.1): the last frame (49) is held.
+    expect(vst(clip, 10, 2.1)).toBeCloseTo(0.1 + 49.5 / 25, 9);
+    // Without sourceFps: the source time plus the nudge, from sourceStart.
+    expect(vst({ start: 0, sourceStart: 0.1 }, 0.5)).toBeCloseTo(0.6 + 0.001, 9);
+    for (const bad of [-1, Number.NaN, '0.1', 1e9, undefined]) expect(sourceStartOf({ sourceStart: bad })).toBe(0);
+  });
+});
+
+describe('frameVerdict (render: accept the frame a video shows after a seek)', () => {
+  const base = { previous: null, stableMs: 0, before: null, seen: [] as number[], settleMs: 300 } as const;
+  it('draws a frame inside the declared window at once', async () => {
+    const { frameVerdict } = await import('../src/timing.ts');
+    expect(frameVerdict({ ...base, ts: 0.5, target: 0.5 + 0.5 / 30, span: 1 / 30 })).toBe('draw');
+  });
+  it('a 25 fps file declared as 30 fps: an out-of-window frame that stays put is drawn with a warning, after settling', async () => {
+    const { frameVerdict } = await import('../src/timing.ts');
+    // target (i + 0.5) / 30 for i = 15 is 0.5167; Chrome shows the 25 fps frame 12 at 0.48 (it is also the previous seek's frame).
+    const o = { ...base, ts: 0.48, target: 15.5 / 30, span: 1 / 30, before: 0.48, seen: [0.4, 0.44, 0.48, 0.52] };
+    expect(frameVerdict({ ...o, previous: null })).toBe('wait');
+    expect(frameVerdict({ ...o, previous: 0.48, stableMs: 100 })).toBe('wait');
+    expect(frameVerdict({ ...o, previous: 0.48, stableMs: 300 })).toBe('warn');
+  });
+  it('a first frame at 0.1 s without sourceStart: targets before it are drawn with a warning, not stalled', async () => {
+    const { frameVerdict } = await import('../src/timing.ts');
+    const o = { ...base, ts: 0.1, target: 0.5 / 30, span: 1 / 30, before: 0.1, seen: [0.1, 0.1333] };
+    expect(frameVerdict({ ...o, previous: 0.1, stableMs: 400 })).toBe('warn');
+  });
+  it('stale only with evidence: a frame already seen starts after the shown one and by the target', async () => {
+    const { frameVerdict } = await import('../src/timing.ts');
+    const o = { ...base, ts: 0.8, target: 0.85, span: 1 / 30, before: 0.8, previous: 0.8, stableMs: 10_000 };
+    expect(frameVerdict({ ...o, seen: [0.7667, 0.8, 0.8333] })).toBe('stale');
+    expect(frameVerdict({ ...o, seen: [0.7667, 0.8] })).toBe('warn'); // nothing later seen yet: cannot tell, drawn with a warning
+    // VFR: a long frame (1/12 s) shown for a target inside it is not stale, though shorter frames were seen earlier.
+    expect(frameVerdict({ ...o, span: null, ts: 0.9, before: 0.9, previous: 0.9, target: 0.95, seen: [0.8, 0.8333, 0.8667, 0.9, 0.9833] })).toBe('draw');
+    expect(frameVerdict({ ...o, ts: 0.8, target: 0.85, before: null, seen: [0.8, 0.8333] })).toBe('warn'); // not unchanged
+  });
+
+  it('VFR (no sourceFps): drawn once stable, without a warning', async () => {
+    const { frameVerdict } = await import('../src/timing.ts');
+    expect(frameVerdict({ ...base, ts: 0.3, target: 0.31, span: null })).toBe('wait');
+    expect(frameVerdict({ ...base, ts: 0.3, target: 0.31, span: null, previous: 0.3 })).toBe('draw');
+  });
+});

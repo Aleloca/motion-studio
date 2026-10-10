@@ -40,25 +40,58 @@ export function sourceFrameIndex(s: number, fps: number): number {
   return Math.max(0, Math.floor(s * fps + TIME_EPS));
 }
 
+/** A usable `sourceStart` (seconds), else 0. */
+export function sourceStartOf(clip: { sourceStart?: unknown }): number {
+  const s = clip.sourceStart;
+  return typeof s === 'number' && Number.isFinite(s) && s >= 0 && s <= 36_000 ? s : 0;
+}
+
 /**
  * The `currentTime` to give a video element so it shows the source frame of composition time `t`:
- * - the source time is `trimStart + (t - clip.start)` (clamped at the clip start);
- * - with `sourceFps`, the centre of that source frame, `(i + 0.5) / sourceFps`. Seeking exactly to a frame boundary
- *   shows the previous frame about one time in three (spike §1); the centre never does;
+ * - the time into the source is `trimStart + (t - clip.start)` (clamped at the clip start), counted from the source's
+ *   first frame, which sits at `sourceStart` on the media timeline (0 unless given: a file whose first timestamp is 0.1 s
+ *   has `sourceStart` 0.1; the core sets it from ffprobe, Task 5);
+ * - with `sourceFps`, the centre of that source frame, `sourceStart + (i + 0.5) / sourceFps`. Seeking exactly to a frame
+ *   boundary shows the previous frame about one time in three (spike §1); the centre never does;
  * - without it (variable or unknown frame rate), `VFR_NUDGE` past the source time;
- * - never past the end of the source (`sourceDuration`, when known): the last frame is held.
+ * - never past the end of the source (`sourceDuration`, the media timeline's end, when known): the last frame is held.
  */
-export function videoSourceTime(clip: { start: number; trimStart?: number; sourceFps?: number }, t: number, sourceDuration?: number): number {
+export function videoSourceTime(clip: { start: number; trimStart?: number; sourceFps?: number; sourceStart?: unknown }, t: number, sourceDuration?: number): number {
+  const base = sourceStartOf(clip);
   const s = (clip.trimStart ?? 0) + Math.max(0, t - clip.start);
-  const known = sourceDuration !== undefined && Number.isFinite(sourceDuration) && sourceDuration > 0;
+  const known = sourceDuration !== undefined && Number.isFinite(sourceDuration) && sourceDuration > base;
   const fps = clip.sourceFps;
   if (fps !== undefined && fps > 0) {
     let i = sourceFrameIndex(s, fps);
-    if (known) i = Math.min(i, Math.max(0, Math.ceil(sourceDuration * fps - TIME_EPS) - 1));
-    return (i + 0.5) / fps;
+    if (known) i = Math.min(i, Math.max(0, Math.ceil((sourceDuration - base) * fps - TIME_EPS) - 1));
+    return base + (i + 0.5) / fps;
   }
-  const target = s + VFR_NUDGE;
-  return known ? Math.min(target, Math.max(0, sourceDuration - VFR_NUDGE)) : target;
+  const target = base + s + VFR_NUDGE;
+  return known ? Math.min(target, Math.max(base, sourceDuration - VFR_NUDGE)) : target;
+}
+
+/**
+ * Render mode: what to do with the frame a video holds after a seek (mount.ts `paintVideo`), from its timestamp `ts`:
+ * - `draw`: it starts within one declared frame (`span`) before `target`;
+ * - `stale`: still the frame shown before the seek (`before`) although a frame already seen in this video (`seen`)
+ *   starts after it and at or before the target: Chrome must show that one, so this one is provably old. Never drawn
+ *   before the deadline (then `videoSeekTimeout`). Evidence from the file itself, not from a frame rate: a VFR file or a
+ *   wrong declared rate cannot make a correct frame look stale;
+ * - `warn`: draw it with a `videoFrameMismatch` warning: outside the window but stable (the same timestamp as the
+ *   previous read, for `settleMs`): a wrong declared `sourceFps`/`sourceStart` (it is still the frame Chrome shows at
+ *   `target`). Without `span` (VFR) a stable frame is drawn without a warning: stability, not correctness;
+ * - `wait`: read again after an animation frame.
+ */
+export function frameVerdict(o: {
+  ts: number; previous: number | null; stableMs: number; target: number; span: number | null; before: number | null;
+  seen: readonly number[]; settleMs: number;
+}): 'draw' | 'warn' | 'stale' | 'wait' {
+  const { ts, target, span } = o;
+  if (span !== null && ts <= target + 1e-3 && ts > target - span - 1e-3) return 'draw';
+  if (o.before !== null && ts === o.before && o.seen.some((x) => x > ts + 1e-6 && x <= target + 1e-6)) return 'stale';
+  const stable = ts === o.previous && (span === null || o.stableMs >= o.settleMs);
+  if (!stable) return 'wait';
+  return span === null ? 'draw' : 'warn';
 }
 
 /** Preview playback: whether a media element drifted more than one composition frame from where it should be. */
