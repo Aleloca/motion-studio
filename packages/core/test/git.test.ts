@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { execCommand, type CommandExec } from '../src/exec.ts';
 import { Git } from '../src/git.ts';
-import { clearQuarantineForTests, quarantineRepo } from '../src/git-safety.ts';
+import { IntegrityStore, snapshotProtected } from '../src/project-integrity.ts';
 
 describe('Git', () => {
   it('inits a repo and commits all files, returning the sha', async () => {
@@ -257,12 +257,19 @@ describe('Git hardening (decisions log 141)', () => {
     await writeFile(join(bad.dir, '.gitattributes'), '*.c filter=indent\n');
     await expect(bad.git.commitAll(bad.dir, 'c')).rejects.toThrow();
   });
-  it('refuses every operation on a quarantined repo and commits again once cleared', async () => {
+  it('refuses every operation on a quarantined repo and commits again once the protected files are restored', async () => {
     const { dir, git } = await freshCommit();
-    quarantineRepo(dir);
-    await expect(git.commitAll(dir, 'c')).rejects.toThrow();
-    clearQuarantineForTests();
+    const store = new IntegrityStore(await mkdtemp(join(tmpdir(), 'ms-integrity-'))).activate();
+    await writeFile(join(dir, 'CLAUDE.md'), '# ok');
+    const before = await snapshotProtected(dir);
+    await writeFile(join(dir, 'CLAUDE.md'), '# tampered');
+    await store.quarantine(dir, 'tampered', ['CLAUDE.md'], before);
+    await expect(git.commitAll(dir, 'c')).rejects.toThrow('CLAUDE.md');
+    await expect(git.restorePath(dir, 'abcdef1', 'a.txt')).rejects.toThrow('CLAUDE.md');
+    await writeFile(join(dir, 'CLAUDE.md'), '# ok');
     await expect(git.commitAll(dir, 'c')).resolves.toMatch(/^[0-9a-f]{40}$/);
+    expect(await store.isQuarantined(dir)).toBe(false);
+    new IntegrityStore(null).activate();
   });
   it('commits with the Motion Studio identity even with no global config (GIT_CONFIG_GLOBAL=/dev/null)', async () => {
     const { dir, git } = await freshCommit();

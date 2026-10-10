@@ -1,24 +1,20 @@
 import { lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { execCommand, type CommandExec } from './exec.ts';
-import { inspectGitSafety, isQuarantined, GitUnsafeError } from './git-safety.ts';
+import { GitUnsafeError, HARDENED_FLAGS, hardenedGitEnv, inspectGitSafety } from './git-safety.ts';
+import { activeIntegrityStore } from './project-integrity.ts';
 import { KeyedMutex } from './keyed-mutex.ts';
 import { t } from './i18n.ts';
 
 const IDENTITY = ['-c', 'user.name=Motion Studio', '-c', 'user.email=motion-studio@localhost'];
 /**
  * The agent can write inside the project: hooks, an fsmonitor command or a config/attributes driver planted in the repo
- * must never run. `-c` overrides the repo config for this call; the env drops the system and global config and any external
- * diff. The repo's own config and attributes are still checked by `assertSafe` before every call (a `-c` cannot neutralise
- * a `filter`/`diff` driver, which runs from `.gitattributes`). Identity travels in `-c user.*`, so commits work without a
- * global config.
+ * must never run. `-c` overrides the repo config for this call; the env drops every inherited `GIT_*`, the system and
+ * global config and pins the repository (`hardenedGitEnv`). The repo's own layout, config and attributes are still checked
+ * by `assertSafe` before every call (a `-c` cannot neutralise a `filter`/`diff` driver, which runs from `.gitattributes`).
+ * Identity travels in `-c user.*`, so commits work without a global config.
  */
-const HARDENED = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
-const HARDENED_ENV: NodeJS.ProcessEnv = {
-  ...process.env,
-  GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_ATTR_NOSYSTEM: '1',
-  GIT_EXTERNAL_DIFF: undefined, GIT_PAGER: 'cat', GIT_TERMINAL_PROMPT: '0',
-};
+const HARDENED = HARDENED_FLAGS;
 
 /**
  * Never versioned, whatever the project's .gitignore says: the sandbox caches, the agent's scratch folders and the
@@ -63,19 +59,21 @@ export class Git {
   constructor(private readonly exec: CommandExec = execCommand) {}
 
   /**
-   * Refuses to run git on a repo that is quarantined (the integrity tripwire found a protected file changed) or whose
-   * config/attributes carry anything the core did not set. Called before every operation on an existing repo (not `init`,
-   * which creates the config). The job that triggered it fails with a clear message; no git touches the repo until the
-   * user restores it (or restarts the app). The core keeps no trusted copy of `.git`, so it never rewrites the repo itself.
+   * Refuses to run git on a project that is quarantined (the integrity check found a protected file changed; persisted in
+   * the config folder, cleared once the files match again) or whose layout/config/attributes carry anything the core did
+   * not set. Called before every operation on an existing repo (not `init`, which creates the config). The job that
+   * triggered it fails with a message naming the problem and the fix. The core keeps no trusted copy of `.git`, so it
+   * never rewrites the repo itself.
    */
   private async assertSafe(dir: string): Promise<void> {
-    if (isQuarantined(dir)) throw new GitUnsafeError(t().errors.gitRepoQuarantined, 'quarantined');
-    const detail = await inspectGitSafety(dir);
-    if (detail !== null) throw new GitUnsafeError(t().errors.gitRepoUnsafe({ detail }), detail);
+    await activeIntegrityStore().assertUsable(dir);
+    const problem = await inspectGitSafety(dir, this.exec);
+    if (problem !== null) throw new GitUnsafeError(problem, problem);
   }
 
   async init(dir: string): Promise<void> {
-    await this.must(dir, ['init', '-q', '-b', 'main']);
+    // No pinned GIT_DIR here: init creates the repository in its cwd (inherited GIT_* are still dropped).
+    await this.must(dir, ['init', '-q', '-b', 'main'], hardenedGitEnv());
     await ensureLocalExcludes(dir);
   }
 
@@ -118,7 +116,7 @@ export class Git {
     return this.lock.run(resolve(dir), async () => {
       if (!/^[0-9a-f]{7,40}$/.test(commit)) throw new Error(t().errors.commitNotFound({ commit }));
       await this.assertSafe(dir);
-      const check = await this.exec('git', [...HARDENED, 'cat-file', '-e', `${commit}^{commit}`], { cwd: dir, env: HARDENED_ENV });
+      const check = await this.exec('git', [...HARDENED, 'cat-file', '-e', `${commit}^{commit}`], { cwd: dir, env: hardenedGitEnv(dir) });
       if (check.notFound) throw new Error(t().errors.gitNotFound);
       if (check.code !== 0) throw new Error(t().errors.commitNotFound({ commit }));
       const spec = `:(literal)${relPath}`;
@@ -129,8 +127,8 @@ export class Git {
     });
   }
 
-  private async must(cwd: string, args: string[]): Promise<string> {
-    const r = await this.exec('git', [...HARDENED, ...args], { cwd, env: HARDENED_ENV });
+  private async must(cwd: string, args: string[], env: NodeJS.ProcessEnv = hardenedGitEnv(cwd)): Promise<string> {
+    const r = await this.exec('git', [...HARDENED, ...args], { cwd, env });
     if (r.notFound) throw new Error(t().errors.gitNotFound);
     if (r.code !== 0) throw new Error(t().errors.gitFailed({ command: subcommand(args), detail: r.stderr.trim() }));
     return r.stdout;

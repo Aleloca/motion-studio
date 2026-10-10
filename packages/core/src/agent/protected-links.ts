@@ -9,7 +9,7 @@ export const CREATIVE_CORE_FILES = ['conversation.jsonl', 'versions.json', 'crea
 /** Per brand proposal: its activity log. */
 export const PROPOSAL_LOG = 'log.jsonl';
 /** Project files the core or the next agent turn loads (also protected by the launcher). */
-const PROJECT_CONFIG_FILES = ['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json'];
+const PROJECT_CONFIG_FILES = ['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json', '.gitattributes'];
 
 /** The temp name of a detach in progress: `.<name>.detach-<12 hex>`; one left by a crash is removed on the next pass. */
 const TEMP_RE = /^\..+\.detach-[0-9a-f]{12}$/;

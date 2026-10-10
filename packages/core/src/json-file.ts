@@ -5,6 +5,7 @@ import type { z } from 'zod';
 import { currentLocale, t } from './i18n.ts';
 import { issuesText } from '@motion-studio/shared';
 import { noteCoreChange } from './core-changes.ts';
+import { noteCoreFile } from './project-integrity.ts';
 
 export type JsonFileErrorReason = 'missing' | 'invalid-json' | 'schema';
 
@@ -41,7 +42,10 @@ export async function writeJsonFileAtomic(path: string, data: unknown): Promise<
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.${randomBytes(6).toString('hex')}.tmp`;
   try {
-    await writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+    const text = `${JSON.stringify(data, null, 2)}\n`;
+    await writeFile(tmp, text, 'utf8');
+    // Noted before the rename: the integrity check accepts exactly this content however its timing falls (decisions log 141).
+    await noteCoreFile(path, text);
     await rename(tmp, path);
     await noteCoreChange(dirname(path));
   } catch (err) {

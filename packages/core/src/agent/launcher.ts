@@ -13,7 +13,7 @@ import { t } from '../i18n.ts';
 import { buildAgentPolicy, sandboxPath, type AgentJobKind } from './policy.ts';
 import { CREATIVE_CORE_FILES, detachProtectedLinks, PROPOSAL_LOG } from './protected-links.ts';
 import { armTripwire } from './run-tripwire.ts';
-import { quarantineRepo } from '../git-safety.ts';
+import { IntegrityStore, ProjectQuarantinedError, snapshotDiff } from '../project-integrity.ts';
 import type { AgentRun, AgentRunner, AgentTurnRequest } from './runner.ts';
 import type { SandboxSupport } from './sandbox.ts';
 import { UsageLedger } from '../usage/usage-ledger.ts';
@@ -32,7 +32,8 @@ export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
 export const GLOB_CHARS = /[[\]*?]/;
 /** Project entries the agent may never write, whatever the job or sandbox mode. */
 const PROTECTED_PROJECT_DIRS = ['.git', '.claude', '.studio'];
-const PROTECTED_PROJECT_FILES = ['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json'];
+/** `.gitattributes` too (decisions log 141): it can drive a git filter, so it is tripwired; the core's own maintenance write is noted. */
+const PROTECTED_PROJECT_FILES = ['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json', '.gitattributes'];
 /*
  * Transparency logs the UI shows as facts ("N commands ran in the sandbox", Activity): the core writes them from outside
  * the sandbox, the agent must never alter them. Per creative: CREATIVE_CORE_FILES; per brand proposal: PROPOSAL_LOG.
@@ -53,6 +54,8 @@ export interface LauncherDeps {
   mcpCommand: string[] | null;
   /** Extra env of the MCP server process (e.g. ELECTRON_RUN_AS_NODE=1 when the command is Electron's binary). Never overrides the Motion Studio variables. */
   mcpEnv?: Record<string, string>;
+  /** Quarantine and last-good state (decisions log 141); defaults to one in `configDir`. Share one per config folder: it caches records. */
+  integrity?: IntegrityStore;
   /** Where every run's token and cost usage is recorded (`<project>/.studio/usage.jsonl`); defaults to a private one. */
   usageLedger?: UsageLedger;
 }
@@ -98,7 +101,12 @@ export class AgentLauncher {
   private readonly usageLedger: UsageLedger;
   /** Jobs already told that their workspace path has glob characters (a creative job launches once per attempt). */
   private readonly weakRootWarned = new Set<string>();
-  constructor(private readonly deps: LauncherDeps) { this.usageLedger = deps.usageLedger ?? new UsageLedger(); }
+  /** Quarantine and last-good state per project, in the config folder (decisions log 141); also the one Git consults. */
+  readonly integrity: IntegrityStore;
+  constructor(private readonly deps: LauncherDeps) {
+    this.usageLedger = deps.usageLedger ?? new UsageLedger();
+    this.integrity = (deps.integrity ?? new IntegrityStore(deps.configDir)).activate();
+  }
 
   /** True when agents get the `studio` MCP server (bridge listening and a command to start it). */
   mcpActive(): boolean { return Boolean(this.deps.bridge.origin && this.deps.mcpCommand?.length); }
@@ -109,6 +117,9 @@ export class AgentLauncher {
   }
 
   async start(i: LaunchInput): Promise<AgentRun> {
+    // A quarantined project gets no agent (its .claude/.mcp.json/CLAUDE.md may be tampered); it clears by itself once
+    // the protected files match the recorded state again.
+    await this.integrity.assertUsable(i.projectDir);
     const settings = await this.deps.settings();
     const detected = settings.sandboxMode === 'auto' && (await this.deps.sandbox()).available;
     const sandbox = i.sandboxed === false ? false : detected;
@@ -228,6 +239,16 @@ export class AgentLauncher {
         await warn(t().jobs.workspacePathGlob);
       }
       const tripwire = await armTripwire(i.projectDir, { logs: weakRoot });
+      // Changes made between runs (a leftover process, an edit while the app was closed) are compared against the state the
+      // last clean run ended with: the arm must not take a tampered state as its baseline.
+      const lastGood = await this.integrity.lastGood(i.projectDir);
+      const between = lastGood ? snapshotDiff(i.projectDir, lastGood, tripwire.armed) : [];
+      if (lastGood && between.length > 0) {
+        await this.integrity.quarantine(i.projectDir, 'between-runs', between, lastGood);
+        const detail = t().jobs.protectedFilesChangedBetweenRuns({ list: list(between) });
+        await warn(detail);
+        throw new ProjectQuarantinedError(detail, between);
+      }
       const run = this.deps.runner.start({
         cwd: i.projectDir, ...i.request,
         addDirs: policy.addDirs, allowedTools: policy.allowedTools, disallowedTools: policy.disallowedTools,
@@ -240,17 +261,27 @@ export class AgentLauncher {
         // purpose, so their group is left alone; the detach and the tripwire still run.
         if (i.kind !== 'console') run.killGroup?.();
         await detachLinks();
-        const tw = await tripwire.check().catch(() => ({ tampered: [] as string[], moved: [] as string[], rewritten: [] as string[] }));
-        // A protected config/exec file the core never writes during a run changed (git config/hooks/attributes, .claude,
-        // .mcp.json, CLAUDE*.md): an unambiguous tamper, the only way being a move of a folder out of the sandbox and back.
-        // The repo is quarantined (no git runs on it until the user restores it) and the job fails before any commit.
+        // The check fails closed: if it cannot run, the project is quarantined against the pre-run state.
+        const tw = await tripwire.check().catch(() => null);
+        if (tw === null) {
+          await this.integrity.quarantine(i.projectDir, 'check-failed', [], tripwire.armed);
+          const detail = t().jobs.integrityCheckFailed;
+          await warn(detail);
+          await tracker.finish(r.status).catch(() => {});
+          throw new Error(detail);
+        }
+        // A protected config/exec file changed, appeared or vanished (git config/layout/hooks/attributes, .claude,
+        // .mcp.json, CLAUDE*.md, .studio/permissions.json) other than by a noted core write: an unambiguous tamper (a move
+        // out of the sandbox and back, or a run with the sandbox off). The project is quarantined against the pre-run
+        // state (no agent and no git until it matches again) and the job fails before any commit.
         if (tw.tampered.length > 0) {
-          quarantineRepo(i.projectDir);
+          await this.integrity.quarantine(i.projectDir, 'tampered', tw.tampered, tripwire.armed);
           const detail = t().jobs.protectedFilesTampered({ list: list(tw.tampered) });
           await warn(detail);
           await tracker.finish(r.status).catch(() => {});
           throw new Error(detail);
         }
+        await this.integrity.setLastGood(i.projectDir, tw.snapshot).catch(() => {});
         if (tw.moved.length > 0) await warn(t().jobs.recordFoldersMoved({ list: list(tw.moved) }));
         if (tw.rewritten.length > 0) await warn(t().jobs.logHistoryRewritten({ list: list(tw.rewritten) }));
         const { record, event } = await tracker.finish(r.status);

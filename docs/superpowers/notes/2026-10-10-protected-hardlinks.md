@@ -212,3 +212,44 @@ The chat of `probe-a` then showed three warnings:
 The appended `HLM1` line is caught only by the folder warning, not by the history check, as documented.
 
 Tokens: 8 input, 1,216 output, 19,976 cache write, 108,859 cache read; 21,200 shown; $0.0057. User folder mtimes were unchanged (1791461297, 1791538433), and the scratch folder was deleted.
+
+## Fourth round (review 3 fixes)
+
+- **Git config from git itself (M1).** `inspectGitSafety` now:
+  - requires `.git` to be a real folder (a `gitdir:` file or a link blocks);
+  - blocks when `.git/commondir` or `.git/config.worktree` exists;
+  - treats any read error other than ENOENT as unsafe;
+  - runs `git config --list --show-origin --null` with the hardened env. Every key must come from `<project>/.git/config` (or the core's own `-c`) and pass the allowlist.
+  - Every inherited `GIT_*` is dropped. `GIT_DIR`, `GIT_WORK_TREE` and `GIT_COMMON_DIR` are pinned on every call except `init`.
+  - The review's commondir demo is now a test: the filter does not run and the commit is refused.
+- **Second tier (compatibility ruling).**
+  - Allowed: `remote.<n>.url/pushurl/fetch` and `branch.<n>.remote/merge/rebase`, unless the value contains `!`, `ext::`, `--upload-pack` or `--receive-pack`.
+  - Allowed: built-in `diff=<name>` attributes, while no `diff.<name>.*` config exists.
+  - Still blocked: `filter.*` (git-lfs included) and `diff.*.textconv/command`.
+  - Each block message names the key and the fix, in en and it.
+  - The core never fetches, pushes or pulls (checked: the only git callers are `git.ts`, `codebases.ts` and `doctor.ts`).
+- **Every attributes file (M4).**
+  - `git ls-files -z --cached --others -- ':(glob)**/.gitattributes'` lists tracked, untracked and ignored files, plus `.git/info/attributes`.
+  - Only a line that starts with `#` is a comment.
+  - Cost: about 0.17 s on 30k ignored files.
+- **Integrity by snapshot (M2, I1).** `project-integrity.ts` re-enumerates the protected set at arm and at check, so an added path counts too. The set:
+  - `CLAUDE*.md`, `.mcp.json`, `.gitattributes`;
+  - the kind of `.git`, `.claude` and `.studio`;
+  - `.git/config`, `HEAD`, `info/attributes`, `commondir` and `config.worktree`;
+  - `.git/hooks/**`, `.claude/**`;
+  - `.studio/permissions.json`.
+
+  Core writes note their content (`noteCoreFile`, from `writeJsonFileAtomic` and the `.gitattributes` maintenance), so a `PermissionsStore` write is quiet and a foreign one trips.
+- **Persistent quarantine (M3).**
+  - Stored in `<configDir>/integrity/<hash>.json` with the expected (pre-run) snapshot.
+  - `AgentLauncher.start` and `Git` refuse while it is set, across restarts.
+  - It clears by itself once the files match again.
+  - The reason goes to the chat (`errors.projectQuarantined`, `jobs.protectedFilesTampered`).
+- **Fail closed (I3).** If `check()` throws, the job fails and the project is quarantined.
+- **Last good state (I4).** Each clean check saves the snapshot. The next arm compares against it, and a difference quarantines the project and refuses the launch (`jobs.protectedFilesChangedBetweenRuns`). Core writes update the saved state.
+- **`.gitattributes` (I2).** It is now in the sandbox `denyWrite`, the Edit/Write deny rules, the link detach and the prompt's protected list. The core's own `completeGitignore` write is noted.
+- **`codebases.ts`.**
+  - `diff --no-ext-diff --no-textconv`;
+  - `hash-object --no-filters`;
+  - no `GIT_EXTERNAL_DIFF`.
+- **Residual.** A deliberate user edit to a protected file between runs locks the project until it is undone. There is no "accept current state" action yet.

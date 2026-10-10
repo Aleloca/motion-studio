@@ -4,13 +4,15 @@ import { lstat, readdir } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { lastCoreChange, type DirStamp } from '../core-changes.ts';
 import { PROPOSAL_LOG } from './protected-links.ts';
+import { snapshotDiff, snapshotProtected, type IntegritySnapshot } from '../project-integrity.ts';
 
 interface DirMark { ino: number; mtimeMs: number; ctimeMs: number }
-interface FileMark { ino: number; size: number; sha: string }
 interface LogMark { ino: number; size: number; ctimeMs: number; sha: string }
 export interface TripwireResult {
-  /** Protected files the core never writes during a run whose content changed: an unambiguous tamper. The job fails and the repo is quarantined. */
+  /** Protected files the core never writes during a run (or wrote itself and noted) that changed, appeared or vanished: an unambiguous tamper. The job fails and the project is quarantined. */
   tampered: string[];
+  /** The protected files as they are now: the project's next "last good" state when nothing was tampered. */
+  snapshot: IntegritySnapshot;
   /** Record folders (`creatives/`, a creative, `outputs/`, `brand/proposals/`) whose identity changed unexplained: a warning. */
   moved: string[];
   /** Append-only logs whose bytes from the start of the run were rewritten or cut (glob roots only): a warning. */
@@ -23,20 +25,6 @@ async function subdirs(parent: string): Promise<string[]> {
   const names = await readdir(parent).catch(() => [] as string[]);
   const checked = await Promise.all(names.map(async (n) => ((await isRealDir(join(parent, n))) ? join(parent, n) : null)));
   return checked.filter((n): n is string => n !== null);
-}
-
-/** Every regular file under the real folder `dir`, recursively; links never followed. */
-async function filesUnder(dir: string): Promise<string[]> {
-  const out: string[] = [];
-  const walk = async (d: string) => {
-    for (const e of await readdir(d, { withFileTypes: true }).catch(() => [])) {
-      const p = join(d, e.name);
-      if (e.isDirectory()) await walk(p);
-      else if (e.isFile()) out.push(p);
-    }
-  };
-  if (await isRealDir(dir)) await walk(dir);
-  return out;
 }
 
 async function sha256(file: string, end?: number): Promise<string | null> {
@@ -63,31 +51,17 @@ async function logMark(file: string): Promise<LogMark | null> {
 }
 
 /**
- * The project files the core never writes during any agent run, so a change to one is a tamper, not a core edit. These are
- * exactly the files that run or configure something OUTSIDE the sandbox (git config and hooks, the attributes that drive
- * filters, the agent's own CLAUDE/.claude/.mcp configuration). `.git/objects` is never walked.
- */
-async function staticProtectedFiles(projectDir: string): Promise<string[]> {
-  const out = [
-    join(projectDir, 'CLAUDE.md'), join(projectDir, 'CLAUDE.local.md'), join(projectDir, '.mcp.json'),
-    join(projectDir, '.gitattributes'),
-    join(projectDir, '.git', 'config'), join(projectDir, '.git', 'HEAD'), join(projectDir, '.git', 'info', 'attributes'),
-  ];
-  out.push(...await filesUnder(join(projectDir, '.git', 'hooks')));
-  out.push(...await filesUnder(join(projectDir, '.claude')));
-  return out;
-}
-
-/**
  * The after-run integrity tripwire (decisions log 141). The sandbox denies writes to the protected records by path, so the
  * one way the agent reaches them is by moving a folder out of the sandbox and back (possible for a creative created during
  * the job, and under a workspace path with `[ ] * ?` or by moving the whole project folder). This arms before the run and
  * is checked after it (after the leftover processes are killed, for the kinds that kill).
  *
  * Two tiers:
- * - **Static files** (`staticProtectedFiles`): content + inode. The core never writes them during a run, so any change is a
- *   tamper → the job fails and the repo is quarantined. These carry the real risk (a `filter` driver in `.git/config`, a
- *   hook, the agent's own config).
+ * - **Protected files** (`snapshotProtected`, project-integrity.ts): content and kind, re-enumerated at check time so an
+ *   added file counts as much as a changed or removed one. The core never writes them during a run except through writers
+ *   that note their content (`noteCoreFile`), so any other change is a tamper → the job fails and the project is
+ *   quarantined. These carry the real risk (a `filter` driver in `.git/config`, a `commondir`, a hook, the agent's own
+ *   config, the project's permissions).
  * - **Record folders** (`creatives/`, each creative, `outputs/`, `brand/proposals/`): inode and ctime, compared against the
  *   core's own recorded changes (`noteCoreChange`, exact values, no clock). A change the core did not make is a move → a
  *   warning (console agents reshape creatives through legitimate git operations, so it is not a hard fail). The logs' prefix
@@ -95,11 +69,11 @@ async function staticProtectedFiles(projectDir: string): Promise<string[]> {
  *
  * The whole-project-folder move is not watched by folder ctime (any top-level write in the project root changes it, so it
  * would false-positive): instead its dangerous payloads are caught by the static-file content check (a project move that
- * edits `.git/config`, a hook, `.claude/**`, `.mcp.json` or `CLAUDE*.md` fails the job), and `git-safety.ts` independently
+ * edits or adds `.git/config`, a hook, `.claude/**`, `.mcp.json`, `CLAUDE*.md` or `.studio/permissions.json` fails the job), and `git-safety.ts` independently
  * refuses to run git with a config or attributes the core did not write. A project move that only rewrites a record file
  * (versions.json, a log) without touching a config/exec file is a documented residual on `[ ] * ?` roots.
  */
-export async function armTripwire(projectDir: string, opts: { logs: boolean }): Promise<{ check(): Promise<TripwireResult> }> {
+export async function armTripwire(projectDir: string, opts: { logs: boolean }): Promise<{ armed: IntegritySnapshot; check(): Promise<TripwireResult> }> {
   const creatives = join(projectDir, 'creatives');
   const proposals = join(projectDir, 'brand', 'proposals');
   const slugs = await subdirs(creatives);
@@ -110,13 +84,8 @@ export async function armTripwire(projectDir: string, opts: { logs: boolean }): 
   const markDir = async (d: string) => { const st = await lstat(d).catch(() => null); if (st?.isDirectory()) dirs.set(d, { ino: st.ino, mtimeMs: st.mtimeMs, ctimeMs: st.ctimeMs }); };
   for (const d of [creatives, proposals, ...slugs]) await markDir(d);
 
-  const files = new Map<string, FileMark>();
-  for (const f of await staticProtectedFiles(projectDir)) {
-    const st = await lstat(f).catch(() => null);
-    if (!st?.isFile()) continue;
-    const sha = await sha256(f);
-    if (sha !== null) files.set(f, { ino: st.ino, size: st.size, sha });
-  }
+  // Re-enumerated at check time too: an added file (a new `.claude/settings.json`, `.git/commondir`, `.mcp.json`) counts.
+  const armed = await snapshotProtected(projectDir);
 
   const logs = new Map<string, LogMark>();
   if (opts.logs) {
@@ -130,13 +99,11 @@ export async function armTripwire(projectDir: string, opts: { logs: boolean }): 
   const explained = (cur: { ino: number; ctimeMs: number }, core: DirStamp | undefined) => core !== undefined && core.ino === cur.ino && core.ctimeMs === cur.ctimeMs;
 
   return {
+    armed,
     async check() {
-      const tampered: string[] = [];
-      for (const [f, mark] of files) {
-        const st = await lstat(f).catch(() => null);
-        const sha = st?.isFile() ? await sha256(f) : null;
-        if (!st?.isFile() || st.ino !== mark.ino || st.size !== mark.size || sha !== mark.sha) tampered.push(relative(projectDir, f));
-      }
+      // Throws on a read error: the launcher fails closed.
+      const snapshot = await snapshotProtected(projectDir);
+      const tampered = snapshotDiff(projectDir, armed, snapshot);
 
       const moved: string[] = [];
       for (const [d, mark] of dirs) {
@@ -155,7 +122,7 @@ export async function armTripwire(projectDir: string, opts: { logs: boolean }): 
         const ok = st?.isFile() && st.size >= mark.size && (await sha256(f, mark.size)) === mark.sha;
         if (!ok) rewritten.push(relative(projectDir, f));
       }
-      return { tampered, moved, rewritten };
+      return { tampered, snapshot, moved, rewritten };
     },
   };
 }

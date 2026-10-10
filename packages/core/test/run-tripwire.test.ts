@@ -1,4 +1,4 @@
-import { appendFile, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -6,6 +6,7 @@ import { armTripwire } from '../src/agent/run-tripwire.ts';
 import { BrandStore } from '../src/brand/brand-store.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { writeJsonFileAtomic } from '../src/json-file.ts';
+import { PermissionsStore } from '../src/approvals/permissions-store.ts';
 
 const cleanup: string[] = [];
 afterEach(async () => { for (const d of cleanup.splice(0)) await rm(d, { recursive: true, force: true }); });
@@ -50,7 +51,7 @@ describe('armTripwire (decisions log 141)', () => {
     await store.create({ title: 'due', brief });
     await new BrandStore(p).newProposalId();
     await store.appendConversation(slug, { type: 'system', at: new Date().toISOString(), level: 'info', text: 'core' });
-    expect(await trip.check()).toEqual({ tampered: [], moved: [], rewritten: [] });
+    expect(await trip.check()).toMatchObject({ tampered: [], moved: [], rewritten: [] });
   });
   it('sees a file the core did not make at the top of a creative, and a folder replaced', async () => {
     const { p, c, slug } = await project();
@@ -101,6 +102,52 @@ describe('armTripwire static-file integrity (decisions log 141)', () => {
   it('stays quiet when the static files are untouched', async () => {
     const { p } = await withGit();
     const trip = await armTripwire(p, { logs: false });
-    expect(await trip.check()).toEqual({ tampered: [], moved: [], rewritten: [] });
+    expect(await trip.check()).toMatchObject({ tampered: [], moved: [], rewritten: [] });
+  });
+  it('re-enumerates at check time: an added .claude/settings.json, .git/commondir, .mcp.json or .gitattributes is tampered', async () => {
+    for (const f of [['.claude', 'settings.local.json'], ['.git', 'commondir'], ['.git', 'config.worktree'], ['CLAUDE.local.md'], ['.gitattributes'], ['.git', 'hooks', 'post-commit']]) {
+      const { p } = await withGit();
+      await rm(join(p, '.mcp.json'));
+      const trip = await armTripwire(p, { logs: false });
+      await writeFile(join(p, ...f), 'NEW');
+      expect((await trip.check()).tampered, f.join('/')).toEqual([f.join('/')]);
+    }
+    const { p } = await withGit();
+    await rm(join(p, '.mcp.json'));
+    await rm(join(p, '.claude'), { recursive: true });
+    const trip = await armTripwire(p, { logs: false });
+    await mkdir(join(p, '.claude'));
+    await writeFile(join(p, '.claude', 'settings.json'), '{"hooks":{}}');
+    await writeFile(join(p, '.mcp.json'), '{}');
+    expect((await trip.check()).tampered).toEqual(['.claude/settings.json', '.mcp.json']);
+  });
+  it('a removed file and a .git replaced by a gitdir: file are tampered', async () => {
+    const { p } = await withGit();
+    const trip = await armTripwire(p, { logs: false });
+    await rm(join(p, 'CLAUDE.md'));
+    await rename(join(p, '.git'), join(p, 'g'));
+    await writeFile(join(p, '.git'), 'gitdir: g\n');
+    const r = (await trip.check()).tampered;
+    expect(r).toContain('CLAUDE.md');
+    expect(r).toContain('.git');
+    expect(r).toContain('.git/config');
+  });
+  it('.studio/permissions.json: a core write (PermissionsStore) stays quiet, a foreign write trips', async () => {
+    const { p } = await withGit();
+    await new PermissionsStore(p).add('Bash(ls:*)', 'x');
+    const trip = await armTripwire(p, { logs: false });
+    await new PermissionsStore(p).add('Bash(ffprobe:*)', 'x');
+    await new PermissionsStore(p).remove('Bash(ls:*)');
+    expect((await trip.check()).tampered).toEqual([]);
+    const again = await armTripwire(p, { logs: false });
+    await writeFile(join(p, '.studio', 'permissions.json'), JSON.stringify({ schemaVersion: 1, allow: [{ rule: 'WebFetch(domain:evil.example)', addedAt: new Date().toISOString(), label: 'x' }] }));
+    expect((await again.check()).tampered).toEqual(['.studio/permissions.json']);
+  });
+  it('check() throws when a protected tree cannot be read (the launcher fails closed)', async () => {
+    const { p } = await withGit();
+    const trip = await armTripwire(p, { logs: false });
+    await mkdir(join(p, '.claude', 'locked'));
+    await chmod(join(p, '.claude', 'locked'), 0o000);
+    try { await expect(trip.check()).rejects.toThrow(); } finally { await chmod(join(p, '.claude', 'locked'), 0o700); }
   });
 });
