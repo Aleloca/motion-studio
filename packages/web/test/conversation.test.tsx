@@ -676,6 +676,19 @@ describe('Conversation · "Applies to" and warnings (Phase 9)', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('None of the chosen formats is in the brief any more: choose them again.');
   });
 
+  it('a coded refusal it has no message for keeps the generic handling (409: busy)', async () => {
+    api.sendCreativeTurn.mockRejectedValueOnce(Object.assign(new ApiError(409, 'raw'), { code: 'some-other-code' }));
+    render(view({ entries: [], appliesTo } as Props));
+    await userEvent.type(screen.getByRole('textbox'), 'x');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    const busy = (await screen.findByRole('alert')).textContent;
+    expect(busy).toBe('A generation is already running for this creative. Wait for it to finish, then send again.');
+    api.sendCreativeTurn.mockRejectedValueOnce(Object.assign(new ApiError(500, 'socket hang up'), { code: 'some-other-code' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/socket hang up/));
+    expect(screen.getByRole('alert').textContent).not.toBe(busy);
+  });
+
   it('no choice without appliesTo (one primary, no version yet)', () => {
     render(view({ entries: [] }));
     expect(screen.queryByRole('group', { name: 'Applies to' })).toBeNull();

@@ -1044,6 +1044,22 @@ describe('CreativeCanvas · per-format versions (Phase 9)', () => {
     expect(within(pop).queryByText(/La prossima modifica parte dalla v1/)).toBeNull();
   });
 
+  it('under StrictMode (mount, cleanup, mount) a ★ pick still toasts and refreshes', async () => {
+    const { StrictMode } = await import('react');
+    const { __resetToasts, getToasts } = await import('../src/ui/toast.tsx');
+    __resetToasts();
+    detail = linked();
+    render(<StrictMode><Harness live={emptyLive()} /></StrictMode>);
+    await loaded();
+    const loads = api.getCreative.mock.calls.length;
+    await userEvent.click(badge(REEL_LABEL));
+    const pop = await screen.findByRole('dialog', { name: `Versioni di ${REEL_LABEL}` });
+    await userEvent.click(within(pop).getByRole('button', { name: 'Usa la v1 per l’export' }));
+    await waitFor(() => expect(getToasts().some((x) => x.text === `Per ${REEL_LABEL} si esporterà la v1`)).toBe(true));
+    await waitFor(() => expect(api.getCreative.mock.calls.length).toBeGreaterThan(loads));
+    expect((within(pop).getByRole('button', { name: 'Usa la v1 per l’export' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it('a ★ in flight disables the ★ buttons: a double click makes one request', async () => {
     detail = linked();
     let release!: () => void;

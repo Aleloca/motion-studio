@@ -48,19 +48,25 @@ export function useVersionActions({ slug, creative, states, labelOf, resumeFrom,
   const fv = t.web.formatVersions;
   const v = t.web.canvas.versions;
   // Leaving the page cancels a retry's wait and silences what is still in flight (no late toast or message).
-  const [life] = useState(() => new AbortController());
-  useEffect(() => () => life.abort(), [life]);
-  const wait = (ms: number) => new Promise<void>((resolve, reject) => {
-    if (life.signal.aborted) { reject(life.signal.reason); return; }
+  // One controller per mount, made and aborted by the effect (StrictMode mounts, cleans up and mounts again: a controller
+  // made once at render would stay aborted). Each action takes the signal of the mount it started in.
+  const life = useRef(new AbortController());
+  useEffect(() => {
+    const c = new AbortController();
+    life.current = c;
+    return () => c.abort();
+  }, []);
+  const waitFor = (signal: AbortSignal) => (ms: number) => new Promise<void>((resolve, reject) => {
+    if (signal.aborted) { reject(signal.reason); return; }
     const id = setTimeout(resolve, ms);
-    life.signal.addEventListener('abort', () => { clearTimeout(id); reject(life.signal.reason); }, { once: true });
+    signal.addEventListener('abort', () => { clearTimeout(id); reject(signal.reason); }, { once: true });
   });
   // Formats whose ★ change is in flight: a ref for the synchronous guard (a double click), state to re-render.
   const inFlight = useRef(new Set<string>());
   const [, setPendingTick] = useState(0);
   const setPending = (format: string, on: boolean) => {
     if (on) inFlight.current.add(format); else inFlight.current.delete(format);
-    if (!life.signal.aborted) setPendingTick((x) => x + 1);
+    if (!life.current.signal.aborted) setPendingTick((x) => x + 1);
   };
   const run = (call: () => Promise<unknown>, ctx: VersionErrorContext, done?: () => void, pendingFormat?: string) => {
     if (pendingFormat !== undefined) {
@@ -68,12 +74,13 @@ export function useVersionActions({ slug, creative, states, labelOf, resumeFrom,
       setPending(pendingFormat, true);
     }
     onError(null);
-    Promise.resolve().then(() => withHashRetry(call, wait)).then(() => {
-      if (life.signal.aborted) return;
+    const signal = life.current.signal;
+    Promise.resolve().then(() => withHashRetry(call, waitFor(signal))).then(() => {
+      if (signal.aborted) return;
       done?.();
       onChanged();
     }).catch((e: unknown) => {
-      if (life.signal.aborted) return;
+      if (signal.aborted) return;
       if (errorCode(e) === 'hashes-pending') toast.show(fv.errors.hashesPending);
       else onError(versionErrorText(e, t, ctx));
     }).finally(() => { if (pendingFormat !== undefined) setPending(pendingFormat, false); });

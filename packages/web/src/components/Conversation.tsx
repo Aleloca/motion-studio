@@ -506,6 +506,9 @@ export function CommandRowView({ row }: { row: CommandRow }) {
   );
 }
 
+/** Coded refusals of a turn that have their own message (versionErrorText); any other keeps the generic handling. */
+const SEND_CODES = new Set(['formats-not-in-brief', 'job-running']);
+
 /** Longest wait for the job a send started before the composer unlocks anyway. */
 export const AWAIT_JOB_MS = 10_000;
 
@@ -581,7 +584,7 @@ function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemoveP
     } catch (e) {
       // The text stays in the box: explain and say what to do; a 409 means a turn is already running.
       // A coded refusal (e.g. `formats-not-in-brief`) has its own clear message; a 409 means a turn is already running.
-      setError(errorCode(e) ? versionErrorText(e, t, { label: '' }) : e instanceof ApiError && e.status === 409 ? c.sendBusy : c.sendFailed({ detail: message(e) }));
+      setError(SEND_CODES.has(errorCode(e) ?? '') ? versionErrorText(e, t, { label: '' }) : e instanceof ApiError && e.status === 409 ? c.sendBusy : c.sendFailed({ detail: message(e) }));
       inFlight.current = false;
     } finally { setSending(false); }
   };
