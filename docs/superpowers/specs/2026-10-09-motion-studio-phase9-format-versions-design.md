@@ -76,7 +76,7 @@ Una cronologia per formato ha senso solo se i formati non toccati restano **iden
   - "All formats";
   - un formato o più formati (multiselezione con le chip dei formati principali).
 
-  Il valore predefinito sono i formati dei commenti allegati, se ce ne sono; altrimenti "All formats". Il turno dell'API riceve `formats?: string[]`.
+  Il valore predefinito sono i formati dei commenti allegati, se ce ne sono; altrimenti "All formats" nel canvas e il formato stesso nella vista del formato. Il turno dell'API riceve `formats?: string[]`.
 - **Core:**
   - l'agente riceve solo i formati indicati (più la consegna in `outputs/vN/`);
   - dopo la validazione, il core **copia senza modifiche** dalla versione di partenza (`resumeFrom` oppure l'ultima) gli output degli altri formati, poi materializza i seguaci;
@@ -95,6 +95,7 @@ Da `creative.js`, `CanvasView` e `VersionsPopover`.
   - ogni tavola ha un **badge di versione** proprio, "★ v5 ▾", che apre il `VersionsPopover` del formato con:
     - le voci della cronologia di F, con miniatura, `vN`, ora e nota;
     - la ★ cliccabile, con il toast "v3 will be exported for Reel";
+    - l'etichetta "Auto" sulla voce scelta dalla regola predefinita, con tooltip "Starred automatically: the newest version without problems"; con una scelta manuale, l'azione "Reset to Auto" in fondo al popover cancella la scelta;
     - in fondo, Compare e "Restart from here";
   - la tavola mostra la ★ come impostazione predefinita;
   - si può *guardare* un'altra versione senza cambiare la ★, con la scritta "viewing v3";
