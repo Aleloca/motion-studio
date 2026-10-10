@@ -155,6 +155,10 @@ describe('request targets', () => {
 });
 
 describe('the listener', () => {
+  it('has explicit timeouts and a connection cap', () => {
+    expect(server.limits).toEqual({ headersTimeout: 10_000, requestTimeout: 30_000, keepAliveTimeout: 5_000, maxConnections: 64 });
+  });
+
   it('listens on 127.0.0.1 on its own random port', () => {
     expect(server.origin).toBe(`http://127.0.0.1:${server.port}`);
     expect(server.port).toBeGreaterThan(0);
@@ -194,7 +198,7 @@ describe('the runtime', () => {
     const r = await send(new URL(s.url).pathname + new URL(s.url).search);
     expect(r.status).toBe(200);
     expect(r.headers['content-type']).toBe('text/html; charset=utf-8');
-    expect(all(r, 'content-security-policy')).toEqual([`${CSP}; frame-ancestors ${UI}`]);
+    expect(all(r, 'content-security-policy')).toEqual([`${CSP}; frame-ancestors ${UI}`, 'sandbox allow-scripts']);
     expect(r.headers['cross-origin-resource-policy']).toBe('cross-origin');
     expect(r.headers['x-content-type-options']).toBe('nosniff');
     expect(r.headers['referrer-policy']).toBe('no-referrer');
@@ -211,7 +215,7 @@ describe('the runtime', () => {
 
   it('a session from the dev UI origin gets that origin; a render session gets frame-ancestors none', async () => {
     const dev = await mint({ parentOrigin: DEV_UI });
-    expect(all(await send(`/${dev.token}/runtime/index.html`), 'content-security-policy')).toEqual([`${CSP}; frame-ancestors ${DEV_UI}`]);
+    expect(all(await send(`/${dev.token}/runtime/index.html`), 'content-security-policy')).toEqual([`${CSP}; frame-ancestors ${DEV_UI}`, 'sandbox allow-scripts']);
     const render = await mint({ mode: 'render', parentOrigin: undefined });
     expect(render.url).toBe(`${server.origin}/${render.token}/runtime/index.html?mode=render`);
     expect(all(await send(`/${render.token}/runtime/index.html`), 'content-security-policy')).toEqual([`${CSP}; frame-ancestors 'none'`]);
@@ -303,6 +307,10 @@ describe('composition files', () => {
     const other = await send(`${prefix(s)}/assets/mono.woff2`, { headers: { origin: 'http://evil.example', 'sec-fetch-dest': 'font' } });
     expect(other.headers['access-control-allow-origin']).toBeUndefined();
 
+    // Sec-Fetch-Dest: font alone is not enough: the file must be a font.
+    const notFont = await send(`${prefix(s)}/assets/data.bin`, { headers: { origin: 'null', 'sec-fetch-dest': 'font' } });
+    expect(notFont.status).toBe(200);
+    expect(notFont.headers['access-control-allow-origin']).toBeUndefined();
     for (const p of ['assets/logo.svg', 'assets/data.bin', 'layers/helper.js']) {
       const r = await send(`${prefix(s)}/${p}`, { headers: { origin: 'null' } });
       expect(r.status, p).toBe(200);
@@ -400,6 +408,15 @@ describe('confinement', () => {
     mkdirSync(join(work, 'outside', 'assets'), { recursive: true });
     writeFileSync(join(work, 'outside', 'assets', 'logo.svg'), SECRET);
     noSecret(await send(`${prefix(s, 'outputs/v3')}/assets/logo.svg`));
+  });
+
+  it('a real folder swapped in at the same path after the session started is refused (dev/ino)', async () => {
+    writeComposition(comp('v4', 'story'));
+    const s = await mint({ versionDir: 'outputs/v4' });
+    expect((await send(`${prefix(s, 'outputs/v4')}/assets/logo.svg`)).status).toBe(200);
+    renameSync(comp('v4', 'story'), join(creative, 'outputs', 'v4', 'compositions', 'story-old'));
+    writeComposition(comp('v4', 'story'), (d) => writeFileSync(join(d, 'assets', 'logo.svg'), SECRET));
+    noSecret(await send(`${prefix(s, 'outputs/v4')}/assets/logo.svg`));
   });
 
   it('mintSession validates its arguments', async () => {

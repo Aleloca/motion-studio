@@ -31,8 +31,11 @@ import { SessionTokens } from './serve-token.ts';
  *   page; an extra `Content-Security-Policy: sandbox allow-scripts` on every composition file, so a layer (or any html/svg
  *   file of the folder) stays opaque even when opened top-level; `Cross-Origin-Resource-Policy: cross-origin` (the frames
  *   are opaque, so same-origin would block them; the token guards the files); `nosniff`; `no-referrer`; `no-store`; and
- *   `Access-Control-Allow-Origin: null` only for a font requested with `Origin: null`. Never credentials or private-network
+ *   `Access-Control-Allow-Origin: null` only for a font file (by extension) requested with `Origin: null`; the preview's
+ *   runtime page also gets the sandbox CSP. Never credentials or private-network
  *   CORS headers.
+ * - the runtime page's `default-src 'self'` is also its `frame-src`, which keeps a layer from navigating its own frame off this
+ *   origin: Chrome checks the embedder's frame-src on every child navigation (tested in real Chrome). Keep it.
  * - a layer (`layers/*.html`) is served only into an iframe (`Sec-Fetch-Dest: iframe`, which Chrome sends to 127.0.0.1),
  *   with the runtime's `layer.js` injected as its first script.
  */
@@ -47,6 +50,7 @@ const DEFAULT_TTL_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_LAYER_BYTES = 5 * 1024 * 1024;
 const MAX_RUNTIME_PAGE_BYTES = 10 * 1024 * 1024;
 const MAX_RUNTIME_SCRIPT_BYTES = 20 * 1024 * 1024;
+const MAX_CONNECTIONS = 64;
 
 const TYPES = new Map<string, string>([
   ['.html', 'text/html; charset=utf-8'], ['.js', 'text/javascript; charset=utf-8'], ['.mjs', 'text/javascript; charset=utf-8'],
@@ -85,6 +89,8 @@ export interface CompositionServerOptions {
   maxLayerBytes?: number;
   /** Clock for token expiry (tests). */
   now?: () => number;
+  /** Called after each response with its method, path (no query; the token included) and status: diagnostics and tests. */
+  onResponse?: (e: { method: string; path: string; status: number }) => void;
 }
 
 export interface MintSessionOptions {
@@ -123,6 +129,8 @@ export interface CompositionServer {
   /** `http://127.0.0.1:<port>`. */
   origin: string;
   port: number;
+  /** The listener's explicit limits (ms and connections). */
+  limits: { headersTimeout: number; requestTimeout: number; keepAliveTimeout: number; maxConnections: number };
   /**
    * Opens a read-only session on one composition folder. Throws when the arguments are invalid, when the folder is missing,
    * is not a directory, or is reached through a symlink (its real path must be exactly `<real creativeDir>/<versionDir>/
@@ -137,10 +145,14 @@ interface Session {
   versionSegments: string[];
   versionDir: string;
   format: string;
-  /** Real path of the composition folder when minted; it must stay that. */
+  /** Real path of the composition folder when minted; it must stay that, and the same directory (dev, ino). */
   compDir: string;
+  compDev: number;
+  compIno: number;
   composition: unknown;
   frameAncestors: string;
+  /** Preview: the runtime page also gets the sandbox CSP, so it is opaque even when opened top-level. */
+  sandboxed: boolean;
 }
 
 /** An exact serialized http(s) origin (`http://127.0.0.1:4318`), nothing more. */
@@ -240,13 +252,14 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
       if (o.check && !(await o.check())) return { skipped: 'outside' as const };
       const head = req.method === 'HEAD';
       if (o.transform) {
-        const buf = Buffer.alloc(o.maxBytes + 1);
+        // One byte more than the fstat size: a file that grew since is refused, never cut.
+        const buf = Buffer.alloc(Math.min(info.size, o.maxBytes) + 1);
         let n = 0;
         for (;;) {
           const { bytesRead } = await fh.read(buf, n, buf.length - n, n);
           if (bytesRead === 0) break;
           n += bytesRead;
-          if (n > o.maxBytes) return { skipped: 'too-large' as const };
+          if (n > o.maxBytes || n > info.size) return { skipped: 'too-large' as const };
         }
         const body = Buffer.from(o.transform(buf.subarray(0, n).toString('utf8')), 'utf8');
         res.writeHead(200, { ...headers, 'content-length': String(body.length) });
@@ -293,10 +306,11 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
           base: `../${session.versionDir}/compositions/${session.format}/`, composition: session.composition,
         });
         const body = Buffer.from(html, 'utf8');
-        res.writeHead(200, {
+        const pageHeaders: Record<string, string | string[]> = {
           ...headers, 'content-type': 'text/html; charset=utf-8', 'content-length': String(body.length),
-          'content-security-policy': `${COMPOSITION_CSP}; frame-ancestors ${session.frameAncestors}`,
-        });
+          'content-security-policy': [`${COMPOSITION_CSP}; frame-ancestors ${session.frameAncestors}`, ...(session.sandboxed ? [SANDBOX_CSP] : [])],
+        };
+        res.writeHead(200, pageHeaders);
         res.end(req.method === 'HEAD' ? undefined : body);
         return;
       }
@@ -317,10 +331,15 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
     };
     const dest = req.headers['sec-fetch-dest'];
     // Fonts are always fetched in CORS mode, and the preview document and every layer have opaque origins (README).
-    if (req.headers.origin === 'null' && (dest === 'font' || FONT_EXT.has(ext))) fileHeaders['access-control-allow-origin'] = 'null';
+    if (req.headers.origin === 'null' && FONT_EXT.has(ext)) fileHeaders['access-control-allow-origin'] = 'null';
     const layer = rel.startsWith('layers/') && ext === '.html';
     if (layer && dest !== 'iframe') return notFound();
-    const stillThere = async () => (await realpath(session.compDir).catch(() => null)) === session.compDir;
+    // Still the very directory minted: same real path, same device and inode (a swapped-in real folder is refused too).
+    const stillThere = async () => {
+      if ((await realpath(session.compDir).catch(() => null)) !== session.compDir) return false;
+      const st = await lstat(session.compDir).catch(() => null);
+      return st !== null && st.isDirectory() && st.dev === session.compDev && st.ino === session.compIno;
+    };
     if (!(await stillThere())) return notFound();
     const ok = await serveFile(req, res, session.compDir, rel, fileHeaders, layer
       ? { maxBytes: maxLayerBytes, ranges: false, check: stillThere, transform: (html) => injectLayerBootstrap(html, `/${target.token}/runtime/layer.js`) }
@@ -329,11 +348,20 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
   }
 
   const server = createServer((req, res) => {
+    if (opts.onResponse) {
+      const log = opts.onResponse;
+      res.once('finish', () => log({ method: req.method ?? '', path: (req.url ?? '').split('?')[0]!, status: res.statusCode }));
+    }
     handle(req, res).catch(() => {
       if (!res.headersSent) send(res, 404, baseHeaders());
       else res.destroy();
     });
   });
+  // Explicit limits: slow or idle clients cannot hold the listener (the browser opens a handful of connections).
+  server.headersTimeout = 10_000;
+  server.requestTimeout = 30_000;
+  server.keepAliveTimeout = 5_000;
+  server.maxConnections = MAX_CONNECTIONS;
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', () => { server.off('error', reject); resolve(); });
@@ -344,6 +372,7 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
 
   return {
     origin, port,
+    limits: { headersTimeout: server.headersTimeout, requestTimeout: server.requestTimeout, keepAliveTimeout: server.keepAliveTimeout, maxConnections: server.maxConnections },
     async mintSession(o) {
       if (closed) throw new Error('composition server: closed');
       if (o.mode !== 'render' && o.mode !== 'preview') throw new Error('composition server: mode must be render or preview');
@@ -365,10 +394,12 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
       const realCreative = await realpath(o.creativeDir);
       const compDir = await realpath(join(o.creativeDir, ...segs, 'compositions', o.format));
       if (compDir !== join(realCreative, ...segs, 'compositions', o.format)) throw new Error('composition server: the composition folder is reached through a link');
-      if (!(await lstat(compDir)).isDirectory()) throw new Error('composition server: the composition folder is not a directory');
+      const dirInfo = await lstat(compDir);
+      if (!dirInfo.isDirectory()) throw new Error('composition server: the composition folder is not a directory');
       if (closed) throw new Error('composition server: closed');
       const { token, expiresAt } = tokens.mint({
-        versionSegments: segs, versionDir: segs.join('/'), format: o.format, compDir, composition: o.composition, frameAncestors,
+        versionSegments: segs, versionDir: segs.join('/'), format: o.format, compDir, compDev: dirInfo.dev, compIno: dirInfo.ino,
+        composition: o.composition, frameAncestors, sandboxed: o.mode === 'preview',
       }, ttl);
       const query = o.mode === 'preview' ? `mode=preview&parentOrigin=${encodeURIComponent(frameAncestors)}` : 'mode=render';
       return {
