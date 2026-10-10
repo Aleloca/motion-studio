@@ -1,7 +1,11 @@
-import { lstat, readFile, realpath } from 'node:fs/promises';
+import { lstat, realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { execCommand, type CommandExec } from './exec.ts';
 import { t } from './i18n.ts';
+import { readRegularFile } from './safe-read.ts';
+
+/** Largest attributes file read (git's own attribute files stay far below it); a bigger one is refused, never read. */
+export const MAX_ATTRIBUTES_BYTES = 1024 * 1024;
 
 /**
  * Git hardening against a tampered repository (decisions log 141). The agent can write inside the project, and under a
@@ -133,13 +137,6 @@ async function lstatMissing(p: string): Promise<Lstat | null> {
     throw e;
   }
 }
-async function readMissing(p: string): Promise<string | null> {
-  try { return await readFile(p, 'utf8'); } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw e;
-  }
-}
-
 /**
  * Checks a project's repository. Returns null when safe, or a localized message naming the first problem and how to fix
  * it. A project with no `.git` yet (before `git init`) is safe. Fails closed: an unexpected read error is a problem.
@@ -186,13 +183,43 @@ export async function inspectGitSafety(projectDir: string, exec: CommandExec = e
   const files = await exec('git', [...HARDENED_FLAGS, 'ls-files', '-z', '--cached', '--others', '--', ':(glob)**/.gitattributes'], { cwd: projectDir, env });
   if (files.code !== 0) return unsafe(`git ls-files failed: ${files.stderr.trim().slice(0, 200)}`);
   const rels = [...new Set(files.stdout.split('\0').filter((p) => p !== '' && !p.endsWith('/'))), '.git/info/attributes'];
+  // Git also opens `.gitattributes` in every folder it walks for `add`, even one it does not list (an untracked FIFO is
+  // left out of `ls-files`, and git's own open would block on it). Every folder of a file `git add -A` would see gets an
+  // lstat of its `.gitattributes`: anything but a regular file or a link (which git does not follow) is refused.
+  const walked = await exec('git', [...HARDENED_FLAGS, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: projectDir, env });
+  if (walked.code !== 0) return unsafe(`git ls-files failed: ${walked.stderr.trim().slice(0, 200)}`);
+  const dirs = new Set<string>(['']);
+  for (const path of walked.stdout.split('\0')) {
+    for (let i = path.lastIndexOf('/'); i > 0; i = path.lastIndexOf('/', i - 1)) {
+      const dir = path.slice(0, i);
+      if (dirs.has(dir)) break;
+      dirs.add(dir);
+    }
+  }
+  for (const dir of dirs) {
+    const rel = dir === '' ? '.gitattributes' : `${dir}/.gitattributes`;
+    let st;
+    try { st = await lstat(join(projectDir, rel)); } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') continue;
+      return unsafe(`${rel} could not be inspected (${code ?? 'error'})`);
+    }
+    if (!st.isFile() && !st.isSymbolicLink()) return unsafe(`${rel} is not a regular file`);
+  }
+
   for (const rel of rels) {
-    let text: string | null;
-    try { text = await readMissing(join(projectDir, rel)); } catch (err) {
+    // Never a plain readFile: a FIFO (or a link to one) would block forever and `/dev/zero` would grow without bound.
+    let file;
+    try { file = await readRegularFile(join(projectDir, rel), MAX_ATTRIBUTES_BYTES); } catch (err) {
       return unsafe(`${rel} could not be read (${(err as NodeJS.ErrnoException).code ?? 'error'})`);
     }
-    if (text === null) continue;
-    const bad = dangerousAttributeLines(text, keys);
+    if (file.kind === 'missing') continue;
+    // Git does not follow a symlinked `.gitattributes` in the work tree: skipped. `.git/info/attributes` is read through
+    // a link by git, so there a link is refused like any other non-regular file.
+    if (file.kind === 'link' && rel !== '.git/info/attributes') continue;
+    if (file.kind === 'link' || file.kind === 'special') return unsafe(`${rel} is not a regular file`);
+    if (file.kind === 'too-large') return unsafe(`${rel} is larger than ${MAX_ATTRIBUTES_BYTES} bytes`);
+    const bad = dangerousAttributeLines(file.data.toString('utf8'), keys);
     if (bad.length > 0) return e.gitAttributesBlocked({ file: rel, line: bad[0]!.slice(0, 120) });
   }
   return null;

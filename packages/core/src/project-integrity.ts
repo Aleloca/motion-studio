@@ -1,10 +1,10 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { lstat, mkdir, readdir, readFile, readlink, realpath, rename, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readlink, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { assertNotRealUserData } from './app-config.ts';
 import { t } from './i18n.ts';
 import { KeyedMutex } from './keyed-mutex.ts';
+import { hashRegularFile, readRegularFile } from './safe-read.ts';
 
 /**
  * Integrity of the project files that run or configure something OUTSIDE the sandbox (decisions log 141): git's config,
@@ -39,17 +39,20 @@ async function lstatOrNull(p: string): Promise<Lstat | null> {
   try { return await lstat(p); } catch (e) { if (isMissing(e)) return null; throw e; }
 }
 
-async function sha256File(file: string): Promise<string> {
-  const hash = createHash('sha256');
-  for await (const chunk of createReadStream(file)) hash.update(chunk as Buffer);
-  return hash.digest('hex');
-}
 export const sha256Text = (text: string | Buffer) => createHash('sha256').update(text).digest('hex');
 
+/**
+ * A file's value in the snapshot. Hashed through `hashRegularFile` (lstat, `O_NOFOLLOW | O_NONBLOCK`, fstat, bounded to the
+ * fstat size): a FIFO or a device swapped in never blocks the check nor grows memory (final review B1).
+ */
 async function describe(p: string, st: Lstat): Promise<string> {
-  if (st.isFile()) return `f:${await sha256File(p)}`;
   if (st.isSymbolicLink()) return `l:${await readlink(p)}`;
-  return st.isDirectory() ? 'd' : 'o';
+  if (st.isDirectory()) return 'd';
+  if (!st.isFile()) return 'o';
+  const h = await hashRegularFile(p);
+  if (h.kind === 'file') return `f:${h.sha}`;
+  if (h.kind === 'missing') return 'o';
+  return h.kind === 'link' ? 'l:?' : 'o';
 }
 
 /**
@@ -194,9 +197,9 @@ export class IntegrityStore {
     const file = this.file(key);
     let rec: IntegrityRecord = { schemaVersion: 1, projectDir: key };
     if (file !== null) {
-      try { rec = parseRecord(await readFile(file, 'utf8')); } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
-      }
+      const r = await readRegularFile(file, 16 * 1024 * 1024);
+      if (r.kind === 'file') rec = parseRecord(r.data.toString('utf8'));
+      else if (r.kind !== 'missing') throw new Error(`integrity record is not a regular file (${r.kind})`);
     }
     this.memory.set(key, rec);
     return rec;
@@ -244,12 +247,17 @@ export class IntegrityStore {
     return this.update(projectDir, (r) => (r.quarantine ? null : { ...r, lastGood: snap }));
   }
 
-  /** A core write of a protected file: the stored "last good" (and a quarantine's expected state) follows it. */
+  /**
+   * A core write of a protected file: the stored "last good" and a quarantine's expected state both follow it, so the
+   * core's own write (a permission removed in Settings, the `.gitattributes` maintenance) is never listed as a change to
+   * accept, also after a restart. The content is the core's own, so taking it as expected is safe.
+   */
   noteCoreWrite(projectDir: string, rel: string, value: string): Promise<void> {
     return this.update(projectDir, (r) => {
       if (!r.lastGood && !r.quarantine) return null;
       const next: IntegrityRecord = { ...r };
       if (r.lastGood) next.lastGood = { ...r.lastGood, [rel]: value };
+      if (r.quarantine) next.quarantine = { ...r.quarantine, expected: { ...r.quarantine.expected, [rel]: value } };
       return next;
     });
   }

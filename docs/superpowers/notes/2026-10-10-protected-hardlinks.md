@@ -274,3 +274,28 @@ Tokens: 8 input, 1,216 output, 19,976 cache write, 108,859 cache read; 21,200 sh
   - The confirmation dialog shows "Only accept if you made these changes yourself" (it: "Accetta solo se hai fatto tu queste modifiche").
   - A git problem is shown in its own box, with the remedy and no accept action.
   - The notice is re-checked when a job ends or the project changes.
+
+## Final fix (final review)
+
+- **B1 (bounded reads).** `packages/core/src/safe-read.ts`:
+  - `lstat` first, then `O_NOFOLLOW | O_NONBLOCK`, then `fstat` must show the same regular file;
+  - contents capped at 1 MB; hashes read at most the `fstat` size.
+- **Where it is used.**
+  - `inspectGitSafety` reads every attributes file this way:
+    - in-tree links are skipped (git ignores them);
+    - FIFOs, devices, oversized files and a linked `info/attributes` are unsafe.
+  - Snapshots hash through it, and the integrity record is read through it.
+  - git itself blocks on an untracked FIFO `.gitattributes` that `ls-files` does not list. So every folder that `git add -A` would walk gets an `lstat` of its `.gitattributes`.
+- **Residual 6, fixed.** `noteCoreWrite` also updates a quarantine's expected state.
+- **Residual 10, fixed.** The integrity notice now also shows on the Assets tab.
+- **Residual limits (decisions-log 141).**
+  1. Accept trusts the user.
+  2. `fd::` and `file://` remote values are allowed (inert for the core).
+  3. With the sandbox off or Bash approved, the agent could read `ui-token` and call the API.
+  4. A time-of-check window remains before each git call.
+  5. Some files are not in the snapshot: subfolder `CLAUDE.md`, record files, and git objects/refs/index.
+  6. Fixed (above).
+  7. Git problems are shown one at a time.
+  8. The isolation is vitest-only, and the path comparison is case-sensitive with no realpath.
+  9. 26 stale test records remain in the real `integrity/`. The user decides; nobody touches them.
+
