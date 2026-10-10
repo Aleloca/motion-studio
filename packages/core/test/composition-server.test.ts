@@ -70,7 +70,7 @@ const comp = (version: string, format: string) => join(creative, 'outputs', vers
 
 beforeAll(async () => {
   work = mkdtempSync(join(tmpdir(), 'ms-comp-server-'));
-  creative = join(work, 'creative');
+  creative = join(work, 'project', 'creatives', 'creative');
   dist = join(work, 'dist');
   mkdirSync(dist, { recursive: true });
   writeFileSync(join(dist, 'index.html'), `<!doctype html><html><head>${COMPOSITION_PLACEHOLDER}<script src="runtime.js"></script></head><body></body></html>`);
@@ -82,6 +82,7 @@ beforeAll(async () => {
   mkdirSync(outside, { recursive: true });
   writeFileSync(join(outside, 'secret.txt'), SECRET);
   writeFileSync(join(outside, 'secret.png'), SECRET);
+  mkdirSync(creative, { recursive: true });
   writeFileSync(join(creative, '..', 'creative-secret.txt'), SECRET);
   writeFileSync(join(work, 'hard-target.png'), SECRET);
 
@@ -487,7 +488,7 @@ describe('closing', () => {
 
 describe('normalised media (Task 5)', () => {
   const SHA = 'a'.repeat(64);
-  const NAME = `${SHA}-30-640.mp4`;
+  const NAME = `${SHA}-30-640x360-n1.mp4`;
   let mediaDir: string;
   const VIDEO_COMP = {
     ...COMPOSITION, tracks: [{ id: 't', kind: 'video', clips: [
@@ -497,16 +498,16 @@ describe('normalised media (Task 5)', () => {
       { id: 'd', type: 'image', src: 'assets/big.png', start: 0, duration: 1, props: {} },
     ] }],
   };
-  const fields = { sourceFps: 30, sourceStart: 0, sourceVideoEnd: 2.5 };
+  const fields = { sourceFps: 30, sourceStart: 0, sourceVideoEnd: 2.5, originalVideoStart: 0.25 };
 
   beforeAll(() => {
     mediaDir = join(work, 'project', '.studio', 'cache', 'media');
     mkdirSync(mediaDir, { recursive: true });
     writeFileSync(join(mediaDir, NAME), Buffer.from('NORMALISED-0123456789'));
-    writeFileSync(join(mediaDir, `${'b'.repeat(64)}-30-640.mp4`), Buffer.from('OTHER'));
+    writeFileSync(join(mediaDir, `${'b'.repeat(64)}-30-640x360-n1.mp4`), Buffer.from('OTHER'));
     writeFileSync(join(mediaDir, 'notes.txt'), SECRET);
   });
-  const media = (clips: Array<[string, { file: string; sourceFps: number; sourceStart: number; sourceVideoEnd: number }]>, dir = mediaDir) => ({ dir, clips: new Map(clips) });
+  const media = (clips: Array<[string, { file: string; sourceFps: number; sourceStart: number; sourceVideoEnd: number; originalVideoStart?: number }]>, dir = mediaDir) => ({ dir, clips: new Map(clips) });
   const inlined = (html: string) => JSON.parse(/<script type="application\/json" id="ms-composition">(.*?)<\/script>/s.exec(html)![1]!) as { composition: typeof VIDEO_COMP };
 
   it('rewrites the mapped video clips to media/<i>.mp4 with the probed fields and sourceTrusted, in the inlined copy only', async () => {
@@ -515,7 +516,7 @@ describe('normalised media (Task 5)', () => {
       const s = await mint({ composition: VIDEO_COMP, mode, ...(mode === 'render' ? { parentOrigin: undefined } : {}), media: media([['assets/clip.mp4', { file: join(mediaDir, NAME), ...fields }]]) });
       const page = await send(new URL(s.url).pathname);
       const clips = inlined(page.body.toString('utf8')).composition.tracks[0]!.clips as Array<Record<string, unknown>>;
-      expect(clips[0]).toMatchObject({ src: 'media/0.mp4', sourceFps: 30, sourceStart: 0, sourceVideoEnd: 2.5, sourceTrusted: true });
+      expect(clips[0]).toMatchObject({ src: 'media/0.mp4', sourceFps: 30, sourceStart: 0, sourceVideoEnd: 2.5, sourceTrusted: true, audioSrc: 'assets/clip.mp4', audioStart: 0.25 });
       expect(clips[1]).toMatchObject({ src: 'media/0.mp4', sourceTrusted: true });
       // Not mapped (its normalisation failed): its own file, and no core-only field survives (the lenient rule).
       expect(clips[2]).toEqual({ id: 'c', type: 'video', src: 'assets/other.mp4', start: 2, duration: 1, props: {} });
@@ -556,9 +557,11 @@ describe('normalised media (Task 5)', () => {
   it('refuses a media file that became a symlink or a hard link, or a media folder swapped after the mint', async () => {
     const dir = join(work, 'project2', '.studio', 'cache', 'media');
     mkdirSync(dir, { recursive: true });
+    const creative2 = join(work, 'project2', 'creatives', 'c2');
+    writeComposition(join(creative2, 'outputs', 'v1', 'compositions', 'story'));
     const file = join(dir, NAME);
     writeFileSync(file, 'GOOD');
-    const s = await mint({ composition: VIDEO_COMP, media: media([['assets/clip.mp4', { file, ...fields }]], dir) });
+    const s = await mint({ creativeDir: creative2, composition: VIDEO_COMP, media: media([['assets/clip.mp4', { file, ...fields }]], dir) });
     expect((await send(`${prefix(s)}/media/0.mp4`)).status).toBe(200);
     rmSync(file);
     symlinkSync(join(work, 'outside', 'secret.txt'), file);
@@ -586,17 +589,17 @@ describe('normalised media (Task 5)', () => {
     await bad(media([['assets/clip.mp4', { ...good, file: join(work, 'outside', 'secret.txt') }]]));
     await bad(media([['assets/clip.mp4', { ...good, file: join(mediaDir, 'notes.txt') }]]));
     await bad(media([['assets/clip.mp4', { ...good, file: `${mediaDir}/../media/${NAME}` }]]));
-    await bad(media([['assets/clip.mp4', { ...good, file: join(mediaDir, `${'c'.repeat(64)}-30-640.mp4`) }]])); // missing
+    await bad(media([['assets/clip.mp4', { ...good, file: join(mediaDir, `${'c'.repeat(64)}-30-640x360-n1.mp4`) }]])); // missing
     await bad(media([['../clip.mp4', good]]));
     await bad(media([['layers/x.mp4', good]]));
     for (const f of [{ sourceFps: 0 }, { sourceFps: Number.NaN }, { sourceVideoEnd: 0 }, { sourceStart: -1 }, { sourceStart: '0' }]) {
       await bad(media([['assets/clip.mp4', { ...good, ...f } as typeof good]]));
     }
-    const hardName = `${'d'.repeat(64)}-30-640.mp4`;
+    const hardName = `${'d'.repeat(64)}-30-640x360-n1.mp4`;
     writeFileSync(join(work, 'hard-media.mp4'), 'X');
     linkSync(join(work, 'hard-media.mp4'), join(mediaDir, hardName));
     await bad(media([['assets/clip.mp4', { ...good, file: join(mediaDir, hardName) }]]));
-    const linkName = `${'e'.repeat(64)}-30-640.mp4`;
+    const linkName = `${'e'.repeat(64)}-30-640x360-n1.mp4`;
     symlinkSync(join(mediaDir, NAME), join(mediaDir, linkName));
     await bad(media([['assets/clip.mp4', { ...good, file: join(mediaDir, linkName) }]]));
     // Not the media cache, or the cache reached through a link below the project folder.
@@ -606,5 +609,11 @@ describe('normalised media (Task 5)', () => {
     const aliasDir = join(work, 'project3', '.studio', 'cache', 'media');
     await bad(media([['assets/clip.mp4', { ...good, file: join(aliasDir, NAME) }]], aliasDir));
     await expect(mint({ composition: VIDEO_COMP, media: { dir: mediaDir, clips: {} as never } })).rejects.toThrow();
+    // Another project's media cache (M8): refused, even though it is a real media cache.
+    const otherDir = join(work, 'project4', '.studio', 'cache', 'media');
+    mkdirSync(otherDir, { recursive: true });
+    writeFileSync(join(otherDir, NAME), 'OTHER PROJECT');
+    await expect(mint({ composition: VIDEO_COMP, media: media([['assets/clip.mp4', { ...good, file: join(otherDir, NAME) }]], otherDir) })).rejects.toThrow(/project/);
+    for (const bad2 of [-1, Number.NaN, '0']) await bad(media([['assets/clip.mp4', { ...good, originalVideoStart: bad2 as number }]]));
   });
 });

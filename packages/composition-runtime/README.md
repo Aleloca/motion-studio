@@ -50,6 +50,11 @@ Everything lives under one token prefix on the composition server's own origin (
   `media/<i>.mp4`, with the probed `sourceFps`, `sourceStart`, `sourceVideoEnd` and `sourceTrusted: true`. The server maps
   exactly those paths, under `base`, to the session's files in `<project>/.studio/cache/media/`. `media/` is never a
   composition path (those start with `assets/` or `layers/`), so it cannot collide with the agent's files.
+  - The normalised file has no audio. The core also sets `audioSrc` (the original `assets/…` file, served as before) and
+    `audioStart` (where the original's first video frame sits on its media timeline). In **preview** mode the runtime
+    mutes the clip's `<video>` and plays `audioSrc` in an `<audio>` element kept on the timeline like an audio clip, at
+    `audioStart + trimStart + (t − start)`, with the clip's volume and its track's mute. In **render** mode nothing
+    changes: the core mixes the sound from the original with ffmpeg, aligned to the first video frame the same way.
 - **No `<base>` element** is used, so `base-uri 'none'` stays.
 
 ### Headers the runtime needs (learned in real Chrome, see the integration test)

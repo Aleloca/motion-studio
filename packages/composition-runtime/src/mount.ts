@@ -259,6 +259,25 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
         }
         content.appendChild(video);
         prepare = loadMedia(video, clip.id, clip.src);
+        // Normalised media (README "Normalised media"): the core's file has no audio, so the preview plays the clip's sound
+        // from the original asset (`audioSrc`) in an `<audio>` element kept on the timeline like an audio clip, starting at
+        // `audioStart` (the original's first video frame on its media timeline). Render mode: the core mixes the sound.
+        const audioSrc = (clip as { audioSrc?: unknown }).audioSrc;
+        if (opts.mode === 'preview' && !still && typeof audioSrc === 'string') {
+          video.muted = true;
+          const volume = clip.volume ?? 1;
+          const aurl = volume > 0 ? assetUrl(audioSrc, clip.id) : null;
+          if (aurl) {
+            const raw = (clip as { audioStart?: unknown }).audioStart;
+            const offset = typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 && raw <= 36_000 ? raw : 0;
+            const el = doc.createElement('audio');
+            el.preload = 'auto';
+            el.src = aurl;
+            audioBin.appendChild(el);
+            const sound = { id: clip.id, type: 'audio', src: audioSrc, start: clip.start, duration: clip.duration, trimStart: offset + (clip.trimStart ?? 0), volume } as AudioClip;
+            audios.push({ clip: sound, el, muted: !!track.muted });
+          }
+        }
         break;
       }
       case 'html': {

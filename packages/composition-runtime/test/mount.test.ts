@@ -139,6 +139,43 @@ describe('mount', () => {
     expect([...root.querySelectorAll('video')].map((v) => v.getAttribute('src'))).toEqual([`${BASE}media/0.mp4`]);
   });
 
+  it('preview: a normalised video plays muted, its sound comes from the original asset in an <audio> at audioStart + trimStart', async () => {
+    const proto = HTMLMediaElement.prototype as unknown as Record<string, unknown>;
+    const saved = { play: proto.play, pause: proto.pause, paused: Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'paused') };
+    const played: HTMLMediaElement[] = [];
+    const state = new WeakMap<HTMLMediaElement, boolean>();
+    proto.play = function (this: HTMLMediaElement) { played.push(this); state.set(this, false); return Promise.resolve(); };
+    proto.pause = function (this: HTMLMediaElement) { state.set(this, true); };
+    Object.defineProperty(HTMLMediaElement.prototype, 'paused', { configurable: true, get(this: HTMLMediaElement) { return state.get(this) ?? true; } });
+    try {
+      const c = comp({ tracks: [{ id: 'v', kind: 'video', clips: [
+        { id: 'n', type: 'video', src: 'media/0.mp4', audioSrc: 'assets/v.mp4', audioStart: 0.1, trimStart: 0.5, volume: 0.8, start: 0, duration: 5, props: {} },
+        { id: 'plain', type: 'video', src: 'assets/w.mp4', start: 0, duration: 5, props: {} },
+      ] }] } as unknown as Partial<Composition>);
+      const { player, root } = run(c, 'preview');
+      const [norm, plain] = [...root.querySelectorAll('video')];
+      expect(norm!.muted).toBe(true);
+      expect(plain!.muted).toBe(false);
+      const audios = [...root.querySelectorAll('audio')];
+      expect(audios.map((a) => a.getAttribute('src'))).toEqual([`${BASE}assets/v.mp4`]);
+      player.play();
+      await new Promise((r) => setTimeout(r, 30));
+      player.pause();
+      expect(played).toContain(audios[0]);
+      // The first video frame of the original sits at 0.1 s on its timeline; trimStart 0.5 → 0.6 + the time played.
+      expect(audios[0]!.currentTime).toBeGreaterThanOrEqual(0.6);
+      expect(audios[0]!.currentTime).toBeLessThan(0.7);
+      expect(audios[0]!.volume).toBeCloseTo(0.8, 5);
+      // Render mode: no <audio> (the core mixes the sound).
+      document.body.innerHTML = '<div id="ms-root"></div>';
+      const r = run(c, 'render');
+      expect(r.root.querySelectorAll('audio')).toHaveLength(0);
+    } finally {
+      proto.play = saved.play; proto.pause = saved.pause;
+      if (saved.paused) Object.defineProperty(HTMLMediaElement.prototype, 'paused', saved.paused);
+    }
+  });
+
   it('html layers are sandboxed iframes that get their params and fonts through window.name', () => {
     const c = comp({ tracks: [{ id: 'v', kind: 'visual', clips: [
       { id: 'outro', type: 'html', src: 'layers/outro.html', start: 0, duration: 2, props: {}, params: {
