@@ -250,6 +250,13 @@ export const it: Messages = {
     quotaExceeded: 'quota di spazio esaurita',
     nameTooLong: 'nome del file troppo lungo',
     writeError: 'errore di scrittura',
+    invalidPicks: 'Scegli almeno un formato da esportare, ognuno con un numero di versione',
+    pickFollower: (p) => `${p.format} segue ${p.primary}: si esporta con la versione ★ di ${p.primary}, non si può scegliere da solo`,
+    pickNoFile: (p) => `v${p.n} non ha un file ${p.format} da esportare`,
+    filesMissing: (p) => `Questi file mancano o non si possono leggere in sicurezza, non è stato esportato nulla: ${p.list}`,
+    nameCollision: (p) => `Due formati avrebbero lo stesso nome di file (${p.list}): aggiungi {format} allo schema dei nomi`,
+    nameEmpty: 'Lo schema dei nomi dà un nome di file vuoto',
+    invalidPattern: 'Lo schema dei nomi non è valido (al massimo 200 caratteri)',
   },
   jobs: {
     regenerateRequest: 'Rigenera tutti i formati partendo dal brief aggiornato.',

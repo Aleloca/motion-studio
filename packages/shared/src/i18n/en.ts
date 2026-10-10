@@ -252,6 +252,13 @@ export const en = {
     quotaExceeded: 'space quota exceeded',
     nameTooLong: 'file name too long',
     writeError: 'write error',
+    invalidPicks: 'Choose at least one format to export, each with a version number',
+    pickFollower: (p: { format: string; primary: string }) => `${p.format} follows ${p.primary}: it is exported with the ${p.primary}'s starred version, it cannot be picked on its own`,
+    pickNoFile: (p: { format: string; n: number }) => `v${p.n} has no ${p.format} file to export`,
+    filesMissing: (p: { list: string }) => `These files are missing or cannot be read safely, nothing was exported: ${p.list}`,
+    nameCollision: (p: { list: string }) => `Two formats would get the same file name (${p.list}): add {format} to the name pattern`,
+    nameEmpty: 'The name pattern gives an empty file name',
+    invalidPattern: 'The name pattern is not valid (at most 200 characters)',
   },
   jobs: {
     regenerateRequest: 'Regenerate all formats from the updated brief.',

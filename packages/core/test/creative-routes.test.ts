@@ -297,6 +297,47 @@ describe('creative export', { timeout: 20_000 }, () => {
     expect((again.json().files as Array<{ to: string }>)[0]!.to).toBe(join(dest, `autumn-sourdough-launch-instagram-post-1x1-v1-2${ext}`));
     expect((await readdir(dest)).sort()).toEqual([`autumn-sourdough-launch-instagram-post-1x1-v1-2${ext}`, `autumn-sourdough-launch-instagram-post-1x1-v1${ext}`].sort());
   });
+  it('exports per-format picks with the workspace name pattern (or the one sent)', async () => {
+    const { slug } = await createCreative();
+    await waitJobs();
+    const url = `/api/projects/acme/creatives/${slug}/export`;
+    const dest = join(base, 'picks');
+    await app.inject({ method: 'PUT', url: '/api/settings', payload: { exportNamePattern: '{channel}_{title}_v{v}' } });
+    const r = await app.inject({ method: 'POST', url, payload: { destination: dest, picks: { 'instagram-post-1x1': 1 } } });
+    expect(r.statusCode).toBe(200);
+    expect(await readdir(dest)).toEqual(['instagram_lancio_v1.mp4']);
+    const sent = await app.inject({ method: 'POST', url, payload: { destination: dest, picks: { 'web-banner-300x250': 1 }, pattern: 'x-{format}' } });
+    expect((sent.json().files as Array<{ to: string }>)[0]!.to.split('/').pop()).toMatch(/^x-web-banner-300x250\./);
+    const bad = async (payload: object) => { const x = await app.inject({ method: 'POST', url, payload: { destination: dest, ...payload } }); return [x.statusCode, x.json().code]; };
+    expect(await bad({ picks: {} })).toEqual([400, 'export-invalid-picks']);
+    expect(await bad({ picks: { 'instagram-post-1x1': 'v1' } })).toEqual([400, 'export-invalid-picks']);
+    expect(await bad({ picks: { 'instagram-post-1x1': 7 } })).toEqual([400, 'export-pick-no-file']);
+    expect(await bad({ picks: { 'instagram-post-1x1': 1 }, pattern: 42 })).toEqual([400, 'export-invalid-pattern']);
+    expect(await bad({ picks: { 'instagram-post-1x1': 1 }, pattern: '{nope}' })).toEqual([400, 'export-name-empty']);
+    await rm(join(base, 'ws', 'acme', 'creatives', slug, 'outputs', 'v1', (await readdir(join(base, 'ws', 'acme', 'creatives', slug, 'outputs', 'v1'))).find((f) => f.startsWith('web-banner'))!));
+    expect(await bad({ picks: { 'instagram-post-1x1': 1, 'web-banner-300x250': 1 } })).toEqual([409, 'export-file-missing']);
+    expect((await readdir(dest)).length).toBe(2);
+  });
+  it('refuses colliding names at the server, before copying', async () => {
+    const created = (await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'Lancio', brief: { ...brief, formats: ['instagram-post-1x1', 'instagram-reel-9x16'] }, generate: true } })).json();
+    await waitJobs();
+    const dest = join(base, 'collide');
+    const r = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${created.slug}/export`,
+      payload: { destination: dest, picks: { 'instagram-post-1x1': 1, 'instagram-reel-9x16': 1 }, pattern: '{title}-v{v}' } });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().code).toBe('export-name-collision');
+    expect(r.json().error).toContain('lancio-v1.mp4');
+    await expect(readdir(dest)).rejects.toThrow();
+  });
+  it('accepts the older single-version payload: every output of that version', async () => {
+    const { slug } = await createCreative();
+    await waitJobs();
+    const dest = join(base, 'old');
+    const r = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, payload: { destination: dest, version: 1 } });
+    expect(r.statusCode).toBe(200);
+    expect((await readdir(dest)).sort().map((f) => f.replace(/\.[a-z0-9]+$/, ''))).toEqual(['lancio-instagram-post-1x1-v1', 'lancio-web-banner-300x250-v1']);
+    expect((await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, payload: { destination: dest, version: 9 } })).statusCode).toBe(404);
+  });
   it('requires the UI token', async () => {
     const guarded = await buildServer({ uiToken: 'ab'.repeat(32), sandbox: async () => ({ available: false, reason: 'test' }),
       appConfig: new AppConfigStore(join(base, 'config2')), git: new Git(), doctor: async () => [],

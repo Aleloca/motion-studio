@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
-import { exportVersion } from '../creatives/export.ts';
+import { exportPicks, exportVersion } from '../creatives/export.ts';
 import { formatSummaries } from '../creatives/format-summary.ts';
 import { withLazyHashes } from '../creatives/output-hashes.ts';
 import { creativeJobKey, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
@@ -34,6 +34,17 @@ export const turnBodySchema = z.object({ text: z.string().max(10_000).optional()
 const createBody = z.object({ title: z.string(), brief: briefSchema, generate: z.boolean().optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
 const editBody = z.object({ title: z.string().optional(), brief: briefSchema.optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
 const pickBody = z.object({ format: z.string().min(1).max(200), version: z.number().int().min(1).nullable() });
+/**
+ * Export of the ★ versions (spec §3.3): `picks` (format → vN), `follow` (followers, exported in their primary's version),
+ * `pattern` (else the workspace's `exportNamePattern`). `version` alone is the older payload: every output of that version.
+ */
+const exportBody = z.object({
+  destination: z.string().max(4096),
+  picks: z.record(z.string().min(1).max(200), z.unknown()).optional(),
+  follow: z.array(z.string().min(1).max(200)).max(100).optional(),
+  pattern: z.unknown().optional(),
+  version: z.number().int().min(1).optional(),
+});
 const linkBody = z.object({ follower: z.string().min(1).max(200), primary: z.string().min(1).max(200).nullable() });
 
 /**
@@ -218,7 +229,35 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const rawFormats = req.body?.formats;
     if (rawFormats !== undefined && (!Array.isArray(rawFormats) || !rawFormats.length || !rawFormats.every((f) => typeof f === 'string'))) throw new WorkspaceError(400, t().export.invalidFormats);
     const creative = await ref.store.get(ref.creativeSlug);
-    return exportVersion({ creativeDir: ref.store.dir(ref.creativeSlug), version, destination, slug: ref.creativeSlug, title: creative.title, formats: rawFormats as string[] | undefined, forbiddenRoot: ref.root });
+    // Older clients: the phase 7 names (default pattern), whatever the workspace pattern.
+    return exportVersion({ creativeDir: ref.store.dir(ref.creativeSlug), version, destination, slug: ref.creativeSlug, title: creative.title, formats: rawFormats as string[] | undefined,
+      forbiddenRoot: ref.root, presets: (await catalog().load()).presets });
+  });
+
+  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/export', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const r = exportBody.safeParse(req.body ?? {});
+    if (!r.success) throw new CodedError(400, t().export.invalidPicks, 'export-invalid-picks');
+    const body = r.data;
+    const destination = expandHome(body.destination.trim());
+    const creative = await ref.store.get(ref.creativeSlug);
+    const creativeDir = ref.store.dir(ref.creativeSlug);
+    const presets = (await catalog().load()).presets;
+    const common = { creativeDir, destination, slug: ref.creativeSlug, title: creative.title, forbiddenRoot: ref.root, presets,
+      label: (id: string) => { const p = presets.find((x) => x.id === id); return p ? formatLabel(p, currentLocale()) : id; } };
+    if (body.picks === undefined && body.follow === undefined && body.version !== undefined) {
+      const version = (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === body.version);
+      if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
+      return exportVersion({ ...common, version });
+    }
+    if (body.pattern !== undefined && (typeof body.pattern !== 'string' || !body.pattern.trim() || body.pattern.length > 200)) {
+      throw new CodedError(400, t().export.invalidPattern, 'export-invalid-pattern');
+    }
+    const pattern = typeof body.pattern === 'string' ? body.pattern : (await ctx.requireWorkspace().readSettings()).exportNamePattern;
+    // The same hashed versions as the creative GET, so a follower's ★ here is the one the dialog showed.
+    const { versions } = await withLazyHashes({ projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir, versions: await ref.store.readVersions(ref.creativeSlug) });
+    return exportPicks({ ...common, versions, picks: (body.picks ?? {}) as Record<string, number>, follow: body.follow, pattern,
+      links: effectiveLinks(creative.brief.links, creative.brief.formats), storedPicks: creative.exportPicks });
   });
 
   app.get<{ Params: { slug: string; c: string; '*': string } }>('/api/projects/:slug/creatives/:c/files/*', async (req, reply) => {

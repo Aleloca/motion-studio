@@ -170,6 +170,29 @@ export function hashConfinedFile(base: string, rel: string): Promise<{ sha256: s
   });
 }
 
+/** Whether `rel` under `base` passes the confined-read checks with an exact real path (see withConfinedFile): true, null when missing. */
+export function probeConfinedFile(base: string, rel: string): Promise<true | ConfinedSkip | null> {
+  return withConfinedFile(base, rel, true, async () => true as const);
+}
+
+/**
+ * Copies `rel` under `base` (confined read, exact real path) to `to`, which must not exist (EEXIST otherwise: never
+ * overwrites). A source refused or gone since it was checked throws with code `ECONFINED`.
+ */
+export async function copyConfinedFile(base: string, rel: string, to: string): Promise<void> {
+  const r = await withConfinedFile(base, rel, true, async (fh) => {
+    const out = await open(to, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW);
+    try {
+      // The write stream closes `out` when done (with autoClose off it never emits `close` and the pipeline would hang).
+      await pipeline(fh.createReadStream({ start: 0, autoClose: false }), out.createWriteStream());
+    } finally {
+      await out.close().catch(() => {});
+    }
+    return true as const;
+  });
+  if (r !== true) throw Object.assign(new Error('The source file cannot be read safely'), { code: 'ECONFINED' });
+}
+
 export const MAX_AGENT_BYTES = 50 * 1024 * 1024;
 
 /** Same checks as readConfinedFile, for binary files (e.g. reference images): the bytes, or `{ skipped }` / null when missing. */

@@ -11,3 +11,4 @@ export * from './i18n/index.ts';
 export * from './issues.ts';
 export * from './usage.ts';
 export * from './explain/index.ts';
+export * from './export-name.ts';
