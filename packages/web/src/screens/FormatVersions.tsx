@@ -263,8 +263,9 @@ function VersionsPopover({ slug, creative, label, state, versions, shown, resume
  * A follower's "Linked to Reel ▾" chip (spec §2.3): its menu says it uses the primary's file and ★, and offers
  * "Unlink — make a dedicated version".
  */
-export function FollowerChip({ label, primary, primaryStar, actions, follower, busy }: {
-  label: string; primary: string; primaryStar: number | null; follower: string; actions: VersionActions; busy?: boolean;
+export function FollowerChip({ label, primary, short, primaryStar, actions, follower, busy }: {
+  /** `short`: the primary's name shown on the chip itself (its format name in a board header); `primary` everywhere else. */
+  label: string; primary: string; short?: string; primaryStar: number | null; follower: string; actions: VersionActions; busy?: boolean;
 }) {
   const fv = useT().web.formatVersions;
   const anchor = useRef<HTMLButtonElement>(null);
@@ -273,7 +274,7 @@ export function FollowerChip({ label, primary, primaryStar, actions, follower, b
     <>
       <button ref={anchor} type="button" className={cx('ms-chip ms-fv-linkchip', open && 'ms-on')} aria-haspopup="dialog" aria-expanded={open}
         aria-label={fv.linkedMenu({ primary })} onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}>
-        <Icon name="link" size={11} /><span className="ms-fv-linkchip-text">{fv.linkedTo({ primary })}</span>
+        <Icon name="link" size={11} /><span className="ms-fv-linkchip-text">{fv.linkedTo({ primary: short ?? primary })}</span>
       </button>
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="bottom-start" width={280} label={fv.linkedTo({ primary })}>
         <div className="ms-fvlink">

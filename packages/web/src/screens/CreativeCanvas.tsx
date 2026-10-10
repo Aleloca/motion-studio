@@ -361,10 +361,13 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
     if (!s) return { badge: null, note: null };
     if (s.follows) {
       const primary = formatLabel(s.follows);
+      // In the narrow header the primary goes by its format name, as the column does (the menu keeps the full label).
+      const pp = presets.find((p) => p.id === s.follows);
+      const short = pp ? formatName(pp, locale) : primary;
       const star = states[s.follows]?.star.version ?? null;
       return {
-        badge: <FollowerChip label={formatLabel(b.id)} primary={primary} primaryStar={star} follower={b.id} actions={actions} busy={busyLinks} />,
-        note: star !== null ? t.web.formatVersions.followsStar({ primary, n: star }) : t.web.formatVersions.follows({ primary }),
+        badge: <FollowerChip label={formatLabel(b.id)} primary={primary} short={short} primaryStar={star} follower={b.id} actions={actions} busy={busyLinks} />,
+        note: star !== null ? t.web.formatVersions.followsStar({ primary: short, n: star }) : t.web.formatVersions.follows({ primary: short }),
       };
     }
     return {

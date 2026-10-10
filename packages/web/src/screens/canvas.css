@@ -58,7 +58,10 @@
 .ms-cv-board-line { display: flex; align-items: center; gap: 6px; height: 20px; min-width: 0; overflow: hidden; }
 /* The line clips (ellipsis): a control in it draws its focus ring inside its own box, never cut by the line. */
 .ms-cv-board-line :focus-visible { outline-offset: -2px; }
-.ms-cv-board-name { color: var(--text); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-cv-board-name { color: var(--text); font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+.ms-cv-board-line .ms-ch, .ms-cv-board-line .ms-fv-badge { flex: none; }
+/* A follower's line: the name stays whole, its "Linked to …" chip shrinks (down to its link icon). */
+.ms-cv-board-line:has(.ms-fv-linkchip) .ms-cv-board-name { flex-shrink: 0; max-width: calc(100% - 50px); }
 .ms-cv-board-slot { display: contents; }
 .ms-cv-board-sub { font-size: 11px; color: var(--muted); white-space: nowrap; }
 .ms-cv-board-meta { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
@@ -205,9 +208,10 @@
 .ms-vmenu-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .ms-vmenu-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .ms-vmenu-line .ms-pill { height: 18px; font-size: 10px; }
-.ms-vmenu-when { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+/* The time stays whole on one line; the token figure gives way first when a row is crowded ("Your pick", "Auto"). */
+.ms-vmenu-when { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
 .ms-vmenu-line .ms-pill, .ms-vmenu-line .ms-fvpop-auto, .ms-vmenu-line > b { flex: none; white-space: nowrap; }
-.ms-vmenu-tokens { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; flex: none; }
+.ms-vmenu-tokens { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ms-vmenu-note { font-size: 11.5px; line-height: 1.35; color: var(--muted); overflow-wrap: anywhere; white-space: normal; }
 .ms-vmenu-explain { margin: 6px 8px 0; font-size: 11.5px; line-height: 1.45; color: var(--muted); text-wrap: pretty; }
 .ms-vmenu-foot { display: flex; gap: 6px; padding: 8px 4px 2px; margin-top: 6px; border-top: 1px solid var(--line2); }

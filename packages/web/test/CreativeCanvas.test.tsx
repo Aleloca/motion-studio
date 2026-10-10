@@ -942,7 +942,8 @@ describe('CreativeCanvas · per-format versions (Phase 9)', () => {
     render(<Harness live={emptyLive()} />);
     await loaded();
     expect(boardImg(TIKTOK).getAttribute('src')).toBe(`/f/acme/lancio/outputs/v3/.previews/${REEL}.jpg`);
-    expect(head(TIKTOK).textContent).toContain(`segue ${REEL_LABEL} ★ v3`);
+    expect(head(TIKTOK).textContent).toContain('segue Story/Reel 9:16 ★ v3');
+    expect(head(TIKTOK).querySelector('.ms-fv-linkchip')!.textContent).toBe('Collegato a Story/Reel 9:16');
     // The format column says it too.
     const column = screen.getByRole('complementary', { name: 'Formati di questa creatività' });
     const follower = within(column).getByRole('button', { name: /^Video 9:16/ });

@@ -69,7 +69,9 @@ const WORLD_PAD_BOTTOM = 140;
 const WORLD_GAP = 40;
 const STACK_GAP = 44;
 const BOARD_HEAD = 50;
-export const LABEL_MIN = 160;
+// 176: the channel mark, a common format name ("Story/Reel 9:16", ~100 px) and its "★ vN" badge fit on the first line
+// (phase 9 live checks: 160 cut the name); a longer name is the last thing to give way (a follower's chip shrinks first).
+export const LABEL_MIN = 176;
 
 /** The canvas world on screen at zoom `z`: tall boards in a row, the others stacked in a column next to them. */
 export function worldAt(boards: BoardModel[], z: number): { width: number; height: number } {
