@@ -59,8 +59,8 @@ export async function versionDirReady(creativeDir: string, n: number): Promise<b
   if (replaced) await rm(dir, { force: true });
   if (!info || replaced) {
     await mkdir(dir, { recursive: true });
-    noteCoreChange(creativeDir);
-    noteCoreChange(join(creativeDir, 'outputs'));
+    await noteCoreChange(creativeDir);
+    await noteCoreChange(join(creativeDir, 'outputs'));
   }
   const [real, realBase] = await Promise.all([realpath(dir).catch(() => null), realpath(creativeDir).catch(() => null)]);
   if (!real || !realBase || real !== join(realBase, 'outputs', `v${n}`)) throw new Error(`outputs/v${n} is not a folder of the creative`);

@@ -7,6 +7,7 @@ import { workspaceSettingsSchema, type AgentEvent } from '@motion-studio/shared'
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AgentLauncher, sweepRunDir, type LauncherDeps } from '../src/agent/launcher.ts';
+import { clearQuarantineForTests, isQuarantined } from '../src/git-safety.ts';
 import type { AgentRunner } from '../src/agent/runner.ts';
 import { ApprovalBroker } from '../src/approvals/broker.ts';
 import { PermissionsStore } from '../src/approvals/permissions-store.ts';
@@ -507,7 +508,7 @@ describe('AgentLauncher after-run checks (review of decisions log 141)', () => {
         killGroup: () => { order.push('kill'); linkSync(join(dir, '.studio', 'usage.jsonl'), join(dir, 'leftover-link')); },
       }),
     };
-    const run = await testLauncher(runner).start({ kind: 'console', jobId: 'j1', projectSlug: 'acme', projectDir: dir, request: { prompt: 'x' }, onEvent: () => {}, onWarning: (w) => { order.push(w.includes('usage.jsonl') ? 'detached' : 'other'); } });
+    const run = await testLauncher(runner).start({ kind: 'brand-analysis', jobId: 'j1', projectSlug: 'acme', projectDir: dir, request: { prompt: 'x' }, onEvent: () => {}, onWarning: (w) => { order.push(w.includes('usage.jsonl') ? 'detached' : 'other'); } });
     await run.done;
     expect(order).toEqual(['kill', 'detached']);
     expect((await stat(join(dir, '.studio', 'usage.jsonl'))).nlink).toBe(1);
@@ -547,5 +548,36 @@ describe('AgentLauncher after-run checks (review of decisions log 141)', () => {
     expect(warnings).toEqual([]);
     await (await start('j2')).done;
     expect(warnings).toHaveLength(1);
+  });
+});
+
+describe('AgentLauncher integrity tripwire fails the job (decisions log 141)', () => {
+  it('a protected config file changed during the run fails the job, warns, and quarantines the repo', { timeout: 20_000 }, async () => {
+    const dir = await newProject();
+    await mkdir(join(dir, '.git', 'info'), { recursive: true });
+    await writeFile(join(dir, '.git', 'config'), '[core]\n\tfilemode = true\n');
+    await writeFile(join(dir, 'CLAUDE.md'), '# ok');
+    const runner: AgentRunner = {
+      start: () => ({
+        done: (async () => { await writeFile(join(dir, '.git', 'config'), '[filter "lfs"]\n\tclean = evil\n'); return { status: 'succeeded' as const }; })(),
+        cancel: () => {},
+      }),
+    };
+    const warnings: string[] = [];
+    const run = await testLauncher(runner).start({ kind: 'creative', jobId: 'j1', projectSlug: 'acme', projectDir: dir, creativeSlug: 'c1', request: { prompt: 'x' }, onEvent: () => {}, onWarning: (w) => { warnings.push(w); } });
+    await expect(run.done).rejects.toThrow();
+    expect(warnings.some((w) => w.includes('.git/config'))).toBe(true);
+    expect(isQuarantined(dir)).toBe(true);
+    clearQuarantineForTests();
+  });
+  it('does not kill the process group at the end of a console turn, but still runs the detach', { timeout: 20_000 }, async () => {
+    const dir = await newProject();
+    await mkdir(join(dir, '.studio'), { recursive: true });
+    await writeFile(join(dir, '.studio', 'usage.jsonl'), '');
+    let killed = false;
+    const runner: AgentRunner = { start: () => ({ done: Promise.resolve({ status: 'succeeded' as const }), cancel: () => {}, killGroup: () => { killed = true; } }) };
+    const run = await testLauncher(runner).start({ kind: 'console', jobId: 'j1', projectSlug: 'acme', projectDir: dir, request: { prompt: 'x' }, onEvent: () => {} });
+    await run.done;
+    expect(killed).toBe(false);
   });
 });

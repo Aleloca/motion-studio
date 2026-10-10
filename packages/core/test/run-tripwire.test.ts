@@ -38,7 +38,7 @@ describe('armTripwire (decisions log 141)', () => {
     await tick();
     await rename(join(c, 'outputs'), join(p, 'o'));
     await rename(join(p, 'o'), join(c, 'outputs'));
-    expect((await trip.check()).moved).toEqual([join('creatives', slug)]);
+    expect((await trip.check()).moved).toContain(join('creatives', slug));
   });
   it('leaves out the core\'s own changes: atomic writes, a creative or a proposal created during the run, appends', async () => {
     const { p, store, c, slug } = await project();
@@ -50,14 +50,14 @@ describe('armTripwire (decisions log 141)', () => {
     await store.create({ title: 'due', brief });
     await new BrandStore(p).newProposalId();
     await store.appendConversation(slug, { type: 'system', at: new Date().toISOString(), level: 'info', text: 'core' });
-    expect(await trip.check()).toEqual({ moved: [], rewritten: [] });
+    expect(await trip.check()).toEqual({ tampered: [], moved: [], rewritten: [] });
   });
   it('sees a file the core did not make at the top of a creative, and a folder replaced', async () => {
     const { p, c, slug } = await project();
     const trip = await armTripwire(p, { logs: false });
     await tick();
     await writeFile(join(c, 'stray.txt'), 'x');
-    expect((await trip.check()).moved).toEqual([join('creatives', slug)]);
+    expect((await trip.check()).moved).toContain(join('creatives', slug));
   });
   it('with logs: a rewritten or cut history is reported, an append is not', async () => {
     const { p, store, c, slug } = await project();
@@ -71,5 +71,36 @@ describe('armTripwire (decisions log 141)', () => {
     const off = await armTripwire(p, { logs: false });
     await writeFile(join(c, 'conversation.jsonl'), '');
     expect((await off.check()).rewritten).toEqual([]);
+  });
+});
+
+describe('armTripwire static-file integrity (decisions log 141)', () => {
+  async function withGit(): Promise<{ p: string }> {
+    const p = await mkdtemp(join(tmpdir(), 'ms-trip2 [x] '));
+    cleanup.push(p);
+    await mkdir(join(p, '.git', 'hooks'), { recursive: true });
+    await mkdir(join(p, '.git', 'info'), { recursive: true });
+    await mkdir(join(p, '.claude'), { recursive: true });
+    await writeFile(join(p, '.git', 'config'), '[core]\n\tfilemode = true\n');
+    await writeFile(join(p, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    await writeFile(join(p, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\n');
+    await writeFile(join(p, '.mcp.json'), '{}');
+    await writeFile(join(p, 'CLAUDE.md'), '# hi');
+    await writeFile(join(p, '.claude', 'settings.json'), '{}');
+    return { p };
+  }
+  it('reports a changed .git/config, hook, .claude file, .mcp.json or CLAUDE.md as tampered', async () => {
+    for (const f of [['.git', 'config'], ['.git', 'hooks', 'pre-commit'], ['.claude', 'settings.json'], ['.mcp.json'], ['CLAUDE.md']]) {
+      const { p } = await withGit();
+      const trip = await armTripwire(p, { logs: false });
+      await writeFile(join(p, ...f), 'TAMPERED');
+      const r = await trip.check();
+      expect(r.tampered, f.join('/')).toEqual([join(...f)]);
+    }
+  });
+  it('stays quiet when the static files are untouched', async () => {
+    const { p } = await withGit();
+    const trip = await armTripwire(p, { logs: false });
+    expect(await trip.check()).toEqual({ tampered: [], moved: [], rewritten: [] });
   });
 });

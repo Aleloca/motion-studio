@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import {
   creativeFileSchema, versionsFileSchema,
@@ -45,7 +45,7 @@ export class CreativeStore {
         const candidate = n === 1 ? base : `${base}-${n}`;
         try {
           await mkdir(join(this.root, candidate));
-          noteCoreChange(this.root);
+          await noteCoreChange(this.root);
           return candidate;
         } catch (e) {
           if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
@@ -57,7 +57,7 @@ export class CreativeStore {
     await writeJsonFileAtomic(this.file(slug, 'creative.json'), creative);
     await writeJsonFileAtomic(this.file(slug, 'versions.json'), { schemaVersion: 1, versions: [] });
     await writeFile(this.file(slug, 'conversation.jsonl'), '');
-    noteCoreChange(this.dir(slug));
+    await noteCoreChange(this.dir(slug));
     return { slug, creative };
   }
 
@@ -125,7 +125,14 @@ export class CreativeStore {
   }
 
   appendConversation(slug: string, entry: ConversationEntry): Promise<void> {
-    return this.lock.run(`l:${slug}`, () => appendFile(this.file(slug, 'conversation.jsonl'), `${JSON.stringify(entry)}\n`));
+    return this.lock.run(`l:${slug}`, async () => {
+      const file = this.file(slug, 'conversation.jsonl');
+      // Creating the log (an old or hand-made creative, or one git removed) adds an entry to the creative folder: note it
+      // so the post-run tripwire does not read it as a move (FP3).
+      const existed = await lstat(file).then(() => true, () => false);
+      await appendFile(file, `${JSON.stringify(entry)}\n`);
+      if (!existed) await noteCoreChange(this.dir(slug));
+    });
   }
 
   async readConversation(slug: string): Promise<ConversationEntry[]> {

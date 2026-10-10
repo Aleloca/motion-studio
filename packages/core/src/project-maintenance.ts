@@ -1,5 +1,6 @@
 import { lstat, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { noteCoreChange } from './core-changes.ts';
 
 const PART_MAX_AGE_MS = 3600_000;
 const PART_RE = /^\..+\.part$/;
@@ -48,11 +49,13 @@ export async function sweepProject(projectDir: string, brandJobIdle: boolean): P
     }
   }
   if (!brandJobIdle) return;
+  let removedProposal = false;
   for (const e of await entries(join(projectDir, 'brand', 'proposals'))) {
     if (!e.isDirectory()) continue;
     const dir = join(projectDir, 'brand', 'proposals', e.name);
-    if (!(await lstat(join(dir, 'proposal.json')).catch(() => null))) await rm(dir, { recursive: true, force: true });
+    if (!(await lstat(join(dir, 'proposal.json')).catch(() => null))) { await rm(dir, { recursive: true, force: true }); removedProposal = true; }
   }
+  if (removedProposal) await noteCoreChange(join(projectDir, 'brand', 'proposals'));
   for (const e of await entries(join(projectDir, 'assets', '.describe'))) {
     await rm(join(projectDir, 'assets', '.describe', e.name), { recursive: true, force: true });
   }

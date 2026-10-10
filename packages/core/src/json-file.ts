@@ -43,7 +43,7 @@ export async function writeJsonFileAtomic(path: string, data: unknown): Promise<
   try {
     await writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
     await rename(tmp, path);
-    noteCoreChange(dirname(path));
+    await noteCoreChange(dirname(path));
   } catch (err) {
     await unlink(tmp).catch(() => { /* never created or already gone */ });
     throw err;

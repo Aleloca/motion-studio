@@ -16,6 +16,7 @@ import { BrandStore } from './brand-store.ts';
 import { parseProposedKit } from './proposed-kit.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { sumUsage } from '../usage/usage-tracker.ts';
+import { noteCoreChange } from '../core-changes.ts';
 
 export interface ProjectRef { root: string; projectSlug: string; projectDir: string }
 export const brandJobKey = (root: string, slug: string) => `brand:${root}:${slug}`;
@@ -130,6 +131,7 @@ export class BrandService {
       const turn = await this.runAgent(ref, 'brand-analysis', buildBrandPrompt(block, locale, sandboxed), join(dir, 'log.jsonl'), signal, jobId, tampered, locale, sandboxed);
       if (turn.status === 'cancelled') {
         await rm(dir, { recursive: true, force: true });
+        await noteCoreChange(join(ref.projectDir, 'brand', 'proposals'));
         return 'cancelled';
       }
       pendingDownloads = () => this.registerDownloads(library, join(dir, 'assets.json'), before, locale);
@@ -202,6 +204,7 @@ export class BrandService {
         if (downloads?.registered.length) await this.deps.git.commitAll(ref.projectDir, t().brand.commitAnalysisAssets({ id })).catch(() => null);
       }
       await rm(dir, { recursive: true, force: true }).catch(() => {});
+      await noteCoreChange(join(ref.projectDir, 'brand', 'proposals'));
       // Assets may already be registered when a late step fails.
       this.changed(ref, 'brand', 'library');
       throw err;

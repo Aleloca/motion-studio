@@ -53,7 +53,7 @@ export async function detachHardLink(file: string): Promise<boolean> {
         continue;
       }
       await rename(tmp, file);
-      noteCoreChange(dirname(file));
+      await noteCoreChange(dirname(file));
       return true;
     } catch (err) {
       await rm(tmp, { force: true }).catch(() => {});
@@ -70,13 +70,20 @@ async function isRealDir(p: string): Promise<boolean> {
   return (await lstat(p).catch(() => null))?.isDirectory() === true;
 }
 
-/** Removes the temp files of detaches a crash left in `dir`. */
+/** How long a `.detach-*` temp file must sit before a sweep removes it, so a concurrent job's in-progress detach is never deleted (M7). */
+const TEMP_STALE_MS = 5 * 60 * 1000;
+
+/** Removes the temp files a crashed detach left in `dir`, but only those older than a few minutes (another job may be detaching right now). */
 async function sweepTemps(dir: string): Promise<void> {
   let swept = false;
   for (const e of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
-    if (e.isFile() && TEMP_RE.test(e.name)) { await rm(join(dir, e.name), { force: true }).catch(() => {}); swept = true; }
+    if (!e.isFile() || !TEMP_RE.test(e.name)) continue;
+    const st = await lstat(join(dir, e.name)).catch(() => null);
+    if (!st || Date.now() - st.mtimeMs < TEMP_STALE_MS) continue;
+    await rm(join(dir, e.name), { force: true }).catch(() => {});
+    swept = true;
   }
-  if (swept) noteCoreChange(dir);
+  if (swept) await noteCoreChange(dir);
 }
 
 /** Real folders directly under `parent`, which must itself be a real folder (links are never followed). */

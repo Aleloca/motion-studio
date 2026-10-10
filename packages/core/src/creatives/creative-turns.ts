@@ -285,6 +285,8 @@ export class CreativeTurnService {
     if (!version) throw new WorkspaceError(404, t().errors.versionNNotFound({ n }));
     if (!version.commit || !version.sessionId) throw new WorkspaceError(409, t().errors.versionNotRestorable({ n }));
     const removed = await this.deps.git.restorePath(ref.projectDir, version.commit, relative(ref.projectDir, store.workDir(ref.creativeSlug)));
+    // Restoring work/ may recreate the creative's work/ folder: note the creative folder so the tripwire does not read it as a move (FP4).
+    await noteCoreChange(store.dir(ref.creativeSlug));
     const updated = await store.update(ref.creativeSlug, { resumeFrom: { version: n, sessionId: version.sessionId } });
     if (removed > 0) {
       await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: t().jobs.removedUnsaved({ count: removed }) });
@@ -351,12 +353,13 @@ export class CreativeTurnService {
           reservedOwner: plan.reservedOwner,
         });
         // Earlier versions are read-only for the agent (sandbox and Edit/Write rules); any change is still detected after.
-        // `outputs/` exists before the agent runs: making it is then never a change to the creative's folder that the
-        // after-run check (run-tripwire.ts) would have to tell from a move.
-        if (!(await lstat(join(creativeDir, 'outputs')).catch(() => null))) {
-          await mkdir(join(creativeDir, 'outputs'), { recursive: true });
-          noteCoreChange(creativeDir);
+        // `work/` and `outputs/` exist before the agent runs: the agent making one (`mkdir -p work`) is then never a change
+        // to the creative's folder that the after-run check (run-tripwire.ts) would have to tell from a move (FP4).
+        let madeDirs = false;
+        for (const d of ['work', 'outputs']) {
+          if (!(await lstat(join(creativeDir, d)).catch(() => null))) { await mkdir(join(creativeDir, d), { recursive: true }); madeDirs = true; }
         }
+        if (madeDirs) await noteCoreChange(creativeDir);
         const earlier = await earlierOutputDirs(creativeDir, n);
         // A hard link made while a version folder was still writable (during its own turn) would stay a writable second
         // name for its files: the sandbox only refuses new links. Detached before the snapshot, so the check below sees

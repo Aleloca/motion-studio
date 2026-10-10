@@ -242,7 +242,7 @@ export class BrandStore {
       await mkdir(join(this.dir, 'proposals'), { recursive: true });
       for (let i = 1; ; i++) {
         const id = i === 1 ? base : `${base}-${i}`;
-        try { await mkdir(join(this.dir, 'proposals', id)); noteCoreChange(join(this.dir, 'proposals')); return id; }
+        try { await mkdir(join(this.dir, 'proposals', id)); await noteCoreChange(join(this.dir, 'proposals')); return id; }
         catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; }
       }
     });

@@ -13,6 +13,7 @@ import { t } from '../i18n.ts';
 import { buildAgentPolicy, sandboxPath, type AgentJobKind } from './policy.ts';
 import { CREATIVE_CORE_FILES, detachProtectedLinks, PROPOSAL_LOG } from './protected-links.ts';
 import { armTripwire } from './run-tripwire.ts';
+import { quarantineRepo } from '../git-safety.ts';
 import type { AgentRun, AgentRunner, AgentTurnRequest } from './runner.ts';
 import type { SandboxSupport } from './sandbox.ts';
 import { UsageLedger } from '../usage/usage-ledger.ts';
@@ -234,12 +235,24 @@ export class AgentLauncher {
         env: { MCP_TOOL_TIMEOUT: '900000', ...policy.env }, unsetEnv: AGENT_UNSET_ENV,
       }, forward);
       const done = run.done.then(async (r) => {
-        // Whatever the agent left running stops before the checks: nothing can make a link or move a folder after them.
-        run.killGroup?.();
+        // Leftover processes are killed before the checks, so nothing can make a link or move a folder after them. Console
+        // turns are the exception (decisions log 141): the user's own agent may leave a dev server or preview running on
+        // purpose, so their group is left alone; the detach and the tripwire still run.
+        if (i.kind !== 'console') run.killGroup?.();
         await detachLinks();
-        const { moved, rewritten } = await tripwire.check().catch(() => ({ moved: [] as string[], rewritten: [] as string[] }));
-        if (moved.length > 0) await warn(t().jobs.recordFoldersMoved({ list: list(moved) }));
-        if (rewritten.length > 0) await warn(t().jobs.logHistoryRewritten({ list: list(rewritten) }));
+        const tw = await tripwire.check().catch(() => ({ tampered: [] as string[], moved: [] as string[], rewritten: [] as string[] }));
+        // A protected config/exec file the core never writes during a run changed (git config/hooks/attributes, .claude,
+        // .mcp.json, CLAUDE*.md): an unambiguous tamper, the only way being a move of a folder out of the sandbox and back.
+        // The repo is quarantined (no git runs on it until the user restores it) and the job fails before any commit.
+        if (tw.tampered.length > 0) {
+          quarantineRepo(i.projectDir);
+          const detail = t().jobs.protectedFilesTampered({ list: list(tw.tampered) });
+          await warn(detail);
+          await tracker.finish(r.status).catch(() => {});
+          throw new Error(detail);
+        }
+        if (tw.moved.length > 0) await warn(t().jobs.recordFoldersMoved({ list: list(tw.moved) }));
+        if (tw.rewritten.length > 0) await warn(t().jobs.logHistoryRewritten({ list: list(tw.rewritten) }));
         const { record, event } = await tracker.finish(r.status);
         if (event) { try { i.onEvent(event); } catch { /* a faulty listener must not lose the outcome */ } }
         return { ...r, usage: record };

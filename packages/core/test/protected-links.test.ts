@@ -1,4 +1,4 @@
-import { appendFile, chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -128,10 +128,14 @@ describe('detachProtectedLinks after review (decisions log 141)', () => {
     await mkdir(join(p, '.studio'), { recursive: true });
     await mkdir(c, { recursive: true });
     const leftovers = [join(c, '.conversation.jsonl.detach-0123456789ab'), join(p, '.studio', '.usage.jsonl.detach-abcdefabcdef')];
-    for (const f of leftovers) await writeFile(f, 'half');
-    await writeFile(join(c, '.notes.detach-zz'), 'keep');
+    // Only temp files older than a few minutes are swept, so a concurrent job's in-progress detach is never deleted (M7).
+    const old = new Date(Date.now() - 10 * 60 * 1000);
+    for (const f of leftovers) { await writeFile(f, 'half'); await utimes(f, old, old); }
+    await writeFile(join(c, '.notes.detach-zz'), 'keep'); // not a detach temp name
+    const fresh = join(c, '.conversation.jsonl.detach-ffffffffffff');
+    await writeFile(fresh, 'in progress'); // a concurrent detach, too new to sweep
     await detachProtectedLinks(p);
-    expect((await readdir(c)).sort()).toEqual(['.notes.detach-zz']);
+    expect((await readdir(c)).sort()).toEqual(['.conversation.jsonl.detach-ffffffffffff', '.notes.detach-zz']);
     expect(await readdir(join(p, '.studio'))).toEqual([]);
   });
 });
