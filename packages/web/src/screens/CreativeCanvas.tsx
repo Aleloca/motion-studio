@@ -229,7 +229,6 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
   const formatLabel = (id: string) => boardLabel({ id, preset: presets.find((p) => p.id === id) ?? null, out: null }, locale);
   const actions = useVersionActions({ slug, creative, states, labelOf: formatLabel, resumeFrom: detail?.creative.resumeFrom?.version ?? null, onChanged: reload, onError: setActionError });
   const [compare, setCompare] = useState<{ open: boolean; init: [number, number]; format: string } | null>(null);
-  const comparable = useMemo(() => boards.filter((b) => versions.some((v) => v.outputs.some((o) => o.format === b.id))).map((b) => b.id), [boards, versions]);
   /** Compare of a format (its badge): the version on screen against the entry before it in the format's history. */
   const openCompare = (format: string) => {
     const s = states[format];
@@ -509,7 +508,7 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
 
       {compare ? (
         <CompareDialog open={compare.open} onClose={() => setCompare((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
-          versions={versions} presets={presets} formats={comparable} initialFormat={compare.format} initial={compare.init} />
+          versions={versions} presets={presets} states={states} format={compare.format} initial={compare.init} actions={actions} />
       ) : null}
       <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
         title={title} snapshot={exporting?.snapshot ?? null} presets={presets} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} />
