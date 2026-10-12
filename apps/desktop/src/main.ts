@@ -10,6 +10,8 @@ import { notificationOptions, registerAttention, sendAttentionClick, showKept } 
 import { setupUpdates } from './updater.ts';
 import { registerFullscreenQuery, registerTitleBar, sendFullscreen } from './titlebar.ts';
 import { externalUrlAllowed, ipcSenderTrusted, isAppUrl, windowOptions, type IpcSender } from './window.ts';
+import { closeAllRenderWindows, desktopRenderOptions } from './render-window.ts';
+import { frameChain, hardenUiWindow, installPreviewFilter, subframeNavigationBlocked } from './preview-filter.ts';
 
 const REPO_URL = 'https://github.com/Aleloca/motion-studio';
 const smokeArg = process.argv.find((a) => a === '--smoke-test' || a.startsWith('--smoke-test='));
@@ -21,14 +23,20 @@ const removeSmokeUserData = () => { if (smokeUserData) rmSync(smokeUserData, { r
 process.on('exit', removeSmokeUserData);
 app.setPath('userData', smokeUserData ?? userDataDir(app.getPath('appData')));
 
-/** Dev: the source tree (dist/main.cjs is two levels under apps/desktop). Packaged: extraResources. */
+/**
+ * Dev: the source tree (dist/main.cjs is two levels under apps/desktop). Packaged: extraResources. `runtimeDir` is the
+ * built composition runtime (the bundled core cannot find it next to its own file).
+ */
 function resourcePaths() {
   if (app.isPackaged) {
     // extraResources: outside the asar so the MCP server can be run by plain node.
-    return { webDir: join(process.resourcesPath, 'web'), mcpServerPath: join(process.resourcesPath, 'mcp-studio.mjs') };
+    return { webDir: join(process.resourcesPath, 'web'), mcpServerPath: join(process.resourcesPath, 'mcp-studio.mjs'), runtimeDir: join(process.resourcesPath, 'runtime') };
   }
   const root = join(__dirname, '..', '..', '..');
-  return { webDir: join(root, 'packages', 'web', 'dist'), mcpServerPath: join(root, 'packages', 'mcp-studio', 'src', 'server.mjs') };
+  return {
+    webDir: join(root, 'packages', 'web', 'dist'), mcpServerPath: join(root, 'packages', 'mcp-studio', 'src', 'server.mjs'),
+    runtimeDir: join(root, 'packages', 'composition-runtime', 'dist'),
+  };
 }
 
 async function boot(configDir?: string) {
@@ -37,9 +45,12 @@ async function boot(configDir?: string) {
   const shellPath = await resolveLoginShellPath(loginShellOptions());
   process.env.PATH = shellPath.path;
   console.log(`PATH source: ${shellPath.source}`);
+  const { runtimeDir, ...resources } = resourcePaths();
   return startServer({
-    ...serverOptions({ resources: resourcePaths(), shellPath, ...(configDir ? { configDir } : {}) }),
+    ...serverOptions({ resources, shellPath, ...(configDir ? { configDir } : {}) }),
     systemLocales: app.getPreferredSystemLanguages(),
+    // Electron's own Chromium renders (hidden offscreen windows), never a Chrome found on disk.
+    ...desktopRenderOptions(runtimeDir),
   });
 }
 
@@ -175,6 +186,9 @@ async function run() {
     isFullScreen: () => !win.isDestroyed() && win.isFullScreen(),
   });
 
+  // The live preview's frames (composition server) may reach only the composition server (preview-filter.ts).
+  installPreviewFilter(session.defaultSession, origin);
+  hardenUiWindow(win.webContents);
   const allowed = (permission: string, requestingUrl: string) => permission === 'notifications' && isAppUrl(requestingUrl, origin);
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb, details) => cb(allowed(permission, details.requestingUrl)));
   session.defaultSession.setPermissionCheckHandler((_wc, permission, requestingOrigin) => allowed(permission, requestingOrigin));
@@ -183,10 +197,13 @@ async function run() {
     closing = true;
     e.preventDefault();
     const bound = new Promise<void>((r) => setTimeout(r, 5000));
-    void Promise.race([server.close().catch(() => {}), bound]).finally(() => app.quit());
+    // Render windows first (a render in flight is cancelled by server.close() too; this is the backstop).
+    void Promise.race([Promise.all([closeAllRenderWindows(), server.close().catch(() => {})]), bound]).finally(() => app.quit());
   });
-  // Deliberate on macOS too: closing the window ends the app, which also stops the in-process core.
+  // Deliberate on macOS too: closing the window ends the app, which also stops the in-process core. Hidden render windows
+  // are windows too, so "all closed" would wait for them: closing the UI window is what ends the app.
   app.on('window-all-closed', () => app.quit());
+  win.on('closed', () => app.quit());
 
   buildMenu();
   if (app.isPackaged) {
@@ -207,7 +224,11 @@ async function run() {
   const guard = (e: { preventDefault: () => void }, url: string) => { if (!isAppUrl(url, origin)) e.preventDefault(); };
   win.webContents.on('will-navigate', (e, url) => guard(e, url));
   win.webContents.on('will-redirect', (e, url) => guard(e, url));
-  win.webContents.on('will-frame-navigate', (e) => guard(e, e.url));
+  win.webContents.on('will-frame-navigate', (e) => {
+    if (e.isMainFrame) guard(e, e.url);
+    // A frame of the UI may show the app or the composition server; a composition frame stays on its server.
+    else if (subframeNavigationBlocked({ url: e.url, frameUrls: frameChain(e.frame) }, origin)) e.preventDefault();
+  });
   if (server.attached) watchAttachedInstance(win, server.attached);
   // Attached: a failed load is handled by the restart prompt (did-fail-load), not by the fatal error box.
   await win.loadURL(server.appUrl).catch((err: unknown) => { if (!server.attached) throw err; });

@@ -75,6 +75,11 @@ export interface StartServerOptions {
    */
   renderProvider?: ChromiumProviderFactory;
   /**
+   * Render settings of this app: `distDir`, the built composition runtime (a bundled core cannot find it next to its own
+   * file: the desktop passes its resources' copy), and `parallel`, the pages (Electron windows) per render.
+   */
+  renderOptions?: { distDir?: string; parallel?: number };
+  /**
    * Extra UI origins allowed to embed live previews, besides the core's own (`http://127.0.0.1:<port>`): the dev server
    * passes Vite's `http://localhost:5173` (src/server/dev.ts).
    */
@@ -148,6 +153,7 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
     vault: opts.vault ?? new KeyringVault(),
     media: await createFfmpegTools(),
     render: createRenderEngine({ ...(opts.renderProvider ? { provider: opts.renderProvider } : {}), appDataDir: configDir }),
+    ...(opts.renderOptions ? { renderOptions: { ...opts.renderOptions } } : {}),
     openPath: revealFolder,
     uiOrigins: () => uiOrigins,
   });

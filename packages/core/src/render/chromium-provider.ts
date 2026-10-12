@@ -24,7 +24,7 @@ import { killGroup, killGroupIfMarked, scaledMemoryLimits, startWatchdog, sweepB
  * request interception and the timeouts are the same code as for Chrome. A provider instance serves ONE render:
  * `renderComposition` always calls `close()` at the end, on success or failure.
  *
- * What Task 7 must do (Electron):
+ * The Electron provider (apps/desktop/src/render-window.ts, Task 7) does this:
  * - **A real flat session id.** `webContents.debugger` reports its own target's events with an empty session id, and the
  *   interception matches every event by session. Attach to the page target with
  *   `Target.attachToTarget({ targetId, flatten: true })` (target id from `Target.getTargets`) and pass THAT session id to
@@ -35,6 +35,8 @@ import { killGroup, killGroupIfMarked, scaledMemoryLimits, startWatchdog, sweepB
  *   server (it also sees WebSockets, which CDP Fetch does not), and the WebRTC policy `disable_non_proxied_udp`.
  * - **Workers and popups.** CDP has no browser-level `TargetGate` there: deny `setWindowOpenHandler`, and let
  *   `session.webRequest` refuse every service or shared worker script (they are not composition files).
+ * - **Processes.** No process group: every window is closed on cancel, failure, close and app quit, and the watchdog
+ *   samples the windows' renderer pids (`samplePidsMemory`, with `app.getAppMetrics()` as another reading).
  */
 
 export interface RuntimeErrorInfo { code: string; message: string; clipId?: string }

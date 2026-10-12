@@ -273,6 +273,22 @@ describe('watchdog', () => {
   });
 });
 
+describe('memory of explicit processes (the desktop render windows)', () => {
+  it.skipIf(process.platform === 'win32')('measures given pids, takes the larger of two readings, and ignores unknown or invalid pids', async () => {
+    const { samplePidsMemory } = await import('../src/render/watchdog.ts');
+    const own = await samplePidsMemory([process.pid]);
+    expect(own).not.toBeNull();
+    expect(own!.pids).toBe(1);
+    expect(own!.maxMB).toBeGreaterThan(10);
+    // Another reading of the same process (Electron's app metrics) wins when larger; other pids in it are ignored.
+    const big = await samplePidsMemory([process.pid], new Map([[process.pid, 64 * 1024 ** 3], [1, 1e12]]));
+    expect(big!.maxMB).toBe(64 * 1024);
+    expect(big!.totalMB).toBe(64 * 1024);
+    expect(await samplePidsMemory([])).toBeNull();
+    expect(await samplePidsMemory([0, -1, 1.5])).toBeNull();
+  });
+});
+
 describe('memory limits', () => {
   it('scale with the page size and the open pages, capped at 75 % of the machine', async () => {
     const { scaledMemoryLimits } = await import('../src/render/watchdog.ts');

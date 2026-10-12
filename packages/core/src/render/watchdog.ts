@@ -139,17 +139,33 @@ export async function sampleGroupMemory(pgid: number): Promise<GroupMemory | nul
   } else {
     pids = await groupMembers(pgid);
   }
+  return samplePidsMemory(pids);
+}
+
+/**
+ * Bytes per process for `pids` (the same sources as `sampleGroupMemory`: macOS footprint with `ps` RSS as a floor, Linux
+ * `/proc`); empty on Windows. Processes that are gone are missing from the map.
+ */
+export async function pidsMemoryBytes(pids: number[]): Promise<Map<number, number>> {
+  const valid = [...new Set(pids)].filter((p) => Number.isInteger(p) && p > 1);
+  if (valid.length === 0 || process.platform === 'win32') return new Map();
+  if (process.platform === 'linux') return linuxMemory(valid);
+  const [fp, rss] = await Promise.all([macFootprint(valid), psRss(valid)]);
+  const bytes = new Map(rss);
+  if (fp) for (const [pid, b] of fp) bytes.set(pid, Math.max(b, bytes.get(pid) ?? 0));
+  return bytes;
+}
+
+/** The memory of an explicit set of processes (the desktop's render windows, which have no process group of their own). */
+export async function samplePidsMemory(pids: number[], extra?: Map<number, number>): Promise<GroupMemory | null> {
   if (pids.length === 0) return null;
-  let bytes: Map<number, number> | null;
-  if (process.platform === 'linux') bytes = await linuxMemory(pids);
-  else {
-    const [fp, rss] = await Promise.all([macFootprint(pids), psRss(pids)]);
-    bytes = new Map(rss);
-    if (fp) for (const [pid, b] of fp) bytes.set(pid, Math.max(b, bytes.get(pid) ?? 0));
-  }
+  const bytes = await pidsMemoryBytes(pids);
+  // `extra`: another reading of the same processes (Electron's app.getAppMetrics()); the larger one counts.
+  for (const [pid, b] of extra ?? []) if (pids.includes(pid)) bytes.set(pid, Math.max(b, bytes.get(pid) ?? 0));
+  if (bytes.size === 0) return null;
   let total = 0, max = 0;
   for (const b of bytes.values()) { total += b; max = Math.max(max, b); }
-  return { totalMB: total / (1024 * 1024), maxMB: max / (1024 * 1024), pids: pids.length };
+  return { totalMB: total / (1024 * 1024), maxMB: max / (1024 * 1024), pids: bytes.size };
 }
 
 export interface WatchdogLimits {
