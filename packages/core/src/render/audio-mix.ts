@@ -59,8 +59,9 @@ export function mixClips(c: Composition): MixClip[] {
   return out.sort((a, b) => a.start - b.start);
 }
 
-const samples = (sec: number) => Math.max(0, Math.round(sec * AUDIO_RATE));
-const num = (n: number) => Number(n.toFixed(6)).toString();
+// Only finite numbers ever reach the filtergraph (a non-finite value from a composition counts as 0).
+const samples = (sec: number) => (Number.isFinite(sec * AUDIO_RATE) ? Math.max(0, Math.round(sec * AUDIO_RATE)) : 0);
+const num = (n: number) => (Number.isFinite(n) ? Number(n.toFixed(6)).toString() : '0');
 
 /** The filter graph for `clips` (input i is `[i:a]`), output `[out]` of exactly `totalSamples` samples. */
 export function mixGraph(clips: ReadonlyArray<Pick<MixClip, 'start' | 'duration' | 'trimStart' | 'volume' | 'fadeIn' | 'fadeOut'>>, totalSamples: number): string {
