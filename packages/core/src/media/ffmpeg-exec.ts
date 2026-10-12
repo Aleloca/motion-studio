@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
-import { closeSync, existsSync, openSync, readSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, openSync, readSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { CommandExec, CommandResult } from '../exec.ts';
 
@@ -55,14 +55,29 @@ const STILL_BY_EXT: Record<string, string> = {
 export function stillDemuxer(file: string): string | null {
   let head = Buffer.alloc(0);
   try {
-    const fd = openSync(file, 'r');
-    try { const b = Buffer.alloc(16); head = b.subarray(0, readSync(fd, b, 0, 16, 0)); } finally { closeSync(fd); }
+    // Non-blocking, and only a regular file is read (M6): a FIFO, socket or device never stalls the core here.
+    const fd = openSync(file, constants.O_RDONLY | constants.O_NONBLOCK);
+    try {
+      if (fstatSync(fd).isFile()) { const b = Buffer.alloc(16); head = b.subarray(0, readSync(fd, b, 0, 16, 0)); }
+      else return null;
+    } finally { closeSync(fd); }
   } catch { /* unreadable here: ffmpeg reports it */ }
   const byContent = stillByContent(head);
   if (byContent) return byContent;
   if (head.length > 0) return null; // other content: not a still, whatever its name
   const ext = /\.([^./\\]+)$/.exec(file)?.[1]?.toLowerCase();
   return ext ? STILL_BY_EXT[ext] ?? null : null;
+}
+
+/**
+ * Whether `file` is a regular file, checked without blocking (opened `O_NONBLOCK`, then `fstat`): what the media tools ask
+ * before handing a path to ffmpeg, so a FIFO, socket or device is refused at once (M6).
+ */
+export function isRegularFileNow(file: string): boolean {
+  try {
+    const fd = openSync(file, constants.O_RDONLY | constants.O_NONBLOCK);
+    try { return fstatSync(fd).isFile(); } finally { closeSync(fd); }
+  } catch { return false; }
 }
 
 /**
@@ -97,27 +112,65 @@ export const ffKindOf = (cmd: string): FfKind => (/ffprobe/i.test(cmd.split(/[\\
 
 /** Filter options: their value is a filtergraph. */
 const FILTER_FLAG = /^-(vf|af|filter(:[a-z])?(:\d+)?|filter_complex|lavfi)$/;
-/** Filters that open files or URLs or take commands from outside (a filtergraph must never name one). */
-const FILTER_SOURCE = /(^|[\s,;[\]'"=])(a?movie|sendcmd|asendcmd|zmq|azmq)\s*[=@:,;'"[\]]?/i;
+/**
+ * The filters the core builds (normalisation, colour stages, the mix, the encode, the VideoToolbox check and its test
+ * pattern): an ALLOWLIST (final wave M3). Any other filter name in a filtergraph or a lavfi input is refused, so no file
+ * reader or writer (`movie`, `drawtext textfile=`, `subtitles`, `lut3d file=`, `metadata file=`, `psnr stats_file=`, …)
+ * can ever run, whatever reaches a graph.
+ */
+export const ALLOWED_FILTERS: ReadonlySet<string> = new Set([
+  'setpts', 'fps', 'colorspace', 'zscale', 'format', 'tonemap', 'scale', 'setsar', 'setparams',
+  'aresample', 'aformat', 'atrim', 'asetpts', 'volume', 'afade', 'adelay', 'amix', 'apad', 'alimiter',
+  'ssim', 'testsrc', 'testsrc2', 'overlay',
+]);
+/** Input options that would let a container open other files (mov external tracks): never passed. */
+const FORBIDDEN_OPTIONS = new Set(['-enable_drefs', '-use_absolute_path']);
+
+/**
+ * The filter names of a filtergraph: link labels `[…]` removed, split at `;` and `,` outside single quotes (backslash
+ * escapes honoured), each name the text before its first `=`. Linear.
+ */
+export function filterNames(graph: string): string[] {
+  const names: string[] = [];
+  let cur = '';
+  let quoted = false;
+  let label = false;
+  const flush = () => { const name = cur.split('=')[0]!.trim(); if (name) names.push(name); cur = ''; };
+  for (let i = 0; i < graph.length; i++) {
+    const c = graph[i]!;
+    if (c === '\\') { cur += c + (graph[i + 1] ?? ''); i++; continue; }
+    if (quoted) { if (c === "'") quoted = false; cur += c; continue; }
+    if (c === "'") { quoted = true; cur += c; continue; }
+    if (label) { if (c === ']') label = false; continue; }
+    if (c === '[') { label = true; continue; }
+    if (c === ';' || c === ',') { flush(); continue; }
+    cur += c;
+  }
+  flush();
+  return names.map((n) => n.split('@')[0]!.trim());
+}
+const badFilter = (graph: string) => filterNames(graph).find((n) => !ALLOWED_FILTERS.has(n));
 
 /**
  * Throws unless every `-i` of `args` has `-protocol_whitelist` and `-format_whitelist` among the options since the previous
  * `-i`. ffprobe must name its input with `-i` (a bare positional input could not be checked), unless it only prints info.
- * Never a filter that opens files or URLs (`movie`, `amovie`) or reads commands (`sendcmd`, `zmq`), in a filter option or a
- * lavfi input, nor an option whose value comes from a file (`-/opt`, `-filter_script`, `-filter_complex_script`).
+ * Only filters of `ALLOWED_FILTERS` in a filter option or a lavfi input; never an option whose value comes from a file
+ * (`-/opt`, `-filter_script`, `-filter_complex_script`) nor one letting a container open other files (`-enable_drefs`,
+ * `-use_absolute_path`).
  */
 export function assertSafeInputs(kind: FfKind, args: readonly string[]): void {
   let seenProtocol = false, seenFormat = false, inputs = 0, forced = '';
   for (let k = 0; k < args.length; k++) {
     const a = args[k]!;
     if (a.startsWith('-/') || /^-(filter|filter_complex|lavfi)_script$/.test(a)) throw new Error(`${kind}: option ${a} reads its value from a file`);
-    if (FILTER_FLAG.test(a) && FILTER_SOURCE.test(args[k + 1] ?? '')) throw new Error(`${kind}: filtergraph names a source filter`);
+    if (FORBIDDEN_OPTIONS.has(a)) throw new Error(`${kind}: option ${a} lets a container open other files`);
+    if (FILTER_FLAG.test(a)) { const bad = badFilter(args[k + 1] ?? ''); if (bad !== undefined) throw new Error(`${kind}: filter ${JSON.stringify(bad.slice(0, 40))} is not one the core builds (source filter or file access)`); }
     if (a === '-f') { forced = args[k + 1] ?? ''; k++; continue; }
     if (a === '-protocol_whitelist') { seenProtocol = true; k++; continue; }
     if (a === '-format_whitelist') { seenFormat = true; k++; continue; }
     if (a === '-i') {
       if (!seenProtocol || !seenFormat) throw new Error(`${kind} input ${JSON.stringify(args[k + 1] ?? '')} has no protocol/format whitelist`);
-      if (forced === 'lavfi' && FILTER_SOURCE.test(args[k + 1] ?? '')) throw new Error(`${kind}: lavfi input names a source filter`);
+      if (forced === 'lavfi') { const bad = badFilter(args[k + 1] ?? ''); if (bad !== undefined) throw new Error(`${kind}: lavfi input filter ${JSON.stringify(bad.slice(0, 40))} is not one the core builds (source filter or file access)`); }
       seenProtocol = seenFormat = false;
       forced = '';
       inputs++;

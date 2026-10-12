@@ -1,7 +1,7 @@
 import { mkdir, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { execCommand, type CommandExec } from '../exec.ts';
-import { execFfVia, mediaInput } from './ffmpeg-exec.ts';
+import { execFfVia, isRegularFileNow, mediaInput } from './ffmpeg-exec.ts';
 import { isSvgName, svgSize } from './svg-size.ts';
 
 export interface MediaInfo { width: number; height: number; durationSec: number | null; /** Average frame rate of the video stream, when known. */ fps?: number }
@@ -29,6 +29,8 @@ export async function createFfmpegTools(exec: CommandExec = execCommand): Promis
   const grab = async (video: string, out: string, atSec: number, opts?: { width?: number }) => {
     // SVG: never given to ffmpeg (final wave P1: no svg_pipe, whose renderer may resolve external references).
     if (isSvgName(video)) return false;
+    // Only a regular file is handed to ffmpeg (a FIFO, socket or device would stall it: M6).
+    if (!isRegularFileNow(video)) return false;
     await mkdir(dirname(out), { recursive: true });
     // The JPEG muxer is always named: a temp name has no image extension, and the image2 muxer (picked by extension) would
     // read `%` in the output path as a frame-number pattern.
@@ -47,6 +49,7 @@ export async function createFfmpegTools(exec: CommandExec = execCommand): Promis
     async probe(file) {
       // SVG: its size from a plain text scan (svg-size.ts), never ffprobe.
       if (isSvgName(file)) { const s = await svgSize(file); return s ? { ...s, durationSec: null } : null; }
+      if (!isRegularFileNow(file)) return null;
       const r = await execFfVia(exec, 'ffprobe', ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', ...mediaInput({ file })], { timeoutMs: 30_000 });
       if (r.code !== 0) return null;
       try {
