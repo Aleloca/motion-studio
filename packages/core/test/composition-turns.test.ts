@@ -42,6 +42,8 @@ const PRESETS: FormatPreset[] = [
   { id: 'test-wide-c', channel: 'Test', name: 'Wide C', width: 320, height: 180, kind: 'video', extensions: ['mp4'], targetBitrateKbps: 800 },
   { id: 'test-tall', channel: 'Test', name: 'Tall', width: 180, height: 320, kind: 'video', extensions: ['mp4'] },
   { id: 'test-still', channel: 'Test', name: 'Still', width: 320, height: 180, kind: 'image', extensions: ['png', 'jpg'] },
+  // A size limit no render meets (I2: a render with problems).
+  { id: 'test-tiny', channel: 'Test', name: 'Tiny', width: 200, height: 200, kind: 'video', extensions: ['mp4'], maxFileMB: 0.00001 },
 ];
 
 /** A minimal PNG header (what `imageSize` reads): enough for a fake frame. */
@@ -636,6 +638,25 @@ describe('review fixes (Task 5b)', { timeout: 90_000 }, () => {
     expect(r.statusCode, r.body).toBe(200);
     expect(fake.renders.map((x) => x.format.id)).toEqual(['test-wide', 'test-still']);
     expect((r.json() as { files: Array<{ to: string }> }).files.map((f) => basename(f.to))).toEqual(['launch-test-still-v1.png']);
+  });
+
+  it('I2: an export does not copy a render it just made that has problems; once the user ticks it again, it is copied', async () => {
+    const slug = await create(['test-wide', 'test-tiny']);
+    const picks = { 'test-wide': 1, 'test-tiny': 1 };
+    const first = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, headers: H, payload: { destination: join(base, 'out1'), picks } });
+    expect(first.statusCode, first.body).toBe(200);
+    const r1 = first.json() as { files: Array<{ to: string }>; skipped: string[] };
+    expect(r1.files.map((f) => basename(f.to))).toEqual(['launch-test-wide-v1.mp4']);
+    expect(r1.skipped.join(' ')).toMatch(/Tiny v1 \(renderizzato con problemi: .+\)/);
+    // The render with problems is now on record: a second export (the row ticked again) copies it.
+    const again = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, headers: H, payload: { destination: join(base, 'out2'), picks: { 'test-tiny': 1 } } });
+    expect(again.statusCode, again.body).toBe(200);
+    expect((again.json() as { files: Array<{ to: string }> }).files.map((f) => basename(f.to))).toEqual(['launch-test-tiny-v1.mp4']);
+    // Only the problem render, made now: nothing exported, a localized 409 naming the problem.
+    const slug2 = await create(['test-tiny']);
+    const only = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug2}/export`, headers: H, payload: { destination: join(base, 'out3'), picks: { 'test-tiny': 1 } } });
+    expect(only.statusCode).toBe(409);
+    expect(only.json()).toMatchObject({ code: 'export-render-problems' });
   });
 
   it('I3: a composition turn never shows the agent a render command, even from a legacy base', async () => {

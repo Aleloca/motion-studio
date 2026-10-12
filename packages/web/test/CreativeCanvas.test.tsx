@@ -1311,6 +1311,18 @@ describe('CreativeCanvas · compositions (Task 8)', () => {
     expect(await within(board('tiktok-9x16')).findByText('Render 42%')).toBeTruthy();
   });
 
+  it('a render with problems is never "Rendered": a warning with the reasons and "Render again" (I2)', async () => {
+    const rendered = { ...out('instagram-post-1x1', 'instagram-post-1x1.png'), sha256: 'd'.repeat(64), fromComposition: HASH['instagram-post-1x1'], problems: ['Il file pesa 31 MB, oltre il limite di 30 MB'] };
+    detail = makeDetail([v2(1, [rendered])]);
+    render(<Harness live={emptyLive()} />);
+    await picture('tiktok-9x16');
+    expect(within(board('instagram-post-1x1')).queryByText('Renderizzato')).toBeNull();
+    await userEvent.click(within(board('instagram-post-1x1')).getByRole('button', { name: /^Mostra i problemi del render di/ }));
+    expect(await screen.findByText('Il file pesa 31 MB, oltre il limite di 30 MB')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: /^Rifai il render di/ }));
+    expect(api.renderVersion).toHaveBeenCalledWith('acme', 'lancio', 1, ['instagram-post-1x1']);
+  });
+
   it('"Render failed · Retry" renders that format again', async () => {
     detail = makeDetail([v2(1)]);
     render(<Harness live={liveWith(renderJob({ state: 'failed', error: 'Render failed: boom', finishedAt: at }))} />);

@@ -136,12 +136,23 @@ export function renderState(v: VersionEntry, formatId: string): RenderState {
 }
 
 /**
+ * The problems the core found in the CURRENT render of `formatId` in a v2 version `v` (final review I2): its output checks
+ * (size over the channel's limit, duration off target, resolution, unreadable), a follower's copy carrying its primary's.
+ * Empty for a legacy file, a version without a current render (`renderState` not `rendered`) or a clean render.
+ */
+export function renderProblems(v: VersionEntry, formatId: string): string[] {
+  if (!v.compositions?.some((c) => c.format === formatId) || renderState(v, formatId) !== 'rendered') return [];
+  return v.outputs.find((o) => o.format === formatId)?.problems ?? [];
+}
+
+/**
  * Whether `formatId` in version `v` has problems: the problems of its composition when recorded (v2), else those of its file
- * when recorded, else (old versions) the version-level `problems`, which then count for every format of that version.
+ * when recorded, else (old versions) the version-level `problems`, which then count for every format of that version. A v2
+ * format whose current render has problems has problems too (I2: such a render is never a clean ★).
  */
 function hasProblems(v: VersionEntry, formatId: string): boolean {
   const own = v.compositions?.find((c) => c.format === formatId)?.problems ?? v.outputs.find((o) => o.format === formatId)?.problems;
-  return own !== undefined ? own.length > 0 : v.problems.length > 0;
+  return (own !== undefined ? own.length > 0 : v.problems.length > 0) || renderProblems(v, formatId).length > 0;
 }
 
 export interface Star { version: number | null; manual: boolean; newer: number | null; follows: string | null }

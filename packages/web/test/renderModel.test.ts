@@ -37,6 +37,9 @@ describe('renderModel', () => {
     expect(boardRender(v(2), 'post', [job({ formats: ['reel'] }), job({ id: 'r2', key: 'render:/Users/me/Motion Studio:acme:lancio:v2:2', state: 'queued', formats: ['post'], queuePosition: 1 })], KEY)).toEqual({ kind: 'queued', ahead: 1 });
     expect(boardRender(v(2), 'post', [job({ key: 'render:/Users/me/Motion Studio:acme:lancio:v1:2', formats: ['post'] })], KEY)).toEqual({ kind: 'none' });
     expect(boardRender(v(2), 'post', [job({ key: 'render:/Users/me/Motion Studio:acme:lancio:v22', formats: ['post'] })], KEY)).toEqual({ kind: 'none' });
+    // A current render with problems is never "rendered" (I2), and Render ★ does not render it again.
+    const bad = { ...v(2, ['reel']), outputs: v(2, ['reel']).outputs.map((o) => ({ ...o, problems: ['too large'] })) };
+    expect(boardRender(bad, 'reel', [], KEY)).toEqual({ kind: 'problem', problems: ['too large'] });
     // A later success wins over an earlier failure.
     expect(boardRender(v(2, ['reel']), 'reel', [job({ state: 'failed', finishedAt: at })], KEY)).toEqual({ kind: 'rendered' });
   });

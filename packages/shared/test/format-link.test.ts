@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canFollow, checkLink, defaultLinks, effectiveLinks, latestDurationOf, DEFAULT_FORMATS, followerMatches, followerVersion, formatHistory, renderState, starOf, type FormatPreset, type OutputFileInfo, type VersionEntry } from '../src/index.ts';
+import { canFollow, checkLink, defaultLinks, effectiveLinks, latestDurationOf, DEFAULT_FORMATS, followerMatches, followerVersion, formatHistory, renderProblems, renderState, starOf, type FormatPreset, type OutputFileInfo, type VersionEntry } from '../src/index.ts';
 
 const preset = (id: string): FormatPreset => DEFAULT_FORMATS.find((f) => f.id === id)!;
 const REEL = preset('instagram-reel-9x16');
@@ -255,6 +255,19 @@ describe('starOf with compositions', () => {
   it('the composition\'s own problems win over its render\'s', () => {
     const vs = [v2(1, [['reel', 'a', undefined, []]]), v2(2, [['reel', 'b', undefined, ['bad']]], [{ ...rendered('reel', 'f', 'b'), problems: [] }], ['bad'])];
     expect(starOf(vs, 'reel', undefined, undefined).version).toBe(1);
+  });
+  it('a current render with problems (size, duration, resolution, unreadable) is not a clean ★ (final review I2)', () => {
+    const vs = [v2(1, [['reel', 'a', undefined, []]], [rendered('reel', 'f', 'a')]), v2(2, [['reel', 'b', undefined, []]], [{ ...rendered('reel', 'g', 'b'), problems: ['too large'] }])];
+    expect(renderProblems(vs[1]!, 'reel')).toEqual(['too large']);
+    expect(starOf(vs, 'reel', undefined, undefined).version).toBe(1);
+    // A manual pick stays (the export asks before copying it).
+    expect(starOf(vs, 'reel', { reel: 2 }, undefined).version).toBe(2);
+    // A stale render's problems are not the version's: it is rendered again before any export.
+    const stale = v2(3, [['reel', 'c', undefined, []]], [{ ...rendered('reel', 'g', 'b'), problems: ['too large'] }]);
+    expect(renderProblems(stale, 'reel')).toEqual([]);
+    expect(starOf([...vs, stale], 'reel', undefined, undefined).version).toBe(3);
+    // Legacy files keep their own rule.
+    expect(renderProblems(ver(1, [out('reel', h('a'), ['bad'])]), 'reel')).toEqual([]);
   });
   it('old v2 data without per-format problems falls back to the version-level problems', () => {
     const vs = [v2(1, [['reel', 'a']]), v2(2, [['reel', 'b']], [], ['broken'])];

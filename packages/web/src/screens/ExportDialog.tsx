@@ -5,7 +5,7 @@
 // is remembered; progress, then a success screen with Show in Finder. File sizes are not shown: the API does not report
 // them (ruling R6).
 import {
-  EXPORT_NAME_TOKENS, exportDate, exportExtension, exportNameCollisions, exportNameVars, formatName, renderName, renderState,
+  EXPORT_NAME_TOKENS, exportDate, exportExtension, exportNameCollisions, exportNameVars, formatName, renderName, renderProblems, renderState,
   type FormatPreset, type JobSummary, type VersionEntry, type WorkspaceSettings,
 } from '@motion-studio/shared';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -106,6 +106,11 @@ interface Row {
   newer: number | null;
   /** Why the row cannot be exported (it is then unchecked and disabled); null when it can. */
   blocked: string | null;
+  /**
+   * The problems of the row's current render (I2: too large, duration off, resolution, unreadable). The row starts
+   * unchecked with the reasons shown: ticking it is the confirmation to export it anyway.
+   */
+  problems: string[];
 }
 
 function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern: initialPattern, onSettings, onBusy, jobs = {} }: ExportDialogProps & { snapshot: ExportSnapshot; onBusy(busy: boolean): void }) {
@@ -129,9 +134,10 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
       ? (follows !== null ? x.noFollowerFile({ n, primary: follows }) : x.fileMissing({ n }))
       : s.starFileMissing ? x.fileMissing({ n: fileN ?? n }) : null;
     const file = output?.file ?? (needsRender ? `${s.id}${renderedExtension(preset)}` : null);
-    return [{ id: s.id, preset, n, fileN, output, needsRender, file, follows, newer: follows === null ? s.star.newer : null, blocked }];
+    const problems = version && !needsRender ? renderProblems(version, s.id) : [];
+    return [{ id: s.id, preset, n, fileN, output, needsRender, file, follows, newer: follows === null ? s.star.newer : null, blocked, problems }];
   }), [states, versions, presets, x, locale]);
-  const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(rows.map((r) => [r.id, r.blocked === null])));
+  const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(rows.map((r) => [r.id, r.blocked === null && r.problems.length === 0])));
   const [pattern, setPattern] = useState(initialPattern);
   const [savedPattern, setSavedPattern] = useState(initialPattern);
   const [save, setSave] = useState<SaveState>({ kind: 'idle' });
@@ -292,6 +298,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
                   <span className="ms-exp-label">{r.preset ? <ChannelMark channel={channelOf(r.preset.channel)} /> : null}<b>{label}</b></span>
                   {blocked ? <span className="ms-exp-blocked">{r.blocked}</span> : <span className="ms-exp-file">{name ?? '—'}</span>}
                   {r.needsRender && !blocked ? <span className="ms-exp-render">{t.web.render.rendersFirst}</span> : null}
+                  {r.problems.length && !blocked ? <span className="ms-exp-problem">{x.renderProblems({ list: r.problems.join('; ') })}</span> : null}
                 </span>
                 {r.follows !== null ? (
                   <span className="ms-exp-follows">{x.follows({ primary: r.follows })}<span className="ms-exp-ver">{x.star({ n: r.n })}</span></span>

@@ -315,6 +315,13 @@ export class RenderJobService {
       await noteCoreChange(versionDir);
       this.deps.broadcast({ type: 'creative', project: ref.projectSlug, creative: ref.creativeSlug });
     }
+    // The output checks' problems (size, duration, resolution, unreadable; final review I2) as job notes and chat warnings,
+    // like the frame warnings; a follower's copy only for the problems its own preset adds.
+    const primaryProblems = infos[0]?.problems ?? [];
+    for (const [i, info] of infos.entries()) {
+      const own = i === 0 ? primaryProblems : (info.problems ?? []).filter((p) => !primaryProblems.includes(p));
+      if (own.length) await o.note(m.render.outputProblems({ format: o.label(info.format), list: own.join('; ') })).catch(() => {});
+    }
     if (failure) throw failure;
   }
 

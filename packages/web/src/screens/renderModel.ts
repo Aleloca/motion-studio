@@ -1,7 +1,7 @@
 // Render state of the v2 (composition) versions on the web side (Task 8, spec §5.3): per board "Not rendered",
-// "Queued · 2 renders ahead", "Rendering 42%", "Rendered", "Render failed · Retry", from the version's records and the live
+// "Queued · 2 renders ahead", "Rendering 42%", "Rendered", "Render problem · Render again", "Render failed · Retry", from the version's records and the live
 // render jobs; and what "Render ★" renders.
-import { renderJobKeyOf, renderState, type JobSummary, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
+import { renderJobKeyOf, renderProblems, renderState, type JobSummary, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
 import type { FormatState } from './versionModel.ts';
 
 export type BoardRender =
@@ -9,6 +9,8 @@ export type BoardRender =
   | { kind: 'queued'; ahead: number | null }
   | { kind: 'rendering'; pct: number }
   | { kind: 'rendered' }
+  /** A current render whose output checks found problems (size, duration, resolution, unreadable): never "Rendered" (I2). */
+  | { kind: 'problem'; problems: string[] }
   | { kind: 'failed'; error: string | null };
 
 /** The composition of `format` in a version (v2); null for a legacy version or a format it lacks. */
@@ -43,14 +45,17 @@ export function boardRender(version: VersionEntry | null | undefined, format: st
   const mine = jobs.filter((j) => j.kind === 'render' && isVersionJob(j, key) && covers(j, format));
   const live = mine.find(isActiveJob);
   if (live) return live.state === 'queued' ? { kind: 'queued', ahead: live.queuePosition ?? null } : { kind: 'rendering', pct: renderPct(live, format) };
-  if (renderState(version, format) === 'rendered') return { kind: 'rendered' };
+  if (renderState(version, format) === 'rendered') {
+    const problems = renderProblems(version, format);
+    return problems.length ? { kind: 'problem', problems } : { kind: 'rendered' };
+  }
   const last = mine.filter((j) => !isActiveJob(j)).sort((a, b) => ended(b).localeCompare(ended(a)))[0];
   return last?.state === 'failed' ? { kind: 'failed', error: last.error ?? null } : { kind: 'none' };
 }
 
 /**
  * "Render ★": every primary format whose ★ is a v2 version without a current render (and no render of it on the way),
- * grouped by version (one request each).
+ * grouped by version (one request each). A current render with problems is not rendered again here (the board offers it).
  */
 export function starRenderPlan(states: Record<string, FormatState>, versions: VersionEntry[], jobs: JobSummary[], creativeJobKey: string): Map<number, string[]> {
   const plan = new Map<number, string[]>();
@@ -58,7 +63,7 @@ export function starRenderPlan(states: Record<string, FormatState>, versions: Ve
     if (s.follows || s.star.version === null) continue;
     const v = versions.find((x) => x.n === s.star.version);
     const r = boardRender(v, s.id, jobs, creativeJobKey);
-    if (!v || !r || r.kind === 'rendered' || r.kind === 'queued' || r.kind === 'rendering') continue;
+    if (!v || !r || r.kind === 'rendered' || r.kind === 'problem' || r.kind === 'queued' || r.kind === 'rendering') continue;
     plan.set(v.n, [...(plan.get(v.n) ?? []), s.id]);
   }
   return plan;

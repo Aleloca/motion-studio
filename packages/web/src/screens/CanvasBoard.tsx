@@ -197,13 +197,17 @@ export function CanvasBoard(p: BoardProps) {
   );
 }
 
-/** A v2 board's render state (spec §5.3): "Not rendered", "Queued · 2 renders ahead", "Rendering 42%", "Rendered", "Render failed · Retry". */
+/**
+ * A v2 board's render state (spec §5.3): "Not rendered", "Queued · 2 renders ahead", "Rendering 42%", "Rendered", "Render
+ * failed · Retry", and a render with problems (I2): never "Rendered", a warning chip with the reasons and "Render again".
+ */
 export function RenderState({ render, label, onRender }: { render: BoardRender; label: string; onRender(): void }) {
   const r = useT().web.render;
   switch (render.kind) {
     case 'queued': return <span className="ms-cv-board-state">{render.ahead ? r.queuedAhead({ count: render.ahead }) : r.queued}</span>;
     case 'rendering': return <span className="ms-cv-board-state">{r.rendering({ pct: render.pct })}</span>;
     case 'rendered': return <span className="ms-cv-board-state">{r.rendered}</span>;
+    case 'problem': return <RenderProblemChip problems={render.problems} label={label} onRender={onRender} />;
     case 'failed':
       return (
         <span className="ms-cv-board-state ms-cv-render-failed" title={render.error ?? undefined}>
@@ -212,6 +216,32 @@ export function RenderState({ render, label, onRender }: { render: BoardRender; 
       );
     default: return <span className="ms-cv-board-state">{r.notRendered}</span>;
   }
+}
+
+/**
+ * A render whose output checks found problems (final review I2): "⚠ Render problem" in the warn tone, opening a popover with
+ * each reason (the core's text, rendered as text) and "Render again".
+ */
+export function RenderProblemChip({ problems, label, onRender }: { problems: string[]; label: string; onRender(): void }) {
+  const r = useT().web.render;
+  const anchor = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button ref={anchor} type="button" className="ms-pill ms-warn ms-cv-large ms-cv-render-problem" aria-haspopup="dialog" aria-expanded={open}
+        aria-label={r.problemOpen({ label })} title={problems.join('\n')} onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}>
+        <Icon name="warn" size={11} />{r.problemState({ count: problems.length })}
+      </button>
+      <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="bottom-start" width={320} label={r.problemTitle}>
+        <div className="ms-cv-large-pop">
+          <b>{r.problemTitle}</b>
+          <ul className="ms-cv-problem-list">{problems.map((p, i) => <li key={i}>{p}</li>)}</ul>
+          <p>{r.problemHint}</p>
+          <Button variant="outline" aria-label={r.renderAgainOf({ label })} onClick={(e) => { e.stopPropagation(); setOpen(false); onRender(); }}>{r.renderAgain}</Button>
+        </div>
+      </Popover>
+    </>
+  );
 }
 
 /**

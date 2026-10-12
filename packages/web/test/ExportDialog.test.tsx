@@ -263,6 +263,20 @@ describe('ExportDialog · compositions rendered first (Task 8)', () => {
     expect(await screen.findByText('2 files exported')).toBeTruthy();
   });
 
+  it('a ★ render with problems is shown with its reasons and starts unchecked; ticking it exports it anyway (I2)', async () => {
+    const bad = { ...v7, outputs: [{ ...v7.outputs[0]!, problems: ['instagram-post-1x1.png is 31 MB, over the 30 MB limit'] }, { ...out(REEL, 'mp4', 1920), sha256: 'a'.repeat(64), fromComposition: 'e'.repeat(64) }] };
+    render(
+      <I18nProvider locale="en">
+        <ExportDialog open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: [bad], states: twoStates() }} presets={DEFAULT_FORMATS} pattern="{title}-{format}-v{v}" />
+      </I18nProvider>,
+    );
+    expect(screen.getByText('Rendered with problems: instagram-post-1x1.png is 31 MB, over the 30 MB limit. Tick it to export it anyway')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Export 1 file' })).toBeTruthy();
+    await userEvent.click(screen.getByRole('checkbox', { name: /Post/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Export 2 files' }));
+    await waitFor(() => expect(api.exportPicks).toHaveBeenCalledWith('acme', 'c1', expect.objectContaining({ picks: { [REEL]: 7, [POST]: 7 } })));
+  });
+
   it('nothing to render: no prepare step', async () => {
     const rendered = { ...v7, outputs: [...v7.outputs, { ...out(REEL, 'mp4', 1920), sha256: 'a'.repeat(64), fromComposition: 'e'.repeat(64) }] };
     render(

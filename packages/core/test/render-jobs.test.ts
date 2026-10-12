@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { renderState, type FormatPreset, type JobSummary, type ManifestV2, type VersionEntry } from '@motion-studio/shared';
+import { renderProblems, renderState, type FormatPreset, type JobSummary, type ManifestV2, type VersionEntry } from '@motion-studio/shared';
 import { AppConfigStore } from '../src/app-config.ts';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { readCompositionFolder } from '../src/compositions/composition-files.ts';
@@ -311,6 +311,20 @@ describe('render jobs', { timeout: 60_000 }, () => {
     expect(fake.calls.map((c) => c.format.id)).toEqual(['test-wide', 'test-tall', 'test-still']);
     const v = await versionOf(store, slug, 1);
     for (const f of ['test-wide', 'test-tall', 'test-still']) expect(renderState(v, f), f).toBe('rendered');
+  });
+
+  it('output problems of a render become job notes and chat warnings, and the render is never a clean ★ (I2)', async () => {
+    // test-wide-c has a tiny size limit: its render is too large.
+    const { slug, store } = await v2Creative({ formats: ['test-wide-c'], links: {} });
+    const done = await waitJob((await post(slug, 1)).json().id);
+    expect(done.state).toBe('succeeded');
+    expect(done.notes?.join('\n')).toMatch(/test-wide-c|Wide C/);
+    expect(done.notes?.join('\n')).toMatch(/problemi/);
+    const v = await versionOf(store, slug, 1);
+    expect(renderState(v, 'test-wide-c')).toBe('rendered');
+    expect(renderProblems(v, 'test-wide-c').length).toBeGreaterThan(0);
+    const chat = (await store.readConversation(slug)).filter((e) => e.type === 'system' && e.level === 'warning').map((e) => (e as { text: string }).text);
+    expect(chat.some((t) => /problemi/.test(t))).toBe(true);
   });
 
   it('a job conflict answers 409 with a localized message that never names the key (I3)', async () => {
