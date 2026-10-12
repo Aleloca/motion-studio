@@ -95,11 +95,14 @@ describe.skipIf(!chrome)('composition server in headless Chrome', () => {
    * Screenshots until the video block shows `expected` (a loaded machine paints the decoded frame late); the caller still
    * asserts the final image equals `expected`, so a wrong frame that never settles still fails. `again` re-issues the seek.
    */
-  const untilVideoFrame = async (page: Page, expected: number, again?: () => Promise<unknown>) => {
+  /**
+   * Screenshots until the video block shows `expected` (a loaded compositor can show the presented frame a little late). The
+   * seek is never re-issued (M2): in render mode a seek that returned before its frame was presented must not be hidden.
+   */
+  const untilVideoFrame = async (page: Page, expected: number) => {
     let img = decodePng(await page.screenshot());
     for (let i = 0; i < 60 && videoFrame(img) !== expected; i++) {
       await new Promise((r) => setTimeout(r, 500));
-      if (again) await again();
       img = decodePng(await page.screenshot());
     }
     return img;
@@ -131,7 +134,7 @@ describe.skipIf(!chrome)('composition server in headless Chrome', () => {
       expect(info.errors).toEqual([]);
       expect(info.duration).toBe(4);
       await page.eval('window.__ms.seek(1.5)', 200_000);
-      const img = ffmpeg ? await untilVideoFrame(page, expectedFrame(1.5), () => page.eval('window.__ms.seek(1.5)', 200_000)) : decodePng(await page.screenshot());
+      const img = ffmpeg ? await untilVideoFrame(page, expectedFrame(1.5)) : decodePng(await page.screenshot());
       expect(barWidth(img)).toBe(75);
       expect(isGreen(px(img, HOSTILE.x + 20, HOSTILE.y + 20))).toBe(true);
       if (ffmpeg) {
