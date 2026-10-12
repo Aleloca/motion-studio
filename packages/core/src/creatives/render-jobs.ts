@@ -319,9 +319,10 @@ export class RenderJobService {
     // (a cancel waits for these few steps; a failing follower is left out and reported). First the primary alone, at once,
     // with the renderer's own hash (a crash during the steps below then leaves a true record), then everything.
     const bare: OutputFileInfo = { format, file, width: result.width, height: result.height, durationSec: result.durationSec, verified: false, preview: null, sha256: result.sha256, problems: [], fromComposition: loaded.hash };
-    await this.record(store, ref, n, [bare], o.plan.fixFollows, o.comps);
     const infos: OutputFileInfo[] = [];
     let failure: unknown = null;
+    // A failing first record must not skip the checks, the follower copies and the final record below (C10).
+    await this.record(store, ref, n, [bare], o.plan.fixFollows, o.comps).catch((e: unknown) => { failure = e; });
     try {
       o.progress({ format, phase: 'finishing', done: 0, total: 1 + o.followers.length });
       await noteCoreChange(versionDir);
@@ -499,6 +500,8 @@ export class RenderJobService {
           }
         } catch { preview = null; } finally {
           await rm(temp, { force: true }).catch(() => {});
+          // The folder's mtime moved (made, or a failed poster): the core's own change, noted whatever happened (C10).
+          if ((await lstat(dir).catch(() => null))?.isDirectory()) await noteCoreOutputWrite(o.creativeDir, `outputs/v${o.n}/.previews`).catch(() => {});
         }
       }
     }

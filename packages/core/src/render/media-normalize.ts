@@ -142,8 +142,9 @@ export function hdrFilter(hdr: HdrInfo, filters: ReadonlySet<string> | undefined
   }
   const primaries = hdr.primaries === 'bt2020' ? 'bt2020' : 'bt709';
   const space = hdr.space === 'bt2020nc' || hdr.space === 'bt2020c' ? 'bt2020ncl' : 'bt709';
-  // The colorspace filter has no PQ or HLG curve: the transfer is read as BT.2020's SDR one (primaries and matrix exact).
-  const trc = hdr.transfer === 'bt709' ? 'bt709' : 'bt2020-10';
+  // The colorspace filter has no PQ or HLG curve: the transfer (always PQ or HLG here) is read as BT.2020's SDR one
+  // (primaries and matrix exact).
+  const trc = 'bt2020-10';
   return { vf: `colorspace=all=bt709:iprimaries=${primaries}:ispace=${space}:itrc=${trc}:format=yuv420p,`, approximate: true };
 }
 

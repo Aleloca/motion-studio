@@ -20,6 +20,9 @@ const stampSchema = z.object({ size: z.number(), mtimeMs: z.number(), sha256: z.
 const fileSchema = z.object({ schemaVersion: z.literal(1), files: z.record(z.string(), stampSchema) });
 type Stamps = Record<string, z.infer<typeof stampSchema>>;
 const lock = new KeyedMutex();
+/** What one `reconcileRenders` call may hash: bytes and time (the rest waits for the next call). */
+export const RECONCILE_BUDGET_BYTES = 2 * 1024 ** 3;
+export const RECONCILE_BUDGET_MS = 10_000;
 
 export const renderStampPath = (projectDir: string, creativeSlug: string, n: number) =>
   join(projectDir, '.studio', 'cache', 'renders', creativeSlug, `v${n}.json`);
@@ -61,9 +64,13 @@ export async function noteRenderStamps(projectDir: string, creativeDir: string, 
  * Checks the rendered outputs (`fromComposition` set) of every v2 version against their stamps; returns whether a record
  * was corrected. A missing file is left to the callers (export reports it); a file that cannot be hashed is skipped.
  */
-export async function reconcileRenders(o: { projectDir: string; store: CreativeStore; creativeSlug: string }): Promise<boolean> {
+export async function reconcileRenders(o: { projectDir: string; store: CreativeStore; creativeSlug: string; budget?: { bytes?: number; ms?: number } }): Promise<boolean> {
   const creativeDir = o.store.dir(o.creativeSlug);
   let changed = false;
+  // A budget per call (C10): renders that need hashing beyond it are left for the next read, so a creative with many large
+  // unstamped renders does not stall its first GET.
+  let bytesLeft = o.budget?.bytes ?? RECONCILE_BUDGET_BYTES;
+  const deadline = Date.now() + (o.budget?.ms ?? RECONCILE_BUDGET_MS);
   for (const v of await o.store.readVersions(o.creativeSlug)) {
     if (!v.compositions?.length) continue;
     const renders = v.outputs.filter((x) => x.sha256 && x.fromComposition);
@@ -78,6 +85,8 @@ export async function reconcileRenders(o: { projectDir: string; store: CreativeS
         if (!st?.isFile()) continue;
         const s = stamps[r.file];
         if (s && s.size === st.size && s.mtimeMs === st.mtimeMs && s.sha256 === r.sha256) continue;
+        if (st.size > bytesLeft || Date.now() > deadline) continue;
+        bytesLeft -= st.size;
         const h = await hashConfinedFile(creativeDir, `outputs/v${v.n}/${r.file}`);
         if (!h || 'skipped' in h) continue;
         stamps[r.file] = { size: h.size, mtimeMs: h.mtimeMs, sha256: h.sha256 };

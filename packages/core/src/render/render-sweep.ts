@@ -26,6 +26,7 @@ const CREATIVE_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const VERSION_RE = /^v\d{1,6}$/;
 /** A `writeJsonFileAtomic` temp of `name` (`<name>.<12 hex>.tmp`), left by a killed app. */
 const jsonTemp = (name: string) => new RegExp(`^${name.replace(/\./g, '\\.')}\\.[0-9a-f]{12}\\.tmp$`);
+const STAMP_TEMP_RE = /^v\d{1,6}\.json\.[0-9a-f]{12}\.tmp$/;
 const JSON_TEMPS_CREATIVE = /^(?:versions|creative)\.json\.[0-9a-f]{12}\.tmp$/;
 
 const oldEnough = async (p: string, minAgeMs: number, now: number) => {
@@ -72,6 +73,14 @@ export async function sweepProjectRenders(projectDir: string, o: { minAgeMs?: nu
   }
   const cache = join(projectDir, '.studio', 'cache');
   if ((await lstat(cache).catch(() => null))?.isDirectory()) removed.push(...await sweepFiles(cache, jsonTemp('source-hashes.json'), minAgeMs, now));
+  // The render stamps' atomic-write temps: `.studio/cache/renders/<creative>/v<N>.json.<12 hex>.tmp` (C10).
+  const stamps = join(cache, 'renders');
+  if ((await lstat(stamps).catch(() => null))?.isDirectory()) {
+    for (const slug of await readdir(stamps).catch(() => [] as string[])) {
+      const sdir = join(stamps, slug);
+      if (CREATIVE_SLUG_RE.test(slug) && (await lstat(sdir).catch(() => null))?.isDirectory()) removed.push(...await sweepFiles(sdir, STAMP_TEMP_RE, minAgeMs, now));
+    }
+  }
   const media = mediaCacheDir(projectDir);
   if ((await lstat(media).catch(() => null))?.isDirectory()) {
     removed.push(...await sweepFiles(media, MEDIA_TEMP_RE, minAgeMs, now));
