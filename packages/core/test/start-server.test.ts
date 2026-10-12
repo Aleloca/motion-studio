@@ -9,10 +9,29 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { MemoryVault } from '../src/secrets/vault.ts';
 import { sweepRunDir } from '../src/agent/launcher.ts';
-import { AlreadyRunningError, startServer } from '../src/server/main.ts';
+import { AlreadyRunningError, startServer, uiOriginsOf } from '../src/server/main.ts';
 import { loadOrCreateUiToken, readServerInfo } from '../src/server/ui-token.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
+
+describe('the UI origins allowed to embed live previews (C2)', () => {
+  it('uiOriginsOf: the listening origin plus the other loopback names of the port; nothing extra on a non-loopback host', () => {
+    expect(uiOriginsOf('http://127.0.0.1:4317', '127.0.0.1')).toEqual(['http://127.0.0.1:4317', 'http://localhost:4317', 'http://[::1]:4317']);
+    expect(uiOriginsOf('http://10.0.0.5:4317', '10.0.0.5')).toEqual(['http://10.0.0.5:4317']);
+  });
+  it('a running core lists localhost:<port> too', async () => {
+    const configDir = await mkdtemp(join(tmpdir(), 'ms-ss-'));
+    const s = await startServer({ port: 'auto', configDir, claudeCommand: ['true'], vault: new MemoryVault() });
+    try {
+      const token = await loadOrCreateUiToken(configDir);
+      const r = await fetch(`${s.url}/api/preview/origin`, { headers: { 'x-motion-studio-ui': token } });
+      expect(((await r.json()) as { uiOrigins: string[] }).uiOrigins).toContain(`http://localhost:${s.port}`);
+    } finally {
+      await s.close();
+      await rm(configDir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('startServer port auto', () => {
   it('uses 4318 when free and a random port when busy', async () => {

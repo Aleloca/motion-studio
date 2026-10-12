@@ -87,6 +87,23 @@ export interface StartServerOptions {
   devUiOrigins?: string[];
 }
 
+/**
+ * The origins the core's own UI can be opened at: the one it listens on, and (when it listens on loopback) the other
+ * loopback names of the same port, which the core's Host check accepts too (`http://localhost:<port>`, `[::1]`). They
+ * all reach the same loopback listener, so allowing them as `frame-ancestors` of the live preview adds no origin another
+ * program could take: a user who types `localhost:4317` gets previews (final wave C2).
+ */
+export function uiOriginsOf(url: string, host: string): string[] {
+  const u = new URL(url);
+  const list = [u.origin];
+  if (['127.0.0.1', 'localhost', '[::1]', '::1'].includes(host)) {
+    for (const name of ['localhost', '[::1]']) { const o = `${u.protocol}//${name}:${u.port}`; if (!list.includes(o)) list.push(o); }
+    const v4 = `${u.protocol}//127.0.0.1:${u.port}`;
+    if (!list.includes(v4)) list.push(v4);
+  }
+  return list;
+}
+
 export async function startServer(opts: StartServerOptions = {}) {
   const configDir = opts.configDir ?? defaultConfigDir();
   // One running instance per config folder: two cores would share workspace, jobs and run/ files. The boot lock makes
@@ -164,7 +181,7 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
   const url = opts.port === 'auto' ? await listenAuto(app, host) : await app.listen({ port: opts.port ?? 4317, host });
   bridge.setOrigin(url);
   // The core serves the UI itself (CLI and desktop): its own origin may embed live previews; dev adds Vite's.
-  uiOrigins.push(new URL(url).origin);
+  uiOrigins.push(...uiOriginsOf(url, host));
   const port = Number(new URL(url).port);
   // For `motion-studio --print-url`; removed on a clean shutdown.
   await writeServerInfo(configDir, { port, pid: process.pid, startedAt: new Date().toISOString() }).catch(() => {});
