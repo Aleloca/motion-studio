@@ -35,9 +35,19 @@ window.msSeek = (t) => { if (t >= 0.1) { for (;;) {} } };
 </script></body></html>`;
 
 /** A layer whose seek never resolves once past 0.1 s: the first frames are captured, then every seek waits (≥ 60 s). */
+/**
+ * A layer whose every seek past 0.1 s answers only after 15 s of real time, well inside the layer timeout: the render keeps
+ * going, slowly, until its time limit. (A layer that never answers is dead after its first timeout since M3, and the render
+ * then fails fast with its layerError instead.) The wait reads `Event.timeStamp` and polls with `requestIdleCallback`, which the virtual clock does not cover.
+ */
 const STALL_LAYER = `<!doctype html><html><body><script>
 window.msReady = Promise.resolve();
-window.msSeek = (t) => (t >= 0.1 ? new Promise(() => {}) : undefined);
+const realNow = () => new Event('x').timeStamp;
+window.msSeek = (t) => (t >= 0.1 ? new Promise((done) => {
+  const end = realNow() + 15000;
+  const poll = () => (realNow() >= end ? done() : requestIdleCallback(poll, { timeout: 100 }));
+  poll();
+}) : undefined);
 </script></body></html>`;
 
 describe.skipIf(!tools.ok)('renderer: processes, cancel, crash, watchdog', () => {
