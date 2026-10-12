@@ -72,6 +72,8 @@ interface MountedAudio { clip: AudioClip; el: HTMLAudioElement; muted: boolean; 
 const DERIVED_AUDIO_WAIT_MS = 3000;
 
 const DEFAULTS = { load: 120_000, seek: 60_000, layer: 60_000 };
+/** Ends a `videoFrameMismatch` message when the frame was accepted only after the seek's deadline (a stalled seek). */
+const LATE_FRAME = 'held until the seek deadline';
 
 const FALLBACK_FONT = 'sans-serif';
 
@@ -451,9 +453,11 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     if (r.frame) {
       drawnOnce.add(v);
       if (r.verdict === 'warn') {
+        // Accepted only once the seek's deadline passed (a held load frame): the seek stalled, and the message says so.
+        const late = n.performanceNow() > deadline ? `, ${LATE_FRAME}` : '';
         report('videoFrameMismatch', r.tsUs! > Math.round(target * 1e6)
-          ? `video ${clip.src}: frame at ${at(r.tsUs!)} s drawn for ${target.toFixed(3)} s, before the source starts (sourceStart missing or wrong)`
-          : `video ${clip.src}: frame at ${at(r.tsUs!)} s drawn for ${target.toFixed(3)} s although its duration does not reach it (untrusted source)`, clip.id);
+          ? `video ${clip.src}: frame at ${at(r.tsUs!)} s drawn for ${target.toFixed(3)} s, before the source starts (sourceStart missing or wrong)${late}`
+          : `video ${clip.src}: frame at ${at(r.tsUs!)} s drawn for ${target.toFixed(3)} s although its duration does not reach it (untrusted source)${late}`, clip.id);
       }
       drawVideoFrame(m, r.frame as unknown as CanvasImageSource, r.frame.displayWidth, r.frame.displayHeight);
       r.frame.close();

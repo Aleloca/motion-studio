@@ -356,11 +356,13 @@ describe('render mode video frames (fake VideoFrame)', () => {
     held = { timestamp: 400_000, duration: 33_333 }; // e.g. a WebM frame whose real duration is longer than reported
     await player.seek(0.5);
     expect(errors.map((e) => e.code)).toEqual(['videoFrameMismatch']);
+    expect(errors[0]!.message).not.toMatch(/seek deadline/); // drawn at once, not a stall
   });
 
   it('untrusted source: a load frame far before the target is held to the deadline, then drawn with a warning', async () => {
     const { player, errors } = run(videoComp({}));
     await player.seek(2);
     expect(errors.map((e) => e.code)).toEqual(['videoFrameMismatch']);
+    expect(errors[0]!.message).toMatch(/, held until the seek deadline$/); // the stall is visible in the warning (M1)
   });
 });
