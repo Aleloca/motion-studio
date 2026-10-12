@@ -1,14 +1,15 @@
 import { rename, rm, writeFile } from 'node:fs/promises';
-import { randomBytes } from 'node:crypto';
-import { join } from 'node:path';
+import { createHash, randomBytes } from 'node:crypto';
+import { basename, dirname, join } from 'node:path';
 import {
-  compositionProblem, compositionProblemText, formatLabel, messages, normalizeComposition, staticLayerCheck,
+  COMPOSITION_LIMITS, compositionHash, compositionProblem, compositionProblemText, formatLabel, messages, normalizeComposition, staticLayerCheck,
   type Composition, type CompositionProblem, type FormatPreset, type Locale,
 } from '@motion-studio/shared';
-import { readConfinedFile } from '../brand/agent-guard.ts';
+import { readConfinedFile, withConfinedFile } from '../brand/agent-guard.ts';
 import { loadComposition, readCompositionFolder, readCompositionJson, type CompositionFolder } from '../compositions/composition-files.ts';
 import { noteCoreTemp } from '../core-temps.ts';
 import { findPreset } from '../formats/format-catalog.ts';
+import { isRealDirChain } from './core-files.ts';
 
 /**
  * Output contract v2 (spec §4, Task 5b): the agent delivers one composition folder per target format,
@@ -34,6 +35,11 @@ export interface CompositionCheck {
   ok: boolean;
   /** The folder's composition hash; null when the folder is missing or cannot be read safely. */
   hash: string | null;
+  /**
+   * The hash the folder will have once `composition.json` is normalised on disk after the turn (`writeNormalized`): what
+   * `validate_composition` reports during the turn, so it matches the recorded hash (fix minor 4).
+   */
+  finalHash: string | null;
   problems: CompositionProblem[];
   warnings: CompositionProblem[];
   /** The normalised composition when it is valid. */
@@ -65,13 +71,14 @@ export async function checkComposition(compDir: string, format: string, preset: 
   let folder: CompositionFolder | null = loaded.ok ? loaded.folder : null;
   if (!loaded.ok && loaded.hash !== null) folder = await readCompositionFolder(compDir).catch(() => null);
   const warnings = [...(loaded.ok ? loaded.warnings : []), ...(folder ? await layerWarnings(compDir, folder) : [])];
-  if (!loaded.ok) return { format, dir, ok: false, hash: loaded.hash, problems: loaded.problems, warnings, composition: null, folder };
+  const finalHash = folder ? await normalizedHash(compDir, folder) : null;
+  if (!loaded.ok) return { format, dir, ok: false, hash: loaded.hash, finalHash, problems: loaded.problems, warnings, composition: null, folder };
   const problems: CompositionProblem[] = [];
   const c = loaded.composition;
   if (preset.kind === 'video' && briefDurationSec !== null && c.duration > 0 && Math.abs(c.duration - briefDurationSec) > Math.max(1, briefDurationSec * 0.1)) {
     problems.push(compositionProblem('composition.durationOffBrief', { duration: Math.round(c.duration * 10) / 10, target: briefDurationSec }));
   }
-  return { format, dir, ok: problems.length === 0, hash: loaded.hash, problems, warnings, composition: c, folder };
+  return { format, dir, ok: problems.length === 0, hash: loaded.hash, finalHash, problems, warnings, composition: c, folder };
 }
 
 export interface TargetsCheck {
@@ -98,6 +105,12 @@ export async function checkTargets(o: { versionDir: string; targets: readonly st
     const preset = findPreset(o.presets, id);
     if (!preset) { add(id, v.unknownPreset({ id })); out.unknownPresets.push(id); continue; }
     const dir = compositionDirOf(id);
+    // Every folder of the path must be a real folder of the creative: a link (planted by the agent) is never followed, and
+    // nothing about where it points is reported (fix minor 1).
+    const creativeDir = dirname(dirname(o.versionDir));
+    const chain = await isRealDirChain(creativeDir, ['outputs', basename(o.versionDir), 'compositions', id]);
+    if (chain === 'missing') { add(id, v.compositionMissing({ label: formatLabel(preset, 'en'), id, dir })); continue; }
+    if (chain === 'unsafe') { add(id, v.compositionProblem({ dir, text: compositionProblemText(compositionProblem('composition.folderUnreadable', { path: dir }), o.locale) })); continue; }
     const check = await checkComposition(join(o.versionDir, 'compositions', id), id, preset, o.briefDurationSec);
     out.checks.push(check);
     const missing = check.hash !== null && check.folder !== null && check.folder.files.length === 0;
@@ -116,21 +129,40 @@ export async function checkTargets(o: { versionDir: string; targets: readonly st
   return out;
 }
 
+/** The text `writeNormalized` writes for `value`, or null when the file is already normalised. */
+function normalizedText(value: unknown): string | null {
+  const normalized = normalizeComposition(value);
+  return JSON.stringify(normalized) === JSON.stringify(value) ? null : `${JSON.stringify(normalized, null, 2)}\n`;
+}
+
+/** The folder's hash with `composition.json` as `writeNormalized` would leave it. */
+async function normalizedHash(compDir: string, folder: CompositionFolder): Promise<string> {
+  const parsed = await readCompositionJson(compDir).catch(() => null);
+  const text = parsed?.ok ? normalizedText(parsed.value) : null;
+  if (text === null) return folder.hash;
+  const sha = createHash('sha256').update(text).digest('hex');
+  return compositionHash(folder.files.map((f) => (f.path === 'composition.json' ? { path: f.path, sha256: sha } : f)));
+}
+
 /**
  * Rewrites `composition.json` in its normalised form (`normalizeComposition`) when that differs from what the agent wrote,
  * so the stored file is exactly what renders (and what is hashed). Only after the agent is gone, never while it may still
- * write. A file that cannot be read or parsed is left as it is (its own problem says why).
+ * write. A file that cannot be read or parsed is left as it is (its own problem says why). The agent's original bytes are
+ * kept first through `keepOriginal(bytes)` (an audit copy in the protected cache, fix minor 4).
  */
-export async function writeNormalized(compDir: string): Promise<void> {
+export async function writeNormalized(compDir: string, keepOriginal?: (bytes: Buffer) => Promise<void>): Promise<void> {
+  const raw = await withConfinedFile(compDir, 'composition.json', true, async (fh, info) => (info.size > COMPOSITION_LIMITS.jsonBytes ? null : fh.readFile())).catch(() => null);
+  if (!raw || !Buffer.isBuffer(raw)) return;
   const parsed = await readCompositionJson(compDir).catch(() => null);
   if (!parsed?.ok) return;
-  const normalized = normalizeComposition(parsed.value);
-  if (JSON.stringify(normalized) === JSON.stringify(parsed.value)) return;
+  const text = normalizedText(parsed.value);
+  if (text === null) return;
+  await keepOriginal?.(raw);
   const path = join(compDir, 'composition.json');
   const temp = join(compDir, `.composition.json.${randomBytes(6).toString('hex')}.tmp`);
   noteCoreTemp(temp);
   try {
-    await writeFile(temp, `${JSON.stringify(normalized, null, 2)}\n`, { flag: 'wx' });
+    await writeFile(temp, text, { flag: 'wx' });
     await rename(temp, path);
   } finally {
     await rm(temp, { force: true }).catch(() => {});

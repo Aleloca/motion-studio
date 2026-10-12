@@ -15,6 +15,7 @@ import { sessionMediaOf, type MediaNormalizer, type PreparedMedia } from '../ren
 import { PreviewLane, PreviewLaneBusyError } from '../render/preview-lane.ts';
 import type { RenderEngine } from '../render/renderer.ts';
 import { CodedError } from '../workspace-store.ts';
+import { isRealDirChain } from './core-files.ts';
 
 /**
  * Everything the core shows of a composition without a final render (Task 5b):
@@ -37,6 +38,8 @@ const withMedia = (p: PreparedMedia) => { const media = sessionMediaOf(p); retur
 export const STORYBOARD_WIDTH = 270;
 export const AGENT_FRAME_MAX_WIDTH = 540;
 export const AGENT_FRAME_MAX_TIMES = 6;
+/** Live preview sessions at once (a canvas with a few boards, Compare's two players); a new one ends the oldest. */
+export const MAX_PREVIEW_SESSIONS = 8;
 /** The poster frame's time (spec: "the poster at 1 s"), clamped to the composition. */
 export const POSTER_TIME_SEC = 1;
 /** At most this many scene frames in a storyboard (a composition may have up to 200 scenes). */
@@ -112,9 +115,11 @@ function entryOf(version: VersionEntry | undefined, format: string): { folder: s
 export class PreviewService {
   readonly lane: PreviewLane;
   private server: Promise<CompositionServer> | null = null;
-  private readonly sessions = new Map<string, { release: () => void; timer: NodeJS.Timeout }>();
+  private readonly sessions = new Map<string, { release: () => void; revoke: () => void; timer: NodeJS.Timeout }>();
   private readonly storyboardLocks = new KeyedMutex();
   private readonly closing = new AbortController();
+  /** Storyboard runs in flight: `close()` waits for them, so nothing is written after the app closed. */
+  private readonly tasks = new Set<Promise<unknown>>();
 
   constructor(private readonly deps: PreviewServiceDeps) {
     this.lane = deps.lane ?? new PreviewLane();
@@ -144,6 +149,7 @@ export class PreviewService {
         const prepared = await this.deps.normalizer.prepare({ projectDir: o.ref.projectDir, compDir, composition: o.composition, signal: laneSignal });
         try {
           return await engine.frames({
+            server: await this.compositionServer(), // one long-lived server for every preview (fix minor 5)
             dir: o.ref.creativeDir, versionDir: `outputs/v${o.ref.n}`, composition: o.composition, format: { ...o.preset, id: o.folder },
             times: o.times, width: o.width, imageFormat: o.imageFormat, quality: 80, signal: laneSignal, ...withMedia(prepared),
             ...(this.deps.distDir ? { distDir: this.deps.distDir } : {}),
@@ -167,6 +173,10 @@ export class PreviewService {
     const preset = findPreset(await this.deps.presets(), o.format);
     if (!preset) throw new CodedError(400, messages(o.locale).validation.unknownPreset({ id: o.format }), 'unknown-format');
     const compDir = join(o.ref.creativeDir, 'outputs', `v${o.ref.n}`, 'compositions', o.format);
+    // A linked folder (planted by the agent) is never followed (fix minor 1).
+    if ((await isRealDirChain(o.ref.creativeDir, ['outputs', `v${o.ref.n}`, 'compositions', o.format])) !== 'ok') {
+      return { format: o.format, ok: false, problems: [messages(o.locale).validation.compositionMissing({ label: preset.name, id: o.format, dir: `compositions/${o.format}` })] };
+    }
     const loaded = await loadComposition(compDir, preset);
     if (!loaded.ok) return { format: o.format, ok: false, problems: loaded.problems.map((p) => compositionProblemText(p, o.locale)) };
     const c = loaded.composition;
@@ -202,6 +212,7 @@ export class PreviewService {
       const plan = storyboardPlan(loaded.composition);
       const unique = [...new Set(plan.map((p) => p.t))];
       const r = await this.frames({ ref, folder, preset, composition: loaded.composition, times: unique, width: Math.min(STORYBOARD_WIDTH, loaded.composition.width), imageFormat: 'jpeg', ...(signal ? { signal } : {}) });
+      if (this.closing.signal.aborted) throw new Error('closed');
       const temp = `${dir}.${randomBytes(6).toString('hex')}.tmp`;
       noteCoreTemp(temp);
       try {
@@ -230,13 +241,21 @@ export class PreviewService {
   }
 
   /** Storyboards of every primary composition of a saved version; followers share their primary's. Never throws. */
-  async storyboardsFor(ref: VersionFormatRef, version: VersionEntry, signal?: AbortSignal): Promise<void> {
+  storyboardsFor(ref: VersionFormatRef, version: VersionEntry, signal?: AbortSignal): Promise<void> {
+    const task = this.storyboardsRun(ref, version, signal);
+    this.tasks.add(task);
+    void task.finally(() => this.tasks.delete(task));
+    return task;
+  }
+
+  private async storyboardsRun(ref: VersionFormatRef, version: VersionEntry, signal?: AbortSignal): Promise<void> {
     const done = new Set<string>();
     for (const c of version.compositions ?? []) {
       const folder = c.dir.slice('compositions/'.length);
-      if (done.has(folder) || signal?.aborted) continue;
+      if (done.has(folder) || signal?.aborted || this.closing.signal.aborted) continue;
       done.add(folder);
       await this.makeStoryboard(ref, folder, c.hash, signal).catch((e: unknown) => {
+        if (this.closing.signal.aborted) return;
         console.warn(`Motion Studio: storyboard of ${folder} v${ref.n} failed: ${(e as Error).message}`);
       });
     }
@@ -254,22 +273,18 @@ export class PreviewService {
   }
 
   /**
-   * One frame of `format` in a saved v2 version at `t`, written as a JPEG (at most 540 px wide) to `target`: the feedback
-   * frame of a pinned comment on a version that has no render (Task 5b). False when it cannot be made.
+   * One frame of `format` in a saved v2 version at `t`, as a JPEG at most 540 px wide: the feedback frame of a pinned
+   * comment on a version that has no render (Task 5b). Null when it cannot be made. The caller writes it (safely).
    */
-  async frameFile(ref: VersionFormatRef, version: VersionEntry, format: string, t: number, target: string): Promise<boolean> {
+  async frameJpeg(ref: VersionFormatRef, version: VersionEntry, format: string, t: number): Promise<Buffer | null> {
     const e = entryOf(version, format);
-    if (!e || !(await this.available())) return false;
+    if (!e || !(await this.available())) return null;
     const preset = findPreset(await this.deps.presets(), e.folder);
-    if (!preset) return false;
+    if (!preset) return null;
     const loaded = await loadComposition(join(ref.creativeDir, 'outputs', `v${ref.n}`, 'compositions', e.folder), preset);
-    if (!loaded.ok || loaded.hash !== e.hash) return false;
+    if (!loaded.ok || loaded.hash !== e.hash) return null;
     const r = await this.frames({ ref, folder: e.folder, preset, composition: loaded.composition, times: [t], width: Math.min(AGENT_FRAME_MAX_WIDTH, loaded.composition.width), imageFormat: 'jpeg' });
-    const frame = r.frames[0];
-    if (!frame) return false;
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, frame.data);
-    return true;
+    return r.frames[0]?.data ?? null;
   }
 
   /**
@@ -297,7 +312,12 @@ export class PreviewService {
       const ttl = Math.max(0, session.expiresAt - Date.now());
       const timer = setTimeout(() => { prepared.release(); this.sessions.delete(session.token); }, ttl + 1000);
       timer.unref();
-      this.sessions.set(session.token, { release: prepared.release, timer });
+      this.sessions.set(session.token, { release: prepared.release, revoke: session.revoke, timer });
+      // At most MAX_PREVIEW_SESSIONS live at once (each holds media leases): the oldest ends first (fix minor 5).
+      while (this.sessions.size > MAX_PREVIEW_SESSIONS) {
+        const [token, old] = this.sessions.entries().next().value!;
+        clearTimeout(old.timer); old.revoke(); old.release(); this.sessions.delete(token);
+      }
       const c = loaded.composition;
       return {
         url: session.url, origin: session.origin, expiresAt: new Date(Date.now() + ttl).toISOString(),
@@ -313,6 +333,7 @@ export class PreviewService {
   async close(): Promise<void> {
     this.closing.abort(new Error('closed'));
     this.lane.close();
+    await Promise.allSettled([...this.tasks]);
     for (const s of this.sessions.values()) { clearTimeout(s.timer); s.release(); }
     this.sessions.clear();
     const server = this.server;

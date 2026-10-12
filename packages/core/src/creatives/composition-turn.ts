@@ -1,5 +1,4 @@
-import { constants } from 'node:fs';
-import { copyFile, lstat, mkdir, readdir, rm } from 'node:fs/promises';
+import { lstat, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
   anyManifestSchema, canFollow, messages, normalizeComposition, renderState,
@@ -10,6 +9,7 @@ import { findPreset } from '../formats/format-catalog.ts';
 import { readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import { checkTargets, compositionDirOf, writeNormalized, type TargetsCheck } from './composition-contract.ts';
 import { confinedSha, copyVerified, versionDirReady, type FollowFailure } from './carry-over.ts';
+import { realDirChain, writeThroughTemp } from './core-files.ts';
 
 /**
  * A turn under output contract v2 (Task 5b): what phase 9's carry-over and links become with composition folders.
@@ -70,7 +70,7 @@ export interface AssembledCompositions {
 
 /** Completes `outputs/v<n>` of a composition turn after the agent is gone (see the module comment). */
 export async function assembleCompositions(o: {
-  creativeDir: string; n: number; base: VersionEntry | undefined; formats: readonly string[]; targets: readonly string[];
+  projectDir: string; creativeSlug: string; creativeDir: string; n: number; base: VersionEntry | undefined; formats: readonly string[]; targets: readonly string[];
   carried: readonly string[]; carriedComps: ReadonlyMap<string, CarriedComposition>; links: Readonly<Record<string, string>>;
   presets: FormatPreset[]; briefDurationSec: number | null; locale: Locale; label: (id: string) => string;
 }): Promise<AssembledCompositions> {
@@ -107,7 +107,14 @@ export async function assembleCompositions(o: {
   const durations = new Map<string, number | undefined>();
   let check: TargetsCheck | null = null;
   if (o.targets.length > 0) {
-    for (const t of o.targets) await writeNormalized(join(compsDir, t)).catch(() => {});
+    // The agent's own composition.json is kept before it is normalised: `.studio/cache/agent-originals/<creative>/v<n>/<format>.json`
+    // (protected, not in the version), so what the agent wrote can still be audited (fix minor 4).
+    for (const t of o.targets) {
+      await writeNormalized(join(compsDir, t), async (bytes) => {
+        const dir = await realDirChain(o.projectDir, ['.studio', 'cache', 'agent-originals', o.creativeSlug, `v${n}`]);
+        if (dir) await writeThroughTemp(dir, `${t}.json`, async (temp) => { await writeFile(temp, bytes, { flag: 'wx' }); return true; });
+      }).catch(() => {});
+    }
     check = await checkTargets({ versionDir: vdir, targets: o.targets, presets: o.presets, briefDurationSec: o.briefDurationSec, locale: o.locale });
     for (const p of check.problems) problem(p);
     for (const c of check.checks) {
@@ -181,9 +188,11 @@ export async function assembleCompositions(o: {
     if (sha === null) continue;
     let preview: string | null = null;
     if (out.preview) {
+      // Confined and verified like the render itself (never through a link; the copy must have the source's bytes).
+      const from = `outputs/v${base.n}/${out.preview}`;
+      const sha = await confinedSha(creativeDir, from);
       await mkdir(join(vdir, '.previews'), { recursive: true }).catch(() => {});
-      preview = await copyFile(join(creativeDir, 'outputs', `v${base.n}`, ...out.preview.split('/')), join(vdir, ...out.preview.split('/')), constants.COPYFILE_EXCL)
-        .then(() => out.preview, () => null);
+      if (sha !== null && (await copyVerified(creativeDir, from, `${vRel}/${out.preview}`, sha)) !== null) preview = out.preview;
     }
     outputs.push({ ...out, preview });
   }

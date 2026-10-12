@@ -3,7 +3,7 @@ import { constants } from 'node:fs';
 import { copyFile, lstat, mkdir, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  anyManifestSchema, compositionProblemText, effectiveLinks, formatLabel, messages,
+  anyManifestSchema, compositionProblemText, effectiveLinks, formatLabel, messages, renderState,
   type Brief, type Composition, type FormatPreset, type JobProgress, type JobSummary, type Locale, type ManifestV2, type OutputFileInfo,
   type ServerMessage, type VersionComposition,
 } from '@motion-studio/shared';
@@ -163,24 +163,35 @@ export class RenderJobService {
   }
 
   /**
-   * The render job of version `n` covering `formats`: the active one for that version when there is one (it may cover other
-   * formats: the caller checks the result), else a new one. Used by the export (Task 5b) to render a missing ★ first.
+   * The render job of version `n` for `formats` (Task 5b; fix I2). An active job of that version that covers every requested
+   * format (its `formats` list primaries and followers) is reused. One that does not is waited for (`wait`, the default)
+   * and a new job is started for the formats still missing, once; with `wait: false` (export/prepare, which must answer at
+   * once) the active job is returned with `covers: false`, and the export itself does the waiting.
    */
-  async ensureJob(ref: CreativeRef, n: number, formats: string[]): Promise<JobSummary> {
+  async ensureJob(ref: CreativeRef, n: number, formats: string[], o: { wait?: boolean } = {}): Promise<{ job: JobSummary; covers: boolean }> {
     const key = renderJobKey(ref.root, ref.projectSlug, ref.creativeSlug, n);
     const active = () => this.deps.queue.list().find((j) => j.key === key && (j.state === 'queued' || j.state === 'running'));
+    const covers = (j: JobSummary) => formats.every((f) => j.formats?.includes(f));
+    const startOrJoin = async (list = formats): Promise<JobSummary> => {
+      try { return await this.start(ref, n, list); } catch (e) {
+        const raced = e instanceof JobConflictError ? active() : undefined;
+        if (raced) return raced;
+        throw e;
+      }
+    };
     const running = active();
-    if (running) return running;
-    try { return await this.start(ref, n, formats); } catch (e) {
-      const raced = e instanceof JobConflictError ? active() : undefined;
-      if (raced) return raced;
-      throw e;
-    }
+    if (!running) { const job = await startOrJoin(); return { job, covers: covers(job) }; }
+    if (covers(running) || o.wait === false) return { job: running, covers: covers(running) };
+    await this.deps.queue.whenSettled(running.id);
+    // Only the formats that job did not render (it may have rendered some of ours as followers).
+    const version = (await new CreativeStore(ref.projectDir).readVersions(ref.creativeSlug)).find((v) => v.n === n);
+    const missing = formats.filter((f) => !version || renderState(version, f) !== 'rendered');
+    return { job: missing.length > 0 ? await startOrJoin(missing) : running, covers: true };
   }
 
-  /** Renders `formats` of each version (`ensureJob`) and waits for the jobs; the summaries as they ended. */
+  /** Renders `formats` of each version (`ensureJob`, waiting for a job that covers other formats) and waits; the summaries as they ended. */
   async renderAndWait(ref: CreativeRef, pending: ReadonlyMap<number, string[]>): Promise<JobSummary[]> {
-    const jobs = await Promise.all([...pending].map(([n, formats]) => this.ensureJob(ref, n, formats)));
+    const jobs = await Promise.all([...pending].map(async ([n, formats]) => (await this.ensureJob(ref, n, formats)).job));
     const ended = await Promise.all(jobs.map((j) => this.deps.queue.whenSettled(j.id)));
     return ended.filter((j): j is JobSummary => j !== null);
   }

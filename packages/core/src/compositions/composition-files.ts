@@ -44,6 +44,9 @@ export class CompositionFolderError extends Error {
 /** Walks and hashes `compDir` (see the module comment). Throws `CompositionFolderError`. */
 export async function readCompositionFolder(compDir: string, o: { maxBytes?: number } = {}): Promise<CompositionFolder> {
   const maxBytes = o.maxBytes ?? COMPOSITION_MAX_BYTES;
+  // The folder itself must not be a link either (it would be followed by readdir).
+  const root = await lstat(compDir).catch(() => null);
+  if (root && !root.isDirectory()) throw new CompositionFolderError(root.isSymbolicLink() ? 'link' : 'special', '');
   const files: CompositionFile[] = [];
   let total = 0;
   const walk = async (rel: string, depth: number): Promise<void> => {

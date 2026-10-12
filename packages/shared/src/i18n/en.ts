@@ -29,6 +29,7 @@ export const en = {
     previewFramesLimit: (p: { max: number }) => `preview_frames can be called at most ${p.max} times per turn: check the frames you already have, then finish the turn`,
     previewFramesTimes: (p: { max: number }) => `Give from 1 to ${p.max} times, in seconds from the start of the composition`,
     previewBusy: 'Too many previews are being prepared: try again in a moment',
+    formatNotInTurn: (p: { format: string; list: string }) => `${p.format} is not one of the formats of this turn: use ${p.list}`,
     previewUnavailable: 'Previews are not available in this Motion Studio: no Chromium to render with',
     previewOrigin: 'This window cannot show a live preview (its origin is not allowed)',
     compositionNotFound: (p: { format: string; n: number }) => `v${p.n} has no composition for ${p.format}`,

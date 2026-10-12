@@ -1,5 +1,5 @@
 import { lstat, realpath } from 'node:fs/promises';
-import { dirname, sep } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { briefSchema, checkLink, defaultLinks, effectiveLinks, formatLabel, isExportDate, issuesText, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
@@ -7,7 +7,9 @@ import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
 import { exportResolved, exportVersion, pendingRenders, resolveExportPicks } from '../creatives/export.ts';
-import { storyboardDir, sweepStoryboardTemps, type PreviewService } from '../creatives/previews.ts';
+import { storyboardDir, storyboardSchema, sweepStoryboardTemps, type PreviewService } from '../creatives/previews.ts';
+import { readJsonFile } from '../json-file.ts';
+import type { UrlSigner } from './signed-urls.ts';
 import { formatSummaries } from '../creatives/format-summary.ts';
 import { withLazyHashes } from '../creatives/output-hashes.ts';
 import { creativeJobKey, PICK_RETRY_AFTER_SEC, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
@@ -33,6 +35,8 @@ export interface CreativeRoutesContext {
   renders: RenderJobService;
   /** Storyboards and live preview sessions (Task 5b). */
   previews: PreviewService;
+  /** Signs the storyboard image URLs (fix I4). */
+  signer: UrlSigner;
 }
 
 const isInsideDir = (p: string, base: string | null) => Boolean(base && p.startsWith(base.endsWith(sep) ? base : base + sep));
@@ -347,12 +351,19 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const creative = await ref.store.get(ref.creativeSlug);
     const creativeDir = ref.store.dir(ref.creativeSlug);
     await reconcileRenders({ projectDir: ref.projectDir, store: ref.store, creativeSlug: ref.creativeSlug }).catch(() => false);
-    const { versions } = await withLazyHashes({ projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir, versions: await ref.store.readVersions(ref.creativeSlug) });
+    const { versions, complete } = await withLazyHashes({ projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir, versions: await ref.store.readVersions(ref.creativeSlug) });
+    // As for the export: a follower's version is never decided on partial hashes.
+    if (!complete && r.data.follow !== undefined) throw new CodedError(503, t().errors.hashesPending, 'hashes-pending', PICK_RETRY_AFTER_SEC);
     const items = resolveExportPicks({ creativeDir, destination: '/', slug: ref.creativeSlug, versions, picks: (r.data.picks ?? {}) as Record<string, number>,
       follow: r.data.follow as string[] | Record<string, number> | undefined, links: effectiveLinks(creative.brief.links, creative.brief.formats), storedPicks: creative.exportPicks });
     const pending = await pendingRenders(creativeDir, versions, items);
     const renders = [];
-    for (const [version, formats] of pending) renders.push({ version, formats, job: await ctx.renders.ensureJob(ref, version, formats) });
+    // Answers at once: an active job of that version for other formats is returned with `covers: false` (the export waits
+    // for it and renders the rest).
+    for (const [version, formats] of pending) {
+      const { job, covers } = await ctx.renders.ensureJob(ref, version, formats, { wait: false });
+      renders.push({ version, formats, job, covers });
+    }
     return { renders };
   });
 
@@ -380,15 +391,25 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
     const r = await ctx.previews.storyboardOf({ projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), creativeSlug: ref.creativeSlug, n }, version, req.params.format);
     if (!r) throw new CodedError(404, t().errors.previewUnavailable, 'storyboard-unavailable');
-    const base = `/api/projects/${encodeURIComponent(req.params.slug)}/creatives/${encodeURIComponent(ref.creativeSlug)}/storyboard-files/${n}/${r.folder}`;
-    return { format: r.folder, hash: r.storyboard.hash, width: r.storyboard.width, frames: r.storyboard.frames.map(({ file, ...f }) => ({ ...f, url: `${base}/${file}` })) };
+    // Signed, short-lived image URLs (fix I4), content-addressed by the composition hash (a regenerated storyboard of other
+    // content never reuses a URL). The UI asks again before `expiresAt` for fresh ones.
+    const base = `/api/projects/${encodeURIComponent(req.params.slug)}/creatives/${encodeURIComponent(ref.creativeSlug)}/storyboard-files/${n}/${r.folder}/${r.storyboard.hash.slice(0, 16)}`;
+    let expiresAt = 0;
+    const frames = r.storyboard.frames.map(({ file, ...f }) => { const s = ctx.signer.sign(`${base}/${file}`); expiresAt = s.expiresAt; return { ...f, url: s.url }; });
+    return { format: r.folder, hash: r.storyboard.hash, width: r.storyboard.width, expiresAt: new Date(expiresAt).toISOString(), frames };
   });
 
-  // Storyboard images, shown by <img> (no UI token, like the creative files): only `f-<i>.jpg` of a storyboard folder.
-  app.get<{ Params: { slug: string; c: string; n: string; folder: string; file: string } }>('/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:file', async (req, reply) => {
+  // Storyboard images, shown by <img>: no UI token, but a signed URL from the route above (fix I4); only `f-<i>.jpg` of the
+  // storyboard whose composition hash starts with `:hash`.
+  app.get<{ Params: { slug: string; c: string; n: string; folder: string; hash: string; file: string }; Querystring: { s?: string } }>('/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:hash/:file', async (req, reply) => {
+    const path = req.url.split('?')[0]!;
+    if (!ctx.signer.verify(path, req.query.s)) return reply.status(403).send({ error: t().errors.fileNotFoundShort });
     const ref = await refOf(req.params.slug, req.params.c);
     const n = Number(req.params.n);
-    if (!Number.isInteger(n) || n < 1 || !FOLDER_RE.test(req.params.folder) || !FRAME_FILE_RE.test(req.params.file)) return reply.status(404).send({ error: t().errors.fileNotFoundShort });
+    const notFound = () => reply.status(404).send({ error: t().errors.fileNotFoundShort });
+    if (!Number.isInteger(n) || n < 1 || !FOLDER_RE.test(req.params.folder) || !/^[0-9a-f]{16}$/.test(req.params.hash) || !FRAME_FILE_RE.test(req.params.file)) return notFound();
+    const sb = await readJsonFile(join(storyboardDir(ref.projectDir, ref.creativeSlug, n, req.params.folder), 'storyboard.json'), storyboardSchema).catch(() => null);
+    if (!sb || !sb.hash.startsWith(req.params.hash)) return notFound();
     return sendConfinedFile(reply, storyboardDir(ref.projectDir, ref.creativeSlug, n, req.params.folder), req.params.file, ['f-']);
   });
 

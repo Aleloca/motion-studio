@@ -275,10 +275,11 @@ export interface FormatSummary {
    * - `notRendered`: a v2 composition with no render yet, or whose render file is gone: export renders it first. This is
    *   never `starFileMissing` (the composition is the result; the media is made on demand);
    * - `stale`: a v2 render made from another composition: export renders it again first;
+   * - `missing`: a legacy file that is gone or unusable (with `starFileMissing`): export refuses it;
    * - null: nothing to export (no ★, or a follower with no qualifying version).
    * Optional: older cores do not send it.
    */
-  starRender?: 'rendered' | 'notRendered' | 'stale' | null;
+  starRender?: 'rendered' | 'notRendered' | 'stale' | 'missing' | null;
   /** Each other format of the brief as a possible primary for this one (`checkLink`). */
   linkable: Array<{ primary: string; ok: boolean; reason?: LinkReason }>;
 }

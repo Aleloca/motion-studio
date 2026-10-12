@@ -27,6 +27,7 @@ export const it: Messages = {
     previewFramesLimit: (p) => `preview_frames si può usare al massimo ${p.max} volte per turno: guarda i fotogrammi che hai già, poi chiudi il turno`,
     previewFramesTimes: (p) => `Indica da 1 a ${p.max} istanti, in secondi dall'inizio della composizione`,
     previewBusy: 'Si stanno preparando troppe anteprime: riprova tra un momento',
+    formatNotInTurn: (p) => `${p.format} non è uno dei formati di questo turno: usa ${p.list}`,
     previewUnavailable: 'Le anteprime non sono disponibili in questo Motion Studio: non c\'è un Chromium con cui renderizzare',
     previewOrigin: 'Questa finestra non può mostrare l\'anteprima dal vivo (la sua origine non è ammessa)',
     compositionNotFound: (p) => `La v${p.n} non ha una composizione per ${p.format}`,

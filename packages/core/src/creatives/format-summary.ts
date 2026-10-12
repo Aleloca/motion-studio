@@ -34,7 +34,7 @@ export async function formatSummaries(creativeDir: string, creative: CreativeFil
       ? primaryStar !== null && (exported === null || (!v2 && !fileOk))
       : exported !== null && !v2 && !fileOk;
     const rs = version && v2 ? renderState(version, id) : null;
-    const starRender: FormatSummary['starRender'] = !version ? null : !v2 ? 'rendered'
+    const starRender: FormatSummary['starRender'] = !version ? null : !v2 ? (fileOk ? 'rendered' : 'missing')
       : rs === 'rendered' ? (fileOk ? 'rendered' : 'notRendered') : rs === 'stale' ? 'stale' : 'notRendered';
     return {
       id,

@@ -5,7 +5,7 @@
  * preview_frames returns PNGs 540 px wide, a preview session serves the runtime page with the UI origin as its only frame
  * ancestor, and no browser is left running. Skipped without Chrome or ffmpeg, unless MS_REQUIRE_CHROME=1 (CI).
  */
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -88,6 +88,8 @@ describe.skipIf(!tools.ok)('previews in real Chrome', () => {
     }
     // The storyboard: JPEG frames 270 px wide.
     const dir = storyboardDir(join(work, 'ws', 'acme'), slug, 1, 'test-reel');
+    // Made after the turn job, in the preview lane.
+    for (let i = 0; i < 1200 && !existsSync(join(dir, 'storyboard.json')); i++) await new Promise((res) => setTimeout(res, 100));
     const sb = JSON.parse(readFileSync(join(dir, 'storyboard.json'), 'utf8')) as { frames: Array<{ file: string; width: number; height: number }> };
     expect(sb.frames).toHaveLength(3);
     for (const f of sb.frames) {

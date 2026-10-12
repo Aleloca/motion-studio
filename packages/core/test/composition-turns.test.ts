@@ -19,7 +19,8 @@ import { AppConfigStore } from '../src/app-config.ts';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AgentBridge } from '../src/bridge/bridge.ts';
 import { CompositionFolderError, folderProblem, readCompositionFolder } from '../src/compositions/composition-files.ts';
-import { checkComposition, writeNormalized } from '../src/creatives/composition-contract.ts';
+import { checkComposition, checkTargets, writeNormalized } from '../src/creatives/composition-contract.ts';
+import { UrlSigner } from '../src/server/signed-urls.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { storyboardDir, storyboardPlan, sweepStoryboardTemps } from '../src/creatives/previews.ts';
 import { noteCoreTemp } from '../src/core-temps.ts';
@@ -60,9 +61,11 @@ interface Fake {
   frames: Array<Omit<RenderFramesOptions, 'provider'>>;
   fail: Record<string, string>;
   kind: 'injected' | null;
+  /** When set, renders wait for it. */
+  gate: Promise<void> | null;
 }
 function fakeEngine(): Fake {
-  const f: Fake = { renders: [], frames: [], fail: {}, kind: 'injected', engine: null as unknown as RenderEngine };
+  const f: Fake = { renders: [], frames: [], fail: {}, kind: 'injected', gate: null, engine: null as unknown as RenderEngine };
   f.engine = {
     info: async () => ({ kind: f.kind }),
     provider: async () => { throw new Error('not used'); },
@@ -74,6 +77,7 @@ function fakeEngine(): Fake {
     },
     render: async (o: Omit<RenderCompositionOptions, 'provider'>): Promise<RenderResult> => {
       f.renders.push(o as RenderCompositionOptions);
+      if (f.gate) await f.gate;
       if (f.fail[o.format.id]) throw new RenderError('ffmpegFailed', f.fail[o.format.id]!);
       const still = !(o.composition.duration > 0);
       const temp = join(dirname(o.out), `.${basename(o.out)}.render-${randomBytes(6).toString('hex')}.tmp`);
@@ -96,7 +100,7 @@ let ws: string;
 let promptFile: string;
 let bridge: AgentBridge;
 
-const ENV = ['FAKE_CLAUDE_SCENARIO', 'FAKE_CLAUDE_PROMPT_FILE', 'FAKE_CLAUDE_COMP_TAG', 'FAKE_CLAUDE_STRAY', 'FAKE_CLAUDE_ALWAYS_INVALID', 'FAKE_CLAUDE_BRIDGE_CALLS', 'FAKE_CLAUDE_BRIDGE_LOG'];
+const ENV = ['FAKE_CLAUDE_NO_SCENES', 'FAKE_CLAUDE_SYMLINKS', 'FAKE_CLAUDE_SCENARIO', 'FAKE_CLAUDE_PROMPT_FILE', 'FAKE_CLAUDE_COMP_TAG', 'FAKE_CLAUDE_STRAY', 'FAKE_CLAUDE_ALWAYS_INVALID', 'FAKE_CLAUDE_BRIDGE_CALLS', 'FAKE_CLAUDE_BRIDGE_LOG'];
 
 beforeEach(async () => {
   base = mkdtempSync(join(tmpdir(), 'ms-test-comp-turns-'));
@@ -150,6 +154,11 @@ async function turn(slug: string, payload: object = {}): Promise<JobSummary> {
   expect(done.state, done.error).toBe('succeeded');
   return done;
 }
+/** Storyboards are made after the turn job, in the preview lane: wait for a file to appear. */
+async function waitFile(path: string): Promise<void> {
+  for (let i = 0; i < 1500 && !existsSync(path); i++) await new Promise((r) => setTimeout(r, 20));
+  expect(existsSync(path), path).toBe(true);
+}
 const versionOf = async (slug: string, n: number): Promise<VersionEntry> => (await store().readVersions(slug)).find((v) => v.n === n)!;
 const compDir = (slug: string, n: number, format: string) => join(store().dir(slug), 'outputs', `v${n}`, 'compositions', format);
 const detail = async (slug: string) => (await app.inject({ url: `/api/projects/acme/creatives/${slug}`, headers: H })).json() as CreativeDetail;
@@ -182,6 +191,8 @@ describe('a composition turn', { timeout: 60_000 }, () => {
     expect(first!.prompt).not.toContain('renderCommand');
     // Storyboards: the scene starts and the poster at 1 s, 270 px wide, in the protected cache; a still has one frame.
     const sbDir = storyboardDir(projectDir(), slug, 1, 'test-wide');
+    await waitFile(join(sbDir, 'storyboard.json'));
+    await waitFile(join(storyboardDir(projectDir(), slug, 1, 'test-still'), 'storyboard.json'));
     const sb = JSON.parse(readFileSync(join(sbDir, 'storyboard.json'), 'utf8'));
     expect(sb).toMatchObject({ schemaVersion: 1, hash: wideHash, width: 270 });
     expect(sb.frames.map((f: { t: number; kind: string; scene?: string }) => [f.t, f.kind, f.scene])).toEqual([[0, 'scene', 'one'], [2, 'scene', 'two'], [1, 'poster', undefined]]);
@@ -190,15 +201,23 @@ describe('a composition turn', { timeout: 60_000 }, () => {
     expect(still.frames).toHaveLength(1);
     expect(fake.frames.every((x) => x.width === 270 && x.imageFormat === 'jpeg')).toBe(true);
     expect(fake.renders).toEqual([]); // nothing is rendered until asked
-    // The storyboard route: the index with image URLs; the images are shown by <img>, without the UI token.
+    // The storyboard route (token): the index with signed, content-addressed image URLs and their expiry (fix I4).
     const route = await app.inject({ url: `/api/projects/acme/creatives/${slug}/versions/1/storyboards/test-wide`, headers: H });
     expect(route.statusCode, route.body).toBe(200);
-    const body = route.json() as { hash: string; frames: Array<{ url: string }> };
+    const body = route.json() as { hash: string; expiresAt: string; frames: Array<{ url: string }> };
     expect(body.hash).toBe(wideHash);
+    expect(Date.parse(body.expiresAt) - Date.now()).toBeGreaterThan(9 * 60_000);
+    expect(body.frames[0]!.url).toContain(`/storyboard-files/1/test-wide/${wideHash.slice(0, 16)}/f-0.jpg?s=`);
     expect((await app.inject({ url: `/api/projects/acme/creatives/${slug}/versions/1/storyboards/test-wide` })).statusCode).toBe(401);
     const img = await app.inject({ url: body.frames[0]!.url });
     expect(img.statusCode).toBe(200);
-    expect((await app.inject({ url: body.frames[0]!.url.replace('f-0.jpg', 'storyboard.json') })).statusCode).toBe(404);
+    expect(img.headers['cross-origin-resource-policy']).toBe('same-origin');
+    // Without the signature, with a wrong one, or on another path: refused.
+    const bare = body.frames[0]!.url.split('?')[0]!;
+    expect((await app.inject({ url: bare })).statusCode).toBe(403);
+    expect((await app.inject({ url: `${bare}?s=9999999999999.${'A'.repeat(43)}` })).statusCode).toBe(403);
+    expect((await app.inject({ url: body.frames[0]!.url.replace('f-0.jpg', 'f-1.jpg') })).statusCode).toBe(403);
+    expect((await app.inject({ url: body.frames[0]!.url.replace('f-0.jpg', 'storyboard.json') })).statusCode).toBe(403);
     // Regenerable: removed, it is made again on request.
     rmSync(sbDir, { recursive: true, force: true });
     expect((await app.inject({ url: `/api/projects/acme/creatives/${slug}/versions/1/storyboards/test-wide`, headers: H })).statusCode).toBe(200);
@@ -450,7 +469,7 @@ describe('export of v2 versions', { timeout: 60_000 }, () => {
     // A later legacy version whose file is gone: missing, as in phase 9.
     await store().appendVersion(slug, { n: 2, commit: null, sessionId: null, status: 'complete', createdAt: new Date().toISOString(), request: 'r', problems: [], tools: [], renderCommand: null, basedOn: 1,
       outputs: [{ format: 'test-wide', file: 'test-wide.mp4', width: 320, height: 180, durationSec: 4, verified: true, preview: null, sha256: 'a'.repeat(64), problems: [] }] });
-    expect(await star()).toMatchObject({ exportVersion: 2, starFileMissing: true, starRender: 'rendered' });
+    expect(await star()).toMatchObject({ exportVersion: 2, starFileMissing: true, starRender: 'missing' });
     // A ★ pick on the unrendered v2 version is allowed (export renders it).
     const pick = await app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}/export-picks`, headers: H, payload: { format: 'test-wide', version: 1 } });
     expect(pick.statusCode, pick.body).toBe(200);
@@ -522,5 +541,141 @@ describe('units', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('review fixes (Task 5b)', { timeout: 90_000 }, () => {
+  it('I1: pin frames go to the protected cache through real folders and a fresh temp, never through a planted link', async () => {
+    const slug = await create(['test-wide']);
+    const pins = [{ format: 'test-wide', x: 0.5, y: 0.5, timeSec: 1 }];
+    const cache = join(projectDir(), '.studio', 'cache', 'pin-frames', slug);
+    // v2: a normal pinned turn.
+    await turn(slug, { text: 'bigger', pins });
+    const frame = join(cache, 'v2', '2-1.jpg');
+    expect(lstatSync(frame).isFile()).toBe(true);
+    expect(prompts()[1]!.prompt).toContain(`.studio/cache/pin-frames/${slug}/v2/2-1.jpg`);
+    expect(existsSync(join(store().dir(slug), 'work', '.feedback'))).toBe(false);
+    // v3: its folder is a link to another folder: nothing is written there, no attachment.
+    const outside = mkdtempSync(join(tmpdir(), 'ms-test-outside-'));
+    try {
+      symlinkSync(outside, join(cache, 'v3'));
+      await turn(slug, { text: 'again', pins });
+      expect(readdirSync(outside)).toEqual([]);
+      expect(prompts()[2]!.prompt).not.toContain('pin-frames');
+      // v4: a link planted at the file's own name is replaced as an entry; its target is untouched.
+      mkdirSync(join(cache, 'v4'));
+      writeFileSync(join(outside, 'victim.txt'), 'keep');
+      symlinkSync(join(outside, 'victim.txt'), join(cache, 'v4', '4-1.jpg'));
+      await turn(slug, { text: 'once more', pins });
+      expect(readFileSync(join(outside, 'victim.txt'), 'utf8')).toBe('keep');
+      expect(lstatSync(join(cache, 'v4', '4-1.jpg')).isFile()).toBe(true);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('I2: an export waits for a render job of other formats, then renders its own', async () => {
+    const slug = await create(['test-wide', 'test-still']);
+    let release!: () => void;
+    fake.gate = new Promise((r) => { release = r; });
+    const reel = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/render`, headers: H, payload: { formats: ['test-wide'] } });
+    expect(reel.statusCode).toBe(202);
+    const prep = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export/prepare`, headers: H, payload: { picks: { 'test-still': 1 } } });
+    expect((prep.json() as { renders: Array<{ covers: boolean }> }).renders[0]!.covers).toBe(false);
+    const exp = app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, headers: H, payload: { destination: join(base, 'out'), picks: { 'test-still': 1 } } });
+    await new Promise((r) => setTimeout(r, 300));
+    release();
+    fake.gate = null;
+    const r = await exp;
+    expect(r.statusCode, r.body).toBe(200);
+    expect(fake.renders.map((x) => x.format.id)).toEqual(['test-wide', 'test-still']);
+    expect((r.json() as { files: Array<{ to: string }> }).files.map((f) => basename(f.to))).toEqual(['launch-test-still-v1.png']);
+  });
+
+  it('I3: a composition turn never shows the agent a render command, even from a legacy base', async () => {
+    const r = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', headers: H, payload: {
+      title: 'Old', generate: false, brief: { goal: 'g', message: '', formats: ['test-wide'], durationSec: 4, assets: [], notes: '' } } });
+    const slug = r.json().slug as string;
+    await store().appendVersion(slug, { n: 1, commit: null, sessionId: 's1', status: 'complete', createdAt: new Date().toISOString(), request: 'r', problems: [], tools: ['remotion'],
+      renderCommand: 'npx remotion render Main outputs/v1/test-wide.mp4', basedOn: null,
+      outputs: [{ format: 'test-wide', file: 'test-wide.mp4', width: 320, height: 180, durationSec: 4, verified: true, preview: null, sha256: 'b'.repeat(64), problems: [] }] });
+    const c = (await detail(slug)).creative;
+    await app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}`, headers: H, payload: { brief: { ...c.brief, formats: ['test-wide', 'test-tall'] } } });
+    await turn(slug, {});
+    const p = prompts()[0]!.prompt;
+    const request = p.slice(p.indexOf('## Request\n') + 11, p.indexOf('\n\n', p.indexOf('## Request\n')));
+    expect(request).toContain('test-tall');
+    expect(request).not.toMatch(/render|remotion|npx|renderCommand/i);
+    expect((await versionOf(slug, 2)).request).not.toMatch(/render|remotion/i);
+  });
+
+  it('stray removal never follows links the agent planted', async () => {
+    const outside = mkdtempSync(join(tmpdir(), 'ms-test-outside-'));
+    try {
+      writeFileSync(join(outside, 'keep.txt'), 'keep');
+      process.env.FAKE_CLAUDE_SYMLINKS = JSON.stringify([['x', outside], ['compositions/test-tall', outside]]);
+      const slug = await create(['test-wide']);
+      expect(readdirSync(outside)).toEqual(['keep.txt']);
+      expect(readdirSync(join(store().dir(slug), 'outputs', 'v1')).sort()).toEqual(['compositions', 'manifest.json']);
+      expect(readdirSync(join(store().dir(slug), 'outputs', 'v1', 'compositions'))).toEqual(['test-wide']);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('the agent\'s original is kept before normalising, and validate_composition reports the final hash', async () => {
+    const url = await app.listen({ port: 0, host: '127.0.0.1' });
+    bridge.setOrigin(url);
+    const log = join(base, 'bridge.jsonl');
+    process.env.FAKE_CLAUDE_NO_SCENES = '1';
+    process.env.FAKE_CLAUDE_BRIDGE_LOG = log;
+    process.env.FAKE_CLAUDE_BRIDGE_CALLS = JSON.stringify([['validate_composition', { format: 'test-wide' }]]);
+    const slug = await create(['test-wide']);
+    const v1 = await versionOf(slug, 1);
+    const call = JSON.parse(readFileSync(log, 'utf8').trim()) as { body: { formats: Array<{ hash: string }> } };
+    expect(call.body.formats[0]!.hash).toBe(v1.compositions![0]!.hash);
+    const original = JSON.parse(readFileSync(join(projectDir(), '.studio', 'cache', 'agent-originals', slug, 'v1', 'test-wide.json'), 'utf8'));
+    expect(original.scenes).toEqual([]);
+    expect(JSON.parse(readFileSync(join(compDir(slug, 1, 'test-wide'), 'composition.json'), 'utf8')).scenes).toHaveLength(1);
+  });
+
+  it('a linked target composition folder is refused without following it', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ms-test-linked-'));
+    try {
+      const outside = join(root, 'outside');
+      mkdirSync(outside);
+      writeFileSync(join(outside, 'composition.json'), '{"secret": true}');
+      const versionDir = join(root, 'creative', 'outputs', 'v1');
+      mkdirSync(join(versionDir, 'compositions'), { recursive: true });
+      symlinkSync(outside, join(versionDir, 'compositions', 'test-wide'));
+      const r = await checkTargets({ versionDir, targets: ['test-wide'], presets: PRESETS, briefDurationSec: null, locale: 'en' });
+      expect(r.checks).toEqual([]);
+      expect(r.problems).toHaveLength(1);
+      expect(r.problems[0]).toContain('cannot be read safely');
+      expect(r.problems[0]).not.toContain('outside');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('signed URLs: bound to the path, refused once expired, compared in constant time', () => {
+    let now = 1_000;
+    const s = new UrlSigner(500, () => now);
+    const { url, expiresAt } = s.sign('/a/b/f-0.jpg');
+    const token = new URLSearchParams(url.split('?')[1]).get('s');
+    expect(expiresAt).toBe(1_500);
+    expect(s.verify('/a/b/f-0.jpg', token)).toBe(true);
+    expect(s.verify('/a/b/f-1.jpg', token)).toBe(false);
+    expect(s.verify('/a/b/f-0.jpg', undefined)).toBe(false);
+    expect(new UrlSigner(500, () => now).verify('/a/b/f-0.jpg', token)).toBe(false); // another process key
+    now = 1_500;
+    expect(s.verify('/a/b/f-0.jpg', token)).toBe(false);
+  });
+
+  it('creative files are same-origin resources too (CORP)', async () => {
+    const slug = await create(['test-wide']);
+    const r = await app.inject({ url: `/api/projects/acme/creatives/${slug}/files/outputs/v1/manifest.json` });
+    expect(r.statusCode).toBe(200);
+    expect(r.headers['cross-origin-resource-policy']).toBe('same-origin');
   });
 });

@@ -4,6 +4,8 @@
 // scenes; a still for image formats), tagged with FAKE_CLAUDE_COMP_TAG (default: the version folder, so every turn differs);
 // `composition_invalid` writes an invalid one (fps 7) on the first attempt and a valid one in the fix attempt
 // (FAKE_CLAUDE_ALWAYS_INVALID=1: every attempt); `composition_layer` adds an html layer that calls fetch (advisory warning).
+// FAKE_CLAUDE_NO_SCENES=1: compositions without scenes (normalisation adds one). FAKE_CLAUDE_SYMLINKS=<json [[name, target], …]>:
+// composition turns then plant those symlinks under the version folder.
 // FAKE_CLAUDE_STRAY=1: composition turns also write a media file and a manifest.json next to the compositions.
 // FAKE_CLAUDE_BRIDGE_CALLS=<json [[tool, args], …]>: before finishing, calls the studio bridge (as the MCP server would) and
 // appends `{ tool, status, body }` per call to FAKE_CLAUDE_BRIDGE_LOG.
@@ -109,13 +111,18 @@ rl.once('line', async (line) => {
       }
       const composition = {
         $schema: 'motion-studio/composition@1', width: f.width, height: f.height, fps: mode === 'invalid' ? 7 : 30, duration, background: '#101010', fonts: [],
-        scenes: still ? [] : [{ id: 'one', start: 0, duration: half }, { id: 'two', start: half, duration: Math.round((duration - half) * 10) / 10 }],
+        scenes: still || process.env.FAKE_CLAUDE_NO_SCENES ? [] : [{ id: 'one', start: 0, duration: half }, { id: 'two', start: half, duration: Math.round((duration - half) * 10) / 10 }],
         tracks: [{ id: 'visual', kind: 'visual', clips }],
       };
       writeFileSync(join(dir, 'composition.json'), JSON.stringify(composition, null, 2));
       if (process.env.FAKE_CLAUDE_STRAY) writeFileSync(join(block.outputDir, `${f.id}.mp4`), 'agent media');
     }
     if (process.env.FAKE_CLAUDE_STRAY) writeFileSync(join(block.outputDir, 'manifest.json'), JSON.stringify({ schemaVersion: 1, files: [], renderCommand: 'node render.js' }));
+    for (const [name, target] of JSON.parse(process.env.FAKE_CLAUDE_SYMLINKS ?? '[]')) {
+      mkdirSync(dirname(join(block.outputDir, name)), { recursive: true });
+      spawnSync('rm', ['-rf', join(block.outputDir, name)]);
+      symlinkSync(target, join(block.outputDir, name));
+    }
   };
   if (block && scenario === 'composition') writeCompositions('valid');
   if (block && scenario === 'composition_layer') writeCompositions('layer');

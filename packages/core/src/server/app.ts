@@ -3,6 +3,7 @@ import { findFfmpeg } from '../render/encode.ts';
 import { MediaNormalizer } from '../render/media-normalize.ts';
 import { RenderJobService } from '../creatives/render-jobs.ts';
 import { PreviewService } from '../creatives/previews.ts';
+import { UrlSigner } from './signed-urls.ts';
 import type { AgentContract } from '../creatives/prompt.ts';
 import { stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -89,6 +90,8 @@ export interface ServerDeps {
   agentContract?: AgentContract;
   /** `preview_frames` calls allowed per turn (default 10). */
   previewFramesPerTurn?: number;
+  /** Lifetime of the signed storyboard image URLs (default 10 min; tests). */
+  signedUrlTtlMs?: number;
 }
 
 /** How long the billing method (one `claude auth status`) is reused; 'unknown' is retried sooner. */
@@ -96,9 +99,10 @@ const BILLING_TTL_MS = 10 * 60 * 1000;
 const BILLING_RETRY_MS = 60 * 1000;
 
 /** Routes reachable without the UI token: health, the MCP bridge (it has its own token) and files shown by <img>/<video>. */
+// The storyboard images carry a signed URL instead (signed-urls.ts, fix I4).
 const UI_TOKEN_EXEMPT: Record<string, ReadonlySet<string>> = {
-  GET: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/projects/:slug/creatives/:c/files/*', '/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:file']),
-  HEAD: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/projects/:slug/creatives/:c/files/*', '/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:file']),
+  GET: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/projects/:slug/creatives/:c/files/*', '/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:hash/:file']),
+  HEAD: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/projects/:slug/creatives/:c/files/*', '/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:hash/:file']),
   POST: new Set(['/api/bridge/:tool']),
 };
 /** `code` is what the UI branches on; `error` is display text in the current language. */
@@ -416,7 +420,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // The live preview's composition server origin (Task 8 frames it; started on first use).
   app.get('/api/preview/origin', async () => ({ origin: (await previews.compositionServer()).origin, uiOrigins: [...(deps.uiOrigins?.() ?? [])] }));
 
-  registerCreativeRoutes(app, { requireWorkspace, turns, renders, previews, media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m) });
+  registerCreativeRoutes(app, { requireWorkspace, turns, renders, previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m) });
 
   const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m) };
   registerBrandRoutes(app, routeCtx);
