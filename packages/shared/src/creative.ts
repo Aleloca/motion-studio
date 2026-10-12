@@ -58,6 +58,13 @@ export const outputWarningSchema = z.object({
 });
 export type OutputWarning = z.infer<typeof outputWarningSchema>;
 
+/** A checked problem of an output file, as a code and its figures (`OutputFileInfo.issues`). */
+export const outputIssueSchema = z.object({
+  code: z.enum(['tooLarge', 'durationOffTarget', 'durationOverMax', 'badResolution', 'notReadable', 'badExtension']),
+  params: z.record(z.string(), z.union([z.string(), z.number()])),
+});
+export type OutputIssue = z.infer<typeof outputIssueSchema>;
+
 export const outputFileInfoSchema = z.object({
   format: z.string(), file: z.string(), width: z.number(), height: z.number(),
   durationSec: z.number().nullable(), verified: z.boolean(), preview: z.string().nullable(),
@@ -75,6 +82,11 @@ export const outputFileInfoSchema = z.object({
    * `problems` count for every file of that version.
    */
   problems: z.array(z.string()).optional(),
+  /**
+   * The output checks' problems as codes with their figures (final wave P2), alongside the texts in `problems`: the UI
+   * says them briefly in its own language ("duration 4.8 s instead of 6 s"). Render outputs only; absent elsewhere.
+   */
+  issues: z.array(outputIssueSchema).optional(),
   /**
    * v2 versions: the composition hash (`compositionHash`) this file was rendered from. The render counts as current only while
    * it equals the version's composition hash for the format (`renderState`). Absent on legacy files (their media is the result).

@@ -21,7 +21,7 @@ import { channelOf } from './creativeState.ts';
 import { message } from './common.tsx';
 import { abortableWait, exportErrorText, withHashRetry } from './versionErrors.ts';
 import type { FormatState } from './versionModel.ts';
-import { compositionOf, renderPct } from './renderModel.ts';
+import { compositionOf, renderPct, shortProblems } from './renderModel.ts';
 
 /** The last destination folder, kept in this browser only. */
 export const EXPORT_FOLDER_KEY = 'ms.exportFolder';
@@ -82,7 +82,8 @@ export function ExportDialog(p: ExportDialogProps) {
 }
 
 /** `render`: the ★ versions without a render are rendered first (their jobs, and how many formats). */
-type Phase = { kind: 'idle' } | { kind: 'run' } | { kind: 'render'; jobs: string[]; count: number } | { kind: 'done'; destination: string; count: number; skipped: string[] };
+type Phase = { kind: 'idle' } | { kind: 'run' } | { kind: 'render'; jobs: string[]; count: number }
+  | { kind: 'done'; destination: string; count: number; skipped: string[]; excluded: string[] };
 type SaveState = { kind: 'idle' | 'saving' | 'saved' } | { kind: 'failed'; detail: string };
 
 interface Row {
@@ -134,9 +135,9 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
       ? (follows !== null ? x.noFollowerFile({ n, primary: follows }) : x.fileMissing({ n }))
       : s.starFileMissing ? x.fileMissing({ n: fileN ?? n }) : null;
     const file = output?.file ?? (needsRender ? `${s.id}${renderedExtension(preset)}` : null);
-    const problems = version && !needsRender ? renderProblems(version, s.id) : [];
+    const problems = version && !needsRender && renderProblems(version, s.id).length ? shortProblems(output, t, locale) : [];
     return [{ id: s.id, preset, n, fileN, output, needsRender, file, follows, newer: follows === null ? s.star.newer : null, blocked, problems }];
-  }), [states, versions, presets, x, locale]);
+  }), [states, versions, presets, x, locale, t]);
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(rows.map((r) => [r.id, r.blocked === null && r.problems.length === 0])));
   const [pattern, setPattern] = useState(initialPattern);
   const [savedPattern, setSavedPattern] = useState(initialPattern);
@@ -236,7 +237,13 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
         abortableWait(signal));
       if (signal.aborted) return;
       writeFolder(dest);
-      setPhase({ kind: 'done', destination: r.destination, count: r.files.length, skipped: r.skipped ?? [] });
+      // A render made now that had problems was not copied: said apart, with its short reasons (P2).
+      const excluded = (r.excluded ?? []).map((e) => {
+        const row = rows.find((x) => x.id === e.format);
+        const label = boardLabel({ id: e.format, preset: row?.preset ?? null, out: row?.output ?? null }, locale);
+        return x.excludedItem({ label, n: e.version, list: shortProblems(e, t, locale).join('; ') });
+      });
+      setPhase({ kind: 'done', destination: r.destination, count: r.files.length, skipped: r.skipped ?? [], excluded });
     } catch (e) {
       if (signal.aborted) return;
       setError(exportErrorText(e, t));
@@ -263,6 +270,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
           <b>{x.done({ count: phase.count })}</b>
           <span className="ms-exp-path">{phase.destination}</span>
           {phase.skipped.length ? <span className="ms-exp-skipped">{x.skipped({ list: phase.skipped.join(', ') })}</span> : null}
+          {phase.excluded.length ? <span className="ms-exp-problem" role="alert">{x.excluded({ list: phase.excluded.join(', ') })}</span> : null}
           {error ? <p role="alert" className="ms-exp-error">{error}</p> : null}
           <div className="ms-exp-done-actions">
             {bridge ? (

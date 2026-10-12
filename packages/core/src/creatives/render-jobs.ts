@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import {
   compositionProblemText, effectiveLinks, formatLabel, messages, renderState,
   type Brief, type Composition, type FormatPreset, type JobProgress, type JobSummary, type Locale, type ManifestV2, type OutputFileInfo,
-  type ServerMessage, type VersionComposition,
+  type OutputIssue, type ServerMessage, type VersionComposition,
 } from '@motion-studio/shared';
 import { hashConfinedFile } from '../brand/agent-guard.ts';
 import { loadComposition } from '../compositions/composition-files.ts';
@@ -350,7 +350,12 @@ export class RenderJobService {
       const own = await this.describe({ creativeDir: o.creativeDir, versionDir: o.versionDir, n: o.n, preset: fPreset, file: fFile, composition: o.composition, sha256, hash: '', locale: o.locale, poster: false });
       const problems = [...(o.primary.problems ?? [])];
       for (const p of own.problems ?? []) if (!problems.includes(p)) problems.push(p);
-      if (!fPreset.extensions.includes(o.ext)) problems.push(v.badExtension({ file: fFile, ext: o.ext, id: o.f, allowed: fPreset.extensions.join(', ') }));
+      const issues: OutputIssue[] = [...(o.primary.issues ?? [])];
+      for (const i of own.issues ?? []) if (!issues.some((x) => JSON.stringify(x) === JSON.stringify(i))) issues.push(i);
+      if (!fPreset.extensions.includes(o.ext)) {
+        problems.push(v.badExtension({ file: fFile, ext: o.ext, id: o.f, allowed: fPreset.extensions.join(', ') }));
+        issues.push({ code: 'badExtension', params: { ext: o.ext } });
+      }
       let preview: string | null = null;
       if (o.primary.preview) {
         const pv = `.previews/${fFile}.jpg`;
@@ -358,8 +363,8 @@ export class RenderJobService {
           (temp) => noteCoreOutputWrite(o.creativeDir, `outputs/v${o.n}/${pv}`, temp)).then(() => true, () => false);
         if (ok) { preview = pv; await noteCoreOutputWrite(o.creativeDir, `outputs/v${o.n}/.previews`); }
       }
-      const { sha256: _drop, fromComposition: _fc, ...rest } = own;
-      return { ...rest, verified: own.verified && sha256 !== undefined, preview, problems, ...(base.sha256 ? { sha256: base.sha256 } : {}), ...(fromComposition ? { fromComposition } : {}) };
+      const { sha256: _drop, fromComposition: _fc, issues: _own, ...rest } = own;
+      return { ...rest, verified: own.verified && sha256 !== undefined, preview, problems, ...(issues.length ? { issues } : {}), ...(base.sha256 ? { sha256: base.sha256 } : {}), ...(fromComposition ? { fromComposition } : {}) };
     } catch {
       return base;
     }
@@ -374,18 +379,33 @@ export class RenderJobService {
     const media = this.deps.media;
     const probed = media.available ? await media.probe(path).catch(() => null) : null;
     const problems: string[] = [];
+    // Each problem also as a code with its figures (P2): the UI says it briefly in its own language.
+    const issues: OutputIssue[] = [];
     const width = probed?.width ?? o.composition.width;
     const height = probed?.height ?? o.composition.height;
     const video = o.composition.duration > 0;
     const durationSec = video ? (probed?.durationSec ?? o.composition.duration) : null;
-    if (media.available && !probed) problems.push(v.notReadable({ file }));
-    if (width !== preset.width || height !== preset.height) problems.push(v.badResolution({ file, width, height, expectedWidth: preset.width, expectedHeight: preset.height }));
+    const round1 = (x: number) => Math.round(x * 10) / 10;
+    if (media.available && !probed) { problems.push(v.notReadable({ file })); issues.push({ code: 'notReadable', params: {} }); }
+    if (width !== preset.width || height !== preset.height) {
+      problems.push(v.badResolution({ file, width, height, expectedWidth: preset.width, expectedHeight: preset.height }));
+      issues.push({ code: 'badResolution', params: { width, height, expectedWidth: preset.width, expectedHeight: preset.height } });
+    }
     if (video && durationSec !== null) {
       // The renderer counted the frames exactly; the container may add up to an AAC frame of padding.
-      if (Math.abs(durationSec - o.composition.duration) > Math.max(0.1, 2 / o.composition.fps)) problems.push(v.durationOffTarget({ file, duration: durationSec.toFixed(1), target: o.composition.duration }));
-      if (preset.maxDurationSec !== undefined && durationSec > preset.maxDurationSec + 1e-3) problems.push(v.durationOverMax({ file, duration: durationSec.toFixed(1), max: preset.maxDurationSec }));
+      if (Math.abs(durationSec - o.composition.duration) > Math.max(0.1, 2 / o.composition.fps)) {
+        problems.push(v.durationOffTarget({ file, duration: durationSec.toFixed(1), target: o.composition.duration }));
+        issues.push({ code: 'durationOffTarget', params: { duration: round1(durationSec), target: o.composition.duration } });
+      }
+      if (preset.maxDurationSec !== undefined && durationSec > preset.maxDurationSec + 1e-3) {
+        problems.push(v.durationOverMax({ file, duration: durationSec.toFixed(1), max: preset.maxDurationSec }));
+        issues.push({ code: 'durationOverMax', params: { duration: round1(durationSec), max: preset.maxDurationSec } });
+      }
     }
-    if (preset.maxFileMB !== undefined && st.size / 1e6 > preset.maxFileMB) problems.push(v.tooLarge({ file, size: (st.size / 1e6).toFixed(1), max: preset.maxFileMB }));
+    if (preset.maxFileMB !== undefined && st.size / 1e6 > preset.maxFileMB) {
+      problems.push(v.tooLarge({ file, size: (st.size / 1e6).toFixed(1), max: preset.maxFileMB }));
+      issues.push({ code: 'tooLarge', params: { size: round1(st.size / 1e6), max: preset.maxFileMB } });
+    }
     const large = largeFileWarning(preset, file.slice(file.lastIndexOf('.') + 1), st.size, durationSec, o.composition.fps);
     let preview: string | null = null;
     if (o.poster && video && media.available && probed) {
@@ -413,7 +433,7 @@ export class RenderJobService {
     }
     return {
       format: preset.id, file, width, height, durationSec, verified: probed !== null, preview,
-      ...(large ? { warnings: [large] } : {}), ...(o.sha256 ? { sha256: o.sha256 } : {}), problems, ...(o.hash ? { fromComposition: o.hash } : {}),
+      ...(large ? { warnings: [large] } : {}), ...(o.sha256 ? { sha256: o.sha256 } : {}), problems, ...(issues.length ? { issues } : {}), ...(o.hash ? { fromComposition: o.hash } : {}),
     };
   }
 

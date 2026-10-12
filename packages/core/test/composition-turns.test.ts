@@ -645,9 +645,11 @@ describe('review fixes (Task 5b)', { timeout: 90_000 }, () => {
     const picks = { 'test-wide': 1, 'test-tiny': 1 };
     const first = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, headers: H, payload: { destination: join(base, 'out1'), picks } });
     expect(first.statusCode, first.body).toBe(200);
-    const r1 = first.json() as { files: Array<{ to: string }>; skipped: string[] };
+    const r1 = first.json() as { files: Array<{ to: string }>; skipped: string[]; excluded: Array<{ format: string; version: number; problems: string[]; issues: Array<{ code: string }> }> };
     expect(r1.files.map((f) => basename(f.to))).toEqual(['launch-test-wide-v1.mp4']);
-    expect(r1.skipped.join(' ')).toMatch(/Tiny v1 \(renderizzato con problemi: .+\)/);
+    // Stated apart, with its problems and their codes (P2): never a silent exclusion, never mixed with missing files.
+    expect(r1.skipped).toEqual([]);
+    expect(r1.excluded).toEqual([{ format: 'test-tiny', version: 1, problems: [expect.any(String)], issues: [{ code: 'tooLarge', params: { size: expect.any(Number), max: 0.00001 } }] }]);
     // The render with problems is now on record: a second export (the row ticked again) copies it.
     const again = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, headers: H, payload: { destination: join(base, 'out2'), picks: { 'test-tiny': 1 } } });
     expect(again.statusCode, again.body).toBe(200);

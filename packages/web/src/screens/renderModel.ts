@@ -1,7 +1,7 @@
 // Render state of the v2 (composition) versions on the web side (Task 8, spec §5.3): per board "Not rendered",
 // "Queued · 2 renders ahead", "Rendering 42%", "Rendered", "Render problem · Render again", "Render failed · Retry", from the version's records and the live
 // render jobs; and what "Render ★" renders.
-import { renderJobKeyOf, renderProblems, renderState, type JobSummary, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
+import { renderJobKeyOf, renderProblems, renderState, type Locale, type Messages, type OutputIssue, type JobSummary, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
 import type { FormatState } from './versionModel.ts';
 
 export type BoardRender =
@@ -68,3 +68,26 @@ export function starRenderPlan(states: Record<string, FormatState>, versions: Ve
   }
   return plan;
 }
+
+/** The short reasons of a render's problems in the UI's language (P2), e.g. "duration 4.8 s instead of 6 s"; the core's own
+ * texts (without their file name) when the render recorded no codes. */
+export function shortProblems(o: { problems?: string[]; issues?: OutputIssue[] } | null | undefined, m: Messages, locale: Locale): string[] {
+  const s = m.web.exportUi.problemShort;
+  const n = (v: unknown) => (typeof v === 'number' ? formatNumberIn(locale, v) : String(v ?? ''));
+  if (o?.issues?.length) {
+    return o.issues.map((i) => {
+      const p = i.params;
+      switch (i.code) {
+        case 'tooLarge': return s.tooLarge({ size: n(p.size), max: n(p.max) });
+        case 'durationOffTarget': return s.durationOffTarget({ duration: n(p.duration), target: n(p.target) });
+        case 'durationOverMax': return s.durationOverMax({ duration: n(p.duration), max: n(p.max) });
+        case 'badResolution': return s.badResolution({ size: `${n(p.width)}×${n(p.height)}`, expected: `${n(p.expectedWidth)}×${n(p.expectedHeight)}` });
+        case 'notReadable': return s.notReadable;
+        case 'badExtension': return s.badExtension({ ext: String(p.ext ?? '') });
+        default: return '';
+      }
+    }).filter(Boolean);
+  }
+  return (o?.problems ?? []).map((p) => p.replace(/^[^:]{1,200}:\s*/, ''));
+}
+const formatNumberIn = (locale: Locale, v: number) => new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(v);

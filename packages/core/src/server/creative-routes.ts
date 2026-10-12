@@ -1,7 +1,7 @@
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { briefSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatLabel, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
+import { briefSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatLabel, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -340,8 +340,10 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       }
     }
     // A render made just now for this export that has problems (I2) is not copied: the user has not seen them. It is
-    // reported as not exported; the dialog then shows the problems and copies it once the row is ticked again.
+    // reported apart (`excluded`, with its problems and their codes: P2, never a silent exclusion); the dialog then shows
+    // the problems and copies it once the row is ticked again.
     const problems: string[] = [];
+    const excluded: Array<{ format: string; version: number; problems: string[]; issues: OutputIssue[] }> = [];
     if (rendered.length > 0) {
       const versions = await ref.store.readVersions(ref.creativeSlug);
       items = items.filter((it) => {
@@ -350,12 +352,13 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
         const list = v ? renderProblems(v, it.format) : [];
         if (!list.length) return true;
         problems.push(t().export.renderProblems({ item: `${common.label(it.format)} v${it.n}`, list: list.join('; ') }));
+        excluded.push({ format: it.format, version: it.n, problems: list, issues: v?.outputs.find((o) => o.format === it.format)?.issues ?? [] });
         return false;
       });
       if (!items.length) throw new CodedError(409, t().export.renderProblemsOnly({ list: problems.join(', ') }), 'export-render-problems');
     }
     const result = await exportResolved(items, common);
-    const withProblems = problems.length ? { ...result, skipped: [...result.skipped, ...problems] } : result;
+    const withProblems = excluded.length ? { ...result, excluded } : result;
     return rendered.length > 0 ? { ...withProblems, rendered } : withProblems;
   });
 

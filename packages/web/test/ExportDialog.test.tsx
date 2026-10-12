@@ -277,6 +277,28 @@ describe('ExportDialog · compositions rendered first (Task 8)', () => {
     await waitFor(() => expect(api.exportPicks).toHaveBeenCalledWith('acme', 'c1', expect.objectContaining({ picks: { [REEL]: 7, [POST]: 7 } })));
   });
 
+  it('the problem row says the short reason in the UI\'s language: "duration 4.8 s instead of 6 s" (P2)', () => {
+    const bad = { ...v7, outputs: [{ ...v7.outputs[0]!, problems: ['instagram-post-1x1.png: duration 4.8s, about 6s requested'], issues: [{ code: 'durationOffTarget' as const, params: { duration: 4.8, target: 6 } }] }, { ...out(REEL, 'mp4', 1920), sha256: 'a'.repeat(64), fromComposition: 'e'.repeat(64) }] };
+    render(
+      <I18nProvider locale="en">
+        <ExportDialog open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: [bad], states: twoStates() }} presets={DEFAULT_FORMATS} pattern="{title}-{format}-v{v}" />
+      </I18nProvider>,
+    );
+    expect(screen.getByText('Rendered with problems: duration 4.8 s instead of 6 s. Tick it to export it anyway')).toBeTruthy();
+    expect((screen.getByRole('checkbox', { name: /Post/ }) as HTMLElement).getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('a render made during the export that had problems is said in the final summary, with its reason (P2)', async () => {
+    api.prepareExport.mockResolvedValueOnce({ renders: [{ version: 7, formats: [REEL], job: job({ state: 'queued' }), covers: true }] });
+    api.exportPicks.mockResolvedValueOnce({ destination: '/out', files: [{ from: 'a', to: 'b' }], skipped: [],
+      excluded: [{ format: REEL, version: 7, problems: ['x'], issues: [{ code: 'tooLarge', params: { size: 31.2, max: 30 } }] }] } as never);
+    openWith({ r7: job({ state: 'queued' }) });
+    await userEvent.click(screen.getByRole('button', { name: 'Export 2 files' }));
+    const line = await screen.findByText(/^Not exported because the render has problems:/);
+    expect(line.textContent).toMatch(/v7 \(31\.2 MB instead of at most 30 MB\)$/);
+    expect(line.getAttribute('role')).toBe('alert');
+  });
+
   it('nothing to render: no prepare step', async () => {
     const rendered = { ...v7, outputs: [...v7.outputs, { ...out(REEL, 'mp4', 1920), sha256: 'a'.repeat(64), fromComposition: 'e'.repeat(64) }] };
     render(
