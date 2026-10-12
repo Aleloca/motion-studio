@@ -4,7 +4,7 @@ import { constants } from 'node:fs';
 import { copyFile, lstat, mkdir, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  compositionProblemText, effectiveLinks, formatLabel, messages, renderState,
+  compositionProblemText, effectiveLinks, formatLabel, messages, renderProblems, renderState,
   type Brief, type Composition, type FormatPreset, type JobProgress, type JobSummary, type Locale, type ManifestV2, type OutputFileInfo,
   type OutputIssue, type ServerMessage, type VersionComposition,
 } from '@motion-studio/shared';
@@ -76,6 +76,8 @@ export interface RenderPlan {
   fixFollows: Record<string, string>;
   /** Requested formats this version has no composition for. */
   unknown: string[];
+  /** Primaries whose CURRENT, clean render is kept: only their followers' copies are made (final wave C6). */
+  reuse?: string[];
 }
 
 /**
@@ -178,7 +180,19 @@ export class RenderJobService {
       if (all) return all;
       return lastRenderJob(active.filter((j) => wanted.some((f) => j.formats?.includes(f))), base);
     }
-    const plan = active.length > 0 ? renderPlan(comps, creative.brief, missing) : full;
+    const basePlan = active.length > 0 ? renderPlan(comps, creative.brief, missing) : full;
+    // A follower asked for alone (its primary not asked for) does not render a current, clean primary again: it is copied.
+    const asked = new Set(active.length > 0 ? missing : requested ?? []);
+    const reuse: string[] = [];
+    if (asked.size > 0) {
+      for (const p of basePlan.primaries) {
+        if (asked.has(p) || renderState(version, p) !== 'rendered' || renderProblems(version, p).length > 0) continue;
+        const file = version.outputs.find((o) => o.format === p)?.file;
+        const st = file ? await lstat(join(new CreativeStore(ref.projectDir).outputsDir(ref.creativeSlug, n), file)).catch(() => null) : null;
+        if (st?.isFile() && st.nlink === 1) reuse.push(p);
+      }
+    }
+    const plan: RenderPlan = reuse.length > 0 ? { ...basePlan, reuse } : basePlan;
     const keys = new Set(active.map((j) => j.key));
     let key = base;
     for (let k = 2; keys.has(key); k++) key = `${base}:${k}`;
@@ -269,6 +283,7 @@ export class RenderJobService {
     const entry = o.comps.find((c) => c.format === format)!;
     const preset = findPreset(o.presets, format);
     if (!preset) throw new Error(m.validation.unknownPreset({ id: format }));
+    if (o.plan.reuse?.includes(format)) return this.copyFollowers(o, preset, entry);
     o.progress({ format, phase: 'media', done: 0, total: 0 });
     const compDir = join(versionDir, ...entry.dir.split('/'));
     const loaded = await loadComposition(compDir, preset);
@@ -335,6 +350,47 @@ export class RenderJobService {
     const primaryProblems = infos[0]?.problems ?? [];
     for (const [i, info] of infos.entries()) {
       const own = i === 0 ? primaryProblems : (info.problems ?? []).filter((p) => !primaryProblems.includes(p));
+      if (own.length) await o.note(m.render.outputProblems({ format: o.label(info.format), list: own.join('; ') })).catch(() => {});
+    }
+    if (failure) throw failure;
+  }
+
+  /**
+   * The primary's current render is kept (C6): the followers' copies are made from it and recorded, nothing is rendered.
+   * The primary's file is checked against its record first; if it no longer matches, it is rendered as usual.
+   */
+  private async copyFollowers(o: Parameters<RenderJobService['renderFormat']>[0], preset: FormatPreset, entry: VersionComposition): Promise<void> {
+    const { ref, n, format } = o;
+    const m = messages(o.locale);
+    const store = new CreativeStore(ref.projectDir);
+    const creativeDir = store.dir(ref.creativeSlug);
+    const versionDir = store.outputsDir(ref.creativeSlug, n);
+    const version = (await store.readVersions(ref.creativeSlug)).find((v) => v.n === n);
+    const primary = version?.outputs.find((x) => x.format === format);
+    const h = primary ? await hashConfinedFile(creativeDir, `outputs/v${n}/${primary.file}`) : null;
+    if (!primary || !h || !('sha256' in h) || h.sha256 !== primary.sha256) return this.renderFormat({ ...o, plan: { ...o.plan, reuse: o.plan.reuse!.filter((f) => f !== format) } });
+    const compDir = join(versionDir, ...entry.dir.split('/'));
+    const loaded = await loadComposition(compDir, preset);
+    if (!loaded.ok || loaded.hash !== entry.hash) return this.renderFormat({ ...o, plan: { ...o.plan, reuse: o.plan.reuse!.filter((f) => f !== format) } });
+    const ext = primary.file.slice(primary.file.lastIndexOf('.') + 1);
+    const infos: OutputFileInfo[] = [];
+    let failure: unknown = null;
+    try {
+      o.progress({ format, phase: 'finishing', done: 0, total: o.followers.length });
+      for (const [i, f] of o.followers.entries()) {
+        try {
+          infos.push(await this.follower({ creativeDir, versionDir, n, f, ext, primary, composition: loaded.composition, presets: o.presets, comps: o.comps, locale: o.locale, fallback: preset }));
+        } catch (e) { failure ??= e; }
+        o.progress({ format, phase: 'finishing', done: i + 1, total: o.followers.length });
+      }
+    } finally {
+      if (infos.length > 0) await this.record(store, ref, n, infos, o.plan.fixFollows, o.comps);
+      await noteCoreChange(versionDir);
+      this.deps.broadcast({ type: 'creative', project: ref.projectSlug, creative: ref.creativeSlug });
+    }
+    const own0 = primary.problems ?? [];
+    for (const info of infos) {
+      const own = (info.problems ?? []).filter((p) => !own0.includes(p));
       if (own.length) await o.note(m.render.outputProblems({ format: o.label(info.format), list: own.join('; ') })).catch(() => {});
     }
     if (failure) throw failure;

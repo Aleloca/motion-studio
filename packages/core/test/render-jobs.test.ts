@@ -574,6 +574,30 @@ describe('round 2: the record follows the disk', { timeout: 60_000 }, () => {
   });
 });
 
+describe('a follower alone does not render a current primary again (C6)', { timeout: 60_000 }, () => {
+  it('only the follower\'s copy is made when the primary\'s render is current and clean; asking for the primary renders it', async () => {
+    const { slug, store, dir } = await v2Creative({ formats: ['test-wide', 'test-wide-b'] });
+    expect((await waitJob((await post(slug, 1)).json().id)).state).toBe('succeeded');
+    expect(fake.calls).toHaveLength(1);
+    const primaryBytes = readFileSync(join(dir, 'outputs', 'v1', 'test-wide.mp4'));
+    // The follower's copy goes missing (a failed copy): file and record.
+    rmSync(join(dir, 'outputs', 'v1', 'test-wide-b.mp4'));
+    await store.updateVersion(slug, 1, (v) => ({ ...v, outputs: v.outputs.filter((o) => o.format !== 'test-wide-b') }));
+    expect(renderState(await versionOf(store, slug, 1), 'test-wide-b')).toBe('none');
+    const job = (await post(slug, 1, { formats: ['test-wide-b'] })).json() as JobSummary;
+    expect((await waitJob(job.id)).state).toBe('succeeded');
+    expect(fake.calls).toHaveLength(1); // no new render
+    expect(readFileSync(join(dir, 'outputs', 'v1', 'test-wide.mp4'))).toEqual(primaryBytes);
+    expect(readFileSync(join(dir, 'outputs', 'v1', 'test-wide-b.mp4'))).toEqual(primaryBytes);
+    const v = await versionOf(store, slug, 1);
+    expect(renderState(v, 'test-wide-b')).toBe('rendered');
+    expect(manifestOf(dir, 1).renders.map((r) => r.format).sort()).toEqual(['test-wide', 'test-wide-b']);
+    // Asking for the primary itself renders it again.
+    expect((await waitJob((await post(slug, 1, { formats: ['test-wide'] })).json().id)).state).toBe('succeeded');
+    expect(fake.calls).toHaveLength(2);
+  });
+});
+
 describe('a turn and a render on the same creative (M9)', { timeout: 120_000 }, () => {
   it('both versions.json writes are kept and the turn reports no earlier-output change', async () => {
     const { slug, store } = await v2Creative({ formats: ['test-wide'], links: {} });
