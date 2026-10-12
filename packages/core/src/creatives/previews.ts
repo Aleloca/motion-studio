@@ -147,19 +147,20 @@ export class PreviewService {
     const signal = AbortSignal.any([this.closing.signal, ...(o.signal ? [o.signal] : [])]);
     const compDir = join(o.ref.creativeDir, 'outputs', `v${o.ref.n}`, 'compositions', o.folder);
     try {
-      return await this.lane.run(async (laneSignal) => {
-        const prepared = await this.deps.normalizer.prepare({ projectDir: o.ref.projectDir, compDir, composition: o.composition, signal: laneSignal });
-        try {
-          return await engine.frames({
-            server: await this.compositionServer(), // one long-lived server for every preview (fix minor 5)
-            dir: o.ref.creativeDir, versionDir: `outputs/v${o.ref.n}`, composition: o.composition, format: { ...o.preset, id: o.folder },
-            times: o.times, width: o.width, imageFormat: o.imageFormat, quality: 80, signal: laneSignal, ...withMedia(prepared),
-            ...(this.deps.distDir ? { distDir: this.deps.distDir } : {}),
-          });
-        } finally {
-          prepared.release();
-        }
-      }, signal);
+      // Media is normalised BEFORE a lane slot is taken (final wave C5): the lane's 180 s limit is for the frames, a long
+      // first encode does not count against it, and a lane timeout aborts only this caller's wait (the encode is shared
+      // and stops only when no caller waits for it any more).
+      const prepared = await this.deps.normalizer.prepare({ projectDir: o.ref.projectDir, compDir, composition: o.composition, signal });
+      try {
+        return await this.lane.run(async (laneSignal) => engine.frames({
+          server: await this.compositionServer(), // one long-lived server for every preview (fix minor 5)
+          dir: o.ref.creativeDir, versionDir: `outputs/v${o.ref.n}`, composition: o.composition, format: { ...o.preset, id: o.folder },
+          times: o.times, width: o.width, imageFormat: o.imageFormat, quality: 80, signal: laneSignal, ...withMedia(prepared),
+          ...(this.deps.distDir ? { distDir: this.deps.distDir } : {}),
+        }), signal);
+      } finally {
+        prepared.release();
+      }
     } catch (e) {
       if (e instanceof PreviewLaneBusyError) throw new CodedError(429, messages(currentLocale()).errors.previewBusy, 'preview-busy');
       throw e;
