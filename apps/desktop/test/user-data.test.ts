@@ -59,6 +59,8 @@ describe('MOTION_STUDIO_USER_DATA_DIR', () => {
       join(appData, 'MOTION STUDIO', 'sub'), join(appData, 'motion studio electron'), join(appData, 'Motion studio beta', 'x'),
       join(appData.toLowerCase(), 'motion studio electron'), join(appData.toUpperCase(), 'MOTION STUDIO'),
       join(appData, 'MOTION STUDIO NEXT', 'x'), // a Motion Studio* folder that does not exist yet, in any case
+      join(appData, 'Motion \u017Ftudio Next', 'x'), join(appData, 'Motion \u017Ftudio'), // ſ, folded to s by APFS (M1)
+      join(appData, 'Ｍotion Studio Wide', 'x'), // a fullwidth M (NFKC)
       join(root, 'LINK-TO-CONFIG', 'new'),
     ]) expect(ci(bad), bad).toMatchObject({ error: expect.stringContaining(USER_DATA_ENV) });
     expect(ci(join(scratch, 'Electron'))).toEqual({ dir: join(scratch, 'Electron') });
