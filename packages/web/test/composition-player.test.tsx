@@ -381,6 +381,24 @@ describe('preview sessions are shared and released (fix round 1, I2)', () => {
     expect(api.revokePreview.mock.calls.map((c) => c[3])).toEqual(['a']);
   });
 
+  it('a switch to another version keeps the shown session until the new frame is shown, then ends it (A5 minor)', async () => {
+    const h = renderHook(({ n }) => usePreviewSession({ slug: 'acme', creative: 'launch', n, format: 'tiktok-9x16', enabled: true }), { initialProps: { n: 1 } });
+    await flush();
+    act(() => { h.result.current.showing('t1'); });
+    h.rerender({ n: 2 });
+    await flush();
+    expect(h.result.current.state).toMatchObject({ kind: 'ready', session: { token: 't2' } });
+    // The player still shows v1's frame while v2's loads: past the grace, t1 is still alive.
+    await act(async () => { await vi.advanceTimersByTimeAsync(RELEASE_GRACE_MS * 3); });
+    expect(api.revokePreview).not.toHaveBeenCalled();
+    act(() => { h.result.current.showing('t2'); });
+    await flush();
+    expect(api.revokePreview.mock.calls.map((c) => c[3])).toEqual(['t1']);
+    h.unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(RELEASE_GRACE_MS + 10); });
+    expect(api.revokePreview.mock.calls.map((c) => c[3])).toEqual(['t1', 't2']);
+  });
+
   it('retry() mints again at once; a new key starts fresh (no leftover backoff)', async () => {
     api.previewSession.mockReset();
     api.previewSession.mockRejectedValueOnce(new ApiError(500, 'boom')).mockResolvedValueOnce(session('ok'));

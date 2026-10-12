@@ -63,10 +63,11 @@ const revokeOnCore = (e: { slug: string; creative: string; n: number }, s: Previ
 function end(e: SessionEntry): void {
   window.clearTimeout(e.idle);
   if (sessions.get(e.key) === e) sessions.delete(e.key);
-  revokeOnCore(e, e.session);
+  // A session a player still shows (its frame stays until the next one is ready, e.g. after a switch to another version)
+  // is retired, not ended: it ends when that player lets it go.
+  const s = e.session;
   e.session = null;
-  for (const s of e.retired.values()) revokeOnCore(e, s);
-  e.retired.clear();
+  retire(e, s);
 }
 /**
  * `s` is no longer handed out (renewed, or its frame stalled): ended on the core at once when no player shows it, else
@@ -156,20 +157,24 @@ export function usePreviewSession(o: PreviewSessionOptions): { state: PreviewSta
   const attempt = useRef({ key: null as string | null, n: 0 });
   const current = useRef<PreviewSessionInfo | null>(null);
   const entry = useRef<SessionEntry | null>(null);
-  /** The token this hook's player shows (counted in its entry's `shown`). */
-  const shownToken = useRef<string | null>(null);
+  /** The token this hook's player shows, with the entry it is counted in (kept across a key change until the player moves on). */
+  const shown = useRef<{ e: SessionEntry; token: string } | null>(null);
+  const shownToken = { get current() { return shown.current?.token ?? null; } };
 
   // Held while enabled; let go (and ended after the grace when nobody else uses it) when disabled or unmounted.
   useEffect(() => {
     if (key === null || o.n === null) { entry.current = null; return; }
     const e = hold({ key, slug: o.slug, creative: o.creative, n: o.n, format: o.format });
     entry.current = e;
+    // The shown frame is not let go here: on a switch (another version or format) the player keeps it until the new
+    // session's frame is ready, then reports it (`showing`), which releases this one.
     return () => {
-      if (shownToken.current !== null) { unshow(e, shownToken.current); shownToken.current = null; }
       if (entry.current === e) entry.current = null;
       letGo(e);
     };
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Unmounted: whatever is still shown is let go.
+  useEffect(() => () => { if (shown.current) { unshow(shown.current.e, shown.current.token); shown.current = null; } }, []);
 
   useEffect(() => {
     if (attempt.current.key !== key) attempt.current = { key, n: 0 };
@@ -216,10 +221,11 @@ export function usePreviewSession(o: PreviewSessionOptions): { state: PreviewSta
   const retry = useCallback(() => { attempt.current.n = 0; setRun((r) => ({ key, n: r.n + 1, wait: false })); }, [key]);
   const showing = useCallback((token: string | null) => {
     const e = entry.current;
-    if (!e || shownToken.current === token) return;
-    if (shownToken.current !== null) unshow(e, shownToken.current);
-    shownToken.current = token;
-    if (token !== null) show(e, token);
+    const prev = shown.current;
+    if (prev && prev.token === token && prev.e === e) return;
+    if (prev) unshow(prev.e, prev.token);
+    shown.current = token !== null && e ? { e, token } : null;
+    if (token !== null && e) show(e, token);
   }, []);
   return { state, stalled, retry, showing };
 }
