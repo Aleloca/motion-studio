@@ -4,7 +4,7 @@ import { constants } from 'node:fs';
 import { copyFile, lstat, mkdir, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  anyManifestSchema, compositionProblemText, effectiveLinks, formatLabel, messages, renderState,
+  compositionProblemText, effectiveLinks, formatLabel, messages, renderState,
   type Brief, type Composition, type FormatPreset, type JobProgress, type JobSummary, type Locale, type ManifestV2, type OutputFileInfo,
   type ServerMessage, type VersionComposition,
 } from '@motion-studio/shared';
@@ -15,7 +15,6 @@ import { noteCoreTemp } from '../core-temps.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { currentLocale } from '../i18n.ts';
 import { JobConflictError, JobFailedError, type JobQueue } from '../jobs/job-queue.ts';
-import { readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { RenderError } from '../render/errors.ts';
 import { sessionMediaOf, type MediaNormalizer } from '../render/media-normalize.ts';
@@ -23,7 +22,7 @@ import type { RenderCompositionOptions, RenderEngine, RenderResult } from '../re
 import { CodedError } from '../workspace-store.ts';
 import { noteCoreOutputWrite } from './carry-over.ts';
 import { CreativeStore } from './creative-store.ts';
-import { noteRenderStamps } from './render-stamps.ts';
+import { noteRenderStamps, updateVersionManifest } from './render-stamps.ts';
 import type { CreativeRef } from './creative-turns.ts';
 import { largeFileWarning } from './output-contract.ts';
 
@@ -413,24 +412,23 @@ export class RenderJobService {
       outputs: [...v.outputs.filter((o) => !formats.has(o.format)), ...infos],
       ...(v.compositions ? { compositions: fixed(v.compositions) } : {}),
     }));
-    const versionDir = store.outputsDir(ref.creativeSlug, n);
-    const path = join(versionDir, 'manifest.json');
-    const current = await readJsonFile(path, anyManifestSchema).catch(() => null);
-    const base: ManifestV2 = current?.schemaVersion === 2 ? current : { schemaVersion: 2, compositions: updated.compositions ?? comps, renders: [] };
     const at = new Date().toISOString();
-    const manifest: ManifestV2 = {
-      schemaVersion: 2,
-      compositions: fixed(base.compositions),
-      renders: [
-        ...base.renders.filter((r) => !formats.has(r.format)),
-        ...infos.filter((i) => i.sha256 !== undefined).map((i) => ({
-          format: i.format, file: i.file, width: i.width, height: i.height,
-          durationSec: i.durationSec !== null && i.durationSec > 0 ? i.durationSec : null,
-          sha256: i.sha256!, renderedAt: at, ...(i.fromComposition ? { fromComposition: i.fromComposition } : {}),
-        })),
-      ],
-    };
-    await writeJsonFileAtomic(path, manifest, { beforeRename: (tmp) => noteCoreOutputWrite(store.dir(ref.creativeSlug), `outputs/v${n}/manifest.json`, tmp) });
+    // Read, changed and written under the manifest's lock, shared with `reconcileRenders` (T5a(1)).
+    await updateVersionManifest(store.dir(ref.creativeSlug), n, (current) => {
+      const base: ManifestV2 = current?.schemaVersion === 2 ? current : { schemaVersion: 2, compositions: updated.compositions ?? comps, renders: [] };
+      return {
+        schemaVersion: 2,
+        compositions: fixed(base.compositions),
+        renders: [
+          ...base.renders.filter((r) => !formats.has(r.format)),
+          ...infos.filter((i) => i.sha256 !== undefined).map((i) => ({
+            format: i.format, file: i.file, width: i.width, height: i.height,
+            durationSec: i.durationSec !== null && i.durationSec > 0 ? i.durationSec : null,
+            sha256: i.sha256!, renderedAt: at, ...(i.fromComposition ? { fromComposition: i.fromComposition } : {}),
+          })),
+        ],
+      };
+    });
     await noteRenderStamps(ref.projectDir, store.dir(ref.creativeSlug), ref.creativeSlug, n, infos).catch(() => {});
   }
 }

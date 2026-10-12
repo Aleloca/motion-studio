@@ -1,11 +1,12 @@
 import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { manifestV2Schema, type OutputFileInfo } from '@motion-studio/shared';
+import { anyManifestSchema, type ManifestV2, type OutputFileInfo } from '@motion-studio/shared';
 import { hashConfinedFile } from '../brand/agent-guard.ts';
 import { readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 import type { CreativeStore } from './creative-store.ts';
+import { noteCoreOutputWrite } from './carry-over.ts';
 
 /**
  * The size and mtime each recorded render had when the core recorded it, in
@@ -22,6 +23,23 @@ const lock = new KeyedMutex();
 
 export const renderStampPath = (projectDir: string, creativeSlug: string, n: number) =>
   join(projectDir, '.studio', 'cache', 'renders', creativeSlug, `v${n}.json`);
+
+/**
+ * The manifest of `outputs/v<n>` changed under one process-wide lock per file (final review T5a(1)): a render's record and
+ * `reconcileRenders` both read, change and write it, and neither may lose the other's change. `change` gets the current
+ * manifest (null when missing or unreadable) and returns the new v2 manifest, or null to leave it alone. The write is
+ * noted as the core's own (`noteCoreOutputWrite`) before its rename, so a turn's earlier-output check never reports it.
+ */
+const manifestLock = new KeyedMutex();
+export function updateVersionManifest(creativeDir: string, n: number, change: (current: Awaited<ReturnType<typeof readManifest>>) => ManifestV2 | null): Promise<void> {
+  const path = join(creativeDir, 'outputs', `v${n}`, 'manifest.json');
+  return manifestLock.run(path, async () => {
+    const next = change(await readManifest(path));
+    if (!next) return;
+    await writeJsonFileAtomic(path, next, { beforeRename: (tmp) => noteCoreOutputWrite(creativeDir, `outputs/v${n}/manifest.json`, tmp) });
+  });
+}
+const readManifest = (path: string) => readJsonFile(path, anyManifestSchema).catch(() => null);
 
 const read = (path: string): Promise<Stamps> => readJsonFile(path, fileSchema).then((f) => f.files, () => ({}));
 
@@ -71,11 +89,9 @@ export async function reconcileRenders(o: { projectDir: string; store: CreativeS
     if (fixes.size === 0) continue;
     changed = true;
     await o.store.updateVersion(o.creativeSlug, v.n, (e) => ({ ...e, outputs: e.outputs.map((x) => (fixes.has(x.format) ? { ...x, sha256: fixes.get(x.format)! } : x)) }));
-    const mpath = join(creativeDir, 'outputs', `v${v.n}`, 'manifest.json');
-    const manifest = await readJsonFile(mpath, manifestV2Schema).catch(() => null);
-    if (manifest) {
-      await writeJsonFileAtomic(mpath, { ...manifest, renders: manifest.renders.map((r) => (fixes.has(r.format) ? { ...r, sha256: fixes.get(r.format)! } : r)) });
-    }
+    await updateVersionManifest(creativeDir, v.n, (manifest) => (manifest?.schemaVersion === 2
+      ? { ...manifest, renders: manifest.renders.map((r) => (fixes.has(r.format) ? { ...r, sha256: fixes.get(r.format)! } : r)) }
+      : null));
   }
   return changed;
 }

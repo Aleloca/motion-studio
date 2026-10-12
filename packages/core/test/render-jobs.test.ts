@@ -20,6 +20,7 @@ import { noteCoreOutputWrite, snapshotChanges, snapshotOutputs, withoutCoreWrite
 import { noteCoreTemp } from '../src/core-temps.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { renderPlan, RenderJobService } from '../src/creatives/render-jobs.ts';
+import { reconcileRenders, updateVersionManifest } from '../src/creatives/render-stamps.ts';
 import { JobQueue } from '../src/jobs/job-queue.ts';
 import { NoMediaTools } from '../src/media/media-tools.ts';
 import type { MediaNormalizer } from '../src/render/media-normalize.ts';
@@ -479,6 +480,33 @@ describe('round 2: the record follows the disk', { timeout: 60_000 }, () => {
     expect(manifestOf(dir, 1).renders[0]!.sha256).toBe(sha);
     // A second read with nothing changed does not hash again (the stamp matches): same answer.
     expect(((await app.inject({ url: `/api/projects/acme/creatives/${slug}`, headers: H })).json() as { versions: VersionEntry[] }).versions[0]!.outputs[0]!.sha256).toBe(sha);
+  });
+
+  it('reconcile\'s manifest fix goes through the manifest lock and is noted as the core\'s write; concurrent changes are all kept (T5a(1))', async () => {
+    const { slug, store, dir } = await v2Creative({ formats: ['test-wide'], links: {} });
+    expect((await waitJob((await post(slug, 1)).json().id)).state).toBe('succeeded');
+    const file = join(dir, 'outputs', 'v1', 'test-wide.mp4');
+    const marker = (i: number) => ({ format: `x${i}`, file: `x${i}.mp4`, width: 1, height: 1, durationSec: null, sha256: String(i % 10).repeat(64), renderedAt: new Date().toISOString() });
+    for (let i = 0; i < 8; i++) {
+      writeFileSync(file, `bytes the record does not know ${i} ${'.'.repeat(i)}`);
+      const sha = createHash('sha256').update(readFileSync(file)).digest('hex');
+      const before = await snapshotOutputs(dir, ['v1']);
+      // A record (same helper as RenderJobService.record) racing reconcile: neither change is lost.
+      const [changed] = await Promise.all([
+        reconcileRenders({ projectDir: projectDir(), store, creativeSlug: slug }),
+        updateVersionManifest(dir, 1, (m) => (m?.schemaVersion === 2 ? { ...m, renders: [...m.renders, marker(i)] } : null)),
+      ]);
+      expect(changed).toBe(true);
+      const m = manifestOf(dir, 1);
+      expect(m.renders.find((r) => r.format === 'test-wide')!.sha256).toBe(sha);
+      expect(m.renders.filter((r) => r.format.startsWith('x')).map((r) => r.format)).toEqual(Array.from({ length: i + 1 }, (_, k) => `x${k}`));
+      // The turn's earlier-output check sees only the file someone else changed, never the core's manifest write.
+      const after = await snapshotOutputs(dir, ['v1']);
+      expect(withoutCoreWrites(dir, snapshotChanges(before, after), after)).toEqual([]);
+    }
+    // Many writers at once: all kept.
+    await Promise.all(Array.from({ length: 12 }, (_, k) => updateVersionManifest(dir, 1, (m) => (m?.schemaVersion === 2 ? { ...m, renders: [...m.renders, marker(100 + k)] } : null))));
+    expect(manifestOf(dir, 1).renders.filter((r) => /^x1\d\d$/.test(r.format))).toHaveLength(12);
   });
 
   it('a re-render replaces the follower\'s record with its new copy (never a stale entry)', async () => {
