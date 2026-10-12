@@ -51,3 +51,38 @@ describe('svgSizeOf', () => {
     }
   });
 });
+
+describe('svgSizeOf stays linear on hostile input (S1)', () => {
+  const time = (text: string) => { const t0 = performance.now(); svgSizeOf(text); return performance.now() - t0; };
+  it.each([
+    ['repeated unterminated comments', '<!--'.repeat(65536)],
+    ['repeated <svg with no >', '<svg'.repeat(65536)],
+    ['repeated <svg followed by spaces, no >', '<svg '.repeat(52428)],
+    ['a huge attribute', `<svg width="${'9'.repeat(250_000)}" height="1">`],
+    ['many unterminated attributes', `<svg ${'a="'.repeat(5000)}`],
+    ['many attributes', `<svg ${'x="1" '.repeat(2500)}width="10" height="20">`],
+    ['comments and tags alternating', '<!-- --><svg'.repeat(20000)],
+    ['an open comment then a tag', `<!--${'<svg width="1" height="1">'.repeat(9000)}`],
+  ])('%s: well under 100 ms', (_name, text) => {
+    svgSizeOf(text); // warm
+    expect(time(text)).toBeLessThan(100);
+  });
+  it('a tag longer than the bound, or past the bytes read, is no size', () => {
+    expect(svgSizeOf(`<svg ${' '.repeat(20_000)}width="1" height="1">`)).toBeNull();
+    expect(svgSizeOf(`${' '.repeat(300_000)}<svg width="1" height="1">`)).toBeNull();
+  });
+});
+
+describe('svgSize never blocks on a special file (M6)', () => {
+  it.skipIf(process.platform === 'win32')('a FIFO named .svg: null at once, nothing waits for a writer', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const dir = mkdtempSync(join(tmpdir(), 'ms-test-svgfifo-'));
+    try {
+      const fifo = join(dir, 'pipe.svg');
+      execFileSync('mkfifo', [fifo]);
+      const t0 = performance.now();
+      expect(await svgSize(fifo)).toBeNull();
+      expect(performance.now() - t0).toBeLessThan(1000);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
