@@ -10,7 +10,8 @@ import { compositionProblem, type CompositionProblem } from './problems.ts';
  *   relative string literal (`./` or `../`), URLs with a scheme (`http`, `https`, `ws`, `wss`, `ftp`, `file`) except the
  *   w3.org namespaces of SVG/XHTML, and protocol-relative URLs (`"//host`, `'//host`, `(//host`);
  * - workers (`composition.layerWorker`): `new Worker` or `Worker(`, `SharedWorker`, `importScripts`, `serviceWorker`;
- * - audio (`composition.layerAudio`): `AudioContext`, `webkitAudioContext`, `OfflineAudioContext`;
+ * - audio (`composition.layerAudio`): `AudioContext`, `webkitAudioContext`, `OfflineAudioContext`, `new Audio`, an `<audio>`
+ *   element and a `<video>` element without the `muted` attribute (sound belongs on the timeline's audio tracks);
  * - autoplay (`composition.layerAutoplay`): an `autoplay` attribute on `<video>`/`<audio>` (any case), or `.autoplay` in script.
  *
  * Not checked: the bodies of HTML comments, and of `//` and `/* … *\/` comments inside `<script>` (`/* … *\/` inside
@@ -86,6 +87,9 @@ export function staticLayerCheckWork(html: string, file = 'layer'): { problems: 
   // Tag state, for autoplay attributes: inside `<video …>` / `<audio …>` until the next `>`.
   let inTag = false;
   let mediaTag = false;
+  // The `<video>` start tag being read, and whether it carries `muted`.
+  let videoTag = false;
+  let videoMuted = false;
   // Raw text elements: inside `<script>` or `<style>` until their end tag; `pendingRaw` is set while their start tag is open.
   let raw: '' | 'script' | 'style' = '';
   let pendingRaw: '' | 'script' | 'style' = '';
@@ -141,12 +145,16 @@ export function staticLayerCheckWork(html: string, file = 'layer'): { problems: 
       tag = tag.toLowerCase();
       inTag = tag !== '';
       mediaTag = tag === 'video' || tag === 'audio';
+      videoTag = tag === 'video'; videoMuted = false;
+      if (tag === 'audio') report('layerAudio', '<audio>');
       pendingRaw = tag === 'script' || tag === 'style' ? tag : '';
       i = j;
       continue;
     }
     if (c === 0x3e /* > */ && raw === '') {
       if (inTag && pendingRaw !== '') raw = pendingRaw;
+      if (inTag && videoTag && !videoMuted) report('layerAudio', '<video> without muted');
+      videoTag = false;
       inTag = false; mediaTag = false; pendingRaw = '';
       i++;
       continue;
@@ -208,6 +216,8 @@ export function staticLayerCheckWork(html: string, file = 'layer'): { problems: 
   function checkWord(word: string, start: number, end: number): void {
     const always = ALWAYS.get(word);
     if (always) { report(always, word); return; }
+    if (inTag && videoTag && word.toLowerCase() === 'muted') { videoMuted = true; return; }
+    if (word === 'Audio' && prevWord === 'new' && prevWordEnd >= 0 && start - prevWordEnd <= LOOKAHEAD && html.slice(prevWordEnd, start).trim() === '') { report('layerAudio', 'new Audio'); return; }
     if (word.toLowerCase() === 'autoplay') {
       if (inTag && mediaTag) report('layerAutoplay', 'autoplay');
       else if (prevNonSpace(start) === 0x2e /* . */ && !setFalse(end)) report('layerAutoplay', 'autoplay');

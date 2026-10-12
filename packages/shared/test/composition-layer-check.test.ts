@@ -33,6 +33,9 @@ describe('staticLayerCheck: forbidden APIs (30 cases)', () => {
     ['serviceWorker', `<script>navigator.serviceWorker.register('sw.js')</script>`, 'composition.layerWorker', 'serviceWorker'],
     ['AudioContext', `<script>new AudioContext()</script>`, 'composition.layerAudio', 'AudioContext'],
     ['webkitAudioContext', `<script>new webkitAudioContext()</script>`, 'composition.layerAudio', 'webkitAudioContext'],
+    ['an audio element', `<audio src="a.mp3"></audio>`, 'composition.layerAudio', '<audio>'],
+    ['a video without muted', `<video src="a.mp4"></video>`, 'composition.layerAudio', '<video> without muted'],
+    ['new Audio', `<script>const a = new Audio('a.mp3')</script>`, 'composition.layerAudio', 'new Audio'],
     ['OfflineAudioContext', `<script>new OfflineAudioContext(2, 44100, 44100)</script>`, 'composition.layerAudio', 'OfflineAudioContext'],
     ['video autoplay', `<video src="../assets/a.mp4" muted autoplay loop></video>`, 'composition.layerAutoplay', 'autoplay'],
     ['VIDEO AUTOPLAY in capitals', `<VIDEO AUTOPLAY SRC="../assets/a.mp4"></VIDEO>`, 'composition.layerAutoplay', 'autoplay'],
@@ -53,7 +56,7 @@ describe('staticLayerCheck: clean layers', () => {
     ['relative dynamic imports', `<script type=module>import('./a.js'); import("../assets/b.js")</script>`],
     ['prose that mentions fetch and workers', `<p>Go fetch the ball. Workers unite.</p>`],
     ['a video that does not autoplay', `<video src="../assets/a.mp4" muted playsinline></video>`],
-    ['a data attribute containing autoplay', `<video data-autoplay="no" src="../assets/a.mp4"></video>`],
+    ['a data attribute containing autoplay', `<video data-autoplay="no" muted src="../assets/a.mp4"></video>`],
     ['an autoplay word outside a media tag', `<p>autoplay is not used here</p>`],
     ['identifiers containing a forbidden word', `<script>const myfetcher = 1; const prefetch = 2; const WorkerPool = 3; const importScriptsNot = 4;</script>`],
     ['a JS line comment', `<script>// a comment\nconst a = 1; // another</script>`],
@@ -139,5 +142,13 @@ describe('staticLayerCheck: bounded, linear work', () => {
     const t0 = performance.now();
     staticLayerCheck(html);
     expect(performance.now() - t0).toBeLessThan(5000);
+  });
+});
+
+describe('muted videos are fine (B4)', () => {
+  it('a video with muted has no audio warning, in any case, and Audio without new is not flagged', () => {
+    expect(keys('<video src="a.mp4" muted></video>')).toEqual([]);
+    expect(keys('<VIDEO MUTED src="a.mp4"></VIDEO>')).toEqual([]);
+    expect(keys('<video muted="">\n</video><div class="Audio"></div><script>const Audio = 1;</script>')).toEqual([]);
   });
 });
