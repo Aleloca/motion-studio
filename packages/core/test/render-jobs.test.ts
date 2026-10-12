@@ -301,8 +301,10 @@ describe('render jobs', { timeout: 60_000 }, () => {
     const third = (await post(slug, 1, { formats: ['test-wide', 'test-tall', 'test-still'] })).json() as JobSummary;
     expect(third.formats).toEqual(['test-still']);
     expect(third.key).toBe(`${first.key}:3`);
-    // Everything covered: the latest covering job comes back, nothing new.
+    // Everything covered: the covering job comes back, nothing new; covered by several, the one that ends last.
     expect(((await post(slug, 1, { formats: ['test-tall'] })).json() as JobSummary).id).toBe(follow.id);
+    expect(((await post(slug, 1, { formats: ['test-still', 'test-wide'] })).json() as JobSummary).id).toBe(third.id);
+    expect(((await post(slug, 1, { formats: ['test-wide', 'test-tall'] })).json() as JobSummary).id).toBe(follow.id);
     expect(((await app.inject({ url: '/api/jobs', headers: H })).json() as JobSummary[]).filter((j) => j.kind === 'render')).toHaveLength(3);
     release();
     fake.gate = null;

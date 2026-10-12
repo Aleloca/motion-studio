@@ -162,7 +162,14 @@ export class RenderJobService {
     const covered = new Set(active.flatMap((j) => j.formats ?? []));
     const wanted = [...full.primaries, ...Object.keys(full.followers)];
     const missing = wanted.filter((f) => !covered.has(f));
-    if (active.length > 0 && missing.length === 0) return active.find((j) => wanted.every((f) => j.formats?.includes(f))) ?? active[0]!;
+    if (active.length > 0 && missing.length === 0) {
+      // One job covering them all, else the one that ends last: the latest of those covering any (one lane, in order),
+      // whose progress a caller (the export dialog) then follows to the end.
+      const all = active.find((j) => wanted.every((f) => j.formats?.includes(f)));
+      if (all) return all;
+      const some = active.filter((j) => wanted.some((f) => j.formats?.includes(f)));
+      return some.reduce((a, b) => (b.createdAt > a.createdAt ? b : a));
+    }
     const plan = active.length > 0 ? renderPlan(comps, creative.brief, missing) : full;
     const keys = new Set(active.map((j) => j.key));
     let key = base;
