@@ -87,9 +87,11 @@ export function staticLayerCheckWork(html: string, file = 'layer'): { problems: 
   // Tag state, for autoplay attributes: inside `<video …>` / `<audio …>` until the next `>`.
   let inTag = false;
   let mediaTag = false;
-  // The `<video>` start tag being read, and whether it carries `muted`.
+  // The `<video>` start tag being read, and whether it carries `muted` as an attribute (M5): a name of its own, not part of
+  // another name (`data-muted`) nor of a value (`src="muted.mp4"`, `title=muted`). `tagQuote` is the open value quote.
   let videoTag = false;
   let videoMuted = false;
+  let tagQuote = 0;
   // Raw text elements: inside `<script>` or `<style>` until their end tag; `pendingRaw` is set while their start tag is open.
   let raw: '' | 'script' | 'style' = '';
   let pendingRaw: '' | 'script' | 'style' = '';
@@ -145,7 +147,7 @@ export function staticLayerCheckWork(html: string, file = 'layer'): { problems: 
       tag = tag.toLowerCase();
       inTag = tag !== '';
       mediaTag = tag === 'video' || tag === 'audio';
-      videoTag = tag === 'video'; videoMuted = false;
+      videoTag = tag === 'video'; videoMuted = false; tagQuote = 0;
       if (tag === 'audio') report('layerAudio', '<audio>');
       pendingRaw = tag === 'script' || tag === 'style' ? tag : '';
       i = j;
@@ -154,11 +156,13 @@ export function staticLayerCheckWork(html: string, file = 'layer'): { problems: 
     if (c === 0x3e /* > */ && raw === '') {
       if (inTag && pendingRaw !== '') raw = pendingRaw;
       if (inTag && videoTag && !videoMuted) report('layerAudio', '<video> without muted');
-      videoTag = false;
+      videoTag = false; tagQuote = 0;
       inTag = false; mediaTag = false; pendingRaw = '';
       i++;
       continue;
     }
+    // Attribute value quotes of a start tag (only tracked, never skipped: URLs inside values are still checked).
+    if (inTag && raw === '' && (c === 0x22 || c === 0x27)) { if (tagQuote === 0) tagQuote = c; else if (tagQuote === c) tagQuote = 0; }
     if (raw === 'script') {
       if (quote !== 0) {
         if (c === 0x5c /* \ */) { steps++; if (html.charCodeAt(i + 1) === 0x0a) line++; i += 2; continue; }
@@ -201,6 +205,13 @@ export function staticLayerCheckWork(html: string, file = 'layer'): { problems: 
   }
   return { problems, steps };
 
+  /** Whether `start..end` stands as an attribute name: after whitespace or `/`, before whitespace, `=`, `/`, `>` or the end. */
+  function attributeName(start: number, end: number): boolean {
+    const before = html.charCodeAt(start - 1), after = end < n ? html.charCodeAt(end) : -1;
+    const space = (ch: number) => ch === 0x20 || ch === 0x09 || ch === 0x0a || ch === 0x0d || ch === 0x0c;
+    return (space(before) || before === 0x2f) && (after === -1 || space(after) || after === 0x3d || after === 0x2f || after === 0x3e);
+  }
+
   /** After `.autoplay`: is it set to a false value (`= false`, `= 0`, `= null`)? Bounded look-ahead. */
   function setFalse(end: number): boolean {
     const eq = skipSpace(end);
@@ -216,7 +227,7 @@ export function staticLayerCheckWork(html: string, file = 'layer'): { problems: 
   function checkWord(word: string, start: number, end: number): void {
     const always = ALWAYS.get(word);
     if (always) { report(always, word); return; }
-    if (inTag && videoTag && word.toLowerCase() === 'muted') { videoMuted = true; return; }
+    if (inTag && videoTag && word.toLowerCase() === 'muted') { if (tagQuote === 0 && attributeName(start, end)) videoMuted = true; return; }
     if (word === 'Audio' && prevWord === 'new' && prevWordEnd >= 0 && start - prevWordEnd <= LOOKAHEAD && html.slice(prevWordEnd, start).trim() === '') { report('layerAudio', 'new Audio'); return; }
     if (word.toLowerCase() === 'autoplay') {
       if (inTag && mediaTag) report('layerAutoplay', 'autoplay');

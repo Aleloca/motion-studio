@@ -35,6 +35,10 @@ describe('staticLayerCheck: forbidden APIs (30 cases)', () => {
     ['webkitAudioContext', `<script>new webkitAudioContext()</script>`, 'composition.layerAudio', 'webkitAudioContext'],
     ['an audio element', `<audio src="a.mp3"></audio>`, 'composition.layerAudio', '<audio>'],
     ['a video without muted', `<video src="a.mp4"></video>`, 'composition.layerAudio', '<video> without muted'],
+    ['muted only in a file name (M5)', `<video src="muted.mp4"></video>`, 'composition.layerAudio', '<video> without muted'],
+    ['muted only in a single-quoted value', `<video title='is muted' src="a.mp4"></video>`, 'composition.layerAudio', '<video> without muted'],
+    ['muted only as an unquoted value', `<video title=muted src="a.mp4"></video>`, 'composition.layerAudio', '<video> without muted'],
+    ['a data-muted attribute', `<video data-muted src="a.mp4"></video>`, 'composition.layerAudio', '<video> without muted'],
     ['new Audio', `<script>const a = new Audio('a.mp3')</script>`, 'composition.layerAudio', 'new Audio'],
     ['OfflineAudioContext', `<script>new OfflineAudioContext(2, 44100, 44100)</script>`, 'composition.layerAudio', 'OfflineAudioContext'],
     ['video autoplay', `<video src="../assets/a.mp4" muted autoplay loop></video>`, 'composition.layerAutoplay', 'autoplay'],
@@ -150,5 +154,9 @@ describe('muted videos are fine (B4)', () => {
     expect(keys('<video src="a.mp4" muted></video>')).toEqual([]);
     expect(keys('<VIDEO MUTED src="a.mp4"></VIDEO>')).toEqual([]);
     expect(keys('<video muted="">\n</video><div class="Audio"></div><script>const Audio = 1;</script>')).toEqual([]);
+    // The attribute in any position and spelling: before `>`, `/>`, `=`, across lines, after a quoted value (M5).
+    for (const ok of ['<video muted>', '<video src="a.mp4" muted/>', '<video muted=muted>', '<video\n  muted\n  src="a.mp4">', '<video title="a b" muted>', "<video title='x' MUTED>"]) {
+      expect(keys(`${ok}</video>`), ok).toEqual([]);
+    }
   });
 });
