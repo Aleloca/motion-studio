@@ -98,7 +98,8 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * The processes `sweepByMarker` may kill (final wave B5), from a `ps` listing: owned by `uid`, carrying `marker` (our
  * unique temp profile path) as a whole path in an argument (`--user-data-dir=<marker>`, or a path that is the marker or
  * starts with `<marker>/`), never as a mere substring; and either a descendant of `rootPid` (our Chromium), or an orphan
- * (parent 1) started at or after `since` (the launch, whole seconds as `ps` reports). Never this process.
+ * (parent 1) started at or after `since` (the launch, whole seconds as `ps` reports), or a marked descendant of one of those.
+ * Never this process. (Under a Linux subreaper orphans never get parent 1: they are left to the group kill.)
  */
 export function sweepCandidates(rows: readonly ProcessRow[], marker: string, o: { rootPid: number; since: number; uid: number; self: number }): ProcessRow[] {
   if (marker.length < 12) return []; // never a short, ambiguous marker
@@ -109,8 +110,19 @@ export function sweepCandidates(rows: readonly ProcessRow[], marker: string, o: 
     return false;
   };
   const since = Math.floor(o.since / 1000) * 1000;
-  return rows.filter((r) => r.pid !== o.self && r.pid !== o.rootPid && r.uid === o.uid && token.test(r.command)
-    && (descends(r.pid) || (r.ppid === 1 && r.startMs >= since)));
+  const marked = rows.filter((r) => r.pid !== o.self && r.pid !== o.rootPid && r.uid === o.uid && token.test(r.command));
+  const picked = new Set(marked.filter((r) => descends(r.pid) || (r.ppid === 1 && r.startMs >= since)).map((r) => r.pid));
+  // Grandchildren: a marked process whose parent chain reaches a picked one (its parent was re-parented to 1, e.g. a
+  // zygote's renderers), found in the same snapshot.
+  const reaches = (pid: number) => {
+    for (let p = parent.get(pid), hops = 0; p !== undefined && p > 1 && hops < 64; p = parent.get(p), hops++) if (picked.has(p)) return true;
+    return false;
+  };
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const r of marked) if (!picked.has(r.pid) && reaches(r.pid)) { picked.add(r.pid); grew = true; }
+  }
+  return marked.filter((r) => picked.has(r.pid));
 }
 
 /**

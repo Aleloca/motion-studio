@@ -33,6 +33,10 @@ describe('sweepCandidates (pure)', () => {
     ];
     expect(sweepCandidates(rows, M, opts).map((r) => r.pid)).toEqual([305, 306]);
   });
+  it('a marked grandchild of a picked orphan (its parent re-parented to 1) goes too; an unmarked one stays', () => {
+    const rows = [row(400, 1, `zygote --user-data-dir=${M}`), row(401, 400, `renderer --user-data-dir=${M}`), row(402, 401, `gpu --user-data-dir=${M}`), row(403, 400, 'plain child')];
+    expect(sweepCandidates(rows, M, opts).map((r) => r.pid).sort()).toEqual([400, 401, 402]);
+  });
   it('a short marker never matches anything', () => {
     expect(sweepCandidates([row(101, 100, '--user-data-dir=/tmp/x')], '/tmp/x', opts)).toEqual([]);
   });
@@ -59,8 +63,8 @@ describe.skipIf(!posix)('listProcesses and sweepByMarker on real processes', () 
     ours.add(pid);
     return pid;
   };
-  const until = async (cond: (rows: ProcessRow[]) => boolean) => {
-    for (let i = 0; i < 300; i++) { const rows = await listProcesses(); if (cond(rows)) return rows; await new Promise((r) => setTimeout(r, 100)); }
+  const until = async (cond: (rows: ProcessRow[]) => boolean, tries = 300) => {
+    for (let i = 0; i < tries; i++) { const rows = await listProcesses(); if (cond(rows)) return rows; await new Promise((r) => setTimeout(r, 100)); }
     throw new Error('timeout waiting for the processes');
   };
 
@@ -75,10 +79,12 @@ describe.skipIf(!posix)('listProcesses and sweepByMarker on real processes', () 
     expect(Math.abs(me.startMs - Date.now())).toBeLessThan(120_000);
   }, 60_000);
 
-  it('kills our Chromium\'s marked descendants and orphans started after the launch; leaves the rest', async () => {
+  it('kills our Chromium\'s marked descendants and orphans started after the launch; leaves the rest', async (ctx) => {
     // Before the render: an orphan with the exact marker.
     const before = orphan(`--user-data-dir=${marker}`);
-    await until((rs) => rs.some((r) => r.pid === before && r.ppid === 1));
+    // Under a Linux subreaper an orphan never gets parent 1: the orphan rule cannot be shown there (left to the group kill).
+    const reparented = await until((rs) => rs.some((r) => r.pid === before && r.ppid !== process.pid), 50).catch(() => null);
+    if (!reparented?.some((r) => r.pid === before && r.ppid === 1)) { ctx.skip(); return; }
     await new Promise((r) => setTimeout(r, 1100));
     const launchedAt = Date.now();
     // "Chromium": a process that starts two helpers, one with the marker as an argument, one with it inside another word.
