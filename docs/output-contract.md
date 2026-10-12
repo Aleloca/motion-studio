@@ -71,6 +71,26 @@ The phase 9 rules apply to composition folders:
 - `preview_frames({ format, times })`: 1–6 times in seconds; the core renders those frames (normalised media, at most 540 px wide) and returns them as PNG images (MCP image content) plus their times and any runtime errors. At most 10 calls per turn (`429` after that; malformed calls are refused without counting). Frames run in the preview lane (2 at a time, a short queue, a time limit each), never behind a long render.
 - `validate_output` (version 1) no longer exists.
 
+### Rendering
+
+Only Motion Studio renders, outside the agent's sandbox, on request: **Render ★** on the canvas, Render in a format's view, or an export that needs it (`POST …/versions/:n/render` with `formats`, or none for every primary).
+
+- The render job has its own queue lane (one at a time) and never blocks agent turns. Storyboards and `preview_frames` use the preview lane.
+- The engine is the desktop app's own Chromium (hidden, isolated Electron windows), or in the CLI system Chrome (Google Chrome or Chromium, `CHROME_PATH` first), else a Chrome for Testing downloaded with consent into `<config>/chromium/`. The engine is reported by `GET /api/render-engine`.
+- Outputs: `outputs/vN/<preset-id>.mp4` (H.264 yuv420p, the composition's fps, tagged BT.709 with limited range, with the phase 8 encoding targets) for videos, and `<preset-id>.png` for stills. They are written to a temp file and renamed into place. A cancelled or failed render leaves no file and no temp file. Each render is recorded in `renders[]` and in the version's `outputs` with `sha256` and `fromComposition`.
+- Every video clip is first normalised (H.264 CFR at the composition's fps, short GOP, no audio, capped size) into `.studio/cache/media/`; the preview and the render both use the normalised file, and the preview plays the clip's audio from the original asset.
+
+### Older creatives (version 1)
+
+A creative whose versions have v1 manifests keeps its media and its exports. At its next change the turn is a **conversion**: the agent rebuilds each legacy format as a composition and applies the request, looking at reference frames of the old media that the core extracts into the protected cache (`.studio`, readable, never writable by the agent), and the chat posts "Converting to the editable format · costs more tokens this once". In the per-format history a legacy version next to a v2 one always counts as changed.
+
+*Verified live (phase 10a, 2026-10-12):*
+- with Haiku, a new creative's turn wrote only compositions (no render, no installs, 0 approvals);
+- Render ★ produced H.264 BT.709 mp4 files and a png that decode without errors;
+- a creative made by the phase 9 build converted at its next change.
+
+Details: `docs/superpowers/notes/2026-10-12-phase10a-live-checks.md`.
+
 ### Export
 
 A ★ whose v2 version has no current render (or whose render file is gone) is rendered first: `POST …/export` enqueues the render job of that version (or joins the active one), waits for it, then copies; the response lists what was rendered (`rendered`). `POST …/export/prepare` starts those renders at once and returns their jobs, so the UI can show their progress before the copy. A render that fails is `409 export-render-failed` and nothing is copied. Legacy versions export their media as before. In the per-format summary `starRender` is `rendered`, `notRendered` or `stale`; `starFileMissing` is only for legacy files (or a follower with no qualifying version).
