@@ -15,7 +15,7 @@ import { sessionMediaOf, type MediaNormalizer, type PreparedMedia } from '../ren
 import { PreviewLane, PreviewLaneBusyError } from '../render/preview-lane.ts';
 import type { RenderEngine } from '../render/renderer.ts';
 import { CodedError } from '../workspace-store.ts';
-import { isRealDirChain } from './core-files.ts';
+import { isRealDirChain, realDirChain } from './core-files.ts';
 
 /**
  * Everything the core shows of a composition without a final render (Task 5b):
@@ -215,10 +215,13 @@ export class PreviewService {
       const unique = [...new Set(plan.map((p) => p.t))];
       const r = await this.frames({ ref, folder, preset, composition: loaded.composition, times: unique, width: Math.min(STORYBOARD_WIDTH, loaded.composition.width), imageFormat: 'jpeg', ...(signal ? { signal } : {}) });
       if (this.closing.signal.aborted) throw new Error('closed');
+      // Every folder of the path is a real directory (a link planted under the cache steers neither the rm nor the rename).
+      const parent = await realDirChain(ref.projectDir, ['.studio', 'cache', 'storyboards', ref.creativeSlug, `v${ref.n}`]);
+      if (parent === null || join(parent, folder) !== dir) return null;
       const temp = `${dir}.${randomBytes(6).toString('hex')}.tmp`;
       noteCoreTemp(temp);
       try {
-        await mkdir(temp, { recursive: true });
+        await mkdir(temp);
         const files = new Map<number, { file: string; width: number; height: number }>();
         for (const [i, f] of r.frames.entries()) {
           const file = `f-${i}.jpg`;
@@ -230,7 +233,6 @@ export class PreviewService {
           frames: plan.map((p) => ({ ...p, ...files.get(p.t)! })),
         };
         await writeFile(join(temp, 'storyboard.json'), `${JSON.stringify(sb, null, 2)}\n`, { flag: 'wx' });
-        await mkdir(dirname(dir), { recursive: true });
         await rm(dir, { recursive: true, force: true });
         await rename(temp, dir);
         // The core's own folders (the tripwire must never read them as a move).

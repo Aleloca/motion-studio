@@ -16,6 +16,7 @@ import { withLazyHashes } from '../creatives/output-hashes.ts';
 import { creativeJobKey, PICK_RETRY_AFTER_SEC, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
 import type { RenderJobService } from '../creatives/render-jobs.ts';
 import { reconcileRenders } from '../creatives/render-stamps.ts';
+import { sweepDerivedCaches } from '../creatives/cache-sweep.ts';
 import { sweepProjectRenders } from '../render/render-sweep.ts';
 import { FormatCatalog } from '../formats/format-catalog.ts';
 import type { MediaTools } from '../media/media-tools.ts';
@@ -126,6 +127,8 @@ export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: st
       media: { ...(ro.mediaInUse ? { inUse: ro.mediaInUse } : {}), ...(ro.mediaCacheMaxBytes !== undefined ? { maxBytes: ro.mediaCacheMaxBytes } : {}) },
     }).catch((err: Error) => console.warn(`Motion Studio: render cleanup failed in project ${p.slug}: ${err.message}`));
     await sweepStoryboardTemps(dir).catch(() => []);
+    // The derived caches (storyboards, pin frames, agent originals, reference frames): old and over-cap version folders.
+    await sweepDerivedCaches(dir, { skipCreative: (slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug)) }).catch(() => []);
     await Promise.all([sweepProject(dir, !isJobActive(brandJobKey(ws.root, p.slug))), completeGitignore(dir)]).catch((err: Error) => {
       console.warn(`Motion Studio: cleanup failed in project ${p.slug}: ${err.message}`);
     });
