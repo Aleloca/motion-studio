@@ -44,11 +44,22 @@ export function boardRender(version: VersionEntry | null | undefined, format: st
   const key = renderKeyOf(creativeJobKey, version.n);
   const mine = jobs.filter((j) => j.kind === 'render' && isVersionJob(j, key) && covers(j, format));
   const live = mine.find(isActiveJob);
-  if (live) return live.state === 'queued' ? { kind: 'queued', ahead: live.queuePosition ?? null } : { kind: 'rendering', pct: renderPct(live, format) };
-  if (renderState(version, format) === 'rendered') {
+  const recorded = (): BoardRender | null => {
+    if (renderState(version, format) !== 'rendered') return null;
     const problems = renderProblems(version, format);
     return problems.length ? { kind: 'problem', problems } : { kind: 'rendered' };
+  };
+  if (live) {
+    if (live.state === 'queued') return { kind: 'queued', ahead: live.queuePosition ?? null };
+    // A running job renders its formats one after the other: only the one it is on shows "Rendering"; one it has done
+    // shows its record, one it has not reached is queued behind it (D2).
+    const p = live.progress;
+    const several = (live.formats?.length ?? 0) !== 1;
+    if (p ? p.format === format : !several) return { kind: 'rendering', pct: renderPct(live, format) };
+    return recorded() ?? { kind: 'queued', ahead: null };
   }
+  const rec = recorded();
+  if (rec) return rec;
   const last = mine.filter((j) => !isActiveJob(j)).sort((a, b) => ended(b).localeCompare(ended(a)))[0];
   return last?.state === 'failed' ? { kind: 'failed', error: last.error ?? null } : { kind: 'none' };
 }

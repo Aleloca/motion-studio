@@ -43,6 +43,17 @@ describe('renderModel', () => {
     // A later success wins over an earlier failure.
     expect(boardRender(v(2, ['reel']), 'reel', [job({ state: 'failed', finishedAt: at })], KEY)).toEqual({ kind: 'rendered' });
   });
+  it('a multi-format running job: only the format it is on shows Rendering; a done one shows its record, a waiting one is queued (D2)', () => {
+    const running = job({ formats: ['reel', 'post'], progress: { format: 'post', phase: 'frames', done: 30, total: 60 } });
+    expect(boardRender(v(2, ['reel']), 'reel', [running], KEY)).toEqual({ kind: 'rendered' });
+    expect(boardRender(v(2, ['reel']), 'post', [running], KEY)).toEqual({ kind: 'rendering', pct: 50 });
+    const first = job({ formats: ['reel', 'post'], progress: { format: 'reel', phase: 'frames', done: 6, total: 60 } });
+    expect(boardRender(v(2), 'post', [first], KEY)).toEqual({ kind: 'queued', ahead: null });
+    expect(boardRender(v(2), 'reel', [first], KEY)).toEqual({ kind: 'rendering', pct: 10 });
+    // No progress yet: several formats are all waiting; a single format is the one being rendered.
+    expect(boardRender(v(2), 'reel', [job({ formats: ['reel', 'post'] })], KEY)).toEqual({ kind: 'queued', ahead: null });
+    expect(boardRender(v(2), 'reel', [job({ formats: ['reel'] })], KEY)).toEqual({ kind: 'rendering', pct: 0 });
+  });
   it('percent per phase: media 0, frames by count (never 100 before finishing), finishing 99, another format 0', () => {
     expect(renderPct(job({ progress: { format: 'reel', phase: 'media', done: 1, total: 2 } }), 'reel')).toBe(0);
     expect(renderPct(job({ progress: { format: 'reel', phase: 'frames', done: 60, total: 60 } }), 'reel')).toBe(99);
