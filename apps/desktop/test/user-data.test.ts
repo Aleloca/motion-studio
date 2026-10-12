@@ -53,4 +53,16 @@ describe('MOTION_STUDIO_USER_DATA_DIR', () => {
     expect(check(join(appData, 'Motion Studio Electron', 'x'))).toMatchObject({ error: expect.any(String) });
     mkdirSync(join(appData, 'Motion Studio Electron'));
   });
+  it('case variants on macOS and Windows: MOTION STUDIO, a lowercased appData, a link into the real folder (N2)', () => {
+    const ci = (value: string, platform = process.platform === 'win32' ? 'win32' : 'darwin') => userDataOverride({ [USER_DATA_ENV]: value }, appData, platform);
+    for (const bad of [
+      join(appData, 'MOTION STUDIO', 'sub'), join(appData, 'motion studio electron'), join(appData, 'Motion studio beta', 'x'),
+      join(appData.toLowerCase(), 'motion studio electron'), join(appData.toUpperCase(), 'MOTION STUDIO'),
+      join(appData, 'MOTION STUDIO NEXT', 'x'), // a Motion Studio* folder that does not exist yet, in any case
+      join(root, 'LINK-TO-CONFIG', 'new'),
+    ]) expect(ci(bad), bad).toMatchObject({ error: expect.stringContaining(USER_DATA_ENV) });
+    expect(ci(join(scratch, 'Electron'))).toEqual({ dir: join(scratch, 'Electron') });
+    // Linux volumes are case-sensitive: another case is another folder (when the volume itself is case-sensitive).
+    expect(userDataOverride({ [USER_DATA_ENV]: join(appData, 'Motion Studio', 'x') }, appData, 'linux')).toMatchObject({ error: expect.any(String) });
+  });
 });
