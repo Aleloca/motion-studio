@@ -167,7 +167,7 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
     session = await server.mintSession({ creativeDir: o.dir, versionDir: o.versionDir, format: o.format.id, composition: c, mode: 'render', ttlMs: (o.timeLimitMs ?? 300_000 + frames * 5_000) + 60_000, ...(o.media ? { media: o.media } : {}) });
     const clock = await clockSource(distDir);
     const openPage = async () => {
-      const p = await o.provider.open({ width: c.width, height: c.height, url: session!.url, signal: ctl.signal, ...(clock ? { clockSource: clock } : {}) });
+      const p = await o.provider.open({ width: c.width, height: c.height, url: session!.url, signal: ctl.signal, purpose: 'render', ...(clock ? { clockSource: clock } : {}) });
       pages.push(p);
       const bad = failing(p.info.errors);
       if (bad.length) throw new RenderError('runtimeErrors', `the composition has errors: ${bad.map((e) => e.code).join(', ')}`, bad);

@@ -45,6 +45,18 @@ describe('preview request source', () => {
     expect(requestSource(req({ frameUrls: [`${APP}/`], initiatorOrigin: 'null' }), APP)).toBe('null');
     expect(requestSource(req({ referrer: 'data:text/html,x' }), APP)).toBe('null');
   });
+
+  it('an about:blank/srcdoc frame under the app with a foreign web initiator is charged to that initiator (N4)', () => {
+    // A non-opaque foreign document navigated a frame of the UI to about:blank (it inherits that document's origin).
+    expect(requestSource(req({ frameUrls: ['about:blank', `${APP}/`], initiatorOrigin: 'http://127.0.0.1:7777' }), APP)).toBe('http://127.0.0.1:7777');
+    expect(requestSource(req({ frameUrls: ['about:srcdoc', `${APP}/`], initiatorOrigin: COMP }), APP)).toBe(COMP);
+    expect(previewRequestBlocked(req({ frameUrls: ['about:blank', `${APP}/`], initiatorOrigin: 'http://127.0.0.1:7777', url: 'http://127.0.0.1:9999/x' }), CTX)).toBe(true);
+    // The app's own about:blank frames and the app's initiator stay the app's.
+    expect(requestSource(req({ frameUrls: ['about:blank', `${APP}/`], initiatorOrigin: APP }), APP)).toBeNull();
+    expect(requestSource(req({ frameUrls: ['about:blank', `${APP}/`] }), APP)).toBeNull();
+    // A UI frame being created (no URL yet) to show the composition server, initiated by the app: allowed.
+    expect(previewRequestBlocked(req({ frameUrls: ['', `${APP}/`], initiatorOrigin: APP, url: `${COMP}/tok/runtime/index.html`, resourceType: 'subFrame' }), CTX)).toBe(false);
+  });
 });
 
 describe('preview filter decision', () => {

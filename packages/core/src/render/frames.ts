@@ -78,7 +78,7 @@ export async function renderFrames(o: RenderFramesOptions): Promise<RenderFrames
     });
     const clock = await readRegularFile(join(distDir, 'clock.js'), 1024 * 1024).catch(() => null);
     page = await o.provider.open({
-      width: c.width, height: c.height, url: session.url, signal: ctl.signal,
+      width: c.width, height: c.height, url: session.url, signal: ctl.signal, purpose: 'frames',
       ...(clock && clock.kind === 'file' ? { clockSource: clock.data.toString('utf8') } : {}),
     });
     const frames: RenderedFrame[] = [];

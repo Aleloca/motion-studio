@@ -8,7 +8,9 @@ import type { Session, WebContents } from 'electron';
  *
  * - every request of the UI window's session is attributed to a **source**: the nearest frame, walking up from the
  *   requesting frame (`details.frame`, then its parents), whose URL is not on the app's origin. Only `about:blank`,
- *   `about:srcdoc` and a frame still loading are skipped (a nested frame of a layer counts as the layer); a frame on
+ *   `about:srcdoc` and a frame still loading are skipped (a nested frame of a layer counts as the layer; when the walk
+ *   reaches the app through such a frame, a foreign web initiator is the source: that document took the origin of whoever
+ *   navigated it there); a frame on
  *   `data:`, an opaque `blob:`, an error page or any other non-web URL is an **opaque** source, and a `blob:` URL counts
  *   by its inner origin. An opaque (`'null'`) initiator is opaque too, whatever the frame chain says (the UI is never
  *   opaque). When the frame is gone (or for workers, which have none), the referrer, then the initiator origin, decide;
@@ -85,15 +87,24 @@ export function requestSource(r: Pick<PreviewRequest, 'frameUrls' | 'referrer' |
   // The UI itself is never opaque: an opaque initiator is a sandboxed preview frame, whatever the frame chain says.
   const opaqueInitiator = r.initiatorOrigin === 'null';
   let sawFrame = false;
+  let inherited = false;
   for (const url of r.frameUrls) {
     const c = classify(url);
-    if (c.kind === 'inherit') continue; // its parent tells
+    if (c.kind === 'inherit') { if (!sawFrame) inherited = true; continue; } // its parent tells (but see below)
     if (c.kind === 'opaque') return 'null';
     sawFrame = true;
     if (c.origin !== app) return c.origin;
   }
   if (opaqueInitiator) return 'null';
-  if (sawFrame) return null;
+  if (sawFrame) {
+    // Reached the app through a skipped about:blank/srcdoc frame: that document may belong to whoever navigated it there
+    // (it inherits the navigation initiator's origin), so a foreign web initiator is the source, not the app.
+    if (inherited && r.initiatorOrigin) {
+      const o = classify(r.initiatorOrigin);
+      if (o.kind === 'web' && o.origin !== app) return o.origin;
+    }
+    return null;
+  }
   const ref = classify(r.referrer);
   if (ref.kind === 'opaque') return 'null';
   if (ref.kind === 'web') return ref.origin === app ? null : ref.origin;

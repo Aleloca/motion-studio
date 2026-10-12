@@ -68,6 +68,11 @@ export interface OpenPageOptions {
   signal: AbortSignal;
   /** The runtime's `clock.js`, added to every new document of every frame (belt and braces; README "Clock bypasses"). */
   clockSource?: string;
+  /**
+   * What the page is for: a render's segment, or a few frames (storyboards, the agent's `preview_frames`). A provider with
+   * a shared window budget (the desktop's) keeps a slot for `frames`, so they never wait behind a render.
+   */
+  purpose?: 'render' | 'frames';
 }
 
 export interface ChromiumProvider {

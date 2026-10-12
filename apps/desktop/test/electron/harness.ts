@@ -30,7 +30,7 @@ interface Config {
    * The UI-like pages (preview): every frame (control), the real server's frames, the CSP-less server's frames; with the
    * composition origin the filter is pinned to in each filtered phase (the real server, then the CSP-less one).
    */
-  ui?: { origin: string; all: string; real: string; naked: string; realComposition: string; nakedComposition: string };
+  ui?: { origin: string; all: string; real: string; naked: string; inherit: string; realComposition: string; nakedComposition: string };
   parallel?: number;
   /** A throwaway folder under the OS temp folder for every Electron data path (the test removes it after the exit). */
   scratch: string;
@@ -173,7 +173,7 @@ async function run(): Promise<void> {
       report({ phase: 'control-done', controlFrames });
       // The UI window as the app sets it up: the filter on its session (pinned to that phase's composition server), the
       // WebRTC policy. Never the will-frame-navigate guard: the filter alone is under test.
-      for (const [phase, page, comp] of [['real-done', ui.real, ui.realComposition], ['naked-done', ui.naked, ui.nakedComposition]] as const) {
+      for (const [phase, page, comp] of [['real-done', ui.real, ui.realComposition], ['naked-done', ui.naked, ui.nakedComposition], ['inherit-done', ui.inherit, ui.nakedComposition]] as const) {
         const win = await loadIn(`ms-test-ui-${phase}-${Date.now()}`, page, (ses) => installPreviewFilter(ses, { appOrigin: ui.origin, compositionOrigin: () => comp }), true);
         await settle(7000);
         const frames = win.webContents.mainFrame.framesInSubtree.map((f) => f.url);

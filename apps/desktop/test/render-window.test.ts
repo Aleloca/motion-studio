@@ -198,10 +198,11 @@ describe('closing a render window', () => {
   });
 });
 
-describe('app-wide window slots (M7)', () => {
-  it('a page past the cap waits for a window to close; an abort ends the wait', async () => {
+describe('app-wide window slots (M7, N3)', () => {
+  it('a render page past its share waits for a window to close; an abort ends the wait', async () => {
     const { WindowSlots } = await import('../src/render-window.ts');
-    const slots = new WindowSlots(2);
+    const slots = new WindowSlots(3); // 2 for renders, 1 reserved for the preview lane
+    expect(slots.renderLimit).toBe(2);
     const a = await slots.acquire();
     await slots.acquire();
     let third = false;
@@ -217,17 +218,40 @@ describe('app-wide window slots (M7)', () => {
     await p;
     expect(third).toBe(true);
     expect(slots.inUse).toBe(2);
-    slots.setLimit(3);
-    await slots.acquire();
-    expect(slots.inUse).toBe(3);
   });
 
-  it('desktopRenderOptions sets the app-wide limit', async () => {
+  it('a render holding its maximum still lets a preview window open (the reserved slot); then previews share what is free', async () => {
+    const { WindowSlots } = await import('../src/render-window.ts');
+    const slots = new WindowSlots(5); // the desktop: 4 render pages + 1 reserved
+    const render = await Promise.all([0, 1, 2, 3].map(() => slots.acquire(undefined, 'render')));
+    // The render lane never exceeds limit - 1, even with a window free.
+    const ac = new AbortController();
+    let fifthRender = false;
+    const fifth = slots.acquire(ac.signal, 'render').then(() => { fifthRender = true; });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(fifthRender).toBe(false);
+    ac.abort();
+    await fifth.catch(() => {});
+    const preview = await Promise.race([slots.acquire(undefined, 'preview'), new Promise<null>((r) => setTimeout(() => r(null), 200))]);
+    expect(preview, 'the preview lane is never queued behind the render').not.toBeNull();
+    expect(slots.inUse).toBe(5);
+    // A second preview waits for a free window (any one).
+    let second = false;
+    const p2 = slots.acquire(undefined, 'preview').then((r) => { second = true; return r; });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(second).toBe(false);
+    render[0]!();
+    await p2;
+    expect(second).toBe(true);
+  });
+
+  it('desktopRenderOptions sets the app-wide limit to the pages plus the reserved slot', async () => {
     const { renderWindowSlots } = await import('../src/render-window.ts');
     desktopRenderOptions('/r', 3);
-    expect(renderWindowSlots.limit).toBe(3);
+    expect(renderWindowSlots.limit).toBe(4);
+    expect(renderWindowSlots.renderLimit).toBe(3);
     desktopRenderOptions('/r');
-    expect(renderWindowSlots.limit).toBe(DESKTOP_RENDER_PARALLEL);
+    expect(renderWindowSlots.limit).toBe(DESKTOP_RENDER_PARALLEL + 1);
   });
 });
 
@@ -278,6 +302,23 @@ describe('ElectronProvider', () => {
     expect(rwClose).toHaveBeenCalled();
     await expect(opened).rejects.toMatchObject({ code: 'cancelled' });
     expect(provider.openWindows).toBe(0);
+  });
+
+  it('close() ends a wait for an app-wide slot even when the open\'s own signal never fires (N2), and frames pages ask the preview lane', async () => {
+    const seen: Array<{ lane?: string; signal?: AbortSignal }> = [];
+    const createWindow = vi.fn((o: { lane?: string; signal?: AbortSignal }) => {
+      seen.push(o);
+      return new Promise<never>((_r, reject) => o.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true }));
+    });
+    const provider = new ElectronProvider({ limits: { timeLimitMs: 60_000 }, createWindow: createWindow as never });
+    const live = new AbortController().signal;
+    const opened = provider.open({ width: 10, height: 10, url: `${PREFIX}runtime/index.html`, signal: live, purpose: 'frames' });
+    opened.catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+    expect(seen[0]!.lane).toBe('preview');
+    await Promise.race([provider.close(), new Promise((_r, reject) => setTimeout(() => reject(new Error('close() did not end the wait')), 2000))]);
+    expect(seen[0]!.signal!.aborted).toBe(true);
+    await expect(opened).rejects.toBeTruthy();
   });
 
   it('refuses a page URL that is not a composition server page, and opens nothing after close', async () => {

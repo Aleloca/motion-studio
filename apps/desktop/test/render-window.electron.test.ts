@@ -95,13 +95,33 @@ function opaqueNavigationLayer(canary: string, k: (typeof OPAQUE_NAVIGATION_CASE
   return `<!doctype html><html><body><script>window.msReady = Promise.resolve(); setTimeout(() => { ${go} }, 100);</script></body></html>`;
 }
 
+/**
+ * N4: two frames of the UI on the CSP-less server, NOT sandboxed (so not opaque). A navigates its sibling B
+ * (`ms-inherit-b`) to about:blank: B's document inherits A's origin, so A can then call B's own fetch. B's frame chain is
+ * then [about:blank, app]: the request must be charged to A's origin (the initiator), not to the app.
+ */
+const INHERIT_PATH = '/inherit-fetch';
+const inheritLayerA = (canary: string) => `<!doctype html><html><body><script>
+setTimeout(() => {
+  try {
+    const b = parent['ms-inherit-b'];
+    b.location.href = 'about:blank';
+    setTimeout(() => { try { b.fetch(${JSON.stringify(canary + INHERIT_PATH)}).catch(() => {}); } catch (e) {} }, 800);
+  } catch (e) {}
+}, 300);
+</script></body></html>`;
+const INHERIT_LAYER_B = '<!doctype html><html><body>b</body></html>';
+
 /** A server WITHOUT any CSP: `/<token>/page.html` starts workers and frames every hostile and self-navigating layer. */
 async function nakedServer(canary: string, udpPort: number): Promise<{ origin: string; close(): Promise<void> }> {
   const layers: Record<string, string> = { hostile: hostileLayer(canary, udpPort) };
   for (const c of SELF_NAVIGATION_CASES) layers[`selfnav-${c}`] = selfNavigationLayer(canary, c);
   for (const k of OPAQUE_NAVIGATION_CASES) layers[`selfnav-${k}`] = opaqueNavigationLayer(canary, k);
   const scripts = hostileWorkerScripts(canary);
-  const page = `<!doctype html><html><body>${Object.keys(layers).map((k) => `<iframe sandbox="allow-scripts" src="/${TOKEN}/layers/${k}.html"></iframe>`).join('')}
+  const framed = Object.keys(layers);
+  layers['inherit-a'] = inheritLayerA(canary);
+  layers['inherit-b'] = INHERIT_LAYER_B;
+  const page = `<!doctype html><html><body>${framed.map((k) => `<iframe sandbox="allow-scripts" src="/${TOKEN}/layers/${k}.html"></iframe>`).join('')}
 <script>
 fetch(${JSON.stringify(`${canary}/top-fetch`)}).catch(() => {});
 try { new WebSocket(${JSON.stringify(canary.replace('http:', 'ws:') + '/top-ws')}); } catch (e) {}
@@ -128,8 +148,11 @@ try { new Worker(URL.createObjectURL(new Blob([${JSON.stringify(workerTransportP
 }
 
 /** A UI-like page server: `/<name>.html` frames that page's URLs (sandboxed, as the UI frames the preview). */
-async function uiServer(): Promise<{ origin: string; setPage(name: string, urls: string[]): void; probeHits: string[]; close(): Promise<void> }> {
-  const pages = new Map<string, string[]>();
+/** A frame of a UI-like page: sandboxed (`allow-scripts`, as the UI frames the preview) unless said otherwise. */
+type UiFrame = string | { src: string; name?: string; sandbox?: boolean };
+
+async function uiServer(): Promise<{ origin: string; setPage(name: string, urls: UiFrame[]): void; probeHits: string[]; close(): Promise<void> }> {
+  const pages = new Map<string, UiFrame[]>();
   const probeHits: string[] = [];
   const s: Server = createServer((req, res) => {
     const path = (req.url ?? '').split('?')[0]!;
@@ -138,7 +161,11 @@ async function uiServer(): Promise<{ origin: string; setPage(name: string, urls:
     const frames = pages.get(path.replace(/^\/|\.html$/g, ''));
     if (frames) {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      res.end(`<!doctype html><html><body>${frames.map((u) => `<iframe sandbox="allow-scripts" src="${u}" width="320" height="180"></iframe>`).join('')}</body></html>`);
+      const tag = (f: UiFrame) => {
+        const o = typeof f === 'string' ? { src: f } : f;
+        return `<iframe ${o.sandbox === false ? '' : 'sandbox="allow-scripts" '}${o.name ? `name="${o.name}" ` : ''}src="${o.src}" width="320" height="180"></iframe>`;
+      };
+      res.end(`<!doctype html><html><body>${frames.map(tag).join('')}</body></html>`);
     } else { res.writeHead(404); res.end(); }
   });
   await new Promise<void>((r) => s.listen(0, '127.0.0.1', () => r()));
@@ -207,7 +234,10 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
       const child = spawn(electronPath!, ['--use-mock-keychain', '--password-store=basic', harness], { env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
       const pgid = child.pid!;
       const groupAlive = () => { try { process.kill(-pgid, 0); return true; } catch { return false; } };
+      // Only while the group is known to be ours: its leader still runs (the timers below, cleared on exit), or members are
+      // still alive (a live group's id cannot be reused). Never after it may be gone.
       const killGroup = () => { try { process.kill(-pgid, 'SIGKILL'); } catch { /* the group is gone */ } };
+      let doneTimer: NodeJS.Timeout | null = null;
       const lines: Array<Record<string, unknown>> = [];
       let killedAfterDone = false;
       let output = '';
@@ -225,7 +255,7 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
             onLine?.(o);
             // Finished. On this very loaded machine Electron's own shutdown took from seconds to minutes (its helpers
             // starved of CPU): after 2 minutes it is killed, and the run still counts as finished.
-            if (o.done) setTimeout(() => { killedAfterDone = true; killGroup(); }, 120_000).unref();
+            if (o.done && !doneTimer) doneTimer = setTimeout(() => { killedAfterDone = true; killGroup(); }, 120_000);
           }
         }
       });
@@ -233,9 +263,11 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
       const timer = setTimeout(killGroup, timeoutMs);
       child.on('exit', (code) => {
         clearTimeout(timer);
-        // Helpers of that Electron still in its group (a starved renderer that has not noticed the exit yet) end now.
+        if (doneTimer) clearTimeout(doneTimer);
+        // Helpers of that Electron still in its group (a starved renderer that has not noticed the exit yet) end now:
+        // only when the group still has members (so its id is still ours).
         const left = groupAlive();
-        killGroup();
+        if (left) killGroup();
         rmSync(configDir, { recursive: true, force: true });
         rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
         const done = lines.some((l) => l.done === true);
@@ -333,7 +365,7 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
     expect(udp.packets.slice(udpStart)).toEqual([]);
   }, 900_000);
 
-  it('preview filter alone (no will-frame-navigate guard): the UI framing the preview and the layers directly, data:/blob: self-navigation, the core and a random port; the control leaks, the UI window reaches nothing', async () => {
+  it('preview filter alone (no will-frame-navigate guard): the UI framing the preview and the layers directly, data:/blob: self-navigation, about:blank inheritance, the core and a random port; the control leaks, the UI window reaches nothing', async () => {
     const creative = join(work, 'preview');
     const compDir = join(creative, 'outputs', 'v1', 'compositions', 'iso');
     mkdirSync(join(compDir, 'layers'), { recursive: true });
@@ -357,14 +389,20 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
       const real = [preview.url, ...names.map(layer), ...probes];
       // data: and blob: self-navigation (I1), from layers without any CSP (the filter alone).
       const nakedFrames = [...names, ...OPAQUE_NAVIGATION_CASES.map((k) => `selfnav-${k}`)].map((n) => `${naked.origin}/${TOKEN}/layers/${n}.html`);
-      ui.setPage('all', [...real, ...nakedFrames]);
+      // N4: non-sandboxed CSP-less frames, one navigating the other to about:blank and fetching through it.
+      const inherit: UiFrame[] = [
+        { src: `${naked.origin}/${TOKEN}/layers/inherit-a.html`, sandbox: false },
+        { src: `${naked.origin}/${TOKEN}/layers/inherit-b.html`, name: 'ms-inherit-b', sandbox: false },
+      ];
+      ui.setPage('all', [...real, ...nakedFrames, ...inherit]);
       ui.setPage('real', real);
       ui.setPage('naked', nakedFrames);
+      ui.setPage('inherit', inherit);
       const start = canary.hits.length;
       const udpStart = udp.packets.length;
       const cuts: Record<string, { hits: number; udp: number; probes: number }> = {};
       const r = await runHarness({ scenario: 'preview', ui: {
-        origin: ui.origin, all: `${ui.origin}/all.html`, real: `${ui.origin}/real.html`, naked: `${ui.origin}/naked.html`,
+        origin: ui.origin, all: `${ui.origin}/all.html`, real: `${ui.origin}/real.html`, naked: `${ui.origin}/naked.html`, inherit: `${ui.origin}/inherit.html`,
         realComposition: server.origin, nakedComposition: naked.origin,
       } }, (l) => {
         if (typeof l.phase === 'string') cuts[l.phase] = { hits: canary.hits.length, udp: udp.packets.length, probes: ui.probeHits.length };
@@ -377,6 +415,7 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
       expect(control, 'control fetch').toContain('/fetch');
       for (const k of OPAQUE_NAVIGATION_CASES) expect(control, `control ${k}: self-navigation`).toContain(opaqueNavigationPath(k));
       expect(control, 'control: a random port framed by the UI').toContain('/probe-random');
+      expect(control, 'control: fetch through a sibling navigated to about:blank (N4)').toContain(INHERIT_PATH);
       expect(ui.probeHits.slice(0, c0.probes), "control: the app's own port framed by the UI").toContain('/probe-app');
       // The UI window: neither the core's port nor a random one is ever framed.
       expect(ui.probeHits.slice(c0.probes)).toEqual([]);
@@ -400,6 +439,8 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
       expect(frames).toContain(preview.url);
       expect(frames.some((u) => u.startsWith(server!.origin) && u.includes('/layers/hostile.html'))).toBe(true);
       expect(find(r.lines, (l) => l.phase === 'naked-done').frames as string[]).toContain(`${naked.origin}/${TOKEN}/layers/hostile.html`);
+      // N4 really ran under the filter: B was navigated to about:blank (and its fetch, above, reached nothing).
+      expect(find(r.lines, (l) => l.phase === 'inherit-done').frames as string[]).toContain('about:blank');
     } finally {
       await server?.close();
       await naked.close();

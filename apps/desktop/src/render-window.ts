@@ -39,7 +39,8 @@ import {
  *   the end of every render); a crashed renderer (`render-process-gone`) fails the render;
  * - every live render window is in a module-wide set, and the app closes them all on quit (`shutdownForQuit`: the core's
  *   jobs are cancelled first, then the windows close); the OS ends the renderers with the app in any case;
- * - the window cap is app-wide (`renderWindowSlots`, every provider), and per provider (`maxWindows`, a render's pages);
+ * - the window cap is app-wide (`renderWindowSlots`, every provider: a render's pages plus one slot reserved for the
+ *   preview lane, so storyboards and `preview_frames` never wait behind a render), and per provider (`maxWindows`);
  * - the watchdog (the core's, with a sampler of our own): the OS pids of each window's renderers
  *   (`webContents.getOSProcessId()` and every frame's `osProcessId`, for out-of-process layer frames), measured like the
  *   Chrome group (macOS physical footprint with `ps` RSS as a floor, Linux `/proc`) and with `app.getAppMetrics()`'s
@@ -155,42 +156,66 @@ function releaseAppIfIdle(): void {
 /** Whether the App Nap blocker is held (tests). */
 export function appKeptAwake(): boolean { return napBlocker !== null; }
 
+/** Which kind of work a render window serves: a render's pages, or the preview lane (storyboards, the agent's frames). */
+export type WindowLane = 'render' | 'preview';
+
 /**
- * The app-wide cap on render windows (every provider: a render's pages, storyboards, the agent's preview frames). A page
- * past the cap waits for a window to close; the waiting ends with the open's abort signal.
+ * The app-wide cap on render windows (every provider). One slot is reserved for the preview lane: a render may hold at
+ * most `limit - 1` windows, so storyboards and the agent's `preview_frames` never wait behind a render for its whole
+ * length; the preview lane may use the reserved slot or any free one. A page past its share waits for a window to close;
+ * the waiting ends with the open's (or its provider's) abort signal.
  */
 export class WindowSlots {
   private used = 0;
-  private readonly waiters: Array<() => void> = [];
+  private renderUsed = 0;
+  private readonly waiters: Array<{ lane: WindowLane; grant: () => void }> = [];
   constructor(private max: number) {}
   get limit(): number { return this.max; }
   get inUse(): number { return this.used; }
+  /** The most windows the render lane may hold (`limit - 1`, at least 1). */
+  get renderLimit(): number { return Math.max(1, this.max - 1); }
   setLimit(n: number): void { this.max = Math.max(1, Math.floor(n)); this.wake(); }
-  private wake(): void { while (this.used < this.max && this.waiters.length) this.waiters.shift()!(); }
-  /** Waits for a slot; resolves with its release (idempotent). */
-  acquire(signal?: AbortSignal): Promise<() => void> {
+  private fits(lane: WindowLane): boolean {
+    return this.used < this.max && (lane === 'preview' || this.renderUsed < this.renderLimit);
+  }
+  private wake(): void {
+    for (let i = 0; i < this.waiters.length;) {
+      const w = this.waiters[i]!;
+      if (this.fits(w.lane)) { this.waiters.splice(i, 1); w.grant(); } else i++;
+    }
+  }
+  /** Waits for a slot of `lane`; resolves with its release (idempotent). */
+  acquire(signal?: AbortSignal, lane: WindowLane = 'render'): Promise<() => void> {
     return new Promise((resolve, reject) => {
       const grant = () => {
         signal?.removeEventListener('abort', onAbort);
         this.used++;
+        if (lane === 'render') this.renderUsed++;
         let released = false;
-        resolve(() => { if (released) return; released = true; this.used--; this.wake(); });
+        resolve(() => {
+          if (released) return;
+          released = true;
+          this.used--;
+          if (lane === 'render') this.renderUsed--;
+          this.wake();
+        });
       };
+      const entry = { lane, grant };
       const onAbort = () => {
-        const i = this.waiters.indexOf(grant);
+        const i = this.waiters.indexOf(entry);
         if (i >= 0) this.waiters.splice(i, 1);
         reject(new RenderError('cancelled', 'cancelled'));
       };
       if (signal?.aborted) return onAbort();
-      if (this.used < this.max) return grant();
-      this.waiters.push(grant);
+      if (this.fits(lane)) return grant();
+      this.waiters.push(entry);
       signal?.addEventListener('abort', onAbort, { once: true });
     });
   }
 }
 
-/** The app's render window slots (`desktopRenderOptions` sets the limit). */
-export const renderWindowSlots = new WindowSlots(DEFAULT_PARALLEL);
+/** The app's render window slots (`desktopRenderOptions` sets the limit: the render's pages plus the reserved one). */
+export const renderWindowSlots = new WindowSlots(DEFAULT_PARALLEL + 1);
 
 /** How many render windows are open (tests: nothing may outlive a render, a cancel or a quit). */
 export function liveRenderWindowCount(): number { return liveWindows.size; }
@@ -208,8 +233,8 @@ export interface RenderWindow {
 }
 
 /** A fresh, locked, hidden window on `about:blank` (see the module comment), within the app-wide cap. */
-export async function createRenderWindow(o: { prefix: string; width: number; height: number; signal?: AbortSignal }): Promise<RenderWindow> {
-  const release = await renderWindowSlots.acquire(o.signal);
+export async function createRenderWindow(o: { prefix: string; width: number; height: number; signal?: AbortSignal; lane?: WindowLane }): Promise<RenderWindow> {
+  const release = await renderWindowSlots.acquire(o.signal, o.lane ?? 'render');
   let win: BrowserWindow;
   const partition = `${RENDER_PARTITION_PREFIX}${randomUUID()}`;
   const ses = session.fromPartition(partition, { cache: false });
@@ -346,7 +371,7 @@ export interface ElectronProviderOptions {
   limits: WatchdogLimits;
   timeouts?: PageTimeouts;
   /** Tests: replaces `createRenderWindow`. */
-  createWindow?: (o: { prefix: string; width: number; height: number; signal?: AbortSignal }) => Promise<RenderWindow>;
+  createWindow?: (o: { prefix: string; width: number; height: number; signal?: AbortSignal; lane?: WindowLane }) => Promise<RenderWindow>;
   /** Tests: the memory reading of the windows' pids (default: the core's sampler with `app.getAppMetrics()`). */
   sample?: (pids: number[]) => ReturnType<typeof samplePidsMemory>;
 }
@@ -366,6 +391,8 @@ export class ElectronProvider implements ChromiumProvider {
   failure: RenderFailure | null = null;
   private readonly windows = new Set<RenderWindow>();
   private opening = 0;
+  /** Fired by close(): ends a wait for an app-wide slot. */
+  private readonly closeCtl = new AbortController();
   /** Windows being created: `close()` waits for them. */
   private readonly creating = new Set<Promise<unknown>>();
   private closing = false;
@@ -426,7 +453,10 @@ export class ElectronProvider implements ChromiumProvider {
     this.pixels ??= { width: o.width, height: o.height };
     this.opening++;
     let rw: RenderWindow;
-    const creating = (this.o.createWindow ?? createRenderWindow)({ prefix, width: o.width, height: o.height, signal: o.signal });
+    // The open's signal, or this provider closing: a wait for an app-wide slot never outlives close().
+    const signal = AbortSignal.any([o.signal, this.closeCtl.signal]);
+    const lane: WindowLane = o.purpose === 'frames' ? 'preview' : 'render';
+    const creating = (this.o.createWindow ?? createRenderWindow)({ prefix, width: o.width, height: o.height, signal, lane });
     this.creating.add(creating);
     try {
       rw = await creating;
@@ -484,6 +514,7 @@ export class ElectronProvider implements ChromiumProvider {
   close(): Promise<void> {
     if (!this.closed) {
       this.closing = true;
+      this.closeCtl.abort(new RenderError('cancelled', 'the render windows are closed'));
       this.watchdog?.stop();
       this.closed = (async () => {
         // Windows still being created first: each joins `windows` as soon as it exists (and closes itself in `open`).
@@ -510,7 +541,8 @@ export const DESKTOP_RENDER_PARALLEL = DEFAULT_PARALLEL;
  * the provider opens.
  */
 export function desktopRenderOptions(runtimeDir: string, parallel = DESKTOP_RENDER_PARALLEL) {
-  renderWindowSlots.setLimit(parallel);
+  // A render's pages, plus the slot reserved for the preview lane.
+  renderWindowSlots.setLimit(parallel + 1);
   return {
     renderProvider: electronRenderProvider({ maxWindows: parallel, limits: { timeLimitMs: 4 * 60 * 60 * 1000 } }),
     renderOptions: { distDir: runtimeDir, parallel },
