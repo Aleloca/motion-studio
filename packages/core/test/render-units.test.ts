@@ -8,6 +8,7 @@ import { allowedPrefix, BASE_FLAGS, interceptRequests, isAllowedRequest, NETWORK
 import { imageSize, splitSegments } from '../src/render/capture.ts';
 import { mixClips, mixGraph } from '../src/render/audio-mix.ts';
 import { binaryArch, concatLine, h264Args, targetKbps } from '../src/render/encode.ts';
+import { filterArgv } from '../src/media/ffmpeg-filters.ts';
 import { startWatchdog, type GroupMemory } from '../src/render/watchdog.ts';
 import { chromeCandidates, findSystemChrome } from '../src/render/system-chrome.ts';
 import { ChromeProvider } from '../src/render/chromium-provider.ts';
@@ -210,13 +211,15 @@ describe('segments, frames, encoding', () => {
     const fmt = { width: 1080, height: 1920, targetBitrateKbps: 4000 };
     expect(targetKbps(fmt, 30)).toBe(4000);
     expect(targetKbps(fmt, 60)).toBe(6000);
-    const a = h264Args('libx264', 4000, 30).join(' ');
+    const text = (args: ReturnType<typeof h264Args>) => args.flatMap((x) => (typeof x === 'string' ? [x] : [...filterArgv(x)!])).join(' ');
+    const a = text(h264Args('libx264', 4000, 30));
     expect(a).toContain('-c:v libx264');
     expect(a).toContain('-crf 20');
     expect(a).toContain('-maxrate 6000k -bufsize 8000k');
     expect(a).toContain('-pix_fmt yuv420p');
     expect(a).toContain('-colorspace bt709');
-    expect(h264Args('h264_videotoolbox', 4000, 30).join(' ')).toContain('-c:v h264_videotoolbox -b:v 4000k');
+    expect(a).toContain('-vf scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv');
+    expect(text(h264Args('h264_videotoolbox', 4000, 30))).toContain('-c:v h264_videotoolbox -b:v 4000k');
     expect(concatLine("/tmp/a'b/seg.mp4")).toBe("file '/tmp/a'\\''b/seg.mp4'");
   });
 
@@ -252,7 +255,8 @@ describe('audio graph', () => {
   });
 
   it('places clips in samples and mixes without normalisation, then limits, at exactly the composition length', () => {
-    const g = mixGraph([{ start: 0.5, duration: 1, trimStart: 0.25, volume: 0.8, fadeIn: 0.1, fadeOut: 0.2 }], 3 * 48_000);
+    const [flag, g] = filterArgv(mixGraph([{ start: 0.5, duration: 1, trimStart: 0.25, volume: 0.8, fadeIn: 0.1, fadeOut: 0.2 }], 3 * 48_000))!;
+    expect(flag).toBe('-filter_complex');
     expect(g).toContain('atrim=start_sample=12000:end_sample=60000');
     expect(g).toContain('afade=t=in:start_sample=0:nb_samples=4800');
     expect(g).toContain('afade=t=out:start_sample=38400:nb_samples=9600');

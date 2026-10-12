@@ -2,6 +2,7 @@ import { execFile, spawn, type ChildProcess, type SpawnOptions } from 'node:chil
 import { closeSync, constants, existsSync, fstatSync, openSync, readSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { CommandExec, CommandResult } from '../exec.ts';
+import { filterArgv, type FilterArg } from './ffmpeg-filters.ts';
 
 export type { ChildProcess, StdioOptions } from 'node:child_process';
 
@@ -13,11 +14,12 @@ export type { ChildProcess, StdioOptions } from 'node:child_process';
  *
  * - Agent or user media (composition assets, library files, agent outputs): `mediaInput`, with only the demuxers we accept
  *   (`MEDIA_DEMUXERS`) and only the protocol of the open (`fd` for a verified descriptor, `file` for a path).
- * - Files the core made itself (render segments, the mix, a frame pipe, a test pattern): `ownInput`, with exactly the
- *   demuxer(s) the file is.
+ * - Files the core made itself (render segments, the mix, a frame pipe): `ownInput`, with exactly the demuxer(s) the file is.
+ * - A generated source (the VideoToolbox test pattern): a lavfi input from `media/ffmpeg-filters.ts`, never `ownInput`.
  *
- * `spawnFf`, `execFf` and `execFfVia` refuse (throw) an argument list with an `-i` that lacks either option, and an ffprobe
- * run with an input not given by `-i`. `test/ffmpeg-exec.test.ts` fails when another core module starts ffmpeg or ffprobe.
+ * Filtergraphs are structural (decisions log 191): `-vf`/`-af`/`-filter*`/`-lavfi` and lavfi inputs exist only as `FilterArg`s
+ * built by `media/ffmpeg-filters.ts`. `spawnFf`, `execFf` and `execFfVia` refuse (throw) a raw string for them, an `-i` that
+ * lacks either whitelist, and an ffprobe run with an input not given by `-i` (`ffArgv`). `test/ffmpeg-exec.test.ts` fails when another core module starts ffmpeg or ffprobe.
  */
 
 /**
@@ -94,9 +96,11 @@ export function mediaInput(src: { fd: number } | { file: string }, demuxers: rea
 
 /**
  * Input options for a file the core made: `formats` are the demuxers allowed (the first is forced with `-f` when `force`),
- * `options` other input options (e.g. `-framerate`). `-` reads stdin (`pipe`/`fd` protocols); a lavfi graph opens no protocol.
+ * `options` other input options (e.g. `-framerate`). `-` reads stdin (`pipe`/`fd` protocols). Never `lavfi` (a generated
+ * source comes from `media/ffmpeg-filters.ts`).
  */
 export function ownInput(target: string, o: { formats: readonly string[]; force?: boolean; options?: readonly string[] }): string[] {
+  if (o.formats.includes('lavfi')) throw new Error('ownInput: a lavfi input must be built by media/ffmpeg-filters.ts');
   // ffmpeg 8 opens `-` through the `fd` protocol (older builds: `pipe`).
   const protocol = target === '-' ? 'pipe,fd' : 'file';
   return ['-protocol_whitelist', protocol, '-format_whitelist', o.formats.join(','), ...(o.force ? ['-f', o.formats[0]!] : []), ...(o.options ?? []), '-i', target];
@@ -112,109 +116,76 @@ export const ffKindOf = (cmd: string): FfKind => (/ffprobe/i.test(cmd.split(/[\\
 
 /**
  * Filter options: their value is a filtergraph. Every spelling ffmpeg accepts: a stream specifier may follow
- * (`-filter:v`, `-vf:v`, `-af:0`, `-filter:v:#1`).
+ * (`-filter:v`, `-vf:v`, `-af:0`, `-filter:v:#1`). Accepted only inside a `FilterArg` from `media/ffmpeg-filters.ts`.
  */
 const FILTER_FLAG = /^-(vf|af|filter|filter_complex|lavfi)(:.*)?$/;
 /** The script forms of the same options: their value is a FILE with a graph. Refused outright. */
 const FILTER_SCRIPT_FLAG = /^-(filter|filter_complex|lavfi)_script(:.*)?$/;
-/**
- * The filters the core builds (normalisation, colour stages, the mix, the encode, the VideoToolbox check and its test
- * pattern): an ALLOWLIST (final wave M3). Any other filter name in a filtergraph or a lavfi input is refused, and so are
- * the ways an allowed filter can still touch a file: an option read from a file (`/option=path`, FFmpeg 7+), any `ssim`
- * argument (`stats_file`), and the file options `stats_file` and `log_path` on any filter. Defence in depth: the core
- * never puts agent text into an argument list.
- */
-export const ALLOWED_FILTERS: ReadonlySet<string> = new Set([
-  'setpts', 'fps', 'colorspace', 'zscale', 'format', 'tonemap', 'scale', 'setsar', 'setparams',
-  'aresample', 'aformat', 'atrim', 'asetpts', 'volume', 'afade', 'adelay', 'amix', 'apad', 'alimiter',
-  'ssim', 'testsrc', 'testsrc2', 'overlay',
-]);
-/** Option keys that name a file an allowed filter would write or read. */
-const FILE_OPTION_KEYS = new Set(['stats_file', 'log_path']);
 /** Input options that would let a container open other files (mov external tracks): never passed. */
 const FORBIDDEN_OPTIONS = new Set(['-enable_drefs', '-use_absolute_path']);
 
-interface ParsedFilter { name: string; args: string; fileForm: boolean }
+/**
+ * One ffmpeg/ffprobe argument: a plain string, or a filter option / lavfi input built by `media/ffmpeg-filters.ts` (decisions
+ * log 191). A filtergraph is never a string here.
+ */
+export type FfArg = string | FilterArg;
+type FilterOption = 'vf' | 'af' | 'filter' | 'filter_complex' | 'lavfi';
+/** The literals refused in an argument list at compile time: the filter options, their script forms, `-/opt` and `lavfi`. */
+export type RawFilterArg = `-${FilterOption}` | `-${FilterOption}:${string}` | `-${string}_script` | `-${string}_script:${string}` | `-/${string}` | 'lavfi';
+/**
+ * `A` with every literal of `RawFilterArg` turned into `never`: `spawnFf(cmd, ['-vf', graph])` does not compile. A string
+ * known only at run time is refused by `ffArgv`.
+ */
+export type CheckedFfArgs<A extends readonly FfArg[]> = { readonly [K in keyof A]: A[K] extends RawFilterArg ? never : A[K] };
 
 /**
- * Parses a filtergraph as ffmpeg does (`av_get_token`): link labels `[...]` removed, split at `;` and `,` outside single
- * quotes. Outside quotes a backslash escapes the next character; INSIDE quotes it is a literal character and the next
- * quote closes the quote (so `'1\'` is a complete value). `fileForm` is set when an option key starts with `/`
- * (right after the first `=`, or after a `:` outside quotes). Linear.
+ * The argument list ffmpeg/ffprobe receives, after the checks (throws when one fails):
+ * - a filter option (`-vf`, `-af`, `-filter[:spec]`, `-filter_complex`, `-lavfi`) or a lavfi input (`-f lavfi`, a
+ *   `-format_whitelist` naming `lavfi`) only inside a `FilterArg` made by `media/ffmpeg-filters.ts`; any other object is refused;
+ * - never an option whose value comes from a file (`-/opt`, `-filter_script[:spec]`, `-filter_complex_script`, `-lavfi_script`)
+ *   nor one letting a container open other files (`-enable_drefs`, `-use_absolute_path`);
+ * - every `-i` has `-protocol_whitelist` and `-format_whitelist` among the options since the previous `-i`; ffprobe names its
+ *   input with `-i` (a bare positional input could not be checked), unless it only prints info.
  */
-function parseGraph(graph: string): ParsedFilter[] {
-  const out: ParsedFilter[] = [];
-  let name = '', args = '', inArgs = false, quoted = false, label = false, fileForm = false, keyStart = false;
-  const flush = () => {
-    const n = name.trim().split('@')[0]!.trim();
-    if (n) out.push({ name: n, args, fileForm });
-    name = ''; args = ''; inArgs = false; fileForm = false; keyStart = false;
-  };
-  for (let i = 0; i < graph.length; i++) {
-    const c = graph[i]!;
-    const add = (t: string) => { if (inArgs) args += t; else name += t; };
-    if (quoted) { if (c === "'") quoted = false; add(c); continue; }
-    if (c === '\\') { add(c + (graph[i + 1] ?? '')); i++; keyStart = false; continue; }
-    if (c === "'") { quoted = true; add(c); keyStart = false; continue; }
-    if (label) { if (c === ']') label = false; continue; }
-    if (c === '[') { label = true; continue; }
-    if (c === ';' || c === ',') { flush(); continue; }
-    if (!inArgs && c === '=') { inArgs = true; keyStart = true; continue; }
-    if (inArgs && c === ':') { args += c; keyStart = true; continue; }
-    if (keyStart && /\s/.test(c)) { args += c; continue; }
-    if (keyStart && c === '/') fileForm = true;
-    keyStart = false;
-    add(c);
-  }
-  flush();
-  return out;
-}
-
-/** The filter names of a filtergraph (see `parseGraph`). */
-export function filterNames(graph: string): string[] {
-  return parseGraph(graph).map((f) => f.name);
-}
-/** Why a graph is refused, or undefined when every filter is allowed and none reads or writes a file. */
-function badFilter(graph: string): string | undefined {
-  for (const f of parseGraph(graph)) {
-    if (!ALLOWED_FILTERS.has(f.name)) return f.name;
-    if (f.fileForm) return `${f.name} (option read from a file)`;
-    if (f.name === 'ssim' && f.args.trim() !== '') return 'ssim (arguments)';
-    for (const part of f.args.split(':')) {
-      const key = part.split('=')[0]!.trim().toLowerCase();
-      if (part.includes('=') && FILE_OPTION_KEYS.has(key)) return `${f.name} (file option ${key})`;
-    }
-  }
-  return undefined;
-}
-
-/**
- * Throws unless every `-i` of `args` has `-protocol_whitelist` and `-format_whitelist` among the options since the previous
- * `-i`. ffprobe must name its input with `-i` (a bare positional input could not be checked), unless it only prints info.
- * Only filters of `ALLOWED_FILTERS` in a filter option or a lavfi input; never an option whose value comes from a file
- * (`-/opt`, `-filter_script[:spec]`, `-filter_complex_script`, `-lavfi_script`) nor one letting a container open other files (`-enable_drefs`,
- * `-use_absolute_path`).
- */
-export function assertSafeInputs(kind: FfKind, args: readonly string[]): void {
-  let seenProtocol = false, seenFormat = false, inputs = 0, forced = '';
+export function ffArgv(kind: FfKind, args: readonly FfArg[]): string[] {
+  const argv: string[] = [];
   for (let k = 0; k < args.length; k++) {
-    const a = args[k]!;
+    const a = args[k];
+    if (typeof a !== 'string') {
+      const built = filterArgv(a);
+      if (!built) throw new Error(`${kind}: argument ${k} is neither a string nor a filter built by media/ffmpeg-filters.ts`);
+      argv.push(...built);
+      continue;
+    }
     if (a.startsWith('-/') || FILTER_SCRIPT_FLAG.test(a)) throw new Error(`${kind}: option ${a} reads its value from a file`);
+    if (FILTER_FLAG.test(a)) throw new Error(`${kind}: option ${a} takes only a filtergraph built by media/ffmpeg-filters.ts, not a string`);
     if (FORBIDDEN_OPTIONS.has(a)) throw new Error(`${kind}: option ${a} lets a container open other files`);
-    if (FILTER_FLAG.test(a)) { const bad = badFilter(args[k + 1] ?? ''); if (bad !== undefined) throw new Error(`${kind}: filter ${JSON.stringify(bad.slice(0, 40))} is not one the core builds (source filter or file access)`); }
-    if (a === '-f') { forced = args[k + 1] ?? ''; k++; continue; }
+    const next = args[k + 1];
+    if ((a === '-f' || a === '-format_whitelist') && typeof next === 'string' && next.split(',').some((f) => f.trim() === 'lavfi')) {
+      throw new Error(`${kind}: a lavfi input must be built by media/ffmpeg-filters.ts`);
+    }
+    argv.push(a);
+  }
+  let seenProtocol = false, seenFormat = false, inputs = 0;
+  for (let k = 0; k < argv.length; k++) {
+    const a = argv[k]!;
     if (a === '-protocol_whitelist') { seenProtocol = true; k++; continue; }
     if (a === '-format_whitelist') { seenFormat = true; k++; continue; }
+    if (a === '-f') { k++; continue; }
     if (a === '-i') {
-      if (!seenProtocol || !seenFormat) throw new Error(`${kind} input ${JSON.stringify(args[k + 1] ?? '')} has no protocol/format whitelist`);
-      if (forced === 'lavfi') { const bad = badFilter(args[k + 1] ?? ''); if (bad !== undefined) throw new Error(`${kind}: lavfi input filter ${JSON.stringify(bad.slice(0, 40))} is not one the core builds (source filter or file access)`); }
+      if (!seenProtocol || !seenFormat) throw new Error(`${kind} input ${JSON.stringify(argv[k + 1] ?? '')} has no protocol/format whitelist`);
       seenProtocol = seenFormat = false;
-      forced = '';
       inputs++;
       k++;
     }
   }
-  if (kind === 'ffprobe' && inputs === 0 && !args.some((a) => INFO_FLAGS.has(a))) throw new Error('ffprobe must name its input with -i');
+  if (kind === 'ffprobe' && inputs === 0 && !argv.some((a) => INFO_FLAGS.has(a))) throw new Error('ffprobe must name its input with -i');
+  return argv;
+}
+
+/** Throws when `ffArgv` would refuse `args`. */
+export function assertSafeInputs(kind: FfKind, args: readonly FfArg[]): void {
+  ffArgv(kind, args);
 }
 
 /** The ffprobe next to an ffmpeg binary, else `ffprobe` from PATH. */
@@ -223,24 +194,22 @@ export function ffprobeOf(ffmpegPath: string): string {
   return existsSync(p) ? p : 'ffprobe';
 }
 
-/** Starts ffmpeg/ffprobe (`cmd` is its path) after `assertSafeInputs`. */
-export function spawnFf(cmd: string, args: string[], options: SpawnOptions): ChildProcess {
-  assertSafeInputs(ffKindOf(cmd), args);
-  return spawn(cmd, args, options);
+/** Starts ffmpeg/ffprobe (`cmd` is its path) with the arguments checked and expanded by `ffArgv`. */
+export function spawnFf<const A extends readonly FfArg[]>(cmd: string, args: A & CheckedFfArgs<A>, options: SpawnOptions): ChildProcess {
+  return spawn(cmd, ffArgv(ffKindOf(cmd), args), options);
 }
 
-/** Runs ffmpeg/ffprobe to completion (exit code, stdout, stderr) after `assertSafeInputs`. */
-export function execFf(cmd: string, args: string[], timeoutMs = 60_000): Promise<{ code: number; stdout: string; stderr: string }> {
-  assertSafeInputs(ffKindOf(cmd), args);
+/** Runs ffmpeg/ffprobe to completion (exit code, stdout, stderr) with the arguments checked and expanded by `ffArgv`. */
+export function execFf<const A extends readonly FfArg[]>(cmd: string, args: A & CheckedFfArgs<A>, timeoutMs = 60_000): Promise<{ code: number; stdout: string; stderr: string }> {
+  const argv = ffArgv(ffKindOf(cmd), args);
   return new Promise((resolve) => {
-    execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, encoding: 'utf8' }, (err, stdout, stderr) => {
+    execFile(cmd, argv, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, encoding: 'utf8' }, (err, stdout, stderr) => {
       resolve({ code: err ? (typeof err.code === 'number' ? err.code : 1) : 0, stdout: stdout ?? '', stderr: stderr ?? '' });
     });
   });
 }
 
-/** Runs `ffmpeg`/`ffprobe` from PATH through an injected `CommandExec` (media tools, doctor), after `assertSafeInputs`. */
-export function execFfVia(exec: CommandExec, kind: FfKind, args: string[], opts?: { timeoutMs?: number }): Promise<CommandResult> {
-  assertSafeInputs(kind, args);
-  return exec(kind, args, opts);
+/** Runs `ffmpeg`/`ffprobe` from PATH through an injected `CommandExec` (media tools, doctor), arguments checked by `ffArgv`. */
+export function execFfVia<const A extends readonly FfArg[]>(exec: CommandExec, kind: FfKind, args: A & CheckedFfArgs<A>, opts?: { timeoutMs?: number }): Promise<CommandResult> {
+  return exec(kind, ffArgv(kind, args), opts);
 }

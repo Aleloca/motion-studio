@@ -8,7 +8,8 @@ import { RenderError } from './errors.ts';
 import { binaryArch, hostArch, type BinaryArch } from './arch.ts';
 import { killGroup, trackGroup } from './watchdog.ts';
 import { makeOwnedTempDir } from './owner.ts';
-import { execFf, ffprobeOf, MP4_DEMUXERS, ownInput, spawnFf, type ChildProcess, type StdioOptions } from '../media/ffmpeg-exec.ts';
+import { execFf, ffprobeOf, MP4_DEMUXERS, ownInput, spawnFf, type CheckedFfArgs, type ChildProcess, type FfArg, type StdioOptions } from '../media/ffmpeg-exec.ts';
+import { h264ColourFilter, ssimCompareFilter, testPatternInput } from '../media/ffmpeg-filters.ts';
 
 export { binaryArch, hostArch, type BinaryArch } from './arch.ts';
 
@@ -86,11 +87,13 @@ export interface FfmpegProcess {
 /**
  * Starts ffmpeg in its own process group (killed as a whole on `kill()` or abort), `-loglevel error`, never prompting.
  * `fds` are open file descriptors handed to the child as fd 3, 4, … (`-fd N -i fd:`). Every input of `args` must come from
- * `mediaInput`/`ownInput` (`media/ffmpeg-exec.ts`): an input without the whitelists is refused (throws).
+ * `mediaInput`/`ownInput` (`media/ffmpeg-exec.ts`): an input without the whitelists is refused (throws). Filtergraphs and lavfi
+ * inputs only from `media/ffmpeg-filters.ts` (a raw string for them does not compile and throws).
  */
-export function spawnFfmpeg(ff: FfmpegInfo, args: string[], o: { signal?: AbortSignal; stdin?: boolean; fds?: number[] } = {}): FfmpegProcess {
+export function spawnFfmpeg<const A extends readonly FfArg[]>(ff: FfmpegInfo, args: A & CheckedFfArgs<A>, o: { signal?: AbortSignal; stdin?: boolean; fds?: number[] } = {}): FfmpegProcess {
   const stdio: StdioOptions = [o.stdin ? 'pipe' : 'ignore', 'ignore', 'pipe', ...(o.fds ?? [])];
-  const proc = spawnFf(ff.path, ['-hide_banner', '-loglevel', 'error', ...(o.stdin ? [] : ['-nostdin']), '-y', ...args], { stdio, detached: true });
+  const all: readonly FfArg[] = ['-hide_banner', '-loglevel', 'error', ...(o.stdin ? [] : ['-nostdin']), '-y', ...args];
+  const proc = spawnFf(ff.path, all, { stdio, detached: true });
   const untrack = proc.pid ? trackGroup(proc.pid) : () => {};
   let tail = '';
   proc.stderr!.on('data', (d: Buffer) => { tail = (tail + d.toString('utf8')).slice(-4000); });
@@ -117,8 +120,9 @@ export function spawnFfmpeg(ff: FfmpegInfo, args: string[], o: { signal?: AbortS
 }
 
 /** Runs ffmpeg to completion. */
-export function runFfmpeg(ff: FfmpegInfo, args: string[], o: { signal?: AbortSignal; fds?: number[] } = {}): Promise<void> {
-  return spawnFfmpeg(ff, args, o).done;
+export function runFfmpeg<const A extends readonly FfArg[]>(ff: FfmpegInfo, args: A & CheckedFfArgs<A>, o: { signal?: AbortSignal; fds?: number[] } = {}): Promise<void> {
+  const all: readonly FfArg[] = args;
+  return spawnFfmpeg(ff, all, o).done;
 }
 
 /** The target bitrate of phase 8 (kbps) for a preset at `fps`. */
@@ -140,8 +144,8 @@ export type VideoEncoder = 'libx264' | 'h264_videotoolbox';
  * final file played in Chrome shows mid-tones about 8 levels lighter than the preview canvas (measured; platforms and
  * phone players show BT.709 SDR as display-referred, i.e. as designed).
  */
-export function h264Args(encoder: VideoEncoder, kbps: number, fps: number, preset = 'fast'): string[] {
-  const color = ['-vf', 'scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv', '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv'];
+export function h264Args(encoder: VideoEncoder, kbps: number, fps: number, preset = 'fast'): FfArg[] {
+  const color: FfArg[] = [h264ColourFilter(), '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv'];
   const common = ['-r', String(fps), '-g', String(fps * 2), '-maxrate', `${Math.round(kbps * 1.5)}k`, '-bufsize', `${Math.round(kbps * 2)}k`, '-profile:v', 'high'];
   if (encoder === 'h264_videotoolbox') return [...color, '-c:v', 'h264_videotoolbox', '-b:v', `${kbps}k`, '-allow_sw', '0', '-realtime', '0', ...common];
   return [...color, '-c:v', 'libx264', '-preset', preset, '-crf', '20', '-pix_fmt', 'yuv420p', ...common];
@@ -151,15 +155,6 @@ export function h264Args(encoder: VideoEncoder, kbps: number, fps: number, prese
 export const VIDEOTOOLBOX_MIN_SSIM = 0.97;
 export interface VideotoolboxCheck { ok: boolean; ssim: number | null; reason?: string; transient?: boolean }
 const vtCache = new Map<string, Promise<VideotoolboxCheck>>();
-
-/**
- * The test pattern: seven-segment counters at two sizes over colour bars (`testsrc`, a quarter-size one overlaid), closer to
- * the text of motion graphics than `testsrc2`. Only lavfi sources: `drawtext` needs a freetype build.
- */
-export const vtTestPattern = (w: number, h: number, fps: number) => {
-  const qw = Math.max(16, Math.round(w / 4 / 2) * 2), qh = Math.max(16, Math.round(h / 4 / 2) * 2);
-  return `testsrc=size=${w}x${h}:rate=${fps}:duration=2[a];testsrc=size=${qw}x${qh}:rate=${fps}:duration=2[b];[a][b]overlay=16:16[out0]`;
-};
 
 /**
  * Whether `h264_videotoolbox` is usable for this size: macOS only, the encoder present, and a 2 s test pattern encoded at
@@ -175,12 +170,13 @@ export function checkVideotoolbox(ff: FfmpegInfo, width: number, height: number,
     p = (async (): Promise<VideotoolboxCheck> => {
       const dir = await makeOwnedTempDir(join(tmpdir(), 'ms-render-vtcheck-'));
       try {
-        const src = vtTestPattern(width, height, fps);
+        // The test pattern (`media/ffmpeg-filters.ts` `testPatternInput`): counters at two sizes over colour bars.
+        const src = testPatternInput(width, height, fps);
         const out = join(dir, 'vt.mp4');
-        const enc = await execFf(ff.path, ['-hide_banner', '-nostdin', '-loglevel', 'error', '-y', ...ownInput(src, { formats: ['lavfi'], force: true }), ...h264Args('h264_videotoolbox', kbps, fps), '-f', 'mp4', out], 300_000);
+        const enc = await execFf(ff.path, ['-hide_banner', '-nostdin', '-loglevel', 'error', '-y', src, ...h264Args('h264_videotoolbox', kbps, fps), '-f', 'mp4', out], 300_000);
         if (enc.code !== 0) return { ok: false, ssim: null, reason: enc.stderr.trim().slice(-300) || 'encode failed', transient: true };
-        const cmp = await execFf(ff.path, ['-hide_banner', '-nostdin', '-loglevel', 'info', ...ownInput(out, { formats: MP4_DEMUXERS }), ...ownInput(src, { formats: ['lavfi'], force: true }),
-          '-lavfi', '[0:v]format=yuv420p[a];[1:v]scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[b];[a][b]ssim', '-f', 'null', '-'], 300_000);
+        const cmp = await execFf(ff.path, ['-hide_banner', '-nostdin', '-loglevel', 'info', ...ownInput(out, { formats: MP4_DEMUXERS }), src,
+          ssimCompareFilter(), '-f', 'null', '-'], 300_000);
         const ssim = Number(/All:([\d.]+)/.exec(cmp.stderr)?.[1]);
         if (!Number.isFinite(ssim)) return { ok: false, ssim: null, reason: 'no SSIM', transient: true };
         return { ok: ssim >= VIDEOTOOLBOX_MIN_SSIM, ssim, ...(ssim < VIDEOTOOLBOX_MIN_SSIM ? { reason: 'quality' } : {}) };

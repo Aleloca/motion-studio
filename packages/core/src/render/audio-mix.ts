@@ -6,7 +6,8 @@ import { copyConfinedFile, withConfinedFile } from '../brand/agent-guard.ts';
 import { RenderError } from './errors.ts';
 import { runFfmpeg, type FfmpegInfo } from './encode.ts';
 import { probeJson } from './media-normalize.ts';
-import { mediaInput } from '../media/ffmpeg-exec.ts';
+import { mediaInput, type FfArg } from '../media/ffmpeg-exec.ts';
+import { audioMixFilter, type FilterArg } from '../media/ffmpeg-filters.ts';
 
 /**
  * The audio of a composition (spec §5.3; spike §5), mixed sample-accurately with ffmpeg:
@@ -59,29 +60,16 @@ export function mixClips(c: Composition): MixClip[] {
   return out.sort((a, b) => a.start - b.start);
 }
 
-// Only finite numbers ever reach the filtergraph (a non-finite value from a composition counts as 0).
+// Only finite numbers ever reach the filtergraph builder (a non-finite value from a composition counts as 0).
 const samples = (sec: number) => (Number.isFinite(sec * AUDIO_RATE) ? Math.max(0, Math.round(sec * AUDIO_RATE)) : 0);
-const num = (n: number) => (Number.isFinite(n) ? Number(n.toFixed(6)).toString() : '0');
 
-/** The filter graph for `clips` (input i is `[i:a]`), output `[out]` of exactly `totalSamples` samples. */
-export function mixGraph(clips: ReadonlyArray<Pick<MixClip, 'start' | 'duration' | 'trimStart' | 'volume' | 'fadeIn' | 'fadeOut'>>, totalSamples: number): string {
+/** The `-filter_complex` of the mix for `clips` (input i is `[i:a]`), output `[out]` of exactly `totalSamples` samples. */
+export function mixGraph(clips: ReadonlyArray<Pick<MixClip, 'start' | 'duration' | 'trimStart' | 'volume' | 'fadeIn' | 'fadeOut'>>, totalSamples: number): FilterArg {
   if (clips.length === 0) throw new Error('mixGraph: no clips');
-  const parts = clips.map((c, i) => {
-    const s0 = samples(c.trimStart);
-    const len = samples(c.duration);
-    const f = [
-      `aresample=${AUDIO_RATE}`, 'aformat=sample_fmts=fltp:channel_layouts=stereo',
-      `atrim=start_sample=${s0}:end_sample=${s0 + len}`, 'asetpts=N/SR/TB', `volume=${num(c.volume)}`,
-    ];
-    const fi = samples(c.fadeIn), fo = samples(c.fadeOut);
-    if (fi > 0) f.push(`afade=t=in:start_sample=0:nb_samples=${fi}`);
-    if (fo > 0) f.push(`afade=t=out:start_sample=${Math.max(0, len - fo)}:nb_samples=${fo}`);
-    f.push(`adelay=delays=${samples(c.start)}S:all=1`);
-    return `[${i}:a]${f.join(',')}[a${i}]`;
-  });
-  const inputs = clips.map((_, i) => `[a${i}]`).join('');
-  return `${parts.join(';')};${inputs}amix=inputs=${clips.length}:duration=longest:dropout_transition=0:normalize=0,`
-    + `apad=whole_len=${totalSamples},alimiter=limit=0.89:level=false:latency=1,atrim=end_sample=${totalSamples},asetpts=N/SR/TB[out]`;
+  return audioMixFilter(clips.map((c) => ({
+    trimStart: samples(c.trimStart), length: samples(c.duration), volume: Number.isFinite(c.volume) ? c.volume : 0,
+    fadeIn: samples(c.fadeIn), fadeOut: samples(c.fadeOut), delay: samples(c.start),
+  })), totalSamples, AUDIO_RATE);
 }
 
 /**
@@ -163,7 +151,7 @@ export async function mixAudio(o: { ff: FfmpegInfo; compDir: string; clips: MixC
   if (kept.length === 0) return false;
   const handles: FileHandle[] = [];
   try {
-    const inputs: string[] = [];
+    const inputs: FfArg[] = [];
     for (const k of kept) {
       if (k.copy) { inputs.push(...mediaInput({ file: k.copy })); continue; }
       const h = await openConfined(o.compDir, k.clip.src);
@@ -171,7 +159,7 @@ export async function mixAudio(o: { ff: FfmpegInfo; compDir: string; clips: MixC
       inputs.push(...mediaInput({ fd: 2 + handles.length }));
     }
     const total = samples(o.durationSec);
-    await runFfmpeg(o.ff, [...inputs, '-filter_complex', mixGraph(kept.map((k) => k.clip), total), '-map', '[out]', '-ar', String(AUDIO_RATE), '-ac', '2', '-c:a', 'pcm_f32le', '-f', 'wav', o.outWav],
+    await runFfmpeg(o.ff, [...inputs, mixGraph(kept.map((k) => k.clip), total), '-map', '[out]', '-ar', String(AUDIO_RATE), '-ac', '2', '-c:a', 'pcm_f32le', '-f', 'wav', o.outWav],
       { signal: o.signal, fds: handles.map((h) => h.fd) });
     return true;
   } finally {

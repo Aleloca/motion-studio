@@ -13,10 +13,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Composition } from '@motion-studio/shared';
 import { RenderError } from '../src/render/errors.ts';
 import { findFfmpeg, h264Args, runFfmpeg, type FfmpegInfo } from '../src/render/encode.ts';
-import { ownInput } from '../src/media/ffmpeg-exec.ts';
+import { filterArgv, gamutStage, hdrStage, testPatternInput } from '../src/media/ffmpeg-filters.ts';
 import { alignVideoAudio, mixAudio } from '../src/render/audio-mix.ts';
 import {
-  clipScaleBound, gamutFilter, hdrFilter, MAX_MEDIA_DIM, MEDIA_TEMP_RE, MediaNormalizer, normalisedFieldsOf, normalizeArgs, pruneMediaCache, targetSize, videoNeeds,
+  clipScaleBound, MAX_MEDIA_DIM, MEDIA_TEMP_RE, MediaNormalizer, normalisedFieldsOf, normalizeArgs, pruneMediaCache, targetSize, videoNeeds,
 } from '../src/render/media-normalize.ts';
 import { listProcesses, liveGroupCount } from '../src/render/watchdog.ts';
 import { burstWav, decodeAudio, decodeStrips, frameCodedVideo, onset, readCode } from './helpers/render-env.ts';
@@ -263,10 +263,12 @@ describe('cache maintenance (pure files)', () => {
 
   it('HDR: tone-mapped when zscale and tonemap exist, else the colorspace filter with the approximate flag', () => {
     const hlg = { primaries: 'bt2020', transfer: 'arib-std-b67', space: 'bt2020nc' };
-    expect(gamutFilter({ primaries: 'bt2020', transfer: 'bt709', space: 'bt2020nc' })).toBe('colorspace=all=bt709:iprimaries=bt2020:ispace=bt2020ncl:itrc=bt709:format=yuv420p,');
-    expect(hdrFilter(hlg, new Set(['zscale', 'tonemap']))).toMatchObject({ approximate: false, vf: expect.stringContaining('tonemap=hable') });
-    expect(hdrFilter(hlg, new Set(['colorspace', 'tonemap']))).toEqual({ approximate: true, vf: 'colorspace=all=bt709:iprimaries=bt2020:ispace=bt2020ncl:itrc=bt2020-10:format=yuv420p,' });
-    expect(normalizeArgs({ fps: 30, width: 64, height: 36, allIntra: true, hdrVf: 'X,' }).join(' ')).toContain('round=up,X,scale=64:36:flags=lanczos:in_color_matrix=bt709');
+    const vf = (a: ReturnType<typeof normalizeArgs>) => a.flatMap((x) => (typeof x === 'string' ? [x] : [...filterArgv(x)!])).join(' ');
+    expect(gamutStage({ primaries: 'bt2020', transfer: 'bt709', space: 'bt2020nc' })).toEqual({ kind: 'colorspace', primaries: 'bt2020', space: 'bt2020ncl', trc: 'bt709' });
+    expect(hdrStage(hlg, new Set(['zscale', 'tonemap']))).toEqual({ approximate: false, stage: { kind: 'tonemap' } });
+    expect(hdrStage(hlg, new Set(['colorspace', 'tonemap']))).toEqual({ approximate: true, stage: { kind: 'colorspace', primaries: 'bt2020', space: 'bt2020ncl', trc: 'bt2020-10' } });
+    expect(vf(normalizeArgs({ fps: 30, width: 64, height: 36, allIntra: true, colour: hdrStage(hlg, new Set(['zscale', 'tonemap'])).stage })))
+      .toContain('round=up,zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p,scale=64:36:flags=lanczos:in_color_matrix=bt709');
   });
 
   it('a video clip\'s sound is aligned to its first video frame (M12)', () => {
@@ -468,7 +470,7 @@ describe.skipIf(!ffmpeg)('normalisation: sharing, slots, failures, HDR, memo, au
 
   it('final renders are tagged full BT.709, limited range (ruling)', async () => {
     const out = join(work, 'final.mp4');
-    await runFfmpeg(ffmpeg!, [...ownInput('testsrc2=s=320x180:r=30:d=0.5', { formats: ['lavfi'], force: true }), ...h264Args('libx264', 800, 30), '-f', 'mp4', out]);
+    await runFfmpeg(ffmpeg!, [testPatternInput(320, 180, 30), ...h264Args('libx264', 800, 30), '-f', 'mp4', out]);
     const s = JSON.parse(probe(out, ['-show_entries', 'stream=color_primaries,color_transfer,color_space,color_range', '-of', 'json'])).streams[0];
     expect(s).toEqual({ color_range: 'tv', color_space: 'bt709', color_transfer: 'bt709', color_primaries: 'bt709' });
   }, 300_000);

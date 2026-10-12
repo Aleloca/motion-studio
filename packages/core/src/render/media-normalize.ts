@@ -15,7 +15,8 @@ import { RenderError } from './errors.ts';
 import { spawnFfmpeg, type FfmpegInfo } from './encode.ts';
 import { killGroup, trackGroup } from './watchdog.ts';
 import { makeOwnedTempDir } from './owner.ts';
-import { ffprobeOf, mediaInput, MP4_DEMUXERS, spawnFf } from '../media/ffmpeg-exec.ts';
+import { ffprobeOf, mediaInput, MP4_DEMUXERS, spawnFf, type FfArg } from '../media/ffmpeg-exec.ts';
+import { gamutStage, hdrStage, normalizeVideoFilter, type ColourStage, type HdrInfo } from '../media/ffmpeg-filters.ts';
 
 /**
  * Video media normalisation (Task 5, orchestrator decision): before a composition is rendered or previewed, the core makes
@@ -124,41 +125,15 @@ export function targetSize(source: { width: number; height: number }, need: { wi
   return { width: even(source.width * f), height: even(source.height * f) };
 }
 
-/** The colour description of a source stream (ffprobe names). */
-export interface HdrInfo { primaries: string; transfer: string; space: string }
-
-const ISPACE: Record<string, string> = { bt2020nc: 'bt2020ncl', bt2020c: 'bt2020ncl', bt709: 'bt709', smpte170m: 'smpte170m', bt470bg: 'bt470bg' };
-const ITRC: Record<string, string> = { bt709: 'bt709', 'bt2020-10': 'bt2020-10', 'bt2020-12': 'bt2020-12', smpte170m: 'smpte170m', bt470bg: 'bt470bg' };
-
-/** A wide-gamut SDR source (BT.2020 primaries, an SDR transfer): a gamut conversion to BT.709, no tone mapping, exact. */
-export function gamutFilter(c: HdrInfo): string {
-  return `colorspace=all=bt709:iprimaries=bt2020:ispace=${ISPACE[c.space] ?? 'bt2020ncl'}:itrc=${ITRC[c.transfer] ?? 'bt709'}:format=yuv420p,`;
-}
-
-/** The colour stage of the chain for an HDR source (PQ or HLG transfer), and whether its colours are only approximate. */
-export function hdrFilter(hdr: HdrInfo, filters: ReadonlySet<string> | undefined): { vf: string; approximate: boolean } {
-  if (filters?.has('zscale') && filters.has('tonemap')) {
-    return { vf: 'zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p,', approximate: false };
-  }
-  const primaries = hdr.primaries === 'bt2020' ? 'bt2020' : 'bt709';
-  const space = hdr.space === 'bt2020nc' || hdr.space === 'bt2020c' ? 'bt2020ncl' : 'bt709';
-  // The colorspace filter has no PQ or HLG curve: the transfer (always PQ or HLG here) is read as BT.2020's SDR one
-  // (primaries and matrix exact).
-  const trc = 'bt2020-10';
-  return { vf: `colorspace=all=bt709:iprimaries=${primaries}:ispace=${space}:itrc=${trc}:format=yuv420p,`, approximate: true };
-}
-
 /** The ffmpeg arguments of a normalisation (input given separately), into `out` (an mp4). */
-export function normalizeArgs(o: { fps: number; width: number; height: number; allIntra: boolean; untagged?: boolean; hdrVf?: string; preset?: string }): string[] {
+export function normalizeArgs(o: { fps: number; width: number; height: number; allIntra: boolean; untagged?: boolean; colour?: ColourStage; preset?: string }): FfArg[] {
   const gop = o.allIntra ? 1 : Math.max(1, Math.round(o.fps / 2));
-  // After an HDR stage the frames are BT.709 already; an untagged source is read as BT.709 (Chrome's assumption).
-  const input = o.hdrVf || o.untagged ? 'in_color_matrix=bt709:in_range=tv:' : '';
   return [
     '-map', '0:v:0', '-an', '-sn', '-dn',
     // round=up: output frame j (at j/fps) shows the source frame on screen at that time (the last one starting at or before
     // it), the frame the runtime would pick from the source itself; the default (near) can show the next one early.
-    '-vf', `setpts=PTS-STARTPTS,fps=fps=${o.fps}:round=up,${o.hdrVf ?? ''}scale=${o.width}:${o.height}:flags=lanczos:${input}out_color_matrix=bt709:out_range=tv,format=yuv420p,setsar=1,`
-      + 'setparams=color_primaries=bt709:color_trc=iec61966-2-1:colorspace=bt709:range=tv',
+    // After a colour stage the frames are BT.709 already; an untagged source is read as BT.709 (Chrome's assumption).
+    normalizeVideoFilter({ fps: o.fps, width: o.width, height: o.height, ...(o.colour ? { colour: o.colour } : {}), ...(o.untagged ? { untagged: true } : {}) }),
     '-c:v', 'libx264', '-preset', o.preset ?? 'veryfast', '-crf', '16', '-pix_fmt', 'yuv420p',
     '-g', String(gop), '-keyint_min', String(gop), '-sc_threshold', '0', '-bf', '0',
     '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'iec61966-2-1', '-color_range', 'tv',
@@ -602,7 +577,7 @@ export class MediaNormalizer {
       if (!MEDIA_FILE_RE.test(name)) return { warnings: [{ kind: 'notNormalised', message: `video ${src} is not normalised: unexpected cache name` }] };
       const final = join(cacheDir, name);
       const want = { fps, ...size };
-      const hdr = info.hdr ? hdrFilter(info.hdr, ff.filters) : info.wideGamut ? { vf: gamutFilter(info.wideGamut), approximate: false } : null;
+      const hdr = info.hdr ? hdrStage(info.hdr, ff.filters) : info.wideGamut ? { stage: gamutStage(info.wideGamut), approximate: false } : null;
       const notes: Array<Omit<MediaWarning, 'src'>> = hdr?.approximate ? [{ kind: 'hdrApproximate', message: `video ${src} is an HDR source: its colours are approximate` }] : [];
       const fields = (f: Pick<SessionMediaFile, 'sourceFps' | 'sourceStart' | 'sourceVideoEnd'>): SessionMediaFile => ({ file: final, ...f, originalVideoStart: info.videoStart, originalAudio: info.audio });
       // Leased from here: a hit, or the file about to be made, cannot be pruned or removed by anyone else meanwhile.
@@ -611,7 +586,7 @@ export class MediaNormalizer {
       if (existing === 'damaged') { unhold(); return { warnings: [{ kind: 'notNormalised', message: `video ${src} is not normalised: its cached file is damaged and in use` }] }; }
       if (existing) { await this.touch(final); return { file: fields(existing), cached: true, warnings: notes }; }
       try {
-        await this.encode(name, (sig) => this.make(ff, input, final, want, { allIntra: (info.durationSec ?? Infinity) < ALL_INTRA_UNDER_SEC, untagged: info.untagged, ...(hdr ? { hdrVf: hdr.vf } : {}) }, sig), signal);
+        await this.encode(name, (sig) => this.make(ff, input, final, want, { allIntra: (info.durationSec ?? Infinity) < ALL_INTRA_UNDER_SEC, untagged: info.untagged, ...(hdr ? { colour: hdr.stage } : {}) }, sig), signal);
       } catch (e) {
         if (isCancel(e) || (e instanceof RenderError && e.code === 'mediaUnreadable')) throw e;
         if (signal.aborted) throw cancelled();
@@ -704,7 +679,7 @@ export class MediaNormalizer {
 
   /** Encodes into a hidden temp file next to `final`, then renames it; the temp file is removed on any failure. */
   private async make(ff: FfmpegInfo, input: <T>(use: (args: string[], fds: number[]) => Promise<T>) => Promise<T>, final: string,
-    want: { fps: number; width: number; height: number }, how: { allIntra: boolean; untagged: boolean; hdrVf?: string }, signal: AbortSignal): Promise<{ approximate: boolean }> {
+    want: { fps: number; width: number; height: number }, how: { allIntra: boolean; untagged: boolean; colour?: ColourStage }, signal: AbortSignal): Promise<{ approximate: boolean }> {
     const name = final.slice(dirname(final).length + 1);
     const temp = join(dirname(final), `.${name.slice(0, -'.mp4'.length)}.${randomBytes(6).toString('hex')}.tmp`);
     this.stats.encodes++;

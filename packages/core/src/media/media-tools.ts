@@ -1,7 +1,8 @@
 import { mkdir, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { execCommand, type CommandExec } from '../exec.ts';
-import { execFfVia, isRegularFileNow, mediaInput } from './ffmpeg-exec.ts';
+import { execFfVia, isRegularFileNow, mediaInput, type FfArg } from './ffmpeg-exec.ts';
+import { frameScaleFilter } from './ffmpeg-filters.ts';
 import { isSvgName, svgSize } from './svg-size.ts';
 
 export interface MediaInfo { width: number; height: number; durationSec: number | null; /** Average frame rate of the video stream, when known. */ fps?: number }
@@ -34,7 +35,7 @@ export async function createFfmpegTools(exec: CommandExec = execCommand): Promis
     await mkdir(dirname(out), { recursive: true });
     // The JPEG muxer is always named: a temp name has no image extension, and the image2 muxer (picked by extension) would
     // read `%` in the output path as a frame-number pattern.
-    const fmt = [...(opts?.width ? ['-vf', `scale='min(${Math.round(opts.width)},iw)':-2`] : []), '-f', 'mjpeg'];
+    const fmt: FfArg[] = [...(opts?.width ? [frameScaleFilter(Math.round(opts.width))] : []), '-f', 'mjpeg'];
     // A seek past the end (a still, or a clip shorter than atSec) exits 0 with no frame written: checked on disk.
     const wrote = async () => ((await stat(out).catch(() => null))?.size ?? 0) > 0;
     const r = await execFfVia(exec, 'ffmpeg', ['-y', '-loglevel', 'error', '-ss', String(atSec), ...mediaInput({ file: video }), '-frames:v', '1', '-q:v', '3', ...fmt, out], { timeoutMs: 60_000 });

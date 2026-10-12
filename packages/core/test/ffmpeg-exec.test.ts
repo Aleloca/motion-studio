@@ -11,15 +11,18 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Composition } from '@motion-studio/shared';
-import { assertSafeInputs, ffKindOf, filterNames, mediaInput, ownInput } from '../src/media/ffmpeg-exec.ts';
+import { assertSafeInputs, execFfVia, ffArgv, ffKindOf, mediaInput, ownInput, type FfArg } from '../src/media/ffmpeg-exec.ts';
+import { BUILT_FILTERS, frameScaleFilter, ssimCompareFilter, testPatternInput } from '../src/media/ffmpeg-filters.ts';
 import { createFfmpegTools } from '../src/media/media-tools.ts';
-import { findFfmpeg, h264Args, vtTestPattern, type FfmpegInfo } from '../src/render/encode.ts';
+import { findFfmpeg, h264Args, type FfmpegInfo } from '../src/render/encode.ts';
 import { mixAudio, mixGraph } from '../src/render/audio-mix.ts';
-import { gamutFilter, hdrFilter, MediaNormalizer, normalizeArgs } from '../src/render/media-normalize.ts';
+import { MediaNormalizer, normalizeArgs } from '../src/render/media-normalize.ts';
 import { RenderError } from '../src/render/errors.ts';
 
 const SRC = join(import.meta.dirname, '..', 'src');
 const HELPER = join('media', 'ffmpeg-exec.ts');
+/** The one module that writes filtergraphs (decisions log 191). */
+const BUILDERS = join('media', 'ffmpeg-filters.ts');
 
 const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : e.name.endsWith('.ts') ? [join(dir, e.name)] : []));
 /** The source without comments (block and line), strings kept. */
@@ -47,6 +50,20 @@ function scanSource(rel: string, src: string): string[] {
   if (/['"`]ff['"`]\s*\+|\bff\$\{|['"`]\s*\+\s*['"`](mpeg|probe)\b|['"`](mpeg|probe)(\.exe)?['"`]/.test(src)) out.push(`${rel}: builds an ffmpeg/ffprobe name from pieces`);
   if (/\b(?!execFf\b|spawnFf\b)(exec\w*|run\w*|spawn\w*)\s*\(\s*[\w.!]*\b(ff|ffmpeg|o\.ff)!?\.path\b/.test(src)) out.push(`${rel}: runs an FfmpegInfo path directly`);
   if (/\bprobePath\b/.test(src)) out.push(`${rel}: resolves an ffprobe path outside the helper`);
+  if (rel !== BUILDERS) out.push(...scanFilterText(rel, src));
+  return out;
+}
+
+const FILTER_AT = new RegExp(`(?:^|[\\[\\],;])\\s*(?:${BUILT_FILTERS.join('|')})=`);
+/** A module outside the builders that writes a filter option, a lavfi input or a graph-like literal (S). */
+function scanFilterText(rel: string, src: string): string[] {
+  const out: string[] = [];
+  for (const m of src.matchAll(/'(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"|`(?:\\.|[^`\\])*`/g)) {
+    const text = m[0].slice(1, -1);
+    if (/^-(?:vf|af|filter|filter_complex|lavfi)(?::.*)?$/.test(text)) out.push(`${rel}: names the filter option ${text}`);
+    else if (text === 'lavfi') out.push(`${rel}: names the lavfi input format`);
+    else if (FILTER_AT.test(text)) out.push(`${rel}: writes a filtergraph (${text.slice(0, 40)})`);
+  }
   return out;
 }
 
@@ -100,64 +117,49 @@ describe('ffmpeg-exec: whitelists on every input', () => {
     expect(() => assertSafeInputs('ffprobe', ['-v', 'error', '/x/a.mp4'])).toThrow(/-i/);
   });
 
-  it('only the filters the core builds may appear in a filtergraph or a lavfi input (allowlist), no option reads a file, no external tracks', () => {
+  it('filter options and lavfi inputs only as builder objects: raw strings, look-alikes and script forms are refused (S)', () => {
     const inp = mediaInput({ file: 'a.mp4' });
-    for (const g of [
-      'movie=/etc/passwd[x];[0:v][x]overlay', '[0:a]amovie=http://x/a.mp3[b]', 'sendcmd=f=cmds.txt,scale=1:1', 'zmq', "scale='1:1',movie=x",
-      "drawtext=textfile=/etc/passwd", "drawtext=fontfile=/x.ttf:text=a", 'subtitles=/x.srt', 'ass=/x.ass', 'lut3d=file=/x.cube', 'lut1d=file=/x.cube',
-      'curves=psfile=/x.acv', 'arnndn=model=/x.rnnn', 'sofalizer=sofa=/x.sofa', 'metadata=mode=print:file=/tmp/out', 'ametadata=mode=print:file=/tmp/out',
-      'psnr=stats_file=/tmp/out', 'ssim=stats_file=/tmp/out,unknownfilter', 'vidstabdetect=result=/tmp/t.trf', 'scale=1:1,  nullsrc',
-    ]) {
-      for (const flag of ['-vf', '-af', '-filter:v', '-filter_complex', '-lavfi']) expect(() => assertSafeInputs('ffmpeg', [...inp, flag, g, 'o.mp4']), `${flag} ${g}`).toThrow(/not one the core builds/);
-      expect(() => assertSafeInputs('ffmpeg', ['-protocol_whitelist', 'file', '-format_whitelist', 'lavfi', '-f', 'lavfi', '-i', g, 'o.mp4']), g).toThrow(/not one the core builds/);
+    // The real graphs, from the builders, pass and are expanded in place.
+    const vf = frameScaleFilter(540);
+    expect(ffArgv('ffmpeg', [...inp, vf, '-f', 'mjpeg', 'o.jpg'])).toEqual([...inp, '-vf', "scale='min(540,iw)':-2", '-f', 'mjpeg', 'o.jpg']);
+    expect(() => assertSafeInputs('ffmpeg', [...inp, ...normalizeArgs({ fps: 30, width: 320, height: 180, allIntra: true, untagged: true }), 'o.mp4'])).not.toThrow();
+    expect(() => assertSafeInputs('ffmpeg', [...inp, mixGraph([{ start: 0, duration: 1, trimStart: 0, volume: 1, fadeIn: 0.5, fadeOut: 0.5 }], 48000), 'o.wav'])).not.toThrow();
+    expect(() => assertSafeInputs('ffmpeg', [testPatternInput(64, 64, 30), ...h264Args('libx264', 800, 30), 'o.mp4'])).not.toThrow();
+    expect(() => assertSafeInputs('ffmpeg', [...ownInput('o.mp4', { formats: ['mov', 'mp4'] }), testPatternInput(64, 64, 30), ssimCompareFilter(), '-f', 'null', '-'])).not.toThrow();
+    // A filtergraph as a plain string, under every spelling of the option, is refused at run time (benign graph).
+    const graph = 'scale=64:36';
+    for (const flag of ['-vf', '-af', '-filter', '-filter:v', '-vf:v', '-af:0', '-filter:v:#1', '-filter_complex', '-filter_complex:x', '-lavfi', '-lavfi:0']) {
+      expect(() => assertSafeInputs('ffmpeg', [...inp, flag, graph, 'o.mp4']), flag).toThrow(/only a filtergraph built by/);
     }
-    for (const opt of ['-/vf', '-filter_script', '-filter_complex_script', '-/filter_complex']) expect(() => assertSafeInputs('ffmpeg', [...inp, opt, 'graph.txt', 'o.mp4']), opt).toThrow(/from a file/);
+    // A lavfi input only from the builders: neither `-f lavfi` nor a lavfi format whitelist as strings, nor ownInput.
+    expect(() => assertSafeInputs('ffmpeg', ['-protocol_whitelist', 'file', '-format_whitelist', 'lavfi', '-f', 'lavfi', '-i', 'testsrc=size=64x64', 'o.mp4'])).toThrow(/lavfi input must be built/);
+    expect(() => assertSafeInputs('ffmpeg', ['-protocol_whitelist', 'file', '-format_whitelist', 'mov,lavfi', '-i', 'testsrc=size=64x64', 'o.mp4'])).toThrow(/lavfi input must be built/);
+    expect(() => ownInput('testsrc=size=64x64', { formats: ['lavfi'], force: true })).toThrow(/lavfi input must be built/);
+    // An object that only looks like a builder result (same shape, no registration) is refused.
+    const lookAlike = Object.freeze(Object.create(null) as object) as unknown as FfArg;
+    expect(() => assertSafeInputs('ffmpeg', [...inp, lookAlike, 'o.mp4'])).toThrow(/neither a string nor a filter built by/);
+    // Script forms and option values read from a file, and external tracks, stay refused.
+    for (const opt of ['-filter_script', '-filter_script:v', '-filter_complex_script', '-lavfi_script', '-/vf', '-/filter_complex']) {
+      expect(() => assertSafeInputs('ffmpeg', [...inp, opt, 'graph.txt', 'o.mp4']), opt).toThrow(/from a file/);
+    }
     for (const opt of ['-enable_drefs', '-use_absolute_path']) {
       expect(() => assertSafeInputs('ffmpeg', [opt, '1', ...inp, 'o.mp4']), opt).toThrow(/open other files/);
       expect(() => assertSafeInputs('ffprobe', [opt, '1', ...inp]), opt).toThrow(/open other files/);
     }
-    // Names inside quotes and labels are not filters; escapes are honoured.
-    expect(filterNames("[0:v]scale='min(540,iw)':-2[a];[a]format=yuv420p,setsar=1[out]")).toEqual(['scale', 'format', 'setsar']);
-    expect(filterNames('testsrc=size=1x1:rate=1[a];testsrc=size=1x1[b];[a][b]overlay=16:16[out0]')).toEqual(['testsrc', 'testsrc', 'overlay']);
-    // The graphs the core builds pass.
-    expect(() => assertSafeInputs('ffmpeg', [...inp, ...normalizeArgs({ fps: 30, width: 320, height: 180, allIntra: true, untagged: true, hdrVf: hdrFilter({ primaries: 'bt2020', transfer: 'smpte2084', space: 'bt2020nc' }, undefined).vf }), 'o.mp4'])).not.toThrow();
-    expect(() => assertSafeInputs('ffmpeg', [...inp, ...normalizeArgs({ fps: 24, width: 320, height: 180, allIntra: false, hdrVf: hdrFilter({ primaries: 'bt2020', transfer: 'smpte2084', space: 'bt2020nc' }, new Set(['zscale', 'tonemap'])).vf }), 'o.mp4'])).not.toThrow();
-    expect(() => assertSafeInputs('ffmpeg', [...inp, ...normalizeArgs({ fps: 24, width: 320, height: 180, allIntra: false, hdrVf: gamutFilter({ primaries: 'bt2020', transfer: 'bt709', space: 'bt2020nc' }) }), 'o.mp4'])).not.toThrow();
-    expect(() => assertSafeInputs('ffmpeg', [...inp, '-filter_complex', mixGraph([{ start: 0, duration: 1, trimStart: 0, volume: 1, fadeIn: 0.5, fadeOut: 0.5 }], 48000), 'o.wav'])).not.toThrow();
-    expect(() => assertSafeInputs('ffmpeg', [...ownInput(vtTestPattern(64, 64, 30), { formats: ['lavfi'], force: true }), ...h264Args('libx264', 800, 30), 'o.mp4'])).not.toThrow();
-    expect(() => assertSafeInputs('ffmpeg', [...inp, '-vf', "scale='min(540,iw)':-2", '-f', 'mjpeg', 'o.jpg'])).not.toThrow();
   });
 
-  it('C15: the four allowlist bypasses of re-review 3 are refused', async () => {
-    const inp = mediaInput({ file: 'a.mp4' });
-    const refused = (args: string[], re: RegExp) => expect(() => assertSafeInputs('ffmpeg', [...inp, ...args, 'o.mp4'])).toThrow(re);
-    // 1. A backslash inside single quotes is literal and the next quote closes it (av_get_token).
-    expect(filterNames("amix=inputs=1:weights='1\\',areverse,amix=inputs=1:weights='1'")).toEqual(['amix', 'areverse', 'amix']);
-    refused(['-af', "amix=inputs=1:weights='1\\',areverse,amix=inputs=1:weights='1'"], /not one the core builds/);
-    refused(['-filter_complex', "[0:a]amix=inputs=1:weights='1\\'[x];amovie=/etc/hosts[y];[x][y]amix=inputs=2[out]"], /not one the core builds/);
-    // An escaped quote OUTSIDE quotes still escapes.
-    expect(filterNames("scale=a\\'b,format=yuv420p")).toEqual(['scale', 'format']);
-    // 2. Filter-level /option=file.
-    for (const g of ['amix=inputs=1:/weights=/tmp/w', 'amix=/inputs=/tmp/w', 'scale=1:1:/flags=/tmp/f', 'scale= /w=/tmp/f']) refused(['-af', g], /read from a file/);
-    refused(['-lavfi', '[0:v]format=yuv420p[a];[a]scale=/w=/tmp/x:h=1'], /read from a file/);
-    expect(() => assertSafeInputs('ffmpeg', [...inp, '-vf', "scale='1/2':3/4", 'o.mp4'])).not.toThrow();
-    // 3. ssim takes no arguments; stats_file / log_path are refused on any filter.
-    for (const g of ['[0:v][1:v]ssim=stats_file=/tmp/w.txt', '[0:v][1:v]ssim=f=/tmp/w.txt', 'psnr=stats_file=/tmp/x', 'scale=1:1:log_path=/tmp/x']) refused(['-lavfi', g], /not one the core builds|file option|arguments/);
-    // 4. Every spelling of the filter options, and the script forms.
-    for (const f of ['-filter:V', '-vf:v', '-af:0', '-filter:v:#1', '-filter:v:#0x1', '-filter_complex:x', '-lavfi:0', '-filter:a:0']) refused([f, 'movie=/etc/hosts'], /not one the core builds/);
-    for (const f of ['-filter_script:a', '-filter_script:v:0', '-filter_script', '-filter_complex_script', '-lavfi_script', '-/filter:v', '-/lavfi']) refused([f, 'g.txt'], /from a file/);
-    // The graph the core builds for the VideoToolbox check still passes.
-    expect(() => assertSafeInputs('ffmpeg', [...inp, '-lavfi', '[0:v]format=yuv420p[a];[1:v]scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[b];[a][b]ssim', '-f', 'null', '-'])).not.toThrow();
-  });
-
-  it('no agent-controlled text reaches a filtergraph: the colour stages map probe values to fixed names, the mix uses numbers', () => {
-    const hostile = 'bt709:x=1,movie=/etc/passwd[a];[a]';
-    for (const vf of [gamutFilter({ primaries: hostile, transfer: hostile, space: hostile }), hdrFilter({ primaries: hostile, transfer: hostile, space: hostile }, undefined).vf]) {
-      expect(vf).not.toContain('movie');
-      expect(vf).not.toContain('passwd');
-    }
-    const g = mixGraph([{ start: Number('1e400'), duration: 1, trimStart: Number.NaN, volume: 0.5, fadeIn: 0, fadeOut: 0 }], 48000);
-    expect(g).not.toMatch(/movie|NaN|Infinity/);
+  it('a raw string for a filter option does not compile (type test)', () => {
+    const exec = async () => ({ code: 0, stdout: '', stderr: '', notFound: false });
+    // Each call below would throw before running anything; they only exist for the type checker.
+    const typeOnly = (f: () => unknown) => expect(f).toThrow();
+    // @ts-expect-error a filtergraph is never a string
+    typeOnly(() => execFfVia(exec, 'ffmpeg', [...mediaInput({ file: 'a.mp4' }), '-vf', 'scale=64:36', 'o.mp4']));
+    // @ts-expect-error a filtergraph is never a string (any spelling of the option)
+    typeOnly(() => execFfVia(exec, 'ffmpeg', [...mediaInput({ file: 'a.mp4' }), '-filter:a', 'volume=1', 'o.wav']));
+    // @ts-expect-error a lavfi input only from the builders
+    typeOnly(() => execFfVia(exec, 'ffmpeg', ['-protocol_whitelist', 'file', '-format_whitelist', 'x', '-f', 'lavfi', '-i', 'testsrc', 'o.mp4']));
+    // The builder object compiles and runs.
+    expect(execFfVia(exec, 'ffmpeg', [...mediaInput({ file: 'a.mp4' }), frameScaleFilter(64), 'o.jpg'])).toBeInstanceOf(Promise);
   });
 
   it('no core module other than the helper starts ffmpeg or ffprobe (source scan, hardened)', () => {
@@ -171,9 +173,10 @@ describe('ffmpeg-exec: whitelists on every input', () => {
       "createRequire(import.meta.url)('child_process')", 'require(mod)', 'process.binding("spawn_sync")',
       "execCommand('ff' + 'mpeg', [])", 'execCommand(`ff${x}`, [])', "execCommand('/usr/bin/ffprobe.exe', [])", "run('FFMPEG', [])",
       'execCommand(ff.path, [])', 'probePath(ff)',
+      "runFfmpeg(ff, [...inp, '-vf', graph])", "const o = ['-filter:a', g]", "ownInput(g, { formats: ['lavfi'] })", "const g = `scale=${w}:${h}`", "'[0:a]volume=1[out]'",
     ];
     for (const x of samples) expect(scanSource('sample.ts', x), x).not.toEqual([]);
-    for (const ok of ["which('ffmpeg', env)", "execFfVia(exec, 'ffprobe', [])", "{ id: 'ffmpeg', label: 'FFmpeg' }", "import('./x.ts')"]) expect(scanSource('sample.ts', ok), ok).toEqual([]);
+    for (const ok of ["which('ffmpeg', env)", "execFfVia(exec, 'ffprobe', [])", "{ id: 'ffmpeg', label: 'FFmpeg' }", "import('./x.ts')", "git(['log', '--format=%H'])", "ff.filters.has('zscale')", "['-hide_banner', '-filters']"]) expect(scanSource('sample.ts', ok), ok).toEqual([]);
   });
 });
 
