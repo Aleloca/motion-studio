@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import open from 'open';
 import { AlreadyRunningError, AppConfigStore, defaultConfigDir, detectSystemLocales, resolveLocale, setLocale, startServer, t } from '@motion-studio/core';
 import { parseCliArgs } from './args.ts';
+import { runtimeDirFor } from './runtime-dir.ts';
 import { alreadyRunningMessage, notRunningMessage, runningUrl } from './print-url.ts';
 
 const help = () => t().cli.help;
@@ -29,7 +30,8 @@ async function main() {
   const webDir = join(here, 'web');
   const mcpServerPath = join(here, 'mcp-studio.mjs');
   try {
-    const { appUrl, close } = await startServer({ port: args.port, webDir, mcpServerPath, systemLocales: detectSystemLocales() });
+    const runtimeDir = runtimeDirFor(here);
+    const { appUrl, close } = await startServer({ port: args.port, webDir, mcpServerPath, systemLocales: detectSystemLocales(), ...(runtimeDir ? { renderOptions: { distDir: runtimeDir } } : {}) });
     // The address carries the UI access code: printed even with --no-open (it can be shown again with --print-url).
     console.log(t().cli.running({ url: appUrl }));
     // Registered before opening the browser so a stop is always handled.
