@@ -19,7 +19,7 @@ import { readCompositionFolder } from '../src/compositions/composition-files.ts'
 import { noteCoreOutputWrite, snapshotChanges, snapshotOutputs, withoutCoreWrites } from '../src/creatives/carry-over.ts';
 import { noteCoreTemp } from '../src/core-temps.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
-import { renderPlan, RenderJobService } from '../src/creatives/render-jobs.ts';
+import { lastRenderJob, renderPlan, RenderJobService } from '../src/creatives/render-jobs.ts';
 import { reconcileRenders, updateVersionManifest } from '../src/creatives/render-stamps.ts';
 import { JobQueue } from '../src/jobs/job-queue.ts';
 import { NoMediaTools } from '../src/media/media-tools.ts';
@@ -611,6 +611,17 @@ describe('a turn and a render on the same creative (M9)', { timeout: 120_000 }, 
       delete process.env.FAKE_CLAUDE_SCENARIO;
       delete process.env.FAKE_CLAUDE_WAIT_FILE_CREATIVE;
     }
+  });
+});
+
+describe('lastRenderJob (A3, M2)', () => {
+  const job = (key: string, createdAt: string): JobSummary => ({ id: key, key, kind: 'render', label: 'R', state: 'queued', createdAt });
+  it('the latest created; on the same millisecond the higher follow-up, whatever the list order', () => {
+    const base = 'render:/w:acme:c:v1';
+    const t = '2026-10-12T10:00:00.000Z';
+    expect(lastRenderJob([job(`${base}:3`, t), job(`${base}:2`, t), job(base, t)], base).key).toBe(`${base}:3`);
+    expect(lastRenderJob([job(base, t), job(`${base}:2`, t), job(`${base}:3`, t)], base).key).toBe(`${base}:3`);
+    expect(lastRenderJob([job(`${base}:3`, t), job(`${base}:2`, '2026-10-12T10:00:00.001Z')], base).key).toBe(`${base}:2`);
   });
 });
 

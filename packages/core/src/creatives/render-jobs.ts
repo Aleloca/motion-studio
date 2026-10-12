@@ -109,6 +109,15 @@ export function renderPlan(comps: VersionComposition[], brief: Pick<Brief, 'link
   return { primaries, followers, fixFollows, unknown };
 }
 
+/**
+ * Of a version's active render jobs (`base` key and follow-ups `<base>:<k>`), the one that ends last in the render lane:
+ * the latest created, and on a tie (the same millisecond, M2) the higher follow-up number. Deterministic.
+ */
+export function lastRenderJob(jobs: readonly JobSummary[], base: string): JobSummary {
+  const seq = (j: JobSummary) => (j.key === base ? 1 : Number(j.key.slice(base.length + 1)) || 0);
+  return jobs.reduce((a, b) => (b.createdAt > a.createdAt || (b.createdAt === a.createdAt && seq(b) > seq(a)) ? b : a));
+}
+
 /** The file extension of a render: the preset's first H.264 container (video) or image type (still), else mp4 / png. */
 export function renderExtension(preset: FormatPreset, still: boolean): string {
   const prefer = still ? ['png', 'jpg', 'jpeg', 'webp'] : ['mp4', 'mov', 'm4v'];
@@ -167,8 +176,7 @@ export class RenderJobService {
       // whose progress a caller (the export dialog) then follows to the end.
       const all = active.find((j) => wanted.every((f) => j.formats?.includes(f)));
       if (all) return all;
-      const some = active.filter((j) => wanted.some((f) => j.formats?.includes(f)));
-      return some.reduce((a, b) => (b.createdAt > a.createdAt ? b : a));
+      return lastRenderJob(active.filter((j) => wanted.some((f) => j.formats?.includes(f))), base);
     }
     const plan = active.length > 0 ? renderPlan(comps, creative.brief, missing) : full;
     const keys = new Set(active.map((j) => j.key));
