@@ -19,6 +19,8 @@ export const compositionOf = (v: VersionEntry | null | undefined, format: string
 export const renderKeyOf = (creativeJobKey: string, n: number): string | null => renderJobKeyOf(creativeJobKey, n);
 
 export const isActiveJob = (j: JobSummary) => j.state === 'queued' || j.state === 'running';
+/** A render job of the version keyed `key`: the first one, or a follow-up queued behind it (`<key>:<k>`, core I3). */
+export const isVersionJob = (j: JobSummary, key: string | null) => key !== null && (j.key === key || j.key.startsWith(`${key}:`));
 const covers = (j: JobSummary, format: string) => !j.formats?.length || j.formats.includes(format);
 const ended = (j: JobSummary) => j.finishedAt ?? j.startedAt ?? j.createdAt;
 
@@ -38,7 +40,7 @@ export function renderPct(job: JobSummary, format: string): number {
 export function boardRender(version: VersionEntry | null | undefined, format: string, jobs: JobSummary[], creativeJobKey: string): BoardRender | null {
   if (!version || !compositionOf(version, format)) return null;
   const key = renderKeyOf(creativeJobKey, version.n);
-  const mine = jobs.filter((j) => j.kind === 'render' && j.key === key && covers(j, format));
+  const mine = jobs.filter((j) => j.kind === 'render' && isVersionJob(j, key) && covers(j, format));
   const live = mine.find(isActiveJob);
   if (live) return live.state === 'queued' ? { kind: 'queued', ahead: live.queuePosition ?? null } : { kind: 'rendering', pct: renderPct(live, format) };
   if (renderState(version, format) === 'rendered') return { kind: 'rendered' };

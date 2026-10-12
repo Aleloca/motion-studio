@@ -624,7 +624,10 @@ describe('review fixes (Task 5b)', { timeout: 90_000 }, () => {
     const reel = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/render`, headers: H, payload: { formats: ['test-wide'] } });
     expect(reel.statusCode).toBe(202);
     const prep = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export/prepare`, headers: H, payload: { picks: { 'test-still': 1 } } });
-    expect((prep.json() as { renders: Array<{ covers: boolean }> }).renders[0]!.covers).toBe(false);
+    // A follow-up job for the still is queued behind the running one (I3): it covers the export's formats.
+    const prepared = (prep.json() as { renders: Array<{ covers: boolean; job: { formats?: string[]; state: string } }> }).renders[0]!;
+    expect(prepared.covers).toBe(true);
+    expect(prepared.job).toMatchObject({ formats: ['test-still'], state: 'queued' });
     const exp = app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, headers: H, payload: { destination: join(base, 'out'), picks: { 'test-still': 1 } } });
     await new Promise((r) => setTimeout(r, 300));
     release();

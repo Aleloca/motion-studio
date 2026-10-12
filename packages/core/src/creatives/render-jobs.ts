@@ -14,7 +14,7 @@ import { noteCoreChange } from '../core-changes.ts';
 import { noteCoreTemp } from '../core-temps.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { currentLocale } from '../i18n.ts';
-import { JobConflictError, JobFailedError, type JobQueue } from '../jobs/job-queue.ts';
+import { JobFailedError, type JobQueue } from '../jobs/job-queue.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { RenderError } from '../render/errors.ts';
 import { sessionMediaOf, type MediaNormalizer } from '../render/media-normalize.ts';
@@ -29,8 +29,8 @@ import { largeFileWarning } from './output-contract.ts';
 /**
  * Render jobs (spec §5.3, Task 5): `POST …/versions/:n/render` renders a v2 version's compositions into its folder.
  *
- * - **One job per request**, key `render:<root>:<project>:<creative>:v<n>` (a second request for the same version while one
- *   is queued or running is 409). Formats are rendered one after the other (each render runs its own parallel pages).
+ * - **One job per request**, key `render:<root>:<project>:<creative>:v<n>`. A request while jobs of that version are queued
+ *   or running reuses them for the formats they cover and queues a follow-up job (`…:v<n>:<k>`) for the rest (I3). Formats are rendered one after the other (each render runs its own parallel pages).
  *   Progress per format (`JobSummary.progress`): `media` ("Preparing media…", the video sources normalised), `frames`,
  *   `finishing`. Cancel: the queue's cancel aborts the normalisation and the render (process groups killed, temp removed).
  * - **Formats:** by default every primary of the version; a follower named in the request stands for its primary. Every
@@ -137,7 +137,12 @@ async function copyInto(from: string, dir: string, name: string, beforeRename?: 
 export class RenderJobService {
   constructor(private readonly deps: RenderJobDeps) {}
 
-  /** Validates the request and enqueues the job (see the module comment). */
+  /**
+   * Validates the request and enqueues the job (see the module comment). Never a conflict (final review I3): when render
+   * jobs of this version are already queued or running, the formats they cover are not asked again. If they cover every
+   * requested format, the latest of them is returned; otherwise a follow-up job renders the rest, in the same lane (it runs
+   * after them), keyed `render:…:v<n>:<k>` (`renderJobKeyOf` matches it too).
+   */
   async start(ref: CreativeRef, n: number, requested?: string[]): Promise<JobSummary> {
     const locale = currentLocale();
     const m = messages(locale);
@@ -147,12 +152,23 @@ export class RenderJobService {
     if (!version) throw new CodedError(404, m.errors.versionNNotFound({ n }), 'version-not-found');
     const comps = version.compositions ?? [];
     if (comps.length === 0) throw new CodedError(400, m.render.notV2({ n }), 'version-not-v2');
-    const plan = renderPlan(comps, creative.brief, requested);
-    if (plan.unknown.length > 0) throw new CodedError(400, m.render.formatsNotInVersion({ list: plan.unknown.join(', ') }), 'formats-not-in-version');
+    const full = renderPlan(comps, creative.brief, requested);
+    if (full.unknown.length > 0) throw new CodedError(400, m.render.formatsNotInVersion({ list: full.unknown.join(', ') }), 'formats-not-in-version');
     if (!this.deps.engine) throw new CodedError(503, m.render.noRenderer, 'no-renderer');
     if ((await this.deps.engine.info()).kind === null) throw new CodedError(409, m.render.noBrowser, 'no-browser');
+    // From here to the enqueue nothing awaits: the active jobs seen are the ones the new job queues behind.
+    const base = renderJobKey(ref.root, ref.projectSlug, ref.creativeSlug, n);
+    const active = this.activeJobs(base);
+    const covered = new Set(active.flatMap((j) => j.formats ?? []));
+    const wanted = [...full.primaries, ...Object.keys(full.followers)];
+    const missing = wanted.filter((f) => !covered.has(f));
+    if (active.length > 0 && missing.length === 0) return active.find((j) => wanted.every((f) => j.formats?.includes(f))) ?? active[0]!;
+    const plan = active.length > 0 ? renderPlan(comps, creative.brief, missing) : full;
+    const keys = new Set(active.map((j) => j.key));
+    let key = base;
+    for (let k = 2; keys.has(key); k++) key = `${base}:${k}`;
     return this.deps.queue.enqueue({
-      key: renderJobKey(ref.root, ref.projectSlug, ref.creativeSlug, n),
+      key,
       kind: 'render',
       // Its own lane (one render at a time): renders never take the slots of agent turns (M3).
       lane: 'render',
@@ -162,37 +178,28 @@ export class RenderJobService {
     });
   }
 
+  /** The queued or running render jobs of a version (its key, and its follow-ups' `<key>:<k>`), latest first. */
+  private activeJobs(base: string): JobSummary[] {
+    return this.deps.queue.list().filter((j) => (j.key === base || j.key.startsWith(`${base}:`)) && (j.state === 'queued' || j.state === 'running'));
+  }
+
   /**
-   * The render job of version `n` for `formats` (Task 5b; fix I2). An active job of that version that covers every requested
-   * format (its `formats` list primaries and followers) is reused. One that does not is waited for (`wait`, the default)
-   * and a new job is started for the formats still missing, once; with `wait: false` (export/prepare, which must answer at
-   * once) the active job is returned with `covers: false`, and the export itself does the waiting.
+   * The render job that will produce `formats` of version `n` (export/prepare). `start` reuses the active jobs that cover
+   * them and queues a follow-up for the rest (I3), so the job returned always covers every format: it is the last of the
+   * version's jobs in the render lane, and when it ends the others have too. `wait` is kept for callers; it changes nothing.
    */
-  async ensureJob(ref: CreativeRef, n: number, formats: string[], o: { wait?: boolean } = {}): Promise<{ job: JobSummary; covers: boolean }> {
-    const key = renderJobKey(ref.root, ref.projectSlug, ref.creativeSlug, n);
-    const active = () => this.deps.queue.list().find((j) => j.key === key && (j.state === 'queued' || j.state === 'running'));
-    const covers = (j: JobSummary) => formats.every((f) => j.formats?.includes(f));
-    const startOrJoin = async (list = formats): Promise<JobSummary> => {
-      try { return await this.start(ref, n, list); } catch (e) {
-        const raced = e instanceof JobConflictError ? active() : undefined;
-        if (raced) return raced;
-        throw e;
-      }
-    };
-    const running = active();
-    if (!running) { const job = await startOrJoin(); return { job, covers: covers(job) }; }
-    if (covers(running) || o.wait === false) return { job: running, covers: covers(running) };
-    await this.deps.queue.whenSettled(running.id);
-    // Only the formats that job did not render (it may have rendered some of ours as followers).
-    const version = (await new CreativeStore(ref.projectDir).readVersions(ref.creativeSlug)).find((v) => v.n === n);
-    const missing = formats.filter((f) => !version || renderState(version, f) !== 'rendered');
-    return { job: missing.length > 0 ? await startOrJoin(missing) : running, covers: true };
+  async ensureJob(ref: CreativeRef, n: number, formats: string[], _o: { wait?: boolean } = {}): Promise<{ job: JobSummary; covers: boolean }> {
+    const job = await this.start(ref, n, formats);
+    return { job, covers: true };
   }
 
   /** Renders `formats` of each version (`ensureJob`, waiting for a job that covers other formats) and waits; the summaries as they ended. */
   async renderAndWait(ref: CreativeRef, pending: ReadonlyMap<number, string[]>): Promise<JobSummary[]> {
     const jobs = await Promise.all([...pending].map(async ([n, formats]) => (await this.ensureJob(ref, n, formats)).job));
-    const ended = await Promise.all(jobs.map((j) => this.deps.queue.whenSettled(j.id)));
+    // Every active job of those versions (a follow-up runs after the jobs it queued behind; wait for them all).
+    const all = new Map(jobs.map((j) => [j.id, j]));
+    for (const [n] of pending) for (const j of this.activeJobs(renderJobKey(ref.root, ref.projectSlug, ref.creativeSlug, n))) all.set(j.id, j);
+    const ended = await Promise.all([...all.values()].map((j) => this.deps.queue.whenSettled(j.id)));
     return ended.filter((j): j is JobSummary => j !== null);
   }
 

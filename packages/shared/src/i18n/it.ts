@@ -415,7 +415,7 @@ export const it: Messages = {
     creativeLabel: (p) => `Creatività · ${p.title}`,
     brandAnalysisLabel: 'Analisi brand',
     assetDescriptionLabel: 'Descrizione asset',
-    conflict: (p) => `C'è già un lavoro attivo per ${p.key}`,
+    conflict: 'Lo stesso lavoro è già in coda o in corso. Riprova quando è finito.',
     briefUpdatedCommit: (p) => `${p.title}: brief aggiornato`,
     restartCommit: (p) => `${p.title}: ripartenza da v${p.n}`,
     stateCommit: (p) => `${p.title}: stato`,

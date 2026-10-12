@@ -2,9 +2,13 @@ import { randomUUID } from 'node:crypto';
 import type { JobKind, JobSummary } from '@motion-studio/shared';
 import { t } from '../i18n.ts';
 
+/**
+ * A job with the same key is queued or running. The message is localized and never names the key (final review I3: a key
+ * holds the workspace path); the key stays on the error for logs and callers.
+ */
 export class JobConflictError extends Error {
-  constructor(key: string) {
-    super(t().jobs.conflict({ key }));
+  constructor(readonly key: string) {
+    super(t().jobs.conflict);
     this.name = 'JobConflictError';
   }
 }

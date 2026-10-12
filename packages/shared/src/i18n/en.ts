@@ -419,7 +419,7 @@ export const en = {
     creativeLabel: (p: { title: string }) => `Creative · ${p.title}`,
     brandAnalysisLabel: 'Brand analysis',
     assetDescriptionLabel: 'Asset description',
-    conflict: (p: { key: string }) => `A job is already active for ${p.key}`,
+    conflict: 'The same work is already queued or running. Try again when it ends.',
     briefUpdatedCommit: (p: { title: string }) => `${p.title}: brief updated`,
     restartCommit: (p: { title: string; n: number }) => `${p.title}: restart from v${p.n}`,
     stateCommit: (p: { title: string }) => `${p.title}: state`,

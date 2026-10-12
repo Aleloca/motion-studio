@@ -361,8 +361,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       follow: r.data.follow as string[] | Record<string, number> | undefined, links: effectiveLinks(creative.brief.links, creative.brief.formats), storedPicks: creative.exportPicks });
     const pending = await pendingRenders(creativeDir, versions, items);
     const renders = [];
-    // Answers at once: an active job of that version for other formats is returned with `covers: false` (the export waits
-    // for it and renders the rest).
+    // Answers at once: an active job of that version is reused for the formats it covers and a follow-up job is queued for
+    // the rest (I3), so the job returned covers them all.
     for (const [version, formats] of pending) {
       const { job, covers } = await ctx.renders.ensureJob(ref, version, formats, { wait: false });
       renders.push({ version, formats, job, covers });

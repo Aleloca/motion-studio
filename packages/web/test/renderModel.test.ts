@@ -33,6 +33,10 @@ describe('renderModel', () => {
     expect(boardRender(v(2), 'post', [job({ formats: ['reel'] })], KEY)).toEqual({ kind: 'none' });
     expect(boardRender(v(2), 'reel', [job({ key: 'render:/Users/me/Motion Studio:acme:lancio:v1' })], KEY)).toEqual({ kind: 'none' });
     expect(boardRender(v(2), 'reel', [job({ state: 'failed', error: 'boom', finishedAt: at })], KEY)).toEqual({ kind: 'failed', error: 'boom' });
+    // A follow-up job of the same version (I3: `…:v2:2`, queued behind the first) is this version's; v1's is not.
+    expect(boardRender(v(2), 'post', [job({ formats: ['reel'] }), job({ id: 'r2', key: 'render:/Users/me/Motion Studio:acme:lancio:v2:2', state: 'queued', formats: ['post'], queuePosition: 1 })], KEY)).toEqual({ kind: 'queued', ahead: 1 });
+    expect(boardRender(v(2), 'post', [job({ key: 'render:/Users/me/Motion Studio:acme:lancio:v1:2', formats: ['post'] })], KEY)).toEqual({ kind: 'none' });
+    expect(boardRender(v(2), 'post', [job({ key: 'render:/Users/me/Motion Studio:acme:lancio:v22', formats: ['post'] })], KEY)).toEqual({ kind: 'none' });
     // A later success wins over an earlier failure.
     expect(boardRender(v(2, ['reel']), 'reel', [job({ state: 'failed', finishedAt: at })], KEY)).toEqual({ kind: 'rendered' });
   });

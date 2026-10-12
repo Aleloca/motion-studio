@@ -266,7 +266,7 @@ describe('render jobs', { timeout: 60_000 }, () => {
     expect(renderState(v, 'test-still')).toBe('none');
   });
 
-  it('reports progress per format (media, frames, finishing), and refuses a second job for the same version', async () => {
+  it('reports progress per format (media, frames, finishing); a second request for the same formats reuses the running job (I3)', async () => {
     const { slug } = await v2Creative({ formats: ['test-wide'], links: {} });
     let release!: () => void;
     fake.gate = new Promise((r) => { release = r; });
@@ -275,12 +275,50 @@ describe('render jobs', { timeout: 60_000 }, () => {
     expect(seen.progress).toMatchObject({ format: 'test-wide', phase: 'frames', total: 30 });
     expect(seen.progress!.done).toBeGreaterThanOrEqual(0);
     const again = await post(slug, 1);
-    expect(again.statusCode).toBe(409);
+    expect(again.statusCode).toBe(202);
+    expect((again.json() as JobSummary).id).toBe(job.id);
     release();
     expect((await waitJob(job.id)).state).toBe('succeeded');
     // A new request once it is done is fine.
     fake.gate = null;
     expect((await waitJob((await post(slug, 1)).json().id)).state).toBe('succeeded');
+  });
+
+  it('Render on another format while the version renders: a follow-up job in the same lane, never a 409 or a key (I3)', async () => {
+    const { slug, store } = await v2Creative({ formats: ['test-wide', 'test-tall', 'test-still'], links: {} });
+    let release!: () => void;
+    fake.gate = new Promise((r) => { release = r; });
+    const first = (await post(slug, 1, { formats: ['test-wide'] })).json() as JobSummary;
+    await waitJob(first.id, (j) => j.progress?.phase === 'frames');
+    const second = await post(slug, 1, { formats: ['test-tall'] });
+    expect(second.statusCode, second.body).toBe(202);
+    const follow = second.json() as JobSummary;
+    expect(follow.id).not.toBe(first.id);
+    expect(follow.formats).toEqual(['test-tall']);
+    expect(follow.key).toBe(`${first.key}:2`);
+    expect(follow.state).toBe('queued');
+    // Render ★ over all three while both run: only the uncovered one gets a third job; covered formats are not asked again.
+    const third = (await post(slug, 1, { formats: ['test-wide', 'test-tall', 'test-still'] })).json() as JobSummary;
+    expect(third.formats).toEqual(['test-still']);
+    expect(third.key).toBe(`${first.key}:3`);
+    // Everything covered: the latest covering job comes back, nothing new.
+    expect(((await post(slug, 1, { formats: ['test-tall'] })).json() as JobSummary).id).toBe(follow.id);
+    expect(((await app.inject({ url: '/api/jobs', headers: H })).json() as JobSummary[]).filter((j) => j.kind === 'render')).toHaveLength(3);
+    release();
+    fake.gate = null;
+    for (const j of [first, follow, third]) expect((await waitJob(j.id)).state).toBe('succeeded');
+    // One at a time, in order (the render lane).
+    expect(fake.calls.map((c) => c.format.id)).toEqual(['test-wide', 'test-tall', 'test-still']);
+    const v = await versionOf(store, slug, 1);
+    for (const f of ['test-wide', 'test-tall', 'test-still']) expect(renderState(v, f), f).toBe('rendered');
+  });
+
+  it('a job conflict answers 409 with a localized message that never names the key (I3)', async () => {
+    const { JobConflictError } = await import('../src/jobs/job-queue.ts');
+    const e = new JobConflictError(`render:${ws}:acme:launch:v1`);
+    expect(e.message).not.toContain(ws);
+    expect(e.message).not.toContain('render:');
+    expect(e.key).toBe(`render:${ws}:acme:launch:v1`);
   });
 
   it('cancel: the render stops, nothing is recorded, no output and no temp file is left', async () => {
