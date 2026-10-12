@@ -24,6 +24,32 @@ interface LayerWindow extends Window {
 /** Bound on the clock pumps while awaiting layer code (the runtime gives up earlier, on its own timeout). */
 const MAX_PUMPS = 20_000;
 
+/** After this many macrotasks in a row in which a timer fired, one animation frame is fired anyway (C8). */
+export const PUMP_FRAME_EVERY = 50;
+
+/**
+ * Awaits `value` while pumping a frozen clock: on every native macrotask the timers already due fire; after a macrotask
+ * in which no timer fired, one animation frame fires. A layer whose code re-arms `setTimeout(0)` forever would never see
+ * an idle macrotask, so a frame is also forced every `PUMP_FRAME_EVERY` busy ones: a `requestAnimationFrame` awaited next
+ * to such a chain is not starved until `maxPumps` runs out. Time never moves.
+ */
+export async function pumpUntilDone<T>(value: T, clock: Pick<VirtualClock, 'native' | 'runDueTimers' | 'runFrame'>, maxPumps = MAX_PUMPS): Promise<Awaited<T>> {
+  if (!value || typeof (value as { then?: unknown }).then !== 'function') return value as Awaited<T>;
+  let done = false;
+  const p = Promise.resolve(value).finally(() => { done = true; });
+  p.catch(() => {});
+  let idle = false; // the previous macrotask fired no timer
+  let busy = 0; // macrotasks in a row in which a timer fired
+  for (let i = 0; !done && i < maxPumps; i++) {
+    await new Promise<void>((r) => clock.native.setTimeout(r, 0));
+    if (done) break;
+    if (idle || busy >= PUMP_FRAME_EVERY) { clock.runFrame(); idle = false; busy = 0; continue; }
+    idle = clock.runDueTimers() === 0;
+    busy = idle ? 0 : busy + 1;
+  }
+  return p;
+}
+
 export function startLayerAgent(w: Window & typeof globalThis): void {
   const config: LayerConfig | null = decodeLayerConfig(w.name);
   if (!config) return; // not a Motion Studio layer frame (opened on its own): leave the page alone
@@ -66,20 +92,7 @@ export function startLayerAgent(w: Window & typeof globalThis): void {
    * time). Without it, `msSeek` or `msReady` code that awaits a `setTimeout(0)` or a `requestAnimationFrame` would wait
    * forever on the virtual clock. Time never moves.
    */
-  const pumping = async <T>(value: T): Promise<Awaited<T>> => {
-    if (!value || typeof (value as { then?: unknown }).then !== 'function') return value as Awaited<T>;
-    let done = false;
-    const p = Promise.resolve(value).finally(() => { done = true; });
-    p.catch(() => {});
-    let idle = false; // the previous macrotask fired no timer
-    for (let i = 0; !done && i < MAX_PUMPS; i++) {
-      await new Promise<void>((r) => clock.native.setTimeout(r, 0));
-      if (done) break;
-      if (idle) { clock.runFrame(); idle = false; continue; }
-      idle = clock.runDueTimers() === 0;
-    }
-    return p;
-  };
+  const pumping = <T>(value: T): Promise<Awaited<T>> => pumpUntilDone(value, clock);
   const callSeek = async (t: number) => {
     if (typeof lw.msSeek === 'function') await pumping(lw.msSeek(t));
     syncAnimations(t); // msSeek may have created animations

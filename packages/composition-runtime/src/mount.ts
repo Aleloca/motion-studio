@@ -507,6 +507,9 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
             throw e; // render: fail the seek rather than capture a stale layer
           }
           report('layerError', `layer seek: ${String(e instanceof Error ? e.message : e)}`, m.clip.id);
+          // Render: a layer the host could not reach (timeout, no bootstrap) fails the seek at once, like a missing frame,
+          // instead of capturing a stale layer for every later frame. The layer's own errors stay reports (C8).
+          if (opts.mode === 'render' && !(e instanceof LayerRequestError)) throw e;
         }));
       }
     }
