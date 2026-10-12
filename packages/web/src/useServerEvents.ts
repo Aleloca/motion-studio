@@ -3,7 +3,7 @@ import { useEffect, useReducer } from 'react';
 import { api } from './api.ts';
 import { eventsReducer, initialEventsState, type EventsState } from './eventsReducer.ts';
 import { localDay, localMidnightIso, msToMidnight } from './usageLive.ts';
-import { onUiTokenChange, pairingNeeded, uiToken } from './uiToken.ts';
+import { onUiTokenChange, pairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
 
 /** Delay before the one retry of a failed day-total fetch. */
 export const USAGE_RETRY_MS = 5000;
@@ -47,7 +47,11 @@ export function useServerEvents(): EventsState {
       // An error is followed by 'close' (which reconnects); closing explicitly covers sockets stuck after an error.
       socket.onerror = () => socket.close();
       // Without a valid token retrying is pointless: a new token (pasted link) reconnects instead.
-      socket.onclose = () => { if (!stopped && ws === socket && !pairingNeeded()) retry = setTimeout(connect, 1000); };
+      // A newer token known meanwhile (desktop: the main process's; B3) reconnects at once through the token listener.
+      socket.onclose = () => {
+        if (!stopped && ws === socket) renewUiToken(token);
+        if (!stopped && ws === socket && !pairingNeeded()) retry = setTimeout(connect, 1000);
+      };
     };
     connect();
     const off = onUiTokenChange(() => {

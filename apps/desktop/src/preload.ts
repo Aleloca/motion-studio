@@ -40,6 +40,14 @@ contextBridge.exposeInMainWorld('motionStudio', {
     } catch { /* an older main process: not in full screen as far as the page knows */ }
     return fullscreen === true;
   },
+  // The UI token of the core this window was opened for (final wave B3): a reload or a refused token takes it, never a
+  // stale one from localStorage. Only the app's own page gets it (the main process checks the sender).
+  uiToken: (): string | null => {
+    try {
+      const v: unknown = ipcRenderer.sendSync('ms:ui-token-now');
+      return typeof v === 'string' && /^[0-9a-f]{64}$/.test(v) ? v : null;
+    } catch { return null; }
+  },
   onFullscreenChange: (cb: (fullscreen: boolean) => void): (() => void) => {
     if (typeof cb !== 'function') return () => {};
     const call = (v: boolean) => { try { cb(v); } catch { /* the page's own error */ } };

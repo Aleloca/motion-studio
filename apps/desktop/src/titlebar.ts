@@ -66,6 +66,19 @@ export const FULLSCREEN = 'ms:fullscreen';
 export const FULLSCREEN_NOW = 'ms:fullscreen-now';
 
 /** Answers FULLSCREEN_NOW with a plain boolean, `false` for an untrusted sender. */
+/** Sync query of the UI token of the core this window was opened for (final wave B3): the page's reload and 401 renewal. */
+export const UI_TOKEN_NOW = 'ms:ui-token-now';
+const UI_TOKEN_RE = /^[0-9a-f]{64}$/;
+
+/** Answers `ms:ui-token-now` with the current token, only to the app's own page (else null). */
+export function registerUiTokenQuery(ipc: { on(channel: string, fn: (e: { returnValue: unknown }) => void): void },
+  d: { trusted(e: unknown): boolean; token(): string | null }): void {
+  ipc.on(UI_TOKEN_NOW, (e) => {
+    const t = d.trusted(e) ? d.token() : null;
+    e.returnValue = typeof t === 'string' && UI_TOKEN_RE.test(t) ? t : null;
+  });
+}
+
 export function registerFullscreenQuery(ipc: { on(channel: string, fn: (e: { returnValue: unknown }) => void): void },
   d: { trusted(e: unknown): boolean; isFullScreen(): boolean }): void {
   ipc.on(FULLSCREEN_NOW, (e) => { e.returnValue = d.trusted(e) ? d.isFullScreen() === true : false; });

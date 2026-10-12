@@ -1,6 +1,6 @@
 import type { ChromeDownloadOffer, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, ProviderId, UsageReport, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
-import { markPairingNeeded, uiToken } from './uiToken.ts';
+import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
 
 /**
  * `code`: the stable machine-readable reason some routes add (e.g. `link-chain`, `pick-file-missing`); `retryAfterSec`: the
@@ -23,10 +23,34 @@ function headers(extra: Record<string, string> = {}): Record<string, string> {
   return token ? { ...extra, 'x-motion-studio-ui': token } : extra;
 }
 
+/** A 401 for the UI token: refused before the server did anything, so the call may be sent again with a renewed token. */
+const tokenRefused = async (res: Response): Promise<boolean> => {
+  if (res.status !== 401) return false;
+  const copy = typeof res.clone === 'function' ? res.clone() : res;
+  return ((await copy.json().catch(() => ({}))) as { code?: string }).code === 'ui-token';
+};
+
+/**
+ * Sends `send()` with the current token; when the server refuses that token and a newer one is known (desktop: the main
+ * process's; browser: another tab's), sends it once more with it (final wave B3). Else the pairing page is asked for.
+ */
+async function withToken(send: () => Promise<Response>): Promise<Response> {
+  const used = uiToken();
+  const res = await send();
+  if (!(await tokenRefused(res))) return res;
+  if (renewUiToken(used)) {
+    const again = await send();
+    if (!(await tokenRefused(again))) return again;
+    markPairingNeeded();
+    return again;
+  }
+  markPairingNeeded();
+  return res;
+}
+
 async function parse<T>(res: Response): Promise<T> {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    if (res.status === 401 && (data as { code?: string }).code === 'ui-token') markPairingNeeded();
     const code = (data as { code?: unknown }).code;
     throw new ApiError(res.status, (data as { error?: string }).error ?? currentMessages().web.api.httpError({ status: res.status }), typeof code === 'string' ? code : undefined, retryAfter(res));
   }
@@ -37,12 +61,12 @@ async function parse<T>(res: Response): Promise<T> {
 export interface RequestOptions { keepalive?: boolean }
 
 async function request<T>(method: string, url: string, body?: unknown, opts: RequestOptions = {}): Promise<T> {
-  const res = await fetch(url, {
+  const res = await withToken(() => fetch(url, {
     method,
     headers: headers(body === undefined ? {} : { 'content-type': 'application/json' }),
     body: body === undefined ? undefined : JSON.stringify(body),
     ...(opts.keepalive ? { keepalive: true } : {}),
-  });
+  }));
   return parse<T>(res);
 }
 
@@ -52,7 +76,7 @@ const enc = (rel: string) => rel.split('/').map(encodeURIComponent).join('/');
 async function upload<T>(url: string, files: File[]): Promise<T> {
   const form = new FormData();
   for (const f of files) form.append('files', f, f.name);
-  const res = await fetch(url, { method: 'POST', body: form, headers: headers() });
+  const res = await withToken(() => fetch(url, { method: 'POST', body: form, headers: headers() }));
   return parse<T>(res);
 }
 

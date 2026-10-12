@@ -25,6 +25,8 @@ export interface DesktopBridge {
   onFullscreenChange?(cb: (fullscreen: boolean) => void): () => void;
   /** The full-screen state now (synchronous), for the first frame after a reload. Missing in early Phase 9 builds. */
   isFullscreen?(): boolean;
+  /** The UI token of the core this window was opened for (synchronous; final wave B3). Missing before Phase 10. */
+  uiToken?(): string | null;
 }
 
 /**

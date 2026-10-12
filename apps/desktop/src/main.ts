@@ -8,7 +8,7 @@ import { absolutePathArg, attachedGone, attachedGoneAction, attachedLocale, boot
 import { menuTemplate } from './menu.ts';
 import { notificationOptions, registerAttention, sendAttentionClick, showKept } from './notify.ts';
 import { setupUpdates } from './updater.ts';
-import { registerFullscreenQuery, registerTitleBar, sendFullscreen } from './titlebar.ts';
+import { registerFullscreenQuery, registerTitleBar, registerUiTokenQuery, sendFullscreen } from './titlebar.ts';
 import { ipcSenderTrusted, isAppUrl, windowOpenToBrowser, windowOptions, type IpcSender } from './window.ts';
 import { desktopRenderOptions, shutdownForQuit } from './render-window.ts';
 import { createRenderGuard, registerRenderGuard, renderRunningPrompt } from './render-guard.ts';
@@ -209,6 +209,11 @@ async function run() {
   registerFullscreenQuery(ipcMain as unknown as Parameters<typeof registerFullscreenQuery>[0], {
     trusted: (e) => ipcSenderTrusted(e as IpcSender, win.webContents, origin),
     isFullScreen: () => !win.isDestroyed() && win.isFullScreen(),
+  });
+  // The page's token after a reload or a refused one (B3): the one of the core this window was opened for.
+  registerUiTokenQuery(ipcMain as unknown as Parameters<typeof registerUiTokenQuery>[0], {
+    trusted: (e) => ipcSenderTrusted(e as IpcSender, win.webContents, origin),
+    token: () => tokenFromAppUrl(server.appUrl),
   });
 
   // The live preview's frames (composition server) may reach only the composition server (preview-filter.ts).

@@ -3,7 +3,11 @@ import { api } from '../src/api.ts';
 import { captureUiToken, listenForUiToken, markPairingNeeded, onUiTokenChange, pairingNeeded, resetUiTokenForTests, uiToken } from '../src/uiToken.ts';
 
 const TOKEN = 'ab'.repeat(32);
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); resetUiTokenForTests(); history.replaceState(null, '', '/'); });
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); resetUiTokenForTests(); history.replaceState(null, '', '/'); delete (window as { motionStudio?: unknown }).motionStudio; });
+
+const STALE = 'cd'.repeat(32);
+/** The desktop preload bridge, answering the token of the core the window was opened for. */
+const desktopWith = (token: () => string | null) => { (window as { motionStudio?: unknown }).motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: async () => null, revealPath: async () => {}, uiToken: token }; };
 
 describe('UI token', () => {
   it('takes the token from the address fragment, stores it and strips it', () => {
@@ -60,5 +64,59 @@ describe('UI token', () => {
       expect(pairingNeeded()).toBe(false);
       expect(changed).toHaveBeenCalledTimes(1);
     } finally { off(); offChange(); }
+  });
+
+  // Final wave B3: the core-provided launch token always wins over a stale one in localStorage; a 401 renews the token.
+  it('desktop: the launch link wins over a stale stored token', () => {
+    localStorage.setItem('motion-studio-ui-token', STALE);
+    history.replaceState(null, '', `/#t=${TOKEN}`);
+    captureUiToken();
+    expect(uiToken()).toBe(TOKEN);
+    expect(localStorage.getItem('motion-studio-ui-token')).toBe(TOKEN);
+  });
+  it('desktop: a reload (no link in the address) takes the main process\'s token, never the stale stored one', () => {
+    localStorage.setItem('motion-studio-ui-token', STALE);
+    desktopWith(() => TOKEN);
+    expect(captureUiToken()).toBe(false);
+    expect(uiToken()).toBe(TOKEN);
+    expect(localStorage.getItem('motion-studio-ui-token')).toBe(TOKEN);
+  });
+  it('desktop: a 401 renews the token from the main process and retries once; no pairing page', async () => {
+    localStorage.setItem('motion-studio-ui-token', STALE);
+    let current = STALE;
+    desktopWith(() => current);
+    expect(uiToken()).toBe(STALE);
+    // The core restarted with a new token meanwhile.
+    current = TOKEN;
+    const changed = vi.fn();
+    const off = onUiTokenChange(changed);
+    const fetchMock = vi.fn(async (_u: string, init: RequestInit) => (new Headers(init.headers).get('x-motion-studio-ui') === TOKEN
+      ? new Response('{"path":"/w"}', { status: 200 })
+      : new Response(JSON.stringify({ code: 'ui-token', error: 'x' }), { status: 401 })));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await expect(api.getWorkspace()).resolves.toEqual({ path: '/w' });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(pairingNeeded()).toBe(false);
+      expect(uiToken()).toBe(TOKEN);
+      expect(localStorage.getItem('motion-studio-ui-token')).toBe(TOKEN);
+      expect(changed).toHaveBeenCalledTimes(1);
+    } finally { off(); }
+  });
+  it('browser: a token another tab stored after a new link is taken on a 401; with nothing newer, the pairing page', async () => {
+    history.replaceState(null, '', `/#t=${STALE}`);
+    captureUiToken();
+    localStorage.setItem('motion-studio-ui-token', TOKEN);
+    const fetchMock = vi.fn(async (_u: string, init: RequestInit) => (new Headers(init.headers).get('x-motion-studio-ui') === TOKEN
+      ? new Response('{}', { status: 200 })
+      : new Response(JSON.stringify({ code: 'ui-token', error: 'x' }), { status: 401 })));
+    vi.stubGlobal('fetch', fetchMock);
+    await api.getWorkspace();
+    expect(pairingNeeded()).toBe(false);
+    expect(uiToken()).toBe(TOKEN);
+    // The token itself is refused now: nothing newer anywhere, so the user is asked for the link.
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ code: 'ui-token', error: 'x' }), { status: 401 })));
+    await expect(api.getWorkspace()).rejects.toThrow();
+    expect(pairingNeeded()).toBe(true);
   });
 });
