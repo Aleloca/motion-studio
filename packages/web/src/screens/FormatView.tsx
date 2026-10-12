@@ -18,6 +18,8 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api.ts';
+import { CompositionPlayer, type CompositionMedia } from '../components/CompositionPlayer.tsx';
+import { posterOf, usePreviewSession, useStoryboard } from '../components/compositionPreview.ts';
 import { Conversation } from '../components/Conversation.tsx';
 import type { EventsState } from '../eventsReducer.ts';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
@@ -37,6 +39,7 @@ import { activatesControl, bare, inOverlay, isTyping } from './keys.ts';
 import { pinsKey, usePendingPins } from './pendingPins.ts';
 import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from './FormatVersions.tsx';
 import { boardSource, entryAt, followersOf, formatStates, isRendering, renderingOf, shownOf, type FormatState } from './versionModel.ts';
+import { compositionOf } from './renderModel.ts';
 import './canvas.css';
 import './format.css';
 import { message } from './common.tsx';
@@ -52,6 +55,8 @@ const FLIP_WINDOW_MS = 400;
 
 /** The comment being written, with the time it is on (videos). */
 type FDraft = Draft & { timeSec: number | null };
+/** What the transport drives: the <video> of a legacy version, or the live composition player (v2). */
+type PlayerMedia = Pick<HTMLVideoElement, 'currentTime' | 'playbackRate' | 'defaultPlaybackRate' | 'pause'> & { play(): Promise<void> | void };
 
 export interface FormatViewProps {
   slug: string;
@@ -127,7 +132,13 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   const preset = presets.find((p) => p.id === format) ?? (presetsLoaded ? null : DEFAULT_FORMATS.find((p) => p.id === format) ?? null);
   const out = version?.outputs.find((o) => o.format === source.format) ?? null;
   const known = Boolean(detail && (detail.creative.brief.formats.includes(format) || versions.some((v) => v.outputs.some((o) => o.format === format))));
-  const video = out ? isVideoFile(out.file) : preset?.kind === 'video';
+  // A v2 version (Task 8): the live player replaces the <video>; a legacy version (no session, 404) keeps its media.
+  const comp = compositionOf(version, source.format);
+  const preview = usePreviewSession({ slug, creative, n: version?.n ?? null, format: source.format, enabled: comp !== null });
+  const livePlayer = comp !== null && preview.state.kind !== 'legacy';
+  const { storyboard, state: storyboardState } = useStoryboard({ slug, creative, n: version?.n ?? null, format: source.format, hash: comp?.hash ?? null, enabled: comp !== null });
+  const sbPoster = posterOf(storyboard);
+  const video = livePlayer ? preset?.kind !== 'image' : out ? isVideoFile(out.file) : preset?.kind === 'video';
   // Proportions: the preset, the output, or (an unknown custom preset still loading) the board it grows from.
   const width = preset?.width ?? out?.width ?? (origin?.width ? Math.round(origin.width) : 1080);
   const height = preset?.height ?? out?.height ?? (origin?.height ? Math.round(origin.height) : 1080);
@@ -139,7 +150,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   // from its pin source (the version resumed from, else the latest): comments are placed only on that version.
   const pinSource = detail ? detail.creative.resumeFrom?.version ?? latest?.n ?? null : null;
   // Comments go on the file the pin source has for this format (a follower: its primary's).
-  const canComment = version !== null && Boolean(out) && entryAt(versions, states[source.format], pinSource) === version.n;
+  const canComment = version !== null && (Boolean(out) || comp !== null) && entryAt(versions, states[source.format], pinSource) === version.n;
   const [stored, setStored] = usePendingPins(pinsKey(slug, creative));
   const sourcePins = useMemo(() => stored.flatMap((p, i) => (p.version === pinSource ? [{ pin: p.pin, at: i }] : [])), [stored, pinSource]);
   const pins = useMemo(() => sourcePins.map((p) => p.pin), [sourcePins]);
@@ -150,7 +161,9 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
 
   // Playback (video). jsdom and some codecs never fire `play`: the state follows the call and the media events.
   const [clock] = useState(createClock);
-  const media = useRef<HTMLVideoElement>(null);
+  const media = useRef<PlayerMedia | null>(null);
+  const [player, setPlayer] = useState<CompositionMedia | null>(null);
+  const [playerReady, setPlayerReady] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [metaDuration, setMetaDuration] = useState<number | null>(null);
   const duration = metaDuration ?? out?.durationSec ?? 0;
@@ -160,15 +173,40 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   const [loop, setLoop] = useState(false);
   const [rate, setRate] = useState<Speed>('1');
   // A new element (src or attempt) starts at its default rate: apply ours on mount, on change and on metadata.
-  const applyRate = useCallback((v: HTMLVideoElement | null) => {
+  const applyRate = useCallback((v: PlayerMedia | null) => {
     if (!v) return;
     v.defaultPlaybackRate = Number(rate);
     v.playbackRate = Number(rate);
   }, [rate]);
-  useEffect(() => { applyRate(media.current); }, [applyRate, src, attempt]);
+  useEffect(() => { applyRate(media.current); }, [applyRate, src, attempt, player]);
   /** A time to show once the (new) video is loaded: a chip opened on another version. */
   const pendingSeek = useRef<number | null>(null);
-  useEffect(() => { setFailed(false); setPlaying(false); clock.set(0, true); setMetaDuration(null); }, [src, clock]);
+  const liveKey = livePlayer && version ? `${version.n}/${source.format}` : null;
+  useEffect(() => { setFailed(false); setPlaying(false); clock.set(0, true); setMetaDuration(null); setPlayerReady(false); }, [src, liveKey, clock]);
+  // The live player as the media: the same events as the <video> below.
+  useEffect(() => {
+    if (!player) return;
+    media.current = player;
+    const off: Array<() => void> = [];
+    const on = (type: string, f: () => void) => { player.addEventListener(type, f); off.push(() => player.removeEventListener(type, f)); };
+    on('timeupdate', () => clock.set(player.currentTime, true));
+    const meta = () => {
+      applyRate(player);
+      setPlayerReady(true);
+      setFailed(false);
+      if (Number.isFinite(player.duration) && player.duration > 0) setMetaDuration(player.duration);
+      if (pendingSeek.current !== null) { player.currentTime = pendingSeek.current; clock.set(pendingSeek.current, true); pendingSeek.current = null; }
+    };
+    on('loadedmetadata', meta);
+    // Ready before this page listened (the player reports itself from its own effect): catch up.
+    if (Number.isFinite(player.duration)) { meta(); clock.set(player.currentTime, true); }
+    on('play', () => setPlaying(true));
+    on('pause', () => setPlaying(false));
+    on('ended', () => setPlaying(false));
+    on('error', () => { setFailed(true); setPlaying(false); });
+    return () => { for (const f of off) f(); if (media.current === player) media.current = null; };
+  }, [player, clock, applyRate]);
+  useEffect(() => { if (player) player.loop = loop; }, [player, loop]);
   const seek = useCallback((to: number) => {
     const v = media.current;
     if (!v) return;
@@ -217,7 +255,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
 
   // Keyboard: Space plays/pauses, ←/→ one frame (never while typing, never on another focused control, never from
   // a page that is leaving).
-  const keysOn = (e: KeyboardEvent) => bare(e) && !e.shiftKey && !isTyping(e) && !inOverlay(e) && !activatesControl(e, PLAYER_CONTROLS) && video && Boolean(out) && !failed;
+  const keysOn = (e: KeyboardEvent) => bare(e) && !e.shiftKey && !isTyping(e) && !inOverlay(e) && !activatesControl(e, PLAYER_CONTROLS) && video && (livePlayer ? playerReady : Boolean(out)) && !failed;
   usePageShortcut(root, (e) => (e.key === ' ' || e.code === 'Space') && keysOn(e), toggle);
   usePageShortcut(root, (e) => (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && keysOn(e), (e) => stepFrame(e.key === 'ArrowRight' ? 1 : -1));
 
@@ -384,11 +422,11 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   const frameStyle: CSSProperties = zoom === 'fit' || video
     ? { width: `min(100cqw, calc(100cqh * ${width / height}))`, aspectRatio: `${width} / ${height}` }
     : { width: Math.round(width * zoom), aspectRatio: `${width} / ${height}` };
-  const lock = !loading && !canComment && version && out && pinSource !== null;
+  const lock = !loading && !canComment && version && (out || comp) && pinSource !== null;
   const state = states[format];
   const primaryLabel = state?.follows ? formatLabel(state.follows) : null;
   const primaryStar = state?.follows ? states[state.follows]?.star.version ?? null : null;
-  const ready = !loading && Boolean(out) && !failed;
+  const ready = !loading && (livePlayer ? playerReady : Boolean(out)) && !failed;
 
   return (
     <div ref={root} className={cx('ms-fv', video ? 'ms-fv-video' : 'ms-fv-image')} aria-busy={loading || undefined}>
@@ -431,10 +469,15 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
       {video ? (
         <aside className="ms-fv-side ms-fv-scenes" aria-label={f.scenes} data-part="l">
           <div className="ms-fv-side-head"><b>{f.scenes}</b>{duration ? <span>{c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) })}</span> : null}</div>
-          <div className="ms-fv-soon">
-            <span className="ms-fv-soon-icon" aria-hidden="true"><Icon name="clock" size={14} /></span>
-            <p>{f.scenesSoon}</p>
-          </div>
+          {livePlayer ? (
+            <Storyboard frames={storyboard?.frames.filter((x) => x.kind === 'scene') ?? []} state={storyboardState} clock={clock}
+              onSeek={(time) => { if (playing) pause(); seek(time); }} disabled={!ready} />
+          ) : (
+            <div className="ms-fv-soon">
+              <span className="ms-fv-soon-icon" aria-hidden="true"><Icon name="clock" size={14} /></span>
+              <p>{f.scenesSoon}</p>
+            </div>
+          )}
         </aside>
       ) : null}
 
@@ -454,11 +497,28 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
         </div>
         <section className="ms-fv-stage" aria-label={f.stage({ label })}>
           <div ref={frame} className="ms-fv-frame" style={frameStyle}>
-            <div className={cx('ms-fv-media', !loading && !out && 'ms-empty-frame')} onClick={() => { if (video && out && !canComment) toggle(); else if (video && playing) pause(); }}>
+            <div className={cx('ms-fv-media', !loading && !out && !livePlayer && 'ms-empty-frame')} onClick={() => { if (video && (out || livePlayer) && !canComment) toggle(); else if (video && playing) pause(); }}>
               {loading ? (
                 <span className="ms-cv-frame-note"><Spinner size={16} label={c.loading} /></span>
+              ) : livePlayer && n !== null ? (
+                <>
+                  {sbPoster && !playerReady ? <img className="ms-fv-poster" src={sbPoster.url} alt="" draggable={false} /> : null}
+                  {preview.state.kind === 'ready' ? (
+                    <CompositionPlayer key={attempt} session={preview.state.session} title={t.web.render.playerFrame({ label: `${label} v${n}` })}
+                      onMedia={setPlayer} onStall={preview.stalled} />
+                  ) : null}
+                  {preview.state.kind === 'loading' || preview.state.kind === 'busy' || preview.state.kind === 'idle' ? (
+                    <span className="ms-cplayer-state" role="status">{preview.state.kind === 'busy' ? t.web.render.busy : t.web.render.loading}</span>
+                  ) : null}
+                  {preview.state.kind === 'failed' ? (
+                    <span className="ms-fv-failed" role="alert">
+                      <span>{t.web.render.failed({ detail: preview.state.message })}</span>
+                      <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); preview.retry(); }}><Icon name="refresh" size={12} />{t.web.render.retry}</Button>
+                    </span>
+                  ) : null}
+                </>
               ) : src && n !== null && video ? (
-                <video key={`${src}#${attempt}`} ref={media} src={src} poster={poster} preload="auto" playsInline loop={loop} aria-label={`${label} v${n}`}
+                <video key={`${src}#${attempt}`} ref={(el) => { media.current = el; }} src={src} poster={poster} preload="auto" playsInline loop={loop} aria-label={`${label} v${n}`}
                   onTimeUpdate={(e) => clock.set(e.currentTarget.currentTime, true)}
                   onLoadedMetadata={(e) => {
                     const v = e.currentTarget;
@@ -497,10 +557,10 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
         </section>
         {canComment && ready && !draft && (!video || !playing) ? <CommentHint clock={clock} video={video} /> : null}
         {lock ? <div className="ms-cv-hint ms-lock ms-fv-hint" id="ms-fv-comment-lock" role="status">{c.versions.commentsOn({ n: pinSource })}</div> : null}
-        {preset?.safeZone && out ? (
+        {preset?.safeZone && (out || livePlayer) ? (
           <span className="ms-fv-safe-toggle"><Toggle size="sm" on={safe} onChange={setSafe} label={c.safeZones} /><span aria-hidden="true">{c.safeZones}</span></span>
         ) : null}
-        {!video && out ? (
+        {!video && (out || livePlayer) ? (
           <div className="ms-cv-toolbar ms-fv-zoom" role="toolbar" aria-label={f.zoom}>
             <button type="button" className="ms-cv-tool ms-sm" aria-label={c.zoomOut} disabled={scale > 0 && scale <= ZOOMS[0]! + 1e-3} onClick={() => zoomBy(-1)}><Icon name="minus" size={13} /></button>
             <span className="ms-fv-zoom-pct" role="status">{scale ? `${formatNumber(locale, Math.round(scale * 100))}%` : '—'}</span>
@@ -566,4 +626,36 @@ function CommentHint({ clock, video }: { clock: Clock; video: boolean }) {
   const f = useT().web.formatView;
   const { settled } = useClock(clock);
   return <div className="ms-cv-hint ms-fv-hint" role="status">{video ? f.commentAt({ time: timecode(settled) }) : f.commentImage}</div>;
+}
+
+/**
+ * The storyboard strip of a v2 version (Task 8): one frame per scene start, in time order; a click seeks there. The scene
+ * the playhead is in is marked.
+ */
+function Storyboard({ frames, state, clock, onSeek, disabled }: {
+  frames: Array<{ t: number; scene?: string; url: string; width: number; height: number }>; state: string; clock: Clock; onSeek(t: number): void; disabled: boolean;
+}) {
+  const t = useT();
+  const r = t.web.render;
+  const { time } = useClock(clock);
+  if (!frames.length) {
+    return <p className="ms-fv-sb-note" role="status">{state === 'loading' || state === 'busy' ? r.storyboardLoading : r.storyboardNone}</p>;
+  }
+  const current = frames.reduce((at, f, i) => (f.t <= time + 1e-6 ? i : at), 0);
+  return (
+    <ol className="ms-fv-sb" aria-label={r.storyboard}>
+      {frames.map((f, i) => {
+        const name = f.scene ?? r.scene({ n: i + 1 });
+        return (
+          <li key={`${f.t}-${i}`}>
+            <button type="button" className={cx('ms-fv-sb-item', i === current && 'ms-on')} aria-current={i === current || undefined} disabled={disabled}
+              aria-label={r.sceneAt({ name, time: timecode(f.t) })} onClick={() => onSeek(f.t)}>
+              <img src={f.url} alt="" draggable={false} style={{ aspectRatio: `${f.width} / ${f.height}` }} />
+              <span className="ms-fv-sb-text"><b>{name}</b><span>{timecode(f.t)}</span></span>
+            </button>
+          </li>
+        );
+      })}
+    </ol>
+  );
 }

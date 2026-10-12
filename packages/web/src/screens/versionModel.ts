@@ -78,12 +78,14 @@ export function shownOf(state: FormatState | undefined, viewing: number | undefi
 }
 
 /**
- * The history entry holding the file version `n` has for the format: the last history version ≤ n; null when version `n`
- * has no file for it.
+ * The history entry holding the file (or the composition) version `n` has for the format: the last history version ≤ n;
+ * null when version `n` has neither for it.
  */
 export function entryAt(versions: VersionEntry[], state: FormatState | undefined, n: number | null): number | null {
   if (!state || n === null) return null;
-  if (!versions.find((v) => v.n === n)?.outputs.some((o) => o.format === state.id)) return null;
+  // A v2 version has the format as a composition, rendered or not (Task 8).
+  const v = versions.find((x) => x.n === n);
+  if (!v || !(v.outputs.some((o) => o.format === state.id) || v.compositions?.some((c) => c.format === state.id))) return null;
   return [...state.history].reverse().find((h) => h <= n) ?? null;
 }
 

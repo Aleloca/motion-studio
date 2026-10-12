@@ -14,6 +14,10 @@ const api = {
   setFormatLink: vi.fn(async (..._a: unknown[]) => ({})),
   restoreVersion: vi.fn(async () => ({})),
   revealVersion: vi.fn(async () => ({ ok: true })),
+  previewSession: vi.fn(async (_s: string, _c: string, n: number, format: string, _o: string) => ({
+    url: `http://127.0.0.1:61234/tok-v${n}/runtime/index.html?mode=preview&parentOrigin=x`, origin: 'http://127.0.0.1:61234',
+    expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), format, hash: String(n).repeat(64), width: 1080, height: 1920, duration: 6, fps: 30,
+  })),
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error { status = 0; } }));
 const { CompareDialog } = await import('../src/screens/CompareDialog.tsx');
@@ -245,5 +249,38 @@ describe('CompareDialog · videos', () => {
     await dialog();
     await act(async () => { await userEvent.keyboard('{Escape}'); });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Confronta le versioni' })).toBeNull());
+  });
+});
+
+
+describe('CompareDialog · compositions (Task 8)', () => {
+  const comp = (n: number) => ({ format: REEL, dir: `compositions/${REEL}`, hash: String(n).repeat(64) });
+  const v2s = [1, 2].map((n) => ({ ...version(n, []), compositions: [comp(n)] }));
+  function V2Harness() {
+    const actions = useVersionActions({ slug: 'acme', creative: 'lancio', states, labelOf: (id) => id, resumeFrom: null, onChanged: () => {}, onError: () => {} });
+    return <CompareDialog open onClose={() => {}} slug="acme" creative="lancio" versions={v2s} presets={DEFAULT_FORMATS} states={states} format={REEL} initial={[1, 2]} actions={actions} />;
+  }
+  const READY = { type: 'ready', version: 1, duration: 6, fps: 30, width: 1080, height: 1920, scenes: [], errors: [] };
+  const send = (f: HTMLIFrameElement, data: unknown) => {
+    const ev = new MessageEvent('message', { data, origin: 'null' });
+    Object.defineProperty(ev, 'source', { value: f.contentWindow });
+    act(() => { window.dispatchEvent(ev); });
+  };
+
+  it('two live players side by side, synced under one transport', async () => {
+    states = { [REEL]: state(REEL, [1, 2], 2) };
+    render(<V2Harness />);
+    const frames = await waitFor(() => { const f = [...document.querySelectorAll('iframe')]; expect(f).toHaveLength(2); return f; });
+    expect(frames.map((f) => f.getAttribute('sandbox'))).toEqual(['allow-scripts', 'allow-scripts']);
+    expect(frames.map((f) => f.getAttribute('src')!.split('/')[3])).toEqual(['tok-v1', 'tok-v2']);
+    const posted = frames.map((f) => vi.spyOn(f.contentWindow!, 'postMessage'));
+    for (const f of frames) send(f, READY);
+    const playBtn = await screen.findByRole('button', { name: 'Riproduci (Spazio)' });
+    await waitFor(() => expect((playBtn as HTMLButtonElement).disabled).toBe(false));
+    await userEvent.click(playBtn);
+    for (const p of posted) expect(p).toHaveBeenCalledWith({ type: 'play', loop: false, rate: 1 }, '*');
+    await userEvent.click(screen.getByRole('button', { name: 'Pausa (Spazio)' }));
+    for (const p of posted) expect(p).toHaveBeenLastCalledWith({ type: 'pause' }, '*');
+    expect(api.previewSession).toHaveBeenCalledTimes(2);
   });
 });

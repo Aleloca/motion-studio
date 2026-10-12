@@ -1,4 +1,4 @@
-import type { ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, ProviderId, UsageReport, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
+import type { ChromeDownloadOffer, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, ProviderId, UsageReport, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, uiToken } from './uiToken.ts';
 
@@ -138,5 +138,31 @@ export const api = {
    */
   exportPicks: (slug: string, creative: string, body: { destination: string; picks: Record<string, number>; follow?: Record<string, number>; pattern?: string; date?: string }) =>
     request<{ destination: string; files: Array<{ from: string; to: string }>; skipped: string[] }>('POST', `${c(slug, creative)}/export`, body),
+  /**
+   * What a ★ export renders first (Task 8): the same picks and followers as `exportPicks`; the jobs are started (or joined)
+   * at once and the export, called next, waits for them.
+   */
+  prepareExport: (slug: string, creative: string, body: { picks: Record<string, number>; follow?: Record<string, number> }) =>
+    request<ExportPrepareResult>('POST', `${c(slug, creative)}/export/prepare`, body),
+  /** Renders a v2 version's compositions (all its primaries, or `formats`; a follower stands for its primary). 202 with the job. */
+  renderVersion: (slug: string, creative: string, n: number, formats?: string[]) =>
+    request<JobSummary>('POST', `${c(slug, creative)}/versions/${n}/render`, formats ? { formats } : {}),
+  /**
+   * A live preview session of one format of a saved v2 version, embeddable by `parentOrigin` (this page's origin). 404 for
+   * a legacy version (no composition), 429 `preview-busy` when the previews are busy.
+   */
+  previewSession: (slug: string, creative: string, n: number, format: string, parentOrigin: string) =>
+    request<PreviewSessionInfo>('POST', `${c(slug, creative)}/versions/${n}/preview-session`, { format, parentOrigin }),
+  /** The storyboard of a v2 version's format: scene frames and the poster, signed URLs valid until `expiresAt`. */
+  getStoryboard: (slug: string, creative: string, n: number, format: string) =>
+    request<StoryboardView>('GET', `${c(slug, creative)}/versions/${n}/storyboards/${encodeURIComponent(format)}`),
+  /** The feedback frames cut for the comments sent with the turn that made version n (signed URLs). */
+  getPinFrames: (slug: string, creative: string, n: number) => request<PinFramesView>('GET', `${c(slug, creative)}/pin-frames/${n}`),
+  /** Which Chromium renders (System check) and the Chrome for Testing download's state. */
+  getRenderEngine: () => request<RenderEngineStatus>('GET', '/api/render-engine'),
+  /** The Chrome for Testing version and exact size, read before asking for consent (nothing is downloaded). */
+  getChromeDownloadInfo: () => request<ChromeDownloadOffer>('GET', '/api/render-engine/download-info'),
+  /** Starts the download the user agreed to: `sizeBytes` is the size shown to them. */
+  downloadChrome: (sizeBytes: number) => request<RenderEngineStatus>('POST', '/api/render-engine/download', { consent: true, sizeBytes }),
   fileUrl: (slug: string, creative: string, rel: string) => `${c(slug, creative)}/files/${rel.split('/').map(encodeURIComponent).join('/')}`,
 };

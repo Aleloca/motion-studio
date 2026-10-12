@@ -15,6 +15,8 @@ export interface DesktopBridge {
   notifyStatus?(): Promise<{ supported: boolean }>;
   /** Dock badge with the pending approvals (0 clears it); the Dock bounces once when it grows. */
   setBadge?(n: number): Promise<void>;
+  /** How many renders are queued or running: closing the window with one asks first (Task 8). Missing before Phase 10. */
+  setRendersRunning?(n: number): Promise<void>;
   /** Calls `cb` when one of the app's native notifications is clicked; returns the unsubscribe. Missing before Phase 7. */
   onAttentionClick?(cb: () => void): () => void;
   /** Integrated title bar: recolours the window controls overlay and background for the page's theme. Missing before Phase 9. */

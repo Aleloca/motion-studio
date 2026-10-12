@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DEFAULT_FORMATS, type ConversationEntry, type CreativeDetail, type OutputFileInfo, type UsageReport, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, type ConversationEntry, type CreativeDetail, type JobSummary, type OutputFileInfo, type UsageReport, type VersionEntry } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import type { Route } from '../src/routes.ts';
@@ -36,6 +36,17 @@ const api = {
   setFormatLink: vi.fn(async (..._a: unknown[]) => detail),
   // The creative's ledger total; by default unavailable (the panel then falls back to its versions).
   getUsage: vi.fn(async (_q?: unknown): Promise<UsageReport> => { throw new Error('offline'); }),
+  // Task 8: v2 versions (compositions).
+  renderVersion: vi.fn(async (_s: string, _c: string, n: number, _f?: string[]) => ({ id: `r${n}`, key: `render:/w:acme:lancio:v${n}`, kind: 'render', label: 'Render', state: 'queued', createdAt: at })),
+  previewSession: vi.fn(async (_s: string, _c: string, _n: number, format: string, _o: string) => ({
+    url: `http://127.0.0.1:61234/tok-${format}/runtime/index.html?mode=preview&parentOrigin=x`, origin: 'http://127.0.0.1:61234',
+    expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), format, hash: 'b'.repeat(64), width: 1080, height: 1920, duration: 6, fps: 30,
+  })),
+  getStoryboard: vi.fn(async (_s: string, _c: string, n: number, format: string) => ({
+    format, hash: 'b'.repeat(64), width: 270, expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+    frames: [{ t: 0, kind: 'scene', scene: 'intro', width: 270, height: 480, url: `/sb/${format}/v${n}/f-0.jpg?s=1` }, { t: 1, kind: 'poster', width: 270, height: 480, url: `/sb/${format}/v${n}/f-1.jpg?s=1` }],
+  })),
+  getPinFrames: vi.fn(async (_s: string, _c: string, n: number) => ({ n, expiresAt: new Date(Date.now() + 600_000).toISOString(), frames: [{ file: `${n}-1.jpg`, url: `/pf/${n}-1.jpg?s=1` }] })),
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error { status = 0; } }));
 const { CreativeCanvas } = await import('../src/screens/CreativeCanvas.tsx');
@@ -1202,5 +1213,119 @@ describe('CreativeCanvas · board header styles', () => {
     const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../src/screens/canvas.css'), 'utf8');
     expect(css).toMatch(/\.ms-cv-board-line \{[^}]*overflow: hidden/);
     expect(css).toMatch(/\.ms-cv-board-line :focus-visible \{ outline-offset: -2px; \}/);
+  });
+});
+
+
+describe('CreativeCanvas · compositions (Task 8)', () => {
+  const HASH = { 'tiktok-9x16': 'b'.repeat(64), 'instagram-post-1x1': 'c'.repeat(64) } as const;
+  const v2 = (n: number, outputs: OutputFileInfo[] = []): VersionEntry => ({
+    ...version(n, 'Dal brief', outputs),
+    compositions: [
+      { format: 'instagram-post-1x1', dir: 'compositions/instagram-post-1x1', hash: HASH['instagram-post-1x1'] },
+      { format: 'tiktok-9x16', dir: 'compositions/tiktok-9x16', hash: HASH['tiktok-9x16'] },
+    ],
+  });
+  const renderJob = (over: Partial<JobSummary>): JobSummary => ({ id: 'r1', key: 'render:/w:acme:lancio:v1', kind: 'render', label: 'Render · Lancio estivo v1', state: 'running', createdAt: at, formats: ['tiktok-9x16'], ...over });
+  const liveWith = (...jobs: JobSummary[]): EventsState => ({ ...emptyLive(), jobs: Object.fromEntries(jobs.map((j) => [j.id, j])) } as EventsState);
+  const board = (id: string) => document.querySelector(`[data-board="${id}"]`) as HTMLElement;
+  /** The board's picture once the canvas has loaded. */
+  const picture = (id: string) => waitFor(() => { const img = board(id)?.querySelector('.ms-cv-frame img'); expect(img).toBeTruthy(); return img as HTMLImageElement; });
+
+  it('a board shows its storyboard poster and "Not rendered"; no live preview on first render', async () => {
+    detail = makeDetail([v2(1)]);
+    render(<Harness live={emptyLive()} />);
+    const poster = await picture('tiktok-9x16');
+    expect(poster.getAttribute('src')).toBe('/sb/tiktok-9x16/v1/f-1.jpg?s=1');
+    expect(within(board('tiktok-9x16')).getByText('Non renderizzato')).toBeTruthy();
+    expect(api.previewSession).not.toHaveBeenCalled();
+    expect(document.querySelector('iframe')).toBeNull();
+  });
+
+  it('plays live on hover intent (a sandboxed frame), and stops when the pointer leaves', async () => {
+    detail = makeDetail([v2(1)]);
+    render(<Harness live={emptyLive()} />);
+    await picture('tiktok-9x16');
+    const wrap = board('tiktok-9x16').querySelector('.ms-cv-frame-wrap') as HTMLElement;
+    fireEvent.pointerOver(wrap);
+    await waitFor(() => expect(api.previewSession).toHaveBeenCalledWith('acme', 'lancio', 1, 'tiktok-9x16', location.origin));
+    const frame = await waitFor(() => { const f = board('tiktok-9x16').querySelector('iframe'); expect(f).not.toBeNull(); return f!; });
+    expect(frame.getAttribute('sandbox')).toBe('allow-scripts');
+    fireEvent.pointerOut(wrap, { relatedTarget: document.body });
+    await waitFor(() => expect(board('tiktok-9x16').querySelector('iframe')).toBeNull());
+  });
+
+  it('the play button starts the live preview by click', async () => {
+    detail = makeDetail([v2(1)]);
+    render(<Harness live={emptyLive()} />);
+    await picture('tiktok-9x16');
+    await userEvent.click(within(board('instagram-post-1x1')).getByRole('button', { name: /^Riproduci l’anteprima dal vivo di/ }));
+    await waitFor(() => expect(api.previewSession).toHaveBeenCalledWith('acme', 'lancio', 1, 'instagram-post-1x1', location.origin));
+    expect(within(board('instagram-post-1x1')).getByRole('button', { name: /^Ferma l’anteprima dal vivo di/ }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('render states: queued with renders ahead, rendering with its percent, rendered', async () => {
+    const rendered = { ...out('instagram-post-1x1', 'instagram-post-1x1.png'), sha256: 'd'.repeat(64), fromComposition: HASH['instagram-post-1x1'] };
+    detail = makeDetail([v2(1, [rendered])]);
+    const { rerender } = render(<Harness live={liveWith(renderJob({ state: 'queued', queuePosition: 2 }))} />);
+    await picture('tiktok-9x16');
+    expect(within(board('tiktok-9x16')).getByText('In coda · 2 render prima')).toBeTruthy();
+    expect(within(board('instagram-post-1x1')).getByText('Renderizzato')).toBeTruthy();
+    rerender(<Harness live={liveWith(renderJob({ progress: { format: 'tiktok-9x16', phase: 'frames', done: 76, total: 180 } }))} />);
+    expect(await within(board('tiktok-9x16')).findByText('Render 42%')).toBeTruthy();
+  });
+
+  it('"Render failed · Retry" renders that format again', async () => {
+    detail = makeDetail([v2(1)]);
+    render(<Harness live={liveWith(renderJob({ state: 'failed', error: 'Render failed: boom', finishedAt: at }))} />);
+    await picture('tiktok-9x16');
+    expect(within(board('tiktok-9x16')).getByText(/Render non riuscito/)).toBeTruthy();
+    await userEvent.click(within(board('tiktok-9x16')).getByRole('button', { name: /^Riprova il render di/ }));
+    expect(api.renderVersion).toHaveBeenCalledWith('acme', 'lancio', 1, ['tiktok-9x16']);
+  });
+
+  it('"Render ★" renders every format at its ★; the board menu renders the version on screen', async () => {
+    detail = makeDetail([v2(1)]);
+    render(<Harness live={emptyLive()} />);
+    await picture('tiktok-9x16');
+    await userEvent.click(screen.getByRole('button', { name: 'Render ★' }));
+    expect(api.renderVersion).toHaveBeenCalledWith('acme', 'lancio', 1, ['instagram-post-1x1', 'tiktok-9x16']);
+    await userEvent.click(within(board('tiktok-9x16')).getByRole('button', { name: /si esporta la v1/ }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Render v1' }));
+    expect(api.renderVersion).toHaveBeenLastCalledWith('acme', 'lancio', 1, ['tiktok-9x16']);
+  });
+
+  it('"Render ★" is off when every ★ is rendered or rendering, and absent for legacy creatives', async () => {
+    detail = makeDetail([v2(1, [{ ...out('instagram-post-1x1', 'p.png'), sha256: 'd'.repeat(64), fromComposition: HASH['instagram-post-1x1'] }])]);
+    const { unmount } = render(<Harness live={liveWith(renderJob({}))} />);
+    await picture('tiktok-9x16');
+    expect((screen.getByRole('button', { name: 'Render ★' }) as HTMLButtonElement).disabled).toBe(true);
+    unmount();
+    detail = makeDetail([version(1, 'Dal brief')]);
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    expect(screen.queryByRole('button', { name: 'Render ★' })).toBeNull();
+  });
+
+  it('comments go on a composition without a render too', async () => {
+    detail = makeDetail([v2(1)]);
+    render(<Harness live={emptyLive()} />);
+    await picture('tiktok-9x16');
+    await userEvent.click(screen.getByRole('button', { name: 'Commenta (C)' }));
+    expect(within(board('tiktok-9x16')).getByRole('button', { name: /^Commenta TikTok/ })).toBeTruthy();
+  });
+
+  it('sent comments show the feedback frame the core cut for them (signed URL)', async () => {
+    detail = makeDetail([v2(1), v2(2)]);
+    conversation = [
+      { type: 'user', at, text: 'Più grande', pins: [{ format: 'tiktok-9x16', x: 0.5, y: 0.5, timeSec: 1.5, note: 'Più grande' }], attachments: [] },
+      { type: 'version', at, n: 2, status: 'complete', request: 'Più grande' } as ConversationEntry,
+    ];
+    render(<Harness live={emptyLive()} />);
+    await picture('tiktok-9x16');
+    await userEvent.click(screen.getByRole('tab', { name: /Commenti/ }));
+    const img = await screen.findByRole('img', { name: 'Fotogramma inviato con il commento 1' });
+    expect(img.getAttribute('src')).toBe('/pf/2-1.jpg?s=1');
+    expect(api.getPinFrames).toHaveBeenCalledWith('acme', 'lancio', 2);
   });
 });

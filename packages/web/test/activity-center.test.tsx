@@ -1,10 +1,11 @@
 import type { ConversationEntry, JobSummary } from '@motion-studio/shared';
 import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import { I18nProvider } from '../src/i18n.tsx';
 
-const api = { getConversation: vi.fn(async (): Promise<ConversationEntry[]> => []) };
+const api = { getConversation: vi.fn(async (): Promise<ConversationEntry[]> => []), cancelJob: vi.fn(async (_id: string) => ({ cancelled: true })) };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { ActivityCenter, jobHref } = await import('../src/shell/ActivityCenter.tsx');
 
@@ -65,5 +66,45 @@ describe('Activity center · what happened (AC2)', () => {
   it('running rows link to where the job runs', () => {
     en(live([job({ id: 'r1', state: 'running', finishedAt: undefined })]), 'running');
     expect(within(screen.getByRole('list')).getByRole('link').getAttribute('href')).toBe('#/p/acme/c/lancio');
+  });
+});
+
+
+describe('Activity center · render lane (Task 8)', () => {
+  const render1 = (over: Partial<JobSummary> & { id: string }) => job({ key: 'render:/w:acme:lancio:v3', kind: 'render', label: 'Render · Lancio estivo v3', state: 'running', finishedAt: undefined, ...over });
+
+  it('queued renders say how many renders are ahead; the running one its frames done out of the total, with a bar', () => {
+    en(live([
+      render1({ id: 'r1', createdAt: '2026-10-08T10:00:00.000Z', formats: ['tiktok-9x16'], progress: { format: 'tiktok-9x16', phase: 'frames', done: 1200, total: 2400 } }),
+      render1({ id: 'r2', state: 'queued', createdAt: '2026-10-08T10:01:00.000Z', queuePosition: 1 }),
+      render1({ id: 'r3', state: 'queued', createdAt: '2026-10-08T10:02:00.000Z', queuePosition: 2 }),
+    ]), 'running');
+    const list = screen.getByRole('list');
+    expect(within(list).getByText('Video 9:16 · 1,200 / 2,400 frames')).toBeTruthy();
+    expect(within(list).getByRole('progressbar').getAttribute('aria-valuenow')).toBe('50');
+    expect(within(list).getByText('Queued · 1 render ahead')).toBeTruthy();
+    expect(within(list).getByText('Queued · 2 renders ahead')).toBeTruthy();
+  });
+
+  it('preparing media and finishing are said as such', () => {
+    en(live([
+      render1({ id: 'r1', progress: { format: 'tiktok-9x16', phase: 'media', done: 1, total: 3 } }),
+      render1({ id: 'r2', createdAt: '2026-10-08T10:05:00.000Z', progress: { format: 'instagram-post-1x1', phase: 'finishing', done: 0, total: 0 } }),
+    ]), 'running');
+    expect(screen.getByText('Video 9:16 · preparing media 1/3')).toBeTruthy();
+    expect(screen.getByText('Post 1:1 · finishing')).toBeTruthy();
+    expect(screen.queryByRole('progressbar')).toBeNull();
+  });
+
+  it('Cancel cancels that render (queued or running); the row still links to the creative', async () => {
+    en(live([render1({ id: 'r1' }), render1({ id: 'r2', state: 'queued', createdAt: '2026-10-08T10:01:00.000Z', queuePosition: 1 })]), 'running');
+    const rows = within(screen.getByRole('list')).getAllByRole('link');
+    expect(rows.every((a) => a.getAttribute('href') === '#/p/acme/c/lancio')).toBe(true);
+    const cancels = screen.getAllByRole('button', { name: 'Cancel Render · Lancio estivo v3' });
+    expect(cancels).toHaveLength(2);
+    // Not inside the link (a button in a link is not a valid control).
+    expect(cancels[0]!.closest('a')).toBeNull();
+    await userEvent.click(cancels[1]!);
+    expect(api.cancelJob).toHaveBeenCalledWith('r2');
   });
 });

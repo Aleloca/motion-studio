@@ -23,7 +23,7 @@ import { DragStrip } from './shell/DragStrip.tsx';
 import { go, ShellContext, type ActivityTab, type Shell } from './shell/ShellContext.tsx';
 import { isMac } from './platform.ts';
 import { TopBar } from './shell/TopBars.tsx';
-import { useAttention, useReadyNotice } from './shell/useAttention.ts';
+import { useAttention, useReadyNotice, useRenderCloseGuard } from './shell/useAttention.ts';
 import { applyTheme } from './theme.ts';
 import { Spinner, Toasts } from './ui/index.ts';
 import { usePairingNeeded } from './uiToken.ts';
@@ -94,6 +94,8 @@ function AppBody({ live, language, systemLocale, onLanguage }: Props) {
   useAttention(approvals.length, approvals, { onReview: review, snapshot: live.snapshots ?? 0 });
   // "When a creative is ready" (Settings → Notifications), while the app is in the background.
   useReadyNotice(live.jobs);
+  // Desktop: closing the window while a render runs asks first.
+  useRenderCloseGuard(live.jobs);
 
   // A recheck keeps the previous checks on screen (no step jump in the setup) and flags `checking`; `checkRun` counts
   // the completed runs, so the setup reveals the rows again only after an actual recheck (not a language reload).

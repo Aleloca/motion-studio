@@ -1,12 +1,14 @@
-import type { AgentEvent, ApprovalRequest, ConversationEntry, JobSummary } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, formatName, type AgentEvent, type ApprovalRequest, type ConversationEntry, type JobSummary } from '@motion-studio/shared';
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api.ts';
 import { ApprovalCard } from '../components/ApprovalCard.tsx';
 import { useApprovalPresence } from '../components/approvalPresence.ts';
 import type { EventsState } from '../eventsReducer.ts';
-import { formatDate, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
+import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
 import { href } from '../routes.ts';
-import { Button, Empty, Icon, Spinner, Tabs, cx } from '../ui/index.ts';
+import { Button, Empty, Icon, ProgressBar, Spinner, Tabs, cx, toast } from '../ui/index.ts';
+import { renderPct } from '../screens/renderModel.ts';
+import { message } from '../errors.ts';
 import { canAskNotifications } from './notify.ts';
 import { go, type ActivityTab } from './ShellContext.tsx';
 import { lastStep } from '../jobEvents.ts';
@@ -153,7 +155,9 @@ export function ActivityCenter({ live, initialTab, request = 0, where }: { live:
           : <Empty icon="check" title={a.emptyNeeds} sub={a.emptyNeedsSub} />)}
         {tab === 'running' && (running.length ? (
           <ul className="ms-activity-list">
-            {running.map((j) => <RunningRow key={j.id} job={j} step={lastStep(live.events[j.id])} tokens={jobLiveTokens(live, j.id)} partial={jobUsagePartial(live, j.id)} />)}
+            {running.map((j) => (j.kind === 'render'
+              ? <RenderRow key={j.id} job={j} />
+              : <RunningRow key={j.id} job={j} step={lastStep(live.events[j.id])} tokens={jobLiveTokens(live, j.id)} partial={jobUsagePartial(live, j.id)} />))}
           </ul>
         ) : <Empty icon="clock" title={a.emptyRunning} sub={a.emptyRunningSub} />)}
         {tab === 'done' && (done.length ? (
@@ -181,13 +185,59 @@ function NeedsYou({ approval, leaving, onGone, where }: { approval: ApprovalRequ
   );
 }
 
-/** A row of the Running or Done list: a link to where the job belongs, when its key tells. */
-function Row({ job, className, children }: { job: JobSummary; className?: string; children: ReactNode }) {
+/** A row of the Running or Done list: a link to where the job belongs, when its key tells; `after` sits beside the link. */
+function Row({ job, className, children, after }: { job: JobSummary; className?: string; children: ReactNode; after?: ReactNode }) {
   const to = jobHref(job);
   return (
-    <li className="ms-activity-item">
+    <li className={cx('ms-activity-item', after !== undefined && 'ms-activity-with-after')}>
       {to ? <a className={cx('ms-activity-row ms-activity-link', className)} href={to}>{children}</a> : <div className={cx('ms-activity-row', className)}>{children}</div>}
+      {after}
     </li>
+  );
+}
+
+/** A format's name for a progress line (the built-in catalog; a custom preset shows its id). */
+function useFormatLabel() {
+  const locale = useLocale();
+  return (id: string) => { const p = DEFAULT_FORMATS.find((x) => x.id === id); return p ? formatName(p, locale) : id; };
+}
+
+/**
+ * The render lane (carry 10): a queued render says how many renders are ahead of it ("Queued · 2 renders ahead"); a running
+ * one its format and frames done out of the total, with a bar; both can be cancelled (the core kills the browser and ffmpeg
+ * groups and removes the temp files).
+ */
+function RenderRow({ job }: { job: JobSummary }) {
+  const t = useT();
+  const r = t.web.render;
+  const locale = useLocale();
+  const label = useFormatLabel();
+  const queued = job.state === 'queued';
+  const p = job.progress;
+  const sub = queued ? (job.queuePosition ? r.queuedAhead({ count: job.queuePosition }) : r.queued)
+    : !p ? r.starting
+      : p.phase === 'media' ? r.mediaProgress({ format: label(p.format), done: p.done, total: p.total })
+        : p.phase === 'finishing' ? r.finishing({ format: label(p.format) })
+          : r.framesProgress({ format: label(p.format), done: formatNumber(locale, p.done), total: formatNumber(locale, p.total) });
+  const [cancelling, setCancelling] = useState(false);
+  const cancel = () => {
+    setCancelling(true);
+    Promise.resolve().then(() => api.cancelJob(job.id))
+      .catch((e: unknown) => { setCancelling(false); toast.show(r.cancelFailed({ detail: message(e) })); });
+  };
+  return (
+    <Row job={job} className="ms-tall" after={(
+      <Button size="sm" variant="ghost" className="ms-activity-cancel" loading={cancelling} disabled={cancelling} aria-label={r.cancelRender({ label: job.label })} onClick={cancel}>
+        {r.cancel}
+      </Button>
+    )}>
+      <span className={cx('ms-activity-glyph', queued && 'ms-muted')}>{queued ? <Icon name="clock" size={14} /> : <Spinner decorative />}</span>
+      <span className="ms-activity-text">
+        <b>{job.label}</b>
+        <span className="ms-activity-sub">{sub}</span>
+        {!queued && p?.phase === 'frames' ? <ProgressBar className="ms-activity-bar" value={renderPct(job, p.format)} label={sub} /> : null}
+      </span>
+    </Row>
   );
 }
 

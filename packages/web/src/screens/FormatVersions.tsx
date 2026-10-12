@@ -147,6 +147,8 @@ export interface FormatBadgeProps {
   busy?: boolean;
   onView(n: number): void;
   onCompare(): void;
+  /** The version on screen is a v2 one that can be rendered now (Task 8): the menu offers "Render vN". */
+  render?: { n: number; run(): void } | null;
   className?: string;
 }
 
@@ -176,7 +178,7 @@ export function FormatBadge(p: FormatBadgeProps) {
   );
 }
 
-function VersionsPopover({ slug, creative, label, state, versions, shown, resumeFrom, labelOf, actions, busy, onView, onCompare, close }: FormatBadgeProps & { close(): void }) {
+function VersionsPopover({ slug, creative, label, state, versions, shown, resumeFrom, labelOf, actions, busy, onView, onCompare, render, close }: FormatBadgeProps & { close(): void }) {
   const t = useT();
   const fv = t.web.formatVersions;
   const v = t.web.canvas.versions;
@@ -184,10 +186,11 @@ function VersionsPopover({ slug, creative, label, state, versions, shown, resume
   const when = useWhen();
   const latest = versions.at(-1)?.n ?? 0;
   const star = state.star.version;
+  // A v2 version without a render is a row too (its composition is the version); it has no thumbnail file.
   const rows = [...state.history].reverse().flatMap((n) => {
     const ver = versions.find((x) => x.n === n);
-    const out = ver?.outputs.find((o) => o.format === state.id);
-    return ver && out ? [{ ver, out }] : [];
+    const out = ver?.outputs.find((o) => o.format === state.id) ?? null;
+    return ver && (out || ver.compositions?.some((c) => c.format === state.id)) ? [{ ver, out }] : [];
   });
   // Restarting is offered when the file on screen is not the one the next change starts from: compared as history entries,
   // so a format carried unchanged since its last change (its file is the same in the resume version) offers none.
@@ -203,7 +206,7 @@ function VersionsPopover({ slug, creative, label, state, versions, shown, resume
       {state.starFileMissing && star !== null ? <p className="ms-vmenu-explain ms-fvpop-warn"><Icon name="warn" size={12} />{fv.fileMissing({ n: star })}</p> : null}
       <div className="ms-vmenu-list">
         {rows.map(({ ver, out }) => {
-          const thumb = outputMedia(slug, creative, ver.n, out);
+          const thumb = out ? outputMedia(slug, creative, ver.n, out) : null;
           const note = ver.request.trim() || v.fromBrief;
           const isStar = ver.n === star;
           const on = ver.n === shown;
@@ -215,7 +218,7 @@ function VersionsPopover({ slug, creative, label, state, versions, shown, resume
                 aria-label={[fv.viewRow({ n: ver.n, when: when(ver.createdAt), note }), tokens, auto ? fv.autoTip : null].filter(Boolean).join(' · ')}
                 onClick={() => { onView(ver.n); close(); }}>
                 <span className="ms-vmenu-thumb" aria-hidden="true">
-                  {thumb.video ? <video src={thumb.src} muted preload="metadata" /> : <img src={thumb.src} alt="" />}
+                  {!thumb ? <Icon name="video" size={14} /> : thumb.video ? <video src={thumb.src} muted preload="metadata" /> : <img src={thumb.src} alt="" />}
                 </span>
                 <span className="ms-vmenu-text">
                   <span className="ms-vmenu-line"><b>v{ver.n}</b><span className="ms-vmenu-when">{when(ver.createdAt)}</span>
@@ -249,6 +252,7 @@ function VersionsPopover({ slug, creative, label, state, versions, shown, resume
       ) : null}
       <div className="ms-vmenu-foot">
         <Button size="sm" className="ms-grow" disabled={rows.length < 2} onClick={() => { close(); onCompare(); }}>{v.compare}</Button>
+        {render ? <Button size="sm" className="ms-grow" onClick={() => { close(); render.run(); }}>{t.web.render.renderVersion({ n: render.n })}</Button> : null}
         {canRestart ? <Button size="sm" className="ms-grow" onClick={() => { close(); actions.restart(shown); }}>{v.restart}</Button> : null}
         {state.star.manual ? (
           <Button size="sm" className="ms-grow" title={fv.autoTip} loading={pending} onClick={() => actions.resetStar(state.id)}>{fv.resetAuto}</Button>

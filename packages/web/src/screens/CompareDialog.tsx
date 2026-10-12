@@ -1,13 +1,16 @@
 // Compare two versions of one format (spec §3.2, prototype `CompareDialog`). The versions come from the format's own
 // history (a follower compares its primary's), with the ★ marked. Images: the slider over the two (default) or side by
 // side. Videos: two players side by side (default) under one shared transport, kept in sync by useSyncedMedia (the left
-// one leads), or "Overlay": the slider over the two paused frames. "★ Use vN for export" stars either side.
+// one leads), or "Overlay": the slider over the two paused frames. "★ Use vN for export" stars either side. A v2 version
+// (Task 8) is its live composition player, the same media contract as a <video>; a legacy one keeps its file.
 import type { FormatPreset, VersionEntry } from '@motion-studio/shared';
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
+import { CompositionPlayer } from '../components/CompositionPlayer.tsx';
+import { usePreviewSession, type PreviewState } from '../components/compositionPreview.ts';
 import { useLocale, useT } from '../i18n.tsx';
 import { isVideoFile } from '../media.ts';
 import { Button, Chip, Icon, Modal, Pill, Segmented, cx } from '../ui/index.ts';
-import { useSyncedMedia } from '../ui/useSyncedMedia.ts';
+import { useSyncedMedia, type SyncMedia } from '../ui/useSyncedMedia.ts';
 import { boardSize, outputUrl } from './canvasModel.ts';
 import { boardLabel } from './CanvasBoard.tsx';
 import type { VersionActions } from './FormatVersions.tsx';
@@ -15,6 +18,7 @@ import { activatesControl, bare, isTyping } from './keys.ts';
 import { RequestNote } from './RequestNote.tsx';
 import { PLAYER_CONTROLS, Transport, type Speed } from './Transport.tsx';
 import type { FormatState } from './versionModel.ts';
+import { compositionOf } from './renderModel.ts';
 
 export interface CompareDialogProps {
   open: boolean;
@@ -33,7 +37,9 @@ export interface CompareDialogProps {
 }
 
 type Mode = 'overlay' | 'side';
-interface Side { video: boolean; src: string; poster?: string; duration: number | null }
+/** A side: a file (legacy, or a v2 version whose preview is not available), or the live player of its composition. */
+type Side = { live: false; video: boolean; src: string; poster?: string; duration: number | null }
+  | { live: true; video: boolean; preview: PreviewState; stalled(): void; retry(): void; duration: number | null };
 
 const STEP = 5;
 const clamp = (v: number) => Math.max(0, Math.min(100, v));
@@ -65,20 +71,31 @@ function CompareBody({ onClose, slug, creative, versions, presets, states, forma
 
   const preset = presets.find((x) => x.id === format) ?? null;
   const label = boardLabel({ id: format, preset, out: null }, locale);
-  const media = (n: number): Side | null => {
+  // The live sessions of the two sides (only v2 versions mint one; a legacy answer falls back to the file).
+  const compOf = (n: number) => compositionOf(versions.find((x) => x.n === n), format);
+  const previews = [
+    usePreviewSession({ slug, creative, n: a, format, enabled: compOf(a) !== null }),
+    usePreviewSession({ slug, creative, n: b, format, enabled: compOf(b) !== null }),
+  ] as const;
+  const media = (n: number, i: 0 | 1): Side | null => {
+    const pv = previews[i];
+    if (compOf(n) && pv.state.kind !== 'legacy') {
+      const known = pv.state.kind === 'ready' ? pv.state.session.duration : null;
+      return { live: true, video: preset?.kind !== 'image', preview: pv.state, stalled: pv.stalled, retry: pv.retry, duration: known };
+    }
     const out = versions.find((x) => x.n === n)?.outputs.find((o) => o.format === format);
     if (!out) return null;
     const rel = (file: string) => outputUrl(slug, creative, n, file);
-    return { video: isVideoFile(out.file), src: rel(out.file), poster: out.preview ? rel(out.preview) : undefined, duration: out.durationSec };
+    return { live: false, video: isVideoFile(out.file), src: rel(out.file), poster: out.preview ? rel(out.preview) : undefined, duration: out.durationSec };
   };
-  const sides = [media(a), media(b)] as const;
+  const sides = [media(a, 0), media(b, 1)] as const;
   const video = sides.some((s) => s?.video);
   const [mode, setMode] = useState<Mode>(() => (video ? 'side' : 'overlay'));
   const overlay = mode === 'overlay';
 
   // Videos: one transport for both (the elements come from callback refs: another version is another element).
-  const [left, setLeft] = useState<HTMLVideoElement | null>(null);
-  const [right, setRight] = useState<HTMLVideoElement | null>(null);
+  const [left, setLeft] = useState<SyncMedia | null>(null);
+  const [right, setRight] = useState<SyncMedia | null>(null);
   const [rate, setRate] = useState<Speed>('1');
   const [loop, setLoop] = useState(false);
   const sync = useSyncedMedia(left, right, { durations: [sides[0]?.duration, sides[1]?.duration], rate: Number(rate), loop });
@@ -150,7 +167,14 @@ function CompareBody({ onClose, slug, creative, versions, presets, states, forma
     return (
       <div className={cx('ms-cmp-pane', i === 0 && 'ms-cmp-left')} style={style}>
         {!m ? <span className="ms-cmp-none">{c.noOutput}</span>
-          : m.video ? (
+          : m.live ? (
+            m.preview.kind === 'ready' ? (
+              <CompositionPlayer key={`v${n}`} session={m.preview.session} title={t.web.render.playerFrame({ label: `${label} v${n}` })}
+                onMedia={i === 0 ? setLeft : setRight} onStall={m.stalled} />
+            ) : m.preview.kind === 'failed' ? (
+              <span className="ms-cmp-failed" role="alert">{t.web.render.failed({ detail: m.preview.message })}</span>
+            ) : <span className="ms-cplayer-state" role="status">{m.preview.kind === 'busy' ? t.web.render.busy : t.web.render.loading}</span>
+          ) : m.video ? (
             // The left one carries the sound; the right one is muted (two soundtracks at once help nobody).
             <video key={m.src} ref={i === 0 ? setLeft : setRight} src={m.src} poster={m.poster} muted={i === 1} playsInline preload="auto"
               aria-label={`${label} v${n}`} />
@@ -177,7 +201,7 @@ function CompareBody({ onClose, slug, creative, versions, presets, states, forma
     );
   };
   // ★ either side: the right one first (usually the newer), each version once.
-  const starable = state && !state.follows ? [...new Set([b, a])].filter((n) => media(n) !== null) : [];
+  const starable = state && !state.follows ? [...new Set([b, a])].filter((n) => compOf(n) !== null || versions.some((x) => x.n === n && x.outputs.some((o) => o.format === format))) : [];
   const pending = actions.pending(format);
   // The dialog closes once the ★ is saved; a refusal stays here, in the dialog.
   const [starError, setStarError] = useState<string | null>(null);

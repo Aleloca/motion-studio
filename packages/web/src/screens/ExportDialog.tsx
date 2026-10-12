@@ -5,8 +5,8 @@
 // is remembered; progress, then a success screen with Show in Finder. File sizes are not shown: the API does not report
 // them (ruling R6).
 import {
-  EXPORT_NAME_TOKENS, exportDate, exportExtension, exportNameCollisions, exportNameVars, formatName, renderName,
-  type FormatPreset, type VersionEntry, type WorkspaceSettings,
+  EXPORT_NAME_TOKENS, exportDate, exportExtension, exportNameCollisions, exportNameVars, formatName, renderName, renderState,
+  type FormatPreset, type JobSummary, type VersionEntry, type WorkspaceSettings,
 } from '@motion-studio/shared';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { api } from '../api.ts';
@@ -14,13 +14,14 @@ import { desktop } from '../desktop.ts';
 import { useLocale, useT } from '../i18n.tsx';
 import { pop } from '../motion/index.ts';
 import { isMac } from '../platform.ts';
-import { Button, ChannelMark, Check, Chip, Icon, Input, Modal, cx } from '../ui/index.ts';
+import { Button, ChannelMark, Check, Chip, Icon, Input, Modal, ProgressBar, cx } from '../ui/index.ts';
 import { boardLabel } from './CanvasBoard.tsx';
 import { outputMedia } from './canvasModel.ts';
 import { channelOf } from './creativeState.ts';
 import { message } from './common.tsx';
 import { abortableWait, exportErrorText, withHashRetry } from './versionErrors.ts';
 import type { FormatState } from './versionModel.ts';
+import { compositionOf, renderPct } from './renderModel.ts';
 
 /** The last destination folder, kept in this browser only. */
 export const EXPORT_FOLDER_KEY = 'ms.exportFolder';
@@ -44,6 +45,29 @@ export interface ExportDialogProps {
   pattern: string;
   /** The workspace settings after "Save as default". */
   onSettings?(next: WorkspaceSettings): void;
+  /** The live jobs (the render jobs a ★ export waits for show their progress, Task 8). */
+  jobs?: Record<string, JobSummary>;
+}
+
+/** The extension a render will have (core render-jobs `renderExtension`): the preset's first H.264 container or image type. */
+export function renderedExtension(preset: FormatPreset | null): string {
+  const still = preset?.kind === 'image';
+  const prefer = still ? ['png', 'jpg', 'jpeg', 'webp'] : ['mp4', 'mov', 'm4v'];
+  return `.${prefer.find((e) => preset?.extensions.includes(e)) ?? prefer[0]!}`;
+}
+
+/** Overall progress of the render jobs an export waits for: each job by its formats done and the current one's frames. */
+export function jobsPct(jobs: Array<JobSummary | undefined>): number | null {
+  const known = jobs.filter((j): j is JobSummary => j !== undefined);
+  if (!known.length) return null;
+  const one = (j: JobSummary) => {
+    if (j.state === 'succeeded') return 100;
+    if (j.state !== 'running' || !j.progress) return 0;
+    const list = j.formats?.length ? j.formats : [j.progress.format];
+    const at = Math.max(0, list.indexOf(j.progress.format));
+    return ((at + renderPct(j, j.progress.format) / 100) / list.length) * 100;
+  };
+  return Math.round(known.reduce((a, j) => a + one(j), 0) / known.length);
 }
 
 export function ExportDialog(p: ExportDialogProps) {
@@ -57,7 +81,8 @@ export function ExportDialog(p: ExportDialogProps) {
   );
 }
 
-type Phase = { kind: 'idle' } | { kind: 'run' } | { kind: 'done'; destination: string; count: number; skipped: string[] };
+/** `render`: the ★ versions without a render are rendered first (their jobs, and how many formats). */
+type Phase = { kind: 'idle' } | { kind: 'run' } | { kind: 'render'; jobs: string[]; count: number } | { kind: 'done'; destination: string; count: number; skipped: string[] };
 type SaveState = { kind: 'idle' | 'saving' | 'saved' } | { kind: 'failed'; detail: string };
 
 interface Row {
@@ -72,6 +97,10 @@ interface Row {
   fileN: number | null;
   /** This format's own file in version `fileN`; null when it has none. */
   output: VersionEntry['outputs'][number] | null;
+  /** A v2 composition without a current render: rendered first, then exported (Task 8). */
+  needsRender: boolean;
+  /** The name the file will have (its extension): the output's, or the render's to come. */
+  file: string | null;
   /** The primary's short name, for a follower. */
   follows: string | null;
   newer: number | null;
@@ -79,7 +108,7 @@ interface Row {
   blocked: string | null;
 }
 
-function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern: initialPattern, onSettings, onBusy }: ExportDialogProps & { snapshot: ExportSnapshot; onBusy(busy: boolean): void }) {
+function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern: initialPattern, onSettings, onBusy, jobs = {} }: ExportDialogProps & { snapshot: ExportSnapshot; onBusy(busy: boolean): void }) {
   const t = useT();
   const x = t.web.exportUi;
   const locale = useLocale();
@@ -88,14 +117,19 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
   const rows = useMemo<Row[]>(() => Object.values(states).flatMap((s): Row[] => {
     const n = s.follows ? (states[s.follows]?.star.version ?? null) : s.star.version;
     if (n === null) return [];
-    const fileN = s.follows ? s.exportVersion : n;
-    const output = fileN === null ? null : versions.find((v) => v.n === fileN)?.outputs.find((o) => o.format === s.id) ?? null;
+    // A v2 follower without its own render yet: its file comes with the primary's render, in the primary's ★ version.
+    const fileN = s.follows ? s.exportVersion ?? (compositionOf(versions.find((v) => v.n === n), s.id) ? n : null) : n;
+    const version = fileN === null ? undefined : versions.find((v) => v.n === fileN);
+    const output = version?.outputs.find((o) => o.format === s.id) ?? null;
+    const needsRender = version !== undefined && compositionOf(version, s.id) !== null && renderState(version, s.id) !== 'rendered';
+    const preset = presets.find((pr) => pr.id === s.id) ?? null;
     const primaryPreset = s.follows ? presets.find((pr) => pr.id === s.follows) : undefined;
     const follows = s.follows ? (primaryPreset ? formatName(primaryPreset, locale) : s.follows) : null;
-    const blocked = !output
+    const blocked = needsRender ? null : !output
       ? (follows !== null ? x.noFollowerFile({ n, primary: follows }) : x.fileMissing({ n }))
       : s.starFileMissing ? x.fileMissing({ n: fileN ?? n }) : null;
-    return [{ id: s.id, preset: presets.find((pr) => pr.id === s.id) ?? null, n, fileN, output, follows, newer: follows === null ? s.star.newer : null, blocked }];
+    const file = output?.file ?? (needsRender ? `${s.id}${renderedExtension(preset)}` : null);
+    return [{ id: s.id, preset, n, fileN, output, needsRender, file, follows, newer: follows === null ? s.star.newer : null, blocked }];
   }), [states, versions, presets, x, locale]);
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(rows.map((r) => [r.id, r.blocked === null])));
   const [pattern, setPattern] = useState(initialPattern);
@@ -108,7 +142,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
   const [error, setError] = useState<string | null>(null);
   const field = useRef<HTMLInputElement>(null);
-  const running = phase.kind === 'run';
+  const running = phase.kind === 'run' || phase.kind === 'render';
   const labelId = useId();
   const namesId = useId();
   const previewId = useId();
@@ -127,8 +161,8 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
   // The final names: the pattern rendered per row with the same shared code as the core, extension added.
   const vars = (r: Row) => exportNameVars({ title, slug: creative, format: r.id, preset: r.preset ?? undefined, size: r.output ?? undefined, version: r.n, date });
   const named = rows.map((r) => {
-    const rendered = r.output ? renderName(pattern, vars(r)) : null;
-    return { row: r, name: rendered?.ok && r.output ? `${rendered.name}${exportExtension(r.output.file)}` : null };
+    const rendered = r.file ? renderName(pattern, vars(r)) : null;
+    return { row: r, name: rendered?.ok && r.file ? `${rendered.name}${exportExtension(r.file)}` : null };
   });
   const chosen = named.filter((c) => c.row.blocked === null && on[c.row.id]);
   // Unknown variables are the same on every row: they are left out of the names and flagged here.
@@ -179,10 +213,20 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
     const follow: Record<string, number> = {};
     for (const c of chosen) { if (c.row.follows !== null) follow[c.row.id] = c.row.fileN ?? c.row.n; else picks[c.row.id] = c.row.n; }
     const signal = life.current.signal;
+    const followed = Object.keys(follow).length ? { follow } : {};
     try {
+      // A ★ v2 version without a render is rendered first (Task 8): the jobs start now and show their progress here; the
+      // export below waits for them on the core's side.
+      if (chosen.some((c) => c.row.needsRender)) {
+        const prep = await withHashRetry(() => api.prepareExport(slug, creative, { picks, ...followed }), abortableWait(signal));
+        if (signal.aborted) return;
+        if (prep.renders.length) {
+          setPhase({ kind: 'render', jobs: prep.renders.map((r) => r.job.id), count: prep.renders.reduce((k, r) => k + r.formats.length, 0) });
+        }
+      }
       // A follower's version is decided on hashes: while old versions are still hashed the core answers hashes-pending,
       // retried after its Retry-After (bounded, like a ★ pick).
-      const r = await withHashRetry(() => api.exportPicks(slug, creative, { destination: dest, picks, ...(Object.keys(follow).length ? { follow } : {}), pattern, date }),
+      const r = await withHashRetry(() => api.exportPicks(slug, creative, { destination: dest, picks, ...followed, pattern, date }),
         abortableWait(signal));
       if (signal.aborted) return;
       writeFolder(dest);
@@ -247,6 +291,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
                 <span className="ms-exp-name">
                   <span className="ms-exp-label">{r.preset ? <ChannelMark channel={channelOf(r.preset.channel)} /> : null}<b>{label}</b></span>
                   {blocked ? <span className="ms-exp-blocked">{r.blocked}</span> : <span className="ms-exp-file">{name ?? '—'}</span>}
+                  {r.needsRender && !blocked ? <span className="ms-exp-render">{t.web.render.rendersFirst}</span> : null}
                 </span>
                 {r.follows !== null ? (
                   <span className="ms-exp-follows">{x.follows({ primary: r.follows })}<span className="ms-exp-ver">{x.star({ n: r.n })}</span></span>
@@ -297,7 +342,12 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
         </div>
       </div>
       <div className="ms-exp-foot">
-        {running ? (
+        {phase.kind === 'render' ? (
+          <div className="ms-exp-progress">
+            <span>{t.web.render.renderingFirst({ count: phase.count })}</span>
+            <RenderProgress ids={phase.jobs} jobs={jobs} label={t.web.render.renderingFirst({ count: phase.count })} />
+          </div>
+        ) : running ? (
           <div className="ms-exp-progress">
             <span>{x.running}</span>
             {/* One request copies every file: there is no per-file progress to show. */}
@@ -316,4 +366,10 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
       </div>
     </div>
   );
+}
+
+/** The render jobs' progress while an export waits for them; indeterminate until a job reports. */
+function RenderProgress({ ids, jobs, label }: { ids: string[]; jobs: Record<string, JobSummary>; label: string }) {
+  const pct = jobsPct(ids.map((id) => jobs[id]));
+  return pct === null ? <div className="ms-progress ms-indet" role="progressbar" aria-label={label}><i /></div> : <ProgressBar value={pct} label={label} />;
 }
