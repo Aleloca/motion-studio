@@ -13,6 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Composition } from '@motion-studio/shared';
 import { RenderError } from '../src/render/errors.ts';
 import { findFfmpeg, h264Args, runFfmpeg, type FfmpegInfo } from '../src/render/encode.ts';
+import { ownInput } from '../src/media/ffmpeg-exec.ts';
 import { alignVideoAudio, mixAudio } from '../src/render/audio-mix.ts';
 import {
   clipScaleBound, gamutFilter, hdrFilter, MAX_MEDIA_DIM, MEDIA_TEMP_RE, MediaNormalizer, normalisedFieldsOf, normalizeArgs, pruneMediaCache, targetSize, videoNeeds,
@@ -467,7 +468,7 @@ describe.skipIf(!ffmpeg)('normalisation: sharing, slots, failures, HDR, memo, au
 
   it('final renders are tagged full BT.709, limited range (ruling)', async () => {
     const out = join(work, 'final.mp4');
-    await runFfmpeg(ffmpeg!, ['-f', 'lavfi', '-i', 'testsrc2=s=320x180:r=30:d=0.5', ...h264Args('libx264', 800, 30), '-f', 'mp4', out]);
+    await runFfmpeg(ffmpeg!, [...ownInput('testsrc2=s=320x180:r=30:d=0.5', { formats: ['lavfi'], force: true }), ...h264Args('libx264', 800, 30), '-f', 'mp4', out]);
     const s = JSON.parse(probe(out, ['-show_entries', 'stream=color_primaries,color_transfer,color_space,color_range', '-of', 'json'])).streams[0];
     expect(s).toEqual({ color_range: 'tv', color_space: 'bt709', color_transfer: 'bt709', color_primaries: 'bt709' });
   }, 300_000);

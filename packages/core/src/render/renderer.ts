@@ -20,6 +20,7 @@ import {
 import { cftPlatform, findInstalledCft } from './cft-download.ts';
 import { chooseEncoder, concatLine, countVideoFrames, findFfmpeg, h264Args, hostArch, spawnFfmpeg, targetKbps, type FfmpegInfo, type VideoEncoder } from './encode.ts';
 import { findSystemChrome } from './system-chrome.ts';
+import { MP4_DEMUXERS, ownInput } from '../media/ffmpeg-exec.ts';
 import { renderFrames, type RenderFramesOptions, type RenderFramesResult } from './frames.ts';
 import type { WatchdogLimits } from './watchdog.ts';
 
@@ -201,7 +202,7 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
       const segFiles = await Promise.all(segments.map(async (seg, j) => {
         const page = (opened[j] as PromiseFulfilledResult<RenderPage>).value;
         const file = join(work!, `seg-${String(seg.index).padStart(2, '0')}.mp4`);
-        const enc = spawnFfmpeg(ff!, ['-f', 'image2pipe', '-c:v', 'mjpeg', '-framerate', String(c.fps), '-i', '-',
+        const enc = spawnFfmpeg(ff!, [...ownInput('-', { formats: ['image2pipe'], force: true, options: ['-c:v', 'mjpeg', '-framerate', String(c.fps)] }),
           ...h264Args(encoder, kbps, c.fps, o.x264Preset), '-an', '-f', 'mp4', file], { signal: ctl.signal, stdin: true });
         try {
           await captureSegment(page, seg, {
@@ -229,7 +230,7 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
       const hasAudio = await audio;
       const list = join(work, 'segments.txt');
       await writeFile(list, segFiles.map(concatLine).join('\n') + '\n');
-      await spawnFfmpeg(ff!, ['-f', 'concat', '-safe', '0', '-i', list, ...(hasAudio ? ['-i', wav] : []),
+      await spawnFfmpeg(ff!, [...ownInput(list, { formats: ['concat', ...MP4_DEMUXERS], force: true, options: ['-safe', '0'] }), ...(hasAudio ? ownInput(wav, { formats: ['wav'] }) : []),
         '-map', '0:v:0', ...(hasAudio ? ['-map', '1:a:0', '-c:a', 'aac', '-b:a', '128k', '-ar', '48000'] : []),
         '-c:v', 'copy', '-movflags', '+faststart', '-f', VIDEO_EXT[ext]!, tempOut], { signal: ctl.signal }).done;
       const check = await countVideoFrames(ff!, tempOut);

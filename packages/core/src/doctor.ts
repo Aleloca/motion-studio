@@ -3,6 +3,7 @@ import type { BinaryArch } from './render/arch.ts';
 import type { SandboxSupport } from './agent/sandbox.ts';
 import type { CommandExec, CommandResult } from './exec.ts';
 import { t } from './i18n.ts';
+import { execFfVia } from './media/ffmpeg-exec.ts';
 
 const versionIn = (s: string) => s.match(/(\d+\.\d+(?:\.\d+)?)/)?.[1];
 const firstLine = (s: string) => s.split('\n').map((l) => l.trim()).find(Boolean);
@@ -47,7 +48,7 @@ export async function runDoctor(opts: {
       ? { id: 'git', label: 'Git', required: true, ok: false, message: d.gitMissing, fix: d.gitFix }
       : { id: 'git', label: 'Git', required: true, ok: false, message: brokenMessage(git) });
 
-  const ffmpeg = await exec('ffmpeg', ['-version']);
+  const ffmpeg = await execFfVia(exec, 'ffmpeg', ['-version']);
   const arch = ffmpeg.code === 0 && opts.ffmpegInfo ? await opts.ffmpegInfo().catch(() => null) : null;
   const archText = arch && arch.arch !== 'unknown' ? d.ffmpegArch({ arch: arch.arch === 'universal' ? d.ffmpegUniversal : arch.arch, translated: arch.translated }) : null;
   const ffmpegVersion = versionIn(ffmpeg.stdout);

@@ -1,14 +1,14 @@
-import { execFile, spawn, type ChildProcess, type StdioOptions } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { delimiter, dirname, join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import type { Writable } from 'node:stream';
 import { videoTargetBitrateKbps, type FormatPreset } from '@motion-studio/shared';
 import { RenderError } from './errors.ts';
 import { binaryArch, hostArch, type BinaryArch } from './arch.ts';
 import { killGroup, trackGroup } from './watchdog.ts';
 import { makeOwnedTempDir } from './owner.ts';
+import { execFf, ffprobeOf, MP4_DEMUXERS, ownInput, spawnFf, type ChildProcess, type StdioOptions } from '../media/ffmpeg-exec.ts';
 
 export { binaryArch, hostArch, type BinaryArch } from './arch.ts';
 
@@ -35,11 +35,6 @@ export interface FfmpegInfo {
   filters?: ReadonlySet<string>;
 }
 
-const run = (cmd: string, args: string[], timeoutMs = 60_000): Promise<{ code: number; stdout: string; stderr: string }> => new Promise((resolve) => {
-  execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, encoding: 'utf8' }, (err, stdout, stderr) => {
-    resolve({ code: err ? (typeof err.code === 'number' ? err.code : 1) : 0, stdout: stdout ?? '', stderr: stderr ?? '' });
-  });
-});
 
 /** `name` on PATH (or the usual install places), or null. */
 function which(name: string, env: NodeJS.ProcessEnv): string | null {
@@ -58,11 +53,11 @@ export function findFfmpeg(env: NodeJS.ProcessEnv = process.env): Promise<Ffmpeg
   let p = infoCache.get(path);
   if (!p) {
     p = (async () => {
-      const v = await run(path, ['-hide_banner', '-version'], 60_000);
+      const v = await execFf(path, ['-hide_banner', '-version'], 60_000);
       if (v.code !== 0) return null;
       const [enc, prot, arch, host, flt] = await Promise.all([
-        run(path, ['-hide_banner', '-encoders'], 60_000), run(path, ['-hide_banner', '-protocols'], 60_000), binaryArch(path), hostArch(),
-        run(path, ['-hide_banner', '-filters'], 60_000),
+        execFf(path, ['-hide_banner', '-encoders'], 60_000), execFf(path, ['-hide_banner', '-protocols'], 60_000), binaryArch(path), hostArch(),
+        execFf(path, ['-hide_banner', '-filters'], 60_000),
       ]);
       const filters = new Set<string>();
       for (const line of flt.stdout.split('\n')) { const m = /^\s*[TSC.]{2,3}\s+(\S+)\s+\S+->\S+/.exec(line); if (m) filters.add(m[1]!); }
@@ -90,11 +85,12 @@ export interface FfmpegProcess {
 
 /**
  * Starts ffmpeg in its own process group (killed as a whole on `kill()` or abort), `-loglevel error`, never prompting.
- * `fds` are open file descriptors handed to the child as fd 3, 4, … (`-fd N -i fd:`).
+ * `fds` are open file descriptors handed to the child as fd 3, 4, … (`-fd N -i fd:`). Every input of `args` must come from
+ * `mediaInput`/`ownInput` (`media/ffmpeg-exec.ts`): an input without the whitelists is refused (throws).
  */
 export function spawnFfmpeg(ff: FfmpegInfo, args: string[], o: { signal?: AbortSignal; stdin?: boolean; fds?: number[] } = {}): FfmpegProcess {
   const stdio: StdioOptions = [o.stdin ? 'pipe' : 'ignore', 'ignore', 'pipe', ...(o.fds ?? [])];
-  const proc = spawn(ff.path, ['-hide_banner', '-loglevel', 'error', ...(o.stdin ? [] : ['-nostdin']), '-y', ...args], { stdio, detached: true });
+  const proc = spawnFf(ff.path, ['-hide_banner', '-loglevel', 'error', ...(o.stdin ? [] : ['-nostdin']), '-y', ...args], { stdio, detached: true });
   const untrack = proc.pid ? trackGroup(proc.pid) : () => {};
   let tail = '';
   proc.stderr!.on('data', (d: Buffer) => { tail = (tail + d.toString('utf8')).slice(-4000); });
@@ -181,9 +177,9 @@ export function checkVideotoolbox(ff: FfmpegInfo, width: number, height: number,
       try {
         const src = vtTestPattern(width, height, fps);
         const out = join(dir, 'vt.mp4');
-        const enc = await run(ff.path, ['-hide_banner', '-nostdin', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', src, ...h264Args('h264_videotoolbox', kbps, fps), '-f', 'mp4', out], 300_000);
+        const enc = await execFf(ff.path, ['-hide_banner', '-nostdin', '-loglevel', 'error', '-y', ...ownInput(src, { formats: ['lavfi'], force: true }), ...h264Args('h264_videotoolbox', kbps, fps), '-f', 'mp4', out], 300_000);
         if (enc.code !== 0) return { ok: false, ssim: null, reason: enc.stderr.trim().slice(-300) || 'encode failed', transient: true };
-        const cmp = await run(ff.path, ['-hide_banner', '-nostdin', '-loglevel', 'info', '-i', out, '-f', 'lavfi', '-i', src,
+        const cmp = await execFf(ff.path, ['-hide_banner', '-nostdin', '-loglevel', 'info', ...ownInput(out, { formats: MP4_DEMUXERS }), ...ownInput(src, { formats: ['lavfi'], force: true }),
           '-lavfi', '[0:v]format=yuv420p[a];[1:v]scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[b];[a][b]ssim', '-f', 'null', '-'], 300_000);
         const ssim = Number(/All:([\d.]+)/.exec(cmp.stderr)?.[1]);
         if (!Number.isFinite(ssim)) return { ok: false, ssim: null, reason: 'no SSIM', transient: true };
@@ -215,9 +211,7 @@ export interface StreamCount { frames: number; width: number; height: number; au
 
 /** Counts the video packets (one per frame for our H.264) of `file` and reads its size; null when unreadable. */
 export async function countVideoFrames(ff: FfmpegInfo, file: string): Promise<StreamCount | null> {
-  const probe = join(dirname(ff.path), process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe');
-  const exe = existsSync(probe) ? probe : 'ffprobe';
-  const r = await run(exe, ['-v', 'error', '-count_packets', '-show_entries', 'stream=codec_type,nb_read_packets,width,height', '-of', 'json', file], 300_000);
+  const r = await execFf(ffprobeOf(ff.path), ['-v', 'error', '-count_packets', '-show_entries', 'stream=codec_type,nb_read_packets,width,height', '-of', 'json', ...ownInput(file, { formats: MP4_DEMUXERS })], 300_000);
   if (r.code !== 0) return null;
   try {
     const data = JSON.parse(r.stdout) as { streams?: Array<{ codec_type?: string; nb_read_packets?: string; width?: number; height?: number }> };

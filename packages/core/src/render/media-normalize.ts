@@ -1,6 +1,5 @@
-import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { createReadStream, existsSync } from 'node:fs';
+import { createReadStream } from 'node:fs';
 import { lstat, mkdir, mkdtemp, open, readdir, rename, rm, utimes } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -16,6 +15,7 @@ import { RenderError } from './errors.ts';
 import { spawnFfmpeg, type FfmpegInfo } from './encode.ts';
 import { killGroup, trackGroup } from './watchdog.ts';
 import { makeOwnedTempDir } from './owner.ts';
+import { ffprobeOf, mediaInput, MP4_DEMUXERS, spawnFf } from '../media/ffmpeg-exec.ts';
 
 /**
  * Video media normalisation (Task 5, orchestrator decision): before a composition is rendered or previewed, the core makes
@@ -167,16 +167,14 @@ export function normalizeArgs(o: { fps: number; width: number; height: number; a
 
 // ---------- ffprobe ----------
 
-const probePath = (ff: FfmpegInfo) => {
-  const p = join(dirname(ff.path), process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe');
-  return existsSync(p) ? p : 'ffprobe';
-};
-
-/** Runs ffprobe (own process group, killed on abort) and parses its JSON; null when it fails or prints no JSON. */
+/**
+ * Runs ffprobe (own process group, killed on abort) and parses its JSON; null when it fails or prints no JSON. Its input
+ * must come from `mediaInput`/`ownInput` (`media/ffmpeg-exec.ts`), or it throws.
+ */
 export function probeJson(ff: FfmpegInfo, args: string[], o: { fds?: number[]; signal: AbortSignal }): Promise<Record<string, unknown> | null> {
   return new Promise((resolve, reject) => {
     if (o.signal.aborted) return reject(new RenderError('cancelled', 'cancelled'));
-    const proc = spawn(probePath(ff), ['-v', 'error', ...args, '-of', 'json'], { stdio: ['ignore', 'pipe', 'ignore', ...(o.fds ?? [])], detached: true });
+    const proc = spawnFf(ffprobeOf(ff.path), ['-v', 'error', ...args, '-of', 'json'], { stdio: ['ignore', 'pipe', 'ignore', ...(o.fds ?? [])], detached: true });
     const untrack = proc.pid ? trackGroup(proc.pid) : () => {};
     let out = '';
     let cancelled = false;
@@ -289,7 +287,7 @@ async function withSource<T>(compDir: string, src: string, expect: Identity | nu
     // A second handle on the same open file: the child gets it as fd 3 (`/dev/fd/N` dups the verified descriptor).
     let dup: FileHandle;
     try { dup = await open(`/dev/fd/${fh.fd}`, 'r'); } catch { return { skipped: 'unreadable' as const }; }
-    try { return { value: await use(['-fd', '3', '-i', 'fd:'], [dup.fd], id) }; } finally { await dup.close().catch(() => {}); }
+    try { return { value: await use(mediaInput({ fd: 3 }), [dup.fd], id) }; } finally { await dup.close().catch(() => {}); }
   });
   if (failure) throw failure;
   if (r === null) throw unreadable(src, 'missing');
@@ -593,7 +591,7 @@ export class MediaNormalizer {
         const h = createHash('sha256');
         await pipeline(createReadStream(copy), h);
         hashed = { sha256: h.digest('hex'), id: { dev: 0, ino: 0, size: 0, mtimeMs: 0, ctimeMs: 0 } };
-        input = (use) => use(['-i', copy], []);
+        input = (use) => use(mediaInput({ file: copy }), []);
       }
       if (signal.aborted) throw cancelled();
       const info = sourceInfoOf(await input((args, fds) => probeJson(ff, [...SOURCE_PROBE, ...args], { fds, signal })));
@@ -691,7 +689,7 @@ export class MediaNormalizer {
       let dup: FileHandle;
       try { dup = await open(`/dev/fd/${fh.fd}`, 'r'); } catch { return { skipped: 'unreadable' as const }; }
       try {
-        const args = ff.fdProtocol && process.platform !== 'win32' ? ['-fd', '3', 'fd:'] : [file];
+        const args = ff.fdProtocol && process.platform !== 'win32' ? mediaInput({ fd: 3 }, MP4_DEMUXERS) : mediaInput({ file }, MP4_DEMUXERS);
         return { value: normalisedFieldsOf(await probeJson(ff, [...NORMALISED_PROBE, ...args], { fds: [dup.fd], signal }), want) };
       } finally { await dup.close().catch(() => {}); }
     }) : null;

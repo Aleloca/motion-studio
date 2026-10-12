@@ -6,6 +6,7 @@ import { copyConfinedFile, withConfinedFile } from '../brand/agent-guard.ts';
 import { RenderError } from './errors.ts';
 import { runFfmpeg, type FfmpegInfo } from './encode.ts';
 import { probeJson } from './media-normalize.ts';
+import { mediaInput } from '../media/ffmpeg-exec.ts';
 
 /**
  * The audio of a composition (spec §5.3; spike §5), mixed sample-accurately with ffmpeg:
@@ -109,7 +110,7 @@ export function alignVideoAudio(clip: MixClip, starts: { video: number; audio: n
 
 /** The start times (s) of the first video and the first audio stream of an input; null when unknown. */
 async function streamStarts(ff: FfmpegInfo, input: { fd: number } | { file: string }, signal: AbortSignal): Promise<{ video: number; audio: number } | null> {
-  const j = await probeJson(ff, ['-show_entries', 'stream=codec_type,start_time', ...('fd' in input ? ['-fd', '3', 'fd:'] : [input.file])], { signal, fds: 'fd' in input ? [input.fd] : [] });
+  const j = await probeJson(ff, ['-show_entries', 'stream=codec_type,start_time', ...mediaInput('fd' in input ? { fd: 3 } : { file: input.file })], { signal, fds: 'fd' in input ? [input.fd] : [] });
   const streams = Array.isArray(j?.streams) ? j.streams as Array<{ codec_type?: string; start_time?: string }> : [];
   const v = Number(streams.find((x) => x.codec_type === 'video')?.start_time);
   const a = Number(streams.find((x) => x.codec_type === 'audio')?.start_time);
@@ -118,7 +119,7 @@ async function streamStarts(ff: FfmpegInfo, input: { fd: number } | { file: stri
 
 /** Whether ffmpeg finds an audio stream in the input (`-fd 3 -i fd:` with `fd`, else `file`). */
 async function hasAudio(ff: FfmpegInfo, input: { fd: number } | { file: string }, signal: AbortSignal): Promise<boolean> {
-  const src = 'fd' in input ? ['-fd', '3', '-i', 'fd:'] : ['-i', input.file];
+  const src = mediaInput('fd' in input ? { fd: 3 } : { file: input.file });
   return runFfmpeg(ff, [...src, '-map', '0:a:0', '-t', '0', '-f', 'null', '-'], { signal, fds: 'fd' in input ? [input.fd] : [] }).then(() => true, (e) => {
     if (e instanceof RenderError && e.code === 'cancelled') throw e;
     return false;
@@ -163,10 +164,10 @@ export async function mixAudio(o: { ff: FfmpegInfo; compDir: string; clips: MixC
   try {
     const inputs: string[] = [];
     for (const k of kept) {
-      if (k.copy) { inputs.push('-i', k.copy); continue; }
+      if (k.copy) { inputs.push(...mediaInput({ file: k.copy })); continue; }
       const h = await openConfined(o.compDir, k.clip.src);
       handles.push(h);
-      inputs.push('-fd', String(2 + handles.length), '-i', 'fd:');
+      inputs.push(...mediaInput({ fd: 2 + handles.length }));
     }
     const total = samples(o.durationSec);
     await runFfmpeg(o.ff, [...inputs, '-filter_complex', mixGraph(kept.map((k) => k.clip), total), '-map', '[out]', '-ar', String(AUDIO_RATE), '-ac', '2', '-c:a', 'pcm_f32le', '-f', 'wav', o.outWav],
