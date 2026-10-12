@@ -48,6 +48,16 @@ for (const k of ['appData', 'userData', 'sessionData', 'logs', 'crashDumps'] as 
 // Not removed here: an rmSync of it in an 'exit' hook hung Electron's exit once pages had loaded over HTTP. The test does it.
 
 const report = (o: unknown) => console.log(`HARNESS ${JSON.stringify(o)}`);
+// Final wave B2: the effective data folders, logged before anything else; one outside the scratch folder stops this run
+// at once. The test checks them too and only then says `go` (stdin): nothing runs before.
+const PATHS = ['appData', 'userData', 'sessionData', 'logs', 'crashDumps'] as const;
+const paths = Object.fromEntries(PATHS.map((k) => [k, app.getPath(k)]));
+report({ phase: 'paths', pid: process.pid, ...paths });
+if (PATHS.some((k) => !paths[k]!.startsWith(`${scratch}/`))) { report({ error: 'Electron data outside the scratch folder' }); app.exit(3); process.exit(3); }
+const go = new Promise<void>((resolve) => {
+  let input = '';
+  process.stdin.on('data', (d: Buffer) => { input += d.toString(); if (/^go$/m.test(input)) resolve(); });
+});
 const settle = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const formatOf = (c: Composition, id: string): FormatPreset => ({ id, channel: 'Test', name: id, width: c.width, height: c.height, kind: 'video', extensions: ['mp4'], targetBitrateKbps: 800 });
@@ -276,7 +286,7 @@ app.dock?.hide();
 void app.whenReady().then(() => powerSaveBlocker.start('prevent-app-suspension'));
 // Hidden windows only: the harness must not end when none is open.
 app.on('window-all-closed', () => {});
-void app.whenReady().then(run).then(
+void app.whenReady().then(() => go).then(run).then(
   async () => { await closeAllRenderWindows(); report({ done: true }); app.exit(0); },
   async (e: unknown) => { report({ error: e instanceof Error ? `${e.name}: ${e.message}` : String(e), code: (e as { code?: unknown }).code ?? null }); await closeAllRenderWindows(); app.exit(1); },
 );

@@ -28,6 +28,7 @@ import { createRequire } from 'node:module';
 import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { electronDataOutside } from './electron/paths.ts';
 import type { Composition } from '../../../packages/shared/src/index.ts';
 import { findFfmpeg, type FfmpegInfo } from '@motion-studio/core';
 import { countVideoFrames } from '../../../packages/core/src/render/encode.ts';
@@ -39,6 +40,7 @@ import {
 import { buildRuntime, decodeStrips, FONT, frameCodedVideo, put, readCode, startCanary, startUdpCanary, type Canary, type UdpCanary } from '../../../packages/core/test/helpers/render-env.ts';
 
 const DESKTOP = join(import.meta.dirname, '..');
+
 const required = process.env.MS_REQUIRE_ELECTRON === '1';
 const electronPath = (() => { try { return createRequire(join(DESKTOP, 'package.json'))('electron') as string; } catch { return null; } })();
 const hasElectron = !!electronPath && existsSync(electronPath);
@@ -231,7 +233,7 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
     };
     return new Promise((resolve) => {
       // Its own process group (detached): the test kills only that group, which it created, never by pattern or marker.
-      const child = spawn(electronPath!, ['--use-mock-keychain', '--password-store=basic', harness], { env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+      const child = spawn(electronPath!, ['--use-mock-keychain', '--password-store=basic', harness], { env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
       const pgid = child.pid!;
       const groupAlive = () => { try { process.kill(-pgid, 0); return true; } catch { return false; } };
       // Only while the group is known to be ours: its leader still runs (the timers below, cleared on exit), or members are
@@ -240,6 +242,7 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
       let doneTimer: NodeJS.Timeout | null = null;
       const lines: Array<Record<string, unknown>> = [];
       let killedAfterDone = false;
+      let badPaths: string[] | null = null;
       let output = '';
       let buf = '';
       child.stdout.on('data', (d: Buffer) => {
@@ -251,6 +254,15 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
           const m = /^HARNESS (.*)$/.exec(line);
           if (m) {
             const o = JSON.parse(m[1]!) as Record<string, unknown>;
+            // Final wave B2: the first report is the effective data folders. Logged; under the scratch folder, the harness
+            // is told to go; anywhere else its own process group (this spawn's) is stopped before it does anything.
+            if (o.phase === 'paths') {
+              console.info(`[electron] pid ${String(o.pid)} userData ${String(o.userData)}`);
+              const bad = electronDataOutside(o, scratch);
+              if (bad.length === 0 && o.pid === child.pid) child.stdin.write('go\n');
+              else { badPaths = bad.length ? bad : ['pid']; killGroup(); }
+              continue;
+            }
             lines.push(o);
             onLine?.(o);
             // Finished. On this very loaded machine Electron's own shutdown took from seconds to minutes (its helpers
@@ -272,7 +284,8 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
         rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
         const done = lines.some((l) => l.done === true);
         if (process.env.MS_RENDER_DEBUG) console.info(`[electron] exit ${String(code)}${killedAfterDone ? ' (group killed 2 min after done)' : ''}${left ? ', helpers left in its group: killed' : ''}`);
-        resolve({ ok: done && (code === 0 || killedAfterDone), code, lines, output: output.slice(-4000) });
+        if (badPaths) output += `\nElectron data outside the scratch folder: ${badPaths.join(', ')}`;
+        resolve({ ok: !badPaths && done && (code === 0 || killedAfterDone), code, lines, output: output.slice(-4000) });
       });
     });
   }
