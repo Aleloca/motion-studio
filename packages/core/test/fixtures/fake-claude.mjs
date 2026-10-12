@@ -134,6 +134,8 @@ rl.once('line', async (line) => {
       appendFileSync(process.env.FAKE_CLAUDE_BRIDGE_LOG, `${JSON.stringify({ tool, status: res.status, body: await res.json().catch(() => null) })}\n`);
     }
   }
+  // An entry the agent makes at the top of its creative folder (final wave B6: the tripwire's documented trigger).
+  if (block && process.env.FAKE_CLAUDE_STRAY_ROOT) mkdirSync(join(dirname(block.workDir.replace(/\/+$/, '')), process.env.FAKE_CLAUDE_STRAY_ROOT), { recursive: true });
   // Holds a creative turn until the file exists (a test runs something else meanwhile).
   if (block && process.env.FAKE_CLAUDE_WAIT_FILE_CREATIVE) { while (!existsSync(process.env.FAKE_CLAUDE_WAIT_FILE_CREATIVE)) await sleep(20); }
   if (block && scenario === 'render') render(false);
