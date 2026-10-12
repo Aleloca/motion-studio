@@ -221,8 +221,8 @@ describe('render jobs', { timeout: 60_000 }, () => {
     expect(done.state, done.error).toBe('succeeded');
     expect(done.progress).toBeUndefined();
     expect(fake.calls.map((c) => [c.format.id, c.versionDir, basename(c.out)])).toEqual([['test-wide', 'outputs/v1', 'test-wide.mp4'], ['test-still', 'outputs/v1', 'test-still.png']]);
-    // The media of every render goes to the session (empty here: no video clip).
-    expect(fake.calls[0]!.media).toMatchObject({ dir: join(projectDir(), '.studio', 'cache', 'media') });
+    // No video clip, nothing normalised: no media for the session (it never needs the cache folder, which may not exist).
+    expect(fake.calls[0]!.media).toBeUndefined();
     const vdir = join(dir, 'outputs', 'v1');
     expect(readdirSync(vdir).sort()).toEqual(['compositions', 'manifest.json', 'test-still.png', 'test-wide-b.mp4', 'test-wide.mp4']);
     // The follower is a copy: same bytes, its own inode, never a hard link.
