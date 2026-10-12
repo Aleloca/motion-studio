@@ -120,7 +120,8 @@ export function requestSource(r: Pick<PreviewRequest, 'frameUrls' | 'referrer' |
  * Whether the UI window's session must cancel this request (see the module comment):
  * - the main frame: never (the window's `will-navigate` guard keeps it on the app);
  * - from the app: anything, except a frame (`subFrame`), which may show only the active composition server;
- * - from the composition server: only the composition server;
+ * - from the composition server: only the composition server, and only the token prefix of its own session (when the
+ *   frame's URL tells it);
  * - from anything else (an opaque or another foreign source): nothing.
  */
 export function previewRequestBlocked(r: PreviewRequest, ctx: FilterContext): boolean {
@@ -129,7 +130,24 @@ export function previewRequestBlocked(r: PreviewRequest, ctx: FilterContext): bo
   const target = webOrigin(r.url);
   const source = requestSource(r, ctx.appOrigin);
   if (source === null) return r.resourceType === 'subFrame' && (comp === null || target !== comp);
-  return comp === null || source !== comp || target !== comp;
+  if (comp === null || source !== comp || target !== comp) return true;
+  // Scoped to the session (M9): a composition frame reaches only its own session's token prefix. When the frame chain does
+  // not tell the token (a worker, a blob: document), the origin check above is all there is.
+  const own = sessionToken(r.frameUrls, comp);
+  return own !== null && firstSegment(r.url) !== own;
+}
+
+/** The first path segment of an http(s)/ws(s) URL (the composition server's session token), or null. */
+function firstSegment(url: string): string | null {
+  try { return /^\/([^/]+)/.exec(new URL(url).pathname)?.[1] ?? null; } catch { return null; }
+}
+
+/** The session token of the nearest frame of the chain served by the composition server (`http(s)` frames only). */
+function sessionToken(frameUrls: string[], comp: string): string | null {
+  for (const url of frameUrls) {
+    if (/^https?:/i.test(url) && webOrigin(url) === comp) return firstSegment(url);
+  }
+  return null;
 }
 
 /** `will-frame-navigate` of a subframe (`frameUrls`: the navigating frame's current URL, then its parents'). */

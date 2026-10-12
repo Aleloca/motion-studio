@@ -65,7 +65,9 @@ describe('preview filter decision', () => {
     ['a layer fetching the core API (canary)', { frameUrls: [LAYER, APP + '/'], url: `${APP}/api/health` }, true],
     ['a layer fetching the internet', { frameUrls: [LAYER, APP + '/'], url: 'https://example.com/' }, true],
     ['a layer opening a WebSocket elsewhere', { frameUrls: [LAYER, APP + '/'], url: 'ws://127.0.0.1:4318/api/events', resourceType: 'webSocket' }, true],
-    ['a WebSocket to the composition server itself', { frameUrls: [LAYER, APP + '/'], url: 'ws://127.0.0.1:50001/x', resourceType: 'webSocket' }, false],
+    ['a WebSocket to the composition server itself', { frameUrls: [LAYER, APP + '/'], url: 'ws://127.0.0.1:50001/tok0123456789abcdef/x', resourceType: 'webSocket' }, false],
+    ['a layer reaching ANOTHER session\'s token path on the composition server (M9)', { frameUrls: [LAYER, APP + '/'], url: `${COMP}/othertoken9999/assets/a.png` }, true],
+    ['a layer reaching the composition server outside any token path (M9)', { frameUrls: [LAYER, APP + '/'], url: `${COMP}/` }, true],
     ['a layer navigating itself out (href, meta, anchor, replace, open _self)', { frameUrls: [LAYER, APP + '/'], url: 'http://127.0.0.1:4318/selfnav-href', resourceType: 'subFrame' }, true],
     ['a nested iframe of a layer', { frameUrls: ['about:blank', LAYER, APP + '/'], url: 'http://127.0.0.1:9999/selfnav-iframe', resourceType: 'subFrame' }, true],
     ['a worker of a layer (no frame, referrer)', { referrer: LAYER, url: 'http://127.0.0.1:9999/worker-fetch', resourceType: 'other' }, true],
@@ -158,7 +160,7 @@ describe('installPreviewFilter', () => {
     const layer = { url: LAYER, parent: runtime };
     const decide = (d: object) => new Promise<{ cancel: boolean }>((r) => handler({ resourceType: 'xhr', referrer: '', ...d }, r));
     expect(await decide({ url: `${APP}/api/health`, frame: layer })).toEqual({ cancel: true });
-    expect(await decide({ url: `${COMP}/tok/a.png`, frame: layer })).toEqual({ cancel: false });
+    expect(await decide({ url: `${COMP}/tok0123456789abcdef/a.png`, frame: layer })).toEqual({ cancel: false });
     expect(await decide({ url: `${APP}/api/health`, frame: top })).toEqual({ cancel: false });
     // A frame object that throws (destroyed) falls back to the referrer.
     const gone = { get url(): string { throw new Error('destroyed'); }, parent: null };
