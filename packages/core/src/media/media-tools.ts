@@ -7,7 +7,8 @@ export interface MediaTools {
   readonly available: boolean;
   probe(file: string): Promise<MediaInfo | null>;
   poster(video: string, out: string, atSec?: number): Promise<boolean>;
-  frame(video: string, out: string, atSec: number): Promise<boolean>;
+  /** One frame at `atSec` (or the first one when the clip is shorter). `width`: shrink to at most this width (never enlarge). */
+  frame(video: string, out: string, atSec: number, opts?: { width?: number }): Promise<boolean>;
 }
 
 export const NoMediaTools: MediaTools = {
@@ -23,10 +24,10 @@ export async function createFfmpegTools(exec: CommandExec = execCommand): Promis
   const check = await exec('ffprobe', ['-version'], { timeoutMs: 10_000 });
   if (check.code !== 0) return NoMediaTools;
 
-  const grab = async (video: string, out: string, atSec: number) => {
+  const grab = async (video: string, out: string, atSec: number, opts?: { width?: number }) => {
     await mkdir(dirname(out), { recursive: true });
     // A temp name (`….tmp`, renamed into place by the caller) has no image extension: the JPEG muxer is named explicitly.
-    const fmt = out.endsWith('.tmp') ? ['-f', 'mjpeg'] : [];
+    const fmt = [...(opts?.width ? ['-vf', `scale='min(${Math.round(opts.width)},iw)':-2`] : []), ...(out.endsWith('.tmp') ? ['-f', 'mjpeg'] : [])];
     const r = await exec('ffmpeg', ['-y', '-loglevel', 'error', '-ss', String(atSec), '-i', video, '-frames:v', '1', '-q:v', '3', ...fmt, out], { timeoutMs: 60_000 });
     if (r.code === 0) return true;
     if (atSec === 0) return false;
@@ -53,6 +54,6 @@ export async function createFfmpegTools(exec: CommandExec = execCommand): Promis
       }
     },
     poster: (video, out, atSec = 0.5) => grab(video, out, atSec),
-    frame: (video, out, atSec) => grab(video, out, atSec),
+    frame: (video, out, atSec, opts) => grab(video, out, atSec, opts),
   };
 }

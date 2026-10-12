@@ -2,6 +2,7 @@ import type { CreativeFile, FormatPreset, Pin } from '@motion-studio/shared';
 import { formatLabel, videoTargetBitrateKbps, type BrandKit, type Locale } from '@motion-studio/shared';
 import { replyInstruction } from '../i18n.ts';
 import { findPreset } from '../formats/format-catalog.ts';
+import type { LegacyFormatReference } from './legacy-conversion.ts';
 
 export interface CreativeContext {
   kit: BrandKit; hasGuidelines: boolean; assets: number; references: number;
@@ -26,6 +27,11 @@ export interface PromptInput {
    * (`ServerDeps.agentContract`).
    */
   contract?: AgentContract;
+  /**
+   * Task 6, spec §7: the base version is legacy (rendered media, no compositions), so this turn converts it: the agent
+   * rebuilds each format as a composition from the old media (and its reference frames), then applies the request.
+   */
+  conversion?: { baseVersion: number; formats: LegacyFormatReference[] };
   /**
    * The formats the agent delivers this turn (spec §2.3, §2.5): primaries only, in the brief's order. Default: every brief
    * format. When some brief formats are left out (carried over or followers), the prompt says Motion Studio handles them.
@@ -145,6 +151,22 @@ export const COMPOSITION_SECTION = [
   '- An image format is a still: `"duration": 0`, no scenes, every clip starting at 0.',
 ];
 
+/** The conversion of a legacy version (Task 6): rebuild every format faithfully as a composition, then apply the request. */
+export function conversionSection(c: NonNullable<PromptInput['conversion']>): string[] {
+  const lines = [
+    '## Convert the earlier version first',
+    `- Version ${c.baseVersion} is rendered media from an older Motion Studio, not compositions. Before applying the request above, rebuild EACH format below faithfully as a composition: same layout, texts, colours, fonts, images, timing, scenes and audio, as close as you can get. Then apply the request on top of that rebuild.`,
+    '- Look at the reference frames (about one per second, 540 px wide) to see what the original looks like, and at the original media for what you need to reuse (images, video, audio, voice-over): copy what the composition uses into its `assets/` folder; extract audio with ffmpeg when needed. The earlier version is read-only.',
+    '- Deliver one composition per format below, even for formats the request does not mention. Do not tell the user about the internals of the conversion beyond what changed visibly.',
+  ];
+  for (const f of c.formats) {
+    lines.push(`- ${f.format}: original ${f.source} (${f.kind === 'image' ? 'image' : `video${f.durationSec ? `, ${f.durationSec}s` : ''}`})`
+      + (f.frames.length > 0 ? `; reference frames:` : '; no reference frames could be extracted, read the original media instead'));
+    for (const fr of f.frames) lines.push(`  - ${fr.file}${f.kind === 'image' ? '' : ` (t=${fr.t}s)`}`);
+  }
+  return lines;
+}
+
 export function buildCreativePrompt(i: PromptInput): string {
   const { locale } = i;
   const contract = i.contract ?? 'compositions';
@@ -181,6 +203,7 @@ export function buildCreativePrompt(i: PromptInput): string {
       for (const p of i.pins) parts.push(`- ${p.format}${p.timeSec !== null ? ` @ ${p.timeSec.toFixed(1)}s` : ''}, point (${pct(p.x)}, ${pct(p.y)})${p.note ? `: ${p.note}` : ''}`);
     }
     if (i.attachments?.length) parts.push('', '## Attached frames (read them)', ...i.attachments.map((a) => `- ${a}`));
+    if (i.conversion && contract === 'compositions') parts.push('', ...conversionSection(i.conversion));
   } else if (contract === 'compositions') {
     parts.push(
       `The compositions of version ${i.version} do not meet the contract. Fix these problems in the same folders (${outputDir}/compositions/<format-id>/), then call validate_composition again:`,

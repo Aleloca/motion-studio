@@ -23,6 +23,7 @@ import { confinedSha, copyVerified, earlierOutputDirs, followCheck, isConfinedFi
 import { outputFileExists } from './format-summary.ts';
 import { hashVersionOutputs, LAZY_HASH_BUDGET_MS, withLazyHashes } from './output-hashes.ts';
 import { legacyProblemsOf } from './legacy-problems.ts';
+import { extractReferenceFrames, isLegacyVersion } from './legacy-conversion.ts';
 import { buildCreativePrompt, type AgentContract, type CreativeContext, type PromptKind } from './prompt.ts';
 import { checkTargets } from './composition-contract.ts';
 import { realDirChain, writeThroughTemp } from './core-files.ts';
@@ -365,6 +366,16 @@ export class CreativeTurnService {
 
       if (!noAgent) {
         const { context, existing } = await this.buildContext(ref, store, creative.linkedCodebases);
+        // Spec §7: a legacy base (rendered media, v1 manifest) makes this change a conversion to compositions. The core
+        // extracts reference frames of the old media into its protected cache; the chat says it costs more tokens once.
+        let conversion: { baseVersion: number; formats: Awaited<ReturnType<typeof extractReferenceFrames>> } | undefined;
+        if (contract === 'compositions' && isLegacyVersion(base)) {
+          await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: j.convertingLegacy });
+          conversion = {
+            baseVersion: base.n,
+            formats: await extractReferenceFrames({ projectDir: ref.projectDir, creativeDir, creativeSlug: slug, n, base, formats: targets, presets, media: this.deps.media }),
+          };
+        }
         const uncheckable = new Set<string>();
         let forkSession = Boolean(creative.resumeFrom);
         let kind: PromptKind = versions.length === 0 ? 'first' : 'iteration';
@@ -436,6 +447,7 @@ export class CreativeTurnService {
             pins: kind === 'iteration' ? message?.pins : undefined,
             attachments: kind === 'iteration' ? attachments : undefined,
             problems, context, locale, sandboxed, contract,
+            conversion: kind === 'iteration' ? conversion : undefined,
           });
           const snapshotsBefore = await Promise.all(existing.map((p) => codebaseSnapshot(p)));
           for (const [k, p] of existing.entries()) {
