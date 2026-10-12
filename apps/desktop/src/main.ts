@@ -1,19 +1,22 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, Notification, session, shell, type IpcMainInvokeEvent } from 'electron';
+import { execFile } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { AlreadyRunningError, answersHealth, defaultConfigDir, resolveLocale, resolveLoginShellPath, setLocale, startServer, t } from '@motion-studio/core';
 import { absolutePathArg, attachedGone, attachedGoneAction, attachedLocale, bootLocale, focusOnReady, readSavedLanguage, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, USER_DATA_ENV, userDataDir, userDataOverride } from './helpers.ts';
 import { menuTemplate } from './menu.ts';
 import { notificationOptions, registerAttention, sendAttentionClick, showKept } from './notify.ts';
-import { setupUpdates } from './updater.ts';
+import { appSigned, setupUpdates } from './updater.ts';
 import { registerFullscreenQuery, registerTitleBar, registerUiTokenQuery, sendFullscreen } from './titlebar.ts';
 import { ipcSenderTrusted, isAppUrl, windowOpenToBrowser, windowOptions, type IpcSender } from './window.ts';
 import { desktopRenderOptions, shutdownForQuit } from './render-window.ts';
 import { createRenderGuard, registerRenderGuard, renderRunningPrompt } from './render-guard.ts';
 import { frameChain, hardenUiWindow, installPreviewFilter, pollCompositionOrigin, subframeNavigationBlocked, type FilterContext } from './preview-filter.ts';
 
+const execFileAsync = promisify(execFile);
 const REPO_URL = 'https://github.com/Aleloca/motion-studio';
 const smokeArg = process.argv.find((a) => a === '--smoke-test' || a.startsWith('--smoke-test='));
 
@@ -256,19 +259,20 @@ async function run() {
   win.on('closed', () => app.quit());
 
   buildMenu();
-  if (app.isPackaged) {
-    // Lazy: dev and smoke runs never load electron-updater.
-    const { autoUpdater } = await import('electron-updater');
-    setupUpdates({
-      updater: autoUpdater, isPackaged: app.isPackaged, log: (m) => console.log(m),
-      notify: (message, onRestart) => {
-        buildMenu(onRestart);
-        const n = new Notification({ title: 'Motion Studio', body: message });
-        n.on('click', onRestart);
-        n.show();
-      },
-    });
-  }
+  // Not awaited and never rejecting: an updater failure is a log line, never run()'s fatal error box. Lazy: development and
+  // smoke runs never load electron-updater.
+  void setupUpdates({
+    isPackaged: app.isPackaged,
+    signed: () => appSigned({ platform: process.platform, execPath: process.execPath, codesign: async (bundle) => (await execFileAsync('/usr/bin/codesign', ['-dv', '--verbose=2', bundle], { timeout: 5000 })).stderr }),
+    load: () => import('electron-updater'),
+    log: (m) => console.log(m),
+    notify: (message, onRestart) => {
+      buildMenu(onRestart);
+      const n = new Notification({ title: 'Motion Studio', body: message });
+      n.on('click', onRestart);
+      n.show();
+    },
+  }).catch((e: unknown) => console.log(`Automatic updates off: ${String(e)}`));
   win.once('ready-to-show', () => { win.show(); focus.ready(win); });
   // Only the app's own pages may hand a link to the system browser: a preview frame (no-referrer) never can.
   win.webContents.setWindowOpenHandler((details) => { if (windowOpenToBrowser(details, origin)) void shell.openExternal(details.url); return { action: 'deny' }; });
