@@ -15,7 +15,9 @@
 // - counted by its users: when the last one lets go it stays a short grace (the pointer coming back) and is then ended on
 //   the core (`DELETE …/preview-session/:token`), its media lease returned;
 // - a new session of another key ends every unused one at once, so at most one idle session lives at any time, and a
-//   session in use (pinned, playing, open in the format view) is never ended by hovering over other boards.
+//   session in use (pinned, playing, open in the format view) is never ended by hovering over other boards;
+// - a session a player SHOWS (its frame is ready) is never ended under it (A5): a renewal or another player's stall retires
+//   it, and it is ended when the last player showing it has moved to its new frame (`showing`).
 import type { PreviewSessionInfo, StoryboardView } from '@motion-studio/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../api.ts';
@@ -45,6 +47,10 @@ interface SessionEntry {
   pending: Promise<PreviewSessionInfo> | null;
   users: number;
   idle: number;
+  /** Per session token, how many players show a ready frame of it now (`showing`). */
+  shown: Map<string, number>;
+  /** Sessions replaced (renewed) or dropped while a player still showed them: ended once nobody shows them (A5). */
+  retired: Map<string, PreviewSessionInfo>;
 }
 const sessions = new Map<string, SessionEntry>();
 /** Still usable: more than the refresh margin (and a second) before its expiry. */
@@ -59,6 +65,25 @@ function end(e: SessionEntry): void {
   if (sessions.get(e.key) === e) sessions.delete(e.key);
   revokeOnCore(e, e.session);
   e.session = null;
+  for (const s of e.retired.values()) revokeOnCore(e, s);
+  e.retired.clear();
+}
+/**
+ * `s` is no longer handed out (renewed, or its frame stalled): ended on the core at once when no player shows it, else
+ * when the last one stops showing it (final review A5: a stalled hover never ends the session the format view plays, and
+ * a renewal never ends the session a player shows until its new frame is ready).
+ */
+function retire(e: SessionEntry, s: PreviewSessionInfo | null): void {
+  if (!s || e.session?.token === s.token) return;
+  if ((e.shown.get(s.token) ?? 0) > 0) e.retired.set(s.token, s); else revokeOnCore(e, s);
+}
+function show(e: SessionEntry, token: string): void { e.shown.set(token, (e.shown.get(token) ?? 0) + 1); }
+function unshow(e: SessionEntry, token: string): void {
+  const left = (e.shown.get(token) ?? 0) - 1;
+  if (left > 0) { e.shown.set(token, left); return; }
+  e.shown.delete(token);
+  const retired = e.retired.get(token);
+  if (retired) { e.retired.delete(token); revokeOnCore(e, retired); }
 }
 /** Ends every session nobody uses, but `keep`'s. */
 function endIdle(keep: string): void {
@@ -67,7 +92,7 @@ function endIdle(keep: string): void {
 
 function hold(o: { key: string; slug: string; creative: string; n: number; format: string }): SessionEntry {
   let e = sessions.get(o.key);
-  if (!e) { e = { ...o, session: null, pending: null, users: 0, idle: 0 }; sessions.set(o.key, e); }
+  if (!e) { e = { ...o, session: null, pending: null, users: 0, idle: 0, shown: new Map(), retired: new Map() }; sessions.set(o.key, e); }
   window.clearTimeout(e.idle);
   e.users += 1;
   return e;
@@ -88,18 +113,18 @@ function sessionOf(e: SessionEntry): Promise<PreviewSessionInfo> {
     e.pending = null;
     if (sessions.get(e.key) !== e) { revokeOnCore(e, s); throw new Error('released'); }
     e.session = s;
-    // A renewed session: the players move to the new one at once; the old one is ended after the grace.
-    if (old && old.token !== s.token) window.setTimeout(() => revokeOnCore(e, old), RELEASE_GRACE_MS);
+    // A renewed session: the players move to the new one, each keeping its frame of the old one until the new frame is
+    // ready; the old one is ended once no player shows it (A5).
+    if (old && old.token !== s.token) retire(e, old);
     return s;
   }, (err: unknown) => { e.pending = null; throw err; });
   e.pending = p;
   return p;
 }
-/** A frame never got ready on this session: it is not reused. */
+/** A frame never got ready on this session: it is not handed out again; ended once no other player shows it (A5). */
 function drop(e: SessionEntry, s: PreviewSessionInfo): void {
-  if (e.session?.token !== s.token) return;
-  e.session = null;
-  revokeOnCore(e, s);
+  if (e.session?.token === s.token) e.session = null;
+  retire(e, s);
 }
 
 /** Tests: forget every session (nothing is sent). */
@@ -118,8 +143,12 @@ export type PreviewState =
 
 export interface PreviewSessionOptions { slug: string; creative: string; n: number | null; format: string; enabled: boolean }
 
-/** The live preview session of (version n, format) while `enabled` (held only then: a board takes it on hover or click). */
-export function usePreviewSession(o: PreviewSessionOptions): { state: PreviewState; stalled(): void; retry(): void } {
+/**
+ * The live preview session of (version n, format) while `enabled` (held only then: a board takes it on hover or click).
+ * `showing(token)`: the player reports the session whose frame it shows (ready), null when none; a session a player shows
+ * is never ended under it (a renewal, another player's stall).
+ */
+export function usePreviewSession(o: PreviewSessionOptions): { state: PreviewState; stalled(): void; retry(): void; showing(token: string | null): void } {
   const [state, setState] = useState<PreviewState>({ kind: 'idle' });
   const key = o.enabled && o.n !== null ? `${o.slug}/${o.creative}/${o.n}/${o.format}` : null;
   // A run of the effect: `wait` after a stall (the server needs a moment to be allowed again); a retry starts at once.
@@ -127,13 +156,19 @@ export function usePreviewSession(o: PreviewSessionOptions): { state: PreviewSta
   const attempt = useRef({ key: null as string | null, n: 0 });
   const current = useRef<PreviewSessionInfo | null>(null);
   const entry = useRef<SessionEntry | null>(null);
+  /** The token this hook's player shows (counted in its entry's `shown`). */
+  const shownToken = useRef<string | null>(null);
 
   // Held while enabled; let go (and ended after the grace when nobody else uses it) when disabled or unmounted.
   useEffect(() => {
     if (key === null || o.n === null) { entry.current = null; return; }
     const e = hold({ key, slug: o.slug, creative: o.creative, n: o.n, format: o.format });
     entry.current = e;
-    return () => { if (entry.current === e) entry.current = null; letGo(e); };
+    return () => {
+      if (shownToken.current !== null) { unshow(e, shownToken.current); shownToken.current = null; }
+      if (entry.current === e) entry.current = null;
+      letGo(e);
+    };
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -165,7 +200,11 @@ export function usePreviewSession(o: PreviewSessionOptions): { state: PreviewSta
         setState({ kind: 'failed', message: message(err) });
       });
     };
-    if (run.wait && run.key === key) { setState({ kind: 'busy' }); later(backoffMs(attempt.current.n++), () => get(false)); } else get(false);
+    // After a stall a player that still shows a ready frame keeps it (state unchanged) while a new session is minted.
+    if (run.wait && run.key === key) {
+      if (shownToken.current === null) setState({ kind: 'busy' });
+      later(backoffMs(attempt.current.n++), () => get(shownToken.current !== null));
+    } else get(false);
     return () => { alive = false; window.clearTimeout(timer); };
   }, [key, run]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -175,7 +214,14 @@ export function usePreviewSession(o: PreviewSessionOptions): { state: PreviewSta
     setRun((r) => ({ key, n: r.n + 1, wait: true }));
   }, [key]);
   const retry = useCallback(() => { attempt.current.n = 0; setRun((r) => ({ key, n: r.n + 1, wait: false })); }, [key]);
-  return { state, stalled, retry };
+  const showing = useCallback((token: string | null) => {
+    const e = entry.current;
+    if (!e || shownToken.current === token) return;
+    if (shownToken.current !== null) unshow(e, shownToken.current);
+    shownToken.current = token;
+    if (token !== null) show(e, token);
+  }, []);
+  return { state, stalled, retry, showing };
 }
 
 export type StoryboardState = 'idle' | 'loading' | 'ready' | 'busy' | 'none';

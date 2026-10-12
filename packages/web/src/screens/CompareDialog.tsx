@@ -39,7 +39,7 @@ export interface CompareDialogProps {
 type Mode = 'overlay' | 'side';
 /** A side: a file (legacy, or a v2 version whose preview is not available), or the live player of its composition. */
 type Side = { live: false; video: boolean; src: string; poster?: string; duration: number | null }
-  | { live: true; video: boolean; preview: PreviewState; stalled(): void; retry(): void; duration: number | null };
+  | { live: true; video: boolean; preview: PreviewState; stalled(): void; retry(): void; showing(token: string | null): void; duration: number | null };
 
 const STEP = 5;
 const clamp = (v: number) => Math.max(0, Math.min(100, v));
@@ -81,7 +81,7 @@ function CompareBody({ onClose, slug, creative, versions, presets, states, forma
     const pv = previews[i];
     if (compOf(n) && pv.state.kind !== 'legacy') {
       const known = pv.state.kind === 'ready' ? pv.state.session.duration : null;
-      return { live: true, video: preset?.kind !== 'image', preview: pv.state, stalled: pv.stalled, retry: pv.retry, duration: known };
+      return { live: true, video: preset?.kind !== 'image', preview: pv.state, stalled: pv.stalled, retry: pv.retry, showing: pv.showing, duration: known };
     }
     const out = versions.find((x) => x.n === n)?.outputs.find((o) => o.format === format);
     if (!out) return null;
@@ -171,7 +171,7 @@ function CompareBody({ onClose, slug, creative, versions, presets, states, forma
             m.preview.kind === 'ready' ? (
               // The left one carries the sound; the right one is muted, as its <video> was.
               <CompositionPlayer key={`v${n}`} session={m.preview.session} title={t.web.render.playerFrame({ label: `${label} v${n}` })}
-                onMedia={i === 0 ? setLeft : setRight} onStall={m.stalled} muted={i === 1} />
+                onMedia={i === 0 ? setLeft : setRight} onStall={m.stalled} onShowing={m.showing} muted={i === 1} />
             ) : m.preview.kind === 'failed' ? (
               <span className="ms-cmp-failed ms-cmp-failed-retry" role="alert">
                 <span>{t.web.render.failed({ detail: m.preview.message })}</span>

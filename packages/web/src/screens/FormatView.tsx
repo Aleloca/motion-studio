@@ -505,7 +505,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
                   {sbPoster && !playerReady ? <img className="ms-fv-poster" src={sbPoster.url} alt="" draggable={false} /> : null}
                   {preview.state.kind === 'ready' ? (
                     <CompositionPlayer key={attempt} session={preview.state.session} title={t.web.render.playerFrame({ label: `${label} v${n}` })}
-                      onMedia={setPlayer} onStall={preview.stalled} />
+                      onMedia={setPlayer} onStall={preview.stalled} onShowing={preview.showing} />
                   ) : null}
                   {preview.state.kind === 'loading' || preview.state.kind === 'busy' || preview.state.kind === 'idle' ? (
                     <span className="ms-cplayer-state" role="status">{preview.state.kind === 'busy' ? t.web.render.busy : t.web.render.loading}</span>

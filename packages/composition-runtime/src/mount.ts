@@ -544,7 +544,8 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
         } finally {
           seekLoop = null;
         }
-        player.onTime?.(time, false);
+        // The real state: a `play` that arrived while the seek ran keeps playing (A5: the parent must not read it as an end).
+        player.onTime?.(time, playing);
         player.onBounds?.();
       })();
     }

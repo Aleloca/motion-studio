@@ -163,25 +163,65 @@ describe('CompositionPlayer', () => {
     act(() => { vi.advanceTimersByTime(2); });
     expect(p.onStall).toHaveBeenCalledTimes(1);
   });
-  it('a new session remounts the frame (never a new src on the same frame) and keeps the media and its time', () => {
+  it('a new session mounts a new frame below the one shown; it takes over only once ready, keeping the media and its time (A5)', () => {
     const p = mount();
     const m = p.media();
     fromRuntime(READY);
     fromRuntime({ type: 'time', t: 5, playing: false });
     const first = frame();
     p.rerender(<I18nProvider locale="en"><CompositionPlayer session={session('tok2')} title="Reel v2" onMedia={() => {}} /></I18nProvider>);
-    const second = frame();
-    expect(second).not.toBe(first);
+    const [old, second] = [...document.querySelectorAll('iframe')];
+    expect(old).toBe(first);
+    expect(second!.getAttribute('src')).toContain('/tok2/');
+    expect(second!.className).toContain('ms-next');
+    const posted = vi.spyOn(second!.contentWindow!, 'postMessage');
+    // Until the new frame is ready, the old one is still the media's: its time counts, the new one's does not.
+    fromRuntime({ type: 'time', t: 5.5, playing: false }, { source: first.contentWindow });
+    expect(m.currentTime).toBe(5.5);
+    fromRuntime({ type: 'time', t: 1, playing: false }, { source: second!.contentWindow });
+    expect(m.currentTime).toBe(5.5);
+    fromRuntime(READY, { source: second!.contentWindow });
     expect(first.isConnected).toBe(false);
-    expect(second.getAttribute('src')).toContain('/tok2/');
-    const posted = vi.spyOn(second.contentWindow!, 'postMessage');
-    // The old frame's messages no longer count.
-    const stale = new MessageEvent('message', { data: { type: 'time', t: 1, playing: false }, origin: 'null' });
-    Object.defineProperty(stale, 'source', { value: null });
-    act(() => { window.dispatchEvent(stale); });
+    expect(document.querySelectorAll('iframe')).toHaveLength(1);
+    expect(m.currentTime).toBe(5.5);
+    expect(posted.mock.calls.map((c) => c[0])).toEqual([{ type: 'seek', t: 5.5 }]);
+  });
+  it('a renewal while playing never stops the playback: the old frame plays until the new one is ready, then seek and play (D1)', () => {
+    const p = mount();
+    const m = p.media();
+    m.loop = true;
     fromRuntime(READY);
-    expect(m.currentTime).toBe(5);
-    expect(posted.mock.calls.map((c) => c[0])).toEqual([{ type: 'seek', t: 5 }]);
+    void m.play();
+    fromRuntime({ type: 'time', t: 7.99, playing: true });
+    const first = frame();
+    const oldPosted = vi.spyOn(first.contentWindow!, 'postMessage');
+    p.rerender(<I18nProvider locale="en"><CompositionPlayer session={session('tok2')} title="Reel v2" onMedia={() => {}} /></I18nProvider>);
+    const second = document.querySelectorAll('iframe')[1]!;
+    const posted = vi.spyOn(second.contentWindow!, 'postMessage');
+    fromRuntime(READY, { source: second.contentWindow });
+    expect(posted.mock.calls.map((c) => c[0])).toEqual([{ type: 'seek', t: 7.99 }, { type: 'play', loop: true, rate: 1 }]);
+    // The old frame is told to stop (it is being removed).
+    expect(oldPosted).toHaveBeenLastCalledWith({ type: 'pause' }, '*');
+    // The restoring seek ends at the very end of the loop before the runtime reports playing again: not the end.
+    fromRuntime({ type: 'time', t: 7.99, playing: false }, { source: second.contentWindow });
+    expect(m.paused).toBe(false);
+    fromRuntime({ type: 'time', t: 0.1, playing: true }, { source: second.contentWindow });
+    expect(m.paused).toBe(false);
+    expect(m.currentTime).toBe(0.1);
+  });
+  it('a new frame that never gets ready leaves the shown one playing, and is reported stalled (A5)', () => {
+    vi.useFakeTimers();
+    const p = mount();
+    const m = p.media();
+    fromRuntime(READY);
+    void m.play();
+    p.rerender(<I18nProvider locale="en"><CompositionPlayer session={session('tok2')} title="Reel v2" onMedia={() => {}} onStall={p.onStall} /></I18nProvider>);
+    act(() => { vi.advanceTimersByTime(READY_TIMEOUT_MS + 1); });
+    expect(p.onStall).toHaveBeenCalledTimes(1);
+    expect(document.querySelectorAll('iframe')).toHaveLength(2);
+    expect(m.paused).toBe(false);
+    fromRuntime({ type: 'time', t: 3, playing: true });
+    expect(m.currentTime).toBe(3);
   });
 });
 
@@ -294,6 +334,51 @@ describe('preview sessions are shared and released (fix round 1, I2)', () => {
     pinned.unmount();
     await act(async () => { await vi.advanceTimersByTimeAsync(RELEASE_GRACE_MS + 10); });
     expect(api.revokePreview.mock.calls.map((c) => c[3])).toEqual(['t2', 't1']);
+  });
+
+  it('a stalled player never ends the session another player shows (A5, T8 drop)', async () => {
+    const view = use(2);
+    const hover = use(2);
+    await flush();
+    act(() => { view.result.current.showing('t1'); });
+    // The hover's frame of t1 stalls: t1 is not handed out again, but the format view still shows it.
+    act(() => { hover.result.current.stalled(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(api.revokePreview).not.toHaveBeenCalled();
+    expect(hover.result.current.state).toMatchObject({ kind: 'ready', session: { token: 't2' } });
+    // Once the view moves to the new session's frame, t1 is ended.
+    act(() => { view.result.current.showing('t2'); });
+    await flush();
+    expect(api.revokePreview.mock.calls.map((c) => c[3])).toEqual(['t1']);
+  });
+
+  it('a stall while a frame is shown keeps the state ready (the shown frame plays on) and mints quietly', async () => {
+    const h = use(2);
+    await flush();
+    act(() => { h.result.current.showing('t1'); });
+    act(() => { h.result.current.stalled(); });
+    expect(h.result.current.state).toMatchObject({ kind: 'ready', session: { token: 't1' } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(h.result.current.state).toMatchObject({ kind: 'ready', session: { token: 't2' } });
+    expect(api.revokePreview).not.toHaveBeenCalled();
+    act(() => { h.result.current.showing('t2'); });
+    await flush();
+    expect(api.revokePreview.mock.calls.map((c) => c[3])).toEqual(['t1']);
+  });
+
+  it('a renewal ends the old session only once the player shows the new one (D1)', async () => {
+    api.previewSession.mockReset();
+    api.previewSession.mockResolvedValueOnce(session('a', { expiresAt: new Date(Date.now() + 5 * 60_000).toISOString() })).mockResolvedValueOnce(session('b'));
+    const h = use(2);
+    await flush();
+    act(() => { h.result.current.showing('a'); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5 * 60_000 - REFRESH_BEFORE_MS + 10); });
+    expect(h.result.current.state).toMatchObject({ kind: 'ready', session: { token: 'b' } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(RELEASE_GRACE_MS * 4); });
+    expect(api.revokePreview).not.toHaveBeenCalled();
+    act(() => { h.result.current.showing('b'); });
+    await flush();
+    expect(api.revokePreview.mock.calls.map((c) => c[3])).toEqual(['a']);
   });
 
   it('retry() mints again at once; a new key starts fresh (no leftover backoff)', async () => {

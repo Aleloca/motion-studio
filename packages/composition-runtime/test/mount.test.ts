@@ -269,6 +269,23 @@ describe('render mode never captures an unpainted frame', () => {
     expect(errors.map((e) => e.code)).toContain('frameTimeout');
   });
 
+  it('preview: a play that arrives while a seek runs is reported as playing when the seek ends (A5, never a false end)', async () => {
+    const root = document.getElementById('ms-root')!;
+    const c = comp({ tracks: [{ id: 'bg', kind: 'visual', clips: [{ id: 'card', type: 'shape', start: 0, duration: 6, props: {} }] }] } as Partial<Composition>);
+    const player = mount(root, c, { mode: 'preview', base: BASE, natives, report: () => {}, timeouts: { load: 50, seek: 50, layer: 50 } });
+    await player.ready();
+    const times: Array<[number, boolean]> = [];
+    player.onTime = (t, playing) => times.push([t, playing]);
+    // The parent restores a frame near the end of a loop, then plays (CompositionMedia on `ready`).
+    const seeking = player.seek(5.99);
+    player.play({ loop: true, rate: 1 });
+    await seeking;
+    const atSeekEnd = times.find(([, p]) => !p);
+    expect(atSeekEnd).toBeUndefined();
+    expect(player.playing).toBe(true);
+    player.pause();
+  });
+
   it('the same in preview resolves after the short fallback', async () => {
     const root = document.getElementById('ms-root')!;
     const player = mount(root, comp(), { mode: 'preview', base: BASE, natives: silent, report: () => {}, timeouts: { load: 50, seek: 30, layer: 50 } });

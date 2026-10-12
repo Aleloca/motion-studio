@@ -156,7 +156,7 @@ export function CanvasBoard(p: BoardProps) {
           )}
           {liveOn && preview.state.kind === 'ready' ? (
             <CompositionPlayer session={preview.state.session} title={t.web.render.playerFrame({ label: `${label} v${comp!.n}` })} autoPlay className="ms-cv-live-player"
-              onStall={preview.stalled} />
+              onStall={preview.stalled} onShowing={preview.showing} />
           ) : null}
           {p.rendering ? <span className="ms-shimmer" aria-hidden="true" /> : null}
           {p.safe && board.preset ? <SafeZoneBands preset={board.preset} /> : null}

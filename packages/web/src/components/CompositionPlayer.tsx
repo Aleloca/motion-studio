@@ -40,10 +40,19 @@ const clampRate = (r: number) => Math.min(RATE_MAX, Math.max(RATE_MIN, Number.is
  * The player as a media element. The time is the runtime's (`time` messages); `paused` is ours (what was asked last), so a
  * late `time` from before a pause never restarts it. Commands sent before `ready` wait: on `ready` the time is restored
  * (a remounted frame continues where the previous one was) and a pending play starts.
+ *
+ * Frames (final review A5, D1): a new session's frame is `expect`ed while the current one still plays; it takes over only
+ * when it reports `ready` (then the player removes the old one). Until then commands and `time` messages stay with the
+ * current frame, and a frame that is neither is ignored. After a `play` is sent, a "not playing" `time` (the end of the
+ * seek that restored the time, possibly at the very end of a loop) never counts as the end: only once the runtime has
+ * reported playing again.
  */
 export class CompositionMedia implements SyncMedia {
   private readonly events = new EventTarget();
-  private send: ((cmd: PreviewIncoming) => void) | null = null;
+  private active: { id: string; send: (cmd: PreviewIncoming) => void } | null = null;
+  private incoming: { id: string; send: (cmd: PreviewIncoming) => void } | null = null;
+  /** A `play` was sent and the runtime has not reported playing since. */
+  private awaitingPlay = false;
   private time = 0;
   private dur = Number.NaN;
   private isPaused = true;
@@ -96,51 +105,59 @@ export class CompositionMedia implements SyncMedia {
   addEventListener(type: string, listener: EventListener): void { this.events.addEventListener(type, listener); }
   removeEventListener(type: string, listener: EventListener): void { this.events.removeEventListener(type, listener); }
 
-  /** A frame is mounted (`send` posts to it) or gone (null): nothing is sent until it is ready. */
-  attach(send: ((cmd: PreviewIncoming) => void) | null): void {
-    this.send = null;
-    this.pending = send;
+  /** A new frame `id` is mounted (`send` posts to it): it takes over when it reports `ready`. */
+  expect(id: string, send: (cmd: PreviewIncoming) => void): void { this.incoming = { id, send }; }
+  /** Frame `id` is gone. */
+  release(id: string): void {
+    if (this.active?.id === id) this.active = null;
+    if (this.incoming?.id === id) this.incoming = null;
   }
-  private pending: ((cmd: PreviewIncoming) => void) | null = null;
+  /** Whether frame `id` is the one played (or, before any is, the one loading): its messages count. */
+  counts(id: string): boolean { return this.active ? this.active.id === id : this.incoming?.id === id; }
+  /** Every frame is gone (the player unmounts). */
+  detach(): void { this.active = null; this.incoming = null; }
 
-  /** A validated runtime message of the attached frame. */
-  receive(msg: PreviewOutgoing): void {
-    switch (msg.type) {
-      case 'ready': {
-        this.send = this.pending;
-        this.dur = msg.duration;
-        this.error = null;
-        if (this.isMuted) this.post({ type: 'mute', muted: true });
-        if (this.time > 0) this.post({ type: 'seek', t: Math.min(this.time, msg.duration) });
-        if (!this.isPaused) this.post(this.playCommand());
-        this.emit('loadedmetadata');
-        this.emit('durationchange');
-        break;
-      }
-      case 'time': {
-        const ended = !msg.playing && !this.isPaused && Number.isFinite(this.dur) && msg.t >= this.dur - END_EPS;
-        // While playing, a stale "not playing" (the end of an earlier seek) only moves the time.
-        if (msg.playing && this.isPaused) break;
-        this.time = msg.t;
-        this.emit('timeupdate');
-        if (ended) {
-          this.isPaused = true;
-          this.emit('pause');
-          this.emit('ended');
-        }
-        break;
-      }
-      case 'error': {
-        if (this.send === null && FATAL.has(msg.error.code)) {
-          this.error = msg.error;
-          this.isPaused = true;
-          this.emit('error');
-        }
-        break;
-      }
-      default:
-        break;
+  /** A validated runtime message of frame `id`. Returns true when that frame has just taken over (`ready`). */
+  receive(msg: PreviewOutgoing, id: string): boolean {
+    if (msg.type === 'ready') {
+      if (this.incoming?.id !== id) return false;
+      const previous = this.active;
+      this.active = this.incoming;
+      this.incoming = null;
+      // The old frame is removed by the player; it must not keep playing (or sounding) meanwhile.
+      if (previous && previous.id !== id) previous.send({ type: 'pause' });
+      this.dur = msg.duration;
+      this.error = null;
+      if (this.isMuted) this.post({ type: 'mute', muted: true });
+      if (this.time > 0) this.post({ type: 'seek', t: Math.min(this.time, msg.duration) });
+      if (!this.isPaused) this.post(this.playCommand());
+      this.emit('loadedmetadata');
+      this.emit('durationchange');
+      return true;
     }
+    if (msg.type === 'error') {
+      // A page that cannot run at all, before any frame of this player ran.
+      if (this.active === null && this.incoming?.id === id && FATAL.has(msg.error.code)) {
+        this.error = msg.error;
+        this.isPaused = true;
+        this.emit('error');
+      }
+      return false;
+    }
+    if (msg.type !== 'time' || this.active?.id !== id) return false;
+    if (msg.playing) this.awaitingPlay = false;
+    // While paused, a late "playing" (sent before the pause) is ignored: it must never restart the transport.
+    if (msg.playing && this.isPaused) return false;
+    // While playing, a "not playing" from before the runtime played again (the end of a restoring seek) only moves the time.
+    const ended = !msg.playing && !this.isPaused && !this.awaitingPlay && Number.isFinite(this.dur) && msg.t >= this.dur - END_EPS;
+    this.time = msg.t;
+    this.emit('timeupdate');
+    if (ended) {
+      this.isPaused = true;
+      this.emit('pause');
+      this.emit('ended');
+    }
+    return false;
   }
 
   private playCommand(): PreviewIncoming {
@@ -148,7 +165,9 @@ export class CompositionMedia implements SyncMedia {
   }
   private post(cmd: PreviewIncoming): void {
     // Only the protocol's commands ever leave (a malformed one is a bug here: dropped).
-    if (this.send && parseIncoming(cmd)) this.send(cmd);
+    if (!this.active || !parseIncoming(cmd)) return;
+    if (cmd.type === 'play') this.awaitingPlay = true;
+    this.active.send(cmd);
   }
   private emit(type: string): void {
     this.events.dispatchEvent(new Event(type));
@@ -163,6 +182,8 @@ export interface CompositionPlayerProps {
   onMedia?(media: CompositionMedia | null): void;
   /** No `ready` within READY_TIMEOUT_MS (e.g. the desktop still refuses a composition server that moved). */
   onStall?(): void;
+  /** The session whose frame is shown (ready), null when none: `usePreviewSession().showing` (A5). */
+  onShowing?(token: string | null): void;
   /** Plays (looping) as soon as it is ready: the canvas boards' preview. */
   autoPlay?: boolean;
   /** No sound (Compare's second player, as its <video> was). */
@@ -180,62 +201,44 @@ function frameUrl(s: PreviewSessionInfo): string | null {
   }
 }
 
-export function CompositionPlayer({ session, title, onMedia, onStall, autoPlay, muted = false, className }: CompositionPlayerProps) {
+export function CompositionPlayer({ session, title, onMedia, onStall, onShowing, autoPlay, muted = false, className }: CompositionPlayerProps) {
   const t = useT();
   const r = t.web.render;
-  const frame = useRef<HTMLIFrameElement>(null);
   const [media] = useState(() => new CompositionMedia());
   const [errors, setErrors] = useState<RuntimeError[]>([]);
+  // The frame shown (ready) while a newer session's frame loads underneath it (A5): swapped when the new one is ready.
+  const [shown, setShown] = useState<PreviewSessionInfo | null>(null);
   const url = frameUrl(session);
-  const callbacks = useRef({ onMedia, onStall });
-  callbacks.current = { onMedia, onStall };
+  const callbacks = useRef({ onMedia, onStall, onShowing });
+  callbacks.current = { onMedia, onStall, onShowing };
 
   useEffect(() => {
     callbacks.current.onMedia?.(media);
-    return () => { media.pause(); media.attach(null); callbacks.current.onMedia?.(null); };
+    return () => { media.pause(); media.detach(); callbacks.current.onMedia?.(null); callbacks.current.onShowing?.(null); };
   }, [media]);
   useEffect(() => { media.muted = muted; }, [muted, media]);
   useEffect(() => {
     if (autoPlay) { media.loop = true; void media.play().catch(() => {}); }
   }, [autoPlay, media]);
 
-  // One frame per session URL (key): listen to it alone, post to it alone, and report it stalled without `ready`.
-  useEffect(() => {
-    const el = frame.current;
-    if (!url || !el) return;
-    setErrors([]);
-    let ready = false;
-    media.attach((cmd) => { el.contentWindow?.postMessage(cmd, '*'); });
-    const onMessage = (ev: MessageEvent) => {
-      if (!el.contentWindow || ev.source !== el.contentWindow) return;
-      if (ev.origin !== 'null' && ev.origin !== session.origin) return;
-      const msg = parseOutgoing(ev.data);
-      if (!msg) return;
-      if (msg.type === 'ready') {
-        ready = true;
-        if (msg.errors.length) setErrors((list) => [...list, ...msg.errors].slice(0, MAX_ERRORS));
-      } else if (msg.type === 'error') {
-        setErrors((list) => (list.length >= MAX_ERRORS ? list : [...list, msg.error]));
-      }
-      media.receive(msg);
-    };
-    window.addEventListener('message', onMessage);
-    const stall = window.setTimeout(() => { if (!ready) callbacks.current.onStall?.(); }, READY_TIMEOUT_MS);
-    return () => {
-      window.removeEventListener('message', onMessage);
-      window.clearTimeout(stall);
-      media.attach(null);
-    };
-  }, [url, session.origin, media]);
-
   if (!url) return <div className={cx('ms-cplayer', className)}><p className="ms-cplayer-note" role="alert">{r.failed({ detail: session.url })}</p></div>;
+  const shownUrl = shown ? frameUrl(shown) : null;
+  // The latest session's frame, and below it (until that one is ready) the one still shown.
+  const frames: Array<{ s: PreviewSessionInfo; u: string; next: boolean }> = [];
+  if (shown && shownUrl && shownUrl !== url) frames.push({ s: shown, u: shownUrl, next: false });
+  frames.push({ s: session, u: url, next: frames.length > 0 });
   const text = (e: RuntimeError) => {
     const base = r.runtimeError[e.code] ?? e.code;
     return e.clipId ? r.errorClip({ text: base, clip: e.clipId }) : base;
   };
   return (
     <div className={cx('ms-cplayer', className)}>
-      <iframe key={url} ref={frame} className="ms-cplayer-frame" src={url} title={title} sandbox="allow-scripts" referrerPolicy="no-referrer" allow="autoplay" />
+      {frames.map((f) => (
+        <RuntimeFrame key={f.u} url={f.u} session={f.s} title={title} media={media} next={f.next}
+          onReady={(errs) => { setShown(f.s); setErrors(errs.slice(0, MAX_ERRORS)); callbacks.current.onShowing?.(f.s.token); }}
+          onError={(e) => setErrors((list) => (list.length >= MAX_ERRORS ? list : [...list, e]))}
+          onStall={() => callbacks.current.onStall?.()} />
+      ))}
       {errors.length ? (
         <ul className="ms-cplayer-errors" role="status" aria-label={r.runtimeIssues}>
           {[...new Set(errors.map(text))].map((line) => <li key={line}>{line}</li>)}
@@ -243,4 +246,41 @@ export function CompositionPlayer({ session, title, onMedia, onStall, autoPlay, 
       ) : null}
     </div>
   );
+}
+
+/**
+ * One runtime frame (one session URL, React `key`): listens to it alone, posts to it alone, reports it stalled without
+ * `ready`. `next`: a newer session's frame loading below the one shown (never hidden: a hidden cross-origin frame may get
+ * no animation frames, and the runtime's ready needs them).
+ */
+function RuntimeFrame({ url, session, title, media, next, onReady, onError, onStall }: {
+  url: string; session: PreviewSessionInfo; title: string; media: CompositionMedia; next: boolean;
+  onReady(errors: RuntimeError[]): void; onError(e: RuntimeError): void; onStall(): void;
+}) {
+  const frame = useRef<HTMLIFrameElement>(null);
+  const cb = useRef({ onReady, onError, onStall });
+  cb.current = { onReady, onError, onStall };
+  useEffect(() => {
+    const el = frame.current;
+    if (!el) return;
+    let ready = false;
+    media.expect(url, (cmd) => { el.contentWindow?.postMessage(cmd, '*'); });
+    const onMessage = (ev: MessageEvent) => {
+      if (!el.contentWindow || ev.source !== el.contentWindow) return;
+      if (ev.origin !== 'null' && ev.origin !== session.origin) return;
+      const msg = parseOutgoing(ev.data);
+      if (!msg) return;
+      if (msg.type === 'error' && media.counts(url)) cb.current.onError(msg.error);
+      if (media.receive(msg, url) && msg.type === 'ready') { ready = true; cb.current.onReady(msg.errors); }
+    };
+    window.addEventListener('message', onMessage);
+    const stall = window.setTimeout(() => { if (!ready) cb.current.onStall(); }, READY_TIMEOUT_MS);
+    return () => {
+      window.removeEventListener('message', onMessage);
+      window.clearTimeout(stall);
+      media.release(url);
+    };
+  }, [url, session.origin, media]);
+  return <iframe ref={frame} className={cx('ms-cplayer-frame', next && 'ms-next')} src={url} title={title} sandbox="allow-scripts" referrerPolicy="no-referrer" allow="autoplay"
+    {...(next ? { 'aria-hidden': true, tabIndex: -1 } : {})} />;
 }
