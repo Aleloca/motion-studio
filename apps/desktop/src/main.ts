@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AlreadyRunningError, answersHealth, defaultConfigDir, resolveLocale, resolveLoginShellPath, setLocale, startServer, t } from '@motion-studio/core';
-import { absolutePathArg, attachedGone, attachedGoneAction, attachedLocale, bootLocale, focusOnReady, readSavedLanguage, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, userDataDir } from './helpers.ts';
+import { absolutePathArg, attachedGone, attachedGoneAction, attachedLocale, bootLocale, focusOnReady, readSavedLanguage, watchAttached, loginShellOptions, pickFolderArgs, serverOptions, tokenFromAppUrl, USER_DATA_ENV, userDataDir, userDataOverride } from './helpers.ts';
 import { menuTemplate } from './menu.ts';
 import { notificationOptions, registerAttention, sendAttentionClick, showKept } from './notify.ts';
 import { setupUpdates } from './updater.ts';
@@ -19,10 +19,25 @@ const smokeArg = process.argv.find((a) => a === '--smoke-test' || a.startsWith('
 
 // Electron's data folder, set before anything reads it (the single-instance lock lives there too): a throwaway one for a smoke
 // run, removed on exit; otherwise a folder of its own beside (never inside) the Motion Studio config folder.
-const smokeUserData = smokeArg ? mkdtempSync(join(tmpdir(), 'motion-studio-smoke-electron-')) : null;
+// `MOTION_STUDIO_USER_DATA_DIR` (checks, tests: final wave B1) moves it, sessionData and the logs elsewhere; one that is,
+// contains or is inside a real Motion Studio folder stops the app before anything is written.
+const override = userDataOverride(process.env, app.getPath('appData'));
+if (override && 'error' in override) {
+  process.stderr.write(`Motion Studio: ${override.error}\n`);
+  app.exit(2);
+  process.exit(2);
+}
+const overrideDir = override && 'dir' in override ? override.dir : null;
+const smokeUserData = smokeArg && !overrideDir ? mkdtempSync(join(tmpdir(), 'motion-studio-smoke-electron-')) : null;
 const removeSmokeUserData = () => { if (smokeUserData) rmSync(smokeUserData, { recursive: true, force: true }); };
 process.on('exit', removeSmokeUserData);
-app.setPath('userData', smokeUserData ?? userDataDir(app.getPath('appData')));
+app.setPath('userData', overrideDir ?? smokeUserData ?? userDataDir(app.getPath('appData')));
+if (overrideDir) {
+  app.setPath('sessionData', overrideDir);
+  app.setPath('crashDumps', join(overrideDir, 'Crashpad'));
+  app.setAppLogsPath(join(overrideDir, 'logs'));
+  console.log(`Motion Studio: ${USER_DATA_ENV} set, Electron data in ${app.getPath('userData')}`);
+}
 
 /**
  * Dev: the source tree (dist/main.cjs is two levels under apps/desktop). Packaged: extraResources. `runtimeDir` is the

@@ -1,4 +1,5 @@
-import { isAbsolute, join } from 'node:path';
+import { readdirSync, realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { AppConfigStore, isLocale, resolveLocale, type currentLocale, type LoginShellPath, type t } from '@motion-studio/core';
 
 type Locale = ReturnType<typeof currentLocale>;
@@ -40,6 +41,42 @@ export function serverOptions(opts: { resources: { webDir: string; mcpServerPath
 
 /** Electron's own data (cache, local storage, single-instance lock): beside, never inside, the Motion Studio config folder. */
 export const userDataDir = (appData: string) => join(appData, 'Motion Studio Electron');
+
+/** The environment variable that moves Electron's data folder for a launch (checks, tests): never a real one. */
+export const USER_DATA_ENV = 'MOTION_STUDIO_USER_DATA_DIR';
+
+/** The real path of `p`: its nearest existing ancestor resolved (links followed), the rest appended. */
+function realish(p: string): string {
+  const rest: string[] = [];
+  let cur = resolve(p);
+  for (;;) {
+    try { return join(realpathSync(cur), ...rest.reverse()); } catch { /* not there yet */ }
+    const up = dirname(cur);
+    if (up === cur) return join(cur, ...rest.reverse());
+    rest.push(basename(cur));
+    cur = up;
+  }
+}
+const within = (child: string, parent: string) => { const r = relative(parent, child); return r === '' || (!r.startsWith('..') && !isAbsolute(r)); };
+
+/**
+ * `MOTION_STUDIO_USER_DATA_DIR` (final wave B1), read before `ready`: the folder for Electron's userData, sessionData and
+ * logs. null when unset; `{ error }` when it is not absolute, or when (real paths resolved) it is, is inside, or contains
+ * the default data folder or any `Motion Studio*` folder of `appData` (the config, the Electron data, other channels).
+ */
+export function userDataOverride(env: NodeJS.ProcessEnv, appData: string): { dir: string } | { error: string } | null {
+  const value = env[USER_DATA_ENV];
+  if (!value) return null;
+  if (!isAbsolute(value)) return { error: `${USER_DATA_ENV} must be an absolute path: ${value}` };
+  let names: string[] = [];
+  try { names = readdirSync(appData).filter((n) => n.startsWith('Motion Studio')); } catch { /* no appData yet */ }
+  const real = new Set([userDataDir(appData), join(appData, 'Motion Studio'), ...names.map((n) => join(appData, n))].map(realish));
+  const dir = realish(value);
+  for (const r of real) {
+    if (within(dir, r) || within(r, dir)) return { error: `${USER_DATA_ENV} must not be, be inside or contain a real Motion Studio folder (${r}): ${value}` };
+  }
+  return { dir: resolve(value) };
+}
 
 export interface FocusableWindow { isMinimized(): boolean; restore(): void; focus(): void }
 
