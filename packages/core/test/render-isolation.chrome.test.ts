@@ -46,6 +46,7 @@ async function rawChrome(exe: string, flags: string[]) {
   const profile = mkdtempSync(join(tmpdir(), 'ms-test-render-iso-'));
   const args = [...BASE_FLAGS, ...flags, '--headless=new', `--user-data-dir=${profile}`, '--remote-debugging-pipe', 'about:blank'];
   const native = await nativeLauncher(exe);
+  const launchedAt = Date.now();
   const proc = spawn(native ? '/usr/bin/arch' : exe, native ? ['-arm64', exe, ...args] : args, { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'], detached: true });
   const cdp = new CdpPipe(proc.stdio[3] as Writable, proc.stdio[4] as Readable, { defaultTimeoutMs: 120_000 });
   await cdp.send('Browser.getVersion');
@@ -67,7 +68,7 @@ async function rawChrome(exe: string, flags: string[]) {
       killGroup(proc.pid!);
       await new Promise((r) => setTimeout(r, 500));
       killGroup(proc.pid!);
-      await sweepByMarker(profile);
+      await sweepByMarker(profile, { rootPid: proc.pid!, since: launchedAt });
       cdp.close();
       rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
     },

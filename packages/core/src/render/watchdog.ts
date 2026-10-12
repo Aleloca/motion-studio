@@ -42,21 +42,35 @@ export function killGroup(pgid: number): void {
   try { process.kill(-pgid, 'SIGKILL'); } catch { /* empty group */ }
 }
 
-const run = (cmd: string, args: string[], timeoutMs: number): Promise<string | null> => new Promise((resolve) => {
-  execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, encoding: 'utf8' }, (err, stdout) => resolve(err ? null : stdout));
+const run = (cmd: string, args: string[], timeoutMs: number, env?: NodeJS.ProcessEnv): Promise<string | null> => new Promise((resolve) => {
+  execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8', ...(env ? { env } : {}) }, (err, stdout) => resolve(err ? null : stdout));
 });
 
-export interface ProcessRow { pid: number; pgid: number; command: string }
+export interface ProcessRow {
+  pid: number; pgid: number; command: string;
+  /** Parent pid (1: an orphan, re-parented to init/launchd). */
+  ppid: number;
+  uid: number;
+  /** Start time, ms since the epoch (whole seconds: `ps` lstart); NaN when unreadable. */
+  startMs: number;
+}
 
-/** Every process (pid, pgid, command line); empty on Windows or when `ps` fails. */
+/** `ps -o lstart` in the C locale: `Mon Oct 12 20:53:17 2026` (the day padded with a space). */
+const LSTART = String.raw`\w{3} \w{3} [ \d]\d \d\d:\d\d:\d\d \d{4}`;
+const ROW = new RegExp(String.raw`^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(${LSTART})\s+(.*)$`);
+
+/**
+ * Every process (pid, parent, group, owner, start, whole command line: `-ww`, never cut at the terminal width); empty on
+ * Windows or when `ps` fails.
+ */
 export async function listProcesses(): Promise<ProcessRow[]> {
   if (process.platform === 'win32') return [];
-  const out = await run('ps', ['-A', '-o', 'pid=,pgid=,command='], 30_000);
+  const out = await run('ps', ['-ww', '-A', '-o', 'pid=,ppid=,pgid=,uid=,lstart=,command='], 30_000, { ...process.env, LC_ALL: 'C', LANG: 'C' });
   if (out === null) return [];
   const rows: ProcessRow[] = [];
   for (const line of out.split('\n')) {
-    const m = /^\s*(\d+)\s+(\d+)\s(.*)$/.exec(line);
-    if (m) rows.push({ pid: Number(m[1]), pgid: Number(m[2]), command: m[3]! });
+    const m = ROW.exec(line);
+    if (m) rows.push({ pid: Number(m[1]), ppid: Number(m[2]), pgid: Number(m[3]), uid: Number(m[4]), startMs: Date.parse(m[5]!), command: m[6]! });
   }
   return rows;
 }
@@ -78,13 +92,36 @@ export async function groupMembers(pgid: number): Promise<number[]> {
   return (await listProcesses()).filter((r) => r.pgid === pgid).map((r) => r.pid);
 }
 
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 /**
- * SIGKILLs every process whose command line contains `marker` literally (a unique temp profile path), in any group: the
- * last sweep after the group kill. Returns how many it found.
+ * The processes `sweepByMarker` may kill (final wave B5), from a `ps` listing: owned by `uid`, carrying `marker` (our
+ * unique temp profile path) as a whole path in an argument (`--user-data-dir=<marker>`, or a path that is the marker or
+ * starts with `<marker>/`), never as a mere substring; and either a descendant of `rootPid` (our Chromium), or an orphan
+ * (parent 1) started at or after `since` (the launch, whole seconds as `ps` reports). Never this process.
  */
-export async function sweepByMarker(marker: string): Promise<number> {
-  if (marker.length < 12) return 0; // never a short, ambiguous marker
-  const rows = (await listProcesses()).filter((r) => r.command.includes(marker) && r.pid !== process.pid);
+export function sweepCandidates(rows: readonly ProcessRow[], marker: string, o: { rootPid: number; since: number; uid: number; self: number }): ProcessRow[] {
+  if (marker.length < 12) return []; // never a short, ambiguous marker
+  const token = new RegExp(String.raw`(?:^|[\s=])${escapeRe(marker)}(?=$|[\s/])`);
+  const parent = new Map(rows.map((r) => [r.pid, r.ppid]));
+  const descends = (pid: number) => {
+    for (let p = parent.get(pid), hops = 0; p !== undefined && p > 1 && hops < 64; p = parent.get(p), hops++) if (p === o.rootPid) return true;
+    return false;
+  };
+  const since = Math.floor(o.since / 1000) * 1000;
+  return rows.filter((r) => r.pid !== o.self && r.pid !== o.rootPid && r.uid === o.uid && token.test(r.command)
+    && (descends(r.pid) || (r.ppid === 1 && r.startMs >= since)));
+}
+
+/**
+ * SIGKILLs the processes `sweepCandidates` picks: the last sweep after the group kill, for Chromium helpers that left the
+ * group. `rootPid`: the Chromium we launched; `since`: when (ms). Returns how many it found.
+ */
+export async function sweepByMarker(marker: string, o: { rootPid: number; since: number }): Promise<number> {
+  if (process.platform === 'win32') return 0;
+  const uid = process.getuid?.();
+  if (uid === undefined) return 0;
+  const rows = sweepCandidates(await listProcesses(), marker, { ...o, uid, self: process.pid });
   for (const r of rows) { try { process.kill(r.pid, 'SIGKILL'); } catch { /* gone */ } }
   return rows.length;
 }

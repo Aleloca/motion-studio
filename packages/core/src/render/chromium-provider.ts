@@ -221,6 +221,8 @@ interface Launched {
   watchdog: Watchdog;
   untrack: () => void;
   exited: Promise<void>;
+  /** When Chromium was started (ms): the marker sweep takes only orphans started since (final wave B5). */
+  launchedAt: number;
 }
 
 /**
@@ -297,6 +299,7 @@ export class ChromeProvider implements ChromiumProvider {
       'about:blank',
     ];
     let proc: ChildProcess;
+    const launchedAt = Date.now();
     try {
       // On Apple Silicon a universal Chrome started by a process that runs under Rosetta (a terminal, an x64 Node) gets its
       // x86_64 slice ("neither tested nor maintained", and it crashed renderers here): ask for the native one. `arch` execs
@@ -336,7 +339,7 @@ export class ChromeProvider implements ChromiumProvider {
         ? { code: 'memoryLimit', message: `memory limit: ${trip.memoryMB} MB > ${trip.limitMB} MB` }
         : { code: 'timeLimit', message: `time limit: ${Math.round(trip.limitMs / 1000)} s` }),
     });
-    const l: Launched = { proc, cdp, profile, origin, watchdog, untrack, exited };
+    const l: Launched = { proc, cdp, profile, origin, watchdog, untrack, exited, launchedAt };
     this.launched = l;
     try {
       if (!proc.pid) throw new RenderError('noBrowser', 'could not start Chromium');
@@ -424,7 +427,7 @@ export class ChromeProvider implements ChromiumProvider {
     await this.killBrowser(l);
     await Promise.race([l.exited, new Promise((r) => setTimeout(r, 10_000))]);
     await this.killBrowser(l); // helpers still in the group (checked by marker: the leader is reaped by now)
-    await sweepByMarker(l.profile).catch(() => 0);
+    await sweepByMarker(l.profile, { rootPid: l.proc.pid!, since: l.launchedAt }).catch(() => 0);
     l.cdp.close();
     l.untrack();
     rmSync(l.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
