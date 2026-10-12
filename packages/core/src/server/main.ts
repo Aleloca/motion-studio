@@ -1,4 +1,5 @@
 import { createRenderEngine } from '../render/renderer.ts';
+import { findFfmpeg } from '../render/encode.ts';
 import type { ChromiumProviderFactory } from '../render/chromium-provider.ts';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -148,7 +149,7 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
     git: new Git(),
     runner: new ClaudeCodeRunner(claudeCommand),
     bridge, mcpCommand, sandbox, ...(opts.mcpEnv ? { mcpEnv: opts.mcpEnv } : {}),
-    doctor: (extra) => runDoctor({ exec: execCommand, claudeCommand, sandbox: extra.sandbox, workspacePath: extra.workspacePath ?? null, ...(opts.shellPath ? { shellPath: opts.shellPath } : {}) }),
+    doctor: (extra) => runDoctor({ exec: execCommand, claudeCommand, sandbox: extra.sandbox, workspacePath: extra.workspacePath ?? null, ...(opts.shellPath ? { shellPath: opts.shellPath } : {}), ffmpegInfo: () => findFfmpeg() }),
     billing: () => readBilling({ exec: execCommand, claudeCommand }),
     webDir: opts.webDir,
     vault: opts.vault ?? new KeyringVault(),

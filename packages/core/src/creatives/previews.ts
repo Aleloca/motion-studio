@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { lstat, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import { compositionProblemText, messages, type Composition, type FormatPreset, type Locale, type VersionEntry } from '@motion-studio/shared';
+import { compositionProblemText, messages, type Composition, type FormatPreset, type Locale, type PreviewSessionInfo, type VersionEntry } from '@motion-studio/shared';
 import { loadComposition } from '../compositions/composition-files.ts';
 import { startCompositionServer, type CompositionServer } from '../compositions/composition-server.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -102,12 +102,8 @@ export interface PreviewServiceDeps {
 
 export interface VersionFormatRef { projectDir: string; creativeDir: string; creativeSlug: string; n: number }
 
-export interface PreviewSessionInfo {
-  url: string; origin: string; expiresAt: string;
-  /** The composition folder shown (a follower's is its primary's) and its hash. */
-  format: string; hash: string;
-  width: number; height: number; duration: number; fps: number;
-}
+/** The answer of the preview-session route (shared with the web's player). */
+export type { PreviewSessionInfo } from '@motion-studio/shared';
 
 /** A format's composition entry in a version, resolved to its folder (`compositions/<folder>`). */
 function entryOf(version: VersionEntry | undefined, format: string): { folder: string; hash: string } | null {

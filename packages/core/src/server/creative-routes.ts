@@ -1,7 +1,7 @@
-import { lstat, realpath } from 'node:fs/promises';
+import { lstat, readdir, realpath } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { briefSchema, checkLink, defaultLinks, effectiveLinks, formatLabel, isExportDate, issuesText, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
+import { briefSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatLabel, isExportDate, issuesText, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -9,6 +9,7 @@ import { CreativeStore } from '../creatives/creative-store.ts';
 import { exportResolved, exportVersion, pendingRenders, resolveExportPicks } from '../creatives/export.ts';
 import { storyboardDir, storyboardSchema, sweepStoryboardTemps, type PreviewService } from '../creatives/previews.ts';
 import { readJsonFile } from '../json-file.ts';
+import { isRealDirChain } from '../creatives/core-files.ts';
 import type { UrlSigner } from './signed-urls.ts';
 import { formatSummaries } from '../creatives/format-summary.ts';
 import { withLazyHashes } from '../creatives/output-hashes.ts';
@@ -70,6 +71,8 @@ const renderBody = z.object({ formats: z.array(z.string().min(1).max(200)).max(1
 const previewBody = z.object({ format: z.string().min(1).max(200), parentOrigin: z.string().min(1).max(200) }).strict();
 const FOLDER_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const FRAME_FILE_RE = /^f-\d{1,3}\.jpg$/;
+/** A pin frame of version n: `<n>-<i>.jpg` (creative-turns `extractPinFrames`). */
+const PIN_FRAME_RE = /^(\d{1,6})-(\d{1,3})\.jpg$/;
 
 /**
  * The links a new creative starts with: the ones sent (sanitized, each pair checked with `checkLink`; the duration is not
@@ -411,6 +414,48 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const sb = await readJsonFile(join(storyboardDir(ref.projectDir, ref.creativeSlug, n, req.params.folder), 'storyboard.json'), storyboardSchema).catch(() => null);
     if (!sb || !sb.hash.startsWith(req.params.hash)) return notFound();
     return sendConfinedFile(reply, storyboardDir(ref.projectDir, ref.creativeSlug, n, req.params.folder), req.params.file, ['f-']);
+  });
+
+  /**
+   * The feedback frames of the comments sent with the turn that made version n (Task 8, carry 9), from the protected core
+   * cache `.studio/cache/pin-frames/<creative>/v<n>/` (creative-turns `extractPinFrames`, fix I1): `<n>-<i>.jpg` for the
+   * i-th pin of that message, as short-lived signed URLs like the storyboards'. The folder is read only through real
+   * directories (a link anywhere in the chain gives an empty list) and is never created here.
+   */
+  const pinFramesRel = (creativeSlug: string, n: number) => ['.studio', 'cache', 'pin-frames', creativeSlug, `v${n}`];
+  app.get<{ Params: { slug: string; c: string; n: string } }>('/api/projects/:slug/creatives/:c/pin-frames/:n', async (req): Promise<PinFramesView> => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const n = /^\d{1,6}$/.test(req.params.n) ? Number(req.params.n) : 0;
+    if (n < 1) throw new WorkspaceError(404, t().errors.versionNotFound);
+    const rel = pinFramesRel(ref.creativeSlug, n);
+    if ((await isRealDirChain(ref.projectDir, rel)) !== 'ok') return { n, expiresAt: null, frames: [] };
+    const dir = join(ref.projectDir, ...rel);
+    const names: Array<{ file: string; i: number }> = [];
+    for (const file of await readdir(dir).catch(() => [] as string[])) {
+      const m = PIN_FRAME_RE.exec(file);
+      if (!m || Number(m[1]) !== n) continue;
+      const st = await lstat(join(dir, file)).catch(() => null);
+      if (st?.isFile() && st.nlink === 1) names.push({ file, i: Number(m[2]) });
+    }
+    names.sort((a, b) => a.i - b.i);
+    const base = `/api/projects/${encodeURIComponent(req.params.slug)}/creatives/${encodeURIComponent(ref.creativeSlug)}/pin-frame-files/${n}`;
+    let expiresAt: number | null = null;
+    const frames = names.map(({ file }) => { const s = ctx.signer.sign(`${base}/${file}`); expiresAt = s.expiresAt; return { file, url: s.url }; });
+    return { n, expiresAt: expiresAt === null ? null : new Date(expiresAt).toISOString(), frames };
+  });
+
+  // The pin frame images, shown by <img>: no UI token, but a signed URL from the route above; only `<n>-<i>.jpg` of v<n>.
+  app.get<{ Params: { slug: string; c: string; n: string; file: string }; Querystring: { s?: string } }>('/api/projects/:slug/creatives/:c/pin-frame-files/:n/:file', async (req, reply) => {
+    const path = req.url.split('?')[0]!;
+    if (!ctx.signer.verify(path, req.query.s)) return reply.status(403).send({ error: t().errors.fileNotFoundShort });
+    const ref = await refOf(req.params.slug, req.params.c);
+    const notFound = () => reply.status(404).send({ error: t().errors.fileNotFoundShort });
+    const m = PIN_FRAME_RE.exec(req.params.file);
+    const n = /^\d{1,6}$/.test(req.params.n) ? Number(req.params.n) : 0;
+    if (!m || n < 1 || Number(m[1]) !== n) return notFound();
+    const rel = pinFramesRel(ref.creativeSlug, n);
+    if ((await isRealDirChain(ref.projectDir, rel)) !== 'ok') return notFound();
+    return sendConfinedFile(reply, join(ref.projectDir, ...rel), req.params.file, [`${n}-`]);
   });
 
   app.get<{ Params: { slug: string; c: string; '*': string } }>('/api/projects/:slug/creatives/:c/files/*', async (req, reply) => {

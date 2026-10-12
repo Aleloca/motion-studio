@@ -11,6 +11,7 @@ import { setupUpdates } from './updater.ts';
 import { registerFullscreenQuery, registerTitleBar, sendFullscreen } from './titlebar.ts';
 import { ipcSenderTrusted, isAppUrl, windowOpenToBrowser, windowOptions, type IpcSender } from './window.ts';
 import { desktopRenderOptions, shutdownForQuit } from './render-window.ts';
+import { createRenderGuard, registerRenderGuard, renderRunningPrompt } from './render-guard.ts';
 import { frameChain, hardenUiWindow, installPreviewFilter, pollCompositionOrigin, subframeNavigationBlocked, type FilterContext } from './preview-filter.ts';
 
 const REPO_URL = 'https://github.com/Aleloca/motion-studio';
@@ -203,10 +204,29 @@ async function run() {
   const allowed = (permission: string, requestingUrl: string) => permission === 'notifications' && isAppUrl(requestingUrl, origin);
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb, details) => cb(allowed(permission, details.requestingUrl)));
   session.defaultSession.setPermissionCheckHandler((_wc, permission, requestingOrigin) => allowed(permission, requestingOrigin));
+  // A render running when the window closes or the app quits: ask first (carry 11). Attached, the renders belong to the
+  // other instance and go on without this window: nothing to ask.
+  const renders = createRenderGuard({
+    ask: async (count) => {
+      if (server.attached || win.isDestroyed()) return true;
+      const { response } = await dialog.showMessageBox(win, { type: 'warning', ...renderRunningPrompt(t().desktop, count) });
+      return response === 0;
+    },
+  });
+  registerRenderGuard(ipcMain, { trusted, guard: renders, invalid: () => new Error(t().desktop.invalidRequest) });
+  win.on('close', (e) => {
+    if (closing || renders.running() === 0 || renders.confirmed()) return;
+    e.preventDefault();
+    void renders.mayClose().then((yes) => { if (yes && !win.isDestroyed()) win.close(); });
+  });
   app.on('before-quit', (e) => {
     if (closing) return;
-    closing = true;
     e.preventDefault();
+    if (renders.running() > 0 && !renders.confirmed()) {
+      void renders.mayClose().then((yes) => { if (yes) app.quit(); });
+      return;
+    }
+    closing = true;
     // Jobs first (the core cancels them and each render removes its temp files), then any render window left.
     void shutdownForQuit({ closeServer: server.close }).finally(() => app.quit());
   });

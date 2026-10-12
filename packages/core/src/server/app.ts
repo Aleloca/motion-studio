@@ -34,6 +34,7 @@ import { JsonFileError } from '../json-file.ts';
 import { MemoryVault, type SecretsVault } from '../secrets/vault.ts';
 import { ApprovalBroker } from '../approvals/broker.ts';
 import { registerSettingsRoutes } from './settings-routes.ts';
+import { defaultChromeInstaller, registerRenderEngineRoutes, type ChromeInstaller } from './render-engine-routes.ts';
 import { CodedError, expandHome, WorkspaceError, WorkspaceStore } from '../workspace-store.ts';
 import { recoverWorkspace, registerCreativeRoutes, type RecoverOptions } from './creative-routes.ts';
 import { registerBrandRoutes } from './brand-routes.ts';
@@ -94,6 +95,11 @@ export interface ServerDeps {
   previewFramesPerTurn?: number;
   /** Lifetime of the signed storyboard image URLs (default 10 min; tests). */
   signedUrlTtlMs?: number;
+  /**
+   * The on-demand Chrome for Testing download of the System check (Task 8). Default: the real one into `configDir` when
+   * there is a renderer and a config folder; null: none (tests inject a fake: no test downloads anything).
+   */
+  chromeInstaller?: ChromeInstaller | null;
 }
 
 /** How long the billing method (one `claude auth status`) is reused; 'unknown' is retried sooner. */
@@ -101,10 +107,10 @@ const BILLING_TTL_MS = 10 * 60 * 1000;
 const BILLING_RETRY_MS = 60 * 1000;
 
 /** Routes reachable without the UI token: health, the MCP bridge (it has its own token) and files shown by <img>/<video>. */
-// The storyboard images carry a signed URL instead (signed-urls.ts, fix I4).
+// The storyboard and pin frame images carry a signed URL instead (signed-urls.ts, fix I4).
 const UI_TOKEN_EXEMPT: Record<string, ReadonlySet<string>> = {
-  GET: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/projects/:slug/creatives/:c/files/*', '/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:hash/:file']),
-  HEAD: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/projects/:slug/creatives/:c/files/*', '/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:hash/:file']),
+  GET: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/projects/:slug/creatives/:c/files/*', '/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:hash/:file', '/api/projects/:slug/creatives/:c/pin-frame-files/:n/:file']),
+  HEAD: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/projects/:slug/creatives/:c/files/*', '/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:hash/:file', '/api/projects/:slug/creatives/:c/pin-frame-files/:n/:file']),
   POST: new Set(['/api/bridge/:tool']),
 };
 /** `code` is what the UI branches on; `error` is display text in the current language. */
@@ -440,6 +446,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     },
   });
   registerSettingsRoutes(app, { vault, approvals, requireWorkspace });
+  registerRenderEngineRoutes(app, {
+    engine: deps.render,
+    installer: deps.chromeInstaller !== undefined ? deps.chromeInstaller : deps.render && deps.configDir ? defaultChromeInstaller(deps.configDir) : null,
+  });
 
   let billingCache: { value: Promise<UsageBilling>; until: number } | null = null;
   const billing = () => {

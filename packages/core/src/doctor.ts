@@ -1,4 +1,5 @@
 import type { DoctorCheck, UsageBilling } from '@motion-studio/shared';
+import type { BinaryArch } from './render/arch.ts';
 import type { SandboxSupport } from './agent/sandbox.ts';
 import type { CommandExec, CommandResult } from './exec.ts';
 import { t } from './i18n.ts';
@@ -19,6 +20,11 @@ export async function runDoctor(opts: {
   exec: CommandExec; claudeCommand: string[]; nodeVersion?: string; sandbox?: () => Promise<SandboxSupport>; shellPath?: ShellPathOrigin;
   /** The chosen workspace folder: a path with `[ ] * ?` weakens the sandbox's protection of the records (decisions log 141). */
   workspacePath?: string | null;
+  /**
+   * The ffmpeg build's architecture (render/encode.ts `findFfmpeg`): shown next to its version, and an x86_64 build under
+   * Rosetta on Apple Silicon is named (it renders, slower). Absent or failing: the plain version.
+   */
+  ffmpegInfo?: () => Promise<{ arch: BinaryArch; hostArch: string; translated: boolean } | null>;
 }): Promise<DoctorCheck[]> {
   const { exec } = opts;
   const [claudeBin, ...claudePrefix] = opts.claudeCommand;
@@ -42,8 +48,15 @@ export async function runDoctor(opts: {
       : { id: 'git', label: 'Git', required: true, ok: false, message: brokenMessage(git) });
 
   const ffmpeg = await exec('ffmpeg', ['-version']);
+  const arch = ffmpeg.code === 0 && opts.ffmpegInfo ? await opts.ffmpegInfo().catch(() => null) : null;
+  const archText = arch && arch.arch !== 'unknown' ? d.ffmpegArch({ arch: arch.arch === 'universal' ? d.ffmpegUniversal : arch.arch, translated: arch.translated }) : null;
+  const ffmpegVersion = versionIn(ffmpeg.stdout);
   checks.push(ffmpeg.code === 0
-    ? { id: 'ffmpeg', label: 'FFmpeg', required: false, ok: true, version: versionIn(ffmpeg.stdout), message: d.installed }
+    ? {
+      id: 'ffmpeg', label: 'FFmpeg', required: false, ok: true,
+      version: ffmpegVersion !== undefined && archText ? `${ffmpegVersion} · ${archText}` : ffmpegVersion,
+      message: arch?.translated ? d.ffmpegRosetta : d.installed,
+    }
     : ffmpeg.notFound
       ? { id: 'ffmpeg', label: 'FFmpeg', required: false, ok: false, message: d.ffmpegRecommended, fix: d.ffmpegFix }
       : { id: 'ffmpeg', label: 'FFmpeg', required: false, ok: false, message: brokenMessage(ffmpeg) });

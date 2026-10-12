@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('motionStudio', {
   notify: (p: { title: string; body: string; sound?: boolean }): Promise<unknown> => ipcRenderer.invoke('ms:notify', { title: p?.title, body: p?.body, sound: p?.sound }),
   notifyStatus: (): Promise<{ supported: boolean }> => ipcRenderer.invoke('ms:notify-status'),
   setBadge: (n: number): Promise<void> => ipcRenderer.invoke('ms:badge', n),
+  // How many renders are queued or running (a whole count): closing the window with one asks first (Task 8).
+  setRendersRunning: (n: number): Promise<void> => ipcRenderer.invoke('ms:renders-running', n),
   // A click on one of the app's notifications (the main process sends it only to the app's own page). The page gets
   // a plain call: never the IPC event or its sender. Returns the unsubscribe.
   onAttentionClick: (cb: () => void): (() => void) => {
