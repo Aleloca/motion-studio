@@ -80,6 +80,32 @@ async function loadIn(partition: string, url: string, prepare: (ses: Electron.Se
   return win;
 }
 
+/**
+ * Watches a session's service workers until `stop()`: `serviceWorkers` is the most running at once (sampled every 200 ms and
+ * on every status change), `swEvents` every registration and running-status change, timed from the start (the diagnostic
+ * of a failure). A single read at the end would miss a worker that ran and was stopped (Chromium stops an idle one after 30 s).
+ */
+function watchServiceWorkers(ses: Electron.Session) {
+  const t0 = Date.now();
+  const swEvents: string[] = [];
+  let max = 0;
+  const sample = () => { max = Math.max(max, Object.keys(ses.serviceWorkers.getAllRunning()).length); };
+  const onRegistered = (_e: unknown, d: { scope: string }) => { swEvents.push(`${Date.now() - t0}ms registered ${d.scope}`); sample(); };
+  const onStatus = (d: { versionId: number; runningStatus: string }) => { swEvents.push(`${Date.now() - t0}ms v${d.versionId} ${d.runningStatus}`); sample(); };
+  ses.serviceWorkers.on('registration-completed', onRegistered);
+  ses.serviceWorkers.on('running-status-changed', onStatus);
+  const timer = setInterval(sample, 200);
+  return {
+    stop() {
+      clearInterval(timer);
+      sample();
+      ses.serviceWorkers.off('registration-completed', onRegistered);
+      ses.serviceWorkers.off('running-status-changed', onStatus);
+      return { serviceWorkers: max, swEvents };
+    },
+  };
+}
+
 async function close(win: BrowserWindow) {
   if (win.isDestroyed()) return;
   const closed = new Promise<void>((r) => win.once('closed', () => r()));
@@ -126,22 +152,26 @@ async function run(): Promise<void> {
     case 'session-rules': {
       // No CDP interception, no CSP: only the session's proxy and webRequest rules (and the WebRTC policy).
       const page = `${c.naked!.origin}/${c.naked!.token}/page.html`;
-      const control = await loadIn(`ms-test-control-${Date.now()}`, page, () => {});
-      report({ phase: 'control-loaded' });
+      let controlWorkers: ReturnType<typeof watchServiceWorkers> | undefined;
+      // The service workers of each window are watched for its whole life, not read once at the end: Chromium stops an idle
+      // worker after 30 s, and the control's load-stretched settle (up to 36 s) outlived the page's worker.
+      const control = await loadIn(`ms-test-control-${Date.now()}`, page, (ses) => { controlWorkers = watchServiceWorkers(ses); });
+      const controlLoaded = Date.now();
       await controlSettle(6000);
-      const controlServiceWorkers = Object.keys(control.webContents.session.serviceWorkers.getAllRunning()).length;
+      const controlSw = controlWorkers!.stop();
       await close(control);
-      report({ phase: 'control-sw', serviceWorkers: controlServiceWorkers });
+      report({ phase: 'control-sw', ...controlSw, settledMs: Date.now() - controlLoaded, load: loadavg()[0] });
       report({ phase: 'control-done' });
       const rw = await createRenderWindow({ prefix: `${c.naked!.origin}/${c.naked!.token}/`, width: 800, height: 600 });
+      const lockedWorkers = watchServiceWorkers(rw.win.webContents.session);
       await rw.win.loadURL(page).catch(() => {});
       const opened = rw.win.webContents.getURL();
       await settle(6000);
       const frames = rw.win.webContents.mainFrame.framesInSubtree.length;
-      // The page registers a service worker on the allowed prefix: the session refuses its script, so none runs.
-      const serviceWorkers = Object.keys(rw.win.webContents.session.serviceWorkers.getAllRunning()).length;
+      // The page registers a service worker on the allowed prefix: the session refuses its script, so none ever runs.
+      const { serviceWorkers, swEvents } = lockedWorkers.stop();
       await rw.close();
-      report({ phase: 'locked-done', opened, frames, serviceWorkers });
+      report({ phase: 'locked-done', opened, frames, serviceWorkers, swEvents });
       return;
     }
     case 'render': {

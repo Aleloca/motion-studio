@@ -323,9 +323,12 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
       const locked = find(r.lines, (l) => l.phase === 'locked-done');
       expect(locked.opened).toBe(`${naked.origin}/${TOKEN}/page.html`);
       expect(locked.frames).toBeGreaterThan(1); // the layers loaded (they are on the allowed prefix)
-      // The control ran the page's service worker (on the same prefix); the locked session refused its script.
-      expect(find(r.lines, (l) => l.phase === 'control-sw').serviceWorkers).toBeGreaterThan(0);
-      expect(locked.serviceWorkers).toBe(0);
+      // The control ran the page's service worker (on the same prefix); the locked session refused its script. Both counts are
+      // the most running at once over the window's life; a failure shows the worker's registration and status timeline.
+      const controlSw = find(r.lines, (l) => l.phase === 'control-sw');
+      expect(controlSw.serviceWorkers, `control service workers: ${JSON.stringify(controlSw)}`).toBeGreaterThan(0);
+      expect(locked.serviceWorkers, `render window service workers: ${JSON.stringify(locked)}`).toBe(0);
+      expect(locked.swEvents, 'no service worker registered or started in the render window').toEqual([]);
       expect(canary.hits.slice(cut)).toEqual([]);
       // Only a packet from a new source is the render window's (the control's QUIC Initial is retransmitted after it closed).
       const controlPorts = new Set(udp.packets.slice(udpStart, udpCut).map((p) => p.from));
