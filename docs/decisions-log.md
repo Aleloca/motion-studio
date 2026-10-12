@@ -457,3 +457,7 @@ Legenda impatto: 🟢 basso · 🟡 medio · 🔴 alto (sicurezza o prodotto).
     - *SVG:* mai ffprobe né `svg_pipe`: la dimensione viene da una lettura testuale di width, height e viewBox, senza risolvere riferimenti esterni.
     - *`MOTION_STUDIO_USER_DATA_DIR`:* percorsi reali con `realpathSync.native` (le maiuscole su disco) e confronto senza distinzione di maiuscole su macOS e Windows, compreso il nome `Motion Studio*`.
     - *Export:* accanto a una ★ deselezionata per un problema compare il motivo breve nella lingua dell'interfaccia ("durata 4,8 s invece di 6 s", dai codici `issues` che il render registra); un render escluso durante l'export è dichiarato a parte nel riepilogo finale, mai in silenzio.
+180. 🟡 **Ondata finale, parte 1, secondo giro di correzioni.**
+    - *SVG:* la lettura della dimensione è lineare (solo `indexOf`, nessuna regex con backtracking sul file) e limitata (256 KB letti, tag radice di al massimo 16 KB): un SVG ostile non blocca più il core. Il file si apre non bloccante e si legge solo se è un file regolare.
+    - *ffmpeg:* nei filtergraph e negli input lavfi sono ammessi solo i filtri che il core costruisce (una allowlist, non più una lista di filtri vietati); `-enable_drefs` e `-use_absolute_path` sono rifiutati; il controllo del contenuto delle immagini non blocca mai, e FIFO, socket e dispositivi non arrivano a ffmpeg.
+    - *`MOTION_STUDIO_USER_DATA_DIR`:* i nomi si confrontano dopo NFKC e maiuscole poi minuscole (`ſ` vale `s`, come per APFS).
