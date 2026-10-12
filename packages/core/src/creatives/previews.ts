@@ -134,9 +134,15 @@ export class PreviewService {
 
   /** The long-lived composition server of the live previews (started on first use). */
   compositionServer(): Promise<CompositionServer> {
+    // After close() no server starts, and one that finished starting after it is closed at once and never announced (C12).
+    if (this.closing.signal.aborted) return Promise.reject(new Error('closed'));
     this.server ??= startCompositionServer({ uiOrigins: this.deps.uiOrigins, ...(this.deps.distDir ? { distDir: this.deps.distDir } : {}) })
-      .then((s) => { this.deps.onServerOrigin?.(s.origin); return s; })
-      .catch((e: unknown) => { this.server = null; throw e; });
+      .then(async (s) => {
+        if (this.closing.signal.aborted) { await s.close().catch(() => {}); throw new Error('closed'); }
+        this.deps.onServerOrigin?.(s.origin);
+        return s;
+      })
+      .catch((e: unknown) => { if (!this.closing.signal.aborted) this.server = null; throw e; });
     return this.server;
   }
 

@@ -60,3 +60,17 @@ describe('the preview lane limit does not include media normalisation (C5)', () 
     await svc.close();
   });
 });
+
+describe('start/close origin race (C12)', () => {
+  it('a server that finishes starting after close() is closed and its origin never announced; no server starts after close', async () => {
+    const origins: Array<string | null> = [];
+    base = mkdtempSync(join(tmpdir(), 'ms-test-origin-race-'));
+    const svc = new PreviewService({ engine: undefined, normalizer: {} as never, presets: async () => [], uiOrigins: () => [], distDir: base, onServerOrigin: (o) => { origins.push(o); } });
+    const starting = svc.compositionServer().catch(() => null);
+    await svc.close();
+    expect(await starting).toBeNull();
+    await expect(svc.compositionServer()).rejects.toThrow('closed');
+    expect(origins.filter((o) => o !== null)).toEqual([]);
+    expect(origins.at(-1)).toBeNull();
+  });
+});

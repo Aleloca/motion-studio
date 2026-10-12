@@ -138,7 +138,11 @@ export async function sweepByMarker(marker: string, o: { rootPid: number; since:
   return rows.length;
 }
 
-/** Memory of a process group in MB: the total and the largest process; null when it cannot be read. */
+/**
+ * Memory of a process group in MB: the total and the largest process (null from the samplers when it cannot be read). `pids` is the number of processes MEASURED in this sample (those a footprint/ps/proc read
+ * answered for), not the number listed in the group: a process that exited between the listing and the read, or a pid the
+ * tool could not read, is not counted (M10). The Electron path re-reads its renderers' pids from live webContents every sample.
+ */
 export interface GroupMemory { totalMB: number; maxMB: number; pids: number }
 
 async function linuxMemory(pids: number[]): Promise<Map<number, number>> {
