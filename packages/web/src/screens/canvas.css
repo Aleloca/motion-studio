@@ -92,6 +92,24 @@
 .ms-cv-frame-wrap.ms-narrow .ms-cv-open-text { display: none; }
 .ms-cv-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* The live preview of a v2 board (Task 8): its player never takes the pointer (player.css: select, double-click and hover
+   stay the board's); the play button sits in the corner, screen-sized like "Open editor", shown on hover or while pinned. */
+.ms-cv-live-player { z-index: 1; }
+.ms-cv-live {
+  position: absolute; left: 8px; bottom: 8px; z-index: 2; width: 28px; height: 28px; min-height: 0; padding: 0; margin: 0; border: 0;
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--onMedia); color: var(--onMediaText);
+  cursor: pointer; box-shadow: 0 6px 16px var(--shadowLg); opacity: 0; transition: opacity var(--d-s) var(--e-std);
+}
+.ms-cv-frame-wrap:hover .ms-cv-live, .ms-cv-live:focus-visible, .ms-cv-live.ms-on { opacity: 1; }
+.ms-cv-live:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* While it plays, "Open editor" steps aside to the top (the picture moves under it). */
+.ms-cv-frame-wrap.ms-live .ms-cv-open { top: 28px; }
+.ms-cv-retry {
+  min-height: 0; height: auto; padding: 0; margin: 0; border: 0; background: transparent; font: inherit; color: var(--accentText); cursor: pointer;
+}
+.ms-cv-retry:hover { text-decoration: underline; }
+.ms-cv-retry:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
 /* Comment mode: the whole frame takes the click. */
 .ms-cv-hit { position: absolute; inset: 0; z-index: 3; width: 100%; height: 100%; min-height: 0; padding: 0; margin: 0; border: 0; border-radius: 0; background: transparent; cursor: crosshair; }
 .ms-cv-hit:focus-visible { outline: 2px dashed var(--accent); outline-offset: -2px; }
@@ -255,6 +273,7 @@
 .ms-cv-cgroup { display: flex; flex-direction: column; gap: 8px; }
 .ms-cv-cgroup + .ms-cv-cgroup { margin-top: 8px; }
 .ms-cv-comment { padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+.ms-cv-comment-frame { display: block; width: 100%; max-height: 160px; object-fit: contain; border-radius: 6px; background: var(--field); user-select: none; }
 .ms-cv-comment-head { display: flex; align-items: center; gap: 8px; font-size: 11px; min-width: 0; }
 .ms-cv-comment-head .ms-pill { height: 20px; flex: none; }
 .ms-cv-comment-where { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -287,6 +306,7 @@
 .ms-cmp-pane img, .ms-cmp-pane video { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
 .ms-cmp-none { font-size: 12px; color: var(--muted); padding: 12px; text-align: center; }
 .ms-cmp-failed { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 1; padding: 8px 10px; border-radius: 8px; background: var(--mediaScrim); color: var(--onMediaScrim); font-size: 12px; overflow-wrap: anywhere; }
+.ms-cmp-failed-retry { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .ms-cmp-failures { position: absolute; left: 0; right: 0; bottom: 0; z-index: 4; }
 .ms-cmp-failures .ms-cmp-failed { position: static; display: block; margin: 0 8px 8px; }
 .ms-cmp-error { margin: 0; font-size: 12px; color: var(--danger); overflow-wrap: anywhere; }
@@ -355,6 +375,7 @@
 .ms-exp-follows { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .ms-exp-follows .ms-exp-ver { font-size: 12px; color: var(--text); }
 .ms-exp-blocked { font-size: 11px; color: var(--danger); overflow-wrap: anywhere; }
+.ms-exp-render { font-size: 11px; color: var(--accentText); }
 .ms-exp-pattern { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .ms-exp-pattern-field { font-family: var(--mono); font-size: 12px; }
 .ms-exp-tokens { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -393,10 +414,13 @@
   .ms-cv-panel { border-left: 0; border-top: 1px solid var(--line); min-height: 420px; }
   .ms-cv-legend { width: auto; right: 16px; }
 }
-@media (prefers-reduced-motion: reduce) { .ms-cv-open, .ms-cv-pin, .ms-cv-frame { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .ms-cv-open, .ms-cv-live, .ms-cv-pin, .ms-cv-frame { transition: none; } }
 /* Large-file warning (Phase 8, spec §6): a warn pill that opens the recommendation. */
 .ms-cv-large { border: 0; margin: 0; font: inherit; font-size: 11px; cursor: pointer; gap: 4px; }
 .ms-cv-large:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ms-cv-large-pop { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; font-size: 12px; }
 .ms-cv-large-pop b { font-weight: 600; }
 .ms-cv-large-pop p { margin: 0; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+.ms-cv-problem-list { margin: 0; padding-left: 16px; line-height: 1.5; overflow-wrap: anywhere; }
+.ms-cv-large-pop .ms-btn { align-self: flex-start; }
+.ms-exp-problem { font-size: 11px; color: var(--warn); overflow-wrap: anywhere; }

@@ -36,3 +36,13 @@ export function ipcSenderTrusted(e: IpcSender, wc: { mainFrame: unknown }, origi
 export function externalUrlAllowed(url: string): boolean {
   try { return ['https:', 'http:', 'mailto:'].includes(new URL(url).protocol); } catch { return false; }
 }
+
+/**
+ * The UI window's window-open handler: a web or mail link goes to the system browser only when the app's own page opened
+ * it. Electron gives the handler no opener frame, only the referrer: the app's pages send their origin (their links use
+ * `rel="noopener"` in the desktop, without `noreferrer`), while the composition server's pages send none
+ * (`Referrer-Policy: no-referrer`), so a popup from a preview frame, should it ever get `allow-popups`, is refused.
+ */
+export function windowOpenToBrowser(details: { url: string; referrer?: { url?: string } | null }, origin: string): boolean {
+  return externalUrlAllowed(details.url) && isAppUrl(details.referrer?.url ?? '', origin);
+}

@@ -1,11 +1,15 @@
 import { access, constants, lstat, mkdir, realpath, rm, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { DEFAULT_EXPORT_NAME_PATTERN, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, renderName, starOf, type FormatPreset, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_NAME_PATTERN, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, hasFormat, renderName, renderState, starOf, type FormatPreset, type VersionEntry } from '@motion-studio/shared';
 import { copyConfinedFile, probeConfinedFile } from '../brand/agent-guard.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
 import { t } from '../i18n.ts';
 
-export interface ExportResult { destination: string; files: Array<{ from: string; to: string }>; skipped: string[] }
+export interface ExportResult {
+  destination: string; files: Array<{ from: string; to: string }>; skipped: string[];
+  /** v2 formats rendered first because their ★ had no current render (Task 5b), by version. */
+  rendered?: Array<{ version: number; formats: string[] }>;
+}
 
 const CASE_INSENSITIVE = process.platform === 'darwin' || process.platform === 'win32';
 const fold = (p: string) => (CASE_INSENSITIVE ? p.toLowerCase() : p);
@@ -66,9 +70,9 @@ async function resolveLoose(p: string): Promise<string> {
  * One file to export: the output `file` of `format` in version `n`. `v` is the number the name's `{v}` shows when it
  * differs from `n`: a follower is named after its primary's version (decisions log 140), whose file is byte-identical.
  */
-interface ExportItem { format: string; n: number; v?: number; file: string; width: number; height: number }
+export interface ExportItem { format: string; n: number; v?: number; file: string; width: number; height: number }
 
-interface ExportCommon {
+export interface ExportCommon {
   creativeDir: string;
   destination: string;
   slug: string;
@@ -161,8 +165,41 @@ const isVersionNumber = (n: unknown): n is number => typeof n === 'number' && Nu
  * - `export-file-missing` (409): the file is missing on disk or refused by the confined read;
  * - `export-name-empty`, `export-name-collision` (400): the pattern gives an empty name, or the same name twice.
  */
-export async function exportPicks(opts: ExportCommon & { versions: VersionEntry[]; picks: Record<string, number>; follow?: string[] | Record<string, number>;
-  links?: Record<string, string>; storedPicks?: Record<string, number> }): Promise<ExportResult> {
+export type PicksOptions = ExportCommon & { versions: VersionEntry[]; picks: Record<string, number>; follow?: string[] | Record<string, number>;
+  links?: Record<string, string>; storedPicks?: Record<string, number> };
+
+export async function exportPicks(opts: PicksOptions): Promise<ExportResult> {
+  const items = resolveExportPicks(opts);
+  return runExport(items, opts, 'refuse', Math.max(0, ...items.map((i) => i.n)));
+}
+
+/** Copies already resolved items (`resolveExportPicks`), with the strict rules of a ★ export. */
+export function exportResolved(items: ExportItem[], opts: ExportCommon): Promise<ExportResult> {
+  return runExport(items, opts, 'refuse', Math.max(0, ...items.map((i) => i.n)));
+}
+
+/**
+ * The v2 items that need a render before export (Task 5b), by version: a composition whose render is not current
+ * (`renderState` is not `rendered`) or whose rendered file is not usable on disk any more. Legacy items never do (their
+ * media is the result).
+ */
+export async function pendingRenders(creativeDir: string, versions: VersionEntry[], items: ExportItem[]): Promise<Map<number, string[]>> {
+  const out = new Map<number, string[]>();
+  for (const it of items) {
+    const v = versions.find((x) => x.n === it.n);
+    if (!v?.compositions?.some((c) => c.format === it.format)) continue;
+    const fresh = renderState(v, it.format) === 'rendered' && it.file !== '' && plainName(it.file)
+      && (await probeConfinedFile(creativeDir, `outputs/v${it.n}/${it.file}`)) === true;
+    if (!fresh) out.set(it.n, [...(out.get(it.n) ?? []), it.format]);
+  }
+  return out;
+}
+
+/**
+ * The items a ★ export copies (the rules and refusals below), without copying anything. A v2 format without a render yet
+ * is an item with an empty `file` (`pendingRenders` lists it; the route renders it first).
+ */
+export function resolveExportPicks(opts: PicksOptions): ExportItem[] {
   const links = opts.links ?? {};
   const label = opts.label ?? ((f: string) => f);
   // `follow` as a record carries the version the client showed for each follower; a list (older clients) lets the core
@@ -173,8 +210,11 @@ export async function exportPicks(opts: ExportCommon & { versions: VersionEntry[
   if (!pickIds.length && !follow.length) throw new CodedError(400, t().export.invalidPicks, 'export-invalid-picks');
   const items: ExportItem[] = [];
   const itemOf = (format: string, n: number) => {
-    const o = opts.versions.find((v) => v.n === n)?.outputs.find((x) => x.format === format);
-    return o ? { format, n, file: o.file, width: o.width, height: o.height } : null;
+    const v = opts.versions.find((x) => x.n === n);
+    const o = v?.outputs.find((x) => x.format === format);
+    if (o) return { format, n, file: o.file, width: o.width, height: o.height };
+    // A v2 composition with no render yet: exported once rendered.
+    return v && v.compositions?.some((c) => c.format === format) && hasFormat(v, format) ? { format, n, file: '', width: 0, height: 0 } : null;
   };
   for (const format of pickIds) {
     const n = opts.picks[format];
@@ -213,7 +253,7 @@ export async function exportPicks(opts: ExportCommon & { versions: VersionEntry[
     // Named after the primary's version: "Reel v2" and "TikTok v2" are the same bytes.
     items.push(primaryN !== it.n ? { ...it, v: primaryN } : it);
   }
-  return runExport(items, opts, 'refuse', Math.max(0, ...items.map((i) => i.n)));
+  return items;
 }
 
 /**

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { canFollow, type FollowCheck, type FormatPreset, type OutputFileInfo } from '@motion-studio/shared';
 import { hashConfinedFile } from '../brand/agent-guard.ts';
 import { noteCoreChange } from '../core-changes.ts';
+import { isCoreTemp } from '../core-temps.ts';
 
 /**
  * Carry-over and linked formats (spec §2.3–2.5): the core, not the agent, puts the files of the formats a turn does not
@@ -122,12 +123,53 @@ export async function snapshotOutputs(creativeDir: string, dirs: string[]): Prom
       const child = `${rel}/${name}`;
       const info = await lstat(join(creativeDir, ...child.split('/'))).catch(() => null);
       if (!info) continue;
-      out.set(child, `${info.isDirectory() ? 'd' : info.isSymbolicLink() ? 'l' : 'f'}:${info.size}:${info.mtimeMs}:${info.ino}`);
+      out.set(child, stampOf(info));
       if (info.isDirectory() && depth < 4) await walk(child, depth + 1);
     }
   };
   for (const d of dirs) await walk(`outputs/${d}`, 0);
   return out;
+}
+
+/** An output entry's fingerprint as `snapshotOutputs` records it. */
+const stampOf = (info: { isDirectory(): boolean; isSymbolicLink(): boolean; size: number; mtimeMs: number; ino: number }) =>
+  `${info.isDirectory() ? 'd' : info.isSymbolicLink() ? 'l' : 'f'}:${info.size}:${info.mtimeMs}:${info.ino}`;
+
+/**
+ * Entries of `outputs/v<k>` the core itself wrote (render jobs, Task 5: a render, a follower copy, the manifest, a poster and
+ * its folder), by absolute path → the fingerprint the core left. A render may run while a turn runs on the same creative,
+ * so the turn's check of earlier versions leaves these out (`withoutCoreWrites`). In memory: the turn and the render
+ * both run in this process.
+ */
+const coreOutputWrites = new Map<string, string>();
+const MAX_CORE_OUTPUT_WRITES = 2000;
+
+/**
+ * Records the core's write of `rel` (`outputs/v<k>/…`) under `creativeDir`: the entry as it is now, or, given `from` (the
+ * temp file about to be renamed to it), that file's fingerprint, which a rename keeps (size, mtime, inode). Called BEFORE
+ * the rename, so a turn's check landing between the two never sees an unexplained change (Task 5 M1).
+ */
+export async function noteCoreOutputWrite(creativeDir: string, rel: string, from?: string): Promise<void> {
+  const abs = join(creativeDir, ...rel.split('/'));
+  const info = await lstat(from ?? abs).catch(() => null);
+  if (!info) return;
+  coreOutputWrites.delete(abs);
+  coreOutputWrites.set(abs, stampOf(info));
+  while (coreOutputWrites.size > MAX_CORE_OUTPUT_WRITES) coreOutputWrites.delete(coreOutputWrites.keys().next().value!);
+}
+
+/**
+ * `changes` (from `snapshotChanges`) without the entries the core wrote itself: those whose fingerprint in `after` is the
+ * one the core recorded, and the temp files the core created in this process (`isCoreTemp`: they come and go while a
+ * render runs). A temp-looking name the core did not create is still reported.
+ */
+export function withoutCoreWrites(creativeDir: string, changes: string[], after: Map<string, string>): string[] {
+  return changes.filter((rel) => {
+    const abs = join(creativeDir, ...rel.split('/'));
+    if (isCoreTemp(abs)) return false;
+    const now = after.get(rel);
+    return now === undefined || coreOutputWrites.get(abs) !== now;
+  });
 }
 
 /** The paths that differ between two snapshots (changed, added or removed), sorted. */

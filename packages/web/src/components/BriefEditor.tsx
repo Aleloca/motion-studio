@@ -1,10 +1,10 @@
 // Brief form of a creative ("Edit the brief" in the canvas panel), built from ui/ controls only: no native select,
 // checkbox or number field, no textarea resize. Saves it, or saves and starts a new generation.
-import { channelName, formatName, type Brief, type CreativeDetail, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
+import { channelName, formatName, legacyTurnKind, linksAfterBriefSave, type Brief, type CreativeDetail, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
 import { useId, useMemo, useState } from 'react';
 import { api } from '../api.ts';
 import { useLocale, useT } from '../i18n.tsx';
-import { Button, ChannelMark, Chip, channelOf, Input, Segmented, Textarea } from '../ui/index.ts';
+import { Button, ChannelMark, Chip, channelOf, Icon, Input, Segmented, Textarea } from '../ui/index.ts';
 import { CodebaseList } from './CodebaseList.tsx';
 import './brief.css';
 import { message } from '../errors.ts';
@@ -35,6 +35,14 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged }: { sl
     for (const p of presets) m.set(p.channel, [...(m.get(p.channel) ?? []), p]);
     return [...m.entries()];
   }, [presets]);
+
+  // Final review I4: on a creative made before compositions, "Save and regenerate" converts every format with the agent
+  // (more tokens once), unless the save only adds formats linked to existing ones (copied without the agent). The same
+  // rules as the core (shared): the links this save will give, and the base the turn builds on.
+  const converts = useMemo(() => {
+    const base = c.resumeFrom ? detail.versions.find((v) => v.n === c.resumeFrom!.version) : detail.versions.at(-1);
+    return legacyTurnKind(base, { formats: brief.formats, links: linksAfterBriefSave(c.brief, brief.formats, presets) }) === 'convert';
+  }, [c.resumeFrom, c.brief, detail.versions, brief.formats, presets]);
 
   const durationSec = (): number | null | 'invalid' => {
     if (length === 'none') return null;
@@ -93,6 +101,7 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged }: { sl
       </div>
       <span className="ms-brief-lbl">{nc.codebases}</span>
       <CodebaseList value={codebases} onChange={setCodebases} disabled={disabled} />
+      {converts ? <p className="ms-brief-notice" role="note"><Icon name="warn" size={13} /><span>{cv.legacyConvertNotice}</span></p> : null}
       {error ? <p role="alert" className="ms-brief-error">{error}</p> : null}
       <div className="ms-brief-actions">
         <Button type="submit" variant="outline" disabled={disabled || busy !== null} loading={busy === 'save'}>{t.common.save}</Button>

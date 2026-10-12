@@ -6,6 +6,7 @@ import { currentLocale, t } from './i18n.ts';
 import { issuesText } from '@motion-studio/shared';
 import { noteCoreChange } from './core-changes.ts';
 import { noteCoreFile } from './project-integrity.ts';
+import { noteCoreTemp } from './core-temps.ts';
 
 export type JsonFileErrorReason = 'missing' | 'invalid-json' | 'schema';
 
@@ -38,14 +39,17 @@ export async function readJsonFile<T>(path: string, schema: z.ZodType<T>): Promi
   return parsed.data;
 }
 
-export async function writeJsonFileAtomic(path: string, data: unknown): Promise<void> {
+/** `beforeRename(tmp)`: called with the written temp file just before it takes `path` (to note its stamp first). */
+export async function writeJsonFileAtomic(path: string, data: unknown, o: { beforeRename?: (tmp: string) => Promise<void> } = {}): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.${randomBytes(6).toString('hex')}.tmp`;
+  noteCoreTemp(tmp);
   try {
     const text = `${JSON.stringify(data, null, 2)}\n`;
     await writeFile(tmp, text, 'utf8');
     // Noted before the rename: the integrity check accepts exactly this content however its timing falls (decisions log 141).
     await noteCoreFile(path, text);
+    await o.beforeRename?.(tmp);
     await rename(tmp, path);
     await noteCoreChange(dirname(path));
   } catch (err) {

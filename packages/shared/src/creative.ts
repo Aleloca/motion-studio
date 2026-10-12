@@ -43,6 +43,11 @@ export const creativeFileSchema = z.object({
 });
 export type CreativeFile = z.infer<typeof creativeFileSchema>;
 
+const HEX64 = /^[0-9a-f]{64}$/;
+const FILE_NAME = /^[^/\\]+$/;
+/** `compositions/<format id>`: a composition folder inside `outputs/vN/`. */
+const COMPOSITION_DIR = /^compositions\/[a-z0-9][a-z0-9-]{0,62}$/;
+
 /**
  * A non-blocking note on an output file: never a problem, never triggers the fix loop. `key` is an i18n key
  * (`outputs.largeFile`, `outputs.keptUnchanged`, `outputs.followerReplaced`) and `params` its values, so the web renders it in the user's language
@@ -52,6 +57,13 @@ export const outputWarningSchema = z.object({
   key: z.string(), params: z.record(z.string(), z.union([z.string(), z.number()])),
 });
 export type OutputWarning = z.infer<typeof outputWarningSchema>;
+
+/** A checked problem of an output file, as a code and its figures (`OutputFileInfo.issues`). */
+export const outputIssueSchema = z.object({
+  code: z.enum(['tooLarge', 'durationOffTarget', 'durationOverMax', 'badResolution', 'notReadable', 'badExtension']),
+  params: z.record(z.string(), z.union([z.string(), z.number()])),
+});
+export type OutputIssue = z.infer<typeof outputIssueSchema>;
 
 export const outputFileInfoSchema = z.object({
   format: z.string(), file: z.string(), width: z.number(), height: z.number(),
@@ -63,15 +75,43 @@ export const outputFileInfoSchema = z.object({
    * hashes are cached in `.studio/cache/hashes/<creative>/v<N>.json`, outside `outputs/vN/`, so old versions.json files
    * are never rewritten. A missing hash counts as "changed".
    */
-  sha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  sha256: z.string().regex(HEX64).optional(),
   /**
    * Problems of this file alone (subset of the version's `problems`), so the ★ rule can tell a clean format from a broken one
    * in the same version; a carried-over or materialized file has `[]`. Absent in old versions: then the version-level
    * `problems` count for every file of that version.
    */
   problems: z.array(z.string()).optional(),
+  /**
+   * The output checks' problems as codes with their figures (final wave P2), alongside the texts in `problems`: the UI
+   * says them briefly in its own language ("duration 4.8 s instead of 6 s"). Render outputs only; absent elsewhere.
+   */
+  issues: z.array(outputIssueSchema).optional(),
+  /**
+   * v2 versions: the composition hash (`compositionHash`) this file was rendered from. The render counts as current only while
+   * it equals the version's composition hash for the format (`renderState`). Absent on legacy files (their media is the result).
+   */
+  fromComposition: z.string().regex(HEX64).optional(),
 });
 export type OutputFileInfo = z.infer<typeof outputFileInfoSchema>;
+
+/**
+ * A format's composition in a v2 version (spec §3.1): `dir` is the composition folder relative to `outputs/vN/`
+ * (`compositions/<format>`), `hash` its canonical `compositionHash`. A follower uses its primary's composition: its entry has
+ * `followsFormat` (the primary) and the primary's `dir` and `hash`.
+ */
+export const versionCompositionSchema = z.object({
+  format: z.string().min(1),
+  dir: z.string().regex(COMPOSITION_DIR),
+  hash: z.string().regex(HEX64),
+  followsFormat: z.string().min(1).optional(),
+  /**
+   * Problems of this format's composition alone (a subset of the version's `problems`), so the ★ rule can tell a clean
+   * format from a broken one in the same v2 version (`starOf`). Absent: the version-level `problems` count for it.
+   */
+  problems: z.array(z.string()).optional(),
+});
+export type VersionComposition = z.infer<typeof versionCompositionSchema>;
 
 export const versionEntrySchema = z.object({
   n: z.number().int().min(1),
@@ -86,13 +126,17 @@ export const versionEntrySchema = z.object({
   renderCommand: z.string().nullable(),
   basedOn: z.number().int().nullable(),
   usage: usageSummarySchema.optional(),
+  /**
+   * v2 versions (manifest v2): one composition per delivered format, the identity the per-format history compares
+   * (`formatHistory`). Absent on legacy versions, whose identity is the file's `sha256`.
+   */
+  compositions: z.array(versionCompositionSchema).optional(),
 });
 export type VersionEntry = z.infer<typeof versionEntrySchema>;
 
 export const versionsFileSchema = z.object({ schemaVersion: z.literal(1), versions: z.array(versionEntrySchema).default([]) });
 export type VersionsFile = z.infer<typeof versionsFileSchema>;
 
-const FILE_NAME = /^[^/\\]+$/;
 export const manifestSchema = z.object({
   schemaVersion: z.literal(1),
   files: z.array(z.object({
@@ -108,6 +152,30 @@ export const manifestSchema = z.object({
   renderCommand: z.string().nullish(),
 });
 export type ManifestFile = z.infer<typeof manifestSchema>;
+
+/**
+ * `outputs/vN/manifest.json` v2, written by the core (spec §3.1): the compositions of the version and the renders made from
+ * them. Additive: v1 manifests stay readable (`anyManifestSchema`). A render's `fromComposition` is the composition hash it
+ * was made from (copied to `OutputFileInfo.fromComposition`); `renderedAt` is an ISO date.
+ */
+export const manifestV2Schema = z.object({
+  schemaVersion: z.literal(2),
+  compositions: z.array(versionCompositionSchema),
+  renders: z.array(z.object({
+    format: z.string().min(1),
+    file: z.string().regex(FILE_NAME).refine((f) => f !== '.' && f !== '..', 'issue.fileName'),
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
+    durationSec: z.number().positive().nullable(),
+    sha256: z.string().regex(HEX64),
+    renderedAt: z.iso.datetime(),
+    fromComposition: z.string().regex(HEX64).optional(),
+  })),
+});
+export type ManifestV2 = z.infer<typeof manifestV2Schema>;
+/** A manifest of either version, told apart by `schemaVersion`. */
+export const anyManifestSchema = z.discriminatedUnion('schemaVersion', [manifestSchema, manifestV2Schema]);
+export type AnyManifest = z.infer<typeof anyManifestSchema>;
 
 export const pinSchema = z.object({
   format: z.string().min(1),

@@ -16,6 +16,22 @@
 }
 .ms-fv-soon p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); text-wrap: pretty; overflow-wrap: anywhere; }
 .ms-fv-soon-icon { width: 28px; height: 28px; border-radius: 8px; background: var(--field); color: var(--muted); display: flex; align-items: center; justify-content: center; }
+/* The storyboard strip of a v2 version (Task 8): a scene per row, a click seeks there; the current one is marked. */
+.ms-fv-sb { list-style: none; margin: 0; padding: 8px; display: flex; flex-direction: column; gap: 6px; overflow: auto; min-height: 0; }
+.ms-fv-sb-item {
+  width: 100%; min-height: 0; height: auto; margin: 0; padding: 6px; border: 1px solid transparent; border-radius: 8px; background: transparent;
+  display: flex; align-items: center; gap: 9px; text-align: left; font: inherit; color: var(--text); cursor: pointer;
+}
+.ms-fv-sb-item:hover:not(:disabled) { background: var(--field); }
+.ms-fv-sb-item.ms-on { border-color: var(--accent); background: var(--sel); }
+.ms-fv-sb-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ms-fv-sb-item:disabled { cursor: default; opacity: .6; }
+.ms-fv-sb-item img { width: 64px; max-height: 64px; object-fit: contain; flex: none; border-radius: 4px; background: var(--field); user-select: none; }
+.ms-fv-sb-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ms-fv-sb-text b { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-fv-sb-text span { font-size: 11px; color: var(--faint); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.ms-fv-sb-note { margin: 12px; font-size: 12px; color: var(--muted); }
+.ms-fv-media .ms-fv-poster { position: absolute; inset: 0; }
 .ms-fv-panel { border-left: 1px solid var(--line); }
 .ms-fv-tabs { flex: none; }
 .ms-fv-tabs .ms-tab { cursor: default; }

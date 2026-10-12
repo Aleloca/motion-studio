@@ -1,6 +1,7 @@
+import { creativeJobKey } from '@motion-studio/shared';
 import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
-import { checkLink, defaultLinks, effectiveLinks, formatHistory, formatLabel, manifestSchema, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionEntry } from '@motion-studio/shared';
+import { canFollow, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, formatLabel, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { detachLinksUnder } from '../agent/protected-links.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -15,15 +16,20 @@ import { JobFailedError, type JobQueue } from '../jobs/job-queue.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { availableTools } from '../bridge/provider-tools.ts';
 import type { SecretsVault } from '../secrets/vault.ts';
-import { CONTEXT_MD } from '../project-template.ts';
+import { compositionSchemaFile, CONTEXT_MD } from '../project-template.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
 import { CreativeStore } from './creative-store.ts';
 import { validateOutputs, type ValidationResult } from './output-contract.ts';
-import { confinedSha, copyVerified, earlierOutputDirs, followCheck, isConfinedFile, normalizeTargets, snapshotChanges, snapshotOutputs, versionDirReady, type FollowFailure } from './carry-over.ts';
+import { confinedSha, copyVerified, earlierOutputDirs, followCheck, isConfinedFile, normalizeTargets, snapshotChanges, snapshotOutputs, versionDirReady, withoutCoreWrites, type FollowFailure } from './carry-over.ts';
 import { outputFileExists } from './format-summary.ts';
 import { hashVersionOutputs, LAZY_HASH_BUDGET_MS, withLazyHashes } from './output-hashes.ts';
 import { legacyProblemsOf } from './legacy-problems.ts';
-import { buildCreativePrompt, type CreativeContext, type PromptKind } from './prompt.ts';
+import { clearReferenceFrames, conversionPlan, extractReferenceFrames } from './legacy-conversion.ts';
+import { buildCreativePrompt, type AgentContract, type CreativeContext, type PromptKind } from './prompt.ts';
+import { checkTargets } from './composition-contract.ts';
+import { realDirChain, writeThroughTemp } from './core-files.ts';
+import { assembleCompositions, carriableComposition, type CarriedComposition } from './composition-turn.ts';
+import { checkedPreviewTimes, type PreviewService } from './previews.ts';
 import { sumUsage } from '../usage/usage-tracker.ts';
 import { currentLocale, t } from '../i18n.ts';
 
@@ -35,10 +41,21 @@ export interface CreativeTurnDeps {
   maxAttempts?: number;
   /** How long an export pick waits for hashes before answering `hashes-pending` (default PICK_HASH_BUDGET_MS). */
   pickHashBudgetMs?: number;
+  /**
+   * What the agent delivers: `compositions` (default, output contract v2, Task 5b) or `media`, the phase 9 contract of
+   * rendered files and manifest v1. `media` is kept ONLY for the phase 9 test suites, whose histories are built from
+   * rendered media; the app always uses compositions.
+   */
+  agentContract?: AgentContract;
+  /** Storyboards, the agent's `preview_frames` and pin frames of unrendered versions; absent: none of them. */
+  previews?: PreviewService;
+  /** `preview_frames` calls allowed per turn (default 10). */
+  previewFramesPerTurn?: number;
 }
 export interface CreativeRef { root: string; projectSlug: string; projectDir: string; creativeSlug: string }
 
-export const creativeJobKey = (root: string, projectSlug: string, creativeSlug: string) => `creative:${root}:${projectSlug}:${creativeSlug}`;
+/** Shared with the web (render keys are derived from it): @motion-studio/shared `creativeJobKey`. */
+export { creativeJobKey };
 /** The render command comes from an agent-written manifest: single line, bounded, no control chars. */
 const sanitizeCommand = (cmd: string): string => cmd.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300);
 
@@ -47,9 +64,10 @@ const sanitizeCommand = (cmd: string): string => cmd.replace(/[\u0000-\u001f\u00
  * The base's render command is shown with its output folders pointing at this turn's `outputs/v<n>/`, so the agent is
  * never led to write into an earlier version.
  */
-function addFormatsRequest(added: string[], base: VersionEntry | undefined, n: number): string | undefined {
+function addFormatsRequest(added: string[], base: VersionEntry | undefined, n: number, contract: AgentContract): string | undefined {
   if (!base || added.length === 0) return undefined;
-  const command = base.renderCommand ? sanitizeCommand(base.renderCommand).replace(/outputs\/v\d+(?!\w)/g, `outputs/v${n}`) : '';
+  // Composition turns never see a render command (the agent does not render; fix I3), even from a legacy base.
+  const command = contract === 'media' && base.renderCommand ? sanitizeCommand(base.renderCommand).replace(/outputs\/v\d+(?!\w)/g, `outputs/v${n}`) : '';
   const j = t().jobs;
   return j.addFormatsRequest({ formats: added.join(', '), n: base.n })
     + (command ? ` ${j.renderCommandWas({ n: base.n, command })}` : '');
@@ -78,6 +96,8 @@ interface TurnPlan {
   unlinked: string[];
   /** The format that owns `file` this turn when the core writes it (carried files, `<follower>.<ext>`). */
   reservedOwner: (file: string) => string | undefined;
+  /** Composition turns: each carried primary's composition, hashed before the agent starts. */
+  carriedComps: Map<string, CarriedComposition>;
 }
 
 /** One manifest entry; a duration the schema refuses (zero, negative) is left unknown. */
@@ -120,20 +140,8 @@ export class CreativeTurnService {
         const { links: _ignored, ...rest } = patch.brief;
         const current = (await store.get(ref.creativeSlug)).brief;
         const added = rest.formats.filter((f) => !current.formats.includes(f));
-        let links = current.links;
-        if (added.length > 0) {
-          const presets = await this.deps.presets();
-          const active = effectiveLinks(current.links, current.formats);
-          const primaries = current.formats.filter((f) => rest.formats.includes(f) && !Object.hasOwn(active, f));
-          const known = [...primaries, ...added].map((id) => findPreset(presets, id)).filter((p): p is FormatPreset => p !== undefined);
-          const defaults = defaultLinks(known, undefined);
-          const next = { ...current.links };
-          for (const f of added) {
-            delete next[f];
-            if (Object.hasOwn(defaults, f)) next[f] = defaults[f]!;
-          }
-          links = next;
-        }
+        // Shared with the web, which tells before "Save and regenerate" whether a legacy creative converts (I4).
+        const links = added.length > 0 ? linksAfterBriefSave(current, rest.formats, await this.deps.presets()) : current.links;
         brief = links ? { ...rest, links } : rest;
       }
       const updated = await store.update(ref.creativeSlug, {
@@ -165,7 +173,8 @@ export class CreativeTurnService {
       if (version !== null) {
         const entry = versions.find((v) => v.n === version);
         if (!entry) throw new CodedError(404, e.versionNNotFound({ n: version }), 'version-not-found');
-        if (!entry.outputs.some((o) => o.format === format)) throw new CodedError(400, e.pickNoFile({ format: label(format), n: version }), 'pick-no-file');
+        // A v2 composition counts without a render (export renders it first, Task 5b).
+        if (!hasFormat(entry, format)) throw new CodedError(400, e.pickNoFile({ format: label(format), n: version }), 'pick-no-file');
       }
       return links;
     };
@@ -188,7 +197,9 @@ export class CreativeTurnService {
       const raw = await store.readVersions(ref.creativeSlug);
       const links = validate(creative, raw);
       const versions = await hashed(raw, LAZY_HASH_BUDGET_MS);
-      if (version !== null && !(await outputFileExists(store.dir(ref.creativeSlug), versions, version, format))) {
+      const picked = version === null ? undefined : versions.find((v) => v.n === version);
+      const v2 = Boolean(picked?.compositions?.some((c) => c.format === format));
+      if (version !== null && !v2 && !(await outputFileExists(store.dir(ref.creativeSlug), versions, version, format))) {
         throw new CodedError(409, e.pickFileMissing({ format: label(format), n: version }), 'pick-file-missing');
       }
       const picks = { ...creative.exportPicks };
@@ -305,6 +316,9 @@ export class CreativeTurnService {
     let finalizing = false;
     try {
       await writeFile(join(ref.projectDir, '.studio', 'context.md'), CONTEXT_MD);
+      const contract = this.deps.agentContract ?? 'compositions';
+      // The full JSON Schema of composition.json, which the prompt and context.md point to (too long to inline).
+      if (contract === 'compositions') await writeFile(join(ref.projectDir, '.studio', 'composition.schema.json'), compositionSchemaFile());
       const versions = await store.readVersions(slug);
       const latest = versions.at(-1);
       const n = await store.nextVersionNumber(slug);
@@ -317,7 +331,17 @@ export class CreativeTurnService {
       const base = initial.resumeFrom ? versions.find((v) => v.n === initial.resumeFrom!.version) : latest;
       const attachments = await this.extractPinFrames(ref, store, message?.pins ?? [], base, n);
       const hasMessage = Boolean(message?.text || message?.pins.length);
-      const plan = await this.planTurn(ref, store, initial, presets, base, hasMessage, requestedFormats, locale);
+      // Final review I4, ruling A: on a legacy base (phase 9 media, no compositions), a turn that only adds LINKED followers
+      // (no message, no explicit formats) keeps the phase 9 no-agent path: the followers are copies of their primaries'
+      // files, the version stays a v1-contract one. When a primary's file cannot be carried, the turn converts as usual
+      // (never a media-contract agent run).
+      let turnContract: AgentContract = contract;
+      if (contract === 'compositions' && !hasMessage && !requestedFormats?.length && legacyTurnKind(base, initial.brief) === 'followers') turnContract = 'media';
+      let plan = await this.planTurn(ref, store, initial, presets, base, hasMessage, requestedFormats, locale, turnContract);
+      if (turnContract !== contract && plan.targets.length > 0) {
+        turnContract = contract;
+        plan = await this.planTurn(ref, store, plan.creative, presets, base, hasMessage, requestedFormats, locale, contract);
+      }
       const { creative, targets } = plan;
       const label = (id: string) => { const p = findPreset(presets, id); return p ? formatLabel(p, locale) : id; };
       const j = t().jobs;
@@ -332,7 +356,7 @@ export class CreativeTurnService {
       });
       const request = message?.text || (message?.pins.length ? j.pinsOnlyRequest : versions.length === 0 ? undefined
         : noAgent ? this.addedFollowersRequest(plan, base!, versions, label, locale)
-          : (addFormatsRequest(targets.filter((f) => plan.added.includes(f)), base, n)
+          : (addFormatsRequest(targets.filter((f) => plan.added.includes(f)), base, n, turnContract)
             ?? (targets.length < primaries.length ? j.regenerateFormatsRequest({ formats: listText(targets.map(label), locale) }) : j.regenerateRequest)));
 
       let resumeSessionId = creative.resumeFrom?.sessionId ?? latest?.sessionId ?? undefined;
@@ -342,6 +366,27 @@ export class CreativeTurnService {
 
       if (!noAgent) {
         const { context, existing } = await this.buildContext(ref, store, creative.linkedCodebases);
+        // Spec §7: a legacy base (rendered media, v1 manifest) makes this change a conversion to compositions. The core
+        // extracts reference frames of the old media into its protected cache; the chat says it costs more tokens once.
+        let conversion: { formats: Awaited<ReturnType<typeof extractReferenceFrames>>; created: string[] } | undefined;
+        if (turnContract === 'compositions') {
+          const cp = conversionPlan(versions, base, targets);
+          if (cp.sources.length > 0) {
+            // Once per conversion: a retry of a turn that saved no version does not repeat the entry.
+            const entries = await store.readConversation(slug);
+            const texts = new Set([messages('en').jobs.convertingLegacy, messages('it').jobs.convertingLegacy]);
+            const since = latest ? Date.parse(latest.createdAt) : 0;
+            const told = entries.some((e) => e.type === 'system' && texts.has(e.text) && Date.parse(e.at) > since);
+            if (!told) await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: j.convertingLegacy });
+            conversion = {
+              formats: await extractReferenceFrames({ projectDir: ref.projectDir, creativeDir, creativeSlug: slug, n, sources: cp.sources, presets, media: this.deps.media }),
+              created: cp.created,
+            };
+          } else {
+            // Not a conversion (any more): frames left by an earlier try of this version are removed.
+            await clearReferenceFrames(ref.projectDir, slug, n);
+          }
+        }
         const uncheckable = new Set<string>();
         let forkSession = Boolean(creative.resumeFrom);
         let kind: PromptKind = versions.length === 0 ? 'first' : 'iteration';
@@ -352,6 +397,39 @@ export class CreativeTurnService {
           dir: store.outputsDir(slug, n), requested: targets, presets, durationSec: creative.brief.durationSec, media: this.deps.media, locale,
           reservedOwner: plan.reservedOwner,
         });
+        const checkCompositions = (only?: string) => checkTargets({
+          versionDir: store.outputsDir(slug, n), targets: only === undefined ? targets : targets.filter((f) => f === only), presets,
+          briefDurationSec: creative.brief.durationSec, locale,
+        });
+        // The agent's MCP tools on its compositions (output contract v2): the same checks as after the turn, and a few frames.
+        let previewCalls = 0;
+        const previewLimit = this.deps.previewFramesPerTurn ?? 10;
+        const compositionTools = turnContract === 'compositions' ? {
+          validateComposition: async (format?: string) => {
+            if (format !== undefined && !targets.includes(format)) throw new CodedError(400, t().errors.formatNotInTurn({ format: format.slice(0, 100), list: targets.join(', ') }), 'formats-not-in-turn');
+            const r = await checkCompositions(format);
+            return {
+              // The hash after normalisation: the one the version will record.
+              formats: r.checks.map((c) => ({ format: c.format, ok: (r.byFormat.get(c.format) ?? []).length === 0, hash: c.finalHash })),
+              problems: r.problems, warnings: r.warnings,
+            };
+          },
+          previewFrames: async (a: { format: unknown; times: unknown }) => {
+            const previews = this.deps.previews;
+            if (!previews) throw new CodedError(503, t().errors.previewUnavailable, 'no-renderer');
+            if (typeof a.format !== 'string' || !targets.includes(a.format)) throw new CodedError(400, t().errors.formatNotInTurn({ format: String(a.format).slice(0, 100), list: targets.join(', ') }), 'formats-not-in-turn');
+            checkedPreviewTimes(a.times, locale); // a malformed call is refused without counting
+            if (previewCalls >= previewLimit) throw new CodedError(429, t().errors.previewFramesLimit({ max: previewLimit }), 'preview-limit');
+            previewCalls++;
+            try {
+              return await previews.agentFrames({ ref: { projectDir: ref.projectDir, creativeDir, creativeSlug: slug, n }, format: a.format, times: a.times, locale, signal });
+            } catch (e) {
+              // A full lane is Motion Studio's limit, not the agent's: that call does not count (fix minor 6).
+              if (e instanceof CodedError && e.apiCode === 'preview-busy') previewCalls--;
+              throw e;
+            }
+          },
+        } : {};
         // Earlier versions are read-only for the agent (sandbox and Edit/Write rules); any change is still detected after.
         // `work/` and `outputs/` exist before the agent runs: the agent making one (`mkdir -p work`) is then never a change
         // to the creative's folder that the after-run check (run-tripwire.ts) would have to tell from a move (FP4).
@@ -379,7 +457,8 @@ export class CreativeTurnService {
             userText: kind === 'fix' ? undefined : request,
             pins: kind === 'iteration' ? message?.pins : undefined,
             attachments: kind === 'iteration' ? attachments : undefined,
-            problems, context, locale, sandboxed,
+            problems, context, locale, sandboxed, contract: turnContract,
+            conversion: kind === 'iteration' ? conversion : undefined,
           });
           const snapshotsBefore = await Promise.all(existing.map((p) => codebaseSnapshot(p)));
           for (const [k, p] of existing.entries()) {
@@ -409,7 +488,7 @@ export class CreativeTurnService {
               const sid = event.kind === 'session' || event.kind === 'result' ? event.sessionId : undefined;
               if (sid) this.deps.queue.patch(jobId, { sessionId: sid });
             },
-            validate: validateTargets,
+            ...compositionTools,
           });
           const onAbort = () => run.cancel();
           signal.addEventListener('abort', onAbort, { once: true });
@@ -435,15 +514,25 @@ export class CreativeTurnService {
           resumeSessionId = outcome.sessionId ?? resumeSessionId;
           forkSession = false;
 
-          result = await validateTargets();
-          problems = result.problems;
+          let unknown: number;
+          if (turnContract === 'compositions') {
+            const r = await checkCompositions();
+            problems = r.problems;
+            unknown = r.unknownPresets.length;
+          } else {
+            result = await validateTargets();
+            problems = result.problems;
+            unknown = result.unknownPresets.length;
+          }
           // A preset missing from the catalog cannot be fixed by the agent: retrying would only waste turns.
-          if (problems.length === result.unknownPresets.length || attempt === this.maxAttempts) break;
+          if (problems.length === unknown || attempt === this.maxAttempts) break;
           await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: t().jobs.checkingOutputs({ count: problems.length, attempt: attempt + 1, max: this.maxAttempts }) });
           this.changed(ref);
           kind = 'fix';
         }
-        const changedEarlier = snapshotChanges(earlierBefore, await snapshotOutputs(creativeDir, earlier));
+        // A render job may record a render in an earlier version meanwhile (Task 5): the core's own writes are left out.
+        const earlierAfter = await snapshotOutputs(creativeDir, earlier);
+        const changedEarlier = withoutCoreWrites(creativeDir, snapshotChanges(earlierBefore, earlierAfter), earlierAfter);
         if (changedEarlier.length > 0) {
           const list = changedEarlier.slice(0, 5).join(', ') + (changedEarlier.length > 5 ? ', …' : '');
           await store.appendConversation(slug, { type: 'system', at: now(), level: 'warning', text: j.earlierOutputsChanged({ list }) });
@@ -453,29 +542,36 @@ export class CreativeTurnService {
       }
 
       finalizing = true;
-      const assembled = await this.assemble(ref, store, plan, presets, base, n, result, label, locale);
-      // Hashed by the core from the files, after the agent is done: never taken from anything the agent wrote.
-      const outputs = await hashVersionOutputs(creativeDir, n, assembled.outputs);
-      const problems = [...assembled.problems];
-      // Each file the core copied must still be the copy it verified.
-      for (const o of outputs) {
-        const copied = assembled.copied.get(o.format);
-        if (copied !== undefined && o.sha256 !== copied) {
-          // No hash at all (the file could not be read as a confined file) is not proof of a change.
-          const text = o.sha256 === undefined ? j.copyUnverified({ format: label(o.format) }) : j.copyChangedAfter({ format: label(o.format) });
-          problems.push(text);
-          o.problems = [...(o.problems ?? []), text];
+      let saved: { outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: string | null; compositions?: VersionComposition[] };
+      if (turnContract === 'compositions') saved = await this.finishCompositions(ref, store, plan, presets, base, n, label, locale);
+      else {
+        const assembled = await this.assemble(ref, store, plan, presets, base, n, result, label, locale);
+        // Hashed by the core from the files, after the agent is done: never taken from anything the agent wrote.
+        const outputs = await hashVersionOutputs(creativeDir, n, assembled.outputs);
+        const problems = [...assembled.problems];
+        // Each file the core copied must still be the copy it verified.
+        for (const o of outputs) {
+          const copied = assembled.copied.get(o.format);
+          if (copied !== undefined && o.sha256 !== copied) {
+            // No hash at all (the file could not be read as a confined file) is not proof of a change.
+            const text = o.sha256 === undefined ? j.copyUnverified({ format: label(o.format) }) : j.copyChangedAfter({ format: label(o.format) });
+            problems.push(text);
+            o.problems = [...(o.problems ?? []), text];
+          }
         }
+        saved = { outputs, problems, tools: assembled.tools, renderCommand: assembled.renderCommand };
       }
+      const { problems } = saved;
       const status = problems.length === 0 ? 'complete' : 'incomplete';
       const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${n}`);
       const usage = sumUsage(attemptUsage);
       await store.appendVersion(slug, {
         n, commit, sessionId: resumeSessionId ?? null, status, createdAt: now(),
         request: request ?? t().jobs.requestFromBrief,
-        outputs, problems, tools: assembled.tools, renderCommand: assembled.renderCommand,
+        outputs: saved.outputs, problems, tools: saved.tools, renderCommand: saved.renderCommand,
         basedOn: creative.resumeFrom?.version ?? latest?.n ?? null,
         ...(usage ? { usage } : {}),
+        ...(saved.compositions ? { compositions: saved.compositions } : {}),
       });
       if (noAgent && request) await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: `${request} · ${j.noAgentNeeded}` });
       await store.appendConversation(slug, { type: 'version', at: now(), n, status });
@@ -488,6 +584,9 @@ export class CreativeTurnService {
       }
       await this.commitState(ref, t().jobs.versionStateCommit({ title: creative.title, n }));
       this.changed(ref);
+      // Storyboards (spec §2.2) once the version is saved: a follow-up in the preview lane, after this job and outside the
+      // creative's lock, best effort; nothing it does can mark the turn as failed (fix minor 3).
+      if (saved.compositions && !signal.aborted) this.storyboardsLater(ref, store, n);
     } catch (err) {
       if (signal.aborted && !finalizing) return await this.cancelled(ref, store, previous, (await store.readVersions(slug)).length > 0);
       const text = err instanceof Error ? err.message : String(err);
@@ -512,14 +611,15 @@ export class CreativeTurnService {
    *   and delivered by the agent.
    */
   private async planTurn(ref: CreativeRef, store: CreativeStore, creative: CreativeFile, presets: FormatPreset[], base: VersionEntry | undefined,
-    hasMessage: boolean, requested: string[] | undefined, locale: Locale): Promise<TurnPlan> {
+    hasMessage: boolean, requested: string[] | undefined, locale: Locale, contract: AgentContract): Promise<TurnPlan> {
     const slug = ref.creativeSlug;
     const creativeDir = store.dir(slug);
     const { formats } = creative.brief;
     const links = effectiveLinks(creative.brief.links, formats);
     const isPrimary = (f: string) => !Object.hasOwn(links, f);
     const baseOut = (f: string) => base?.outputs.find((o) => o.format === f);
-    const added = base ? formats.filter((f) => !baseOut(f)) : [];
+    // A format the base delivers: its file (legacy) or its composition (v2), a follower's entry included.
+    const added = base ? formats.filter((f) => !hasFormat(base, f)) : [];
     let targets: string[];
     if (!base) targets = formats.filter(isPrimary);
     else if (requested?.length) targets = normalizeTargets(requested, formats, links);
@@ -528,9 +628,17 @@ export class CreativeTurnService {
     const wanted = new Set(targets);
     const usable = new Map<string, number>(); // carried primary → size of its base file
     const expected = new Map<string, string>();
+    const carriedComps = new Map<string, CarriedComposition>();
     if (base) {
       for (const p of formats.filter(isPrimary)) {
         if (wanted.has(p)) continue;
+        if (contract === 'compositions') {
+          // Its own composition in the base, hashed now (before the agent runs) and still the recorded one; a legacy base
+          // has none, so every primary is a target.
+          const cc = await carriableComposition(creativeDir, base, p);
+          if (cc) carriedComps.set(p, cc); else wanted.add(p);
+          continue;
+        }
         const out = baseOut(p);
         const rel = out ? `outputs/v${base.n}/${out.file}` : null;
         const file = rel ? await isConfinedFile(creativeDir, rel) : null;
@@ -549,7 +657,11 @@ export class CreativeTurnService {
       if (wanted.has(p)) continue; // the primary is delivered now: checked on the new file, after the render
       const pp = findPreset(presets, p);
       const fp = findPreset(presets, f);
-      const check: { ok: true } | { ok: false; reason: FollowFailure } = pp && fp ? followCheck(pp, fp, baseOut(p)!, usable.get(p)!) : { ok: false, reason: 'unknown' };
+      const cd = carriedComps.get(p)?.duration;
+      const check: { ok: true } | { ok: false; reason: FollowFailure } = !pp || !fp ? { ok: false, reason: 'unknown' }
+        // A composition's duration (an unreadable one is checked again at render); a legacy file's real duration and size.
+        : contract === 'compositions' ? canFollow(pp, fp, cd === null || cd === undefined ? undefined : cd > 0 ? cd : null)
+          : followCheck(pp, fp, baseOut(p)!, usable.get(p)!);
       if (check.ok) continue;
       unlinked.push(f);
       wanted.add(f);
@@ -563,7 +675,8 @@ export class CreativeTurnService {
     const primaries = formats.filter(isPrimary);
     const carried = base ? primaries.filter((f) => !wanted.has(f)) : [];
     // Core-owned names: each carried file, and `<follower>.<any extension>` (the extension is the primary's, known later).
-    const carriedNames = new Map(carried.map((f) => [baseOut(f)!.file, f] as const));
+    // (Composition turns write no files of their own under these names: the media contract only.)
+    const carriedNames = new Map(contract === 'compositions' ? [] : carried.map((f) => [baseOut(f)!.file, f] as const));
     const followerIds = new Set(Object.keys(links));
     const reservedOwner = (file: string) => {
       const dot = file.lastIndexOf('.');
@@ -571,7 +684,7 @@ export class CreativeTurnService {
       return carriedNames.get(file) ?? (followerIds.has(stem) ? stem : undefined);
     };
     return {
-      creative: current, links, added, expected, unlinked, reservedOwner,
+      creative: current, links, added, expected, unlinked, reservedOwner, carriedComps,
       targets: primaries.filter((f) => wanted.has(f)),
       carried,
     };
@@ -737,6 +850,29 @@ export class CreativeTurnService {
     };
   }
 
+  /**
+   * Completes a composition turn's `outputs/v<n>` (output contract v2, composition-turn.ts) and tells the chat what the core
+   * did: followers that cannot follow any more (unlinked), formats the agent wrote although they were not targets,
+   * entries it left that Motion Studio removed, and the advisory layer checks.
+   */
+  private async finishCompositions(ref: CreativeRef, store: CreativeStore, plan: TurnPlan, presets: FormatPreset[], base: VersionEntry | undefined, n: number,
+    label: (id: string) => string, locale: Locale): Promise<{ outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: null; compositions: VersionComposition[] }> {
+    const slug = ref.creativeSlug;
+    const j = t().jobs;
+    const a = await assembleCompositions({
+      projectDir: ref.projectDir, creativeSlug: slug, creativeDir: store.dir(slug), n, base, formats: plan.creative.brief.formats, targets: plan.targets, carried: plan.carried,
+      carriedComps: plan.carriedComps, links: plan.links, presets, briefDurationSec: plan.creative.brief.durationSec, locale, label,
+    });
+    const say = (level: 'info' | 'warning', text: string) => store.appendConversation(slug, { type: 'system', at: now(), level, text });
+    for (const x of a.notDelivered) await say('warning', x.text);
+    if (a.notDelivered.length > 0) await this.unlinkFollowers(store, slug, a.notDelivered.map((x) => x.follower));
+    for (const f of a.touched) await say('info', t().outputs.keptUnchanged({ format: label(f) }));
+    const list = (items: string[]) => items.slice(0, 5).join('; ') + (items.length > 5 ? '; …' : '');
+    if (a.stray.length > 0) await say('warning', j.strayRemoved({ list: list(a.stray) }));
+    if (a.check && a.check.warnings.length > 0) await say('info', j.layerWarnings({ list: list(a.check.warnings) }));
+    return { outputs: a.outputs, problems: a.problems, tools: [], renderCommand: null, compositions: a.compositions };
+  }
+
   private async buildContext(ref: CreativeRef, store: CreativeStore, creativeCodebases: LinkedCodebase[]): Promise<{ context: CreativeContext; existing: string[] }> {
     const note = (text: string) => store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text });
     const brand = new BrandStore(ref.projectDir);
@@ -805,23 +941,51 @@ export class CreativeTurnService {
     await rm(dir, info.isDirectory() ? { recursive: true, force: true } : { force: true });
   }
 
-  private async extractPinFrames(ref: CreativeRef, store: CreativeStore, pins: Pin[], source: { n: number; outputs: Array<{ format: string; file: string }> } | undefined, n: number): Promise<string[]> {
-    if (!this.deps.media.available || !source) return [];
+  /**
+   * The feedback frames of the pinned comments (the agent reads them): one JPEG per pin with a time, from the base's media
+   * or, for a v2 version without a current render, from its composition. They go to the protected core cache
+   * `.studio/cache/pin-frames/<creative>/v<n>/<n>-<i>.jpg` (the agent can read `.studio`, never write it), through real
+   * directories and a fresh temp file renamed into place (fix I1): never through a link someone planted.
+   */
+  private async extractPinFrames(ref: CreativeRef, store: CreativeStore, pins: Pin[], source: VersionEntry | undefined, n: number): Promise<string[]> {
+    if (!source || !pins.some((p) => p.timeSec !== null)) return [];
+    const dir = await realDirChain(ref.projectDir, ['.studio', 'cache', 'pin-frames', ref.creativeSlug, `v${n}`]).catch(() => null);
+    if (!dir) return [];
     const out: string[] = [];
     for (const [i, pin] of pins.entries()) {
       if (pin.timeSec === null) continue;
-      const output = source.outputs.find((o) => o.format === pin.format);
-      if (!output) continue;
-      const target = join(store.workDir(ref.creativeSlug), '.feedback', `${n}-${i + 1}.jpg`);
+      const name = `${n}-${i + 1}.jpg`;
       try {
-        if (await this.deps.media.frame(join(store.outputsDir(ref.creativeSlug, source.n), output.file), target, pin.timeSec)) {
-          out.push(relative(ref.projectDir, target));
+        const output = source.outputs.find((o) => o.format === pin.format);
+        // A v2 version without a current render: the frame comes from its composition (Task 5b).
+        const fromComposition = source.compositions?.some((c) => c.format === pin.format) && renderState(source, pin.format) !== 'rendered';
+        let made = false;
+        if (fromComposition && this.deps.previews) {
+          const jpeg = await this.deps.previews.frameJpeg({ projectDir: ref.projectDir, creativeDir: store.dir(ref.creativeSlug), creativeSlug: ref.creativeSlug, n: source.n }, source, pin.format, pin.timeSec);
+          made = jpeg !== null && await writeThroughTemp(dir, name, async (temp) => { await writeFile(temp, jpeg, { flag: 'wx' }); return true; });
+        } else if (output && this.deps.media.available) {
+          // ffmpeg writes a fresh random temp name (its `-y` never meets an existing entry), then it is renamed into place.
+          made = await writeThroughTemp(dir, name, (temp) => this.deps.media.frame(join(store.outputsDir(ref.creativeSlug, source.n), output.file), temp, pin.timeSec!));
         }
+        if (made) out.push(relative(ref.projectDir, join(dir, name)).split(sep).join('/'));
       } catch {
         // The feedback frame is optional: the pin still travels as text.
       }
     }
     return out;
+  }
+
+  /** The storyboards of version `n`, detached (see the caller); the clients are told when they are there. Never throws. */
+  private storyboardsLater(ref: CreativeRef, store: CreativeStore, n: number): void {
+    const previews = this.deps.previews;
+    if (!previews) return;
+    void (async () => {
+      if (!(await previews.available())) return;
+      const version = (await store.readVersions(ref.creativeSlug)).find((v) => v.n === n);
+      if (!version) return;
+      await previews.storyboardsFor({ projectDir: ref.projectDir, creativeDir: store.dir(ref.creativeSlug), creativeSlug: ref.creativeSlug, n }, version);
+      this.changed(ref);
+    })().catch(() => {});
   }
 
   private changed(ref: CreativeRef) {

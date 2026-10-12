@@ -130,3 +130,26 @@ describe('billing', () => {
     expect(await readBilling({ exec: async () => { throw new Error('spawn'); }, claudeCommand: ['claude'] })).toBe('unknown');
   });
 });
+
+describe('runDoctor: ffmpeg architecture (Task 8, carry 13)', () => {
+  const ffmpegOf = async (info: { arch: 'arm64' | 'x86_64' | 'universal' | 'unknown'; hostArch: string; translated: boolean } | null) =>
+    (await runDoctor({ exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', ffmpegInfo: async () => info })).find((c) => c.id === 'ffmpeg')!;
+
+  it('adds the build architecture to the version', async () => {
+    expect((await ffmpegOf({ arch: 'arm64', hostArch: 'arm64', translated: false })).version).toBe('8.0.1 · arm64');
+    expect((await ffmpegOf({ arch: 'universal', hostArch: 'arm64', translated: false })).version).toBe('8.0.1 · universale');
+    expect((await ffmpegOf({ arch: 'x86_64', hostArch: 'x86_64', translated: false })).version).toBe('8.0.1 · x86_64');
+  });
+  it('says when an Intel build runs under Rosetta on Apple Silicon (slower renders), still ok', async () => {
+    const c = await ffmpegOf({ arch: 'x86_64', hostArch: 'arm64', translated: true });
+    expect(c.ok).toBe(true);
+    expect(c.version).toBe('8.0.1 · x86_64 con Rosetta: render più lenti');
+    expect(c.message).toContain('Rosetta');
+  });
+  it('keeps the plain version when the architecture is unknown or cannot be read', async () => {
+    expect((await ffmpegOf({ arch: 'unknown', hostArch: 'arm64', translated: false })).version).toBe('8.0.1');
+    expect((await ffmpegOf(null)).version).toBe('8.0.1');
+    const failing = await runDoctor({ exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', ffmpegInfo: async () => { throw new Error('boom'); } });
+    expect(failing.find((c) => c.id === 'ffmpeg')!.version).toBe('8.0.1');
+  });
+});

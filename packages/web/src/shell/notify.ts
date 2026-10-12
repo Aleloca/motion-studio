@@ -135,6 +135,12 @@ export function setBadge(n: number): void {
   if (typeof d?.setBadge === 'function') quietly(() => d.setBadge!(Math.max(0, Math.min(MAX_BADGE, Math.trunc(n)))));
 }
 
+/** Desktop: the renders queued or running, so closing the window asks first (Task 8, carry 11); nothing on the web. */
+export function setRendersRunning(n: number): void {
+  const d = desktop();
+  if (typeof d?.setRendersRunning === 'function') quietly(() => d.setRendersRunning!(Math.max(0, Math.min(1000, Math.trunc(n)))));
+}
+
 /** Whether to offer "Turn on notifications" (web only: the desktop app notifies from the main process). */
 export function canAskNotifications(): boolean {
   return !desktop() && typeof Notification !== 'undefined' && Notification.permission === 'default';

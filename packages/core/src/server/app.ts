@@ -1,3 +1,10 @@
+import type { RenderCompositionOptions, RenderEngine } from '../render/renderer.ts';
+import { findFfmpeg } from '../render/encode.ts';
+import { MediaNormalizer } from '../render/media-normalize.ts';
+import { RenderJobService } from '../creatives/render-jobs.ts';
+import { PreviewService } from '../creatives/previews.ts';
+import { UrlSigner } from './signed-urls.ts';
+import type { AgentContract } from '../creatives/prompt.ts';
 import { stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
@@ -27,8 +34,9 @@ import { JsonFileError } from '../json-file.ts';
 import { MemoryVault, type SecretsVault } from '../secrets/vault.ts';
 import { ApprovalBroker } from '../approvals/broker.ts';
 import { registerSettingsRoutes } from './settings-routes.ts';
+import { defaultChromeInstaller, registerRenderEngineRoutes, type ChromeInstaller } from './render-engine-routes.ts';
 import { CodedError, expandHome, WorkspaceError, WorkspaceStore } from '../workspace-store.ts';
-import { recoverWorkspace, registerCreativeRoutes } from './creative-routes.ts';
+import { recoverWorkspace, registerCreativeRoutes, type RecoverOptions } from './creative-routes.ts';
 import { registerBrandRoutes } from './brand-routes.ts';
 import { EventHub } from './event-hub.ts';
 import { registerLibraryRoutes } from './library-routes.ts';
@@ -68,6 +76,30 @@ export interface ServerDeps {
   language?: LanguageController;
   /** How Claude Code is paid for (doctor's auth check); cached by the server. Defaults to 'unknown'. */
   billing?: () => Promise<UsageBilling>;
+  /** The composition renderer and its Chromium (injected provider, system Chrome or Chrome for Testing); render jobs use it (Task 5). */
+  render?: RenderEngine;
+  /** Options of every render job's render (tests: a built runtime, a temp folder, fewer pages, the encoder). */
+  /** Per-project cap of the normalised media cache (default 5 GB). */
+  mediaCacheMaxBytes?: number;
+  renderOptions?: Partial<Pick<RenderCompositionOptions, 'distDir' | 'tempDir' | 'parallel' | 'encoder' | 'x264Preset' | 'timeLimitMs' | 'jpegQuality'>>;
+  /** Told the live-preview composition server's origin when it starts, null when it stops. */
+  onCompositionOrigin?: (origin: string | null) => void;
+  /**
+   * The exact origins the UI runs on, read at every live preview mint (Task 5b): startServer passes the core's own origin
+   * (known once it listens) plus, in development, Vite's `http://localhost:5173`. Default: none (no live previews).
+   */
+  uiOrigins?: () => readonly string[];
+  /** What the agent delivers (default `compositions`); `media` only for the phase 9 test suites (`CreativeTurnDeps.agentContract`). */
+  agentContract?: AgentContract;
+  /** `preview_frames` calls allowed per turn (default 10). */
+  previewFramesPerTurn?: number;
+  /** Lifetime of the signed storyboard image URLs (default 10 min; tests). */
+  signedUrlTtlMs?: number;
+  /**
+   * The on-demand Chrome for Testing download of the System check (Task 8). Default: the real one into `configDir` when
+   * there is a renderer and a config folder; null: none (tests inject a fake: no test downloads anything).
+   */
+  chromeInstaller?: ChromeInstaller | null;
 }
 
 /** How long the billing method (one `claude auth status`) is reused; 'unknown' is retried sooner. */
@@ -75,9 +107,10 @@ const BILLING_TTL_MS = 10 * 60 * 1000;
 const BILLING_RETRY_MS = 60 * 1000;
 
 /** Routes reachable without the UI token: health, the MCP bridge (it has its own token) and files shown by <img>/<video>. */
+// The storyboard and pin frame images carry a signed URL instead (signed-urls.ts, fix I4).
 const UI_TOKEN_EXEMPT: Record<string, ReadonlySet<string>> = {
-  GET: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/projects/:slug/creatives/:c/files/*']),
-  HEAD: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/projects/:slug/creatives/:c/files/*']),
+  GET: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/projects/:slug/creatives/:c/files/*', '/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:hash/:file', '/api/projects/:slug/creatives/:c/pin-frame-files/:n/:file']),
+  HEAD: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/projects/:slug/creatives/:c/files/*', '/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:hash/:file', '/api/projects/:slug/creatives/:c/pin-frame-files/:n/:file']),
   POST: new Set(['/api/bridge/:tool']),
 };
 /** `code` is what the UI branches on; `error` is display text in the current language. */
@@ -144,9 +177,17 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, requestTimeout: 0, connectionTimeout: 0 });
   const hub = new EventHub();
   const approvals = deps.approvals ?? new ApprovalBroker({ broadcast: (m) => hub.broadcast(m) });
-  const queue = new JobQueue({ concurrency: 2, onUpdate: (job) => hub.broadcast({ type: 'job', job }) });
+  // Render jobs have their own lane of one slot (Task 5 M3): a render never blocks an agent turn, nor waits for one.
+  const queue = new JobQueue({ concurrency: 2, lanes: { render: 1 }, onUpdate: (job) => hub.broadcast({ type: 'job', job }) });
   const media = deps.media ?? NoMediaTools;
   const isJobActive = (key: string) => queue.list().some((j) => j.key === key && (j.state === 'queued' || j.state === 'running'));
+  // Video sources are normalised for the renderer (and, Task 5b/8, the preview); close() kills whatever still runs.
+  const normalizer = new MediaNormalizer({ ffmpeg: () => findFfmpeg(), ...(deps.mediaCacheMaxBytes !== undefined ? { maxCacheBytes: deps.mediaCacheMaxBytes } : {}) });
+  const recoverOptions = (root: string): RecoverOptions => ({
+    renderActive: (project, creative) => queue.list().some((j) => (j.state === 'queued' || j.state === 'running') && j.key.startsWith(`render:${root}:${project}:${creative}:`)),
+    mediaInUse: normalizer.inUse,
+    ...(deps.mediaCacheMaxBytes !== undefined ? { mediaCacheMaxBytes: deps.mediaCacheMaxBytes } : {}),
+  });
   let workspace: WorkspaceStore | null = null;
   // Why the configured workspace could not be opened at startup (shown by the onboarding).
   let workspaceProblem: { path: string; error: WorkspaceProblem } | null = null;
@@ -169,7 +210,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       const ws = await WorkspaceStore.open(configured, deps.git, { create: false });
       queue.setConcurrency((await ws.readSettings()).maxConcurrentJobs);
       workspace = ws;
-      await recoverWorkspace(ws, isJobActive);
+      await recoverWorkspace(ws, isJobActive, recoverOptions(ws.root));
     } catch (err) {
       workspaceProblem = { path: configured, error: describeWorkspaceProblem(err) };
     }
@@ -199,11 +240,28 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   });
 
   const vault = deps.vault ?? new MemoryVault();
+  // Storyboards, the agent's preview_frames and the live preview sessions (Task 5b), in their own small lane.
+  const previews = new PreviewService({
+    engine: deps.render, normalizer,
+    presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
+    uiOrigins: deps.uiOrigins ?? (() => []),
+    ...(deps.renderOptions?.distDir ? { distDir: deps.renderOptions.distDir } : {}),
+    ...(deps.onCompositionOrigin ? { onServerOrigin: deps.onCompositionOrigin } : {}),
+  });
   const turns = new CreativeTurnService({
-    queue, launcher, git: deps.git, media, vault,
+    queue, launcher, git: deps.git, media, vault, previews,
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     model: async () => (await requireWorkspace().readSettings()).model,
     broadcast: (msg) => hub.broadcast(msg),
+    ...(deps.agentContract ? { agentContract: deps.agentContract } : {}),
+    ...(deps.previewFramesPerTurn !== undefined ? { previewFramesPerTurn: deps.previewFramesPerTurn } : {}),
+  });
+
+  const renders = new RenderJobService({
+    queue, engine: deps.render, media, normalizer,
+    presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
+    broadcast: (msg) => hub.broadcast(msg),
+    ...(deps.renderOptions ? { renderOptions: deps.renderOptions } : {}),
   });
 
   const brandService = new BrandService({
@@ -242,7 +300,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // receive the final 'cancelled' job updates before their sockets are closed.
   app.addHook('preClose', async () => {
     approvals.cancelAll();
+    // Render jobs too: each kills its browser and ffmpeg groups and removes its temp files before it settles.
     for (const j of queue.list()) queue.cancel(j.id);
+    await previews.close();
+    await normalizer.close();
     await queue.whenIdle();
   });
 
@@ -270,7 +331,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const settings = await ws.readSettings(); // corrupt settings → 422 before the choice is persisted
     await deps.appConfig.setWorkspacePath(path);
     // Re-selecting the workspace in use must not mark its running creatives as interrupted.
-    if (workspace?.root !== ws.root) await recoverWorkspace(ws, isJobActive);
+    if (workspace?.root !== ws.root) await recoverWorkspace(ws, isJobActive, recoverOptions(ws.root));
     workspace = ws;
     workspaceProblem = null;
     queue.setConcurrency(settings.maxConcurrentJobs);
@@ -365,7 +426,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     hub.send(socket, { type: 'snapshot', jobs: queue.list(), approvals: approvals.pending(), ...languageState() });
   });
 
-  registerCreativeRoutes(app, { requireWorkspace, turns, media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m) });
+  // The live preview's composition server origin (Task 8 frames it; started on first use).
+  app.get('/api/preview/origin', async () => ({ origin: (await previews.compositionServer()).origin, uiOrigins: [...(deps.uiOrigins?.() ?? [])] }));
+
+  registerCreativeRoutes(app, { requireWorkspace, turns, renders, previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m) });
 
   const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m) };
   registerBrandRoutes(app, routeCtx);
@@ -382,6 +446,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     },
   });
   registerSettingsRoutes(app, { vault, approvals, requireWorkspace });
+  registerRenderEngineRoutes(app, {
+    engine: deps.render,
+    installer: deps.chromeInstaller !== undefined ? deps.chromeInstaller : deps.render && deps.configDir ? defaultChromeInstaller(deps.configDir) : null,
+  });
 
   let billingCache: { value: Promise<UsageBilling>; until: number } | null = null;
   const billing = () => {

@@ -27,6 +27,16 @@ describe('window security', () => {
     expect(externalUrlAllowed('file:///Applications/Calculator.app')).toBe(false);
     expect(externalUrlAllowed('javascript:alert(1)')).toBe(false);
   });
+  it("hands a link to the system browser only when the app's own page opened it (M3)", async () => {
+    const { windowOpenToBrowser } = await import('../src/window.ts');
+    const app = 'http://127.0.0.1:4318';
+    expect(windowOpenToBrowser({ url: 'https://example.com/', referrer: { url: `${app}/` } }, app)).toBe(true);
+    // A preview frame (composition server: no-referrer), a noreferrer link, another origin: refused.
+    expect(windowOpenToBrowser({ url: 'https://example.com/', referrer: { url: '' } }, app)).toBe(false);
+    expect(windowOpenToBrowser({ url: 'https://example.com/' }, app)).toBe(false);
+    expect(windowOpenToBrowser({ url: 'https://example.com/', referrer: { url: 'http://127.0.0.1:50001/tok/runtime/index.html' } }, app)).toBe(false);
+    expect(windowOpenToBrowser({ url: 'file:///etc/hosts', referrer: { url: `${app}/` } }, app)).toBe(false);
+  });
 });
 
 describe('IPC sender guard', () => {
@@ -182,6 +192,24 @@ describe('ms:fullscreen-now', () => {
   });
 });
 
+describe('ms:ui-token-now (final wave B3)', () => {
+  it('answers the token of the core the window was opened for, to the app only, as a 64-hex string', async () => {
+    const { UI_TOKEN_NOW, registerUiTokenQuery } = await import('../src/titlebar.ts');
+    const handlers: Record<string, (e: { returnValue: unknown }) => void> = {};
+    let trusted = true;
+    let token: string | null = 'ab'.repeat(32);
+    registerUiTokenQuery({ on: (ch, fn) => { handlers[ch] = fn; } }, { trusted: () => trusted, token: () => token });
+    const ask = () => { const e = { returnValue: undefined as unknown }; handlers[UI_TOKEN_NOW]!(e); return e.returnValue; };
+    expect(UI_TOKEN_NOW).toBe('ms:ui-token-now');
+    expect(ask()).toBe('ab'.repeat(32));
+    token = 'not a token';
+    expect(ask()).toBeNull();
+    token = 'ab'.repeat(32);
+    trusted = false;
+    expect(ask()).toBeNull();
+  });
+});
+
 describe('preload: title bar', () => {
   afterEach(() => { vi.resetModules(); vi.clearAllMocks(); });
   async function bridge() {
@@ -238,6 +266,18 @@ describe('preload: title bar', () => {
     expect(ipc.sendSync).toHaveBeenCalledTimes(1);
     for (const l of listeners(ipc)) l({}, false);
     expect(b.isFullscreen()).toBe(false);
+  });
+
+  it('uiToken asks the main process synchronously and passes on only a 64-hex token (B3)', async () => {
+    const { b, ipc } = await bridge();
+    const bt = b as unknown as { uiToken(): string | null };
+    ipc.sendSync.mockReturnValueOnce('cd'.repeat(32));
+    expect(bt.uiToken()).toBe('cd'.repeat(32));
+    expect(ipc.sendSync).toHaveBeenLastCalledWith('ms:ui-token-now');
+    ipc.sendSync.mockReturnValueOnce({ token: 'x' });
+    expect(bt.uiToken()).toBeNull();
+    ipc.sendSync.mockImplementationOnce(() => { throw new Error('no handler'); });
+    expect(bt.uiToken()).toBeNull();
   });
 
   it('isFullscreen is false when the main process cannot answer', async () => {

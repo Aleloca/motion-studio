@@ -203,6 +203,6 @@ export async function availableTools(vault: SecretsVault): Promise<string[]> {
     `- tts: voice-over with OpenAI or ElevenLabs ${st(openai || eleven, 'no TTS key')}`,
     `- stock_search / stock_download: photos and videos from Pexels and Unsplash ${st(pexels || unsplash, 'no Pexels or Unsplash key')}`,
     '- fonts_fetch: Google Fonts fonts (ready)',
-    '- report_progress, validate_output, read_brand_kit (ready)',
+    '- report_progress, validate_composition, preview_frames, read_brand_kit (ready)',
   ];
 }

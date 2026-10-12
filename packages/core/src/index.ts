@@ -49,3 +49,19 @@ export * from './providers/stock.ts';
 export * from './providers/google-fonts.ts';
 export * from './server/ui-token.ts';
 export * from './shell-path.ts';
+// Renderer (phase 10a, Task 4). Task 7 injects its Electron provider with `startServer({ renderProvider })`; it implements
+// `ChromiumProvider` by wrapping `webContents.debugger` as a `CdpClient` and calling `openCdpRenderPage`.
+export * from './render/renderer.ts';
+export * from './render/chromium-provider.ts';
+export { CdpPipe, CdpError, waitForEvent, type CdpClient, type CdpEvent, type CdpSendOptions } from './render/cdp-pipe.ts';
+export { interceptRequests, allowedPrefix, isAllowedRequest, networkLockdownFlags, DEAD_PROXY, type Interception } from './render/isolation.ts';
+export { startWatchdog, scaledMemoryLimits, samplePidsMemory, pidsMemoryBytes, type Watchdog, type WatchdogLimits, type WatchdogTrip, type GroupMemory } from './render/watchdog.ts';
+export { findSystemChrome, MIN_CHROME_MAJOR, type ChromeInstall } from './render/system-chrome.ts';
+export { cftDownloadInfo, installCft, findInstalledCft, cftPlatform, CftError, CFT_ENDPOINT, type CftDownloadInfo, type CftPlatform } from './render/cft-download.ts';
+export { findFfmpeg, checkVideotoolbox, type FfmpegInfo, type VideoEncoder } from './render/encode.ts';
+// Render jobs and normalised media (phase 10a, Task 5a).
+export { MediaNormalizer, mediaCacheDir, mediaFileName, pruneMediaCache, MEDIA_RECIPE_VERSION, clipScaleBound, videoNeeds, targetSize, type PrepareMediaOptions, type PreparedMedia, type MediaWarning, type PruneOptions } from './render/media-normalize.ts';
+export { sweepProjectRenders, sweepRenderTempDirs } from './render/render-sweep.ts';
+export { RenderJobService, renderJobKey, renderPlan, renderExtension, type RenderJobDeps, type RenderPlan } from './creatives/render-jobs.ts';
+export { loadComposition, readCompositionFolder, CompositionFolderError, type CompositionFolder, type LoadedComposition } from './compositions/composition-files.ts';
+export type { SessionMedia, SessionMediaFile } from './compositions/composition-server.ts';

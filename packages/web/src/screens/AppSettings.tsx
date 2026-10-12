@@ -1,7 +1,7 @@
-import { LOCALES, shownTotal, type DoctorCheck, type LanguageSetting, type Locale, type ProviderId, type SecretStatus, type UsageReport, type WorkspaceSettings, type WorkspaceSettingsView } from '@motion-studio/shared';
+import { LOCALES, shownTotal, type ChromeDownloadOffer, type RenderEngineStatus, type DoctorCheck, type LanguageSetting, type Locale, type ProviderId, type SecretStatus, type UsageReport, type WorkspaceSettings, type WorkspaceSettingsView } from '@motion-studio/shared';
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { api } from '../api.ts';
-import { formatDate, useLocale, useT, type LanguageState } from '../i18n.tsx';
+import { formatDate, formatNumber, useLocale, useT, type LanguageState } from '../i18n.tsx';
 import { anim, D, E, enter } from '../motion/index.ts';
 import { href, type SettingsSection } from '../routes.ts';
 import { notificationStatus, notifyApprovalsEnabled, notifyReadyEnabled, notifySoundEnabled, sendNotification, setNotifyApprovals, setNotifyReady, setNotifySound, type NotificationResult, type NotificationStatus } from '../shell/notify.ts';
@@ -9,7 +9,7 @@ import { go } from '../shell/ShellContext.tsx';
 import { billingNote, costText, formatTokens } from '../shell/Tokens.tsx';
 import type { Theme } from '../theme.ts';
 import { desktop } from '../desktop.ts';
-import { Button, Card, Empty, Icon, Input, Select, Spinner, Toggle, cx, toast } from '../ui/index.ts';
+import { Button, Card, Empty, Icon, Input, ProgressBar, Select, Spinner, Toggle, cx, toast } from '../ui/index.ts';
 import { rovingIndex } from '../ui/roving.ts';
 import { Alert, Head, Row, SectionMain, message } from './common.tsx';
 import { SystemChecks } from './Welcome.tsx';
@@ -198,6 +198,102 @@ function System({ checks, checking, checksRun, loadError, onRecheck }: AppSettin
       <Card className="ms-syscard" data-enter>
         <SystemChecks checks={checks} checking={checking} run={checksRun} revealedRun={revealedRun} loadError={loadError} onRecheck={onRecheck} />
       </Card>
+      <Card className="ms-syscard" data-enter>
+        <RenderEngine run={checksRun} />
+      </Card>
+    </div>
+  );
+}
+
+/** Bytes as decimal megabytes, one decimal ("98.8 MB"). */
+const megabytes = (locale: Locale, bytes: number, mb: (p: { n: string }) => string) => mb({ n: formatNumber(locale, bytes / 1e6, { maximumFractionDigits: 1, minimumFractionDigits: 1 }) });
+const DOWNLOAD_POLL_MS = 1000;
+
+/**
+ * The render engine (Task 8, carry 12): Electron's own Chromium on desktop (always there), a system Chrome with its version,
+ * a downloaded Chrome for Testing, or none. With none, the CLI offers Chrome for Testing: a first click only reads its version
+ * and exact size, the download starts only from the consent showing them (global constraints), and its progress follows.
+ */
+function RenderEngine({ run }: { run: number }) {
+  const t = useT();
+  const r = t.web.render;
+  const locale = useLocale();
+  const [status, setStatus] = useState<RenderEngineStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [consent, setConsent] = useState<{ kind: 'checking' } | { kind: 'offer'; offer: ChromeDownloadOffer } | { kind: 'failed'; detail: string } | null>(null);
+  const [starting, setStarting] = useState(false);
+  const load = () => Promise.resolve().then(() => api.getRenderEngine());
+  useEffect(() => {
+    let alive = true;
+    load().then((s) => { if (alive) { setStatus(s); setError(null); } }, (e: unknown) => { if (alive) setError(message(e)); });
+    return () => { alive = false; };
+  }, [run]);
+  // While it downloads, the progress is read again every second.
+  const running = status?.download.state === 'running';
+  useEffect(() => {
+    if (!running) return;
+    let alive = true;
+    const id = window.setInterval(() => { load().then((s) => { if (alive) setStatus(s); }, () => {}); }, DOWNLOAD_POLL_MS);
+    return () => { alive = false; window.clearInterval(id); };
+  }, [running]);
+
+  const ask = () => {
+    setConsent({ kind: 'checking' });
+    Promise.resolve().then(() => api.getChromeDownloadInfo())
+      .then((offer) => setConsent({ kind: 'offer', offer }), (e: unknown) => setConsent({ kind: 'failed', detail: message(e) }));
+  };
+  const agree = (offer: ChromeDownloadOffer) => {
+    setStarting(true);
+    Promise.resolve().then(() => api.downloadChrome(offer.sizeBytes))
+      .then((s) => { setStatus(s); setConsent(null); }, (e: unknown) => setConsent({ kind: 'failed', detail: message(e) }))
+      .finally(() => setStarting(false));
+  };
+  const size = (bytes: number) => megabytes(locale, bytes, r.sizeMb);
+  const value = !status ? null
+    : status.kind === 'electron' ? r.engineElectron
+      : status.kind === 'system' ? (status.version ? r.engineSystem({ version: status.version }) : r.engineSystemPlain)
+        : status.kind === 'cft' ? r.engineCft({ version: status.version ?? '' })
+          : status.kind === 'injected' ? r.engineInjected : r.engineNone;
+  const d = status?.download;
+  return (
+    <div className="ms-engine">
+      <div className="ms-syscheck">
+        {status === null && !error ? <Spinner decorative size={16} />
+          : status?.kind ? <span className="ms-syscheck-mark ms-ok" aria-hidden="true"><Icon name="check" size={10} strokeWidth={2.4} /></span>
+            : <span className="ms-syscheck-mark ms-note" aria-hidden="true"><Icon name="minus" size={10} strokeWidth={2.4} /></span>}
+        <span className="ms-syscheck-label">{r.engineLabel}</span>
+        <span className="ms-syscheck-value">{value ?? ''}</span>
+      </div>
+      {error ? <p className="ms-syscheck-message" role="alert">{r.engineLoadFailed({ detail: error })}</p> : null}
+      {status && !status.kind ? <p className="ms-syscheck-message">{r.engineNoneHint}</p> : null}
+      {d?.state === 'running' && d.total ? (
+        <div className="ms-engine-progress">
+          <ProgressBar value={(d.bytes / d.total) * 100} label={r.downloading({ done: size(d.bytes), total: size(d.total) })} />
+          <span className="ms-syscheck-message">{r.downloading({ done: size(d.bytes), total: size(d.total) })}</span>
+        </div>
+      ) : null}
+      {d?.state === 'done' && status?.kind ? <p className="ms-syscheck-message" role="status">{r.downloaded}</p> : null}
+      {d?.state === 'failed' ? <p className="ms-syscheck-message" role="alert">{r.downloadFailed({ detail: d.error ?? '' })}</p> : null}
+      {status?.downloadable && d?.state !== 'running' && consent === null ? (
+        <div className="ms-remedy"><div className="ms-grow" /><Button size="sm" variant="outline" onClick={ask}><Icon name="download" size={12} />{r.downloadOffer}</Button></div>
+      ) : null}
+      {consent?.kind === 'checking' ? <p className="ms-syscheck-message" role="status">{r.consentChecking}</p> : null}
+      {consent?.kind === 'failed' ? (
+        <div className="ms-remedy">
+          <p className="ms-syscheck-message" role="alert">{r.consentFailed({ detail: consent.detail })}</p>
+          <Button size="sm" variant="outline" onClick={ask}><Icon name="refresh" size={12} />{r.retry}</Button>
+        </div>
+      ) : null}
+      {consent?.kind === 'offer' ? (
+        <div className="ms-engine-consent" role="group" aria-label={r.consentTitle}>
+          <b>{r.consentTitle}</b>
+          <p>{r.consentBody({ version: consent.offer.version, size: size(consent.offer.sizeBytes) })}</p>
+          <div className="ms-engine-actions">
+            <Button size="sm" variant="ghost" disabled={starting} onClick={() => setConsent(null)}>{t.common.cancel}</Button>
+            <Button size="sm" variant="ink" loading={starting} onClick={() => agree(consent.offer)}>{r.consentAgree({ size: size(consent.offer.sizeBytes) })}</Button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -30,9 +30,11 @@ import { activatesControl, bare, inOverlay, isTyping } from './keys.ts';
 import { pinsKey, usePendingPins } from './pendingPins.ts';
 import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from './FormatVersions.tsx';
 import { boardSource, entryAt, followersOf, formatStates, isRendering, renderingOf, shownOf, type FormatState } from './versionModel.ts';
+import { boardRender, compositionOf, starRenderPlan } from './renderModel.ts';
 import './canvas.css';
 import { message } from './common.tsx';
 import { isVideoFile } from '../media.ts';
+import { usePinFrames } from './pinFrames.ts';
 
 const ZOOM_MIN = 0.5;
 /** T4 only while the player's rect is fresh (boards that arrive later cascade in). */
@@ -134,12 +136,15 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
   // `index` is a position in `sourcePins`.
   const pinSource = detail ? detail.creative.resumeFrom?.version ?? latest?.n ?? null : null;
   // A board takes comments when its file is the one the pin source has for its format (a follower: its primary's).
+  // A board shows a picture: its file, or (v2) its composition, rendered or not.
+  const hasPicture = useCallback((b: BoardModel & { n: number | null }) => b.out !== null
+    || compositionOf(versions.find((v) => v.n === b.n), boardSource(states, b.id, viewing).format) !== null, [versions, states, viewing]);
   const commentable = useMemo(() => new Set(boards.filter((b) => {
     const src = boardSource(states, b.id, viewing);
-    return b.out !== null && b.n !== null && entryAt(versions, states[src.format], pinSource) === b.n;
-  }).map((b) => b.id)), [boards, states, viewing, versions, pinSource]);
+    return hasPicture(b) && b.n !== null && entryAt(versions, states[src.format], pinSource) === b.n;
+  }).map((b) => b.id)), [boards, states, viewing, versions, pinSource, hasPicture]);
   const canComment = commentable.size > 0;
-  const commentLock = pinSource !== null && boards.some((b) => b.out !== null && !commentable.has(b.id));
+  const commentLock = pinSource !== null && boards.some((b) => hasPicture(b) && !commentable.has(b.id));
   const [stored, setStored] = usePendingPins(pinsKey(slug, creative));
   const sourcePins = useMemo(() => stored.flatMap((p, i) => (p.version === pinSource ? [{ pin: p.pin, at: i }] : [])), [stored, pinSource]);
   const pins = useMemo(() => sourcePins.map((p) => p.pin), [sourcePins]);
@@ -182,9 +187,11 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
     const note = draft.text.trim();
     if (!note) return;
     if (draft.index === null) {
-      const out = boards.find((b) => b.id === draft.format)?.out;
-      // On the canvas a video comment is at 0 s; frame-accurate comments come with the format view.
-      const pin: Pin = { format: draft.format, x: draft.x, y: draft.y, timeSec: out && isVideoFile(out.file) ? 0 : null, note };
+      const b = boards.find((x) => x.id === draft.format);
+      // On the canvas a video comment is at 0 s; frame-accurate comments come with the format view. A composition without
+      // a render is a video when its format is.
+      const isVideo = b?.out ? isVideoFile(b.out.file) : b?.preset?.kind === 'video';
+      const pin: Pin = { format: draft.format, x: draft.x, y: draft.y, timeSec: isVideo ? 0 : null, note };
       if (pinSource !== null) setStored((ps) => [...ps, { pin, version: pinSource }]);
     } else {
       const at = sourcePins[draft.index]?.at;
@@ -230,6 +237,23 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
   const [actionError, setActionError] = useState<string | null>(null);
   const formatLabel = (id: string) => boardLabel({ id, preset: presets.find((p) => p.id === id) ?? null, out: null }, locale);
   const actions = useVersionActions({ slug, creative, states, labelOf: formatLabel, resumeFrom: detail?.creative.resumeFrom?.version ?? null, onChanged: reload, onError: setActionError });
+  // Renders of v2 versions (Task 8): a board's Retry and its menu's "Render vN", and the bar's "Render ★".
+  const jobList = useMemo(() => Object.values(live.jobs), [live.jobs]);
+  const renderNow = (list: Array<[number, string[]]>) => {
+    // One request per version: each starts or not on its own, and the toast says which.
+    void Promise.allSettled(list.map(([n, formats]) => Promise.resolve().then(() => api.renderVersion(slug, creative, n, formats)))).then((results) => {
+      const started = results.reduce((k, r, i) => k + (r.status === 'fulfilled' ? list[i]![1].length : 0), 0);
+      const failed = results.flatMap((r, i) => (r.status === 'rejected' ? [{ n: list[i]![0], formats: list[i]![1], detail: message(r.reason) }] : []));
+      if (!failed.length) { toast.show(t.web.render.started({ count: started }), { tone: 'ok' }); return; }
+      const what = failed.map((f) => `${f.formats.map(formatLabel).join(', ')} v${f.n}`).join('; ');
+      toast.show(started > 0
+        ? t.web.render.startedPartly({ count: started, list: what, detail: failed[0]!.detail })
+        : t.web.render.startFailed({ detail: failed[0]!.detail }));
+    });
+  };
+  const starPlan = useMemo(() => (detail ? starRenderPlan(states, versions, jobList, detail.jobKey) : new Map<number, string[]>()), [detail, states, versions, jobList]);
+  const anyComposition = versions.some((v) => (v.compositions?.length ?? 0) > 0);
+
   const [compare, setCompare] = useState<{ open: boolean; init: [number, number]; format: string } | null>(null);
   /** Compare of a format (its badge): the version on screen against the entry before it in the format's history. */
   const openCompare = (format: string) => {
@@ -373,15 +397,28 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
         note: star !== null ? t.web.formatVersions.followsStar({ primary: short, n: star }) : t.web.formatVersions.follows({ primary: short }),
       };
     }
+    const shownVersion = b.n !== null ? versions.find((v) => v.n === b.n) : undefined;
+    const r = boardRender(shownVersion, b.id, jobList, detail.jobKey);
+    const canRender = b.n !== null && r !== null && r.kind !== 'queued' && r.kind !== 'rendering';
     return {
       badge: <FormatBadge slug={slug} creative={creative} label={formatLabel(b.id)} state={s} versions={versions} shown={b.n} resumeFrom={cr.resumeFrom?.version ?? null}
-        labelOf={formatLabel} actions={actions} busy={busyLinks} onView={(v) => view(b.id, v)} onCompare={() => openCompare(b.id)} />,
+        labelOf={formatLabel} actions={actions} busy={busyLinks} onView={(v) => view(b.id, v)} onCompare={() => openCompare(b.id)}
+        render={canRender ? { n: b.n!, run: () => renderNow([[b.n!, [b.id]]]) } : null} />,
       note: null,
     };
   };
+  /** A v2 board: the composition it shows (a follower's primary's), its render state and Retry. */
+  const compositionFor = (b: BoardModel & { n: number | null }) => {
+    if (b.n === null) return null;
+    const src = boardSource(states, b.id, viewing).format;
+    const v = versions.find((x) => x.n === b.n);
+    const comp = compositionOf(v, src);
+    const render = boardRender(v, src, jobList, detail.jobKey);
+    return comp && render ? { n: b.n, format: src, hash: comp.hash, render, onRender: () => renderNow([[b.n!, [src]]]) } : null;
+  };
   const board = (b: BoardModel & { n: number | null }) => (
     <CanvasBoard key={b.id} slug={slug} creative={creative} board={b} n={b.n} tool={tool} zoom={zoom} selected={sel === b.id} rendering={isRendering(rendering, b.id)} safe={safe}
-      commentable={commentable.has(b.id)} missing={b.n === null ? latest?.n ?? null : null} {...badgeOf(b)}
+      commentable={commentable.has(b.id)} missing={b.n === null ? latest?.n ?? null : null} {...badgeOf(b)} composition={compositionFor(b)}
       pins={commentable.has(b.id) ? pinsOf(b.id) : []} draft={commentable.has(b.id) ? draft : null} nextNumber={pins.length + 1}
       onSelect={() => setSel(b.id)} onOpen={(el) => { if (tool === 'select') openEditor(b.id, el); }} onPlace={(x, y) => place(b.id, x, y)} onEditPin={editPin}
       onDraftText={(text) => setDraft((d) => (d ? { ...d, text } : d))} onDraftCommit={commitDraft} onDraftCancel={() => setDraft(null)}
@@ -404,6 +441,12 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
         <>
           {versions.length ? (
             <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={actions} buttonRef={versionButton} />
+          ) : null}
+          {anyComposition ? (
+            <Button variant="outline" className="ms-cv-render-stars" disabled={starPlan.size === 0} title={starPlan.size ? t.web.render.renderStarsHint : t.web.render.renderStarsNone}
+              onClick={() => renderNow([...starPlan])}>
+              {t.web.render.renderStars}
+            </Button>
           ) : null}
           <Button variant="ink" className="ms-cv-export" disabled={!version} onClick={() => { if (version) setExporting({ open: true, snapshot: { versions, states } }); }}>
             <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
@@ -523,7 +566,7 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
             versionExtra={(n) => <UsageBadge usage={versions.find((v) => v.n === n)?.usage} billing={live.today?.billing ?? null} />}
             versionNote={(n) => <OutputWarnings outputs={versions.find((v) => v.n === n)?.outputs ?? []} formatLabel={formatLabel} />} />
         ) : null}
-        {tab === 'comments' ? <CommentsTab sent={sent} working={working} formatLabel={formatLabel} onStart={() => { setTool('comment'); }} /> : null}
+        {tab === 'comments' ? <CommentsTab slug={slug} creative={creative} sent={sent} working={working} formatLabel={formatLabel} onStart={() => { setTool('comment'); }} /> : null}
         {/* Kept mounted while hidden, so an unsaved brief draft survives tab switches. */}
         <div className="ms-cv-brief-wrap" hidden={tab !== 'brief'}>
           <BriefTab project={slug} detail={detail} presets={presets} disabled={working} formatLabel={formatLabel} onChanged={reload} />
@@ -535,7 +578,7 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
           versions={versions} presets={presets} states={states} format={compare.format} initial={compare.init} actions={actions} />
       ) : null}
       <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
-        title={title} snapshot={exporting?.snapshot ?? null} presets={presets} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} />
+        title={title} snapshot={exporting?.snapshot ?? null} presets={presets} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} jobs={live.jobs} />
     </div>
   );
 }
@@ -620,25 +663,40 @@ function StatePill({ status, needs, working }: { status: CreativeStatus; needs: 
   }
 }
 
-interface SentComment { pin: Pin; at: string }
+/**
+ * `frame`: the feedback frame the core cut for it (`<n>-<i>.jpg`, the i-th pin of its message, carry 9), known only for the
+ * pins of the message the version answered (an earlier message whose turn made no version shares its number).
+ */
+interface SentComment { pin: Pin; at: string; frame?: string }
 interface SentComments { applied: Array<{ n: number; items: SentComment[] }>; open: SentComment[]; count: number }
 
 /** Comments the user sent, grouped by the version that applied them (the next version after the message). */
-function sentComments(entries: ConversationEntry[]): SentComments {
+export function sentComments(entries: ConversationEntry[]): SentComments {
   const applied: SentComments['applied'] = [];
-  let open: SentComment[] = [];
+  let open: Array<SentComment & { message: number }> = [];
   let count = 0;
+  let message = 0;
   for (const e of entries) {
-    if (e.type === 'user' && e.pins.length) { open = [...open, ...e.pins.map((pin) => ({ pin, at: e.at }))]; count += e.pins.length; }
-    if (e.type === 'version' && open.length) { applied.push({ n: e.n, items: open }); open = []; }
+    if (e.type === 'user' && e.pins.length) {
+      message += 1;
+      const m = message;
+      open = [...open, ...e.pins.map((pin, i) => ({ pin, at: e.at, message: m, frame: pin.timeSec !== null ? `${i + 1}` : undefined }))];
+      count += e.pins.length;
+    }
+    if (e.type === 'version' && open.length) {
+      const n = e.n;
+      applied.push({ n, items: open.map(({ message: m, frame, ...k }) => ({ ...k, ...(m === message && frame ? { frame: `${n}-${frame}.jpg` } : {}) })) });
+      open = [];
+    }
   }
-  return { applied: applied.reverse(), open, count };
+  return { applied: applied.reverse(), open: open.map(({ message: _m, frame: _f, ...k }) => k), count };
 }
 
-function CommentsTab({ sent, working, formatLabel, onStart }: { sent: SentComments; working: boolean; formatLabel(id: string): string; onStart(): void }) {
+function CommentsTab({ slug, creative, sent, working, formatLabel, onStart }: { slug: string; creative: string; sent: SentComments; working: boolean; formatLabel(id: string): string; onStart(): void }) {
   const t = useT();
   const c = t.web.canvas.comments;
   const locale = useLocale();
+  const frames = usePinFrames(slug, creative, sent.applied.filter((g) => g.items.some((k) => k.frame)).map((g) => g.n));
   if (!sent.count) {
     return (
       <div className="ms-cv-tabbody ms-cv-tabempty">
@@ -646,8 +704,9 @@ function CommentsTab({ sent, working, formatLabel, onStart }: { sent: SentCommen
       </div>
     );
   }
-  const card = (k: SentComment, i: number, state: ReactNode) => (
+  const card = (k: SentComment, i: number, state: ReactNode, n?: number) => (
     <div key={i} className="ms-card ms-cv-comment">
+      {n !== undefined && k.frame && frames[n]?.[k.frame] ? <img className="ms-cv-comment-frame" src={frames[n]![k.frame]} alt={t.web.render.pinFrame({ n: i + 1 })} draggable={false} /> : null}
       <span className="ms-cv-comment-head">{state}<span className="ms-cv-comment-where">{formatLabel(k.pin.format)}{k.pin.timeSec ? ` · ${t.web.conversation.atSeconds({ time: formatNumber(locale, k.pin.timeSec, { maximumFractionDigits: 1 }) })}` : ''}</span>
         <span className="ms-cv-comment-at">{formatDate(locale, k.at, TIME_OF_DAY)}</span></span>
       <span className={cx('ms-cv-comment-text', !k.pin.note && 'ms-faint')}>{k.pin.note || c.noText}</span>
@@ -664,7 +723,7 @@ function CommentsTab({ sent, working, formatLabel, onStart }: { sent: SentCommen
       {sent.applied.map((g) => (
         <section key={g.n} className="ms-cv-cgroup">
           <span className="ms-cap">{c.applied({ n: g.n })}</span>
-          {g.items.map((k, i) => card(k, i, <Pill tone="ok" dot>v{g.n}</Pill>))}
+          {g.items.map((k, i) => card(k, i, <Pill tone="ok" dot>v{g.n}</Pill>, g.n))}
         </section>
       ))}
     </div>

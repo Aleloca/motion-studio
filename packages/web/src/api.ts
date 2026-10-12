@@ -1,6 +1,6 @@
-import type { ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, ProviderId, UsageReport, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
+import type { ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, ProviderId, UsageReport, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
-import { markPairingNeeded, uiToken } from './uiToken.ts';
+import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
 
 /**
  * `code`: the stable machine-readable reason some routes add (e.g. `link-chain`, `pick-file-missing`); `retryAfterSec`: the
@@ -23,10 +23,34 @@ function headers(extra: Record<string, string> = {}): Record<string, string> {
   return token ? { ...extra, 'x-motion-studio-ui': token } : extra;
 }
 
+/** A 401 for the UI token: refused before the server did anything, so the call may be sent again with a renewed token. */
+const tokenRefused = async (res: Response): Promise<boolean> => {
+  if (res.status !== 401) return false;
+  const copy = typeof res.clone === 'function' ? res.clone() : res;
+  return ((await copy.json().catch(() => ({}))) as { code?: string }).code === 'ui-token';
+};
+
+/**
+ * Sends `send()` with the current token; when the server refuses that token and a newer one is known (desktop: the main
+ * process's; browser: another tab's), sends it once more with it (final wave B3). Else the pairing page is asked for.
+ */
+async function withToken(send: () => Promise<Response>): Promise<Response> {
+  const used = uiToken();
+  const res = await send();
+  if (!(await tokenRefused(res))) return res;
+  if (renewUiToken(used)) {
+    const again = await send();
+    if (!(await tokenRefused(again))) return again;
+    markPairingNeeded();
+    return again;
+  }
+  markPairingNeeded();
+  return res;
+}
+
 async function parse<T>(res: Response): Promise<T> {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    if (res.status === 401 && (data as { code?: string }).code === 'ui-token') markPairingNeeded();
     const code = (data as { code?: unknown }).code;
     throw new ApiError(res.status, (data as { error?: string }).error ?? currentMessages().web.api.httpError({ status: res.status }), typeof code === 'string' ? code : undefined, retryAfter(res));
   }
@@ -37,14 +61,17 @@ async function parse<T>(res: Response): Promise<T> {
 export interface RequestOptions { keepalive?: boolean }
 
 async function request<T>(method: string, url: string, body?: unknown, opts: RequestOptions = {}): Promise<T> {
-  const res = await fetch(url, {
+  const res = await withToken(() => fetch(url, {
     method,
     headers: headers(body === undefined ? {} : { 'content-type': 'application/json' }),
     body: body === undefined ? undefined : JSON.stringify(body),
     ...(opts.keepalive ? { keepalive: true } : {}),
-  });
+  }));
   return parse<T>(res);
 }
+
+/** A render made during an export that had problems, so not copied (final wave P2): said in the summary. */
+export interface ExportExcluded { format: string; version: number; problems: string[]; issues: OutputIssue[] }
 
 export interface CodebaseCheck { path: string; note?: string; exists: boolean }
 const enc = (rel: string) => rel.split('/').map(encodeURIComponent).join('/');
@@ -52,7 +79,7 @@ const enc = (rel: string) => rel.split('/').map(encodeURIComponent).join('/');
 async function upload<T>(url: string, files: File[]): Promise<T> {
   const form = new FormData();
   for (const f of files) form.append('files', f, f.name);
-  const res = await fetch(url, { method: 'POST', body: form, headers: headers() });
+  const res = await withToken(() => fetch(url, { method: 'POST', body: form, headers: headers() }));
   return parse<T>(res);
 }
 
@@ -137,6 +164,35 @@ export const api = {
    * Refusals carry an `export-*` code.
    */
   exportPicks: (slug: string, creative: string, body: { destination: string; picks: Record<string, number>; follow?: Record<string, number>; pattern?: string; date?: string }) =>
-    request<{ destination: string; files: Array<{ from: string; to: string }>; skipped: string[] }>('POST', `${c(slug, creative)}/export`, body),
+    request<{ destination: string; files: Array<{ from: string; to: string }>; skipped: string[]; excluded?: ExportExcluded[] }>('POST', `${c(slug, creative)}/export`, body),
+  /**
+   * What a ★ export renders first (Task 8): the same picks and followers as `exportPicks`; the jobs are started (or joined)
+   * at once and the export, called next, waits for them.
+   */
+  prepareExport: (slug: string, creative: string, body: { picks: Record<string, number>; follow?: Record<string, number> }) =>
+    request<ExportPrepareResult>('POST', `${c(slug, creative)}/export/prepare`, body),
+  /** Renders a v2 version's compositions (all its primaries, or `formats`; a follower stands for its primary). 202 with the job. */
+  renderVersion: (slug: string, creative: string, n: number, formats?: string[]) =>
+    request<JobSummary>('POST', `${c(slug, creative)}/versions/${n}/render`, formats ? { formats } : {}),
+  /**
+   * A live preview session of one format of a saved v2 version, embeddable by `parentOrigin` (this page's origin). 404 for
+   * a legacy version (no composition), 429 `preview-busy` when the previews are busy.
+   */
+  previewSession: (slug: string, creative: string, n: number, format: string, parentOrigin: string) =>
+    request<PreviewSessionInfo>('POST', `${c(slug, creative)}/versions/${n}/preview-session`, { format, parentOrigin }),
+  /** Ends a live preview session early (a hover preview no longer shown); sent with keepalive so it survives a page close. */
+  revokePreview: (slug: string, creative: string, n: number, token: string) =>
+    request<{ revoked: true }>('DELETE', `${c(slug, creative)}/versions/${n}/preview-session/${encodeURIComponent(token)}`, undefined, { keepalive: true }),
+  /** The storyboard of a v2 version's format: scene frames and the poster, signed URLs valid until `expiresAt`. */
+  getStoryboard: (slug: string, creative: string, n: number, format: string) =>
+    request<StoryboardView>('GET', `${c(slug, creative)}/versions/${n}/storyboards/${encodeURIComponent(format)}`),
+  /** The feedback frames cut for the comments sent with the turn that made version n (signed URLs). */
+  getPinFrames: (slug: string, creative: string, n: number) => request<PinFramesView>('GET', `${c(slug, creative)}/pin-frames/${n}`),
+  /** Which Chromium renders (System check) and the Chrome for Testing download's state. */
+  getRenderEngine: () => request<RenderEngineStatus>('GET', '/api/render-engine'),
+  /** The Chrome for Testing version and exact size, read before asking for consent (nothing is downloaded). */
+  getChromeDownloadInfo: () => request<ChromeDownloadOffer>('GET', '/api/render-engine/download-info'),
+  /** Starts the download the user agreed to: `sizeBytes` is the size shown to them. */
+  downloadChrome: (sizeBytes: number) => request<RenderEngineStatus>('POST', '/api/render-engine/download', { consent: true, sizeBytes }),
   fileUrl: (slug: string, creative: string, rel: string) => `${c(slug, creative)}/files/${rel.split('/').map(encodeURIComponent).join('/')}`,
 };

@@ -1,15 +1,23 @@
-import { lstat, realpath } from 'node:fs/promises';
-import { dirname, sep } from 'node:path';
+import { lstat, readdir, realpath } from 'node:fs/promises';
+import { dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { briefSchema, checkLink, defaultLinks, effectiveLinks, formatLabel, isExportDate, issuesText, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
+import { briefSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatLabel, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
-import { exportPicks, exportVersion } from '../creatives/export.ts';
+import { exportResolved, exportVersion, pendingRenders, resolveExportPicks } from '../creatives/export.ts';
+import { storyboardDir, storyboardSchema, sweepStoryboardTemps, type PreviewService } from '../creatives/previews.ts';
+import { readJsonFile } from '../json-file.ts';
+import { isRealDirChain } from '../creatives/core-files.ts';
+import type { UrlSigner } from './signed-urls.ts';
 import { formatSummaries } from '../creatives/format-summary.ts';
 import { withLazyHashes } from '../creatives/output-hashes.ts';
 import { creativeJobKey, PICK_RETRY_AFTER_SEC, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
+import type { RenderJobService } from '../creatives/render-jobs.ts';
+import { reconcileRenders } from '../creatives/render-stamps.ts';
+import { sweepDerivedCaches } from '../creatives/cache-sweep.ts';
+import { sweepProjectRenders } from '../render/render-sweep.ts';
 import { FormatCatalog } from '../formats/format-catalog.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { completeGitignore, sweepProject } from '../project-maintenance.ts';
@@ -25,6 +33,12 @@ export interface CreativeRoutesContext {
   isJobActive: (key: string) => boolean;
   /** Tells the clients a creative changed (e.g. lazy hashes finished after the GET answered). */
   broadcast?: (msg: ServerMessage) => void;
+  /** Render jobs of v2 versions (Task 5). */
+  renders: RenderJobService;
+  /** Storyboards and live preview sessions (Task 5b). */
+  previews: PreviewService;
+  /** Signs the storyboard image URLs (fix I4). */
+  signer: UrlSigner;
 }
 
 const isInsideDir = (p: string, base: string | null) => Boolean(base && p.startsWith(base.endsWith(sep) ? base : base + sep));
@@ -52,6 +66,14 @@ const exportBody = z.object({
   version: z.number().int().min(1).optional(),
 });
 const linkBody = z.object({ follower: z.string().min(1).max(200), primary: z.string().min(1).max(200).nullable() });
+/** A render request (Task 5): `formats` to render (a follower stands for its primary); absent or empty: every primary. */
+const renderBody = z.object({ formats: z.array(z.string().min(1).max(200)).max(100).optional() }).strict();
+/** A live preview session (Task 5b): the format, and the exact origin of the UI page that embeds the iframe. */
+const previewBody = z.object({ format: z.string().min(1).max(200), parentOrigin: z.string().min(1).max(200) }).strict();
+const FOLDER_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const FRAME_FILE_RE = /^f-\d{1,3}\.jpg$/;
+/** A pin frame of version n: `<n>-<i>.jpg` (creative-turns `extractPinFrames`). */
+const PIN_FRAME_RE = /^(\d{1,6})-(\d{1,3})\.jpg$/;
 
 /**
  * The links a new creative starts with: the ones sent (sanitized, each pair checked with `checkLink`; the duration is not
@@ -83,13 +105,30 @@ function parse<T>(schema: z.ZodType<T>, body: unknown): T {
  * In every readable project: marks as interrupted the creatives left in `working` by a previous run, sweeps leftovers
  * of interrupted uploads and brand jobs, and completes the .gitignore.
  */
-export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: string) => boolean = () => false): Promise<void> {
+export interface RecoverOptions {
+  /** Whether a creative has a queued or running render job (its render temp files are left alone). */
+  renderActive?: (projectSlug: string, creativeSlug: string) => boolean;
+  /** Media cache files a live session uses, and the cache cap (`pruneMediaCache`). */
+  mediaInUse?: (file: string) => boolean;
+  mediaCacheMaxBytes?: number;
+}
+
+export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: string) => boolean = () => false, ro: RecoverOptions = {}): Promise<void> {
   for (const p of await ws.listProjects()) {
     if (!p.ok) continue;
     const dir = ws.projectDir(p.slug);
     await new CreativeStore(dir).recoverInterrupted((slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug))).catch((err: Error) => {
       console.warn(`Motion Studio: creative recovery failed in project ${p.slug}: ${err.message}`);
     });
+    // Render and media temp files left by a render the app was killed during, and the media cache's garbage. This also runs
+    // on a workspace switch, when renders may run: their creatives are skipped and files in use are kept.
+    await sweepProjectRenders(dir, {
+      skipCreative: (slug) => ro.renderActive?.(p.slug, slug) ?? false,
+      media: { ...(ro.mediaInUse ? { inUse: ro.mediaInUse } : {}), ...(ro.mediaCacheMaxBytes !== undefined ? { maxBytes: ro.mediaCacheMaxBytes } : {}) },
+    }).catch((err: Error) => console.warn(`Motion Studio: render cleanup failed in project ${p.slug}: ${err.message}`));
+    await sweepStoryboardTemps(dir).catch(() => []);
+    // The derived caches (storyboards, pin frames, agent originals, reference frames): old and over-cap version folders.
+    await sweepDerivedCaches(dir, { skipCreative: (slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug)) }).catch(() => []);
     await Promise.all([sweepProject(dir, !isJobActive(brandJobKey(ws.root, p.slug))), completeGitignore(dir)]).catch((err: Error) => {
       console.warn(`Motion Studio: cleanup failed in project ${p.slug}: ${err.message}`);
     });
@@ -159,6 +198,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   const detailOf = async (ref: CreativeRef & { store: CreativeStore }): Promise<CreativeDetail> => {
     const creative = await ref.store.get(ref.creativeSlug);
     const creativeDir = ref.store.dir(ref.creativeSlug);
+    // Render records whose file changed since it was recorded are corrected first (render-stamps.ts).
+    await reconcileRenders({ projectDir: ref.projectDir, store: ref.store, creativeSlug: ref.creativeSlug }).catch(() => false);
     const { versions } = await withLazyHashes({
       projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir, versions: await ref.store.readVersions(ref.creativeSlug),
       onBackgroundDone: () => ctx.broadcast?.({ type: 'creative', project: ref.projectSlug, creative: ref.creativeSlug }),
@@ -211,6 +252,15 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   app.post<{ Params: { slug: string; c: string; n: string } }>('/api/projects/:slug/creatives/:c/versions/:n/restore', async (req) => {
     const ref = await refOf(req.params.slug, req.params.c);
     return ctx.turns.restore(ref, Number(req.params.n));
+  });
+
+  // Renders a v2 version's compositions (Task 5): one job per request, 202 with the job.
+  app.post<{ Params: { slug: string; c: string; n: string } }>('/api/projects/:slug/creatives/:c/versions/:n/render', async (req, reply) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const n = Number(req.params.n);
+    if (!Number.isInteger(n) || n < 1) throw new WorkspaceError(404, t().errors.versionNotFound);
+    const body = parse(renderBody, req.body);
+    return reply.status(202).send(await ctx.renders.start(ref, n, body.formats));
   });
 
   app.post<{ Params: { slug: string; c: string; n: string } }>('/api/projects/:slug/creatives/:c/versions/:n/reveal', async (req) => {
@@ -268,13 +318,179 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
       return exportVersion({ ...common, version });
     }
-    // The same hashed versions as the creative GET, so a follower's ★ here is the one the dialog showed.
+    const resolve = async () => {
+      // The same hashed versions as the creative GET, so a follower's ★ here is the one the dialog showed.
+      await reconcileRenders({ projectDir: ref.projectDir, store: ref.store, creativeSlug: ref.creativeSlug }).catch(() => false);
+      const { versions, complete } = await withLazyHashes({ projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir, versions: await ref.store.readVersions(ref.creativeSlug) });
+      // A follower's version is decided on hashes: never on partial ones (a refusal now would only mean "not hashed yet").
+      // The hashing goes on; the client retries after Retry-After, as for a ★ pick.
+      if (!complete && body.follow !== undefined) throw new CodedError(503, t().errors.hashesPending, 'hashes-pending', PICK_RETRY_AFTER_SEC);
+      const items = resolveExportPicks({ ...common, versions, picks: (body.picks ?? {}) as Record<string, number>, follow: body.follow as string[] | Record<string, number> | undefined,
+        links: effectiveLinks(creative.brief.links, creative.brief.formats), storedPicks: creative.exportPicks });
+      return { items, pending: await pendingRenders(creativeDir, versions, items) };
+    };
+    let { items, pending } = await resolve();
+    // Task 5b: a v2 ★ with no current render is rendered first (a render job per version, its progress on the job list),
+    // then the picks are resolved again on the new records and copied. Legacy versions export their media as they are.
+    const rendered: Array<{ version: number; formats: string[] }> = [];
+    if (pending.size > 0) {
+      await ctx.renders.renderAndWait(ref, pending);
+      for (const [version, formats] of pending) rendered.push({ version, formats });
+      ({ items, pending } = await resolve());
+      if (pending.size > 0) {
+        const list = [...pending].flatMap(([n, fs]) => fs.map((f) => `${common.label(f)} v${n}`)).join(', ');
+        throw new CodedError(409, t().export.renderFailed({ list }), 'export-render-failed');
+      }
+    }
+    // A render made just now for this export that has problems (I2) is not copied: the user has not seen them. It is
+    // reported apart (`excluded`, with its problems and their codes: P2, never a silent exclusion); the dialog then shows
+    // the problems and copies it once the row is ticked again.
+    const problems: string[] = [];
+    const excluded: Array<{ format: string; version: number; problems: string[]; issues: OutputIssue[] }> = [];
+    if (rendered.length > 0) {
+      const versions = await ref.store.readVersions(ref.creativeSlug);
+      items = items.filter((it) => {
+        if (!rendered.some((r) => r.version === it.n && r.formats.includes(it.format))) return true;
+        const v = versions.find((x) => x.n === it.n);
+        const list = v ? renderProblems(v, it.format) : [];
+        if (!list.length) return true;
+        problems.push(t().export.renderProblems({ item: `${common.label(it.format)} v${it.n}`, list: list.join('; ') }));
+        excluded.push({ format: it.format, version: it.n, problems: list, issues: v?.outputs.find((o) => o.format === it.format)?.issues ?? [] });
+        return false;
+      });
+      if (!items.length) throw new CodedError(409, t().export.renderProblemsOnly({ list: problems.join(', ') }), 'export-render-problems');
+    }
+    const result = await exportResolved(items, common);
+    const withProblems = excluded.length ? { ...result, excluded } : result;
+    return rendered.length > 0 ? { ...withProblems, rendered } : withProblems;
+  });
+
+  /**
+   * What a ★ export would have to render first (Task 5b), started now: the web shows "Rendering 2 formats first…" with the
+   * jobs' progress, then calls the export. `renders`: one job per version (an active one is reused); empty: nothing to render.
+   */
+  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/export/prepare', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const r = exportBody.safeParse(req.body ?? {});
+    if (!r.success || (r.data.picks === undefined && r.data.follow === undefined)) throw new CodedError(400, t().export.invalidPicks, 'export-invalid-picks');
+    const creative = await ref.store.get(ref.creativeSlug);
+    const creativeDir = ref.store.dir(ref.creativeSlug);
+    await reconcileRenders({ projectDir: ref.projectDir, store: ref.store, creativeSlug: ref.creativeSlug }).catch(() => false);
     const { versions, complete } = await withLazyHashes({ projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir, versions: await ref.store.readVersions(ref.creativeSlug) });
-    // A follower's version is decided on hashes: never on partial ones (a refusal now would only mean "not hashed yet").
-    // The hashing goes on; the client retries after Retry-After, as for a ★ pick.
-    if (!complete && body.follow !== undefined) throw new CodedError(503, t().errors.hashesPending, 'hashes-pending', PICK_RETRY_AFTER_SEC);
-    return exportPicks({ ...common, versions, picks: (body.picks ?? {}) as Record<string, number>, follow: body.follow as string[] | Record<string, number> | undefined,
-      links: effectiveLinks(creative.brief.links, creative.brief.formats), storedPicks: creative.exportPicks });
+    // As for the export: a follower's version is never decided on partial hashes.
+    if (!complete && r.data.follow !== undefined) throw new CodedError(503, t().errors.hashesPending, 'hashes-pending', PICK_RETRY_AFTER_SEC);
+    const items = resolveExportPicks({ creativeDir, destination: '/', slug: ref.creativeSlug, versions, picks: (r.data.picks ?? {}) as Record<string, number>,
+      follow: r.data.follow as string[] | Record<string, number> | undefined, links: effectiveLinks(creative.brief.links, creative.brief.formats), storedPicks: creative.exportPicks });
+    const pending = await pendingRenders(creativeDir, versions, items);
+    const renders = [];
+    // Answers at once: an active job of that version is reused for the formats it covers and a follow-up job is queued for
+    // the rest (I3), so the job returned covers them all.
+    for (const [version, formats] of pending) {
+      const { job, covers } = await ctx.renders.ensureJob(ref, version, formats, { wait: false });
+      renders.push({ version, formats, job, covers });
+    }
+    return { renders };
+  });
+
+  /**
+   * A live preview session of one format of a saved v2 version (Task 5b; the web's player and Compare, Task 8). Behind the UI
+   * token like every API; `parentOrigin` must be one of the UI origins (403 `preview-origin`); the media is normalised first.
+   */
+  app.post<{ Params: { slug: string; c: string; n: string } }>('/api/projects/:slug/creatives/:c/versions/:n/preview-session', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const n = Number(req.params.n);
+    const version = Number.isInteger(n) && n > 0 ? (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === n) : undefined;
+    if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
+    const body = parse(previewBody, req.body);
+    return ctx.previews.mintPreview({ projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), creativeSlug: ref.creativeSlug, n }, version, body.format, body.parentOrigin, currentLocale());
+  });
+
+  /**
+   * Ends a live preview session of this creative's version n early (Task 8 fix I2): the web releases hover previews it no
+   * longer shows, so they never count against the live sessions cap (MAX_PREVIEW_SESSIONS) of a player still in use.
+   * Behind the UI token; a session of another creative or version is not touched (404 either way, nothing to learn).
+   */
+  app.delete<{ Params: { slug: string; c: string; n: string; token: string } }>('/api/projects/:slug/creatives/:c/versions/:n/preview-session/:token', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const n = /^\d{1,6}$/.test(req.params.n) ? Number(req.params.n) : 0;
+    if (n < 1 || !/^[A-Za-z0-9_-]{43}$/.test(req.params.token)) throw new WorkspaceError(404, t().errors.previewSessionNotFound);
+    if (!ctx.previews.revokePreview({ creativeDir: ref.store.dir(ref.creativeSlug), n }, req.params.token)) throw new WorkspaceError(404, t().errors.previewSessionNotFound);
+    return { revoked: true };
+  });
+
+  /**
+   * The storyboard of one format of a saved v2 version (scene starts and the poster), made now when missing or stale.
+   * 404 `storyboard-unavailable` when it cannot be made (no renderer, an invalid composition).
+   */
+  app.get<{ Params: { slug: string; c: string; n: string; format: string } }>('/api/projects/:slug/creatives/:c/versions/:n/storyboards/:format', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const n = Number(req.params.n);
+    const version = Number.isInteger(n) && n > 0 ? (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === n) : undefined;
+    if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
+    const r = await ctx.previews.storyboardOf({ projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), creativeSlug: ref.creativeSlug, n }, version, req.params.format);
+    if (!r) throw new CodedError(404, t().errors.previewUnavailable, 'storyboard-unavailable');
+    // Signed, short-lived image URLs (fix I4), content-addressed by the composition hash (a regenerated storyboard of other
+    // content never reuses a URL). The UI asks again before `expiresAt` for fresh ones.
+    const base = `/api/projects/${encodeURIComponent(req.params.slug)}/creatives/${encodeURIComponent(ref.creativeSlug)}/storyboard-files/${n}/${r.folder}/${r.storyboard.hash.slice(0, 16)}`;
+    let expiresAt = 0;
+    const frames = r.storyboard.frames.map(({ file, ...f }) => { const s = ctx.signer.sign(`${base}/${file}`); expiresAt = s.expiresAt; return { ...f, url: s.url }; });
+    return { format: r.folder, hash: r.storyboard.hash, width: r.storyboard.width, expiresAt: new Date(expiresAt).toISOString(), frames };
+  });
+
+  // Storyboard images, shown by <img>: no UI token, but a signed URL from the route above (fix I4); only `f-<i>.jpg` of the
+  // storyboard whose composition hash starts with `:hash`.
+  app.get<{ Params: { slug: string; c: string; n: string; folder: string; hash: string; file: string }; Querystring: { s?: string } }>('/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:hash/:file', async (req, reply) => {
+    const path = req.url.split('?')[0]!;
+    if (!ctx.signer.verify(path, req.query.s)) return reply.status(403).send({ error: t().errors.fileNotFoundShort });
+    const ref = await refOf(req.params.slug, req.params.c);
+    const n = Number(req.params.n);
+    const notFound = () => reply.status(404).send({ error: t().errors.fileNotFoundShort });
+    if (!Number.isInteger(n) || n < 1 || !FOLDER_RE.test(req.params.folder) || !/^[0-9a-f]{16}$/.test(req.params.hash) || !FRAME_FILE_RE.test(req.params.file)) return notFound();
+    const sb = await readJsonFile(join(storyboardDir(ref.projectDir, ref.creativeSlug, n, req.params.folder), 'storyboard.json'), storyboardSchema).catch(() => null);
+    if (!sb || !sb.hash.startsWith(req.params.hash)) return notFound();
+    return sendConfinedFile(reply, storyboardDir(ref.projectDir, ref.creativeSlug, n, req.params.folder), req.params.file, ['f-']);
+  });
+
+  /**
+   * The feedback frames of the comments sent with the turn that made version n (Task 8, carry 9), from the protected core
+   * cache `.studio/cache/pin-frames/<creative>/v<n>/` (creative-turns `extractPinFrames`, fix I1): `<n>-<i>.jpg` for the
+   * i-th pin of that message, as short-lived signed URLs like the storyboards'. The folder is read only through real
+   * directories (a link anywhere in the chain gives an empty list) and is never created here.
+   */
+  const pinFramesRel = (creativeSlug: string, n: number) => ['.studio', 'cache', 'pin-frames', creativeSlug, `v${n}`];
+  app.get<{ Params: { slug: string; c: string; n: string } }>('/api/projects/:slug/creatives/:c/pin-frames/:n', async (req): Promise<PinFramesView> => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const n = /^\d{1,6}$/.test(req.params.n) ? Number(req.params.n) : 0;
+    if (n < 1) throw new WorkspaceError(404, t().errors.versionNotFound);
+    const rel = pinFramesRel(ref.creativeSlug, n);
+    if ((await isRealDirChain(ref.projectDir, rel)) !== 'ok') return { n, expiresAt: null, frames: [] };
+    const dir = join(ref.projectDir, ...rel);
+    const names: Array<{ file: string; i: number }> = [];
+    for (const file of await readdir(dir).catch(() => [] as string[])) {
+      const m = PIN_FRAME_RE.exec(file);
+      if (!m || Number(m[1]) !== n) continue;
+      const st = await lstat(join(dir, file)).catch(() => null);
+      if (st?.isFile() && st.nlink === 1) names.push({ file, i: Number(m[2]) });
+    }
+    names.sort((a, b) => a.i - b.i);
+    const base = `/api/projects/${encodeURIComponent(req.params.slug)}/creatives/${encodeURIComponent(ref.creativeSlug)}/pin-frame-files/${n}`;
+    let expiresAt: number | null = null;
+    const frames = names.map(({ file }) => { const s = ctx.signer.sign(`${base}/${file}`); expiresAt = s.expiresAt; return { file, url: s.url }; });
+    return { n, expiresAt: expiresAt === null ? null : new Date(expiresAt).toISOString(), frames };
+  });
+
+  // The pin frame images, shown by <img>: no UI token, but a signed URL from the route above; only `<n>-<i>.jpg` of v<n>.
+  app.get<{ Params: { slug: string; c: string; n: string; file: string }; Querystring: { s?: string } }>('/api/projects/:slug/creatives/:c/pin-frame-files/:n/:file', async (req, reply) => {
+    const path = req.url.split('?')[0]!;
+    if (!ctx.signer.verify(path, req.query.s)) return reply.status(403).send({ error: t().errors.fileNotFoundShort });
+    const ref = await refOf(req.params.slug, req.params.c);
+    const notFound = () => reply.status(404).send({ error: t().errors.fileNotFoundShort });
+    const m = PIN_FRAME_RE.exec(req.params.file);
+    const n = /^\d{1,6}$/.test(req.params.n) ? Number(req.params.n) : 0;
+    if (!m || n < 1 || Number(m[1]) !== n) return notFound();
+    const rel = pinFramesRel(ref.creativeSlug, n);
+    if ((await isRealDirChain(ref.projectDir, rel)) !== 'ok') return notFound();
+    return sendConfinedFile(reply, join(ref.projectDir, ...rel), req.params.file, [`${n}-`]);
   });
 
   app.get<{ Params: { slug: string; c: string; '*': string } }>('/api/projects/:slug/creatives/:c/files/*', async (req, reply) => {

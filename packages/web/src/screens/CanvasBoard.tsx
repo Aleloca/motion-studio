@@ -6,11 +6,14 @@
 // bubble are screen-sized at any zoom (as in Figma): they sit in the frame's box, sized in screen pixels, at the
 // world point × zoom, so nothing scales them and the bubble's text field stays crisp.
 import { channelName, formatName, outputWarningText, type FormatPreset, type OutputWarning, type Pin } from '@motion-studio/shared';
-import { useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode, type SyntheticEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode, type SyntheticEvent } from 'react';
+import { CompositionPlayer } from '../components/CompositionPlayer.tsx';
+import { posterOf, usePreviewSession, useStoryboard } from '../components/compositionPreview.ts';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { anim, D, E, isSubmitChord } from '../motion/index.ts';
 import { Button, ChannelMark, Icon, Pill, Popover, Textarea, channelOf, cx } from '../ui/index.ts';
 import { boardFrame, LABEL_MIN, outputMedia, pointIn, ratioText, toScreen, type BoardModel } from './canvasModel.ts';
+import type { BoardRender } from './renderModel.ts';
 
 export type Tool = 'select' | 'comment' | 'hand';
 
@@ -51,9 +54,16 @@ export interface BoardProps {
   onDraftCommit(): void;
   onDraftCancel(): void;
   onDraftDelete(): void;
+  /**
+   * A v2 version on the board (Task 8): the composition shown (`format` is the source format, a follower's primary's, and
+   * `hash` its composition hash), its render state and the Render action of "Render failed · Retry". Null: legacy media.
+   */
+  composition?: { n: number; format: string; hash: string; render: BoardRender; onRender(): void } | null;
 }
 
 const NARROW_BOARD = 170;
+/** Hover intent: the live preview starts after the pointer rests this long on the frame. */
+export const HOVER_INTENT_MS = 450;
 
 export function boardLabel(board: BoardModel, locale: ReturnType<typeof useLocale>): string {
   return board.preset ? `${channelName(board.preset.channel, locale)} · ${formatName(board.preset, locale)}` : board.id;
@@ -76,7 +86,22 @@ export function CanvasBoard(p: BoardProps) {
     const pt = toScreen({ x: x * size.width, y: y * size.height }, zoom);
     return { left: `${pt.x}px`, top: `${pt.y}px` };
   };
-  const media = board.out && n !== null ? outputMedia(p.slug, p.creative, n, board.out) : null;
+  const comp = p.composition ?? null;
+  // A v2 board's picture is its storyboard poster (a still made by the core; the live player loads only on demand).
+  const { storyboard } = useStoryboard({ slug: p.slug, creative: p.creative, n: comp?.n ?? null, format: comp?.format ?? board.id, hash: comp?.hash ?? null, enabled: comp !== null });
+  const poster = posterOf(storyboard);
+  const media = poster ? { src: poster.url, video: false } : board.out && n !== null ? outputMedia(p.slug, p.creative, n, board.out) : null;
+  const hasPicture = board.out !== null || comp !== null;
+  // The live preview: on hover intent, or pinned by the play button; never before (carry 4) and never with another tool.
+  const [hovered, setHovered] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const intent = useRef(0);
+  useEffect(() => () => window.clearTimeout(intent.current), []);
+  useEffect(() => { if (p.tool !== 'select') { setPinned(false); setHovered(false); } }, [p.tool]);
+  const liveOn = comp !== null && p.tool === 'select' && (hovered || pinned);
+  const preview = usePreviewSession({ slug: p.slug, creative: p.creative, n: comp?.n ?? null, format: comp?.format ?? board.id, enabled: liveOn });
+  const hoverIn = () => { if (comp && p.tool === 'select') { window.clearTimeout(intent.current); intent.current = window.setTimeout(() => setHovered(true), HOVER_INTENT_MS); } };
+  const hoverOut = () => { window.clearTimeout(intent.current); setHovered(false); };
   const video = board.preset?.kind === 'video';
   const duration = board.out?.durationSec ?? null;
   const largeFile = board.out?.warnings?.filter((w) => w.key === 'outputs.largeFile') ?? [];
@@ -104,37 +129,53 @@ export function CanvasBoard(p: BoardProps) {
           {board.preset ? <span className="ms-cv-board-meta">{ratioText(board.preset)}{duration !== null ? ` · ${c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) })}` : ''}</span> : null}
           {p.rendering ? <span className="ms-cv-board-state">{c.renderingState}</span>
             : p.note ? <span className="ms-cv-board-state">{p.note}</span>
-              : board.out && board.out.verified && !largeFile.length ? <span className="ms-cv-board-state">{c.boardReady}</span> : null}
+              : comp ? <RenderState render={comp.render} label={label} onRender={comp.onRender} />
+                : board.out && board.out.verified && !largeFile.length ? <span className="ms-cv-board-state">{c.boardReady}</span> : null}
           {!p.rendering && board.out && !board.out.verified ? <Pill tone="warn">{t.web.formatUi.unverified}</Pill> : null}
           {largeFile.map((w, i) => <LargeFileChip key={i} warning={w} />)}
         </div>
       </div>
-      <div className={cx('ms-cv-frame-wrap', narrow && 'ms-narrow')} style={{ width: size.width * zoom, height: size.height * zoom }}>
+      <div className={cx('ms-cv-frame-wrap', narrow && 'ms-narrow', liveOn && 'ms-live')} style={{ width: size.width * zoom, height: size.height * zoom }}
+        onPointerEnter={hoverIn} onPointerLeave={hoverOut}>
         <div
           ref={frame}
-          className={cx('ms-cv-frame', !board.out && 'ms-empty-frame')}
+          className={cx('ms-cv-frame', !hasPicture && 'ms-empty-frame')}
           style={{ width: size.width, height: size.height, zoom }}
           data-frame={board.id}
           onClick={p.onSelect}
-          onDoubleClick={() => { if (board.out && frame.current) p.onOpen(frame.current); }}
+          onDoubleClick={() => { if (hasPicture && frame.current) p.onOpen(frame.current); }}
         >
           {media && n !== null ? (
             media.video
               ? <video key={media.src} src={media.src} muted playsInline preload="metadata" aria-label={`${label} v${n}`} onLoadedData={reveal} />
               : <img key={media.src} src={media.src} alt={`${label} v${n}`} onLoad={reveal} draggable={false} />
-          ) : (
+          ) : comp ? null : (
             <span className="ms-cv-frame-note">
               {!board.preset ? t.web.formatUi.unknownPreset({ id: board.id }) : n !== null ? t.web.formatUi.missingIn({ n }) : p.missing ? t.web.formatUi.missingIn({ n: p.missing }) : c.notGenerated}
             </span>
           )}
+          {liveOn && preview.state.kind === 'ready' ? (
+            <CompositionPlayer session={preview.state.session} title={t.web.render.playerFrame({ label: `${label} v${comp!.n}` })} autoPlay className="ms-cv-live-player"
+              onStall={preview.stalled} onShowing={preview.showing} />
+          ) : null}
           {p.rendering ? <span className="ms-shimmer" aria-hidden="true" /> : null}
           {p.safe && board.preset ? <SafeZoneBands preset={board.preset} /> : null}
-          {p.tool === 'comment' && board.out && p.commentable !== false ? (
+          {p.tool === 'comment' && hasPicture && p.commentable !== false ? (
             <button type="button" className="ms-cv-hit" aria-label={c.commentOn({ label })} onClick={(e) => { e.stopPropagation(); place(e); }} />
           ) : null}
         </div>
         {/* Over the frame, outside its zoom: screen-sized, shown on hover of the board or on keyboard focus. */}
-        {p.tool === 'select' && board.out ? (
+        {liveOn && (preview.state.kind === 'loading' || preview.state.kind === 'busy') ? (
+          <span className="ms-cplayer-state" role="status">{preview.state.kind === 'busy' ? t.web.render.busy : t.web.render.loading}</span>
+        ) : null}
+        {comp && p.tool === 'select' ? (
+          <button type="button" className={cx('ms-cv-live', pinned && 'ms-on')} aria-pressed={pinned}
+            aria-label={pinned ? t.web.render.stopPreview({ label }) : t.web.render.playPreview({ label })} title={pinned ? t.web.render.stopPreview({ label }) : t.web.render.playPreview({ label })}
+            onClick={(e) => { e.stopPropagation(); setPinned((x) => !x); }} onDoubleClick={(e) => e.stopPropagation()}>
+            <Icon name={pinned ? 'pause' : 'play'} size={12} fill={!pinned} />
+          </button>
+        ) : null}
+        {p.tool === 'select' && hasPicture ? (
           <button type="button" className="ms-cv-open" aria-label={c.openEditorOf({ label })}
             onClick={(e) => { e.stopPropagation(); if (frame.current) p.onOpen(frame.current); }}
             onDoubleClick={(e) => e.stopPropagation()}>
@@ -153,6 +194,53 @@ export function CanvasBoard(p: BoardProps) {
         ) : null}
       </div>
     </div>
+  );
+}
+
+/**
+ * A v2 board's render state (spec §5.3): "Not rendered", "Queued · 2 renders ahead", "Rendering 42%", "Rendered", "Render
+ * failed · Retry", and a render with problems (I2): never "Rendered", a warning chip with the reasons and "Render again".
+ */
+export function RenderState({ render, label, onRender }: { render: BoardRender; label: string; onRender(): void }) {
+  const r = useT().web.render;
+  switch (render.kind) {
+    case 'queued': return <span className="ms-cv-board-state">{render.ahead ? r.queuedAhead({ count: render.ahead }) : r.queued}</span>;
+    case 'rendering': return <span className="ms-cv-board-state">{r.rendering({ pct: render.pct })}</span>;
+    case 'rendered': return <span className="ms-cv-board-state">{r.rendered}</span>;
+    case 'problem': return <RenderProblemChip problems={render.problems} label={label} onRender={onRender} />;
+    case 'failed':
+      return (
+        <span className="ms-cv-board-state ms-cv-render-failed" title={render.error ?? undefined}>
+          {r.failedState} · <button type="button" className="ms-cv-retry" aria-label={r.retryRenderOf({ label })} onClick={(e) => { e.stopPropagation(); onRender(); }}>{r.retryRender}</button>
+        </span>
+      );
+    default: return <span className="ms-cv-board-state">{r.notRendered}</span>;
+  }
+}
+
+/**
+ * A render whose output checks found problems (final review I2): "⚠ Render problem" in the warn tone, opening a popover with
+ * each reason (the core's text, rendered as text) and "Render again".
+ */
+export function RenderProblemChip({ problems, label, onRender }: { problems: string[]; label: string; onRender(): void }) {
+  const r = useT().web.render;
+  const anchor = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button ref={anchor} type="button" className="ms-pill ms-warn ms-cv-large ms-cv-render-problem" aria-haspopup="dialog" aria-expanded={open}
+        aria-label={r.problemOpen({ label })} title={problems.join('\n')} onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}>
+        <Icon name="warn" size={11} />{r.problemState({ count: problems.length })}
+      </button>
+      <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="bottom-start" width={320} label={r.problemTitle}>
+        <div className="ms-cv-large-pop">
+          <b>{r.problemTitle}</b>
+          <ul className="ms-cv-problem-list">{problems.map((p, i) => <li key={i}>{p}</li>)}</ul>
+          <p>{r.problemHint}</p>
+          <Button variant="outline" aria-label={r.renderAgainOf({ label })} onClick={(e) => { e.stopPropagation(); setOpen(false); onRender(); }}>{r.renderAgain}</Button>
+        </div>
+      </Popover>
+    </>
   );
 }
 

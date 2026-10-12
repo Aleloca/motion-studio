@@ -10,7 +10,7 @@
     "dev": "electron .",
     "smoke": "electron . --smoke-test",
     "typecheck": "tsc -p tsconfig.json",
-    "prepare-resources": "node -e \"const fs=require('fs');fs.rmSync('resources',{recursive:true,force:true});fs.mkdirSync('resources',{recursive:true});fs.cpSync('../../packages/web/dist','resources/web',{recursive:true});fs.copyFileSync('../../packages/mcp-studio/src/server.mjs','resources/mcp-studio.mjs')\"",
+    "prepare-resources": "node -e \"const fs=require('fs');fs.rmSync('resources',{recursive:true,force:true});fs.mkdirSync('resources',{recursive:true});fs.cpSync('../../packages/web/dist','resources/web',{recursive:true});fs.copyFileSync('../../packages/mcp-studio/src/server.mjs','resources/mcp-studio.mjs');fs.cpSync('../../packages/composition-runtime/dist','resources/runtime',{recursive:true});for(const f of ['index.html','runtime.js','layer.js','clock.js'])if(!fs.existsSync('resources/runtime/'+f))throw new Error('composition runtime not built: '+f)\"",
     "dist": "pnpm run build && pnpm run prepare-resources && electron-builder",
     "dist:dir": "pnpm run build && pnpm run prepare-resources && electron-builder --dir",
     "dist:mac": "pnpm run build && pnpm run prepare-resources && electron-builder --mac",

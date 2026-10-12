@@ -5,6 +5,7 @@ import {
   type AssetEntry, type AssetOrigin, type ReferenceEntry,
 } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
+import { svgSize } from '../media/svg-size.ts';
 import { fileLock } from '../file-locks.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { WorkspaceError } from '../workspace-store.ts';
@@ -97,7 +98,8 @@ export class LibraryStore {
       for (const item of items) {
         const abs = await this.mustBeFile('assets', item.file);
         const kind = assetKindOf(item.file);
-        const probed = (kind === 'image' || kind === 'video') && this.media.available ? await this.media.probe(abs) : null;
+        // SVG: its size from a plain text scan (never ffprobe, never resolving references); images and videos: ffprobe.
+        const probed = kind === 'svg' ? await svgSize(abs) : (kind === 'image' || kind === 'video') && this.media.available ? await this.media.probe(abs) : null;
         const existing = assets.find((a) => a.file === item.file);
         const entry: AssetEntry = {
           file: item.file, kind, origin: item.origin, sourceUrl: item.sourceUrl ?? existing?.sourceUrl ?? null,

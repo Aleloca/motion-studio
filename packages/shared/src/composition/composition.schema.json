@@ -1,0 +1,1146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "motion-studio/composition@1",
+  "title": "Motion Studio composition",
+  "description": "One composition.json per format. Semantic rules beyond this schema: scenes are contiguous from 0 to duration (a video with no scenes gets one implicit scene); clips lie inside the duration (and inside their scene); every fontFamily is declared in fonts[] with a font file under assets/ (a text clip without fontFamily uses fonts[0]); every referenced file exists; html layers live in layers/ and never use the network, Workers, AudioContext or autoplaying media. A still (duration 0, image formats) shows t = 0 only: its scenes, animations and audio are ignored.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "const": "motion-studio/composition@1"
+    },
+    "width": {
+      "type": "integer",
+      "minimum": 16,
+      "maximum": 8192
+    },
+    "height": {
+      "type": "integer",
+      "minimum": 16,
+      "maximum": 8192
+    },
+    "fps": {
+      "type": "number",
+      "enum": [
+        24,
+        25,
+        30,
+        50,
+        60
+      ]
+    },
+    "duration": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 600,
+      "description": "Seconds. 0 for a still (image formats): one frame at t = 0."
+    },
+    "background": {
+      "$ref": "#/$defs/color"
+    },
+    "fonts": {
+      "maxItems": 32,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/font"
+      }
+    },
+    "scenes": {
+      "maxItems": 200,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/scene"
+      }
+    },
+    "tracks": {
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/track"
+      },
+      "description": "Stacking order: the first track is at the bottom. Audio tracks do not render."
+    }
+  },
+  "required": [
+    "$schema",
+    "width",
+    "height",
+    "fps",
+    "duration",
+    "background",
+    "fonts",
+    "scenes",
+    "tracks"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "color": {
+      "type": "string",
+      "maxLength": 9,
+      "pattern": "^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$",
+      "description": "Hex colour: #rgb, #rgba, #rrggbb or #rrggbbaa."
+    },
+    "font": {
+      "type": "object",
+      "properties": {
+        "family": {
+          "$ref": "#/$defs/fontFamily"
+        },
+        "src": {
+          "description": "A font file (.ttf, .otf, .woff, .woff2) under assets/.",
+          "$ref": "#/$defs/path"
+        },
+        "weight": {
+          "$ref": "#/$defs/fontWeight"
+        },
+        "style": {
+          "type": "string",
+          "enum": [
+            "normal",
+            "italic"
+          ]
+        }
+      },
+      "required": [
+        "family",
+        "src"
+      ],
+      "additionalProperties": false
+    },
+    "fontFamily": {
+      "type": "string",
+      "maxLength": 80,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9 _-]{0,79}$",
+      "description": "A family declared in fonts[] (no fallbacks or generic families)."
+    },
+    "path": {
+      "type": "string",
+      "maxLength": 512,
+      "pattern": "^(?!.*(?:^|\\/)\\.{1,2}(?:\\/|$))(?!.*\\/\\/)(?!.*\\/$)(?![\\s\\S]*[\\u0000-\\u001f\\u007f-\\u009f])(?:assets|layers)\\/[^\\\\:%?#]+$",
+      "description": "Relative to the composition folder, under assets/ or layers/; no scheme, no \"..\", no backslash."
+    },
+    "fontWeight": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        {
+          "type": "string",
+          "enum": [
+            "normal",
+            "bold"
+          ]
+        }
+      ]
+    },
+    "scene": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "start": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600
+        },
+        "duration": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 600
+        }
+      },
+      "required": [
+        "id",
+        "start",
+        "duration"
+      ],
+      "additionalProperties": false,
+      "description": "A named time range. Scenes are listed in order, contiguous, and cover the whole duration."
+    },
+    "id": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+      "description": "Lowercase letters, digits and hyphens; unique in the composition."
+    },
+    "track": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "visual",
+            "video",
+            "text",
+            "audio"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "muted": {
+          "type": "boolean"
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "locked": {
+          "type": "boolean"
+        },
+        "clips": {
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/clip"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "clips"
+      ],
+      "additionalProperties": false
+    },
+    "clip": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/textClip"
+        },
+        {
+          "$ref": "#/$defs/shapeClip"
+        },
+        {
+          "$ref": "#/$defs/imageClip"
+        },
+        {
+          "$ref": "#/$defs/svgClip"
+        },
+        {
+          "$ref": "#/$defs/videoClip"
+        },
+        {
+          "$ref": "#/$defs/htmlClip"
+        },
+        {
+          "$ref": "#/$defs/audioClip"
+        }
+      ]
+    },
+    "textClip": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "scene": {
+          "description": "The scene this clip belongs to: moving the scene moves the clip. The clip must lie inside it.",
+          "$ref": "#/$defs/id"
+        },
+        "start": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600,
+          "description": "Seconds, absolute on the composition timeline."
+        },
+        "duration": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600
+        },
+        "type": {
+          "type": "string",
+          "const": "text"
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "number",
+              "minimum": -100000,
+              "maximum": 100000
+            },
+            "y": {
+              "type": "number",
+              "minimum": -100000,
+              "maximum": 100000
+            },
+            "width": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "height": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "rotation": {
+              "type": "number",
+              "minimum": -3600,
+              "maximum": 3600
+            },
+            "scale": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "opacity": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "fontFamily": {
+              "$ref": "#/$defs/fontFamily"
+            },
+            "fontSize": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 2000
+            },
+            "fontWeight": {
+              "$ref": "#/$defs/fontWeight"
+            },
+            "color": {
+              "$ref": "#/$defs/color"
+            },
+            "align": {
+              "type": "string",
+              "enum": [
+                "left",
+                "center",
+                "right"
+              ]
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        "animations": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/animation"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "start",
+        "duration",
+        "type",
+        "props"
+      ],
+      "additionalProperties": false
+    },
+    "animation": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "preset": {
+              "type": "string",
+              "enum": [
+                "fadeIn",
+                "fadeOut",
+                "slideUp",
+                "slideDown",
+                "slideLeft",
+                "slideRight",
+                "popIn",
+                "scaleIn",
+                "wipe"
+              ]
+            },
+            "start": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 600
+            },
+            "duration": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 600
+            },
+            "ease": {
+              "$ref": "#/$defs/easing"
+            }
+          },
+          "required": [
+            "preset",
+            "duration"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "prop": {
+              "type": "string",
+              "enum": [
+                "opacity",
+                "x",
+                "y",
+                "scale",
+                "rotation",
+                "color",
+                "blur"
+              ]
+            },
+            "from": {
+              "$ref": "#/$defs/animationValue"
+            },
+            "to": {
+              "$ref": "#/$defs/animationValue"
+            },
+            "start": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 600
+            },
+            "duration": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 600
+            },
+            "ease": {
+              "$ref": "#/$defs/easing"
+            }
+          },
+          "required": [
+            "prop",
+            "from",
+            "to",
+            "duration"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "prop": {
+              "type": "string",
+              "enum": [
+                "opacity",
+                "x",
+                "y",
+                "scale",
+                "rotation",
+                "color",
+                "blur"
+              ]
+            },
+            "keyframes": {
+              "minItems": 2,
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "t": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "v": {
+                    "$ref": "#/$defs/animationValue"
+                  },
+                  "ease": {
+                    "$ref": "#/$defs/easing"
+                  }
+                },
+                "required": [
+                  "t",
+                  "v"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "start": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 600
+            },
+            "duration": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 600
+            }
+          },
+          "required": [
+            "prop",
+            "keyframes",
+            "duration"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "Times relative to the clip start. A preset, a from/to tween of one prop, or keyframes (t from 0 to 1, ascending) of one prop."
+    },
+    "easing": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9(),. -]{0,63}$",
+      "description": "CSS easing: linear, ease-out, cubic-bezier(...), steps(...)."
+    },
+    "animationValue": {
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": -100000,
+          "maximum": 100000
+        },
+        {
+          "$ref": "#/$defs/color"
+        }
+      ],
+      "description": "A number, or a hex colour for prop \"color\"."
+    },
+    "shapeClip": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "scene": {
+          "description": "The scene this clip belongs to: moving the scene moves the clip. The clip must lie inside it.",
+          "$ref": "#/$defs/id"
+        },
+        "start": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600,
+          "description": "Seconds, absolute on the composition timeline."
+        },
+        "duration": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600
+        },
+        "type": {
+          "type": "string",
+          "const": "shape"
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "number",
+              "minimum": -100000,
+              "maximum": 100000
+            },
+            "y": {
+              "type": "number",
+              "minimum": -100000,
+              "maximum": 100000
+            },
+            "width": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "height": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100000
+            },
+            "rotation": {
+              "type": "number",
+              "minimum": -3600,
+              "maximum": 3600
+            },
+            "scale": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "opacity": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "fill": {
+              "$ref": "#/$defs/color"
+            },
+            "radius": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100000
+            }
+          },
+          "additionalProperties": false
+        },
+        "animations": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/animation"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "start",
+        "duration",
+        "type",
+        "props"
+      ],
+      "additionalProperties": false
+    },
+    "imageClip": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "scene": {
+          "description": "The scene this clip belongs to: moving the scene moves the clip. The clip must lie inside it.",
+          "$ref": "#/$defs/id"
+        },
+        "start": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600,
+          "description": "Seconds, absolute on the composition timeline."
+        },
+        "duration": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600
+        },
+        "type": {
+          "type": "string",
+          "const": "image"
+        },
+        "src": {
+          "$ref": "#/$defs/path"
+        },
+        "props": {
+          "$ref": "#/$defs/pictureProps"
+        },
+        "animations": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/animation"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "start",
+        "duration",
+        "type",
+        "src",
+        "props"
+      ],
+      "additionalProperties": false
+    },
+    "pictureProps": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "minimum": -100000,
+          "maximum": 100000
+        },
+        "y": {
+          "type": "number",
+          "minimum": -100000,
+          "maximum": 100000
+        },
+        "width": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "height": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "rotation": {
+          "type": "number",
+          "minimum": -3600,
+          "maximum": 3600
+        },
+        "scale": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "fit": {
+          "type": "string",
+          "enum": [
+            "cover",
+            "contain",
+            "fill"
+          ]
+        },
+        "kenBurns": {
+          "type": "object",
+          "properties": {
+            "from": {
+              "$ref": "#/$defs/kenBurnsEnd"
+            },
+            "to": {
+              "$ref": "#/$defs/kenBurnsEnd"
+            }
+          },
+          "required": [
+            "from",
+            "to"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "kenBurnsEnd": {
+      "type": "object",
+      "properties": {
+        "scale": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "x": {
+          "type": "number",
+          "minimum": -100000,
+          "maximum": 100000
+        },
+        "y": {
+          "type": "number",
+          "minimum": -100000,
+          "maximum": 100000
+        }
+      },
+      "additionalProperties": false
+    },
+    "svgClip": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "scene": {
+          "description": "The scene this clip belongs to: moving the scene moves the clip. The clip must lie inside it.",
+          "$ref": "#/$defs/id"
+        },
+        "start": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600,
+          "description": "Seconds, absolute on the composition timeline."
+        },
+        "duration": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600
+        },
+        "type": {
+          "type": "string",
+          "const": "svg"
+        },
+        "src": {
+          "$ref": "#/$defs/path"
+        },
+        "props": {
+          "$ref": "#/$defs/pictureProps"
+        },
+        "animations": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/animation"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "start",
+        "duration",
+        "type",
+        "src",
+        "props"
+      ],
+      "additionalProperties": false
+    },
+    "videoClip": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "scene": {
+          "description": "The scene this clip belongs to: moving the scene moves the clip. The clip must lie inside it.",
+          "$ref": "#/$defs/id"
+        },
+        "start": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600,
+          "description": "Seconds, absolute on the composition timeline."
+        },
+        "duration": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600
+        },
+        "type": {
+          "type": "string",
+          "const": "video"
+        },
+        "src": {
+          "$ref": "#/$defs/path"
+        },
+        "trimStart": {
+          "description": "Seconds skipped at the start of the source.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 36000
+        },
+        "sourceFps": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 240
+        },
+        "volume": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "props": {
+          "$ref": "#/$defs/box"
+        },
+        "animations": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/animation"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "start",
+        "duration",
+        "type",
+        "src",
+        "props"
+      ],
+      "additionalProperties": false
+    },
+    "box": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "minimum": -100000,
+          "maximum": 100000
+        },
+        "y": {
+          "type": "number",
+          "minimum": -100000,
+          "maximum": 100000
+        },
+        "width": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "height": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        "rotation": {
+          "type": "number",
+          "minimum": -3600,
+          "maximum": 3600
+        },
+        "scale": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": false,
+      "description": "Composition pixels; rotation (degrees) and scale apply around the box centre."
+    },
+    "htmlClip": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "scene": {
+          "description": "The scene this clip belongs to: moving the scene moves the clip. The clip must lie inside it.",
+          "$ref": "#/$defs/id"
+        },
+        "start": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600,
+          "description": "Seconds, absolute on the composition timeline."
+        },
+        "duration": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600
+        },
+        "type": {
+          "type": "string",
+          "const": "html"
+        },
+        "src": {
+          "description": "An .html file under layers/.",
+          "$ref": "#/$defs/path"
+        },
+        "params": {
+          "description": "The only values the editor exposes for a free layer; the layer reads them from window.msParams.",
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/htmlParam"
+          }
+        },
+        "props": {
+          "$ref": "#/$defs/box"
+        },
+        "animations": {
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/animation"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "start",
+        "duration",
+        "type",
+        "src",
+        "props"
+      ],
+      "additionalProperties": false
+    },
+    "htmlParam": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "text"
+            },
+            "value": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "label": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "color"
+            },
+            "value": {
+              "$ref": "#/$defs/color"
+            },
+            "label": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "number"
+            },
+            "value": {
+              "type": "number",
+              "minimum": -1000000000,
+              "maximum": 1000000000
+            },
+            "label": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "image"
+            },
+            "value": {
+              "$ref": "#/$defs/path"
+            },
+            "label": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "audioClip": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "scene": {
+          "description": "The scene this clip belongs to: moving the scene moves the clip. The clip must lie inside it.",
+          "$ref": "#/$defs/id"
+        },
+        "start": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600,
+          "description": "Seconds, absolute on the composition timeline."
+        },
+        "duration": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600
+        },
+        "type": {
+          "type": "string",
+          "const": "audio"
+        },
+        "src": {
+          "$ref": "#/$defs/path"
+        },
+        "trimStart": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 36000
+        },
+        "volume": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "fadeIn": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600
+        },
+        "fadeOut": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 600
+        },
+        "role": {
+          "description": "Lets the mixer duck music under voice.",
+          "type": "string",
+          "enum": [
+            "voice",
+            "music",
+            "sfx"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "start",
+        "duration",
+        "type",
+        "src"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

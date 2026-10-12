@@ -28,8 +28,37 @@ jobs:
           cache: pnpm
       - name: Install ffmpeg
         run: ${{ matrix.os == 'macos-latest' && 'brew install ffmpeg' || 'sudo apt-get update && sudo apt-get install -y ffmpeg' }}
+      # The renderer's integration tests need a real Chrome (never downloaded by the tests). GitHub's runner images ship
+      # Google Chrome; install it when an image does not. Chromium's own sandbox stays on: never --no-sandbox.
+      # Linux: Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor
+      # (kernel.apparmor_restrict_unprivileged_userns=1), and Chromium's namespace sandbox needs them. Lift the restriction on
+      # this throwaway VM (older kernels use kernel.unprivileged_userns_clone), then prove a sandboxed headless launch works.
+      - name: Ensure Chrome (sandboxed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            [ -x "$CHROME" ] || brew install --cask google-chrome
+          else
+            if ! command -v google-chrome >/dev/null; then
+              wget -q -O "$RUNNER_TEMP/chrome.deb" https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+              sudo apt-get install -y "$RUNNER_TEMP/chrome.deb"
+            fi
+            CHROME="$(command -v google-chrome)"
+            if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0; fi
+            if [ -e /proc/sys/kernel/unprivileged_userns_clone ]; then sudo sysctl -w kernel.unprivileged_userns_clone=1; fi
+          fi
+          "$CHROME" --version
+          PROFILE="$(mktemp -d)"
+          "$CHROME" --headless=new --user-data-dir="$PROFILE" --dump-dom about:blank > /dev/null
+          rm -rf "$PROFILE"
+          echo "CHROME_PATH=$CHROME" >> "$GITHUB_ENV"
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm check:i18n
       - run: pnpm test
+        env:
+          # The Chrome and ffmpeg integration tests (composition runtime, server and renderer) fail instead of skipping.
+          MS_REQUIRE_CHROME: '1'
       - run: pnpm build

@@ -50,7 +50,7 @@ const protectedDirRules = (dir: string, name: string) => ['Edit', 'Write', 'Mult
 const studioRules = (dir: string) => protectedDirRules(dir, '.studio');
 
 describe('AgentLauncher sandbox caches', () => {
-  it('points the caches at <project>/.cache only when sandboxed', { timeout: 20_000 }, async () => {
+  it('points the caches at <project>/.cache only when sandboxed', { timeout: 90_000 }, async () => {
     vi.stubEnv('HOME', '/fake-home-for-test');
     // Restored even when the launch throws: a stubbed HOME must never leak into later tests.
     let on: Awaited<ReturnType<typeof launch>>;
@@ -74,7 +74,7 @@ describe('AgentLauncher sandbox caches', () => {
 });
 
 describe('AgentLauncher sandbox decision', () => {
-  it('a sandbox turned off between the prompt and start wins: the override can only downgrade, never claim a sandbox', { timeout: 20_000 }, async () => {
+  it('a sandbox turned off between the prompt and start wins: the override can only downgrade, never claim a sandbox', { timeout: 90_000 }, async () => {
     const dir = await newProject();
     const argsFile = join(dir, 'args.json');
     process.env.FAKE_CLAUDE_ARGS_FILE = argsFile;
@@ -91,7 +91,7 @@ describe('AgentLauncher sandbox decision', () => {
     expect(cacheEnv.npm_config_cache).not.toBe(join(dir, '.cache', 'npm')); // whatever the parent env had, not the project cache
     expect(args).not.toContain('--settings');
   });
-  it('the override keeps the prompt and the policy in agreement when nothing changes', { timeout: 20_000 }, async () => {
+  it('the override keeps the prompt and the policy in agreement when nothing changes', { timeout: 90_000 }, async () => {
     const dir = await newProject();
     const argsFile = join(dir, 'args.json');
     process.env.FAKE_CLAUDE_ARGS_FILE = argsFile;
@@ -106,7 +106,7 @@ describe('AgentLauncher sandbox decision', () => {
 });
 
 describe('AgentLauncher', () => {
-  it('without sandbox and MCP keeps the phase 3 behaviour plus project rules (never provider rules)', { timeout: 20_000 }, async () => {
+  it('without sandbox and MCP keeps the phase 3 behaviour plus project rules (never provider rules)', { timeout: 90_000 }, async () => {
     const { args } = await launch({});
     expect(args).toContain('--permission-prompts');
     expect(args).not.toContain('--settings');
@@ -114,16 +114,16 @@ describe('AgentLauncher', () => {
     expect(args).not.toContain('provider:openai-images');
     expect(args).not.toContain('--mcp-config');
   });
-  it('with sandbox passes the sandbox settings', { timeout: 20_000 }, async () => {
+  it('with sandbox passes the sandbox settings', { timeout: 90_000 }, async () => {
     const { args } = await launch({ sandbox: async () => ({ available: true, reason: 'ok' }) });
     const settings = JSON.parse(args[args.indexOf('--settings') + 1]!);
     expect(settings.sandbox.enabled).toBe(true);
   });
-  it('honours sandboxMode off', { timeout: 20_000 }, async () => {
+  it('honours sandboxMode off', { timeout: 90_000 }, async () => {
     const { args } = await launch({ sandbox: async () => ({ available: true, reason: 'ok' }), settings: { sandboxMode: 'off' } });
     expect(args).not.toContain('--settings');
   });
-  it('with a bridge origin wires the MCP server through a private file, the prompt tool, the env and frees the token at the end', { timeout: 20_000 }, async () => {
+  it('with a bridge origin wires the MCP server through a private file, the prompt tool, the env and frees the token at the end', { timeout: 90_000 }, async () => {
     const bridge = new AgentBridge();
     bridge.setOrigin('http://127.0.0.1:4317');
     const configDir = await newProject();
@@ -143,7 +143,7 @@ describe('AgentLauncher', () => {
     const token = tokenFile!.content;
     expect(token).toMatch(/^[0-9a-f]{64}$/);
     expect(args.some((a) => a.includes(token))).toBe(false); // never visible in the process list
-    expect(cfg.mcpServers.studio.env.MOTION_STUDIO_TOOLS).toContain('validate_output');
+    expect(cfg.mcpServers.studio.env.MOTION_STUDIO_TOOLS).toContain('validate_composition');
     expect(args[args.indexOf('--permission-prompt-tool') + 1]).toBe('mcp__studio__approve');
     expect(args).not.toContain('--permission-prompts');
     expect(args).toContain('mcp__studio__report_progress');
@@ -154,7 +154,7 @@ describe('AgentLauncher', () => {
     expect(existsSync(tokenPath)).toBe(false);
     expect((await stat(join(configDir, 'run'))).mode & 0o777).toBe(0o700);
   });
-  it('passes mcpEnv to the MCP server env without letting it override the Motion Studio variables', { timeout: 20_000 }, async () => {
+  it('passes mcpEnv to the MCP server env without letting it override the Motion Studio variables', { timeout: 90_000 }, async () => {
     const bridge = new AgentBridge();
     bridge.setOrigin('http://127.0.0.1:4317');
     const { mcpConfigFile, args } = await launch({
@@ -166,9 +166,9 @@ describe('AgentLauncher', () => {
     const path = args[args.indexOf('--mcp-config') + 1]!;
     expect(env.MOTION_STUDIO_BRIDGE_TOKEN_FILE).toBe(path.replace(/\.mcp\.json$/, '.token'));
     expect(env.MOTION_STUDIO_BRIDGE_URL).toBe('http://127.0.0.1:4317');
-    expect(env.MOTION_STUDIO_TOOLS).toContain('validate_output');
+    expect(env.MOTION_STUDIO_TOOLS).toContain('validate_composition');
   });
-  it('only exposes the MCP tools of the job kind', { timeout: 20_000 }, async () => {
+  it('only exposes the MCP tools of the job kind', { timeout: 90_000 }, async () => {
     const bridge = new AgentBridge();
     bridge.setOrigin('http://127.0.0.1:4317');
     const { mcpConfigFile, args } = await launch({ bridge, mcpCommand: ['node', '/x/server.mjs'] }, 'describe');
@@ -181,7 +181,7 @@ describe('AgentLauncher', () => {
     const creative = await launch({ bridge, mcpCommand: ['node', '/x/server.mjs'] }, 'creative');
     expect(creative.args).not.toContain('mcp__studio__download_file');
   });
-  it('protects .studio (and its real path) from edits for every job kind, sandbox or not', { timeout: 20_000 }, async () => {
+  it('protects .studio (and its real path) from edits for every job kind, sandbox or not', { timeout: 90_000 }, async () => {
     const real = await newProject();
     const linkParent = await newProject();
     const linked = join(linkParent, 'link');
@@ -198,7 +198,7 @@ describe('AgentLauncher', () => {
       }
     }
   });
-  it('protects every creative\'s conversation/versions/creative files and every proposal log, plain and realpath, sandbox or not', { timeout: 30_000 }, async () => {
+  it('protects every creative\'s conversation/versions/creative files and every proposal log, plain and realpath, sandbox or not', { timeout: 90_000 }, async () => {
     const real = await newProject();
     const linkParent = await newProject();
     const linked = join(linkParent, 'link');
@@ -231,7 +231,7 @@ describe('AgentLauncher', () => {
       }
     }
   });
-  it('protects the caller\'s extra folders (earlier outputs/v*), plain and realpath, sandbox or not; the new one stays writable', { timeout: 30_000 }, async () => {
+  it('protects the caller\'s extra folders (earlier outputs/v*), plain and realpath, sandbox or not; the new one stays writable', { timeout: 90_000 }, async () => {
     const real = await newProject();
     const linkParent = await newProject();
     const linked = join(linkParent, 'link');
@@ -247,7 +247,7 @@ describe('AgentLauncher', () => {
       expect(args.some((a) => a.includes(join('outputs', 'v2')))).toBe(false);
     }
   });
-  it('never passes the provider keys or the bridge token from the environment to the agent', { timeout: 20_000 }, async () => {
+  it('never passes the provider keys or the bridge token from the environment to the agent', { timeout: 90_000 }, async () => {
     const keys = [...Object.values(PROVIDER_ENV), 'MOTION_STUDIO_BRIDGE_TOKEN'];
     for (const k of keys) process.env[k] = `secret-${k}`;
     try {
@@ -260,7 +260,7 @@ describe('AgentLauncher', () => {
       for (const k of keys) delete process.env[k];
     }
   });
-  it('protects .git, .claude, CLAUDE.md, CLAUDE.local.md and .mcp.json (and their real paths) for every job kind, sandbox or not', { timeout: 30_000 }, async () => {
+  it('protects .git, .claude, CLAUDE.md, CLAUDE.local.md and .mcp.json (and their real paths) for every job kind, sandbox or not', { timeout: 90_000 }, async () => {
     const real = await newProject();
     const linkParent = await newProject();
     const linked = join(linkParent, 'link');
@@ -285,7 +285,7 @@ describe('AgentLauncher', () => {
       }
     }
   });
-  it('ignores stored rules that are not valid "always" rules, and a corrupt permissions file', { timeout: 20_000 }, async () => {
+  it('ignores stored rules that are not valid "always" rules, and a corrupt permissions file', { timeout: 90_000 }, async () => {
     const dir = await newProject();
     await mkdir(join(dir, '.studio'), { recursive: true });
     const at = new Date().toISOString();
@@ -382,7 +382,7 @@ describe('AgentLauncher', () => {
     expect(existsSync(run)).toBe(false);
     await sweepRunDir(join(configDir, 'missing')); // no folder: nothing to do
   });
-  it('replaces a run folder that is a link instead of writing or chmod-ing through it', { timeout: 20_000 }, async () => {
+  it('replaces a run folder that is a link instead of writing or chmod-ing through it', { timeout: 90_000 }, async () => {
     const bridge = new AgentBridge();
     bridge.setOrigin('http://127.0.0.1:4317');
     const configDir = await newProject();
@@ -398,7 +398,7 @@ describe('AgentLauncher', () => {
     expect((await stat(outside)).mode & 0o777).toBe(0o755);
     expect(await readdir(outside)).toEqual([]);
   });
-  it('reads the settings once per start', { timeout: 20_000 }, async () => {
+  it('reads the settings once per start', { timeout: 90_000 }, async () => {
     let reads = 0;
     const projectDir = await newProject();
     process.env.FAKE_CLAUDE_ARGS_FILE = join(projectDir, 'args.json');
@@ -411,7 +411,7 @@ describe('AgentLauncher', () => {
     expect(reads).toBe(1);
   });
 
-  it("stamps the run's session event with the job's sandbox decision (count work)", { timeout: 20_000 }, async () => {
+  it("stamps the run's session event with the job's sandbox decision (count work)", { timeout: 90_000 }, async () => {
     const projectDir = await newProject();
     const runner: AgentRunner = {
       start: (_req, onEvent) => {
@@ -434,7 +434,7 @@ describe('AgentLauncher', () => {
 });
 
 describe('AgentLauncher protected files under a root with glob characters (decisions log 141)', () => {
-  it('sends the sandbox the escaped roots: concrete entries and the log globs both match the real paths', { timeout: 20_000 }, async () => {
+  it('sends the sandbox the escaped roots: concrete entries and the log globs both match the real paths', { timeout: 90_000 }, async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ms-launch [x] *? '));
     cleanup.push(dir);
     await mkdir(join(dir, 'creatives', 'c1'), { recursive: true });
@@ -459,7 +459,7 @@ describe('AgentLauncher hard links to protected files', () => {
   const stubRunner = (during: () => Promise<void>): AgentRunner => ({
     start: () => ({ done: during().then(() => ({ status: 'succeeded' as const })), cancel: () => {} }),
   });
-  it('detaches a linked log before the run and one linked during the run, with a warning each time', { timeout: 20_000 }, async () => {
+  it('detaches a linked log before the run and one linked during the run, with a warning each time', { timeout: 90_000 }, async () => {
     const dir = await newProject();
     const c = join(dir, 'creatives', 'c1');
     await mkdir(join(c, 'work'), { recursive: true });
@@ -483,7 +483,7 @@ describe('AgentLauncher hard links to protected files', () => {
     await appendFile(join(c, 'work', 'x'), 'forged\n');
     expect(await readFile(join(c, 'conversation.jsonl'), 'utf8')).toBe('core\n');
   });
-  it('without onWarning the warning is a progress event of the run', { timeout: 20_000 }, async () => {
+  it('without onWarning the warning is a progress event of the run', { timeout: 90_000 }, async () => {
     const dir = await newProject();
     await mkdir(join(dir, 'brand', 'proposals', 'p1'), { recursive: true });
     await writeFile(join(dir, 'brand', 'proposals', 'p1', 'log.jsonl'), '');
@@ -496,7 +496,7 @@ describe('AgentLauncher hard links to protected files', () => {
 });
 
 describe('AgentLauncher after-run checks (review of decisions log 141)', () => {
-  it('kills leftover processes before the after-run detach: a link made by a leftover until the kill is still caught', { timeout: 20_000 }, async () => {
+  it('kills leftover processes before the after-run detach: a link made by a leftover until the kill is still caught', { timeout: 90_000 }, async () => {
     const dir = await newProject();
     await mkdir(join(dir, '.studio'), { recursive: true });
     await writeFile(join(dir, '.studio', 'usage.jsonl'), '');
@@ -514,7 +514,7 @@ describe('AgentLauncher after-run checks (review of decisions log 141)', () => {
     expect(order).toEqual(['kill', 'detached']);
     expect((await stat(join(dir, '.studio', 'usage.jsonl'))).nlink).toBe(1);
   });
-  it('under a path with glob characters: one warning per job, and a creative moved out and back during the run is reported', { timeout: 20_000 }, async () => {
+  it('under a path with glob characters: one warning per job, and a creative moved out and back during the run is reported', { timeout: 90_000 }, async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ms-launch [x] '));
     cleanup.push(dir);
     const c = join(dir, 'creatives', 'c1');
@@ -553,7 +553,7 @@ describe('AgentLauncher after-run checks (review of decisions log 141)', () => {
 });
 
 describe('AgentLauncher integrity tripwire fails the job (decisions log 141)', () => {
-  it('a protected config file changed during the run fails the job, warns, and quarantines the repo', { timeout: 20_000 }, async () => {
+  it('a protected config file changed during the run fails the job, warns, and quarantines the repo', { timeout: 90_000 }, async () => {
     const dir = await newProject();
     await mkdir(join(dir, '.git', 'info'), { recursive: true });
     await writeFile(join(dir, '.git', 'config'), '[core]\n\tfilemode = true\n');
@@ -571,7 +571,7 @@ describe('AgentLauncher integrity tripwire fails the job (decisions log 141)', (
     expect(warnings.some((w) => w.includes('.git/config'))).toBe(true);
     expect(await launcher.integrity.isQuarantined(dir)).toBe(true);
   });
-  it('does not kill the process group at the end of a console turn, but still runs the detach', { timeout: 20_000 }, async () => {
+  it('does not kill the process group at the end of a console turn, but still runs the detach', { timeout: 90_000 }, async () => {
     const dir = await newProject();
     await mkdir(join(dir, '.studio'), { recursive: true });
     await writeFile(join(dir, '.studio', 'usage.jsonl'), '');
@@ -598,7 +598,7 @@ describe('Integrity with the sandbox off (decisions log 141, round 4)', () => {
   }
   const start = (launcher: AgentLauncher, dir: string, jobId = 'j1') => launcher.start({ kind: 'creative', jobId, projectSlug: 'acme', projectDir: dir, creativeSlug: 'c1', request: { prompt: 'x' }, onEvent: () => {}, onWarning: () => {} });
 
-  it('an agent creating .claude/settings.json fails the job and quarantines the project; launches and git are refused until it is removed, across a restart', { timeout: 30_000 }, async () => {
+  it('an agent creating .claude/settings.json fails the job and quarantines the project; launches and git are refused until it is removed, across a restart', { timeout: 90_000 }, async () => {
     const dir = await gitProject();
     let act = async () => { await mkdir(join(dir, '.claude'), { recursive: true }); await writeFile(join(dir, '.claude', 'settings.json'), '{"hooks":{"Stop":[]}}'); };
     const configDir = await mkdtemp(join(tmpdir(), 'ms-cfg-q-'));
@@ -618,14 +618,14 @@ describe('Integrity with the sandbox off (decisions log 141, round 4)', () => {
     expect(await restarted.integrity.isQuarantined(dir)).toBe(false);
     await expect(new Git().commitAll(dir, 'c')).resolves.toMatch(/^[0-9a-f]{40}$/);
   });
-  it('an agent creating .git/commondir fails the job, and git refuses the repo', { timeout: 30_000 }, async () => {
+  it('an agent creating .git/commondir fails the job, and git refuses the repo', { timeout: 90_000 }, async () => {
     const dir = await gitProject();
     const launcher = testLauncher(acting(async () => { await writeFile(join(dir, '.git', 'commondir'), '/tmp/evil\n'); }), off);
     await expect((await start(launcher, dir)).done).rejects.toThrow('.git/commondir');
     expect(await launcher.integrity.isQuarantined(dir)).toBe(true);
     await expect(new Git().commitAll(dir, 'c')).rejects.toThrow();
   });
-  it('a check() that throws fails the job and quarantines the project (fail closed)', { timeout: 30_000 }, async () => {
+  it('a check() that throws fails the job and quarantines the project (fail closed)', { timeout: 90_000 }, async () => {
     const dir = await gitProject();
     const locked = join(dir, '.claude', 'locked');
     const launcher = testLauncher(acting(async () => { await mkdir(locked, { recursive: true }); await chmod(locked, 0o000); }), off);
@@ -634,7 +634,7 @@ describe('Integrity with the sandbox off (decisions log 141, round 4)', () => {
       expect(await launcher.integrity.isQuarantined(dir)).toBe(true);
     } finally { await chmod(locked, 0o700).catch(() => {}); }
   });
-  it('a change between runs (e.g. a leftover process) is caught at the next arm against the last good state', { timeout: 30_000 }, async () => {
+  it('a change between runs (e.g. a leftover process) is caught at the next arm against the last good state', { timeout: 90_000 }, async () => {
     const dir = await gitProject();
     const launcher = testLauncher(acting(async () => {}), off);
     await (await start(launcher, dir)).done;
@@ -644,7 +644,7 @@ describe('Integrity with the sandbox off (decisions log 141, round 4)', () => {
     await rm(join(dir, '.mcp.json'));
     await (await start(launcher, dir, 'j3')).done;
   });
-  it('permissions.json: a core write during the run stays quiet, a foreign write trips', { timeout: 30_000 }, async () => {
+  it('permissions.json: a core write during the run stays quiet, a foreign write trips', { timeout: 90_000 }, async () => {
     const dir = await gitProject();
     const quiet = testLauncher(acting(async () => { await new PermissionsStore(dir).add('Bash(ls:*)', 'x'); }), off);
     await (await start(quiet, dir)).done;

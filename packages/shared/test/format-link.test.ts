@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canFollow, checkLink, defaultLinks, effectiveLinks, latestDurationOf, DEFAULT_FORMATS, followerMatches, followerVersion, formatHistory, starOf, type FormatPreset, type OutputFileInfo, type VersionEntry } from '../src/index.ts';
+import { canFollow, checkLink, defaultLinks, effectiveLinks, latestDurationOf, DEFAULT_FORMATS, followerMatches, followerVersion, formatHistory, legacyTurnKind, linksAfterBriefSave, renderProblems, renderState, starOf, type FormatPreset, type OutputFileInfo, type VersionEntry } from '../src/index.ts';
 
 const preset = (id: string): FormatPreset => DEFAULT_FORMATS.find((f) => f.id === id)!;
 const REEL = preset('instagram-reel-9x16');
@@ -209,5 +209,135 @@ describe('followerMatches', () => {
     expect(followerMatches([ver(1, [out(R, 'a'), out(T, undefined)])], T, 1, 1, links)).toBe(false);
     expect(followerMatches([ver(1, [out(R, 'a'), out(T, 'b')])], T, 1, 1, links)).toBe(false);
     expect(followerMatches([ver(1, [out(R, 'a'), out(T, 'a')])], T, 1, 1, links)).toBe(true);
+  });
+});
+
+// ---------- v2 versions (compositions) and the legacy → v2 boundary (decisions R1, R2) ----------
+
+/** A v2 version: a composition per format (`[format, hash, followsFormat?]`), plus optional renders. */
+const v2 = (n: number, comps: Array<[string, string, string?, string[]?]>, outputs: OutputFileInfo[] = [], problems: string[] = []): VersionEntry => ({
+  ...ver(n, outputs, problems),
+  compositions: comps.map(([format, hash, followsFormat, own]) => ({
+    format, dir: `compositions/${followsFormat ?? format}`, hash: h(hash), ...(followsFormat ? { followsFormat } : {}), ...(own ? { problems: own } : {}),
+  })),
+});
+const rendered = (format: string, fileSha: string, fromComp: string | undefined): OutputFileInfo => ({ ...out(format, h(fileSha)), ...(fromComp ? { fromComposition: h(fromComp) } : {}) });
+
+describe('formatHistory with compositions', () => {
+  it.each([
+    ['v2 only: the composition hash decides', [v2(1, [['reel', 'a']]), v2(2, [['reel', 'a']]), v2(3, [['reel', 'b']])], [1, 3]],
+    ['v2: a new render of the same composition is not a change', [v2(1, [['reel', 'a']]), v2(2, [['reel', 'a']], [rendered('reel', 'f', 'a')])], [1]],
+    ['v2: the composition wins over differing render bytes', [v2(1, [['reel', 'a']], [rendered('reel', 'f', 'a')]), v2(2, [['reel', 'a']], [rendered('reel', 'g', 'a')])], [1]],
+    ['legacy → v2 is a change even when nothing else moved', [ver(1, [out('reel', h('a'))]), v2(2, [['reel', 'a']])], [1, 2]],
+    ['legacy → v2 with the v2 render byte-identical to the legacy file is still a change', [ver(1, [out('reel', h('f'))]), v2(2, [['reel', 'a']], [rendered('reel', 'f', 'a')])], [1, 2]],
+    ['v2 → legacy (e.g. a restored old version) is a change', [v2(1, [['reel', 'a']]), ver(2, [out('reel', h('a'))])], [1, 2]],
+    ['legacy v1–v3 then v2 v4–v5', [ver(1, [out('reel', h('a'))]), ver(2, [out('reel', h('a'))]), ver(3, [out('reel', h('b'))]), v2(4, [['reel', 'c']]), v2(5, [['reel', 'c']])], [1, 3, 4]],
+    ['a v2 version without the format breaks the chain', [v2(1, [['reel', 'a']]), v2(2, [['post', 'p']]), v2(3, [['reel', 'a']])], [1, 3]],
+    ['a v2 version whose composition is for another format, with a stray file of this one, counts the file', [v2(1, [['post', 'p']], [out('reel', h('a'))]), ver(2, [out('reel', h('a'))])], [1]],
+  ] as const)('%s', (_name, versions, expected) => {
+    expect(formatHistory([...versions], 'reel')).toEqual(expected);
+  });
+});
+
+describe('starOf with compositions', () => {
+  it('a v2 version without a render still has the format: picks and history see it', () => {
+    const vs = [ver(1, [out('reel', h('a'), [])]), v2(2, [['reel', 'c']])];
+    expect(starOf(vs, 'reel', undefined, undefined)).toEqual({ version: 2, manual: false, newer: null, follows: null });
+    expect(starOf(vs, 'reel', { reel: 1 }, undefined)).toEqual({ version: 1, manual: true, newer: 2, follows: null });
+    expect(starOf(vs, 'reel', { reel: 2 }, undefined)).toEqual({ version: 2, manual: true, newer: null, follows: null });
+  });
+  it('per-format problems of a v2 version: a broken format does not push a clean one off the version', () => {
+    // v2: format A (post) is broken, format B (reel) is clean, in the same version.
+    const vs = [v2(1, [['reel', 'a', undefined, []], ['post', 'p', undefined, []]]), v2(2, [['reel', 'b', undefined, []], ['post', 'q', undefined, ['post broken']]], [], ['post broken'])];
+    expect(starOf(vs, 'reel', undefined, undefined).version).toBe(2);
+    expect(starOf(vs, 'post', undefined, undefined).version).toBe(1);
+  });
+  it('the composition\'s own problems win over its render\'s', () => {
+    const vs = [v2(1, [['reel', 'a', undefined, []]]), v2(2, [['reel', 'b', undefined, ['bad']]], [{ ...rendered('reel', 'f', 'b'), problems: [] }], ['bad'])];
+    expect(starOf(vs, 'reel', undefined, undefined).version).toBe(1);
+  });
+  it('a current render with problems (size, duration, resolution, unreadable) is not a clean ★ (final review I2)', () => {
+    const vs = [v2(1, [['reel', 'a', undefined, []]], [rendered('reel', 'f', 'a')]), v2(2, [['reel', 'b', undefined, []]], [{ ...rendered('reel', 'g', 'b'), problems: ['too large'] }])];
+    expect(renderProblems(vs[1]!, 'reel')).toEqual(['too large']);
+    expect(starOf(vs, 'reel', undefined, undefined).version).toBe(1);
+    // A manual pick stays (the export asks before copying it).
+    expect(starOf(vs, 'reel', { reel: 2 }, undefined).version).toBe(2);
+    // A stale render's problems are not the version's: it is rendered again before any export.
+    const stale = v2(3, [['reel', 'c', undefined, []]], [{ ...rendered('reel', 'g', 'b'), problems: ['too large'] }]);
+    expect(renderProblems(stale, 'reel')).toEqual([]);
+    expect(starOf([...vs, stale], 'reel', undefined, undefined).version).toBe(3);
+    // Legacy files keep their own rule.
+    expect(renderProblems(ver(1, [out('reel', h('a'), ['bad'])]), 'reel')).toEqual([]);
+  });
+  it('old v2 data without per-format problems falls back to the version-level problems', () => {
+    const vs = [v2(1, [['reel', 'a']]), v2(2, [['reel', 'b']], [], ['broken'])];
+    expect(starOf(vs, 'reel', undefined, undefined).version).toBe(1);
+  });
+});
+
+describe('followerVersion and followerMatches with compositions', () => {
+  const R = 'instagram-reel-9x16';
+  const T = 'tiktok-9x16';
+  const links = { [T]: R };
+  it.each([
+    ['v2: the follower follows the primary composition with the same hash', [v2(1, [[R, 'a'], [T, 'a', R]])], 1, 1],
+    ['v2: the latest version following the ★ composition wins', [v2(1, [[R, 'a'], [T, 'a', R]]), v2(2, [[R, 'a'], [T, 'a', R]]), v2(3, [[R, 'b'], [T, 'b', R]])], 1, 2],
+    ['v2: a dedicated follower composition (no followsFormat) never qualifies, even with the same hash', [v2(1, [[R, 'a'], [T, 'a']])], 1, null],
+    ['v2: following another primary does not qualify', [v2(1, [[R, 'a'], [T, 'a', 'other']])], 1, null],
+    ['v2: a different hash does not qualify', [v2(1, [[R, 'a'], [T, 'b', R]])], 1, null],
+    ['mixed: a legacy ★ and a v2 follower never match', [ver(1, [out(R, h('a'))]), v2(2, [[R, 'a'], [T, 'a', R]])], 1, null],
+    ['mixed: a v2 ★ and a legacy follower file never match, even with equal bytes', [v2(1, [[R, 'a']], [rendered(R, 'f', 'a')]), ver(2, [out(R, h('f')), out(T, h('f'))])], 1, null],
+    ['mixed history: a legacy ★ still resolves to its legacy follower copy', [ver(1, [out(R, h('a')), out(T, h('a'))]), v2(2, [[R, 'c'], [T, 'c', R]])], 1, 1],
+    ['mixed history: a v2 ★ resolves to its v2 follower', [ver(1, [out(R, h('a')), out(T, h('a'))]), v2(2, [[R, 'c'], [T, 'c', R]])], 2, 2],
+  ] as const)('%s', (_name, vs, primaryN, expected) => {
+    expect(followerVersion([...vs], T, primaryN, links)).toBe(expected);
+  });
+  it('followerMatches compares composition hashes across versions', () => {
+    const vs = [v2(1, [[R, 'a']]), v2(2, [[R, 'a'], [T, 'a', R]])];
+    expect(followerMatches(vs, T, 2, 1, links)).toBe(true);
+    expect(followerMatches(vs, T, 1, 1, links)).toBe(false);
+  });
+});
+
+describe('renderState', () => {
+  it.each([
+    ['legacy with the media file: rendered (the media is the result)', ver(1, [out('reel', h('a'))]), 'rendered'],
+    ['legacy with the media file, hash not computed yet: rendered', ver(1, [out('reel', undefined)]), 'rendered'],
+    ['legacy without the format: none', ver(1, [out('post', h('a'))]), 'none'],
+    ['v2 without a render: none', v2(1, [['reel', 'a']]), 'none'],
+    ['v2 with a render of the current composition: rendered', v2(1, [['reel', 'a']], [rendered('reel', 'f', 'a')]), 'rendered'],
+    ['v2 with a render of another composition: stale', v2(1, [['reel', 'b']], [rendered('reel', 'f', 'a')]), 'stale'],
+    ['v2 with a render that does not say its composition: stale', v2(1, [['reel', 'a']], [rendered('reel', 'f', undefined)]), 'stale'],
+    ['v2 with an output without sha256: none', v2(1, [['reel', 'a']], [{ ...out('reel', undefined), fromComposition: h('a') }]), 'none'],
+    ['v2 follower with a copied render of the primary composition: rendered', v2(1, [['reel', 'a'], ['tiktok', 'a', 'reel']], [rendered('tiktok', 'f', 'a')]), 'rendered'],
+  ] as const)('%s', (_name, v, expected) => {
+    expect(renderState(v, v.compositions?.some((c) => c.format === 'tiktok') ? 'tiktok' : 'reel')).toBe(expected);
+  });
+});
+
+describe('latestDurationOf with compositions', () => {
+  const dur = (o: OutputFileInfo, d: number) => ({ ...o, durationSec: d });
+  it('only a current render of the latest version counts', () => {
+    expect(latestDurationOf([ver(1, [dur(out('reel', h('a')), 30)]), v2(2, [['reel', 'c']])], 'reel')).toBeUndefined();
+    expect(latestDurationOf([v2(1, [['reel', 'c']], [dur(rendered('reel', 'f', 'c'), 20)])], 'reel')).toBe(20);
+    expect(latestDurationOf([v2(1, [['reel', 'c']], [dur(rendered('reel', 'f', 'x'), 20)])], 'reel')).toBeUndefined();
+    expect(latestDurationOf([ver(1, [dur(out('reel', h('a')), 30)]), v2(2, [['post', 'p']])], 'reel')).toBe(30);
+  });
+});
+
+describe('legacy turns and brief-save links (final review I4)', () => {
+  const legacy = ver(1, [out(REEL.id, h('a'))]);
+  it('a brief save links only the formats it adds, against the primaries already there; stored links are kept', () => {
+    expect(linksAfterBriefSave({ formats: [REEL.id], links: {} }, [REEL.id, TIKTOK.id], DEFAULT_FORMATS)).toEqual({ [TIKTOK.id]: REEL.id });
+    expect(linksAfterBriefSave({ formats: [REEL.id], links: {} }, [REEL.id, POST.id], DEFAULT_FORMATS)).toEqual({});
+    expect(linksAfterBriefSave({ formats: [REEL.id, TIKTOK.id], links: {} }, [REEL.id, TIKTOK.id], DEFAULT_FORMATS)).toEqual({});
+  });
+  it('legacy base: only linked followers added → followers; anything else → convert; v2 or no base → normal', () => {
+    expect(legacyTurnKind(legacy, { formats: [REEL.id, TIKTOK.id], links: { [TIKTOK.id]: REEL.id } })).toBe('followers');
+    expect(legacyTurnKind(legacy, { formats: [REEL.id, POST.id], links: {} })).toBe('convert');
+    expect(legacyTurnKind(legacy, { formats: [REEL.id, TIKTOK.id, POST.id], links: { [TIKTOK.id]: REEL.id } })).toBe('convert');
+    expect(legacyTurnKind(legacy, { formats: [REEL.id], links: {} })).toBe('convert');
+    expect(legacyTurnKind(v2(1, [[REEL.id, 'a']]), { formats: [REEL.id, POST.id], links: {} })).toBe('normal');
+    expect(legacyTurnKind(undefined, { formats: [REEL.id], links: {} })).toBe('normal');
   });
 });

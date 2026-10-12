@@ -1,4 +1,4 @@
-import { DEFAULT_FORMATS, workspaceSettingsSchema, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, workspaceSettingsSchema, type JobSummary, type VersionEntry } from '@motion-studio/shared';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,6 +9,7 @@ const api = {
   fileUrl: (s: string, c: string, rel: string) => `/f/${s}/${c}/${rel}`,
   exportPicks: vi.fn(async (_s: string, _c: string, body: { destination: string }) => ({ destination: body.destination, files: [{ from: 'a', to: 'b' }], skipped: [] as string[] })),
   updateSettings: vi.fn(async (patch: { exportNamePattern?: string }) => workspaceSettingsSchema.parse({ schemaVersion: 1, ...patch })),
+  prepareExport: vi.fn(async (_s: string, _c: string, _body: unknown): Promise<{ renders: Array<{ version: number; formats: string[]; job: JobSummary; covers: boolean }> }> => ({ renders: [] })),
 };
 class ApiError extends Error { constructor(public status: number, msg: string, public code?: string) { super(msg); } }
 vi.mock('../src/api.ts', () => ({ api, ApiError }));
@@ -40,7 +41,7 @@ const open = (s = states(), pattern = '{title}-{format}-v{v}', presets = DEFAULT
 const patternField = () => screen.getByLabelText('File name pattern') as HTMLInputElement;
 const setPattern = async (v: string) => { await userEvent.clear(patternField()); if (v) await userEvent.type(patternField(), v.replace(/[{[]/g, (c) => c + c)); };
 
-beforeEach(() => { localStorage.setItem('ms.exportFolder', '/out'); api.exportPicks.mockClear(); api.updateSettings.mockClear(); onSettings.mockClear(); });
+beforeEach(() => { localStorage.setItem('ms.exportFolder', '/out'); api.exportPicks.mockClear(); api.prepareExport.mockClear(); api.updateSettings.mockClear(); onSettings.mockClear(); });
 
 describe('ExportDialog · the starred versions', () => {
   it('shows each format at its ★, the newer version, and followers named after themselves in their primary’s ★', () => {
@@ -218,5 +219,96 @@ describe('ExportDialog · name pattern', () => {
     expect(await screen.findByText('Saved as the workspace default')).toBeTruthy();
     expect(onSettings).toHaveBeenCalledWith(expect.objectContaining({ exportNamePattern: '{date}-{format}-v{v}' }));
     expect(saveButton.disabled).toBe(true);
+  });
+});
+
+
+describe('ExportDialog · compositions rendered first (Task 8)', () => {
+  const comp = (format: string) => ({ format, dir: `compositions/${format}`, hash: 'e'.repeat(64) });
+  // v7 is a v2 version: the post is rendered (its file comes from the composition), the reel is not yet.
+  const v7 = { ...ver(7, [{ ...out(POST, 'png'), sha256: 'f'.repeat(64), fromComposition: 'e'.repeat(64) }]), compositions: [comp(REEL), comp(POST)] };
+  const twoStates = () => ({ [REEL]: state(REEL, { history: [7] }), [POST]: state(POST, { history: [7] }) });
+  const job = (over: Partial<JobSummary> = {}): JobSummary => ({ id: 'r7', key: 'render:/w:acme:c1:v7', kind: 'render', label: 'Render · Summer launch v7', state: 'running', createdAt: '2026-10-08T10:00:00.000Z', formats: [REEL], ...over });
+  const openWith = (jobs: Record<string, JobSummary> = {}) => render(
+    <I18nProvider locale="en">
+      <ExportDialog open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: [v7], states: twoStates() }} presets={DEFAULT_FORMATS}
+        pattern="{title}-{format}-v{v}" jobs={jobs} />
+    </I18nProvider>,
+  );
+
+  it('a ★ composition without a render is exportable, named with its render’s extension, and marked', () => {
+    openWith();
+    expect(screen.getAllByText('summer-launch-instagram-reel-9x16-v7.mp4')).toHaveLength(2);
+    expect(screen.getAllByText('Rendered first')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Export 2 files' })).toBeTruthy();
+  });
+
+  it('renders the missing formats first, with their progress, then exports', async () => {
+    let finish: (v: { destination: string; files: Array<{ from: string; to: string }>; skipped: string[] }) => void = () => {};
+    api.exportPicks.mockImplementationOnce(() => new Promise((r) => { finish = r; }));
+    api.prepareExport.mockResolvedValueOnce({ renders: [{ version: 7, formats: [REEL], job: job({ state: 'queued' }), covers: true }] });
+    const view = openWith({ r7: job({ state: 'queued' }) });
+    await userEvent.click(screen.getByRole('button', { name: 'Export 2 files' }));
+    expect(api.prepareExport).toHaveBeenCalledWith('acme', 'c1', { picks: { [REEL]: 7, [POST]: 7 } });
+    expect(await screen.findByText('Rendering 1 format first…')).toBeTruthy();
+    await waitFor(() => expect(api.exportPicks).toHaveBeenCalled());
+    view.rerender(
+      <I18nProvider locale="en">
+        <ExportDialog open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: [v7], states: twoStates() }} presets={DEFAULT_FORMATS}
+          pattern="{title}-{format}-v{v}" jobs={{ r7: job({ progress: { format: REEL, phase: 'frames', done: 90, total: 180 } }) }} />
+      </I18nProvider>,
+    );
+    expect(screen.getByRole('progressbar', { name: 'Rendering 1 format first…' }).getAttribute('aria-valuenow')).toBe('50');
+    finish({ destination: '/out', files: [{ from: 'a', to: 'b' }, { from: 'c', to: 'd' }], skipped: [] });
+    expect(await screen.findByText('2 files exported')).toBeTruthy();
+  });
+
+  it('a ★ render with problems is shown with its reasons and starts unchecked; ticking it exports it anyway (I2)', async () => {
+    const bad = { ...v7, outputs: [{ ...v7.outputs[0]!, problems: ['instagram-post-1x1.png is 31 MB, over the 30 MB limit'] }, { ...out(REEL, 'mp4', 1920), sha256: 'a'.repeat(64), fromComposition: 'e'.repeat(64) }] };
+    render(
+      <I18nProvider locale="en">
+        <ExportDialog open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: [bad], states: twoStates() }} presets={DEFAULT_FORMATS} pattern="{title}-{format}-v{v}" />
+      </I18nProvider>,
+    );
+    expect(screen.getByText('Rendered with problems: instagram-post-1x1.png is 31 MB, over the 30 MB limit. Tick it to export it anyway')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Export 1 file' })).toBeTruthy();
+    await userEvent.click(screen.getByRole('checkbox', { name: /Post/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Export 2 files' }));
+    await waitFor(() => expect(api.exportPicks).toHaveBeenCalledWith('acme', 'c1', expect.objectContaining({ picks: { [REEL]: 7, [POST]: 7 } })));
+  });
+
+  it('the problem row says the short reason in the UI\'s language: "duration 4.8 s instead of 6 s" (P2)', () => {
+    const bad = { ...v7, outputs: [{ ...v7.outputs[0]!, problems: ['instagram-post-1x1.png: duration 4.8s, about 6s requested'], issues: [{ code: 'durationOffTarget' as const, params: { duration: 4.8, target: 6 } }] }, { ...out(REEL, 'mp4', 1920), sha256: 'a'.repeat(64), fromComposition: 'e'.repeat(64) }] };
+    render(
+      <I18nProvider locale="en">
+        <ExportDialog open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: [bad], states: twoStates() }} presets={DEFAULT_FORMATS} pattern="{title}-{format}-v{v}" />
+      </I18nProvider>,
+    );
+    expect(screen.getByText('Rendered with problems: duration 4.8 s instead of 6 s. Tick it to export it anyway')).toBeTruthy();
+    expect((screen.getByRole('checkbox', { name: /Post/ }) as HTMLElement).getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('a render made during the export that had problems is said in the final summary, with its reason (P2)', async () => {
+    api.prepareExport.mockResolvedValueOnce({ renders: [{ version: 7, formats: [REEL], job: job({ state: 'queued' }), covers: true }] });
+    api.exportPicks.mockResolvedValueOnce({ destination: '/out', files: [{ from: 'a', to: 'b' }], skipped: [],
+      excluded: [{ format: REEL, version: 7, problems: ['x'], issues: [{ code: 'tooLarge', params: { size: 31.2, max: 30 } }] }] } as never);
+    openWith({ r7: job({ state: 'queued' }) });
+    await userEvent.click(screen.getByRole('button', { name: 'Export 2 files' }));
+    const line = await screen.findByText(/^Not exported because the render has problems:/);
+    expect(line.textContent).toMatch(/v7 \(31\.2 MB instead of at most 30 MB\)$/);
+    expect(line.getAttribute('role')).toBe('alert');
+  });
+
+  it('nothing to render: no prepare step', async () => {
+    const rendered = { ...v7, outputs: [...v7.outputs, { ...out(REEL, 'mp4', 1920), sha256: 'a'.repeat(64), fromComposition: 'e'.repeat(64) }] };
+    render(
+      <I18nProvider locale="en">
+        <ExportDialog open onClose={() => {}} slug="acme" creative="c1" title="Summer launch" snapshot={{ versions: [rendered], states: twoStates() }} presets={DEFAULT_FORMATS} pattern="{title}-{format}-v{v}" />
+      </I18nProvider>,
+    );
+    expect(screen.queryByText('Rendered first')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Export 2 files' }));
+    await waitFor(() => expect(api.exportPicks).toHaveBeenCalled());
+    expect(api.prepareExport).not.toHaveBeenCalled();
   });
 });

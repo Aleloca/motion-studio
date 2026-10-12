@@ -108,9 +108,14 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
       c.emit({ kind: 'progress', text });
       return { ok: true };
     },
-    validate_output: async (c) => {
-      if (!c.validate) throw new WorkspaceError(400, t().errors.validateOnlyCreatives);
-      return c.validate();
+    validate_composition: async (c, a) => {
+      if (!c.validateComposition) throw new WorkspaceError(400, t().errors.validateOnlyCreatives);
+      const format = typeof a.format === 'string' && a.format.trim() ? a.format.trim().slice(0, 200) : undefined;
+      return c.validateComposition(format);
+    },
+    preview_frames: async (c, a) => {
+      if (!c.previewFrames) throw new WorkspaceError(400, t().errors.validateOnlyCreatives);
+      return c.previewFrames({ format: a.format, times: a.times });
     },
     // The core is not sandboxed: never follow the agent's symlinks, never read special or huge files.
     read_brand_kit: async (c) => {

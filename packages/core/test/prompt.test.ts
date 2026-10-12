@@ -1,4 +1,4 @@
-import { DEFAULT_FORMATS, type CreativeFile } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, normalizeComposition, validateComposition, type CreativeFile } from '@motion-studio/shared';
 import { homedir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import { buildCreativePrompt, parseStudioBlock } from '../src/creatives/prompt.ts';
@@ -11,7 +11,9 @@ const creative: CreativeFile = {
   brief: { goal: 'Far capire che prenotare è immediato', message: 'Prenota in 3 tap', formats: ['instagram-post-1x1', 'web-banner-300x250', 'ghost'],
     durationSec: 15, assets: ['assets/logo.svg'], notes: 'Chiudi sempre con il logo' },
 };
-const base = { slug: '2026-10-07-lancio-app', creative, presets: DEFAULT_FORMATS, version: 2, locale: 'it' as const };
+// The phase 9 media contract (kept for the legacy suites); output contract v2 is tested below with `v2`.
+const base = { slug: '2026-10-07-lancio-app', creative, presets: DEFAULT_FORMATS, version: 2, locale: 'it' as const, contract: 'media' as const };
+const v2 = { ...base, contract: undefined };
 
 describe('buildCreativePrompt', () => {
   it('first turn: brief, formats, paths and the machine block', () => {
@@ -92,11 +94,22 @@ describe('parseStudioBlock', () => {
 });
 
 describe('CONTEXT_MD', () => {
-  it('documents the output contract', () => {
-    expect(CONTEXT_MD).toContain('## Output contract');
-    expect(CONTEXT_MD).toContain('manifest.json');
-    expect(CONTEXT_MD).toContain('`durationSec` (seconds, positive number) is required only for videos');
-    expect(CONTEXT_MD).toContain('`file` is the file name only, without subfolders');
+  it('documents output contract v2: compositions, the schema file, layers, fonts, examples, never render', () => {
+    expect(CONTEXT_MD).toContain('## Output contract (v2: compositions)');
+    expect(CONTEXT_MD).toContain('outputs/vN/compositions/<preset-id>/');
+    expect(CONTEXT_MD).toContain('.studio/composition.schema.json');
+    expect(CONTEXT_MD).toContain('Never render final media and never install renderers');
+    expect(CONTEXT_MD).toContain('Do not write `manifest.json`');
+    for (const x of ['msReady', 'msSeek', 'msTimeline', 'msParams', 'FontFace', 'Ken Burns', 'subtitles', 'Transitions between scenes', 'Logo']) expect(CONTEXT_MD).toContain(x);
+    expect(CONTEXT_MD).not.toContain('renderCommand');
+    expect(CONTEXT_MD).not.toMatch(/Remotion works well|rendered with Playwright/);
+  });
+  it('its still example is a valid composition', () => {
+    const json = CONTEXT_MD.slice(CONTEXT_MD.indexOf('```json\n') + 8, CONTEXT_MD.indexOf('\n```', CONTEXT_MD.indexOf('```json\n')));
+    const c = JSON.parse(json);
+    const files = new Map([['assets/Inter-700.woff2', { size: 10 }], ['assets/photo.jpg', { size: 10 }]]);
+    const r = validateComposition(normalizeComposition(c), { format: { id: 'sq', channel: 'T', name: 'Sq', width: 1080, height: 1080, kind: 'image', extensions: ['png'] }, files });
+    expect(r.problems).toEqual([]);
   });
 });
 
@@ -135,7 +148,10 @@ describe('brand and codebase context', () => {
   it('lists the tools when given', () => {
     const p = buildCreativePrompt({ ...base, kind: 'first', context: { ...context, tools: ['- fonts_fetch: Google Fonts fonts (ready)'] } });
     expect(p).toContain('## Motion Studio tools (MCP)');
-    expect(p).toContain('validate_output before ending the turn');
+    expect(p).not.toContain('validate_output');
+    const p2 = buildCreativePrompt({ ...v2, kind: 'first', context: { ...context, tools: ['- fonts_fetch: Google Fonts fonts (ready)'] } });
+    expect(p2).toContain('call validate_composition for every format before ending the turn');
+    expect(p2).toContain('preview_frames');
   });
 });
 
@@ -143,7 +159,9 @@ describe('Motion Studio tools in CONTEXT_MD', () => {
   it('is explained in CONTEXT_MD', () => {
     expect(CONTEXT_MD).toContain('## Motion Studio tools');
     expect(CONTEXT_MD).toContain('attribution');
-    expect(CONTEXT_MD).toContain('`validate_output` (only in creatives)');
+    expect(CONTEXT_MD).toContain('`validate_composition`');
+    expect(CONTEXT_MD).toContain('`preview_frames`');
+    expect(CONTEXT_MD).not.toContain('validate_output');
     expect(CONTEXT_MD).toContain('Do not use git in the project: Motion Studio manages the versions.');
   });
 });
@@ -215,5 +233,45 @@ describe('Sandbox environment section', () => {
     }
     expect(buildBrandPrompt({ proposalDir: 'p', kitFile: 'k', guidelinesFile: 'g', assetsListFile: 'a', summaryFile: 's', sources: [] }, 'it')).not.toContain('## Sandbox environment');
     expect(buildDescribePrompt({ outFile: 'o.json', files: ['assets/a.png'] }, 'it')).not.toContain('## Sandbox environment');
+  });
+});
+
+describe('buildCreativePrompt, output contract v2 (Task 5b)', () => {
+  it('is the default: compositions per format, the schema reference, never render, no renderCommand or encoding', () => {
+    for (const kind of ['first', 'iteration', 'fix'] as const) {
+      const p = buildCreativePrompt({ ...v2, kind, userText: 'x', problems: ['compositions/instagram-post-1x1: y'] });
+      expect(p).toContain('.studio/composition.schema.json');
+      expect(p).not.toContain('renderCommand');
+      expect(p).not.toContain('## Encoding');
+      expect(p).not.toContain('-crf');
+      if (kind !== 'fix') {
+        expect(p).toContain('NEVER render final media');
+        expect(p).toContain('NEVER install renderers');
+        expect(p).toContain('motion-studio/composition@1');
+        expect(p).toContain('creatives/2026-10-07-lancio-app/outputs/v2/compositions/instagram-post-1x1/');
+      }
+    }
+    const block = parseStudioBlock(buildCreativePrompt({ ...v2, kind: 'first' }))!;
+    expect(block).toMatchObject({ contract: 2, schema: '.studio/composition.schema.json', outputDir: 'creatives/2026-10-07-lancio-app/outputs/v2' });
+    expect(block.formats[0]).toMatchObject({ id: 'instagram-post-1x1', compositionDir: 'creatives/2026-10-07-lancio-app/outputs/v2/compositions/instagram-post-1x1' });
+  });
+  it('fix prompts list the problems and point to validate_composition', () => {
+    const p = buildCreativePrompt({ ...v2, kind: 'fix', problems: ['compositions/instagram-post-1x1: fps 7 is not allowed'] });
+    expect(p).toContain('do not meet the contract');
+    expect(p).toContain('- compositions/instagram-post-1x1: fps 7 is not allowed');
+    expect(p).toContain('validate_composition');
+  });
+  it('the inline example is a valid composition', () => {
+    const p = buildCreativePrompt({ ...v2, kind: 'first' });
+    const start = p.indexOf('```json\n') + 8;
+    const c = JSON.parse(p.slice(start, p.indexOf('\n```', start)));
+    const files = new Map(['assets/Inter-700.woff2', 'assets/photo.jpg', 'assets/music.mp3'].map((f) => [f, { size: 10 }] as const));
+    const r = validateComposition(normalizeComposition(c), { format: { id: 'reel', channel: 'T', name: 'Reel', width: 1080, height: 1920, kind: 'video', extensions: ['mp4'] }, files });
+    expect(r.problems).toEqual([]);
+  });
+  it('the sandbox section of a composition turn has no rendering-engine advice', () => {
+    const p = buildCreativePrompt({ ...v2, kind: 'first', sandboxed: true });
+    expect(p).toContain('## Sandbox environment');
+    expect(p).not.toMatch(/headless Chromium|node-canvas|Puppeteer and Playwright cannot run/);
   });
 });

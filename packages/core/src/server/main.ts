@@ -1,9 +1,13 @@
+import { createRenderEngine } from '../render/renderer.ts';
+import { findFfmpeg } from '../render/encode.ts';
+import type { ChromiumProviderFactory } from '../render/chromium-provider.ts';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { LanguageSetting, Locale } from '@motion-studio/shared';
 import type { FastifyInstance } from 'fastify';
 import open from 'open';
 import { sweepRunDir } from '../agent/launcher.ts';
+import { sweepRenderTempDirs } from '../render/render-sweep.ts';
 import { ClaudeCodeRunner, claudeCommandFromEnv } from '../agent/claude-code-runner.ts';
 import { cachedSandboxDetection } from '../agent/sandbox.ts';
 import { AppConfigStore, defaultConfigDir } from '../app-config.ts';
@@ -66,6 +70,38 @@ export interface StartServerOptions {
   bootLockWaitMs?: number;
   /** The user's preferred languages (first match wins) for the 'system' language setting. Default: detectSystemLocales(). */
   systemLocales?: string[];
+  /**
+   * The Chromium that renders compositions (spec §5.3): the desktop app injects its Electron provider here (Task 7).
+   * Without it the core uses system Chrome, else a Chrome for Testing installed in `<configDir>/chromium/`.
+   */
+  renderProvider?: ChromiumProviderFactory;
+  /**
+   * Render settings of this app: `distDir`, the built composition runtime (a bundled core cannot find it next to its own
+   * file: the desktop passes its resources' copy), and `parallel`, the pages (Electron windows) per render.
+   */
+  renderOptions?: { distDir?: string; parallel?: number };
+  /**
+   * Extra UI origins allowed to embed live previews, besides the core's own (`http://127.0.0.1:<port>`): the dev server
+   * passes Vite's `http://localhost:5173` (src/server/dev.ts).
+   */
+  devUiOrigins?: string[];
+}
+
+/**
+ * The origins the core's own UI can be opened at: the one it listens on, and (when it listens on loopback) the other
+ * loopback names of the same port, which the core's Host check accepts too (`http://localhost:<port>`, `[::1]`). They
+ * all reach the same loopback listener, so allowing them as `frame-ancestors` of the live preview adds no origin another
+ * program could take: a user who types `localhost:4317` gets previews (final wave C2).
+ */
+export function uiOriginsOf(url: string, host: string): string[] {
+  const u = new URL(url);
+  const list = [u.origin];
+  if (['127.0.0.1', 'localhost', '[::1]', '::1'].includes(host)) {
+    for (const name of ['localhost', '[::1]']) { const o = `${u.protocol}//${name}:${u.port}`; if (!list.includes(o)) list.push(o); }
+    const v4 = `${u.protocol}//127.0.0.1:${u.port}`;
+    if (!list.includes(v4)) list.push(v4);
+  }
+  return list;
 }
 
 export async function startServer(opts: StartServerOptions = {}) {
@@ -108,6 +144,8 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
   const claudeCommand = opts.claudeCommand ?? claudeCommandFromEnv();
   // Leftovers (config and token files) of a run that was killed with the app; no other instance is alive here.
   await sweepRunDir(configDir).catch(() => {});
+  // Render work folders and browser profiles a killed render left in the OS temp folder (only unused, old `ms-render-*`).
+  void sweepRenderTempDirs().catch(() => {});
   const bridge = new AgentBridge();
   const mcpServerPath = opts.mcpServerPath ?? DEV_MCP_SERVER;
   // Without the server file the agent runs as in phase 3 (anything that would prompt is denied) instead of failing to start.
@@ -118,6 +156,9 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
   const appConfig = new AppConfigStore(configDir);
   const language = new LanguageController((await appConfig.read()).language, opts.systemLocales ?? detectSystemLocales());
   language.apply();
+  // Filled once the server listens (its port is known only then); read at every preview mint.
+  const uiOrigins: string[] = [...(opts.devUiOrigins ?? [])];
+  let compositionOrigin: string | null = null;
   const app = await buildServer({
     uiToken,
     appConfig, language,
@@ -125,16 +166,22 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
     git: new Git(),
     runner: new ClaudeCodeRunner(claudeCommand),
     bridge, mcpCommand, sandbox, ...(opts.mcpEnv ? { mcpEnv: opts.mcpEnv } : {}),
-    doctor: (extra) => runDoctor({ exec: execCommand, claudeCommand, sandbox: extra.sandbox, workspacePath: extra.workspacePath ?? null, ...(opts.shellPath ? { shellPath: opts.shellPath } : {}) }),
+    doctor: (extra) => runDoctor({ exec: execCommand, claudeCommand, sandbox: extra.sandbox, workspacePath: extra.workspacePath ?? null, ...(opts.shellPath ? { shellPath: opts.shellPath } : {}), ffmpegInfo: () => findFfmpeg() }),
     billing: () => readBilling({ exec: execCommand, claudeCommand }),
     webDir: opts.webDir,
     vault: opts.vault ?? new KeyringVault(),
     media: await createFfmpegTools(),
+    render: createRenderEngine({ ...(opts.renderProvider ? { provider: opts.renderProvider } : {}), appDataDir: configDir }),
+    ...(opts.renderOptions ? { renderOptions: { ...opts.renderOptions } } : {}),
+    onCompositionOrigin: (o) => { compositionOrigin = o; },
     openPath: revealFolder,
+    uiOrigins: () => uiOrigins,
   });
   const host = opts.host ?? '127.0.0.1';
   const url = opts.port === 'auto' ? await listenAuto(app, host) : await app.listen({ port: opts.port ?? 4317, host });
   bridge.setOrigin(url);
+  // The core serves the UI itself (CLI and desktop): its own origin may embed live previews; dev adds Vite's.
+  uiOrigins.push(...uiOriginsOf(url, host));
   const port = Number(new URL(url).port);
   // For `motion-studio --print-url`; removed on a clean shutdown.
   await writeServerInfo(configDir, { port, pid: process.pid, startedAt: new Date().toISOString() }).catch(() => {});
@@ -145,6 +192,8 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
     onLocaleChange: (cb: (locale: Locale, setting: LanguageSetting) => void) => language.onChange(cb),
     /** The address to open: it carries the UI token in the fragment. */
     appUrl: uiUrl(port, uiToken),
+    /** The live-preview composition server's exact origin, or null while it is not running (read it live: it may restart). */
+    compositionOrigin: () => compositionOrigin,
     // server.json is removed only when it is still this process's.
     close: async () => { await app.close(); await removeServerInfo(configDir, process.pid); },
   };

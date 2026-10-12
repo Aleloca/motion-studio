@@ -2,9 +2,13 @@ import { randomUUID } from 'node:crypto';
 import type { JobKind, JobSummary } from '@motion-studio/shared';
 import { t } from '../i18n.ts';
 
+/**
+ * A job with the same key is queued or running. The message is localized and never names the key (final review I3: a key
+ * holds the workspace path); the key stays on the error for logs and callers.
+ */
 export class JobConflictError extends Error {
-  constructor(key: string) {
-    super(t().jobs.conflict({ key }));
+  constructor(readonly key: string) {
+    super(t().jobs.conflict);
     this.name = 'JobConflictError';
   }
 }
@@ -29,6 +33,11 @@ export interface JobSpec {
    * when the signal was aborted (the rejection is taken to be caused by the abort) unless the error is a JobFailedError.
    */
   run: (signal: AbortSignal, jobId: string) => Promise<void | 'cancelled'>;
+  /**
+   * A separate lane with its own limit (`JobQueue` option `lanes`), e.g. `render`: its jobs never take the main slots, so a
+   * long render never blocks an agent turn. Its queued jobs carry `queuePosition` (jobs of the lane ahead of them).
+   */
+  lane?: string;
   /** Called when the job is cancelled while still queued (run() never starts). Errors are swallowed. The queue is pumped after it settles; a whenIdle() called after the cancel may resolve before the hook finishes. */
   onCancelledBeforeStart?: () => void | Promise<void>;
 }
@@ -50,10 +59,14 @@ export class JobQueue {
   private readonly onUpdate?: (job: JobSummary) => void;
   private readonly entries: Entry[] = [];
   private idleWaiters: Array<() => void> = [];
+  private settleWaiters: Array<{ id: string; resolve: (job: JobSummary) => void }> = [];
 
-  constructor(opts: { concurrency: number; onUpdate?: (job: JobSummary) => void }) {
+  private readonly lanes: Record<string, number>;
+
+  constructor(opts: { concurrency: number; onUpdate?: (job: JobSummary) => void; lanes?: Record<string, number> }) {
     this.concurrency = clampConcurrency(opts.concurrency, 1);
     this.onUpdate = opts.onUpdate;
+    this.lanes = Object.fromEntries(Object.entries(opts.lanes ?? {}).map(([k, v]) => [k, clampConcurrency(v, 1)]));
   }
 
   enqueue(spec: JobSpec): JobSummary {
@@ -86,7 +99,7 @@ export class JobQueue {
   }
 
   /** Records agent-neutral details learnt while the job runs (e.g. the session id) and broadcasts them. */
-  patch(id: string, fields: Partial<Pick<JobSummary, 'sessionId' | 'notes' | 'formats'>>): void {
+  patch(id: string, fields: Partial<Pick<JobSummary, 'sessionId' | 'notes' | 'formats' | 'progress'>>): void {
     const entry = this.entries.find((e) => e.summary.id === id);
     const same = (k: keyof typeof fields) => JSON.stringify(entry!.summary[k]) === JSON.stringify(fields[k]);
     if (!entry || (Object.keys(fields) as Array<keyof typeof fields>).every(same)) return;
@@ -103,15 +116,37 @@ export class JobQueue {
     this.pump();
   }
 
+  /** The job's final summary once it is no longer queued or running (at once when it already ended); null for an unknown id. */
+  whenSettled(id: string): Promise<JobSummary | null> {
+    const entry = this.entries.find((e) => e.summary.id === id);
+    if (!entry) return Promise.resolve(null);
+    if (!ACTIVE.has(entry.summary.state)) return Promise.resolve({ ...entry.summary });
+    return new Promise((resolve) => this.settleWaiters.push({ id, resolve }));
+  }
+
   whenIdle(): Promise<void> {
     if (!this.entries.some((e) => ACTIVE.has(e.summary.state))) return Promise.resolve();
     return new Promise((r) => this.idleWaiters.push(r));
   }
 
+  private laneOf(e: Entry): string | null { return e.spec.lane !== undefined && Object.hasOwn(this.lanes, e.spec.lane) ? e.spec.lane : null; }
+
   private pump(): void {
-    const running = this.entries.filter((e) => e.summary.state === 'running').length;
-    const waiting = this.entries.filter((e) => e.summary.state === 'queued').reverse();
-    for (const entry of waiting.slice(0, Math.max(0, this.concurrency - running))) this.start(entry);
+    for (const lane of [null, ...Object.keys(this.lanes)]) {
+      const mine = this.entries.filter((e) => this.laneOf(e) === lane);
+      const running = mine.filter((e) => e.summary.state === 'running').length;
+      const waiting = mine.filter((e) => e.summary.state === 'queued').reverse();
+      const limit = lane === null ? this.concurrency : this.lanes[lane]!;
+      for (const entry of waiting.slice(0, Math.max(0, limit - running))) this.start(entry);
+      if (lane === null) continue;
+      // Queued jobs of a lane: how many of its jobs are ahead (running, or queued earlier).
+      const ahead = mine.filter((e) => e.summary.state === 'running').length;
+      waiting.filter((e) => e.summary.state === 'queued').forEach((e, i) => {
+        if (e.summary.queuePosition === ahead + i) return;
+        e.summary.queuePosition = ahead + i;
+        this.update(e);
+      });
+    }
     if (!this.entries.some((e) => ACTIVE.has(e.summary.state))) {
       const waiters = this.idleWaiters;
       this.idleWaiters = [];
@@ -121,6 +156,7 @@ export class JobQueue {
 
   private start(entry: Entry): void {
     entry.summary.state = 'running';
+    delete entry.summary.queuePosition;
     entry.summary.startedAt = new Date().toISOString();
     this.update(entry);
     Promise.resolve().then(() => entry.spec.run(entry.controller.signal, entry.summary.id)).then(
@@ -131,9 +167,15 @@ export class JobQueue {
 
   private finish(entry: Entry, state: 'succeeded' | 'failed' | 'cancelled', error?: string): void {
     entry.summary.state = state;
+    delete entry.summary.queuePosition;
     entry.summary.finishedAt = new Date().toISOString();
     if (error && state === 'failed') entry.summary.error = error;
     this.update(entry);
+    const mine = this.settleWaiters.filter((w) => w.id === entry.summary.id);
+    if (mine.length > 0) {
+      this.settleWaiters = this.settleWaiters.filter((w) => w.id !== entry.summary.id);
+      for (const w of mine) w.resolve({ ...entry.summary });
+    }
   }
 
   private update(entry: Entry): void {

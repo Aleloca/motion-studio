@@ -14,6 +14,13 @@ import { noteCoreChange } from '../core-changes.ts';
 export const CREATIVE_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
+/**
+ * versions.json writes, by file, for the whole process: a turn appends its version while a render job (Task 5) records a
+ * render in an earlier one, each through its own `CreativeStore`, and neither may lose the other's write.
+ */
+const versionsLock = new KeyedMutex();
+/** conversation.jsonl appends, by file, for the whole process (same reason). */
+const conversationLock = new KeyedMutex();
 /** yyyy-mm-dd in the user's local time zone (a creative made at 23:30 belongs to that day). */
 const localDay = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
@@ -118,14 +125,33 @@ export class CreativeStore {
   }
 
   appendVersion(slug: string, entry: VersionEntry): Promise<void> {
-    return this.lock.run(`v:${slug}`, async () => {
+    const file = this.file(slug, 'versions.json');
+    return versionsLock.run(file, async () => {
       const versions = await this.readVersions(slug);
-      await writeJsonFileAtomic(this.file(slug, 'versions.json'), { schemaVersion: 1, versions: [...versions, entry] });
+      await writeJsonFileAtomic(file, { schemaVersion: 1, versions: [...versions, entry] });
+    });
+  }
+
+  /**
+   * Rewrites version `n` with `fn` (read, changed and written under the process-wide versions.json lock). Returns the new
+   * entry; 404 when the version does not exist.
+   */
+  updateVersion(slug: string, n: number, fn: (v: VersionEntry) => VersionEntry): Promise<VersionEntry> {
+    const file = this.file(slug, 'versions.json');
+    return versionsLock.run(file, async () => {
+      const versions = await this.readVersions(slug);
+      const at = versions.findIndex((v) => v.n === n);
+      if (at < 0) throw new WorkspaceError(404, t().errors.versionNNotFound({ n }));
+      const next = fn(versions[at]!);
+      const all = versions.map((v, i) => (i === at ? next : v));
+      await writeJsonFileAtomic(file, { schemaVersion: 1, versions: all });
+      return next;
     });
   }
 
   appendConversation(slug: string, entry: ConversationEntry): Promise<void> {
-    return this.lock.run(`l:${slug}`, async () => {
+    // Process-wide per file (M7): a render job and a turn append through their own stores.
+    return conversationLock.run(this.file(slug, 'conversation.jsonl'), async () => {
       const file = this.file(slug, 'conversation.jsonl');
       // Creating the log (an old or hand-made creative, or one git removed) adds an entry to the creative folder: note it
       // so the post-run tripwire does not read it as a move (FP3).

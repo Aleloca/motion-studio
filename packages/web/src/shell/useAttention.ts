@@ -2,7 +2,7 @@ import type { ApprovalRequest, JobSummary } from '@motion-studio/shared';
 import { useEffect, useRef } from 'react';
 import { useT } from '../i18n.tsx';
 import { toast } from '../ui/index.ts';
-import { APP_TITLE, appInBackground, notifyApprovalsEnabled, notifyReadyEnabled, onNotificationClick, setBadge, showNotification } from './notify.ts';
+import { APP_TITLE, appInBackground, notifyApprovalsEnabled, notifyReadyEnabled, onNotificationClick, setBadge, setRendersRunning, showNotification } from './notify.ts';
 
 export interface AttentionOptions {
   /** "Review" on a toast. */
@@ -97,4 +97,11 @@ export function useReadyNotice(jobs: Readonly<Record<string, JobSummary>>): void
       }
     }
   }, [jobs, t]);
+}
+
+/** The desktop app learns how many renders are queued or running (its close confirmation, Task 8); 0 when the page goes. */
+export function useRenderCloseGuard(jobs: Record<string, JobSummary>): void {
+  const count = Object.values(jobs).filter((j) => j.kind === 'render' && (j.state === 'queued' || j.state === 'running')).length;
+  useEffect(() => { setRendersRunning(count); }, [count]);
+  useEffect(() => () => setRendersRunning(0), []);
 }

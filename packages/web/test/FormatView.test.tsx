@@ -32,8 +32,23 @@ const api = {
   cancelJob: vi.fn(async () => ({ cancelled: true })),
   setExportPick: vi.fn(async (..._a: unknown[]) => detail),
   setFormatLink: vi.fn(async (..._a: unknown[]) => detail),
+  // Task 8: v2 versions.
+  revokePreview: vi.fn(async (..._a: unknown[]) => ({ revoked: true })),
+  previewSession: vi.fn(async (_s: string, _c: string, n: number, format: string, _o: string) => ({
+    url: `http://127.0.0.1:61234/tok-${format}-v${n}/runtime/index.html?mode=preview&parentOrigin=x`, token: `tok-${format}-v${n}`, origin: 'http://127.0.0.1:61234',
+    expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), format, hash: 'b'.repeat(64), width: 1080, height: 1920, duration: 8, fps: 30,
+  })),
+  getStoryboard: vi.fn(async (_s: string, _c: string, n: number, format: string) => ({
+    format, hash: 'b'.repeat(64), width: 270, expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+    frames: [
+      { t: 0, kind: 'scene', scene: 'intro', width: 270, height: 480, url: `/sb/${format}/v${n}/f-0.jpg?s=1` },
+      { t: 3.5, kind: 'scene', scene: 'offerta', width: 270, height: 480, url: `/sb/${format}/v${n}/f-1.jpg?s=1` },
+      { t: 1, kind: 'poster', width: 270, height: 480, url: `/sb/${format}/v${n}/f-2.jpg?s=1` },
+    ],
+  })),
 };
-vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error { status = 0; } }));
+class ApiError extends Error { constructor(public status: number, message: string, public code?: string) { super(message); } }
+vi.mock('../src/api.ts', () => ({ api, ApiError }));
 const flip = vi.fn(async () => undefined);
 const chat = vi.hoisted(() => ({ renders: 0 }));
 vi.mock('../src/components/Conversation.tsx', async (orig) => {
@@ -42,6 +57,7 @@ vi.mock('../src/components/Conversation.tsx', async (orig) => {
 });
 vi.mock('../src/motion/motion.ts', async (orig) => ({ ...(await orig<typeof import('../src/motion/motion.ts')>()), flip }));
 const { FormatView } = await import('../src/screens/FormatView.tsx');
+const { __resetPreviewSessions, RELEASE_GRACE_MS } = await import('../src/components/compositionPreview.ts');
 const { TopBar } = await import('../src/shell/TopBars.tsx');
 const { ShellContext } = await import('../src/shell/ShellContext.tsx');
 const { __resetPendingPins, pinsKey, usePendingPins } = await import('../src/screens/pendingPins.ts');
@@ -96,6 +112,7 @@ let play: ReturnType<typeof vi.fn>;
 let pause: ReturnType<typeof vi.fn>;
 let platform: ReturnType<typeof vi.spyOn> | null = null;
 beforeEach(() => {
+  __resetPreviewSessions();
   vi.clearAllMocks();
   detail = makeDetail([version(1)]);
   __resetPendingPins();
@@ -495,5 +512,93 @@ describe('FormatView · per-format versions (Phase 9)', () => {
     await userEvent.type(screen.getByLabelText('Chiedi una modifica'), 'Più ritmo');
     await userEvent.click(screen.getByRole('button', { name: 'Invia' }));
     await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'lancio', { text: 'Più ritmo', pins: [], formats: [VIDEO] }));
+  });
+});
+
+
+describe('FormatView · live composition player (Task 8)', () => {
+  const v2 = (n: number): VersionEntry => ({
+    ...version(n), outputs: [out('instagram-post-1x1', 'post.png')],
+    compositions: [{ format: VIDEO, dir: `compositions/${VIDEO}`, hash: 'b'.repeat(64) }],
+  });
+  const READY = { type: 'ready', version: 1, duration: 8, fps: 30, width: 1080, height: 1920, scenes: [], errors: [] };
+  const frame = () => waitFor(() => { const f = document.querySelector('.ms-fv-media iframe') as HTMLIFrameElement | null; expect(f).not.toBeNull(); return f!; });
+  const fromRuntime = (f: HTMLIFrameElement, data: unknown) => {
+    const ev = new MessageEvent('message', { data, origin: 'null' });
+    Object.defineProperty(ev, 'source', { value: f.contentWindow });
+    act(() => { window.dispatchEvent(ev); });
+  };
+  const readyPlayer = async () => {
+    const f = await frame();
+    const posted = vi.spyOn(f.contentWindow!, 'postMessage');
+    fromRuntime(f, READY);
+    await waitFor(() => expect((document.querySelector('.ms-fv-play') as HTMLButtonElement).disabled).toBe(false));
+    return { f, posted };
+  };
+
+  it('a v2 version plays in the sandboxed live player instead of a <video>', async () => {
+    detail = makeDetail([v2(1)]);
+    render(<Harness format={VIDEO} />);
+    const f = await frame();
+    expect(f.getAttribute('sandbox')).toBe('allow-scripts');
+    expect(f.getAttribute('src')).toContain('/tok-tiktok-9x16-v1/');
+    expect(document.querySelector('.ms-fv-media video')).toBeNull();
+    expect(api.previewSession).toHaveBeenCalledWith('acme', 'lancio', 1, VIDEO, location.origin);
+  });
+
+  it('the phase 7 transport drives it: play, pause, frame step, speed', async () => {
+    detail = makeDetail([v2(1)]);
+    render(<Harness format={VIDEO} />);
+    const { f, posted } = await readyPlayer();
+    await userEvent.click(screen.getByRole('button', { name: 'Riproduci (Spazio)' }));
+    expect(posted).toHaveBeenLastCalledWith({ type: 'play', loop: false, rate: 1 }, '*');
+    fromRuntime(f, { type: 'time', t: 2, playing: true });
+    await userEvent.click(screen.getByRole('button', { name: 'Pausa (Spazio)' }));
+    expect(posted).toHaveBeenLastCalledWith({ type: 'pause' }, '*');
+    fromRuntime(f, { type: 'time', t: 2, playing: false });
+    await userEvent.click(screen.getByRole('button', { name: 'Fotogramma successivo (→)' }));
+    const seek = posted.mock.calls.map((c) => c[0] as { type: string; t?: number }).filter((m) => m.type === 'seek').at(-1)!;
+    expect(seek.t).toBeCloseTo(2 + 1 / 30, 5);
+    await userEvent.click(screen.getByRole('button', { name: 'Ripeti' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Riproduci (Spazio)' }));
+    expect(posted).toHaveBeenLastCalledWith({ type: 'play', loop: true, rate: 1 }, '*');
+  });
+
+  it('the storyboard strip lists the scenes; a click seeks there', async () => {
+    detail = makeDetail([v2(1)]);
+    render(<Harness format={VIDEO} />);
+    const { posted } = await readyPlayer();
+    const strip = await screen.findByRole('list', { name: 'Storyboard' });
+    const scenes = within(strip).getAllByRole('button');
+    expect(scenes.map((b) => b.getAttribute('aria-label'))).toEqual(['intro, a 00:00.00', 'offerta, a 00:03.50']);
+    await userEvent.click(scenes[1]!);
+    expect(posted).toHaveBeenLastCalledWith({ type: 'seek', t: 3.5 }, '*');
+  });
+
+  it('frame comments work on the paused live picture, at the current time', async () => {
+    detail = makeDetail([v2(1)]);
+    render(<Harness format={VIDEO} />);
+    const { f } = await readyPlayer();
+    fromRuntime(f, { type: 'time', t: 3.5, playing: false });
+    await userEvent.click(await screen.findByRole('button', { name: 'Commenta il fotogramma a 00:03.50' }));
+    expect(screen.getByRole('group', { name: /Commento 1/ })).toBeTruthy();
+    expect(screen.getByText('A 00:03.50')).toBeTruthy();
+  });
+
+  it('a legacy answer (404) keeps the version\'s own media', async () => {
+    api.previewSession.mockRejectedValueOnce(new ApiError(404, 'none', 'composition-not-found'));
+    detail = makeDetail([{ ...v2(1), outputs: version(1).outputs }]);
+    render(<Harness format={VIDEO} />);
+    await player();
+    expect(document.querySelector('.ms-fv-media iframe')).toBeNull();
+  });
+
+  it('busy (429): a calm "retrying" state, not an error', async () => {
+    api.previewSession.mockRejectedValueOnce(new ApiError(429, 'busy', 'preview-busy'));
+    detail = makeDetail([v2(1)]);
+    render(<Harness format={VIDEO} />);
+    expect(await screen.findByText('Le anteprime sono occupate: riprovo tra un momento…')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+    await frame();
   });
 });

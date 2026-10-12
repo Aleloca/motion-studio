@@ -263,7 +263,7 @@ describe('version usage', { timeout: 30_000 }, () => {
     const store = new CreativeStore(projectDir);
     const created = await store.create({ title: 'Spot', brief: { goal: 'g', message: '', formats: ['instagram-post-1x1'], durationSec: 5, assets: [], notes: '' } });
     const queue = new JobQueue({ concurrency: 1 });
-    const service = new CreativeTurnService({
+    const service = new CreativeTurnService({ agentContract: 'media',
       queue, git, media: NoMediaTools, vault: new MemoryVault(),
       launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},

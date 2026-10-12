@@ -22,6 +22,9 @@ describe('preload', () => {
     expect(electron.ipcRenderer.invoke).toHaveBeenLastCalledWith('ms:notify', { title: 'Motion Studio', body: 'Run a command' });
     await bridge.setBadge(3);
     expect(electron.ipcRenderer.invoke).toHaveBeenLastCalledWith('ms:badge', 3);
+    // Task 8: the renders queued or running, for the confirmation on close.
+    await (bridge as unknown as { setRendersRunning(n: number): Promise<void> }).setRendersRunning(2);
+    expect(electron.ipcRenderer.invoke).toHaveBeenLastCalledWith('ms:renders-running', 2);
   });
 });
 

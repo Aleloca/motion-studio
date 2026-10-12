@@ -1,0 +1,22 @@
+{
+  "name": "@motion-studio/composition-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser runtime that mounts a composition, seeks it deterministically and plays it in the live preview.",
+  "exports": {
+    "./protocol": "./src/protocol.ts",
+    "./page": "./src/page.ts",
+    "./dist": "./src/dist-dir.ts"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@motion-studio/shared": "workspace:*",
+    "jsdom": "^26.1.0",
+    "tsup": "^8.5.0",
+    "vitest": "^3.2.0"
+  }
+}

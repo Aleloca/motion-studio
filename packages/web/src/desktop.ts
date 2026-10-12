@@ -15,6 +15,8 @@ export interface DesktopBridge {
   notifyStatus?(): Promise<{ supported: boolean }>;
   /** Dock badge with the pending approvals (0 clears it); the Dock bounces once when it grows. */
   setBadge?(n: number): Promise<void>;
+  /** How many renders are queued or running: closing the window with one asks first (Task 8). Missing before Phase 10. */
+  setRendersRunning?(n: number): Promise<void>;
   /** Calls `cb` when one of the app's native notifications is clicked; returns the unsubscribe. Missing before Phase 7. */
   onAttentionClick?(cb: () => void): () => void;
   /** Integrated title bar: recolours the window controls overlay and background for the page's theme. Missing before Phase 9. */
@@ -23,6 +25,17 @@ export interface DesktopBridge {
   onFullscreenChange?(cb: (fullscreen: boolean) => void): () => void;
   /** The full-screen state now (synchronous), for the first frame after a reload. Missing in early Phase 9 builds. */
   isFullscreen?(): boolean;
+  /** The UI token of the core this window was opened for (synchronous; final wave B3). Missing before Phase 10. */
+  uiToken?(): string | null;
+}
+
+/**
+ * `rel` of an external `target="_blank"` link. In the desktop app the window-open handler hands a link to the system
+ * browser only when the referrer is the app's own page, so no `noreferrer` there (the system browser receives the URL
+ * alone, never a Referer). In a plain browser, `noreferrer` keeps the local address out of other sites' logs.
+ */
+export function externalLinkRel(): string {
+  return desktop() ? 'noopener' : 'noopener noreferrer';
 }
 
 /** The Electron preload bridge, or null in a plain browser (or when the bridge is malformed). */

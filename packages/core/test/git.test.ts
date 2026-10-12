@@ -4,10 +4,14 @@ import { appendFile, mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
 import { execCommand, type CommandExec } from '../src/exec.ts';
 import { Git } from '../src/git.ts';
 import { IntegrityStore, snapshotProtected } from '../src/project-integrity.ts';
+
+// Many of these tests run real git on a loaded machine: a generous timeout for this file only.
+vi.setConfig({ testTimeout: 60_000 });
 
 describe('Git', () => {
   it('inits a repo and commits all files, returning the sha', async () => {

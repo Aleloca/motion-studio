@@ -1,13 +1,17 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { execCommand, type CommandExec } from '../exec.ts';
+import { execFfVia, isRegularFileNow, mediaInput, type FfArg } from './ffmpeg-exec.ts';
+import { frameScaleFilter } from './ffmpeg-filters.ts';
+import { isSvgName, svgSize } from './svg-size.ts';
 
 export interface MediaInfo { width: number; height: number; durationSec: number | null; /** Average frame rate of the video stream, when known. */ fps?: number }
 export interface MediaTools {
   readonly available: boolean;
   probe(file: string): Promise<MediaInfo | null>;
   poster(video: string, out: string, atSec?: number): Promise<boolean>;
-  frame(video: string, out: string, atSec: number): Promise<boolean>;
+  /** One frame at `atSec` (or the first one when the clip is shorter). `width`: shrink to at most this width (never enlarge). */
+  frame(video: string, out: string, atSec: number, opts?: { width?: number }): Promise<boolean>;
 }
 
 export const NoMediaTools: MediaTools = {
@@ -20,22 +24,34 @@ export const NoMediaTools: MediaTools = {
 const STILL_CODECS = new Set(['png', 'mjpeg', 'webp', 'bmp', 'tiff']);
 
 export async function createFfmpegTools(exec: CommandExec = execCommand): Promise<MediaTools> {
-  const check = await exec('ffprobe', ['-version'], { timeoutMs: 10_000 });
+  const check = await execFfVia(exec, 'ffprobe', ['-version'], { timeoutMs: 10_000 });
   if (check.code !== 0) return NoMediaTools;
 
-  const grab = async (video: string, out: string, atSec: number) => {
+  const grab = async (video: string, out: string, atSec: number, opts?: { width?: number }) => {
+    // SVG: never given to ffmpeg (final wave P1: no svg_pipe, whose renderer may resolve external references).
+    if (isSvgName(video)) return false;
+    // Only a regular file is handed to ffmpeg (a FIFO, socket or device would stall it: M6).
+    if (!isRegularFileNow(video)) return false;
     await mkdir(dirname(out), { recursive: true });
-    const r = await exec('ffmpeg', ['-y', '-loglevel', 'error', '-ss', String(atSec), '-i', video, '-frames:v', '1', '-q:v', '3', out], { timeoutMs: 60_000 });
-    if (r.code === 0) return true;
+    // The JPEG muxer is always named: a temp name has no image extension, and the image2 muxer (picked by extension) would
+    // read `%` in the output path as a frame-number pattern.
+    const fmt: FfArg[] = [...(opts?.width ? [frameScaleFilter(Math.round(opts.width))] : []), '-f', 'mjpeg'];
+    // A seek past the end (a still, or a clip shorter than atSec) exits 0 with no frame written: checked on disk.
+    const wrote = async () => ((await stat(out).catch(() => null))?.size ?? 0) > 0;
+    const r = await execFfVia(exec, 'ffmpeg', ['-y', '-loglevel', 'error', '-ss', String(atSec), ...mediaInput({ file: video }), '-frames:v', '1', '-q:v', '3', ...fmt, out], { timeoutMs: 60_000 });
+    if (r.code === 0 && await wrote()) return true;
     if (atSec === 0) return false;
     // Clips shorter than atSec: fall back to the first frame.
-    return (await exec('ffmpeg', ['-y', '-loglevel', 'error', '-i', video, '-frames:v', '1', '-q:v', '3', out], { timeoutMs: 60_000 })).code === 0;
+    return (await execFfVia(exec, 'ffmpeg', ['-y', '-loglevel', 'error', ...mediaInput({ file: video }), '-frames:v', '1', '-q:v', '3', ...fmt, out], { timeoutMs: 60_000 })).code === 0 && await wrote();
   };
 
   return {
     available: true,
     async probe(file) {
-      const r = await exec('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', file], { timeoutMs: 30_000 });
+      // SVG: its size from a plain text scan (svg-size.ts), never ffprobe.
+      if (isSvgName(file)) { const s = await svgSize(file); return s ? { ...s, durationSec: null } : null; }
+      if (!isRegularFileNow(file)) return null;
+      const r = await execFfVia(exec, 'ffprobe', ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', ...mediaInput({ file })], { timeoutMs: 30_000 });
       if (r.code !== 0) return null;
       try {
         const data = JSON.parse(r.stdout) as { streams?: Array<{ codec_type?: string; codec_name?: string; width?: number; height?: number; avg_frame_rate?: string }>; format?: { duration?: string } };
@@ -51,6 +67,6 @@ export async function createFfmpegTools(exec: CommandExec = execCommand): Promis
       }
     },
     poster: (video, out, atSec = 0.5) => grab(video, out, atSec),
-    frame: (video, out, atSec) => grab(video, out, atSec),
+    frame: (video, out, atSec, opts) => grab(video, out, atSec, opts),
   };
 }

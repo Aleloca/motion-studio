@@ -1,5 +1,14 @@
 #!/usr/bin/env node
-// Test double for the `claude` CLI. Scenario via FAKE_CLAUDE_SCENARIO: ok | tool | usage_stream | crash | hang | hang_ignore_term | garbage | error_result | leak_fd | render | render_missing_once | render_never | render_then_crash | render_touch | brand | brand_invalid | brand_many_dropped | brand_big_guidelines | brand_symlink_summary | brand_outside_assets | brand_mixed
+// Test double for the `claude` CLI. Scenario via FAKE_CLAUDE_SCENARIO: ok | tool | usage_stream | crash | hang | hang_ignore_term | garbage | error_result | leak_fd | render | render_missing_once | render_never | render_then_crash | render_touch | brand | brand_invalid | brand_many_dropped | brand_big_guidelines | brand_symlink_summary | brand_outside_assets | brand_mixed | composition | composition_invalid | composition_layer
+// Output contract v2 (Task 5b): `composition` writes a valid composition folder per format of the block (shapes only, two
+// scenes; a still for image formats), tagged with FAKE_CLAUDE_COMP_TAG (default: the version folder, so every turn differs);
+// `composition_invalid` writes an invalid one (fps 7) on the first attempt and a valid one in the fix attempt
+// (FAKE_CLAUDE_ALWAYS_INVALID=1: every attempt); `composition_layer` adds an html layer that calls fetch (advisory warning).
+// FAKE_CLAUDE_NO_SCENES=1: compositions without scenes (normalisation adds one). FAKE_CLAUDE_SYMLINKS=<json [[name, target], …]>:
+// composition turns then plant those symlinks under the version folder.
+// FAKE_CLAUDE_STRAY=1: composition turns also write a media file and a manifest.json next to the compositions.
+// FAKE_CLAUDE_BRIDGE_CALLS=<json [[tool, args], …]>: before finishing, calls the studio bridge (as the MCP server would) and
+// appends `{ tool, status, body }` per call to FAKE_CLAUDE_BRIDGE_LOG.
 // FAKE_CLAUDE_NO_FFMPEG=1: render placeholder media even with ffmpeg installed, each file with its own content.
 // FAKE_CLAUDE_EXTRA_FILES=<json array of manifest entries>: render also writes those files (content `agent:<file>`) and lists
 // the entries whose `format` is set (an entry without one only writes its file).
@@ -83,6 +92,52 @@ rl.once('line', async (line) => {
     if (process.env.FAKE_CLAUDE_SYMLINK_AT) { const [name, target] = process.env.FAKE_CLAUDE_SYMLINK_AT.split('='); symlinkSync(target, join(block.outputDir, name)); }
     if (process.env.FAKE_CLAUDE_BG_WRITE) spawn('sh', ['-c', `sleep 1; echo late > "$0"`, process.env.FAKE_CLAUDE_BG_WRITE], { stdio: 'ignore' });
   };
+  const writeCompositions = (mode) => {
+    mkdirSync(block.workDir, { recursive: true });
+    writeFileSync(join(block.workDir, 'scene.txt'), `${prompt.length}:${Date.now()}`);
+    const tag = process.env.FAKE_CLAUDE_COMP_TAG ?? block.outputDir.split('/').pop();
+    for (const f of block.formats) {
+      const dir = f.compositionDir ?? join(block.outputDir, 'compositions', f.id);
+      mkdirSync(dir, { recursive: true });
+      const still = f.kind === 'image';
+      let duration = still ? 0 : (block.durationSec ?? 10);
+      if (f.maxDurationSec) duration = Math.min(duration, f.maxDurationSec);
+      const half = Math.round(duration * 5) / 10;
+      const clips = [{ id: 'bg', name: `${tag}`, type: 'shape', start: 0, duration, props: { x: 0, y: 0, width: f.width, height: f.height, fill: '#2060c0' } }];
+      if (mode === 'layer') {
+        mkdirSync(join(dir, 'layers'), { recursive: true });
+        writeFileSync(join(dir, 'layers', 'fx.html'), '<!doctype html><html><body><script>\nfetch("https://example.com/data.json");\n</script></body></html>');
+        clips.push({ id: 'fx', type: 'html', src: 'layers/fx.html', start: 0, duration, props: { x: 0, y: 0, width: f.width, height: f.height } });
+      }
+      const composition = {
+        $schema: 'motion-studio/composition@1', width: f.width, height: f.height, fps: mode === 'invalid' ? 7 : 30, duration, background: '#101010', fonts: [],
+        scenes: still || process.env.FAKE_CLAUDE_NO_SCENES ? [] : [{ id: 'one', start: 0, duration: half }, { id: 'two', start: half, duration: Math.round((duration - half) * 10) / 10 }],
+        tracks: [{ id: 'visual', kind: 'visual', clips }],
+      };
+      writeFileSync(join(dir, 'composition.json'), JSON.stringify(composition, null, 2));
+      if (process.env.FAKE_CLAUDE_STRAY) writeFileSync(join(block.outputDir, `${f.id}.mp4`), 'agent media');
+    }
+    if (process.env.FAKE_CLAUDE_STRAY) writeFileSync(join(block.outputDir, 'manifest.json'), JSON.stringify({ schemaVersion: 1, files: [], renderCommand: 'node render.js' }));
+    for (const [name, target] of JSON.parse(process.env.FAKE_CLAUDE_SYMLINKS ?? '[]')) {
+      mkdirSync(dirname(join(block.outputDir, name)), { recursive: true });
+      spawnSync('rm', ['-rf', join(block.outputDir, name)]);
+      symlinkSync(target, join(block.outputDir, name));
+    }
+  };
+  if (block && scenario === 'composition') writeCompositions('valid');
+  if (block && scenario === 'composition_layer') writeCompositions('layer');
+  if (block && scenario === 'composition_invalid') writeCompositions(!isFix || process.env.FAKE_CLAUDE_ALWAYS_INVALID ? 'invalid' : 'valid');
+  if (block && process.env.FAKE_CLAUDE_BRIDGE_CALLS) {
+    const env = JSON.parse(mcpConfigFile.content).mcpServers.studio.env;
+    for (const [tool, payload] of JSON.parse(process.env.FAKE_CLAUDE_BRIDGE_CALLS)) {
+      const res = await fetch(`${env.MOTION_STUDIO_BRIDGE_URL}/api/bridge/${tool}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-motion-studio-bridge': tokenFile.content.trim() }, body: JSON.stringify(payload) });
+      appendFileSync(process.env.FAKE_CLAUDE_BRIDGE_LOG, `${JSON.stringify({ tool, status: res.status, body: await res.json().catch(() => null) })}\n`);
+    }
+  }
+  // An entry the agent makes at the top of its creative folder (final wave B6: the tripwire's documented trigger).
+  if (block && process.env.FAKE_CLAUDE_STRAY_ROOT) mkdirSync(join(dirname(block.workDir.replace(/\/+$/, '')), process.env.FAKE_CLAUDE_STRAY_ROOT), { recursive: true });
+  // Holds a creative turn until the file exists (a test runs something else meanwhile).
+  if (block && process.env.FAKE_CLAUDE_WAIT_FILE_CREATIVE) { while (!existsSync(process.env.FAKE_CLAUDE_WAIT_FILE_CREATIVE)) await sleep(20); }
   if (block && scenario === 'render') render(false);
   if (scenario === 'render_touch' && block) { render(false); if (process.env.FAKE_CLAUDE_TOUCH) writeFileSync(process.env.FAKE_CLAUDE_TOUCH, 'modified'); if (process.env.FAKE_CLAUDE_GIT_INIT) spawnSync('git', ['init', '-q'], { cwd: process.env.FAKE_CLAUDE_GIT_INIT }); }
   const brandBlock = (() => { const m = prompt.match(/```motion-studio-brand\n([\s\S]*?)\n```/); return m ? JSON.parse(m[1]) : null; })();

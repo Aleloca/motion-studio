@@ -137,6 +137,14 @@
 .ms-status .ms-blink { align-self: flex-start; padding: 0; border-radius: 4px; height: auto; min-height: 0; border: 0; background: transparent; color: var(--accentText); font: inherit; font-size: 12px; cursor: pointer; }
 .ms-status .ms-blink:hover { text-decoration: underline; }
 .ms-syscard { padding: 6px 16px; }
+/* The render engine (Task 8): its row, the consent to the Chrome for Testing download, the download's progress. */
+.ms-syscard + .ms-syscard { margin-top: 12px; }
+.ms-engine { padding: 4px 0 8px; display: flex; flex-direction: column; gap: 8px; }
+.ms-engine .ms-syscheck-message { margin: 0; }
+.ms-engine-progress { display: flex; flex-direction: column; gap: 6px; }
+.ms-engine-consent { display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); }
+.ms-engine-consent p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+.ms-engine-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 /* Paid services. */
 .ms-key { border-bottom: 1px solid var(--line2); }

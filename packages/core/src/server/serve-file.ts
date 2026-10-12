@@ -15,6 +15,7 @@ export async function sendConfinedFile(reply: FastifyReply, base: string, relRaw
   // Exact match: rejects a symlink at any level below base (it would bypass the allowed prefixes).
   if (!real || real !== join(realBase, rel)) return notFound();
   // Agent-written HTML/SVG is served same-origin: sandbox it so scripts cannot reach the loopback API.
-  reply.header('Content-Security-Policy', 'sandbox').header('X-Content-Type-Options', 'nosniff');
+  // Same-origin only (fix I4): another site cannot embed these files to probe for slugs, versions or sizes.
+  reply.header('Content-Security-Policy', 'sandbox').header('X-Content-Type-Options', 'nosniff').header('Cross-Origin-Resource-Policy', 'same-origin');
   return reply.sendFile(rel, base);
 }

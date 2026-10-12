@@ -14,6 +14,7 @@ import { Button, Check, Chip, Empty, Icon, Input, NavItem, Pill, Popover, Spinne
 import { useFontPreview, specimenFamily } from './brandFonts.ts';
 import { Alert, UNDO_MS, message } from './common.tsx';
 import { KEEPALIVE, deferRemoval, isPendingRemoval, removalKey, usePendingRemovals } from './deferred.ts';
+import { externalLinkRel } from '../desktop.ts';
 import './library.css';
 
 const KINDS: AssetKind[] = ['image', 'svg', 'video', 'font', 'audio', 'other'];
@@ -662,7 +663,7 @@ function AssetDetail({ slug, asset: x, describing, busy, onClose, onSaved, onDes
           <dt>{d.file}</dt><dd className="ms-lib-mono">{x.file}</dd>
           {x.width && x.height ? <><dt>{d.size}</dt><dd>{x.width}×{x.height}</dd></> : null}
           <dt>{d.added}</dt><dd>{a.origins[x.origin]} · {formatWhen(locale, x.addedAt)}</dd>
-          {x.sourceUrl ? <><dt>{d.source}</dt><dd><a href={x.sourceUrl} target="_blank" rel="noreferrer" title={x.sourceUrl}>{host}</a></dd></> : null}
+          {x.sourceUrl ? <><dt>{d.source}</dt><dd><a href={x.sourceUrl} target="_blank" rel={externalLinkRel()} title={x.sourceUrl}>{host}</a></dd></> : null}
           {x.attribution ? <><dt>{d.credit}</dt><dd>{x.attribution}</dd></> : null}
         </dl>
         <div className="ms-lib-row">

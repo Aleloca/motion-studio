@@ -6,7 +6,10 @@ import { lastCoreChange, type DirStamp } from '../core-changes.ts';
 import { PROPOSAL_LOG } from './protected-links.ts';
 import { snapshotDiff, snapshotProtected, type IntegritySnapshot } from '../project-integrity.ts';
 
-interface DirMark { ino: number; mtimeMs: number; ctimeMs: number }
+interface DirMark { ino: number; mtimeMs: number; ctimeMs: number; names: ReadonlySet<string> }
+
+/** macOS Finder metadata: an entry Finder may add at the top of a folder the user has open. Never a record. */
+const isFinderMetadata = (n: string) => n === '.DS_Store' || n.startsWith('._') || n === 'Icon\r';
 interface LogMark { ino: number; size: number; ctimeMs: number; sha: string }
 export interface TripwireResult {
   /** Protected files the core never writes during a run (or wrote itself and noted) that changed, appeared or vanished: an unambiguous tamper. The job fails and the project is quarantined. */
@@ -81,7 +84,7 @@ export async function armTripwire(projectDir: string, opts: { logs: boolean }): 
   // `outputs/` is not tracked: the core/agent create the new version folder `outputs/vN` inside it every turn, which would
   // false-positive. Changes to earlier `outputs/vK` are caught separately by the creative turn's output snapshot.
   const dirs = new Map<string, DirMark>();
-  const markDir = async (d: string) => { const st = await lstat(d).catch(() => null); if (st?.isDirectory()) dirs.set(d, { ino: st.ino, mtimeMs: st.mtimeMs, ctimeMs: st.ctimeMs }); };
+  const markDir = async (d: string) => { const st = await lstat(d).catch(() => null); if (st?.isDirectory()) dirs.set(d, { ino: st.ino, mtimeMs: st.mtimeMs, ctimeMs: st.ctimeMs, names: new Set(await readdir(d).catch(() => [] as string[])) }); };
   for (const d of [creatives, proposals, ...slugs]) await markDir(d);
 
   // Re-enumerated at check time too: an added file (a new `.claude/settings.json`, `.git/commondir`, `.mcp.json`) counts.
@@ -113,7 +116,12 @@ export async function armTripwire(projectDir: string, opts: { logs: boolean }): 
           continue;
         }
         if (st.mtimeMs === mark.mtimeMs && st.ctimeMs === mark.ctimeMs) continue;
-        if (!explained({ ino: st.ino, ctimeMs: st.ctimeMs }, lastCoreChange(d))) moved.push(relative(projectDir, d));
+        if (explained({ ino: st.ino, ctimeMs: st.ctimeMs }, lastCoreChange(d))) continue;
+        // Only Finder metadata came or went (and nothing else changed in the names): not a move.
+        const now = new Set(await readdir(d).catch(() => [] as string[]));
+        const diff = [...now].filter((n) => !mark.names.has(n)).concat([...mark.names].filter((n) => !now.has(n)));
+        if (diff.length > 0 && diff.every(isFinderMetadata)) continue;
+        moved.push(relative(projectDir, d));
       }
 
       const rewritten: string[] = [];

@@ -5,6 +5,9 @@ files: [dist/**, package.json]
 extraResources:
   - { from: resources/web, to: web }
   - { from: resources/mcp-studio.mjs, to: mcp-studio.mjs }
+  # The composition runtime (index.html, runtime.js, layer.js, clock.js): served by the composition server to the render
+  # windows and the live preview (RUNTIME_DIST_DIR in development).
+  - { from: resources/runtime, to: runtime }
 asarUnpack: ["**/node_modules/@napi-rs/keyring*/**"]
 mac: { category: public.app-category.video, target: [{ target: dmg, arch: [arm64, x64] }, { target: zip, arch: [arm64, x64] }], hardenedRuntime: true, entitlements: build/entitlements.mac.plist, entitlementsInherit: build/entitlements.mac.plist }
 win: { target: [nsis] }

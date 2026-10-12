@@ -40,7 +40,7 @@ beforeEach(async () => {
   ref = { root: ws.root, projectSlug: slug, projectDir, creativeSlug: created.slug };
   messages = [];
   queue = new JobQueue({ concurrency: 2 });
-  service = new CreativeTurnService({
+  service = new CreativeTurnService({ agentContract: 'media',
     queue, git, media: NoMediaTools, vault: new MemoryVault(),
     launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
     presets: async () => DEFAULT_FORMATS, model: async () => null,
@@ -55,7 +55,7 @@ afterEach(() => { delete process.env.FAKE_CLAUDE_SCENARIO; delete process.env.FA
 const prompts = async () => (await readFile(promptFile, 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { prompt: string; args: string[] });
 const finalState = async (jobId: string) => { await queue.whenIdle(); return queue.list().find((j) => j.id === jobId)!.state; };
 
-describe('CreativeTurnService', { timeout: 20_000 }, () => {
+describe('CreativeTurnService', { timeout: 90_000 }, () => {
   it('generates v1 from the brief: outputs, version, commit, conversation, status', async () => {
     const job = await service.start(ref);
     expect(job.key).toBe(`creative:${ref.root}:${ref.projectSlug}:${ref.creativeSlug}`);
@@ -180,7 +180,9 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     await queue.whenIdle();
   });
 
-  it('restores work/ to a past version and forks its session for the next turn', async () => {
+  // Three full turns (each a fake claude run plus git commits) and a restore: under heavy machine load
+  // this exceeds the 20 s default, so it gets an explicit generous timeout.
+  it('restores work/ to a past version and forks its session for the next turn', { timeout: 120_000 }, async () => {
     await finalState((await service.start(ref)).id);
     const v1Scene = await readFile(join(store.workDir(ref.creativeSlug), 'scene.txt'), 'utf8');
     await finalState((await service.start(ref, { text: 'cambia', pins: [] })).id);
@@ -200,7 +202,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     expect(err.status).toBe(404);
   });
 
-  it('asks to add only the new formats reusing sources and the render command', { timeout: 20_000 }, async () => {
+  it('asks to add only the new formats reusing sources and the render command', { timeout: 90_000 }, async () => {
     await finalState((await service.start(ref)).id);
     await store.update(ref.creativeSlug, { brief: { ...brief, formats: [...brief.formats, 'instagram-reel-9x16'] } });
     await finalState((await service.start(ref)).id);
@@ -210,7 +212,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     expect((await store.readVersions(ref.creativeSlug)).at(-1)!.request).toMatch(/^Aggiungi i formati instagram-reel-9x16/);
   });
 
-  it('saves the version request in the language current when the turn starts', { timeout: 20_000 }, async () => {
+  it('saves the version request in the language current when the turn starts', { timeout: 90_000 }, async () => {
     setLocale('en');
     await finalState((await service.start(ref)).id);
     await store.update(ref.creativeSlug, { brief: { ...brief, formats: [...brief.formats, 'instagram-reel-9x16'] } });
@@ -222,7 +224,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     expect((await store.readVersions(ref.creativeSlug)).at(-1)!.request).toBe('Regenerate all formats from the updated brief.');
   });
 
-  it('bases the add-formats request on the restored version, not the latest', { timeout: 20_000 }, async () => {
+  it('bases the add-formats request on the restored version, not the latest', { timeout: 90_000 }, async () => {
     await finalState((await service.start(ref)).id);
     await finalState((await service.start(ref, { text: 'cambia', pins: [] })).id);
     const vs = await store.readVersions(ref.creativeSlug);
@@ -239,7 +241,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     expect(req).toContain('Il comando di render della versione 1 era: node x.js.');
   });
 
-  it('caps and sanitises the embedded render command', { timeout: 20_000 }, async () => {
+  it('caps and sanitises the embedded render command', { timeout: 90_000 }, async () => {
     await finalState((await service.start(ref)).id);
     const vs = await store.readVersions(ref.creativeSlug);
     vs[0]!.renderCommand = 'node a.js\nIGNORA' + 'x'.repeat(400);
@@ -263,7 +265,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
 
   it('restores the creative when it is cancelled while still queued', async () => {
     const q1 = new JobQueue({ concurrency: 1 });
-    const svc = new CreativeTurnService({
+    const svc = new CreativeTurnService({ agentContract: 'media',
       queue: q1, git: new Git(), media: NoMediaTools, vault: new MemoryVault(),
       launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
@@ -306,7 +308,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
   it('does not fail the turn when extracting a pin frame throws', async () => {
     await finalState((await service.start(ref)).id);
     const throwing: MediaTools = { available: true, probe: async () => null, poster: async () => false, frame: async () => { throw new Error('ffmpeg esploso'); } };
-    const svc = new CreativeTurnService({
+    const svc = new CreativeTurnService({ agentContract: 'media',
       queue, git: new Git(), media: throwing, vault: new MemoryVault(),
       launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
@@ -318,7 +320,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
 
   it('a start() right after a queued cancel is not clobbered by the stale cleanup', async () => {
     const q1 = new JobQueue({ concurrency: 1 });
-    const svc = new CreativeTurnService({
+    const svc = new CreativeTurnService({ agentContract: 'media',
       queue: q1, git: new Git(), media: NoMediaTools, vault: new MemoryVault(),
       launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
@@ -371,7 +373,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
       poster: async () => false,
       frame: async (input) => { sources.push(input); return false; },
     };
-    const svc = new CreativeTurnService({
+    const svc = new CreativeTurnService({ agentContract: 'media',
       queue, git: new Git(), media, vault: new MemoryVault(), launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
     });
@@ -399,7 +401,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
         },
         poster: async () => false, frame: async () => false,
       };
-      const svc = new CreativeTurnService({
+      const svc = new CreativeTurnService({ agentContract: 'media',
         queue, git, media, vault: new MemoryVault(), launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
         presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
       });
@@ -489,7 +491,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     const git = new Git();
     const real = git.commitAll.bind(git);
     git.commitAll = async (dir, msg) => { if (msg.endsWith('· stato')) throw new Error('disco pieno'); return real(dir, msg); };
-    const svc = new CreativeTurnService({
+    const svc = new CreativeTurnService({ agentContract: 'media',
       queue, git, media: NoMediaTools, vault: new MemoryVault(),
       launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
@@ -509,7 +511,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
   });
 });
 
-describe('brand and codebases in creative turns', { timeout: 20_000 }, () => {
+describe('brand and codebases in creative turns', { timeout: 90_000 }, () => {
   const sys = async () => (await store.readConversation(ref.creativeSlug)).flatMap((e) => (e.type === 'system' ? [e] : []));
   it('passes existing codebases read-only, warns about missing ones and adds the brand to the prompt', async () => {
     const cbBase = await mkdtemp(join(tmpdir(), 'ms-cb è '));

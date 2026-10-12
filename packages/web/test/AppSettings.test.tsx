@@ -1,4 +1,4 @@
-import { workspaceSettingsSchema, type DoctorCheck, type JobSummary, type SecretStatus } from '@motion-studio/shared';
+import { workspaceSettingsSchema, type DoctorCheck, type JobSummary, type RenderEngineStatus, type SecretStatus } from '@motion-studio/shared';
 import { render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -7,6 +7,7 @@ import type { SettingsSection } from '../src/routes.ts';
 import { __resetToasts, getToasts } from '../src/ui/toast.tsx';
 
 let secrets: SecretStatus[];
+const electron: RenderEngineStatus = { kind: 'electron', downloadable: false, download: { state: 'idle', bytes: 0, total: null } };
 const api = {
   getSecrets: vi.fn(async () => structuredClone(secrets)),
   setSecret: vi.fn(async (provider: SecretStatus['provider']) => {
@@ -19,6 +20,9 @@ const api = {
   }),
   setLanguage: vi.fn(),
   updateSettings: vi.fn(),
+  getRenderEngine: vi.fn(async (): Promise<RenderEngineStatus> => electron),
+  getChromeDownloadInfo: vi.fn(async () => ({ version: '131.0.6778.85', sizeBytes: 98_765_432 })),
+  downloadChrome: vi.fn(async (sizeBytes: number): Promise<RenderEngineStatus> => ({ kind: null, downloadable: true, download: { state: 'running', bytes: 0, total: sizeBytes } })),
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { AppSettings } = await import('../src/screens/AppSettings.tsx');
@@ -111,6 +115,54 @@ describe('App settings · system check', () => {
     expect(screen.getByText('brew install ffmpeg')).toBeTruthy();
     await userEvent.click(screen.getAllByRole('button', { name: 'Check again' })[0]!);
     expect(onRecheck).toHaveBeenCalled();
+  });
+});
+
+describe('App settings · system check · render engine (Task 8)', () => {
+  const none: RenderEngineStatus = { kind: null, downloadable: true, download: { state: 'idle', bytes: 0, total: null } };
+  afterEach(() => { api.getRenderEngine.mockImplementation(async () => electron); });
+  it('desktop: the built-in Electron engine, nothing to download', async () => {
+    en(page('system'));
+    const row = (await screen.findByText('Built in (Electron)')).closest('.ms-engine') as HTMLElement;
+    expect(within(row).getByText('Render engine')).toBeTruthy();
+    expect(within(row).queryByRole('button')).toBeNull();
+  });
+  it('system Chrome with its version', async () => {
+    api.getRenderEngine.mockResolvedValueOnce({ kind: 'system', version: '131.0.6778.86', downloadable: false, download: { state: 'idle', bytes: 0, total: null } });
+    en(page('system'));
+    expect(await screen.findByText('Google Chrome 131.0.6778.86')).toBeTruthy();
+  });
+  it('none: offers Chrome for Testing, and downloads only after the consent to the exact size', async () => {
+    api.getRenderEngine.mockResolvedValue(none);
+    en(page('system'));
+    expect(await screen.findByText('Not available')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Download Chrome for Testing (about 100 MB)' }));
+    // The offer reads the size; nothing is downloaded yet.
+    expect(api.getChromeDownloadInfo).toHaveBeenCalledTimes(1);
+    const consent = await screen.findByRole('group', { name: 'Download Chrome for Testing?' });
+    expect(consent.textContent).toContain('131.0.6778.85');
+    expect(consent.textContent).toContain('98.8 MB');
+    expect(api.downloadChrome).not.toHaveBeenCalled();
+    // Cancel: still nothing.
+    await userEvent.click(within(consent).getByRole('button', { name: 'Cancel' }));
+    expect(api.downloadChrome).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Download Chrome for Testing (about 100 MB)' }));
+    const again = await screen.findByRole('group', { name: 'Download Chrome for Testing?' });
+    api.getRenderEngine.mockResolvedValue({ kind: null, downloadable: true, download: { state: 'running', bytes: 49_382_716, total: 98_765_432 } });
+    await userEvent.click(within(again).getByRole('button', { name: 'Download 98.8 MB' }));
+    expect(api.downloadChrome).toHaveBeenCalledWith(98_765_432);
+    const bar = await screen.findByRole('progressbar');
+    expect(bar.getAttribute('aria-valuenow')).toBe('0');
+    await waitFor(() => expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('50'), { timeout: 4000 });
+    expect(screen.getByText('Downloading 49.4 MB of 98.8 MB')).toBeTruthy();
+    api.getRenderEngine.mockResolvedValue({ kind: 'cft', version: '131.0.6778.85', downloadable: false, download: { state: 'done', bytes: 98_765_432, total: 98_765_432 } });
+    expect(await screen.findByText('Chrome for Testing 131.0.6778.85', undefined, { timeout: 4000 })).toBeTruthy();
+  });
+  it('a failed download says why and offers it again', async () => {
+    api.getRenderEngine.mockResolvedValueOnce({ ...none, download: { state: 'failed', bytes: 10, total: 98_765_432, error: 'the archive has no chrome-headless-shell' } });
+    en(page('system'));
+    expect(await screen.findByText(/The download failed: the archive has no chrome-headless-shell/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Download Chrome for Testing (about 100 MB)' })).toBeTruthy();
   });
 });
 
