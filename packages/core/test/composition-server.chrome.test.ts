@@ -192,7 +192,8 @@ describe.skipIf(!chrome)('composition server in headless Chrome', () => {
    */
   it('self-navigation of a layer is blocked by the runtime page (frame-src), in preview and in render', async () => {
     const ui = await stubUi();
-    const server = await startCompositionServer({ uiOrigins: [ui], distDir: dist });
+    const served: Array<{ path: string; status: number }> = [];
+    const server = await startCompositionServer({ uiOrigins: [ui], distDir: dist, onResponse: (e) => { served.push({ path: e.path, status: e.status }); } });
     const selfnav = { ...composition, tracks: [selfNavigationTrack()] };
     const before = canaryHits.length;
     try {
@@ -206,6 +207,11 @@ describe.skipIf(!chrome)('composition server in headless Chrome', () => {
       // The layers load at once and each one navigates within a second (meta refresh 0, a script, a click).
       await new Promise((r) => setTimeout(r, 6000));
       expect(canaryHits.slice(before)).toEqual([]);
+      // The silence means something only if the hostile layers were really loaded (C9): every one was served, in both modes.
+      for (const c of SELF_NAVIGATION_CASES) {
+        const hits = served.filter((e) => e.path.endsWith(`/layers/selfnav-${c}.html`) && e.status === 200);
+        expect(hits.length, `selfnav-${c} served`).toBeGreaterThanOrEqual(2);
+      }
       expect(await page.eval('location.href')).toBe(`${ui}/`);
       expect(await top.eval('location.href')).toBe(render.url);
       await page.close();
