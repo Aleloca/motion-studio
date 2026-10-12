@@ -38,7 +38,7 @@ After every attempt each target's folder is checked; each problem reads `composi
 
 **Warnings** never block: the static checks of every `layers/*.html` (`staticLayerCheck`: network, workers, audio, autoplay) and the validator's warnings (e.g. a still's ignored animations). They are returned by `validate_composition` and summarised in the chat after the turn.
 
-After the agent is gone the core rewrites `composition.json` in its normalised form (when that differs), then hashes the folder itself (`compositionHash`); nothing the agent writes is trusted for the hash. Up to 3 attempts, as before.
+After the agent is gone the core rewrites `composition.json` in its normalised form (when that differs; the agent's original is kept in `.studio/cache/agent-originals/<creative>/v<N>/<format>.json`), then hashes the folder itself (`compositionHash`); nothing the agent writes is trusted for the hash. Up to 3 attempts, as before.
 
 ### What Motion Studio records
 
@@ -56,9 +56,18 @@ The phase 9 rules apply to composition folders:
 - **Formats added without the agent** work as before: the version gets the followers' entries and no agent runs.
 - **History** (`formatHistory`) compares composition hashes for v2 versions and file hashes for legacy ones; a legacy version next to a v2 one always counts as changed.
 
+### Pin frames and storyboard images
+
+- The feedback frame of a pinned comment goes to `.studio/cache/pin-frames/<creative>/v<n>/<n>-<i>.jpg`. The agent reads it there and can never write there. The core writes it through real folders only (a link anywhere on the way means no frame) and a fresh `wx` temp file renamed into place. A version without a current render gets its frame from the composition.
+- Storyboard images are served only through **signed, short-lived URLs**. The token-gated `GET …/versions/:n/storyboards/:format` returns:
+  - each frame's `url`: `…/storyboard-files/<n>/<format>/<hash16>/f-<i>.jpg?s=<expiry>.<hmac>`, an HMAC-SHA256 bound to the exact path and keyed by a per-process secret, valid about 10 minutes;
+  - `expiresAt`: the UI asks again before then.
+
+  A missing, wrong or expired signature is refused (403). The path carries the composition hash, so new content never reuses a URL. Every confined file response is `Cross-Origin-Resource-Policy: same-origin`.
+
 ### MCP tools
 
-- `validate_composition({ format? })`: the same checks on the current version (all target formats, or one); returns `formats[]` (`format`, `ok`, `hash`), `problems` and `warnings`. Saves nothing.
+- `validate_composition({ format? })`: the same checks on the current version (all target formats, or one); returns `formats[]` (`format`, `ok`, `hash`: the hash after Motion Studio normalises `composition.json`, the one the version records), `problems` and `warnings`. Saves nothing.
 - `preview_frames({ format, times })`: 1–6 times in seconds; the core renders those frames (normalised media, at most 540 px wide) and returns them as PNG images (MCP image content) plus their times and any runtime errors. At most 10 calls per turn (`429` after that; malformed calls are refused without counting). Frames run in the preview lane (2 at a time, a short queue, a time limit each), never behind a long render.
 - `validate_output` (version 1) no longer exists.
 
