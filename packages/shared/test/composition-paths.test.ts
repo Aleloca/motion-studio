@@ -53,6 +53,8 @@ describe('isCompositionPath', () => {
     ['assets/x\u2060.png', false],
     ['assets/x\u206f.png', false],
     ['assets/x\ufeff.png', false],
+    ['assets/x\u061c.png', false],
+    ['assets/x\u180e.png', false],
     ['assets/x\ud800.png', false],
     ['assets/x\udc00.png', false],
     ['assets/x\ud800', false],

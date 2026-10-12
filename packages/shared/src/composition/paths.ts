@@ -10,7 +10,7 @@ export const COMPOSITION_PATH_MAX = 512;
  *   (they would cut the path when it becomes a URL);
  * - a segment that is blank or only whitespace (`assets/ /x`);
  * - NUL and every control character (C0, DEL, C1), the line/paragraph separators U+2028/U+2029, invisible and bidi
- *   format characters (U+200B–U+200F, U+202A–U+202E, U+2060–U+206F, U+FEFF) and unpaired UTF-16 surrogates;
+ *   format characters (U+061C, U+180E, U+200B–U+200F, U+202A–U+202E, U+2060–U+206F, U+FEFF) and unpaired UTF-16 surrogates;
  * - more than `COMPOSITION_PATH_MAX` characters.
  * A single linear pass, no regex: safe on any input.
  */
@@ -27,7 +27,7 @@ export function isCompositionPath(p: string): boolean {
     }
     const c = p.charCodeAt(i);
     if (c < 0x20 || (c >= 0x7f && c <= 0x9f) || c === 0x2028 || c === 0x2029) return false;
-    if ((c >= 0x200b && c <= 0x200f) || (c >= 0x202a && c <= 0x202e) || (c >= 0x2060 && c <= 0x206f) || c === 0xfeff) return false;
+    if ((c >= 0x200b && c <= 0x200f) || (c >= 0x202a && c <= 0x202e) || (c >= 0x2060 && c <= 0x206f) || c === 0xfeff || c === 0x061c || c === 0x180e) return false;
     if (c >= 0xd800 && c <= 0xdbff) {
       // A high surrogate must be followed by a low one (the pair is one character); skip the low half.
       const next = p.charCodeAt(i + 1);
