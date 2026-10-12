@@ -506,10 +506,9 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
             report('frameTimeout', `html layer painted no frame after seeking to ${time}: ${e.message}`, m.clip.id);
             throw e; // render: fail the seek rather than capture a stale layer
           }
+          // Not thrown, deliberately (C8): the report fails the render at its end (the renderer refuses any runtime error but
+          // the ignored ones), while a layer that navigated away or never answered must not stop the frames of the others.
           report('layerError', `layer seek: ${String(e instanceof Error ? e.message : e)}`, m.clip.id);
-          // Render: a layer the host could not reach (timeout, no bootstrap) fails the seek at once, like a missing frame,
-          // instead of capturing a stale layer for every later frame. The layer's own errors stay reports (C8).
-          if (opts.mode === 'render' && !(e instanceof LayerRequestError)) throw e;
         }));
       }
     }

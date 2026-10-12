@@ -237,23 +237,20 @@ describe('mount', () => {
   it('a layer without the bootstrap is reported, and seeking does not hang', async () => {
     const c = comp({ tracks: [{ id: 'v', kind: 'visual', clips: [{ id: 'l', type: 'html', src: 'layers/x.html', start: 0, duration: 2, props: {} }] }] } as Partial<Composition>);
     const { player, errors } = run(c);
-    // Render mode: the unreachable layer fails the first seek (C8), after the timeout was reported.
-    await player.ready().catch(() => {});
+    await player.ready();
     expect(errors.map((e) => e.code)).toEqual(expect.arrayContaining(['layerTimeout']));
   });
 });
 
 describe('a layer the host cannot reach (C8)', () => {
-  const layerComp = () => comp({ tracks: [{ id: 'v', kind: 'visual', clips: [{ id: 'l', type: 'html', src: 'layers/x.html', start: 0, duration: 2, props: {} }] }] } as Partial<Composition>);
-  it('render: the seek fails and the error is reported; preview: it is only reported', async () => {
-    const r = run(layerComp(), 'render');
-    await expect(r.player.ready()).rejects.toThrow(/timed out|did not answer/);
-    await expect(r.player.seek(1)).rejects.toThrow(/timed out|did not answer/);
-    expect(r.errors.map((e) => e.code)).toContain('layerError');
-    const p = run(layerComp(), 'preview');
-    await p.player.ready();
-    await expect(p.player.seek(1)).resolves.toBeUndefined();
-    expect(p.errors.map((e) => e.code)).toContain('layerError');
+  it('is reported as layerError in both modes and the seek still resolves: the renderer fails the render from the report', async () => {
+    const layerComp = () => comp({ tracks: [{ id: 'v', kind: 'visual', clips: [{ id: 'l', type: 'html', src: 'layers/x.html', start: 0, duration: 2, props: {} }] }] } as Partial<Composition>);
+    for (const mode of ['render', 'preview'] as const) {
+      const r = run(layerComp(), mode);
+      await r.player.ready();
+      await expect(r.player.seek(1)).resolves.toBeUndefined();
+      expect(r.errors.map((e) => e.code), mode).toContain('layerError');
+    }
   });
 });
 
