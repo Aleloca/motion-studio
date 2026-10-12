@@ -19,8 +19,13 @@ export interface LayerHost {
   tick(t: number): void;
 }
 
-export function connectLayer(frame: HTMLIFrameElement, natives: Natives, timeoutMs: number): LayerHost {
+/**
+ * `failFast` (render mode, M3): once a request got no reply within `timeoutMs`, the layer is dead and every later request
+ * fails at once instead of waiting again; the caller still reports each failure, so the render fails at its end as before.
+ */
+export function connectLayer(frame: HTMLIFrameElement, natives: Natives, timeoutMs: number, o: { failFast?: boolean } = {}): LayerHost {
   let port: MessagePort | null = null;
+  let dead: string | null = null;
   let nextId = 1;
   const pending = new Map<number, { resolve: (r: LayerResult) => void }>();
   let onHello: (() => void) | null = null;
@@ -46,11 +51,14 @@ export function connectLayer(frame: HTMLIFrameElement, natives: Natives, timeout
   connected.catch(() => {});
 
   const request = async (op: 'ready' | 'seek', t?: number) => {
+    if (dead !== null) throw new LayerRequestError(`layer ${op} skipped: ${dead}`);
     await connected;
     const id = nextId++;
     const reply = new Promise<LayerResult>((resolve) => { pending.set(id, { resolve }); });
     port!.postMessage(op === 'seek' ? { id, op, t } : { id, op });
-    const r = await withTimeout(reply, timeoutMs, natives, `layer ${op} timed out`).finally(() => pending.delete(id));
+    const r = await withTimeout(reply, timeoutMs, natives, `layer ${op} timed out`)
+      .catch((e: unknown) => { if (o.failFast) dead = `the layer did not answer a ${op} within ${timeoutMs} ms`; throw e; })
+      .finally(() => pending.delete(id));
     if (!r.ok) throw new LayerRequestError(r.error ?? `layer ${op} failed`, r.code);
     return r;
   };

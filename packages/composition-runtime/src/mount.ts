@@ -308,7 +308,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
         frame.tabIndex = -1;
         frame.name = encodeLayerConfig({ v: 1, mode: opts.mode, clipId: clip.id, params, fonts: layerFonts, frameTimeoutMs: Math.max(1, Math.floor(timeouts.layer / 2)) });
         Object.assign(frame.style, { display: 'block', width: '100%', height: '100%', border: '0', background: 'transparent', colorScheme: 'normal' });
-        layer = connectLayer(frame, n, timeouts.layer);
+        layer = connectLayer(frame, n, timeouts.layer, { failFast: opts.mode === 'render' });
         frame.src = url;
         content.appendChild(frame);
         const lh = layer;
