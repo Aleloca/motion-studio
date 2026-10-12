@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canFollow, checkLink, defaultLinks, effectiveLinks, latestDurationOf, DEFAULT_FORMATS, followerMatches, followerVersion, formatHistory, renderProblems, renderState, starOf, type FormatPreset, type OutputFileInfo, type VersionEntry } from '../src/index.ts';
+import { canFollow, checkLink, defaultLinks, effectiveLinks, latestDurationOf, DEFAULT_FORMATS, followerMatches, followerVersion, formatHistory, legacyTurnKind, linksAfterBriefSave, renderProblems, renderState, starOf, type FormatPreset, type OutputFileInfo, type VersionEntry } from '../src/index.ts';
 
 const preset = (id: string): FormatPreset => DEFAULT_FORMATS.find((f) => f.id === id)!;
 const REEL = preset('instagram-reel-9x16');
@@ -322,5 +322,22 @@ describe('latestDurationOf with compositions', () => {
     expect(latestDurationOf([v2(1, [['reel', 'c']], [dur(rendered('reel', 'f', 'c'), 20)])], 'reel')).toBe(20);
     expect(latestDurationOf([v2(1, [['reel', 'c']], [dur(rendered('reel', 'f', 'x'), 20)])], 'reel')).toBeUndefined();
     expect(latestDurationOf([ver(1, [dur(out('reel', h('a')), 30)]), v2(2, [['post', 'p']])], 'reel')).toBe(30);
+  });
+});
+
+describe('legacy turns and brief-save links (final review I4)', () => {
+  const legacy = ver(1, [out(REEL.id, h('a'))]);
+  it('a brief save links only the formats it adds, against the primaries already there; stored links are kept', () => {
+    expect(linksAfterBriefSave({ formats: [REEL.id], links: {} }, [REEL.id, TIKTOK.id], DEFAULT_FORMATS)).toEqual({ [TIKTOK.id]: REEL.id });
+    expect(linksAfterBriefSave({ formats: [REEL.id], links: {} }, [REEL.id, POST.id], DEFAULT_FORMATS)).toEqual({});
+    expect(linksAfterBriefSave({ formats: [REEL.id, TIKTOK.id], links: {} }, [REEL.id, TIKTOK.id], DEFAULT_FORMATS)).toEqual({});
+  });
+  it('legacy base: only linked followers added → followers; anything else → convert; v2 or no base → normal', () => {
+    expect(legacyTurnKind(legacy, { formats: [REEL.id, TIKTOK.id], links: { [TIKTOK.id]: REEL.id } })).toBe('followers');
+    expect(legacyTurnKind(legacy, { formats: [REEL.id, POST.id], links: {} })).toBe('convert');
+    expect(legacyTurnKind(legacy, { formats: [REEL.id, TIKTOK.id, POST.id], links: { [TIKTOK.id]: REEL.id } })).toBe('convert');
+    expect(legacyTurnKind(legacy, { formats: [REEL.id], links: {} })).toBe('convert');
+    expect(legacyTurnKind(v2(1, [[REEL.id, 'a']]), { formats: [REEL.id, POST.id], links: {} })).toBe('normal');
+    expect(legacyTurnKind(undefined, { formats: [REEL.id], links: {} })).toBe('normal');
   });
 });

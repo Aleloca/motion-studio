@@ -699,6 +699,32 @@ describe('CreativeCanvas · review round 1', () => {
     expect(within(await openBadge(/^Instagram · Post 1:1: si esporta/)).queryByRole('button', { name: 'Riparti da qui' })).toBeNull();
   });
 
+  it('a legacy creative: adding a non-linked format warns before "Save and regenerate" that it converts with the agent; a linked one does not (I4)', async () => {
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Modifica il brief' }));
+    const form = document.querySelector('.ms-brief-form') as HTMLElement;
+    const notice = () => within(form).queryByText(/Rigenerare converte ogni formato in una composizione con l’agente/);
+    // Unchanged formats: regenerating a legacy creative converts it.
+    expect(notice()).toBeTruthy();
+    // Shorts is linked to TikTok (9:16) by the save: copied without the agent, no conversion.
+    await userEvent.click(within(within(form).getByRole('group', { name: 'YouTube' })).getByRole('button', { name: /Shorts/ }));
+    expect(notice()).toBeNull();
+    // A 16:9 format has no primary: everything converts.
+    await userEvent.click(within(within(form).getByRole('group', { name: 'YouTube' })).getAllByRole('button', { name: /^Video/ })[0]!);
+    expect(notice()).toBeTruthy();
+  });
+
+  it('a v2 creative shows no conversion notice', async () => {
+    detail = makeDetail([{ ...version(1, 'Dal brief', []), compositions: [{ format: 'instagram-post-1x1', dir: 'compositions/instagram-post-1x1', hash: 'c'.repeat(64) }, { format: 'tiktok-9x16', dir: 'compositions/tiktok-9x16', hash: 'b'.repeat(64) }] }]);
+    render(<Harness live={emptyLive()} />);
+    await ready();
+    await userEvent.click(screen.getByRole('tab', { name: 'Brief' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Modifica il brief' }));
+    expect(within(document.querySelector('.ms-brief-form') as HTMLElement).queryByText(/converte ogni formato/)).toBeNull();
+  });
+
   it('edits the brief with ui controls: length segments, format chips, same save semantics', async () => {
     render(<Harness live={emptyLive()} />);
     await ready();

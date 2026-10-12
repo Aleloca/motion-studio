@@ -56,6 +56,44 @@ export function defaultLinks(formats: FormatPreset[], durationSec?: number | nul
 }
 
 /**
+ * The stored links after a brief save that sets the formats to `next` (core `CreativeTurnService.update`): links change only
+ * through `setLink`, so the stored ones are kept; each format the save ADDS gets its default link against the primaries
+ * already there and the other added formats (`defaultLinks`, the duration unknown: checked at materialization).
+ */
+export function linksAfterBriefSave(current: Pick<Brief, 'formats' | 'links'>, next: readonly string[], presets: readonly FormatPreset[]): Record<string, string> | undefined {
+  const added = next.filter((f) => !current.formats.includes(f));
+  if (added.length === 0) return current.links;
+  const active = effectiveLinks(current.links, current.formats);
+  const primaries = current.formats.filter((f) => next.includes(f) && !Object.hasOwn(active, f));
+  const known = [...primaries, ...added].map((id) => presets.find((p) => p.id === id)).filter((p): p is FormatPreset => p !== undefined);
+  const defaults = defaultLinks(known, undefined);
+  const out = { ...current.links };
+  for (const f of added) {
+    delete out[f];
+    if (Object.hasOwn(defaults, f)) out[f] = defaults[f]!;
+  }
+  return out;
+}
+
+/** A phase 9 version: rendered media and no compositions (spec §7). */
+export const isLegacyMediaVersion = (v: VersionEntry | undefined): v is VersionEntry => v !== undefined && v.compositions === undefined && v.outputs.length > 0;
+
+/**
+ * What a turn without a message or explicit formats does on base `base` with `brief` (final review I4, ruling A):
+ * - `followers`: a legacy base and the brief only ADDS linked followers: the phase 9 path, no agent (copies of their
+ *   primaries' files);
+ * - `convert`: any other such turn on a legacy base converts every format to compositions with the agent (more tokens once);
+ * - `normal`: no legacy base.
+ * The core may still convert a `followers` turn when a primary's file cannot be carried.
+ */
+export function legacyTurnKind(base: VersionEntry | undefined, brief: Pick<Brief, 'formats' | 'links'>): 'followers' | 'convert' | 'normal' {
+  if (!isLegacyMediaVersion(base)) return 'normal';
+  const links = effectiveLinks(brief.links, brief.formats);
+  const adding = brief.formats.filter((f) => !hasFormat(base, f));
+  return adding.length > 0 && adding.every((f) => Object.hasOwn(links, f)) ? 'followers' : 'convert';
+}
+
+/**
  * The links that actually apply, follower → primary: drops self-links, links whose follower or primary is not in `formats`
  * (when given; e.g. `effectiveLinks(brief.links, brief.formats)`) and chains, i.e. a link whose primary is itself a follower
  * (in a cycle A→B, B→A both are dropped). Never throws on bad data: a stored brief stays readable.

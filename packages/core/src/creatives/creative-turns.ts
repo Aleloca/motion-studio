@@ -1,7 +1,7 @@
 import { creativeJobKey } from '@motion-studio/shared';
 import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
-import { canFollow, checkLink, defaultLinks, effectiveLinks, formatHistory, formatLabel, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
+import { canFollow, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, formatLabel, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { detachLinksUnder } from '../agent/protected-links.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -140,20 +140,8 @@ export class CreativeTurnService {
         const { links: _ignored, ...rest } = patch.brief;
         const current = (await store.get(ref.creativeSlug)).brief;
         const added = rest.formats.filter((f) => !current.formats.includes(f));
-        let links = current.links;
-        if (added.length > 0) {
-          const presets = await this.deps.presets();
-          const active = effectiveLinks(current.links, current.formats);
-          const primaries = current.formats.filter((f) => rest.formats.includes(f) && !Object.hasOwn(active, f));
-          const known = [...primaries, ...added].map((id) => findPreset(presets, id)).filter((p): p is FormatPreset => p !== undefined);
-          const defaults = defaultLinks(known, undefined);
-          const next = { ...current.links };
-          for (const f of added) {
-            delete next[f];
-            if (Object.hasOwn(defaults, f)) next[f] = defaults[f]!;
-          }
-          links = next;
-        }
+        // Shared with the web, which tells before "Save and regenerate" whether a legacy creative converts (I4).
+        const links = added.length > 0 ? linksAfterBriefSave(current, rest.formats, await this.deps.presets()) : current.links;
         brief = links ? { ...rest, links } : rest;
       }
       const updated = await store.update(ref.creativeSlug, {
@@ -343,7 +331,17 @@ export class CreativeTurnService {
       const base = initial.resumeFrom ? versions.find((v) => v.n === initial.resumeFrom!.version) : latest;
       const attachments = await this.extractPinFrames(ref, store, message?.pins ?? [], base, n);
       const hasMessage = Boolean(message?.text || message?.pins.length);
-      const plan = await this.planTurn(ref, store, initial, presets, base, hasMessage, requestedFormats, locale);
+      // Final review I4, ruling A: on a legacy base (phase 9 media, no compositions), a turn that only adds LINKED followers
+      // (no message, no explicit formats) keeps the phase 9 no-agent path: the followers are copies of their primaries'
+      // files, the version stays a v1-contract one. When a primary's file cannot be carried, the turn converts as usual
+      // (never a media-contract agent run).
+      let turnContract: AgentContract = contract;
+      if (contract === 'compositions' && !hasMessage && !requestedFormats?.length && legacyTurnKind(base, initial.brief) === 'followers') turnContract = 'media';
+      let plan = await this.planTurn(ref, store, initial, presets, base, hasMessage, requestedFormats, locale, turnContract);
+      if (turnContract !== contract && plan.targets.length > 0) {
+        turnContract = contract;
+        plan = await this.planTurn(ref, store, plan.creative, presets, base, hasMessage, requestedFormats, locale, contract);
+      }
       const { creative, targets } = plan;
       const label = (id: string) => { const p = findPreset(presets, id); return p ? formatLabel(p, locale) : id; };
       const j = t().jobs;
@@ -358,7 +356,7 @@ export class CreativeTurnService {
       });
       const request = message?.text || (message?.pins.length ? j.pinsOnlyRequest : versions.length === 0 ? undefined
         : noAgent ? this.addedFollowersRequest(plan, base!, versions, label, locale)
-          : (addFormatsRequest(targets.filter((f) => plan.added.includes(f)), base, n, contract)
+          : (addFormatsRequest(targets.filter((f) => plan.added.includes(f)), base, n, turnContract)
             ?? (targets.length < primaries.length ? j.regenerateFormatsRequest({ formats: listText(targets.map(label), locale) }) : j.regenerateRequest)));
 
       let resumeSessionId = creative.resumeFrom?.sessionId ?? latest?.sessionId ?? undefined;
@@ -371,7 +369,7 @@ export class CreativeTurnService {
         // Spec §7: a legacy base (rendered media, v1 manifest) makes this change a conversion to compositions. The core
         // extracts reference frames of the old media into its protected cache; the chat says it costs more tokens once.
         let conversion: { formats: Awaited<ReturnType<typeof extractReferenceFrames>>; created: string[] } | undefined;
-        if (contract === 'compositions') {
+        if (turnContract === 'compositions') {
           const cp = conversionPlan(versions, base, targets);
           if (cp.sources.length > 0) {
             // Once per conversion: a retry of a turn that saved no version does not repeat the entry.
@@ -403,7 +401,7 @@ export class CreativeTurnService {
         // The agent's MCP tools on its compositions (output contract v2): the same checks as after the turn, and a few frames.
         let previewCalls = 0;
         const previewLimit = this.deps.previewFramesPerTurn ?? 10;
-        const compositionTools = contract === 'compositions' ? {
+        const compositionTools = turnContract === 'compositions' ? {
           validateComposition: async (format?: string) => {
             if (format !== undefined && !targets.includes(format)) throw new CodedError(400, t().errors.formatNotInTurn({ format: format.slice(0, 100), list: targets.join(', ') }), 'formats-not-in-turn');
             const r = await checkCompositions(format);
@@ -456,7 +454,7 @@ export class CreativeTurnService {
             userText: kind === 'fix' ? undefined : request,
             pins: kind === 'iteration' ? message?.pins : undefined,
             attachments: kind === 'iteration' ? attachments : undefined,
-            problems, context, locale, sandboxed, contract,
+            problems, context, locale, sandboxed, contract: turnContract,
             conversion: kind === 'iteration' ? conversion : undefined,
           });
           const snapshotsBefore = await Promise.all(existing.map((p) => codebaseSnapshot(p)));
@@ -514,7 +512,7 @@ export class CreativeTurnService {
           forkSession = false;
 
           let unknown: number;
-          if (contract === 'compositions') {
+          if (turnContract === 'compositions') {
             const r = await checkCompositions();
             problems = r.problems;
             unknown = r.unknownPresets.length;
@@ -542,7 +540,7 @@ export class CreativeTurnService {
 
       finalizing = true;
       let saved: { outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: string | null; compositions?: VersionComposition[] };
-      if (contract === 'compositions') saved = await this.finishCompositions(ref, store, plan, presets, base, n, label, locale);
+      if (turnContract === 'compositions') saved = await this.finishCompositions(ref, store, plan, presets, base, n, label, locale);
       else {
         const assembled = await this.assemble(ref, store, plan, presets, base, n, result, label, locale);
         // Hashed by the core from the files, after the agent is done: never taken from anything the agent wrote.
@@ -610,14 +608,13 @@ export class CreativeTurnService {
    *   and delivered by the agent.
    */
   private async planTurn(ref: CreativeRef, store: CreativeStore, creative: CreativeFile, presets: FormatPreset[], base: VersionEntry | undefined,
-    hasMessage: boolean, requested: string[] | undefined, locale: Locale): Promise<TurnPlan> {
+    hasMessage: boolean, requested: string[] | undefined, locale: Locale, contract: AgentContract): Promise<TurnPlan> {
     const slug = ref.creativeSlug;
     const creativeDir = store.dir(slug);
     const { formats } = creative.brief;
     const links = effectiveLinks(creative.brief.links, formats);
     const isPrimary = (f: string) => !Object.hasOwn(links, f);
     const baseOut = (f: string) => base?.outputs.find((o) => o.format === f);
-    const contract = this.deps.agentContract ?? 'compositions';
     // A format the base delivers: its file (legacy) or its composition (v2), a follower's entry included.
     const added = base ? formats.filter((f) => !hasFormat(base, f)) : [];
     let targets: string[];

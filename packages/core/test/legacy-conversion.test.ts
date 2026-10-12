@@ -34,6 +34,7 @@ const TOKEN = 'ab'.repeat(32);
 const H = { 'x-motion-studio-ui': TOKEN };
 const PRESETS: FormatPreset[] = [
   { id: 'test-wide', channel: 'Test', name: 'Wide', width: 320, height: 180, kind: 'video', extensions: ['mp4'], targetBitrateKbps: 800 },
+  { id: 'test-wide-b', channel: 'Test', name: 'Wide B', width: 320, height: 180, kind: 'video', extensions: ['mp4'], targetBitrateKbps: 800 },
   { id: 'test-tall', channel: 'Test', name: 'Tall', width: 180, height: 320, kind: 'video', extensions: ['mp4'] },
   { id: 'test-still', channel: 'Test', name: 'Still', width: 320, height: 180, kind: 'image', extensions: ['png', 'jpg'] },
 ];
@@ -318,6 +319,74 @@ describe('legacy conversion', { timeout: 60_000 }, () => {
   });
 });
 
+describe('adding formats to a legacy creative (final review I4, ruling A)', { timeout: 90_000 }, () => {
+  /** A phase 9 creative: v1 with real files whose recorded hashes match them (carriable as files). */
+  async function phase9(formats: string[]): Promise<string> {
+    const r = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', headers: H, payload: {
+      title: 'Old', generate: false, brief: { goal: 'g', message: '', formats, durationSec: 4, assets: [], notes: '', links: {} } } });
+    const slug = r.json().slug as string;
+    const dir = join(store().dir(slug), 'outputs', 'v1');
+    mkdirSync(dir, { recursive: true });
+    const outputs = formats.map((format) => {
+      const file = `${format}.mp4`;
+      const body = `legacy ${format} v1`;
+      writeFileSync(join(dir, file), body);
+      return { format, file, width: 320, height: 180, durationSec: 4, verified: true, preview: null, sha256: createHash('sha256').update(body).digest('hex'), problems: [] as string[] };
+    });
+    writeFileSync(join(dir, 'manifest.json'), JSON.stringify({ schemaVersion: 1, files: outputs.map((o) => ({ format: o.format, file: o.file })) }));
+    await store().appendVersion(slug, { n: 1, commit: null, sessionId: null, status: 'complete', createdAt: new Date().toISOString(), request: 'r', problems: [], tools: ['remotion'], renderCommand: 'npx remotion render', basedOn: null, outputs });
+    return slug;
+  }
+  const setFormats = async (slug: string, formats: string[], links: Record<string, string>) => {
+    const c = (await detail(slug)).creative;
+    const r = await app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}`, headers: H, payload: { brief: { ...c.brief, formats, links } } });
+    expect(r.statusCode, r.body).toBe(200);
+  };
+
+  it('a linked follower added to a legacy base takes the phase 9 path: no agent, a copy, a legacy (v1-contract) version', async () => {
+    await app.close();
+    await boot(NoMediaTools);
+    setLocale('en');
+    const slug = await phase9(['test-wide']);
+    await setFormats(slug, ['test-wide', 'test-wide-b'], { 'test-wide-b': 'test-wide' });
+    await turn(slug, {});
+    expect(prompts()).toEqual([]);
+    const v2 = await versionOf(slug, 2);
+    expect(v2.compositions).toBeUndefined();
+    expect(isLegacyVersion(v2)).toBe(true);
+    const wide = (await versionOf(slug, 1)).outputs[0]!;
+    expect(v2.outputs.map((o) => [o.format, o.sha256])).toEqual([['test-wide', wide.sha256], ['test-wide-b', wide.sha256]]);
+    expect(readFileSync(join(store().dir(slug), 'outputs', 'v2', 'test-wide-b.mp4'), 'utf8')).toBe('legacy test-wide v1');
+    const texts = await systemTexts(slug);
+    expect(hasConverting(texts)).toBe(0);
+    expect(texts.some((t) => t.includes(messages('en').jobs.noAgentNeeded))).toBe(true);
+    expect(fm.calls).toEqual([]);
+  });
+
+  it('a non-linked format added to a legacy base converts everything with the agent, as before', async () => {
+    const slug = await phase9(['test-wide']);
+    await setFormats(slug, ['test-wide', 'test-tall'], {});
+    await turn(slug, {});
+    const p = prompts()[0]!.prompt;
+    expect(p).toContain('## Convert the earlier media first');
+    expect(p).toContain('test-tall: create it from scratch');
+    expect(hasConverting(await systemTexts(slug))).toBe(1);
+    expect((await versionOf(slug, 2)).compositions!.map((c) => c.format).sort()).toEqual(['test-tall', 'test-wide']);
+  });
+
+  it('a linked follower whose primary file cannot be carried converts with the agent (never a media-contract agent run)', async () => {
+    const slug = await phase9(['test-wide']);
+    // The recorded file changed on disk since v1: it cannot be carried as a file.
+    writeFileSync(join(store().dir(slug), 'outputs', 'v1', 'test-wide.mp4'), 'changed by hand');
+    await setFormats(slug, ['test-wide', 'test-wide-b'], { 'test-wide-b': 'test-wide' });
+    await turn(slug, {});
+    const p = prompts()[0]!.prompt;
+    expect(p).toContain('## Convert the earlier media first');
+    expect(p).not.toMatch(/npx remotion|renderCommand/i);
+    expect((await versionOf(slug, 2)).compositions).toBeDefined();
+  });
+});
+
 describe('conversion per format (review of Task 6)', { timeout: 90_000 }, () => {
   const v2With = (compositions: Array<{ format: string }>) => async (slug: string) => {
     await store().appendVersion(slug, { n: 2, commit: null, sessionId: null, status: 'incomplete', createdAt: new Date(Date.now() + 1000).toISOString(), request: 'r', problems: ['x'], tools: [], renderCommand: null, basedOn: 1,
@@ -414,6 +483,8 @@ describe('Review Focus 5: legacy v1-v3 then a composition v4', { timeout: 120_00
     const slug = await boundary();
     const f = (await detail(slug)).formats!.find((x) => x.id === 'test-wide')!;
     expect(f).toMatchObject({ exportVersion: 4, starRender: 'notRendered', starFileMissing: false });
+    // The render's output check reads it as media (a render nothing can read has a problem and is not exported: I2).
+    fm.probe = async () => ({ width: 320, height: 180, durationSec: 4 });
     const r = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, headers: H, payload: { destination: join(base, 'out'), picks: { 'test-wide': 4 } } });
     expect(r.statusCode, r.body).toBe(200);
     expect(fake.renders.map((x) => x.format.id)).toEqual(['test-wide']);
