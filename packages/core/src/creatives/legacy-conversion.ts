@@ -74,6 +74,17 @@ export interface LegacyFormatReference {
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /**
+ * Removes the reference frames of version `n` (`.studio/cache/reference-frames/<creative>/v<n>`), as an entry, never
+ * followed. A turn that is no longer a conversion calls it too, so a folder left by an earlier try does not stay (C11).
+ */
+export async function clearReferenceFrames(projectDir: string, creativeSlug: string, n: number): Promise<void> {
+  try {
+    const parent = await realDirChain(projectDir, ['.studio', 'cache', 'reference-frames', creativeSlug]);
+    if (parent) { await rm(join(parent, `v${n}`), { recursive: true, force: true }); await noteCoreChange(parent); }
+  } catch { /* optional help */ }
+}
+
+/**
  * Reference frames of every `formats` entry the base delivers, into
  * `.studio/cache/reference-frames/<creative>/v<n>/<format>/<i>.jpg` (540 px wide, 1 per second, at most 12). The media is read
  * through the confined helpers (regular file, one link, real path inside the version's outputs). A format whose media cannot
@@ -85,10 +96,7 @@ export async function extractReferenceFrames(o: {
 }): Promise<LegacyFormatReference[]> {
   const out: LegacyFormatReference[] = [];
   // The whole folder of this version goes first (also formats no longer converted): removed as an entry, never followed.
-  try {
-    const parent = await realDirChain(o.projectDir, ['.studio', 'cache', 'reference-frames', o.creativeSlug]);
-    if (parent) { await rm(join(parent, `v${o.n}`), { recursive: true, force: true }); await noteCoreChange(parent); }
-  } catch { /* optional help */ }
+  await clearReferenceFrames(o.projectDir, o.creativeSlug, o.n);
   for (const { format, version: src } of o.sources) {
     const output = src.outputs.find((x) => x.format === format);
     if (!output) continue;

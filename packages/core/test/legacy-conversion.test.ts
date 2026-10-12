@@ -438,6 +438,32 @@ describe('conversion per format (review of Task 6)', { timeout: 90_000 }, () => 
     expect(hasConverting(await systemTexts(slug))).toBe(1);
   });
 
+  it('a turn that fails before saving a version, then a second turn: the chat entry is not repeated (C11)', async () => {
+    const slug = await legacy(['test-wide']);
+    process.env.FAKE_CLAUDE_SCENARIO = 'crash';
+    const r = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/turns`, headers: H, payload: { text: 'a' } });
+    expect(r.statusCode, r.body).toBe(202);
+    expect((await waitJob((r.json() as JobSummary).id)).state).toBe('failed');
+    expect((await store().readVersions(slug)).map((v) => v.n)).toEqual([1]);
+    expect(hasConverting(await systemTexts(slug))).toBe(1);
+    process.env.FAKE_CLAUDE_SCENARIO = 'composition';
+    await turn(slug, { text: 'b' });
+    expect(prompts().at(-1)!.prompt).toContain('## Convert the earlier media first');
+    expect(hasConverting(await systemTexts(slug))).toBe(1);
+  });
+
+  it('reference frames left for a version by an earlier try are removed when its turn is not a conversion (C11)', async () => {
+    const slug = await legacy(['test-wide']);
+    const c = (await detail(slug)).creative;
+    // A v2 base (no conversion) whose next folder v3 holds stale frames.
+    await turn(slug, { text: 'convert' });
+    mkdirSync(refDir(slug, 3, 'test-wide'), { recursive: true });
+    writeFileSync(join(refDir(slug, 3, 'test-wide'), '01.jpg'), 'stale');
+    expect(c.brief.formats).toEqual(['test-wide']);
+    await turn(slug, { text: 'again' });
+    expect(existsSync(refDir(slug, 3, 'test-wide'))).toBe(false);
+  });
+
   it('the Italian entry', async () => {
     setLocale('it');
     const slug = await legacy(['test-wide']);

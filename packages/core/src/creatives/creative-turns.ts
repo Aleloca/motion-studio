@@ -24,7 +24,7 @@ import { confinedSha, copyVerified, earlierOutputDirs, followCheck, isConfinedFi
 import { outputFileExists } from './format-summary.ts';
 import { hashVersionOutputs, LAZY_HASH_BUDGET_MS, withLazyHashes } from './output-hashes.ts';
 import { legacyProblemsOf } from './legacy-problems.ts';
-import { conversionPlan, extractReferenceFrames } from './legacy-conversion.ts';
+import { clearReferenceFrames, conversionPlan, extractReferenceFrames } from './legacy-conversion.ts';
 import { buildCreativePrompt, type AgentContract, type CreativeContext, type PromptKind } from './prompt.ts';
 import { checkTargets } from './composition-contract.ts';
 import { realDirChain, writeThroughTemp } from './core-files.ts';
@@ -382,6 +382,9 @@ export class CreativeTurnService {
               formats: await extractReferenceFrames({ projectDir: ref.projectDir, creativeDir, creativeSlug: slug, n, sources: cp.sources, presets, media: this.deps.media }),
               created: cp.created,
             };
+          } else {
+            // Not a conversion (any more): frames left by an earlier try of this version are removed.
+            await clearReferenceFrames(ref.projectDir, slug, n);
           }
         }
         const uncheckable = new Set<string>();
