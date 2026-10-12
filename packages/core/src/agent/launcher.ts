@@ -22,7 +22,7 @@ import { UsageTracker } from '../usage/usage-tracker.ts';
 const RUN_DIR = 'run';
 export const MCP_SERVER = 'studio';
 export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
-  creative: ['report_progress', 'validate_output', 'read_brand_kit', 'generate_image', 'tts', 'stock_search', 'stock_download', 'fonts_fetch'],
+  creative: ['report_progress', 'validate_composition', 'preview_frames', 'read_brand_kit', 'generate_image', 'tts', 'stock_search', 'stock_download', 'fonts_fetch'],
   console: ['report_progress', 'read_brand_kit', 'generate_image', 'tts', 'stock_search', 'stock_download', 'fonts_fetch'],
   'brand-analysis': ['report_progress', 'read_brand_kit', 'fonts_fetch', 'download_file'],
   describe: ['report_progress'],
@@ -66,7 +66,8 @@ export interface LaunchInput {
   protectedDirs?: string[];
   request: Pick<AgentTurnRequest, 'prompt' | 'resumeSessionId' | 'forkSession' | 'model'>;
   onEvent(e: AgentEvent): void;
-  validate?: BridgeContext['validate'];
+  validateComposition?: BridgeContext['validateComposition'];
+  previewFrames?: BridgeContext['previewFrames'];
   /** What the run's ledger line is about (a creative's version and fix-loop attempt); null for other jobs. */
   usage?: { version: number | null; attempt: number | null };
   /**
@@ -187,7 +188,7 @@ export class AgentLauncher {
           sandboxed: sandbox,
           // The same value as the policy's autoAllowBashIfSandboxed: a setting turned on later never reaches this job.
           autoApproveAtStart,
-          emit: i.onEvent, signal: abort.signal, ...(i.validate ? { validate: i.validate } : {}),
+          emit: i.onEvent, signal: abort.signal, ...(i.validateComposition ? { validateComposition: i.validateComposition } : {}), ...(i.previewFrames ? { previewFrames: i.previewFrames } : {}),
         });
         // The paths are recorded before writing, so release() also removes a half-written pair.
         const files = await prepareRunFiles(configDir, i.jobId);

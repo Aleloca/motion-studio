@@ -19,8 +19,10 @@ export interface BridgeContext {
   emit(e: AgentEvent): void;
   /** Aborted when the job is cancelled or ends: in-flight provider calls must stop. */
   signal: AbortSignal;
-  /** Creative turns only. */
-  validate?: () => Promise<{ problems: string[]; outputs: unknown[] }>;
+  /** Creative turns (output contract v2): the checks of the turn's compositions, all or one format's (`validate_composition`). */
+  validateComposition?: (format?: string) => Promise<unknown>;
+  /** Creative turns: a few PNG frames of a composition (`preview_frames`), rate-limited per turn. */
+  previewFrames?: (args: { format: unknown; times: unknown }) => Promise<unknown>;
 }
 
 /** Per-job tokens that let the `studio` MCP server call back into the core on behalf of one agent job. */

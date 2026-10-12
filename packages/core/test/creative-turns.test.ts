@@ -40,7 +40,7 @@ beforeEach(async () => {
   ref = { root: ws.root, projectSlug: slug, projectDir, creativeSlug: created.slug };
   messages = [];
   queue = new JobQueue({ concurrency: 2 });
-  service = new CreativeTurnService({
+  service = new CreativeTurnService({ agentContract: 'media',
     queue, git, media: NoMediaTools, vault: new MemoryVault(),
     launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
     presets: async () => DEFAULT_FORMATS, model: async () => null,
@@ -265,7 +265,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
 
   it('restores the creative when it is cancelled while still queued', async () => {
     const q1 = new JobQueue({ concurrency: 1 });
-    const svc = new CreativeTurnService({
+    const svc = new CreativeTurnService({ agentContract: 'media',
       queue: q1, git: new Git(), media: NoMediaTools, vault: new MemoryVault(),
       launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
@@ -308,7 +308,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
   it('does not fail the turn when extracting a pin frame throws', async () => {
     await finalState((await service.start(ref)).id);
     const throwing: MediaTools = { available: true, probe: async () => null, poster: async () => false, frame: async () => { throw new Error('ffmpeg esploso'); } };
-    const svc = new CreativeTurnService({
+    const svc = new CreativeTurnService({ agentContract: 'media',
       queue, git: new Git(), media: throwing, vault: new MemoryVault(),
       launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
@@ -320,7 +320,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
 
   it('a start() right after a queued cancel is not clobbered by the stale cleanup', async () => {
     const q1 = new JobQueue({ concurrency: 1 });
-    const svc = new CreativeTurnService({
+    const svc = new CreativeTurnService({ agentContract: 'media',
       queue: q1, git: new Git(), media: NoMediaTools, vault: new MemoryVault(),
       launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
@@ -373,7 +373,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
       poster: async () => false,
       frame: async (input) => { sources.push(input); return false; },
     };
-    const svc = new CreativeTurnService({
+    const svc = new CreativeTurnService({ agentContract: 'media',
       queue, git: new Git(), media, vault: new MemoryVault(), launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
     });
@@ -401,7 +401,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
         },
         poster: async () => false, frame: async () => false,
       };
-      const svc = new CreativeTurnService({
+      const svc = new CreativeTurnService({ agentContract: 'media',
         queue, git, media, vault: new MemoryVault(), launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
         presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
       });
@@ -491,7 +491,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     const git = new Git();
     const real = git.commitAll.bind(git);
     git.commitAll = async (dir, msg) => { if (msg.endsWith('· stato')) throw new Error('disco pieno'); return real(dir, msg); };
-    const svc = new CreativeTurnService({
+    const svc = new CreativeTurnService({ agentContract: 'media',
       queue, git, media: NoMediaTools, vault: new MemoryVault(),
       launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},

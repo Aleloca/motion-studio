@@ -6,7 +6,8 @@ import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
-import { exportPicks, exportVersion } from '../creatives/export.ts';
+import { exportResolved, exportVersion, pendingRenders, resolveExportPicks } from '../creatives/export.ts';
+import { storyboardDir, sweepStoryboardTemps, type PreviewService } from '../creatives/previews.ts';
 import { formatSummaries } from '../creatives/format-summary.ts';
 import { withLazyHashes } from '../creatives/output-hashes.ts';
 import { creativeJobKey, PICK_RETRY_AFTER_SEC, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
@@ -30,6 +31,8 @@ export interface CreativeRoutesContext {
   broadcast?: (msg: ServerMessage) => void;
   /** Render jobs of v2 versions (Task 5). */
   renders: RenderJobService;
+  /** Storyboards and live preview sessions (Task 5b). */
+  previews: PreviewService;
 }
 
 const isInsideDir = (p: string, base: string | null) => Boolean(base && p.startsWith(base.endsWith(sep) ? base : base + sep));
@@ -59,6 +62,10 @@ const exportBody = z.object({
 const linkBody = z.object({ follower: z.string().min(1).max(200), primary: z.string().min(1).max(200).nullable() });
 /** A render request (Task 5): `formats` to render (a follower stands for its primary); absent or empty: every primary. */
 const renderBody = z.object({ formats: z.array(z.string().min(1).max(200)).max(100).optional() }).strict();
+/** A live preview session (Task 5b): the format, and the exact origin of the UI page that embeds the iframe. */
+const previewBody = z.object({ format: z.string().min(1).max(200), parentOrigin: z.string().min(1).max(200) }).strict();
+const FOLDER_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const FRAME_FILE_RE = /^f-\d{1,3}\.jpg$/;
 
 /**
  * The links a new creative starts with: the ones sent (sanitized, each pair checked with `checkLink`; the duration is not
@@ -111,6 +118,7 @@ export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: st
       skipCreative: (slug) => ro.renderActive?.(p.slug, slug) ?? false,
       media: { ...(ro.mediaInUse ? { inUse: ro.mediaInUse } : {}), ...(ro.mediaCacheMaxBytes !== undefined ? { maxBytes: ro.mediaCacheMaxBytes } : {}) },
     }).catch((err: Error) => console.warn(`Motion Studio: render cleanup failed in project ${p.slug}: ${err.message}`));
+    await sweepStoryboardTemps(dir).catch(() => []);
     await Promise.all([sweepProject(dir, !isJobActive(brandJobKey(ws.root, p.slug))), completeGitignore(dir)]).catch((err: Error) => {
       console.warn(`Motion Studio: cleanup failed in project ${p.slug}: ${err.message}`);
     });
@@ -300,14 +308,88 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
       return exportVersion({ ...common, version });
     }
-    // The same hashed versions as the creative GET, so a follower's ★ here is the one the dialog showed.
+    const resolve = async () => {
+      // The same hashed versions as the creative GET, so a follower's ★ here is the one the dialog showed.
+      await reconcileRenders({ projectDir: ref.projectDir, store: ref.store, creativeSlug: ref.creativeSlug }).catch(() => false);
+      const { versions, complete } = await withLazyHashes({ projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir, versions: await ref.store.readVersions(ref.creativeSlug) });
+      // A follower's version is decided on hashes: never on partial ones (a refusal now would only mean "not hashed yet").
+      // The hashing goes on; the client retries after Retry-After, as for a ★ pick.
+      if (!complete && body.follow !== undefined) throw new CodedError(503, t().errors.hashesPending, 'hashes-pending', PICK_RETRY_AFTER_SEC);
+      const items = resolveExportPicks({ ...common, versions, picks: (body.picks ?? {}) as Record<string, number>, follow: body.follow as string[] | Record<string, number> | undefined,
+        links: effectiveLinks(creative.brief.links, creative.brief.formats), storedPicks: creative.exportPicks });
+      return { items, pending: await pendingRenders(creativeDir, versions, items) };
+    };
+    let { items, pending } = await resolve();
+    // Task 5b: a v2 ★ with no current render is rendered first (a render job per version, its progress on the job list),
+    // then the picks are resolved again on the new records and copied. Legacy versions export their media as they are.
+    const rendered: Array<{ version: number; formats: string[] }> = [];
+    if (pending.size > 0) {
+      await ctx.renders.renderAndWait(ref, pending);
+      for (const [version, formats] of pending) rendered.push({ version, formats });
+      ({ items, pending } = await resolve());
+      if (pending.size > 0) {
+        const list = [...pending].flatMap(([n, fs]) => fs.map((f) => `${common.label(f)} v${n}`)).join(', ');
+        throw new CodedError(409, t().export.renderFailed({ list }), 'export-render-failed');
+      }
+    }
+    const result = await exportResolved(items, common);
+    return rendered.length > 0 ? { ...result, rendered } : result;
+  });
+
+  /**
+   * What a ★ export would have to render first (Task 5b), started now: the web shows "Rendering 2 formats first…" with the
+   * jobs' progress, then calls the export. `renders`: one job per version (an active one is reused); empty: nothing to render.
+   */
+  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/export/prepare', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const r = exportBody.safeParse(req.body ?? {});
+    if (!r.success || (r.data.picks === undefined && r.data.follow === undefined)) throw new CodedError(400, t().export.invalidPicks, 'export-invalid-picks');
+    const creative = await ref.store.get(ref.creativeSlug);
+    const creativeDir = ref.store.dir(ref.creativeSlug);
     await reconcileRenders({ projectDir: ref.projectDir, store: ref.store, creativeSlug: ref.creativeSlug }).catch(() => false);
-    const { versions, complete } = await withLazyHashes({ projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir, versions: await ref.store.readVersions(ref.creativeSlug) });
-    // A follower's version is decided on hashes: never on partial ones (a refusal now would only mean "not hashed yet").
-    // The hashing goes on; the client retries after Retry-After, as for a ★ pick.
-    if (!complete && body.follow !== undefined) throw new CodedError(503, t().errors.hashesPending, 'hashes-pending', PICK_RETRY_AFTER_SEC);
-    return exportPicks({ ...common, versions, picks: (body.picks ?? {}) as Record<string, number>, follow: body.follow as string[] | Record<string, number> | undefined,
-      links: effectiveLinks(creative.brief.links, creative.brief.formats), storedPicks: creative.exportPicks });
+    const { versions } = await withLazyHashes({ projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir, versions: await ref.store.readVersions(ref.creativeSlug) });
+    const items = resolveExportPicks({ creativeDir, destination: '/', slug: ref.creativeSlug, versions, picks: (r.data.picks ?? {}) as Record<string, number>,
+      follow: r.data.follow as string[] | Record<string, number> | undefined, links: effectiveLinks(creative.brief.links, creative.brief.formats), storedPicks: creative.exportPicks });
+    const pending = await pendingRenders(creativeDir, versions, items);
+    const renders = [];
+    for (const [version, formats] of pending) renders.push({ version, formats, job: await ctx.renders.ensureJob(ref, version, formats) });
+    return { renders };
+  });
+
+  /**
+   * A live preview session of one format of a saved v2 version (Task 5b; the web's player and Compare, Task 8). Behind the UI
+   * token like every API; `parentOrigin` must be one of the UI origins (403 `preview-origin`); the media is normalised first.
+   */
+  app.post<{ Params: { slug: string; c: string; n: string } }>('/api/projects/:slug/creatives/:c/versions/:n/preview-session', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const n = Number(req.params.n);
+    const version = Number.isInteger(n) && n > 0 ? (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === n) : undefined;
+    if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
+    const body = parse(previewBody, req.body);
+    return ctx.previews.mintPreview({ projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), creativeSlug: ref.creativeSlug, n }, version, body.format, body.parentOrigin, currentLocale());
+  });
+
+  /**
+   * The storyboard of one format of a saved v2 version (scene starts and the poster), made now when missing or stale.
+   * 404 `storyboard-unavailable` when it cannot be made (no renderer, an invalid composition).
+   */
+  app.get<{ Params: { slug: string; c: string; n: string; format: string } }>('/api/projects/:slug/creatives/:c/versions/:n/storyboards/:format', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const n = Number(req.params.n);
+    const version = Number.isInteger(n) && n > 0 ? (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === n) : undefined;
+    if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
+    const r = await ctx.previews.storyboardOf({ projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), creativeSlug: ref.creativeSlug, n }, version, req.params.format);
+    if (!r) throw new CodedError(404, t().errors.previewUnavailable, 'storyboard-unavailable');
+    const base = `/api/projects/${encodeURIComponent(req.params.slug)}/creatives/${encodeURIComponent(ref.creativeSlug)}/storyboard-files/${n}/${r.folder}`;
+    return { format: r.folder, hash: r.storyboard.hash, width: r.storyboard.width, frames: r.storyboard.frames.map(({ file, ...f }) => ({ ...f, url: `${base}/${file}` })) };
+  });
+
+  // Storyboard images, shown by <img> (no UI token, like the creative files): only `f-<i>.jpg` of a storyboard folder.
+  app.get<{ Params: { slug: string; c: string; n: string; folder: string; file: string } }>('/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:file', async (req, reply) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const n = Number(req.params.n);
+    if (!Number.isInteger(n) || n < 1 || !FOLDER_RE.test(req.params.folder) || !FRAME_FILE_RE.test(req.params.file)) return reply.status(404).send({ error: t().errors.fileNotFoundShort });
+    return sendConfinedFile(reply, storyboardDir(ref.projectDir, ref.creativeSlug, n, req.params.folder), req.params.file, ['f-']);
   });
 
   app.get<{ Params: { slug: string; c: string; '*': string } }>('/api/projects/:slug/creatives/:c/files/*', async (req, reply) => {

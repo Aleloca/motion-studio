@@ -497,7 +497,7 @@ describe('a turn and a render on the same creative (M9)', { timeout: 120_000 }, 
     const { slug, store } = await v2Creative({ formats: ['test-wide'], links: {} });
     await app.close();
     const wait = join(base, 'go');
-    process.env.FAKE_CLAUDE_SCENARIO = 'render';
+    process.env.FAKE_CLAUDE_SCENARIO = 'composition';
     process.env.FAKE_CLAUDE_WAIT_FILE_CREATIVE = wait;
     try {
       app = await buildServer({

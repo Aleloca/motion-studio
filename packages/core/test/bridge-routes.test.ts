@@ -24,7 +24,7 @@ beforeEach(async () => {
   bridge = new AgentBridge();
   approvals = new ApprovalBroker({ broadcast: () => {} });
   events = [];
-  token = bridge.register({ jobId: 'j1', kind: 'creative', projectSlug: 'acme', projectDir, creativeSlug: 'c1', sandboxed: false, autoApproveAtStart: false, emit: (e) => events.push(e), signal: new AbortController().signal, validate: async () => ({ problems: ['Manca il formato X'], outputs: [] }) });
+  token = bridge.register({ jobId: 'j1', kind: 'creative', projectSlug: 'acme', projectDir, creativeSlug: 'c1', sandboxed: false, autoApproveAtStart: false, emit: (e) => events.push(e), signal: new AbortController().signal, validateComposition: async (format?: string) => ({ problems: [`Manca ${format ?? 'tutto'}`] }), previewFrames: async (a) => ({ asked: a, images: [] }) });
   app = Fastify();
   registerBridgeRoutes(app, { bridge, approvals });
 });
@@ -136,8 +136,12 @@ describe('bridge', () => {
     expect(res.json()).toEqual({ behavior: 'deny', message: 'Nessuna risposta entro 10 minuti: azione negata.' });
     await app2.close();
   });
-  it('validates outputs and reads the brand kit', async () => {
-    expect((await call('validate_output', {})).json()).toEqual({ problems: ['Manca il formato X'], outputs: [] });
+  it('validates compositions, previews frames and reads the brand kit', async () => {
+    expect((await call('validate_composition', {})).json()).toEqual({ problems: ['Manca tutto'] });
+    expect((await call('validate_composition', { format: ' reel ' })).json()).toEqual({ problems: ['Manca reel'] });
+    expect((await call('preview_frames', { format: 'reel', times: [0, 1] })).json()).toEqual({ asked: { format: 'reel', times: [0, 1] }, images: [] });
+    // The legacy media tool is gone.
+    expect((await call('validate_output', {})).statusCode).toBe(404);
     expect((await call('read_brand_kit', {})).json().kit.colors[0].hex).toBe('#1E3A5F');
     expect((await call('nope', {})).statusCode).toBe(404);
     expect((await call('constructor', {})).statusCode).toBe(404);
@@ -190,16 +194,19 @@ describe('bridge', () => {
     const res = await call('read_brand_kit', {}, describeToken);
     expect(res.statusCode).toBe(403);
     expect(res.json()).toEqual({ error: 'Strumento non disponibile in questo lavoro' });
-    expect((await call('validate_output', {}, describeToken)).statusCode).toBe(403);
+    expect((await call('validate_composition', {}, describeToken)).statusCode).toBe(403);
+    expect((await call('preview_frames', { format: 'x', times: [0] }, describeToken)).statusCode).toBe(403);
     expect((await call('report_progress', { message: 'ok' }, describeToken)).statusCode).toBe(200);
     const consoleToken = bridge.register({ jobId: 'j3', kind: 'console', projectSlug: 'acme', projectDir, creativeSlug: null, sandboxed: false, autoApproveAtStart: false, emit: () => {}, signal: new AbortController().signal });
-    expect((await call('validate_output', {}, consoleToken)).statusCode).toBe(403);
+    expect((await call('validate_composition', {}, consoleToken)).statusCode).toBe(403);
   });
   it('explains that validation is only for creatives when the context has none', async () => {
     const t = bridge.register({ jobId: 'j4', kind: 'creative', projectSlug: 'acme', projectDir, creativeSlug: 'c2', sandboxed: false, autoApproveAtStart: false, emit: () => {}, signal: new AbortController().signal });
-    const res = await call('validate_output', {}, t);
-    expect(res.statusCode).toBe(400);
-    expect(res.json().error).toBe('Validazione disponibile solo nelle creatività');
+    for (const tool of ['validate_composition', 'preview_frames']) {
+      const res = await call(tool, {}, t);
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toBe('Validazione disponibile solo nelle creatività');
+    }
   });
 });
 

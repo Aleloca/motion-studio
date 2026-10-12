@@ -22,7 +22,8 @@ const str = (description, extra = {}) => ({ type: 'string', description, ...extr
 const TOOLS = [
   { name: 'approve', description: 'For Motion Studio internal use only (permission requests).', inputSchema: { type: 'object', properties: { tool_name: str('Tool'), input: { type: 'object' }, tool_use_id: str('Id') }, additionalProperties: true } },
   { name: 'report_progress', description: 'Tell the user where you are (one short sentence).', inputSchema: { type: 'object', properties: { message: str('Short sentence', { maxLength: 300 }) }, required: ['message'] } },
-  { name: 'validate_output', description: 'Checks the outputs of the current version against the contract and returns the problems.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'validate_composition', description: 'Checks the compositions of the current version (all formats, or one) against the contract: schema, assets, duration, fonts, html layer checks. Returns problems (to fix) and warnings (advisory).', inputSchema: { type: 'object', properties: { format: str('Format id (optional: all formats when omitted)') } } },
+  { name: 'preview_frames', description: 'Renders up to 6 frames of a format\'s composition (PNG, at most 540 px wide) and returns them as images, so you can look at your work. Limited calls per turn.', inputSchema: { type: 'object', properties: { format: str('Format id'), times: { type: 'array', items: { type: 'number', minimum: 0 }, minItems: 1, maxItems: 6, description: 'Times in seconds from the start of the composition' } }, required: ['format', 'times'] } },
   { name: 'read_brand_kit', description: 'Reads the project brand kit and guidelines.', inputSchema: { type: 'object', properties: {} } },
   { name: 'generate_image', description: 'Generates or edits an image with gpt-image-2 (paid; may ask the user for confirmation). Returns the path of the file saved in the assets.', inputSchema: { type: 'object', properties: { prompt: str('Description'), width: { type: 'integer' }, height: { type: 'integer' }, quality: { enum: ['low', 'medium', 'high', 'auto'] }, background: { enum: ['transparent', 'opaque', 'auto'] }, references: { type: 'array', items: { type: 'string' }, maxItems: 16, description: 'Project images to use as references' }, name: str('File name (optional)') }, required: ['prompt', 'width', 'height'] } },
   { name: 'tts', description: 'Generates a voice-over (paid; may ask for confirmation). Returns the path of the audio file.', inputSchema: { type: 'object', properties: { text: str('Text to read'), provider: { enum: ['openai', 'elevenlabs'] }, voice: str('Voice'), instructions: str('Tone and style (OpenAI only)'), format: { enum: ['mp3', 'wav'] }, name: str('File name (optional)') }, required: ['text'] } },
@@ -62,6 +63,12 @@ async function call(name, args) {
   try {
     const { status, body } = await post(`/api/bridge/${encodeURIComponent(name)}`, JSON.stringify(args ?? {}));
     if (status < 200 || status > 299) return fail(body?.error ?? `Error ${status}`);
+    // A result with `images` (preview_frames): the images become image content, the rest stays text.
+    if (body && typeof body === 'object' && Array.isArray(body.images)) {
+      const { images, ...rest } = body;
+      const pictures = images.filter((i) => i && typeof i.data === 'string' && /^image\/(png|jpeg)$/.test(i.mimeType ?? '')).slice(0, 6);
+      return { content: [{ type: 'text', text: JSON.stringify(rest) }, ...pictures.map((i) => ({ type: 'image', data: i.data, mimeType: i.mimeType }))] };
+    }
     return { content: [{ type: 'text', text: JSON.stringify(body) }] };
   } catch (err) {
     return fail(`Motion Studio is unreachable: ${err.message}`);

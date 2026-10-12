@@ -143,7 +143,7 @@ describe('AgentLauncher', () => {
     const token = tokenFile!.content;
     expect(token).toMatch(/^[0-9a-f]{64}$/);
     expect(args.some((a) => a.includes(token))).toBe(false); // never visible in the process list
-    expect(cfg.mcpServers.studio.env.MOTION_STUDIO_TOOLS).toContain('validate_output');
+    expect(cfg.mcpServers.studio.env.MOTION_STUDIO_TOOLS).toContain('validate_composition');
     expect(args[args.indexOf('--permission-prompt-tool') + 1]).toBe('mcp__studio__approve');
     expect(args).not.toContain('--permission-prompts');
     expect(args).toContain('mcp__studio__report_progress');
@@ -166,7 +166,7 @@ describe('AgentLauncher', () => {
     const path = args[args.indexOf('--mcp-config') + 1]!;
     expect(env.MOTION_STUDIO_BRIDGE_TOKEN_FILE).toBe(path.replace(/\.mcp\.json$/, '.token'));
     expect(env.MOTION_STUDIO_BRIDGE_URL).toBe('http://127.0.0.1:4317');
-    expect(env.MOTION_STUDIO_TOOLS).toContain('validate_output');
+    expect(env.MOTION_STUDIO_TOOLS).toContain('validate_composition');
   });
   it('only exposes the MCP tools of the job kind', { timeout: 20_000 }, async () => {
     const bridge = new AgentBridge();

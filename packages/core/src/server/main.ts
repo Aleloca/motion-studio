@@ -74,6 +74,11 @@ export interface StartServerOptions {
    * Without it the core uses system Chrome, else a Chrome for Testing installed in `<configDir>/chromium/`.
    */
   renderProvider?: ChromiumProviderFactory;
+  /**
+   * Extra UI origins allowed to embed live previews, besides the core's own (`http://127.0.0.1:<port>`): the dev server
+   * passes Vite's `http://localhost:5173` (src/server/dev.ts).
+   */
+  devUiOrigins?: string[];
 }
 
 export async function startServer(opts: StartServerOptions = {}) {
@@ -128,6 +133,8 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
   const appConfig = new AppConfigStore(configDir);
   const language = new LanguageController((await appConfig.read()).language, opts.systemLocales ?? detectSystemLocales());
   language.apply();
+  // Filled once the server listens (its port is known only then); read at every preview mint.
+  const uiOrigins: string[] = [...(opts.devUiOrigins ?? [])];
   const app = await buildServer({
     uiToken,
     appConfig, language,
@@ -142,10 +149,13 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
     media: await createFfmpegTools(),
     render: createRenderEngine({ ...(opts.renderProvider ? { provider: opts.renderProvider } : {}), appDataDir: configDir }),
     openPath: revealFolder,
+    uiOrigins: () => uiOrigins,
   });
   const host = opts.host ?? '127.0.0.1';
   const url = opts.port === 'auto' ? await listenAuto(app, host) : await app.listen({ port: opts.port ?? 4317, host });
   bridge.setOrigin(url);
+  // The core serves the UI itself (CLI and desktop): its own origin may embed live previews; dev adds Vite's.
+  uiOrigins.push(new URL(url).origin);
   const port = Number(new URL(url).port);
   // For `motion-studio --print-url`; removed on a clean shutdown.
   await writeServerInfo(configDir, { port, pid: process.pid, startedAt: new Date().toISOString() }).catch(() => {});

@@ -390,7 +390,7 @@ describe('auto_approved events follow the job event path', () => {
     } };
     const broadcast: unknown[] = [];
     const queue = new JobQueue({ concurrency: 1 });
-    const service = new CreativeTurnService({
+    const service = new CreativeTurnService({ agentContract: 'media',
       queue, git, media: NoMediaTools, vault: new MemoryVault(),
       launcher: testLauncher(runner, { bridge, approvals, mcpCommand: ['node', '/x/server.mjs'], sandbox: async () => ({ available: true, reason: 'ok' }), settings: { sandboxMode: 'auto', autoApproveSandboxed: true } }),
       presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: (m) => broadcast.push(m),

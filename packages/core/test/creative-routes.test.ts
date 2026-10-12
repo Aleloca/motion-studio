@@ -18,7 +18,7 @@ let app: FastifyInstance;
 let base: string;
 let opened: string[];
 
-const build = () => buildServer({ uiToken: null, sandbox: async () => ({ available: false, reason: 'test' }),
+const build = () => buildServer({ agentContract: 'media', uiToken: null, sandbox: async () => ({ available: false, reason: 'test' }),
   appConfig: new AppConfigStore(join(base, 'config')),
   git: new Git(),
   runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }),
@@ -351,7 +351,7 @@ describe('creative export', { timeout: 20_000 }, () => {
     expect((await readdir(join(base, 'old2'))).sort().map((f) => f.replace(/\.[a-z0-9]+$/, ''))).toEqual(['2026-01-02_instagram', '2026-01-02_web']);
   });
   it('requires the UI token', async () => {
-    const guarded = await buildServer({ uiToken: 'ab'.repeat(32), sandbox: async () => ({ available: false, reason: 'test' }),
+    const guarded = await buildServer({ agentContract: 'media', uiToken: 'ab'.repeat(32), sandbox: async () => ({ available: false, reason: 'test' }),
       appConfig: new AppConfigStore(join(base, 'config2')), git: new Git(), doctor: async () => [],
       runner: new ClaudeCodeRunner([process.execPath, FAKE]) });
     const r = await guarded.inject({ method: 'POST', url: '/api/projects/acme/creatives/x/versions/1/export', payload: { destination: join(base, 'out') } });

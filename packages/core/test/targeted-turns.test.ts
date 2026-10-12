@@ -46,7 +46,7 @@ async function setup(brief: Brief) {
   ref = { root: ws.root, projectSlug: slug, projectDir, creativeSlug: created.slug };
   queue = new JobQueue({ concurrency: 2 });
   launcher = testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }));
-  service = new CreativeTurnService({
+  service = new CreativeTurnService({ agentContract: 'media',
     queue, git, media: NoMediaTools, vault: new MemoryVault(),
     launcher,
     presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
