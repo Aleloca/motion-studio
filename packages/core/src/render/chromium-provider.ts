@@ -48,8 +48,11 @@ export interface RenderPage {
   readonly info: ReadyInfo;
   /** Shows composition time `t`; rejects when the runtime cannot (e.g. `frameTimeout`) or the call times out. */
   seek(t: number): Promise<void>;
-  /** The viewport as an image. */
-  capture(format: CaptureFormat, quality?: number): Promise<Buffer>;
+  /**
+   * The viewport as an image. `scale` (0 < scale ≤ 1, default 1) shrinks it in the browser (`clip.scale`): the image is
+   * about `width × scale` by `height × scale` (storyboards and agent previews, Task 5b).
+   */
+  capture(format: CaptureFormat, quality?: number, scale?: number): Promise<Buffer>;
   /** Every runtime error so far (`__ms.errors`). */
   errors(): Promise<RuntimeErrorInfo[]>;
   close(): Promise<void>;
@@ -164,10 +167,12 @@ export async function openCdpRenderPage(client: CdpClient, o: OpenPageOptions & 
         if (interception.failure) throw new RenderError('isolation', interception.failure.message);
         await evaluate(client, sid, `window.__ms.seek(${JSON.stringify(time)}).then(() => true)`, t.frameMs);
       },
-      async capture(format: CaptureFormat, quality?: number) {
+      async capture(format: CaptureFormat, quality?: number, scale?: number) {
         if (interception.failure) throw new RenderError('isolation', interception.failure.message);
+        const scaled = scale !== undefined && Number.isFinite(scale) && scale > 0 && scale < 1;
         const r = await client.send<{ data?: string }>('Page.captureScreenshot', {
           format, ...(format !== 'png' && quality !== undefined ? { quality } : {}), optimizeForSpeed: true, fromSurface: true, captureBeyondViewport: false,
+          ...(scaled ? { clip: { x: 0, y: 0, width: o.width, height: o.height, scale } } : {}),
         }, { sessionId: sid, timeoutMs: t.captureMs });
         if (typeof r.data !== 'string') throw new RenderError('badFrame', 'empty screenshot');
         return Buffer.from(r.data, 'base64');

@@ -30,9 +30,12 @@ export interface CompositionFolder {
   sizes: ReadonlyMap<string, { size: number }>;
 }
 
-/** Why a folder cannot be read as a composition: `link` (a symlink or hard link), `special` (not a file or folder), `limit`, `unreadable`. */
+/**
+ * Why a folder cannot be read as a composition: `link` (a symlink or hard link), `special` (not a file or folder), `limit`,
+ * `unreadable`, `ambiguous` (two names equal once NFC-normalised: `compositionHash` refuses such a listing).
+ */
 export class CompositionFolderError extends Error {
-  constructor(readonly reason: 'link' | 'special' | 'limit' | 'unreadable', readonly path: string) {
+  constructor(readonly reason: 'link' | 'special' | 'limit' | 'unreadable' | 'ambiguous', readonly path: string) {
     super(`composition folder: ${reason} at ${path || '.'}`);
     this.name = 'CompositionFolderError';
   }
@@ -67,11 +70,18 @@ export async function readCompositionFolder(compDir: string, o: { maxBytes?: num
     }
   };
   await walk('', 0);
-  return { files, hash: compositionHash(files), sizes: new Map(files.map((f) => [f.path.normalize('NFC'), { size: f.size }])) };
+  let hash: string;
+  try { hash = compositionHash(files); } catch {
+    // Two names equal after NFC (e.g. one written in NFD by macOS, one in NFC): the listing has no single canonical form.
+    const seen = new Set<string>();
+    const dup = files.find((f) => { const k = f.path.normalize('NFC'); if (seen.has(k)) return true; seen.add(k); return false; });
+    throw new CompositionFolderError('ambiguous', dup?.path ?? '');
+  }
+  return { files, hash, sizes: new Map(files.map((f) => [f.path.normalize('NFC'), { size: f.size }])) };
 }
 
 /** Reads `composition.json` of `compDir` (confined, bounded) and parses it. */
-async function readCompositionJson(compDir: string): Promise<{ ok: true; value: unknown } | { ok: false; problems: CompositionProblem[] }> {
+export async function readCompositionJson(compDir: string): Promise<{ ok: true; value: unknown } | { ok: false; problems: CompositionProblem[] }> {
   const r = await withConfinedFile(compDir, 'composition.json', true, async (fh, info) => {
     if (info.size > COMPOSITION_LIMITS.jsonBytes) return { bytes: null };
     const buf = Buffer.alloc(info.size + 1);
@@ -89,6 +99,14 @@ async function readCompositionJson(compDir: string): Promise<{ ok: true; value: 
   return parseCompositionText(r.bytes);
 }
 
+/** The problem of a folder `readCompositionFolder` refused. */
+export function folderProblem(e: unknown): CompositionProblem {
+  const path = e instanceof CompositionFolderError ? e.path : '';
+  return e instanceof CompositionFolderError && e.reason === 'ambiguous'
+    ? compositionProblem('composition.ambiguousNames', { path })
+    : compositionProblem('composition.folderUnreadable', { path });
+}
+
 export type LoadedComposition =
   | { ok: true; composition: Composition; hash: string; folder: CompositionFolder; warnings: CompositionProblem[] }
   | { ok: false; problems: CompositionProblem[]; hash: string | null };
@@ -101,8 +119,7 @@ export type LoadedComposition =
 export async function loadComposition(compDir: string, format: FormatPreset): Promise<LoadedComposition> {
   let folder: CompositionFolder;
   try { folder = await readCompositionFolder(compDir); } catch (e) {
-    const path = e instanceof CompositionFolderError ? e.path : '';
-    return { ok: false, hash: null, problems: [compositionProblem('composition.folderUnreadable', { path })] };
+    return { ok: false, hash: null, problems: [folderProblem(e)] };
   }
   const parsed = await readCompositionJson(compDir);
   if (!parsed.ok) return { ok: false, hash: folder.hash, problems: parsed.problems };

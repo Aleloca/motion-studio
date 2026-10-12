@@ -263,8 +263,22 @@ export interface FormatSummary {
    * cores do not send it and clients compute it with `followerVersion`.
    */
   exportVersion?: number | null;
-  /** The file export would copy (`exportVersion`) is missing: no version qualifies for a follower, or the file is missing on disk (e.g. deleted by hand) or is a symlink/hard link: export refuses it. */
+  /**
+   * The file export would copy (`exportVersion`) is missing: no version qualifies for a follower, or a legacy file is missing
+   * on disk (e.g. deleted by hand) or is a symlink/hard link: export refuses it. A v2 composition without a render is NOT
+   * missing (see `starRender`).
+   */
   starFileMissing: boolean;
+  /**
+   * The render state of what export would copy (`exportVersion`), Task 5b:
+   * - `rendered`: a current render (v2) or a legacy file;
+   * - `notRendered`: a v2 composition with no render yet, or whose render file is gone: export renders it first. This is
+   *   never `starFileMissing` (the composition is the result; the media is made on demand);
+   * - `stale`: a v2 render made from another composition: export renders it again first;
+   * - null: nothing to export (no ★, or a follower with no qualifying version).
+   * Optional: older cores do not send it.
+   */
+  starRender?: 'rendered' | 'notRendered' | 'stale' | null;
   /** Each other format of the brief as a possible primary for this one (`checkLink`). */
   linkable: Array<{ primary: string; ok: boolean; reason?: LinkReason }>;
 }

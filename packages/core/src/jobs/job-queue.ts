@@ -55,6 +55,7 @@ export class JobQueue {
   private readonly onUpdate?: (job: JobSummary) => void;
   private readonly entries: Entry[] = [];
   private idleWaiters: Array<() => void> = [];
+  private settleWaiters: Array<{ id: string; resolve: (job: JobSummary) => void }> = [];
 
   private readonly lanes: Record<string, number>;
 
@@ -111,6 +112,14 @@ export class JobQueue {
     this.pump();
   }
 
+  /** The job's final summary once it is no longer queued or running (at once when it already ended); null for an unknown id. */
+  whenSettled(id: string): Promise<JobSummary | null> {
+    const entry = this.entries.find((e) => e.summary.id === id);
+    if (!entry) return Promise.resolve(null);
+    if (!ACTIVE.has(entry.summary.state)) return Promise.resolve({ ...entry.summary });
+    return new Promise((resolve) => this.settleWaiters.push({ id, resolve }));
+  }
+
   whenIdle(): Promise<void> {
     if (!this.entries.some((e) => ACTIVE.has(e.summary.state))) return Promise.resolve();
     return new Promise((r) => this.idleWaiters.push(r));
@@ -158,6 +167,11 @@ export class JobQueue {
     entry.summary.finishedAt = new Date().toISOString();
     if (error && state === 'failed') entry.summary.error = error;
     this.update(entry);
+    const mine = this.settleWaiters.filter((w) => w.id === entry.summary.id);
+    if (mine.length > 0) {
+      this.settleWaiters = this.settleWaiters.filter((w) => w.id !== entry.summary.id);
+      for (const w of mine) w.resolve({ ...entry.summary });
+    }
   }
 
   private update(entry: Entry): void {

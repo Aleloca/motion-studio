@@ -436,6 +436,12 @@ export interface PreparedMedia {
   release(): void;
 }
 
+/**
+ * The media to give a session: none when no clip was normalised (a composition without video, or every source left as it
+ * is), so the session never needs the cache folder, which then may not even exist.
+ */
+export const sessionMediaOf = (p: PreparedMedia): SessionMedia | undefined => (p.media.clips.size > 0 ? p.media : undefined);
+
 /** At most `max` tasks at once; a waiter whose signal aborts leaves the queue. */
 function limiter(max: number) {
   let active = 0;

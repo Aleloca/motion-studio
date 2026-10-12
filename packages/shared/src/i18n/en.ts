@@ -26,6 +26,13 @@ export const en = {
     jobCancelled: 'The job was cancelled.',
     invalidProgress: 'Invalid progress message (1-300 characters)',
     validateOnlyCreatives: 'Validation is only available in creatives',
+    previewFramesLimit: (p: { max: number }) => `preview_frames can be called at most ${p.max} times per turn: check the frames you already have, then finish the turn`,
+    previewFramesTimes: (p: { max: number }) => `Give from 1 to ${p.max} times, in seconds from the start of the composition`,
+    previewBusy: 'Too many previews are being prepared: try again in a moment',
+    previewUnavailable: 'Previews are not available in this Motion Studio: no Chromium to render with',
+    previewOrigin: 'This window cannot show a live preview (its origin is not allowed)',
+    compositionNotFound: (p: { format: string; n: number }) => `v${p.n} has no composition for ${p.format}`,
+    compositionUnusable: (p: { format: string; n: number }) => `The composition of ${p.format} in v${p.n} has problems: it cannot be previewed`,
     rootPath: '(root)',
     turnFailed: 'Turn failed',
     codebaseNotAbsolute: (p: { path: string }) => `The linked folder must be an absolute path: ${p.path}`,
@@ -246,6 +253,8 @@ export const en = {
     durationOverMax: (p: { file: string; duration: string; max: number }) => `${p.file}: duration ${p.duration}s exceeds the maximum of ${p.max}s`,
     durationOffTarget: (p: { file: string; duration: string; target: number }) => `${p.file}: duration ${p.duration}s, about ${p.target}s requested`,
     reservedName: (p: { file: string; format: string }) => `${p.file}: this name belongs to ${p.format}, which Motion Studio delivers itself in this version; rename your file`,
+    compositionMissing: (p: { label: string; id: string; dir: string }) => `Missing composition for ${p.label} (${p.id}): write ${p.dir}/composition.json`,
+    compositionProblem: (p: { dir: string; text: string }) => `${p.dir}: ${p.text}`,
   },
   outputs: {
     largeFile: (p: { sizeMB: number; mbps: number; targetMbps: number; channel: string }) => `Large file: ${p.sizeMB} MB at ${p.mbps} Mbps (about ${p.targetMbps} Mbps is plenty for ${p.channel})`,
@@ -310,6 +319,8 @@ export const en = {
     layerAutoplay: (p: { file: string; line: number; api: string }) => `${p.file}, line ${p.line}: media must not play on its own (${p.api}) in html layers: use a video or audio clip of the composition`,
     jsonMissing: 'composition.json is missing or cannot be read safely: write the composition as a regular file in the composition folder',
     folderUnreadable: (p: { path: string }) => `The composition folder cannot be read safely (${p.path}): remove links, hard links and special files, and keep it within the limits`,
+    ambiguousNames: (p: { path: string }) => `Two files of the composition folder have the same name once Unicode-normalised (${p.path}): rename one of them`,
+    durationOffBrief: (p: { duration: number; target: number }) => `The composition lasts ${p.duration}s, but about ${p.target}s were requested: adjust the duration and the scenes`,
   },
   /** Render jobs (Task 5): the core renders a v2 version's compositions on demand. */
   render: {
@@ -350,6 +361,7 @@ export const en = {
     invalidDestination: 'Choose a destination folder',
     invalidDate: 'Invalid export date (YYYY-MM-DD)',
     invalidPattern: 'The name pattern is not valid (at most 200 characters)',
+    renderFailed: (p: { list: string }) => `These formats could not be rendered, nothing was exported: ${p.list}`,
   },
   jobs: {
     regenerateRequest: 'Regenerate all formats from the updated brief.',
@@ -359,6 +371,8 @@ export const en = {
     regenerateFormatsRequest: (p: { formats: string }) => `Regenerate ${p.formats} from the updated brief.`,
     addedFollowers: (p: { formats: string; primary: string; n: number }) => `Added ${p.formats} using the ${p.primary} (v${p.n})`,
     noAgentNeeded: 'no agent needed',
+    layerWarnings: (p: { list: string }) => `Advisory checks of the html layers: ${p.list}`,
+    strayRemoved: (p: { list: string }) => `The agent wrote files that Motion Studio makes itself; they were removed: ${p.list}`,
     followerUnlinked: (p: { follower: string; primary: string; reason: string }) => `${p.follower} can no longer follow ${p.primary} (${p.reason}): it is unlinked, even if this turn is cancelled, and gets a dedicated version in this turn.`,
     copyFailed: (p: { format: string }) => `${p.format}: Motion Studio could not put its file in this version`,
     carriedChanged: (p: { format: string; n: number }) => `${p.format}: the file of v${p.n} is not the one recorded for that version, so it could not be kept unchanged`,

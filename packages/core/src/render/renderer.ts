@@ -20,6 +20,7 @@ import {
 import { cftPlatform, findInstalledCft } from './cft-download.ts';
 import { chooseEncoder, concatLine, countVideoFrames, findFfmpeg, h264Args, hostArch, spawnFfmpeg, targetKbps, type FfmpegInfo, type VideoEncoder } from './encode.ts';
 import { findSystemChrome } from './system-chrome.ts';
+import { renderFrames, type RenderFramesOptions, type RenderFramesResult } from './frames.ts';
 import type { WatchdogLimits } from './watchdog.ts';
 
 /**
@@ -308,6 +309,10 @@ export function createRenderEngine(o: RenderEngineOptions = {}) {
     /** Renders with a fresh provider from this engine. */
     async render(opts: Omit<RenderCompositionOptions, 'provider'>): Promise<RenderResult> {
       return renderComposition({ ...opts, provider: await this.provider() });
+    },
+    /** A few small frames (storyboards, the agent's `preview_frames`) with a fresh provider from this engine. */
+    async frames(opts: Omit<RenderFramesOptions, 'provider'>): Promise<RenderFramesResult> {
+      return renderFrames({ ...opts, provider: await this.provider() });
     },
   };
 }

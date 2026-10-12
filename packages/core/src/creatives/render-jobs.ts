@@ -13,11 +13,11 @@ import { noteCoreChange } from '../core-changes.ts';
 import { noteCoreTemp } from '../core-temps.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { currentLocale } from '../i18n.ts';
-import { JobFailedError, type JobQueue } from '../jobs/job-queue.ts';
+import { JobConflictError, JobFailedError, type JobQueue } from '../jobs/job-queue.ts';
 import { readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { RenderError } from '../render/errors.ts';
-import type { MediaNormalizer } from '../render/media-normalize.ts';
+import { sessionMediaOf, type MediaNormalizer } from '../render/media-normalize.ts';
 import type { RenderCompositionOptions, RenderEngine, RenderResult } from '../render/renderer.ts';
 import { CodedError } from '../workspace-store.ts';
 import { noteCoreOutputWrite } from './carry-over.ts';
@@ -162,6 +162,29 @@ export class RenderJobService {
     });
   }
 
+  /**
+   * The render job of version `n` covering `formats`: the active one for that version when there is one (it may cover other
+   * formats: the caller checks the result), else a new one. Used by the export (Task 5b) to render a missing ★ first.
+   */
+  async ensureJob(ref: CreativeRef, n: number, formats: string[]): Promise<JobSummary> {
+    const key = renderJobKey(ref.root, ref.projectSlug, ref.creativeSlug, n);
+    const active = () => this.deps.queue.list().find((j) => j.key === key && (j.state === 'queued' || j.state === 'running'));
+    const running = active();
+    if (running) return running;
+    try { return await this.start(ref, n, formats); } catch (e) {
+      const raced = e instanceof JobConflictError ? active() : undefined;
+      if (raced) return raced;
+      throw e;
+    }
+  }
+
+  /** Renders `formats` of each version (`ensureJob`) and waits for the jobs; the summaries as they ended. */
+  async renderAndWait(ref: CreativeRef, pending: ReadonlyMap<number, string[]>): Promise<JobSummary[]> {
+    const jobs = await Promise.all([...pending].map(([n, formats]) => this.ensureJob(ref, n, formats)));
+    const ended = await Promise.all(jobs.map((j) => this.deps.queue.whenSettled(j.id)));
+    return ended.filter((j): j is JobSummary => j !== null);
+  }
+
   private async run(ref: CreativeRef, n: number, plan: RenderPlan, comps: VersionComposition[], locale: Locale, signal: AbortSignal, jobId: string): Promise<void> {
     const m = messages(locale);
     const presets = await this.deps.presets();
@@ -236,7 +259,7 @@ export class RenderJobService {
       }
       result = await this.deps.engine!.render({
         ...this.deps.renderOptions,
-        dir: creativeDir, versionDir: `outputs/v${n}`, composition, format: preset, out: join(versionDir, file), signal, media: prepared.media,
+        dir: creativeDir, versionDir: `outputs/v${n}`, composition, format: preset, out: join(versionDir, file), signal, ...(sessionMediaOf(prepared) ? { media: sessionMediaOf(prepared)! } : {}),
         onProgress: (p) => o.progress({ format, phase: 'frames', done: p.frames, total: p.total }),
         // The stamp is noted before the rename (M1): a turn's check in between sees the core's own write.
         beforeRename: (temp) => noteCoreOutputWrite(creativeDir, `outputs/v${n}/${file}`, temp),
