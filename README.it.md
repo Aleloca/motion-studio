@@ -39,7 +39,7 @@ Per ogni cartella di configurazione gira un solo Motion Studio: se è già avvia
 ## Requisiti
 - [Claude Code](https://docs.claude.com/claude-code) installato e autenticato (`claude auth login`)
 - Git
-- FFmpeg (serve per renderizzare le composizioni in file video e immagine; senza, le creatività vecchie risultano "non verificate")
+- FFmpeg (serve per renderizzare le composizioni in video; le immagini fisse non ne hanno bisogno; senza, le creatività vecchie risultano "non verificate")
 - Solo per la CLI (`npx`): Google Chrome o Chromium, che renderizza le composizioni. Se manca, **Impostazioni → System check** propone di scaricare Chrome for Testing nella cartella dati di Motion Studio, solo dopo averne mostrato la dimensione e con il tuo consenso. L'app desktop renderizza con il proprio Chromium.
 - Node.js 22+ per `npx` e per i sorgenti (non serve per l'app desktop)
 
@@ -48,7 +48,7 @@ Per ogni cartella di configurazione gira un solo Motion Studio: se è già avvia
 2. L'agente lavora in `creatives/<data-titolo>/work/` e consegna in `outputs/vN/compositions/<formato>/` una **composizione** per formato: un `composition.json` (scene, tracce, testi, forme, immagini, video, audio, animazioni, livelli HTML facoltativi) e gli `assets/` che usa ([contratto completo](docs/output-contract.md)). L'agente non renderizza mai i media finali e non installa renderer.
 3. Motion Studio controlla ogni composizione (schema, file, durata rispetto al brief): se qualcosa non torna chiede all'agente di correggere, fino a 3 tentativi in totale; poi salva la versione, anche se incompleta. Poi crea una storyboard (un piccolo fotogramma per scena) per ogni formato.
 4. Le tavole mostrano le storyboard e riproducono un'**anteprima dal vivo** della composizione: non serve aspettare un render. Una versione nasce "Not rendered".
-5. **Render ★** (o un export che ne ha bisogno) renderizza le versioni ★ sul tuo computer, fuori dalla sandbox dell'agente: un mp4 (H.264, BT.709) per i video, un png per le immagini, con i target di codifica di ogni formato. Un render non blocca mai l'agente: i render aspettano in una coda propria, uno alla volta. Una modifica successiva crea una nuova versione, quindi un render vecchio non viene mai sovrascritto.
+5. **Render ★** (o un export che ne ha bisogno) renderizza le versioni ★ sul tuo computer, fuori dalla sandbox dell'agente: un mp4 (H.264, BT.709) per i video, un file immagine per le fisse (un png se il formato lo prevede, altrimenti un jpg o webp tra quelli ammessi), con i target di codifica di ogni formato. Un render non blocca mai l'agente: i render aspettano in una coda propria, uno alla volta. Una modifica successiva crea una nuova versione, e il render di un'altra versione non viene mai toccato; rifare il render della stessa versione ne sostituisce il file.
 6. Ogni versione è un commit git del progetto. Dalla pagina della creatività puoi aprire un formato, aggiungere commenti su un punto/istante, chiedere modifiche, confrontare versioni e ripartire da una versione precedente. Una creatività fatta prima delle composizioni tiene i suoi video; alla modifica successiva l'agente la converte in composizione (la chat avvisa che quel turno costa più token).
 
 ### Consumi e token

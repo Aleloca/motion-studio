@@ -39,7 +39,7 @@ Only one Motion Studio runs per configuration folder: if one is already running 
 ## Requirements
 - [Claude Code](https://docs.claude.com/claude-code) installed and signed in (`claude auth login`)
 - Git
-- FFmpeg (needed to render compositions into video and image files; older creatives without it are shown as "unverified")
+- FFmpeg (needed to render compositions into videos; stills need none; older creatives without it are shown as "unverified")
 - For the CLI (`npx`) only: Google Chrome or Chromium, which renders the compositions. Without it, **Settings → System check** offers to download Chrome for Testing into Motion Studio's data folder, only after showing its size and with your consent. The desktop app renders with its own Chromium.
 - Node.js 22+ for `npx` and the sources (not needed for the desktop app)
 
@@ -48,7 +48,7 @@ Only one Motion Studio runs per configuration folder: if one is already running 
 2. The agent works in `creatives/<date-title>/work/` and delivers, in `outputs/vN/compositions/<format>/`, one **composition** per format: a `composition.json` (scenes, tracks, text, shapes, images, video, audio, animations, optional HTML layers) and the `assets/` it uses ([full contract](docs/output-contract.md)). The agent never renders final media and never installs a renderer.
 3. Motion Studio checks each composition (schema, files, duration against the brief): if something is off it asks the agent to fix it, up to 3 attempts in total; then it saves the version, even if incomplete. It then makes a storyboard (one small frame per scene) for each format.
 4. The boards show the storyboards and play a **live preview** of the composition: no waiting for a render. A version starts as "Not rendered".
-5. **Render ★** (or an export that needs it) renders the starred versions on your computer, outside the agent's sandbox: an mp4 (H.264, BT.709) for videos, a png for images, with the encoding targets of each format. A render never blocks the agent: renders wait in their own queue, one at a time. A later change makes a new version, so an old render is never overwritten.
+5. **Render ★** (or an export that needs it) renders the starred versions on your computer, outside the agent's sandbox: an mp4 (H.264, BT.709) for videos, an image file for stills (a png when the format allows it, else a jpg or webp it lists), with the encoding targets of each format. A render never blocks the agent: renders wait in their own queue, one at a time. A later change makes a new version, and the render of another version is never touched; rendering the same version again replaces its file.
 6. Each version is a git commit of the project. From the creative's page you can open a format, add comments on a spot/moment, ask for changes, compare versions and restart from an earlier version. A creative made before compositions keeps its videos; at its next change the agent converts it to a composition (the chat says that this turn costs more tokens).
 
 ### Usage and tokens
