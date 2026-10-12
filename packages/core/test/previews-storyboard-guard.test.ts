@@ -12,7 +12,7 @@ const PRESET = { id: 'test-wide', channel: 'Test', name: 'Wide', width: 320, hei
 let base = '';
 afterEach(() => { if (base) rmSync(base, { recursive: true, force: true }); base = ''; });
 
-async function setup(o: { prepareMs?: number; laneMs?: number } = {}) {
+async function setup(o: { prepareMs?: number; laneMs?: number; normalizer?: unknown } = {}) {
   base = mkdtempSync(join(tmpdir(), 'ms-test-storyboard-guard-'));
   const projectDir = join(base, 'acme');
   const creativeDir = join(projectDir, 'creatives', 'promo');
@@ -27,7 +27,7 @@ async function setup(o: { prepareMs?: number; laneMs?: number } = {}) {
     frames: async (o: { times: number[] }) => ({ frames: o.times.map((t) => ({ t, data: Buffer.from('jpg'), width: 320, height: 180 })), errors: [] }),
   };
   const normalizer = { prepare: async () => { await new Promise((r) => setTimeout(r, o.prepareMs ?? 0)); return { warnings: [], release() {}, media: { clips: new Map() } }; } };
-  const svc = new PreviewService({ engine: engine as never, normalizer: normalizer as never, presets: async () => [PRESET as never], uiOrigins: () => [], distDir: base, ...(o.laneMs ? { lane: new PreviewLane({ timeLimitMs: o.laneMs }) } : {}) });
+  const svc = new PreviewService({ engine: engine as never, normalizer: (o.normalizer ?? normalizer) as never, presets: async () => [PRESET as never], uiOrigins: () => [], distDir: base, ...(o.laneMs ? { lane: new PreviewLane({ timeLimitMs: o.laneMs }) } : {}) });
   (svc as unknown as { compositionServer: () => Promise<unknown> }).compositionServer = async () => ({ origin: 'http://127.0.0.1:1' });
   return { svc, projectDir, creativeDir, hash: loaded.hash };
 }
@@ -57,6 +57,32 @@ describe('the preview lane limit does not include media normalisation (C5)', () 
     const { svc, projectDir, creativeDir, hash } = await setup({ prepareMs: 400, laneMs: 150 });
     const sb = await svc.makeStoryboard({ projectDir, creativeDir, creativeSlug: 'promo', n: 1 }, 'test-wide', hash);
     expect(sb?.frames.length).toBeGreaterThan(0);
+    await svc.close();
+  });
+
+  it('a preview whose lane limit passes during a shared encode does not cancel it for another caller (M7)', async () => {
+    // One encode shared by every caller (as the media normaliser shares one per file): cancelled only if a waiter's signal
+    // aborts while it runs.
+    const signals: AbortSignal[] = [];
+    let shared: Promise<void> | null = null;
+    let cancelled = false;
+    const normalizer = {
+      prepare: async (p: { signal: AbortSignal }) => {
+        signals.push(p.signal);
+        p.signal.addEventListener('abort', () => { cancelled = true; }, { once: true });
+        shared ??= new Promise((r) => setTimeout(r, 400));
+        await shared;
+        return { warnings: [], release() {}, media: { clips: new Map() } };
+      },
+    };
+    const { svc, projectDir, creativeDir, hash } = await setup({ laneMs: 150, normalizer });
+    const preview = svc.makeStoryboard({ projectDir, creativeDir, creativeSlug: 'promo', n: 1 }, 'test-wide', hash);
+    const other = normalizer.prepare({ signal: new AbortController().signal }); // e.g. a render of the same composition
+    const [sb] = await Promise.all([preview, other]);
+    expect(sb?.frames.length).toBeGreaterThan(0);
+    expect(signals).toHaveLength(2);
+    expect(cancelled).toBe(false);
+    expect(signals.some((x) => x.aborted)).toBe(false);
     await svc.close();
   });
 });

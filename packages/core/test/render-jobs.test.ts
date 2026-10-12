@@ -596,6 +596,29 @@ describe('a follower alone does not render a current primary again (C6)', { time
     expect((await waitJob((await post(slug, 1, { formats: ['test-wide'] })).json().id)).state).toBe('succeeded');
     expect(fake.calls).toHaveLength(2);
   });
+
+  it('when the primary\'s file no longer matches its record at run time, the primary is rendered again (M7)', async () => {
+    const { slug, store, dir } = await v2Creative({ formats: ['test-wide', 'test-wide-b'] });
+    expect((await waitJob((await post(slug, 1)).json().id)).state).toBe('succeeded');
+    expect(fake.calls).toHaveLength(1);
+    const primaryBytes = readFileSync(join(dir, 'outputs', 'v1', 'test-wide.mp4'));
+    rmSync(join(dir, 'outputs', 'v1', 'test-wide-b.mp4'));
+    await store.updateVersion(slug, 1, (v) => ({ ...v, outputs: v.outputs.filter((o) => o.format !== 'test-wide-b') }));
+    // Same regular file (nlink 1), other bytes: the record still says rendered, so the copy is planned; the run-time sha
+    // check refuses it and falls back to a full render of the primary.
+    const changed = Buffer.from(primaryBytes);
+    changed[changed.length - 1] = changed[changed.length - 1]! ^ 0xff;
+    writeFileSync(join(dir, 'outputs', 'v1', 'test-wide.mp4'), changed);
+    expect(renderState(await versionOf(store, slug, 1), 'test-wide')).toBe('rendered');
+    expect((await waitJob((await post(slug, 1, { formats: ['test-wide-b'] })).json().id)).state).toBe('succeeded');
+    expect(fake.calls).toHaveLength(2);
+    const rendered = readFileSync(join(dir, 'outputs', 'v1', 'test-wide.mp4'));
+    expect(rendered.equals(changed)).toBe(false);
+    expect(readFileSync(join(dir, 'outputs', 'v1', 'test-wide-b.mp4'))).toEqual(rendered);
+    const v = await versionOf(store, slug, 1);
+    expect(renderState(v, 'test-wide')).toBe('rendered');
+    expect(renderState(v, 'test-wide-b')).toBe('rendered');
+  });
 });
 
 describe('a turn and a render on the same creative (M9)', { timeout: 180_000 }, () => {
