@@ -13,6 +13,8 @@ describe('incoming messages', () => {
     expect(parseIncoming({ type: 'select', clipId: null })).toEqual({ type: 'select', clipId: null });
     expect(parseIncoming({ type: 'setScale', scale: 'fit' })).toEqual({ type: 'setScale', scale: 'fit' });
     expect(parseIncoming({ type: 'setScale', scale: 0.5 })).toEqual({ type: 'setScale', scale: 0.5 });
+    expect(parseIncoming({ type: 'mute', muted: true })).toEqual({ type: 'mute', muted: true });
+    expect(parseIncoming({ type: 'mute', muted: false })).toEqual({ type: 'mute', muted: false });
   });
   it('ignores unknown types, extra fields and bad values', () => {
     for (const bad of [
@@ -21,6 +23,7 @@ describe('incoming messages', () => {
       { type: 'seek', t: 1, extra: true }, { type: 'play', rate: 0 }, { type: 'play', rate: 100 }, { type: 'play', loop: 'yes' },
       { type: 'select', clipId: 'x'.repeat(65) }, { type: 'select', clipId: 3 }, { type: 'select' },
       { type: 'setScale', scale: 0 }, { type: 'setScale', scale: 100 }, { type: 'setScale', scale: 'auto' },
+      { type: 'mute' }, { type: 'mute', muted: 1 }, { type: 'mute', muted: 'true' }, { type: 'mute', muted: true, volume: 0 },
     ]) expect(parseIncoming(bad)).toBeNull();
   });
 });
@@ -63,7 +66,7 @@ describe('preview bridge', () => {
   const ORIGIN = 'http://127.0.0.1:4317';
   function setup() {
     const parent = { postMessage: vi.fn() };
-    const player = { seek: vi.fn(async () => {}), play: vi.fn(), pause: vi.fn(), select: vi.fn(), setScale: vi.fn() };
+    const player = { seek: vi.fn(async () => {}), play: vi.fn(), pause: vi.fn(), select: vi.fn(), setScale: vi.fn(), setMuted: vi.fn() };
     const bridge = createPreviewBridge({ parent, parentOrigin: ORIGIN, player });
     return { parent, player, bridge };
   }
@@ -74,6 +77,8 @@ describe('preview bridge', () => {
     bridge.handle({ data: { type: 'pause' }, origin: ORIGIN, source: parent });
     bridge.handle({ data: { type: 'select', clipId: 'title' }, origin: ORIGIN, source: parent });
     bridge.handle({ data: { type: 'setScale', scale: 'fit' }, origin: ORIGIN, source: parent });
+    bridge.handle({ data: { type: 'mute', muted: true }, origin: ORIGIN, source: parent });
+    expect(player.setMuted).toHaveBeenCalledWith(true);
     expect(player.seek).toHaveBeenCalledWith(2);
     expect(player.play).toHaveBeenCalledWith({ loop: true, rate: 0.5 });
     expect(player.pause).toHaveBeenCalled();

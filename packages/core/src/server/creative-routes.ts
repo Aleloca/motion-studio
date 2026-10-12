@@ -384,6 +384,19 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   });
 
   /**
+   * Ends a live preview session of this creative's version n early (Task 8 fix I2): the web releases hover previews it no
+   * longer shows, so they never count against the live sessions cap (MAX_PREVIEW_SESSIONS) of a player still in use.
+   * Behind the UI token; a session of another creative or version is not touched (404 either way, nothing to learn).
+   */
+  app.delete<{ Params: { slug: string; c: string; n: string; token: string } }>('/api/projects/:slug/creatives/:c/versions/:n/preview-session/:token', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const n = /^\d{1,6}$/.test(req.params.n) ? Number(req.params.n) : 0;
+    if (n < 1 || !/^[A-Za-z0-9_-]{43}$/.test(req.params.token)) throw new WorkspaceError(404, t().errors.previewSessionNotFound);
+    if (!ctx.previews.revokePreview({ creativeDir: ref.store.dir(ref.creativeSlug), n }, req.params.token)) throw new WorkspaceError(404, t().errors.previewSessionNotFound);
+    return { revoked: true };
+  });
+
+  /**
    * The storyboard of one format of a saved v2 version (scene starts and the poster), made now when missing or stale.
    * 404 `storyboard-unavailable` when it cannot be made (no renderer, an invalid composition).
    */

@@ -38,8 +38,9 @@ const api = {
   getUsage: vi.fn(async (_q?: unknown): Promise<UsageReport> => { throw new Error('offline'); }),
   // Task 8: v2 versions (compositions).
   renderVersion: vi.fn(async (_s: string, _c: string, n: number, _f?: string[]) => ({ id: `r${n}`, key: `render:/w:acme:lancio:v${n}`, kind: 'render', label: 'Render', state: 'queued', createdAt: at })),
+  revokePreview: vi.fn(async (..._a: unknown[]) => ({ revoked: true })),
   previewSession: vi.fn(async (_s: string, _c: string, _n: number, format: string, _o: string) => ({
-    url: `http://127.0.0.1:61234/tok-${format}/runtime/index.html?mode=preview&parentOrigin=x`, origin: 'http://127.0.0.1:61234',
+    url: `http://127.0.0.1:61234/tok-${format}/runtime/index.html?mode=preview&parentOrigin=x`, token: `tok-${format}`, origin: 'http://127.0.0.1:61234',
     expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), format, hash: 'b'.repeat(64), width: 1080, height: 1920, duration: 6, fps: 30,
   })),
   getStoryboard: vi.fn(async (_s: string, _c: string, n: number, format: string) => ({
@@ -50,10 +51,12 @@ const api = {
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error { status = 0; } }));
 const { CreativeCanvas } = await import('../src/screens/CreativeCanvas.tsx');
+const { __resetPreviewSessions, RELEASE_GRACE_MS } = await import('../src/components/compositionPreview.ts');
 const { TopBar } = await import('../src/shell/TopBars.tsx');
 const { ShellContext } = await import('../src/shell/ShellContext.tsx');
 const { __resetPendingPins } = await import('../src/screens/pendingPins.ts');
 const { takeFrameOrigin } = await import('../src/shell/intents.ts');
+const { getToasts } = await import('../src/ui/toast.tsx');
 
 const emptyLive = (): EventsState => ({ approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} } as unknown as EventsState);
 const route: Route = { name: 'creative', slug: 'acme', creative: 'lancio' };
@@ -76,6 +79,7 @@ function Harness({ live }: { live: EventsState }) {
 const ready = () => screen.findByRole('img', { name: /Post 1:1 v\d/ });
 let platform: ReturnType<typeof vi.spyOn> | null = null;
 beforeEach(() => {
+  __resetPreviewSessions();
   vi.clearAllMocks();
   api.getUsage.mockImplementation(async () => { throw new Error('offline'); });
   detail = makeDetail([version(1, 'Dal brief')]);
@@ -1253,6 +1257,38 @@ describe('CreativeCanvas · compositions (Task 8)', () => {
     expect(frame.getAttribute('sandbox')).toBe('allow-scripts');
     fireEvent.pointerOut(wrap, { relatedTarget: document.body });
     await waitFor(() => expect(board('tiktok-9x16').querySelector('iframe')).toBeNull());
+  });
+
+  it('hover sessions are ended on the core after the pointer leaves; a pinned preview keeps its own (fix round 1, I2)', async () => {
+    detail = makeDetail([v2(1)]);
+    render(<Harness live={emptyLive()} />);
+    await picture('tiktok-9x16');
+    await userEvent.click(within(board('instagram-post-1x1')).getByRole('button', { name: /^Riproduci l’anteprima dal vivo di/ }));
+    await waitFor(() => expect(board('instagram-post-1x1').querySelector('iframe')).not.toBeNull());
+    const wrap = board('tiktok-9x16').querySelector('.ms-cv-frame-wrap') as HTMLElement;
+    fireEvent.pointerOver(wrap);
+    await waitFor(() => expect(board('tiktok-9x16').querySelector('iframe')).not.toBeNull());
+    fireEvent.pointerOut(wrap, { relatedTarget: document.body });
+    await waitFor(() => expect(api.revokePreview).toHaveBeenCalledWith('acme', 'lancio', 1, 'tok-tiktok-9x16'), { timeout: RELEASE_GRACE_MS + 3000 });
+    expect(api.revokePreview).not.toHaveBeenCalledWith('acme', 'lancio', 1, 'tok-instagram-post-1x1');
+    expect(board('instagram-post-1x1').querySelector('iframe')).not.toBeNull();
+  }, 20_000);
+
+  it('"Render ★" with one version refused says what started and what did not', async () => {
+    detail = makeDetail([v2(1), { ...v2(2), compositions: [{ format: 'tiktok-9x16', dir: 'compositions/tiktok-9x16', hash: 'e'.repeat(64) }] }]);
+    api.renderVersion.mockImplementation(async (_s: string, _c: string, n: number) => {
+      if (n === 1) throw new Error('Già in corso');
+      return { id: `r${n}`, key: `render:/w:acme:lancio:v${n}`, kind: 'render', label: 'Render', state: 'queued', createdAt: at };
+    });
+    try {
+      render(<Harness live={emptyLive()} />);
+      await picture('tiktok-9x16');
+      await userEvent.click(screen.getByRole('button', { name: 'Render ★' }));
+      await waitFor(() => expect(getToasts().map((x) => x.text).join('|')).toMatch(/^Render di 1 formato; non partiti: Instagram · Post 1:1 v1 \(Già in corso\)/));
+    } finally {
+      api.renderVersion.mockReset();
+      api.renderVersion.mockImplementation(async (_s: string, _c: string, n: number, _f?: string[]) => ({ id: `r${n}`, key: `render:/w:acme:lancio:v${n}`, kind: 'render', label: 'Render', state: 'queued', createdAt: at }));
+    }
   });
 
   it('the play button starts the live preview by click', async () => {

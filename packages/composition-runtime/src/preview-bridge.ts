@@ -7,6 +7,7 @@ export interface BridgePlayer {
   pause(): void;
   select(clipId: string | null): void;
   setScale(scale: number | 'fit'): void;
+  setMuted(muted: boolean): void;
 }
 
 export interface PreviewBridge {
@@ -28,6 +29,7 @@ export function createPreviewBridge(o: { parent: { postMessage(msg: unknown, tar
         case 'pause': o.player.pause(); break;
         case 'select': o.player.select(cmd.clipId); break;
         case 'setScale': o.player.setScale(cmd.scale); break;
+        case 'mute': o.player.setMuted(cmd.muted); break;
       }
     },
     post(msg) {

@@ -1,4 +1,4 @@
-import type { JobSummary, VersionEntry } from '@motion-studio/shared';
+import { creativeJobKey, renderJobKey, type JobSummary, type VersionEntry } from '@motion-studio/shared';
 import { describe, expect, it } from 'vitest';
 import { boardRender, renderKeyOf, renderPct, starRenderPlan } from '../src/screens/renderModel.ts';
 import type { FormatState } from '../src/screens/versionModel.ts';
@@ -19,6 +19,8 @@ describe('renderModel', () => {
     expect(renderKeyOf(KEY, 2)).toBe('render:/Users/me/Motion Studio:acme:lancio:v2');
     expect(renderKeyOf('creative:C:\\ws:acme:lancio', 4)).toBe('render:C:\\ws:acme:lancio:v4');
     expect(renderKeyOf('brand:/w:acme', 1)).toBeNull();
+    // The same shared rule as the core's keys (fix round 1): derived from the creative's key, it is the render job's key.
+    for (const root of ['/Users/me/Motion Studio', 'C:\\ws']) expect(renderKeyOf(creativeJobKey(root, 'acme', 'lancio'), 7)).toBe(renderJobKey(root, 'acme', 'lancio', 7));
   });
   it('legacy versions have no render state; v2 ones: none, rendered, queued, rendering, failed', () => {
     const legacy = { ...v(2), compositions: undefined };

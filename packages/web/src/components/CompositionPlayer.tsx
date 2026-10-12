@@ -51,6 +51,7 @@ export class CompositionMedia implements SyncMedia {
   defaultPlaybackRate = 1;
   /** The runtime loops by itself (the format view's Loop); Compare loops through useSyncedMedia instead. */
   loop = false;
+  private isMuted = false;
   error: unknown = null;
 
   get currentTime(): number { return this.time; }
@@ -63,6 +64,13 @@ export class CompositionMedia implements SyncMedia {
     if (!this.isPaused) this.post(this.playCommand());
   }
   get duration(): number { return this.dur; }
+  /** As `<video>.muted`: every sound of the preview silenced (Compare's second player); sent again to a new frame. */
+  get muted(): boolean { return this.isMuted; }
+  set muted(m: boolean) {
+    if (m === this.isMuted) return;
+    this.isMuted = m;
+    this.post({ type: 'mute', muted: m });
+  }
   get paused(): boolean { return this.isPaused; }
   get playbackRate(): number { return this.rate; }
   set playbackRate(r: number) {
@@ -102,6 +110,7 @@ export class CompositionMedia implements SyncMedia {
         this.send = this.pending;
         this.dur = msg.duration;
         this.error = null;
+        if (this.isMuted) this.post({ type: 'mute', muted: true });
         if (this.time > 0) this.post({ type: 'seek', t: Math.min(this.time, msg.duration) });
         if (!this.isPaused) this.post(this.playCommand());
         this.emit('loadedmetadata');
@@ -156,6 +165,8 @@ export interface CompositionPlayerProps {
   onStall?(): void;
   /** Plays (looping) as soon as it is ready: the canvas boards' preview. */
   autoPlay?: boolean;
+  /** No sound (Compare's second player, as its <video> was). */
+  muted?: boolean;
   className?: string;
 }
 
@@ -169,7 +180,7 @@ function frameUrl(s: PreviewSessionInfo): string | null {
   }
 }
 
-export function CompositionPlayer({ session, title, onMedia, onStall, autoPlay, className }: CompositionPlayerProps) {
+export function CompositionPlayer({ session, title, onMedia, onStall, autoPlay, muted = false, className }: CompositionPlayerProps) {
   const t = useT();
   const r = t.web.render;
   const frame = useRef<HTMLIFrameElement>(null);
@@ -183,6 +194,7 @@ export function CompositionPlayer({ session, title, onMedia, onStall, autoPlay, 
     callbacks.current.onMedia?.(media);
     return () => { media.pause(); media.attach(null); callbacks.current.onMedia?.(null); };
   }, [media]);
+  useEffect(() => { media.muted = muted; }, [muted, media]);
   useEffect(() => {
     if (autoPlay) { media.loop = true; void media.play().catch(() => {}); }
   }, [autoPlay, media]);

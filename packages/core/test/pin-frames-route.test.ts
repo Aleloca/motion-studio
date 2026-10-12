@@ -96,9 +96,26 @@ describe('GET …/pin-frame-files/:n/:file', () => {
   });
   it('serves only `<n>-<i>.jpg` of version n, never through a link', async () => {
     mkdirSync(framesDir(2), { recursive: true });
-    writeFileSync(join(base, 'secret.jpg'), JPEG);
+    writeFileSync(join(base, 'secret.jpg'), Buffer.from('secret'));
+    // A real frame is listed and signed; then it is replaced by a link to a file elsewhere.
+    writeFileSync(join(framesDir(2), '2-1.jpg'), JPEG);
+    const url = (await list(2)).json().frames[0].url as string;
+    expect((await app.inject({ url })).statusCode).toBe(200);
+    rmSync(join(framesDir(2), '2-1.jpg'));
     symlinkSync(join(base, 'secret.jpg'), join(framesDir(2), '2-1.jpg'));
-    // A link listed by name is not a regular file: not listed, and not served even with a valid signature.
+    // A link is not a regular file: not listed, and not served even with a valid signature for its name.
     expect((await list(2)).json().frames).toEqual([]);
+    const linked = await app.inject({ url });
+    expect([403, 404]).toContain(linked.statusCode);
+    expect(linked.body).not.toContain('secret');
+    // A linked version folder, with a signature from before: refused too.
+    rmSync(framesDir(2), { recursive: true });
+    const outside = join(base, 'outside-v2');
+    mkdirSync(outside);
+    writeFileSync(join(outside, '2-1.jpg'), Buffer.from('secret'));
+    symlinkSync(outside, framesDir(2));
+    const through = await app.inject({ url });
+    expect([403, 404]).toContain(through.statusCode);
+    expect(through.body).not.toContain('secret');
   });
 });

@@ -153,6 +153,9 @@ export const api = {
    */
   previewSession: (slug: string, creative: string, n: number, format: string, parentOrigin: string) =>
     request<PreviewSessionInfo>('POST', `${c(slug, creative)}/versions/${n}/preview-session`, { format, parentOrigin }),
+  /** Ends a live preview session early (a hover preview no longer shown); sent with keepalive so it survives a page close. */
+  revokePreview: (slug: string, creative: string, n: number, token: string) =>
+    request<{ revoked: true }>('DELETE', `${c(slug, creative)}/versions/${n}/preview-session/${encodeURIComponent(token)}`, undefined, { keepalive: true }),
   /** The storyboard of a v2 version's format: scene frames and the poster, signed URLs valid until `expiresAt`. */
   getStoryboard: (slug: string, creative: string, n: number, format: string) =>
     request<StoryboardView>('GET', `${c(slug, creative)}/versions/${n}/storyboards/${encodeURIComponent(format)}`),

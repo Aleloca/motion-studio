@@ -1,3 +1,4 @@
+import { renderJobKey } from '@motion-studio/shared';
 import { randomBytes } from 'node:crypto';
 import { constants } from 'node:fs';
 import { copyFile, lstat, mkdir, rename, rm } from 'node:fs/promises';
@@ -50,8 +51,8 @@ import { largeFileWarning } from './output-contract.ts';
  *   turn's check of earlier versions leaves out the core's own writes (`noteCoreOutputWrite`). `outputs/` is not in git.
  */
 
-export const renderJobKey = (root: string, projectSlug: string, creativeSlug: string, n: number): string =>
-  `render:${root}:${projectSlug}:${creativeSlug}:v${n}`;
+/** Shared with the web, which derives it from the creative's key (`renderJobKeyOf`). */
+export { renderJobKey };
 
 export interface RenderJobDeps {
   queue: JobQueue;

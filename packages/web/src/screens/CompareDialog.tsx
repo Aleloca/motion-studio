@@ -169,10 +169,14 @@ function CompareBody({ onClose, slug, creative, versions, presets, states, forma
         {!m ? <span className="ms-cmp-none">{c.noOutput}</span>
           : m.live ? (
             m.preview.kind === 'ready' ? (
+              // The left one carries the sound; the right one is muted, as its <video> was.
               <CompositionPlayer key={`v${n}`} session={m.preview.session} title={t.web.render.playerFrame({ label: `${label} v${n}` })}
-                onMedia={i === 0 ? setLeft : setRight} onStall={m.stalled} />
+                onMedia={i === 0 ? setLeft : setRight} onStall={m.stalled} muted={i === 1} />
             ) : m.preview.kind === 'failed' ? (
-              <span className="ms-cmp-failed" role="alert">{t.web.render.failed({ detail: m.preview.message })}</span>
+              <span className="ms-cmp-failed ms-cmp-failed-retry" role="alert">
+                <span>{t.web.render.failed({ detail: m.preview.message })}</span>
+                <Button size="sm" variant="outline" onClick={m.retry}><Icon name="refresh" size={12} />{t.web.render.retry}</Button>
+              </span>
             ) : <span className="ms-cplayer-state" role="status">{m.preview.kind === 'busy' ? t.web.render.busy : t.web.render.loading}</span>
           ) : m.video ? (
             // The left one carries the sound; the right one is muted (two soundtracks at once help nobody).

@@ -240,10 +240,16 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
   // Renders of v2 versions (Task 8): a board's Retry and its menu's "Render vN", and the bar's "Render ★".
   const jobList = useMemo(() => Object.values(live.jobs), [live.jobs]);
   const renderNow = (list: Array<[number, string[]]>) => {
-    const count = list.reduce((k, [, f]) => k + f.length, 0);
-    Promise.all(list.map(([n, formats]) => Promise.resolve().then(() => api.renderVersion(slug, creative, n, formats))))
-      .then(() => toast.show(t.web.render.started({ count }), { tone: 'ok' }))
-      .catch((e: unknown) => toast.show(t.web.render.startFailed({ detail: message(e) })));
+    // One request per version: each starts or not on its own, and the toast says which.
+    void Promise.allSettled(list.map(([n, formats]) => Promise.resolve().then(() => api.renderVersion(slug, creative, n, formats)))).then((results) => {
+      const started = results.reduce((k, r, i) => k + (r.status === 'fulfilled' ? list[i]![1].length : 0), 0);
+      const failed = results.flatMap((r, i) => (r.status === 'rejected' ? [{ n: list[i]![0], formats: list[i]![1], detail: message(r.reason) }] : []));
+      if (!failed.length) { toast.show(t.web.render.started({ count: started }), { tone: 'ok' }); return; }
+      const what = failed.map((f) => `${f.formats.map(formatLabel).join(', ')} v${f.n}`).join('; ');
+      toast.show(started > 0
+        ? t.web.render.startedPartly({ count: started, list: what, detail: failed[0]!.detail })
+        : t.web.render.startFailed({ detail: failed[0]!.detail }));
+    });
   };
   const starPlan = useMemo(() => (detail ? starRenderPlan(states, versions, jobList, detail.jobKey) : new Map<number, string[]>()), [detail, states, versions, jobList]);
   const anyComposition = versions.some((v) => (v.compositions?.length ?? 0) > 0);

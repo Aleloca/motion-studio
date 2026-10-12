@@ -1,7 +1,7 @@
 // Render state of the v2 (composition) versions on the web side (Task 8, spec §5.3): per board "Not rendered",
 // "Queued · 2 renders ahead", "Rendering 42%", "Rendered", "Render failed · Retry", from the version's records and the live
 // render jobs; and what "Render ★" renders.
-import { renderState, type JobSummary, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
+import { renderJobKeyOf, renderState, type JobSummary, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
 import type { FormatState } from './versionModel.ts';
 
 export type BoardRender =
@@ -15,10 +15,8 @@ export type BoardRender =
 export const compositionOf = (v: VersionEntry | null | undefined, format: string): VersionComposition | null =>
   v?.compositions?.find((c) => c.format === format) ?? null;
 
-/** The render jobs' key of version n (core render-jobs `renderJobKey`), from the creative's job key `creative:<root>:<p>:<c>`. */
-export function renderKeyOf(creativeJobKey: string, n: number): string | null {
-  return creativeJobKey.startsWith('creative:') ? `render:${creativeJobKey.slice('creative:'.length)}:v${n}` : null;
-}
+/** The render jobs' key of version n, from the creative's job key: the shared rule the core keys its jobs with. */
+export const renderKeyOf = (creativeJobKey: string, n: number): string | null => renderJobKeyOf(creativeJobKey, n);
 
 export const isActiveJob = (j: JobSummary) => j.state === 'queued' || j.state === 'running';
 const covers = (j: JobSummary, format: string) => !j.formats?.length || j.formats.includes(format);

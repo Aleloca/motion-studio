@@ -33,8 +33,9 @@ const api = {
   setExportPick: vi.fn(async (..._a: unknown[]) => detail),
   setFormatLink: vi.fn(async (..._a: unknown[]) => detail),
   // Task 8: v2 versions.
+  revokePreview: vi.fn(async (..._a: unknown[]) => ({ revoked: true })),
   previewSession: vi.fn(async (_s: string, _c: string, n: number, format: string, _o: string) => ({
-    url: `http://127.0.0.1:61234/tok-${format}-v${n}/runtime/index.html?mode=preview&parentOrigin=x`, origin: 'http://127.0.0.1:61234',
+    url: `http://127.0.0.1:61234/tok-${format}-v${n}/runtime/index.html?mode=preview&parentOrigin=x`, token: `tok-${format}-v${n}`, origin: 'http://127.0.0.1:61234',
     expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), format, hash: 'b'.repeat(64), width: 1080, height: 1920, duration: 8, fps: 30,
   })),
   getStoryboard: vi.fn(async (_s: string, _c: string, n: number, format: string) => ({
@@ -56,6 +57,7 @@ vi.mock('../src/components/Conversation.tsx', async (orig) => {
 });
 vi.mock('../src/motion/motion.ts', async (orig) => ({ ...(await orig<typeof import('../src/motion/motion.ts')>()), flip }));
 const { FormatView } = await import('../src/screens/FormatView.tsx');
+const { __resetPreviewSessions, RELEASE_GRACE_MS } = await import('../src/components/compositionPreview.ts');
 const { TopBar } = await import('../src/shell/TopBars.tsx');
 const { ShellContext } = await import('../src/shell/ShellContext.tsx');
 const { __resetPendingPins, pinsKey, usePendingPins } = await import('../src/screens/pendingPins.ts');
@@ -110,6 +112,7 @@ let play: ReturnType<typeof vi.fn>;
 let pause: ReturnType<typeof vi.fn>;
 let platform: ReturnType<typeof vi.spyOn> | null = null;
 beforeEach(() => {
+  __resetPreviewSessions();
   vi.clearAllMocks();
   detail = makeDetail([version(1)]);
   __resetPendingPins();

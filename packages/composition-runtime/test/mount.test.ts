@@ -139,6 +139,23 @@ describe('mount', () => {
     expect([...root.querySelectorAll('video')].map((v) => v.getAttribute('src'))).toEqual([`${BASE}media/0.mp4`]);
   });
 
+  it('preview: mute silences every video and audio clip; unmute restores each one\'s own setting (Task 8, Compare)', () => {
+    const c = comp({ tracks: [{ id: 'v', kind: 'video', clips: [
+      { id: 'n', type: 'video', src: 'media/0.mp4', audioSrc: 'assets/v.mp4', start: 0, duration: 5, props: {} },
+      { id: 'plain', type: 'video', src: 'assets/w.mp4', start: 0, duration: 5, props: {} },
+    ] }, { id: 'aud', kind: 'audio', clips: [{ id: 'music', type: 'audio', src: 'assets/m.wav', start: 0, duration: 5 }] }] } as unknown as Partial<Composition>);
+    const { player, root } = run(c, 'preview');
+    const [norm, plain] = [...root.querySelectorAll('video')];
+    const audios = [...root.querySelectorAll('audio')];
+    expect([norm!.muted, plain!.muted]).toEqual([true, false]);
+    player.setMuted(true);
+    expect([norm!.muted, plain!.muted]).toEqual([true, true]);
+    expect(audios.every((a) => a.muted)).toBe(true);
+    player.setMuted(false);
+    expect([norm!.muted, plain!.muted]).toEqual([true, false]);
+    expect(audios.every((a) => !a.muted)).toBe(true);
+  });
+
   it('preview: a normalised video plays muted, its sound comes from the original asset in an <audio> at audioStart + trimStart', async () => {
     const proto = HTMLMediaElement.prototype as unknown as Record<string, unknown>;
     const saved = { play: proto.play, pause: proto.pause, paused: Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'paused') };

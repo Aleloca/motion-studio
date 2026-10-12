@@ -306,6 +306,7 @@
 .ms-cmp-pane img, .ms-cmp-pane video { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
 .ms-cmp-none { font-size: 12px; color: var(--muted); padding: 12px; text-align: center; }
 .ms-cmp-failed { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 1; padding: 8px 10px; border-radius: 8px; background: var(--mediaScrim); color: var(--onMediaScrim); font-size: 12px; overflow-wrap: anywhere; }
+.ms-cmp-failed-retry { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .ms-cmp-failures { position: absolute; left: 0; right: 0; bottom: 0; z-index: 4; }
 .ms-cmp-failures .ms-cmp-failed { position: static; display: block; margin: 0 8px 8px; }
 .ms-cmp-error { margin: 0; font-size: 12px; color: var(--danger); overflow-wrap: anywhere; }

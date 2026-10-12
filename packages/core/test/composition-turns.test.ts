@@ -424,6 +424,30 @@ describe('live preview sessions', { timeout: 60_000 }, () => {
     expect(changed.statusCode).toBe(409);
   });
 
+  it('a session can be ended early, only by its own creative and version (Task 8 fix I2)', async () => {
+    const slug = await create(['test-wide']);
+    const other = await create(['test-wide']);
+    const mint = async (c: string) => (await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${c}/versions/1/preview-session`, headers: H,
+      payload: { format: 'test-wide', parentOrigin: UI_ORIGIN } })).json() as { url: string; token: string };
+    const s = await mint(slug);
+    expect(s.url).toContain(`/${s.token}/runtime/`);
+    const page = async () => (await fetch(s.url)).status;
+    expect(await page()).toBe(200);
+    const del = (c: string, n: number | string, token = s.token, headers: Record<string, string> = H) =>
+      app.inject({ method: 'DELETE', url: `/api/projects/acme/creatives/${c}/versions/${n}/preview-session/${token}`, headers });
+    expect((await del(slug, 1, s.token, {})).statusCode).toBe(401);
+    // Another creative, another version, a malformed token: nothing is touched.
+    expect((await del(other, 1)).statusCode).toBe(404);
+    expect((await del(slug, 2)).statusCode).toBe(404);
+    expect((await del(slug, 1, 'short')).statusCode).toBe(404);
+    expect(await page()).toBe(200);
+    const r = await del(slug, 1);
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toEqual({ revoked: true });
+    expect(await page()).toBe(404);
+    expect((await del(slug, 1)).statusCode).toBe(404);
+  });
+
   it('reports the live composition server origin when it starts, and null when the app closes (desktop pins its frames to it)', async () => {
     const seen: Array<string | null> = [];
     const other = await buildServer({

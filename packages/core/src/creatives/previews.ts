@@ -116,7 +116,7 @@ function entryOf(version: VersionEntry | undefined, format: string): { folder: s
 export class PreviewService {
   readonly lane: PreviewLane;
   private server: Promise<CompositionServer> | null = null;
-  private readonly sessions = new Map<string, { release: () => void; revoke: () => void; timer: NodeJS.Timeout }>();
+  private readonly sessions = new Map<string, { release: () => void; revoke: () => void; timer: NodeJS.Timeout; creativeDir: string; n: number }>();
   private readonly storyboardLocks = new KeyedMutex();
   private readonly closing = new AbortController();
   /** Storyboard runs in flight: `close()` waits for them, so nothing is written after the app closed. */
@@ -314,7 +314,7 @@ export class PreviewService {
       const ttl = Math.max(0, session.expiresAt - Date.now());
       const timer = setTimeout(() => { prepared.release(); this.sessions.delete(session.token); }, ttl + 1000);
       timer.unref();
-      this.sessions.set(session.token, { release: prepared.release, revoke: session.revoke, timer });
+      this.sessions.set(session.token, { release: prepared.release, revoke: session.revoke, timer, creativeDir: ref.creativeDir, n: ref.n });
       // At most MAX_PREVIEW_SESSIONS live at once (each holds media leases): the oldest ends first (fix minor 5).
       while (this.sessions.size > MAX_PREVIEW_SESSIONS) {
         const [token, old] = this.sessions.entries().next().value!;
@@ -322,13 +322,24 @@ export class PreviewService {
       }
       const c = loaded.composition;
       return {
-        url: session.url, origin: session.origin, expiresAt: new Date(Date.now() + ttl).toISOString(),
+        url: session.url, token: session.token, origin: session.origin, expiresAt: new Date(Date.now() + ttl).toISOString(),
         format: entry.folder, hash: entry.hash, width: c.width, height: c.height, duration: c.duration, fps: c.fps,
       };
     } catch (err) {
       prepared.release();
       throw err;
     }
+  }
+
+  /**
+   * Ends a live preview session early (Task 8 fix I2: a hover preview the UI no longer shows): its token stops working and
+   * its media lease is returned. Only a session of this creative's version `ref.n`; false when there is no such live session.
+   */
+  revokePreview(ref: Pick<VersionFormatRef, 'creativeDir' | 'n'>, token: string): boolean {
+    const s = this.sessions.get(token);
+    if (!s || s.creativeDir !== ref.creativeDir || s.n !== ref.n) return false;
+    clearTimeout(s.timer); s.revoke(); s.release(); this.sessions.delete(token);
+    return true;
   }
 
   /** App quit: running frames aborted, sessions ended, media leases returned, the server closed. */

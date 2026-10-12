@@ -1,5 +1,14 @@
 import type { JobSummary } from './events.ts';
 
+/** The job key of a creative's turns (core creative-turns): `creative:<root>:<project>:<creative>`; the root may hold ':'. */
+export const creativeJobKey = (root: string, projectSlug: string, creativeSlug: string): string => `creative:${root}:${projectSlug}:${creativeSlug}`;
+/** The job key of the render jobs of version n (core render-jobs): `render:<root>:<project>:<creative>:v<n>`. */
+export const renderJobKey = (root: string, projectSlug: string, creativeSlug: string, n: number): string => `render:${root}:${projectSlug}:${creativeSlug}:v${n}`;
+/** `renderJobKey` from a creative's job key (the creative detail's `jobKey`); null for another kind of key. */
+export function renderJobKeyOf(creativeKey: string, n: number): string | null {
+  return creativeKey.startsWith('creative:') ? `render:${creativeKey.slice('creative:'.length)}:v${n}` : null;
+}
+
 /**
  * What the core's preview, storyboard, render and render engine routes answer (Task 8), shared by the core and the web.
  */
@@ -8,6 +17,8 @@ import type { JobSummary } from './events.ts';
 export interface PreviewSessionInfo {
   /** The runtime page on the composition server (its own origin, a session token in the path). */
   url: string;
+  /** The session token (also in `url`): `DELETE …/preview-session/:token` ends the session early. */
+  token: string;
   origin: string;
   expiresAt: string;
   /** The composition folder shown (a follower's is its primary's) and its hash. */

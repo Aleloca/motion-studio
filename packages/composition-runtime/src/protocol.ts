@@ -66,7 +66,9 @@ export type PreviewIncoming =
   | { type: 'pause' }
   | { type: 'select'; clipId: string | null }
   /** `fit` (default) letterboxes the composition in the viewport; a number is a fixed zoom (0.01 to 8). */
-  | { type: 'setScale'; scale: number | 'fit' };
+  | { type: 'setScale'; scale: number | 'fit' }
+  /** Silences (or restores) every sound of the preview: Compare's second player (Task 8). */
+  | { type: 'mute'; muted: boolean };
 
 export const RATE_MIN = 0.1;
 export const RATE_MAX = 4;
@@ -97,6 +99,8 @@ export function parseIncoming(data: unknown): PreviewIncoming | null {
       return keysWithin(data, ['type']) ? { type: 'pause' } : null;
     case 'select':
       return keysWithin(data, ['type', 'clipId']) && (data.clipId === null || isClipId(data.clipId)) ? { type: 'select', clipId: data.clipId } : null;
+    case 'mute':
+      return keysWithin(data, ['type', 'muted']) && typeof data.muted === 'boolean' ? { type: 'mute', muted: data.muted } : null;
     case 'setScale':
       return keysWithin(data, ['type', 'scale']) && (data.scale === 'fit' || (finite(data.scale) && data.scale >= SCALE_MIN && data.scale <= SCALE_MAX))
         ? { type: 'setScale', scale: data.scale } : null;

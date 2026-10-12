@@ -14,6 +14,9 @@ export function rendersArg(arg: unknown): number | null {
   return typeof arg === 'number' && Number.isInteger(arg) && arg >= 0 && arg <= 1000 ? arg : null;
 }
 
+/** A "yes" holds this long: a quit that did not happen (aborted elsewhere) asks again on the next close. */
+export const CONFIRM_TTL_MS = 60_000;
+
 export interface RenderGuard {
   set(n: number): void;
   running(): number;
@@ -23,17 +26,30 @@ export interface RenderGuard {
   mayClose(): Promise<boolean>;
 }
 
-export function createRenderGuard(o: { ask(count: number): Promise<boolean> }): RenderGuard {
+/**
+ * - It asks only while renders run; when the answer comes, a "no" given after every render already ended still closes.
+ * - A "yes" holds for the rest of the quit, and is forgotten when the quit did not happen: after CONFIRM_TTL_MS, or as soon
+ *   as a new render starts (the app is clearly still in use).
+ */
+export function createRenderGuard(o: { ask(count: number): Promise<boolean>; now?: () => number }): RenderGuard {
+  const now = o.now ?? Date.now;
   let count = 0;
-  let confirmed = false;
+  let confirmedAt: number | null = null;
   let asking: Promise<boolean> | null = null;
+  const confirmed = () => confirmedAt !== null && now() - confirmedAt < CONFIRM_TTL_MS;
   return {
-    set: (n) => { count = n; },
+    set: (n) => {
+      if (n > count) confirmedAt = null;
+      count = n;
+    },
     running: () => count,
-    confirmed: () => confirmed,
+    confirmed,
     mayClose() {
-      if (confirmed || count === 0) return Promise.resolve(true);
-      asking ??= o.ask(count).then((yes) => { confirmed = yes; return yes; }, () => false).finally(() => { asking = null; });
+      if (confirmed() || count === 0) return Promise.resolve(true);
+      asking ??= o.ask(count).then((yes) => {
+        if (yes) confirmedAt = now();
+        return yes || count === 0;
+      }, () => count === 0).finally(() => { asking = null; });
       return asking;
     },
   };

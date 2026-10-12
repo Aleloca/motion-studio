@@ -13,7 +13,7 @@ import type { RenderEngineStatus } from '@motion-studio/shared';
 import { AppConfigStore } from '../src/app-config.ts';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { Git } from '../src/git.ts';
-import type { CftDownloadInfo } from '../src/render/cft-download.ts';
+import { CftError, type CftDownloadInfo } from '../src/render/cft-download.ts';
 import type { RenderEngine, RenderEngineInfo } from '../src/render/renderer.ts';
 import { buildServer } from '../src/server/app.ts';
 import type { ChromeInstaller } from '../src/server/render-engine-routes.ts';
@@ -147,16 +147,42 @@ describe('Chrome for Testing download (consent first)', () => {
     await app.inject({ method: 'POST', url: '/api/render-engine/download', headers: H, payload: { consent: true, sizeBytes: OFFER.sizeBytes } });
     inst.finish(false);
     await until(async () => (await status()).download.state === 'failed');
-    expect((await status()).download.error).toContain('chrome-headless-shell');
+    // A code and a pointer to the log, never the raw message (it may hold local paths).
+    const error = (await status()).download.error!;
+    expect(error).toContain('(error)');
+    expect(error).not.toContain('chrome-headless-shell');
     await app.inject({ method: 'POST', url: '/api/render-engine/download', headers: H, payload: { consent: true, sizeBytes: OFFER.sizeBytes } });
     expect(inst.installs).toHaveLength(2);
   });
-  it('the metadata failing is a clear 503, not a download', async () => {
+  it('the metadata failing is a clear 503 with a code only, not a download', async () => {
     const inst = fakeInstaller();
-    inst.info = async () => { throw new Error('manifest: HTTP 500'); };
+    inst.info = async () => { throw new CftError('download', 'manifest: ENOENT /Users/someone/secret/path'); };
     await build({ engine: engineOf({ kind: null }), installer: inst });
     const r = await app.inject({ url: '/api/render-engine/download-info', headers: H });
     expect(r.statusCode).toBe(503);
     expect(r.json().code).toBe('chrome-info-failed');
+    expect(r.json().error).toContain('(download)');
+    expect(r.json().error).not.toContain('/Users/');
+  });
+  it('two requests at once start exactly one download (the slot is claimed before any await)', async () => {
+    const inst = fakeInstaller();
+    // A slow metadata read: both requests are inside the route at the same time.
+    const info = inst.info;
+    inst.info = async () => { await new Promise((r) => setTimeout(r, 30)); return info(); };
+    await build({ engine: engineOf({ kind: null }), installer: inst });
+    const post = () => app.inject({ method: 'POST', url: '/api/render-engine/download', headers: H, payload: { consent: true, sizeBytes: OFFER.sizeBytes } });
+    const [a, b] = await Promise.all([post(), post()]);
+    expect([a.statusCode, b.statusCode]).toEqual([202, 202]);
+    expect(inst.installs).toHaveLength(1);
+    expect(inst.infoCalls).toBe(1);
+    inst.finish();
+    await until(async () => (await status()).download.state === 'done');
+  });
+  it('a refused request releases the slot', async () => {
+    const inst = fakeInstaller();
+    await build({ engine: engineOf({ kind: null }), installer: inst });
+    expect((await app.inject({ method: 'POST', url: '/api/render-engine/download', headers: H, payload: { consent: true, sizeBytes: 1 } })).statusCode).toBe(409);
+    expect((await app.inject({ method: 'POST', url: '/api/render-engine/download', headers: H, payload: { consent: true, sizeBytes: OFFER.sizeBytes } })).statusCode).toBe(202);
+    expect(inst.installs).toHaveLength(1);
   });
 });

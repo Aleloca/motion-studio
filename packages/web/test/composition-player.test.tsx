@@ -12,15 +12,16 @@ class ApiError extends Error {
 const api = {
   previewSession: vi.fn(),
   getStoryboard: vi.fn(),
+  revokePreview: vi.fn(async (..._a: unknown[]) => ({ revoked: true })),
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError }));
 const { CompositionPlayer, CompositionMedia, READY_TIMEOUT_MS } = await import('../src/components/CompositionPlayer.tsx');
-const { usePreviewSession, useStoryboard, REFRESH_BEFORE_MS } = await import('../src/components/compositionPreview.ts');
+const { usePreviewSession, useStoryboard, REFRESH_BEFORE_MS, RELEASE_GRACE_MS, MAX_REFRESH_RETRIES, __resetPreviewSessions } = await import('../src/components/compositionPreview.ts');
 const { I18nProvider } = await import('../src/i18n.tsx');
 
 const ORIGIN = 'http://127.0.0.1:61234';
 const session = (token = 'tok1', over: Partial<PreviewSessionInfo> = {}): PreviewSessionInfo => ({
-  url: `${ORIGIN}/${token}/runtime/index.html?mode=preview&parentOrigin=${encodeURIComponent('http://localhost:3000')}`,
+  url: `${ORIGIN}/${token}/runtime/index.html?mode=preview&parentOrigin=${encodeURIComponent('http://localhost:3000')}`, token,
   origin: ORIGIN, expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
   format: 'tiktok-9x16', hash: 'a'.repeat(64), width: 1080, height: 1920, duration: 8, fps: 30, ...over,
 });
@@ -47,7 +48,7 @@ function mount(over: Partial<Parameters<typeof CompositionPlayer>[0]> = {}) {
   return { ...r, media: () => media!, posted, onStall };
 }
 
-afterEach(() => { vi.useRealTimers(); vi.clearAllMocks(); });
+afterEach(() => { __resetPreviewSessions(); vi.useRealTimers(); vi.clearAllMocks(); api.previewSession.mockReset(); api.getStoryboard.mockReset(); });
 
 describe('CompositionPlayer', () => {
   it('is a sandboxed frame on the composition server: allow-scripts only, no referrer', () => {
@@ -127,6 +128,15 @@ describe('CompositionPlayer', () => {
     fromRuntime({ type: 'time', t: 8, playing: false });
     expect(m.paused).toBe(true);
     expect(seen).toEqual(['loadedmetadata', 'play', 'timeupdate', 'timeupdate', 'pause', 'ended']);
+  });
+  it('muted: sent as a mute command once ready, and again to a new frame', () => {
+    const p = mount({ muted: true });
+    expect(p.posted).not.toHaveBeenCalled();
+    fromRuntime(READY);
+    expect(p.posted.mock.calls.map((c) => c[0])).toEqual([{ type: 'mute', muted: true }]);
+    expect(p.media().muted).toBe(true);
+    p.media().muted = false;
+    expect(p.posted).toHaveBeenLastCalledWith({ type: 'mute', muted: false }, '*');
   });
   it('shows the runtime errors inline', () => {
     mount();
@@ -237,6 +247,74 @@ describe('usePreviewSession', () => {
   });
 });
 
+describe('preview sessions are shared and released (fix round 1, I2)', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  const flush = async () => { await act(async () => { await vi.advanceTimersByTimeAsync(0); }); };
+  const use = (n: number, format = 'tiktok-9x16', on = true) => renderHook(({ e }) => usePreviewSession({ slug: 'acme', creative: 'launch', n, format, enabled: e }), { initialProps: { e: on } });
+  let minted = 0;
+  beforeEach(() => { minted = 0; api.previewSession.mockImplementation(async () => session(`t${++minted}`)); });
+
+  it('one session per version and format, shared by every player of it', async () => {
+    const a = use(2);
+    const b = use(2);
+    await flush();
+    expect(api.previewSession).toHaveBeenCalledTimes(1);
+    expect(a.result.current.state).toMatchObject({ kind: 'ready', session: { token: 't1' } });
+    expect(b.result.current.state).toMatchObject({ kind: 'ready', session: { token: 't1' } });
+  });
+
+  it('a hover that ends lets the session go: ended on the core after the grace, reused if the pointer comes back first', async () => {
+    const h = use(2);
+    await flush();
+    h.rerender({ e: false });
+    await act(async () => { await vi.advanceTimersByTimeAsync(RELEASE_GRACE_MS - 100); });
+    h.rerender({ e: true });
+    await flush();
+    expect(api.previewSession).toHaveBeenCalledTimes(1);
+    expect(api.revokePreview).not.toHaveBeenCalled();
+    h.rerender({ e: false });
+    await act(async () => { await vi.advanceTimersByTimeAsync(RELEASE_GRACE_MS + 10); });
+    expect(api.revokePreview).toHaveBeenCalledWith('acme', 'launch', 2, 't1');
+    h.unmount();
+  });
+
+  it('a new session ends the unused ones at once, never one still in use (a pinned or playing player)', async () => {
+    const pinned = use(1, 'instagram-post-1x1');
+    await flush();
+    const hover = use(2);
+    await flush();
+    hover.rerender({ e: false });
+    // The pointer moves on to a third board: the idle hover session goes now, the pinned one stays.
+    const next = use(3);
+    await flush();
+    expect(api.revokePreview.mock.calls.map((c) => c[3])).toEqual(['t2']);
+    expect(pinned.result.current.state).toMatchObject({ kind: 'ready', session: { token: 't1' } });
+    expect(next.result.current.state).toMatchObject({ kind: 'ready', session: { token: 't3' } });
+    // Unmounting the last user of a session ends it after the grace.
+    pinned.unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(RELEASE_GRACE_MS + 10); });
+    expect(api.revokePreview.mock.calls.map((c) => c[3])).toEqual(['t2', 't1']);
+  });
+
+  it('retry() mints again at once; a new key starts fresh (no leftover backoff)', async () => {
+    api.previewSession.mockReset();
+    api.previewSession.mockRejectedValueOnce(new ApiError(500, 'boom')).mockResolvedValueOnce(session('ok'));
+    const h = renderHook(({ n }) => usePreviewSession({ slug: 'acme', creative: 'launch', n, format: 'tiktok-9x16', enabled: true }), { initialProps: { n: 2 } });
+    await flush();
+    expect(h.result.current.state.kind).toBe('failed');
+    act(() => { h.result.current.retry(); });
+    await flush();
+    expect(h.result.current.state).toMatchObject({ kind: 'ready', session: { token: 'ok' } });
+    // A stall, then another version: its first session comes without waiting a backoff.
+    api.previewSession.mockResolvedValueOnce(session('v3'));
+    act(() => { h.result.current.stalled(); });
+    expect(h.result.current.state.kind).toBe('busy');
+    h.rerender({ n: 3 });
+    await flush();
+    expect(h.result.current.state).toMatchObject({ kind: 'ready', session: { token: 'v3' } });
+  });
+});
+
 describe('useStoryboard', () => {
   beforeEach(() => { vi.useFakeTimers(); });
   const board = (exp: number): StoryboardView => ({
@@ -266,5 +344,33 @@ describe('useStoryboard', () => {
     await flush();
     expect(g.result.current.state).toBe('none');
     expect(g.result.current.storyboard).toBeNull();
+  });
+});
+
+describe('useStoryboard (fix round 1)', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  const flush = async () => { await act(async () => { await vi.advanceTimersByTimeAsync(0); }); };
+  const sb = (exp: number): StoryboardView => ({ format: 'f', hash: 'h', width: 270, expiresAt: new Date(Date.now() + exp).toISOString(), frames: [{ t: 1, kind: 'poster', width: 1, height: 1, url: `/u?${exp}` }] });
+
+  it('busy on the first load stays busy until it works (no flicker back to loading)', async () => {
+    const busy = () => new ApiError(429, 'busy', 'preview-busy');
+    api.getStoryboard.mockRejectedValueOnce(busy()).mockRejectedValueOnce(busy()).mockResolvedValueOnce(sb(600_000));
+    const seen: string[] = [];
+    renderHook(() => { const r = useStoryboard({ slug: 'a', creative: 'c', n: 1, format: 'f', hash: 'h', enabled: true }); seen.push(r.state); return r; });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    const after = seen.slice(seen.indexOf('busy'));
+    expect(after.includes('loading')).toBe(false);
+    expect(seen.at(-1)).toBe('ready');
+  });
+
+  it('a refresh that keeps failing is bounded, then the expiring images are dropped', async () => {
+    api.getStoryboard.mockResolvedValueOnce(sb(2 * 60_000)).mockRejectedValue(new Error('offline'));
+    const h = renderHook(() => useStoryboard({ slug: 'a', creative: 'c', n: 1, format: 'f', hash: 'h', enabled: true }));
+    await flush();
+    expect(h.result.current.state).toBe('ready');
+    await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000); });
+    expect(api.getStoryboard).toHaveBeenCalledTimes(2 + MAX_REFRESH_RETRIES);
+    expect(h.result.current.state).toBe('none');
+    expect(h.result.current.storyboard).toBeNull();
   });
 });

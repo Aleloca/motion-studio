@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { setLocale, t } from '@motion-studio/core';
-import { createRenderGuard, registerRenderGuard, rendersArg, renderRunningPrompt } from '../src/render-guard.ts';
+import { CONFIRM_TTL_MS, createRenderGuard, registerRenderGuard, rendersArg, renderRunningPrompt } from '../src/render-guard.ts';
 
 // Closing the UI window (or quitting) while a render runs asks first (Task 8, carry 11): the quit itself cancels the
 // renders cleanly (render-window.ts shutdownForQuit), this is only the confirmation.
@@ -66,6 +66,32 @@ describe('createRenderGuard', () => {
     expect(await a).toBe(true);
     expect(await b).toBe(true);
     expect(ask).toHaveBeenCalledTimes(1);
+  });
+  it('renders that ended while the question was open: the window closes whatever the answer', async () => {
+    let answer: (v: boolean) => void = () => {};
+    const g = createRenderGuard({ ask: () => new Promise<boolean>((r) => { answer = r; }) });
+    g.set(1);
+    const closing = g.mayClose();
+    g.set(0);
+    answer(false);
+    expect(await closing).toBe(true);
+    expect(g.confirmed()).toBe(false);
+  });
+  it('a yes is forgotten when the quit did not happen: a new render, or after a minute', async () => {
+    let t = 1000;
+    const ask = vi.fn(async () => true);
+    const g = createRenderGuard({ ask, now: () => t });
+    g.set(1);
+    expect(await g.mayClose()).toBe(true);
+    expect(g.confirmed()).toBe(true);
+    g.set(2);
+    expect(g.confirmed()).toBe(false);
+    expect(await g.mayClose()).toBe(true);
+    expect(ask).toHaveBeenCalledTimes(2);
+    t += CONFIRM_TTL_MS;
+    expect(g.confirmed()).toBe(false);
+    expect(await g.mayClose()).toBe(true);
+    expect(ask).toHaveBeenCalledTimes(3);
   });
   it('the prompt names the renders and keeps rendering as the default', () => {
     setLocale('en');

@@ -14,13 +14,15 @@ const api = {
   setFormatLink: vi.fn(async (..._a: unknown[]) => ({})),
   restoreVersion: vi.fn(async () => ({})),
   revealVersion: vi.fn(async () => ({ ok: true })),
+  revokePreview: vi.fn(async (..._a: unknown[]) => ({ revoked: true })),
   previewSession: vi.fn(async (_s: string, _c: string, n: number, format: string, _o: string) => ({
-    url: `http://127.0.0.1:61234/tok-v${n}/runtime/index.html?mode=preview&parentOrigin=x`, origin: 'http://127.0.0.1:61234',
+    url: `http://127.0.0.1:61234/tok-v${n}/runtime/index.html?mode=preview&parentOrigin=x`, token: `tok-v${n}`, origin: 'http://127.0.0.1:61234',
     expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), format, hash: String(n).repeat(64), width: 1080, height: 1920, duration: 6, fps: 30,
   })),
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error { status = 0; } }));
 const { CompareDialog } = await import('../src/screens/CompareDialog.tsx');
+const { __resetPreviewSessions, RELEASE_GRACE_MS } = await import('../src/components/compositionPreview.ts');
 const { useVersionActions } = await import('../src/screens/FormatVersions.tsx');
 
 const POST = 'instagram-post-1x1';
@@ -60,6 +62,7 @@ function Harness({ format, initial }: { format: string; initial: [number, number
 let play: ReturnType<typeof vi.fn>;
 let pause: ReturnType<typeof vi.fn>;
 beforeEach(() => {
+  __resetPreviewSessions();
   vi.clearAllMocks();
   states = {
     [POST]: state(POST, [1, 3], 3),
@@ -282,5 +285,25 @@ describe('CompareDialog · compositions (Task 8)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Pausa (Spazio)' }));
     for (const p of posted) expect(p).toHaveBeenLastCalledWith({ type: 'pause' }, '*');
     expect(api.previewSession).toHaveBeenCalledTimes(2);
+  });
+
+  it('the right player is muted, as its <video> was; the left one carries the sound', async () => {
+    states = { [REEL]: state(REEL, [1, 2], 2) };
+    render(<V2Harness />);
+    const frames = await waitFor(() => { const f = [...document.querySelectorAll('iframe')]; expect(f).toHaveLength(2); return f; });
+    const posted = frames.map((f) => vi.spyOn(f.contentWindow!, 'postMessage'));
+    for (const f of frames) send(f, READY);
+    expect(posted[1]).toHaveBeenCalledWith({ type: 'mute', muted: true }, '*');
+    expect(posted[0]!.mock.calls.some((c) => (c[0] as { type: string }).type === 'mute')).toBe(false);
+  });
+
+  it('a side whose preview failed offers Retry', async () => {
+    states = { [REEL]: state(REEL, [1, 2], 2) };
+    api.previewSession.mockRejectedValueOnce(new Error('The composition changed'));
+    render(<V2Harness />);
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('The composition changed');
+    await userEvent.click(within(alert).getByRole('button', { name: 'Riprova' }));
+    await waitFor(() => expect(document.querySelectorAll('iframe')).toHaveLength(2));
   });
 });

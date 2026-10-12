@@ -37,6 +37,8 @@ export interface Player {
   pause(): void;
   select(clipId: string | null): void;
   setScale(scale: number | 'fit'): void;
+  /** Preview: silences every sound (videos and audio clips) or restores each one's own setting. */
+  setMuted(muted: boolean): void;
   /** The selected clip (preview), or null. */
   readonly selected: string | null;
   /** Bounds of the selected clip in viewport CSS pixels, or null. */
@@ -550,6 +552,9 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
   };
 
   // ---- preview playback (real time, native clock) ----
+  /** The whole preview is silenced (`mute`); each video's own muted state is kept to be restored. */
+  let allMuted = false;
+  const ownMuted = new Map<HTMLMediaElement, boolean>();
   let wallStart = 0;
   let tStart = 0;
   const syncMedia = (t: number) => {
@@ -568,7 +573,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
       const on = local >= 0 && local < a.clip.duration;
       if (!on) { if (!el.paused) el.pause(); continue; }
       el.volume = audioGain(a.clip, t);
-      el.muted = a.muted;
+      el.muted = a.muted || allMuted;
       el.playbackRate = rate;
       const target = (a.clip.trimStart ?? 0) + local;
       // Audio tolerates more drift than video before a jump (each jump clicks): about 3 frames, at least 50 ms.
@@ -659,6 +664,16 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     },
     select(clipId) { selected = clipId; player.onBounds?.(); },
     setScale(s) { scaleMode = s; applyScale(); player.onBounds?.(); },
+    setMuted(m) {
+      if (opts.mode !== 'preview' || m === allMuted) return;
+      allMuted = m;
+      for (const x of mounted) {
+        const v = x.video;
+        if (!v) continue;
+        if (m) { ownMuted.set(v, v.muted); v.muted = true; } else { v.muted = ownMuted.get(v) ?? v.muted; ownMuted.delete(v); }
+      }
+      for (const a of audios) a.el.muted = a.muted || m;
+    },
     selectedBounds() {
       if (!selected) return null;
       const m = mounted.find((x) => x.clip.id === selected);

@@ -1,3 +1,4 @@
+import { creativeJobKey } from '@motion-studio/shared';
 import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
 import { canFollow, checkLink, defaultLinks, effectiveLinks, formatHistory, formatLabel, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
@@ -53,7 +54,8 @@ export interface CreativeTurnDeps {
 }
 export interface CreativeRef { root: string; projectSlug: string; projectDir: string; creativeSlug: string }
 
-export const creativeJobKey = (root: string, projectSlug: string, creativeSlug: string) => `creative:${root}:${projectSlug}:${creativeSlug}`;
+/** Shared with the web (render keys are derived from it): @motion-studio/shared `creativeJobKey`. */
+export { creativeJobKey };
 /** The render command comes from an agent-written manifest: single line, bounded, no control chars. */
 const sanitizeCommand = (cmd: string): string => cmd.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300);
 
