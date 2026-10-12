@@ -60,6 +60,17 @@ describe('armTripwire (decisions log 141)', () => {
     await writeFile(join(c, 'stray.txt'), 'x');
     expect((await trip.check()).moved).toContain(join('creatives', slug));
   });
+  it('ignores macOS Finder metadata at the top of a creative, but not when anything else came too (C14)', async () => {
+    const { p, c, slug } = await project();
+    const trip = await armTripwire(p, { logs: false });
+    await tick();
+    await writeFile(join(c, '.DS_Store'), 'x');
+    await writeFile(join(c, '._versions.json'), 'x');
+    await writeFile(join(c, 'Icon\r'), '');
+    expect((await trip.check()).moved).toEqual([]);
+    await writeFile(join(c, 'stray.txt'), 'x');
+    expect((await trip.check()).moved).toContain(join('creatives', slug));
+  });
   it('with logs: a rewritten or cut history is reported, an append is not', async () => {
     const { p, store, c, slug } = await project();
     await store.appendConversation(slug, { type: 'system', at: new Date().toISOString(), level: 'info', text: 'one' });
