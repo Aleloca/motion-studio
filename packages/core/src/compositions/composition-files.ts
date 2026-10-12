@@ -41,6 +41,19 @@ export class CompositionFolderError extends Error {
   }
 }
 
+/**
+ * File hashes remembered by (path, dev, ino, size, mtime, ctime) (final wave C4): a hover on a board with a large video
+ * asset does not hash it again at every mint. ctime moves on any write and cannot be set by the agent, so a changed file
+ * never matches; a file changed in the last second is not remembered (a write in the same clock tick could look equal).
+ */
+const HASH_MEMO_MAX = 20_000;
+const HASH_MEMO_SETTLE_MS = 1000;
+const hashMemo = new Map<string, { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number; sha256: string }>();
+export function clearCompositionHashMemoForTests(): void { hashMemo.clear(); }
+let hashedForTests = 0;
+/** How many file bodies were actually hashed (tests). */
+export const compositionHashReads = () => hashedForTests;
+
 /** Walks and hashes `compDir` (see the module comment). Throws `CompositionFolderError`. */
 export async function readCompositionFolder(compDir: string, o: { maxBytes?: number } = {}): Promise<CompositionFolder> {
   const maxBytes = o.maxBytes ?? COMPOSITION_MAX_BYTES;
@@ -60,10 +73,21 @@ export async function readCompositionFolder(compDir: string, o: { maxBytes?: num
       if (st.isDirectory()) { await walk(child, depth + 1); continue; }
       if (!st.isFile()) throw new CompositionFolderError('special', child);
       if (files.length >= MAX_COMPOSITION_FILES) throw new CompositionFolderError('limit', child);
+      const memoKey = join(compDir, child);
       const r = await withConfinedFile(compDir, child, true, async (fh, info) => {
+        const hit = hashMemo.get(memoKey);
+        if (hit && hit.dev === info.dev && hit.ino === info.ino && hit.size === info.size && hit.mtimeMs === info.mtimeMs && hit.ctimeMs === info.ctimeMs) return { sha256: hit.sha256, size: info.size };
+        const settled = Date.now() - Math.max(info.mtimeMs, info.ctimeMs) > HASH_MEMO_SETTLE_MS;
         const h = createHash('sha256');
+        hashedForTests++;
         await pipeline(fh.createReadStream({ start: 0, autoClose: false }), h);
-        return { sha256: h.digest('hex'), size: info.size };
+        const sha256 = h.digest('hex');
+        if (settled) {
+          if (hashMemo.size >= HASH_MEMO_MAX) hashMemo.delete(hashMemo.keys().next().value!);
+          hashMemo.delete(memoKey);
+          hashMemo.set(memoKey, { dev: info.dev, ino: info.ino, size: info.size, mtimeMs: info.mtimeMs, ctimeMs: info.ctimeMs, sha256 });
+        }
+        return { sha256, size: info.size };
       });
       if (r === null) continue;
       if ('skipped' in r) throw new CompositionFolderError(r.skipped === 'linked' || r.skipped === 'outside' ? 'link' : r.skipped === 'not-regular' ? 'special' : 'unreadable', child);
