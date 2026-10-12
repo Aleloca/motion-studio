@@ -128,6 +128,28 @@ describe('ffmpeg-exec: whitelists on every input', () => {
     expect(() => assertSafeInputs('ffmpeg', [...inp, '-vf', "scale='min(540,iw)':-2", '-f', 'mjpeg', 'o.jpg'])).not.toThrow();
   });
 
+  it('C15: the four allowlist bypasses of re-review 3 are refused', async () => {
+    const inp = mediaInput({ file: 'a.mp4' });
+    const refused = (args: string[], re: RegExp) => expect(() => assertSafeInputs('ffmpeg', [...inp, ...args, 'o.mp4'])).toThrow(re);
+    // 1. A backslash inside single quotes is literal and the next quote closes it (av_get_token).
+    expect(filterNames("amix=inputs=1:weights='1\\',areverse,amix=inputs=1:weights='1'")).toEqual(['amix', 'areverse', 'amix']);
+    refused(['-af', "amix=inputs=1:weights='1\\',areverse,amix=inputs=1:weights='1'"], /not one the core builds/);
+    refused(['-filter_complex', "[0:a]amix=inputs=1:weights='1\\'[x];amovie=/etc/hosts[y];[x][y]amix=inputs=2[out]"], /not one the core builds/);
+    // An escaped quote OUTSIDE quotes still escapes.
+    expect(filterNames("scale=a\\'b,format=yuv420p")).toEqual(['scale', 'format']);
+    // 2. Filter-level /option=file.
+    for (const g of ['amix=inputs=1:/weights=/tmp/w', 'amix=/inputs=/tmp/w', 'scale=1:1:/flags=/tmp/f', 'scale= /w=/tmp/f']) refused(['-af', g], /read from a file/);
+    refused(['-lavfi', '[0:v]format=yuv420p[a];[a]scale=/w=/tmp/x:h=1'], /read from a file/);
+    expect(() => assertSafeInputs('ffmpeg', [...inp, '-vf', "scale='1/2':3/4", 'o.mp4'])).not.toThrow();
+    // 3. ssim takes no arguments; stats_file / log_path are refused on any filter.
+    for (const g of ['[0:v][1:v]ssim=stats_file=/tmp/w.txt', '[0:v][1:v]ssim=f=/tmp/w.txt', 'psnr=stats_file=/tmp/x', 'scale=1:1:log_path=/tmp/x']) refused(['-lavfi', g], /not one the core builds|file option|arguments/);
+    // 4. Every spelling of the filter options, and the script forms.
+    for (const f of ['-filter:V', '-vf:v', '-af:0', '-filter:v:#1', '-filter:v:#0x1', '-filter_complex:x', '-lavfi:0', '-filter:a:0']) refused([f, 'movie=/etc/hosts'], /not one the core builds/);
+    for (const f of ['-filter_script:a', '-filter_script:v:0', '-filter_script', '-filter_complex_script', '-lavfi_script', '-/filter:v', '-/lavfi']) refused([f, 'g.txt'], /from a file/);
+    // The graph the core builds for the VideoToolbox check still passes.
+    expect(() => assertSafeInputs('ffmpeg', [...inp, '-lavfi', '[0:v]format=yuv420p[a];[1:v]scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[b];[a][b]ssim', '-f', 'null', '-'])).not.toThrow();
+  });
+
   it('no agent-controlled text reaches a filtergraph: the colour stages map probe values to fixed names, the mix uses numbers', () => {
     const hostile = 'bt709:x=1,movie=/etc/passwd[a];[a]';
     for (const vf of [gamutFilter({ primaries: hostile, transfer: hostile, space: hostile }), hdrFilter({ primaries: hostile, transfer: hostile, space: hostile }, undefined).vf]) {
