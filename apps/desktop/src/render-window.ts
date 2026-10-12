@@ -37,8 +37,9 @@ import {
  * **Processes.** The render windows' renderers are Electron's own children: there is no process group to kill. Instead:
  * - cancel, a time limit, a failed segment and `close()` close every window of the provider (the core calls `close()` at
  *   the end of every render); a crashed renderer (`render-process-gone`) fails the render;
- * - every live render window is in a module-wide set, and the app closes them all on quit (`closeAllRenderWindows`,
- *   from `before-quit`); the OS ends the renderers with the app in any case;
+ * - every live render window is in a module-wide set, and the app closes them all on quit (`shutdownForQuit`: the core's
+ *   jobs are cancelled first, then the windows close); the OS ends the renderers with the app in any case;
+ * - the window cap is app-wide (`renderWindowSlots`, every provider), and per provider (`maxWindows`, a render's pages);
  * - the watchdog (the core's, with a sampler of our own): the OS pids of each window's renderers
  *   (`webContents.getOSProcessId()` and every frame's `osProcessId`, for out-of-process layer frames), measured like the
  *   Chrome group (macOS physical footprint with `ps` RSS as a floor, Linux `/proc`) and with `app.getAppMetrics()`'s
@@ -104,8 +105,8 @@ export async function lockRenderSession(ses: LockableSession, prefix: string): P
   ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   ses.setPermissionCheckHandler(() => false);
   ses.setDevicePermissionHandler(() => false);
-  // No source given: the request is refused.
-  ses.setDisplayMediaRequestHandler((_request, callback) => (callback as (s: object) => void)({}));
+  // `null`: the request is refused (getDisplayMedia rejects); never an empty stream set (which may throw).
+  ses.setDisplayMediaRequestHandler((_request, callback) => { try { callback(null); } catch { /* the frame is gone */ } });
   ses.setSpellCheckerEnabled(false);
   ses.on('will-download', (e) => e.preventDefault());
   await ses.setProxy(renderProxyConfig(prefix));
@@ -154,6 +155,43 @@ function releaseAppIfIdle(): void {
 /** Whether the App Nap blocker is held (tests). */
 export function appKeptAwake(): boolean { return napBlocker !== null; }
 
+/**
+ * The app-wide cap on render windows (every provider: a render's pages, storyboards, the agent's preview frames). A page
+ * past the cap waits for a window to close; the waiting ends with the open's abort signal.
+ */
+export class WindowSlots {
+  private used = 0;
+  private readonly waiters: Array<() => void> = [];
+  constructor(private max: number) {}
+  get limit(): number { return this.max; }
+  get inUse(): number { return this.used; }
+  setLimit(n: number): void { this.max = Math.max(1, Math.floor(n)); this.wake(); }
+  private wake(): void { while (this.used < this.max && this.waiters.length) this.waiters.shift()!(); }
+  /** Waits for a slot; resolves with its release (idempotent). */
+  acquire(signal?: AbortSignal): Promise<() => void> {
+    return new Promise((resolve, reject) => {
+      const grant = () => {
+        signal?.removeEventListener('abort', onAbort);
+        this.used++;
+        let released = false;
+        resolve(() => { if (released) return; released = true; this.used--; this.wake(); });
+      };
+      const onAbort = () => {
+        const i = this.waiters.indexOf(grant);
+        if (i >= 0) this.waiters.splice(i, 1);
+        reject(new RenderError('cancelled', 'cancelled'));
+      };
+      if (signal?.aborted) return onAbort();
+      if (this.used < this.max) return grant();
+      this.waiters.push(grant);
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+}
+
+/** The app's render window slots (`desktopRenderOptions` sets the limit). */
+export const renderWindowSlots = new WindowSlots(DEFAULT_PARALLEL);
+
 /** How many render windows are open (tests: nothing may outlive a render, a cancel or a quit). */
 export function liveRenderWindowCount(): number { return liveWindows.size; }
 
@@ -169,17 +207,25 @@ export interface RenderWindow {
   close(): Promise<void>;
 }
 
-/** A fresh, locked, hidden window on `about:blank` (see the module comment). */
-export async function createRenderWindow(o: { prefix: string; width: number; height: number }): Promise<RenderWindow> {
+/** A fresh, locked, hidden window on `about:blank` (see the module comment), within the app-wide cap. */
+export async function createRenderWindow(o: { prefix: string; width: number; height: number; signal?: AbortSignal }): Promise<RenderWindow> {
+  const release = await renderWindowSlots.acquire(o.signal);
+  let win: BrowserWindow;
   const partition = `${RENDER_PARTITION_PREFIX}${randomUUID()}`;
   const ses = session.fromPartition(partition, { cache: false });
-  await lockRenderSession(ses, o.prefix);
-  const win = new BrowserWindow(renderWindowOptions(partition, o.width, o.height));
+  try {
+    await lockRenderSession(ses, o.prefix);
+    win = new BrowserWindow(renderWindowOptions(partition, o.width, o.height));
+  } catch (e) {
+    release();
+    throw e;
+  }
   liveWindows.add(win);
   holdAppAwake();
   const wc = win.webContents;
   win.once('closed', () => {
     liveWindows.delete(win);
+    release();
     releaseAppIfIdle();
     // The partition stays registered in Electron for the app's life (there is no API to drop one): empty it.
     void ses.clearStorageData().catch(() => {});
@@ -300,7 +346,7 @@ export interface ElectronProviderOptions {
   limits: WatchdogLimits;
   timeouts?: PageTimeouts;
   /** Tests: replaces `createRenderWindow`. */
-  createWindow?: (o: { prefix: string; width: number; height: number }) => Promise<RenderWindow>;
+  createWindow?: (o: { prefix: string; width: number; height: number; signal?: AbortSignal }) => Promise<RenderWindow>;
   /** Tests: the memory reading of the windows' pids (default: the core's sampler with `app.getAppMetrics()`). */
   sample?: (pids: number[]) => ReturnType<typeof samplePidsMemory>;
 }
@@ -320,6 +366,8 @@ export class ElectronProvider implements ChromiumProvider {
   failure: RenderFailure | null = null;
   private readonly windows = new Set<RenderWindow>();
   private opening = 0;
+  /** Windows being created: `close()` waits for them. */
+  private readonly creating = new Set<Promise<unknown>>();
   private closing = false;
   private closed: Promise<void> | null = null;
   private origin: string | null = null;
@@ -378,10 +426,13 @@ export class ElectronProvider implements ChromiumProvider {
     this.pixels ??= { width: o.width, height: o.height };
     this.opening++;
     let rw: RenderWindow;
+    const creating = (this.o.createWindow ?? createRenderWindow)({ prefix, width: o.width, height: o.height, signal: o.signal });
+    this.creating.add(creating);
     try {
-      rw = await (this.o.createWindow ?? createRenderWindow)({ prefix, width: o.width, height: o.height });
+      rw = await creating;
     } finally {
       this.opening--;
+      this.creating.delete(creating);
     }
     this.windows.add(rw);
     rw.win.once('closed', () => this.windows.delete(rw));
@@ -435,7 +486,8 @@ export class ElectronProvider implements ChromiumProvider {
       this.closing = true;
       this.watchdog?.stop();
       this.closed = (async () => {
-        // A window still being created joins `windows` before `open` sees `closing`, and closes itself there.
+        // Windows still being created first: each joins `windows` as soon as it exists (and closes itself in `open`).
+        await Promise.allSettled([...this.creating]);
         await Promise.all([...this.windows].map((w) => w.close()));
       })();
     }
@@ -445,7 +497,8 @@ export class ElectronProvider implements ChromiumProvider {
 
 /** The desktop's provider factory: a fresh `ElectronProvider` per render. */
 export function electronRenderProvider(o: Omit<ElectronProviderOptions, 'createWindow' | 'sample'>): ChromiumProviderFactory {
-  return async () => new ElectronProvider(o);
+  // `kind`: the core's engine reports `electron` (System check), not `injected`.
+  return Object.assign(async () => new ElectronProvider(o), { kind: 'electron' as const });
 }
 
 /** The pages (windows) of one desktop render: the core's default, until a user setting exists (Task 8). */
@@ -457,8 +510,26 @@ export const DESKTOP_RENDER_PARALLEL = DEFAULT_PARALLEL;
  * the provider opens.
  */
 export function desktopRenderOptions(runtimeDir: string, parallel = DESKTOP_RENDER_PARALLEL) {
+  renderWindowSlots.setLimit(parallel);
   return {
     renderProvider: electronRenderProvider({ maxWindows: parallel, limits: { timeLimitMs: 4 * 60 * 60 * 1000 } }),
     renderOptions: { distDir: runtimeDir, parallel },
   };
+}
+
+const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/**
+ * What the app does on quit (`before-quit`), in this order:
+ * 1. `closeServer` (the in-process core's `close()`): it cancels every job first; a cancelled render closes its windows,
+ *    kills its ffmpeg and removes its temp output and work folder before it settles, and the core waits for the queue to
+ *    be idle. Bounded by `serverMs`;
+ * 2. every render window still open is closed (the backstop for a render that did not settle in time);
+ * 3. a last short wait for the server, so a render that was cut off by step 2 can still remove its temp files.
+ */
+export async function shutdownForQuit(o: { closeServer: () => Promise<void>; serverMs?: number; windowsMs?: number; graceMs?: number }): Promise<void> {
+  const server = o.closeServer().catch(() => {});
+  await Promise.race([server, delay(o.serverMs ?? 10_000)]);
+  await Promise.race([closeAllRenderWindows(), delay(o.windowsMs ?? 8_000)]);
+  await Promise.race([server, delay(o.graceMs ?? 3_000)]);
 }

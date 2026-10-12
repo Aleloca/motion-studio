@@ -1,5 +1,6 @@
 import { Fragment, type ReactNode } from 'react';
 import { cx } from './cx.ts';
+import { externalLinkRel } from '../desktop.ts';
 
 // Safe Markdown subset for agent and user text (spec point 32): **bold**, *italic* / _italic_, `code`, bullet lists,
 // [label](https://…), bare http(s) URLs, fenced code blocks (``` or ~~~, with an optional language label; an unclosed
@@ -36,7 +37,7 @@ export function safeHref(raw: string): string | null {
 
 // External: in the desktop app the window-open handler hands target=_blank links to the system browser.
 const ExternalLink = ({ href, children }: { href: string; children: ReactNode }) => (
-  <a className="ms-link" href={href} target="_blank" rel="noopener noreferrer">{children}</a>
+  <a className="ms-link" href={href} target="_blank" rel={externalLinkRel()}>{children}</a>
 );
 
 const RULES: Rule[] = [

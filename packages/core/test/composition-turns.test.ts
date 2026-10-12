@@ -423,6 +423,25 @@ describe('live preview sessions', { timeout: 60_000 }, () => {
     const changed = await app.inject({ method: 'POST', url, headers: H, payload });
     expect(changed.statusCode).toBe(409);
   });
+
+  it('reports the live composition server origin when it starts, and null when the app closes (desktop pins its frames to it)', async () => {
+    const seen: Array<string | null> = [];
+    const other = await buildServer({
+      uiToken: TOKEN, sandbox: async () => ({ available: false, reason: 'test' }),
+      appConfig: new AppConfigStore(join(base, 'config2')), git: new Git(),
+      runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }), doctor: async () => [],
+      render: fake.engine, uiOrigins: () => [UI_ORIGIN], bridge: new AgentBridge(), mcpCommand: [process.execPath, '-e', ''],
+      onCompositionOrigin: (o) => seen.push(o),
+    });
+    try {
+      expect(seen).toEqual([]);
+      const origin = ((await other.inject({ url: '/api/preview/origin', headers: H })).json() as { origin: string }).origin;
+      expect(seen).toEqual([origin]);
+    } finally {
+      await other.close();
+    }
+    expect(seen.at(-1)).toBeNull();
+  });
 });
 
 describe('export of v2 versions', { timeout: 60_000 }, () => {

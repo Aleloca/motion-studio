@@ -21,7 +21,7 @@
  * Runs on macOS when the Electron binary is installed; elsewhere (a display is needed) only with MS_REQUIRE_ELECTRON=1,
  * which also makes a missing binary a failure. Needs ffmpeg for the renders.
  */
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { createRequire } from 'node:module';
@@ -83,10 +83,23 @@ const keep = [];
 window.msSeek = (t) => { if (t >= 0.1 && keep.length === 0) { for (let i = 0; i < 32; i++) { const a = new Uint8Array(64 * 1024 * 1024); for (let j = 0; j < a.length; j += 4) a[j] = (j * 2654435761) & 255; keep.push(a); } } };
 </script></body></html>`;
 
+/** The opaque self-navigations (I1): a layer that navigates its own frame to a `data:` or a `blob:` document that fetches. */
+const OPAQUE_NAVIGATION_CASES = ['data', 'blob'] as const;
+const opaqueNavigationPath = (k: (typeof OPAQUE_NAVIGATION_CASES)[number]) => `/selfnav-${k}-fetch`;
+function opaqueNavigationLayer(canary: string, k: (typeof OPAQUE_NAVIGATION_CASES)[number]): string {
+  const inner = `<!doctype html><script>fetch(${JSON.stringify(canary + opaqueNavigationPath(k))}).catch(() => {});</script>`;
+  const html = JSON.stringify(inner).replace(/<\//g, '<\\/');
+  const go = k === 'data'
+    ? `location.href = 'data:text/html,' + encodeURIComponent(${html});`
+    : `location.href = URL.createObjectURL(new Blob([${html}], { type: 'text/html' }));`;
+  return `<!doctype html><html><body><script>window.msReady = Promise.resolve(); setTimeout(() => { ${go} }, 100);</script></body></html>`;
+}
+
 /** A server WITHOUT any CSP: `/<token>/page.html` starts workers and frames every hostile and self-navigating layer. */
 async function nakedServer(canary: string, udpPort: number): Promise<{ origin: string; close(): Promise<void> }> {
   const layers: Record<string, string> = { hostile: hostileLayer(canary, udpPort) };
   for (const c of SELF_NAVIGATION_CASES) layers[`selfnav-${c}`] = selfNavigationLayer(canary, c);
+  for (const k of OPAQUE_NAVIGATION_CASES) layers[`selfnav-${k}`] = opaqueNavigationLayer(canary, k);
   const scripts = hostileWorkerScripts(canary);
   const page = `<!doctype html><html><body>${Object.keys(layers).map((k) => `<iframe sandbox="allow-scripts" src="/${TOKEN}/layers/${k}.html"></iframe>`).join('')}
 <script>
@@ -115,10 +128,14 @@ try { new Worker(URL.createObjectURL(new Blob([${JSON.stringify(workerTransportP
 }
 
 /** A UI-like page server: `/<name>.html` frames that page's URLs (sandboxed, as the UI frames the preview). */
-async function uiServer(): Promise<{ origin: string; setPage(name: string, urls: string[]): void; close(): Promise<void> }> {
+async function uiServer(): Promise<{ origin: string; setPage(name: string, urls: string[]): void; probeHits: string[]; close(): Promise<void> }> {
   const pages = new Map<string, string[]>();
+  const probeHits: string[] = [];
   const s: Server = createServer((req, res) => {
-    const frames = pages.get((req.url ?? '').split('?')[0]!.replace(/^\/|\.html$/g, ''));
+    const path = (req.url ?? '').split('?')[0]!;
+    // The app's own port framed by the UI (the core's port in the app): recorded, it must never load under the filter.
+    if (path.startsWith('/probe-')) { probeHits.push(path); res.writeHead(200, { 'content-type': 'text/html' }); res.end('probe'); return; }
+    const frames = pages.get(path.replace(/^\/|\.html$/g, ''));
     if (frames) {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(`<!doctype html><html><body>${frames.map((u) => `<iframe sandbox="allow-scripts" src="${u}" width="320" height="180"></iframe>`).join('')}</body></html>`);
@@ -127,20 +144,9 @@ async function uiServer(): Promise<{ origin: string; setPage(name: string, urls:
   await new Promise<void>((r) => s.listen(0, '127.0.0.1', () => r()));
   return {
     origin: `http://127.0.0.1:${(s.address() as { port: number }).port}`,
-    setPage: (name, urls) => { pages.set(name, urls); },
+    setPage: (name, urls) => { pages.set(name, urls); }, probeHits,
     close: () => new Promise((r) => { s.closeAllConnections(); s.close(() => r()); }),
   };
-}
-
-/** SIGKILLs every process whose full command line mentions `marker` (`ps -ww`: Electron's helper paths are long). */
-async function sweepHelpers(marker: string): Promise<number> {
-  const out = await new Promise<string>((resolve) => execFile('ps', ['-A', '-ww', '-o', 'pid=,command='], { maxBuffer: 64 << 20 }, (_e, so) => resolve(so ?? '')));
-  let n = 0;
-  for (const line of out.split('\n')) {
-    const m = /^\s*(\d+)\s(.*)$/.exec(line);
-    if (m && m[2]!.includes(marker) && Number(m[1]) !== process.pid) { n++; try { process.kill(Number(m[1]), 'SIGKILL'); } catch { /* gone */ } }
-  }
-  return n;
 }
 
 /** The real data folders an Electron run could touch (their mtimes must not change). */
@@ -197,7 +203,11 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
       MS_HARNESS: JSON.stringify({ dist, scratch, ...config }), MOTION_STUDIO_CONFIG_DIR: configDir,
     };
     return new Promise((resolve) => {
-      const child = spawn(electronPath!, ['--use-mock-keychain', '--password-store=basic', harness], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      // Its own process group (detached): the test kills only that group, which it created, never by pattern or marker.
+      const child = spawn(electronPath!, ['--use-mock-keychain', '--password-store=basic', harness], { env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+      const pgid = child.pid!;
+      const groupAlive = () => { try { process.kill(-pgid, 0); return true; } catch { return false; } };
+      const killGroup = () => { try { process.kill(-pgid, 'SIGKILL'); } catch { /* the group is gone */ } };
       const lines: Array<Record<string, unknown>> = [];
       let killedAfterDone = false;
       let output = '';
@@ -215,22 +225,22 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
             onLine?.(o);
             // Finished. On this very loaded machine Electron's own shutdown took from seconds to minutes (its helpers
             // starved of CPU): after 2 minutes it is killed, and the run still counts as finished.
-            if (o.done) setTimeout(() => { killedAfterDone = true; child.kill('SIGKILL'); }, 120_000).unref();
+            if (o.done) setTimeout(() => { killedAfterDone = true; killGroup(); }, 120_000).unref();
           }
         }
       });
       child.stderr.on('data', (d: Buffer) => { output += d.toString(); });
-      const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+      const timer = setTimeout(killGroup, timeoutMs);
       child.on('exit', (code) => {
         clearTimeout(timer);
-        // Its helpers (they carry --user-data-dir=<scratch>) end with it; any still alive (killed main, starved helper) go.
-        void sweepHelpers(scratch).then((left) => {
-          rmSync(configDir, { recursive: true, force: true });
-          rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-          const done = lines.some((l) => l.done === true);
-          if (process.env.MS_RENDER_DEBUG) console.info(`[electron] exit ${String(code)}${killedAfterDone ? ' (killed 2 min after done)' : ''}, ${left} helper(s) swept`);
-          resolve({ ok: done && (code === 0 || killedAfterDone), code, lines, output: output.slice(-4000) });
-        });
+        // Helpers of that Electron still in its group (a starved renderer that has not noticed the exit yet) end now.
+        const left = groupAlive();
+        killGroup();
+        rmSync(configDir, { recursive: true, force: true });
+        rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+        const done = lines.some((l) => l.done === true);
+        if (process.env.MS_RENDER_DEBUG) console.info(`[electron] exit ${String(code)}${killedAfterDone ? ' (group killed 2 min after done)' : ''}${left ? ', helpers left in its group: killed' : ''}`);
+        resolve({ ok: done && (code === 0 || killedAfterDone), code, lines, output: output.slice(-4000) });
       });
     });
   }
@@ -316,12 +326,14 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
     const r = await runHarness({ scenario: 'hostile-render', creative, composition, format: 'iso' });
     expect(r.ok, r.output).toBe(true);
     expect(r.lines[0]).toMatchObject({ captured: true, failure: null });
+    // getDisplayMedia, asked with a user gesture: the session refuses it cleanly (callback(null)), nothing throws.
+    expect(r.lines[0]!.displayMedia).toBe('NotAllowedError');
     expect(find(r.lines, (l) => 'windowsAfter' in l)).toEqual({ windowsAfter: 0 });
     expect(canary.hits.slice(start)).toEqual([]);
     expect(udp.packets.slice(udpStart)).toEqual([]);
   }, 900_000);
 
-  it('preview filter: the UI framing the preview and the layers directly (the residual); the control leaks, the UI window reaches nothing', async () => {
+  it('preview filter alone (no will-frame-navigate guard): the UI framing the preview and the layers directly, data:/blob: self-navigation, the core and a random port; the control leaks, the UI window reaches nothing', async () => {
     const creative = join(work, 'preview');
     const compDir = join(creative, 'outputs', 'v1', 'compositions', 'iso');
     mkdirSync(join(compDir, 'layers'), { recursive: true });
@@ -340,16 +352,22 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
       const names = ['hostile', ...SELF_NAVIGATION_CASES.map((c) => `selfnav-${c}`)];
       // real: the real preview, and every layer of the real server framed directly (Task 3's residual: no runtime page
       // above them, only their own headers). naked: the same layers from a server without any CSP (the filter alone).
-      const real = [preview.url, ...names.map(layer)];
-      const nakedFrames = names.map((n) => `${naked.origin}/${TOKEN}/layers/${n}.html`);
+      // Probes (I2): the UI framing the app's own port (the core's, in the app) and another loopback port (the canary's).
+      const probes = [`${ui.origin}/probe-app`, `${canary.origin}/probe-random`];
+      const real = [preview.url, ...names.map(layer), ...probes];
+      // data: and blob: self-navigation (I1), from layers without any CSP (the filter alone).
+      const nakedFrames = [...names, ...OPAQUE_NAVIGATION_CASES.map((k) => `selfnav-${k}`)].map((n) => `${naked.origin}/${TOKEN}/layers/${n}.html`);
       ui.setPage('all', [...real, ...nakedFrames]);
       ui.setPage('real', real);
       ui.setPage('naked', nakedFrames);
       const start = canary.hits.length;
       const udpStart = udp.packets.length;
-      const cuts: Record<string, { hits: number; udp: number }> = {};
-      const r = await runHarness({ scenario: 'preview', ui: { origin: ui.origin, all: `${ui.origin}/all.html`, real: `${ui.origin}/real.html`, naked: `${ui.origin}/naked.html` } }, (l) => {
-        if (typeof l.phase === 'string') cuts[l.phase] = { hits: canary.hits.length, udp: udp.packets.length };
+      const cuts: Record<string, { hits: number; udp: number; probes: number }> = {};
+      const r = await runHarness({ scenario: 'preview', ui: {
+        origin: ui.origin, all: `${ui.origin}/all.html`, real: `${ui.origin}/real.html`, naked: `${ui.origin}/naked.html`,
+        realComposition: server.origin, nakedComposition: naked.origin,
+      } }, (l) => {
+        if (typeof l.phase === 'string') cuts[l.phase] = { hits: canary.hits.length, udp: udp.packets.length, probes: ui.probeHits.length };
       });
       expect(r.ok, r.output).toBe(true);
       const c0 = cuts['control-done']!, c1 = cuts['real-done']!, c2 = cuts['naked-done']!;
@@ -357,6 +375,11 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
       const control = canary.hits.slice(start, c0.hits);
       for (const c of OWN_FRAME_NAVIGATION_CASES) expect(control, `control ${c}`).toContain(selfNavigationPath(c));
       expect(control, 'control fetch').toContain('/fetch');
+      for (const k of OPAQUE_NAVIGATION_CASES) expect(control, `control ${k}: self-navigation`).toContain(opaqueNavigationPath(k));
+      expect(control, 'control: a random port framed by the UI').toContain('/probe-random');
+      expect(ui.probeHits.slice(0, c0.probes), "control: the app's own port framed by the UI").toContain('/probe-app');
+      // The UI window: neither the core's port nor a random one is ever framed.
+      expect(ui.probeHits.slice(c0.probes)).toEqual([]);
       expect(c0.udp - udpStart, 'the control sends UDP (WebRTC / WebTransport)').toBeGreaterThan(0);
       // The UI window: nothing over HTTP, from either page.
       expect(canary.hits.slice(c0.hits)).toEqual([]);
@@ -384,7 +407,7 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
     }
   }, 900_000);
 
-  it('lifecycle: quit closes every render window (renderers end), cancel, time limit, window cap', async () => {
+  it('lifecycle: closeAllRenderWindows closes every render window (renderers end), cancel, time limit, window cap', async () => {
     const creative = join(work, 'life');
     const compDir = join(creative, 'outputs', 'v1', 'compositions', 'life');
     mkdirSync(compDir, { recursive: true });
@@ -401,6 +424,28 @@ describe.skipIf(!enabled)('Electron render provider and preview filter in real E
     expect(find(r.lines, (l) => l.phase === 'time')).toMatchObject({ phase: 'time', failure: 'timeLimit', windows: 0, alive: false });
     expect(find(r.lines, (l) => l.phase === 'time').seek).not.toBe('ok');
     expect(find(r.lines, (l) => l.phase === 'cap')).toEqual({ phase: 'cap', refused: 'render: at most 1 render windows at once', windows: 0 });
+  }, 900_000);
+
+  it('quit during a render (M1): the quit sequence cancels the render first, then no window, no output, no temp file, no work folder', async () => {
+    const creative = join(work, 'quit');
+    const compDir = join(creative, 'outputs', 'v1', 'compositions', 'quit');
+    put(join(compDir, 'layers', 'outro.html'), OUTRO_LAYER);
+    const D = 10;
+    const composition = {
+      $schema: 'motion-studio/composition@1', width: W, height: H, fps: 30, duration: D, background: '#101010', fonts: [],
+      scenes: [{ id: 's', start: 0, duration: D }],
+      tracks: [
+        { id: 'bg', kind: 'visual', clips: [{ id: 'bar', type: 'shape', start: 0, duration: D, props: { x: 0, y: 140, width: W, height: 40, fill: '#2060c0' }, animations: [{ preset: 'fadeIn', duration: 1 }] }] },
+        { id: 'layer', kind: 'visual', clips: [{ id: 'outro', type: 'html', src: 'layers/outro.html', start: 0, duration: D, props: { x: 200, y: 20, width: 100, height: 100 } }] },
+      ],
+    } as unknown as Composition;
+    const out = join(creative, 'outputs', 'v1', 'quit.mp4');
+    const r = await runHarness({ scenario: 'quit', creative, composition, format: 'quit', out, ffmpeg });
+    expect(r.ok, r.output).toBe(true);
+    const q = find(r.lines, (l) => l.phase === 'quit');
+    expect(q.windowsBefore, JSON.stringify(q)).toBeGreaterThan(0);
+    expect(q).toMatchObject({ result: 'cancelled', windows: 0, allWindows: 0, out: false, temps: [], workDirs: [] });
+    expect(existsSync(out)).toBe(false);
   }, 900_000);
 
   it('memory: a 2 GB layer trips the watchdog (memoryLimit) and no window is left', async () => {

@@ -363,6 +363,8 @@ describe('render engine: provider injection and resolution', () => {
     const injected = { kind: 'electron' as const, open: async () => { throw new Error('x'); }, close: async () => {} };
     const e1 = createRenderEngine({ provider: async () => injected, env: { CHROME_PATH: join(work, 'no-chrome') } });
     expect(await e1.info()).toEqual({ kind: 'injected' });
+    // A factory that says what it is (the desktop's Electron provider) is reported as that.
+    expect(await createRenderEngine({ provider: Object.assign(async () => injected, { kind: 'electron' as const }) }).info()).toEqual({ kind: 'electron' });
     expect(await e1.provider()).toBe(injected);
 
     const none = createRenderEngine({ env: { CHROME_PATH: join(work, 'no-chrome') }, appDataDir: join(work, 'empty-app-data') });

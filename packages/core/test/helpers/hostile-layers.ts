@@ -4,7 +4,8 @@
  * asserts which canary paths were (not) requested.
  *
  * - `hostileLayer`: everything the headers must block (fetch, WebSocket, EventSource, beacon, Worker, import(), script,
- *   stylesheet, image, file://, form, popup, top navigation, top/parent document access, cross-origin pushState), workers
+ *   stylesheet, image, file://, form, popup, top navigation, top/parent document access, cross-origin pushState, a
+ *   `getDisplayMedia` request), workers
  *   that really fetch (blob, same-folder script, SharedWorker, service worker), and, given a UDP canary port, WebRTC
  *   STUN/TURN and WebTransport, from the page and from a dedicated worker. It paints
  *   itself green, or red when a synchronous attempt did not throw. Nothing may reach the canary, in any mode.
@@ -76,6 +77,8 @@ export const hostileLayer = (canary: string, udpPort?: number) => `<!doctype htm
     // A dedicated worker has WebTransport too (no RTCPeerConnection there): the same probe from a worker.
     try { new Worker(URL.createObjectURL(new Blob([${JSON.stringify(workerTransportProbe('U_PLACEHOLDER'))}.replace('U_PLACEHOLDER', String(U))], { type: 'text/javascript' }))); } catch (e) {}
   }
+  // Screen capture: a grant would let the layer read the screen; on a grant it tells the canary.
+  try { navigator.mediaDevices.getDisplayMedia({ video: true }).then(() => fetch(C + '/display-media-granted').catch(() => {}), () => {}); } catch (e) {}
   import(C + '/mod.js').catch(() => {});
   const s = document.createElement('script'); s.src = C + '/script.js'; document.head.appendChild(s);
   try { document.getElementById('f').submit(); } catch (e) {}

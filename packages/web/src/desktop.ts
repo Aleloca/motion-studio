@@ -25,6 +25,15 @@ export interface DesktopBridge {
   isFullscreen?(): boolean;
 }
 
+/**
+ * `rel` of an external `target="_blank"` link. In the desktop app the window-open handler hands a link to the system
+ * browser only when the referrer is the app's own page, so no `noreferrer` there (the system browser receives the URL
+ * alone, never a Referer). In a plain browser, `noreferrer` keeps the local address out of other sites' logs.
+ */
+export function externalLinkRel(): string {
+  return desktop() ? 'noopener' : 'noopener noreferrer';
+}
+
 /** The Electron preload bridge, or null in a plain browser (or when the bridge is malformed). */
 export function desktop(): DesktopBridge | null {
   const b = (window as unknown as { motionStudio?: Partial<DesktopBridge> }).motionStudio;

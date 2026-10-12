@@ -286,7 +286,7 @@ export interface RenderEngineInfo {
 export function createRenderEngine(o: RenderEngineOptions = {}) {
   const limits = (): WatchdogLimits => ({ timeLimitMs: 4 * 60 * 60 * 1000, ...o.limits });
   async function resolve(): Promise<{ info: RenderEngineInfo; factory: ChromiumProviderFactory | null }> {
-    if (o.provider) return { info: { kind: 'injected' }, factory: o.provider };
+    if (o.provider) return { info: { kind: o.provider.kind ?? 'injected' }, factory: o.provider };
     const sys = await findSystemChrome({ env: o.env });
     if (sys) return { info: { kind: 'system', exe: sys.exe, version: sys.version }, factory: async () => new ChromeProvider({ exe: sys.exe, kind: 'system', limits: limits(), timeouts: o.timeouts }) };
     if (o.appDataDir) {

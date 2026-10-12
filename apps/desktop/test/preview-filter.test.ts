@@ -5,12 +5,13 @@
  * render-window.electron.test.ts.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { hardenUiWindow, installPreviewFilter, previewRequestBlocked, requestSource, subframeNavigationBlocked, type PreviewRequest } from '../src/preview-filter.ts';
+import { compositionOriginOf, hardenUiWindow, installPreviewFilter, pollCompositionOrigin, previewRequestBlocked, requestSource, subframeNavigationBlocked, type FilterContext, type PreviewRequest } from '../src/preview-filter.ts';
 
 const APP = 'http://127.0.0.1:4318';
 const COMP = 'http://127.0.0.1:50001';
 const LAYER = `${COMP}/tok0123456789abcdef/layers/a.html`;
 
+const CTX: FilterContext = { appOrigin: APP, compositionOrigin: () => COMP };
 const req = (o: Partial<PreviewRequest>): PreviewRequest => ({ url: `${COMP}/x`, resourceType: 'xhr', frameUrls: [], ...o });
 
 describe('preview request source', () => {
@@ -30,6 +31,20 @@ describe('preview request source', () => {
     expect(requestSource(req({ initiatorOrigin: APP, referrer: `${APP}/` }), APP)).toBeNull();
     expect(requestSource(req({}), APP)).toBeNull();
   });
+
+  it('a frame on data:, an opaque blob:, or any non-web URL is opaque, never charged to its parent (I1)', () => {
+    expect(requestSource(req({ frameUrls: ['data:text/html,<script>fetch(1)</script>', `${APP}/`] }), APP)).toBe('null');
+    expect(requestSource(req({ frameUrls: ['blob:null/3f2a', `${APP}/`] }), APP)).toBe('null');
+    expect(requestSource(req({ frameUrls: ['chrome-error://chromewebdata/', `${APP}/`] }), APP)).toBe('null');
+    expect(requestSource(req({ frameUrls: ['javascript:1', `${APP}/`] }), APP)).toBe('null');
+    // blob: counts by its inner origin.
+    expect(requestSource(req({ frameUrls: [`blob:${COMP}/3f2a`, `${APP}/`] }), APP)).toBe(COMP);
+    expect(requestSource(req({ frameUrls: [`blob:${APP}/3f2a`] }), APP)).toBeNull();
+    // An opaque initiator is foreign even when the frame chain resolves to the app (the UI is never opaque).
+    expect(requestSource(req({ frameUrls: ['', `${APP}/`], initiatorOrigin: 'null' }), APP)).toBe('null');
+    expect(requestSource(req({ frameUrls: [`${APP}/`], initiatorOrigin: 'null' }), APP)).toBe('null');
+    expect(requestSource(req({ referrer: 'data:text/html,x' }), APP)).toBe('null');
+  });
 });
 
 describe('preview filter decision', () => {
@@ -43,23 +58,73 @@ describe('preview filter decision', () => {
     ['a nested iframe of a layer', { frameUrls: ['about:blank', LAYER, APP + '/'], url: 'http://127.0.0.1:9999/selfnav-iframe', resourceType: 'subFrame' }, true],
     ['a worker of a layer (no frame, referrer)', { referrer: LAYER, url: 'http://127.0.0.1:9999/worker-fetch', resourceType: 'other' }, true],
     ['an opaque initiator with nothing else', { initiatorOrigin: 'null', url: `${COMP}/x` }, true],
+    ['a data: document (self-navigated) fetching the canary', { frameUrls: ['data:text/html,x', APP + '/'], url: 'http://127.0.0.1:9999/data-fetch' }, true],
+    ['a data: document fetching the composition server', { frameUrls: ['data:text/html,x', APP + '/'], url: `${COMP}/x` }, true],
+    ['an opaque blob: document fetching the canary', { frameUrls: ['blob:null/1', APP + '/'], url: 'http://127.0.0.1:9999/blob-fetch' }, true],
+    ['a composition blob: document fetching the canary', { frameUrls: [`blob:${COMP}/1`, APP + '/'], url: 'http://127.0.0.1:9999/blob-fetch' }, true],
+    ['a composition blob: document fetching its server', { frameUrls: [`blob:${COMP}/1`, APP + '/'], url: `${COMP}/a.png` }, false],
+    ['an opaque initiator under an app frame chain', { frameUrls: ['', APP + '/'], initiatorOrigin: 'null', url: 'http://127.0.0.1:9999/x', resourceType: 'subFrame' }, true],
+    ['another foreign origin (not the composition server) fetching itself', { frameUrls: ['http://127.0.0.1:7777/a.html', APP + '/'], url: 'http://127.0.0.1:7777/b' }, true],
+    ['the UI framing the core port (its own origin)', { frameUrls: ['', `${APP}/`], initiatorOrigin: APP, url: `${APP}/api/health`, resourceType: 'subFrame' }, true],
+    ['the UI framing another loopback port', { frameUrls: ['', `${APP}/`], initiatorOrigin: APP, url: 'http://127.0.0.1:9999/', resourceType: 'subFrame' }, true],
     ['the UI itself calling its API', { frameUrls: [`${APP}/#/p/x`], url: `${APP}/api/projects` }, false],
     ['the UI framing the preview', { frameUrls: ['', `${APP}/`], initiatorOrigin: APP, url: `${COMP}/tok/runtime/index.html`, resourceType: 'subFrame' }, false],
     ['the UI loading an external font', { frameUrls: [`${APP}/`], url: 'https://fonts.gstatic.com/x.woff2' }, false],
     ['a main-frame navigation (guarded by will-navigate)', { frameUrls: [LAYER], url: 'https://example.com/', resourceType: 'mainFrame' }, false],
   ])('%s', (_n, r, blocked) => {
-    expect(previewRequestBlocked(req(r), APP)).toBe(blocked);
+    expect(previewRequestBlocked(req(r), CTX)).toBe(blocked);
+  });
+
+  it('reads the composition origin live: none yet refuses composition frames and UI frames alike; a restart on a new port moves the allowance', () => {
+    let comp: string | null = null;
+    const ctx: FilterContext = { appOrigin: APP, compositionOrigin: () => comp };
+    const frame = req({ frameUrls: ['', `${APP}/`], initiatorOrigin: APP, url: `${COMP}/tok/runtime/index.html`, resourceType: 'subFrame' });
+    expect(previewRequestBlocked(frame, ctx)).toBe(true);
+    expect(previewRequestBlocked(req({ frameUrls: [LAYER, APP + '/'], url: `${COMP}/a.png` }), ctx)).toBe(true);
+    comp = COMP;
+    expect(previewRequestBlocked(frame, ctx)).toBe(false);
+    comp = 'http://127.0.0.1:50002';
+    expect(previewRequestBlocked(frame, ctx)).toBe(true);
+    // The UI's own requests are never affected.
+    expect(previewRequestBlocked(req({ frameUrls: [`${APP}/`], url: `${APP}/api/projects` }), ctx)).toBe(false);
   });
 });
 
 describe('subframe navigation guard (will-frame-navigate)', () => {
-  it('a UI frame may show the app or a loopback server (the preview); a composition frame stays on its server', () => {
-    expect(subframeNavigationBlocked({ url: `${COMP}/tok/runtime/index.html`, frameUrls: ['', `${APP}/`] }, APP)).toBe(false);
-    expect(subframeNavigationBlocked({ url: `${APP}/#/x`, frameUrls: ['', `${APP}/`] }, APP)).toBe(false);
-    expect(subframeNavigationBlocked({ url: 'https://example.com/', frameUrls: ['', `${APP}/`] }, APP)).toBe(true);
-    expect(subframeNavigationBlocked({ url: 'file:///etc/hosts', frameUrls: ['', `${APP}/`] }, APP)).toBe(true);
-    expect(subframeNavigationBlocked({ url: `${APP}/selfnav-href`, frameUrls: [LAYER, `${APP}/`] }, APP)).toBe(true);
-    expect(subframeNavigationBlocked({ url: `${COMP}/tok0123456789abcdef/layers/b.html`, frameUrls: [LAYER, `${APP}/`] }, APP)).toBe(false);
+  it('a UI frame may show only the active composition server: never the core port, never another port (I2)', () => {
+    const ui = ['', `${APP}/`];
+    expect(subframeNavigationBlocked({ url: `${COMP}/tok/runtime/index.html`, frameUrls: ui }, CTX)).toBe(false);
+    expect(subframeNavigationBlocked({ url: `${APP}/#/x`, frameUrls: ui }, CTX)).toBe(true); // the core's port
+    expect(subframeNavigationBlocked({ url: 'http://127.0.0.1:9999/', frameUrls: ui }, CTX)).toBe(true); // a random port
+    expect(subframeNavigationBlocked({ url: 'http://localhost:50001/', frameUrls: ui }, CTX)).toBe(true);
+    expect(subframeNavigationBlocked({ url: 'https://example.com/', frameUrls: ui }, CTX)).toBe(true);
+    expect(subframeNavigationBlocked({ url: 'file:///etc/hosts', frameUrls: ui }, CTX)).toBe(true);
+    expect(subframeNavigationBlocked({ url: 'about:blank', frameUrls: ui }, CTX)).toBe(false);
+    expect(subframeNavigationBlocked({ url: `${COMP}/tok/runtime/index.html`, frameUrls: ui }, { appOrigin: APP, compositionOrigin: () => null })).toBe(true);
+  });
+
+  it('a composition frame stays on its server, and never goes to data: or an opaque blob:', () => {
+    expect(subframeNavigationBlocked({ url: `${APP}/selfnav-href`, frameUrls: [LAYER, `${APP}/`] }, CTX)).toBe(true);
+    expect(subframeNavigationBlocked({ url: `${COMP}/tok0123456789abcdef/layers/b.html`, frameUrls: [LAYER, `${APP}/`] }, CTX)).toBe(false);
+    expect(subframeNavigationBlocked({ url: 'data:text/html,x', frameUrls: [LAYER, `${APP}/`] }, CTX)).toBe(true);
+    expect(subframeNavigationBlocked({ url: 'blob:null/1', frameUrls: [LAYER, `${APP}/`] }, CTX)).toBe(true);
+    expect(subframeNavigationBlocked({ url: 'about:blank', frameUrls: ['data:text/html,x', `${APP}/`] }, CTX)).toBe(true);
+  });
+});
+
+describe('composition origin of an attached core', () => {
+  it('accepts only http://127.0.0.1:<port>, keeps the last good answer on a failure, and follows a restart', async () => {
+    expect(compositionOriginOf('http://127.0.0.1:50001')).toBe('http://127.0.0.1:50001');
+    for (const bad of ['http://localhost:50001', 'https://127.0.0.1:50001', 'http://127.0.0.1', 'http://127.0.0.1:50001/x', 5, null]) expect(compositionOriginOf(bad)).toBeNull();
+    const answers: Array<() => unknown> = [() => 'http://127.0.0.1:50001', () => { throw new Error('down'); }, () => 'http://127.0.0.1:50002'];
+    const poll = pollCompositionOrigin({ fetchOrigin: async () => answers.shift()!(), intervalMs: 60_000 });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(poll.get()).toBe('http://127.0.0.1:50001');
+    await poll.refresh();
+    expect(poll.get()).toBe('http://127.0.0.1:50001');
+    await poll.refresh();
+    expect(poll.get()).toBe('http://127.0.0.1:50002');
+    poll.stop();
   });
 });
 
@@ -75,7 +140,7 @@ describe('installPreviewFilter', () => {
   it('reads the frame chain from Electron details (frame, parents) and cancels', async () => {
     let handler!: (d: unknown, cb: (r: { cancel: boolean }) => void) => void;
     const ses = { webRequest: { onBeforeRequest: vi.fn((f: typeof handler) => { handler = f; }) } };
-    installPreviewFilter(ses as never, APP);
+    installPreviewFilter(ses as never, CTX);
     const top = { url: `${APP}/`, parent: null };
     const runtime = { url: `${COMP}/tok/runtime/index.html`, parent: top };
     const layer = { url: LAYER, parent: runtime };

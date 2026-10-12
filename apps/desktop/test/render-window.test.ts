@@ -98,6 +98,11 @@ describe('render session lockdown', () => {
     (handlers['will-download'] as unknown as (e: unknown) => void)({ preventDefault: prevented });
     expect(prevented).toHaveBeenCalled();
     expect(ses.setSpellCheckerEnabled).toHaveBeenCalledWith(false);
+    // Display media: refused with null (never an empty stream set), and a destroyed frame's throw is swallowed.
+    const display = vi.fn();
+    (handlers.display as unknown as (r: unknown, cb: (s: unknown) => void) => void)({}, display);
+    expect(display).toHaveBeenCalledWith(null);
+    expect(() => (handlers.display as unknown as (r: unknown, cb: (s: unknown) => void) => void)({}, () => { throw new Error('gone'); })).not.toThrow();
   });
 });
 
@@ -193,6 +198,54 @@ describe('closing a render window', () => {
   });
 });
 
+describe('app-wide window slots (M7)', () => {
+  it('a page past the cap waits for a window to close; an abort ends the wait', async () => {
+    const { WindowSlots } = await import('../src/render-window.ts');
+    const slots = new WindowSlots(2);
+    const a = await slots.acquire();
+    await slots.acquire();
+    let third = false;
+    const p = slots.acquire().then((r) => { third = true; return r; });
+    const ac = new AbortController();
+    const aborted = slots.acquire(ac.signal);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(third).toBe(false);
+    ac.abort();
+    await expect(aborted).rejects.toMatchObject({ code: 'cancelled' });
+    a();
+    a(); // idempotent
+    await p;
+    expect(third).toBe(true);
+    expect(slots.inUse).toBe(2);
+    slots.setLimit(3);
+    await slots.acquire();
+    expect(slots.inUse).toBe(3);
+  });
+
+  it('desktopRenderOptions sets the app-wide limit', async () => {
+    const { renderWindowSlots } = await import('../src/render-window.ts');
+    desktopRenderOptions('/r', 3);
+    expect(renderWindowSlots.limit).toBe(3);
+    desktopRenderOptions('/r');
+    expect(renderWindowSlots.limit).toBe(DESKTOP_RENDER_PARALLEL);
+  });
+});
+
+describe('quit (M1)', () => {
+  it('cancels the jobs (server close) before closing the render windows, then gives the server a last grace', async () => {
+    const { shutdownForQuit } = await import('../src/render-window.ts');
+    const order: string[] = [];
+    let finish!: () => void;
+    const closeServer = () => { order.push('server'); return new Promise<void>((r) => { finish = () => { order.push('server done'); r(); }; }); };
+    const done = shutdownForQuit({ closeServer, serverMs: 30, windowsMs: 30, graceMs: 1000 }).then(() => order.push('quit'));
+    await new Promise((r) => setTimeout(r, 60));
+    expect(order).toEqual(['server']); // still waiting in the grace for the server
+    finish();
+    await done;
+    expect(order).toEqual(['server', 'server done', 'quit']);
+  });
+});
+
 describe('ElectronProvider', () => {
   it('is kind electron and opens at most maxWindows windows at once', async () => {
     const created: unknown[] = [];
@@ -205,6 +258,26 @@ describe('ElectronProvider', () => {
     await expect(provider.open({ width: 320, height: 180, url, signal })).rejects.toThrow(/at most 2/);
     expect(created).toHaveLength(2);
     expect(created[0]).toMatchObject({ prefix: PREFIX, width: 320, height: 180 });
+  });
+
+  it('close() waits for a window still being created, and that window is closed (M6)', async () => {
+    let resolveCreate!: (rw: unknown) => void;
+    const win = Object.assign(new EventEmitter(), { webContents: new EventEmitter() });
+    const rwClose = vi.fn(async () => { win.emit('closed'); });
+    const createWindow = vi.fn(() => new Promise<never>((r) => { resolveCreate = r as (rw: unknown) => void; }));
+    const provider = new ElectronProvider({ limits: { timeLimitMs: 60_000 }, createWindow });
+    const opened = provider.open({ width: 10, height: 10, url: `${PREFIX}runtime/index.html`, signal: new AbortController().signal });
+    opened.catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+    let closed = false;
+    const closing = provider.close().then(() => { closed = true; });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(closed).toBe(false);
+    resolveCreate({ win, pids: () => [], close: rwClose });
+    await closing;
+    expect(rwClose).toHaveBeenCalled();
+    await expect(opened).rejects.toMatchObject({ code: 'cancelled' });
+    expect(provider.openWindows).toBe(0);
   });
 
   it('refuses a page URL that is not a composition server page, and opens nothing after close', async () => {
@@ -222,6 +295,7 @@ describe('desktop wiring', () => {
   it('Electron is the provider, with the runtime folder and one parallel value for pages and windows', async () => {
     const o = desktopRenderOptions('/res/runtime');
     expect(o.renderOptions).toEqual({ distDir: '/res/runtime', parallel: DESKTOP_RENDER_PARALLEL });
+    expect(o.renderProvider.kind).toBe('electron');
     const provider = await o.renderProvider();
     expect(provider.kind).toBe('electron');
     await provider.close();

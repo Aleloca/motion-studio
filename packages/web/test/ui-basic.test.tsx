@@ -510,6 +510,16 @@ describe('Markdown', () => {
     expect(a.getAttribute('rel')).toBe('noopener noreferrer');
     expect(screen.getByRole('link', { name: 'https://example.org/b' }).getAttribute('href')).toBe('https://example.org/b');
   });
+  it('in the desktop app, links keep their referrer (the window-open handler hands only the app\'s own links to the browser)', () => {
+    const w = window as unknown as { motionStudio?: unknown };
+    w.motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: async () => null, revealPath: async () => {} };
+    try {
+      render(<Markdown text={'See [docs](https://example.com/a).'} />);
+      expect(screen.getByRole('link', { name: 'docs' }).getAttribute('rel')).toBe('noopener');
+    } finally {
+      delete w.motionStudio;
+    }
+  });
   it('does not render javascript: or other non-http links', () => {
     const { container } = render(<Markdown text={'[x](javascript:alert(1)) [y](data:text/html,hi) [z](//evil.com)'} />);
     expect(container.querySelector('a')).toBeNull();

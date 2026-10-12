@@ -93,6 +93,11 @@ export interface PreviewServiceDeps {
   lane?: PreviewLane;
   /** The built runtime (tests). */
   distDir?: string;
+  /**
+   * Told the live composition server's origin when it starts, and null when it stops (the desktop pins its UI window's
+   * frames to that exact origin, Task 7).
+   */
+  onServerOrigin?: (origin: string | null) => void;
 }
 
 export interface VersionFormatRef { projectDir: string; creativeDir: string; creativeSlug: string; n: number }
@@ -134,6 +139,7 @@ export class PreviewService {
   /** The long-lived composition server of the live previews (started on first use). */
   compositionServer(): Promise<CompositionServer> {
     this.server ??= startCompositionServer({ uiOrigins: this.deps.uiOrigins, ...(this.deps.distDir ? { distDir: this.deps.distDir } : {}) })
+      .then((s) => { this.deps.onServerOrigin?.(s.origin); return s; })
       .catch((e: unknown) => { this.server = null; throw e; });
     return this.server;
   }
@@ -338,6 +344,7 @@ export class PreviewService {
     this.sessions.clear();
     const server = this.server;
     this.server = null;
+    this.deps.onServerOrigin?.(null);
     if (server) await (await server.catch(() => null))?.close().catch(() => {});
   }
 }

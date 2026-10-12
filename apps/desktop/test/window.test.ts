@@ -27,6 +27,16 @@ describe('window security', () => {
     expect(externalUrlAllowed('file:///Applications/Calculator.app')).toBe(false);
     expect(externalUrlAllowed('javascript:alert(1)')).toBe(false);
   });
+  it("hands a link to the system browser only when the app's own page opened it (M3)", async () => {
+    const { windowOpenToBrowser } = await import('../src/window.ts');
+    const app = 'http://127.0.0.1:4318';
+    expect(windowOpenToBrowser({ url: 'https://example.com/', referrer: { url: `${app}/` } }, app)).toBe(true);
+    // A preview frame (composition server: no-referrer), a noreferrer link, another origin: refused.
+    expect(windowOpenToBrowser({ url: 'https://example.com/', referrer: { url: '' } }, app)).toBe(false);
+    expect(windowOpenToBrowser({ url: 'https://example.com/' }, app)).toBe(false);
+    expect(windowOpenToBrowser({ url: 'https://example.com/', referrer: { url: 'http://127.0.0.1:50001/tok/runtime/index.html' } }, app)).toBe(false);
+    expect(windowOpenToBrowser({ url: 'file:///etc/hosts', referrer: { url: `${app}/` } }, app)).toBe(false);
+  });
 });
 
 describe('IPC sender guard', () => {

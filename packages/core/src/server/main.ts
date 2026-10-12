@@ -140,6 +140,7 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
   language.apply();
   // Filled once the server listens (its port is known only then); read at every preview mint.
   const uiOrigins: string[] = [...(opts.devUiOrigins ?? [])];
+  let compositionOrigin: string | null = null;
   const app = await buildServer({
     uiToken,
     appConfig, language,
@@ -154,6 +155,7 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
     media: await createFfmpegTools(),
     render: createRenderEngine({ ...(opts.renderProvider ? { provider: opts.renderProvider } : {}), appDataDir: configDir }),
     ...(opts.renderOptions ? { renderOptions: { ...opts.renderOptions } } : {}),
+    onCompositionOrigin: (o) => { compositionOrigin = o; },
     openPath: revealFolder,
     uiOrigins: () => uiOrigins,
   });
@@ -172,6 +174,8 @@ async function startLocked(configDir: string, opts: StartServerOptions) {
     onLocaleChange: (cb: (locale: Locale, setting: LanguageSetting) => void) => language.onChange(cb),
     /** The address to open: it carries the UI token in the fragment. */
     appUrl: uiUrl(port, uiToken),
+    /** The live-preview composition server's exact origin, or null while it is not running (read it live: it may restart). */
+    compositionOrigin: () => compositionOrigin,
     // server.json is removed only when it is still this process's.
     close: async () => { await app.close(); await removeServerInfo(configDir, process.pid); },
   };

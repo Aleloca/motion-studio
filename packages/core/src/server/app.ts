@@ -81,6 +81,8 @@ export interface ServerDeps {
   /** Per-project cap of the normalised media cache (default 5 GB). */
   mediaCacheMaxBytes?: number;
   renderOptions?: Partial<Pick<RenderCompositionOptions, 'distDir' | 'tempDir' | 'parallel' | 'encoder' | 'x264Preset' | 'timeLimitMs' | 'jpegQuality'>>;
+  /** Told the live-preview composition server's origin when it starts, null when it stops. */
+  onCompositionOrigin?: (origin: string | null) => void;
   /**
    * The exact origins the UI runs on, read at every live preview mint (Task 5b): startServer passes the core's own origin
    * (known once it listens) plus, in development, Vite's `http://localhost:5173`. Default: none (no live previews).
@@ -238,6 +240,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     uiOrigins: deps.uiOrigins ?? (() => []),
     ...(deps.renderOptions?.distDir ? { distDir: deps.renderOptions.distDir } : {}),
+    ...(deps.onCompositionOrigin ? { onServerOrigin: deps.onCompositionOrigin } : {}),
   });
   const turns = new CreativeTurnService({
     queue, launcher, git: deps.git, media, vault, previews,

@@ -9,11 +9,13 @@ import { app, BrowserWindow, powerSaveBlocker, session } from 'electron';
 import type { Composition, FormatPreset } from '../../../../packages/shared/src/index.ts';
 import { renderComposition, RenderError, type FfmpegInfo } from '@motion-studio/core';
 import { startCompositionServer } from '../../../../packages/core/src/compositions/composition-server.ts';
-import { appKeptAwake, closeAllRenderWindows, createRenderWindow, ElectronProvider, liveRenderWindowCount } from '../../src/render-window.ts';
+import { appKeptAwake, closeAllRenderWindows, createRenderWindow, ElectronProvider, liveRenderWindowCount, shutdownForQuit } from '../../src/render-window.ts';
+import { readdirSync, existsSync } from 'node:fs';
+import { basename, dirname } from 'node:path';
 import { hardenUiWindow, installPreviewFilter } from '../../src/preview-filter.ts';
 
 interface Config {
-  scenario: 'options' | 'session-rules' | 'render' | 'hostile-render' | 'preview' | 'lifecycle' | 'memory';
+  scenario: 'options' | 'session-rules' | 'render' | 'hostile-render' | 'preview' | 'lifecycle' | 'memory' | 'quit';
   /** The built runtime. */
   dist: string;
   /** The creative folder (render scenarios). */
@@ -24,8 +26,11 @@ interface Config {
   ffmpeg?: FfmpegInfo;
   /** A server without any CSP (session rules, preview): `<origin>/<token>/page.html` frames every hostile layer. */
   naked?: { origin: string; token: string };
-  /** The UI-like pages (preview): every frame (control), the real server's frames, the CSP-less server's frames. */
-  ui?: { origin: string; all: string; real: string; naked: string };
+  /**
+   * The UI-like pages (preview): every frame (control), the real server's frames, the CSP-less server's frames; with the
+   * composition origin the filter is pinned to in each filtered phase (the real server, then the CSP-less one).
+   */
+  ui?: { origin: string; all: string; real: string; naked: string; realComposition: string; nakedComposition: string };
   parallel?: number;
   /** A throwaway folder under the OS temp folder for every Electron data path (the test removes it after the exit). */
   scratch: string;
@@ -144,8 +149,12 @@ async function run(): Promise<void> {
         const seeks: string[] = [];
         for (const t of [0, 1, 1.6, 1.9]) seeks.push(await page.seek(t).then(() => 'ok', (e: Error) => e.message.slice(0, 80)));
         const png = await page.capture('png');
+        // Display media, with a user gesture (so the session's handler is really asked): refused cleanly.
+        const win = BrowserWindow.getAllWindows()[0]!;
+        const displayMedia = await win.webContents.executeJavaScript("navigator.mediaDevices.getDisplayMedia({ video: true }).then(() => 'granted', (e) => e.name)", true)
+          .catch((e: Error) => `threw: ${e.message}`);
         await settle(3000);
-        report({ seeks, captured: png.length > 100, failure: provider.failure, errors: page.info.errors.map((e) => e.code) });
+        report({ seeks, captured: png.length > 100, failure: provider.failure, errors: page.info.errors.map((e) => e.code), displayMedia });
       } finally {
         await provider.close();
         await server.close();
@@ -162,9 +171,10 @@ async function run(): Promise<void> {
       const controlFrames = control.webContents.mainFrame.framesInSubtree.length;
       await close(control);
       report({ phase: 'control-done', controlFrames });
-      // The UI window as the app sets it up: the filter on its session, the WebRTC policy.
-      for (const [phase, page] of [['real-done', ui.real], ['naked-done', ui.naked]] as const) {
-        const win = await loadIn(`ms-test-ui-${phase}-${Date.now()}`, page, (ses) => installPreviewFilter(ses, ui.origin), true);
+      // The UI window as the app sets it up: the filter on its session (pinned to that phase's composition server), the
+      // WebRTC policy. Never the will-frame-navigate guard: the filter alone is under test.
+      for (const [phase, page, comp] of [['real-done', ui.real, ui.realComposition], ['naked-done', ui.naked, ui.nakedComposition]] as const) {
+        const win = await loadIn(`ms-test-ui-${phase}-${Date.now()}`, page, (ses) => installPreviewFilter(ses, { appOrigin: ui.origin, compositionOrigin: () => comp }), true);
         await settle(7000);
         const frames = win.webContents.mainFrame.framesInSubtree.map((f) => f.url);
         const webTransport = await win.webContents.executeJavaScript('typeof WebTransport').catch((e: Error) => e.message);
@@ -218,6 +228,34 @@ async function run(): Promise<void> {
         await closeAllRenderWindows();
         await server.close();
       }
+      return;
+    }
+    case 'quit': {
+      // Quit during a render, through the app's quit sequence (shutdownForQuit, as main.ts's before-quit runs it). The
+      // core is stood in for by its close(): cancel the render (the core's preClose cancels every job) and wait for it.
+      const provider = new ElectronProvider({ maxWindows: 2, limits: { timeLimitMs: 30 * 60_000 } });
+      const ac = new AbortController();
+      let frames = 0;
+      const outcome = renderComposition({
+        dir: c.creative!, versionDir: 'outputs/v1', composition: c.composition!, format: formatOf(c.composition!, c.format!), out: c.out!,
+        provider, parallel: 2, signal: ac.signal, distDir: c.dist, ffmpeg: c.ffmpeg!, encoder: 'libx264', tempDir: scratch,
+        onProgress: (p) => { frames = p.frames; },
+      }).then(() => 'rendered', (e: unknown) => (e instanceof RenderError ? e.code : String(e)));
+      const started = Date.now();
+      while (frames < 3 && Date.now() - started < 300_000) await settle(200);
+      const windowsBefore = liveRenderWindowCount();
+      const quit = new Promise<void>((resolve) => {
+        app.once('before-quit', (e) => {
+          e.preventDefault();
+          void shutdownForQuit({ closeServer: async () => { ac.abort(); await outcome; } }).then(resolve);
+        });
+      });
+      app.quit();
+      await quit;
+      const dir = dirname(c.out!);
+      const temps = readdirSync(dir).filter((n) => n.startsWith(`.${basename(c.out!)}.render-`));
+      const workDirs = readdirSync(scratch).filter((n) => n.startsWith('ms-render-'));
+      report({ phase: 'quit', framesAtQuit: frames, windowsBefore, result: await outcome, windows: liveRenderWindowCount(), allWindows: BrowserWindow.getAllWindows().length, out: existsSync(c.out!), temps, workDirs });
       return;
     }
     case 'memory': {

@@ -79,8 +79,11 @@ export interface ChromiumProvider {
   close(): Promise<void>;
 }
 
-/** Makes a provider for one render. */
-export type ChromiumProviderFactory = () => Promise<ChromiumProvider>;
+/**
+ * Makes a provider for one render. `kind`, when set, is what the engine reports for an injected factory (the desktop's
+ * Electron provider says `electron`); without it the engine reports `injected`.
+ */
+export type ChromiumProviderFactory = (() => Promise<ChromiumProvider>) & { readonly kind?: ChromiumProvider['kind'] };
 
 export interface PageTimeouts {
   /** Navigation until `load`. Default 180 s (the machine may be very busy). */

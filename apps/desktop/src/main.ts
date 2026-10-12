@@ -9,9 +9,9 @@ import { menuTemplate } from './menu.ts';
 import { notificationOptions, registerAttention, sendAttentionClick, showKept } from './notify.ts';
 import { setupUpdates } from './updater.ts';
 import { registerFullscreenQuery, registerTitleBar, sendFullscreen } from './titlebar.ts';
-import { externalUrlAllowed, ipcSenderTrusted, isAppUrl, windowOptions, type IpcSender } from './window.ts';
-import { closeAllRenderWindows, desktopRenderOptions } from './render-window.ts';
-import { frameChain, hardenUiWindow, installPreviewFilter, subframeNavigationBlocked } from './preview-filter.ts';
+import { ipcSenderTrusted, isAppUrl, windowOpenToBrowser, windowOptions, type IpcSender } from './window.ts';
+import { desktopRenderOptions, shutdownForQuit } from './render-window.ts';
+import { frameChain, hardenUiWindow, installPreviewFilter, pollCompositionOrigin, subframeNavigationBlocked, type FilterContext } from './preview-filter.ts';
 
 const REPO_URL = 'https://github.com/Aleloca/motion-studio';
 const smokeArg = process.argv.find((a) => a === '--smoke-test' || a.startsWith('--smoke-test='));
@@ -55,17 +55,26 @@ async function boot(configDir?: string) {
 }
 
 /** Our own core, or the address of the Motion Studio (desktop or CLI) already serving the same config folder. */
-async function bootOrAttach(): Promise<{ url: string; appUrl: string; close: () => Promise<void>; onLocaleChange: (cb: () => void) => void; attached?: { port: number; pid: number } }> {
+async function bootOrAttach(): Promise<{ url: string; appUrl: string; close: () => Promise<void>; onLocaleChange: (cb: () => void) => void; compositionOrigin: () => string | null; attached?: { port: number; pid: number } }> {
   try {
     const server = await boot();
-    return { url: server.url, appUrl: server.appUrl, close: server.close, onLocaleChange: (cb) => { server.onLocaleChange(cb); } };
+    return { url: server.url, appUrl: server.appUrl, close: server.close, onLocaleChange: (cb) => { server.onLocaleChange(cb); }, compositionOrigin: server.compositionOrigin };
   } catch (err) {
     if (!(err instanceof AlreadyRunningError)) throw err;
     const { port, pid, appUrl } = err.alreadyRunning;
     // Before the first message: no core of our own, so the system language until the live instance is asked.
     setLocale(resolveLocale('system', app.getPreferredSystemLanguages()));
     console.log(t().desktop.alreadyRunning({ port }));
-    return { url: new URL(appUrl).origin, appUrl, close: async () => {}, onLocaleChange: () => {}, attached: { port, pid } };
+    // The live instance's composition server, asked over its API (with the UI token) and kept fresh.
+    const origin = new URL(appUrl).origin;
+    const token = tokenFromAppUrl(appUrl) ?? '';
+    const poll = pollCompositionOrigin({
+      fetchOrigin: async () => {
+        const res = await fetch(`${origin}/api/preview/origin`, { headers: { 'x-motion-studio-ui': token } });
+        return res.ok ? ((await res.json()) as { origin?: unknown }).origin : undefined;
+      },
+    });
+    return { url: origin, appUrl, close: async () => { poll.stop(); }, onLocaleChange: () => {}, compositionOrigin: poll.get, attached: { port, pid } };
   }
 }
 
@@ -187,7 +196,9 @@ async function run() {
   });
 
   // The live preview's frames (composition server) may reach only the composition server (preview-filter.ts).
-  installPreviewFilter(session.defaultSession, origin);
+  // Pinned to the active composition server's exact origin, read live (it starts lazily and may move to another port).
+  const filterContext: FilterContext = { appOrigin: origin, compositionOrigin: server.compositionOrigin };
+  installPreviewFilter(session.defaultSession, filterContext);
   hardenUiWindow(win.webContents);
   const allowed = (permission: string, requestingUrl: string) => permission === 'notifications' && isAppUrl(requestingUrl, origin);
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb, details) => cb(allowed(permission, details.requestingUrl)));
@@ -196,9 +207,8 @@ async function run() {
     if (closing) return;
     closing = true;
     e.preventDefault();
-    const bound = new Promise<void>((r) => setTimeout(r, 5000));
-    // Render windows first (a render in flight is cancelled by server.close() too; this is the backstop).
-    void Promise.race([Promise.all([closeAllRenderWindows(), server.close().catch(() => {})]), bound]).finally(() => app.quit());
+    // Jobs first (the core cancels them and each render removes its temp files), then any render window left.
+    void shutdownForQuit({ closeServer: server.close }).finally(() => app.quit());
   });
   // Deliberate on macOS too: closing the window ends the app, which also stops the in-process core. Hidden render windows
   // are windows too, so "all closed" would wait for them: closing the UI window is what ends the app.
@@ -220,14 +230,15 @@ async function run() {
     });
   }
   win.once('ready-to-show', () => { win.show(); focus.ready(win); });
-  win.webContents.setWindowOpenHandler(({ url }) => { if (externalUrlAllowed(url)) void shell.openExternal(url); return { action: 'deny' }; });
+  // Only the app's own pages may hand a link to the system browser: a preview frame (no-referrer) never can.
+  win.webContents.setWindowOpenHandler((details) => { if (windowOpenToBrowser(details, origin)) void shell.openExternal(details.url); return { action: 'deny' }; });
   const guard = (e: { preventDefault: () => void }, url: string) => { if (!isAppUrl(url, origin)) e.preventDefault(); };
   win.webContents.on('will-navigate', (e, url) => guard(e, url));
   win.webContents.on('will-redirect', (e, url) => guard(e, url));
   win.webContents.on('will-frame-navigate', (e) => {
     if (e.isMainFrame) guard(e, e.url);
     // A frame of the UI may show the app or the composition server; a composition frame stays on its server.
-    else if (subframeNavigationBlocked({ url: e.url, frameUrls: frameChain(e.frame) }, origin)) e.preventDefault();
+    else if (subframeNavigationBlocked({ url: e.url, frameUrls: frameChain(e.frame) }, filterContext)) e.preventDefault();
   });
   if (server.attached) watchAttachedInstance(win, server.attached);
   // Attached: a failed load is handled by the restart prompt (did-fail-load), not by the fatal error box.
