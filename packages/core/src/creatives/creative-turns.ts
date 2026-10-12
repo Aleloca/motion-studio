@@ -1,6 +1,6 @@
 import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
-import { canFollow, checkLink, defaultLinks, effectiveLinks, formatHistory, formatLabel, hasFormat, manifestSchema, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
+import { canFollow, checkLink, defaultLinks, effectiveLinks, formatHistory, formatLabel, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { detachLinksUnder } from '../agent/protected-links.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -23,7 +23,7 @@ import { confinedSha, copyVerified, earlierOutputDirs, followCheck, isConfinedFi
 import { outputFileExists } from './format-summary.ts';
 import { hashVersionOutputs, LAZY_HASH_BUDGET_MS, withLazyHashes } from './output-hashes.ts';
 import { legacyProblemsOf } from './legacy-problems.ts';
-import { extractReferenceFrames, isLegacyVersion } from './legacy-conversion.ts';
+import { conversionPlan, extractReferenceFrames } from './legacy-conversion.ts';
 import { buildCreativePrompt, type AgentContract, type CreativeContext, type PromptKind } from './prompt.ts';
 import { checkTargets } from './composition-contract.ts';
 import { realDirChain, writeThroughTemp } from './core-files.ts';
@@ -368,13 +368,21 @@ export class CreativeTurnService {
         const { context, existing } = await this.buildContext(ref, store, creative.linkedCodebases);
         // Spec §7: a legacy base (rendered media, v1 manifest) makes this change a conversion to compositions. The core
         // extracts reference frames of the old media into its protected cache; the chat says it costs more tokens once.
-        let conversion: { baseVersion: number; formats: Awaited<ReturnType<typeof extractReferenceFrames>> } | undefined;
-        if (contract === 'compositions' && isLegacyVersion(base)) {
-          await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: j.convertingLegacy });
-          conversion = {
-            baseVersion: base.n,
-            formats: await extractReferenceFrames({ projectDir: ref.projectDir, creativeDir, creativeSlug: slug, n, base, formats: targets, presets, media: this.deps.media }),
-          };
+        let conversion: { formats: Awaited<ReturnType<typeof extractReferenceFrames>>; created: string[] } | undefined;
+        if (contract === 'compositions') {
+          const cp = conversionPlan(versions, base, targets);
+          if (cp.sources.length > 0) {
+            // Once per conversion: a retry of a turn that saved no version does not repeat the entry.
+            const entries = await store.readConversation(slug);
+            const texts = new Set([messages('en').jobs.convertingLegacy, messages('it').jobs.convertingLegacy]);
+            const since = latest ? Date.parse(latest.createdAt) : 0;
+            const told = entries.some((e) => e.type === 'system' && texts.has(e.text) && Date.parse(e.at) > since);
+            if (!told) await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: j.convertingLegacy });
+            conversion = {
+              formats: await extractReferenceFrames({ projectDir: ref.projectDir, creativeDir, creativeSlug: slug, n, sources: cp.sources, presets, media: this.deps.media }),
+              created: cp.created,
+            };
+          }
         }
         const uncheckable = new Set<string>();
         let forkSession = Boolean(creative.resumeFrom);

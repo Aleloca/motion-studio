@@ -31,7 +31,7 @@ export interface PromptInput {
    * Task 6, spec §7: the base version is legacy (rendered media, no compositions), so this turn converts it: the agent
    * rebuilds each format as a composition from the old media (and its reference frames), then applies the request.
    */
-  conversion?: { baseVersion: number; formats: LegacyFormatReference[] };
+  conversion?: { formats: LegacyFormatReference[]; created?: string[] };
   /**
    * The formats the agent delivers this turn (spec §2.3, §2.5): primaries only, in the brief's order. Default: every brief
    * format. When some brief formats are left out (carried over or followers), the prompt says Motion Studio handles them.
@@ -151,18 +151,24 @@ export const COMPOSITION_SECTION = [
   '- An image format is a still: `"duration": 0`, no scenes, every clip starting at 0.',
 ];
 
-/** The conversion of a legacy version (Task 6): rebuild every format faithfully as a composition, then apply the request. */
+/** The conversion of legacy media (Task 6): rebuild every listed format faithfully as a composition, then apply the request. */
 export function conversionSection(c: NonNullable<PromptInput['conversion']>): string[] {
   const lines = [
-    '## Convert the earlier version first',
-    `- Version ${c.baseVersion} is rendered media from an older Motion Studio, not compositions. Before applying the request above, rebuild EACH format below faithfully as a composition: same layout, texts, colours, fonts, images, timing, scenes and audio, as close as you can get. Then apply the request on top of that rebuild.`,
-    '- Look at the reference frames (about one per second, 540 px wide) to see what the original looks like, and at the original media for what you need to reuse (images, video, audio, voice-over): copy what the composition uses into its `assets/` folder; extract audio with ffmpeg when needed. The earlier version is read-only.',
-    '- Deliver one composition per format below, even for formats the request does not mention. Do not tell the user about the internals of the conversion beyond what changed visibly.',
+    '## Convert the earlier media first',
+    '- Some formats below exist only as rendered media from an older Motion Studio, not as compositions. Before applying the request above, rebuild EACH of them faithfully as a composition: same layout, texts, colours, fonts, images, timing, scenes and audio, as close as you can get. Then apply the request on top of that rebuild.',
+    '- Look at the reference frames (about one per second, 540 px wide) to see what the original looks like, and at the original media for what you need to reuse (images, video, audio, voice-over): copy what the composition uses into its `assets/` folder; extract audio with ffmpeg when needed. Earlier versions are read-only.',
+    '- Deliver one composition per format listed under "Required formats", even for formats the request does not mention. Do not tell the user about the internals of the conversion beyond what changed visibly.',
+    '',
+    'Formats to rebuild:',
   ];
   for (const f of c.formats) {
-    lines.push(`- ${f.format}: original ${f.source} (${f.kind === 'image' ? 'image' : `video${f.durationSec ? `, ${f.durationSec}s` : ''}`})`
-      + (f.frames.length > 0 ? `; reference frames:` : '; no reference frames could be extracted, read the original media instead'));
+    lines.push(`- ${f.format}: rebuild from version ${f.version}, original ${f.source} (${f.kind === 'image' ? 'image' : `video${f.durationSec ? `, ${f.durationSec}s` : ''}`})`
+      + (f.frames.length > 0 ? '; reference frames:' : '; no reference frames could be extracted, read the original media instead'));
     for (const fr of f.frames) lines.push(`  - ${fr.file}${f.kind === 'image' ? '' : ` (t=${fr.t}s)`}`);
+  }
+  if (c.created?.length) {
+    lines.push('', 'New formats (nothing earlier to rebuild):');
+    for (const id of c.created) lines.push(`- ${id}: create it from scratch, following the request and the other formats' look.`);
   }
   return lines;
 }

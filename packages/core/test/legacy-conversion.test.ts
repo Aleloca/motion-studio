@@ -25,6 +25,7 @@ import { Git } from '../src/git.ts';
 import { createFfmpegTools, type MediaTools } from '../src/media/media-tools.ts';
 import { frameTime, type RenderFramesOptions, type RenderFramesResult } from '../src/render/frames.ts';
 import type { RenderCompositionOptions, RenderEngine, RenderResult } from '../src/render/renderer.ts';
+import { setLocale } from '../src/i18n.ts';
 import { buildServer } from '../src/server/app.ts';
 import { NoMediaTools } from '../src/media/media-tools.ts';
 
@@ -114,11 +115,13 @@ beforeEach(async () => {
   fake = fakeEngine();
   fm = fakeMedia();
   await boot(fm);
+  setLocale('en'); // after boot: the app config must not override it
   promptFile = join(base, 'prompts.jsonl');
   process.env.FAKE_CLAUDE_PROMPT_FILE = promptFile;
   process.env.FAKE_CLAUDE_SCENARIO = 'composition';
 });
 afterEach(async () => {
+  setLocale('it');
   delete process.env.FAKE_CLAUDE_PROMPT_FILE;
   delete process.env.FAKE_CLAUDE_SCENARIO;
   await app?.close();
@@ -146,9 +149,8 @@ async function turn(slug: string, payload: object = {}): Promise<JobSummary> {
 const detail = async (slug: string) => (await app.inject({ url: `/api/projects/acme/creatives/${slug}`, headers: H })).json() as CreativeDetail;
 const versionOf = async (slug: string, n: number): Promise<VersionEntry> => (await store().readVersions(slug)).find((v) => v.n === n)!;
 const systemTexts = async (slug: string) => (await store().readConversation(slug)).filter((e) => e.type === 'system').map((e) => (e as { text: string }).text);
-// The app's language is the test machine's: the entry is checked in either catalogue.
 const CONVERTING = messages('en').jobs.convertingLegacy;
-const hasConverting = (texts: string[]) => texts.filter((t) => t === CONVERTING || t === messages('it').jobs.convertingLegacy).length;
+const hasConverting = (texts: string[]) => texts.filter((t) => t === CONVERTING).length;
 it('the chat entry is the specified text (en and it)', () => {
   expect(CONVERTING).toBe('Converting to the editable format · costs more tokens this once');
   expect(messages('it').jobs.convertingLegacy).toBe('Conversione al formato modificabile · costa più token questa volta');
@@ -188,8 +190,8 @@ describe('legacy conversion', { timeout: 60_000 }, () => {
     // Never in the agent-writable work folder.
     expect(existsSync(join(store().dir(slug), 'work', 'reference'))).toBe(false);
     const p = prompts()[0]!.prompt;
-    expect(p).toContain('## Convert the earlier version first');
-    expect(p).toContain('rebuild EACH format below faithfully as a composition');
+    expect(p).toContain('## Convert the earlier media first');
+    expect(p).toContain('rebuild EACH of them faithfully as a composition');
     expect(p).toContain(`.studio/cache/reference-frames/${slug}/v2/test-wide/01.jpg (t=0s)`);
     expect(p).toContain(`.studio/cache/reference-frames/${slug}/v2/test-still/01.jpg`);
     expect(p).toContain(`creatives/${slug}/outputs/v1/test-wide.mp4`);
@@ -205,7 +207,7 @@ describe('legacy conversion', { timeout: 60_000 }, () => {
   it('a conversion without a message (regenerate) still converts', async () => {
     const slug = await legacy(['test-wide']);
     await turn(slug, {});
-    expect(prompts()[0]!.prompt).toContain('## Convert the earlier version first');
+    expect(prompts()[0]!.prompt).toContain('## Convert the earlier media first');
     expect(hasConverting(await systemTexts(slug))).toBe(1);
   });
 
@@ -244,7 +246,7 @@ describe('legacy conversion', { timeout: 60_000 }, () => {
     expect(r.statusCode, r.body).toBe(200);
     fm.calls.length = 0;
     await turn(slug, { text: 'from the old one' });
-    expect(prompts()[1]!.prompt).toContain('## Convert the earlier version first');
+    expect(prompts()[1]!.prompt).toContain('## Convert the earlier media first');
     expect(prompts()[1]!.prompt).toContain(`creatives/${slug}/outputs/v1/test-wide.mp4`);
     expect(fm.calls.every((c) => c.video.includes(join('outputs', 'v1')))).toBe(true);
     expect(fm.calls.length).toBeGreaterThan(0);
@@ -273,11 +275,14 @@ describe('legacy conversion', { timeout: 60_000 }, () => {
       mkdirSync(join(projectDir(), '.studio', 'cache', 'reference-frames', slug), { recursive: true });
       symlinkSync(outside, join(projectDir(), '.studio', 'cache', 'reference-frames', slug, 'v2'));
       await turn(slug, { text: 'go' });
-      expect(fm.calls).toEqual([]);
+      // The planted folder link is removed as an entry (never followed); the safe media still gets its frame, in a real folder.
+      expect(fm.calls.map((c) => basename(c.video))).toEqual(['test-still.png']);
       expect(readdirSync(outside).sort()).toEqual(['secret.mp4', 'twin.mp4']);
+      expect(lstatSync(join(projectDir(), '.studio', 'cache', 'reference-frames', slug, 'v2')).isDirectory()).toBe(true);
       const p = prompts()[0]!.prompt;
-      expect(p).toContain('no reference frames could be extracted');
-      expect(p).not.toContain('reference-frames/');
+      expect(p).toContain('test-wide: rebuild from version 1');
+      expect(p.match(/no reference frames could be extracted/g)).toHaveLength(2);
+      expect(p).toContain('reference-frames/' + slug + '/v2/test-still/01.jpg');
     } finally {
       rmSync(outside, { recursive: true, force: true });
     }
@@ -310,6 +315,65 @@ describe('legacy conversion', { timeout: 60_000 }, () => {
     await turn(slug, { text: 'go' });
     expect(prompts()[0]!.prompt).toContain('no reference frames could be extracted');
     expect(hasConverting(await systemTexts(slug))).toBe(1);
+  });
+});
+
+describe('conversion per format (review of Task 6)', { timeout: 90_000 }, () => {
+  const v2With = (compositions: Array<{ format: string }>) => async (slug: string) => {
+    await store().appendVersion(slug, { n: 2, commit: null, sessionId: null, status: 'incomplete', createdAt: new Date(Date.now() + 1000).toISOString(), request: 'r', problems: ['x'], tools: [], renderCommand: null, basedOn: 1,
+      outputs: [], compositions: compositions.map((c) => ({ format: c.format, dir: `compositions/${c.format}`, hash: 'f'.repeat(64), problems: [] })) });
+  };
+
+  it('(a) an incomplete v2 with no compositions: the next turn converts from v1', async () => {
+    const slug = await legacy(['test-wide']);
+    await v2With([])(slug);
+    await turn(slug, { text: 'again' });
+    const p = prompts()[0]!.prompt;
+    expect(p).toContain('## Convert the earlier media first');
+    expect(p).toContain('test-wide: rebuild from version 1');
+    expect(p).toContain(`creatives/${slug}/outputs/v1/test-wide.mp4`);
+    expect(fm.calls.length).toBeGreaterThan(0);
+    expect(hasConverting(await systemTexts(slug))).toBe(1);
+  });
+
+  it('(b) a partial conversion: only the missing format gets frames from v1', async () => {
+    const slug = await legacy(['test-wide', 'test-tall']);
+    await v2With([{ format: 'test-wide' }])(slug);
+    await turn(slug, { text: 'again', formats: ['test-tall'] });
+    const p = prompts()[0]!.prompt;
+    expect(p).toContain('test-tall: rebuild from version 1');
+    expect(p).not.toContain('test-wide: rebuild');
+    expect(fm.calls.every((c) => c.video.endsWith('test-tall.mp4'))).toBe(true);
+    expect(existsSync(refDir(slug, 3, 'test-wide'))).toBe(false);
+  });
+
+  it('a format added since gets a plain create line, and stale folders of this version are removed', async () => {
+    const slug = await legacy(['test-wide']);
+    const c = (await detail(slug)).creative;
+    await app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}`, headers: H, payload: { brief: { ...c.brief, formats: ['test-wide', 'test-tall'] } } });
+    mkdirSync(join(refDir(slug, 2, 'test-gone')), { recursive: true });
+    writeFileSync(join(refDir(slug, 2, 'test-gone'), '01.jpg'), 'stale');
+    await turn(slug, { text: 'add tall' });
+    const p = prompts()[0]!.prompt;
+    expect(p).toContain('test-wide: rebuild from version 1');
+    expect(p).toContain('test-tall: create it from scratch');
+    expect(existsSync(refDir(slug, 2, 'test-gone'))).toBe(false);
+    expect(existsSync(refDir(slug, 2, 'test-wide'))).toBe(true);
+  });
+
+  it('a failed turn that is retried does not repeat the chat entry', async () => {
+    const slug = await legacy(['test-wide']);
+    process.env.FAKE_CLAUDE_ALWAYS_INVALID = '1';
+    await turn(slug, { text: 'a' }); // saves an incomplete version: a new one follows
+    delete process.env.FAKE_CLAUDE_ALWAYS_INVALID;
+    expect(hasConverting(await systemTexts(slug))).toBe(1);
+  });
+
+  it('the Italian entry', async () => {
+    setLocale('it');
+    const slug = await legacy(['test-wide']);
+    await turn(slug, { text: 'a' });
+    expect((await systemTexts(slug)).filter((t) => t === 'Conversione al formato modificabile · costa più token questa volta')).toHaveLength(1);
   });
 });
 

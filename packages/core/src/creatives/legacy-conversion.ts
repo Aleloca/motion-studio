@@ -1,6 +1,6 @@
-import { lstat, readdir, rm } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
-import type { FormatPreset, VersionEntry } from '@motion-studio/shared';
+import { hasFormat, type FormatPreset, type VersionEntry } from '@motion-studio/shared';
 import { noteCoreChange } from '../core-changes.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { isConfinedFile } from './carry-over.ts';
@@ -12,6 +12,35 @@ import { realDirChain, writeThroughTemp } from './core-files.ts';
  * reference frames of the old media, which the core extracts into the protected cache (the agent can read `.studio`, never
  * write it), through real directories and a fresh temp file renamed into place (the same helpers as the pin frames).
  */
+
+/**
+ * The version whose media a target `format` is converted from, or null when the format has nothing legacy to convert.
+ * Decided per format (review of Task 6): the base itself when it has the format as media; when the base has neither a
+ * composition nor media for it (an incomplete or partial conversion, or a format added since), the latest earlier version
+ * that has it as legacy media. A format with a composition anywhere on the way is already converted: null.
+ */
+export function legacySourceFor(versions: readonly VersionEntry[], base: VersionEntry | undefined, format: string): VersionEntry | null {
+  if (!base || base.compositions?.some((c) => c.format === format)) return null;
+  if (base.compositions === undefined && base.outputs.some((o) => o.format === format)) return base;
+  if (base.compositions !== undefined && base.outputs.some((o) => o.format === format)) return null;
+  for (const v of [...versions].filter((x) => x.n < base.n).sort((a, b) => b.n - a.n)) {
+    if (v.compositions?.some((c) => c.format === format)) return null;
+    if (v.outputs.some((o) => o.format === format)) return v;
+  }
+  return null;
+}
+
+/** Targets of a conversion: format → the legacy version it is converted from; `created`: targets the base does not have at all. */
+export function conversionPlan(versions: readonly VersionEntry[], base: VersionEntry | undefined, targets: readonly string[]): { sources: Array<{ format: string; version: VersionEntry }>; created: string[] } {
+  const sources: Array<{ format: string; version: VersionEntry }> = [];
+  const created: string[] = [];
+  for (const format of targets) {
+    const version = legacySourceFor(versions, base, format);
+    if (version) sources.push({ format, version });
+    else if (base && !hasFormat(base, format)) created.push(format);
+  }
+  return { sources, created };
+}
 
 export const REFERENCE_FRAME_WIDTH = 540;
 export const REFERENCE_FRAME_MAX = 12;
@@ -32,6 +61,8 @@ export function referenceTimes(kind: 'video' | 'image', durationSec: number | nu
 
 export interface LegacyFormatReference {
   format: string;
+  /** The legacy version this format is converted from. */
+  version: number;
   /** The old media, relative to the project (the agent may read it for assets). */
   source: string;
   kind: 'video' | 'image';
@@ -49,26 +80,26 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
  * be read or has no frames is listed without frames; nothing here throws.
  */
 export async function extractReferenceFrames(o: {
-  projectDir: string; creativeDir: string; creativeSlug: string; n: number; base: VersionEntry; formats: readonly string[];
+  projectDir: string; creativeDir: string; creativeSlug: string; n: number; sources: ReadonlyArray<{ format: string; version: VersionEntry }>;
   presets: readonly FormatPreset[]; media: MediaTools;
 }): Promise<LegacyFormatReference[]> {
   const out: LegacyFormatReference[] = [];
-  for (const format of o.formats) {
-    const output = o.base.outputs.find((x) => x.format === format);
+  // The whole folder of this version goes first (also formats no longer converted): removed as an entry, never followed.
+  try {
+    const parent = await realDirChain(o.projectDir, ['.studio', 'cache', 'reference-frames', o.creativeSlug]);
+    if (parent) { await rm(join(parent, `v${o.n}`), { recursive: true, force: true }); await noteCoreChange(parent); }
+  } catch { /* optional help */ }
+  for (const { format, version: src } of o.sources) {
+    const output = src.outputs.find((x) => x.format === format);
     if (!output) continue;
     const kind = o.presets.find((p) => p.id === format)?.kind ?? (/\.(png|jpe?g|webp|gif)$/i.test(output.file) && output.durationSec == null ? 'image' : 'video');
-    const rel = `outputs/v${o.base.n}/${output.file}`;
-    const ref: LegacyFormatReference = { format, source: relative(o.projectDir, join(o.creativeDir, ...rel.split('/'))).split(sep).join('/'), kind, durationSec: output.durationSec ?? null, frames: [] };
+    const rel = `outputs/v${src.n}/${output.file}`;
+    const ref: LegacyFormatReference = { format, version: src.n, source: relative(o.projectDir, join(o.creativeDir, ...rel.split('/'))).split(sep).join('/'), kind, durationSec: output.durationSec ?? null, frames: [] };
     out.push(ref);
     try {
       if (!o.media.available || !SAFE_ID.test(format) || !(await isConfinedFile(o.creativeDir, rel))) continue;
       const dir = await realDirChain(o.projectDir, ['.studio', 'cache', 'reference-frames', o.creativeSlug, `v${o.n}`, format]);
       if (!dir) continue;
-      // A leftover of an earlier try of this version: removed as entries (a link is never followed).
-      for (const name of await readdir(dir).catch(() => [] as string[])) {
-        if ((await lstat(join(dir, name)).catch(() => null)) !== null) await rm(join(dir, name), { recursive: true, force: true });
-      }
-      await noteCoreChange(dir);
       const abs = join(o.creativeDir, ...rel.split('/'));
       for (const [i, t] of referenceTimes(kind, output.durationSec).entries()) {
         const name = `${String(i + 1).padStart(2, '0')}.jpg`;

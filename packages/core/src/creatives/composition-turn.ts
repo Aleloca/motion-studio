@@ -18,7 +18,7 @@ import { realDirChain, writeThroughTemp } from './core-files.ts';
  *   composition entry (not a follower's) and the folder, hashed before the agent starts, still has the recorded hash. Every
  *   file is copied with `COPYFILE_EXCL` and checked against the sha256 read then (never the source's bytes after the turn),
  *   and the copied folder must hash to the recorded hash. A legacy base (no compositions) carries nothing: every primary is
- *   a target (Task 6 makes that turn a conversion).
+ *   a target (and the turn is a conversion: legacy-conversion.ts).
  * - **Followers.** A follower's entry is its primary's composition: `{ format, dir: <primary's dir>, hash, followsFormat,
  *   problems: <primary's> }`; no files are copied (the render job copies the primary's render to it). The link is checked
  *   with `canFollow` on the composition's duration (unknown when the composition is not valid: checked again at render).
