@@ -83,7 +83,12 @@ export function registerRenderEngineRoutes(app: FastifyInstance, ctx: { engine: 
     if (!body.success) throw new CodedError(400, t().errors.chromeConsentRequired, 'consent-required');
     if (!ctx.installer || !ctx.engine) throw new CodedError(503, t().errors.chromeDownloadUnavailable, 'chrome-download-unavailable');
     // Another request holds the slot (it is checking the offer, or downloading): this one starts nothing.
-    if (claimed) return reply.status(202).send(await statusNow());
+    // The racer that lost reports a download in progress, even while the winner is still checking the offer (state not
+    // 'running' yet): the UI must not show "idle" or an old failure for a download that is about to start.
+    if (claimed) {
+      const now = await statusNow();
+      return reply.status(202).send(now.download.state === 'running' ? now : { ...now, download: { state: 'running', bytes: 0, total: null } });
+    }
     claimed = true;
     let started = false;
     try {

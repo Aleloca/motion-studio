@@ -164,15 +164,25 @@ describe('Chrome for Testing download (consent first)', () => {
     expect(r.json().error).toContain('(download)');
     expect(r.json().error).not.toContain('/Users/');
   });
-  it('two requests at once start exactly one download (the slot is claimed before any await)', async () => {
+  it('two requests at once start exactly one download; the loser answers 202 "running" while the winner is still inside the route (C12)', async () => {
     const inst = fakeInstaller();
-    // A slow metadata read: both requests are inside the route at the same time.
+    // The metadata read is held open: the winner is inside the route until the loser has been answered, so the two
+    // requests provably overlap (a sequential run could not pass).
     const info = inst.info;
-    inst.info = async () => { await new Promise((r) => setTimeout(r, 30)); return info(); };
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    inst.info = async () => { await gate; return info(); };
     await build({ engine: engineOf({ kind: null }), installer: inst });
     const post = () => app.inject({ method: 'POST', url: '/api/render-engine/download', headers: H, payload: { consent: true, sizeBytes: OFFER.sizeBytes } });
-    const [a, b] = await Promise.all([post(), post()]);
-    expect([a.statusCode, b.statusCode]).toEqual([202, 202]);
+    let winnerDone = false;
+    const winner = post().then((r) => { winnerDone = true; return r; });
+    await new Promise((r) => setTimeout(r, 50));
+    const loser = await post();
+    expect(winnerDone).toBe(false);
+    expect(loser.statusCode).toBe(202);
+    expect(loser.json().download).toEqual({ state: 'running', bytes: 0, total: null });
+    release();
+    expect((await winner).statusCode).toBe(202);
     expect(inst.installs).toHaveLength(1);
     expect(inst.infoCalls).toBe(1);
     inst.finish();
