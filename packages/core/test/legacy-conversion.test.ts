@@ -178,7 +178,7 @@ async function legacy(formats: string[], versions: Array<Record<string, string>>
 }
 const refDir = (slug: string, n: number, format: string) => join(projectDir(), '.studio', 'cache', 'reference-frames', slug, `v${n}`, format);
 
-describe('legacy conversion', { timeout: 60_000 }, () => {
+describe('legacy conversion', { timeout: 120_000 }, () => {
   it('a legacy base converts on the next change: reference frames in the protected cache, conversion prompt, chat entry', async () => {
     const slug = await legacy(['test-wide', 'test-still']);
     await turn(slug, { text: 'make the title bigger' });
@@ -319,7 +319,7 @@ describe('legacy conversion', { timeout: 60_000 }, () => {
   });
 });
 
-describe('adding formats to a legacy creative (final review I4, ruling A)', { timeout: 90_000 }, () => {
+describe('adding formats to a legacy creative (final review I4, ruling A)', { timeout: 150_000 }, () => {
   /** A phase 9 creative: v1 with real files whose recorded hashes match them (carriable as files). */
   async function phase9(formats: string[]): Promise<string> {
     const r = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', headers: H, payload: {
@@ -387,7 +387,7 @@ describe('adding formats to a legacy creative (final review I4, ruling A)', { ti
   });
 });
 
-describe('conversion per format (review of Task 6)', { timeout: 90_000 }, () => {
+describe('conversion per format (review of Task 6)', { timeout: 150_000 }, () => {
   const v2With = (compositions: Array<{ format: string }>) => async (slug: string) => {
     await store().appendVersion(slug, { n: 2, commit: null, sessionId: null, status: 'incomplete', createdAt: new Date(Date.now() + 1000).toISOString(), request: 'r', problems: ['x'], tools: [], renderCommand: null, basedOn: 1,
       outputs: [], compositions: compositions.map((c) => ({ format: c.format, dir: `compositions/${c.format}`, hash: 'f'.repeat(64), problems: [] })) });
@@ -472,7 +472,7 @@ describe('conversion per format (review of Task 6)', { timeout: 90_000 }, () => 
   });
 });
 
-describe('Review Focus 5: legacy v1-v3 then a composition v4', { timeout: 120_000 }, () => {
+describe('Review Focus 5: legacy v1-v3 then a composition v4', { timeout: 180_000 }, () => {
   async function boundary(): Promise<string> {
     // wide: a, a (unchanged), b ; tall: a, b, b
     const slug = await legacy(['test-wide', 'test-tall'], [

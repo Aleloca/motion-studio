@@ -171,7 +171,7 @@ async function render(slug: string, n: number, formats?: string[]) {
   return waitJob((r.json() as JobSummary).id);
 }
 
-describe('a composition turn', { timeout: 60_000 }, () => {
+describe('a composition turn', { timeout: 120_000 }, () => {
   it('delivers a validated, hashed composition per format, the manifest v2 and storyboards; the prompt points to the schema', async () => {
     const slug = await create(['test-wide', 'test-still']);
     const v1 = await versionOf(slug, 1);
@@ -270,7 +270,7 @@ describe('a composition turn', { timeout: 60_000 }, () => {
   });
 });
 
-describe('phase 9 on composition folders', { timeout: 90_000 }, () => {
+describe('phase 9 on composition folders', { timeout: 150_000 }, () => {
   it('the history compares composition hashes; a carried composition is a verified copy of every file', async () => {
     process.env.FAKE_CLAUDE_COMP_TAG = 'same';
     const slug = await create(['test-wide', 'test-tall']);
@@ -362,7 +362,7 @@ describe('phase 9 on composition folders', { timeout: 90_000 }, () => {
   });
 });
 
-describe('the agent\'s composition tools', { timeout: 60_000 }, () => {
+describe('the agent\'s composition tools', { timeout: 120_000 }, () => {
   it('validate_composition checks; preview_frames returns PNG images, at most 540 px wide, 10 calls per turn', async () => {
     const url = await app.listen({ port: 0, host: '127.0.0.1' });
     bridge.setOrigin(url);
@@ -396,7 +396,7 @@ describe('the agent\'s composition tools', { timeout: 60_000 }, () => {
   });
 });
 
-describe('live preview sessions', { timeout: 60_000 }, () => {
+describe('live preview sessions', { timeout: 120_000 }, () => {
   it('need the UI token, a UI origin as parent, and mint a preview session on the composition server', async () => {
     const slug = await create(['test-wide', 'test-wide-b']);
     const url = `/api/projects/acme/creatives/${slug}/versions/1/preview-session`;
@@ -470,7 +470,7 @@ describe('live preview sessions', { timeout: 60_000 }, () => {
   });
 });
 
-describe('export of v2 versions', { timeout: 60_000 }, () => {
+describe('export of v2 versions', { timeout: 120_000 }, () => {
   it('renders a missing ★ render first, then copies; a rendered one is copied as it is', async () => {
     const slug = await create(['test-wide', 'test-still']);
     const prep = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export/prepare`, headers: H, payload: { picks: { 'test-wide': 1 } } });
@@ -589,7 +589,7 @@ describe('units', () => {
   });
 });
 
-describe('review fixes (Task 5b)', { timeout: 90_000 }, () => {
+describe('review fixes (Task 5b)', { timeout: 150_000 }, () => {
   it('I1: pin frames go to the protected cache through real folders and a fresh temp, never through a planted link', async () => {
     const slug = await create(['test-wide']);
     const pins = [{ format: 'test-wide', x: 0.5, y: 0.5, timeSec: 1 }];

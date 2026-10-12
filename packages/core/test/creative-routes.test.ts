@@ -47,7 +47,7 @@ const waitJobs = async () => {
 const createCreative = async (generate = true) =>
   (await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'Lancio', brief, generate } })).json();
 
-describe('formats', { timeout: 20_000 }, () => {
+describe('formats', { timeout: 90_000 }, () => {
   it('serves, validates and resets the catalog', async () => {
     const s = (await app.inject('/api/formats')).json();
     expect(s.presets.length).toBeGreaterThan(30);
@@ -57,7 +57,7 @@ describe('formats', { timeout: 20_000 }, () => {
   });
 });
 
-describe('creatives', { timeout: 20_000 }, () => {
+describe('creatives', { timeout: 90_000 }, () => {
   it('creates and generates, then exposes detail, conversation and files', async () => {
     const created = await createCreative();
     expect(created.job).toMatchObject({ state: expect.any(String) });
@@ -111,7 +111,7 @@ describe('creatives', { timeout: 20_000 }, () => {
   });
 });
 
-describe('reveal safety', { timeout: 20_000 }, () => {
+describe('reveal safety', { timeout: 90_000 }, () => {
   it('refuses a symlinked version folder or outputs folder', async () => {
     const { slug } = await createCreative();
     await waitJobs();
@@ -127,7 +127,7 @@ describe('reveal safety', { timeout: 20_000 }, () => {
   });
 });
 
-describe('file serving safety', { timeout: 20_000 }, () => {
+describe('file serving safety', { timeout: 90_000 }, () => {
   it('refuses traversal, non-output paths and symlinks', async () => {
     const { slug } = await createCreative();
     await waitJobs();
@@ -140,7 +140,7 @@ describe('file serving safety', { timeout: 20_000 }, () => {
   });
 });
 
-describe('file route confinement', { timeout: 20_000 }, () => {
+describe('file route confinement', { timeout: 90_000 }, () => {
   it.skipIf(process.platform === 'win32')('refuses symlinked directories and serves .feedback with sandbox headers', async () => {
     const { slug } = await createCreative();
     await waitJobs();
@@ -162,7 +162,7 @@ describe('file route confinement', { timeout: 20_000 }, () => {
   });
 });
 
-describe('startup recovery', { timeout: 20_000 }, () => {
+describe('startup recovery', { timeout: 90_000 }, () => {
   it('marks creatives left in working as interrupted', async () => {
     const { slug } = await createCreative(false);
     const file = join(base, 'ws', 'acme', 'creatives', slug, 'creative.json');
@@ -173,7 +173,7 @@ describe('startup recovery', { timeout: 20_000 }, () => {
   });
 });
 
-describe('recoverWorkspace', { timeout: 20_000 }, () => {
+describe('recoverWorkspace', { timeout: 90_000 }, () => {
   it('sweeps leftovers and completes the .gitignore of existing projects', async () => {
     const ws = await WorkspaceStore.open(join(base, 'ws'), new Git());
     const dir = ws.projectDir('acme');
@@ -239,7 +239,7 @@ describe('recoverWorkspace', { timeout: 20_000 }, () => {
   });
 });
 
-describe('creative linked codebases', { timeout: 20_000 }, () => {
+describe('creative linked codebases', { timeout: 90_000 }, () => {
   it('accepts and normalizes linkedCodebases on create and edit', async () => {
     const res = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'C', brief, linkedCodebases: [{ path: '/tmp/app/' }] } });
     expect(res.json().creative.linkedCodebases).toEqual([{ path: '/tmp/app' }]);
@@ -258,7 +258,7 @@ describe('creative linked codebases', { timeout: 20_000 }, () => {
   });
 });
 
-describe('creative export', { timeout: 20_000 }, () => {
+describe('creative export', { timeout: 90_000 }, () => {
   it('exports a version to a folder outside the workspace and validates input', async () => {
     const { slug } = await createCreative();
     await waitJobs();

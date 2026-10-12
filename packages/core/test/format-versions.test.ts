@@ -37,7 +37,7 @@ const version = (n: number, outputs: OutputFileInfo[], problems: string[] = []):
   request: `v${n}`, outputs, problems, tools: [], renderCommand: null, basedOn: n > 1 ? n - 1 : null,
 });
 
-describe('hashes recorded with a new version', { timeout: 20_000 }, () => {
+describe('hashes recorded with a new version', { timeout: 90_000 }, () => {
   it('stores the sha256 of every output, computed by the core from the files', async () => {
     const base = await mkdtemp(join(tmpdir(), 'ms-fv-turn-'));
     const git = new Git();
@@ -142,7 +142,7 @@ describe('lazy hashes of old versions', () => {
   });
 });
 
-describe('format routes', { timeout: 20_000 }, () => {
+describe('format routes', { timeout: 90_000 }, () => {
   let app: FastifyInstance;
   let base: string;
   let projectDir: string;
@@ -544,7 +544,7 @@ describe('hashing: scheduling, de-duplication and safety', () => {
   });
 });
 
-describe('export picks are never decided on partial hashes', { timeout: 20_000 }, () => {
+describe('export picks are never decided on partial hashes', { timeout: 90_000 }, () => {
   it('answers hashes-pending (503) while hashes are missing, then succeeds on retry', async () => {
     const base = await mkdtemp(join(tmpdir(), 'ms-fv-503-'));
     const git = new Git();
@@ -649,7 +649,7 @@ describe('export picks are never decided on partial hashes', { timeout: 20_000 }
   });
 });
 
-describe('export picks do not hold the creative lock while hashing', { timeout: 20_000 }, () => {
+describe('export picks do not hold the creative lock while hashing', { timeout: 90_000 }, () => {
   it('lets a brief update through while a pick waits for slow hashes', async () => {
     const base = await mkdtemp(join(tmpdir(), 'ms-fv-lock-'));
     const git = new Git();

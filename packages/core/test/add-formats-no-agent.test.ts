@@ -78,7 +78,7 @@ const run = async (job: Promise<{ id: string }>) => { const { id } = await job; 
 const versions = () => store.readVersions(ref.creativeSlug);
 const out = (v: VersionEntry, format: string) => v.outputs.find((o) => o.format === format);
 
-describe('formats added without the agent (spec §2.4)', { timeout: 30_000 }, () => {
+describe('formats added without the agent (spec §2.4)', { timeout: 90_000 }, () => {
   it('links the formats a brief save adds against the existing primaries, duration unknown', async () => {
     await setup(brief);
     const updated = await service.updateBrief(ref, { brief: { ...brief, formats: [REEL, POST, TIKTOK, SHORTS, YT], links: { [YT]: POST } } });

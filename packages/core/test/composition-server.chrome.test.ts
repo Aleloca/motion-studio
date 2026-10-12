@@ -91,6 +91,19 @@ describe.skipIf(!chrome)('composition server in headless Chrome', () => {
     const digit = (x: number) => Math.round((meanGrey(img, x, VIDEO.y + VIDEO.height / 2) * 219) / 255 / 20);
     return digit(VIDEO.x + (VIDEO.width * 3) / 4) * 10 + digit(VIDEO.x + VIDEO.width / 4);
   };
+  /**
+   * Screenshots until the video block shows `expected` (a loaded machine paints the decoded frame late); the caller still
+   * asserts the final image equals `expected`, so a wrong frame that never settles still fails. `again` re-issues the seek.
+   */
+  const untilVideoFrame = async (page: Page, expected: number, again?: () => Promise<unknown>) => {
+    let img = decodePng(await page.screenshot());
+    for (let i = 0; i < 60 && videoFrame(img) !== expected; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (again) await again();
+      img = decodePng(await page.screenshot());
+    }
+    return img;
+  };
   const expectedFrame = (t: number) => sourceFrameIndex(videoSourceTime(VIDEO, t), VIDEO.sourceFps);
   const log: Array<{ method: string; path: string; status: number }> = [];
   const onResponse = (e: { method: string; path: string; status: number }) => { log.push(e); };
@@ -118,7 +131,7 @@ describe.skipIf(!chrome)('composition server in headless Chrome', () => {
       expect(info.errors).toEqual([]);
       expect(info.duration).toBe(4);
       await page.eval('window.__ms.seek(1.5)', 200_000);
-      const img = decodePng(await page.screenshot());
+      const img = ffmpeg ? await untilVideoFrame(page, expectedFrame(1.5), () => page.eval('window.__ms.seek(1.5)', 200_000)) : decodePng(await page.screenshot());
       expect(barWidth(img)).toBe(75);
       expect(isGreen(px(img, HOSTILE.x + 20, HOSTILE.y + 20))).toBe(true);
       if (ffmpeg) {
@@ -148,7 +161,7 @@ describe.skipIf(!chrome)('composition server in headless Chrome', () => {
       expect(await page.eval("window.msgs.filter((m) => m.type === 'error')")).toEqual([]);
       await page.eval("window.msgs.length = 0; document.getElementById('f').contentWindow.postMessage({ type: 'seek', t: 1.5 }, '*'); true");
       expect(await poll(page, "window.msgs.find((m) => m.type === 'time')")).toEqual({ type: 'time', t: 1.5, playing: false });
-      const img = decodePng(await page.screenshot());
+      const img = ffmpeg ? await untilVideoFrame(page, expectedFrame(1.5)) : decodePng(await page.screenshot());
       expect(barWidth(img)).toBe(75);
       expect(isGreen(px(img, HOSTILE.x + 20, HOSTILE.y + 20))).toBe(true);
       if (ffmpeg) expect(videoFrame(img)).toBe(expectedFrame(1.5));

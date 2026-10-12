@@ -81,7 +81,7 @@ const fileOf = (n: number, file: string) => join(store.outputsDir(ref.creativeSl
 const sha = async (path: string) => createHash('sha256').update(await readFile(path)).digest('hex');
 const manifestOf = async (n: number) => manifestSchema.parse(JSON.parse(await readFile(fileOf(n, 'manifest.json'), 'utf8')));
 
-describe('targeted turns (spec §2.5)', { timeout: 30_000 }, () => {
+describe('targeted turns (spec §2.5)', { timeout: 90_000 }, () => {
   it('formats: [reel] delivers only the reel; the post is carried with the same sha256 and its history does not grow', async () => {
     await setup(baseBrief);
     expect(await run(service.start(ref))).toBe('succeeded');
@@ -201,7 +201,7 @@ describe('targeted turns (spec §2.5)', { timeout: 30_000 }, () => {
   });
 });
 
-describe('linked formats (spec §2.3)', { timeout: 30_000 }, () => {
+describe('linked formats (spec §2.3)', { timeout: 90_000 }, () => {
   it('materializes a follower as a copy of its primary, with followsFormat in the manifest', async () => {
     await setup({ ...baseBrief, formats: [REEL, POST, TIKTOK], links: { [TIKTOK]: REEL } });
     process.env.FAKE_CLAUDE_MANIFEST_PATCH = JSON.stringify({ followsFormat: POST });
@@ -257,7 +257,7 @@ describe('linked formats (spec §2.3)', { timeout: 30_000 }, () => {
   });
 });
 
-describe('carry-over safety (review fixes)', { timeout: 30_000 }, () => {
+describe('carry-over safety (review fixes)', { timeout: 90_000 }, () => {
   it('protects every earlier outputs/v* folder of the creative, never the new one', async () => {
     await setup(baseBrief);
     await run(service.start(ref));
@@ -435,7 +435,7 @@ describe('carry-over safety (review fixes)', { timeout: 30_000 }, () => {
 });
 
 
-describe('hard links to earlier versions (decisions log 141)', { timeout: 30_000 }, () => {
+describe('hard links to earlier versions (decisions log 141)', { timeout: 90_000 }, () => {
   it('a link left to an earlier output is detached before the agent starts, with a warning; the earlier file stays as it was', async () => {
     setLocale('en');
     await setup(baseBrief);

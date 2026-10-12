@@ -169,7 +169,7 @@ async function waitJob(id: string, until: (j: JobSummary) => boolean = (j) => j.
 const versionOf = async (store: CreativeStore, slug: string, n: number) => (await store.readVersions(slug)).find((v) => v.n === n)!;
 const manifestOf = (dir: string, n: number) => JSON.parse(readFileSync(join(dir, 'outputs', `v${n}`, 'manifest.json'), 'utf8')) as ManifestV2;
 
-describe('the render route', { timeout: 30_000 }, () => {
+describe('the render route', { timeout: 90_000 }, () => {
   it('needs the UI token and a local origin, like every API route', async () => {
     const { slug } = await v2Creative();
     expect((await post(slug, 1, {}, {})).statusCode).toBe(401);
@@ -209,7 +209,7 @@ describe('the render route', { timeout: 30_000 }, () => {
   });
 });
 
-describe('render jobs', { timeout: 60_000 }, () => {
+describe('render jobs', { timeout: 120_000 }, () => {
   it('one job renders every primary, copies followers, and records outputs, renders[] and renderState', async () => {
     const { slug, store, dir } = await v2Creative();
     const r = await post(slug, 1);
@@ -399,7 +399,7 @@ describe('render jobs', { timeout: 60_000 }, () => {
   });
 });
 
-describe('progress events and warnings', { timeout: 30_000 }, () => {
+describe('progress events and warnings', { timeout: 90_000 }, () => {
   it('per format: media (sources done of total), frames, finishing (the follower copies); media warnings become notes and chat warnings', async () => {
     const { slug, store } = await v2Creative({ formats: ['test-wide', 'test-wide-b'] });
     const updates: JobSummary[] = [];
@@ -429,7 +429,7 @@ describe('progress events and warnings', { timeout: 30_000 }, () => {
   });
 });
 
-describe('fix round: records always written, follower limits, the render lane', { timeout: 60_000 }, () => {
+describe('fix round: records always written, follower limits, the render lane', { timeout: 120_000 }, () => {
   it('a cancel after a render is in place still records it (I3); the next format is not rendered', async () => {
     const { slug, store, dir } = await v2Creative({ formats: ['test-wide', 'test-still', 'test-wide-b'] });
     let id = '';
@@ -492,7 +492,7 @@ describe('fix round: records always written, follower limits, the render lane', 
   });
 });
 
-describe('round 2: the record follows the disk', { timeout: 60_000 }, () => {
+describe('round 2: the record follows the disk', { timeout: 120_000 }, () => {
   it('the primary is recorded right after its rename, before posters and followers (crash window)', async () => {
     const { slug, store, dir } = await v2Creative({ formats: ['test-wide', 'test-wide-b'] });
     let openPoster!: () => void;
@@ -574,7 +574,7 @@ describe('round 2: the record follows the disk', { timeout: 60_000 }, () => {
   });
 });
 
-describe('a follower alone does not render a current primary again (C6)', { timeout: 60_000 }, () => {
+describe('a follower alone does not render a current primary again (C6)', { timeout: 120_000 }, () => {
   it('only the follower\'s copy is made when the primary\'s render is current and clean; asking for the primary renders it', async () => {
     const { slug, store, dir } = await v2Creative({ formats: ['test-wide', 'test-wide-b'] });
     expect((await waitJob((await post(slug, 1)).json().id)).state).toBe('succeeded');
@@ -598,7 +598,7 @@ describe('a follower alone does not render a current primary again (C6)', { time
   });
 });
 
-describe('a turn and a render on the same creative (M9)', { timeout: 120_000 }, () => {
+describe('a turn and a render on the same creative (M9)', { timeout: 180_000 }, () => {
   it('both versions.json writes are kept and the turn reports no earlier-output change', async () => {
     const { slug, store } = await v2Creative({ formats: ['test-wide'], links: {} });
     await app.close();

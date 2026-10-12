@@ -47,6 +47,9 @@ const CLIPS = {
   seam: { start: 0, duration: DURATION, sourceFps: 30 },
 };
 
+/** What the strict test's render took on this machine, now: the yardstick of the lenient test's "no stall" bound. */
+let baselineMs = 0;
+
 describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => {
   let work: string;
   let dist: string;
@@ -264,7 +267,8 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
     const out = join(creative, VERSION_DIR, `${id}.mp4`);
     const t0 = Date.now();
     const r = await renderComposition({ dir: creative, versionDir: VERSION_DIR, composition: comp, format: { ...FORMAT, id }, out, provider: p, parallel: 2, signal: new AbortController().signal, distDir: dist, ffmpeg: ff, encoder: 'libx264' });
-    if (process.env.MS_RENDER_DEBUG) console.info(`[render] trusted: ${Date.now() - t0} ms`);
+    baselineMs = Date.now() - t0;
+    if (process.env.MS_RENDER_DEBUG) console.info(`[render] trusted: ${baselineMs} ms`);
     const frames = Array.from({ length: N }, (_, i) => i);
     expect(decodeStrips(ff, out, BOXES.v24, 2).map(readCode)).toEqual(frames.map((i) => Math.min(i, 29) + 1));
     expect(decodeStrips(ff, out, BOXES.v25, 2).map(readCode)).toEqual(frames.map((i) => (i < 15 ? 0 : Math.min(i - 15, 29) + 1)));
@@ -297,7 +301,9 @@ describe.skipIf(!tools.ok)('renderer: media timing, seams, audio, still', () => 
     if (process.env.MS_RENDER_DEBUG) console.info(`[render] webm: ${elapsed} ms, ${r.warnings.length} warnings`, got.join(','));
     expect(got).toEqual(Array.from({ length: N }, (_, i) => shown(i / FPS + VFR_NUDGE)));
     expect(r.warnings.every((w) => w.code === 'videoFrameMismatch' && w.clipId === 'w')).toBe(true);
-    expect(elapsed).toBeLessThan(45_000); // no seek waits out its 60 s deadline
+    // No seek waits out its 60 s deadline. A fixed 45 s is load-blind (a busy machine took 120 s for a healthy render), so
+    // the bound scales with what the strict test's render took in this run; a stalled seek adds a full 60 s on top.
+    expect(elapsed).toBeLessThan(Math.max(45_000, baselineMs * 4));
     rmSync(out);
   }, 1_800_000);
 

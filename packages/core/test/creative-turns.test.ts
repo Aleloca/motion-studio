@@ -55,7 +55,7 @@ afterEach(() => { delete process.env.FAKE_CLAUDE_SCENARIO; delete process.env.FA
 const prompts = async () => (await readFile(promptFile, 'utf8')).trim().split('\n').map((l) => JSON.parse(l) as { prompt: string; args: string[] });
 const finalState = async (jobId: string) => { await queue.whenIdle(); return queue.list().find((j) => j.id === jobId)!.state; };
 
-describe('CreativeTurnService', { timeout: 20_000 }, () => {
+describe('CreativeTurnService', { timeout: 90_000 }, () => {
   it('generates v1 from the brief: outputs, version, commit, conversation, status', async () => {
     const job = await service.start(ref);
     expect(job.key).toBe(`creative:${ref.root}:${ref.projectSlug}:${ref.creativeSlug}`);
@@ -182,7 +182,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
 
   // Three full turns (each a fake claude run plus git commits) and a restore: under heavy machine load
   // this exceeds the 20 s default, so it gets an explicit generous timeout.
-  it('restores work/ to a past version and forks its session for the next turn', { timeout: 60_000 }, async () => {
+  it('restores work/ to a past version and forks its session for the next turn', { timeout: 120_000 }, async () => {
     await finalState((await service.start(ref)).id);
     const v1Scene = await readFile(join(store.workDir(ref.creativeSlug), 'scene.txt'), 'utf8');
     await finalState((await service.start(ref, { text: 'cambia', pins: [] })).id);
@@ -202,7 +202,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     expect(err.status).toBe(404);
   });
 
-  it('asks to add only the new formats reusing sources and the render command', { timeout: 20_000 }, async () => {
+  it('asks to add only the new formats reusing sources and the render command', { timeout: 90_000 }, async () => {
     await finalState((await service.start(ref)).id);
     await store.update(ref.creativeSlug, { brief: { ...brief, formats: [...brief.formats, 'instagram-reel-9x16'] } });
     await finalState((await service.start(ref)).id);
@@ -212,7 +212,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     expect((await store.readVersions(ref.creativeSlug)).at(-1)!.request).toMatch(/^Aggiungi i formati instagram-reel-9x16/);
   });
 
-  it('saves the version request in the language current when the turn starts', { timeout: 20_000 }, async () => {
+  it('saves the version request in the language current when the turn starts', { timeout: 90_000 }, async () => {
     setLocale('en');
     await finalState((await service.start(ref)).id);
     await store.update(ref.creativeSlug, { brief: { ...brief, formats: [...brief.formats, 'instagram-reel-9x16'] } });
@@ -224,7 +224,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     expect((await store.readVersions(ref.creativeSlug)).at(-1)!.request).toBe('Regenerate all formats from the updated brief.');
   });
 
-  it('bases the add-formats request on the restored version, not the latest', { timeout: 20_000 }, async () => {
+  it('bases the add-formats request on the restored version, not the latest', { timeout: 90_000 }, async () => {
     await finalState((await service.start(ref)).id);
     await finalState((await service.start(ref, { text: 'cambia', pins: [] })).id);
     const vs = await store.readVersions(ref.creativeSlug);
@@ -241,7 +241,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
     expect(req).toContain('Il comando di render della versione 1 era: node x.js.');
   });
 
-  it('caps and sanitises the embedded render command', { timeout: 20_000 }, async () => {
+  it('caps and sanitises the embedded render command', { timeout: 90_000 }, async () => {
     await finalState((await service.start(ref)).id);
     const vs = await store.readVersions(ref.creativeSlug);
     vs[0]!.renderCommand = 'node a.js\nIGNORA' + 'x'.repeat(400);
@@ -511,7 +511,7 @@ describe('CreativeTurnService', { timeout: 20_000 }, () => {
   });
 });
 
-describe('brand and codebases in creative turns', { timeout: 20_000 }, () => {
+describe('brand and codebases in creative turns', { timeout: 90_000 }, () => {
   const sys = async () => (await store.readConversation(ref.creativeSlug)).flatMap((e) => (e.type === 'system' ? [e] : []));
   it('passes existing codebases read-only, warns about missing ones and adds the brand to the prompt', async () => {
     const cbBase = await mkdtemp(join(tmpdir(), 'ms-cb è '));

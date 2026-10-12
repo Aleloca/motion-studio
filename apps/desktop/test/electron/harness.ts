@@ -4,6 +4,7 @@
  * core's config folder is the test's temp one (`MOTION_STUDIO_CONFIG_DIR`). It reads one scenario from `MS_HARNESS`
  * (JSON) and prints `HARNESS <json>` lines; the test asserts on them.
  */
+import { cpus, loadavg } from 'node:os';
 import { join } from 'node:path';
 import { app, BrowserWindow, powerSaveBlocker, session } from 'electron';
 import type { Composition, FormatPreset } from '../../../../packages/shared/src/index.ts';
@@ -59,6 +60,11 @@ const go = new Promise<void>((resolve) => {
   process.stdin.on('data', (d: Buffer) => { input += d.toString(); if (/^go$/m.test(input)) resolve(); });
 });
 const settle = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/**
+ * How long a CONTROL window (no filter: it must leak, or "nothing leaked" proves nothing) is given to do its work: its base
+ * time stretched by the machine load (1 to 6 times), so a slow start under load does not close it before its probes fired.
+ */
+const controlSettle = (ms: number) => settle(ms * Math.min(6, Math.max(1, loadavg()[0]! / Math.max(1, cpus().length))));
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const formatOf = (c: Composition, id: string): FormatPreset => ({ id, channel: 'Test', name: id, width: c.width, height: c.height, kind: 'video', extensions: ['mp4'], targetBitrateKbps: 800 });
 
@@ -122,7 +128,7 @@ async function run(): Promise<void> {
       const page = `${c.naked!.origin}/${c.naked!.token}/page.html`;
       const control = await loadIn(`ms-test-control-${Date.now()}`, page, () => {});
       report({ phase: 'control-loaded' });
-      await settle(6000);
+      await controlSettle(6000);
       const controlServiceWorkers = Object.keys(control.webContents.session.serviceWorkers.getAllRunning()).length;
       await close(control);
       report({ phase: 'control-sw', serviceWorkers: controlServiceWorkers });
@@ -177,7 +183,7 @@ async function run(): Promise<void> {
       // a server without CSP (the residual). Control first (no filter), then the UI session with the filter.
       const ui = c.ui!;
       const control = await loadIn(`ms-test-ui-control-${Date.now()}`, ui.all, () => {});
-      await settle(7000);
+      await controlSettle(7000);
       const controlFrames = control.webContents.mainFrame.framesInSubtree.length;
       await close(control);
       report({ phase: 'control-done', controlFrames });

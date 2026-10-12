@@ -18,7 +18,7 @@ import { WorkspaceStore } from '../src/workspace-store.ts';
 import { setLocale } from '../src/i18n.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
-const T = { timeout: 20_000 };
+const T = { timeout: 90_000 };
 let ref: ProjectRef;
 let queue: JobQueue;
 let service: BrandService;

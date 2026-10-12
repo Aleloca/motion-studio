@@ -35,7 +35,7 @@ const waitJobs = async () => {
 };
 
 describe('brand API', () => {
-  it('edits kit and guidelines, analyzes a site and applies the proposal', { timeout: 20_000 }, async () => {
+  it('edits kit and guidelines, analyzes a site and applies the proposal', { timeout: 90_000 }, async () => {
     const kit = await app.inject({ method: 'PUT', url: `${P}/brand/kit`, payload: { kit: { schemaVersion: 1, colors: [{ id: 'blu', name: 'Blu', hex: '#1e3a5f', role: 'primary', source: manual }] } } });
     expect(kit.json().colors[0].hex).toBe('#1E3A5F');
     expect((await app.inject({ method: 'PUT', url: `${P}/brand/guidelines`, payload: { text: 'Tono diretto' } })).json()).toEqual({ ok: true });
@@ -49,13 +49,13 @@ describe('brand API', () => {
     expect(applied.json().kit.colors.map((c: { id: string }) => c.id)).toEqual(['blu', 'arancio']);
     expect((await app.inject(`${P}/brand`)).json().guidelines).toBe('Tono diretto');
   });
-  it('turns references marked for brand into image sources before analyzing', { timeout: 20_000 }, async () => {
+  it('turns references marked for brand into image sources before analyzing', { timeout: 90_000 }, async () => {
     await app.inject({ method: 'POST', url: `${P}/references`, ...multipart([{ name: 'mood.jpg', content: 'x' }]) });
     expect((await app.inject({ method: 'POST', url: `${P}/brand/analyze`, payload: {} })).statusCode).toBe(202);
     await waitJobs();
     expect((await app.inject(`${P}/brand`)).json().sources).toEqual([expect.objectContaining({ kind: 'image', file: 'references/mood.jpg' })]);
   });
-  it('syncs image sources with the references before analyzing', { timeout: 20_000 }, async () => {
+  it('syncs image sources with the references before analyzing', { timeout: 90_000 }, async () => {
     await app.inject({ method: 'POST', url: `${P}/references`, ...multipart([{ name: 'a.jpg', content: 'x' }, { name: 'b.jpg', content: 'y' }, { name: 'c.jpg', content: 'z' }]) });
     for (const f of ['a.jpg', 'b.jpg']) await app.inject({ method: 'POST', url: `${P}/brand/sources`, payload: { kind: 'image', file: `references/${f}` } });
     await app.inject({ method: 'POST', url: `${P}/brand/sources`, payload: { kind: 'website', url: 'https://acme.example' } });
