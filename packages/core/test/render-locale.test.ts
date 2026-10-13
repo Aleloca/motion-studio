@@ -130,6 +130,7 @@ describe('render problems of a translation (Rulings I, J)', { timeout: 120_000 }
     const row = ver.localizations!.find((r) => r.locale === 'de')!;
     expect(row.render!.problems).toEqual([text]);
     expect(row.problems).toEqual([text]);
+    expect(row.issues).toEqual([{ code: 'textOverflowMeasured', clipId: 'title', message: text }]);
     expect(ver.outputs.find((o) => o.format === 'test-wide')!.problems).toEqual([]);
     expect(ver.problems).toEqual([]);
     // Now it has an open problem: a new render needs force.

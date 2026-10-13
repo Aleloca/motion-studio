@@ -42,7 +42,8 @@ function Body({ onClose, slug, creative, plan, locales, rowsOf, labelOf }: Rende
   const [error, setError] = useState<string | null>(null);
   /** The translations the core refused until "Render anyway": the versions that must be sent again, with the list. */
   const [refused, setRefused] = useState<{ versions: Array<[number, string[]]>; list: string[] } | null>(null);
-  const primaryDone = useRef(false);
+  // The versions whose original render started: sent once, but a failed one is sent again.
+  const primaryDone = useRef(new Set<number>());
   const listId = useId();
   const chosen = locales.extra.filter((tag) => on[tag] && hasAll(tag));
   const withPrimary = Boolean(on[locales.primary]);
@@ -56,14 +57,12 @@ function Body({ onClose, slug, creative, plan, locales, rowsOf, labelOf }: Rende
     let failure: string | null = null;
     for (const [n, formats] of targets) {
       try {
-        if (withPrimary && !primaryDone.current) { await api.renderVersion(slug, creative, n, formats); started += formats.length; }
+        if (withPrimary && !primaryDone.current.has(n)) { await api.renderVersion(slug, creative, n, formats); primaryDone.current.add(n); started += formats.length; }
         if (chosen.length) { await api.renderVersion(slug, creative, n, formats, { locales: chosen, force }); started += formats.length * chosen.length; }
       } catch (e) {
         if (e instanceof ApiError && e.code === 'localization-needs-force' && !force) { stillRefused.push([n, formats]); list.push(...(e.problems ?? [e.message])); } else failure ??= message(e);
       }
     }
-    // The original is rendered once: a "Render anyway" sends the translations only.
-    if (withPrimary) primaryDone.current = true;
     setBusy(false);
     if (stillRefused.length) { setRefused({ versions: stillRefused, list: [...new Set(list)] }); }
     else setRefused(null);

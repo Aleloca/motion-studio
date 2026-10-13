@@ -148,6 +148,20 @@ export const versionCompositionSchema = z.object({
 });
 export type VersionComposition = z.infer<typeof versionCompositionSchema>;
 
+/**
+ * Why a translation has a problem, as the core knows it when it writes the sentence (Phase 12, Ruling M): the UI flags clips by
+ * `code` and `clipId` and words the label itself, never by reading the (translated, stored) sentence. `message` is that sentence.
+ * `stale`: the entry's source text changed since the translation (only in `issues`, never in `problems`).
+ */
+export const LOCALIZATION_ISSUE_CODES = [
+  'textOverflow', 'textOverflowMeasured', 'notTranslated', 'stale', 'voiceTooLong', 'voiceFailed', 'voiceDurationUnknown', 'voiceFileInvalid',
+  'assetChanged', 'fallbackFontUnavailable', 'renderCheckFailed', 'invalid',
+] as const;
+export const localizationIssueSchema = z.object({
+  code: z.enum(LOCALIZATION_ISSUE_CODES), clipId: z.string().max(200).optional(), message: z.string().max(1000),
+});
+export type LocalizationIssue = z.infer<typeof localizationIssueSchema>;
+
 export const versionEntrySchema = z.object({
   n: z.number().int().min(1),
   commit: z.string().nullable(),
@@ -177,6 +191,8 @@ export const versionEntrySchema = z.object({
     locale: localeTag, instanceId: z.string().regex(INSTANCE_ID_RE), hash: z.string().regex(HEX64),
     origin: z.enum(['agent', 'editor']), stale: z.array(z.string()),
     voice: z.enum(['translated', 'original', 'muted']), problems: z.array(z.string()).optional(),
+    /** Phase 12, Ruling M: the same problems (and the outdated entries) with their code and clip; absent on rows written before. */
+    issues: z.array(localizationIssueSchema).max(400).optional(),
     /**
      * Phase 12, Task 4: why a language asked to translate its voices keeps a fallback (`voice` is then `original`): the brief's
      * voice service is off, no key, a key known to lack text-to-speech (F5), the batch confirmation declined, or the

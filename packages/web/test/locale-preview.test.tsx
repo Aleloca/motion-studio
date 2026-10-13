@@ -87,6 +87,8 @@ describe('the language switcher of the preview', () => {
     await waitFor(() => expect(player.setComposition).toHaveBeenCalledOnce());
     await userEvent.click(screen.getByRole('radio', { name: 'Original (English)' }));
     expect(player.setComposition).toHaveBeenLastCalledWith(draft);
+    // The runtime selection of a flagged clip goes away with the language.
+    expect(player.select).toHaveBeenLastCalledWith(null);
     // Without a draft the base composition is read from the core.
     const second = new FakePlayer();
     render(<Harness player={second} rows={[row('ja')]} />);
@@ -145,5 +147,36 @@ describe('the language switcher of the preview', () => {
     await act(async () => { r.rerender(<Harness player={player} rows={[row('de')]} token={'B'.repeat(43)} />); });
     await waitFor(() => expect(player.setComposition).toHaveBeenCalledTimes(2));
     expect(api.attachLocalePreview).toHaveBeenLastCalledWith('acme', 'c1', 3, 'de', 'reel', 'B'.repeat(43));
+  });
+
+  it('flags by the core\'s issues (code and clip): two clips with the same name are told apart, and each kind has its own label', async () => {
+    const twin = (id: string, voice = false) => voice
+      ? { id, type: 'audio', role: 'voice', name: 'Narration', start: 0, duration: 3, src: 'assets/a.mp3', props: {} }
+      : { id, type: 'text', name: 'Headline', start: 0, duration: 3, props: { text: id } };
+    const composition = { ...base, tracks: [{ id: 't', kind: 'text', clips: [twin('h1'), twin('h2'), twin('h3'), twin('vo', true)] }] } as unknown as Composition;
+    view = { composition, localization: { locale: 'de', stale: [], voice: 'translated', problems: ['x'], issues: [
+      { code: 'textOverflow', clipId: 'h1', message: 'The translation of "Headline" does not fit its box, even at 70% size' },
+      { code: 'notTranslated', clipId: 'h2', message: '"Headline" is not translated yet' },
+      { code: 'voiceTooLong', clipId: 'vo', message: 'The translated voice of "Narration" lasts 3.0 s' },
+    ] } as never };
+    const player = new FakePlayer();
+    render(<Harness player={player} rows={[row('de')]} />);
+    await userEvent.click(screen.getByRole('radio', { name: 'German' }));
+    const flags = await screen.findByRole('list', { name: 'Clips to check' });
+    expect(within(flags).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Headlineoutside the box', 'Headlinenot translated', 'Narrationvoice problem']);
+    expect(within(flags).getAllByRole('button').map((b) => b.getAttribute('title'))).toEqual([
+      'The translation of "Headline" does not fit its box, even at 70% size', '"Headline" is not translated yet', 'The translated voice of "Narration" lasts 3.0 s',
+    ]);
+    await waitFor(() => expect(player.select).toHaveBeenCalledWith('h1'));
+  });
+
+  it('an old row (no issues) is read by the overflow sentences only: a "not translated" sentence is not an overflow', async () => {
+    view = { composition: localized({ title: 'W', sub: 'F' }), localization: { locale: 'de', stale: [], voice: 'original', problems: [
+      '"Title" is not translated yet', 'The translation of "sub" does not fit its box, even at 70% size',
+    ] } };
+    render(<Harness player={new FakePlayer()} rows={[row('de')]} />);
+    await userEvent.click(screen.getByRole('radio', { name: 'German' }));
+    const flags = await screen.findByRole('list', { name: 'Clips to check' });
+    expect(within(flags).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['suboutside the box']);
   });
 });

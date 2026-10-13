@@ -3,7 +3,7 @@ import { lstat, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   applyLocalization, localizableEntries, LOCALIZATION_SCHEMA_ID, LocalizationMismatch, localizationSchema, messages,
-  type Composition, type FormatPreset, type Locale, type LocaleTag, type Localization, type LocalizationRow, type VersionComposition, type VersionEntry,
+  type Composition, type FormatPreset, type Locale, type LocaleTag, type Localization, type LocalizationIssue, type LocalizationRow, type VersionComposition, type VersionEntry,
 } from '@motion-studio/shared';
 import { readConfinedBytes, readConfinedFile } from '../brand/agent-guard.ts';
 import { LibraryStore } from '../library/library-store.ts';
@@ -258,7 +258,7 @@ export async function resolveFallbackFont(project: ProjectRef, locale: LocaleTag
   }
 }
 
-export interface FinishedOverlay { overlay: Localization; stale: string[]; problems: string[]; warnings: string[] }
+export interface FinishedOverlay { overlay: Localization; stale: string[]; problems: string[]; /** The same problems with their code and clip, plus the outdated entries (Ruling M). */ issues: LocalizationIssue[]; warnings: string[] }
 
 /**
  * Completes an overlay against its composition before it is stored (shared by the PUT route, the carry-over and Task 4):
@@ -282,34 +282,44 @@ export async function finishOverlay(o: {
 }): Promise<FinishedOverlay> {
   const v = messages(o.uiLocale).variants;
   const problems: string[] = [];
-  const add = (t: string) => { if (!problems.includes(t)) problems.push(t); };
+  const issues: LocalizationIssue[] = [];
+  const add = (code: LocalizationIssue['code'], message: string, clipId?: string) => {
+    if (problems.includes(message)) return;
+    problems.push(message);
+    issues.push({ code, message, ...(clipId !== undefined ? { clipId } : {}) });
+  };
   let overlay = o.overlay;
   const scripts = o.scripts ?? await knownVoiceScripts(o.base, o.projectDir);
   const stale = [...new Set([...staleIds(overlay, o.base.composition, scripts), ...(o.extraStale ?? [])])];
   const font = o.fallback;
-  if (font && 'unavailable' in font) add(v.fallbackFontUnavailable({ family: font.unavailable }));
+  // Outdated entries are issues too (the row keeps their ids in `stale`): the clip is the entry's clip.
+  for (const id of stale) {
+    const clipId = id.split('.')[0]!;
+    issues.push({ code: 'stale', clipId, message: v.staleEntry({ clip: clipLabel(o.base.composition, clipId) }) });
+  }
+  if (font && 'unavailable' in font) add('fallbackFontUnavailable', v.fallbackFontUnavailable({ family: font.unavailable }));
   else if (font) overlay = { ...overlay, fonts: [...overlay.fonts.filter((f) => f.family !== font.family), { family: font.family, files: font.files }] };
   const fitted = fitTexts(o.base.composition, overlay, stale, o.chooseFit);
   overlay = fitted.overlay;
-  for (const id of fitted.overflowing) add(v.textOverflow({ clip: clipLabel(o.base.composition, id) }));
+  for (const id of fitted.overflowing) add('textOverflow', v.textOverflow({ clip: clipLabel(o.base.composition, id) }), id);
   for (const [id, voice] of Object.entries(overlay.voices)) {
-    if (!stale.includes(id) && !(await voiceFileOk(o.voiceRoots, voice.src))) add(v.voiceFileInvalid({ clip: clipLabel(o.base.composition, id) }));
+    if (!stale.includes(id) && !(await voiceFileOk(o.voiceRoots, voice.src))) add('voiceFileInvalid', v.voiceFileInvalid({ clip: clipLabel(o.base.composition, id) }), id);
   }
   let localized: Composition | null = null;
   try {
     localized = applyLocalization(o.base.composition, overlay, { stale, voiceMode: o.voice });
   } catch (e) {
     if (!(e instanceof LocalizationMismatch)) throw e;
-    add(e.reason === 'tooManyFonts' || e.reason === 'tooManyFallbacks' ? v.tooManyFonts : v.localizationMismatch({ entry: e.entry.slice(0, 100) }));
+    add('invalid', e.reason === 'tooManyFonts' || e.reason === 'tooManyFallbacks' ? v.tooManyFonts : v.localizationMismatch({ entry: e.entry.slice(0, 100) }));
   }
   let warnings: string[] = [];
   if (localized) {
     const files = await extraFiles(o, overlay, new Map(o.base.folder.sizes));
     const checked = await checkLocalizedComposition(localized, { preset: o.base.preset, compDir: o.base.compDir, folder: o.base.folder, files, uiLocale: o.uiLocale });
-    for (const p of checked.problems) add(p);
+    for (const p of checked.problems) add('invalid', p);
     warnings = checked.warnings;
   }
-  return { overlay, stale, problems, warnings };
+  return { overlay, stale, problems, issues, warnings };
 }
 
 /** The localized composition shown and rendered for a row: stale ids keep the source (Review Focus 2); null when it no longer applies. */

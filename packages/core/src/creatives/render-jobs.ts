@@ -5,11 +5,12 @@ import { copyFile, lstat, mkdir, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
   compositionProblemText, effectiveLinks, formatDisplayName, messages, renderProblems, renderState,
-  type Brief, type Composition, type FormatPreset, type JobProgress, type JobSummary, type Locale, type LocaleTag, type Localization, type LocalizationRow, type ManifestV2, type OutputFileInfo,
+  type Brief, type Composition, type FormatPreset, type JobProgress, type JobSummary, type Locale, type LocaleTag, type Localization, type LocalizationIssue, type LocalizationRow, type ManifestV2, type OutputFileInfo,
   type OutputIssue, type ServerMessage, type VersionComposition, type VersionEntry,
 } from '@motion-studio/shared';
 import { copyConfinedFile, hashConfinedFile } from '../brand/agent-guard.ts';
 import { loadComposition, readCompositionFolder } from '../compositions/composition-files.ts';
+import { withIssues, withoutIssues } from '../localization/issues.ts';
 import { changedAssets, instanceComposition, isAssetChangedProblem, localizedComposition, overlayAssetPaths, readOverlay } from '../localization/store.ts';
 import { checkedLocale, clipLabel, voiceFileOk } from '../localization/validate.ts';
 import { realDirChain } from './core-files.ts';
@@ -533,11 +534,8 @@ export class RenderJobService {
     const still = new Set(await changedAssets([compDir, ref.projectDir], row, overlayAssetPaths(overlay, row)));
     const cleared = recorded.filter((p) => !still.has(p));
     if (!(row.problems ?? []).some((p) => isAssetChangedProblem(p, cleared))) return row;
-    const strip = (r: LocalizationRow): LocalizationRow => {
-      const { problems: _p, ...rest } = r;
-      const left = (r.problems ?? []).filter((p) => !isAssetChangedProblem(p, cleared));
-      return left.length ? { ...rest, problems: left } : rest;
-    };
+    const strip = (r: LocalizationRow): LocalizationRow =>
+      withoutIssues(r, (i) => i.code === 'assetChanged' && isAssetChangedProblem(i.message, cleared), (p) => isAssetChangedProblem(p, cleared));
     await new CreativeStore(ref.projectDir).updateVersion(ref.creativeSlug, n, (x) => ({
       ...x, localizations: (x.localizations ?? []).map((r) => (r.locale === row.locale && r.instanceId === row.instanceId ? strip(r) : r)),
     }));
@@ -674,8 +672,12 @@ export class RenderJobService {
       const changed = await changedAssets([compDir], row, used);
       if (changed.length > 0) {
         const texts = changed.map((file) => m.variants.assetChanged({ file }));
+        const found: LocalizationIssue[] = changed.map((file, i) => {
+          const clipId = Object.entries(read.overlay.voices).find(([, v]) => v.src === file)?.[0];
+          return { code: 'assetChanged', message: texts[i]!, ...(clipId !== undefined ? { clipId } : {}) };
+        });
         await store.updateVersion(ref.creativeSlug, n, (x) => ({
-          ...x, localizations: (x.localizations ?? []).map((r) => (r.locale !== tag || r.instanceId !== instanceId ? r : { ...r, problems: [...new Set([...(r.problems ?? []), ...texts])] })),
+          ...x, localizations: (x.localizations ?? []).map((r) => (r.locale !== tag || r.instanceId !== instanceId ? r : withIssues(r, found))),
         }));
         this.deps.broadcast({ type: 'creative', project: ref.projectSlug, creative: ref.creativeSlug });
         throw new Error(texts.join('; '));
@@ -699,10 +701,11 @@ export class RenderJobService {
         // A check that could not run is a problem of the render, never a clean record (Ruling J).
         .catch(() => ({ width: result.width, height: result.height, durationSec: result.durationSec, problems: [m.variants.renderCheckFailed({ file })] }));
       // The browser's own measure (Ruling I): a text that overflows its box at the applied fit is a problem of this language.
-      const overflows = (result.textOverflows ?? []).filter((e) => e.clipId !== undefined).map((e) => {
+      const overflowIssues: LocalizationIssue[] = (result.textOverflows ?? []).filter((e) => e.clipId !== undefined).map((e) => {
         const fit = Math.round((read.overlay.fit[e.clipId!] ?? 1) * 100);
-        return m.variants.textOverflowMeasured({ clip: clipLabel(ic.composition, e.clipId!), fit });
+        return { code: 'textOverflowMeasured', clipId: e.clipId!, message: m.variants.textOverflowMeasured({ clip: clipLabel(ic.composition, e.clipId!), fit }) };
       });
+      const overflows = overflowIssues.map((i) => i.message);
       const problems = [...new Set([...(info.problems ?? []), ...overflows])];
       const at = new Date().toISOString();
       const render: NonNullable<LocalizationRow['render']> = {
@@ -714,8 +717,7 @@ export class RenderJobService {
         ...x, localizations: (x.localizations ?? []).map((r) => {
           if (r.locale !== tag || r.instanceId !== instanceId) return r;
           // A measured overflow is also an open problem of the translation (while it is the overlay rendered).
-          const own = r.hash === row.hash ? [...new Set([...(r.problems ?? []), ...overflows])] : r.problems ?? [];
-          return { ...r, render, ...(own.length ? { problems: own } : {}) };
+          return { ...(r.hash === row.hash ? withIssues(r, overflowIssues) : r), render };
         }),
       }));
       await updateVersionManifest(creativeDir, n, (found) => {

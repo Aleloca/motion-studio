@@ -649,9 +649,10 @@ export class PreviewService {
    * (`hashes`), which the composition server checks against the bytes at every request. The paths served are returned.
    * 404 `editor-no-session` when the token is not a live session of this creative.
    */
-  async attachLocale(ref: Pick<VersionFormatRef, 'projectDir' | 'creativeDir' | 'creativeSlug'>, token: string, paths: Iterable<string>, hashes: Readonly<Record<string, string>>, locale: Locale): Promise<string[]> {
+  async attachLocale(ref: Pick<VersionFormatRef, 'projectDir' | 'creativeDir' | 'creativeSlug' | 'n'> & { folder: string }, token: string, paths: Iterable<string>, hashes: Readonly<Record<string, string>>, locale: Locale): Promise<string[]> {
     const s = this.sessions.get(token);
-    if (!s || s.creativeDir !== ref.creativeDir || s.creativeSlug !== ref.creativeSlug || !s.session.live() || this.closing.signal.aborted) {
+    // The session must show this very version and format: another one's row files are not its to serve.
+    if (!s || s.creativeDir !== ref.creativeDir || s.creativeSlug !== ref.creativeSlug || s.n !== ref.n || s.format !== ref.folder || !s.session.live() || this.closing.signal.aborted) {
       throw new CodedError(404, messages(locale).editor.stageNoSession, 'editor-no-session');
     }
     const files: Record<string, string> = {};

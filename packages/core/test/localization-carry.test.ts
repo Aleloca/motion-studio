@@ -66,6 +66,8 @@ describe('carryLocalizations', () => {
   it('a text whose source changed becomes stale (its translation kept, the source shown); the previous version is untouched', async () => {
     const { rows, carried, before } = await carry(comp({ title: 'Hello there' }), { 'assets/vo-de.mp3': 'de' });
     expect(rows![0]!.stale).toEqual(['title']);
+    expect(rows![0]!.issues).toEqual([expect.objectContaining({ code: 'stale', clipId: 'title' })]);
+    expect(rows![0]!.problems).toBeUndefined();
     expect(carried!.overlay.texts.title).toEqual({ source: 'Hello', text: 'Hallo' });
     expect(readFileSync(join(base, 'outputs', 'v1', 'locales', 'de', 'test-wide.json'), 'utf8')).toBe(before);
   });

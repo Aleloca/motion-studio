@@ -33,7 +33,9 @@ export function BriefLanguages({ value, onChange, disabled }: { value: Brief['lo
       <span className="ms-brief-lbl">{l.briefTitle}</span>
       <p className="ms-brief-hint" id={hintId}>{l.briefHint}</p>
       <Select<string> label={l.briefPrimary} value={value?.primary ?? ''} disabled={disabled} onChange={pick}
-        options={[{ value: '', label: l.briefNone }, ...ordered.map((x) => ({ value: x.tag, label: localeName(x.tag, ui) }))]} />
+        options={[{ value: '', label: l.briefNone }, ...ordered.map((x) => ({ value: x.tag, label: localeName(x.tag, ui) })),
+          // Not supported yet: listed so the reason is seen before a language is chosen.
+          ...RTL_CHOICES.map((tag) => ({ value: tag, label: localeName(tag, ui), disabled: true, hint: l.briefRtl }))]} />
       {value ? (
         <>
           <span className="ms-brief-lbl">{l.briefExtra({ count: value.extra.length, max: MAX_EXTRA_LOCALES })}</span>

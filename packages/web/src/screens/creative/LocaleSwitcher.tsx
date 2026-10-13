@@ -5,10 +5,13 @@ import { useEffect, useState } from 'react';
 import { useLocale, useT } from '../../i18n.tsx';
 import type { CompositionMedia } from '../../components/CompositionPlayer.tsx';
 import { Pill, Segmented, cx } from '../../ui/index.ts';
-import { creativeLocales, localeName } from './languagesModel.ts';
+import { creativeLocales, localeName, type FlagKind } from './languagesModel.ts';
 import type { LocalePreview } from './useLocalePreview.ts';
-import type { Brief, LocaleTag } from '@motion-studio/shared';
+import type { Brief, LocaleTag, Messages } from '@motion-studio/shared';
 import './languages.css';
+
+const flagText = (k: FlagKind, l: Messages['web']['languages']): string =>
+  k === 'stale' ? l.flagStale : k === 'overflow' ? l.flagOverflow : k === 'notTranslated' ? l.flagNotTranslated : k === 'voice' ? l.flagVoice : l.flagAsset;
 
 export interface LocaleSwitcherProps { brief: Pick<Brief, 'locales'>; preview: LocalePreview; className?: string }
 
@@ -36,10 +39,10 @@ export function LocaleSwitcher({ brief, preview, className }: LocaleSwitcherProp
         <ul className="ms-loc-flags" aria-label={l.flaggedLabel}>
           {preview.flagged.map((f) => (
             <li key={f.clipId}>
-              <button type="button" className={cx('ms-loc-flag', preview.focus === f.clipId && 'ms-on')} aria-pressed={preview.focus === f.clipId}
+              <button type="button" className={cx('ms-loc-flag', preview.focus === f.clipId && 'ms-on')} aria-pressed={preview.focus === f.clipId} title={f.messages.join(' · ') || undefined}
                 onClick={() => preview.setFocus(f.clipId)} onMouseEnter={() => preview.setFocus(f.clipId)} onFocus={() => preview.setFocus(f.clipId)}>
                 <span className="ms-loc-flag-name">{f.label}</span>
-                <Pill tone="warn">{f.kind === 'stale' ? l.flagStale : l.flagOverflow}</Pill>
+                <Pill tone="warn">{flagText(f.kind, l)}</Pill>
               </button>
             </li>
           ))}
@@ -69,7 +72,7 @@ export function LocaleOutline({ player, preview }: { player: CompositionMedia | 
   return (
     <div className="ms-loc-outline-layer" aria-hidden="true">
       <span className={cx('ms-loc-outline', `ms-${flag.kind}`)} data-clip={flag.clipId} style={{ left: box.x, top: box.y, width: box.width, height: box.height }}>
-        <span className="ms-loc-outline-label">{flag.kind === 'stale' ? l.flagStale : l.flagOverflow}</span>
+        <span className="ms-loc-outline-label">{flagText(flag.kind, l)}</span>
       </span>
     </div>
   );

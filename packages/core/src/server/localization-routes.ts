@@ -2,12 +2,13 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import {
   COMPOSITION_LIMITS, localizableEntries, messages,
-  type EditorCompositionView, type FormatPreset, type Locale, type LocaleTag, type Localization, type LocalizationRow, type VersionEntry,
+  type EditorCompositionView, type FormatPreset, type Locale, type LocaleTag, type Localization, type LocalizationIssue, type LocalizationRow, type VersionEntry,
 } from '@motion-studio/shared';
 import { CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeRef, CreativeTurnService } from '../creatives/creative-turns.ts';
 import { editorCompositionView } from '../creatives/editor-staging.ts';
 import { emptyOverlay, finishOverlay, overlayAssetPaths, resolveFallbackFont, instanceComposition, localizedComposition, readOverlay, rowAssetHashes, attachedFontHashes, setLocalizationRow, voiceRootsOf, writeOverlay } from '../localization/store.ts';
+import { issueFields } from '../localization/issues.ts';
 import { checkedInstance, checkedLocale } from '../localization/validate.ts';
 import type { PreviewService } from '../creatives/previews.ts';
 import type { LocalizeService } from '../localization/localize-turn.ts';
@@ -52,7 +53,7 @@ export const localizationEditSchema = z.strictObject({
 export type LocalizationEdit = z.infer<typeof localizationEditSchema>;
 
 /** What an overlay GET (and PUT) answers. */
-export interface LocalizationView { overlay: Localization; problems: string[]; stale: string[]; voice: LocalizationRow['voice']; origin: LocalizationRow['origin']; hash: string;
+export interface LocalizationView { overlay: Localization; problems: string[]; issues?: LocalizationIssue[]; stale: string[]; voice: LocalizationRow['voice']; origin: LocalizationRow['origin']; hash: string;
   /** PUT only: advisory checks of the localized composition (html layers), as in a turn. */
   warnings?: string[] }
 
@@ -83,7 +84,7 @@ async function rowOverlay(creativeDir: string, v: VersionEntry, locale: LocaleTa
 }
 
 const viewOf = (row: LocalizationRow, overlay: Localization): LocalizationView =>
-  ({ overlay, problems: row.problems ?? [], stale: row.stale, voice: row.voice, origin: row.origin, hash: row.hash });
+  ({ overlay, problems: row.problems ?? [], ...(row.issues ? { issues: row.issues } : {}), stale: row.stale, voice: row.voice, origin: row.origin, hash: row.hash });
 
 /**
  * The localized composition of `format` in a version, for the preview (`GET …/compositions/:format?locale=xx`): the editor
@@ -91,14 +92,14 @@ const viewOf = (row: LocalizationRow, overlay: Localization): LocalizationView =
  * problems so the UI flags them.
  */
 export async function localizedCompositionView(o: { projectDir: string; creativeDir: string; version: VersionEntry; format: string; rawLocale: unknown; presets: FormatPreset[]; locale: Locale }):
-  Promise<EditorCompositionView & { localization: { locale: LocaleTag; stale: string[]; problems: string[]; voice: LocalizationRow['voice'] } }> {
+  Promise<EditorCompositionView & { localization: { locale: LocaleTag; stale: string[]; problems: string[]; issues?: LocalizationIssue[]; voice: LocalizationRow['voice'] } }> {
   const tag = checkedLocale(o.rawLocale, o.locale);
   const instanceId = checkedInstance(o.format, o.version, o.locale);
   const view = await editorCompositionView({ projectDir: o.projectDir, creativeDir: o.creativeDir, version: o.version, format: instanceId, presets: o.presets, locale: o.locale });
   const { row, overlay } = await rowOverlay(o.creativeDir, o.version, tag, instanceId, o.locale);
   const composition = localizedComposition(view.composition, overlay, row);
   if (!composition) throw new CodedError(409, messages(o.locale).variants.localizationUnusable({ locale: tag, format: instanceId }), 'localization-unusable');
-  return { ...view, composition, localization: { locale: tag, stale: row.stale, problems: row.problems ?? [], voice: row.voice } };
+  return { ...view, composition, localization: { locale: tag, stale: row.stale, problems: row.problems ?? [], ...(row.issues ? { issues: row.issues } : {}), voice: row.voice } };
 }
 
 /** Applies a manual edit to `overlay` (sources always from the composition, never from the client); the ids whose fit the core picks. */
@@ -160,7 +161,8 @@ export function registerLocalizationRoutes(app: FastifyInstance, ctx: Localizati
     const tag = checkedLocale(req.params.locale, ui);
     const instanceId = checkedInstance(req.params.instanceId, v, ui);
     const { row, overlay } = await rowOverlay(ref.store.dir(ref.creativeSlug), v, tag, instanceId, ui);
-    const files = await ctx.previews.attachLocale({ projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), creativeSlug: ref.creativeSlug },
+    const files = await ctx.previews.attachLocale({ projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), creativeSlug: ref.creativeSlug, n: v.n,
+        folder: (v.compositions?.find((c) => c.format === instanceId)?.dir ?? `compositions/${instanceId}`).slice('compositions/'.length) },
       body.data.token, overlayAssetPaths(overlay, row), row.assetHashes ?? {}, ui);
     return { files };
   });
@@ -226,7 +228,7 @@ export function registerLocalizationRoutes(app: FastifyInstance, ctx: Localizati
         // A voice choice made here replaces the fallback the turn recorded.
         ...(row?.voiceFallback && !edit.voice ? { voiceFallback: row.voiceFallback } : {}), ...(row?.noScript ? { noScript: row.noScript } : {}),
         ...(assetHashes ? { assetHashes } : {}),
-        ...(done.problems.length ? { problems: done.problems } : {}), ...(row?.render ? { render: row.render } : {}),
+        ...issueFields(done.issues), ...(row?.render ? { render: row.render } : {}),
       };
       await setLocalizationRow(ref.store, slug, v.n, next);
       ctx.turns.changed(ref);

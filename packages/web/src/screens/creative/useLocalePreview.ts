@@ -70,6 +70,7 @@ export function useLocalePreview(o: LocalePreviewOptions): LocalePreview {
     setFocus(null);
     if (tag !== null) return;
     setView(null); setState('idle'); setError(null);
+    player?.select(null);
     const base = original.current?.() ?? null;
     if (base && player) { player.setComposition(base); return; }
     if (player && n !== null) {
@@ -80,7 +81,7 @@ export function useLocalePreview(o: LocalePreviewOptions): LocalePreview {
   const flagged = useMemo(() => {
     if (!view) return [];
     const clips = view.composition.tracks.flatMap((t) => t.clips.map((c) => ({ clipId: c.id, ...(c.name !== undefined ? { name: c.name } : {}) })));
-    return flaggedClips({ stale: view.localization.stale, problems: view.localization.problems, clips });
+    return flaggedClips({ stale: view.localization.stale, problems: view.localization.problems, ...(view.localization.issues ? { issues: view.localization.issues } : {}), clips });
   }, [view]);
 
   // The first flagged clip is outlined by default; the person moves on to the others from the list.

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import {
   COMPOSITION_LIMITS, creativeJobKey, effectiveServices, formatDisplayName, localizableEntries, messages, SUPPORTED_LOCALES,
   EMPTY_BRAND_KIT, type BrandKit, type Composition, type FormatPreset, type JobSummary, type Locale, type LocaleTag, type Localization,
-  type LocalizationRow, type ServerMessage, type VersionEntry,
+  type LocalizationIssue, type LocalizationRow, type ServerMessage, type VersionEntry,
 } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { CREATIVE_CORE_FILES, detachLinksUnder } from '../agent/protected-links.ts';
@@ -25,6 +25,7 @@ import {
   emptyOverlay, finishOverlay, instanceComposition, knownVoiceScripts, localizedComposition, readOverlay, resolveFallbackFont, setLocalizationRow,
   attachedFontHashes, rowAssetHashes, voiceRootsOf, writeOverlay, type FallbackResult, type InstanceComposition,
 } from './store.ts';
+import { issueFields } from './issues.ts';
 import { checkedInstance, checkedLocale, clipLabel } from './validate.ts';
 
 /**
@@ -117,7 +118,7 @@ interface Pair {
   /** Translated scripts waiting for their voice. */
   pending: Map<string, string>;
   /** Voice problems: the text, and whether a shorter script can fix it. */
-  voiceProblems: Map<string, { text: string; fixable: boolean }>;
+  voiceProblems: Map<string, { text: string; fixable: boolean; code: 'voiceTooLong' | 'voiceFailed' | 'voiceDurationUnknown' }>;
   /** The browser's measure of the overlay with this hash (clip ids that overflow). */
   measured?: { hash: string; ids: string[] };
   submitted: boolean;
@@ -334,7 +335,7 @@ export class LocalizeService {
           }
           // The fallback font the core attached now is hashed now (Ruling L); a recorded hash is kept.
           const fresh = await attachedFontHashes(ref.projectDir, fallback, row?.assetHashes);
-          await this.writeRows(store, creativeDir, n, pair, done.overlay, { origin: 'agent', stale: done.stale, problems: done.problems, fresh });
+          await this.writeRows(store, creativeDir, n, pair, done.overlay, { origin: 'agent', stale: done.stale, issues: done.issues, fresh });
           pair.submitted = true;
           this.deps.turns.changed(ref);
           const missing = this.missing(pair, done.overlay, done.stale).map((id) => va.notTranslated({ clip: clipLabel(ic.composition, id) }));
@@ -539,7 +540,7 @@ export class LocalizeService {
 
   /** Writes the overlay and the row of every instance of the pair's group (the caller holds the creative's lock). */
   private async writeRows(store: CreativeStore, creativeDir: string, n: number, pair: Pair, overlay: Localization,
-    o: { origin: LocalizationRow['origin']; stale: string[]; problems: string[]; voice?: LocalizationRow['voice']; final?: boolean; fresh?: Record<string, string> }): Promise<void> {
+    o: { origin: LocalizationRow['origin']; stale: string[]; issues: LocalizationIssue[]; voice?: LocalizationRow['voice']; final?: boolean; fresh?: Record<string, string> }): Promise<void> {
     const versions = await store.readVersions(basename(creativeDir));
     const rows = versions.find((v) => v.n === n)?.localizations ?? [];
     for (const member of pair.group.members) {
@@ -549,7 +550,7 @@ export class LocalizeService {
       const assetHashes = rowAssetHashes({ overlay, ...(old?.assetHashes ? { old: old.assetHashes } : {}), ...(o.fresh ? { fresh: o.fresh } : {}) });
       const row: LocalizationRow = {
         locale: pair.locale, instanceId: member, hash, origin: o.origin, stale: o.stale, voice,
-        ...(o.problems.length ? { problems: o.problems } : {}),
+        ...issueFields(o.issues),
         ...(old?.render ? { render: old.render } : {}),
         ...(assetHashes ? { assetHashes } : {}),
         ...(o.final ? {
@@ -679,14 +680,14 @@ export class LocalizeService {
         const r = result.files.get(`${p.key}|${clipId}`);
         const clip = clipLabel(p.group.ic.composition, clipId);
         // A script over the provider's limit is the agent's to shorten; any other failure is not.
-        if (!r || 'error' in r) { p.voiceProblems.set(clipId, { text: va.voiceFailed({ clip, reason: r && 'error' in r ? r.error.slice(0, 200) : '?' }), fixable: Boolean(r && 'error' in r && r.tooLong) }); continue; }
+        if (!r || 'error' in r) { p.voiceProblems.set(clipId, { text: va.voiceFailed({ clip, reason: r && 'error' in r ? r.error.slice(0, 200) : '?' }), fixable: Boolean(r && 'error' in r && r.tooLong), code: 'voiceFailed' }); continue; }
         const file = join(ref.projectDir, ...r.file.split('/'));
         const probed = this.deps.media.probeAudio ? await this.deps.media.probeAudio(file).catch(() => null) : await this.deps.media.probe(file).then((x) => (x ? { durationSec: x.durationSec } : null)).catch(() => null);
         const d = probed?.durationSec ?? null;
         const clipSec = entries.get(clipId)?.duration ?? 0;
-        if (d === null) p.voiceProblems.set(clipId, { text: va.voiceDurationUnknown({ clip }), fixable: false });
+        if (d === null) p.voiceProblems.set(clipId, { text: va.voiceDurationUnknown({ clip }), fixable: false, code: 'voiceDurationUnknown' });
         // Never cut: a long voice is kept and reported with both durations (Review Focus 4).
-        else if (d > clipSec + 0.05) p.voiceProblems.set(clipId, { text: va.voiceTooLong({ clip, voice: Math.round(d * 10) / 10, clipSec: Math.round(clipSec * 10) / 10 }), fixable: true });
+        else if (d > clipSec + 0.05) p.voiceProblems.set(clipId, { text: va.voiceTooLong({ clip, voice: Math.round(d * 10) / 10, clipSec: Math.round(clipSec * 10) / 10 }), fixable: true, code: 'voiceTooLong' });
         else p.voiceProblems.delete(clipId);
         made.push({ clipId, src: r.file, script, sha256: r.sha256 });
       }
@@ -701,7 +702,7 @@ export class LocalizeService {
         for (const x of made) overlay.voices[x.clipId] = { src: x.src, script: x.script, sourceScript: p.group.scripts.get(x.clipId)! };
         const done = await finishOverlay({ overlay, base: ic, voice: 'translated', chooseFit: new Set(), uiLocale: ui, projectDir: ref.projectDir,
           voiceRoots: voiceRootsOf(ic, ref.projectDir), scripts: p.group.scripts });
-        await this.writeRows(store, creativeDir, n, p, done.overlay, { origin: 'agent', stale: done.stale, problems: done.problems, fresh: Object.fromEntries(made.map((x) => [x.src, x.sha256])) });
+        await this.writeRows(store, creativeDir, n, p, done.overlay, { origin: 'agent', stale: done.stale, issues: done.issues, fresh: Object.fromEntries(made.map((x) => [x.src, x.sha256])) });
       });
       this.deps.turns.changed(ref);
     }
@@ -731,13 +732,13 @@ export class LocalizeService {
         const comp = ic.composition;
         const boxed = (id: string) => { const c = comp.tracks.flatMap((tr) => tr.clips).find((x) => x.id === id); return c?.type === 'text' && (c.props.width !== undefined || c.props.height !== undefined); };
         const measured = pair.measured;
-        const problems = done.problems.filter((p) => !(measured && Object.keys(done.overlay.texts).some((id) => boxed(id) && p === va.textOverflow({ clip: clipLabel(comp, id) }))));
+        const issues: LocalizationIssue[] = done.issues.filter((i) => !(measured && i.code === 'textOverflow' && i.clipId !== undefined && boxed(i.clipId)));
         if (measured) {
-          for (const id of measured.ids) if (Object.hasOwn(done.overlay.texts, id) && !done.stale.includes(id) && boxed(id)) problems.push(va.textOverflowMeasured({ clip: clipLabel(comp, id), fit: Math.round((done.overlay.fit[id] ?? 1) * 100) }));
+          for (const id of measured.ids) if (Object.hasOwn(done.overlay.texts, id) && !done.stale.includes(id) && boxed(id)) issues.push({ code: 'textOverflowMeasured', clipId: id, message: va.textOverflowMeasured({ clip: clipLabel(comp, id), fit: Math.round((done.overlay.fit[id] ?? 1) * 100) }) });
         }
-        for (const id of this.missing(pair, done.overlay, done.stale)) problems.push(va.notTranslated({ clip: clipLabel(comp, id) }));
-        for (const vp of pair.voiceProblems.values()) problems.push(vp.text);
-        await this.writeRows(store, creativeDir, n, pair, done.overlay, { origin: pair.submitted ? 'agent' : cur.row.origin, stale: done.stale, problems: [...new Set(problems)], voice, final: true });
+        for (const id of this.missing(pair, done.overlay, done.stale)) issues.push({ code: 'notTranslated', clipId: id, message: va.notTranslated({ clip: clipLabel(comp, id) }) });
+        for (const [id, vp] of pair.voiceProblems) issues.push({ code: vp.code, clipId: id, message: vp.text });
+        await this.writeRows(store, creativeDir, n, pair, done.overlay, { origin: pair.submitted ? 'agent' : cur.row.origin, stale: done.stale, issues, voice, final: true });
       });
       if (signal.aborted) return;
     }

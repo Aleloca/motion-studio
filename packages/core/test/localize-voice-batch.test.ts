@@ -293,6 +293,7 @@ describe('translated voices in a localize turn', { timeout: 120_000 }, () => {
     expect(job.error).toContain(vt().assetChanged({ file: src }));
     expect(env.fake.renders.length).toBe(before);
     expect((await rowOf(slug, 'de')).problems).toContain(vt().assetChanged({ file: src }));
+    expect((await rowOf(slug, 'de')).issues).toContainEqual({ code: 'assetChanged', clipId: 'vo', message: vt().assetChanged({ file: src }) });
     // Restored: the next render checks again, clears the problem and renders.
     await writeFile(file, original);
     const again = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/render`, headers: H, payload: { locales: ['de'] } });
@@ -301,6 +302,7 @@ describe('translated voices in a localize turn', { timeout: 120_000 }, () => {
     expect(ok.state, ok.error).toBe('succeeded');
     expect(env.fake.renders.length).toBe(before + 1);
     expect((await rowOf(slug, 'de')).problems ?? []).not.toContain(vt().assetChanged({ file: src }));
+    expect((await rowOf(slug, 'de')).issues?.some((i) => i.code === 'assetChanged') ?? false).toBe(false);
   });
 
   it('a file planted at the voice\'s path in the next version\'s composition folder keeps the recorded hash and is a problem, never rendered', async () => {
@@ -401,6 +403,7 @@ describe('translated voices in a localize turn', { timeout: 120_000 }, () => {
     const row = await rowOf(slug, 'de');
     expect(row.voice).toBe('translated');
     expect(row.problems).toEqual([vt().voiceTooLong({ clip: 'Voice', voice: 3, clipSec: 2 })]);
+    expect(row.issues).toEqual([{ code: 'voiceTooLong', clipId: 'vo', message: vt().voiceTooLong({ clip: 'Voice', voice: 3, clipSec: 2 }) }]);
     expect((await overlayOf(slug, 'de')).voices.vo!.script).toBe('LANG again');
   });
 });

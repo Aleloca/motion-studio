@@ -1,4 +1,4 @@
-import type { LocaleTag, Localization, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
+import type { LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
 
@@ -80,13 +80,13 @@ export interface SaveEditsBody { baseVersion: number; format: string; baseHash: 
 export interface ExportExcluded { format: string; version: number; problems: string[]; issues: OutputIssue[]; /** A translation that was excluded (Phase 12). */ locale?: string }
 
 /** A translation as the core answers GET and PUT of one language and format (Phase 12). `warnings`: PUT only, advisory. */
-export interface LocalizationView { overlay: Localization; problems: string[]; stale: string[]; voice: LocalizationRow['voice']; origin: LocalizationRow['origin']; hash: string; warnings?: string[] }
+export interface LocalizationView { overlay: Localization; problems: string[]; /** The problems with their code and clip; absent on rows written before. */ issues?: LocalizationIssue[]; stale: string[]; voice: LocalizationRow['voice']; origin: LocalizationRow['origin']; hash: string; warnings?: string[] }
 /** The edit PUT takes: `null` removes an entry; `voice`: keep the original voice or mute it. */
 export interface LocalizationEdit { texts?: Record<string, string | null>; params?: Record<string, string | null>; fit?: Record<string, number | null>; voice?: 'original' | 'muted' }
 /** The body of a localize turn (`POST …/versions/:n/localize`): `voice` per language. */
 export interface LocalizeRequest { locales: string[]; formats?: string[]; voice?: Record<string, 'translate' | 'original' | 'muted'>; text?: string }
 /** The localized composition of a format (preview): the editor view with the overlay applied, plus the language's state. */
-export type LocalizedCompositionView = EditorCompositionView & { localization: { locale: LocaleTag; stale: string[]; problems: string[]; voice: LocalizationRow['voice'] } };
+export type LocalizedCompositionView = EditorCompositionView & { localization: { locale: LocaleTag; stale: string[]; problems: string[]; issues?: LocalizationIssue[]; voice: LocalizationRow['voice'] } };
 /** "Render anyway" and the languages of a render or an export (Phase 12 §3.5). */
 export interface LocaleOptions { locales?: string[]; force?: boolean }
 

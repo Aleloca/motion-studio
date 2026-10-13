@@ -489,16 +489,14 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
     if (!ok) send(res, 404, headers);
   }
 
-  /** One project file of a localized preview: read whole through the confined checks, served only when its sha256 is the recorded one. */
-  async function serveLocaleAsset(req: IncomingMessage, res: ServerResponse, loc: NonNullable<Session['locale']>, rel: string, sha256: string,
+  /**
+   * One file of a localized preview that has a recorded hash (`dir` is the composition folder or the project): read whole through
+   * the confined checks, served only when its sha256 is the recorded one (anything else is not served, whichever folder it is in).
+   */
+  async function serveLocaleAsset(req: IncomingMessage, res: ServerResponse, dir: string, stillThere: () => Promise<boolean>, rel: string, sha256: string,
     headers: Record<string, string | string[]>): Promise<boolean> {
-    const stillThere = async () => {
-      if ((await realpath(loc.dir).catch(() => null)) !== loc.dir) return false;
-      const st = await lstat(loc.dir).catch(() => null);
-      return st !== null && st.isDirectory() && st.dev === loc.dev && st.ino === loc.ino;
-    };
     if (!(await stillThere())) return false;
-    const r = await withConfinedFile(loc.dir, rel, true, async (fh: FileHandle, info: Stats) => {
+    const r = await withConfinedFile(dir, rel, true, async (fh: FileHandle, info: Stats) => {
       if (info.size > MAX_LOCALE_ASSET_BYTES) return { skipped: 'too-large' as const };
       const buf = Buffer.alloc(info.size + 1);
       let n = 0;
@@ -596,12 +594,20 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
         return served ? undefined : notFound();
       }
     }
-    // A localized preview's fallback fonts and voices (project files, listed with their hash); the composition folder wins.
+    // A localized preview's fallback fonts and voices have a recorded hash: the file that wins (the composition folder's, else
+    // the project's) must be that one, else 404 (the composition folder is agent-writable, Ruling L).
     const wanted = session.locale?.files.get(rel);
     if (session.locale && wanted !== undefined) {
       const inBase = await lstat(join(session.compDir, ...rel.split('/'))).then(() => true, (e: NodeJS.ErrnoException) => (e.code === 'ENOENT' || e.code === 'ENOTDIR' ? false : null));
       if (inBase === null) return notFound();
-      if (!inBase) return (await serveLocaleAsset(req, res, session.locale, rel, wanted, fileHeaders)) ? undefined : notFound();
+      if (inBase) return (await serveLocaleAsset(req, res, session.compDir, stillThere, rel, wanted, fileHeaders)) ? undefined : notFound();
+      const loc = session.locale;
+      const projectStill = async () => {
+        if ((await realpath(loc.dir).catch(() => null)) !== loc.dir) return false;
+        const st = await lstat(loc.dir).catch(() => null);
+        return st !== null && st.isDirectory() && st.dev === loc.dev && st.ino === loc.ino;
+      };
+      return (await serveLocaleAsset(req, res, loc.dir, projectStill, rel, wanted, fileHeaders)) ? undefined : notFound();
     }
     const ok = await serveFile(req, res, session.compDir, rel, fileHeaders, layer
       ? { maxBytes: maxLayerBytes, ranges: false, check: stillThere, transform: (html) => injectLayerBootstrap(html, `/${target.token}/runtime/layer.js`) }

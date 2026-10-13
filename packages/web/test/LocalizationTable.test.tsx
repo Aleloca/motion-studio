@@ -130,4 +130,22 @@ describe('LocalizationTable', () => {
     expect((await screen.findByRole('textbox', { name: 'Translation of Title' }) as HTMLTextAreaElement).disabled).toBe(true);
     expect((screen.getByRole('button', { name: 'Save translation' }) as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it('puts the overflow on the very clip by the core\'s issues, also when two clips have the same name; other issues stay general', async () => {
+    const twins = { ...composition, tracks: [{ id: 't1', kind: 'text', clips: [
+      { id: 'a', type: 'text', name: 'Headline', start: 0, duration: 3, props: { text: 'One', fontSize: 40, width: 600 } },
+      { id: 'b', type: 'text', name: 'Headline', start: 0, duration: 3, props: { text: 'Two', fontSize: 40, width: 600 } },
+    ] }] } as unknown as Composition;
+    const over = 'The translation of "Headline" does not fit its box, even at 70% size';
+    const voice = 'The translated voice of "Narration" lasts 3.0 s, longer than its clip (2.0 s): it needs a shorter script';
+    stored = { ...stored, overlay: { ...overlay(), texts: { a: { source: 'One', text: 'Eins lang' }, b: { source: 'Two', text: 'Zwei' } }, fit: {} }, problems: [over, voice],
+      issues: [{ code: 'textOverflow', clipId: 'a', message: over }, { code: 'voiceTooLong', clipId: 'vo', message: voice }] } as typeof stored;
+    render(ui(row({ problems: [over, voice], issues: [{ code: 'textOverflow', clipId: 'a', message: over }, { code: 'voiceTooLong', clipId: 'vo', message: voice }] }), { composition: twins }));
+    const rows = await screen.findAllByRole('row');
+    await waitFor(() => expect(within(rows[1]!).getByRole('alert').textContent).toBe(over));
+    expect(within(rows[1]!).getByText('Outside the box')).toBeTruthy();
+    expect(within(rows[2]!).queryByRole('alert')).toBeNull();
+    expect(within(rows[2]!).getByText('OK')).toBeTruthy();
+    expect(screen.getByRole('list', { name: 'Problems of this translation' }).textContent).toBe(voice);
+  });
 });

@@ -8,7 +8,7 @@ import { api, ApiError, type LocalizationEdit, type LocalizationView } from '../
 import { useLocale, useT } from '../../i18n.tsx';
 import { message } from '../../errors.ts';
 import { Button, cx, Pill, Segmented, Slider, Textarea } from '../../ui/index.ts';
-import { clipDisplay, localeName, problemsOfClip, reasonText, type VoiceReason } from './languagesModel.ts';
+import { clipDisplay, generalProblems, localeName, overflowOfClip, reasonText, type VoiceReason } from './languagesModel.ts';
 import './languages.css';
 
 export interface LocalizationTableProps {
@@ -67,6 +67,8 @@ export function LocalizationTable({ slug, creative, n, locale, instanceId, forma
 
   const stale = new Set(view?.stale ?? row?.stale ?? []);
   const problems = view?.problems ?? row?.problems ?? [];
+  // The core's issues (code and clip) of the stored translation; an old row has none and is read by its sentences.
+  const issueRow = { problems, ...((view?.issues ?? row?.issues) ? { issues: (view?.issues ?? row?.issues)! } : {}) };
   const overlay = view?.overlay;
 
   const edit = useMemo<LocalizationEdit>(() => {
@@ -109,8 +111,8 @@ export function LocalizationTable({ slug, creative, n, locale, instanceId, forma
     } finally { setSaving(false); }
   }, [slug, creative, n, locale, instanceId, edit, onSaved, l.busy]);
 
-  const rowState = (id: string, label: string, translated: boolean) => {
-    const own = problemsOfClip(problems, label);
+  const rowState = (id: string, clip: { clipId: string; name?: string } | null, translated: boolean) => {
+    const own = clip ? overflowOfClip(issueRow, clip) : [];
     if (!translated) return { tone: 'neutral' as const, text: l.rowNotTranslated, own };
     if (stale.has(id)) return { tone: 'warn' as const, text: l.rowStale, own };
     if (own.length) return { tone: 'warn' as const, text: l.rowOverflow, own };
@@ -118,8 +120,7 @@ export function LocalizationTable({ slug, creative, n, locale, instanceId, forma
   };
   const noScript = row?.noScript ?? [];
   const labelOf = (id: string) => clipDisplay(entries.texts.find((e) => e.clipId === id) ?? entries.voices.find((e) => e.clipId === id) ?? { clipId: id });
-  const matched = new Set(entries.texts.flatMap((e) => problemsOfClip(problems, clipDisplay(e))));
-  const general = problems.filter((p) => !matched.has(p));
+  const general = generalProblems(issueRow, entries.texts);
 
   return (
     <section className="ms-lt" aria-labelledby={titleId}>
@@ -145,7 +146,7 @@ export function LocalizationTable({ slug, creative, n, locale, instanceId, forma
             {entries.texts.map((e) => {
               const label = clipDisplay(e);
               const has = Boolean(overlay?.texts[e.clipId]) || (texts[e.clipId] ?? '').trim() !== '';
-              const st = rowState(e.clipId, label, Boolean(overlay?.texts[e.clipId]));
+              const st = rowState(e.clipId, e, Boolean(overlay?.texts[e.clipId]));
               const f = fit[e.clipId] ?? 100;
               return (
                 <tr key={e.clipId} data-clip={e.clipId} className={cx(st.own.length > 0 && 'ms-lt-over', stale.has(e.clipId) && 'ms-lt-stale')}>
@@ -166,7 +167,7 @@ export function LocalizationTable({ slug, creative, n, locale, instanceId, forma
             })}
             {entries.params.map((e) => {
               const label = e.label ?? e.key;
-              const st = rowState(e.key, label, Boolean(overlay?.params[e.key]));
+              const st = rowState(e.key, null, Boolean(overlay?.params[e.key]));
               return (
                 <tr key={e.key} data-param={e.key} className={cx(stale.has(e.key) && 'ms-lt-stale')}>
                   <th scope="row" className="ms-lt-src"><span className="ms-lt-name">{label}</span><span className="ms-lt-text">{e.text}</span></th>

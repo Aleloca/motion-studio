@@ -58,6 +58,14 @@ describe('preview assets of a localized preview', { timeout: 120_000 }, () => {
     writeFileSync(join(env.projectDir(), 'assets', 'fonts', 'NotoSansJP-400.woff2'), 'tampered');
     expect(await fetchStatus('assets/fonts/NotoSansJP-400.woff2')).toBe(404);
   });
+  it('refuses a session that shows another version or format than the row', async () => {
+    const { slug } = await setup();
+    const url = base(slug, 'preview-assets');
+    // A session of the same creative but another format (the post is not the row's format).
+    await env.turn(slug, { text: 'again' });
+    const other = (await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/2/preview-session`, headers: H, payload: { format: 'test-wide', parentOrigin: UI_ORIGIN } })).json() as { token: string };
+    expect((await env.app.inject({ method: 'POST', url, headers: H, payload: { token: other.token } })).statusCode).toBe(404);
+  });
   it('refuses an unknown session, another language\'s missing row, a bad body and a request without the UI token', async () => {
     const { slug, mint } = await setup();
     const url = base(slug, 'preview-assets');

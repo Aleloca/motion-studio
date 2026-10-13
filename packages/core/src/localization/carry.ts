@@ -1,4 +1,5 @@
 import type { Locale, VersionEntry } from '@motion-studio/shared';
+import { issueFields } from './issues.ts';
 import { finishOverlay, readOverlay, rowAssetHashes, voiceRootsOf, writeOverlay, type InstanceComposition } from './store.ts';
 import { voiceFileOk, withoutGone } from './validate.ts';
 
@@ -42,7 +43,7 @@ export async function carryLocalizations(prev: VersionDir, next: VersionDir, nex
       locale: row.locale, instanceId: row.instanceId, hash, origin: row.origin, stale: done.stale, voice: row.voice,
       ...(row.voiceFallback ? { voiceFallback: row.voiceFallback } : {}), ...(row.noScript ? { noScript: row.noScript } : {}),
       ...(assetHashes ? { assetHashes } : {}),
-      ...(done.problems.length ? { problems: done.problems } : {}),
+      ...issueFields(done.issues),
     });
   }
   return out.length > 0 ? out : undefined;

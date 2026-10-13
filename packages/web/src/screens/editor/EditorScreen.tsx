@@ -574,7 +574,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
         <>
           {followers.length > 0 ? <Pill tone="neutral" className="ms-ed-also">{e.alsoUsedBy({ list: alsoList })}</Pill> : null}
           {n !== null ? <Pill tone="neutral" className="ms-ed-version">{e.version({ n })}</Pill> : null}
-          <LanguagesButton slug={slug} creative={creative} detail={detail} version={latest} presets={presets} live={live} onChanged={reload} />
+          <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} />
           <Button variant="ink" className="ms-cv-export" disabled={!latest} onClick={() => { if (latest) setExporting({ open: true, snapshot: { versions, states } }); }}>
             <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
           </Button>

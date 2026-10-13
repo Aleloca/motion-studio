@@ -93,10 +93,16 @@ describe('attachLocaleAssets', () => {
     await s.attachLocaleAssets(project, LISTED);
     for (const f of ['changed', 'link', 'hard']) expect((await get(at(s, `assets/audio/${f}.mp3`))).status).toBe(404);
   });
-  it('lets the composition folder win over the project file', async () => {
+  it('checks the file that wins against the recorded hash: a planted composition-folder file is 404, the recorded one is served', async () => {
     const s = await mint();
     await s.attachLocaleAssets(project, LISTED);
-    expect((await get(at(s, 'assets/audio/shadow.mp3'))).body.toString()).toBe('COMP');
+    // The composition folder has a file at the listed path whose bytes are not the recorded ones: never served.
+    expect((await get(at(s, 'assets/audio/shadow.mp3'))).status).toBe(404);
+    // With the recorded hash the composition folder's file wins over the project's.
+    await s.attachLocaleAssets(project, { ...LISTED, 'assets/audio/shadow.mp3': sha('COMP') });
+    const ok = await get(at(s, 'assets/audio/shadow.mp3'));
+    expect(ok.status).toBe(200);
+    expect(ok.body.toString()).toBe('COMP');
   });
   it('rejects paths outside assets/audio and assets/fonts, traversal and bad hashes', async () => {
     const s = await mint();

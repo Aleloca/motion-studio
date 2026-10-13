@@ -208,6 +208,12 @@ describe('BriefLanguages', () => {
     expect(next).toHaveBeenCalledWith({ primary: 'it', extra: extra.filter((x) => x !== 'fr') });
   });
 
+  it('lists the right-to-left languages disabled in the primary language list too', async () => {
+    render(<I18nProvider locale="en"><BriefLanguages value={undefined} onChange={() => {}} /></I18nProvider>);
+    await userEvent.click(screen.getByRole('button', { name: /Original language/ }));
+    for (const name of ['Arabic', 'Hebrew', 'Persian', 'Urdu']) expect(screen.getByRole('option', { name: new RegExp('^' + name) }).getAttribute('aria-disabled')).toBe('true');
+  });
+
   it('shows the right-to-left languages disabled, with the reason', async () => {
     const onChange = vi.fn();
     render(<I18nProvider locale="en"><BriefLanguages value={{ primary: 'en', extra: [] }} onChange={onChange} /></I18nProvider>);
@@ -251,6 +257,18 @@ describe('Render in several languages', () => {
     await waitFor(() => expect(api.renderVersion).toHaveBeenCalledTimes(2));
     expect(api.renderVersion).toHaveBeenNthCalledWith(1, 'acme', 'c1', 3, ['instagram-reel-9x16']);
     expect(api.renderVersion).toHaveBeenNthCalledWith(2, 'acme', 'c1', 3, ['instagram-reel-9x16'], { locales: ['de'], force: false });
+  });
+
+  it('a failed original render is sent again by the next press; one that started is not', async () => {
+    api.renderVersion.mockRejectedValueOnce(new ApiError(503, 'no renderer', 'no-renderer'));
+    dialog();
+    await userEvent.click(screen.getByRole('checkbox', { name: 'German' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Japanese' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Render' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('no renderer');
+    await userEvent.click(screen.getByRole('button', { name: 'Render' }));
+    await waitFor(() => expect(api.renderVersion).toHaveBeenCalledTimes(2));
+    expect(api.renderVersion).toHaveBeenLastCalledWith('acme', 'c1', 3, ['instagram-reel-9x16']);
   });
 
   it('on a 409 shows the list and "Render anyway", which sends force for the translations only', async () => {

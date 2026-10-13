@@ -551,7 +551,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
           {versions.length && cr ? (
             <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={actions} buttonRef={versionButton} />
           ) : null}
-          <LanguagesButton slug={slug} creative={creative} detail={detail} version={latest} presets={presets} live={live} onChanged={reload} />
+          <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} />
           {comp !== null && !working ? (
             <Button variant="outline" className="ms-fv-duplicate" title={t.web.instances.duplicateHint({ label })} loading={duplicating} onClick={() => void duplicate()}>
               <Icon name="copy" size={13} strokeWidth={1.7} />{t.web.instances.duplicate}
