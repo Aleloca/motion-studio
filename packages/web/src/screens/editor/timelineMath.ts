@@ -73,6 +73,11 @@ export function moveTiming(from: Timing, want: number, bounds: { lo: number; hi:
   return { start: r6(start), duration: from.duration };
 }
 
+/** A timing on whole frames: the start and the duration rounded to 1/fps, the clip keeping at least one frame. */
+export function frameTiming(t: Timing, fps: number): Timing {
+  return { start: frameRound(t.start, fps), duration: Math.max(frameRound(t.duration, fps), minDuration(fps)) };
+}
+
 /** An edge trim to time `want`: the other edge stays, the clip keeps at least one frame and stays inside `bounds`. */
 export function trimTiming(from: Timing, edge: 'start' | 'end', want: number, bounds: { lo: number; hi: number }, fps: number): Timing {
   const min = minDuration(fps);

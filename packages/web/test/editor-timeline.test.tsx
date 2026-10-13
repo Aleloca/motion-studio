@@ -247,7 +247,8 @@ describe('moving and snapping', () => {
     expect(clipData('vo').start).toBeCloseTo(0.8, 5);
     // Alt: 3 px from 0.6 would snap, it does not.
     drag(bar('vo'), 100, [77], { altKey: true });
-    expect(clipData('vo').start).toBeCloseTo(0.57, 5);
+    // (a mouse drag lands on whole frames: 0.57 s is frame 17 of 30 fps)
+    expect(clipData('vo').start).toBeCloseTo(17 / 30, 5);
     // Without Alt the same gesture snaps.
     drag(bar('vo'), 100, [103]);
     expect(clipData('vo').start).toBeCloseTo(0.6, 5);
@@ -264,7 +265,7 @@ describe('moving and snapping', () => {
   it('with the magnet off nothing snaps', async () => {
     await mount();
     drag(bar('caption'), 300, [273]);
-    expect(clipData('caption').start).toBeCloseTo(2.03, 5);
+    expect(clipData('caption').start).toBeCloseTo(61 / 30, 5); // 2.03 s rounded to its frame
   });
 
   it('snapping follows the zoom: 8 px are fewer seconds when zoomed in', async () => {
@@ -274,10 +275,11 @@ describe('moving and snapping', () => {
     expect(document.querySelector('.ms-tl-scroll')!.getAttribute('data-zoom')).toBe('20');
     // 2000 px/s. subtitle (0.6..2.0): 10 px to the left is 5 ms, but no target is within 8 px (4 ms) of either edge except none:
     // its end 1.995 is 5 ms (10 px) from the scene end at 2.0, outside the threshold at this zoom.
-    drag(bar('subtitle'), 1200, [1190]);
-    expect(clipData('subtitle').start).toBeCloseTo(0.595, 5);
-    // 6 px (3 ms) from the scene end is within it: the end snaps to 2.0.
-    drag(bar('subtitle'), 1200, [1206]);
+    // (40 px = 20 ms is 0.58 s, on its frame 17: 0.5667 s, the end 1.9667 s is 33 ms from the scene end)
+    drag(bar('subtitle'), 1200, [1160]);
+    expect(clipData('subtitle').start).toBeCloseTo(17 / 30, 5);
+    // From there (end 1.9667 s), 64 px (32 ms) right puts the end 2.7 px (1.3 ms) from the scene end: it snaps to 2.0.
+    drag(bar('subtitle'), 1200, [1264]);
     expect(clipData('subtitle').start + clipData('subtitle').duration).toBeCloseTo(2, 5);
   });
 
@@ -292,6 +294,32 @@ describe('moving and snapping', () => {
     expect(bar('card').getAttribute('aria-label')).toContain('locked');
     drag(edge('card', 'end'), 200, [150]);
     expect(ops()).toHaveLength(0);
+  });
+});
+
+describe('drags at the Fit zoom (Task 11 D3)', () => {
+  it('a ripple drag does not overshoot while the duration grows: the scale is the one the drag started with', async () => {
+    await mount();
+    fireEvent.click(screen.getByRole('button', { name: /^Ripple/ }));
+    const before = clipData('caption');
+    // At Fit, 100 px/s: 100 px right of the end edge is +1 s, however much the composition grows meanwhile.
+    // Each move gets its animation frame, so the composition (and the Fit scale) changes under the drag.
+    const frame = () => act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+    fireEvent.pointerDown(edge('caption', 'end'), { clientX: 300, pointerId: 1, button: 0 });
+    for (const x of [330, 360, 400]) { fireEvent.pointerMove(window, { clientX: x, pointerId: 1 }); await frame(); }
+    fireEvent.pointerUp(window, { clientX: 400, pointerId: 1 });
+    expect(comp().duration).toBeGreaterThan(6);
+    expect(clipData('caption').duration).toBeCloseTo(before.duration + 1, 5);
+  });
+
+  it('mouse drags land on whole frames', async () => {
+    await mount();
+    const onFrame = (t: number) => Math.abs(t * comp().fps - Math.round(t * comp().fps)) < 1e-4;
+    drag(bar('vo'), 100, [105.4]); // 54 ms: between frames
+    expect(onFrame(clipData('vo').start)).toBe(true);
+    expect(onFrame(clipData('vo').duration)).toBe(true);
+    drag(edge('title', 'end'), 200, [213.7]);
+    expect(onFrame(clipData('title').start + clipData('title').duration)).toBe(true);
   });
 });
 

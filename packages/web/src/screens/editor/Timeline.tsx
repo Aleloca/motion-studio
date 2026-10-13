@@ -24,7 +24,7 @@ import { SPEEDS, timecode, type Mark, type Speed } from '../Transport.tsx';
 import { ClipBar, type DragMode } from './ClipBar.tsx';
 import { useEditor } from './editorContext.ts';
 import {
-  DRAG_SLOP, clampZoom, clipBounds, frameRound, moveTiming, pxPerSec, pxToTime, rulerTicks, sliderToZoom, snapEdges, timeToPx, trimTiming, zoomAt, zoomToSlider,
+  DRAG_SLOP, clampZoom, clipBounds, frameRound, frameTiming, moveTiming, pxPerSec, pxToTime, rulerTicks, sliderToZoom, snapEdges, timeToPx, trimTiming, zoomAt, zoomToSlider,
   type Timing,
 } from './timelineMath.ts';
 import { TrackHeader } from './TrackHeader.tsx';
@@ -207,12 +207,16 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay, on
     live.current.actions.endRun();
     const from: Timing = { start: clip.start, duration: clip.duration };
     const x0 = ev.clientX;
+    // The scale of the gesture is the one it STARTED with: at Fit zoom a ripple grows the duration and so shrinks pps, and
+    // the pointer would otherwise overshoot (a 1 s drag giving 1.18 s, Task 11 D3).
+    const pps0 = live.current.pps;
     let latest = { x: x0, alt: ev.altKey };
     let moved = false;
     let raf = 0;
     const flush = () => {
       raf = 0;
-      const { pps: p, ripple: rip, snap: magnet, comp: c, fps: rate } = live.current;
+      const { ripple: rip, snap: magnet, comp: c, fps: rate } = live.current;
+      const p = pps0;
       const bounds = clipBounds(c, clip, rip);
       // Fresh each frame: with ripple the scene boundaries and later clips move during the drag.
       const targets = [...new Set([...snapTargets(c, clip.id), playheadNow()])].sort((a, b) => a - b);
@@ -233,7 +237,8 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay, on
         to = trimTiming(from, 'end', end + dt + s.delta, bounds, rate);
         setGuide(s.snappedTo);
       }
-      timing(clip.id, to, `drag:${clip.id}`);
+      // A mouse drag lands on whole frames (1/fps), never on fractions of a frame.
+      timing(clip.id, frameTiming(to, rate), `drag:${clip.id}`);
     };
     const move = (m: PointerEvent) => {
       latest = { x: m.clientX, alt: m.altKey };
