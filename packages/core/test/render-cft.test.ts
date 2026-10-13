@@ -103,6 +103,13 @@ beforeEach(() => { hits.length = 0; served.zip = goodZip; delete served.headLeng
 const appData = (name: string) => join(work, name);
 const install = (name: string, extra: Partial<Parameters<typeof installCft>[0]> = {}) =>
   installCft({ consent: true, appDataDir: appData(name), endpoint: `${base}/manifest.json`, fetchImpl: guardedFetch, ...extra });
+/**
+ * Installs the fixture's archive (`/dl.zip`, built for PLATFORM). Without `info`, installCft asks the manifest for the HOST's
+ * platform, which is PLATFORM only on Apple Silicon: elsewhere the manifest points to `/other.zip` (404), and the install is
+ * rightly refused as "the download size is unknown" before the archive is ever read.
+ */
+const installFixture = async (name: string) =>
+  install(name, { info: await cftDownloadInfo({ endpoint: `${base}/manifest.json`, platform: PLATFORM, fetchImpl: guardedFetch }) });
 
 describe('Chrome for Testing download (fake endpoint)', () => {
   it('the default endpoint is the official JSON, and the guard refuses it in tests', async () => {
@@ -182,7 +189,8 @@ describe('Chrome for Testing download (fake endpoint)', () => {
     it(`refuses an archive with ${what}, writing nothing`, async () => {
       served.zip = makeZip(entries);
       const name = `hostile-${what.replace(/\W+/g, '-')}`;
-      await expect(install(name)).rejects.toMatchObject({ code: 'unsafeArchive' });
+      await expect(installFixture(name)).rejects.toMatchObject({ code: 'unsafeArchive' });
+      expect(hits).toContain('GET /dl.zip'); // refused after reading the archive, not before downloading it
       expect(readdirSync(join(appData(name), 'chromium'))).toEqual([]);
       expect(existsSync(join(work, 'escape.txt'))).toBe(false);
     });
@@ -190,9 +198,9 @@ describe('Chrome for Testing download (fake endpoint)', () => {
 
   it('refuses a CRC mismatch and an archive without the executable', async () => {
     served.zip = makeZip([exeEntry, { name: 'a.txt', data: 'hello' }], { badCrc: 'a.txt' });
-    await expect(install('crc')).rejects.toMatchObject({ code: 'badArchive' });
+    await expect(installFixture('crc')).rejects.toMatchObject({ code: 'badArchive' });
     served.zip = makeZip([{ name: 'readme.txt', data: 'x' }]);
-    await expect(install('noexe')).rejects.toMatchObject({ code: 'noExecutable' });
+    await expect(installFixture('noexe')).rejects.toMatchObject({ code: 'noExecutable' });
     expect(readdirSync(join(appData('noexe'), 'chromium'))).toEqual([]);
   });
 
