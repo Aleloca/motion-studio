@@ -109,10 +109,15 @@ export type FrameVerdict = 'draw' | 'warn' | 'stale' | 'wait' | 'hold';
  *   exception is the **load frame** (`loadFrame`: the frame held before the video's first seek, the first-seek bug):
  *   when the target is more than one frame after it, `hold`: read again until it changes or the deadline passes, then
  *   draw it with a warning.
+ * - Lenient only, the **pre-seek frame** (`preSeekFrame`: the frame the video showed just before this seek, which moved to
+ *   another target): after `seeked`, Chrome can still hand out that old frame for a few animation frames (a loaded machine:
+ *   Ubuntu CI drew the previous output frame's source frame twice). When the target lies past it (its own duration and the
+ *   declared frame), `hold`: `pickVideoFrame` reads again until it changes or a short settle window (`PRE_SEEK_SETTLE_MS`)
+ *   passes, then draws it with a warning as before, so a render never blocks. A trusted source never gets this rule.
  */
 export function frameVerdict(o: {
   tsUs: number; durUs: number | null; targetUs: number; trusted: boolean;
-  videoEndUs: number | null; atEnd: boolean; stable: boolean; loadFrame: boolean; spanUs: number | null;
+  videoEndUs: number | null; atEnd: boolean; stable: boolean; loadFrame: boolean; spanUs: number | null; preSeekFrame?: boolean;
 }): FrameVerdict {
   const { tsUs: ts, targetUs: target } = o;
   const E = FRAME_EPS_US;
@@ -124,21 +129,31 @@ export function frameVerdict(o: {
   // Lenient. Without a duration, the declared frame (span) before the target counts as covering.
   if (dur === null && o.spanUs !== null && notAfter && ts + o.spanUs > target - E) return 'draw';
   if (!o.stable) return 'wait';
-  if (o.loadFrame && target > ts + Math.max(dur ?? 0, o.spanUs ?? 0) + E) return 'hold';
+  const pastIt = target > ts + Math.max(dur ?? 0, o.spanUs ?? 0) + E;
+  if ((o.loadFrame || (o.preSeekFrame === true && !o.trusted)) && pastIt) return 'hold';
   return 'warn';
 }
 
 /**
+ * How long (native ms) a lenient source's pre-seek frame is held waiting for Chrome to hand out the seek's frame
+ * (`frameVerdict`): the most a frame can cost, plus one animation frame, when that old frame is in fact the right one (a
+ * container whose frame durations are wrong).
+ */
+export const PRE_SEEK_SETTLE_MS = 1000;
+
+/**
  * Reads the frame a video holds until `frameVerdict` accepts it (`draw`, or `warn` in lenient mode), one native animation
  * frame apart, up to `deadline` (native ms). `stable` is the same timestamp as the previous read. Returns the accepted
- * frame (the caller draws and closes it). At the deadline: a `hold` frame (lenient load frame) is returned as `warn`;
- * otherwise no frame and the last verdict (`stale`, `wait` or `none`): a frame that is not accepted is never drawn.
+ * frame (the caller draws and closes it). A `hold` frame is returned as `warn`: the lenient load frame at the deadline, the
+ * lenient pre-seek frame (`preSeekTsUs`, the load frame's rule first) once `settleUntil` (native ms) has passed; otherwise
+ * at the deadline no frame and the last verdict (`stale`, `wait` or `none`): a frame that is not accepted is never drawn.
  * DOM-free, so it is unit tested.
  */
 export async function pickVideoFrame<F>(o: {
   read(): F | null; stamp(f: F): { tsUs: number; durUs: number | null }; close(f: F): void;
   nextFrame(): Promise<void>; now(): number; deadline: number;
   targetUs: number; trusted: boolean; videoEndUs: number | null; atEnd(): boolean; loadTsUs: number | null; spanUs: number | null;
+  preSeekTsUs?: number | null; settleUntil?: number;
 }): Promise<{ frame: F | null; verdict: FrameVerdict | 'none'; tsUs: number | null }> {
   let previous: number | null = null;
   let last: { verdict: 'stale' | 'wait' | 'none'; tsUs: number | null } = { verdict: 'none', tsUs: null };
@@ -147,12 +162,14 @@ export async function pickVideoFrame<F>(o: {
     const late = o.now() > o.deadline;
     if (f) {
       const { tsUs, durUs } = o.stamp(f);
+      const loadFrame = o.loadTsUs !== null && tsUs === o.loadTsUs;
+      const preSeekFrame = !loadFrame && o.preSeekTsUs !== undefined && o.preSeekTsUs !== null && tsUs === o.preSeekTsUs;
       const verdict = frameVerdict({
         tsUs, durUs, targetUs: o.targetUs, trusted: o.trusted, videoEndUs: o.videoEndUs, atEnd: o.atEnd(),
-        stable: tsUs === previous, loadFrame: o.loadTsUs !== null && tsUs === o.loadTsUs, spanUs: o.spanUs,
+        stable: tsUs === previous, loadFrame, spanUs: o.spanUs, preSeekFrame,
       });
       if (verdict === 'draw' || verdict === 'warn') return { frame: f, verdict, tsUs };
-      if (verdict === 'hold' && late) return { frame: f, verdict: 'warn', tsUs };
+      if (verdict === 'hold' && (late || (preSeekFrame && o.now() >= (o.settleUntil ?? -Infinity)))) return { frame: f, verdict: 'warn', tsUs };
       o.close(f);
       previous = tsUs;
       last = { verdict: verdict === 'hold' ? 'wait' : verdict, tsUs };

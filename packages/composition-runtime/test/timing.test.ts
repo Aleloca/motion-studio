@@ -131,7 +131,7 @@ const us = (s: number) => Math.round(s * 1e6);
 const F30 = us(1 / 30);
 
 describe('frameVerdict (render: which frame a video may show after a seek)', () => {
-  const base = { trusted: true, videoEndUs: null as number | null, atEnd: false, stable: false, loadFrame: false, spanUs: null as number | null };
+  const base = { trusted: true, videoEndUs: null as number | null, atEnd: false, stable: false, loadFrame: false, spanUs: null as number | null, preSeekFrame: false };
   type Row = readonly [string, number, number | null, number, Partial<typeof base>, string];
   const check = async ([, ts, dur, target, extra, verdict]: Row) => {
     const { frameVerdict } = await import('../src/timing.ts');
@@ -152,6 +152,8 @@ describe('frameVerdict (render: which frame a video may show after a seek)', () 
     ['no sourceVideoEnd: the same frame on its first read waits for the stability check (stale)', 59 / 30, F30, 2.2, { atEnd: true }, 'stale'],
     ['no sourceVideoEnd: stable but not at the media end: stale', 59 / 30, F30, 2.2, { stable: true }, 'stale'],
     ['no duration: the lenient rule (stable → warn)', 0.8, null, 0.85, { stable: true }, 'warn'],
+    ['the pre-seek frame is not special for a trusted source: stale', 0.76, 40_000, 0.82, { preSeekFrame: true, stable: true }, 'stale'],
+    ['trusted without a duration: the pre-seek hold still does not apply (warn)', 0.8, null, 0.85, { preSeekFrame: true, stable: true }, 'warn'],
   ];
   const lenient: Row[] = [
     ['the frame covering the target', 0.833333, F30, 0.85, {}, 'draw'],
@@ -167,6 +169,10 @@ describe('frameVerdict (render: which frame a video may show after a seek)', () 
     ['no duration, VFR, stable: warn', 0.3, null, 0.31, { stable: true }, 'warn'],
     ['audio longer than video, no sourceVideoEnd: the last frame at the media end is drawn', 59 / 30, F30, 2.25, { stable: true, atEnd: true }, 'draw'],
     ['audio longer than video, with sourceVideoEnd: drawn at once', 59 / 30, F30, 2.25, { videoEndUs: us(2.0) }, 'draw'],
+    ['the pre-seek frame, stable, the target past it: hold (Chrome may still hand out the old frame)', 0.76, 40_000, 0.82, { preSeekFrame: true, stable: true, spanUs: 40_000 }, 'hold'],
+    ['the pre-seek frame covering the target: draw', 0.76, 40_000, 0.78, { preSeekFrame: true, spanUs: 40_000 }, 'draw'],
+    ['the pre-seek frame after the target: warn, not hold', 0.1, F30, 0.5 / 30, { preSeekFrame: true, stable: true }, 'warn'],
+    ['the pre-seek frame, no duration, past its declared frame: hold', 0.3, null, 0.4, { preSeekFrame: true, stable: true, spanUs: F30 }, 'hold'],
   ];
   it.each(strict)('strict (sourceTrusted): %s', async (...row) => { await check(row); });
   it.each(lenient)('lenient (untrusted): %s', async (...row) => { await check([row[0], row[1], row[2], row[3], { trusted: false, ...row[4] }, row[5]]); });
@@ -174,7 +180,7 @@ describe('frameVerdict (render: which frame a video may show after a seek)', () 
 
 describe('pickVideoFrame (the read loop)', () => {
   type F = { ts: number; dur: number | null; closed?: boolean };
-  const run = async (reads: Array<F | null>, o: { target: number; trusted?: boolean; deadlineReads?: number; loadTs?: number | null }) => {
+  const run = async (reads: Array<F | null>, o: { target: number; trusted?: boolean; deadlineReads?: number; loadTs?: number | null; preSeekTs?: number; settleMs?: number; span?: number }) => {
     const { pickVideoFrame } = await import('../src/timing.ts');
     let i = 0, clock = 0;
     const handed: F[] = [];
@@ -183,9 +189,10 @@ describe('pickVideoFrame (the read loop)', () => {
       stamp: (f) => ({ tsUs: us(f.ts), durUs: f.dur }), close: (f) => { f.closed = true; },
       nextFrame: async () => { clock += 16; }, now: () => clock, deadline: 16 * (o.deadlineReads ?? 50),
       targetUs: us(o.target), trusted: o.trusted ?? true, videoEndUs: null, atEnd: () => false,
-      loadTsUs: o.loadTs === undefined || o.loadTs === null ? null : us(o.loadTs), spanUs: F30,
+      loadTsUs: o.loadTs === undefined || o.loadTs === null ? null : us(o.loadTs), spanUs: o.span ?? F30,
+      preSeekTsUs: o.preSeekTs === undefined ? null : us(o.preSeekTs), settleUntil: o.settleMs ?? 1000,
     });
-    return { r, handed, reads: i };
+    return { r, handed, reads: i, clock };
   };
   const stale = { ts: 0.8, dur: F30 }, right = { ts: 0.833333, dur: F30 };
   it('strict: a stale frame is never drawn; re-read until the right one comes', async () => {
@@ -215,6 +222,37 @@ describe('pickVideoFrame (the read loop)', () => {
     const { r } = await run([{ ts: 0, dur: F30 }], { target: 0.5, trusted: false, loadTs: 0, deadlineReads: 5 });
     expect(r.verdict).toBe('warn');
     expect(r.frame).not.toBeNull();
+  });
+  // Ubuntu CI: v25 (25 fps, untrusted) drew the previous output frame's source frame (0.760 s) for 0.820 s, stable on two
+  // reads right after `seeked`. The frame held before the seek is now waited out, within the settle window.
+  const F25 = us(1 / 25), old = { ts: 0.76, dur: F25 }, next = { ts: 0.8, dur: F25 };
+  it('lenient: a stale pre-seek frame that persists after the seek is held until the seek\'s frame comes, then drawn', async () => {
+    const { r, handed, reads } = await run([old, old, old, old, old, next], { target: 0.82, trusted: false, preSeekTs: 0.76, span: F25 });
+    expect(r.verdict).toBe('draw');
+    expect(r.tsUs).toBe(us(0.8));
+    expect(reads).toBe(6);
+    expect(handed.slice(0, 5).every((f) => f.closed)).toBe(true);
+  });
+  it('lenient: a pre-seek frame that never changes is drawn with a warning once the settle window passes, long before the deadline', async () => {
+    const { r, clock } = await run([old], { target: 0.82, trusted: false, preSeekTs: 0.76, span: F25, settleMs: 160, deadlineReads: 1000 });
+    expect(r.verdict).toBe('warn');
+    expect(r.frame).not.toBeNull();
+    expect(clock).toBe(160); // the first read at or past the window: at most one animation frame more
+  });
+  it('lenient: another stable frame that is not the pre-seek one keeps the old rule (warn on stability)', async () => {
+    const { r, reads } = await run([{ ts: 0.72, dur: F25 }], { target: 0.82, trusted: false, preSeekTs: 0.76, span: F25 });
+    expect(r.verdict).toBe('warn');
+    expect(reads).toBe(2);
+  });
+  it('lenient: the load frame keeps its rule (held to the deadline), even when it is also the pre-seek frame', async () => {
+    const load = { ts: 0, dur: F30 };
+    const { r, clock } = await run([load], { target: 0.5, trusted: false, loadTs: 0, preSeekTs: 0, settleMs: 16, deadlineReads: 20 });
+    expect(r.verdict).toBe('warn');
+    expect(clock).toBeGreaterThan(16 * 20);
+  });
+  it('strict: the pre-seek frame changes nothing (stale until the deadline, never drawn)', async () => {
+    const { r } = await run([old], { target: 0.82, trusted: true, preSeekTs: 0.76, span: F25, settleMs: 16, deadlineReads: 5 });
+    expect(r).toEqual({ frame: null, verdict: 'stale', tsUs: us(0.76) });
   });
   it('no frame at all until the deadline: none', async () => {
     const { r } = await run([null], { target: 0.5, deadlineReads: 3 });

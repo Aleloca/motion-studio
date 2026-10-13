@@ -6,6 +6,7 @@ import { FrameTimeoutError, twoFrames } from '../src/frames.ts';
 import { decodeLayerConfig } from '../src/layer-protocol.ts';
 import { mount } from '../src/mount.ts';
 import type { RuntimeError } from '../src/protocol.ts';
+import { PRE_SEEK_SETTLE_MS } from '../src/timing.ts';
 
 /** jsdom has no WAAPI, FontFace or media loading: minimal stand-ins record what the mount asks for. */
 interface FakeAnimation { keyframes: unknown; options: KeyframeAnimationOptions; currentTime: number | null; pause(): void }
@@ -49,10 +50,10 @@ function comp(over: Partial<Composition> = {}): Composition {
   } as Composition;
 }
 
-function run(c: Composition, mode: 'render' | 'preview' = 'render') {
+function run(c: Composition, mode: 'render' | 'preview' = 'render', seek = 50) {
   const errors: RuntimeError[] = [];
   const root = document.getElementById('ms-root')!;
-  const player = mount(root, c, { mode, base: BASE, natives, report: (e) => errors.push(e), timeouts: { load: 50, seek: 50, layer: 50 } });
+  const player = mount(root, c, { mode, base: BASE, natives, report: (e) => errors.push(e), timeouts: { load: 50, seek, layer: 50 } });
   const box = (id: string) => root.querySelector<HTMLElement>(`[data-clip-id="${id}"]`);
   return { player, errors, root, box };
 }
@@ -308,6 +309,8 @@ describe('render mode never captures an unpainted frame', () => {
 describe('render mode video frames (fake VideoFrame)', () => {
   /** The frame the fake video holds (µs), whatever its currentTime: a decoder that never moves. */
   let held = { timestamp: 0, duration: 33_333 };
+  /** Called when a seek sets currentTime (the decoder moving to another frame), before `seeked`. */
+  let onSeek: (() => void) | null = null;
   const restore: Array<() => void> = [];
   const define = (proto: object, key: string, desc: PropertyDescriptor) => {
     const old = Object.getOwnPropertyDescriptor(proto, key);
@@ -316,13 +319,14 @@ describe('render mode video frames (fake VideoFrame)', () => {
   };
   beforeEach(() => {
     held = { timestamp: 0, duration: 33_333 };
+    onSeek = null;
     const times = new WeakMap<HTMLMediaElement, number>();
     define(HTMLMediaElement.prototype, 'readyState', { get: () => 4 });
     define(HTMLMediaElement.prototype, 'duration', { get: () => 10 });
     define(HTMLCanvasElement.prototype, 'getContext', { value: () => null, writable: true });
     define(HTMLMediaElement.prototype, 'currentTime', {
       get(this: HTMLMediaElement) { return times.get(this) ?? 0; },
-      set(this: HTMLMediaElement, t: number) { times.set(this, t); setTimeout(() => this.dispatchEvent(new Event('seeked')), 1); },
+      set(this: HTMLMediaElement, t: number) { times.set(this, t); onSeek?.(); setTimeout(() => this.dispatchEvent(new Event('seeked')), 1); },
     });
     (globalThis as unknown as { VideoFrame: unknown }).VideoFrame = class {
       timestamp = held.timestamp; duration = held.duration; displayWidth = 16; displayHeight = 16; close() {}
@@ -353,11 +357,50 @@ describe('render mode video frames (fake VideoFrame)', () => {
   it('untrusted source: the same stable frame is drawn with a videoFrameMismatch warning, the seek resolves', async () => {
     const { player, errors } = run(videoComp({}));
     await player.seek(0); // the first seek: the load frame (ts 0) covers the target
-    held = { timestamp: 400_000, duration: 33_333 }; // e.g. a WebM frame whose real duration is longer than reported
+    // The seek moves the decoder to a frame that does not cover the target: e.g. a WebM frame whose real duration is
+    // longer than reported.
+    onSeek = () => { held = { timestamp: 400_000, duration: 33_333 }; };
     await player.seek(0.5);
     expect(errors.map((e) => e.code)).toEqual(['videoFrameMismatch']);
     expect(errors[0]!.message).not.toMatch(/seek deadline/); // drawn at once, not a stall
   });
+
+  it('untrusted source: the frame shown before the seek, still handed out after it, is waited out for the settle window, then drawn with a warning', async () => {
+    const { player, errors } = run(videoComp({}), 'render', 10_000);
+    await player.seek(0);
+    held = { timestamp: 400_000, duration: 33_333 };
+    await player.seek(0.4); // the frame at 0.4 s is shown (and covers the target)
+    expect(errors).toEqual([]);
+    const t0 = performance.now();
+    await player.seek(0.6); // the decoder never moves: the pre-seek frame is held, not drawn on stability
+    const waited = performance.now() - t0;
+    expect(errors.map((e) => e.code)).toEqual(['videoFrameMismatch']);
+    expect(errors[0]!.message).toMatch(/frame at 0\.400 s drawn for 0\.617 s/);
+    expect(errors[0]!.message).not.toMatch(/seek deadline/); // released by the settle window, far before the 10 s deadline
+    expect(waited).toBeGreaterThanOrEqual(PRE_SEEK_SETTLE_MS - 50);
+    expect(waited).toBeLessThan(5_000);
+  });
+
+  it('untrusted source: a pre-seek frame replaced by the seek\'s frame within the window is never drawn', async () => {
+    const { player, errors } = run(videoComp({}), 'render', 10_000);
+    await player.seek(0);
+    held = { timestamp: 400_000, duration: 33_333 };
+    await player.seek(0.4);
+    onSeek = () => { setTimeout(() => { held = { timestamp: 600_000, duration: 33_333 }; }, 100); }; // Chrome late by 100 ms
+    await player.seek(0.6);
+    expect(errors).toEqual([]);
+  });
+
+  it('trusted source: the pre-seek rule does not apply (a stale frame still fails fast)', async () => {
+    const { player, errors } = run(videoComp({ sourceTrusted: true, sourceVideoEnd: 6 }), 'render', 2_500);
+    await player.seek(0);
+    held = { timestamp: 400_000, duration: 33_333 };
+    await player.seek(0.4);
+    const t0 = performance.now();
+    await expect(player.seek(0.6)).rejects.toThrow(/videoSeekTimeout/);
+    expect(performance.now() - t0).toBeGreaterThan(PRE_SEEK_SETTLE_MS + 500); // its own deadline, never the settle window
+    expect(errors.some((e) => e.code === 'videoFrameMismatch')).toBe(false);
+  }, 20_000);
 
   it('untrusted source: a load frame far before the target is held to the deadline, then drawn with a warning', async () => {
     const { player, errors } = run(videoComp({}));

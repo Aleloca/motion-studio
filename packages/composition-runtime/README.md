@@ -123,7 +123,10 @@ Everything lives under one token prefix on the composition server's own origin (
        `videoFrameMismatch`** warning (the renderer returns it in `warnings`). This proves the frame stopped changing,
        not that it is the right one. The first-seek protection still holds: the frame held before a video's first seek
        (the load frame) is recognised by its timestamp, and while the target is more than one frame after it the frame is
-       read again until it changes; only at the seek's deadline is it drawn, with a warning, instead of failing;
+       read again until it changes; only at the seek's deadline is it drawn, with a warning, instead of failing. Likewise
+       the frame shown just before each seek to another target (the pre-seek frame: after `seeked` Chrome can still hand
+       it out for a few animation frames on a loaded machine) is read again while the target lies past it, for at most
+       `PRE_SEEK_SETTLE_MS` (1 s), then drawn with the same warning: never a block, at most about 1 s per such frame;
    - **source fields** (all optional, next to `sourceFps`; not in the agent's schema). From Task 5 the core normalises
      every video clip (H.264, constant frame rate equal to the composition's, short GOP), probes the result with ffprobe
      and sets them after validation, overriding anything the agent declared, so every normalised clip gets the strict

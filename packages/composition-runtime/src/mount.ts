@@ -5,7 +5,7 @@ import { FrameTimeoutError, twoFrames, withTimeout } from './frames.ts';
 import { connectLayer, LayerRequestError, type LayerHost } from './layer-host.ts';
 import { encodeLayerConfig, type LayerFont } from './layer-protocol.ts';
 import type { Rect, RuntimeError, RuntimeErrorCode, RuntimeMode } from './protocol.ts';
-import { audioGain, frameCount, isClipVisible, needsAudioResync, needsResync, pickVideoFrame, sourceTrustedOf, sourceVideoEndOf, videoSourceTime } from './timing.ts';
+import { audioGain, frameCount, isClipVisible, needsAudioResync, needsResync, pickVideoFrame, PRE_SEEK_SETTLE_MS, sourceTrustedOf, sourceVideoEndOf, videoSourceTime } from './timing.ts';
 
 export interface MountOptions {
   mode: RuntimeMode;
@@ -430,7 +430,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
    * An untrusted source gets the lenient rule: the covering frame, else a stable one with a non-fatal
    * `videoFrameMismatch`. Returns false when nothing was drawn.
    */
-  const paintVideo = async (m: Mounted, target: number, deadline: number): Promise<boolean> => {
+  const paintVideo = async (m: Mounted, target: number, deadline: number, preSeekTsUs: number | null, settleUntil: number): Promise<boolean> => {
     const v = m.video!;
     if (m.clip.type !== 'video') return true;
     const clip = m.clip;
@@ -448,6 +448,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
       // At the end of the media: the target sits in the last (declared or nominal 1/30 s) frame of the element's duration.
       atEnd: () => Number.isFinite(v.duration) && !v.seeking && v.currentTime >= v.duration - (span ?? 1 / 30) - 1e-3,
       loadTsUs: drawnOnce.has(v) ? null : (loadStamps.get(v) ?? null), spanUs: span === null ? null : Math.round(span * 1e6),
+      preSeekTsUs, settleUntil,
     });
     const at = (us: number) => (us / 1e6).toFixed(3);
     if (r.frame) {
@@ -480,17 +481,26 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     const deadline = n.performanceNow() + timeouts.seek;
     const target = videoSourceTime(m.clip, t, v.duration);
     if (!v.paused) v.pause();
-    if (m.canvas && !loadStamps.has(v)) {
+    const moves = !(Math.abs(v.currentTime - target) < 1e-6 && !v.seeking && v.readyState >= 2);
+    // The frame shown before this seek: the load frame (first seek), and for an untrusted source moving to another target
+    // the pre-seek frame, which Chrome may still hand out for a while after `seeked` (frameVerdict).
+    let preSeekTsUs: number | null = null;
+    if (m.canvas && (!loadStamps.has(v) || (moves && !sourceTrustedOf(m.clip)))) {
       const f = grabFrame(v);
-      if (f) { loadStamps.set(v, Math.round(f.timestamp)); f.close(); }
+      if (f) {
+        const ts = Math.round(f.timestamp);
+        f.close();
+        if (!loadStamps.has(v)) loadStamps.set(v, ts);
+        if (moves && !sourceTrustedOf(m.clip)) preSeekTsUs = ts;
+      }
     }
-    if (!(Math.abs(v.currentTime - target) < 1e-6 && !v.seeking && v.readyState >= 2)) {
+    if (moves) {
       const seeked = new Promise<void>((resolve) => v.addEventListener('seeked', () => resolve(), { once: true }));
       v.currentTime = target;
       await withTimeout(seeked, Math.max(1, deadline - n.performanceNow()), n, `video ${m.clip.src} did not seek to ${target}`)
         .catch((e: unknown) => report('videoSeekTimeout', String(e instanceof Error ? e.message : e), m.clip.id));
     }
-    if (m.canvas && !(await paintVideo(m, target, deadline))) {
+    if (m.canvas && !(await paintVideo(m, target, deadline, preSeekTsUs, n.performanceNow() + PRE_SEEK_SETTLE_MS))) {
       throw new Error(`videoSeekTimeout: video ${m.clip.src} has no frame for ${target.toFixed(3)} s`);
     }
   };
