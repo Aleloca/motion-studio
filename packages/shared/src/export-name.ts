@@ -2,6 +2,7 @@
 // by the core (the names written to disk) and the web (the live preview), so the names on screen are the ones on disk.
 // Every regex here is linear-time: single character classes, no nested or overlapping quantifiers.
 import type { FormatPreset } from './formats.ts';
+import { instanceIndex } from './format-instance.ts';
 
 export const EXPORT_NAME_TOKENS = ['title', 'channel', 'format', 'ratio', 'v', 'date', 'locale'] as const;
 export type ExportNameToken = (typeof EXPORT_NAME_TOKENS)[number];
@@ -87,6 +88,26 @@ function notReserved(name: string): string {
   const head = dot === -1 ? name : name.slice(0, dot);
   if (!RESERVED.has(head.toLowerCase())) return name;
   return dot === -1 ? `${name}_` : `${head}_${name.slice(dot + 1)}`;
+}
+
+/** `stem-suffix`, the stem cut so the whole stays within EXPORT_NAME_MAX. */
+function withSuffix(stem: string, suffix: string): string {
+  const room = EXPORT_NAME_MAX - suffix.length - 1;
+  let head = stem.length > room ? stem.slice(0, room) : stem;
+  while (head.length > 0 && '-_.'.includes(head.at(-1)!)) head = head.slice(0, -1);
+  return `${head}-${suffix}`;
+}
+
+/**
+ * Format instances (Phase 12, Ruling C): files that would share a name (a pattern without `{format}`, or a preset id equal to
+ * an instance's slug, `foo-2` and `foo@2`) are kept apart with the instance's slugged id on each k > 1 instance; a bare
+ * instance's name never changes. Returns the stems in the order given; what still collides is for the caller to refuse.
+ * Shared by the core's export and the export dialog's preview.
+ */
+export function separateInstanceNames(items: ReadonlyArray<{ format: string; stem: string; ext: string }>): string[] {
+  const count = new Map<string, number>();
+  for (const x of items) { const k = `${x.stem}${x.ext}`.toLowerCase(); count.set(k, (count.get(k) ?? 0) + 1); }
+  return items.map((x) => (count.get(`${x.stem}${x.ext}`.toLowerCase())! > 1 && instanceIndex(x.format) > 1 ? withSuffix(x.stem, slugToken(x.format)) : x.stem));
 }
 
 /** Names that occur more than once, compared case-insensitively (macOS and Windows file systems), lowercased. */

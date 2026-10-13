@@ -16,3 +16,15 @@
 }
 .ms-brief-notice > svg { color: var(--warn); flex: none; margin-top: 2px; }
 .ms-brief-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.ms-brief-inst { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ms-brief-inst-row { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 8px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line); min-width: 0; }
+.ms-brief-inst-row[draggable="true"] { cursor: grab; }
+.ms-brief-inst-row.ms-drag { box-shadow: inset 0 0 0 1px var(--accentText); }
+.ms-brief-inst-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ms-brief-inst-grip { display: inline-flex; color: var(--muted); }
+.ms-brief-inst-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--text); }
+.ms-brief-inst-actions { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.ms-brief-confirm { display: flex; flex-direction: column; gap: 8px; padding: 18px; }
+.ms-brief-confirm h3 { margin: 0; font-size: 15px; color: var(--text); }
+.ms-brief-confirm p { margin: 0; font-size: 13px; line-height: 1.45; color: var(--muted); }
+.ms-brief-up { display: inline-flex; transform: rotate(180deg); }

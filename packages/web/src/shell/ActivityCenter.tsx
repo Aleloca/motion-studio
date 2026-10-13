@@ -1,4 +1,5 @@
 import { DEFAULT_FORMATS, formatName, type AgentEvent, type ApprovalRequest, type ConversationEntry, type JobSummary } from '@motion-studio/shared';
+import { instanceName, presetFor } from '../instances.ts';
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api.ts';
 import { ApprovalCard } from '../components/ApprovalCard.tsx';
@@ -203,7 +204,7 @@ function Row({ job, className, children, after }: { job: JobSummary; className?:
 /** A format's name for a progress line (the built-in catalog; a custom preset shows its id). */
 function useFormatLabel() {
   const locale = useLocale();
-  return (id: string) => { const p = DEFAULT_FORMATS.find((x) => x.id === id); return p ? formatName(p, locale) : id; };
+  return (id: string) => { return instanceName(presetFor(DEFAULT_FORMATS, id), id, locale); };
 }
 
 /**

@@ -1,3 +1,4 @@
+import { presetFor } from '../instances.ts';
 import type { ApprovalRequest, ConversationEntry, CreativeSummary, FormatPreset, JobSummary, Pin } from '@motion-studio/shared';
 import type { EventsState } from '../eventsReducer.ts';
 import { lastStep } from '../jobEvents.ts';
@@ -68,7 +69,7 @@ export interface Frame { id: string; preset: FormatPreset | null; width: number;
  */
 export function frames(formats: string[], presets: FormatPreset[], o: { height: number; maxWidth: number; gap: number }): Frame[] {
   const aspects = formats.map((id) => {
-    const preset = presets.find((p) => p.id === id) ?? null;
+    const preset = presetFor(presets, id);
     return { id, preset, a: preset ? preset.width / preset.height : 1 };
   });
   if (aspects.length === 0) return [];

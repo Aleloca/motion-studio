@@ -1,4 +1,4 @@
-import type { BrandFont, EditOp, EditorCompositionView, StagedAsset, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
+import type { BrandFont, EditOp, EditorCompositionView, StagedAsset, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
 
@@ -183,7 +183,14 @@ export const api = {
   createCreative: (slug: string, body: { title: string; brief: Brief; generate: boolean; linkedCodebases?: LinkedCodebase[] }) =>
     request<{ slug: string; creative: CreativeFile; job: JobSummary | null }>('POST', `${p(slug)}/creatives`, body),
   getCreative: (slug: string, creative: string) => request<CreativeDetail>('GET', c(slug, creative)),
-  updateCreative: (slug: string, creative: string, body: { title?: string; brief?: Brief; services?: Brief['services']; linkedCodebases?: LinkedCodebase[] }) => request<CreativeFile>('PUT', c(slug, creative), body),
+  updateCreative: (slug: string, creative: string, body: {
+    title?: string; brief?: Brief; services?: Brief['services']; linkedCodebases?: LinkedCodebase[];
+    /** Alone, each merges into the stored brief under the creative's lock (labels; order and removal of formats). */
+    formatLabels?: Record<string, string>; formats?: string[];
+  }) => request<CreativeFile>('PUT', c(slug, creative), body),
+  /** Duplicates a format of version n as the next free instance and saves a new version; the new instance's id comes back. */
+  duplicateFormat: (slug: string, creative: string, n: number, body: { instanceId: string; label?: string }) =>
+    request<{ version: VersionEntry; instanceId: string }>('POST', `${c(slug, creative)}/versions/${n}/duplicate-format`, body),
   /** Manual ★ of a format (`null` clears it; the version the default rule gives also clears it). */
   setExportPick: (slug: string, creative: string, format: string, version: number | null) =>
     request<CreativeDetail>('PUT', `${c(slug, creative)}/export-picks`, { format, version }),

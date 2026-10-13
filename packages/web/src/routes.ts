@@ -15,6 +15,8 @@ export type Route =
   | { name: 'edit'; slug: string; creative: string; format: string };
 
 const SLUG = '[a-z0-9][a-z0-9-]*';
+/** A format segment: a preset id or an instance id (`x@2`; `%40` is the same `@`). */
+const FORMAT_SEG = '[a-z0-9][a-z0-9@%A-F0-9-]*';
 /** The old project "Agent console" tab: its technical events now live in the conversation's Activity details. */
 const LEGACY_CONSOLE = new RegExp(`^#/p/(${SLUG})/console$`);
 
@@ -34,10 +36,10 @@ export function parseRoute(hash: string): Route {
   if (hash === '#/welcome') return { name: 'welcome' };
   m = hash.match(/^#\/welcome\/([123])$/);
   if (m) return { name: 'welcome', step: Number(m[1]) as WelcomeStep };
-  m = hash.match(new RegExp(`^#/p/(${SLUG})/c/(${SLUG})/f/(${SLUG})/edit$`));
-  if (m) return { name: 'edit', slug: m[1]!, creative: m[2]!, format: m[3]! };
-  m = hash.match(new RegExp(`^#/p/(${SLUG})/c/(${SLUG})/f/(${SLUG})$`));
-  if (m) return { name: 'format', slug: m[1]!, creative: m[2]!, format: m[3]! };
+  m = hash.match(new RegExp(`^#/p/(${SLUG})/c/(${SLUG})/f/(${FORMAT_SEG})/edit$`));
+  if (m) return { name: 'edit', slug: m[1]!, creative: m[2]!, format: formatOfSeg(m[3]!) };
+  m = hash.match(new RegExp(`^#/p/(${SLUG})/c/(${SLUG})/f/(${FORMAT_SEG})$`));
+  if (m) return { name: 'format', slug: m[1]!, creative: m[2]!, format: formatOfSeg(m[3]!) };
   m = hash.match(new RegExp(`^#/p/(${SLUG})/c/(${SLUG})$`));
   if (m) return { name: 'creative', slug: m[1]!, creative: m[2]! };
   m = hash.match(new RegExp(`^#/p/(${SLUG})/new$`));
@@ -50,6 +52,10 @@ export function parseRoute(hash: string): Route {
     if (tab === 'creatives' || TABS.includes(tab)) return { name: 'project', slug: m[1]!, tab };
   }
   return { name: 'projects' };
+}
+
+function formatOfSeg(seg: string): string {
+  try { return decodeURIComponent(seg); } catch { return seg; }
 }
 
 export const href = {

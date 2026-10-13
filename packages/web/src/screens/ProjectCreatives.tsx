@@ -1,3 +1,4 @@
+import { instanceName, presetFor } from '../instances.ts';
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
 import { formatName, type CreativeListItem, type CreativeSummary, type FormatPreset } from '@motion-studio/shared';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react';
@@ -201,7 +202,7 @@ function CreativeCard({ slug, c, info, presets, index, fresh }: CardProps) {
   };
 
   const when = state === 'draft' ? s.draft : relativeTime(locale, c.updatedAt);
-  const known = c.formats.map((id) => ({ id, preset: presets.find((p) => p.id === id) ?? null }));
+  const known = c.formats.map((id) => ({ id, preset: presetFor(presets, id) }));
   return (
     <article
       ref={ref}
@@ -223,7 +224,7 @@ function CreativeCard({ slug, c, info, presets, index, fresh }: CardProps) {
             {known.slice(0, MAX_TAGS).map(({ id, preset }) => (
               <Tag key={id} className="ms-ftag">
                 {preset ? <ChannelMark channel={channelOf(preset.channel)} /> : null}
-                <span className="ms-ftag-name">{preset ? formatName(preset, locale) : id}</span>
+                <span className="ms-ftag-name">{instanceName(preset, id, locale)}</span>
               </Tag>
             ))}
             {known.length > MAX_TAGS ? <Tag className="ms-ftag">{s.moreFormats({ n: known.length - MAX_TAGS })}</Tag> : null}
@@ -273,7 +274,7 @@ function Previews({ slug, c, presets, state }: { slug: string; c: CreativeSummar
   const s = useT().web.creatives;
   const [natural, setNatural] = useState<number | null>(null);
   if (c.cover && c.versions > 0) {
-    const preset = presets.find((p) => p.id === c.formats[0]) ?? null;
+    const preset = c.formats[0] ? presetFor(presets, c.formats[0]) : null;
     const aspect = natural ?? (preset ? preset.width / preset.height : 1);
     const h = Math.min(STAGE.height, STAGE.maxWidth / aspect);
     const src = api.fileUrl(slug, c.slug, c.cover);

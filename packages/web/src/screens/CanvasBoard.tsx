@@ -5,11 +5,12 @@
 // Zoom: only the frame (media, safe zones) is zoomed. The label above it, "Open editor", the comment markers and the
 // bubble are screen-sized at any zoom (as in Figma): they sit in the frame's box, sized in screen pixels, at the
 // world point × zoom, so nothing scales them and the bubble's text field stays crisp.
-import { channelName, formatName, outputWarningText, type FormatPreset, type OutputWarning, type Pin } from '@motion-studio/shared';
+import { channelName, outputWarningText, type FormatPreset, type OutputWarning, type Pin } from '@motion-studio/shared';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode, type SyntheticEvent } from 'react';
 import { CompositionPlayer } from '../components/CompositionPlayer.tsx';
 import { posterOf, usePreviewSession, useStoryboard } from '../components/compositionPreview.ts';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
+import { instanceName } from '../instances.ts';
 import { anim, D, E, isSubmitChord } from '../motion/index.ts';
 import { Button, ChannelMark, Icon, Pill, Popover, Textarea, channelOf, cx } from '../ui/index.ts';
 import { boardFrame, LABEL_MIN, outputMedia, pointIn, ratioText, toScreen, type BoardModel } from './canvasModel.ts';
@@ -65,8 +66,13 @@ const NARROW_BOARD = 170;
 /** Hover intent: the live preview starts after the pointer rests this long on the frame. */
 export const HOVER_INTENT_MS = 450;
 
+/** The name of a board: the instance's label, else the preset's name with `#k` for a second instance (Phase 12). */
+export function boardName(board: BoardModel, locale: ReturnType<typeof useLocale>): string {
+  return instanceName(board.preset, board.id, locale, board.labels);
+}
+
 export function boardLabel(board: BoardModel, locale: ReturnType<typeof useLocale>): string {
-  return board.preset ? `${channelName(board.preset.channel, locale)} · ${formatName(board.preset, locale)}` : board.id;
+  return board.preset ? `${channelName(board.preset.channel, locale)} · ${boardName(board, locale)}` : board.id;
 }
 
 export function CanvasBoard(p: BoardProps) {
@@ -121,7 +127,7 @@ export function CanvasBoard(p: BoardProps) {
         <div className="ms-cv-board-line">
           {/* The format's name only, whole first; the channel is its mark (the full label is the tooltip and the accessible name). */}
           {board.preset ? <ChannelMark channel={channelOf(board.preset.channel)} /> : null}
-          <b className="ms-cv-board-name" title={label}>{board.preset ? formatName(board.preset, locale) : label}</b>
+          <b className="ms-cv-board-name" title={label}>{board.preset ? boardName(board, locale) : label}</b>
           {/* The version badge, or a follower's link chip. */}
           <span className="ms-cv-board-slot">{p.badge}</span>
         </div>

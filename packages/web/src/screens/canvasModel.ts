@@ -2,10 +2,11 @@
 import type { FormatPreset, OutputFileInfo, VersionEntry } from '@motion-studio/shared';
 import { api } from '../api.ts';
 import { isVideoFile } from '../media.ts';
+import { presetFor } from '../instances.ts';
 
 
 /** A format of the creative on the canvas: its preset (null when the catalog no longer has it) and its output. */
-export interface BoardModel { id: string; preset: FormatPreset | null; out: OutputFileInfo | null }
+export interface BoardModel { id: string; preset: FormatPreset | null; out: OutputFileInfo | null; /** The brief's labels of the instances (`brief.formatLabels`). */ labels?: Record<string, string> }
 
 export interface Media { src: string; video: boolean }
 
@@ -26,7 +27,7 @@ export function outputMedia(slug: string, creative: string, n: number, out: Outp
  * The boards of a creative with per-format versions (spec §3.1): the brief's formats in order, then outputs of the latest
  * version outside the brief. Each board shows the file of `source(id)` (a follower: its primary's) at that version.
  */
-export function boardsWith(formats: string[], presets: FormatPreset[], versions: VersionEntry[], source: (id: string) => { format: string; n: number | null }):
+export function boardsWith(formats: string[], presets: FormatPreset[], versions: VersionEntry[], source: (id: string) => { format: string; n: number | null }, labels?: Record<string, string>):
   Array<BoardModel & { n: number | null }> {
   const latest = versions.at(-1) ?? null;
   const ids = [...formats, ...(latest?.outputs.map((o) => o.format).filter((f) => !formats.includes(f)) ?? [])];
@@ -34,7 +35,8 @@ export function boardsWith(formats: string[], presets: FormatPreset[], versions:
     const src = source(id);
     return {
       id,
-      preset: presets.find((p) => p.id === id) ?? null,
+      preset: presetFor(presets, id),
+      ...(labels ? { labels } : {}),
       out: src.n === null ? null : versions.find((v) => v.n === src.n)?.outputs.find((o) => o.format === src.format) ?? null,
       n: src.n,
     };

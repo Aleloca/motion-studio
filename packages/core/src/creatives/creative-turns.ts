@@ -154,7 +154,7 @@ export class CreativeTurnService {
   }
 
   /** Edits title and/or brief; refused while a generation is queued or running for the creative. */
-  async updateBrief(ref: CreativeRef, patch: { title?: string; brief?: Brief; services?: Brief['services']; linkedCodebases?: LinkedCodebase[] }): Promise<CreativeFile> {
+  async updateBrief(ref: CreativeRef, patch: { title?: string; brief?: Brief; services?: Brief['services']; formatLabels?: Record<string, string>; formats?: string[]; linkedCodebases?: LinkedCodebase[] }): Promise<CreativeFile> {
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     return this.locks.run(key, async () => {
       if (this.isActive(key)) throw new WorkspaceError(409, t().errors.waitBeforeBrief);
@@ -182,9 +182,32 @@ export class CreativeTurnService {
           exportPicks = { exportPicks: pruned.exportPicks };
         }
         brief = links ? { ...rest, links } : rest;
-      } else if (patch.services) {
-        // Only the service choices change: everything else comes from the brief stored now, never from the caller's copy.
-        brief = { ...(await store.get(ref.creativeSlug)).brief, services: patch.services };
+      } else if (patch.services || patch.formatLabels || patch.formats) {
+        // A partial save (services chip, inline labels, reorder, removal): everything else comes from the brief stored now,
+        // never from the caller's copy.
+        const stored = await store.get(ref.creativeSlug);
+        const next: Brief = { ...stored.brief };
+        if (patch.services) next.services = patch.services;
+        if (patch.formats) {
+          const f = patch.formats;
+          if (new Set(f).size !== f.length || f.some((id) => !stored.brief.formats.includes(id))) {
+            throw new CodedError(400, t().errors.formatsReorderRemoveOnly, 'formats-reorder-remove-only');
+          }
+          next.formats = f;
+          const gone = new Set(stored.brief.formats.filter((id) => !f.includes(id)));
+          if (gone.size > 0) {
+            const pruned = withoutFormatState(next.links, stored.exportPicks, gone);
+            if (pruned.links) next.links = pruned.links;
+            exportPicks = { exportPicks: pruned.exportPicks };
+          }
+        }
+        if (patch.formatLabels) next.formatLabels = patch.formatLabels;
+        // Ruling H: a label of a format the brief no longer has goes with it.
+        if (next.formatLabels) {
+          const kept = Object.fromEntries(Object.entries(next.formatLabels).filter(([k]) => next.formats.includes(k)));
+          if (Object.keys(kept).length > 0) next.formatLabels = kept; else delete next.formatLabels;
+        }
+        brief = next;
       }
       const updated = await store.update(ref.creativeSlug, {
         ...(patch.title !== undefined ? { title: patch.title } : {}),

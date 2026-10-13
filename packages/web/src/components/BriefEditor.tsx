@@ -1,10 +1,11 @@
 // Brief form of a creative ("Edit the brief" in the canvas panel), built from ui/ controls only: no native select,
 // checkbox or number field, no textarea resize. Saves it, or saves and starts a new generation.
-import { channelName, formatName, legacyTurnKind, linksAfterBriefSave, type Brief, type BriefServices, type CreativeDetail, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
-import { useId, useMemo, useState } from 'react';
+import { channelName, INSTANCE_ID_RE, legacyTurnKind, linksAfterBriefSave, nextInstanceId, presetOf, type Brief, type BriefServices, type CreativeDetail, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
+import { useId, useMemo, useState, type DragEvent } from 'react';
 import { api } from '../api.ts';
+import { instanceName, presetFor, presetNameOf } from '../instances.ts';
 import { useLocale, useT } from '../i18n.tsx';
-import { Button, ChannelMark, Chip, channelOf, Icon, Input, Segmented, Textarea } from '../ui/index.ts';
+import { Button, ChannelMark, Chip, channelOf, cx, Icon, Input, Modal, Segmented, Textarea } from '../ui/index.ts';
 import { CodebaseList } from './CodebaseList.tsx';
 import { ServicesSelector, useConfiguredProviders, useKeyChecks } from './ServicesSelector.tsx';
 import './brief.css';
@@ -14,7 +15,11 @@ const LENGTHS = ['none', '6', '15', '30', '60', 'custom'] as const;
 type LengthChoice = (typeof LENGTHS)[number];
 const lengthChoice = (sec: number | null): LengthChoice => (sec === null ? 'none' : (LENGTHS as readonly string[]).includes(String(sec)) ? (String(sec) as LengthChoice) : 'custom');
 
-export function BriefEditor({ slug, detail, presets, disabled, onChanged }: { slug: string; detail: CreativeDetail; presets: FormatPreset[]; disabled: boolean; onChanged(): void }) {
+export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefresh }: {
+  slug: string; detail: CreativeDetail; presets: FormatPreset[]; disabled: boolean; onChanged(): void;
+  /** The brief changed on the server without leaving the form (labels, order, removal of formats): reload the creative. */
+  onRefresh?(): void;
+}) {
   const t = useT();
   const cv = t.web.conversation;
   const nc = t.web.newCreative;
@@ -23,6 +28,8 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged }: { sl
   const c = detail.creative;
   const [title, setTitle] = useState(c.title);
   const [brief, setBrief] = useState<Brief>(c.brief);
+  // The brief as the server has it: partial saves (labels, order, removal) move it without touching the rest of the draft.
+  const [stored, setStored] = useState<Brief>(c.brief);
   const [length, setLength] = useState<LengthChoice>(() => lengthChoice(c.brief.durationSec));
   const [custom, setCustom] = useState(() => (lengthChoice(c.brief.durationSec) === 'custom' ? String(c.brief.durationSec) : ''));
   const [assets, setAssets] = useState(c.brief.assets.join(', '));
@@ -34,7 +41,77 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged }: { sl
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'save' | 'regenerate' | null>(null);
   const set = <K extends keyof Brief>(k: K, v: Brief[K]) => setBrief((b) => ({ ...b, [k]: v }));
-  const toggle = (fid: string) => set('formats', brief.formats.includes(fid) ? brief.formats.filter((x) => x !== fid) : [...brief.formats, fid]);
+  const labelsFor = (formats: string[], labels: Record<string, string> | undefined) => {
+    const kept = Object.fromEntries(Object.entries(labels ?? {}).filter(([k]) => formats.includes(k)));
+    return Object.keys(kept).length > 0 ? kept : undefined;
+  };
+  /** The draft's formats and labels together (a label never outlives its format). */
+  const setFormats = (formats: string[]) => setBrief((b) => {
+    const { formatLabels: _old, ...rest } = b;
+    const labels = labelsFor(formats, b.formatLabels);
+    return { ...rest, formats, ...(labels ? { formatLabels: labels } : {}) };
+  });
+  // A preset chip adds the preset, or takes out every instance of it.
+  const toggle = (pid: string) => {
+    const mine = brief.formats.filter((f) => presetOf(f) === pid);
+    setFormats(mine.length > 0 ? brief.formats.filter((f) => presetOf(f) !== pid) : [...brief.formats, pid]);
+  };
+  const [confirm, setConfirm] = useState<string | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const nameOf = (fid: string) => instanceName(presetFor(presets, fid), fid, locale, brief.formatLabels);
+  /** Order and removal are saved at once, as a partial save merged into the stored brief under the lock (Phase 12). */
+  const savePartial = async (patch: { formats?: string[]; formatLabels?: Record<string, string> }) => {
+    setError(null);
+    try {
+      const saved = await api.updateCreative(slug, detail.slug, patch);
+      setStored(saved.brief);
+      onRefresh?.();
+    } catch (e) { setError(t.web.instances.saveFailed({ detail: message(e) })); }
+  };
+  /** The formats the server has, in the draft's order, without `gone`. */
+  const storedOrder = (formats: string[], gone?: string) => formats.filter((f) => stored.formats.includes(f) && f !== gone);
+  const persistOrder = (formats: string[], gone?: string) => {
+    const next = storedOrder(formats, gone);
+    const cur = stored.formats;
+    if (next.length > 0 && (next.length !== cur.length || next.some((f, i) => f !== cur[i]))) void savePartial({ formats: next });
+  };
+  const move = (fid: string, to: number) => {
+    const from = brief.formats.indexOf(fid);
+    if (from < 0 || to < 0 || to >= brief.formats.length || to === from) return;
+    const next = brief.formats.filter((f) => f !== fid);
+    next.splice(to, 0, fid);
+    setFormats(next);
+    persistOrder(next);
+  };
+  const addAnother = (fid: string) => {
+    const next = nextInstanceId(presetOf(fid), brief.formats);
+    if (!next) return;
+    const last = brief.formats.reduce((k, f, i) => (presetOf(f) === presetOf(fid) ? i : k), -1);
+    setFormats([...brief.formats.slice(0, last + 1), next, ...brief.formats.slice(last + 1)]);
+  };
+  const remove = (fid: string) => {
+    setConfirm(null);
+    const next = brief.formats.filter((f) => f !== fid);
+    setFormats(next);
+    persistOrder(next, fid);
+  };
+  const commitLabel = (fid: string) => {
+    const value = (brief.formatLabels?.[fid] ?? '').trim();
+    if (!stored.formats.includes(fid) || (stored.formatLabels?.[fid] ?? '') === value) return;
+    const map = { ...(stored.formatLabels ?? {}) };
+    if (value) map[fid] = value; else delete map[fid];
+    void savePartial({ formatLabels: map });
+  };
+  const setLabel = (fid: string, value: string) => setBrief((b) => {
+    const { formatLabels: old, ...rest } = b;
+    const labels = { ...(old ?? {}), [fid]: value };
+    return { ...rest, formatLabels: labels };
+  });
+  const onDrop = (target: string) => (e: DragEvent) => {
+    e.preventDefault();
+    if (dragging && dragging !== target) move(dragging, brief.formats.indexOf(target));
+    setDragging(null);
+  };
   const groups = useMemo(() => {
     const m = new Map<string, FormatPreset[]>();
     for (const p of presets) m.set(p.channel, [...(m.get(p.channel) ?? []), p]);
@@ -46,8 +123,8 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged }: { sl
   // rules as the core (shared): the links this save will give, and the base the turn builds on.
   const converts = useMemo(() => {
     const base = c.resumeFrom ? detail.versions.find((v) => v.n === c.resumeFrom!.version) : detail.versions.at(-1);
-    return legacyTurnKind(base, { formats: brief.formats, links: linksAfterBriefSave(c.brief, brief.formats, presets) }) === 'convert';
-  }, [c.resumeFrom, c.brief, detail.versions, brief.formats, presets]);
+    return legacyTurnKind(base, { formats: brief.formats, links: linksAfterBriefSave(stored, brief.formats, presets) }) === 'convert';
+  }, [c.resumeFrom, stored, detail.versions, brief.formats, presets]);
 
   const durationSec = (): number | null | 'invalid' => {
     if (length === 'none') return null;
@@ -59,12 +136,16 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged }: { sl
     setError(null);
     const sec = durationSec();
     if (sec === 'invalid') { setError(nc.customInvalid); return; }
+    // A legacy brief may hold an id the core no longer accepts on a full save: say which, instead of a bare refusal.
+    const bad = brief.formats.find((f) => !INSTANCE_ID_RE.test(f));
+    if (bad !== undefined) { setError(t.web.instances.invalidId({ id: bad })); return; }
     setBusy(regenerate ? 'regenerate' : 'save');
     let saved = false;
     try {
       const chosen = services ?? c.brief.services;
-      const { services: _draft, ...rest } = brief;
-      await api.updateCreative(slug, detail.slug, { title, brief: { ...rest, durationSec: sec, assets: assets.split(',').map((a) => a.trim()).filter(Boolean), ...(chosen ? { services: chosen } : {}) }, linkedCodebases: codebases });
+      const { services: _draft, formatLabels: _labels, ...rest } = brief;
+      const labels = labelsFor(brief.formats, brief.formatLabels);
+      await api.updateCreative(slug, detail.slug, { title, brief: { ...rest, ...(labels ? { formatLabels: labels } : {}), durationSec: sec, assets: assets.split(',').map((a) => a.trim()).filter(Boolean), ...(chosen ? { services: chosen } : {}) }, linkedCodebases: codebases });
       saved = true;
       if (regenerate) await api.sendCreativeTurn(slug, detail.slug, {});
     } catch (e) { setError(message(e)); }
@@ -99,13 +180,64 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged }: { sl
             <span className="ms-brief-ghead"><ChannelMark channel={channelOf(channel)} />{channelName(channel, locale)}</span>
             <div className="ms-brief-chips">
               {items.map((p) => (
-                <Chip key={p.id} on={brief.formats.includes(p.id)} onClick={() => toggle(p.id)} icon={p.kind === 'video' ? 'video' : 'image'}
-                  title={`${p.width}×${p.height}`}>{formatName(p, locale)}</Chip>
+                <Chip key={p.id} on={brief.formats.some((f) => presetOf(f) === p.id)} onClick={() => toggle(p.id)} icon={p.kind === 'video' ? 'video' : 'image'}
+                  title={`${p.width}×${p.height}`}>{presetNameOf(p, locale)}</Chip>
               ))}
             </div>
           </div>
         ))}
       </div>
+      {brief.formats.length > 0 ? (
+        <>
+          <span className="ms-brief-lbl" id={`${id}-inst`}>{t.web.instances.title}</span>
+          <p className="ms-brief-hint">{t.web.instances.hint}</p>
+          <ol className="ms-brief-inst" aria-labelledby={`${id}-inst`}>
+            {brief.formats.map((fid, i) => {
+              const preset = presetFor(presets, fid);
+              const name = nameOf(fid);
+              const full = nextInstanceId(presetOf(fid), brief.formats) === null;
+              return (
+                <li key={fid} className={cx('ms-brief-inst-row', dragging === fid && 'ms-drag')} draggable={!disabled}
+                  onDragStart={(e) => { setDragging(fid); e.dataTransfer?.setData('text/plain', fid); }} onDragEnd={() => setDragging(null)}
+                  onDragOver={(e) => { if (dragging) e.preventDefault(); }} onDrop={onDrop(fid)}>
+                  <span className="ms-brief-inst-head">
+                    <span className="ms-brief-inst-grip" title={t.web.instances.dragHandle({ name })} aria-hidden="true"><Icon name="menu" size={13} /></span>
+                    {preset ? <ChannelMark channel={channelOf(preset.channel)} /> : null}
+                    <b className="ms-brief-inst-name">{name}</b>
+                  </span>
+                  <Input className="ms-brief-inst-label" aria-label={t.web.instances.labelOf({ name })} placeholder={t.web.instances.labelPlaceholder} maxLength={60}
+                    value={brief.formatLabels?.[fid] ?? ''} disabled={disabled} onChange={(e) => setLabel(fid, e.target.value)}
+                    onBlur={() => commitLabel(fid)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitLabel(fid); } }} />
+                  <span className="ms-brief-inst-actions">
+                    <Button size="sm" variant="ghost" icon aria-label={t.web.instances.moveUp({ name })} disabled={disabled || i === 0} onClick={() => move(fid, i - 1)}>
+                      <span className="ms-brief-up"><Icon name="chevron" size={13} /></span>
+                    </Button>
+                    <Button size="sm" variant="ghost" icon aria-label={t.web.instances.moveDown({ name })} disabled={disabled || i === brief.formats.length - 1} onClick={() => move(fid, i + 1)}>
+                      <Icon name="chevron" size={13} />
+                    </Button>
+                    <Button size="sm" variant="ghost" aria-label={t.web.instances.addAnother({ name })} title={full ? t.web.instances.full : undefined} disabled={disabled || full || !preset} onClick={() => addAnother(fid)}>
+                      <Icon name="plus" size={13} />{t.web.instances.addAnotherShort}
+                    </Button>
+                    <Button size="sm" variant="ghost" icon aria-label={t.web.instances.remove({ name })} disabled={disabled} onClick={() => setConfirm(fid)}>
+                      <Icon name="trash" size={13} />
+                    </Button>
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+        </>
+      ) : null}
+      <Modal open={confirm !== null} onClose={() => setConfirm(null)} label={confirm ? t.web.instances.removeTitle({ name: nameOf(confirm) }) : ''} width={420}>
+        <div className="ms-brief-confirm">
+          <h3>{confirm ? t.web.instances.removeTitle({ name: nameOf(confirm) }) : ''}</h3>
+          <p>{t.web.instances.removeBody}</p>
+          <div className="ms-brief-actions">
+            <Button variant="danger" onClick={() => { if (confirm) remove(confirm); }}>{t.web.instances.removeConfirm}</Button>
+            <Button variant="outline" onClick={() => setConfirm(null)}>{t.common.cancel}</Button>
+          </div>
+        </div>
+      </Modal>
       <span className="ms-brief-lbl">{t.web.services.title}</span>
       <p className="ms-brief-hint">{t.web.services.hint}</p>
       <ServicesSelector value={services ?? c.brief.services} configured={configured} checks={keyChecks} disabled={disabled} onChange={setServices} />

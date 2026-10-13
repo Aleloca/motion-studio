@@ -17,7 +17,7 @@
 // - The draft goes to the player with `setComposition` (coalesced per animation frame); a draft the runtime refuses is
 //   shown as a problem, never ignored.
 import {
-  channelName, compositionProblemText, formatName, type Composition, type EditorCompositionView, type FormatPreset, type Pin, type StagedAsset, type StageRequest,
+  channelName, compositionProblemText, type Composition, type EditorCompositionView, type FormatPreset, type Pin, type StagedAsset, type StageRequest,
 } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
@@ -41,6 +41,7 @@ import { clipPin, findClipById, rangePin, rangeTimes } from '../pinModel.ts';
 import { PinNoteDialog } from './PinNoteDialog.tsx';
 import { RangeSpans } from './RangeSpans.tsx';
 import { RangeDialog } from './RangeDialog.tsx';
+import { instanceName, presetFor } from '../../instances.ts';
 import { boardLabel } from '../CanvasBoard.tsx';
 import { ExportDialog, type ExportSnapshot } from '../ExportDialog.tsx';
 import { compositionOf } from '../renderModel.ts';
@@ -113,8 +114,9 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const states = useMemo(() => (detail ? formatStates(detail, presets) : {}), [detail, presets]);
   const primary = states[format]?.follows ?? format;
   const followers = useMemo(() => followersOf(states, primary), [states, primary]);
-  const preset = presets.find((p) => p.id === primary);
-  const labelOf = useCallback((id: string) => boardLabel({ id, preset: presets.find((p) => p.id === id) ?? null, out: null }, locale), [presets, locale]);
+  const preset = presetFor(presets, primary) ?? undefined;
+  const labels = detail?.creative.brief.formatLabels;
+  const labelOf = useCallback((id: string) => boardLabel({ id, preset: presetFor(presets, id), out: null, labels }, locale), [presets, locale, labels]);
 
   // The draft of (creative, primary format): a module store, found again after a route change.
   const key = draftKey(slug, creative, primary);
@@ -300,7 +302,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const savedTimer = useRef(0);
   useEffect(() => () => window.clearTimeout(savedTimer.current), []);
   const nextN = (latest?.n ?? n ?? 0) + 1;
-  const reelName = preset ? formatName(preset, locale) : primary;
+  const reelName = instanceName(preset ?? null, primary, locale, labels);
   const save = useCallback(async (): Promise<boolean> => {
     const d = peekDraft(key);
     if (!d || saving) return false;
@@ -550,7 +552,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
         <>
           <span className="ms-crumb ms-last ms-fv-crumb">
             <span className="ms-faint" aria-hidden="true">/</span>
-            <b aria-current="page" title={preset ? channelName(preset.channel, locale) : undefined}>{preset ? formatName(preset, locale) : primary}</b>
+            <b aria-current="page" title={preset ? channelName(preset.channel, locale) : undefined}>{reelName}</b>
           </span>
           {meta ? <span className="ms-fv-meta">{meta}</span> : null}
         </>,
@@ -696,7 +698,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
         </div>
       </Modal>
       <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
-        title={detail?.creative.title ?? ''} snapshot={exporting?.snapshot ?? null} presets={presets} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} />
+        title={detail?.creative.title ?? ''} snapshot={exporting?.snapshot ?? null} presets={presets} labels={detail?.creative.brief.formatLabels} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} />
     </div>
   );
   // Tasks 6 to 10 read the draft, the player and the selection from here (`useEditor()`).

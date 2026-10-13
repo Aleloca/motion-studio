@@ -3,7 +3,7 @@ import { recoverRenameJournal } from '../library/rename-recovery.ts';
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { INSTANCE_FOLDER_RE, briefSchema, briefWriteSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
+import { INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -53,7 +53,17 @@ const isInsideDir = (p: string, base: string | null) => Boolean(base && p.starts
 export const turnBodySchema = z.object({ text: z.string().max(10_000).optional(), pins: z.array(pinSchema).max(50).optional(), formats: z.array(z.string().min(1).max(200)).max(100).optional() });
 const createBody = z.object({ title: z.string(), brief: briefWriteSchema, generate: z.boolean().optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
 // `services` alone changes only that field of the stored brief (the composer's Services chip); `brief` replaces the brief.
-const editBody = z.object({ title: z.string().optional(), brief: briefWriteSchema.optional(), services: briefSchema.shape.services, linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
+// `formatLabels` / `formats` alone merge into the stored brief the same way (Phase 12: inline labels, reorder, removal).
+const editBody = z.object({ title: z.string().optional(), brief: briefWriteSchema.optional(), services: briefSchema.shape.services,
+  formatLabels: z.record(z.string(), z.string().trim().min(1).max(60)).optional(),
+  formats: z.array(z.string().regex(INSTANCE_ID_RE)).min(1).max(100).optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
+/** Ruling H: a full brief save whose `formatLabels` name formats it no longer has drops those labels (no 400). */
+function pruneLabelsOfRemovedFormats(raw: unknown): unknown {
+  const b = (raw as { brief?: { formats?: unknown; formatLabels?: unknown } } | null)?.brief;
+  if (!b || !Array.isArray(b.formats) || !b.formatLabels || typeof b.formatLabels !== 'object' || Array.isArray(b.formatLabels)) return raw;
+  const kept = Object.fromEntries(Object.entries(b.formatLabels).filter(([k]) => (b.formats as unknown[]).includes(k)));
+  return { ...(raw as object), brief: { ...b, formatLabels: kept } };
+}
 const pickBody = z.object({ format: z.string().min(1).max(200), version: z.number().int().min(1).nullable() });
 /**
  * Export of the ★ versions (spec §3.3): `picks` (format → vN), `follow` (followers, exported in their primary's version),
@@ -257,7 +267,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   });
 
   app.put<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c', async (req) => {
-    const body = parse(editBody, req.body);
+    const body = parse(editBody, pruneLabelsOfRemovedFormats(req.body));
     const ref = await refOf(req.params.slug, req.params.c);
     return ctx.turns.updateBrief(ref, body);
   });

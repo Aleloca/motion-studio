@@ -667,13 +667,13 @@ export class PreviewService {
   }
 }
 
+/** `<folder>.<hex>.tmp`: a storyboard folder being written (`folder` a preset or an instance id). */
+const STORYBOARD_TEMP_RE = new RegExp(`^${INSTANCE_FOLDER_SOURCE}\\.[0-9a-f]{12}\\.tmp$`);
+
 /**
  * Leftover storyboard temp folders (`<format>.<hex>.tmp`, a crash while one was written) of a project, older than
  * `olderThanMs` (default 10 min, so a storyboard being written now is never touched). Startup and workspace switch.
  */
-/** `<folder>.<hex>.tmp`: a storyboard folder being written (`folder` a preset or an instance id). */
-const STORYBOARD_TEMP_RE = new RegExp(`^${INSTANCE_FOLDER_SOURCE}\\.[0-9a-f]{12}\\.tmp$`);
-
 export async function sweepStoryboardTemps(projectDir: string, o: { now?: number; olderThanMs?: number } = {}): Promise<string[]> {
   const root = join(projectDir, '.studio', 'cache', 'storyboards');
   const limit = (o.now ?? Date.now()) - (o.olderThanMs ?? 10 * 60_000);

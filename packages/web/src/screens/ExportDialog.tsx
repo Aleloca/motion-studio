@@ -5,7 +5,7 @@
 // is remembered; progress, then a success screen with Show in Finder. File sizes are not shown: the API does not report
 // them (ruling R6).
 import {
-  EXPORT_NAME_TOKENS, exportDate, exportExtension, exportNameCollisions, exportNameVars, formatName, renderName, renderProblems, renderState,
+  EXPORT_NAME_TOKENS, exportDate, exportExtension, exportNameCollisions, exportNameVars, renderName, renderProblems, renderState, separateInstanceNames,
   type FormatPreset, type JobSummary, type VersionEntry, type WorkspaceSettings,
 } from '@motion-studio/shared';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -15,6 +15,7 @@ import { useLocale, useT } from '../i18n.tsx';
 import { pop } from '../motion/index.ts';
 import { isMac } from '../platform.ts';
 import { Button, ChannelMark, Check, Chip, Icon, Input, Modal, ProgressBar, cx } from '../ui/index.ts';
+import { instanceName, presetFor } from '../instances.ts';
 import { boardLabel } from './CanvasBoard.tsx';
 import { outputMedia } from './canvasModel.ts';
 import { channelOf } from './creativeState.ts';
@@ -41,6 +42,8 @@ export interface ExportDialogProps {
   title: string;
   snapshot: ExportSnapshot | null;
   presets: FormatPreset[];
+  /** The brief's labels of format instances: rows are named after them (Phase 12). */
+  labels?: Record<string, string>;
   /** The workspace's file name pattern: the field starts with it. */
   pattern: string;
   /** The workspace settings after "Save as default". */
@@ -114,7 +117,7 @@ interface Row {
   problems: string[];
 }
 
-function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern: initialPattern, onSettings, onBusy, jobs = {} }: ExportDialogProps & { snapshot: ExportSnapshot; onBusy(busy: boolean): void }) {
+function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels, pattern: initialPattern, onSettings, onBusy, jobs = {} }: ExportDialogProps & { snapshot: ExportSnapshot; onBusy(busy: boolean): void }) {
   const t = useT();
   const x = t.web.exportUi;
   const locale = useLocale();
@@ -128,16 +131,15 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
     const version = fileN === null ? undefined : versions.find((v) => v.n === fileN);
     const output = version?.outputs.find((o) => o.format === s.id) ?? null;
     const needsRender = version !== undefined && compositionOf(version, s.id) !== null && renderState(version, s.id) !== 'rendered';
-    const preset = presets.find((pr) => pr.id === s.id) ?? null;
-    const primaryPreset = s.follows ? presets.find((pr) => pr.id === s.follows) : undefined;
-    const follows = s.follows ? (primaryPreset ? formatName(primaryPreset, locale) : s.follows) : null;
+    const preset = presetFor(presets, s.id);
+    const follows = s.follows ? instanceName(presetFor(presets, s.follows), s.follows, locale, labels) : null;
     const blocked = needsRender ? null : !output
       ? (follows !== null ? x.noFollowerFile({ n, primary: follows }) : x.fileMissing({ n }))
       : s.starFileMissing ? x.fileMissing({ n: fileN ?? n }) : null;
     const file = output?.file ?? (needsRender ? `${s.id}${renderedExtension(preset)}` : null);
     const problems = version && !needsRender && renderProblems(version, s.id).length ? shortProblems(output, t, locale) : [];
     return [{ id: s.id, preset, n, fileN, output, needsRender, file, follows, newer: follows === null ? s.star.newer : null, blocked, problems }];
-  }), [states, versions, presets, x, locale, t]);
+  }), [states, versions, presets, labels, x, locale, t]);
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(rows.map((r) => [r.id, r.blocked === null && r.problems.length === 0])));
   const [pattern, setPattern] = useState(initialPattern);
   const [savedPattern, setSavedPattern] = useState(initialPattern);
@@ -167,9 +169,13 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
 
   // The final names: the pattern rendered per row with the same shared code as the core, extension added.
   const vars = (r: Row) => exportNameVars({ title, slug: creative, format: r.id, preset: r.preset ?? undefined, size: r.output ?? undefined, version: r.n, date });
-  const named = rows.map((r) => {
-    const rendered = r.file ? renderName(pattern, vars(r)) : null;
-    return { row: r, name: rendered?.ok && r.file ? `${rendered.name}${exportExtension(r.file)}` : null };
+  const rendered = rows.map((r) => (r.file ? renderName(pattern, vars(r)) : null));
+  // Instances that would share a name are told apart exactly as the core does it on export (shared code).
+  const stems = separateInstanceNames(rows.flatMap((r, i) => (rendered[i]?.ok && r.file ? [{ format: r.id, stem: rendered[i]!.name, ext: exportExtension(r.file) }] : [])));
+  let k = 0;
+  const named = rows.map((r, i) => {
+    const ok = rendered[i]?.ok && r.file;
+    return { row: r, name: ok ? `${stems[k++]!}${exportExtension(r.file!)}` : null };
   });
   const chosen = named.filter((c) => c.row.blocked === null && on[c.row.id]);
   // Unknown variables are the same on every row: they are left out of the names and flagged here.
@@ -240,7 +246,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
       // A render made now that had problems was not copied: said apart, with its short reasons (P2).
       const excluded = (r.excluded ?? []).map((e) => {
         const row = rows.find((x) => x.id === e.format);
-        const label = boardLabel({ id: e.format, preset: row?.preset ?? null, out: row?.output ?? null }, locale);
+        const label = boardLabel({ id: e.format, preset: row?.preset ?? null, out: row?.output ?? null, labels }, locale);
         return x.excludedItem({ label, n: e.version, list: shortProblems(e, t, locale).join('; ') });
       });
       setPhase({ kind: 'done', destination: r.destination, count: r.files.length, skipped: r.skipped ?? [], excluded });
@@ -292,7 +298,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, pattern
         <div className="ms-exp-rows">
           <div className="ms-exp-row ms-exp-cols ms-cap" aria-hidden="true"><span /><span /><span>{x.format}</span><span>{x.version}</span></div>
           {named.map(({ row: r, name }) => {
-            const label = boardLabel({ id: r.id, preset: r.preset, out: r.output }, locale);
+            const label = boardLabel({ id: r.id, preset: r.preset, out: r.output, labels }, locale);
             const media = r.output && r.fileN !== null ? outputMedia(slug, creative, r.fileN, r.output) : null;
             const aspect = r.preset ? r.preset.width / r.preset.height : r.output ? r.output.width / r.output.height : 1;
             const blocked = r.blocked !== null;

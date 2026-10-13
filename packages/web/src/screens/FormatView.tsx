@@ -11,7 +11,7 @@
 // (Transport.tsx, shared with Compare), the comment layer and the hint read, so the page (bar, chat) does not
 // re-render while the video plays.
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
-import { channelName, isDurationOffBrief, pinClipName, DEFAULT_EXPORT_NAME_PATTERN, DEFAULT_FORMATS, formatName, type Composition, type FormatPreset, type Pin, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
+import { channelName, isDurationOffBrief, pinClipName, DEFAULT_EXPORT_NAME_PATTERN, DEFAULT_FORMATS, type Composition, type FormatPreset, type Pin, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import {
   useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type CSSProperties, type MouseEvent,
@@ -28,9 +28,10 @@ import { href, routeKey } from '../routes.ts';
 import { useBarClaim } from '../shell/barSlots.ts';
 import { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } from '../shell/intents.ts';
 import { go, ShellContext } from '../shell/ShellContext.tsx';
-import { Button, ChannelMark, Empty, Icon, Pill, Select, Spinner, Toggle, cx } from '../ui/index.ts';
+import { Button, ChannelMark, Empty, Icon, Pill, Select, Spinner, Toggle, cx, toast } from '../ui/index.ts';
 import { useCreative } from '../useCreative.ts';
 import { boardLabel, PinBubble, SafeZoneBands, type Draft } from './CanvasBoard.tsx';
+import { instanceName, presetFor } from '../instances.ts';
 import { outputUrl, pointIn, ratioText } from './canvasModel.ts';
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf, lastStep } from './creativeState.ts';
@@ -131,7 +132,8 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
 
   // The format and what this version made of it.
   const loading = !detail || !presetsLoaded;
-  const preset = presets.find((p) => p.id === format) ?? (presetsLoaded ? null : DEFAULT_FORMATS.find((p) => p.id === format) ?? null);
+  const preset = presetFor(presets, format) ?? (presetsLoaded ? null : presetFor(DEFAULT_FORMATS, format));
+  const labels = detail?.creative.brief.formatLabels;
   const out = version?.outputs.find((o) => o.format === source.format) ?? null;
   const known = Boolean(detail && (detail.creative.brief.formats.includes(format) || versions.some((v) => v.outputs.some((o) => o.format === format))));
   // A v2 version (Task 8): the live player replaces the <video>; a legacy version (no session, 404) keeps its media.
@@ -144,7 +146,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   // Proportions: the preset, the output, or (an unknown custom preset still loading) the board it grows from.
   const width = preset?.width ?? out?.width ?? (origin?.width ? Math.round(origin.width) : 1080);
   const height = preset?.height ?? out?.height ?? (origin?.height ? Math.round(origin.height) : 1080);
-  const label = boardLabel({ id: format, preset, out: null }, locale);
+  const label = boardLabel({ id: format, preset, out: null, labels }, locale);
   const src = out && version ? outputUrl(slug, creative, version.n, out.file) : null;
   const poster = out?.preview && version ? outputUrl(slug, creative, version.n, out.preview) : undefined;
 
@@ -331,6 +333,25 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
     go(href.edit(slug, creative, format));
   };
 
+  // Duplicate format (Phase 12): the next free instance of this format, copied from the version on screen; opens the new one.
+  const [duplicating, setDuplicating] = useState(false);
+  const duplicate = async () => {
+    if (!version || duplicating) return;
+    setDuplicating(true);
+    setActionError(null);
+    try {
+      const r = await api.duplicateFormat(slug, creative, version.n, { instanceId: format });
+      pause();
+      keepVersion({});
+      reload();
+      toast.show(t.web.instances.duplicated({ label: instanceName(preset, r.instanceId, locale, labels) }), { tone: 'ok' });
+      go(href.format(slug, creative, r.instanceId));
+    } catch (e) {
+      setActionError(t.web.instances.duplicateFailed({ detail: message(e) }));
+    }
+    setDuplicating(false);
+  };
+
   // Comments.
   const place = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
@@ -416,7 +437,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
 
   // Chat callbacks are stable: the panel re-renders only when the conversation or the comments change.
   const onEditChip = useCallback((i: number) => openPinRef.current(i + 1), []);
-  const formatLabel = useCallback((id: string) => boardLabel({ id, preset: presets.find((p) => p.id === id) ?? null, out: null }, locale), [presets, locale]);
+  const formatLabel = useCallback((id: string) => boardLabel({ id, preset: presetFor(presets, id), out: null, labels }, locale), [presets, locale, labels]);
   const onSent = useCallback(({ pins: sent }: { pins: Pin[] }) => { setStored((ps) => ps.filter((p) => !sent.includes(p.pin))); setViewing({}); reload(); }, [setStored, reload]);
   // "View vN" of a version card: this format's file as it was in vN.
   const onSelectVersion = useCallback((v: number) => {
@@ -497,7 +518,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
           <span className="ms-crumb ms-last ms-fv-crumb">
             <span className="ms-faint" aria-hidden="true">/</span>
             {preset ? <ChannelMark channel={channelOf(preset.channel)} /> : null}
-            <b aria-current="page" title={preset ? channelName(preset.channel, locale) : undefined}>{preset ? formatName(preset, locale) : format}</b>
+            <b aria-current="page" title={preset ? channelName(preset.channel, locale) : undefined}>{instanceName(preset, format, locale, labels)}</b>
           </span>
           <span className="ms-fv-meta">{meta}</span>
           {out && !out.verified ? <Pill tone="warn" className="ms-cv-state-pill">{t.web.formatUi.unverified}</Pill> : null}
@@ -519,6 +540,11 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
           ) : null}
           {versions.length && cr ? (
             <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={actions} buttonRef={versionButton} />
+          ) : null}
+          {comp !== null && !working ? (
+            <Button variant="outline" className="ms-fv-duplicate" title={t.web.instances.duplicateHint({ label })} loading={duplicating} onClick={() => void duplicate()}>
+              <Icon name="copy" size={13} strokeWidth={1.7} />{t.web.instances.duplicate}
+            </Button>
           ) : null}
           {comp !== null && !working && preview.state.kind !== 'legacy' ? (
             <Button variant="outline" className="ms-cv-edit" aria-label={t.web.editor.editOf({ label })} onClick={openEditor}>
@@ -661,10 +687,10 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
 
       {compare ? (
         <CompareDialog open={compare.open} onClose={() => setCompare((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
-          versions={versions} presets={presets} states={states} format={source.format} initial={compare.init} actions={actions} />
+          versions={versions} presets={presets} labels={cr?.brief.formatLabels} states={states} format={source.format} initial={compare.init} actions={actions} />
       ) : null}
       <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
-        title={cr?.title ?? ''} snapshot={exporting?.snapshot ?? null} presets={presets} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} />
+        title={cr?.title ?? ''} snapshot={exporting?.snapshot ?? null} presets={presets} labels={cr?.brief.formatLabels} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} />
     </div>
   );
 }
