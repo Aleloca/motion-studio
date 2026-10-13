@@ -152,7 +152,9 @@
 .ms-composer .ms-textarea { background: transparent; box-shadow: none; padding: 0; min-height: 0; }
 .ms-composer .ms-textarea:focus, .ms-composer .ms-textarea:focus-visible { box-shadow: none; }
 .ms-composer-foot { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.ms-composer-hint { font-size: 11px; color: var(--faint); flex: 1; min-width: 0; }
+.ms-composer-hint { font-size: 11px; color: var(--faint); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The Services chip gives way first (its summary ellipsizes); the hint stays on one line. */
+.ms-composer-foot > .ms-services-chip { flex: 0 100 auto; overflow: hidden; }
 .ms-composer-send { border-radius: 50%; box-shadow: none; }
 .ms-composer-error { margin: 0; font-size: 12px; color: var(--warn); overflow-wrap: anywhere; }
 
