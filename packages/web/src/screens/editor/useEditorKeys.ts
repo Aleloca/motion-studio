@@ -33,3 +33,30 @@ export function useEditorKeys(root: RefObject<Element | null>, enabled: boolean,
   usePageShortcut(root, (e) => plain(e) && (e.key === 'Delete' || e.key === 'Backspace'), () => handlers.current.remove());
   usePageShortcut(root, (e) => plain(e) && e.key === 'Escape', () => handlers.current.deselect());
 }
+
+export interface NudgeHandlers {
+  /** Whether a boxed clip is selected (otherwise the keys are left alone). */
+  can(): boolean;
+  /** Moves the selected clip by whole composition pixels. */
+  nudge(dx: number, dy: number): void;
+}
+
+const ARROWS: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+
+/**
+ * Alt+arrows nudge the selected clip by 1 composition pixel, Alt+Shift+arrows by 10. Plain arrows stay frame-step. Never while
+ * typing, never from a modal or popover on top. The caller coalesces a burst into one undo step and refuses locked clips.
+ */
+export function useNudgeKeys(root: RefObject<Element | null>, enabled: boolean, h: NudgeHandlers): void {
+  const handlers = useRef(h);
+  handlers.current = h;
+  usePageShortcut(
+    root,
+    (e) => enabled && e.altKey && !e.metaKey && !e.ctrlKey && !e.isComposing && Object.hasOwn(ARROWS, e.key) && !isTyping(e) && !inOverlay(e) && handlers.current.can(),
+    (e) => {
+      const [dx, dy] = ARROWS[e.key]!;
+      const n = e.shiftKey ? 10 : 1;
+      handlers.current.nudge(dx * n, dy * n);
+    },
+  );
+}

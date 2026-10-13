@@ -46,11 +46,13 @@ import { draftKey, isDirty, peekDraft, useDraft, type Draft } from './draftStore
 import { EditorContext, type EditorState } from './editorContext.ts';
 import { registerLeaveGuard } from './leaveGuard.ts';
 import { ScenesColumn } from './ScenesColumn.tsx';
+import { nudgeClip, nudgeable } from './nudge.ts';
 import { Stage } from './Stage.tsx';
 import { Timeline } from './Timeline.tsx';
-import { useEditorKeys } from './useEditorKeys.ts';
+import { Inspector } from './Inspector.tsx';
+import { useEditorKeys, useNudgeKeys } from './useEditorKeys.ts';
 import { usePlayerControls } from './usePlayerControls.ts';
-import { DEFAULT_EXPORT_NAME_PATTERN } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_NAME_PATTERN, editProblemText } from '@motion-studio/shared';
 import './editor.css';
 
 export interface EditorScreenProps {
@@ -342,6 +344,19 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     remove: () => toast.show(e.keysDeleteClip),
   });
 
+  // Alt+arrows nudge the selected clip (the inspector's X and Y are the other keyboard path): one undo step per burst.
+  useNudgeKeys(root, Boolean(draft) && active && leave === null, {
+    can: () => (draft ? nudgeable(draft, selection) : false),
+    nudge: (dx, dy) => {
+      const fresh = peekDraft(key) ?? draft; // the store now: two presses in one tick must not start from the same x
+      if (!fresh) return;
+      const r = nudgeClip(fresh, actions, selection, dx, dy);
+      if (r.ok) return;
+      if (r.reason === 'locked') toast.show(e.locked);
+      else if (r.reason === 'refused') toast.show(editProblemText(r.result.problem, locale));
+    },
+  });
+
   // Back to the format view (the version stays the one edited).
   const back = () => {
     controls.pause();
@@ -504,8 +519,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
                 formatName={labelOf} canGenerate={versions.length === 0} onSent={onSent} beforeSend={beforeSend} snapshots={live.snapshots} appliesTo={appliesTo} />
             ) : <div className="ms-cv-state"><Spinner size={16} label={c.loading} /></div>
           ) : (
-            // Task 8 puts the inspector here.
-            <div className="ms-ed-slot" data-slot="inspector"><p>{e.inspectorSoon}</p></div>
+            ctx ? <Inspector /> : <div className="ms-ed-slot" data-slot="inspector"><p>{e.inspectorSoon}</p></div>
           )}
         </div>
       </aside>

@@ -166,3 +166,42 @@
 .ms-tl-playhead { position: absolute; top: 0; bottom: 0; width: 1px; margin-left: -.5px; background: var(--accent); z-index: 2; pointer-events: none; }
 .ms-tl-guide { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--accentText); z-index: 2; pointer-events: none; }
 .ms-tl-overlay { position: absolute; top: 26px; bottom: 0; right: 0; pointer-events: none; z-index: 1; }
+
+/* The inspector (Task 8): sections of the selected clip, rows with their problems, the asset picker. */
+.ms-insp-wrap, .ms-insp-empty { display: flex; flex-direction: column; min-height: 0; }
+.ms-insp-empty { padding: 24px 16px; }
+.ms-insp { display: flex; flex-direction: column; min-width: 0; }
+.ms-insp-head { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-bottom: 1px solid var(--line2); }
+.ms-insp-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-insp-kind { font-size: 11px; color: var(--muted); }
+.ms-insp-locked { display: flex; align-items: center; gap: 6px; margin: 0; padding: 8px 14px; font-size: 12px; color: var(--muted); background: var(--field); }
+.ms-insp-sec { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line2); min-width: 0; }
+.ms-insp-sec > h4 { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--muted); }
+.ms-insp-row { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ms-insp-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 0; }
+.ms-insp-grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; min-width: 0; }
+.ms-insp-err { margin: 0; font-size: 11.5px; line-height: 1.4; color: var(--warn); overflow-wrap: anywhere; }
+.ms-insp-note { margin: 0; font-size: 11.5px; line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }
+.ms-insp-slider { width: 100%; }
+.ms-insp-vol { display: flex; flex-direction: column; gap: 6px; }
+.ms-insp-cap { font-size: 11px; color: var(--muted); }
+.ms-insp-param { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ms-insp-file { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ms-insp-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; }
+.ms-insp-warn { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 10px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--warn); }
+.ms-insp-warn p { margin: 0; font-size: 12px; line-height: 1.45; color: var(--text); }
+.ms-insp-slot { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ms-insp-slot-name { font-size: 12px; }
+.ms-picker { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px; min-width: 0; }
+.ms-picker-head { display: flex; align-items: center; gap: 10px; }
+.ms-picker-head h2 { flex: 1; margin: 0; font-size: 16px; font-weight: 600; }
+.ms-picker-state, .ms-picker-empty { margin: 0; padding: 18px 0; font-size: 13px; color: var(--muted); text-align: center; }
+.ms-picker-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 340px; overflow: auto; }
+.ms-picker-item { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 10px; border: 0; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.ms-picker-item:hover:not(:disabled), .ms-picker-item.ms-on { box-shadow: inset 0 0 0 1px var(--accent); }
+.ms-picker-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ms-picker-item:disabled { cursor: default; opacity: .7; }
+.ms-picker-name { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.ms-picker-desc { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.ms-picker-busy { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--muted); }
+.ms-picker-foot { display: flex; justify-content: flex-end; }

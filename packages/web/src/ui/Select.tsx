@@ -1,11 +1,17 @@
-import { useId, useRef, useState, type KeyboardEvent } from 'react';
+import { Fragment, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { cx } from './cx.ts';
 import { Icon } from './Icon.tsx';
 import type { IconName } from './icons.ts';
 import { Popover } from './Popover.tsx';
 import { rovingIndex } from './roving.ts';
 
-export interface SelectOption<T extends string> { value: T; label: string }
+export interface SelectOption<T extends string> {
+  value: T; label: string;
+  /** Listed but not choosable (arrows skip it); `hint` says why, under the label. */
+  disabled?: boolean; hint?: string;
+  /** A heading shown before this option when it differs from the previous option's group. */
+  group?: string;
+}
 
 export interface SelectProps<T extends string> {
   value: T;
@@ -46,6 +52,7 @@ export function Select<T extends string>({ value, options, onChange, label, clas
   };
   const choose = (i: number) => {
     const o = options[i];
+    if (o?.disabled) return;
     setOpen(false);
     if (o && o.value !== value) onChange(o.value);
   };
@@ -58,9 +65,13 @@ export function Select<T extends string>({ value, options, onChange, label, clas
   };
 
   const onListKey = (e: KeyboardEvent<HTMLDivElement>) => {
-    const next = rovingIndex(e.key, active, options.length);
+    let next = rovingIndex(e.key, active, options.length);
     if (next !== null) {
       e.preventDefault();
+      // Disabled options are skipped, in the direction of the key (Home and End look inward).
+      const dir = e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'End' ? -1 : 1;
+      for (let guard = 0; guard < options.length && options[next]?.disabled; guard++) next = (next + dir + options.length) % options.length;
+      if (options[next]?.disabled) return;
       setActive(next);
       document.getElementById(optId(next))?.scrollIntoView?.({ block: 'nearest' });
       return;
@@ -110,20 +121,23 @@ export function Select<T extends string>({ value, options, onChange, label, clas
           {options.map((o, i) => {
             const on = i === selected;
             return (
-              <div
-                key={o.value}
-                id={optId(i)}
-                role="option"
-                aria-selected={on}
-                data-row=""
-                className={cx('ms-option', i === active && 'ms-active', on && 'ms-on')}
-                onMouseDown={(e) => e.preventDefault()}
-                onMouseMove={() => { if (i !== active) setActive(i); }}
-                onClick={() => choose(i)}
-              >
-                <span className="ms-option-label">{o.label}</span>
-                {on ? <Icon name="check" size={14} strokeWidth={2} /> : null}
-              </div>
+              <Fragment key={o.value}>
+                {o.group !== undefined && o.group !== options[i - 1]?.group ? <div role="presentation" className="ms-option-group">{o.group}</div> : null}
+                <div
+                  id={optId(i)}
+                  role="option"
+                  aria-selected={on}
+                  aria-disabled={o.disabled || undefined}
+                  data-row=""
+                  className={cx('ms-option', i === active && 'ms-active', on && 'ms-on', o.disabled && 'ms-off')}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onMouseMove={() => { if (i !== active && !o.disabled) setActive(i); }}
+                  onClick={() => choose(i)}
+                >
+                  <span className="ms-option-label">{o.label}{o.hint ? <small className="ms-option-hint">{o.hint}</small> : null}</span>
+                  {on ? <Icon name="check" size={14} strokeWidth={2} /> : null}
+                </div>
+              </Fragment>
             );
           })}
         </div>
