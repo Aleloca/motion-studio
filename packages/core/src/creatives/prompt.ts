@@ -145,7 +145,10 @@ export function directEditSection(i: Pick<PromptInput, 'slug' | 'directEdit' | '
     const n = d.version;
     out.push('## Direct edits by the user',
       `v${n} contains direct edits by the user: ${oneLine(d.summary, 2000)}. Build on v${n}; keep those edits unless the user asks to change them.`,
-      `- Start from its compositions: \`${base}/outputs/v${n}/compositions/<format-id>/\` (read-only)${d.copies.length > 0 ? `; an exact copy of each is in \`${base}/work/editor/<format-id>/\` (${d.copies.join(', ')})` : ''}. Your earlier notes, sources and scripts in \`${base}/work/\` predate these edits: do not regenerate the compositions from them without applying the edits.`,
+      ...(d.copies.length > 0
+        ? [`- \`${base}/work/editor/<format-id>/\` is the current source of ${d.copies.length === 1 ? 'that format' : 'those formats'} (${d.copies.join(', ')}): an exact copy of \`${base}/outputs/v${n}/compositions/<format-id>/\` with the user's edits. Build on it; any other copy of ${d.copies.length === 1 ? 'its composition' : 'their compositions'} elsewhere in \`${base}/work/\` is superseded.`]
+        : [`- Start from its compositions: \`${base}/outputs/v${n}/compositions/<format-id>/\` (read-only).`]),
+      `- Your generators and scripts in \`${base}/work/\` predate these edits: if you run one again, reapply the edits to what it produces; otherwise edit the composition directly.`,
       `- Keep the values the user set (texts, colours, fonts, positions, timing, durations) and keep the files under \`assets/lib/\` of those compositions: copy them with the composition.`);
   }
   if (i.keptDurations?.length) {

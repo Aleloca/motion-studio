@@ -309,7 +309,9 @@ describe('buildCreativePrompt, output contract v2 (Task 5b)', () => {
       keptDurations: [{ format: 'instagram-post-1x1', durationSec: 7.04 }] });
     expect(p).toContain('## Direct edits by the user\nv4 contains direct edits by the user: Direct edits: title text x. Build on v4; keep those edits unless the user asks to change them.');
     expect(p).toContain('outputs/v4/compositions/<format-id>/');
-    expect(p).toContain('work/editor/<format-id>/` (instagram-post-1x1)');
+    expect(p).toContain('work/editor/<format-id>/` is the current source of that format (instagram-post-1x1): an exact copy of `creatives/');
+    expect(p).toContain('is superseded.');
+    expect(p).toContain('predate these edits: if you run one again, reapply the edits to what it produces; otherwise edit the composition directly.');
     expect(p).toMatch(/Keep the current duration \(instagram-post-1x1: 7s\) unless the user explicitly asks for another one/);
     const alone = buildCreativePrompt({ ...v2, kind: 'iteration', userText: 'x', keptDurations: [{ format: 'instagram-post-1x1', durationSec: 7 }] });
     expect(alone).toContain('## Durations');
