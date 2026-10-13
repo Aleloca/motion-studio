@@ -44,6 +44,7 @@ import { registerVoicesRoutes } from './voices-routes.ts';
 import { KeyCheckCache } from '../providers/key-check.ts';
 import { GoogleFontsCatalog } from '../providers/google-fonts-catalog.ts';
 import type { HttpDeps } from '../providers/http.ts';
+import { registerLocalizationRoutes } from './localization-routes.ts';
 import type { InstallIo } from '../providers/google-fonts.ts';
 import { registerBrandRoutes } from './brand-routes.ts';
 import { EventHub } from './event-hub.ts';
@@ -469,6 +470,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   registerLibraryRoutes(app, routeCtx);
   const fontsHttp = deps.fontsHttp ?? { fetch: globalThis.fetch };
   registerFontsRoutes(app, { ...routeCtx, catalog: new GoogleFontsCatalog({ configDir, http: fontsHttp }), http: fontsHttp, signer: new UrlSigner(deps.signedUrlTtlMs), ...(deps.fontsInstallIo ? { installIo: deps.fontsInstallIo } : {}) });
+  registerLocalizationRoutes(app, { requireWorkspace, turns, media, presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets, fontsHttp,
+    ...(deps.fontsInstallIo ? { fontsIo: deps.fontsInstallIo } : {}) });
   registerVoicesRoutes(app, { vault, http: deps.voicesHttp ?? { fetch: globalThis.fetch }, signer: new UrlSigner(deps.signedUrlTtlMs), keyChecks });
   registerGenerateRoutes(app, { requireWorkspace, vault, approvals, media, queue, keyChecks, http: deps.generateHttp ?? { fetch: globalThis.fetch }, broadcast: (m) => hub.broadcast(m) });
   registerProjectRoutes(app, { requireWorkspace, jobKeyOf: projectJobKey, broadcast: (m) => hub.broadcast(m) });

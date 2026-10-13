@@ -177,9 +177,22 @@ export const versionEntrySchema = z.object({
     locale: localeTag, instanceId: z.string().regex(INSTANCE_ID_RE), hash: z.string().regex(HEX64),
     origin: z.enum(['agent', 'editor']), stale: z.array(z.string()),
     voice: z.enum(['translated', 'original', 'muted']), problems: z.array(z.string()).optional(),
+    /**
+     * The latest render of this language and instance (`outputs/vN/<instanceId>.<locale>.<ext>`, Phase 12 §3.5), written by
+     * the core. Current while `overlayHash` is the row's `hash` and `fromComposition` the instance's composition hash;
+     * `forced`: rendered with open problems or outdated entries ("render anyway"), whose ids are in `stale`.
+     */
+    render: z.object({
+      file: z.string().regex(FILE_NAME).refine((f) => f !== '.' && f !== '..', 'issue.fileName'),
+      width: z.number().int().positive(), height: z.number().int().positive(), durationSec: z.number().positive().nullable(),
+      sha256: z.string().regex(HEX64), fromComposition: z.string().regex(HEX64), overlayHash: z.string().regex(HEX64),
+      forced: z.boolean(), stale: z.array(z.string()), problems: z.array(z.string()).optional(), renderedAt: z.iso.datetime(),
+    }).optional(),
   })).optional(),
 });
 export type VersionEntry = z.infer<typeof versionEntrySchema>;
+/** One localization row of a version (Phase 12). */
+export type LocalizationRow = NonNullable<VersionEntry['localizations']>[number];
 
 export const versionsFileSchema = z.object({ schemaVersion: z.literal(1), versions: z.array(versionEntrySchema).default([]) });
 export type VersionsFile = z.infer<typeof versionsFileSchema>;
@@ -217,6 +230,13 @@ export const manifestV2Schema = z.object({
     sha256: z.string().regex(HEX64),
     renderedAt: z.iso.datetime(),
     fromComposition: z.string().regex(HEX64).optional(),
+    /**
+     * A localized render (Phase 12 §3.5): its language, whether it was made with open problems or outdated entries
+     * ("render anyway"), and the outdated ids it shows in the source language. Absent on the primary language's renders.
+     */
+    locale: localeTag.optional(),
+    forced: z.boolean().optional(),
+    stale: z.array(z.string()).optional(),
   })),
 });
 export type ManifestV2 = z.infer<typeof manifestV2Schema>;

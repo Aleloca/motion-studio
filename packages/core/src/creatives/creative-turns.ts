@@ -32,6 +32,8 @@ import { realDirChain, writeThroughTemp } from './core-files.ts';
 import { acceptedDurationsOf, alignEditorCopies, assembleCompositions, carriableComposition, type CarriedComposition } from './composition-turn.ts';
 import { checkedPreviewTimes, type PreviewService } from './previews.ts';
 import { sumUsage } from '../usage/usage-tracker.ts';
+import { carryLocalizations } from '../localization/carry.ts';
+import { instanceComposition, type InstanceComposition } from '../localization/store.ts';
 import { currentLocale, t } from '../i18n.ts';
 
 export interface CreativeTurnDeps {
@@ -643,7 +645,7 @@ export class CreativeTurnService {
       }
 
       finalizing = true;
-      let saved: { outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: string | null; compositions?: VersionComposition[] };
+      let saved: { outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: string | null; compositions?: VersionComposition[]; localizations?: VersionEntry['localizations'] };
       if (turnContract === 'compositions') saved = await this.finishCompositions(ref, store, plan, presets, base, n, label, locale, { accepted });
       else {
         const assembled = await this.assemble(ref, store, plan, presets, base, n, result, label, locale);
@@ -673,6 +675,7 @@ export class CreativeTurnService {
         basedOn: creative.resumeFrom?.version ?? latest?.n ?? null,
         ...(usage ? { usage } : {}),
         ...(saved.compositions ? { compositions: saved.compositions } : {}),
+        ...(saved.localizations ? { localizations: saved.localizations } : {}),
       });
       if (noAgent && request) await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: `${request} · ${j.noAgentNeeded}` });
       await store.appendConversation(slug, { type: 'version', at: now(), n, status });
@@ -960,7 +963,7 @@ export class CreativeTurnService {
   async finishCompositions(ref: CreativeRef, store: CreativeStore, plan: Pick<TurnPlan, 'creative' | 'targets' | 'carried' | 'carriedComps' | 'links'>, presets: FormatPreset[], base: VersionEntry | undefined, n: number,
     label: (id: string) => string, locale: Locale,
     /** `direct`: a direct edit (decisions log 262): the brief's duration is not checked. `accepted`: see `acceptedDurationsOf`. */
-    duration: { direct: true; base?: { durationSec: number | null; userDuration?: { durationSec: number } } } | { accepted: ReadonlyMap<string, number> } = { accepted: new Map() }): Promise<{ outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: null; compositions: VersionComposition[] }> {
+    duration: { direct: true; base?: { durationSec: number | null; userDuration?: { durationSec: number } } } | { accepted: ReadonlyMap<string, number> } = { accepted: new Map() }): Promise<{ outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: null; compositions: VersionComposition[]; localizations?: VersionEntry['localizations'] }> {
     const slug = ref.creativeSlug;
     const j = t().jobs;
     const a = await assembleCompositions({
@@ -977,7 +980,32 @@ export class CreativeTurnService {
     const list = (items: string[]) => items.slice(0, 5).join('; ') + (items.length > 5 ? '; …' : '');
     if (a.stray.length > 0) await say('warning', j.strayRemoved({ list: list(a.stray) }));
     if (a.check && a.check.warnings.length > 0) await say('info', j.layerWarnings({ list: list(a.check.warnings) }));
-    return { outputs: a.outputs, problems: a.problems, tools: [], renderCommand: null, compositions: a.compositions };
+    const localizations = await this.carryLocalizations(ref, store, base, n, a.compositions, presets, locale);
+    return { outputs: a.outputs, problems: a.problems, tools: [], renderCommand: null, compositions: a.compositions, ...(localizations ? { localizations } : {}) };
+  }
+
+  /**
+   * The base's localization overlays carried into the new version `n` (Phase 12, spec §3.3: kept, stale or dropped,
+   * `carryLocalizations`), for every way a version is made (turns, direct edits, duplicates all finish here). Best effort: a
+   * failure leaves the new version without overlays and says so in the chat, it never fails the version.
+   */
+  private async carryLocalizations(ref: CreativeRef, store: CreativeStore, base: VersionEntry | undefined, n: number, compositions: VersionComposition[],
+    presets: FormatPreset[], locale: Locale): Promise<VersionEntry['localizations']> {
+    if (!base?.localizations?.length) return undefined;
+    const creativeDir = store.dir(ref.creativeSlug);
+    try {
+      const next = { n, compositions } as VersionEntry;
+      const comps = new Map<string, InstanceComposition>();
+      for (const c of compositions) {
+        if (!base.localizations.some((r) => r.instanceId === c.format)) continue;
+        const ic = await instanceComposition(creativeDir, next, c.format, presets);
+        if (ic) comps.set(c.format, ic);
+      }
+      return await carryLocalizations({ creativeDir, n: base.n, version: base }, { creativeDir, n }, comps, { projectDir: ref.projectDir, uiLocale: locale });
+    } catch (e) {
+      await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'warning', text: messages(locale).variants.localizationInvalid({ detail: (e as Error).message.slice(0, 200) }) }).catch(() => {});
+      return undefined;
+    }
   }
 
   private async buildContext(ref: CreativeRef, store: CreativeStore, creativeCodebases: LinkedCodebase[], services: Brief['services']): Promise<{ context: CreativeContext; existing: string[] }> {

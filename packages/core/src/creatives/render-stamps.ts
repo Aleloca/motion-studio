@@ -99,7 +99,7 @@ export async function reconcileRenders(o: { projectDir: string; store: CreativeS
     changed = true;
     await o.store.updateVersion(o.creativeSlug, v.n, (e) => ({ ...e, outputs: e.outputs.map((x) => (fixes.has(x.format) ? { ...x, sha256: fixes.get(x.format)! } : x)) }));
     await updateVersionManifest(creativeDir, v.n, (manifest) => (manifest?.schemaVersion === 2
-      ? { ...manifest, renders: manifest.renders.map((r) => (fixes.has(r.format) ? { ...r, sha256: fixes.get(r.format)! } : r)) }
+      ? { ...manifest, renders: manifest.renders.map((r) => (fixes.has(r.format) && r.locale === undefined ? { ...r, sha256: fixes.get(r.format)! } : r)) }
       : null));
   }
   return changed;

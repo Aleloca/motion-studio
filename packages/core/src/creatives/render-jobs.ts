@@ -2,14 +2,17 @@ import { renderJobKey } from '@motion-studio/shared';
 import { randomBytes } from 'node:crypto';
 import { constants } from 'node:fs';
 import { copyFile, lstat, mkdir, rename, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   compositionProblemText, effectiveLinks, formatDisplayName, messages, renderProblems, renderState,
-  type Brief, type Composition, type FormatPreset, type JobProgress, type JobSummary, type Locale, type ManifestV2, type OutputFileInfo,
-  type OutputIssue, type ServerMessage, type VersionComposition,
+  type Brief, type Composition, type FormatPreset, type JobProgress, type JobSummary, type Locale, type LocaleTag, type LocalizationRow, type ManifestV2, type OutputFileInfo,
+  type OutputIssue, type ServerMessage, type VersionComposition, type VersionEntry,
 } from '@motion-studio/shared';
-import { hashConfinedFile } from '../brand/agent-guard.ts';
-import { loadComposition } from '../compositions/composition-files.ts';
+import { copyConfinedFile, hashConfinedFile } from '../brand/agent-guard.ts';
+import { loadComposition, readCompositionFolder } from '../compositions/composition-files.ts';
+import { instanceComposition, localizedComposition, readOverlay } from '../localization/store.ts';
+import { checkedLocale } from '../localization/validate.ts';
+import { realDirChain } from './core-files.ts';
 import { noteCoreChange } from '../core-changes.ts';
 import { noteCoreTemp } from '../core-temps.ts';
 import { findPreset } from '../formats/format-catalog.ts';
@@ -154,7 +157,7 @@ export class RenderJobService {
    * requested format, the latest of them is returned; otherwise a follow-up job renders the rest, in the same lane (it runs
    * after them), keyed `render:…:v<n>:<k>` (`renderJobKeyOf` matches it too).
    */
-  async start(ref: CreativeRef, n: number, requested?: string[]): Promise<JobSummary> {
+  async start(ref: CreativeRef, n: number, requested?: string[], opts: { locales?: readonly string[]; force?: boolean } = {}): Promise<JobSummary> {
     const locale = currentLocale();
     const m = messages(locale);
     const store = new CreativeStore(ref.projectDir);
@@ -165,6 +168,7 @@ export class RenderJobService {
     if (comps.length === 0) throw new CodedError(400, m.render.notV2({ n }), 'version-not-v2');
     const full = renderPlan(comps, creative.brief, requested);
     if (full.unknown.length > 0) throw new CodedError(400, m.render.formatsNotInVersion({ list: full.unknown.join(', ') }), 'formats-not-in-version');
+    if (opts.locales && opts.locales.length > 0) return this.startLocalized(ref, version, creative.title, requested, opts.locales, opts.force === true, locale);
     if (!this.deps.engine) throw new CodedError(503, m.render.noRenderer, 'no-renderer');
     if ((await this.deps.engine.info()).kind === null) throw new CodedError(409, m.render.noBrowser, 'no-browser');
     // From here to the enqueue nothing awaits: the active jobs seen are the ones the new job queues behind.
@@ -230,6 +234,12 @@ export class RenderJobService {
     for (const [n] of pending) for (const j of this.activeJobs(renderJobKey(ref.root, ref.projectSlug, ref.creativeSlug, n))) all.set(j.id, j);
     const ended = await Promise.all([...all.values()].map((j) => this.deps.queue.whenSettled(j.id)));
     return ended.filter((j): j is JobSummary => j !== null);
+  }
+
+  /** Renders `formats` of version `n` in `locales` (`start` with locales) and waits for the job; its summary as it ended. */
+  async renderLocalesAndWait(ref: CreativeRef, n: number, formats: string[], locales: readonly string[], force: boolean): Promise<JobSummary | null> {
+    const job = await this.start(ref, n, formats, { locales, force });
+    return this.deps.queue.whenSettled(job.id);
   }
 
   private async run(ref: CreativeRef, n: number, plan: RenderPlan, comps: VersionComposition[], locale: Locale, signal: AbortSignal, jobId: string): Promise<void> {
@@ -511,6 +521,157 @@ export class RenderJobService {
     };
   }
 
+  /**
+   * A render in other languages (Phase 12, spec §3.5): every requested instance (all of the version's when none; a follower
+   * is rendered with its OWN overlay on the composition it shows) in every requested language, into
+   * `outputs/vN/<instanceId>.<locale>.<ext>`. Refused before anything is queued: a language not in the curated list (400),
+   * an instance with no translation (409 `localization-missing`), and, without `force` ("render anyway"), a translation with
+   * open problems or outdated entries (409 `localization-needs-force`, `problems` listing them). Always a new job in the
+   * render lane; the primary-language files and records are never touched.
+   */
+  private async startLocalized(ref: CreativeRef, version: VersionEntry, title: string, requested: readonly string[] | undefined, rawLocales: readonly string[], force: boolean, locale: Locale): Promise<JobSummary> {
+    const m = messages(locale);
+    const v = m.variants;
+    const tags = [...new Set(rawLocales.map((x) => checkedLocale(x, locale)))];
+    const comps = version.compositions ?? [];
+    const instances = requested && requested.length > 0 ? comps.map((c) => c.format).filter((f) => requested.includes(f)) : comps.map((c) => c.format);
+    const presets = await this.deps.presets();
+    const label = (id: string, tag: string) => `${formatDisplayName(presets, id, locale)} (${tag})`;
+    const missing: string[] = [];
+    const needsForce: string[] = [];
+    const creativeDir = new CreativeStore(ref.projectDir).dir(ref.creativeSlug);
+    for (const tag of tags) {
+      for (const id of instances) {
+        const row = version.localizations?.find((r) => r.locale === tag && r.instanceId === id);
+        const read = row ? await readOverlay(creativeDir, version.n, tag, id) : null;
+        if (!row || !read || read.hash !== row.hash) { missing.push(label(id, tag)); continue; }
+        if ((row.problems?.length ?? 0) > 0 || row.stale.length > 0) needsForce.push(label(id, tag));
+      }
+    }
+    if (missing.length > 0) {
+      const err = new CodedError(409, v.localizationMissing({ list: missing.slice(0, 10).join(', ') }), 'localization-missing');
+      err.problems = missing.slice(0, 50);
+      throw err;
+    }
+    if (needsForce.length > 0 && !force) {
+      const err = new CodedError(409, v.renderNeedsForce({ list: needsForce.slice(0, 10).join(', ') }), 'localization-needs-force');
+      err.problems = needsForce.slice(0, 50);
+      throw err;
+    }
+    if (!this.deps.engine) throw new CodedError(503, m.render.noRenderer, 'no-renderer');
+    if ((await this.deps.engine.info()).kind === null) throw new CodedError(409, m.render.noBrowser, 'no-browser');
+    const base = renderJobKey(ref.root, ref.projectSlug, ref.creativeSlug, version.n);
+    const keys = new Set(this.activeJobs(base).map((j) => j.key));
+    let key = `${base}:2`;
+    for (let k = 3; keys.has(key); k++) key = `${base}:${k}`;
+    const items = tags.flatMap((tag) => instances.map((id) => ({ id, tag })));
+    return this.deps.queue.enqueue({
+      key, kind: 'render', lane: 'render',
+      label: m.render.jobLabel({ title, n: version.n }),
+      // `<instance>.<locale>`: never taken for a primary-language format by a later request's coverage check.
+      formats: items.map((x) => `${x.id}.${x.tag}`),
+      run: async (signal) => {
+        const failures: string[] = [];
+        for (const it of items) {
+          if (signal.aborted) throw new RenderError('cancelled', 'cancelled');
+          try {
+            await this.renderLocalized(ref, version.n, it.id, it.tag, force, presets, locale, signal);
+          } catch (e) {
+            if (signal.aborted || (e instanceof RenderError && e.code === 'cancelled')) throw e;
+            failures.push(m.render.formatFailed({ format: label(it.id, it.tag), reason: errorText(e) }));
+          }
+        }
+        if (failures.length > 0) throw new JobFailedError(m.render.someFailed({ list: failures.join('; ') }));
+      },
+    });
+  }
+
+  /**
+   * One localized render: the instance's composition (re-hashed, still the recorded one) with its overlay applied
+   * (`localizedComposition`, stale ids keep the source), rendered by the usual pipeline from a private copy of the folder in
+   * `<project>/.studio/cache/locale-render/` (the folder's files, verified against the recorded hash, plus the overlay's
+   * fallback font files from the project), removed afterwards. Recorded in the row (`render`) and in the manifest's
+   * `renders[]` with `locale`, `forced` and `stale`.
+   */
+  private async renderLocalized(ref: CreativeRef, n: number, instanceId: string, tag: LocaleTag, force: boolean, presets: FormatPreset[], locale: Locale, signal: AbortSignal): Promise<void> {
+    const m = messages(locale);
+    const store = new CreativeStore(ref.projectDir);
+    const creativeDir = store.dir(ref.creativeSlug);
+    const versionDir = store.outputsDir(ref.creativeSlug, n);
+    const version = (await store.readVersions(ref.creativeSlug)).find((x) => x.n === n);
+    const row = version?.localizations?.find((r) => r.locale === tag && r.instanceId === instanceId);
+    const read = row ? await readOverlay(creativeDir, n, tag, instanceId) : null;
+    if (!version || !row || !read || read.hash !== row.hash) throw new Error(m.variants.localizationNotFound({ locale: tag, format: instanceId, n }));
+    const forced = (row.problems?.length ?? 0) > 0 || row.stale.length > 0;
+    if (forced && !force) throw new Error(m.variants.renderNeedsForce({ list: `${instanceId} (${tag})` }));
+    const ic = await instanceComposition(creativeDir, version, instanceId, presets);
+    if (!ic) throw new Error(m.render.compositionChanged({ format: instanceId }));
+    const composition = localizedComposition(ic.composition, read.overlay, row);
+    if (!composition) throw new Error(m.variants.localizationUnusable({ locale: tag, format: instanceId }));
+    const preset = findPreset(presets, instanceId) ?? { ...ic.preset, id: instanceId };
+    const cache = await realDirChain(ref.projectDir, ['.studio', 'cache', 'locale-render']);
+    if (!cache) throw new Error(m.render.compositionChanged({ format: instanceId }));
+    const root = join(cache, `r-${randomBytes(8).toString('hex')}`);
+    const compDir = join(root, 'outputs', `v${n}`, 'compositions', instanceId);
+    try {
+      await mkdir(compDir, { recursive: true });
+      for (const f of ic.folder.files) {
+        await mkdir(dirname(join(compDir, ...f.path.split('/'))), { recursive: true });
+        await copyConfinedFile(ic.compDir, f.path, join(compDir, ...f.path.split('/')));
+      }
+      if ((await readCompositionFolder(compDir)).hash !== ic.entry.hash) throw new Error(m.render.compositionChanged({ format: instanceId }));
+      const have = new Set(ic.folder.files.map((f) => f.path));
+      for (const font of read.overlay.fonts) {
+        for (const p of font.files) {
+          if (have.has(p)) continue;
+          await mkdir(dirname(join(compDir, ...p.split('/'))), { recursive: true });
+          await copyConfinedFile(ref.projectDir, p, join(compDir, ...p.split('/')));
+          have.add(p);
+        }
+      }
+      const prepared = await this.deps.normalizer.prepare({ projectDir: ref.projectDir, compDir, composition, signal });
+      const still = !(composition.duration > 0);
+      const file = `${instanceId}.${tag}.${renderExtension(preset, still)}`;
+      let result: RenderResult;
+      try {
+        result = await this.deps.engine!.render({
+          ...this.deps.renderOptions,
+          dir: root, versionDir: `outputs/v${n}`, composition, format: { ...preset, id: instanceId }, out: join(versionDir, file), signal,
+          ...(sessionMediaOf(prepared) ? { media: sessionMediaOf(prepared)! } : {}),
+          beforeRename: (temp) => noteCoreOutputWrite(creativeDir, `outputs/v${n}/${file}`, temp),
+        });
+      } finally {
+        prepared.release();
+      }
+      await noteCoreChange(versionDir);
+      const info = await this.describe({ creativeDir, versionDir, n, preset, file, composition, sha256: result.sha256, hash: ic.entry.hash, locale, poster: false })
+        .catch(() => ({ width: result.width, height: result.height, durationSec: result.durationSec, problems: [] as string[] }));
+      const at = new Date().toISOString();
+      const render: NonNullable<LocalizationRow['render']> = {
+        file, width: info.width, height: info.height, durationSec: info.durationSec !== null && info.durationSec > 0 ? info.durationSec : null,
+        sha256: result.sha256, fromComposition: ic.entry.hash, overlayHash: row.hash, forced, stale: [...row.stale],
+        ...(info.problems?.length ? { problems: info.problems } : {}), renderedAt: at,
+      };
+      await store.updateVersion(ref.creativeSlug, n, (x) => ({
+        ...x, localizations: (x.localizations ?? []).map((r) => (r.locale === tag && r.instanceId === instanceId ? { ...r, render } : r)),
+      }));
+      await updateVersionManifest(creativeDir, n, (current) => {
+        if (current?.schemaVersion !== 2) return null;
+        return {
+          ...current,
+          renders: [
+            ...current.renders.filter((r) => !(r.format === instanceId && r.locale === tag)),
+            { format: instanceId, file, width: render.width, height: render.height, durationSec: render.durationSec, sha256: render.sha256, renderedAt: at,
+              fromComposition: render.fromComposition, locale: tag, forced, stale: render.stale },
+          ],
+        };
+      });
+      this.deps.broadcast({ type: 'creative', project: ref.projectSlug, creative: ref.creativeSlug });
+    } finally {
+      await rm(root, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
   /** Records renders in versions.json (outputs) and the manifest v2 (`renders[]`), and the followers' `followsFormat`. */
   private async record(store: CreativeStore, ref: CreativeRef, n: number, infos: OutputFileInfo[], fixFollows: Record<string, string>, comps: VersionComposition[]): Promise<void> {
     const fixed = (list: VersionComposition[]) => list.map((c) => (fixFollows[c.format] && !c.followsFormat ? { ...c, followsFormat: fixFollows[c.format] } : c));
@@ -528,7 +689,7 @@ export class RenderJobService {
         schemaVersion: 2,
         compositions: fixed(base.compositions),
         renders: [
-          ...base.renders.filter((r) => !formats.has(r.format)),
+          ...base.renders.filter((r) => !formats.has(r.format) || r.locale !== undefined),
           ...infos.filter((i) => i.sha256 !== undefined).map((i) => ({
             format: i.format, file: i.file, width: i.width, height: i.height,
             durationSec: i.durationSec !== null && i.durationSec > 0 ? i.durationSec : null,

@@ -3,12 +3,13 @@ import { recoverRenameJournal } from '../library/rename-recovery.ts';
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { INSTANCE_FOLDER_RE, briefSchema, briefWriteSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_NAME_PATTERN, defaultPattern, messages, INSTANCE_FOLDER_RE, briefSchema, briefWriteSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
-import { exportResolved, exportVersion, pendingRenders, resolveExportPicks } from '../creatives/export.ts';
+import { exportResolved, exportVersion, pendingRenders, resolveExportPicks, resolveLocalizedItems, type ExportItem } from '../creatives/export.ts';
+import { checkedLocale } from '../localization/validate.ts';
 import { storyboardDir, storyboardSchema, sweepStoryboardTemps, type PreviewService } from '../creatives/previews.ts';
 import { readJsonFile } from '../json-file.ts';
 import { isRealDirChain } from '../creatives/core-files.ts';
@@ -27,6 +28,7 @@ import type { MediaTools } from '../media/media-tools.ts';
 import { completeGitignore, sweepProject } from '../project-maintenance.ts';
 import { CodedError, expandHome, WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import { sendConfinedFile } from './serve-file.ts';
+import { localizedCompositionView } from './localization-routes.ts';
 import { currentLocale, t } from '../i18n.ts';
 
 export interface CreativeRoutesContext {
@@ -84,10 +86,20 @@ const exportBody = z.object({
   pattern: z.unknown().optional(),
   date: z.unknown().optional(),
   version: z.number().int().min(1).optional(),
+  /** Phase 12 §3.5: the languages to export (the primary one is the primary-language file); absent: today's files. */
+  locales: z.array(z.string().min(1).max(40)).min(1).max(11).optional(),
+  /** "Render anyway" for translations rendered first that have open problems or outdated entries. */
+  force: z.boolean().optional(),
 });
 const linkBody = z.object({ follower: z.string().min(1).max(200), primary: z.string().min(1).max(200).nullable() });
 /** A render request (Task 5): `formats` to render (a follower stands for its primary); absent or empty: every primary. */
-const renderBody = z.object({ formats: z.array(z.string().min(1).max(200)).max(100).optional() }).strict();
+const renderBody = z.object({
+  formats: z.array(z.string().min(1).max(200)).max(100).optional(),
+  /** Phase 12 §3.5: languages to render (`outputs/vN/<instanceId>.<locale>.<ext>`); absent or empty: today's files. */
+  locales: z.array(z.string().min(1).max(40)).max(11).optional(),
+  /** "Render anyway": translations with open problems or outdated entries are rendered and marked as forced. */
+  force: z.boolean().optional(),
+}).strict();
 /**
  * A live preview session (Task 5b): the format, and the exact origin of the UI page that embeds the iframe. `renewFrom`
  * (Phase 10b): the session this one renews; the editor's staged files move to the new one when both show the same version
@@ -301,7 +313,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const n = Number(req.params.n);
     if (!Number.isInteger(n) || n < 1) throw new WorkspaceError(404, t().errors.versionNotFound);
     const body = parse(renderBody, req.body);
-    return reply.status(202).send(await ctx.renders.start(ref, n, body.formats));
+    return reply.status(202).send(await ctx.renders.start(ref, n, body.formats, { ...(body.locales ? { locales: body.locales } : {}), ...(body.force !== undefined ? { force: body.force } : {}) }));
   });
 
   app.post<{ Params: { slug: string; c: string; n: string } }>('/api/projects/:slug/creatives/:c/versions/:n/reveal', async (req) => {
@@ -349,7 +361,15 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const creativeDir = ref.store.dir(ref.creativeSlug);
     const presets = (await catalog().load()).presets;
     // The pattern sent (else the workspace's) and the date the client previewed (else today) apply to both payloads.
-    const pattern = typeof body.pattern === 'string' ? body.pattern : (await ctx.requireWorkspace().readSettings()).exportNamePattern;
+    // Languages (Phase 12): the default pattern names the language when the creative has extra languages.
+    const extraLocales = creative.brief.locales?.extra ?? [];
+    const primaryLocale = extraLocales.length > 0 ? creative.brief.locales?.primary : undefined;
+    const settingsPattern = typeof body.pattern === 'string' ? null : (await ctx.requireWorkspace().readSettings()).exportNamePattern;
+    const pattern = typeof body.pattern === 'string' ? body.pattern
+      : settingsPattern === DEFAULT_EXPORT_NAME_PATTERN ? defaultPattern(extraLocales.length > 0) : settingsPattern!;
+    const tags = body.locales ? [...new Set(body.locales.map((x) => checkedLocale(x, currentLocale())))] : null;
+    const includeSource = tags === null || (primaryLocale !== undefined && tags.includes(primaryLocale));
+    const otherTags = tags === null ? [] : tags.filter((x) => x !== primaryLocale);
     const common = { creativeDir, destination, slug: ref.creativeSlug, title: creative.title, forbiddenRoot: ref.root, presets, pattern,
       ...(typeof body.date === 'string' ? { now: body.date } : {}),
       label: (id: string) => formatDisplayName(presets, id, currentLocale(), creative.brief.formatLabels) };
@@ -374,7 +394,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     // Task 5b: a v2 ★ with no current render is rendered first (a render job per version, its progress on the job list),
     // then the picks are resolved again on the new records and copied. Legacy versions export their media as they are.
     const rendered: Array<{ version: number; formats: string[] }> = [];
-    if (pending.size > 0) {
+    if (pending.size > 0 && includeSource) {
       await ctx.renders.renderAndWait(ref, pending);
       for (const [version, formats] of pending) rendered.push({ version, formats });
       ({ items, pending } = await resolve());
@@ -401,10 +421,43 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       });
       if (!items.length) throw new CodedError(409, t().export.renderProblemsOnly({ list: problems.join(', ') }), 'export-render-problems');
     }
+    if (tags !== null || primaryLocale !== undefined) items = await withLocales(ref, creativeDir, items, { includeSource, primaryLocale, otherTags, force: body.force === true, label: common.label });
     const result = await exportResolved(items, common);
     const withProblems = excluded.length ? { ...result, excluded } : result;
     return rendered.length > 0 ? { ...withProblems, rendered } : withProblems;
   });
+
+  /**
+   * The export items with their languages (Phase 12, spec §3.5): the primary-language files (when exported) carry the primary
+   * tag, and each other language adds the translated renders of the same formats and versions. A translation without a
+   * current render is rendered first (409 `localization-needs-force` when it has open problems or outdated entries and
+   * `force` is not set: the dialog asks "render anyway"); a format with no translation is refused (409 `localization-missing`).
+   */
+  async function withLocales(ref: CreativeRef & { store: CreativeStore }, creativeDir: string, items: ExportItem[],
+    o: { includeSource: boolean; primaryLocale: string | undefined; otherTags: string[]; force: boolean; label: (id: string) => string }): Promise<ExportItem[]> {
+    const source = o.includeSource ? items.map((it) => (o.primaryLocale !== undefined ? { ...it, locale: o.primaryLocale } : it)) : [];
+    if (o.otherTags.length === 0) return source;
+    const v = messages(currentLocale()).variants;
+    let r = await resolveLocalizedItems(creativeDir, await ref.store.readVersions(ref.creativeSlug), items, o.otherTags);
+    const refuseMissing = () => {
+      if (r.missing.length === 0) return;
+      const list = r.missing.map((x) => `${o.label(x.format)} v${x.n} (${x.locale})`);
+      const err = new CodedError(409, v.localizationMissing({ list: list.slice(0, 10).join(', ') }), 'localization-missing');
+      err.problems = list.slice(0, 50);
+      throw err;
+    };
+    refuseMissing();
+    if (r.pending.size > 0) {
+      for (const [n, p] of r.pending) await ctx.renders.renderLocalesAndWait(ref, n, p.formats, p.locales, o.force);
+      r = await resolveLocalizedItems(creativeDir, await ref.store.readVersions(ref.creativeSlug), items, o.otherTags);
+      refuseMissing();
+      if (r.pending.size > 0) {
+        const list = [...r.pending].flatMap(([n, p]) => p.formats.map((f) => `${o.label(f)} v${n}`)).join(', ');
+        throw new CodedError(409, t().export.renderFailed({ list }), 'export-render-failed');
+      }
+    }
+    return [...source, ...r.items];
+  }
 
   /**
    * What a ★ export would have to render first (Task 5b), started now: the web shows "Rendering 2 formats first…" with the
@@ -464,11 +517,16 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
    * The editor's view of one format of a saved v2 version (Phase 10b): the primary's composition (a follower's is its
    * primary's, `primaryFormat`), its files and the fonts offered. 404 for a legacy version or a format it lacks.
    */
-  app.get<{ Params: { slug: string; c: string; n: string; format: string } }>('/api/projects/:slug/creatives/:c/versions/:n/compositions/:format', async (req) => {
+  app.get<{ Params: { slug: string; c: string; n: string; format: string }; Querystring: { locale?: string } }>('/api/projects/:slug/creatives/:c/versions/:n/compositions/:format', async (req) => {
     const ref = await refOf(req.params.slug, req.params.c);
     const n = /^\d{1,6}$/.test(req.params.n) ? Number(req.params.n) : 0;
     const version = n > 0 ? (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === n) : undefined;
     if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
+    // `?locale=xx` (Phase 12): the localized composition for the preview, with the language's stale ids and problems.
+    if (req.query.locale !== undefined) {
+      return localizedCompositionView({ projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), version, format: req.params.format,
+        rawLocale: req.query.locale, presets: (await catalog().load()).presets, locale: currentLocale() });
+    }
     return editorCompositionView({
       projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), version, format: req.params.format,
       presets: (await catalog().load()).presets, locale: currentLocale(),

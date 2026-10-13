@@ -1,6 +1,6 @@
 import { access, constants, lstat, mkdir, realpath, rm, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { DEFAULT_EXPORT_NAME_PATTERN, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, hasFormat, renderName, renderState, separateInstanceNames, starOf, type FormatPreset, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_NAME_PATTERN, EXPORT_NAME_MAX, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, hasFormat, renderName, renderState, separateInstanceNames, starOf, type FormatPreset, type VersionEntry } from '@motion-studio/shared';
 import { copyConfinedFile, probeConfinedFile } from '../brand/agent-guard.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
@@ -71,7 +71,11 @@ async function resolveLoose(p: string): Promise<string> {
  * One file to export: the output `file` of `format` in version `n`. `v` is the number the name's `{v}` shows when it
  * differs from `n`: a follower is named after its primary's version (decisions log 140), whose file is byte-identical.
  */
-export interface ExportItem { format: string; n: number; v?: number; file: string; width: number; height: number }
+export interface ExportItem { format: string; n: number; v?: number; file: string; width: number; height: number;
+  /** The language of the file (Phase 12): the `{locale}` of its name; absent for a creative without extra languages. */
+  locale?: string;
+  /** A translated render (not the primary language's file). */
+  localized?: boolean }
 
 export interface ExportCommon {
   creativeDir: string;
@@ -121,10 +125,15 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
   const pattern = opts.pattern ?? DEFAULT_EXPORT_NAME_PATTERN;
   const named = ok.map((it) => {
     const r = renderName(pattern, exportNameVars({ title: opts.title, slug: opts.slug, format: it.format, preset: opts.presets ? findPreset(opts.presets, it.format) : undefined,
-      size: { width: it.width, height: it.height }, version: it.v ?? it.n, date }));
+      size: { width: it.width, height: it.height }, version: it.v ?? it.n, date, ...(it.locale !== undefined ? { locale: it.locale } : {}) }));
     if (!r.ok) throw new CodedError(400, t().export.nameEmpty, 'export-name-empty');
     return { ...it, stem: r.name, ext: exportExtension(it.file) };
   });
+  // Languages (Phase 12): a pattern without `{locale}` exporting more than one language names each translated file with its
+  // language, so two languages of one format never collide; the primary language's file keeps its name.
+  if (!pattern.includes('{locale}') && new Set(named.map((x) => x.locale ?? '')).size > 1) {
+    for (const x of named) if (x.localized && x.locale) x.stem = withLocaleSuffix(x.stem, x.locale);
+  }
   // Format instances (Phase 12, Ruling C): two files that would share a name (a pattern without `{format}`, or a preset id
   // equal to an instance's slug, `foo-2` and `foo@2`) keep them apart with the instance's slugged id on each k > 1 instance;
   // a bare instance's name never changes. What still collides is refused below, as before.
@@ -153,6 +162,45 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
   }
   if (!files.length) throw new WorkspaceError(404, t().export.nothingToExport({ n: emptyN }));
   return { destination: dest, files, skipped };
+}
+
+/** `stem-<locale>`, within the name length limit. */
+function withLocaleSuffix(stem: string, locale: string): string {
+  const suffix = locale.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  const room = EXPORT_NAME_MAX - suffix.length - 1;
+  return `${stem.slice(0, room).replace(/[-_.]+$/, '')}-${suffix}`;
+}
+
+/**
+ * The translated files of export `items` in `locales` (Phase 12, spec §3.5): for each item (a format in a version) and
+ * language, its row's render when it is current (made from the row's overlay and the version's composition of that format,
+ * still a usable file); `missing`: no translation at all; `stale`: a translation whose render is not current (to render first).
+ */
+export async function resolveLocalizedItems(creativeDir: string, versions: VersionEntry[], items: ExportItem[], locales: readonly string[]):
+  Promise<{ items: ExportItem[]; missing: Array<{ format: string; n: number; locale: string }>; pending: Map<number, { formats: string[]; locales: string[] }> }> {
+  const out: ExportItem[] = [];
+  const missing: Array<{ format: string; n: number; locale: string }> = [];
+  const pending = new Map<number, { formats: string[]; locales: string[] }>();
+  for (const it of items) {
+    const v = versions.find((x) => x.n === it.n);
+    const comp = v?.compositions?.find((c) => c.format === it.format);
+    for (const locale of locales) {
+      const row = v?.localizations?.find((r) => r.locale === locale && r.instanceId === it.format);
+      if (!v || !comp || !row) { missing.push({ format: it.format, n: it.n, locale }); continue; }
+      const r = row.render;
+      const current = r !== undefined && r.overlayHash === row.hash && r.fromComposition === comp.hash && plainName(r.file)
+        && (await probeConfinedFile(creativeDir, `outputs/v${it.n}/${r.file}`)) === true;
+      if (!current) {
+        const p = pending.get(it.n) ?? { formats: [], locales: [] };
+        if (!p.formats.includes(it.format)) p.formats.push(it.format);
+        if (!p.locales.includes(locale)) p.locales.push(locale);
+        pending.set(it.n, p);
+        continue;
+      }
+      out.push({ format: it.format, n: it.n, ...(it.v !== undefined ? { v: it.v } : {}), file: r.file, width: r.width, height: r.height, locale, localized: true });
+    }
+  }
+  return { items: out, missing, pending };
 }
 
 const isVersionNumber = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0;

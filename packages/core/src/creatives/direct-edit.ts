@@ -249,7 +249,7 @@ export class DirectEditService {
       await store.appendVersion(slug, {
         n: newN, commit, sessionId: creative.resumeFrom?.sessionId ?? latest.sessionId ?? null, status, createdAt: now(),
         request: v.duplicatedRequest({ label: newLabel(instanceId) }), outputs: saved.outputs, problems: saved.problems, tools: [], renderCommand: null,
-        basedOn: latest.n, compositions: saved.compositions, origin: 'editor',
+        basedOn: latest.n, compositions: saved.compositions, origin: 'editor', ...(saved.localizations ? { localizations: saved.localizations } : {}),
       });
       recorded = true;
       await store.appendConversation(slug, { type: 'version', at: now(), n: newN, status });
@@ -398,7 +398,7 @@ export class DirectEditService {
         await store.appendVersion(slug, {
           n, commit, sessionId: creative.resumeFrom?.sessionId ?? latest.sessionId ?? null, status, createdAt: now(),
           request, outputs: saved.outputs, problems, tools: [], renderCommand: null, basedOn: body.baseVersion,
-          compositions: saved.compositions, origin: 'editor',
+          compositions: saved.compositions, origin: 'editor', ...(saved.localizations ? { localizations: saved.localizations } : {}),
         });
         recorded = true;
         await store.appendConversation(slug, { type: 'version', at: now(), n, status });

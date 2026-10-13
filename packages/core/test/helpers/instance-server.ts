@@ -83,20 +83,21 @@ export interface InstanceEnv {
   versionOf(slug: string, n: number): Promise<VersionEntry | undefined>;
   waitJob(id: string): Promise<JobSummary>;
   waitRunning(id: string): Promise<void>;
-  create(formats: string[], o?: { links?: Record<string, string>; formatLabels?: Record<string, string> }): Promise<string>;
+  create(formats: string[], o?: { links?: Record<string, string>; formatLabels?: Record<string, string>; locales?: { primary: string; extra: string[] } }): Promise<string>;
   turn(slug: string, payload: object): Promise<void>;
   render(slug: string, n: number): Promise<void>;
   close(): Promise<void>;
 }
 
-export async function startInstanceEnv(prefix: string): Promise<InstanceEnv> {
+/** `extra`: more server dependencies (e.g. a fake Google Fonts network, Phase 12 Task 3). */
+export async function startInstanceEnv(prefix: string, extra: Partial<Parameters<typeof buildServer>[0]> = {}): Promise<InstanceEnv> {
   const base = mkdtempSync(join(tmpdir(), prefix));
   const fake = fakeEngine();
   const app = await buildServer({
     uiToken: TOKEN, sandbox: async () => ({ available: false, reason: 'test' }),
     appConfig: new AppConfigStore(join(base, 'config')), git: new Git(),
     runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }), doctor: async () => [],
-    render: fake.engine, uiOrigins: () => [UI_ORIGIN], bridge: new AgentBridge(), mcpCommand: [process.execPath, '-e', ''],
+    render: fake.engine, uiOrigins: () => [UI_ORIGIN], bridge: new AgentBridge(), mcpCommand: [process.execPath, '-e', ''], ...extra,
   });
   const ws = join(base, 'ws');
   await app.inject({ method: 'PUT', url: '/api/workspace', headers: H, payload: { path: ws } });
@@ -133,7 +134,7 @@ export async function startInstanceEnv(prefix: string): Promise<InstanceEnv> {
     },
     async create(formats, o = {}) {
       const r = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', headers: H, payload: {
-        title: 'Launch', generate: true, brief: { goal: 'g', message: '', formats, durationSec: 4, assets: [], notes: '', ...(o.links ? { links: o.links } : {}), ...(o.formatLabels ? { formatLabels: o.formatLabels } : {}) },
+        title: 'Launch', generate: true, brief: { goal: 'g', message: '', formats, durationSec: 4, assets: [], notes: '', ...(o.links ? { links: o.links } : {}), ...(o.formatLabels ? { formatLabels: o.formatLabels } : {}), ...(o.locales ? { locales: o.locales } : {}) },
       } });
       expect(r.statusCode, r.body).toBe(201);
       const done = await waitJob((r.json().job as JobSummary).id);
