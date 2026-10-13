@@ -271,3 +271,122 @@ describe('registration failure', () => {
     expect(messages).toEqual([]);
   });
 });
+
+describe('ElevenLabs sound effects, music and voices', () => {
+  const KEY = 'xi-secret-777';
+  const seen: Array<{ url: string; body: string; key: string | undefined }> = [];
+  let answer: (url: string) => Response;
+  const audioFetch = (async (url: string, init: RequestInit) => {
+    seen.push({ url, body: String(init.body ?? ''), key: (init.headers as Record<string, string> | undefined)?.['xi-api-key'] });
+    return answer(url);
+  }) as unknown as typeof fetch;
+  const media = { ...NoMediaTools, available: true, probeAudio: async () => ({ durationSec: 4.2 }) };
+  const withKey = (settings = {}, over: Partial<Parameters<typeof providerTools>[0]> = {}) => providerTools({
+    vault: new MemoryVault({ ELEVENLABS_API_KEY: KEY }), approvals, media, fetch: audioFetch, lookup: publicLookup, broadcast: (m) => messages.push(m),
+    settings: async () => workspaceSettingsSchema.parse({ schemaVersion: 1, ...settings }), ...over,
+  });
+  beforeEach(() => { setLocale('en'); seen.length = 0; answer = () => new Response(new Uint8Array([5, 5]), { status: 200, headers: { 'content-type': 'audio/mpeg' } }); });
+
+  it('sound_effect asks (rule, prompt, duration, provider), saves in assets/audio and registers the fields', async () => {
+    const t = withKey();
+    const pending = t.sound_effect!(ctx, { prompt: 'door slam', durationSec: 2, loop: true, name: 'slam' });
+    await waitForPending();
+    const [req] = approvals.pending();
+    expect(req).toMatchObject({ kind: 'provider', toolName: 'provider:sfx-elevenlabs' });
+    expect(`${req!.title} ${req!.detail}`).toMatch(/door slam/);
+    expect(`${req!.title} ${req!.detail}`).toMatch(/2/);
+    expect(`${req!.title} ${req!.detail}`).toMatch(/ElevenLabs/);
+    expect(seen).toHaveLength(0);
+    await approvals.decide(req!.id, 'once');
+    const out = await pending as { file: string };
+    expect(out.file).toBe('assets/audio/slam.mp3');
+    expect((await readFile(join(projectDir, out.file))).equals(Buffer.from([5, 5]))).toBe(true);
+    expect((await new LibraryStore(projectDir, media).listAssets())[0]).toMatchObject({ file: 'audio/slam.mp3', origin: 'generated', description: 'door slam', provider: 'elevenlabs', model: 'eleven_text_to_sound_v2', durationSec: 4.2, loop: true, attribution: 'AI-generated (ElevenLabs)' });
+    expect(seen[0]).toMatchObject({ key: KEY });
+    expect(JSON.parse(seen[0]!.body)).toMatchObject({ text: 'door slam', duration_seconds: 2, loop: true });
+    expect(JSON.stringify([out, messages])).not.toContain(KEY);
+  });
+  it('music uses its own rule; "always" skips later confirmations; deny sends nothing', async () => {
+    const t = withKey();
+    const denied = t.music!(ctx, { prompt: 'calm', durationSec: 20 }).catch((e) => e);
+    await waitForPending();
+    await approvals.decide(approvals.pending()[0]!.id, 'deny');
+    expect(status(await denied)).toBe(403);
+    expect(seen).toHaveLength(0);
+    const p = t.music!(ctx, { prompt: 'calm', durationSec: 20, instrumental: true });
+    await waitForPending();
+    expect(approvals.pending()[0]).toMatchObject({ toolName: 'provider:music-elevenlabs' });
+    await approvals.decide(approvals.pending()[0]!.id, 'always');
+    const out = await p as { file: string };
+    expect(await new PermissionsStore(projectDir).has('provider:music-elevenlabs')).toBe(true);
+    expect(JSON.parse(seen[0]!.body)).toMatchObject({ prompt: 'calm', music_length_ms: 20000, force_instrumental: true });
+    expect((await new LibraryStore(projectDir, media).listAssets()).find((a) => `assets/${a.file}` === out.file)).toMatchObject({ provider: 'elevenlabs', model: 'music_v1', durationSec: 4.2 });
+    await t.music!(ctx, { prompt: 'again', durationSec: 15 });
+    expect(approvals.pending()).toHaveLength(0);
+  });
+  it('validates limits before asking and refuses without a key or for other job kinds', async () => {
+    const t = withKey();
+    expect(status(await t.music!(ctx, { prompt: 'x', durationSec: 5 }).catch((e) => e))).toBe(400);
+    expect(status(await t.sound_effect!(ctx, { prompt: 'x', durationSec: 31 }).catch((e) => e))).toBe(400);
+    expect(status(await t.sound_effect!(ctx, { prompt: 'x'.repeat(1001) }).catch((e) => e))).toBe(400);
+    expect(approvals.pending()).toHaveLength(0);
+    expect(status(await t.sound_effect!({ ...ctx, kind: 'describe' }, { prompt: 'x' }).catch((e) => e))).toBe(403);
+    const none = withKey({}, { vault: new MemoryVault({}) });
+    expect(status(await none.sound_effect!(ctx, { prompt: 'x' }).catch((e) => e))).toBe(400);
+    expect(seen).toHaveLength(0);
+  });
+  it('a 401 or 403 records the capability as missing with the permission, a 429 does not; no key leaks', async () => {
+    const { KeyCheckCache } = await import('../src/providers/key-check.ts');
+    const cache = new KeyCheckCache();
+    const t = withKey({ confirmPaidProviders: false }, { keyChecks: cache });
+    answer = () => new Response(`nope ${KEY}`, { status: 401 });
+    const e1 = await t.sound_effect!(ctx, { prompt: 'x' }).catch((e) => e) as Error;
+    answer = () => new Response('', { status: 403 });
+    const e2 = await t.music!(ctx, { prompt: 'x', durationSec: 12 }).catch((e) => e) as Error;
+    const e3 = await t.list_voices!(ctx, {}).catch((e) => e) as Error;
+    expect(cache.get('elevenlabs')).toMatchObject({ sfx: { status: 'missing', permission: 'sound_generation' }, music: { status: 'missing', permission: 'music_generation' }, voices: { status: 'missing', permission: 'voices_read' } });
+    answer = () => new Response('', { status: 429 });
+    const cache2 = new KeyCheckCache();
+    const e4 = await withKey({ confirmPaidProviders: false }, { keyChecks: cache2 }).sound_effect!(ctx, { prompt: 'x' }).catch((e) => e) as Error;
+    expect(status(e4)).toBe(429);
+    expect(cache2.get('elevenlabs')).toEqual({});
+    for (const e of [e1, e2, e3, e4]) expect(e.message).not.toContain(KEY);
+    expect(await readdirAssets()).toEqual([]);
+  });
+  it('aborts mid-request, saving and registering nothing', async () => {
+    answer = () => { throw new Error('unused'); };
+    const hang = ((_u: string, init: RequestInit) => new Promise((_r, rej) => init.signal!.addEventListener('abort', () => rej(new Error('x'))))) as unknown as typeof fetch;
+    const t = withKey({ confirmPaidProviders: false }, { fetch: hang });
+    const p = t.sound_effect!(ctx, { prompt: 'x' }).catch((e) => e);
+    await new Promise((r) => setTimeout(r, 20));
+    controller.abort();
+    expect(status(await p)).toBe(499);
+    expect(await new LibraryStore(projectDir, media).listAssets()).toEqual([]);
+  });
+  it('list_voices is free: no confirmation, returns the voices', async () => {
+    answer = () => new Response(JSON.stringify({ voices: [{ voice_id: 'a1', name: 'Bella', labels: { gender: 'f' }, preview_url: null }] }), { status: 200 });
+    const out = await withKey().list_voices!(ctx, { search: 'bel', limit: 5 }) as { voices: unknown[] };
+    expect(approvals.pending()).toHaveLength(0);
+    expect(out.voices).toEqual([{ id: 'a1', name: 'Bella', labels: { gender: 'f' }, previewUrl: null }]);
+    expect(seen[0]!.url).toBe('https://api.elevenlabs.io/v2/voices?page_size=5&search=bel');
+    expect(status(await withKey().list_voices!({ ...ctx, kind: 'brand-analysis' }, {}).catch((e) => e))).toBe(403);
+  });
+  it('tts defaults to the brand voice when none is passed, and an explicit voice wins', async () => {
+    await mkdir(join(projectDir, 'brand'), { recursive: true });
+    await writeFile(join(projectDir, 'brand', 'brand-kit.json'), JSON.stringify({ schemaVersion: 1, sound: { genre: '', energy: null, instruments: [], avoid: [], voice: { provider: 'elevenlabs', id: 'brandVoice1' } } }));
+    const t = withKey({ confirmPaidProviders: false });
+    expect(await t.tts!(ctx, { text: 'Ciao' })).toMatchObject({ provider: 'elevenlabs' });
+    expect(seen.map((s) => s.url).join(' ')).toContain('/v1/text-to-speech/brandVoice1');
+    seen.length = 0;
+    await t.tts!(ctx, { text: 'Ciao', voice: 'other' });
+    expect(seen[0]!.url).toContain('/v1/text-to-speech/other');
+  });
+  it('availableTools lists the new tools', async () => {
+    const lines = (await availableTools(new MemoryVault({ ELEVENLABS_API_KEY: 'k' }))).join('\n');
+    expect(lines).toMatch(/sound_effect.*\(ready\)/);
+    expect(lines).toMatch(/list_voices/);
+    expect((await availableTools(new MemoryVault({}))).join('\n')).toMatch(/music.*not configured/);
+  });
+  afterEach(() => setLocale('it'));
+  const readdirAssets = async () => (await new LibraryStore(projectDir, media).listAssets());
+});

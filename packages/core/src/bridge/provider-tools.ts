@@ -1,16 +1,18 @@
 import { extname, join } from 'node:path';
 import { rm } from 'node:fs/promises';
-import { relativeFileSchema, webUrlSchema, type ServerMessage, type WorkspaceSettings } from '@motion-studio/shared';
+import { brandKitSchema, relativeFileSchema, webUrlSchema, type ServerMessage, type WorkspaceSettings } from '@motion-studio/shared';
 import { MCP_TOOLS } from '../agent/launcher.ts';
 import type { ApprovalBroker } from '../approvals/broker.ts';
 import { isAllowedRule, PermissionsStore } from '../approvals/permissions-store.ts';
-import { MAX_AGENT_BYTES, readConfinedBytes } from '../brand/agent-guard.ts';
+import { MAX_AGENT_BYTES, readConfinedBytes, readConfinedFile } from '../brand/agent-guard.ts';
 import { inspectSiteFonts } from '../brand/site-fonts.ts';
 import { LibraryStore } from '../library/library-store.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { saveGeneratedFile } from '../providers/files.ts';
 import { installGoogleFont } from '../providers/google-fonts.ts';
+import { elevenlabsMusic, elevenlabsSoundEffect, elevenlabsVoices, MUSIC_MODEL, SFX_MODEL, validateMusic, validateSoundEffect } from '../providers/elevenlabs-audio.ts';
 import { ProviderError } from '../providers/http.ts';
+import { KeyCheckCache } from '../providers/key-check.ts';
 import { fetchTransport, nodeTransport, type LookupFn, type Transport } from '../providers/safe-fetch.ts';
 import { generateImage, normalizeImageSize } from '../providers/openai-images.ts';
 import { stockDownload, stockSearch, type StockProvider } from '../providers/stock.ts';
@@ -25,6 +27,8 @@ export interface ProviderToolsDeps {
   settings: () => Promise<WorkspaceSettings>; fetch?: typeof fetch; broadcast: (m: ServerMessage) => void;
   /** Downloads of provider-supplied URLs; default: over the injected fetch when there is one, else the pinned-DNS node transport. */
   transport?: Transport; lookup?: LookupFn;
+  /** What the app has learned about the keys' capabilities (core memory only). */
+  keyChecks?: KeyCheckCache;
 }
 
 /** Network access of one job: every request (API call or download) also stops when the job is cancelled. */
@@ -53,6 +57,7 @@ const oneOf = <T extends string>(v: unknown, allowed: readonly T[], label: () =>
 const stockProvider = (v: unknown): StockProvider => oneOf(v, ['pexels', 'unsplash'] as const, () => t().providers.optionProvider) ?? 'pexels';
 const cancelled = (): string => t().errors.jobCancelled;
 const s = (v: unknown, max = 4000) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+const num = (v: unknown): number | undefined => (v === undefined || v === null || v === '' ? undefined : typeof v === 'number' ? v : Number.NaN);
 const slug = (t: string) => t.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'file';
 
 export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHandler> {
@@ -81,6 +86,25 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
     try { ({ decision } = await pending); } finally { c.signal.removeEventListener('abort', onAbort); }
     alive(c);
     if (decision !== 'once' && decision !== 'always') throw new ProviderError(403, t().approvals.providerNotApproved);
+  };
+  const keyChecks = deps.keyChecks ?? new KeyCheckCache();
+  /** A 401/403 from ElevenLabs means the key lacks this permission: remembered in memory, then the error goes on. */
+  const withKeyCheck = async <T>(capability: string, permission: string, run: () => Promise<T>): Promise<T> => {
+    try { return await run(); }
+    catch (e) {
+      if (e instanceof ProviderError && (e.upstreamStatus === 401 || e.upstreamStatus === 403)) keyChecks.record('elevenlabs', capability, 'missing', permission);
+      throw e;
+    }
+  };
+  /** The sound voice of the project's brand kit, when one is set (unreadable or invalid kits count as none). */
+  const brandVoice = async (c: BridgeContext) => {
+    try {
+      const k = await readConfinedFile(c.projectDir, 'brand/brand-kit.json');
+      if (!k || !('text' in k)) return null;
+      const parsed = brandKitSchema.safeParse(JSON.parse(k.text));
+      const v = parsed.success ? parsed.data.sound?.voice : null;
+      return v && VOICE.test(v.id) ? v : null;
+    } catch { return null; }
   };
   const removeFiles = (c: BridgeContext, files: string[]) =>
     Promise.all(files.map((f) => rm(join(c.projectDir, 'assets', ...f.split('/')), { force: true }).catch(() => {})));
@@ -140,18 +164,57 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       const requested = oneOf(a.provider, ['openai', 'elevenlabs'] as const, () => t().providers.optionProvider) ?? null;
       const voice = s(a.voice, 100) || undefined;
       if (voice !== undefined && !VOICE.test(voice)) throw new ProviderError(400, t().providers.invalidVoice);
-      const provider = requested ?? ((await deps.vault.get('openai')) ? 'openai' : (await deps.vault.get('elevenlabs')) ? 'elevenlabs' : 'openai');
+      // No voice asked: the brand kit's voice, with its provider when the caller did not pick one and that key is set.
+      const brand = voice === undefined ? await brandVoice(c) : null;
+      const provider = requested ?? (brand && (await deps.vault.get(brand.provider)) ? brand.provider : (await deps.vault.get('openai')) ? 'openai' : (await deps.vault.get('elevenlabs')) ? 'elevenlabs' : 'openai');
+      const voiceId = voice ?? (brand && brand.provider === provider ? brand.id : undefined);
       const apiKey = await keyOf(provider);
       const format = a.format === 'wav' ? 'wav' : 'mp3';
       await confirmPaid(c, `provider:tts-${provider}`, t().approvals.generateVoice({ provider: LABEL[provider] }), text.slice(0, 300));
       alive(c);
-      const req = { text, voice, instructions: s(a.instructions, 1000) || undefined, format } as const;
+      const req = { text, voice: voiceId, instructions: s(a.instructions, 1000) || undefined, format } as const;
       const http = { ...httpFor(c), apiKey };
       const out = provider === 'openai' ? await openaiSpeech(http, req) : await elevenlabsSpeech(http, req);
       alive(c);
       const file = await saveGeneratedFile(c.projectDir, 'audio', `${s(a.name, 60) || slug(text)}.${format}`, out.bytes);
       await register(c, [file], (f) => ({ file: f, origin: 'generated', description: text.slice(0, 2000), tags: [t().providers.voiceTag, provider], attribution: t().providers.voiceAttribution({ provider: LABEL[provider] }) }));
       return { file: `assets/${file}`, provider, voice: out.voice };
+    },
+    sound_effect: async (c, a) => {
+      allowed(c, 'sound_effect');
+      const req = { prompt: s(a.prompt, 5000), durationSec: num(a.durationSec), loop: typeof a.loop === 'boolean' ? a.loop : undefined, promptInfluence: num(a.promptInfluence) };
+      const prompt = validateSoundEffect(req);
+      const apiKey = await keyOf('elevenlabs');
+      await confirmPaid(c, 'provider:sfx-elevenlabs', t().approvals.generateSfx({ provider: LABEL.elevenlabs }), t().approvals.audioDetail({ provider: LABEL.elevenlabs, seconds: req.durationSec ?? null, prompt: prompt.slice(0, 300) }));
+      alive(c);
+      const out = await withKeyCheck('sfx', 'sound_generation', () => elevenlabsSoundEffect({ ...httpFor(c), apiKey }, { ...req, prompt }));
+      alive(c);
+      const file = await saveGeneratedFile(c.projectDir, 'audio', `${s(a.name, 60) || slug(prompt)}.mp3`, Buffer.from(out.bytes));
+      await register(c, [file], (f) => ({ file: f, origin: 'generated', description: prompt, tags: [t().providers.soundTag, 'elevenlabs'], attribution: t().providers.audioAttribution({ provider: LABEL.elevenlabs }), provider: 'elevenlabs', model: SFX_MODEL, ...(req.loop !== undefined ? { loop: req.loop } : {}) }));
+      keyChecks.record('elevenlabs', 'sfx', 'ok');
+      return { file: `assets/${file}`, provider: 'elevenlabs' };
+    },
+    music: async (c, a) => {
+      allowed(c, 'music');
+      const req = { prompt: s(a.prompt, 5000), durationSec: num(a.durationSec) ?? Number.NaN, instrumental: typeof a.instrumental === 'boolean' ? a.instrumental : undefined };
+      const prompt = validateMusic(req);
+      const apiKey = await keyOf('elevenlabs');
+      await confirmPaid(c, 'provider:music-elevenlabs', t().approvals.generateMusic({ provider: LABEL.elevenlabs }), t().approvals.audioDetail({ provider: LABEL.elevenlabs, seconds: req.durationSec, prompt: prompt.slice(0, 300) }));
+      alive(c);
+      const out = await withKeyCheck('music', 'music_generation', () => elevenlabsMusic({ ...httpFor(c), apiKey }, { ...req, prompt }));
+      alive(c);
+      const file = await saveGeneratedFile(c.projectDir, 'audio', `${s(a.name, 60) || slug(prompt)}.mp3`, Buffer.from(out.bytes));
+      await register(c, [file], (f) => ({ file: f, origin: 'generated', description: prompt, tags: [t().providers.musicTag, 'elevenlabs'], attribution: t().providers.audioAttribution({ provider: LABEL.elevenlabs }), provider: 'elevenlabs', model: MUSIC_MODEL }));
+      keyChecks.record('elevenlabs', 'music', 'ok');
+      return { file: `assets/${file}`, provider: 'elevenlabs' };
+    },
+    list_voices: async (c, a) => {
+      allowed(c, 'list_voices');
+      const apiKey = await keyOf('elevenlabs');
+      const voices = await withKeyCheck('voices', 'voices_read', () => elevenlabsVoices({ ...httpFor(c), apiKey }, { search: s(a.search, 100) || undefined, pageSize: num(a.limit) }));
+      alive(c);
+      keyChecks.record('elevenlabs', 'voices', 'ok');
+      return { voices };
     },
     stock_search: async (c, a) => {
       allowed(c, 'stock_search');
@@ -213,6 +276,8 @@ export async function availableTools(vault: SecretsVault): Promise<string[]> {
   return [
     `- generate_image: images with gpt-image-2 ${st(openai, 'the OpenAI key is missing')}`,
     `- tts: voice-over with OpenAI or ElevenLabs ${st(openai || eleven, 'no TTS key')}`,
+    `- sound_effect / music: sound effects and music tracks with ElevenLabs ${st(eleven, 'the ElevenLabs key is missing')}`,
+    `- list_voices: ElevenLabs voices of the account (free) ${st(eleven, 'the ElevenLabs key is missing')}`,
     `- stock_search / stock_download: photos and videos from Pexels and Unsplash ${st(pexels || unsplash, 'no Pexels or Unsplash key')}`,
     '- fonts_fetch: Google Fonts fonts (ready)',
     '- report_progress, validate_composition, preview_frames, read_brand_kit (ready)',

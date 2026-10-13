@@ -102,7 +102,7 @@ export class LibraryStore {
     fileLock.noteWrite(this.metadataPath('references'));
   }
 
-  registerAssets(items: Array<{ file: string; origin: AssetOrigin; sourceUrl?: string | null; description?: string; tags?: string[]; attribution?: string | null; bytes?: number }>): Promise<AssetEntry[]> {
+  registerAssets(items: Array<{ file: string; origin: AssetOrigin; sourceUrl?: string | null; description?: string; tags?: string[]; attribution?: string | null; bytes?: number; provider?: string; model?: string; loop?: boolean }>): Promise<AssetEntry[]> {
     return this.lock.run('assets', async () => {
       const assets = await this.listAssets();
       const out: AssetEntry[] = [];
@@ -118,7 +118,8 @@ export class LibraryStore {
           width: meta.width ?? existing?.width ?? null, height: meta.height ?? existing?.height ?? null,
           durationSec: meta.durationSec ?? existing?.durationSec ?? null, bytes: item.bytes ?? meta.bytes,
           addedAt: existing?.addedAt ?? now(), attribution: item.attribution ?? existing?.attribution ?? null,
-          ...(existing?.provider ? { provider: existing.provider } : {}), ...(existing?.model ? { model: existing.model } : {}), ...(existing?.loop !== undefined ? { loop: existing.loop } : {}),
+          ...((item.provider ?? existing?.provider) ? { provider: (item.provider ?? existing?.provider)! } : {}), ...((item.model ?? existing?.model) ? { model: (item.model ?? existing?.model)! } : {}),
+          ...((item.loop ?? existing?.loop) !== undefined ? { loop: (item.loop ?? existing?.loop)! } : {}),
         };
         if (existing) assets[assets.indexOf(existing)] = entry; else assets.push(entry);
         out.push(entry);

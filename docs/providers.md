@@ -11,7 +11,7 @@ Providers are external services the agent uses through MCP tools of the `studio`
 - A missing key produces the error "Set the <Provider> key in the Motion Studio settings" (shown in the language chosen in Settings → Language); in the request to the agent, unconfigured tools appear as "not configured".
 
 ## Costs and confirmations
-`generate_image` and `tts` are paid: if the option **Ask before using paid providers** is on in Settings (default), every call appears as a request on the job's page (*Allow once*, *Always for this project*, *Deny*; with no answer in 10 minutes it is denied). "Always" saves the rule `provider:openai-images`, `provider:tts-openai` or `provider:tts-elevenlabs` in `<project>/.studio/permissions.json`. Stock search and download and fonts do not ask for confirmation (they are not paid).
+`generate_image`, `tts`, `sound_effect` and `music` are paid: if the option **Ask before using paid providers** is on in Settings (default), every call appears as a request on the job's page (*Allow once*, *Always for this project*, *Deny*; with no answer in 10 minutes it is denied). "Always" saves the rule `provider:openai-images`, `provider:tts-openai`, `provider:tts-elevenlabs`, `provider:sfx-elevenlabs` or `provider:music-elevenlabs` in `<project>/.studio/permissions.json`. `list_voices`, stock search and download and fonts do not ask for confirmation (they are not paid).
 
 ## Images: OpenAI gpt-image-2 (`generate_image`)
 - Key: `OPENAI_API_KEY`. Model `gpt-image-2`, PNG output.
@@ -21,8 +21,16 @@ Providers are external services the agent uses through MCP tools of the `studio`
 
 ## Voice-over: OpenAI TTS and ElevenLabs (`tts`)
 - Keys: `OPENAI_API_KEY` (model `gpt-4o-mini-tts`, default voice `marin`, text up to 4096 characters, optional tone instructions) or `ELEVENLABS_API_KEY` (model `eleven_multilingual_v2`, text up to 5000 characters; with no voice given it uses the first in the account's list).
-- If the provider is not given, it uses OpenAI when the key is present, otherwise ElevenLabs.
+- If the provider is not given, it uses the provider of the brand kit voice (`sound.voice`) when its key is present, else OpenAI when the key is present, otherwise ElevenLabs. If no voice is given, the brand kit voice is used when it belongs to the chosen provider.
 - Formats `mp3` (default) and `wav`; files in `assets/audio/`, with the attribution "AI-generated voice (<Provider>)" (in the language set in Settings).
+
+## Sound effects, music and voices: ElevenLabs (`sound_effect`, `music`, `list_voices`)
+- Key: `ELEVENLABS_API_KEY`, sent in the `xi-api-key` header. API shapes checked against the public ElevenLabs documentation on 2026-10-13 (not tried live).
+- `sound_effect`: `POST /v1/sound-generation?output_format=mp3_44100_128`, body `{ text, duration_seconds?, prompt_influence?, loop?, model_id: "eleven_text_to_sound_v2" }`. Parameters: `prompt` (up to 1000 characters), `durationSec` (0.5 to 30; left out, the service infers it), `loop`, `promptInfluence` (0 to 1), `name`.
+- `music`: `POST /v1/music?output_format=mp3_44100_128`, body `{ prompt, music_length_ms, force_instrumental?, model_id: "music_v1" }`. Parameters: `prompt` (up to 1000 characters), `durationSec` (10 to 300; the API itself allows 3 to 600 s), `instrumental`, `name`.
+- `list_voices`: `GET /v2/voices?page_size=&search=` (free, no confirmation): `id`, `name`, `labels`, `previewUrl`; up to 100 voices per call.
+- Both generators are paid and ask for confirmation (rules `provider:sfx-elevenlabs`, `provider:music-elevenlabs`; the request shows provider, duration and prompt). Files (mp3, 50 MB maximum) go in `assets/audio/`, registered with the prompt as description, `provider`, `model`, the probed `durationSec`, `loop` and the attribution "AI-generated (ElevenLabs)".
+- A 401 or 403 from these calls is recorded in the in-memory key-check cache (`providers/key-check.ts`, never persisted) as `missing` for that capability, with the permission name `sound_generation`, `music_generation` or `voices_read`.
 
 ## Stock photos and videos: Pexels and Unsplash (`stock_search`, `stock_download`)
 - Keys: `PEXELS_API_KEY`, `UNSPLASH_ACCESS_KEY`. Unsplash offers only photos; search videos on Pexels.

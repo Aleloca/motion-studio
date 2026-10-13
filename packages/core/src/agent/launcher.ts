@@ -22,8 +22,8 @@ import { UsageTracker } from '../usage/usage-tracker.ts';
 const RUN_DIR = 'run';
 export const MCP_SERVER = 'studio';
 export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
-  creative: ['report_progress', 'validate_composition', 'preview_frames', 'read_brand_kit', 'generate_image', 'tts', 'stock_search', 'stock_download', 'fonts_fetch'],
-  console: ['report_progress', 'read_brand_kit', 'generate_image', 'tts', 'stock_search', 'stock_download', 'fonts_fetch'],
+  creative: ['report_progress', 'validate_composition', 'preview_frames', 'read_brand_kit', 'generate_image', 'tts', 'sound_effect', 'music', 'list_voices', 'stock_search', 'stock_download', 'fonts_fetch'],
+  console: ['report_progress', 'read_brand_kit', 'generate_image', 'tts', 'sound_effect', 'music', 'list_voices', 'stock_search', 'stock_download', 'fonts_fetch'],
   'brand-analysis': ['report_progress', 'read_brand_kit', 'fonts_fetch', 'download_file', 'inspect_site_fonts'],
   describe: ['report_progress'],
 };
