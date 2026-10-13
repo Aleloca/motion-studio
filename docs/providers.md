@@ -78,7 +78,7 @@ Outcomes:
 - `error`: network failure, deadline, 5xx or rate limit (429, or Unsplash's 403 "Rate Limit Exceeded"). Never `missing`.
 - With no voice given, ElevenLabs voice-over first reads the account's voice list: that read is recorded under the voice list (`voices_read`), not under voice-over.
 
-Tests never reach these hosts: `test-support/block-provider-network.ts` refuses real requests to the provider and Google Fonts hosts under vitest (a test that really means it calls `allowProviderNetwork()`, undone after every test; an inherited `MS_ALLOW_PROVIDER_NETWORK` is deleted and ignored).
+Tests never reach these hosts: `test-support/block-provider-network.ts` refuses real requests to the provider hosts and to every Google Fonts host the product contacts (`fonts.google.com`, `fonts.googleapis.com`, `fonts.gstatic.com`) under vitest (a test that really means it calls `allowProviderNetwork()`, undone after every test; an inherited `MS_ALLOW_PROVIDER_NETWORK` is deleted and ignored).
 
 A restricted ElevenLabs key (for example one with only `text_to_speech`) answers `401` with `missing_permissions` to the read requests: the key is shown as working, the read permissions as missing and generation as unverified, never as an invalid key.
 

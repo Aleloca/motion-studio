@@ -1,6 +1,7 @@
 import https from 'node:https';
 import { afterEach, describe, expect, it } from 'vitest';
 import { allowProviderNetwork, BLOCKED_PROVIDER_HOSTS, INHERITED_OPT_IN, isBlockedProviderHost, ProviderNetworkBlocked, scrubInheritedOptIn } from '../../../test-support/block-provider-network.ts';
+import { CATALOG_URL } from '../src/providers/google-fonts-catalog.ts';
 import { checkKey } from '../src/providers/key-check.ts';
 import { nodeTransport } from '../src/providers/safe-fetch.ts';
 
@@ -21,6 +22,12 @@ describe('test network guard', () => {
     // The lookup pins a loopback address: even if the guard failed, nothing would leave the machine.
     const lookup = (async () => [{ address: '127.0.0.1', family: 4 }]) as never;
     await expect(nodeTransport(new URL('https://fonts.gstatic.com/s/a.ttf'), {}, lookup)).rejects.toBeInstanceOf(ProviderNetworkBlocked);
+  });
+  it('covers the Google Fonts catalog host the product reads (fonts.google.com), not only the css2 and file hosts', async () => {
+    for (const u of [CATALOG_URL, 'https://fonts.googleapis.com/css2?family=Inter', 'https://fonts.gstatic.com/s/inter/a.ttf']) {
+      expect(isBlockedProviderHost(new URL(u).hostname)).toBe(true);
+    }
+    await expect(fetch(CATALOG_URL)).rejects.toBeInstanceOf(ProviderNetworkBlocked);
   });
   it('a key check with the default real fetch is refused, never sent', async () => {
     const r = await checkKey({ fetch: globalThis.fetch }, 'openai', 'sk-guard-0123456789');

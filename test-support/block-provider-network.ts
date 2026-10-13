@@ -13,7 +13,9 @@ import { afterEach } from 'vitest';
  * isolate-user-data.ts, so every package's setup has it.
  */
 export const BLOCKED_PROVIDER_HOSTS = [
-  'api.openai.com', 'api.elevenlabs.io', 'api.pexels.com', 'api.unsplash.com', 'fonts.googleapis.com', 'fonts.gstatic.com',
+  'api.openai.com', 'api.elevenlabs.io', 'api.pexels.com', 'api.unsplash.com',
+  // Every Google Fonts host the product contacts: the catalog (fonts.google.com), the css2 API and the font files.
+  'fonts.google.com', 'fonts.googleapis.com', 'fonts.gstatic.com',
 ] as const;
 
 export class ProviderNetworkBlocked extends Error {
