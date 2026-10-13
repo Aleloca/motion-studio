@@ -154,7 +154,7 @@ export class CreativeTurnService {
   }
 
   /** Edits title and/or brief; refused while a generation is queued or running for the creative. */
-  async updateBrief(ref: CreativeRef, patch: { title?: string; brief?: Brief; services?: Brief['services']; formatLabels?: Record<string, string>; formats?: string[]; linkedCodebases?: LinkedCodebase[] }): Promise<CreativeFile> {
+  async updateBrief(ref: CreativeRef, patch: { title?: string; brief?: Brief; services?: Brief['services']; formatLabels?: Record<string, string | null>; formats?: string[]; linkedCodebases?: LinkedCodebase[] }): Promise<CreativeFile> {
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     return this.locks.run(key, async () => {
       if (this.isActive(key)) throw new WorkspaceError(409, t().errors.waitBeforeBrief);
@@ -201,7 +201,12 @@ export class CreativeTurnService {
             exportPicks = { exportPicks: pruned.exportPicks };
           }
         }
-        if (patch.formatLabels) next.formatLabels = patch.formatLabels;
+        if (patch.formatLabels) {
+          // Per key: a key left out is kept (a newer label from another tab survives); '' or null clears the key.
+          const merged: Record<string, string> = { ...(next.formatLabels ?? {}) };
+          for (const [k, v] of Object.entries(patch.formatLabels)) { if (v === null || v === '') delete merged[k]; else merged[k] = v; }
+          next.formatLabels = merged;
+        }
         // Ruling H: a label of a format the brief no longer has goes with it.
         if (next.formatLabels) {
           const kept = Object.fromEntries(Object.entries(next.formatLabels).filter(([k]) => next.formats.includes(k)));

@@ -13,10 +13,14 @@ let serverBrief: Brief;
 const api = {
   getSecrets: vi.fn(async () => []),
   getKeyChecks: vi.fn(async () => ({})),
-  updateCreative: vi.fn(async (_s: string, _c: string, body: { formats?: string[]; formatLabels?: Record<string, string>; brief?: Brief }) => {
+  updateCreative: vi.fn(async (_s: string, _c: string, body: { formats?: string[]; formatLabels?: Record<string, string | null>; brief?: Brief }) => {
     if (body.brief) serverBrief = body.brief;
     if (body.formats) serverBrief = { ...serverBrief, formats: body.formats };
-    if (body.formatLabels) serverBrief = { ...serverBrief, formatLabels: body.formatLabels };
+    if (body.formatLabels) {
+      const m: Record<string, string> = { ...(serverBrief.formatLabels ?? {}) };
+      for (const [k, v] of Object.entries(body.formatLabels)) { if (v) m[k] = v; else delete m[k]; }
+      serverBrief = { ...serverBrief, formatLabels: m };
+    }
     return { brief: serverBrief };
   }),
   sendCreativeTurn: vi.fn(async () => ({})),
@@ -73,6 +77,22 @@ describe('format instances · names', () => {
     expect(parseRoute(href.format('acme', 'c', POST2))).toEqual({ name: 'format', slug: 'acme', creative: 'c', format: POST2 });
     expect(parseRoute('#/p/acme/c/c/f/instagram-post-1x1%402')).toMatchObject({ format: POST2 });
     expect(parseRoute(href.edit('acme', 'c', POST2))).toMatchObject({ name: 'edit', format: POST2 });
+    // Only the instance pattern: no encoded slash, no @1 or @21.
+    for (const bad of ['x%2Fy', 'x@1', 'x@21', 'x%40001']) expect(parseRoute(`#/p/acme/c/c/f/${bad}`).name).not.toBe('format');
+  });
+});
+
+describe('format instances · project cards', () => {
+  it('a card names its instances by their labels, else Name #k', async () => {
+    const { ProjectCreatives } = await import('../src/screens/ProjectCreatives.tsx');
+    (api as unknown as Record<string, unknown>).listCreatives = vi.fn(async () => [
+      { ok: true, slug: 'c1', title: 'Launch', status: 'ready', formats: [POST, POST2, BANNER], formatLabels: { [POST2]: 'Summer promo' }, versions: 1, updatedAt: '2026-10-08T10:00:00.000Z', cover: null },
+    ]);
+    (api as unknown as Record<string, unknown>).getFormats = vi.fn(async () => ({ presets: DEFAULT_FORMATS, error: null, path: '/x' }));
+    render(en(<ProjectCreatives slug="acme" live={{ approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} } as never} />));
+    const card = await screen.findByRole('article');
+    await waitFor(() => expect(within(card).getByText('Summer promo')).toBeTruthy());
+    expect(within(card).getByText('Post 1:1')).toBeTruthy();
   });
 });
 
@@ -97,7 +117,7 @@ describe('format instances · brief editor', () => {
     await userEvent.clear(field);
     await userEvent.type(field, '{Enter}');
     await waitFor(() => expect(api.updateCreative).toHaveBeenCalledOnce());
-    expect(lastBody()).toEqual({ formatLabels: {} });
+    expect(lastBody()).toEqual({ formatLabels: { [POST2]: '' } });
   });
 
   it('move down and up reorder with the keyboard alternative and save formats only', async () => {
@@ -115,7 +135,9 @@ describe('format instances · brief editor', () => {
   it('dragging a row onto another reorders the same way', async () => {
     mount();
     const [first, , third] = rows();
-    fireEvent.dragStart(first!);
+    // Only the handle drags: the row itself is not a drag source.
+    expect(first!.getAttribute('draggable')).toBeNull();
+    fireEvent.dragStart(first!.querySelector('.ms-brief-inst-grip')!);
     fireEvent.dragOver(third!);
     fireEvent.drop(third!);
     await waitFor(() => expect(api.updateCreative).toHaveBeenCalledOnce());
@@ -158,9 +180,27 @@ describe('format instances · brief editor', () => {
     expect(api.updateCreative).not.toHaveBeenCalled();
   });
 
-  it('the preset chip adds the first instance and takes out every instance of it', async () => {
-    mount();
+  it('the preset chip takes out every saved instance only after a confirmation that names them and keeps saved versions', async () => {
+    mount(baseBrief({ formatLabels: { [POST2]: 'Promo' } }));
     await userEvent.click(screen.getByRole('button', { name: /^Post 1:1/, pressed: true }));
+    const dialog = screen.getByRole('dialog', { name: 'Remove Post 1:1, Promo?' });
+    expect(within(dialog).getByText(/Saved versions are kept/)).toBeTruthy();
+    expect(names()).toHaveLength(3);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(names()).toHaveLength(3);
+    await userEvent.click(screen.getByRole('button', { name: /^Post 1:1/, pressed: true }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(api.updateCreative).toHaveBeenCalledOnce());
+    expect(lastBody()).toEqual({ formats: [BANNER] });
+    expect(names()).toEqual(['Banner 300×250']);
+  });
+
+  it('a chip that only holds unsaved instances turns off at once', async () => {
+    mount(baseBrief({ formats: [BANNER] }));
+    await userEvent.click(within(screen.getByRole('group', { name: 'Instagram' })).getByRole('button', { name: /^Post 1:1/ }));
+    expect(names()).toEqual(['Banner 300×250', 'Post 1:1']);
+    await userEvent.click(screen.getByRole('button', { name: /^Post 1:1/, pressed: true }));
+    expect(screen.queryByRole('dialog')).toBeNull();
     expect(names()).toEqual(['Banner 300×250']);
   });
 
@@ -176,6 +216,8 @@ describe('format instances · brief editor', () => {
     api.updateCreative.mockRejectedValueOnce(new ApiError(409, 'Wait for the generation'));
     await userEvent.click(screen.getByRole('button', { name: 'Move Post 1:1 down' }));
     expect((await screen.findByRole('alert')).textContent).toBe("Couldn't save the formats: Wait for the generation");
+    // The list goes back to what the server has.
+    expect(names()).toEqual(['Post 1:1', 'Post 1:1 #2', 'Banner 300×250']);
   });
 
   it('a legacy brief with an odd format id says which one on save, and removing it fixes the brief', async () => {

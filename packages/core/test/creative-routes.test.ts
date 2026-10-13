@@ -142,9 +142,35 @@ describe('creatives', { timeout: 90_000 }, () => {
     expect((await app.inject({ method: 'PUT', url, payload: { formatLabels: { 'instagram-post-1x1': 'x'.repeat(61) } } })).statusCode).toBe(400);
     res = await app.inject({ method: 'PUT', url, payload: { formatLabels: { 'web-banner-300x250': 'gone', 'instagram-post-1x1': 'Main' } } });
     expect(res.json().brief.formatLabels).toEqual({ 'instagram-post-1x1': 'Main' });
-    // An empty map clears the labels.
+    // Labels merge per key: a key left out is kept (a stale tab cannot drop a newer label); '' or null clears that key only.
+    await app.inject({ method: 'PUT', url, payload: { formatLabels: { 'instagram-post-1x1': 'Newer' } } });
     res = await app.inject({ method: 'PUT', url, payload: { formatLabels: {} } });
+    expect(res.json().brief.formatLabels).toEqual({ 'instagram-post-1x1': 'Newer' });
+    res = await app.inject({ method: 'PUT', url, payload: { formatLabels: { 'instagram-post-1x1@2': 'Other' } } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().brief.formatLabels).toEqual({ 'instagram-post-1x1': 'Newer' });
+    res = await app.inject({ method: 'PUT', url, payload: { formatLabels: { 'instagram-post-1x1': null } } });
     expect(res.json().brief.formatLabels).toBeUndefined();
+    await app.inject({ method: 'PUT', url, payload: { formatLabels: { 'instagram-post-1x1': 'Again' } } });
+    res = await app.inject({ method: 'PUT', url, payload: { formatLabels: { 'instagram-post-1x1': '' } } });
+    expect(res.json().brief.formatLabels).toBeUndefined();
+  });
+  it('a full brief together with formats or labels is refused, not half ignored', async () => {
+    const { slug } = await createCreative(false);
+    const url = `/api/projects/acme/creatives/${slug}`;
+    expect((await app.inject({ method: 'PUT', url, payload: { brief, formats: ['instagram-post-1x1'] } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'PUT', url, payload: { brief, formatLabels: { 'instagram-post-1x1': 'x' } } })).statusCode).toBe(400);
+  });
+  it('a legacy odd format id stored in a brief can be removed through the partial path', async () => {
+    const { slug } = await createCreative(false);
+    const file = join(base, 'ws', 'acme', 'creatives', slug, 'creative.json');
+    const c = JSON.parse(await readFile(file, 'utf8'));
+    c.brief.formats = ['instagram-post-1x1', 'Old_One', 'Old_Two'];
+    await writeFile(file, JSON.stringify(c));
+    const url = `/api/projects/acme/creatives/${slug}`;
+    const res = await app.inject({ method: 'PUT', url, payload: { formats: ['instagram-post-1x1', 'Old_Two'] } });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json().brief.formats).toEqual(['instagram-post-1x1', 'Old_Two']);
   });
   it('a full brief save with labels of formats it removes prunes them instead of answering 400 (Ruling H)', async () => {
     const { slug } = await createCreative(false);

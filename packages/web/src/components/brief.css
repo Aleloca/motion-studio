@@ -18,7 +18,7 @@
 .ms-brief-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .ms-brief-inst { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .ms-brief-inst-row { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 8px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line); min-width: 0; }
-.ms-brief-inst-row[draggable="true"] { cursor: grab; }
+.ms-brief-inst-grip[draggable="true"] { cursor: grab; }
 .ms-brief-inst-row.ms-drag { box-shadow: inset 0 0 0 1px var(--accentText); }
 .ms-brief-inst-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .ms-brief-inst-grip { display: inline-flex; color: var(--muted); }

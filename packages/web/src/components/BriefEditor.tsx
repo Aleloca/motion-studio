@@ -51,26 +51,35 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefr
     const labels = labelsFor(formats, b.formatLabels);
     return { ...rest, formats, ...(labels ? { formatLabels: labels } : {}) };
   });
-  // A preset chip adds the preset, or takes out every instance of it.
+  // A preset chip adds the preset, or takes out every instance of it; instances the server already has ask first.
   const toggle = (pid: string) => {
     const mine = brief.formats.filter((f) => presetOf(f) === pid);
-    setFormats(mine.length > 0 ? brief.formats.filter((f) => presetOf(f) !== pid) : [...brief.formats, pid]);
+    if (mine.length === 0) { setFormats([...brief.formats, pid]); return; }
+    if (mine.some((f) => stored.formats.includes(f))) { setConfirm(mine); return; }
+    remove(mine);
   };
-  const [confirm, setConfirm] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<string[] | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const nameOf = (fid: string) => instanceName(presetFor(presets, fid), fid, locale, brief.formatLabels);
   /** Order and removal are saved at once, as a partial save merged into the stored brief under the lock (Phase 12). */
-  const savePartial = async (patch: { formats?: string[]; formatLabels?: Record<string, string> }) => {
+  const savePartial = async (patch: { formats?: string[]; formatLabels?: Record<string, string | null> }) => {
     setError(null);
     try {
       const saved = await api.updateCreative(slug, detail.slug, patch);
       setStored(saved.brief);
       onRefresh?.();
-    } catch (e) { setError(t.web.instances.saveFailed({ detail: message(e) })); }
+    } catch (e) {
+      // The draft goes back to what the server has, so the list never shows an order or a label that was not saved.
+      setBrief((b) => {
+        const { formatLabels: _l, ...rest } = b;
+        return { ...rest, formats: stored.formats, ...(stored.formatLabels ? { formatLabels: stored.formatLabels } : {}) };
+      });
+      setError(t.web.instances.saveFailed({ detail: message(e) }));
+    }
   };
   /** The formats the server has, in the draft's order, without `gone`. */
-  const storedOrder = (formats: string[], gone?: string) => formats.filter((f) => stored.formats.includes(f) && f !== gone);
-  const persistOrder = (formats: string[], gone?: string) => {
+  const storedOrder = (formats: string[], gone: readonly string[] = []) => formats.filter((f) => stored.formats.includes(f) && !gone.includes(f));
+  const persistOrder = (formats: string[], gone: readonly string[] = []) => {
     const next = storedOrder(formats, gone);
     const cur = stored.formats;
     if (next.length > 0 && (next.length !== cur.length || next.some((f, i) => f !== cur[i]))) void savePartial({ formats: next });
@@ -89,18 +98,17 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefr
     const last = brief.formats.reduce((k, f, i) => (presetOf(f) === presetOf(fid) ? i : k), -1);
     setFormats([...brief.formats.slice(0, last + 1), next, ...brief.formats.slice(last + 1)]);
   };
-  const remove = (fid: string) => {
+  const remove = (ids: string[]) => {
     setConfirm(null);
-    const next = brief.formats.filter((f) => f !== fid);
+    const next = brief.formats.filter((f) => !ids.includes(f));
     setFormats(next);
-    persistOrder(next, fid);
+    persistOrder(next, ids);
   };
   const commitLabel = (fid: string) => {
     const value = (brief.formatLabels?.[fid] ?? '').trim();
     if (!stored.formats.includes(fid) || (stored.formatLabels?.[fid] ?? '') === value) return;
-    const map = { ...(stored.formatLabels ?? {}) };
-    if (value) map[fid] = value; else delete map[fid];
-    void savePartial({ formatLabels: map });
+    // Only this key goes: the server merges per key, so another tab's newer labels are kept ('' clears this one).
+    void savePartial({ formatLabels: { [fid]: value } });
   };
   const setLabel = (fid: string, value: string) => setBrief((b) => {
     const { formatLabels: old, ...rest } = b;
@@ -197,11 +205,12 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefr
               const name = nameOf(fid);
               const full = nextInstanceId(presetOf(fid), brief.formats) === null;
               return (
-                <li key={fid} className={cx('ms-brief-inst-row', dragging === fid && 'ms-drag')} draggable={!disabled}
-                  onDragStart={(e) => { setDragging(fid); e.dataTransfer?.setData('text/plain', fid); }} onDragEnd={() => setDragging(null)}
+                <li key={fid} className={cx('ms-brief-inst-row', dragging === fid && 'ms-drag')}
                   onDragOver={(e) => { if (dragging) e.preventDefault(); }} onDrop={onDrop(fid)}>
                   <span className="ms-brief-inst-head">
-                    <span className="ms-brief-inst-grip" title={t.web.instances.dragHandle({ name })} aria-hidden="true"><Icon name="menu" size={13} /></span>
+                    {/* Only the handle drags (the label field keeps its text selection); Move up/down are the keyboard way. */}
+                    <span className="ms-brief-inst-grip" draggable={!disabled} title={t.web.instances.dragHandle({ name })} aria-hidden="true"
+                      onDragStart={(e) => { setDragging(fid); e.dataTransfer?.setData('text/plain', fid); }} onDragEnd={() => setDragging(null)}><Icon name="menu" size={13} /></span>
                     {preset ? <ChannelMark channel={channelOf(preset.channel)} /> : null}
                     <b className="ms-brief-inst-name">{name}</b>
                   </span>
@@ -218,7 +227,7 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefr
                     <Button size="sm" variant="ghost" aria-label={t.web.instances.addAnother({ name })} title={full ? t.web.instances.full : undefined} disabled={disabled || full || !preset} onClick={() => addAnother(fid)}>
                       <Icon name="plus" size={13} />{t.web.instances.addAnotherShort}
                     </Button>
-                    <Button size="sm" variant="ghost" icon aria-label={t.web.instances.remove({ name })} disabled={disabled} onClick={() => setConfirm(fid)}>
+                    <Button size="sm" variant="ghost" icon aria-label={t.web.instances.remove({ name })} disabled={disabled} onClick={() => setConfirm([fid])}>
                       <Icon name="trash" size={13} />
                     </Button>
                   </span>
@@ -228,9 +237,9 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefr
           </ol>
         </>
       ) : null}
-      <Modal open={confirm !== null} onClose={() => setConfirm(null)} label={confirm ? t.web.instances.removeTitle({ name: nameOf(confirm) }) : ''} width={420}>
+      <Modal open={confirm !== null} onClose={() => setConfirm(null)} label={confirm ? t.web.instances.removeTitle({ name: confirm.map(nameOf).join(', ') }) : ''} width={420}>
         <div className="ms-brief-confirm">
-          <h3>{confirm ? t.web.instances.removeTitle({ name: nameOf(confirm) }) : ''}</h3>
+          <h3>{confirm ? t.web.instances.removeTitle({ name: confirm.map(nameOf).join(', ') }) : ''}</h3>
           <p>{t.web.instances.removeBody}</p>
           <div className="ms-brief-actions">
             <Button variant="danger" onClick={() => { if (confirm) remove(confirm); }}>{t.web.instances.removeConfirm}</Button>

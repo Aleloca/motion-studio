@@ -705,6 +705,7 @@ export const it: Messages = {
     sourceInvalid: 'fonte non valida',
     duplicateFormats: 'lo stesso formato due volte',
     labelNotInFormats: 'un\'etichetta per un formato che non è nel brief',
+    briefWithPartial: 'un brief completo non può essere inviato insieme a formati o etichette',
     badLocales: 'lingue non valide (senza ripetizioni, e la lingua principale non è tra quelle extra)',
     duplicateStores: 'lo stesso store due volte',
     storePackIphone: 'l\'App Store richiede gli screenshot iPhone 6.9"',

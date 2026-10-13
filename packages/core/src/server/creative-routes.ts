@@ -3,7 +3,7 @@ import { recoverRenameJournal } from '../library/rename-recovery.ts';
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { INSTANCE_FOLDER_RE, INSTANCE_ID_RE, briefSchema, briefWriteSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
+import { INSTANCE_FOLDER_RE, briefSchema, briefWriteSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -54,9 +54,12 @@ export const turnBodySchema = z.object({ text: z.string().max(10_000).optional()
 const createBody = z.object({ title: z.string(), brief: briefWriteSchema, generate: z.boolean().optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
 // `services` alone changes only that field of the stored brief (the composer's Services chip); `brief` replaces the brief.
 // `formatLabels` / `formats` alone merge into the stored brief the same way (Phase 12: inline labels, reorder, removal).
+// `formatLabels` merges per key (an omitted key is kept; `''` or `null` clears that key), so a stale tab cannot drop a newer label.
+// `formats` is checked against the stored ones by the core (only reorder or remove), so a legacy odd id can be taken out.
 const editBody = z.object({ title: z.string().optional(), brief: briefWriteSchema.optional(), services: briefSchema.shape.services,
-  formatLabels: z.record(z.string(), z.string().trim().min(1).max(60)).optional(),
-  formats: z.array(z.string().regex(INSTANCE_ID_RE)).min(1).max(100).optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
+  formatLabels: z.record(z.string(), z.union([z.string().trim().max(60), z.null()])).optional(),
+  formats: z.array(z.string().min(1).max(200)).min(1).max(100).optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() })
+  .refine((b) => !b.brief || (b.formats === undefined && b.formatLabels === undefined), { message: 'issue.briefWithPartial' });
 /** Ruling H: a full brief save whose `formatLabels` name formats it no longer has drops those labels (no 400). */
 function pruneLabelsOfRemovedFormats(raw: unknown): unknown {
   const b = (raw as { brief?: { formats?: unknown; formatLabels?: unknown } } | null)?.brief;

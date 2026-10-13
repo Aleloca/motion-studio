@@ -1,6 +1,6 @@
 import { instanceName, presetFor } from '../instances.ts';
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
-import { formatName, type CreativeListItem, type CreativeSummary, type FormatPreset } from '@motion-studio/shared';
+import { type CreativeListItem, type CreativeSummary, type FormatPreset } from '@motion-studio/shared';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react';
 import { api } from '../api.ts';
 import type { EventsState } from '../eventsReducer.ts';
@@ -224,7 +224,7 @@ function CreativeCard({ slug, c, info, presets, index, fresh }: CardProps) {
             {known.slice(0, MAX_TAGS).map(({ id, preset }) => (
               <Tag key={id} className="ms-ftag">
                 {preset ? <ChannelMark channel={channelOf(preset.channel)} /> : null}
-                <span className="ms-ftag-name">{instanceName(preset, id, locale)}</span>
+                <span className="ms-ftag-name">{instanceName(preset, id, locale, c.formatLabels)}</span>
               </Tag>
             ))}
             {known.length > MAX_TAGS ? <Tag className="ms-ftag">{s.moreFormats({ n: known.length - MAX_TAGS })}</Tag> : null}

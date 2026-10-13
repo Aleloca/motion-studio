@@ -713,6 +713,7 @@ export const en = {
     sourceInvalid: 'invalid source',
     duplicateFormats: 'the same format twice',
     labelNotInFormats: 'a label for a format that is not in the brief',
+    briefWithPartial: 'a full brief cannot be sent together with formats or labels',
     badLocales: 'invalid languages (no repeats, and the main language is not among the extra ones)',
     duplicateStores: 'the same store twice',
     storePackIphone: 'the App Store needs the iPhone 6.9" screenshots',

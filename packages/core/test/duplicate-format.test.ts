@@ -171,6 +171,48 @@ describe('duplicating a format', { timeout: 120_000 }, () => {
     expect(d.formats!.find((f) => f.id === 'test-tall')!.star.follows).toBeNull();
   });
 
+  it('a removal through the partial path ({ formats } alone) clears the removed instance\'s links at either end and its pick; re-adding the id starts clean', async () => {
+    const slug = await env.create(['test-wide', 'test-tall'], { links: {} });
+    const dup = await duplicate(slug, 1, { instanceId: 'test-wide' });
+    expect(dup.statusCode, dup.body).toBe(200);
+    const file = join(env.store().dir(slug), 'creative.json');
+    const c = JSON.parse(readFileSync(file, 'utf8'));
+    c.brief.links = { 'test-wide@2': 'test-wide', 'test-tall': 'test-wide@2' };
+    c.exportPicks = { 'test-wide@2': 1, 'test-tall': 1 };
+    writeFileSync(file, JSON.stringify(c));
+    const url = `/api/projects/acme/creatives/${slug}`;
+    const r = await env.app.inject({ method: 'PUT', url, headers: H, payload: { formats: ['test-wide', 'test-tall'] } });
+    expect(r.statusCode, r.body).toBe(200);
+    const d = await detail(slug);
+    expect(d.creative.brief.formats).toEqual(['test-wide', 'test-tall']);
+    expect(d.creative.brief.links ?? {}).toEqual({});
+    expect(d.creative.exportPicks).toEqual({ 'test-tall': 1 });
+    // The id comes back (a duplicate takes the free @2): no link and no pick follow it.
+    const again = await duplicate(slug, 2, { instanceId: 'test-wide' });
+    expect(again.json().instanceId).toBe('test-wide@2');
+    const after = await detail(slug);
+    expect(after.creative.brief.links ?? {}).toEqual({});
+    expect(after.formats!.find((f) => f.id === 'test-wide@2')!.star).toMatchObject({ follows: null, manual: false });
+  });
+
+  it('duplicating from an older version copies that version\'s source; every other instance comes from the latest version', async () => {
+    const slug = await env.create(['test-wide', 'test-tall'], { links: {} });
+    for (const text of ['two', 'three', 'four', 'five']) await env.turn(slug, { text });
+    const v3 = (await env.versionOf(slug, 3))!;
+    const v5 = (await env.versionOf(slug, 5))!;
+    expect(entry(v3, 'test-wide')!.hash).not.toBe(entry(v5, 'test-wide')!.hash);
+    expect(entry(v3, 'test-tall')!.hash).not.toBe(entry(v5, 'test-tall')!.hash);
+    const r = await duplicate(slug, 3, { instanceId: 'test-wide' });
+    expect(r.statusCode, r.body).toBe(200);
+    const body = r.json() as { version: VersionEntry; instanceId: string };
+    expect(body.version.n).toBe(6);
+    const v6 = (await env.versionOf(slug, 6))!;
+    expect(entry(v6, body.instanceId)!.hash).toBe(entry(v3, 'test-wide')!.hash);
+    expect((await readCompositionFolder(compDir(slug, 6, body.instanceId))).hash).toBe(entry(v3, 'test-wide')!.hash);
+    expect(entry(v6, 'test-wide')!.hash).toBe(entry(v5, 'test-wide')!.hash);
+    expect(entry(v6, 'test-tall')!.hash).toBe(entry(v5, 'test-tall')!.hash);
+  });
+
   it('refuses 20 instances, a source not in version n (409), a source not in the brief (400), an unknown version (404) and a bad body (400)', async () => {
     const slug = await env.create(['test-wide'], { links: {} });
     const twenty = ['test-wide', ...Array.from({ length: 19 }, (_, i) => `test-wide@${i + 2}`)];

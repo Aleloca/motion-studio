@@ -260,7 +260,7 @@ export type ConversationEntry =
   /** `warning`: something the user should know that did not fail the turn (e.g. a link removed); shown like `info`. */
   | { type: 'system'; at: string; level: 'info' | 'warning' | 'error'; text: string };
 
-export interface CreativeSummary { slug: string; title: string; status: CreativeStatus; formats: string[]; versions: number; updatedAt: string; cover: string | null }
+export interface CreativeSummary { slug: string; title: string; status: CreativeStatus; formats: string[]; /** The brief's labels of format instances (Phase 12); absent when there are none. */ formatLabels?: Record<string, string>; versions: number; updatedAt: string; cover: string | null }
 /** A creative summary tagged with its project, for cross-project lists such as "Jump back in". */
 export type RecentCreative = CreativeSummary & { project: { slug: string; name: string } };
 export type CreativeListItem = ({ ok: true } & CreativeSummary) | { ok: false; slug: string; error: string };

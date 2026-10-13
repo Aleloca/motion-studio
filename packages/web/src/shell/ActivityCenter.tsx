@@ -1,6 +1,6 @@
-import { DEFAULT_FORMATS, formatName, type AgentEvent, type ApprovalRequest, type ConversationEntry, type JobSummary } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, type AgentEvent, type ApprovalRequest, type ConversationEntry, type JobSummary } from '@motion-studio/shared';
 import { instanceName, presetFor } from '../instances.ts';
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api.ts';
 import { ApprovalCard } from '../components/ApprovalCard.tsx';
 import { useApprovalPresence } from '../components/approvalPresence.ts';
@@ -11,7 +11,7 @@ import { Button, Empty, Icon, ProgressBar, Spinner, Tabs, cx, toast } from '../u
 import { renderPct } from '../screens/renderModel.ts';
 import { message } from '../errors.ts';
 import { canAskNotifications } from './notify.ts';
-import { go, type ActivityTab } from './ShellContext.tsx';
+import { go, ShellContext, type ActivityTab } from './ShellContext.tsx';
 import { lastStep } from '../jobEvents.ts';
 import { jobFinalTokens, jobLiveTokens, jobUsagePartial, todayTokens } from '../usageLive.ts';
 import { formatTokens, TokenCount } from './Tokens.tsx';
@@ -202,9 +202,13 @@ function Row({ job, className, children, after }: { job: JobSummary; className?:
 }
 
 /** A format's name for a progress line (the built-in catalog; a custom preset shows its id). */
-function useFormatLabel() {
+function useFormatLabel(job: JobSummary) {
   const locale = useLocale();
-  return (id: string) => { return instanceName(presetFor(DEFAULT_FORMATS, id), id, locale); };
+  const shell = useContext(ShellContext);
+  // The creative's labels of format instances, from the catalog of the projects visited (absent: "Name #k").
+  const at = jobPlace(job);
+  const labels = at?.creative ? shell?.catalog.creatives[at.project]?.find((c) => c.slug === at.creative)?.formatLabels : undefined;
+  return (id: string) => instanceName(presetFor(DEFAULT_FORMATS, id), id, locale, labels);
 }
 
 /**
@@ -216,7 +220,7 @@ function RenderRow({ job }: { job: JobSummary }) {
   const t = useT();
   const r = t.web.render;
   const locale = useLocale();
-  const label = useFormatLabel();
+  const label = useFormatLabel(job);
   const queued = job.state === 'queued';
   const p = job.progress;
   const sub = queued ? (job.queuePosition ? r.queuedAhead({ count: job.queuePosition }) : r.queued)

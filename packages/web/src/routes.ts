@@ -16,7 +16,7 @@ export type Route =
 
 const SLUG = '[a-z0-9][a-z0-9-]*';
 /** A format segment: a preset id or an instance id (`x@2`; `%40` is the same `@`). */
-const FORMAT_SEG = '[a-z0-9][a-z0-9@%A-F0-9-]*';
+const FORMAT_SEG = '[a-z0-9][a-z0-9-]{0,62}(?:(?:@|%40)(?:[2-9]|1[0-9]|20))?';
 /** The old project "Agent console" tab: its technical events now live in the conversation's Activity details. */
 const LEGACY_CONSOLE = new RegExp(`^#/p/(${SLUG})/console$`);
 

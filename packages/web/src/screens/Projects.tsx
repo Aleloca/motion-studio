@@ -1,5 +1,5 @@
 import { instanceName, presetFor } from '../instances.ts';
-import { formatName, type BrandOverview, type CreativeListItem, type FormatPreset, type ProjectFile, type ProjectListItem, type RecentCreative } from '@motion-studio/shared';
+import { type BrandOverview, type CreativeListItem, type FormatPreset, type ProjectFile, type ProjectListItem, type RecentCreative } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.ts';
 import type { EventsState } from '../eventsReducer.ts';
@@ -226,7 +226,7 @@ function JumpTile({ c, live, presets }: { c: RecentCreative; live: EventsState; 
   const { state, job, step } = liveCreative(c, c.project.slug, live);
   const first = c.formats[0] ? presetFor(presets, c.formats[0]) ?? undefined : undefined;
   const width = Math.round(Math.min(120, Math.max(40, THUMB_H * (first ? first.width / first.height : 1))));
-  const what = c.formats.length === 1 && first ? instanceName(first, c.formats[0]!, locale) : p.formats({ n: c.formats.length });
+  const what = c.formats.length === 1 && first ? instanceName(first, c.formats[0]!, locale, c.formatLabels) : p.formats({ n: c.formats.length });
   return (
     <a className="ms-card ms-jump-tile" data-hover-play href={href.creative(c.project.slug, c.slug)}>
       <span className="ms-jump-thumb" style={{ width }}>
