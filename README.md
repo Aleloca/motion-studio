@@ -86,7 +86,7 @@ In a format's view, **Edit** (or **Open editor** on a board) opens the editor on
   - Renders are carried only for unchanged compositions, and the storyboards are made again.
 - **The draft is never lost by surprise:**
   - leaving the editor with unsaved edits (back, another format or version, a link, a chat message) asks "Save · Discard · Keep editing";
-  - reloading or closing the page asks the browser's (or the app's) confirmation, and a reload does lose the draft.
+  - reloading or closing the page asks the browser's (or the app's) confirmation (in the app too for ⌘R and View → Reload), and a confirmed reload does lose the draft.
 - **While someone else works:**
   - while an agent turn or a render of the creative runs, Save is not available (the core refuses it too);
   - if a turn or another save changed the same format meanwhile, Save is refused and the draft is kept; **Reopen on the latest version** discards it after a confirmation;

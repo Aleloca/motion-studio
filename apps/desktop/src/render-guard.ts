@@ -94,3 +94,16 @@ export function renderRunningPrompt(m: Messages['desktop'], count: number, draft
   const detail = drafts > 0 ? `${m.renderRunningDetail}\n\n${m.draftUnsavedMessage({ count: drafts })}. ${m.draftUnsavedDetail}` : m.renderRunningDetail;
   return { message: m.renderRunningMessage({ count }), detail, buttons: [m.renderRunningQuit, m.renderRunningKeep], defaultId: 1, cancelId: 1 };
 }
+
+/** The dialog of a reload (⌘R, View → Reload, a script's `location.reload()`) with unsaved drafts: discard (0) or keep editing (1, the default and Escape). */
+export function reloadPrompt(m: Messages['desktop'], drafts: number) {
+  return { message: m.draftUnsavedMessage({ count: drafts }), detail: m.draftReloadDetail, buttons: [m.draftReloadDiscard, m.draftUnsavedKeep], defaultId: 1, cancelId: 1 };
+}
+
+/**
+ * Whether a page unload the editor's `beforeunload` held back (Electron's `will-prevent-unload`) may go on without asking:
+ * the user already agreed to the quit or close, the app is quitting, or no draft is left (the page's count changed meanwhile).
+ */
+export function unloadWithoutAsking(g: Pick<RenderGuard, 'confirmed' | 'drafts'>, quitting: boolean): boolean {
+  return quitting || g.confirmed() || g.drafts() === 0;
+}

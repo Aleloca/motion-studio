@@ -86,7 +86,7 @@ Nella vista di un formato, **Modifica** (o **Apri l’editor** su una tavola) ap
   - I render vengono portati solo per le composizioni invariate, e le storyboard si rifanno.
 - **La bozza non si perde per sorpresa:**
   - uscire dall'editor con modifiche non salvate (indietro, un altro formato o versione, un link, un messaggio in chat) chiede "Salva · Scarta · Continua a modificare";
-  - ricaricare o chiudere la pagina chiede la conferma del browser (o dell'app), e un ricaricamento la bozza la perde davvero.
+  - ricaricare o chiudere la pagina chiede la conferma del browser (o dell'app, anche per ⌘R e Vista → Ricarica), e un ricaricamento confermato la bozza la perde davvero.
 - **Mentre altri lavorano:**
   - mentre gira un turno dell'agente o un render della creatività, il salvataggio non è disponibile (anche il core lo rifiuta);
   - se nel frattempo un turno o un altro salvataggio ha cambiato lo stesso formato, il salvataggio viene rifiutato e la bozza resta; **Riapri sull'ultima versione** la scarta dopo una conferma;

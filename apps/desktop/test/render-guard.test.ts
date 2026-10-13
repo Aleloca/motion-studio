@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { setLocale, t } from '@motion-studio/core';
-import { CONFIRM_TTL_MS, DRAFTS_UNSAVED, createRenderGuard, registerRenderGuard, rendersArg, renderRunningPrompt } from '../src/render-guard.ts';
+import { CONFIRM_TTL_MS, DRAFTS_UNSAVED, createRenderGuard, registerRenderGuard, reloadPrompt, rendersArg, renderRunningPrompt, unloadWithoutAsking } from '../src/render-guard.ts';
 
 // Closing the UI window (or quitting) while a render runs asks first (Task 8, carry 11): the quit itself cancels the
 // renders cleanly (render-window.ts shutdownForQuit), this is only the confirmation.
@@ -148,5 +148,26 @@ describe('unsaved editor drafts', () => {
     expect(both.message).toBe(t().desktop.renderRunningMessage({ count: 1 }));
     expect(both.detail).toContain(t().desktop.draftUnsavedMessage({ count: 1 }));
     expect(both.buttons).toEqual([t().desktop.renderRunningQuit, t().desktop.renderRunningKeep]);
+  });
+});
+
+describe('reload with unsaved drafts (final review I3)', () => {
+  it('asks "Discard and reload" / "Keep editing", Keep being the default and Escape, in both languages', () => {
+    setLocale('en');
+    const en = reloadPrompt(t().desktop, 2);
+    expect(en).toMatchObject({ buttons: ['Discard and reload', 'Keep editing'], defaultId: 1, cancelId: 1 });
+    expect(en.message).toContain('2 editors');
+    expect(en.detail).toMatch(/Reloading discards/);
+    setLocale('it');
+    expect(reloadPrompt(t().desktop, 1).buttons).toEqual(['Scarta e ricarica', 'Continua a modificare']);
+    setLocale('en');
+  });
+  it('an unload goes on without asking only when quitting, already confirmed, or no draft is left', () => {
+    const g = createRenderGuard({ ask: async () => true });
+    expect(unloadWithoutAsking(g, false)).toBe(true); // no draft
+    g.setDrafts(1);
+    expect(unloadWithoutAsking(g, false)).toBe(false);
+    expect(unloadWithoutAsking(g, true)).toBe(true);
+    return g.mayClose().then(() => { expect(unloadWithoutAsking(g, false)).toBe(true); });
   });
 });

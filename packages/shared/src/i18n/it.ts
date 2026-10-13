@@ -661,6 +661,8 @@ export const it: Messages = {
     draftUnsavedDetail: 'Uscendo le scarti. Continua a modificare per salvarle prima come nuova versione.',
     draftUnsavedQuit: 'Scarta ed esci',
     draftUnsavedKeep: 'Continua a modificare',
+    draftReloadDetail: 'Ricaricando le scarti. Continua a modificare per salvarle prima come nuova versione.',
+    draftReloadDiscard: 'Scarta e ricarica',
     invalidRequest: 'Richiesta non valida',
     invalidPath: 'Percorso non valido',
     alreadyRunning: (p) => `Motion Studio è già avviato (porta ${p.port})`,

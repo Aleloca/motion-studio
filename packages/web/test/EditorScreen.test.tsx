@@ -664,7 +664,7 @@ describe('closing with an unsaved draft', () => {
     act(() => h.result.current[1].undo());
     await waitFor(() => expect(unload()).toBe(false));
   });
-  it('the desktop app is told the count (its close confirmation is the render guard\'s)', async () => {
+  it('the desktop app is told the count (its close confirmation is the render guard\'s) and a reload is held back for its dialog', async () => {
     const setDraftsUnsaved = vi.fn(async () => {});
     (window as unknown as { motionStudio: unknown }).motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: async () => null, revealPath: async () => {}, setDraftsUnsaved };
     try {
@@ -674,8 +674,8 @@ describe('closing with an unsaved draft', () => {
       await opened();
       store().apply(move(1));
       await waitFor(() => expect(setDraftsUnsaved).toHaveBeenLastCalledWith(1));
-      // The desktop's own dialog replaces beforeunload.
-      expect(unload()).toBe(false);
+      // A reload holds back too (I3): the desktop app answers it with its own dialog (`will-prevent-unload`), never silently.
+      expect(unload()).toBe(true);
     } finally {
       delete (window as unknown as { motionStudio?: unknown }).motionStudio;
     }

@@ -668,6 +668,8 @@ export const en = {
     draftUnsavedDetail: 'Quitting discards them. Keep editing to save them as a new version first.',
     draftUnsavedQuit: 'Discard and quit',
     draftUnsavedKeep: 'Keep editing',
+    draftReloadDetail: 'Reloading discards them. Keep editing to save them as a new version first.',
+    draftReloadDiscard: 'Discard and reload',
     invalidRequest: 'Invalid request',
     invalidPath: 'Invalid path',
     alreadyRunning: (p: { port: number }) => `Motion Studio is already running (port ${p.port})`,
