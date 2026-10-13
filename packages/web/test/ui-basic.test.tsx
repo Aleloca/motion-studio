@@ -35,7 +35,8 @@ describe('Icon', () => {
     ]);
     for (const [name, d] of Object.entries(proto)) expect(ICONS[name as keyof typeof ICONS], name).toBe(d);
     const extra = Object.keys(ICONS).filter((k) => !(k in proto));
-    expect(extra).toEqual(['forward', 'menu', 'minus', 'external', 'copy', 'edit', 'pin', 'pause', 'user']);
+    expect(extra).toEqual(['forward', 'menu', 'minus', 'external', 'copy', 'edit', 'pin', 'pause', 'user',
+      'undo', 'redo', 'unlock', 'eyeOff', 'rotate', 'music', 'scissors', 'magnet']);
   });
   it('supports the prototype fill and stroke-width options, colour from currentColor', () => {
     const { container } = render(<Icon name="play" fill strokeWidth={2} />);
