@@ -4,7 +4,7 @@
 // `applyEdit` (the one rule set shared with the core) and re-validates with the files of the composition folder plus the
 // files staged for this draft, so Save can be disabled with the first problem's text while the core refuses the same.
 import {
-  applyEdit, compositionProblem, validateComposition,
+  applyEdit, compositionProblem, draftSizeProblem, validateComposition,
   type Composition, type CompositionProblem, type EditOp, type EditorCompositionView, type EditResult, type FormatPreset, type StagedAsset, type StageRequest,
 } from '@motion-studio/shared';
 import { useMemo, useSyncExternalStore } from 'react';
@@ -79,7 +79,9 @@ function presetOf(view: EditorCompositionView): FormatPreset {
 }
 
 function validate(composition: Composition, files: Map<string, { size: number }>, preset: FormatPreset): CompositionProblem[] {
-  return validateComposition(composition, { format: preset, files }).problems;
+  // The core's size rule too (final review M5): the same compact JSON of the normalised draft, the same limit.
+  const tooLarge = draftSizeProblem(composition);
+  return [...(tooLarge ? [tooLarge] : []), ...validateComposition(composition, { format: preset, files }).problems];
 }
 
 const filesOf = (view: EditorCompositionView) => new Map(view.files.map((f) => [f.path, { size: f.size }] as const));

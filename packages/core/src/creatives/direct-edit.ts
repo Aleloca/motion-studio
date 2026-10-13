@@ -3,7 +3,7 @@ import { copyFile, lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import {
-  COMPOSITION_LIMITS, compositionProblem, compositionProblemText, describeEdits, editOpSchema, effectiveLinks, formatLabel, isCompositionPath, messages,
+  COMPOSITION_LIMITS, compositionProblem, compositionProblemText, describeEdits, draftSizeProblem, editOpSchema, effectiveLinks, formatLabel, isCompositionPath, messages,
   normalizeComposition, renderJobKey, validateComposition,
   type CompositionProblem, type FormatPreset, type Locale, type StagedAsset, type VersionEntry,
 } from '@motion-studio/shared';
@@ -49,12 +49,12 @@ export const OPS_MAX = 20_000;
 /** `POST /api/projects/:slug/creatives/:c/edits`. */
 export const directEditBodySchema = z.strictObject({
   baseVersion: z.number().int().positive(),
-  format: z.string(), // the primary format edited
-  baseHash: z.string(), // composition hash of the base
+  format: z.string().min(1).max(200), // the primary format edited
+  baseHash: z.string().regex(/^[0-9a-f]{64}$/), // composition hash of the base
   composition: z.unknown(), // validated in the core
-  staged: z.array(z.string()).max(20), // staged paths used by the draft
+  staged: z.array(z.string().min(1).max(512)).max(20), // staged paths used by the draft
   ops: z.array(editOpSchema).max(OPS_MAX), // for the summary and the log only; the composition is authoritative, so the count must never fail a save
-  token: z.string(), // the preview session that owns the staging
+  token: z.string().regex(/^[A-Za-z0-9_-]{43}$/), // the preview session that owns the staging (as the stage and preview bodies)
 });
 export type DirectEditBody = z.infer<typeof directEditBodySchema>;
 
@@ -131,6 +131,12 @@ function referencedAssets(draft: unknown): Set<string> {
   return out;
 }
 
+/** The bytes of `composition.json` for a (normalised) draft: indented when that fits the limit, else compact (final review M5). */
+export function compositionFileText(draft: unknown): string {
+  const pretty = `${JSON.stringify(draft, null, 2)}\n`;
+  return Buffer.byteLength(pretty) <= COMPOSITION_LIMITS.jsonBytes ? pretty : JSON.stringify(draft);
+}
+
 export class DirectEditService {
   constructor(private readonly deps: DirectEditDeps) {}
 
@@ -192,16 +198,17 @@ export class DirectEditService {
     }
 
     const draft = normalizeComposition(body.composition);
-    const text = `${JSON.stringify(draft, null, 2)}\n`;
+    // One size rule with the editor and the runtime (final review M5): the compact JSON is measured (`draftSizeProblem`);
+    // the file is written indented when that still fits, else compact.
+    const text = compositionFileText(draft);
     const invalid = (problems: string[]) => {
       const err = new CodedError(422, e.saveInvalid({ text: problems[0] ?? '' }), 'editor-invalid');
       err.problems = problems.slice(0, 50);
       return err;
     };
     const problemTexts = (ps: CompositionProblem[]) => ps.map((p) => compositionProblemText(p, locale));
-    if (Buffer.byteLength(text) > COMPOSITION_LIMITS.jsonBytes) {
-      throw invalid(problemTexts([compositionProblem('composition.jsonTooLarge', { sizeMB: Math.ceil(Buffer.byteLength(text) / (1024 * 1024)), maxMB: COMPOSITION_LIMITS.jsonBytes / (1024 * 1024) })]));
-    }
+    const tooLarge = draftSizeProblem(draft);
+    if (tooLarge) throw invalid(problemTexts([tooLarge]));
     const baseFiles = new Map(baseComp.files.map((f) => [f.path, f] as const));
     const referenced = referencedAssets(draft);
     const declared = new Set(body.staged);

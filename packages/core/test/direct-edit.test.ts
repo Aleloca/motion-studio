@@ -16,13 +16,13 @@ import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
-import { formatLabel, messages, starOf, type Composition, type EditorCompositionView, type FormatPreset, type JobSummary, type ManifestV2, type ServerMessage, type StagedAsset, type VersionEntry } from '@motion-studio/shared';
+import { COMPOSITION_LIMITS, draftJsonBytes, draftSizeProblem, formatLabel, messages, starOf, type Composition, type EditorCompositionView, type FormatPreset, type JobSummary, type ManifestV2, type ServerMessage, type StagedAsset, type VersionEntry } from '@motion-studio/shared';
 import { AppConfigStore } from '../src/app-config.ts';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AgentBridge } from '../src/bridge/bridge.ts';
 import { readCompositionFolder } from '../src/compositions/composition-files.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
-import { editorRefusals } from '../src/creatives/direct-edit.ts';
+import { compositionFileText, editorRefusals } from '../src/creatives/direct-edit.ts';
 import { storyboardDir } from '../src/creatives/previews.ts';
 import { noteCoreTemp } from '../src/core-temps.ts';
 import { Git } from '../src/git.ts';
@@ -528,6 +528,17 @@ describe('a long editing session', { timeout: 120_000 }, () => {
     // Four distinct items on one clip: three named, one more.
     expect(v2.request).toBe(e.summary({ items: [e.itemLayout({ name: 'Title' }), e.itemStyle({ name: 'Title' }), e.itemText({ name: 'Title' })].join(', '), more: 1 }));
   });
+  it('the body\'s identifiers are bounded: a malformed token, hash, an overlong format or staged path is a plain 400 (final review M4)', async () => {
+    const slug = await create(['test-wide']);
+    const body = await draft(slug, 1, 'test-wide', (c) => { clip(c, 'title').props.text = 'x'; });
+    for (const bad of [{ token: 'short' }, { token: 'A'.repeat(42) + '!' }, { baseHash: 'z'.repeat(64) }, { baseHash: 'a'.repeat(65) }, { format: 'f'.repeat(201) }, { format: '' }, { staged: ['p'.repeat(513)] }]) {
+      const r = await save(slug, { ...body, ...bad });
+      expect(r.statusCode, JSON.stringify(Object.keys(bad))).toBe(400);
+    }
+    expect(await versionOf(slug, 2)).toBeFalsy();
+    expect((await save(slug, body)).statusCode).toBe(200);
+  });
+
   it('more ops than the bound is a plain 400, never a half-written version', async () => {
     const slug = await create(['test-wide']);
     const body = await draft(slug, 1, 'test-wide', (c) => { clip(c, 'title').props.text = 'x'; }, Array.from({ length: 20_001 }, () => ({ kind: 'clipProps', clipId: 'title', props: { x: 1 } })));
@@ -705,6 +716,21 @@ describe('refusals', { timeout: 120_000 }, () => {
     expect(r.statusCode).toBe(409);
     expect(r.json().code).toBe('editor-carry-failed');
     expect(existsSync(join(store().dir(slug), 'outputs', 'v3'))).toBe(false);
+  });
+});
+
+describe('one size rule (final review M5)', () => {
+  it('the compact JSON of the normalised draft is measured; the file is indented when that fits, else compact', () => {
+    const small = { a: [1, 2] };
+    expect(compositionFileText(small)).toBe(`${JSON.stringify(small, null, 2)}\n`);
+    // About 2 MB compact, 9 MB indented: under the limit as measured, written compact.
+    const wide = { a: Array.from({ length: 1_000_000 }, () => 1) };
+    expect(draftSizeProblem(wide)).toBeNull();
+    expect(compositionFileText(wide)).toBe(JSON.stringify(wide));
+    expect(Buffer.byteLength(compositionFileText(wide))).toBeLessThanOrEqual(COMPOSITION_LIMITS.jsonBytes);
+    // Over the limit even compact: the problem the editor shows too.
+    expect(draftSizeProblem({ s: 'x'.repeat(COMPOSITION_LIMITS.jsonBytes) })).toMatchObject({ key: 'composition.jsonTooLarge' });
+    expect(draftJsonBytes({ s: 'é' })).toBe(Buffer.byteLength(JSON.stringify({ s: 'é' })));
   });
 });
 

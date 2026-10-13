@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react';
-import { DEFAULT_FORMATS, type Composition, type EditorCompositionView, type StagedAsset } from '@motion-studio/shared';
+import { COMPOSITION_LIMITS, DEFAULT_FORMATS, type Composition, type EditorCompositionView, type StagedAsset } from '@motion-studio/shared';
 import spikeJson from '../../shared/test/fixtures/spike-composition.json';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetDrafts, draftKey, HISTORY_MAX, COALESCE_MS, peekDraft, unsavedDrafts, useDraft } from '../src/screens/editor/draftStore.ts';
@@ -36,6 +36,17 @@ describe('draft store', () => {
     expect(d.ops).toEqual([]);
     expect(d.problems).toEqual([]);
     expect(d.files.get('assets/photo.jpg')).toEqual({ size: 1000 });
+  });
+
+  it('the core\'s size rule is the draft\'s first problem: compact JSON of the normalised draft over the limit (final review M5)', () => {
+    const { actions } = setup();
+    expect(peekDraft(KEY)!.problems.map((p) => p.key)).not.toContain('composition.jsonTooLarge');
+    // A text far over the size limit (the schema's own text limit aside, the size rule comes first).
+    act(() => { actions().apply({ kind: 'clipProps', clipId: 'title', props: { text: 'x' } }); });
+    const big = structuredClone(peekDraft(KEY)!.composition);
+    (big.tracks.flatMap((t) => t.clips).find((k) => k.id === 'title') as unknown as { props: { text: string } }).props.text = 'x'.repeat(COMPOSITION_LIMITS.jsonBytes);
+    act(() => { __resetDrafts(); actions().open(view({ composition: big }), REEL); });
+    expect(peekDraft(KEY)!.problems[0]!.key).toBe('composition.jsonTooLarge');
   });
 
   it('apply changes the composition, records the op, and undo / redo walk the history', () => {
