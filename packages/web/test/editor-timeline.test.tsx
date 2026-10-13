@@ -26,7 +26,7 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 
-const { EditorContext } = await import('../src/screens/editor/editorContext.ts');
+const { EditorContext, useEditor } = await import('../src/screens/editor/editorContext.ts');
 const { __resetDrafts, draftKey, peekDraft, useDraft } = await import('../src/screens/editor/draftStore.ts');
 const { Timeline, SCRUB_RESEND_MS } = await import('../src/screens/editor/Timeline.tsx');
 const { useEditorKeys } = await import('../src/screens/editor/useEditorKeys.ts');
@@ -390,6 +390,38 @@ describe('transport and zoom', () => {
   });
 });
 
+describe('snap toggle', () => {
+  it('is in the transport and shares the editor state with the stage toggle', async () => {
+    snapState = true;
+    function Stage() { const { snap, setSnap } = useEditor(); return <button type="button" aria-label="stage magnet" aria-pressed={snap} onClick={() => setSnap(!snap)} />; }
+    render(<Harness><Stage />{tl()}</Harness>);
+    await waitFor(() => expect(peekDraft(KEY)).not.toBeNull());
+    const mine = screen.getByRole('button', { name: 'Snap to guides and edges' });
+    const stage = screen.getByRole('button', { name: 'stage magnet' });
+    expect(mine.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(mine);
+    expect(mine.getAttribute('aria-pressed')).toBe('false');
+    expect(stage.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(stage);
+    expect(mine.getAttribute('aria-pressed')).toBe('true');
+  });
+});
+
+describe('slider zoom by pointer', () => {
+  it('follows a drag through several zoom levels without going back to the zoom of the pointer-down', async () => {
+    await mount();
+    const slider = screen.getByRole('slider', { name: 'Zoom' });
+    vi.spyOn(slider, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20, x: 0, y: 0, toJSON() {} });
+    const scroller = document.querySelector<HTMLElement>('.ms-tl-scroll')!;
+    fireEvent.pointerDown(slider, { clientX: 10, pointerId: 1, button: 0 });
+    const seen: number[] = [];
+    for (const x of [30, 50, 70, 100]) { fireEvent.pointerMove(window, { clientX: x, pointerId: 1 }); seen.push(Number(scroller.dataset.zoom)); }
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    expect(seen).toEqual([...seen].sort((a, b) => a - b));
+    expect(seen.at(-1)).toBe(20);
+  });
+});
+
 describe('scrubbing the ruler', () => {
   const ruler = () => screen.getByRole('slider', { name: /^Timeline ruler/ });
   function stubRect(el: HTMLElement) {
@@ -429,6 +461,18 @@ describe('scrubbing the ruler', () => {
     await waitFor(() => expect(controls.seek).toHaveBeenCalledTimes(2));
     expect(controls.seek.mock.lastCall).toEqual([2.5]);
     fireEvent.pointerUp(window, { clientX: 250, pointerId: 1 });
+  });
+
+  it('does not seek back with the resend once playback has resumed', async () => {
+    playing = true;
+    const view = await mount();
+    stubRect(ruler());
+    fireEvent.pointerDown(ruler(), { clientX: 100, pointerId: 1, button: 0 });
+    fireEvent.pointerUp(window, { clientX: 300, pointerId: 1 });
+    expect(controls.seek.mock.calls).toEqual([[1], [3]]);
+    view.rerender(<Harness>{tl()}</Harness>);
+    await new Promise((r) => setTimeout(r, SCRUB_RESEND_MS * 3));
+    expect(controls.seek).toHaveBeenCalledTimes(2);
   });
 
   it('pauses a playing player while scrubbing and resumes it afterwards', async () => {

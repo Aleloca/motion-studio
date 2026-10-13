@@ -17,6 +17,9 @@ export interface SliderProps {
 export function Slider({ value, min, max, step = 1, onChange, label, valueText, disabled, className }: SliderProps) {
   const track = useRef<HTMLDivElement>(null);
   const off = useRef<() => void>(() => {});
+  // The latest callback: a drag started on one render keeps calling the current one, not the one it began with.
+  const change = useRef(onChange);
+  change.current = onChange;
   useEffect(() => () => off.current(), []);
   const span = max - min;
   const pct = span > 0 ? Math.min(100, Math.max(0, ((value - min) / span) * 100)) : 0;
@@ -29,8 +32,8 @@ export function Slider({ value, min, max, step = 1, onChange, label, valueText, 
   const down = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (disabled || e.button !== 0) return;
     const first = at(e.clientX);
-    if (first !== null) onChange(first);
-    const move = (m: PointerEvent) => { const v = at(m.clientX); if (v !== null) onChange(v); };
+    if (first !== null) change.current(first);
+    const move = (m: PointerEvent) => { const v = at(m.clientX); if (v !== null) change.current(v); };
     off.current = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', end);

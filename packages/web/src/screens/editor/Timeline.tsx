@@ -34,6 +34,8 @@ const FALLBACK_VIEWPORT = 720;
 /** The final scrub position is sent once more after this long, in case the runtime dropped the first. */
 export const SCRUB_RESEND_MS = 120;
 const ZOOM_WHEEL = 0.0015;
+/** A refusal stays on screen this long. */
+const NOTICE_MS = 6000;
 
 const CLIP_KIND_KEY = { text: 'clipText', shape: 'clipShape', image: 'clipImage', svg: 'clipSvg', video: 'clipVideo', html: 'clipHtml', audio: 'clipAudio' } as const;
 
@@ -87,7 +89,7 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay }: 
   const f = t.web.formatView;
   const r = t.web.render;
   const locale = useLocale();
-  const { slug, creative, primary, draft, actions, controls, selection, select, snap } = useEditor();
+  const { slug, creative, primary, draft, actions, controls, selection, select, snap, setSnap } = useEditor();
   const comp = draft.composition;
   const fps = comp.fps;
   const scenes = useMemo(() => [...comp.scenes].sort((a, b) => a.start - b.start), [comp.scenes]);
@@ -122,12 +124,18 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay }: 
 
   // Zoom anchored at a viewport pixel: the scroll that keeps the time under it is set once the content has its new width.
   const pendingScroll = useRef<number | null>(null);
+  const zoomRef = useRef(zoom);
+  const geometry = useRef({ viewport, duration: comp.duration });
+  geometry.current = { viewport, duration: comp.duration };
+  // Reads the zoom and scroll of the LAST call (not of the last render): several wheel events or slider moves in a frame chain.
   const setZoomAt = useCallback((next: number, anchorPx: number) => {
     const el = scroller.current;
-    const out = zoomAt({ zoom, next, scrollLeft: el?.scrollLeft ?? 0, anchorPx, viewportPx: viewport, duration: comp.duration });
+    if (clampZoom(next) === zoomRef.current) return;
+    const out = zoomAt({ zoom: zoomRef.current, next, scrollLeft: pendingScroll.current ?? el?.scrollLeft ?? 0, anchorPx, viewportPx: geometry.current.viewport, duration: geometry.current.duration });
     pendingScroll.current = out.scrollLeft;
+    zoomRef.current = out.zoom;
     setZoom(out.zoom);
-  }, [zoom, viewport, comp.duration]);
+  }, []);
   useLayoutEffect(() => {
     if (pendingScroll.current === null || !scroller.current) return;
     scroller.current.scrollLeft = pendingScroll.current;
@@ -137,8 +145,6 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay }: 
   // ⌘ / Ctrl + wheel zooms at the pointer (a native listener: React's is passive and could not stop the page zoom).
   const wheelRef = useRef(setZoomAt);
   wheelRef.current = setZoomAt;
-  const zoomRef = useRef(zoom);
-  zoomRef.current = zoom;
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
@@ -160,6 +166,11 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay }: 
   const trackName = (track: Track) => track.name ?? e.trackName({ kind: kindName(track.kind), n: comp.tracks.filter((x) => x.kind === track.kind).indexOf(track) + 1 });
   const sceneName = (s: { name?: string }, i: number) => s.name ?? r.scene({ n: i + 1 });
 
+  useEffect(() => {
+    if (!notice) return;
+    const id = window.setTimeout(() => setNotice(''), NOTICE_MS);
+    return () => window.clearTimeout(id);
+  }, [notice]);
   const refuse = useCallback((problem: Parameters<typeof editProblemText>[0]) => setNotice(editProblemText(problem, locale)), [locale]);
   const timing = useCallback((clipId: string, to: Timing, coalesce?: string): boolean => {
     const { actions: a, ripple: rip } = live.current;
@@ -182,7 +193,6 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay }: 
     cleanup.current();
     const from: Timing = { start: clip.start, duration: clip.duration };
     const x0 = ev.clientX;
-    const targets = [...new Set([...snapTargets(live.current.comp, clip.id), playheadNow()])].sort((a, b) => a - b);
     let latest = { x: x0, alt: ev.altKey };
     let moved = false;
     let raf = 0;
@@ -190,6 +200,8 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay }: 
       raf = 0;
       const { pps: p, ripple: rip, snap: magnet, comp: c, fps: rate } = live.current;
       const bounds = clipBounds(c, clip, rip);
+      // Fresh each frame: with ripple the scene boundaries and later clips move during the drag.
+      const targets = [...new Set([...snapTargets(c, clip.id), playheadNow()])].sort((a, b) => a - b);
       const dt = (latest.x - x0) / p;
       const on = magnet && !latest.alt;
       let to: Timing;
@@ -259,7 +271,7 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay }: 
   };
 
   // ---- ruler: scrub
-  const scrub = useRef<{ last: number; sent: number | null; raf: number; resume: boolean; resend: number }>({ last: 0, sent: null, raf: 0, resume: false, resend: 0 });
+  const scrub = useRef<{ last: number; sent: number | null; raf: number; resume: boolean; resend: number; seq: number }>({ last: 0, sent: null, raf: 0, resume: false, resend: 0, seq: 0 });
   const timeAt = (clientX: number): number => {
     const rect = area.current?.getBoundingClientRect();
     const x = clientX - (rect?.left ?? 0);
@@ -270,6 +282,7 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay }: 
     cleanup.current();
     const s = scrub.current;
     window.clearTimeout(s.resend);
+    s.seq += 1;
     s.resume = controls.playing;
     if (controls.playing) controls.pause();
     s.last = timeAt(ev.clientX);
@@ -286,7 +299,8 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay }: 
       const final = s.last;
       s.sent = final;
       live.current.controls.seek(final);
-      s.resend = window.setTimeout(() => live.current.controls.seek(final), SCRUB_RESEND_MS);
+      const mine = ++s.seq;
+      s.resend = window.setTimeout(() => { if (s.seq === mine && !live.current.controls.playing) live.current.controls.seek(final); }, SCRUB_RESEND_MS);
       if (s.resume) live.current.controls.toggle();
     };
     cleanup.current = () => {
@@ -334,6 +348,7 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay }: 
         <Select className="ms-fv-speed" variant="pill" label={f.speed} value={speed} onChange={onSpeed}
           options={SPEEDS.map((v) => ({ value: v, label: f.speedValue({ n: formatNumber(locale, Number(v)) }) }))} />
         <span className="ms-fv-sep" aria-hidden="true" />
+        <Button size="sm" variant="outline" icon className={cx('ms-tl-toggle', snap && 'ms-on')} aria-label={e.snap} title={e.snap} aria-pressed={snap} onClick={() => setSnap(!snap)}><Icon name="magnet" size={13} /></Button>
         <Button size="sm" variant="outline" icon className={cx('ms-tl-toggle', ripple && 'ms-on')} aria-label={e.tlRipple} title={e.tlRipple} aria-pressed={ripple} onClick={() => setRipple(!ripple)}><Icon name="link" size={13} /></Button>
         <span className="ms-grow" />
         {notice ? <span className="ms-tl-notice" role="alert">{notice}</span> : null}

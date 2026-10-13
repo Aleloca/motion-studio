@@ -226,8 +226,11 @@ describe('EditorScreen · shell', () => {
     await userEvent.click(within(timeline).getByRole('button', { name: 'Lock Text 1' }));
     expect(peekDraft(KEY)!.ops.at(-1)).toEqual({ kind: 'trackFlags', trackId: 'text', locked: true });
     // The magnet is the stage's: one state.
-    await userEvent.click(screen.getByRole('button', { name: 'Snap to guides and edges' }));
+    const both = screen.getAllByRole('button', { name: 'Snap to guides and edges' });
+    expect(both).toHaveLength(2);
+    await userEvent.click(both[0]!);
     expect((probe.ctx as unknown as { snap: boolean }).snap).toBe(false);
+    expect(both.map((b) => b.getAttribute('aria-pressed'))).toEqual(['false', 'false']);
   });
 
   it('an image format has the layers panel and no timeline', async () => {
