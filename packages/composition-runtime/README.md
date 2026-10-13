@@ -126,7 +126,9 @@ Everything lives under one token prefix on the composition server's own origin (
        read again until it changes; only at the seek's deadline is it drawn, with a warning, instead of failing. Likewise
        the frame shown just before each seek to another target (the pre-seek frame: after `seeked` Chrome can still hand
        it out for a few animation frames on a loaded machine) is read again while the target lies past it, for at most
-       `PRE_SEEK_SETTLE_MS` (1 s), then drawn with the same warning: never a block, at most about 1 s per such frame;
+       `PRE_SEEK_SETTLE_MS` (1 s), then drawn with the same warning: never a block, at most about 1 s per such frame.
+       A frame held out once is not held again in that video, so the total is at most about 1 s per distinct source
+       frame that stays, not per output frame;
    - **source fields** (all optional, next to `sourceFps`; not in the agent's schema). From Task 5 the core normalises
      every video clip (H.264, constant frame rate equal to the composition's, short GOP), probes the result with ffprobe
      and sets them after validation, overriding anything the agent declared, so every normalised clip gets the strict
