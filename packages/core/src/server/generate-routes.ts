@@ -12,7 +12,7 @@ import { LibraryStore } from '../library/library-store.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { elevenlabsMusic, elevenlabsSoundEffect, MUSIC_MODEL, SFX_MODEL, validateMusic, validateSoundEffect } from '../providers/elevenlabs-audio.ts';
 import { saveGeneratedFile } from '../providers/files.ts';
-import { ProviderError, type HttpDeps } from '../providers/http.ts';
+import { namedPermission, ProviderError, type HttpDeps } from '../providers/http.ts';
 import { KEY_PERMISSIONS, type KeyCheckCache } from '../providers/key-check.ts';
 import { generateImage, normalizeImageSize, OPENAI_IMAGE_MODEL } from '../providers/openai-images.ts';
 import { ELEVENLABS_TTS_MODEL, elevenlabsDefaultVoice, elevenlabsSpeech, OPENAI_TTS_MODEL, openaiSpeech, TTS_MAX_CHARS } from '../providers/tts.ts';
@@ -122,7 +122,7 @@ export function registerGenerateRoutes(app: FastifyInstance, ctx: GenerateRoutes
       let out: T;
       try { out = await call(); }
       catch (e) {
-        if (e instanceof ProviderError && e.refusal === 'permission') await keyChecks.recordUse(ctx.vault, { ...lease, provider }, capability, 'missing', KEY_PERMISSIONS[provider][capability]);
+        if (e instanceof ProviderError && e.refusal === 'permission') await keyChecks.recordUse(ctx.vault, { ...lease, provider }, capability, 'missing', namedPermission(e, KEY_PERMISSIONS[provider][capability]));
         throw e;
       }
       await keyChecks.recordUse(ctx.vault, { ...lease, provider }, capability, 'ok');

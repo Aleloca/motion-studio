@@ -11,7 +11,7 @@ import type { MediaTools } from '../media/media-tools.ts';
 import { saveGeneratedFile } from '../providers/files.ts';
 import { installGoogleFont } from '../providers/google-fonts.ts';
 import { elevenlabsMusic, elevenlabsSoundEffect, elevenlabsVoices, MUSIC_MODEL, SFX_MODEL, validateMusic, validateSoundEffect } from '../providers/elevenlabs-audio.ts';
-import { ProviderError } from '../providers/http.ts';
+import { namedPermission, ProviderError } from '../providers/http.ts';
 import { KEY_PERMISSIONS, KeyCheckCache } from '../providers/key-check.ts';
 import { fetchTransport, nodeTransport, type LookupFn, type Transport } from '../providers/safe-fetch.ts';
 import { generateImage, normalizeImageSize, OPENAI_IMAGE_MODEL } from '../providers/openai-images.ts';
@@ -103,7 +103,7 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
     let out: T;
     try { out = await run(); }
     catch (e) {
-      if (e instanceof ProviderError && e.refusal === 'permission') await keyChecks.recordUse(deps.vault, lease, capability, 'missing', KEY_PERMISSIONS[provider][capability]);
+      if (e instanceof ProviderError && e.refusal === 'permission') await keyChecks.recordUse(deps.vault, lease, capability, 'missing', namedPermission(e, KEY_PERMISSIONS[provider][capability]));
       throw e;
     }
     await keyChecks.recordUse(deps.vault, lease, capability, 'ok');
@@ -323,17 +323,20 @@ export async function availableTools(vault: SecretsVault, services?: BriefServic
   const [openai, eleven, pexels, unsplash] = await Promise.all((['openai', 'elevenlabs', 'pexels', 'unsplash'] as const).map(async (p) => Boolean(await vault.get(p))));
   const keyed: Record<keyof typeof LABEL, boolean> = { openai: openai!, elevenlabs: eleven!, pexels: pexels!, unsplash: unsplash! };
   /** null when usable; otherwise why not (with a key: the permission the check found missing). */
-  const blocked = (p: keyof typeof LABEL, capability: KeyCapability): { noKey: true } | { permission: string } | null => {
+  const blocked = (p: keyof typeof LABEL, capability: KeyCapability): { noKey: true } | { permission: string } | { refused: string } | null => {
     if (!keyed[p]) return { noKey: true };
     const m = missingCapability(keyChecks?.get(p), capability);
-    return m ? { permission: m.permission ?? `${LABEL[p]} does not accept the key` } : null;
+    return m ? (m.permission ? { permission: m.permission } : { refused: LABEL[p] }) : null;
   };
   /** The status of a tool usable through any of `options`, with the text for "no key at all". */
   const status = (options: Array<[keyof typeof LABEL, KeyCapability]>, noKey: string): string => {
     const why = options.map(([p, c]) => blocked(p, c));
     if (why.some((w) => w === null)) return '(ready)';
     const perms = why.flatMap((w) => (w && 'permission' in w ? [w.permission] : []));
-    return perms.length ? `(missing permission: ${[...new Set(perms)].join(', ')})` : `(not configured: ${noKey})`;
+    if (perms.length) return `(missing permission: ${[...new Set(perms)].join(', ')})`;
+    // No permission named (a bare 403 or a key the provider does not know): said as a refusal, never as a made-up permission.
+    const refused = why.flatMap((w) => (w && 'refused' in w ? [w.refused] : []));
+    return refused.length ? `(refused by the provider: ${[...new Set(refused)].join(', ')})` : `(not configured: ${noKey})`;
   };
   const off = (isOff: boolean, st: () => string, why = '') => (isOff ? `(off for this creative${why})` : st());
   const voiceOptions: Array<[keyof typeof LABEL, KeyCapability]> = s.voice === 'openai' ? [['openai', 'tts']] : s.voice === 'elevenlabs' ? [['elevenlabs', 'tts']] : [['openai', 'tts'], ['elevenlabs', 'tts']];

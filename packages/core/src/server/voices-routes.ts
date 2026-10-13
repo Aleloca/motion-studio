@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { elevenlabsVoices } from '../providers/elevenlabs-audio.ts';
-import { ProviderError, type HttpDeps } from '../providers/http.ts';
+import { namedPermission, ProviderError, type HttpDeps } from '../providers/http.ts';
 import type { KeyCheckCache } from '../providers/key-check.ts';
 import { fetchVoicePreview, isElevenLabsPreviewUrl, OPENAI_VOICES, VOICE_ID } from '../providers/voices.ts';
 import type { SecretsVault } from '../secrets/vault.ts';
@@ -57,7 +57,7 @@ export function registerVoicesRoutes(app: FastifyInstance, ctx: VoicesRoutesCont
       try { return await elevenlabsVoices({ ...ctx.http, apiKey }, { search: q.q, pageSize: 30 }); }
       catch (e) {
         // A refusal classified as a missing permission (classifyRefusal) is remembered in memory; the error goes on.
-        if (e instanceof ProviderError && e.refusal === 'permission') await ctx.keyChecks.recordUse(ctx.vault, lease, 'voices', 'missing', 'voices_read');
+        if (e instanceof ProviderError && e.refusal === 'permission') await ctx.keyChecks.recordUse(ctx.vault, lease, 'voices', 'missing', namedPermission(e, 'voices_read'));
         throw e;
       }
     });

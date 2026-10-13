@@ -76,8 +76,13 @@ describe('checkKey · ElevenLabs (Review Focus 3)', () => {
   });
   it('a 403 on the voices probe marks voices missing; an unknown key is invalid', async () => {
     const a = await checkKey({ fetch: fake((u) => (u.includes('/v2/voices') ? new Response('', { status: 403 }) : json(200, {}))).fetch }, 'elevenlabs', KEY);
-    expect(cap(a, 'voices')).toMatchObject({ status: 'missing', permission: 'voices_read' });
+    // A bare 403 may be a region, an organization verification or a firewall: missing, but no permission is named.
+    expect(cap(a, 'voices')).toMatchObject({ status: 'missing' });
+    expect(cap(a, 'voices')).not.toHaveProperty('permission');
     expect(cap(a, 'key')!.status).toBe('ok');
+    // The permission is named only when the provider's own words did.
+    const named = await checkKey({ fetch: fake((u) => (u.includes('/v2/voices') ? json(403, { detail: { status: 'missing_permissions', message: 'The API key you used is missing the permission voices_read.' } }) : json(200, {}))).fetch }, 'elevenlabs', KEY);
+    expect(cap(named, 'voices')).toMatchObject({ status: 'missing', permission: 'voices_read' });
     const b = await checkKey({ fetch: fake(elevenInvalid).fetch }, 'elevenlabs', KEY);
     expect(statuses(b)).toEqual({ key: 'missing', account: 'missing', voices: 'missing', tts: 'missing', sfx: 'missing', music: 'missing' });
   });

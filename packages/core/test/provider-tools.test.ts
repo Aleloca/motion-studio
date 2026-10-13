@@ -216,8 +216,9 @@ describe('availableTools and what is known about the keys (F5)', () => {
     expect(line(lines, 'tts')).toContain('(ready)');
     cache.merge('openai', { provider: 'openai', checkedAt: '', capabilities: [{ capability: 'key', status: 'missing' }, { capability: 'images', status: 'missing' }, { capability: 'tts', status: 'missing' }] });
     lines = await availableTools(vault, undefined, cache);
-    expect(line(lines, 'generate_image')).toContain('(missing permission: OpenAI does not accept the key)');
-    expect(line(lines, 'tts')).toContain('(missing permission: OpenAI does not accept the key)');
+    // No permission is known: said as a refusal, never as a made-up permission.
+    expect(line(lines, 'generate_image')).toContain('(refused by the provider: OpenAI)');
+    expect(line(lines, 'tts')).toContain('(refused by the provider: OpenAI)');
   });
   it('auto voice is ready when either provider can speak; with neither, it lists what is missing', async () => {
     const { KeyCheckCache } = await import('../src/providers/key-check.ts');
@@ -341,10 +342,11 @@ describe('key checks from real calls (Task 8)', () => {
     });
     deny = /images\/generations/;
     await t.generate_image!(ctx, { prompt: 'x', width: 1024, height: 1024 }).catch(() => {});
-    expect(cache.capabilities('openai').images).toMatchObject({ status: 'missing', permission: 'model.request' });
+    expect(cache.capabilities('openai').images).toMatchObject({ status: 'missing' });
+    expect(cache.capabilities('openai').images).not.toHaveProperty('permission');
     deny = /text-to-speech/;
     await t.tts!(ctx, { text: 'Ciao', provider: 'elevenlabs' }).catch(() => {});
-    expect(cache.capabilities('elevenlabs').tts).toMatchObject({ status: 'missing', permission: 'text_to_speech' });
+    expect(cache.capabilities('elevenlabs').tts).toMatchObject({ status: 'missing' });
     // Pexels keys have no permissions: a refusal means the key itself, which only a Test can tell (fix round 2).
     deny = /api\.pexels\.com\/v1\/search/;
     await t.stock_search!(ctx, { query: 'mare' }).catch(() => {});
@@ -458,7 +460,10 @@ describe('ElevenLabs sound effects, music and voices', () => {
     answer = () => new Response('', { status: 403 });
     const e2 = await t.music!(ctx, { prompt: 'x', durationSec: 12 }).catch((e) => e) as Error;
     const e3 = await t.list_voices!(ctx, {}).catch((e) => e) as Error;
-    expect(cache.capabilities('elevenlabs')).toMatchObject({ sfx: { status: 'missing', permission: 'sound_generation' }, music: { status: 'missing', permission: 'music_generation' }, voices: { status: 'missing', permission: 'voices_read' } });
+    expect(cache.capabilities('elevenlabs')).toMatchObject({ sfx: { status: 'missing', permission: 'sound_generation' }, music: { status: 'missing' }, voices: { status: 'missing' } });
+    // The bare 403s name no permission (only the first answer, which did, does).
+    expect(cache.capabilities('elevenlabs').music).not.toHaveProperty('permission');
+    expect(cache.capabilities('elevenlabs').voices).not.toHaveProperty('permission');
     answer = () => new Response('', { status: 429 });
     const cache2 = new KeyCheckCache();
     const e4 = await withKey({ confirmPaidProviders: false }, { keyChecks: cache2 }).sound_effect!(ctx, { prompt: 'x' }).catch((e) => e) as Error;
@@ -483,10 +488,11 @@ describe('ElevenLabs sound effects, music and voices', () => {
       await t.sound_effect!(ctx, { prompt: 'x' }).catch(() => {});
     }
     expect(cache.capabilities('elevenlabs').sfx).toBeUndefined();
-    // The same classification as the key check: a bare 403 from a provider with permissions is a missing permission.
+    // The same classification as the key check: a bare 403 from a provider with permissions is unavailable, naming no permission.
     answer = () => new Response('', { status: 403 });
     await t.sound_effect!(ctx, { prompt: 'x' }).catch(() => {});
-    expect(cache.capabilities('elevenlabs').sfx).toMatchObject({ status: 'missing', permission: 'sound_generation' });
+    expect(cache.capabilities('elevenlabs').sfx).toMatchObject({ status: 'missing' });
+    expect(cache.capabilities('elevenlabs').sfx).not.toHaveProperty('permission');
   });
   it('aborts mid-request, saving and registering nothing', async () => {
     answer = () => { throw new Error('unused'); };

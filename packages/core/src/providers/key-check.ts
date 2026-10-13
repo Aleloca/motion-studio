@@ -2,7 +2,7 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { KEY_CAPABILITIES, KEY_PERMISSIONS, type KeyCapability, type KeyCheckResult, type KeyCheckStatus, type ProviderId } from '@motion-studio/shared';
 import { redact } from '../secrets/vault.ts';
 import { t } from '../i18n.ts';
-import { classifyRefusal, ProviderError, requestProbe, type HttpDeps } from './http.ts';
+import { classifyRefusal, PERMISSION_WORDS, ProviderError, requestProbe, type HttpDeps } from './http.ts';
 import { OPENAI_IMAGE_MODEL } from './openai-images.ts';
 import { OPENAI_TTS_MODEL } from './tts.ts';
 
@@ -38,7 +38,7 @@ const entry = (capability: KeyCapability, status: KeyCheckStatus, permission?: s
   return { capability, status, ...(p !== undefined ? { permission: p } : {}), ...(d !== undefined ? { detail: d } : {}) };
 };
 
-type Outcome = { kind: 'ok' } | { kind: 'denied'; why: 'permission' | 'invalid' } | { kind: 'notFound' } | { kind: 'error'; detail: string };
+type Outcome = { kind: 'ok' } | { kind: 'denied'; why: 'permission' | 'invalid'; named?: boolean } | { kind: 'notFound' } | { kind: 'error'; detail: string };
 
 interface Probe {
   capability: KeyCapability;
@@ -88,7 +88,7 @@ async function probe(deps: HttpDeps, p: Plan, pr: Probe, apiKey: string): Promis
       // The same classification as real calls (`classifyRefusal`).
       const r = classifyRefusal(p.label, a.status, a.body);
       if (r === 'rateLimited') return { kind: 'error', detail: t().keyChecks.rateLimited };
-      if (r === 'permission' || r === 'invalid') return { kind: 'denied', why: r };
+      if (r === 'permission' || r === 'invalid') return { kind: 'denied', why: r, named: PERMISSION_WORDS.test(a.body) };
       return { kind: 'error', detail: t().keyChecks.refused };
     }
     if (a.status === 404 && pr.notFound) return { kind: 'notFound' };
@@ -125,7 +125,9 @@ export async function checkKey(deps: HttpDeps, provider: ProviderId, apiKey: str
     switch (out.kind) {
       case 'ok': return entry(capability, 'ok');
       case 'notFound': return entry(capability, 'missing', pr.notFound, undefined, secrets);
-      case 'denied': return entry(capability, pr.denied ?? 'missing', perms[capability], undefined, secrets);
+      // `missing` names the permission only when the provider's words did (a bare 403 may be a region, an organization
+      // verification or a firewall); `unverified` keeps naming what the capability needs.
+      case 'denied': return pr.denied ? entry(capability, pr.denied, perms[capability], undefined, secrets) : entry(capability, 'missing', out.named ? perms[capability] : undefined, undefined, secrets);
       case 'error': return entry(capability, 'error', undefined, out.detail, secrets);
     }
   });

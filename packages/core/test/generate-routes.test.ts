@@ -147,7 +147,9 @@ describe('generate route', () => {
     status = 403;
     const job = await settle((await post({ kind: 'music', provider: 'elevenlabs', prompt: 'Calm piano', options: { durationSec: 30 } })).json().jobId);
     expect(job.state).toBe('failed');
-    expect(keyChecks.capabilities('elevenlabs').music).toMatchObject({ status: 'missing', permission: 'music_generation' });
+    // A bare 403 (a region, an organization verification, a firewall) is unavailable, but names no permission.
+    expect(keyChecks.capabilities('elevenlabs').music).toMatchObject({ status: 'missing' });
+    expect(keyChecks.capabilities('elevenlabs').music).not.toHaveProperty('permission');
     // A 401 that does not read as a missing permission (here a bare "denied") is not recorded (fix round 2).
     status = 401;
     await settle((await post({ kind: 'image', provider: 'openai', prompt: 'x' })).json().jobId);

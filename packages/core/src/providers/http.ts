@@ -11,7 +11,7 @@ import { t } from '../i18n.ts';
 export type Refusal = 'permission' | 'invalid' | 'rateLimited' | 'refused';
 
 export class ProviderError extends Error {
-  constructor(public readonly status: number, message: string, public readonly upstreamStatus?: number, public readonly refusal?: Refusal) { super(message); this.name = 'ProviderError'; }
+  constructor(public readonly status: number, message: string, public readonly upstreamStatus?: number, public readonly refusal?: Refusal, public readonly permissionNamed?: boolean) { super(message); this.name = 'ProviderError'; }
 }
 
 /** The words a provider uses for a known key that lacks a permission (ElevenLabs `missing_permissions`, OpenAI scopes). */
@@ -27,6 +27,12 @@ const RATE_LIMIT_WORDS = /rate limit/i;
 const ACCOUNT_WORDS = /quota|billing|credits?\b|payment|subscription|suspended|unusual activity|unusual_activity|account (?:is )?(?:disabled|inactive|deactivated)/i;
 /** The providers whose keys have permissions (Pexels and Unsplash keys have none: any refusal means the key). */
 const SCOPED = new Set(['OpenAI', 'ElevenLabs']);
+
+/**
+ * The permission a refusal is recorded with: the one the capability needs, but only when the provider's own words named a
+ * permission. A bare 403 (geo-block, organization verification, a firewall) is still unavailable but names nothing.
+ */
+export const namedPermission = (e: ProviderError, needed: string | undefined): string | undefined => (e.permissionNamed ? needed : undefined);
 
 /** Classifies a 401/403/429 answer from `provider` (its label) by status and body: the one rule key checks and real calls share. */
 export function classifyRefusal(provider: string, status: number, body: string): Refusal {
@@ -65,7 +71,7 @@ async function send(deps: HttpDeps, url: string, init: RequestInit, o: Opts): Pr
     // Read (bounded) only to classify the refusal; the body itself goes nowhere.
     let body = '';
     try { body = (await readBounded(res, REFUSAL_BODY_MAX, false)).toString('utf8'); } catch { /* unreadable: classified on the status */ }
-    throw new ProviderError(401, t().providers.invalidKey({ provider: o.provider }), res.status, classifyRefusal(o.provider, res.status, body));
+    throw new ProviderError(401, t().providers.invalidKey({ provider: o.provider }), res.status, classifyRefusal(o.provider, res.status, body), PERMISSION_WORDS.test(body));
   }
   if (res.status === 429) { await res.body?.cancel().catch(() => {}); throw new ProviderError(429, t().providers.rateLimited({ provider: o.provider }), 429); }
   let text = '';
