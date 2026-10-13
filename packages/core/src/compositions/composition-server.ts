@@ -18,7 +18,7 @@ import { SessionTokens } from './serve-token.ts';
  * the UI (preview). This server is the only way it reaches files:
  * - its **own listener** on 127.0.0.1 with a random port, never the UI/API port; it serves no core API at all;
  * - every path sits under a **session token** (serve-token.ts) scoped to exactly one composition folder plus the runtime:
- *   `/<token>/runtime/{index.html,runtime.js,layer.js,clock.js}` and `/<token>/<versionDir>/compositions/<format>/{assets,layers}/…`.
+ *   `/<token>/runtime/{index.html,runtime.js,layer.js,clock.js,preview.js}` and `/<token>/<versionDir>/compositions/<format>/{assets,layers}/…`.
  *   `composition.json` is never served (the runtime page has it inlined); everything else is 404;
  * - the `Host` must be exactly `127.0.0.1:<port>` (DNS rebinding: 421), and only GET and HEAD are allowed (405);
  * - the URL is decoded once; encoded separators (`%2f`, `%5c`, `%00`), a `%` left after decoding (double encoding), a
@@ -91,7 +91,7 @@ export interface CompositionServerOptions {
    * web UI and the desktop app, which loads the UI from the core) and, in development, Vite's `http://localhost:5173`.
    */
   uiOrigins: readonly string[] | (() => readonly string[]);
-  /** The built runtime (`index.html`, `runtime.js`, `layer.js`, `clock.js`); default `RUNTIME_DIST_DIR`. */
+  /** The built runtime (`index.html`, `runtime.js`, `layer.js`, `clock.js`, `preview.js`); default `RUNTIME_DIST_DIR`. */
   distDir?: string;
   /** Default session lifetime in ms (30 min); `mintSession` may pass its own. */
   ttlMs?: number;

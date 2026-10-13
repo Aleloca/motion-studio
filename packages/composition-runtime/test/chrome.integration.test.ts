@@ -86,6 +86,8 @@ describe.skipIf(!chrome)('runtime in headless Chrome', () => {
       expect(await page.eval('[window.__ms.mode, window.__ms.duration, window.__ms.fps, typeof window.__ms.seek]')).toEqual(['render', 4, 30, 'function']);
       // No network API was used: every request went to the token-prefixed paths of the composition server.
       expect(server.requests.filter((p) => p !== '/favicon.ico').every((p) => p.startsWith(`/${server.token}/`))).toBe(true);
+      // A render page never loads the draft parser (zod): that script is the preview's only.
+      expect(server.requests.some((p) => p.endsWith('/runtime/preview.js'))).toBe(false);
     });
   }, 240_000);
 
@@ -251,10 +253,16 @@ describe.skipIf(!chrome)('runtime in headless Chrome', () => {
       expect(teal(before, 290, 30)).toBe(true);
       expect(barWidth(before)).toBe(75);
 
+      // zod runs jitless in the runtime: loading the parser (zod builds the schema then) and validating a draft raise no CSP
+      // violation (no `new Function`, M2). preview.js is loaded once more under a listener to see its load (its second
+      // definition of the parser throws, harmlessly).
+      await p.inFrame("window.__violations = []; document.addEventListener('securitypolicyviolation', (e) => window.__violations.push(`${e.violatedDirective} ${e.blockedURI}`)); "
+        + "new Promise((r) => { const s = document.createElement('script'); s.src = 'preview.js'; s.onload = s.onerror = () => r(true); document.head.appendChild(s); })");
       const moved = fixtureComposition();
       Object.assign(clipOf(moved, 'logo').props, { x: 200, y: 55 });
       const applied = await p.setComposition(moved, 1);
       expect(applied.errors).toEqual([]);
+      expect(await p.inFrame('window.__violations')).toEqual([]);
       const msgs = await p.page.eval<Array<{ type: string; t?: number; clipId?: string; bounds?: { x: number; y: number } | null }>>('window.msgs');
       expect(msgs.filter((m) => m.type === 'time').at(-1)).toMatchObject({ t: 1.5, playing: false });
       const bounds = msgs.filter((m) => m.type === 'clipBounds').at(-1)!;

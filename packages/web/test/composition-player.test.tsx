@@ -1,6 +1,7 @@
 import { act, render, renderHook, screen } from '@testing-library/react';
 import type { PreviewSessionInfo, StoryboardView } from '@motion-studio/shared';
 import { parseIncoming } from '@motion-studio/composition-runtime/protocol';
+import { parseDraft } from '@motion-studio/composition-runtime/draft';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The live player (Task 8): an iframe on the composition server's origin, `sandbox="allow-scripts"` only, driven by
@@ -249,7 +250,7 @@ describe('CompositionMedia.setComposition (the editor draft, Phase 10b)', () => 
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ type: 'setComposition', keepTime: true, seq });
     expect(sent[0]!.composition!.tracks[0]!.clips[0]!.props.text).toBe('c');
-    expect(parseIncoming(sent[0])).toEqual(sent[0]);
+    expect(parseIncoming(sent[0], parseDraft)).toEqual(sent[0]);
     expect(p.posted.mock.calls[0]![1]).toBe('*');
     await nextFrame();
     expect(setCalls(p.posted)).toHaveLength(1); // nothing new: nothing sent
@@ -304,14 +305,30 @@ describe('CompositionMedia.setComposition (the editor draft, Phase 10b)', () => 
     expect(posted3.mock.calls.map((c) => (c[0] as { type: string }).type)).toEqual(['seek']);
   });
 
-  it('a draft the protocol refuses is never sent', async () => {
+  it('a draft the protocol refuses is never sent, and is answered at once with compositionInvalid (M4)', async () => {
     const p = mount();
     const m = p.media();
     fromRuntime(READY);
     p.posted.mockClear();
-    m.setComposition({ ...draft('a'), width: 1 });
+    const applied = vi.fn();
+    m.addEventListener('compositionapplied', applied);
+    const seq = m.setComposition({ ...draft('a'), width: 1 });
     await nextFrame();
     expect(p.posted).not.toHaveBeenCalled();
+    expect(applied).toHaveBeenCalledTimes(1);
+    expect(m.applied).toMatchObject({ seq, errors: [{ code: 'compositionInvalid' }] });
+    expect(m.duration).toBe(8);
+  });
+
+  it('a draft the runtime could not mount does not change the duration (M1)', async () => {
+    const p = mount();
+    const m = p.media();
+    fromRuntime(READY);
+    const seq = m.setComposition(draft('a', 5));
+    await nextFrame();
+    fromRuntime({ type: 'compositionApplied', seq, errors: [{ code: 'compositionInvalid', message: 'x' }] });
+    expect(m.duration).toBe(8);
+    expect(m.applied).toMatchObject({ seq });
   });
 });
 

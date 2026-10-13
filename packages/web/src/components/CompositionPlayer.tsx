@@ -20,6 +20,7 @@
 //   (no request interception, no dead proxy); the CSP (`connect-src 'none'`) and the session token, which exposes only
 //   that composition's files, are what confine it. The desktop app adds its frame filter (apps/desktop preview-filter.ts).
 import { parseIncoming, parseOutgoing, RATE_MAX, RATE_MIN, SEQ_MAX, type PreviewIncoming, type PreviewOutgoing, type RuntimeError, type RuntimeErrorCode } from '@motion-studio/composition-runtime/protocol';
+import { parseDraft } from '@motion-studio/composition-runtime/draft';
 import type { Composition, PreviewSessionInfo } from '@motion-studio/shared';
 import { useEffect, useRef, useState } from 'react';
 import { useT } from '../i18n.tsx';
@@ -119,7 +120,8 @@ export class CompositionMedia implements SyncMedia {
   /**
    * Shows `composition` (the editor's draft) in place of the session's, keeping the time. Coalesced: at most one message
    * per animation frame, the latest wins; a frame mounted later (a renewal) gets it once ready. Returns its `seq`, which
-   * `applied` (event `compositionapplied`) names once the runtime shows it. A draft the protocol refuses is never sent.
+   * `applied` (event `compositionapplied`) names once the runtime shows it. A draft the protocol refuses is never sent: it is
+   * answered at once, locally, with a `compositionInvalid` error.
    */
   setComposition(composition: Composition): number {
     this.seq = this.seq >= SEQ_MAX ? 1 : this.seq + 1;
@@ -179,7 +181,9 @@ export class CompositionMedia implements SyncMedia {
     if (msg.type === 'compositionApplied') {
       if (this.active?.id !== id) return false;
       this.applied = { seq: msg.seq, errors: msg.errors };
-      if (this.draft && msg.seq === this.draft.seq) {
+      // A draft that could not be mounted leaves the previous one shown: its duration does not count (M1).
+      const shown = !msg.errors.some((e) => e.code === 'compositionInvalid');
+      if (shown && this.draft && msg.seq === this.draft.seq) {
         const d = this.draft.composition.duration > 0 ? this.draft.composition.duration : 0;
         if (d !== this.dur) { this.dur = d; this.emit('durationchange'); }
       }
@@ -204,17 +208,23 @@ export class CompositionMedia implements SyncMedia {
 
   private flushDraft(): void {
     if (!this.draft || !this.active || this.draft.seq === this.sentSeq) return;
-    this.sentSeq = this.draft.seq;
-    this.post({ type: 'setComposition', composition: this.draft.composition, keepTime: true, seq: this.draft.seq });
+    const { composition, seq } = this.draft;
+    this.sentSeq = seq;
+    if (!this.post({ type: 'setComposition', composition, keepTime: true, seq })) {
+      // Refused here (structure or size): the runtime would refuse it too. The caller hears it as its answer (M4).
+      this.applied = { seq, errors: [{ code: 'compositionInvalid', message: 'the draft was refused by the preview protocol (structure or size)' }] };
+      this.emit('compositionapplied');
+    }
   }
   private playCommand(): PreviewIncoming {
     return { type: 'play', loop: this.loop, rate: this.rate };
   }
-  private post(cmd: PreviewIncoming): void {
-    // Only the protocol's commands ever leave (a malformed one is a bug here: dropped).
-    if (!this.active || !parseIncoming(cmd)) return;
+  /** Whether `cmd` was sent: only the protocol's commands ever leave (a malformed one is a bug here, or a refused draft). */
+  private post(cmd: PreviewIncoming): boolean {
+    if (!this.active || !parseIncoming(cmd, parseDraft)) return false;
     if (cmd.type === 'play') this.awaitingPlay = true;
     this.active.send(cmd);
+    return true;
   }
   private emit(type: string): void {
     this.events.dispatchEvent(new Event(type));

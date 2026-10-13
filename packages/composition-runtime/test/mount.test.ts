@@ -418,6 +418,22 @@ describe('load (a re-mount seeks straight to its time)', () => {
   });
 });
 
+describe('play from (a re-mount resumes where the old mount had got to, M5)', () => {
+  it('starts at `from`, not at the time last shown', async () => {
+    const times: Array<[number, boolean]> = [];
+    const { player } = run(comp({ tracks: [{ id: 'v', kind: 'visual', clips: [{ id: 'card', type: 'shape', start: 0, duration: 6, props: {} }] }] } as Partial<Composition>), 'preview');
+    await player.load();
+    await player.seek(1);
+    player.onTime = (t, playing) => times.push([t, playing]);
+    player.play({ from: 2.5 });
+    await new Promise((r) => setTimeout(r, 30));
+    player.pause();
+    const first = times.find(([, p]) => p)!;
+    expect(first[0]).toBeGreaterThanOrEqual(2.5);
+    expect(first[0]).toBeLessThan(2.7);
+  });
+});
+
 describe('destroy (the re-mount of setComposition)', () => {
   // jsdom implements no media loading: pause and load are stand-ins here (they only print "not implemented").
   const proto = HTMLMediaElement.prototype as unknown as Record<string, unknown>;

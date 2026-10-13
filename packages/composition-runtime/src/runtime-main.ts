@@ -2,8 +2,8 @@ import type { Composition } from '@motion-studio/shared';
 import { installVirtualClock, nativesOf } from './clock.ts';
 import { mount, type Player, type ReadyInfo } from './mount.ts';
 import { COMPOSITION_DATA_ID, readCompositionData } from './page.ts';
-import { createPreviewBridge, type BridgePlayer, type PreviewBridge } from './preview-bridge.ts';
-import { parseParentOrigin, PREVIEW_PROTOCOL_VERSION, RUNTIME_QUERY, type PreviewOutgoing, type RuntimeError, type RuntimeMode } from './protocol.ts';
+import { createPreviewBridge, DRAFT_PARSER_KEY, type BridgePlayer, type PreviewBridge } from './preview-bridge.ts';
+import { parseParentOrigin, PREVIEW_PROTOCOL_VERSION, RUNTIME_QUERY, type DraftParser, type PreviewOutgoing, type RuntimeError, type RuntimeMode } from './protocol.ts';
 
 /** The render-mode API on `window.__ms` (driven over CDP by the core renderer). */
 export interface RuntimeApi {
@@ -83,7 +83,17 @@ export function startRuntime(w: Window & typeof globalThis): RuntimeApi {
       w, root, first: player, composition: comp as Composition, base: base.href, natives, report,
       post: (m) => { if (bridge) bridge.post(m); },
     });
-    const b = createPreviewBridge({ parent: w.parent, parentOrigin, player: live });
+    const parserOf = () => (w as unknown as Record<string, { parseDraft?: DraftParser } | undefined>)[DRAFT_PARSER_KEY]?.parseDraft;
+    const b = createPreviewBridge({ parent: w.parent, parentOrigin, player: live, parseDraft: parserOf });
+    // The draft parser (zod) is a script of its own, loaded only here: a render page never carries it. A draft that comes
+    // before it has loaded waits for it (bridge `parserReady`).
+    if (!parserOf()) {
+      const script = w.document.createElement('script');
+      script.src = 'preview.js';
+      script.addEventListener('load', () => b.parserReady());
+      script.addEventListener('error', () => w.console.warn('[motion-studio] preview.js did not load: drafts are refused'));
+      w.document.head.appendChild(script);
+    }
     void ready.then((info) => {
       bridge = b;
       w.addEventListener('message', (ev) => b.handle(ev));
@@ -161,6 +171,9 @@ function createLivePreview(o: {
   let muted = false;
   let playOpts: { loop: boolean; rate: number } | null = null;
   let applying = false;
+  /** Seek commands seen (and the last time asked): a re-mount follows one that came while it ran. */
+  let seekGen = 0;
+  let lastSeek = 0;
   let pending: { composition: Composition; keepTime: boolean; seq: number } | null = null;
 
   const wire = (p: Player) => {
@@ -171,6 +184,7 @@ function createLivePreview(o: {
 
   const apply = async (d: { composition: Composition; keepTime: boolean; seq: number }) => {
     applying = true;
+    const genAtStart = seekGen;
     const errors: RuntimeError[] = [];
     let collecting = true;
     const report = (e: RuntimeError) => { if (!collecting) o.report(e); else if (errors.length < MAX_ERRORS) errors.push(e); };
@@ -185,9 +199,19 @@ function createLivePreview(o: {
       next.setScale(scale);
       await next.load();
       const ids = idsOf(c);
+      // The time to show: the one a seek command asked for meanwhile, else the kept one (or 0). A seek that arrives while
+      // the new mount seeks moves it again (a few times at most: commands keep coming only while the user scrubs).
+      let want = seekGen !== genAtStart ? lastSeek : d.keepTime ? current.time : 0;
+      for (let i = 0; i < 4; i++) {
+        const gen = seekGen;
+        await next.seek(want);
+        if (seekGen === gen) break;
+        want = lastSeek;
+      }
+      // Everything else is read at the swap, so a select, setScale, mute or play/pause sent during the re-mount holds.
       const keep = selected !== null && ids.has(selected) ? selected : null;
-      await next.seek(d.keepTime ? current.time : 0);
-      const resume = current.playing && playOpts ? playOpts : null;
+      const resume = current.playing && playOpts ? { ...playOpts, from: current.time } : null;
+      next.setScale(scale);
       // Swap: the old mount goes, the new one is the one shown.
       current.destroy();
       holder?.remove();
@@ -215,7 +239,7 @@ function createLivePreview(o: {
   };
 
   return {
-    seek: (t) => { playOpts = null; return current.seek(t); },
+    seek: (t) => { playOpts = null; seekGen++; lastSeek = t; return current.seek(t); },
     play: (p) => { playOpts = p; current.play(p); },
     pause: () => { playOpts = null; current.pause(); },
     select: (id) => { selected = id; current.select(id); },

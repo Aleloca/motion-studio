@@ -76,6 +76,7 @@ beforeAll(async () => {
   writeFileSync(join(dist, 'index.html'), `<!doctype html><html><head>${COMPOSITION_PLACEHOLDER}<script src="runtime.js"></script></head><body></body></html>`);
   writeFileSync(join(dist, 'runtime.js'), '/* runtime */');
   writeFileSync(join(dist, 'layer.js'), '/* layer */');
+  writeFileSync(join(dist, 'preview.js'), '/* preview */');
   writeFileSync(join(dist, 'clock.js'), '/* clock */');
   writeFileSync(join(dist, 'secret.js'), '/* not a runtime file */');
   const outside = join(work, 'outside');
@@ -222,9 +223,9 @@ describe('the runtime', () => {
     expect(all(await send(`/${render.token}/runtime/index.html`), 'content-security-policy')).toEqual([`${CSP}; frame-ancestors 'none'`]);
   });
 
-  it('serves the three scripts as JavaScript, nothing else from dist', async () => {
+  it('serves the four scripts as JavaScript, nothing else from dist', async () => {
     const s = await mint();
-    for (const f of ['runtime.js', 'layer.js', 'clock.js']) {
+    for (const f of ['runtime.js', 'layer.js', 'clock.js', 'preview.js']) {
       const r = await send(`/${s.token}/runtime/${f}`);
       expect(r.status, f).toBe(200);
       expect(r.headers['content-type']).toBe('text/javascript; charset=utf-8');

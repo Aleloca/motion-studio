@@ -1,6 +1,8 @@
 import { JSDOM } from 'jsdom';
 import { describe, expect, it } from 'vitest';
 import { renderRuntimePage } from '../src/page.ts';
+import { parseDraft } from '../src/draft.ts';
+import { DRAFT_PARSER_KEY } from '../src/preview-bridge.ts';
 import { startRuntime } from '../src/runtime-main.ts';
 
 const INDEX = '<!doctype html><html><head><!--ms-composition--></head><body><div id="ms-root"></div></body></html>';
@@ -36,7 +38,8 @@ describe('setComposition (preview, same document)', () => {
     ...over,
   });
 
-  function preview(composition: unknown, mode: 'preview' | 'render' = 'preview', before?: (w: Window & typeof globalThis) => void) {
+  /** `parser`: preview.js has already run (jsdom loads no scripts); false leaves it to the test. */
+  function preview(composition: unknown, mode: 'preview' | 'render' = 'preview', before?: (w: Window & typeof globalThis) => void, parser = true) {
     const html = renderRuntimePage(INDEX, { base: '../v1/compositions/story/', composition });
     const url = `http://127.0.0.1:9999/tok/runtime/index.html?mode=${mode}&parentOrigin=${encodeURIComponent(ORIGIN)}`;
     const w = new JSDOM(html, { url, pretendToBeVisual: true }).window;
@@ -45,6 +48,7 @@ describe('setComposition (preview, same document)', () => {
     const parent = { postMessage: (m: Record<string, unknown>, o: string) => { if (o === ORIGIN) sent.push(m); } };
     Object.defineProperty(w, 'parent', { value: parent, configurable: true });
     before?.(w as unknown as Window & typeof globalThis);
+    if (parser) Object.defineProperty(w, DRAFT_PARSER_KEY, { value: { parseDraft } });
     const api = startRuntime(w as unknown as Window & typeof globalThis);
     const post = (data: unknown, source: unknown = parent, origin = ORIGIN) => {
       const ev = new w.Event('message');
@@ -82,6 +86,53 @@ describe('setComposition (preview, same document)', () => {
     expect(p.sent.some((m) => m.type === 'clipBounds' && m.clipId === 'card')).toBe(true);
     // The runtime's own API (render) is untouched by a preview re-mount.
     expect(p.api.mode).toBe('preview');
+  });
+
+  it('select, setScale and seek sent while a draft re-mounts hold after the swap (I1)', async () => {
+    const p = preview(comp());
+    await p.until(() => p.sent.some((m) => m.type === 'ready'));
+    p.post({ type: 'select', clipId: 'card' });
+    p.post({ type: 'seek', t: 1 });
+    await p.until(() => p.sent.some((m) => m.type === 'clipBounds' && m.clipId === 'card'));
+    // During the load phase.
+    p.post({ type: 'setComposition', composition: comp(), keepTime: true, seq: 1 });
+    p.post({ type: 'select', clipId: 'late' });
+    p.post({ type: 'setScale', scale: 2 });
+    p.post({ type: 'seek', t: 3.5 });
+    await p.until(() => p.sent.some((m) => m.type === 'compositionApplied' && m.seq === 1));
+    const bounds = p.sent.filter((m) => m.type === 'clipBounds').at(-1);
+    expect(bounds).toMatchObject({ clipId: 'late', scale: 2 });
+    expect(p.sent.filter((m) => m.type === 'time').at(-1)).toMatchObject({ t: 3.5 });
+    // During the seek phase: the commands come once the draft has loaded (the next animation frame).
+    p.sent.length = 0;
+    p.post({ type: 'setComposition', composition: comp(), keepTime: true, seq: 2 });
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => p.w.requestAnimationFrame(() => r(null)));
+    p.post({ type: 'select', clipId: 'card' });
+    p.post({ type: 'setScale', scale: 0.5 });
+    p.post({ type: 'seek', t: 2.25 });
+    await p.until(() => p.sent.some((m) => m.type === 'compositionApplied' && m.seq === 2));
+    expect(p.sent.filter((m) => m.type === 'clipBounds').at(-1)).toMatchObject({ clipId: 'card', scale: 0.5 });
+    expect(p.sent.filter((m) => m.type === 'time').at(-1)).toMatchObject({ t: 2.25, playing: false });
+    const stage = p.w.document.querySelector<HTMLElement>('.ms-stage')!;
+    expect(stage.style.transform).toContain('scale(0.5)');
+  });
+
+  it('a draft that comes before preview.js has loaded is applied once it loads; render pages never load it', async () => {
+    const p = preview(comp(), 'preview', undefined, false);
+    await p.until(() => p.sent.some((m) => m.type === 'ready'));
+    const script = p.w.document.querySelector<HTMLScriptElement>('script[src="preview.js"]');
+    expect(script).not.toBeNull();
+    p.post({ type: 'setComposition', composition: comp({ tracks: [] }), seq: 4 });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(p.sent.some((m) => m.type === 'compositionApplied')).toBe(false);
+    Object.defineProperty(p.w, DRAFT_PARSER_KEY, { value: { parseDraft } });
+    script!.dispatchEvent(new p.w.Event('load'));
+    await p.until(() => p.sent.some((m) => m.type === 'compositionApplied' && m.seq === 4));
+    expect(p.boxes()).toEqual([]);
+    const r = preview(comp(), 'render', undefined, false);
+    await r.api.ready();
+    expect(r.w.document.querySelector('script[src="preview.js"]')).toBeNull();
   });
 
   it('without keepTime the new composition starts at 0; a selected clip that no longer exists is dropped', async () => {

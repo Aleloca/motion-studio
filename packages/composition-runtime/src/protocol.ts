@@ -11,14 +11,14 @@
  *   grandchild with its own opaque origin and could post to the top window too), then `parseOutgoing(event.data)`.
  * - Commands go to the iframe with `iframe.contentWindow.postMessage(cmd, '*')` (the only possible target for an opaque
  *   origin; commands carry no secrets).
- * - `setComposition` (the editor's draft, Phase 10b) is validated structurally with the shared `compositionSchema` and bounded
- *   by `COMPOSITION_LIMITS.jsonBytes`; the runtime re-mounts it in the same document, in preview mode only. Its asset paths
- *   are composition paths (`assets/…`, `layers/…`), resolved against the session's folder like the inlined composition's: a
+ * - `setComposition` (the editor's draft, Phase 10b) is validated by a `DraftParser` (`parseDraft` of `./draft`: the shared
+ *   `compositionSchema`, bounded by `COMPOSITION_LIMITS.jsonBytes`); without one `parseIncoming` refuses it. This module
+ *   stays free of zod, so the render runtime does not carry it: the preview loads the parser from its own script
+ *   (`preview.js`). The runtime re-mounts a draft in the same document, in preview mode only. Its asset paths are
+ *   composition paths (`assets/…`, `layers/…`), resolved against the session's folder like the inlined composition's: a
  *   file the session cannot serve fails to load and is reported, never fetched from anywhere else.
- *   The schema comes from its own entry (`@motion-studio/shared/composition/schema`): the runtime bundle takes zod and
- *   the schema, not the rest of the shared package (catalogs, explain texts).
  */
-import { COMPOSITION_LIMITS, compositionSchema, type Composition } from '@motion-studio/shared/composition/schema';
+import type { Composition } from '@motion-studio/shared';
 
 export const PREVIEW_PROTOCOL_VERSION = 1;
 
@@ -105,37 +105,14 @@ const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFi
 const isClipId = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= CLIP_ID_MAX;
 const isSeq = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= SEQ_MAX;
 
-/** UTF-8 length of `s`, stopping as soon as it passes `max`. */
-function utf8Exceeds(s: string, max: number): boolean {
-  if (s.length > max) return true; // every UTF-16 unit is at least one byte
-  let bytes = 0;
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    if (c < 0x80) bytes += 1;
-    else if (c < 0x800) bytes += 2;
-    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length && (s.charCodeAt(i + 1) & 0xfc00) === 0xdc00) { bytes += 4; i++; }
-    else bytes += 3;
-    if (bytes > max) return true;
-  }
-  return false;
-}
+/** Validates a draft composition (see `./draft`): a fresh, structurally valid copy, or null. */
+export type DraftParser = (value: unknown) => Composition | null;
 
 /**
- * A draft composition: serialised once (which also refuses cycles, BigInts and anything JSON cannot hold), bounded by
- * `COMPOSITION_LIMITS.jsonBytes`, parsed back into a fresh plain copy and checked with `compositionSchema` (structure only:
- * the semantic rules are the editor's and the core's). Null when any step fails.
+ * Validates a message from the UI. Anything else (unknown type, extra field, bad value) gives null and is ignored.
+ * `setComposition` needs `parseDraft`: without it the draft is refused.
  */
-function parseDraft(v: unknown): Composition | null {
-  if (!isObj(v)) return null;
-  let text: string;
-  try { text = JSON.stringify(v); } catch { return null; }
-  if (typeof text !== 'string' || utf8Exceeds(text, COMPOSITION_LIMITS.jsonBytes)) return null;
-  const r = compositionSchema.safeParse(JSON.parse(text));
-  return r.success ? r.data : null;
-}
-
-/** Validates a message from the UI. Anything else (unknown type, extra field, bad value) gives null and is ignored. */
-export function parseIncoming(data: unknown): PreviewIncoming | null {
+export function parseIncoming(data: unknown, parseDraft?: DraftParser): PreviewIncoming | null {
   if (!isObj(data)) return null;
   switch (data.type) {
     case 'seek':
@@ -158,7 +135,7 @@ export function parseIncoming(data: unknown): PreviewIncoming | null {
     case 'setComposition': {
       if (!keysWithin(data, ['type', 'composition', 'keepTime', 'seq']) || !isSeq(data.seq)) return null;
       if (data.keepTime !== undefined && typeof data.keepTime !== 'boolean') return null;
-      const composition = parseDraft(data.composition);
+      const composition = parseDraft ? parseDraft(data.composition) : null;
       if (!composition) return null;
       return { type: 'setComposition', composition, ...(data.keepTime !== undefined ? { keepTime: data.keepTime } : {}), seq: data.seq };
     }

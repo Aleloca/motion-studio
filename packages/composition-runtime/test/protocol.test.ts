@@ -1,7 +1,8 @@
 import { COMPOSITION_LIMITS, type Composition } from '@motion-studio/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { parseLayerReply } from '../src/layer-protocol.ts';
-import { parseIncoming, parseOutgoing, parseParentOrigin } from '../src/protocol.ts';
+import { parseDraft } from '../src/draft.ts';
+import { parseIncoming, parseIncoming as parseIncomingRaw, parseOutgoing, parseParentOrigin } from '../src/protocol.ts';
 import { createPreviewBridge } from '../src/preview-bridge.ts';
 
 describe('incoming messages', () => {
@@ -39,6 +40,10 @@ function smallComp(over: Record<string, unknown> = {}): Composition {
 }
 
 describe('setComposition (incoming)', () => {
+  const parseIncoming = (d: unknown) => parseIncomingRaw(d, parseDraft);
+  it('is refused without a draft parser (protocol.ts carries no zod: the render runtime has none)', () => {
+    expect(parseIncomingRaw({ type: 'setComposition', composition: smallComp(), seq: 1 })).toBeNull();
+  });
   it('accepts a structurally valid composition with a seq and an optional keepTime, and returns a clean copy', () => {
     const c = smallComp();
     const parsed = parseIncoming({ type: 'setComposition', composition: c, keepTime: true, seq: 7 });
@@ -138,7 +143,7 @@ describe('preview bridge', () => {
   function setup() {
     const parent = { postMessage: vi.fn() };
     const player = { seek: vi.fn(async () => {}), play: vi.fn(), pause: vi.fn(), select: vi.fn(), setScale: vi.fn(), setMuted: vi.fn(), setComposition: vi.fn() };
-    const bridge = createPreviewBridge({ parent, parentOrigin: ORIGIN, player });
+    const bridge = createPreviewBridge({ parent, parentOrigin: ORIGIN, player, parseDraft: () => parseDraft });
     return { parent, player, bridge };
   }
   it('runs commands from the parent at its origin', () => {
@@ -168,6 +173,24 @@ describe('preview bridge', () => {
     expect(player.setComposition).toHaveBeenCalledTimes(1);
     bridge.handle({ data: { type: 'setComposition', composition: c, seq: 8 }, origin: ORIGIN, source: parent });
     expect(player.setComposition).toHaveBeenLastCalledWith(c, { keepTime: false, seq: 8 });
+  });
+  it('a draft that comes before the parser has loaded waits for it (the latest only), then applies', () => {
+    const parent = { postMessage: vi.fn() };
+    const player = { seek: vi.fn(async () => {}), play: vi.fn(), pause: vi.fn(), select: vi.fn(), setScale: vi.fn(), setMuted: vi.fn(), setComposition: vi.fn() };
+    let parser: typeof parseDraft | undefined;
+    const bridge = createPreviewBridge({ parent, parentOrigin: ORIGIN, player, parseDraft: () => parser });
+    bridge.handle({ data: { type: 'setComposition', composition: smallComp(), seq: 1 }, origin: ORIGIN, source: parent });
+    bridge.handle({ data: { type: 'setComposition', composition: smallComp(), seq: 2 }, origin: ORIGIN, source: {} }); // not the parent
+    bridge.handle({ data: { type: 'setComposition', composition: smallComp(), seq: 3 }, origin: ORIGIN, source: parent });
+    bridge.handle({ data: { type: 'seek', t: 1 }, origin: ORIGIN, source: parent }); // other commands go on
+    expect(player.seek).toHaveBeenCalledWith(1);
+    expect(player.setComposition).not.toHaveBeenCalled();
+    parser = parseDraft;
+    bridge.parserReady();
+    expect(player.setComposition).toHaveBeenCalledTimes(1);
+    expect(player.setComposition.mock.calls[0]![1]).toEqual({ keepTime: false, seq: 3 });
+    bridge.parserReady(); // nothing left
+    expect(player.setComposition).toHaveBeenCalledTimes(1);
   });
   it('ignores a wrong origin, a source other than the parent and unknown types', () => {
     const { parent, player, bridge } = setup();

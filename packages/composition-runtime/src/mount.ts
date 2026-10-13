@@ -35,7 +35,8 @@ export interface Player {
   load(): Promise<void>;
   /** Deterministic seek; concurrent calls coalesce to the latest time. Pauses playback. */
   seek(t: number): Promise<void>;
-  play(o?: { loop?: boolean; rate?: number }): void;
+  /** `from`: start there instead of the time shown (a re-mount resumes where the old mount had got to). */
+  play(o?: { loop?: boolean; rate?: number; from?: number }): void;
   pause(): void;
   select(clipId: string | null): void;
   setScale(scale: number | 'fit'): void;
@@ -714,6 +715,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
       if (destroyed || opts.mode !== 'preview' || still) return;
       loop = o.loop ?? true;
       rate = o.rate ?? 1;
+      if (o.from !== undefined && Number.isFinite(o.from)) time = clampT(o.from);
       if (playing) { tStart = time; wallStart = n.performanceNow(); return; }
       playing = true;
       tStart = time >= c.duration ? 0 : time;

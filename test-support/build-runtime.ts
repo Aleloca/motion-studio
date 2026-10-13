@@ -13,7 +13,7 @@ import { pathToFileURL } from 'node:url';
 const PKG = join(import.meta.dirname, '..', 'packages', 'composition-runtime');
 const DIST = join(PKG, 'dist');
 /** What the core serves and the packaged apps copy (the CLI and desktop builds check the same list). */
-const OUTPUTS = ['index.html', 'runtime.js', 'layer.js', 'clock.js'];
+const OUTPUTS = ['index.html', 'runtime.js', 'layer.js', 'clock.js', 'preview.js'];
 
 function newestSource(dir: string): number {
   let newest = 0;
