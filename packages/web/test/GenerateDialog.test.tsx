@@ -51,6 +51,20 @@ describe('GenerateDialog', () => {
     r.rerender(ui(live([job({ state: 'succeeded' })])));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
+  it('shows the job\'s approval card inside the dialog, so the paid confirmation can be answered without closing it (Q3)', async () => {
+    const user = userEvent.setup();
+    const r = render(ui());
+    await user.type(await screen.findByLabelText('Description'), 'A blue plane');
+    await user.click(screen.getByRole('button', { name: 'Generate' }));
+    await screen.findByText(/Generating…/);
+    const approval = { id: 'a1', jobId: 'job-1', projectSlug: 'acme', creativeSlug: null, kind: 'provider', title: 'Generate an image', detail: 'A blue plane', toolName: 'provider:openai-images', alwaysRule: 'provider:openai-images', explanation: null, agentReason: null, createdAt: '2026-01-01T00:00:00Z', expiresAt: '2099-01-01T00:00:00Z' } as const;
+    const other = { ...approval, id: 'a2', jobId: 'other-job', title: 'Not this one' };
+    r.rerender(ui({ ...live([job()]), approvals: { a1: approval, a2: other } }));
+    const dialog = screen.getByRole('dialog');
+    expect(await within(dialog).findByText('Generate an image')).toBeTruthy();
+    expect(within(dialog).queryByText('Not this one')).toBeNull();
+    expect(within(dialog).getByRole('button', { name: 'Deny' })).toBeTruthy();
+  });
   it('shows a failed job\'s error and allows another try', async () => {
     const user = userEvent.setup();
     const r = render(ui());

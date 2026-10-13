@@ -249,5 +249,6 @@
 .ms-gen-inline { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); }
 .ms-gen-note { margin: 0; font-size: 12px; line-height: 1.45; color: var(--muted); }
 .ms-gen-note a { color: var(--text); text-decoration: underline; }
+.ms-gen-approval { min-width: 0; }
 .ms-gen-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ms-gen-running { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }

@@ -6,6 +6,7 @@ import { useT } from '../../i18n.tsx';
 import { isActiveJob } from '../../labels.ts';
 import { href } from '../../routes.ts';
 import { Button, Icon, Input, Modal, NumberField, Segmented, Select, Spinner, Tabs, Textarea, Toggle, toast, type IconName } from '../../ui/index.ts';
+import { ApprovalCard } from '../../components/ApprovalCard.tsx';
 import { Alert, message } from '../common.tsx';
 
 type Kind = 'image' | 'voice' | 'sfx' | 'music';
@@ -106,6 +107,9 @@ function Body({ onClose, slug, live }: GenerateDialogProps) {
   }, [secrets]);
 
   const job = jobId ? live.jobs[jobId] : undefined;
+  // The paid confirmation of this job is answered here: the dialog's scrim hides the activity center, and closing the dialog
+  // to approve would lose the result (Q3).
+  const pendingApprovals = jobId ? Object.values(live.approvals).filter((a) => a.jobId === jobId) : [];
   const running = sending || Boolean(jobId && (!job || isActiveJob(job)));
   const [seen, setSeen] = useState<string | null>(null);
   useEffect(() => {
@@ -249,6 +253,7 @@ function Body({ onClose, slug, live }: GenerateDialogProps) {
         )}
       </div>
       <p className="ms-gen-note"><Icon name={ICONS[kind]} size={12} /> {g.paidNote}</p>
+      {pendingApprovals.map((a) => <div key={a.id} className="ms-gen-approval"><ApprovalCard approval={a} /></div>)}
       {problem ? <Alert>{problem}</Alert> : null}
       <footer className="ms-gen-foot">
         {running ? <span className="ms-gen-running" role="status"><Spinner size={14} /> {jobId ? g.running : g.starting}</span> : null}
