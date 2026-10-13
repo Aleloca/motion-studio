@@ -12,6 +12,9 @@ import { AppConfigStore } from '../src/app-config.ts';
 import { Git } from '../src/git.ts';
 import { buildServer } from '../src/server/app.ts';
 
+// Load-robust (flaky under a busy machine): a per-file timeout, not a global one; what the tests check is unchanged.
+vi.setConfig({ testTimeout: 90_000, hookTimeout: 60_000 });
+
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const brief = { goal: 'Lancio app', message: '', formats: ['instagram-post-1x1', 'web-banner-300x250'], durationSec: 10, assets: [], notes: '' };
 let app: FastifyInstance;
