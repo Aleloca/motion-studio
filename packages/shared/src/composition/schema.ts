@@ -197,6 +197,7 @@ export const compositionSchema = z.strictObject({
   duration: seconds.describe('Seconds. 0 for a still (image formats): one frame at t = 0.'),
   background: color,
   fonts: z.array(fontRefSchema).max(COMPOSITION_LIMITS.fonts),
+  fontFallbacks: z.array(family).max(3).optional().describe('Declared families tried after a text clip\'s own family, before the generic fallback (per character). Set by localization for scripts the font lacks; leave it as it is.'),
   scenes: z.array(sceneSchema).max(COMPOSITION_LIMITS.scenes),
   tracks: z.array(trackSchema).max(COMPOSITION_LIMITS.tracks).describe('Stacking order: the first track is at the bottom. Audio tracks do not render.'),
 });

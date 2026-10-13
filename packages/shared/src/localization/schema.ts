@@ -11,7 +11,7 @@ export const localeTag = z.enum(SUPPORTED_LOCALES.map((x) => x.tag) as [LocaleTa
 
 const clipId = z.string().max(COMPOSITION_LIMITS.id).regex(/^[a-z0-9][a-z0-9-]*$/);
 /** A file under `assets/` of the composition folder (a voice file or a font file): never `layers/`. */
-const assetPath = z.string().max(COMPOSITION_PATH_MAX).refine((p) => p.startsWith('assets/') && isCompositionPath(p), 'issue.badAssetPath');
+export const assetFilePath = z.string().max(COMPOSITION_PATH_MAX).refine((p) => p.startsWith('assets/') && isCompositionPath(p), 'issue.badAssetPath');
 const text = z.string().max(COMPOSITION_LIMITS.text);
 
 /**
@@ -25,8 +25,8 @@ export const localizationSchema = z.object({
   instanceId: z.string().regex(INSTANCE_ID_RE),
   texts: z.record(clipId, z.object({ source: text, text }).strict()),
   params: z.record(z.string().regex(/^[a-z0-9-]+\.[A-Za-z0-9_-]+$/), z.object({ source: text, text }).strict()),
-  voices: z.record(clipId, z.object({ src: assetPath, sourceScript: z.string().max(5000), script: z.string().max(5000) }).strict()),
+  voices: z.record(clipId, z.object({ src: assetFilePath, sourceScript: z.string().max(5000), script: z.string().max(5000) }).strict()),
   fit: z.record(clipId, z.number().min(0.7).max(1)),
-  fonts: z.array(z.object({ family: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9 _-]{0,79}$/), files: z.array(assetPath).min(1).max(8) }).strict()).max(3),
+  fonts: z.array(z.object({ family: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9 _-]{0,79}$/), files: z.array(assetFilePath).min(1).max(8) }).strict()).max(3),
 }).strict();
 export type Localization = z.infer<typeof localizationSchema>;

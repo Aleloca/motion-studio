@@ -1,8 +1,9 @@
 // App Store / Google Play pack (Phase 12, spec §4.1): the choices of the guided flow, kept in `brief.storePack`, and the
 // formats (one instance per screenshot and device) they stand for.
 import { z } from 'zod';
-import { DEFAULT_FORMATS } from './formats.ts';
+import { DEFAULT_FORMATS, type FormatPreset } from './formats.ts';
 import { instanceIdOf } from './format-instance.ts';
+import { assetFilePath } from './localization/schema.ts';
 
 export type StoreId = 'appstore' | 'playstore';
 export const STORE_IDS = ['appstore', 'playstore'] as const;
@@ -27,7 +28,7 @@ export const storePackSchema = z.object({
     playstore: z.array(z.enum(PLAYSTORE_DEVICES)).max(3).optional(),
   }).strict(),
   /** One per screenshot, in order: its caption and the app screen (a file under `assets/` of the project) it shows, or null. */
-  screenshots: z.array(z.object({ caption: z.string().trim().min(1).max(80), screen: z.string().min(1).max(512).nullable() }).strict()).min(1).max(10),
+  screenshots: z.array(z.object({ caption: z.string().trim().min(1).max(80), screen: assetFilePath.nullable() }).strict()).min(1).max(10),
   preview: z.boolean(),
 }).strict().superRefine((p, ctx) => {
   const issue = (message: string, path: (string | number)[]) => ctx.addIssue({ code: 'custom', message, path });
@@ -41,18 +42,21 @@ export const storePackSchema = z.object({
 });
 export type StorePack = z.infer<typeof storePackSchema>;
 
-const sizeOf = (presetId: string) => {
-  const f = DEFAULT_FORMATS.find((x) => x.id === presetId);
-  return f ? `${f.width}x${f.height}` : presetId;
-};
+type SizedPreset = Pick<FormatPreset, 'id' | 'width' | 'height'>;
 
 /**
  * The brief's formats for a pack, in display order: for each chosen store and device one instance per screenshot (the first is
- * the bare preset id), the feature graphic once, then the preview video. `formatLabels`: "Screenshot N · caption" for a
- * screenshot, the generic names for the rest. `links` (follower → primary): the same screenshot on a device of the same
- * pixel size as an earlier one; the store devices have different sizes, so a pack made of the shipped presets has none.
+ * the bare preset id), the feature graphic once, then the preview video. `formatLabels`: "N · caption" for a screenshot
+ * (language-neutral: the caption is the user's text, and the UI names the preset); the feature graphic and the video have none
+ * (the UI shows the preset name). `links` (follower → primary): the same screenshot on a device of the same pixel size as an
+ * earlier one. The shipped store devices all have different sizes, so for the shipped presets `links` is always empty (Ruling D):
+ * consistency across devices comes from the series prompt. `presets` only exists so the branch can be tested with equal sizes.
  */
-export function storePackFormats(p: StorePack): { formats: string[]; formatLabels: Record<string, string>; links: Record<string, string> } {
+export function storePackFormats(p: StorePack, presets: readonly SizedPreset[] = DEFAULT_FORMATS): { formats: string[]; formatLabels: Record<string, string>; links: Record<string, string> } {
+  const sizeOf = (presetId: string) => {
+    const f = presets.find((x) => x.id === presetId);
+    return f ? `${f.width}x${f.height}` : presetId;
+  };
   const formats: string[] = [];
   const formatLabels: Record<string, string> = {};
   const links: Record<string, string> = {};
@@ -61,14 +65,13 @@ export function storePackFormats(p: StorePack): { formats: string[]; formatLabel
     if (!p.preview) return;
     const id = STORE_PREVIEW_PRESET[store];
     formats.push(id);
-    formatLabels[id] = store === 'appstore' ? 'App preview' : 'Promo video';
   };
   for (const store of p.stores) {
     const chosen: readonly string[] = p.devices[store] ?? [];
     const order: readonly string[] = store === 'appstore' ? APPSTORE_DEVICES : PLAYSTORE_DEVICES;
     for (const device of order.filter((d) => chosen.includes(d))) {
       const preset = (STORE_DEVICE_PRESET[store] as Record<string, string>)[device]!;
-      if (device === 'feature') { formats.push(preset); formatLabels[preset] = 'Feature graphic'; continue; }
+      if (device === 'feature') { formats.push(preset); continue; }
       const size = sizeOf(preset);
       const primaries = firstOfSize.get(size);
       const mine: string[] = [];
@@ -76,7 +79,7 @@ export function storePackFormats(p: StorePack): { formats: string[]; formatLabel
         const id = instanceIdOf(preset, i + 1);
         formats.push(id);
         mine.push(id);
-        formatLabels[id] = `Screenshot ${i + 1} · ${shot.caption}`;
+        formatLabels[id] = `${i + 1} · ${shot.caption}`;
         if (primaries?.[i]) links[id] = primaries[i]!;
       });
       if (!primaries) firstOfSize.set(size, mine);

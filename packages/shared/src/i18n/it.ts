@@ -581,10 +581,6 @@ export const it: Messages = {
       title: 'Pacchetto store',
       appStore: 'App Store',
       googlePlay: 'Google Play',
-      screenshotLabel: (p) => `Screenshot ${p.n} · ${p.caption}`,
-      preview: 'Anteprima app',
-      promoVideo: 'Video promo',
-      featureGraphic: 'Feature graphic',
     },
   },
   pairing: {

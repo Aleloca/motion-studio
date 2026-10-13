@@ -588,10 +588,6 @@ export const en = {
       title: 'App store pack',
       appStore: 'App Store',
       googlePlay: 'Google Play',
-      screenshotLabel: (p: { n: number; caption: string }) => `Screenshot ${p.n} · ${p.caption}`,
-      preview: 'App preview',
-      promoVideo: 'Promo video',
-      featureGraphic: 'Feature graphic',
     },
   },
   pairing: {

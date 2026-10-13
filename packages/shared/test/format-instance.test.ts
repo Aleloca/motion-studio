@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_FORMATS, INSTANCE_ID_RE, briefSchema, creativeFileSchema, instanceIndex, instanceLabel, nextInstanceId, presetOf, versionsFileSchema } from '../src/index.ts';
+import { DEFAULT_FORMATS, INSTANCE_ID_RE, briefSchema, briefWriteSchema, creativeFileSchema, instanceIndex, instanceLabel, nextInstanceId, presetOf, versionsFileSchema } from '../src/index.ts';
 
 const now = '2026-10-07T10:00:00.000Z';
 const oldBrief = { goal: 'Far capire che prenotare è immediato', message: '', formats: ['instagram-post-1x1', 'instagram-reel-9x16'], durationSec: 15, assets: [], notes: '' };
@@ -43,9 +43,9 @@ describe('brief formats and labels', () => {
     expect(briefSchema.safeParse({ ...oldBrief, formats: ['instagram-post-1x1', 'instagram-post-1x1@2'] }).success).toBe(true);
   });
   it('refuses duplicates and bad ids', () => {
-    expect(briefSchema.safeParse({ ...oldBrief, formats: ['a', 'a'] }).success).toBe(false);
-    expect(briefSchema.safeParse({ ...oldBrief, formats: ['a@1'] }).success).toBe(false);
-    expect(briefSchema.safeParse({ ...oldBrief, formats: ['a@21'] }).success).toBe(false);
+    expect(briefWriteSchema.safeParse({ ...oldBrief, formats: ['a', 'a'] }).success).toBe(false);
+    expect(briefWriteSchema.safeParse({ ...oldBrief, formats: ['a@1'] }).success).toBe(false);
+    expect(briefWriteSchema.safeParse({ ...oldBrief, formats: ['a@21'] }).success).toBe(false);
   });
   it('formatLabels: keys must be in formats, values 1..60 chars', () => {
     const f = ['a', 'a@2'];
@@ -64,6 +64,25 @@ describe('brief formats and labels', () => {
     const eleven = ['it', 'fr', 'de', 'es', 'pt', 'nl', 'sv', 'da', 'nb', 'fi', 'pl'];
     expect(briefSchema.safeParse({ ...oldBrief, locales: { primary: 'en', extra: eleven } }).success).toBe(false);
     expect(briefSchema.safeParse({ ...oldBrief, locales: { primary: 'en', extra: eleven.slice(0, 10) } }).success).toBe(true);
+  });
+});
+
+describe('reading old briefs (Ruling F)', () => {
+  it('drops duplicate formats on read, keeping the first; writes refuse them', () => {
+    const dup = { ...oldBrief, formats: ['b', 'a', 'b', 'a'] };
+    expect(briefSchema.parse(dup).formats).toEqual(['b', 'a']);
+    expect(briefWriteSchema.safeParse(dup).success).toBe(false);
+    expect(briefWriteSchema.safeParse({ ...oldBrief, formats: ['b', 'a'] }).success).toBe(true);
+  });
+  it('keeps a legacy id outside the instance pattern loadable; writes refuse it', () => {
+    const legacy = { ...oldBrief, formats: ['My_Custom Format', 'instagram-post-1x1'] };
+    expect(briefSchema.parse(legacy).formats).toEqual(['My_Custom Format', 'instagram-post-1x1']);
+    expect(briefWriteSchema.safeParse(legacy).success).toBe(false);
+    expect(briefWriteSchema.safeParse({ ...oldBrief, formats: ['a@21'] }).success).toBe(false);
+  });
+  it('a whole creative file with duplicate formats still loads', () => {
+    const file = { schemaVersion: 1, title: 'T', status: 'ready', error: null, createdAt: now, updatedAt: now, resumeFrom: null, linkedCodebases: [], brief: { ...oldBrief, formats: ['a', 'a'] } };
+    expect(creativeFileSchema.parse(file).brief.formats).toEqual(['a']);
   });
 });
 

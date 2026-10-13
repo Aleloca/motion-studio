@@ -85,6 +85,15 @@ describe('mount', () => {
     expect(shape.style.backgroundColor).toBe('currentcolor');
   });
 
+  it('puts fontFallbacks between the clip family and the generic font; without them the chain is unchanged', () => {
+    const font = (c: Composition, id: string) => { document.body.innerHTML = '<div id="ms-root"></div>'; return run(c).box(id)!.querySelector<HTMLElement>('.ms-content')!.style.fontFamily; };
+    const plain = font(comp(), 'title');
+    expect(plain).toBe('"Brand", sans-serif'); // old compositions: byte-identical chain
+    const withFallbacks = comp({ fontFallbacks: ['Noto Sans JP', 'Noto Sans KR'], fonts: [{ family: 'Brand', src: 'assets/brand.woff2' }, { family: 'Noto Sans JP', src: 'assets/jp.ttf' }] });
+    expect(font(withFallbacks, 'title')).toBe('"Brand", "Noto Sans JP", "Noto Sans KR", sans-serif');
+    expect(font(withFallbacks, 'other')).toBe('"Nope", "Noto Sans JP", "Noto Sans KR", sans-serif');
+  });
+
   it('reports a font that is not declared and falls back', () => {
     const { errors, box } = run(comp());
     expect(errors).toContainEqual(expect.objectContaining({ code: 'fontMissing', clipId: 'other' }));

@@ -13,11 +13,11 @@ import type { FormatSummary } from './formats/link.ts';
 export const creativeStatusSchema = z.enum(['draft', 'working', 'ready', 'incomplete', 'error', 'interrupted']);
 export type CreativeStatus = z.infer<typeof creativeStatusSchema>;
 
-export const briefSchema = z.object({
+const makeBriefSchema = (formats: z.ZodType<string[]>) => z.object({
   goal: z.string().trim().min(1),
   message: z.string(),
   /** Format instance ids (`<presetId>` or `<presetId>@<k>`, Phase 12): the order is the display and export order. */
-  formats: z.array(z.string().regex(INSTANCE_ID_RE)).min(1).refine((f) => new Set(f).size === f.length, 'issue.duplicateFormats'),
+  formats,
   /** A label per instance (1..60 characters); a key that is not in `formats` is refused. */
   formatLabels: z.record(z.string(), z.string().min(1).max(60)).optional(),
   durationSec: z.number().int().min(1).max(600).nullable(),
@@ -42,6 +42,16 @@ export const briefSchema = z.object({
   /** The App Store / Google Play pack choices (Phase 12). */
   storePack: storePackSchema.optional(),
 }).refine((b) => Object.keys(b.formatLabels ?? {}).every((k) => b.formats.includes(k)), { message: 'issue.labelNotInFormats', path: ['formatLabels'] });
+
+/**
+ * Reading (a stored brief, Phase 12 Ruling F): a brief written before instances may hold the same format twice or an id that the
+ * instance pattern refuses; neither may make the creative unreadable, so duplicates are dropped (the first stays) and any
+ * non-empty id is kept as it is (consumers ignore ids that are not in the catalog, as they always did).
+ */
+export const briefSchema = makeBriefSchema(z.array(z.string().min(1)).min(1).transform((f) => [...new Set(f)]));
+/** Writing (create and edit requests): format ids must be instance ids and unique. */
+export const briefWriteSchema = makeBriefSchema(z.array(z.string().regex(INSTANCE_ID_RE)).min(1).refine((f) => new Set(f).size === f.length, 'issue.duplicateFormats'));
+
 export type Brief = z.infer<typeof briefSchema>;
 
 export const creativeFileSchema = z.object({

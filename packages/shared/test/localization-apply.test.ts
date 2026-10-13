@@ -32,21 +32,26 @@ const overlay = (over: Partial<Localization> = {}): Localization => ({
   ...over,
 });
 
-/** Puts back the only fields the overlay may write: the result must then equal the input, deep. */
-function restore(out: Composition, src: Composition): Composition {
+/**
+ * Puts back, on the TARGETED clips only, the fields the overlay may write; every other clip is left as the output has it, so a
+ * write to an untargeted clip makes the deep-compare fail. Composition-level `fonts`/`fontFallbacks` are restored too.
+ */
+function restore(out: Composition, src: Composition, targeted: readonly string[]): Composition {
   const r = structuredClone(out);
   const orig = (id: string) => src.tracks.flatMap((t) => t.clips).find((c) => c.id === id)!;
   for (const clip of r.tracks.flatMap((t) => t.clips)) {
+    if (!targeted.includes(clip.id)) continue;
     const o = orig(clip.id);
     if (clip.type === 'text' && o.type === 'text') { clip.props.text = o.props.text; if (o.props.fontSize === undefined) delete clip.props.fontSize; else clip.props.fontSize = o.props.fontSize; }
     if (clip.type === 'html' && o.type === 'html') for (const [k, p] of Object.entries(clip.params ?? {})) if (p.type === 'text') p.value = (o.params![k] as typeof p).value;
-    if (clip.type === 'audio' && o.type === 'audio' && o.role === 'voice') {
+    if (clip.type === 'audio' && o.type === 'audio') {
       clip.src = o.src;
       if (o.script === undefined) delete clip.script; else clip.script = o.script;
       if (o.volume === undefined) delete clip.volume; else clip.volume = o.volume;
     }
   }
   r.fonts = r.fonts.filter((f) => src.fonts.some((x) => x.family === f.family && x.src === f.src));
+  if (src.fontFallbacks === undefined) delete r.fontFallbacks; else r.fontFallbacks = src.fontFallbacks;
   return r;
 }
 
@@ -57,8 +62,49 @@ describe('applyLocalization', () => {
     const out = applyLocalization(c, overlay());
     expect(c).toEqual(frozen); // the input is untouched
     expect(out).not.toBe(c);
-    expect(restore(out, c)).toEqual(c); // everything else deep-equals the input
+    expect(restore(out, c, ['title', 'sub', 'card', 'vo'])).toEqual(c); // everything else deep-equals the input
     expect(out).not.toEqual(c);
+    // the untargeted clips are identical in the output, with nothing restored
+    for (const id of ['vo-2', 'bgm']) expect(out.tracks.flatMap((t) => t.clips).find((x) => x.id === id)).toEqual(c.tracks.flatMap((t) => t.clips).find((x) => x.id === id));
+    // a restore that forgets a targeted clip must NOT equal the input (the helper detects writes)
+    expect(restore(out, c, ['title', 'sub', 'card'])).not.toEqual(c);
+  });
+  it('original and muted modes also touch only what they may', () => {
+    const c = comp();
+    const orig = applyLocalization(c, overlay(), { voiceMode: 'original' });
+    expect(restore(orig, c, ['title', 'sub', 'card'])).toEqual(c);
+    const muted = applyLocalization(c, overlay(), { voiceMode: 'muted' });
+    expect(restore(muted, c, ['title', 'sub', 'card', 'vo', 'vo-2'])).toEqual(c);
+    expect(muted.tracks.flatMap((t) => t.clips).find((x) => x.id === 'bgm')).toEqual(c.tracks.flatMap((t) => t.clips).find((x) => x.id === 'bgm'));
+    const stale = applyLocalization(c, overlay(), { stale: ['title', 'card.headline', 'vo'] });
+    expect(restore(stale, c, ['sub'])).toEqual(c);
+  });
+  it('still validates the voice entries in original and muted modes', () => {
+    const bad = overlay({ voices: { nope: { src: 'assets/a.mp3', sourceScript: '', script: '' } } });
+    for (const voiceMode of ['original', 'muted'] as const) expect(() => applyLocalization(comp(), bad, { voiceMode })).toThrow(LocalizationMismatch);
+    const wrong = overlay({ voices: { bgm: { src: 'assets/a.mp3', sourceScript: '', script: '' } } });
+    for (const voiceMode of ['original', 'muted'] as const) expect(() => applyLocalization(comp(), wrong, { voiceMode })).toThrow(LocalizationMismatch);
+  });
+  it('sets fontFallbacks from the overlay fonts and the result passes the composition schema', () => {
+    const out = applyLocalization(comp(), overlay({ fonts: [{ family: 'Noto Sans JP', files: ['assets/a.ttf', 'assets/b.ttf'] }, { family: 'Noto Sans KR', files: ['assets/c.ttf'] }] }));
+    expect(out.fontFallbacks).toEqual(['Noto Sans JP', 'Noto Sans KR']);
+    expect(out.fonts).toHaveLength(4);
+    expect(compositionSchema.safeParse(out).success).toBe(true);
+    expect(applyLocalization(out, overlay({ fonts: [{ family: 'Noto Sans JP', files: ['assets/a.ttf'] }] })).fontFallbacks).toEqual(['Noto Sans JP', 'Noto Sans KR']);
+  });
+  it('an overlay without fonts leaves fontFallbacks absent (old compositions are unchanged)', () => {
+    const out = applyLocalization(comp(), overlay({ fonts: [] }));
+    expect('fontFallbacks' in out).toBe(false);
+  });
+  it('throws, never truncates, when the fonts or fallbacks would exceed the limits', () => {
+    const c = comp();
+    for (let i = 0; i < 31; i++) c.fonts.push({ family: `F${i}`, src: `assets/f${i}.ttf` });
+    expect(c.fonts).toHaveLength(32);
+    expect(() => applyLocalization(c, overlay())).toThrow(/32 font files/);
+    const withFallbacks = comp();
+    withFallbacks.fontFallbacks = ['A', 'B', 'C'];
+    expect(() => applyLocalization(withFallbacks, overlay())).toThrow(LocalizationMismatch);
+    expect(applyLocalization(withFallbacks, overlay({ fonts: [{ family: 'B', files: ['assets/b.ttf'] }] })).fontFallbacks).toEqual(['A', 'B', 'C']);
   });
   it('writes texts, params, voices, fit and fonts into the real fields', () => {
     const out = applyLocalization(comp(), overlay());
@@ -74,6 +120,7 @@ describe('applyLocalization', () => {
     expect(clip('title').props.fontSize).toBeCloseTo(80);
     expect(clip('sub').props.fontSize).toBeUndefined();
     expect(out.fonts).toEqual([{ family: 'Inter', src: 'assets/inter.ttf' }, { family: 'Noto Sans JP', src: 'assets/noto-jp.ttf' }]);
+    expect(out.fontFallbacks).toEqual(['Noto Sans JP']);
     expect(compositionSchema.safeParse(out).success).toBe(true);
   });
   it('fit multiplies the size, the default size when unset', () => {

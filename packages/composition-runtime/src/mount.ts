@@ -239,7 +239,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
         else if (!declaredFamilies.has(family.toLowerCase())) report('fontMissing', `font ${family} is not declared in fonts[]; using a fallback`, clip.id);
         content.textContent = tp.text;
         Object.assign(content.style, {
-          fontFamily: family ? `${cssString(family)}, ${FALLBACK_FONT}` : FALLBACK_FONT,
+          fontFamily: [...(family ? [cssString(family)] : []), ...(c.fontFallbacks ?? []).map(cssString), FALLBACK_FONT].join(', '),
           fontSize: `${tp.fontSize ?? 48}px`, fontWeight: String(tp.fontWeight ?? 'normal'), color: tp.color ?? '#ffffff',
           textAlign: tp.align ?? 'left', lineHeight: '1.2', whiteSpace: 'pre-wrap', overflowWrap: 'break-word',
         });

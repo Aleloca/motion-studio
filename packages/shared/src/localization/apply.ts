@@ -1,10 +1,14 @@
-import type { Clip, Composition } from '../composition/schema.ts';
+import { COMPOSITION_LIMITS, type Clip, type Composition } from '../composition/schema.ts';
 import type { Localization } from './schema.ts';
 
 /** The overlay names a clip, param or voice that the composition does not have, or one of another kind. */
 export class LocalizationMismatch extends Error {
-  constructor(readonly entry: string, readonly reason: 'unknown' | 'wrongKind') {
-    super(`localization entry "${entry}": ${reason === 'unknown' ? 'not found in the composition' : 'wrong kind of clip'}`);
+  constructor(readonly entry: string, readonly reason: 'unknown' | 'wrongKind' | 'tooManyFonts' | 'tooManyFallbacks') {
+    super(`localization entry "${entry}": ${{
+      unknown: 'not found in the composition', wrongKind: 'wrong kind of clip',
+      tooManyFonts: `the extra fonts would take the composition over ${COMPOSITION_LIMITS.fonts} font files`,
+      tooManyFallbacks: 'the composition would have more than 3 fallback font families',
+    }[reason]}`);
     this.name = 'LocalizationMismatch';
   }
 }
@@ -34,9 +38,13 @@ const isVoice = (clip: Clip): clip is AudioClip => clip.type === 'audio' && clip
  * - `voices[clipId]` → `src` and `script` of that audio clip, `role: 'voice'` only;
  * - `fit[clipId]` → `props.fontSize` of that text clip, multiplied (the composition has no `props.size`: the text size is
  *   `props.fontSize`, `DEFAULT_TEXT_SIZE` when unset); 1 leaves it as it is;
- * - `fonts` → appended to `fonts[]` (one entry per file, no duplicate of family and file). A text clip's `fontFamily` stays
- *   a single declared family (the schema allows no fallback chain: a family with commas is refused), so the fallback is
- *   done by the runtime per character using the extra declared families; nothing else is written on the clips.
+ * - `fonts` → files appended to `fonts[]` (one entry per file, no duplicate of family and file) and families added to
+ *   `fontFallbacks` (no duplicate, at most 3). A text clip's `fontFamily` stays a single declared family (the schema allows no
+ *   fallback chain in it): the runtime puts `fontFallbacks` between the clip's family and the generic font, so the browser falls
+ *   back per character. Over 32 font files or over 3 fallbacks it throws `LocalizationMismatch` (never truncates), so the
+ *   result always passes `compositionSchema`.
+ * - Voice entries are validated (unknown id or not a voice clip throws) in every `voiceMode`, even when `original`/`muted`
+ *   ignore them: an overlay that does not fit the composition is wrong whatever the voice choice.
  * `opts.stale`: ids (clip ids, `<clipId>.<key>` for params) whose source changed since the translation; they keep the source
  * text, voice and size, and are not checked against the composition. `opts.voiceMode`: `translated` (default) applies the
  * voices; `original` ignores them; `muted` ignores them and sets `volume` 0 on every voice clip.
@@ -94,6 +102,11 @@ export function applyLocalization(
     for (const file of font.files) {
       if (!out.fonts.some((x) => x.family === font.family && x.src === file)) out.fonts.push({ family: font.family, src: file });
     }
+    if (out.fonts.length > COMPOSITION_LIMITS.fonts) throw new LocalizationMismatch(font.family, 'tooManyFonts');
+    const fallbacks = out.fontFallbacks ?? [];
+    if (!fallbacks.includes(font.family)) fallbacks.push(font.family);
+    if (fallbacks.length > 3) throw new LocalizationMismatch(font.family, 'tooManyFallbacks');
+    out.fontFallbacks = fallbacks;
   }
   return out;
 }
