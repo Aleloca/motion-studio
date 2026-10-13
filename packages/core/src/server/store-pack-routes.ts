@@ -98,7 +98,10 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
     // The pack's formats in this version, in the brief's order.
     const base = (await readVersion())!;
     const inVersion = (v: VersionEntry, f: string) => v.outputs.some((o) => o.format === f) || v.compositions?.some((x) => x.format === f) === true;
-    const formats = creative.brief.formats.filter((f) => packEntry(pack, f, undefined) !== null && inVersion(base, f));
+    // A pack format of the brief that this version lacks (the brief changed after it) is listed, never dropped silently (I1).
+    const packFormats = creative.brief.formats.filter((f) => packEntry(pack, f, undefined) !== null);
+    const formats = packFormats.filter((f) => inVersion(base, f));
+    const absent = packFormats.filter((f) => !inVersion(base, f));
     const sizeOf = (f: string) => { const p = findPreset(catalog, f); return { width: p?.width ?? 0, height: p?.height ?? 0 }; };
     const itemsOf = (v: VersionEntry): ExportItem[] => formats.map((format) => {
       const o = v.outputs.find((x) => x.format === format);
@@ -122,6 +125,7 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
         version = (await readVersion())!;
       }
       const still = await pendingRenders(creativeDir, [version], itemsOf(version));
+      for (const format of absent) files.push({ format, ...(primary ? { locale: primary } : {}), ...sizeOf(format), failure: c.notInVersion({ n }) });
       for (const it of itemsOf(version)) {
         const f: PackFile = { format: it.format, ...(primary ? { locale: primary } : {}), ...sizeOf(it.format) };
         const problems = pending.get(n)?.includes(it.format) ? renderProblems(version, it.format) : [];
@@ -155,6 +159,7 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
         r = await resolve();
       }
       for (const locale of others) {
+        for (const format of absent) files.push({ format, locale, ...sizeOf(format), failure: c.notInVersion({ n }) });
         for (const format of formats) {
           const f: PackFile = { format, locale, ...sizeOf(format) };
           const item = r.items.find((x) => x.format === format && x.locale === locale);

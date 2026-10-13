@@ -39,9 +39,14 @@ describe('storeRenderOptions and backgroundRgb', () => {
   });
   it('reads the rgb part of any composition colour', () => {
     expect(backgroundRgb('#abc')).toBe('aabbcc');
-    expect(backgroundRgb('#abcd')).toBe('aabbcc');
+    expect(backgroundRgb('#abcf')).toBe('aabbcc');
+    expect(backgroundRgb('#abcd')).toBe('b5c4d3'); // alpha 0xdd mixed with white
     expect(backgroundRgb('#A1B2C3')).toBe('a1b2c3');
-    expect(backgroundRgb('#a1b2c300')).toBe('a1b2c3');
+    // Ruling O: a transparent background is flattened onto white (as the preview shows it); a partial one is mixed with white.
+    expect(backgroundRgb('#a1b2c3ff')).toBe('a1b2c3');
+    expect(backgroundRgb('#a1b2c300')).toBe('ffffff');
+    expect(backgroundRgb('#0000')).toBe('ffffff');
+    expect(backgroundRgb('#00000080')).toBe('7f7f7f');
     expect(() => backgroundRgb('red')).toThrow();
     expect(() => backgroundRgb('#12345')).toThrow();
   });
@@ -62,6 +67,14 @@ describe.skipIf(!ff)('flattenPng and withSilentAudio (real ffmpeg)', () => {
     expect(pixel[0]).toBeLessThan(210);
     expect(pixel[1]).toBeGreaterThan(45);
     expect(pixel[1]).toBeLessThan(85);
+  });
+
+  it('Ruling O: a transparent pixel on a transparent background comes out white', async () => {
+    const src = join(work, 'clear.png');
+    writeFileSync(src, makePng(8, 8, 6, [], 0x00)); // every pixel (0, 0, 0, alpha 0)
+    const out = join(work, 'clear-flat.png');
+    await flattenPng(ff!, src, out, { width: 8, height: 8, background: '#00000000' }, signal);
+    expect(firstPixel(readFileSync(out))).toEqual({ colorType: 2, pixel: [255, 255, 255] });
   });
 
   it('refuses an output of another size (a PNG that is not the format size)', async () => {

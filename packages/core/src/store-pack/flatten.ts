@@ -41,12 +41,17 @@ export function storeRenderOptions(formatId: string, composition: Pick<Compositi
   return {};
 }
 
-/** The six lowercase hex digits of a composition colour (`#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`), alpha dropped. */
+/**
+ * The six lowercase hex digits of the opaque colour a composition background (`#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`) is
+ * flattened onto. Ruling O: a background with alpha is mixed with white (fully transparent: white), as the preview shows it.
+ */
 export function backgroundRgb(color: string): string {
   const m = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(color);
   if (!m) throw new RangeError(`not a composition colour: ${color}`);
-  const hex = m[1]!.toLowerCase();
-  return hex.length <= 4 ? [...hex.slice(0, 3)].map((x) => x + x).join('') : hex.slice(0, 6);
+  const raw = m[1]!.toLowerCase();
+  const hex = raw.length <= 4 ? [...raw].map((x) => x + x).join('') : raw;
+  const alpha = hex.length === 8 ? parseInt(hex.slice(6, 8), 16) / 255 : 1;
+  return [0, 2, 4].map((i) => Math.round(parseInt(hex.slice(i, i + 2), 16) * alpha + 255 * (1 - alpha)).toString(16).padStart(2, '0')).join('');
 }
 
 /**

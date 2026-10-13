@@ -41,7 +41,7 @@ const IMAGE_MAGIC: Array<(b: Buffer) => boolean> = [
 
 /**
  * Checks every app screen of the pack (Phase 12, spec §4.1): a regular file under the project's `assets/` (no symbolic link,
- * real path inside the library), listed in the library as an image, whose bytes are a PNG, JPEG or WebP. The schema already
+ * real path inside the library, no hard link), listed in the library as an image, whose bytes are a PNG, JPEG or WebP. The schema already
  * confines the path to `assets/` (Task 0). Throws 400 `store-pack-screen` naming the first screen that fails.
  */
 export async function verifyScreens(projectDir: string, media: MediaTools, p: StorePack): Promise<void> {
@@ -60,7 +60,9 @@ export async function verifyScreens(projectDir: string, media: MediaTools, p: St
     const fh = await open(abs, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW).catch(() => null);
     if (!fh) throw refuse(screen);
     try {
-      if (!(await fh.stat()).isFile()) throw refuse(screen);
+      // A regular file with a single name: a hard link to a file elsewhere is refused like a symbolic link.
+      const st = await fh.stat();
+      if (!st.isFile() || st.nlink > 1) throw refuse(screen);
       const b = Buffer.alloc(16);
       const { bytesRead } = await fh.read(b, 0, 16, 0);
       if (!IMAGE_MAGIC.some((ok) => ok(b.subarray(0, bytesRead)))) throw refuse(screen);

@@ -6,7 +6,7 @@
  * (size, PNG/JPEG, alpha, preview duration/fps/codec/audio) on the copy written; a failing file is removed and listed with its
  * translated reason, the rest is exported. The existing destination rules apply (absolute, outside the workspace, collisions).
  */
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -180,6 +180,26 @@ describe('store pack export', { timeout: 120_000 }, () => {
     const readme = readFileSync(join(body.folder, 'README.txt'), 'utf8');
     expect(readme).toContain('AppStore/preview.mp4');
     expect(readme).toContain(c().hasAlpha);
+  });
+
+  it('I1: a pack format of the brief that the version lacks is listed as "not in version N" (and in the README)', async () => {
+    const slug = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false }), { locales: { primary: 'en', extra: ['de'] } });
+    // The brief gained a third screenshot instance after v1 (a brief edit): v1 does not have it.
+    const creativeFile = join(env.store().dir(slug), 'creative.json');
+    const cf = JSON.parse(readFileSync(creativeFile, 'utf8')) as { brief: { formats: string[] } };
+    cf.brief.formats.push('appstore-iphone-69@3');
+    writeFileSync(creativeFile, JSON.stringify(cf));
+    for (const inst of ['appstore-iphone-69', 'appstore-iphone-69@2']) {
+      await env.app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}/versions/1/localizations/de/${encodeURIComponent(inst)}`, headers: H, payload: { texts: { title: 'Hallo' } } });
+    }
+    const body = (await exportPack(slug)).json() as { folder: string; written: string[]; failed: Array<{ file: string; reason: string }> };
+    expect(body.written).toHaveLength(4);
+    expect(body.failed).toEqual([
+      { file: 'AppStore/en/iPhone-6.9/03-screenshot.png', reason: c().notInVersion({ n: 1 }) },
+      { file: 'AppStore/de/iPhone-6.9/03-screenshot.png', reason: c().notInVersion({ n: 1 }) },
+    ]);
+    const readme = readFileSync(join(body.folder, 'README.txt'), 'utf8');
+    expect(readme).toContain(`AppStore/en/iPhone-6.9/03-screenshot.png: ${c().notInVersion({ n: 1 })}`);
   });
 
   it('a preview without an audio track is refused at export (the render adds one: store-flatten)', async () => {

@@ -10,11 +10,11 @@ export function chunk(type: string, data: Buffer): Buffer {
   return Buffer.concat([len, td, crc]);
 }
 /** A real PNG: `colorType` 2 (RGB) or 6 (RGBA), one colour; `extra` chunks before IDAT. */
-export function makePng(w: number, h: number, colorType: 2 | 6 | 4 | 0 | 3 = 2, extra: Buffer[] = []): Buffer {
+export function makePng(w: number, h: number, colorType: 2 | 6 | 4 | 0 | 3 = 2, extra: Buffer[] = [], fill = 0x80): Buffer {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = colorType;
   const bpp = colorType === 6 ? 4 : colorType === 4 ? 2 : colorType === 2 ? 3 : 1;
-  const row = Buffer.alloc(1 + w * bpp, 0x80); row[0] = 0;
+  const row = Buffer.alloc(1 + w * bpp, fill); row[0] = 0;
   const raw = Buffer.concat(Array.from({ length: h }, () => row));
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), ...extra, chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
 }

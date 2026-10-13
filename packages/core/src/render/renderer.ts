@@ -267,7 +267,7 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
       const list = join(work, 'segments.txt');
       await writeFile(list, segFiles.map(concatLine).join('\n') + '\n');
       await spawnFfmpeg(ff!, [...ownInput(list, { formats: ['concat', ...MP4_DEMUXERS], force: true, options: ['-safe', '0'] }), ...(hasAudio ? ownInput(wav, { formats: ['wav'] }) : []),
-        '-map', '0:v:0', ...(hasAudio ? ['-map', '1:a:0', '-c:a', 'aac', '-b:a', o.storeAudio ? `${STORE_AUDIO_KBPS}k` : '128k', '-ar', '48000'] : []),
+        '-map', '0:v:0', ...(hasAudio ? ['-map', '1:a:0', '-c:a', 'aac', '-b:a', o.storeAudio ? `${STORE_AUDIO_KBPS}k` : '128k', '-ar', '48000', ...(o.storeAudio ? ['-ac', '2'] : [])] : []),
         '-c:v', 'copy', '-movflags', '+faststart', '-f', VIDEO_EXT[ext]!, hasAudio || !o.storeAudio ? tempOut : join(work, `muted${ext}`)], { signal: ctl.signal }).done;
       // An App Store preview without audio gets a silent track of the video's length (Phase 12, spec §4.2).
       if (!hasAudio && o.storeAudio) await withSilentAudio(ff!, join(work, `muted${ext}`), tempOut, { durationSec: frames / c.fps, container: VIDEO_EXT[ext] as 'mp4' | 'mov' }, ctl.signal);
