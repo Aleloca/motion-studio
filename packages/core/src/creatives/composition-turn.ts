@@ -65,6 +65,17 @@ export function acceptedDurationsOf(base: VersionEntry | undefined, targets: rea
   return out;
 }
 
+/**
+ * A direct save records the duration as the user's choice only when the user changed it (it differs from the base's) or the
+ * base already carries that very choice. A text-only save over an agent's off-brief version records nothing, so the next
+ * agent turn is still told to bring the duration back (Q8). With no base information the older rule applies.
+ */
+function directChoseDuration(base: { durationSec: number | null; userDuration?: { durationSec: number } } | undefined, d: number): boolean {
+  if (!base) return true;
+  if (base.userDuration && Math.abs(base.userDuration.durationSec - d) < 0.0005) return true;
+  return base.durationSec === null || Math.abs(base.durationSec - d) >= 0.0005;
+}
+
 /** The (normalised) duration of a composition folder, or null when `composition.json` cannot be read. */
 export async function compositionDuration(compDir: string): Promise<number | null> {
   const parsed = await readCompositionJson(compDir).catch(() => null);
@@ -96,7 +107,11 @@ export async function assembleCompositions(o: {
   /** Durations of the base kept without a problem (see `checkComposition`). */
   acceptedDurations?: ReadonlyMap<string, number>;
   /** A direct save (decisions log 270): the brief's duration, to record a target's duration far from it as the user's choice. */
-  direct?: { briefDurationSec: number | null };
+  direct?: {
+    briefDurationSec: number | null;
+    /** The edited format's duration in the base composition, and the user's duration the base already carries (Q8). */
+    base?: { durationSec: number | null; userDuration?: { durationSec: number } };
+  };
 }): Promise<AssembledCompositions> {
   const m = messages(o.locale);
   const j = m.jobs;
@@ -151,7 +166,7 @@ export async function assembleCompositions(o: {
       const accepted = o.acceptedDurations?.get(c.format);
       const brief = o.direct ? o.direct.briefDurationSec : o.briefDurationSec;
       const userDuration = d === undefined || brief === null || findPreset(o.presets, c.format)?.kind !== 'video' ? undefined
-        : o.direct && isDurationOffBrief(d, brief) ? { durationSec: d, briefDurationSec: brief }
+        : o.direct && isDurationOffBrief(d, brief) && directChoseDuration(o.direct.base, d) ? { durationSec: d, briefDurationSec: brief }
           : accepted !== undefined && Math.abs(d - accepted) < 0.0005 ? { durationSec: accepted, briefDurationSec: brief } : undefined;
       entries.set(c.format, { format: c.format, dir: compositionDirOf(c.format), hash: c.hash!, problems: own, ...(userDuration ? { userDuration } : {}) });
       durations.set(c.format, c.composition ? c.composition.duration : undefined);

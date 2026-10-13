@@ -900,7 +900,7 @@ export class CreativeTurnService {
   async finishCompositions(ref: CreativeRef, store: CreativeStore, plan: Pick<TurnPlan, 'creative' | 'targets' | 'carried' | 'carriedComps' | 'links'>, presets: FormatPreset[], base: VersionEntry | undefined, n: number,
     label: (id: string) => string, locale: Locale,
     /** `direct`: a direct edit (decisions log 262): the brief's duration is not checked. `accepted`: see `acceptedDurationsOf`. */
-    duration: { direct: true } | { accepted: ReadonlyMap<string, number> } = { accepted: new Map() }): Promise<{ outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: null; compositions: VersionComposition[] }> {
+    duration: { direct: true; base?: { durationSec: number | null; userDuration?: { durationSec: number } } } | { accepted: ReadonlyMap<string, number> } = { accepted: new Map() }): Promise<{ outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: null; compositions: VersionComposition[] }> {
     const slug = ref.creativeSlug;
     const j = t().jobs;
     const a = await assembleCompositions({
@@ -908,7 +908,7 @@ export class CreativeTurnService {
       carriedComps: plan.carriedComps, links: plan.links, presets, locale, label,
       briefDurationSec: 'direct' in duration ? null : plan.creative.brief.durationSec,
       acceptedDurations: 'accepted' in duration ? duration.accepted : undefined,
-      ...('direct' in duration ? { direct: { briefDurationSec: plan.creative.brief.durationSec } } : {}),
+      ...('direct' in duration ? { direct: { briefDurationSec: plan.creative.brief.durationSec, ...(duration.base ? { base: duration.base } : {}) } } : {}),
     });
     const say = (level: 'info' | 'warning', text: string) => store.appendConversation(slug, { type: 'system', at: now(), level, text });
     for (const x of a.notDelivered) await say('warning', x.text);

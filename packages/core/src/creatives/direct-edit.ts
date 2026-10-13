@@ -269,7 +269,7 @@ export class DirectEditService {
           throw invalid([f.path.startsWith('layers/') ? e.layersChanged : e.srcUnavailable({ clip: '-', path: f.path })]);
         }
 
-        const saved = await this.deps.turns.finishCompositions(ref, store, { creative, targets: [format], carried, carriedComps, links }, presets, latest, n, label, locale, { direct: true });
+        const saved = await this.deps.turns.finishCompositions(ref, store, { creative, targets: [format], carried, carriedComps, links }, presets, latest, n, label, locale, { direct: true, base: { durationSec: baseComp.duration, ...(latestEntry.userDuration ? { userDuration: latestEntry.userDuration } : {}) } });
         const { problems } = saved;
         const status = problems.length === 0 ? 'complete' : 'incomplete';
         // The agent's workspace gets an exact copy of this version's compositions (decisions log 263), committed with it so a

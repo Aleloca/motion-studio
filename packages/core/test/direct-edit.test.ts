@@ -468,6 +468,18 @@ describe('saving a draft as a new version', { timeout: 120_000 }, () => {
       expect((await versionOf(slug, 4))!.status).toBe('complete');
     });
 
+    it('an agent version off the brief, then a text-only editor save: nothing recorded, the next agent turn is still flagged (Q8)', async () => {
+      process.env.FAKE_CLAUDE_DURATION = '5.8';
+      const slug = await create(['test-wide']); // brief 4 s, the agent made 5.8 s
+      expect((await versionOf(slug, 1))!.status).toBe('incomplete');
+      const text = await draft(slug, 1, 'test-wide', (c) => { clip(c, 'title').props.text = 'Goodbye'; }, [{ kind: 'clipProps', clipId: 'title', props: { text: 'Goodbye' } }]);
+      expect((await save(slug, text)).statusCode, 'save').toBe(200);
+      expect((await versionOf(slug, 2))!.compositions![0]!.userDuration).toBeUndefined();
+      await turn(slug, { text: 'louder' });
+      expect(lastPrompt()).not.toContain('Keep the current duration');
+      expect(offBrief((await versionOf(slug, 3))!)).toBe(true);
+    });
+
     it('an editor version, then a brief change: flagged again', async () => {
       const slug = await create(['test-wide']);
       expect((await save(slug, await extend(slug))).statusCode).toBe(200);
