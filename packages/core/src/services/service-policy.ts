@@ -84,8 +84,3 @@ export function refusalText(d: Extract<ServiceDecision, { ok: false }>, kind: Se
 export function overrideNote(kind: ServiceKind, requested: string, provider: string): string {
   return t().providers.serviceOverridden({ service: t().providers.serviceFor[kind], provider: LABEL[provider] ?? provider, requested: LABEL[requested] ?? requested });
 }
-
-/** Whether the brief turns a kind off for the agent (prompt and tool list). */
-export function serviceOff(services: BriefServices | undefined, kind: ServiceKind): boolean {
-  return effectiveServices({ services })[kind] === 'none';
-}
