@@ -13,6 +13,7 @@ import { readJsonFile } from '../json-file.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 import { NoMediaTools, type MediaTools } from '../media/media-tools.ts';
 import { RenderError } from '../render/errors.ts';
+import { frameTime } from '../render/frames.ts';
 import { sessionMediaOf, type MediaNormalizer, type PreparedMedia } from '../render/media-normalize.ts';
 import { PreviewLane, PreviewLaneBusyError } from '../render/preview-lane.ts';
 import type { RenderEngine } from '../render/renderer.ts';
@@ -358,7 +359,10 @@ export class PreviewService {
     if (!preset) return null;
     const loaded = await loadComposition(join(ref.creativeDir, 'outputs', `v${ref.n}`, 'compositions', e.folder), preset);
     if (!loaded.ok || loaded.hash !== e.hash) return null;
-    const r = await this.frames({ ref, folder: e.folder, preset, composition: loaded.composition, times: [t], width: Math.min(AGENT_FRAME_MAX_WIDTH, loaded.composition.width), imageFormat: 'jpeg' });
+    // At most the last frame (final review, T10): a range comment ending at the duration of a composition never rendered
+    // (every editor version) still gets its end frame, whatever engine draws it.
+    const at = frameTime(loaded.composition, t);
+    const r = await this.frames({ ref, folder: e.folder, preset, composition: loaded.composition, times: [at], width: Math.min(AGENT_FRAME_MAX_WIDTH, loaded.composition.width), imageFormat: 'jpeg' });
     return r.frames[0]?.data ?? null;
   }
 

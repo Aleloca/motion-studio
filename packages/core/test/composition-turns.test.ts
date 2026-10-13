@@ -647,6 +647,21 @@ describe('review fixes (Task 5b)', { timeout: 150_000 }, () => {
     }
   });
 
+  it('T10: a range ending at the duration of a composition never rendered gets its end frame, grabbed at the last frame', async () => {
+    const slug = await create(['test-wide']);
+    const c = JSON.parse(readFileSync(join(store().dir(slug), 'outputs', 'v1', 'compositions', 'test-wide', 'composition.json'), 'utf8')) as { duration: number; fps: number };
+    expect(renderState((await store().readVersions(slug))[0]!, 'test-wide')).not.toBe('rendered');
+    const before = fake.frames.length;
+    await turn(slug, { text: 'end', pins: [{ format: 'test-wide', x: 0.5, y: 0.5, timeSec: 1, range: { start: 1, end: c.duration } }] });
+    // The pin frames are single-time grabs (a storyboard asks for several times at once, and may land meanwhile).
+    const asked = fake.frames.slice(before).filter((o) => o.imageFormat === 'jpeg' && o.times.length === 1).map((o) => o.times[0]!);
+    expect(asked[0]).toBe(frameTime(c, 1));
+    // The end: the last frame, never the duration itself.
+    expect(asked[1]).toBeCloseTo(c.duration - 1 / c.fps, 6);
+    const cache = join(projectDir(), '.studio', 'cache', 'pin-frames', slug, 'v2');
+    expect(readdirSync(cache).filter((f) => f.endsWith('.jpg')).sort()).toEqual(['2-1.jpg', '2-1e.jpg']);
+  });
+
   it('I2: an export waits for a render job of other formats, then renders its own', async () => {
     const slug = await create(['test-wide', 'test-still']);
     let release!: () => void;
