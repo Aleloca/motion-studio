@@ -1,6 +1,8 @@
 import { ProviderError, requestBytes, requestJson, type HttpDeps } from './http.ts';
 import { t } from '../i18n.ts';
 
+/** The OpenAI speech model Motion Studio uses (the key check reads it, read-only). */
+export const OPENAI_TTS_MODEL = 'gpt-4o-mini-tts';
 export interface TtsRequest { text: string; voice?: string; instructions?: string; format: 'mp3' | 'wav' }
 const MAX = 50 * 1024 * 1024;
 
@@ -10,7 +12,7 @@ export async function openaiSpeech(deps: HttpDeps & { apiKey: string }, req: Tts
   if (req.text.length > 4096) throw new ProviderError(400, t().providers.textTooLong({ provider: 'OpenAI', max: 4096 }));
   const voice = req.voice ?? 'marin';
   if (!VOICE.test(voice)) throw new ProviderError(400, t().providers.invalidVoice);
-  const body = { model: 'gpt-4o-mini-tts', input: req.text, voice, ...(req.instructions ? { instructions: req.instructions } : {}), response_format: req.format };
+  const body = { model: OPENAI_TTS_MODEL, input: req.text, voice, ...(req.instructions ? { instructions: req.instructions } : {}), response_format: req.format };
   const { bytes } = await requestBytes(deps, 'https://api.openai.com/v1/audio/speech', {
     method: 'POST', headers: { authorization: `Bearer ${deps.apiKey}`, 'content-type': 'application/json' }, body: JSON.stringify(body),
   }, { provider: 'OpenAI', secrets: [deps.apiKey], maxBytes: MAX });

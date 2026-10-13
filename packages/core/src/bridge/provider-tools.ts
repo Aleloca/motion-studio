@@ -1,6 +1,6 @@
 import { extname, join } from 'node:path';
 import { rm } from 'node:fs/promises';
-import { brandKitSchema, effectiveServices, PROVIDER_IDS, relativeFileSchema, webUrlSchema, type BriefServices, type ProviderId, type ServerMessage, type ServiceKind, type WorkspaceSettings } from '@motion-studio/shared';
+import { brandKitSchema, effectiveServices, PROVIDER_IDS, relativeFileSchema, webUrlSchema, type BriefServices, type KeyCapability, type ProviderId, type ServerMessage, type ServiceKind, type WorkspaceSettings } from '@motion-studio/shared';
 import { MCP_TOOLS } from '../agent/launcher.ts';
 import type { ApprovalBroker } from '../approvals/broker.ts';
 import { confirmPaid as confirmPaidShared } from '../approvals/confirm-paid.ts';
@@ -12,7 +12,7 @@ import { saveGeneratedFile } from '../providers/files.ts';
 import { installGoogleFont } from '../providers/google-fonts.ts';
 import { elevenlabsMusic, elevenlabsSoundEffect, elevenlabsVoices, MUSIC_MODEL, SFX_MODEL, validateMusic, validateSoundEffect } from '../providers/elevenlabs-audio.ts';
 import { ProviderError } from '../providers/http.ts';
-import { KeyCheckCache } from '../providers/key-check.ts';
+import { KEY_PERMISSIONS, KeyCheckCache } from '../providers/key-check.ts';
 import { fetchTransport, nodeTransport, type LookupFn, type Transport } from '../providers/safe-fetch.ts';
 import { generateImage, normalizeImageSize } from '../providers/openai-images.ts';
 import { stockDownload, stockSearch, type StockProvider } from '../providers/stock.ts';
@@ -87,13 +87,19 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
     return d.provider;
   };
   const keyChecks = deps.keyChecks ?? new KeyCheckCache();
-  /** A 401/403 from ElevenLabs means the key lacks this permission: remembered in memory, then the error goes on. */
-  const withKeyCheck = async <T>(capability: string, permission: string, run: () => Promise<T>): Promise<T> => {
-    try { return await run(); }
+  /**
+   * What a real call says about the key (Task 8): a 401/403 means the key lacks this capability's permission, a success that
+   * it has it. Remembered in memory only; the error goes on unchanged.
+   */
+  const withKeyCheck = async <T>(provider: ProviderId, capability: KeyCapability, run: () => Promise<T>): Promise<T> => {
+    let out: T;
+    try { out = await run(); }
     catch (e) {
-      if (e instanceof ProviderError && (e.upstreamStatus === 401 || e.upstreamStatus === 403)) keyChecks.record('elevenlabs', capability, 'missing', permission);
+      if (e instanceof ProviderError && (e.upstreamStatus === 401 || e.upstreamStatus === 403)) keyChecks.record(provider, capability, 'missing', KEY_PERMISSIONS[provider][capability]);
       throw e;
     }
+    keyChecks.record(provider, capability, 'ok');
+    return out;
   };
   /** The sound voice of the project's brand kit, when one is set (unreadable or invalid kits count as none). */
   const brandVoice = async (c: BridgeContext) => {
@@ -150,7 +156,7 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       const refs = await readReferences(c, a.references);
       await confirmPaid(c, 'provider:openai-images', t().approvals.generateImage, t().approvals.imageDetail({ width: size.width, height: size.height, refs: refs.length, prompt: prompt.slice(0, 300) }));
       alive(c);
-      const img = await generateImage({ ...httpFor(c), apiKey }, { prompt, width: size.width, height: size.height, quality, background, references: refs });
+      const img = await withKeyCheck('openai', 'images', () => generateImage({ ...httpFor(c), apiKey }, { prompt, width: size.width, height: size.height, quality, background, references: refs }));
       alive(c);
       const file = await saveGeneratedFile(c.projectDir, 'generated', `${s(a.name, 60) || slug(prompt)}.png`, img.bytes);
       await register(c, [file], (f) => ({ file: f, origin: 'generated', description: prompt.slice(0, 2000), tags: ['gpt-image-2'] }));
@@ -178,7 +184,7 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       alive(c);
       const req = { text, voice: voiceId, instructions: s(a.instructions, 1000) || undefined, format } as const;
       const http = { ...httpFor(c), apiKey };
-      const out = provider === 'openai' ? await openaiSpeech(http, req) : await elevenlabsSpeech(http, req);
+      const out = await withKeyCheck(provider, 'tts', () => (provider === 'openai' ? openaiSpeech(http, req) : elevenlabsSpeech(http, req)));
       alive(c);
       const file = await saveGeneratedFile(c.projectDir, 'audio', `${s(a.name, 60) || slug(text)}.${format}`, out.bytes);
       await register(c, [file], (f) => ({ file: f, origin: 'generated', description: text.slice(0, 2000), tags: [t().providers.voiceTag, provider], attribution: t().providers.voiceAttribution({ provider: LABEL[provider] }) }));
@@ -192,11 +198,10 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       const apiKey = await keyOf('elevenlabs');
       await confirmPaid(c, 'provider:sfx-elevenlabs', t().approvals.generateSfx({ provider: LABEL.elevenlabs }), t().approvals.audioDetail({ provider: LABEL.elevenlabs, seconds: req.durationSec ?? null, prompt: prompt.slice(0, 300) }));
       alive(c);
-      const out = await withKeyCheck('sfx', 'sound_generation', () => elevenlabsSoundEffect({ ...httpFor(c), apiKey }, { ...req, prompt }));
+      const out = await withKeyCheck('elevenlabs', 'sfx', () => elevenlabsSoundEffect({ ...httpFor(c), apiKey }, { ...req, prompt }));
       alive(c);
       const file = await saveGeneratedFile(c.projectDir, 'audio', `${s(a.name, 60) || slug(prompt)}.mp3`, Buffer.from(out.bytes));
       await register(c, [file], (f) => ({ file: f, origin: 'generated', description: prompt, tags: [t().providers.soundTag, 'elevenlabs'], attribution: t().providers.audioAttribution({ provider: LABEL.elevenlabs }), provider: 'elevenlabs', model: SFX_MODEL, ...(req.loop !== undefined ? { loop: req.loop } : {}) }));
-      keyChecks.record('elevenlabs', 'sfx', 'ok');
       return { file: `assets/${file}`, provider: 'elevenlabs' };
     },
     music: async (c, a) => {
@@ -207,11 +212,10 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       const apiKey = await keyOf('elevenlabs');
       await confirmPaid(c, 'provider:music-elevenlabs', t().approvals.generateMusic({ provider: LABEL.elevenlabs }), t().approvals.audioDetail({ provider: LABEL.elevenlabs, seconds: req.durationSec, prompt: prompt.slice(0, 300) }));
       alive(c);
-      const out = await withKeyCheck('music', 'music_generation', () => elevenlabsMusic({ ...httpFor(c), apiKey }, { ...req, prompt }));
+      const out = await withKeyCheck('elevenlabs', 'music', () => elevenlabsMusic({ ...httpFor(c), apiKey }, { ...req, prompt }));
       alive(c);
       const file = await saveGeneratedFile(c.projectDir, 'audio', `${s(a.name, 60) || slug(prompt)}.mp3`, Buffer.from(out.bytes));
       await register(c, [file], (f) => ({ file: f, origin: 'generated', description: prompt, tags: [t().providers.musicTag, 'elevenlabs'], attribution: t().providers.audioAttribution({ provider: LABEL.elevenlabs }), provider: 'elevenlabs', model: MUSIC_MODEL }));
-      keyChecks.record('elevenlabs', 'music', 'ok');
       return { file: `assets/${file}`, provider: 'elevenlabs' };
     },
     list_voices: async (c, a) => {
@@ -220,9 +224,8 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       if (effectiveServices(c).voice === 'openai') throw new ProviderError(403, t().providers.serviceVoicesUnused);
       await service(c, 'voice', 'elevenlabs');
       const apiKey = await keyOf('elevenlabs');
-      const voices = await withKeyCheck('voices', 'voices_read', () => elevenlabsVoices({ ...httpFor(c), apiKey }, { search: s(a.search, 100) || undefined, pageSize: num(a.limit) }));
+      const voices = await withKeyCheck('elevenlabs', 'voices', () => elevenlabsVoices({ ...httpFor(c), apiKey }, { search: s(a.search, 100) || undefined, pageSize: num(a.limit) }));
       alive(c);
-      keyChecks.record('elevenlabs', 'voices', 'ok');
       return { voices };
     },
     stock_search: async (c, a) => {
@@ -232,7 +235,8 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       const query = s(a.query, 200);
       if (!query) throw new ProviderError(400, t().providers.searchWhat);
       const orientation = oneOf(a.orientation, ['landscape', 'portrait', 'square'] as const, () => t().providers.optionOrientation);
-      const results = await stockSearch({ ...httpFor(c), apiKey: await keyOf(provider) }, { provider, query, kind: a.kind === 'video' ? 'video' : 'photo', orientation, limit: Number(a.limit) || 10 });
+      const apiKey = await keyOf(provider);
+      const results = await withKeyCheck(provider, 'search', () => stockSearch({ ...httpFor(c), apiKey }, { provider, query, kind: a.kind === 'video' ? 'video' : 'photo', orientation, limit: Number(a.limit) || 10 }));
       return { results };
     },
     stock_download: async (c, a) => {
@@ -240,7 +244,8 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       await service(c, 'images', 'stock');
       const provider = stockProvider(a.provider);
       const id = s(a.id, 64);
-      const d = await stockDownload({ ...httpFor(c), apiKey: await keyOf(provider) }, { provider, id, kind: a.kind === 'video' ? 'video' : 'photo' });
+      const apiKey = await keyOf(provider);
+      const d = await withKeyCheck(provider, 'search', () => stockDownload({ ...httpFor(c), apiKey }, { provider, id, kind: a.kind === 'video' ? 'video' : 'photo' }));
       alive(c);
       const file = await saveGeneratedFile(c.projectDir, 'stock', `${provider}-${id}.${d.ext}`, d.bytes);
       await register(c, [file], (f) => ({ file: f, origin: 'stock', sourceUrl: d.sourceUrl, description: d.attribution, tags: ['stock', provider], attribution: d.attribution }));

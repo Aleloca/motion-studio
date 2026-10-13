@@ -92,7 +92,7 @@ describe('generate route', () => {
     expect(list.find((x) => x.model === 'eleven_text_to_sound_v2')).toMatchObject({ provider: 'elevenlabs', loop: true, durationSec: 4.5, bytes: 4, attribution: 'Generato con AI (ElevenLabs)' });
     expect(list.find((x) => x.model === 'music_v1')).toMatchObject({ provider: 'elevenlabs', description: 'Calm piano' });
     expect(JSON.parse(calls.find((c) => c.url.includes('/v1/music'))!.body)).toMatchObject({ music_length_ms: 30_000, force_instrumental: true });
-    expect(keyChecks.get('elevenlabs')).toMatchObject({ sfx: { status: 'ok' }, music: { status: 'ok' } });
+    expect(keyChecks.capabilities('elevenlabs')).toMatchObject({ sfx: { status: 'ok' }, music: { status: 'ok' } });
   });
   it('asks for confirmation (the approval card) and runs only after "once"', async () => {
     await boot({ openai: OPENAI, elevenlabs: ELEVEN }, { confirmPaidProviders: true });
@@ -145,10 +145,10 @@ describe('generate route', () => {
     status = 403;
     const job = await settle((await post({ kind: 'music', provider: 'elevenlabs', prompt: 'Calm piano', options: { durationSec: 30 } })).json().jobId);
     expect(job.state).toBe('failed');
-    expect(keyChecks.get('elevenlabs').music).toMatchObject({ status: 'missing', permission: 'music_generation' });
+    expect(keyChecks.capabilities('elevenlabs').music).toMatchObject({ status: 'missing', permission: 'music_generation' });
     status = 401;
     await settle((await post({ kind: 'image', provider: 'openai', prompt: 'x' })).json().jobId);
-    expect(keyChecks.get('openai').images).toMatchObject({ status: 'missing' });
+    expect(keyChecks.capabilities('openai').images).toMatchObject({ status: 'missing' });
     const everything = JSON.stringify([(await app.inject('/api/jobs')).json(), keyChecks.get('elevenlabs'), keyChecks.get('openai')]);
     expect(everything).not.toContain(ELEVEN);
     expect(everything).not.toContain(OPENAI);

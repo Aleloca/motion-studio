@@ -70,6 +70,31 @@ async function readBody(res: Response, o: Opts, max: number): Promise<Buffer> {
   }
 }
 
+export interface ProbeAnswer { status: number; body: string }
+
+/**
+ * A read-only probe (key checks): the answer comes back whatever its status, with at most `maxBytes` of a non-2xx body
+ * (redacted). Same rules as the other calls (`redirect: 'error'`, a deadline: `deps.timeoutMs`). A network failure throws
+ * a redacted ProviderError 502; the deadline throws a ProviderError 504.
+ */
+export async function requestProbe(deps: HttpDeps, url: string, init: RequestInit, o: Opts & { maxBytes?: number }): Promise<ProbeAnswer> {
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(), deps.timeoutMs ?? 120_000);
+  const signal = init.signal ? AbortSignal.any([init.signal, deadline.signal]) : deadline.signal;
+  try {
+    let res: Response;
+    try { res = await deps.fetch(url, { ...init, redirect: 'error', signal }); }
+    catch (e) {
+      if (deadline.signal.aborted) throw new ProviderError(504, o.provider);
+      throw unreachable(o, e);
+    }
+    if (res.ok) { await res.body?.cancel().catch(() => {}); return { status: res.status, body: '' }; }
+    let body = '';
+    try { body = (await readBounded(res, o.maxBytes ?? 8 * 1024, false)).toString('utf8'); } catch { /* unreadable error body */ }
+    return { status: res.status, body: redact(body, o.secrets) };
+  } finally { clearTimeout(timer); }
+}
+
 export async function requestJson<T>(deps: HttpDeps, url: string, init: RequestInit, o: Opts & { maxBytes?: number }): Promise<T> {
   const { res } = await send(deps, url, init, o);
   const buf = await readBody(res, o, o.maxBytes ?? JSON_MAX);

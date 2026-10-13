@@ -1,4 +1,4 @@
-import { LOCALES, shownTotal, type ChromeDownloadOffer, type RenderEngineStatus, type DoctorCheck, type LanguageSetting, type Locale, type ProviderId, type SecretStatus, type UsageReport, type WorkspaceSettings, type WorkspaceSettingsView } from '@motion-studio/shared';
+import { KEY_CAPABILITIES, KEY_PERMISSIONS, LOCALES, shownTotal, type ChromeDownloadOffer, type KeyCheckResult, type RenderEngineStatus, type DoctorCheck, type LanguageSetting, type Locale, type ProviderId, type SecretStatus, type UsageReport, type WorkspaceSettings, type WorkspaceSettingsView } from '@motion-studio/shared';
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { api } from '../api.ts';
 import { formatDate, formatNumber, useLocale, useT, type LanguageState } from '../i18n.tsx';
@@ -9,7 +9,7 @@ import { go } from '../shell/ShellContext.tsx';
 import { billingNote, costText, formatTokens } from '../shell/Tokens.tsx';
 import type { Theme } from '../theme.ts';
 import { desktop } from '../desktop.ts';
-import { Button, Card, Empty, Icon, Input, ProgressBar, Select, Spinner, Toggle, cx, toast } from '../ui/index.ts';
+import { Button, Card, Empty, Icon, Input, Pill, ProgressBar, Select, Spinner, Toggle, cx, toast, type PillTone } from '../ui/index.ts';
 import { rovingIndex } from '../ui/roving.ts';
 import { Alert, Head, Row, SectionMain, message } from './common.tsx';
 import { SystemChecks } from './Welcome.tsx';
@@ -301,6 +301,14 @@ function RenderEngine({ run }: { run: number }) {
 function Paid({ secrets, error, onChange, reload }: { secrets: SecretStatus[] | null; error: string | null; onChange(next: SecretStatus): void; reload(all: SecretStatus[]): void }) {
   const t = useT();
   const p = t.web.appSettings.paid;
+  // What the core knows about each key (its memory only): shown on open, without testing again.
+  const [checks, setChecks] = useState<Partial<Record<ProviderId, KeyCheckResult | null>>>({});
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve().then(() => api.getKeyChecks()).then((x) => { if (alive) setChecks((cur) => ({ ...x, ...cur })); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  const setCheck = (id: ProviderId, r: KeyCheckResult | null) => setChecks((cur) => ({ ...cur, [id]: r }));
   return (
     <div className="ms-set-narrow">
       <Head title={p.title} sub={p.sub} />
@@ -308,14 +316,60 @@ function Paid({ secrets, error, onChange, reload }: { secrets: SecretStatus[] | 
       <Card className="ms-set-card" data-enter>
         {!secrets && !error ? <div className="ms-set-pad"><Spinner size={16} /></div> : null}
         {secrets ? PROVIDERS.map(([id, name, env, mark]) => (
-          <KeyRow key={id} id={id} name={name} env={env} mark={mark} status={secrets.find((x) => x.provider === id)} onChange={onChange} reload={reload} />
+          <KeyRow key={id} id={id} name={name} env={env} mark={mark} status={secrets.find((x) => x.provider === id)} onChange={onChange} reload={reload}
+            check={checks[id] ?? null} onCheck={(r) => setCheck(id, r)} />
         )) : null}
       </Card>
     </div>
   );
 }
 
-function KeyRow({ id, name, env, mark, status, onChange, reload }: { id: ProviderId; name: string; env: string; mark: string; status?: SecretStatus; onChange(s: SecretStatus): void; reload(all: SecretStatus[]): void }) {
+const CHECK_TONE: Record<KeyCheckResult['capabilities'][number]['status'], PillTone> = { ok: 'ok', missing: 'warn', unverified: 'neutral', error: 'warn' };
+
+/** The results of a key check: one chip per capability, then what to do about what is missing. */
+function KeyChecks({ id, name, check }: { id: ProviderId; name: string; check: KeyCheckResult }) {
+  const t = useT();
+  const p = t.web.appSettings.paid;
+  const key = check.capabilities.find((c) => c.capability === 'key');
+  if (key?.status === 'missing') return <p className="ms-set-error ms-key-note" role="status">{p.keyRefused}</p>;
+  const missing = check.capabilities.some((c) => c.status === 'missing');
+  const unverified = check.capabilities.some((c) => c.status === 'unverified');
+  const failed = check.capabilities.find((c) => c.status === 'error' && c.detail);
+  // ElevenLabs: every feature with its permission (spec §7); the others: the permissions that are missing.
+  const rows = id === 'elevenlabs'
+    ? KEY_CAPABILITIES.elevenlabs.filter((c) => KEY_PERMISSIONS.elevenlabs[c]).map((c) => ({ capability: c, permission: KEY_PERMISSIONS.elevenlabs[c]!, status: check.capabilities.find((x) => x.capability === c)?.status }))
+    : check.capabilities.filter((c) => c.status === 'missing' && c.permission).map((c) => ({ capability: c.capability, permission: c.permission!, status: c.status }));
+  return (
+    <div className="ms-key-checks">
+      <ul className="ms-key-caps" aria-label={p.checksLabel({ name })}>
+        {check.capabilities.map((c) => (
+          <li key={c.capability}>
+            <Pill tone={CHECK_TONE[c.status]} dot>{`${p.caps[c.capability]} · ${p.capStatus[c.status]}`}</Pill>
+          </li>
+        ))}
+      </ul>
+      {failed ? <p className="ms-key-note">{p.someErrors({ detail: failed.detail! })}</p> : null}
+      {unverified ? <p className="ms-key-note">{p.unverifiedNote}</p> : null}
+      {missing ? (
+        <section className="ms-key-help" aria-label={p.permissionsTitle}>
+          <b>{p.permissionsTitle}</b>
+          <p>{p.permissionsHelp[id]}</p>
+          {rows.length ? (
+            <ul>
+              {rows.map((r) => (
+                <li key={r.capability} className={cx(r.status === 'missing' && 'ms-warn')}>
+                  <code>{r.permission}</code> <span>{p.caps[r.capability]}{r.status ? ` · ${p.capStatus[r.status]}` : ''}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function KeyRow({ id, name, env, mark, status, onChange, reload, check, onCheck }: { id: ProviderId; name: string; env: string; mark: string; status?: SecretStatus; onChange(s: SecretStatus): void; reload(all: SecretStatus[]): void; check: KeyCheckResult | null; onCheck(r: KeyCheckResult | null): void }) {
   const t = useT();
   const p = t.web.appSettings.paid;
   const [open, setOpen] = useState(false);
@@ -331,8 +385,17 @@ function KeyRow({ id, name, env, mark, status, onChange, reload }: { id: Provide
   const fromEnv = status?.source === 'env';
   const inKeychain = status?.source === 'keychain';
 
-  // Save: the key goes to the Keychain, then the status is read back to check it is really stored there (the core has
-  // no way to test a key against the provider).
+  // Test: the core probes the key with free, read-only requests (up to 15 s) and answers per capability.
+  const [testing, setTesting] = useState<'test' | 'saved' | null>(null);
+  const test = async (after: 'test' | 'saved') => {
+    setTesting(after);
+    setError(null);
+    try { onCheck(await api.checkSecret(id)); }
+    catch (err) { setError(p.checkFailed({ detail: message(err) })); }
+    finally { setTesting(null); }
+  };
+
+  // Save: the key goes to the Keychain, then the status is read back to check it is really stored there; then the test.
   const save = async (e: FormEvent) => {
     e.preventDefault();
     if (!value.trim() || saving) return;
@@ -348,14 +411,17 @@ function KeyRow({ id, name, env, mark, status, onChange, reload }: { id: Provide
       toast.show(p.saved({ name }), { tone: 'ok' });
     } catch (err) {
       setError(p.failed({ detail: message(err) }));
+      return;
     } finally {
       setSaving(false);
     }
+    onCheck(null);
+    await test('saved');
   };
   const remove = async () => {
     setConfirming(false);
     setError(null);
-    try { onChange(await api.deleteSecret(id)); toast.show(p.removed({ name })); }
+    try { onChange(await api.deleteSecret(id)); onCheck(null); toast.show(p.removed({ name })); }
     catch (err) { setError(p.removeFailed({ detail: message(err) })); }
   };
 
@@ -367,6 +433,11 @@ function KeyRow({ id, name, env, mark, status, onChange, reload }: { id: Provide
           <b><span>{name}</span> <span className="ms-set-faint">· {p.uses[id]}</span></b>
           {fromEnv ? <span>{p.fromEnv({ env })}</span> : inKeychain ? <span className="ms-ok">{p.inKeychain}</span> : <span>{p.notConnected}</span>}
         </div>
+        {status?.configured && !confirming ? (
+          <Button size="sm" variant="ghost" aria-label={p.testLabel({ name })} loading={testing === 'test'} disabled={testing !== null} onClick={() => void test('test')}>
+            {testing === 'test' ? p.testing : p.test}
+          </Button>
+        ) : null}
         {fromEnv ? null : (
           <div className="ms-key-actions">
             {inKeychain && confirming ? (
@@ -394,6 +465,8 @@ function KeyRow({ id, name, env, mark, status, onChange, reload }: { id: Provide
           <Button type="submit" size="sm" variant="ink" loading={saving} disabled={!value.trim() || saving}>{saving ? p.saving : p.save}</Button>
         </form>
       ) : null}
+      {testing === 'saved' ? <p className="ms-key-note" role="status"><Spinner decorative size={11} /> {p.savedChecking}</p> : null}
+      {check && testing !== 'saved' && status?.configured ? <KeyChecks id={id} name={name} check={check} /> : null}
       {error ? <p className="ms-set-error" role="alert">{error}</p> : null}
     </div>
   );

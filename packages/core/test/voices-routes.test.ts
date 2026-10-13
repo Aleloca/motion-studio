@@ -76,7 +76,7 @@ describe('voices routes', () => {
     const cache = new KeyCheckCache();
     const h = await boot({ extra: { keyChecks: cache } });
     const r = (await app.inject({ url: '/api/voices?provider=elevenlabs', headers: h })).json();
-    expect(cache.get('elevenlabs').voices).toMatchObject({ status: 'ok' });
+    expect(cache.capabilities('elevenlabs').voices).toMatchObject({ status: 'ok' });
     expect(r.configured).toBe(true);
     expect(r.voices.map((v: { id: string }) => v.id)).toEqual(['v1', 'v2', 'v3', 'v4', 'v5', 'v6']);
     const prev = Object.fromEntries(r.voices.map((v: { id: string; previewUrl: string | null }) => [v.id, v.previewUrl]));
@@ -161,7 +161,7 @@ describe('voices routes', () => {
     const h = await boot({ extra: { keyChecks: cache } });
     const r = await app.inject({ url: '/api/voices?provider=elevenlabs', headers: h });
     expect(r.statusCode).toBe(503);
-    expect(cache.get('elevenlabs').voices).toMatchObject({ status: 'missing', permission: 'voices_read' });
+    expect(cache.capabilities('elevenlabs').voices).toMatchObject({ status: 'missing', permission: 'voices_read' });
     expect(r.body).not.toContain(KEY);
     expect(JSON.stringify([warn.mock.calls, log.mock.calls, err.mock.calls])).not.toContain(KEY);
   });

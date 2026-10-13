@@ -1,4 +1,4 @@
-import type { BrandFont, EditOp, EditorCompositionView, StagedAsset, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, ProviderId, UsageReport, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
+import type { BrandFont, EditOp, EditorCompositionView, StagedAsset, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
 
@@ -124,7 +124,10 @@ export const api = {
   updateSettings: (patch: Partial<WorkspaceSettings>) => request<WorkspaceSettings>('PUT', '/api/settings', patch),
   setLanguage: (language: LanguageSetting) => request<{ locale: Locale; languageSetting: LanguageSetting; systemLocale: Locale }>('PUT', '/api/settings/language', { language }),
   getSecrets: () => request<SecretStatus[]>('GET', '/api/secrets'),
-  setSecret: (provider: ProviderId, value: string) => request<SecretStatus>('PUT', `/api/secrets/${provider}`, { value }),
+  /** Saves only: the UI says "Saved · checking…" and then asks for the test with checkSecret. */
+  setSecret: (provider: ProviderId, value: string) => request<SecretStatus>('PUT', `/api/secrets/${provider}`, { value, check: false }),
+  checkSecret: (provider: ProviderId) => request<KeyCheckResult>('POST', `/api/secrets/${provider}/check`),
+  getKeyChecks: () => request<Record<ProviderId, KeyCheckResult | null>>('GET', '/api/secrets/checks'),
   deleteSecret: (provider: ProviderId) => request<SecretStatus>('DELETE', `/api/secrets/${provider}`),
   getApprovals: () => request<ApprovalRequest[]>('GET', '/api/approvals'),
   decideApproval: (id: string, decision: ApprovalDecision) => request<unknown>('POST', `/api/approvals/${encodeURIComponent(id)}`, { decision }),

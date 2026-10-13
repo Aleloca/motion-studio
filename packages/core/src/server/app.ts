@@ -81,6 +81,8 @@ export interface ServerDeps {
   voicesHttp?: HttpDeps;
   /** What the app has learned about the provider keys (core memory only; tests inject one to read it). */
   keyChecks?: KeyCheckCache;
+  /** Network of the key checks (tests inject a fake fetch; default: the real one). */
+  keyCheckHttp?: HttpDeps;
   /** Test seam of the Google Fonts add (a failure on one file). */
   fontsInstallIo?: InstallIo;
   /** Sandbox support of the system; defaults to a cached detectSandbox(). */
@@ -479,7 +481,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       download_file: downloadTool({ media, broadcast: (m) => hub.broadcast(m) }),
     },
   });
-  registerSettingsRoutes(app, { vault, approvals, requireWorkspace });
+  registerSettingsRoutes(app, { vault, approvals, requireWorkspace, keyChecks, keyCheckHttp: deps.keyCheckHttp ?? { fetch: globalThis.fetch } });
   registerRenderEngineRoutes(app, {
     engine: deps.render,
     installer: deps.chromeInstaller !== undefined ? deps.chromeInstaller : deps.render && deps.configDir ? defaultChromeInstaller(deps.configDir) : null,

@@ -7,7 +7,7 @@ import { I18nProvider } from '../src/i18n.tsx';
 const api = {
   decideApproval: vi.fn(),
   getSecrets: vi.fn(async () => [{ provider: 'openai', configured: true, source: 'keychain' }, { provider: 'pexels', configured: true, source: 'env' }]),
-  setSecret: vi.fn(), deleteSecret: vi.fn(), updateSettings: vi.fn(), setLanguage: vi.fn(),
+  setSecret: vi.fn(), deleteSecret: vi.fn(), checkSecret: vi.fn(), getKeyChecks: vi.fn(async () => ({ openai: null, elevenlabs: null, pexels: null, unsplash: null })), updateSettings: vi.fn(), setLanguage: vi.fn(),
   fileUrl: (s: string, c: string, rel: string) => `/f/${s}/${c}/${rel}`,
   exportPicks: vi.fn(async () => ({ destination: '/out', files: [{ from: 'a', to: 'b' }, { from: 'c', to: 'd' }], skipped: ['x.mov'] })),
 };

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import type { ServerMessage } from '@motion-studio/shared';
+import type { KeyCapability, ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import type { ApprovalBroker } from '../approvals/broker.ts';
 import { confirmPaid } from '../approvals/confirm-paid.ts';
@@ -13,7 +13,7 @@ import type { MediaTools } from '../media/media-tools.ts';
 import { elevenlabsMusic, elevenlabsSoundEffect, MUSIC_MODEL, SFX_MODEL, validateMusic, validateSoundEffect } from '../providers/elevenlabs-audio.ts';
 import { saveGeneratedFile } from '../providers/files.ts';
 import { ProviderError, type HttpDeps } from '../providers/http.ts';
-import type { KeyCheckCache } from '../providers/key-check.ts';
+import { KEY_PERMISSIONS, type KeyCheckCache } from '../providers/key-check.ts';
 import { generateImage, normalizeImageSize } from '../providers/openai-images.ts';
 import { elevenlabsSpeech, openaiSpeech } from '../providers/tts.ts';
 import type { SecretsVault } from '../secrets/vault.ts';
@@ -109,10 +109,10 @@ export function registerGenerateRoutes(app: FastifyInstance, ctx: GenerateRoutes
     const paid = (rule: string, title: string, detail: string) => confirmPaid({ approvals: ctx.approvals, settings: () => ctx.requireWorkspace().readSettings() }, { jobId: r.jobId, projectSlug, projectDir, creativeSlug: null, signal }, rule, title, detail);
     const http = { ...jobHttp(ctx.http, { signal }), ...(ctx.http.timeoutMs ? { timeoutMs: ctx.http.timeoutMs } : {}), apiKey };
     /** A 401/403 from the provider means the key lacks this capability: remembered in memory, then the error goes on. */
-    const checkedCall = async <T>(provider: Provider, capability: string, permission: string, call: () => Promise<T>): Promise<T> => {
+    const checkedCall = async <T>(provider: Provider, capability: KeyCapability, call: () => Promise<T>): Promise<T> => {
       try { const out = await call(); keyChecks.record(provider, capability, 'ok'); return out; }
       catch (e) {
-        if (e instanceof ProviderError && (e.upstreamStatus === 401 || e.upstreamStatus === 403)) keyChecks.record(provider, capability, 'missing', permission);
+        if (e instanceof ProviderError && (e.upstreamStatus === 401 || e.upstreamStatus === 403)) keyChecks.record(provider, capability, 'missing', KEY_PERMISSIONS[provider][capability]);
         throw e;
       }
     };
@@ -136,7 +136,7 @@ export function registerGenerateRoutes(app: FastifyInstance, ctx: GenerateRoutes
         const size = checked.size!;
         await paid('provider:openai-images', t().approvals.generateImage, t().approvals.imageDetail({ width: size.width, height: size.height, refs: 0, prompt: checked.prompt.slice(0, 300) }));
         alive();
-        const img = await checkedCall('openai', 'images', 'images_write', () => generateImage(http, { prompt: checked.prompt, width: size.width, height: size.height, quality: b.options.quality, background: b.options.background }));
+        const img = await checkedCall('openai', 'images', () => generateImage(http, { prompt: checked.prompt, width: size.width, height: size.height, quality: b.options.quality, background: b.options.background }));
         await store('generated', 'png', img.bytes, (f) => ({ file: f, origin: 'generated', description: checked.prompt.slice(0, 2000), tags: ['gpt-image-2'], provider: 'openai', model: 'gpt-image-2' }));
       } else if (b.kind === 'voice') {
         const text = checked.prompt;
@@ -144,20 +144,20 @@ export function registerGenerateRoutes(app: FastifyInstance, ctx: GenerateRoutes
         alive();
         const speech = { text, voice: b.options.voice, instructions: b.options.instructions || undefined, format: b.options.format } as const;
         const out = b.provider === 'openai'
-          ? await checkedCall('openai', 'tts', 'audio_speech', () => openaiSpeech(http, speech))
-          : await checkedCall('elevenlabs', 'tts', 'text_to_speech', () => elevenlabsSpeech(http, speech));
+          ? await checkedCall('openai', 'tts', () => openaiSpeech(http, speech))
+          : await checkedCall('elevenlabs', 'tts', () => elevenlabsSpeech(http, speech));
         const model = b.provider === 'openai' ? 'gpt-4o-mini-tts' : 'eleven_multilingual_v2';
         await store('audio', b.options.format, out.bytes, (f) => ({ file: f, origin: 'generated', description: text.slice(0, 2000), tags: [t().providers.voiceTag, b.provider], attribution: t().providers.voiceAttribution({ provider: LABEL[b.provider] }), provider: b.provider, model }));
       } else if (b.kind === 'sfx') {
         await paid('provider:sfx-elevenlabs', t().approvals.generateSfx({ provider: LABEL.elevenlabs }), t().approvals.audioDetail({ provider: LABEL.elevenlabs, seconds: b.options.durationSec ?? null, prompt: checked.prompt.slice(0, 300) }));
         alive();
         const { name: _n, ...o } = b.options;
-        const out = await checkedCall('elevenlabs', 'sfx', 'sound_generation', () => elevenlabsSoundEffect(http, { ...o, prompt: checked.prompt }));
+        const out = await checkedCall('elevenlabs', 'sfx', () => elevenlabsSoundEffect(http, { ...o, prompt: checked.prompt }));
         await store('audio', 'mp3', out.bytes, (f) => ({ file: f, origin: 'generated', description: checked.prompt, tags: [t().providers.soundTag, 'elevenlabs'], attribution: attribution('elevenlabs'), provider: 'elevenlabs', model: SFX_MODEL, ...(b.options.loop !== undefined ? { loop: b.options.loop } : {}) }));
       } else {
         await paid('provider:music-elevenlabs', t().approvals.generateMusic({ provider: LABEL.elevenlabs }), t().approvals.audioDetail({ provider: LABEL.elevenlabs, seconds: b.options.durationSec, prompt: checked.prompt.slice(0, 300) }));
         alive();
-        const out = await checkedCall('elevenlabs', 'music', 'music_generation', () => elevenlabsMusic(http, { prompt: checked.prompt, durationSec: b.options.durationSec, instrumental: b.options.instrumental }));
+        const out = await checkedCall('elevenlabs', 'music', () => elevenlabsMusic(http, { prompt: checked.prompt, durationSec: b.options.durationSec, instrumental: b.options.instrumental }));
         await store('audio', 'mp3', out.bytes, (f) => ({ file: f, origin: 'generated', description: checked.prompt, tags: [t().providers.musicTag, 'elevenlabs'], attribution: attribution('elevenlabs'), provider: 'elevenlabs', model: MUSIC_MODEL }));
       }
     } catch (e) {

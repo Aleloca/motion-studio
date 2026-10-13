@@ -30,7 +30,7 @@ Providers are external services the agent uses through MCP tools of the `studio`
 - `music`: `POST /v1/music?output_format=mp3_44100_128`, body `{ prompt, music_length_ms, force_instrumental?, model_id: "music_v1" }`. Parameters: `prompt` (up to 1000 characters), `durationSec` (10 to 300; the API itself allows 3 to 600 s), `instrumental`, `name`.
 - `list_voices`: `GET /v2/voices?page_size=&search=` (free, no confirmation): `id`, `name`, `labels`, `previewUrl`; up to 100 voices per call.
 - Both generators are paid and ask for confirmation (rules `provider:sfx-elevenlabs`, `provider:music-elevenlabs`; the request shows provider, duration and prompt). Files (mp3, 50 MB maximum) go in `assets/audio/`, registered with the prompt as description, `provider`, `model`, the probed `durationSec`, `loop` and the attribution "AI-generated (ElevenLabs)".
-- A 401 or 403 from these calls is recorded in the in-memory key-check cache (`providers/key-check.ts`, never persisted) as `missing` for that capability, with the permission name `sound_generation`, `music_generation` or `voices_read`.
+- A 401 or 403 from these calls is recorded in the in-memory key-check cache (`providers/key-check.ts`, never persisted) as `missing` for that capability, with the permission name `sound_generation`, `music_generation` or `voices_read`; a success records it as `ok` (see [Key checks](#key-checks)).
 
 ## Stock photos and videos: Pexels and Unsplash (`stock_search`, `stock_download`)
 - Keys: `PEXELS_API_KEY`, `UNSPLASH_ACCESS_KEY`. Unsplash offers only photos; search videos on Pexels.
@@ -45,10 +45,46 @@ Providers are external services the agent uses through MCP tools of the `studio`
 ## Downloads from outside: `download_file` (brand analysis)
 Only for brand analysis, whose sandbox has no network: downloads a logo, image or font from a website into `assets/brand/` or `assets/fonts/` (image and font extensions, 50 MB maximum). All downloads of externally supplied URLs (provider ones too) go through `safe-fetch.ts`: private, local or reserved addresses are refused by checking the resolved IPs at every redirect, and the connection goes to the very address that was checked. Providers accept only https.
 
+## Key checks
+When a key is saved in **Settings → Paid services**, and with the **Test** button of each row (keys from environment variables too), the core tries the key with read-only, free requests and reports what it can do, per capability. The requests run in parallel, each with a 15 s deadline, over `requestProbe` (`http.ts`: `redirect: 'error'`, bounded and redacted bodies). Results live in the core's memory only (`KeyCheckCache`): they are never written to disk, never hold the key, and are forgotten when the key is replaced or removed.
+
+| Provider | Request | Capabilities reported |
+|---|---|---|
+| OpenAI | `GET /v1/models`, `GET /v1/models/gpt-image-2`, `GET /v1/models/gpt-4o-mini-tts` | key, images, voice-over |
+| ElevenLabs | `GET /v1/user` | key, account |
+| ElevenLabs | `GET /v2/voices?page_size=1` | voice list |
+| ElevenLabs | none | voice-over, sound effects, music: `unverified` (only a paid generation can tell) |
+| Pexels | `GET /v1/search?query=test&per_page=1` | key, search |
+| Unsplash | `GET /search/photos?query=test&per_page=1` | key, search |
+
+Outcomes:
+- `ok`: the request worked.
+- `missing`: the key lacks the permission named in the result. With no permission name, on the key itself, the provider does not know the key (401 on the base request, not a permission refusal); then every capability is `missing`.
+- `unverified`: no free request can tell. The first real use updates it: a 401/403 marks it `missing`, a success `ok` (`generate_image`, `tts`, `sound_effect`, `music`, `list_voices`, stock search and download, the Assets Generate jobs and the voice picker all report into the same cache). A later Test keeps what real use learned for these capabilities.
+- `error`: network failure, deadline, 5xx or rate limit (429, or Unsplash's 403 "Rate Limit Exceeded"). Never `missing`.
+
+A restricted ElevenLabs key (for example one with only `text_to_speech`) answers `401` with `missing_permissions` to the read requests: the key is shown as working, the read permissions as missing and generation as unverified, never as an invalid key.
+
+Permissions per Motion Studio feature (Settings shows the same table when something is missing):
+
+| Provider | Feature | Permission |
+|---|---|---|
+| ElevenLabs | Voice-over (`tts`) | `text_to_speech` |
+| ElevenLabs | Sound effects (`sound_effect`) | `sound_generation` |
+| ElevenLabs | Music (`music`) | `music_generation` |
+| ElevenLabs | Voice list and picker (`list_voices`) | `voices_read` |
+| ElevenLabs | Account check (key test only) | `user_read` |
+| OpenAI | Key test (restricted keys) | Models: Read (`api.model.read`) |
+| OpenAI | Images, voice-over | Model capabilities: Write (`model.request`); `gpt-image-2` may need organization verification (a 404 on the model marks images `missing` with the model name) |
+| Pexels, Unsplash | Search, download | no permissions: a refused key is invalid |
+
+The OpenAI permission names and the ElevenLabs `missing_permissions` wording follow the providers' public documentation; they have not been tried live.
+
 ## Adding a provider
 1. **Module** in `packages/core/src/providers/<name>.ts`: pure functions that take `HttpDeps & { apiKey }` (`fetch`, `transport`, `lookup`) and use `requestJson`/`requestBytes` from `http.ts` with `secrets: [apiKey]` (errors scrubbed of keys, size limits). To download URLs returned by the service use `safeDownload`.
 2. **Key**: add the id to `PROVIDER_IDS` (`packages/shared`) and the variable to `PROVIDER_ENV` (`secrets/vault.ts`); the variables in `PROVIDER_ENV` are automatically removed from the agent's environment. Add the entry in the web app's Settings.
-3. **Bridge tool** in `packages/core/src/bridge/provider-tools.ts`: a handler in `providerTools` (validates the arguments, `allowed(c, '<tool>')`, `keyOf`, `confirmPaid` if it costs, `saveGeneratedFile` and `register` to save and record the asset) and a line in `availableTools`.
+3. **Bridge tool** in `packages/core/src/bridge/provider-tools.ts`: a handler in `providerTools` (validates the arguments, `allowed(c, '<tool>')`, `keyOf`, `confirmPaid` if it costs, `withKeyCheck(provider, capability, …)` around the provider call, `saveGeneratedFile` and `register` to save and record the asset) and a line in `availableTools`.
+   **Key check**: the capabilities and permissions in `KEY_CAPABILITIES`/`KEY_PERMISSIONS` (`packages/shared/src/services.ts`), a free read-only probe in `providers/key-check.ts` (or `unverified`), the permissions table above and the Settings catalog texts.
 4. **Authorization per job type**: add the name to `MCP_TOOLS` (`agent/launcher.ts`) for the jobs that may use it.
 5. **MCP schema** in `packages/mcp-studio/src/server.mjs` (`TOOLS` list, with an English description: it is agent-facing text).
 6. **Tests** with an injected `fetch` (see `openai-images.test.ts`, `stock.test.ts`, `provider-tools.test.ts`): never real network calls or real keys.

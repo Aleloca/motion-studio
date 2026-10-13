@@ -101,11 +101,11 @@ describe('elevenlabsVoices', () => {
 describe('KeyCheckCache', () => {
   it('holds capability statuses in memory per provider', () => {
     const c = new KeyCheckCache();
-    expect(c.get('elevenlabs')).toEqual({});
+    expect(c.capabilities('elevenlabs')).toEqual({});
     c.record('elevenlabs', 'sfx', 'missing', 'sound_generation');
-    expect(c.get('elevenlabs').sfx).toMatchObject({ status: 'missing', permission: 'sound_generation' });
+    expect(c.capabilities('elevenlabs').sfx).toMatchObject({ status: 'missing', permission: 'sound_generation' });
     c.record('elevenlabs', 'sfx', 'ok');
-    expect(c.get('elevenlabs').sfx).toMatchObject({ status: 'ok' });
-    expect(c.get('elevenlabs').sfx!.permission).toBeUndefined();
+    expect(c.capabilities('elevenlabs').sfx).toMatchObject({ status: 'ok' });
+    expect(c.capabilities('elevenlabs').sfx!.permission).toBeUndefined();
   });
 });

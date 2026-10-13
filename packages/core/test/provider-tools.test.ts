@@ -283,6 +283,36 @@ describe('registration failure', () => {
   });
 });
 
+describe('key checks from real calls (Task 8)', () => {
+  it('generate_image, tts and stock record a 401/403 as missing and a success as ok, without the key', async () => {
+    const { KeyCheckCache } = await import('../src/providers/key-check.ts');
+    const cache = new KeyCheckCache();
+    let deny: RegExp | null = null;
+    const gate = (async (url: string, init?: RequestInit) => (deny && deny.test(url) ? new Response('denied sk-real-0123456789', { status: 403 }) : fakeFetch(url, init))) as unknown as typeof fetch;
+    const t = providerTools({
+      vault: new MemoryVault({ OPENAI_API_KEY: 'sk-real-0123456789', ELEVENLABS_API_KEY: 'xi-real-0123456789', PEXELS_API_KEY: 'px-real-0123456789' }), approvals, media: NoMediaTools, fetch: gate, lookup: publicLookup,
+      broadcast: () => {}, keyChecks: cache, settings: async () => workspaceSettingsSchema.parse({ schemaVersion: 1, confirmPaidProviders: false }),
+    });
+    deny = /images\/generations/;
+    await t.generate_image!(ctx, { prompt: 'x', width: 1024, height: 1024 }).catch(() => {});
+    expect(cache.capabilities('openai').images).toMatchObject({ status: 'missing', permission: 'model.request' });
+    deny = /text-to-speech/;
+    await t.tts!(ctx, { text: 'Ciao', provider: 'elevenlabs' }).catch(() => {});
+    expect(cache.capabilities('elevenlabs').tts).toMatchObject({ status: 'missing', permission: 'text_to_speech' });
+    deny = /api\.pexels\.com\/v1\/search/;
+    await t.stock_search!(ctx, { query: 'mare' }).catch(() => {});
+    expect(cache.capabilities('pexels').search).toMatchObject({ status: 'missing' });
+    deny = null;
+    await t.generate_image!(ctx, { prompt: 'x', width: 1024, height: 1024 });
+    await t.tts!(ctx, { text: 'Ciao', provider: 'openai' });
+    await t.stock_search!(ctx, { query: 'mare' });
+    expect(cache.capabilities('openai')).toMatchObject({ key: { status: 'ok' }, images: { status: 'ok' }, tts: { status: 'ok' } });
+    expect(cache.capabilities('pexels').search).toEqual({ capability: 'search', status: 'ok' });
+    const all = JSON.stringify(['openai', 'elevenlabs', 'pexels'].map((p) => cache.get(p as 'openai')));
+    for (const k of ['sk-real-0123456789', 'xi-real-0123456789', 'px-real-0123456789']) expect(all).not.toContain(k);
+  });
+});
+
 describe('ElevenLabs sound effects, music and voices', () => {
   const KEY = 'xi-secret-777';
   const seen: Array<{ url: string; body: string; key: string | undefined }> = [];
@@ -355,12 +385,12 @@ describe('ElevenLabs sound effects, music and voices', () => {
     answer = () => new Response('', { status: 403 });
     const e2 = await t.music!(ctx, { prompt: 'x', durationSec: 12 }).catch((e) => e) as Error;
     const e3 = await t.list_voices!(ctx, {}).catch((e) => e) as Error;
-    expect(cache.get('elevenlabs')).toMatchObject({ sfx: { status: 'missing', permission: 'sound_generation' }, music: { status: 'missing', permission: 'music_generation' }, voices: { status: 'missing', permission: 'voices_read' } });
+    expect(cache.capabilities('elevenlabs')).toMatchObject({ sfx: { status: 'missing', permission: 'sound_generation' }, music: { status: 'missing', permission: 'music_generation' }, voices: { status: 'missing', permission: 'voices_read' } });
     answer = () => new Response('', { status: 429 });
     const cache2 = new KeyCheckCache();
     const e4 = await withKey({ confirmPaidProviders: false }, { keyChecks: cache2 }).sound_effect!(ctx, { prompt: 'x' }).catch((e) => e) as Error;
     expect(status(e4)).toBe(429);
-    expect(cache2.get('elevenlabs')).toEqual({});
+    expect(cache2.capabilities('elevenlabs')).toEqual({});
     for (const e of [e1, e2, e3, e4]) expect(e.message).not.toContain(KEY);
     expect(await readdirAssets()).toEqual([]);
   });
