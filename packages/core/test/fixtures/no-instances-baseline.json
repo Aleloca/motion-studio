@@ -1,0 +1,93 @@
+{
+  "links": {
+    "test-wide-b": "test-wide"
+  },
+  "exportPicks": {
+    "test-tall": 1
+  },
+  "v1": [
+    {
+      "format": "test-wide",
+      "dir": "compositions/test-wide"
+    },
+    {
+      "format": "test-tall",
+      "dir": "compositions/test-tall"
+    },
+    {
+      "format": "test-wide-b",
+      "dir": "compositions/test-wide",
+      "followsFormat": "test-wide"
+    }
+  ],
+  "v1Files": [
+    "compositions",
+    "manifest.json",
+    "test-tall.mp4",
+    "test-wide-b.mp4",
+    "test-wide.mp4"
+  ],
+  "v1Outputs": [
+    {
+      "format": "test-wide",
+      "file": "test-wide.mp4"
+    },
+    {
+      "format": "test-wide-b",
+      "file": "test-wide-b.mp4"
+    },
+    {
+      "format": "test-tall",
+      "file": "test-tall.mp4"
+    }
+  ],
+  "v2": [
+    {
+      "format": "test-wide",
+      "dir": "compositions/test-wide"
+    },
+    {
+      "format": "test-tall",
+      "dir": "compositions/test-tall"
+    },
+    {
+      "format": "test-wide-b",
+      "dir": "compositions/test-wide",
+      "followsFormat": "test-wide"
+    }
+  ],
+  "v2Request": "Only the tall one",
+  "exported": [
+    "launch-test-wide-b-v1.mp4",
+    "launch-test-wide-v1.mp4"
+  ],
+  "custom": [
+    400,
+    "export-name-collision"
+  ],
+  "prompts": [
+    {
+      "required": [
+        "- test-wide: Test · Wide — 320×180, video — folder creatives/<slug>/outputs/v1/compositions/test-wide/",
+        "- test-tall: Test · Tall — 180×320, video — folder creatives/<slug>/outputs/v1/compositions/test-tall/"
+      ],
+      "block": "```motion-studio\n{\"outputDir\":\"creatives/<slug>/outputs/v1\",\"workDir\":\"creatives/<slug>/work\",\"durationSec\":4,\"formats\":[{\"id\":\"test-wide\",\"width\":320,\"height\":180,\"kind\":\"video\",\"extensions\":[\"mp4\"],\"compositionDir\":\"creatives/<slug>/outputs/v1/compositions/test-wide\"},{\"id\":\"test-tall\",\"width\":180,\"height\":320,\"kind\":\"video\",\"extensions\":[\"mp4\"],\"compositionDir\":\"creatives/<slug>/outputs/v1/compositions/test-tall\"}],\"contract\":2,\"schema\":\".studio/composition.schema.json\"}\n```"
+    },
+    {
+      "required": [
+        "- test-tall: Test · Tall — 180×320, video — folder creatives/<slug>/outputs/v2/compositions/test-tall/"
+      ],
+      "block": "```motion-studio\n{\"outputDir\":\"creatives/<slug>/outputs/v2\",\"workDir\":\"creatives/<slug>/work\",\"durationSec\":4,\"formats\":[{\"id\":\"test-tall\",\"width\":180,\"height\":320,\"kind\":\"video\",\"extensions\":[\"mp4\"],\"compositionDir\":\"creatives/<slug>/outputs/v2/compositions/test-tall\"}],\"contract\":2,\"schema\":\".studio/composition.schema.json\"}\n```"
+    }
+  ],
+  "renders": [
+    [
+      "test-wide",
+      "v1/test-wide.mp4"
+    ],
+    [
+      "test-tall",
+      "v1/test-tall.mp4"
+    ]
+  ]
+}

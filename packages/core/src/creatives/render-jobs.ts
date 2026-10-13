@@ -4,7 +4,7 @@ import { constants } from 'node:fs';
 import { copyFile, lstat, mkdir, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  compositionProblemText, effectiveLinks, formatLabel, messages, renderProblems, renderState,
+  compositionProblemText, effectiveLinks, formatDisplayName, messages, renderProblems, renderState,
   type Brief, type Composition, type FormatPreset, type JobProgress, type JobSummary, type Locale, type ManifestV2, type OutputFileInfo,
   type OutputIssue, type ServerMessage, type VersionComposition,
 } from '@motion-studio/shared';
@@ -235,7 +235,7 @@ export class RenderJobService {
   private async run(ref: CreativeRef, n: number, plan: RenderPlan, comps: VersionComposition[], locale: Locale, signal: AbortSignal, jobId: string): Promise<void> {
     const m = messages(locale);
     const presets = await this.deps.presets();
-    const label = (id: string) => { const p = findPreset(presets, id); return p ? formatLabel(p, locale) : id; };
+    const label = (id: string) => formatDisplayName(presets, id, locale);
     const store = new CreativeStore(ref.projectDir);
     const notes: string[] = [];
     const note = async (text: string) => {

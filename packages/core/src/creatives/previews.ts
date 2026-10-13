@@ -682,7 +682,7 @@ export async function sweepStoryboardTemps(projectDir: string, o: { now?: number
       const vdir = join(cdir, v);
       if (!/^v\d+$/.test(v) || !(await lstat(vdir).catch(() => null))?.isDirectory()) continue;
       for (const name of await readdir(vdir).catch(() => [] as string[])) {
-        if (!/^[a-z0-9][a-z0-9-]{0,62}\.[0-9a-f]{12}\.tmp$/.test(name)) continue;
+        if (!/^[a-z0-9][a-z0-9-]{0,62}(@([2-9]|1[0-9]|20))?\.[0-9a-f]{12}\.tmp$/.test(name)) continue;
         const st = await lstat(join(vdir, name)).catch(() => null);
         if (!st || st.mtimeMs > limit) continue;
         await rm(join(vdir, name), { recursive: true, force: true }).catch(() => {});

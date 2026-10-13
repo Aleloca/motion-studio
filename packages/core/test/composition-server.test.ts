@@ -96,6 +96,7 @@ beforeAll(async () => {
   });
   writeComposition(comp('v1', 'square'));
   writeComposition(comp('v2', 'story'));
+  writeComposition(comp('v1', 'story@2')); // a format instance's folder (Phase 12)
   // A composition whose whole assets/ folder is a symlink to another folder.
   mkdirSync(join(comp('v1', 'linked'), 'layers'), { recursive: true });
   symlinkSync(outside, join(comp('v1', 'linked'), 'assets'));
@@ -468,6 +469,15 @@ describe('session scope', () => {
     const sq = await mint({ format: 'square' });
     expect((await send(`${prefix(sq, 'outputs/v1', 'square')}/assets/logo.svg`)).status).toBe(200);
     expect((await send(`${prefix(sq)}/assets/logo.svg`)).status).toBe(404);
+    // A format instance (Phase 12) is its own folder: served only to its own session, never to the bare instance's.
+    const second = await mint({ format: 'story@2' });
+    expect((await send(`${prefix(second, 'outputs/v1', 'story@2')}/assets/logo.svg`)).status).toBe(200);
+    expect((await send(`${prefix(second, 'outputs/v1', 'story%402')}/assets/logo.svg`)).status).toBe(200);
+    expect((await send(`${prefix(second)}/assets/logo.svg`)).status).toBe(404);
+    expect((await send(`${prefix(s, 'outputs/v1', 'story@2')}/assets/logo.svg`)).status).toBe(404);
+    await expect(mint({ format: 'story@1' })).rejects.toThrow();
+    await expect(mint({ format: 'story@21' })).rejects.toThrow();
+    await expect(mint({ format: 'story@2/../x' })).rejects.toThrow();
   });
 });
 

@@ -81,7 +81,8 @@ const FONT_EXT = new Set(['.woff2', '.woff', '.ttf', '.otf']);
 /** A segment of `versionDir` (`outputs/v3`): no dot first, so never `.` or `..`. */
 const VERSION_SEGMENT_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 /** A format id (shared formats `ID_RE`). */
-const FORMAT_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+/** A composition folder: a preset id, or an instance id `<preset>@<k>` (Phase 12). */
+const FORMAT_RE = /^[a-z0-9][a-z0-9-]{0,62}(@([2-9]|1[0-9]|20))?$/;
 const ENCODED_SEPARATOR_RE = /%(?:2f|5c|00)/i;
 const RANGE_RE = /^bytes=(\d{0,15})-(\d{0,15})$/;
 /** A normalised media file of the cache (`<sha256 of the source>-<fps>-<w>x<h>-n<recipe>.mp4`, media-normalize.ts). */

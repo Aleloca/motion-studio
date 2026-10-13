@@ -1,7 +1,8 @@
 import { access, constants, lstat, mkdir, realpath, rm, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { DEFAULT_EXPORT_NAME_PATTERN, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, hasFormat, renderName, renderState, starOf, type FormatPreset, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_NAME_PATTERN, EXPORT_NAME_MAX, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, hasFormat, instanceIndex, renderName, renderState, slugToken, starOf, type FormatPreset, type VersionEntry } from '@motion-studio/shared';
 import { copyConfinedFile, probeConfinedFile } from '../brand/agent-guard.ts';
+import { findPreset } from '../formats/format-catalog.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
 import { t } from '../i18n.ts';
 
@@ -119,11 +120,19 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
   const date = opts.now ?? new Date();
   const pattern = opts.pattern ?? DEFAULT_EXPORT_NAME_PATTERN;
   const named = ok.map((it) => {
-    const r = renderName(pattern, exportNameVars({ title: opts.title, slug: opts.slug, format: it.format, preset: opts.presets?.find((p) => p.id === it.format),
+    const r = renderName(pattern, exportNameVars({ title: opts.title, slug: opts.slug, format: it.format, preset: opts.presets ? findPreset(opts.presets, it.format) : undefined,
       size: { width: it.width, height: it.height }, version: it.v ?? it.n, date }));
     if (!r.ok) throw new CodedError(400, t().export.nameEmpty, 'export-name-empty');
     return { ...it, stem: r.name, ext: exportExtension(it.file) };
   });
+  // Format instances (Phase 12, Ruling C): two files that would share a name (a pattern without `{format}`, or a preset id
+  // equal to an instance's slug, `foo-2` and `foo@2`) keep them apart with the instance's slugged id on each k > 1 instance;
+  // a bare instance's name never changes. What still collides is refused below, as before.
+  const count = new Map<string, number>();
+  for (const x of named) count.set(`${x.stem}${x.ext}`.toLowerCase(), (count.get(`${x.stem}${x.ext}`.toLowerCase()) ?? 0) + 1);
+  for (const x of named) {
+    if (count.get(`${x.stem}${x.ext}`.toLowerCase())! > 1 && instanceIndex(x.format) > 1) x.stem = withSuffix(x.stem, slugToken(x.format));
+  }
   const collisions = exportNameCollisions(named.map((x) => `${x.stem}${x.ext}`));
   if (collisions.length) throw new CodedError(400, t().export.nameCollision({ list: collisions.join(', ') }), 'export-name-collision');
 
@@ -147,6 +156,14 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
   }
   if (!files.length) throw new WorkspaceError(404, t().export.nothingToExport({ n: emptyN }));
   return { destination: dest, files, skipped };
+}
+
+/** `stem-suffix`, the stem cut so the whole stays within EXPORT_NAME_MAX. */
+function withSuffix(stem: string, suffix: string): string {
+  const room = EXPORT_NAME_MAX - suffix.length - 1;
+  let head = stem.length > room ? stem.slice(0, room) : stem;
+  while (head.length > 0 && '-_.'.includes(head.at(-1)!)) head = head.slice(0, -1);
+  return `${head}-${suffix}`;
 }
 
 const isVersionNumber = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n > 0;

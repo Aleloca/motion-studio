@@ -1,5 +1,5 @@
 import type { CreativeFile, FormatPreset, Pin } from '@motion-studio/shared';
-import { formatLabel, videoTargetBitrateKbps, type BrandKit, type BriefServices, type Locale } from '@motion-studio/shared';
+import { formatDisplayName, presetOf, videoTargetBitrateKbps, type BrandKit, type BriefServices, type Locale } from '@motion-studio/shared';
 import { replyInstruction } from '../i18n.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { servicesLine } from '../services/service-policy.ts';
@@ -280,6 +280,9 @@ function repairRequestSection(userWords: string | undefined): string[] {
   ];
 }
 
+/** Said of two or more instances of one preset in a turn (Phase 12, spec §2). */
+export const SAME_SIZE_NOTE = 'These are separate designs of the same size; keep each one distinct unless the request says otherwise';
+
 export function buildCreativePrompt(i: PromptInput): string {
   const { locale } = i;
   const contract = i.contract ?? 'compositions';
@@ -289,13 +292,23 @@ export function buildCreativePrompt(i: PromptInput): string {
   const targets = i.formats ?? brief.formats;
   const known = targets.map((id) => [id, findPreset(i.presets, id)] as const);
   const othersKept = brief.formats.some((id) => !targets.includes(id));
+  // Agent-facing name of an instance (Phase 12): the English preset name (`#k` for k > 1), and the user's label, quoted as data.
+  const nameOf = (id: string) => {
+    const own = brief.formatLabels?.[id];
+    const name = formatDisplayName(i.presets, id, 'en');
+    return own ? `${name}, labelled ${quotePromptString(oneLine(own, 60))}` : name;
+  };
+  // Instances of one preset in the same turn are separate designs, said once per preset (Phase 12).
+  const byPreset = new Map<string, string[]>();
+  for (const [id, p] of known) if (p) byPreset.set(presetOf(id), [...(byPreset.get(presetOf(id)) ?? []), id]);
+  const sameSize = [...byPreset.values()].filter((ids) => ids.length > 1).map((ids) => `- ${ids.join(', ')}: ${SAME_SIZE_NOTE}.`);
   const block: StudioBlock = {
     outputDir, workDir: `${base}/work`, durationSec: brief.durationSec,
     formats: known.flatMap(([, p]) => (p ? [{ id: p.id, width: p.width, height: p.height, kind: p.kind, extensions: p.extensions }] : [])),
   };
   // Agent-facing text: format names are always the English ones, whatever the user's language; the id identifies the preset.
   const formatLines = known.map(([id, p]) => p
-    ? `- ${p.id}: ${formatLabel(p, 'en')} — ${p.width}×${p.height}, ${p.kind}${p.maxDurationSec ? `, max ${p.maxDurationSec}s` : ''}${p.safeZone ? `, safe zone px (top ${p.safeZone.top}, bottom ${p.safeZone.bottom}, left ${p.safeZone.left}, right ${p.safeZone.right})` : ''}${p.maxFileMB ? `, hard limit ${p.maxFileMB} MB` : ''}${p.kind === 'video' && p.extensions.some((e) => e === 'mp4' || e === 'mov') ? `, target ~${p.targetBitrateKbps ?? videoTargetBitrateKbps(p.width, p.height)} kbps, encode mp4/mov: ${encodeFlags(p.targetBitrateKbps ?? videoTargetBitrateKbps(p.width, p.height))}` : ''} — extensions: ${p.extensions.join(', ')}`
+    ? `- ${p.id}: ${nameOf(id)} — ${p.width}×${p.height}, ${p.kind}${p.maxDurationSec ? `, max ${p.maxDurationSec}s` : ''}${p.safeZone ? `, safe zone px (top ${p.safeZone.top}, bottom ${p.safeZone.bottom}, left ${p.safeZone.left}, right ${p.safeZone.right})` : ''}${p.maxFileMB ? `, hard limit ${p.maxFileMB} MB` : ''}${p.kind === 'video' && p.extensions.some((e) => e === 'mp4' || e === 'mov') ? `, target ~${p.targetBitrateKbps ?? videoTargetBitrateKbps(p.width, p.height)} kbps, encode mp4/mov: ${encodeFlags(p.targetBitrateKbps ?? videoTargetBitrateKbps(p.width, p.height))}` : ''} — extensions: ${p.extensions.join(', ')}`
     : `- ${id}: unknown preset, ignore it and mention it in your reply`);
 
   const parts: string[] = [];
@@ -336,7 +349,7 @@ export function buildCreativePrompt(i: PromptInput): string {
   if (contract === 'compositions') {
     // Agent-facing: the format's own facts only (Motion Studio renders, so no extensions, bitrates or encoding flags).
     const compositionLines = known.map(([id, p]) => p
-      ? `- ${p.id}: ${formatLabel(p, 'en')} — ${p.width}×${p.height}, ${p.kind === 'image' ? 'image (a still: duration 0)' : 'video'}${p.maxDurationSec ? `, max ${p.maxDurationSec}s` : ''}${p.safeZone ? `, safe zone px (top ${p.safeZone.top}, bottom ${p.safeZone.bottom}, left ${p.safeZone.left}, right ${p.safeZone.right})` : ''} — folder ${outputDir}/compositions/${p.id}/`
+      ? `- ${p.id}: ${nameOf(id)} — ${p.width}×${p.height}, ${p.kind === 'image' ? 'image (a still: duration 0)' : 'video'}${p.maxDurationSec ? `, max ${p.maxDurationSec}s` : ''}${p.safeZone ? `, safe zone px (top ${p.safeZone.top}, bottom ${p.safeZone.bottom}, left ${p.safeZone.left}, right ${p.safeZone.right})` : ''} — folder ${outputDir}/compositions/${p.id}/`
       : `- ${id}: unknown preset, ignore it and mention it in your reply`);
     const v2Block: StudioBlock = {
       ...block, contract: 2, schema: '.studio/composition.schema.json',
@@ -346,7 +359,7 @@ export function buildCreativePrompt(i: PromptInput): string {
       }),
     };
     parts.push(
-      '', '## Required formats', ...compositionLines,
+      '', '## Required formats', ...compositionLines, ...sameSize,
       '', ...COMPOSITION_SECTION,
       ...(i.sandboxed ? ['', ...SANDBOX_SECTION_COMPOSITIONS] : []),
       '', '## Where to work',
@@ -361,7 +374,7 @@ export function buildCreativePrompt(i: PromptInput): string {
     return parts.filter((l, idx, arr) => !(l === '' && arr[idx - 1] === '')).join('\n');
   }
   parts.push(
-    '', '## Required formats', ...formatLines,
+    '', '## Required formats', ...formatLines, ...sameSize,
     '', ...ENCODING_SECTION,
     ...(i.sandboxed ? ['', ...SANDBOX_SECTION] : []),
     '', '## Where to work',

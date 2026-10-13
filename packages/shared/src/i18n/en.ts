@@ -584,6 +584,10 @@ export const en = {
   },
   variants: {
     rtlUnsupported: 'Right-to-left languages are not supported yet: the layout would have to be mirrored, and only text and voice change in a translation',
+    duplicatedRequest: (p: { label: string }) => `Duplicated ${p.label}`,
+    duplicateBusy: 'The agent or a render is working on this creative: duplicate the format when it has finished',
+    instancesFull: (p: { format: string; max: number }) => `${p.format} already has ${p.max} copies: remove one before duplicating it again`,
+    formatNotInVersion: (p: { format: string; n: number }) => `${p.format} is not in v${p.n}: open a version that has it to duplicate it`,
     storePack: {
       title: 'App store pack',
       appStore: 'App Store',

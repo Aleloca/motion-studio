@@ -1,7 +1,7 @@
 import { creativeJobKey } from '@motion-studio/shared';
 import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
-import { canFollow, effectiveServices, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, formatLabel, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
+import { canFollow, effectiveServices, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, formatDisplayName, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { detachLinksUnder } from '../agent/protected-links.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -184,7 +184,7 @@ export class CreativeTurnService {
   async setExportPick(ref: CreativeRef, format: string, version: number | null): Promise<CreativeFile> {
     const store = new CreativeStore(ref.projectDir);
     const presets = await this.deps.presets();
-    const label = (id: string) => { const p = presets.find((x) => x.id === id); return p ? formatLabel(p, currentLocale()) : id; };
+    const label = (id: string) => formatDisplayName(presets, id, currentLocale());
     const e = t().errors;
     /** The checks that need no hashes; run on an unlocked read first (fail fast), then again under the lock. */
     const validate = (creative: CreativeFile, versions: VersionEntry[]) => {
@@ -247,7 +247,7 @@ export class CreativeTurnService {
       const creative = await store.get(ref.creativeSlug);
       const { brief } = creative;
       const presets = await this.deps.presets();
-      const label = (id: string) => { const p = presets.find((x) => x.id === id); return p ? formatLabel(p, currentLocale()) : id; };
+      const label = (id: string) => formatDisplayName(presets, id, currentLocale(), brief.formatLabels);
       const e = t().errors;
       for (const f of primary === null ? [follower] : [follower, primary]) {
         if (!brief.formats.includes(f)) throw new CodedError(400, e.formatNotInBrief({ format: label(f) }), 'format-not-in-brief');
@@ -377,7 +377,7 @@ export class CreativeTurnService {
         plan = await this.planTurn(ref, store, plan.creative, presets, base, hasMessage, requestedFormats, locale, contract);
       }
       const { creative, targets } = plan;
-      const label = (id: string) => { const p = findPreset(presets, id); return p ? formatLabel(p, locale) : id; };
+      const label = (id: string) => formatDisplayName(presets, id, locale, creative.brief.formatLabels);
       const j = t().jobs;
       const noAgent = targets.length === 0;
       const primaries = creative.brief.formats.filter((f) => !Object.hasOwn(plan.links, f));
@@ -701,7 +701,7 @@ export class CreativeTurnService {
         } else wanted.add(p);
       }
     }
-    const label = (id: string) => { const p = findPreset(presets, id); return p ? formatLabel(p, locale) : id; };
+    const label = (id: string) => formatDisplayName(presets, id, locale, creative.brief.formatLabels);
     const e = t().errors;
     const unlinked: string[] = [];
     for (const [f, p] of Object.entries(links)) {

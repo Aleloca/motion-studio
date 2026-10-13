@@ -3,7 +3,7 @@ import { recoverRenameJournal } from '../library/rename-recovery.ts';
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { briefSchema, briefWriteSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatLabel, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
+import { briefSchema, briefWriteSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -22,7 +22,7 @@ import { sweepDerivedCaches, sweepEditorStaging } from '../creatives/cache-sweep
 import { editorCompositionView } from '../creatives/editor-staging.ts';
 import { directEditBodySchema, type DirectEditService } from '../creatives/direct-edit.ts';
 import { sweepProjectRenders } from '../render/render-sweep.ts';
-import { FormatCatalog } from '../formats/format-catalog.ts';
+import { FormatCatalog, findPreset } from '../formats/format-catalog.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { completeGitignore, sweepProject } from '../project-maintenance.ts';
 import { CodedError, expandHome, WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
@@ -89,7 +89,8 @@ const stageBody = z.object({
     z.object({ kind: z.literal('brandFont'), id: z.string().min(1).max(64) }).strict(),
   ]),
 }).strict();
-const FOLDER_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+/** A composition folder's name: a preset id, or an instance id `<preset>@<k>` (Phase 12). */
+const FOLDER_RE = /^[a-z0-9][a-z0-9-]{0,62}(@([2-9]|1[0-9]|20))?$/;
 const FRAME_FILE_RE = /^f-\d{1,3}\.jpg$/;
 /** A pin frame of version n: `<n>-<i>.jpg` (creative-turns `extractPinFrames`). */
 const PIN_FRAME_RE = /^(\d{1,6})-(\d{1,3})(e?)\.jpg$/;
@@ -101,12 +102,12 @@ const PIN_FRAME_RE = /^(\d{1,6})-(\d{1,3})(e?)\.jpg$/;
  */
 function initialLinks(brief: Brief, presets: FormatPreset[]): Record<string, string> {
   if (brief.links === undefined) {
-    const known = brief.formats.map((id) => presets.find((p) => p.id === id)).filter((p): p is FormatPreset => p !== undefined);
+    const known = brief.formats.map((id) => findPreset(presets, id)).filter((p): p is FormatPreset => p !== undefined);
     return defaultLinks(known, undefined);
   }
   const links = effectiveLinks(brief.links, brief.formats);
   const e = t().errors;
-  const label = (id: string) => { const p = presets.find((x) => x.id === id); return p ? formatLabel(p, currentLocale()) : id; };
+  const label = (id: string) => formatDisplayName(presets, id, currentLocale(), brief.formatLabels);
   for (const [follower, primary] of Object.entries(links)) {
     const c = checkLink({ formats: brief.formats, links }, [], presets, follower, primary);
     if (!c.ok) throw new CodedError(400, e.linkIncompatible({ follower: label(follower), primary: label(primary), reason: e.followReason[c.reason] }), 'link-incompatible');
@@ -338,7 +339,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const pattern = typeof body.pattern === 'string' ? body.pattern : (await ctx.requireWorkspace().readSettings()).exportNamePattern;
     const common = { creativeDir, destination, slug: ref.creativeSlug, title: creative.title, forbiddenRoot: ref.root, presets, pattern,
       ...(typeof body.date === 'string' ? { now: body.date } : {}),
-      label: (id: string) => { const p = presets.find((x) => x.id === id); return p ? formatLabel(p, currentLocale()) : id; } };
+      label: (id: string) => formatDisplayName(presets, id, currentLocale(), creative.brief.formatLabels) };
     if (body.picks === undefined && body.follow === undefined && body.version !== undefined) {
       // The older single-version payload: every output of that version.
       const version = (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === body.version);
@@ -481,6 +482,18 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const ref = await refOf(req.params.slug, req.params.c);
     const body = parse(directEditBodySchema, req.body);
     return ctx.edits.save({ root: ref.root, projectSlug: ref.projectSlug, projectDir: ref.projectDir, creativeSlug: ref.creativeSlug }, body, currentLocale());
+  });
+
+  /**
+   * Duplicate format (Phase 12, `DirectEditService.duplicate`): `{ instanceId, label? }` → `{ version, instanceId }`, a new
+   * editor version with a copy of that instance's composition of version n as the next instance of its preset. 409 while a
+   * turn or a render runs, when 20 instances exist or the source is not in version n.
+   */
+  app.post<{ Params: { slug: string; c: string; n: string } }>('/api/projects/:slug/creatives/:c/versions/:n/duplicate-format', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const n = /^\d{1,6}$/.test(req.params.n) ? Number(req.params.n) : 0;
+    if (n < 1) throw new CodedError(404, t().errors.versionNotFound, 'version-not-found');
+    return ctx.edits.duplicate({ root: ref.root, projectSlug: ref.projectSlug, projectDir: ref.projectDir, creativeSlug: ref.creativeSlug }, n, req.body, currentLocale());
   });
 
   /**

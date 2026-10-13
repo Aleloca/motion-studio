@@ -1,12 +1,16 @@
 import { join } from 'node:path';
-import { DEFAULT_FORMATS, formatsFileSchema, issuesText, type FormatPreset } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, formatsFileSchema, instancePreset, issuesText, type FormatPreset } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import { currentLocale, t } from '../i18n.ts';
 
 export interface CatalogState { presets: FormatPreset[]; error: string | null; path: string }
 
-export const findPreset = (presets: FormatPreset[], id: string) => presets.find((p) => p.id === id);
+/**
+ * The preset of a format instance id (Phase 12, `instancePreset`): the catalog preset with the instance id as its `id`, so
+ * folders, render files and prompt lines are named after the instance. Every lookup of a brief format goes through here.
+ */
+export const findPreset = (presets: readonly FormatPreset[], id: string): FormatPreset | undefined => instancePreset(presets, id);
 
 export class FormatCatalog {
   private readonly path: string;

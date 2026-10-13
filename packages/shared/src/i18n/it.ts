@@ -577,6 +577,10 @@ export const it: Messages = {
   },
   variants: {
     rtlUnsupported: 'Le lingue da destra a sinistra non sono ancora supportate: servirebbe specchiare l\'impaginazione, mentre in una traduzione cambiano solo testo e voce',
+    duplicatedRequest: (p) => `Duplicato ${p.label}`,
+    duplicateBusy: 'L\'agente o un render stanno lavorando su questa creatività: duplica il formato quando hanno finito',
+    instancesFull: (p) => `${p.format} ha già ${p.max} copie: rimuovine una prima di duplicarlo ancora`,
+    formatNotInVersion: (p) => `${p.format} non è nella v${p.n}: apri una versione che lo contiene per duplicarlo`,
     storePack: {
       title: 'Pacchetto store',
       appStore: 'App Store',

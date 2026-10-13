@@ -6,7 +6,7 @@ import { usageSummarySchema } from './usage.ts';
 import { INSTANCE_ID_RE } from './format-instance.ts';
 import { storePackSchema } from './store-pack.ts';
 import { localeTag } from './localization/schema.ts';
-import { channelName, DEFAULT_FORMATS, formatLabel } from './formats.ts';
+import { channelName, DEFAULT_FORMATS, formatDisplayName } from './formats.ts';
 import { messages, type Locale } from './i18n/index.ts';
 import type { FormatSummary } from './formats/link.ts';
 
@@ -280,7 +280,7 @@ export function outputWarningText(w: OutputWarning, locale: Locale): string {
     return messages(locale).outputs.largeFile({ sizeMB, mbps, targetMbps, channel: channelName(String(w.params.channel ?? ''), locale) });
   }
   // A catalog format is named in the reader's language; any other id is shown as stored.
-  const name = (v: unknown) => { const id = String(v ?? ''); const preset = DEFAULT_FORMATS.find((p) => p.id === id); return preset ? formatLabel(preset, locale) : id; };
+  const name = (v: unknown) => formatDisplayName(DEFAULT_FORMATS, String(v ?? ''), locale);
   if (w.key === 'outputs.keptUnchanged') return messages(locale).outputs.keptUnchanged({ format: name(w.params.format) });
   if (w.key === 'outputs.followerReplaced') return messages(locale).outputs.followerReplaced({ format: name(w.params.format), primary: name(w.params.primary) });
   return w.key;

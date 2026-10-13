@@ -12,6 +12,17 @@ export function presetOf(instanceId: string): string {
   return at === -1 ? instanceId : instanceId.slice(0, at);
 }
 
+/**
+ * The catalog preset of an instance id, carrying the INSTANCE id (`{ ...preset, id: instanceId }`), so whatever is named
+ * after `preset.id` (composition folders, render files, prompt lines) is the instance's own. A bare id, or an id that is not
+ * an instance id (a legacy brief, Ruling F), is looked up exactly as before (the catalog's own object); unknown: undefined.
+ */
+export function instancePreset<P extends { id: string }>(presets: readonly P[], instanceId: string): P | undefined {
+  if (!INSTANCE_ID_RE.test(instanceId) || !instanceId.includes('@')) return presets.find((p) => p.id === instanceId);
+  const preset = presets.find((p) => p.id === presetOf(instanceId));
+  return preset ? { ...preset, id: instanceId } : undefined;
+}
+
 /** The 1-based index of an instance (a bare id is 1, `@3` is 3). */
 export function instanceIndex(instanceId: string): number {
   const at = instanceId.lastIndexOf('@');

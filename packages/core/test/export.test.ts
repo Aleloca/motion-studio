@@ -330,3 +330,52 @@ describe('exportPicks', () => {
     expect(e.status).toBe(400);
   });
 });
+
+describe('export names of format instances (Phase 12, Ruling C)', () => {
+  const story = 'instagram-story';
+  const presets = [
+    { id: story, channel: 'Instagram', name: 'Story', width: 1080, height: 1920, kind: 'video' as const, extensions: ['mp4'] },
+    { id: 'foo', channel: 'Test', name: 'Foo', width: 200, height: 200, kind: 'video' as const, extensions: ['mp4'] },
+    { id: 'foo-2', channel: 'Test', name: 'Foo two', width: 200, height: 200, kind: 'video' as const, extensions: ['mp4'] },
+  ];
+  const ids = [story, `${story}@2`, `${story}@3`, 'foo', 'foo-2', 'foo@2'];
+  const v: VersionEntry = { ...version, n: 1, outputs: ids.map((format) => ({ format, file: `${format}.mp4`, width: 1080, height: 1920, durationSec: 6, verified: true, preview: null })) };
+  beforeEach(async () => {
+    await mkdir(join(creativeDir, 'outputs', 'v1'), { recursive: true });
+    for (const o of v.outputs) await writeFile(join(creativeDir, 'outputs', 'v1', o.file), o.format);
+  });
+  const run = (picks: string[], pattern?: string) => exportPicks({ creativeDir, versions: [v], presets, title: 'Summer', slug: 's', destination: dest, now: '2026-10-13',
+    picks: Object.fromEntries(picks.map((f) => [f, 1])), ...(pattern ? { pattern } : {}) });
+  const named = (r: { files: Array<{ from: string; to: string }> }) => Object.fromEntries(r.files.map((f) => [f.from.split('/').pop(), f.to.split('/').pop()]));
+
+  it('the default pattern names each instance after its slugged id; the bare one is unchanged', async () => {
+    expect(named(await run([story, `${story}@2`, `${story}@3`]))).toEqual({
+      'instagram-story.mp4': 'summer-instagram-story-v1.mp4',
+      'instagram-story@2.mp4': 'summer-instagram-story-2-v1.mp4',
+      'instagram-story@3.mp4': 'summer-instagram-story-3-v1.mp4',
+    });
+  });
+  it('a pattern without {format}: each k > 1 instance gets -<slugged id>, the bare one keeps its name', async () => {
+    expect(named(await run([story, `${story}@2`, `${story}@3`], '{title}-{channel}-v{v}'))).toEqual({
+      'instagram-story.mp4': 'summer-instagram-v1.mp4',
+      'instagram-story@2.mp4': 'summer-instagram-v1-instagram-story-2.mp4',
+      'instagram-story@3.mp4': 'summer-instagram-v1-instagram-story-3.mp4',
+    });
+    // Without a collision nothing is added.
+    expect(named(await run([`${story}@2`], '{title}-{channel}-v{v}'))).toEqual({ 'instagram-story@2.mp4': 'summer-instagram-v1-2.mp4' });
+  });
+  it('a user preset foo-2 next to the instance foo@2 (same slug): the instance gets the suffix, both are copied', async () => {
+    const r = await run(['foo', 'foo-2', 'foo@2']);
+    expect(named(r)).toEqual({ 'foo.mp4': 'summer-foo-v1.mp4', 'foo-2.mp4': 'summer-foo-2-v1.mp4', 'foo@2.mp4': 'summer-foo-2-v1-foo-2.mp4' });
+    expect(await readFile(join(dest, 'summer-foo-2-v1-foo-2.mp4'), 'utf8')).toBe('foo@2');
+    expect(await readFile(join(dest, 'summer-foo-2-v1.mp4'), 'utf8')).toBe('foo-2');
+  });
+  it('the suffix keeps the name within the length cap; collisions it cannot solve are still refused', async () => {
+    const long = await run([story, `${story}@2`], `${'x'.repeat(118)}-v{v}`);
+    const names = Object.values(named(long)) as string[];
+    expect(names.every((n) => n.length - '.mp4'.length <= 120)).toBe(true);
+    expect(names.find((n) => n.endsWith('-instagram-story-2.mp4'))).toBeDefined();
+    const e = await run(['foo', story], 'fixed').catch((x) => x);
+    expect(e).toMatchObject({ status: 400, apiCode: 'export-name-collision' });
+  });
+});

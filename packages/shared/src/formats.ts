@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { LOCALES, messages, type Locale } from './i18n/index.ts';
+import { instanceLabel, instancePreset, presetOf } from './format-instance.ts';
 
 export type FormatKind = 'video' | 'image';
 
@@ -50,6 +51,16 @@ export function channelName(channel: string, locale: Locale): string {
 /** `Instagram · Post 1:1`. */
 export const formatLabel = (preset: Pick<FormatPreset, 'id' | 'name' | 'channel'>, locale: Locale): string =>
   `${channelName(preset.channel, locale)} · ${formatName(preset, locale)}`;
+
+/**
+ * What an instance is called in messages and on screen (Phase 12): its label (`brief.formatLabels`), else the preset's
+ * `formatLabel` plus `#k` for k > 1; the id itself when its preset is not in the catalog. A bare id without a label gives
+ * exactly `formatLabel`.
+ */
+export function formatDisplayName(presets: readonly FormatPreset[], id: string, locale: Locale, labels?: Record<string, string>): string {
+  const p = instancePreset(presets, id);
+  return p ? instanceLabel(id, formatLabel({ ...p, id: presetOf(id) }, locale), labels) : id;
+}
 
 /**
  * Target H.264 bitrate (kbps) for a video of `width`x`height`. Reference points at 30 fps:

@@ -85,15 +85,15 @@ describe.skipIf(!tools.ok)('render jobs in real Chrome', () => {
   }, 600_000);
   afterAll(async () => { await app?.close(); if (work) rmSync(work, { recursive: true, force: true }); });
 
-  async function v2Creative(title: string, duration: number, legacy = false) {
+  async function v2Creative(title: string, duration: number, legacy = false, format = 'test-wide') {
     const r = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', headers: H, payload: {
-      title, generate: false, brief: { goal: 'g', message: '', formats: ['test-wide'], durationSec: Math.ceil(duration), assets: [], notes: '' },
+      title, generate: false, brief: { goal: 'g', message: '', formats: [format], durationSec: Math.ceil(duration), assets: [], notes: '' },
     } });
     expect(r.statusCode, r.body).toBe(201);
     const slug = r.json().slug as string;
     const store = new CreativeStore(join(ws, 'acme'));
     const vdir = store.outputsDir(slug, 1);
-    const dir = join(vdir, 'compositions', 'test-wide');
+    const dir = join(vdir, 'compositions', format);
     // 25 fps, 50 frames (2 s), first frame at 0.1 s, a 2.5 s audio track: audio longer than the video.
     frameCodedVideo(tools.ffmpeg!, join(dir, 'assets', 'code25.mp4'), { fps: 25, frames: 50, offset: 0.1, audioSeconds: 2.5 });
     if (legacy) {
@@ -108,7 +108,7 @@ describe.skipIf(!tools.ok)('render jobs in real Chrome', () => {
     }
     writeFileSync(join(dir, 'composition.json'), JSON.stringify(composition(duration, legacy)));
     const hash = (await readCompositionFolder(dir)).hash;
-    const compositions = [{ format: 'test-wide', dir: 'compositions/test-wide', hash, problems: [] }];
+    const compositions = [{ format, dir: `compositions/${format}`, hash, problems: [] }];
     writeFileSync(join(vdir, 'manifest.json'), JSON.stringify({ schemaVersion: 2, compositions, renders: [] } satisfies ManifestV2));
     await store.appendVersion(slug, { n: 1, commit: null, sessionId: null, status: 'complete', createdAt: new Date().toISOString(), request: 'r', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: null, compositions });
     return { slug, store, vdir, dir, hash };
@@ -158,6 +158,18 @@ describe.skipIf(!tools.ok)('render jobs in real Chrome', () => {
     expect(readdirSync(vdir).filter((f) => f.startsWith('.') && f !== '.previews')).toEqual([]);
     expect(readdirSync(renderTemp)).toEqual([]);
     expect(await leftovers({ pgids: providers.map((p) => p.pgid!).filter(Boolean), markers: [renderTemp] })).toEqual([]);
+  }, 900_000);
+
+  it('a format instance renders through the trusted path into outputs/vN/<instanceId>.mp4 (Phase 12)', async () => {
+    const { slug, store, vdir, hash } = await v2Creative('Instance', 2, false, 'test-wide@2');
+    const r = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/render`, headers: H, payload: {} });
+    expect(r.statusCode, r.body).toBe(202);
+    const job = await waitJob(r.json().id);
+    expect(job.state, job.error).toBe('succeeded');
+    expect(await countVideoFrames(tools.ffmpeg!, join(vdir, 'test-wide@2.mp4'))).toMatchObject({ frames: 60, width: 320, height: 180 });
+    const v = (await store.readVersions(slug))[0]!;
+    expect(v.outputs[0]).toMatchObject({ format: 'test-wide@2', file: 'test-wide@2.mp4', preview: '.previews/test-wide@2.mp4.jpg', fromComposition: hash });
+    expect(renderState(v, 'test-wide@2')).toBe('rendered');
   }, 900_000);
 
   it('an app quit during a render leaves no process and no partial output; a retry starts clean', async () => {

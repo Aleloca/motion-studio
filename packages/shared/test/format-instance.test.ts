@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_FORMATS, INSTANCE_ID_RE, briefSchema, briefWriteSchema, creativeFileSchema, instanceIndex, instanceLabel, nextInstanceId, presetOf, versionsFileSchema } from '../src/index.ts';
+import { DEFAULT_FORMATS, INSTANCE_ID_RE, briefSchema, briefWriteSchema, checkLink, creativeFileSchema, defaultLinks, formatDisplayName, formatLabel, instanceIndex, instanceLabel, instancePreset, linksAfterBriefSave, nextInstanceId, presetOf, versionsFileSchema } from '../src/index.ts';
 
 const now = '2026-10-07T10:00:00.000Z';
 const oldBrief = { goal: 'Far capire che prenotare è immediato', message: '', formats: ['instagram-post-1x1', 'instagram-reel-9x16'], durationSec: 15, assets: [], notes: '' };
@@ -107,5 +107,35 @@ describe('pre-phase-12 data still parses unchanged', () => {
     expect(versionsFileSchema.parse({ schemaVersion: 1, versions: [v] }).versions[0]).toEqual(v);
     expect(versionsFileSchema.safeParse({ schemaVersion: 1, versions: [{ ...v, compositions: [{ format: 'x@2', dir: 'compositions/x@1', hash: h }] }] }).success).toBe(false);
     expect(versionsFileSchema.safeParse({ schemaVersion: 1, versions: [{ ...v, localizations: [{ ...v.localizations[0], origin: 'bot' }] }] }).success).toBe(false);
+  });
+});
+
+describe('instance presets, names and links (Phase 12, Task 1)', () => {
+  const STORY = DEFAULT_FORMATS.find((p) => p.id === 'instagram-reel-9x16')!;
+  it('instancePreset: a bare id is the catalog object itself, an instance a copy carrying its own id, anything else as before', () => {
+    expect(instancePreset(DEFAULT_FORMATS, STORY.id)).toBe(STORY);
+    expect(instancePreset(DEFAULT_FORMATS, `${STORY.id}@2`)).toEqual({ ...STORY, id: `${STORY.id}@2` });
+    expect(instancePreset(DEFAULT_FORMATS, 'nope@2')).toBeUndefined();
+    // Not an instance id (a legacy brief): looked up exactly, never through its preset part.
+    expect(instancePreset(DEFAULT_FORMATS, `${STORY.id}@1`)).toBeUndefined();
+    expect(instancePreset(DEFAULT_FORMATS, `${STORY.id}@x`)).toBeUndefined();
+  });
+  it('formatDisplayName: the label, else the localized preset name with #k; a bare id without a label is formatLabel', () => {
+    for (const l of ['en', 'it'] as const) {
+      expect(formatDisplayName(DEFAULT_FORMATS, STORY.id, l)).toBe(formatLabel(STORY, l));
+      expect(formatDisplayName(DEFAULT_FORMATS, `${STORY.id}@3`, l)).toBe(`${formatLabel(STORY, l)} #3`);
+    }
+    expect(formatDisplayName(DEFAULT_FORMATS, `${STORY.id}@3`, 'en', { [`${STORY.id}@3`]: 'Promo' })).toBe('Promo');
+    expect(formatDisplayName(DEFAULT_FORMATS, 'nope@2', 'en')).toBe('nope@2');
+  });
+  it('defaultLinks never links two instances of one preset; checkLink and linksAfterBriefSave resolve instances', () => {
+    const at2 = `${STORY.id}@2`;
+    const known = [STORY.id, at2].map((id) => instancePreset(DEFAULT_FORMATS, id)!);
+    expect(defaultLinks(known, undefined)).toEqual({});
+    const brief = { formats: [STORY.id, at2], links: {} };
+    expect(checkLink(brief, [], DEFAULT_FORMATS, at2, STORY.id)).toEqual({ ok: true });
+    expect(linksAfterBriefSave({ formats: [STORY.id], links: {} }, [STORY.id, at2], DEFAULT_FORMATS)).toEqual({});
+    // Another preset of the same size still follows by default, as before.
+    expect(linksAfterBriefSave({ formats: [STORY.id, at2], links: {} }, [STORY.id, at2, 'tiktok-9x16'], DEFAULT_FORMATS)).toEqual({ 'tiktok-9x16': STORY.id });
   });
 });
