@@ -418,6 +418,8 @@ describe('usePreviewSession', () => {
     expect(h.result.current.state.kind).toBe('busy');
     await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
     expect(h.result.current.state).toMatchObject({ kind: 'ready', session: { url: expect.stringContaining('/b/') } });
+    // It renews the dropped one (the editor's staged files move with it, decisions log 264).
+    expect(api.previewSession.mock.calls[1]![5]).toBe('a');
   });
   it('renews the session before it expires', async () => {
     api.previewSession.mockResolvedValueOnce(session('a', { expiresAt: new Date(Date.now() + 5 * 60_000).toISOString() })).mockResolvedValueOnce(session('b'));

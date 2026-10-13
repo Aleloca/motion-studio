@@ -5,7 +5,7 @@
 // files staged for this draft, so Save can be disabled with the first problem's text while the core refuses the same.
 import {
   applyEdit, compositionProblem, validateComposition,
-  type Composition, type CompositionProblem, type EditOp, type EditorCompositionView, type EditResult, type FormatPreset, type StagedAsset,
+  type Composition, type CompositionProblem, type EditOp, type EditorCompositionView, type EditResult, type FormatPreset, type StagedAsset, type StageRequest,
 } from '@motion-studio/shared';
 import { useMemo, useSyncExternalStore } from 'react';
 
@@ -28,7 +28,10 @@ export type Draft = {
   composition: Composition;
   /** Every file of the composition folder plus the staged ones, by composition-relative path. */
   files: Map<string, { size: number }>;
-  staged: StagedAsset[];
+  /** Files staged for this draft, each with what it was staged from (to stage it again in a new session, decisions log 264). */
+  staged: StagedEntry[];
+  /** The preview session (token) the staged files are known to be in; another session must take them over or stage them again. */
+  stagedIn: string | null;
   ops: EditOp[];
   past: Snapshot[];
   future: Snapshot[];
@@ -41,6 +44,8 @@ export type Draft = {
   preset: FormatPreset;
 };
 
+export type StagedEntry = StagedAsset & { from?: StageRequest['from'] };
+
 export type DraftActions = {
   /** Starts a draft from the editor's view of a version. An existing draft with edits is kept as it is (never lost). */
   open(view: EditorCompositionView, preset?: FormatPreset): void;
@@ -48,7 +53,10 @@ export type DraftActions = {
   undo(): void;
   redo(): void;
   discard(): void;
-  stage(asset: StagedAsset): void;
+  /** A staged file (new, or as a renewed session reports it: its media index may differ), in session `token` when given. */
+  stage(asset: StagedAsset, o?: { from?: StageRequest['from']; token?: string }): void;
+  /** The staged files are now known to be in session `token`. */
+  stagedIn(token: string): void;
   /** Ends the coalescing run: the next edit is a new undo step even with the same key (the end of a drag). */
   endRun(): void;
 };
@@ -86,7 +94,7 @@ function open(key: string, view: EditorCompositionView, preset: FormatPreset = p
   const composition = structuredClone(view.composition);
   store.set(key, {
     key, base: { n: view.n, format: view.primaryFormat, hash: view.hash }, baseComposition: view.composition, composition, files,
-    staged: existing?.staged ?? [], ops: [], past: [], future: [], problems: validate(composition, files, preset),
+    staged: existing?.staged ?? [], stagedIn: existing?.stagedIn ?? null, ops: [], past: [], future: [], problems: validate(composition, files, preset),
     primaryFormat: view.primaryFormat, format: view.format, fonts: view.fonts, preset,
   });
   runs.delete(key);
@@ -134,12 +142,23 @@ function travel(key: string, dir: 'undo' | 'redo'): void {
   bump();
 }
 
-function stage(key: string, asset: StagedAsset): void {
+function stage(key: string, asset: StagedAsset, o: { from?: StageRequest['from']; token?: string } = {}): void {
   const d = store.get(key);
   if (!d) return;
   const files = new Map(d.files).set(asset.path, { size: asset.size });
-  const staged = [...d.staged.filter((s) => s.path !== asset.path), asset];
-  store.set(key, { ...d, files, staged, problems: validate(d.composition, files, d.preset) });
+  const before = d.staged.find((s) => s.path === asset.path);
+  const from = o.from ?? before?.from;
+  const entry: StagedEntry = { ...asset, ...(from ? { from } : {}) };
+  // Same place in the list (a renewal's update keeps the order the media indices were given in).
+  const staged = before ? d.staged.map((s) => (s.path === asset.path ? entry : s)) : [...d.staged, entry];
+  store.set(key, { ...d, files, staged, stagedIn: o.token ?? d.stagedIn, problems: validate(d.composition, files, d.preset) });
+  bump();
+}
+
+function stagedIn(key: string, token: string): void {
+  const d = store.get(key);
+  if (!d || d.stagedIn === token) return;
+  store.set(key, { ...d, stagedIn: token });
   bump();
 }
 
@@ -154,7 +173,8 @@ const actionsOf = (key: string): DraftActions => ({
   undo: () => travel(key, 'undo'),
   redo: () => travel(key, 'redo'),
   discard: () => discard(key),
-  stage: (asset) => stage(key, asset),
+  stage: (asset, o) => stage(key, asset, o),
+  stagedIn: (token) => stagedIn(key, token),
   endRun: () => { runs.delete(key); },
 });
 

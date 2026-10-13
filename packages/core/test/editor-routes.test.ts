@@ -160,11 +160,11 @@ describe('the staging route', { timeout: 120_000 }, () => {
     expect(file.status).toBe(200);
     expect(await file.text()).toBe(SVG);
     expect(file.headers.get('cross-origin-resource-policy')).toBe('cross-origin');
-    // Revoked: the folder goes, the file is no longer served, and staging is refused.
+    // Revoked: the file is no longer served and staging is refused; the folder waits a while for a late renewal (decisions log 264).
     expect((await app.inject({ method: 'DELETE', url: `/api/projects/acme/creatives/${slug}/versions/1/preview-session/${s.token}`, headers: H })).statusCode).toBe(200);
-    for (let i = 0; i < 50 && existsSync(stagingDirOf(projectDir(), slug, s.token)); i++) await new Promise((res) => setTimeout(res, 20));
-    expect(existsSync(stagingDirOf(projectDir(), slug, s.token))).toBe(false);
+    expect((await fetch(`${s.url.split('/runtime/')[0]}/outputs/v1/compositions/test-wide/${asset.path}`)).status).not.toBe(200);
     expect((await stage(slug, ok)).json().code).toBe('editor-no-session');
+    expect(existsSync(stagingDirOf(projectDir(), slug, s.token))).toBe(true);
     expect(agentRuns()).toBe(runs); // no agent
   });
 });

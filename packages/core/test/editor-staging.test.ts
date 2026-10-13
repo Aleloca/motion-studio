@@ -62,11 +62,12 @@ function brand(fonts: Array<{ id: string; family: string; file: string | null; w
   }));
 }
 
-async function makeService(o: { ttlMs?: number; media?: MediaTools; normalizer?: MediaNormalizer } = {}) {
+/** `graceMs`: how long an ended session's staging waits for a renewal; 0 here unless a test checks the grace itself. */
+async function makeService(o: { ttlMs?: number; media?: MediaTools; normalizer?: MediaNormalizer; graceMs?: number } = {}) {
   normalizer = o.normalizer ?? new MediaNormalizer({ ffmpeg: async () => ffmpeg });
   previews = new PreviewService({
     engine: undefined, normalizer, presets: async () => [PRESET], uiOrigins: () => [UI], media: o.media ?? media,
-    ...(o.ttlMs ? { sessionTtlMs: o.ttlMs } : {}),
+    ...(o.ttlMs ? { sessionTtlMs: o.ttlMs } : {}), stagingGraceMs: o.graceMs ?? 0,
   });
 }
 const ref = (c = 'launch') => ({ projectDir, creativeDir: join(projectDir, 'creatives', c), creativeSlug: c, n: 1 });
@@ -472,7 +473,7 @@ describe('a renewed session takes over the staging (Phase 10b, Task 4)', () => {
     await previews.close();
     await normalizer.close();
     normalizer = new MediaNormalizer({ ffmpeg: async () => ffmpeg });
-    previews = new PreviewService({ engine: undefined, normalizer, presets: async () => [PRESET, { ...PRESET, id: 'test-wide-b' }], uiOrigins: () => [UI], media });
+    previews = new PreviewService({ engine: undefined, normalizer, presets: async () => [PRESET, { ...PRESET, id: 'test-wide-b' }], uiOrigins: () => [UI], media, stagingGraceMs: 0 });
     const a = await previews.mintPreview(ref(), versionB, 'test-wide', UI, 'en');
     const svg = await stage(a.token, { kind: 'library', file: 'logo.svg' });
     const oldDir = stagingDirOf(projectDir, 'launch', a.token);
@@ -490,6 +491,7 @@ describe('a renewed session takes over the staging (Phase 10b, Task 4)', () => {
     const empty = await previews.mintPreview(ref(), versionB, 'test-wide', UI, 'en');
     expect((await previews.mintPreview(ref(), versionB, 'test-wide', UI, 'en', { renewFrom: empty.token })).staged).toBeUndefined();
     expect(previews.revokePreview(ref(), a.token)).toBe(true);
+    expect(await until(() => !existsSync(oldDir))).toBe(true); // no grace in this service: gone
     expect((await previews.mintPreview(ref(), versionB, 'test-wide', UI, 'en', { renewFrom: a.token })).staged).toBeUndefined();
   });
 
@@ -518,6 +520,98 @@ describe('a renewed session takes over the staging (Phase 10b, Task 4)', () => {
     previews.revokePreview(ref(), b.token);
     await new Promise((res) => setTimeout(res, 50));
     expect(normalizer.inUse(file)).toBe(false);
+  }, 60_000);
+});
+
+describe('a late renewal adopts an ended session\'s staging (decisions log 264)', () => {
+  it('expired: a renewal naming it within the grace takes the staged files, served under the new token only', async () => {
+    await previews.close();
+    await normalizer.close();
+    await makeService({ ttlMs: 200, graceMs: 60_000 });
+    register(['logo.svg']);
+    const a = await mint();
+    const svg = await stage(a.token, { kind: 'library', file: 'logo.svg' });
+    const oldDir = stagingDirOf(projectDir, 'launch', a.token);
+    // The session expires (TTL + 1 s): its token stops working, its staging waits.
+    await new Promise((r) => setTimeout(r, 1700));
+    expect(previews.revokePreview(ref(), a.token)).toBe(false); // already ended (not a live session any more)
+    expect(existsSync(oldDir)).toBe(true);
+    expect(previews.stagingInUse(oldDir)).toBe(true);
+    expect((await served(a.url, svg.path)).status).not.toBe(200);
+    const b = await previews.mintPreview(ref(), version, 'test-wide', UI, 'en', { renewFrom: a.token });
+    expect(b.staged).toEqual([svg]);
+    expect(existsSync(oldDir)).toBe(false);
+    expect((await served(b.url, svg.path)).status).toBe(200);
+    // Adopted once: the same old token adopts nothing again.
+    const c = await previews.mintPreview(ref(), version, 'test-wide', UI, 'en', { renewFrom: a.token });
+    expect(c.staged).toBeUndefined();
+  });
+
+  it('evicted or revoked: adopted by a renewal of the same creative, version and format only', async () => {
+    await previews.close();
+    await normalizer.close();
+    await makeService({ graceMs: 60_000 });
+    register(['logo.svg']);
+    const a = await mint();
+    const svg = await stage(a.token, { kind: 'library', file: 'logo.svg' });
+    for (let i = 0; i < 8; i++) await mint(); // the oldest of more than 8 ends
+    expect(previews.revokePreview(ref(), a.token)).toBe(false);
+    // Another creative never adopts it.
+    const other = await previews.mintPreview(ref('other'), version, 'test-wide', UI, 'en', { renewFrom: a.token }).catch(() => null);
+    expect(other?.staged).toBeUndefined();
+    const b = await previews.mintPreview(ref(), version, 'test-wide', UI, 'en', { renewFrom: a.token });
+    expect(b.staged).toEqual([svg]);
+    // Revoked: the same.
+    const svg2 = await stage(b.token, { kind: 'library', file: 'logo.svg' });
+    expect(previews.revokePreview(ref(), b.token)).toBe(true);
+    await new Promise((r) => setTimeout(r, 50));
+    const c = await previews.mintPreview(ref(), version, 'test-wide', UI, 'en', { renewFrom: b.token });
+    expect(c.staged).toEqual([svg2]);
+  });
+
+  it('after the grace, nothing is adopted and the folder is gone; app close removes waiting stagings', async () => {
+    await previews.close();
+    await normalizer.close();
+    await makeService({ graceMs: 300 });
+    register(['logo.svg']);
+    const a = await mint();
+    await stage(a.token, { kind: 'library', file: 'logo.svg' });
+    const oldDir = stagingDirOf(projectDir, 'launch', a.token);
+    expect(previews.revokePreview(ref(), a.token)).toBe(true);
+    expect(existsSync(oldDir)).toBe(true);
+    expect(await until(() => !existsSync(oldDir))).toBe(true);
+    expect(previews.stagingInUse(oldDir)).toBe(false);
+    expect((await previews.mintPreview(ref(), version, 'test-wide', UI, 'en', { renewFrom: a.token })).staged).toBeUndefined();
+    await previews.close();
+    await normalizer.close();
+    await makeService({ graceMs: 60_000 });
+    const b = await mint();
+    await stage(b.token, { kind: 'library', file: 'logo.svg' });
+    const bDir = stagingDirOf(projectDir, 'launch', b.token);
+    expect(previews.revokePreview(ref(), b.token)).toBe(true);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(existsSync(bDir)).toBe(true);
+    await previews.close();
+    expect(existsSync(bDir)).toBe(false);
+  });
+
+  withFfmpeg('a staged video keeps its lease through the grace and moves to the renewal, never encoded again', async () => {
+    await previews.close();
+    await normalizer.close();
+    await makeService({ graceMs: 60_000 });
+    ff(ffmpeg!, ['-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=25:d=2', '-c:v', 'libx264', '-preset', 'ultrafast', join(projectDir, 'assets', 'clip.mp4')]);
+    register(['clip.mp4']);
+    const a = await mint();
+    const v = await stage(a.token, { kind: 'library', file: 'clip.mp4' });
+    const cached = readdirSync(join(projectDir, '.studio', 'cache', 'media')).filter((n) => n.endsWith('.mp4'));
+    const file = join(projectDir, '.studio', 'cache', 'media', cached[0]!);
+    expect(previews.revokePreview(ref(), a.token)).toBe(true);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(normalizer.inUse(file)).toBe(true);
+    const b = await previews.mintPreview(ref(), version, 'test-wide', UI, 'en', { renewFrom: a.token });
+    expect(b.staged).toEqual([{ ...v, media: { ...v.media!, index: expect.any(Number) } }]);
+    expect((await served(b.url, `media/${b.staged![0]!.media!.index}.mp4`, { headers: { range: 'bytes=0-7' } })).status).toBe(206);
+    expect(readdirSync(join(projectDir, '.studio', 'cache', 'media')).filter((n) => n.endsWith('.mp4'))).toEqual(cached);
   }, 60_000);
 });
 

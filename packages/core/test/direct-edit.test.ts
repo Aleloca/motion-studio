@@ -32,6 +32,9 @@ import type { RenderCompositionOptions, RenderEngine, RenderResult } from '../sr
 import { buildServer } from '../src/server/app.ts';
 import { usageLedgerFile } from '../src/usage/usage-ledger.ts';
 import { FONT } from './helpers/render-env.ts';
+import { findFfmpeg } from '../src/render/encode.ts';
+import { stagingIdOf } from '../src/creatives/editor-staging.ts';
+const ffmpegInfo = await findFfmpeg();
 
 // A crash between the copy and the manifest: `assembleCompositions` throws while `crash.on` is set.
 const crash = vi.hoisted(() => ({ on: false }));
@@ -296,6 +299,90 @@ describe('saving a draft as a new version', { timeout: 120_000 }, () => {
     expect((await versionOf(slug, 2))!.compositions![0]!.hash).toBe((await readCompositionFolder(dir)).hash);
     expect(agentRuns()).toBe(runs);
   });
+
+  it('a renewal that arrives after the old session ended still carries the staged files, and the save with the new token works (decisions log 264)', async () => {
+    const slug = await create(['test-wide']);
+    await registerLibrary({ 'green.svg': SVG2 });
+    const a = await mint(slug);
+    const green = await stage(slug, a.token, 'green.svg');
+    // The old session ends first (a revoke, an eviction, an expiry): its token is gone.
+    expect((await app.inject({ method: 'DELETE', url: `/api/projects/acme/creatives/${slug}/versions/1/preview-session/${a.token}`, headers: H })).statusCode).toBe(200);
+    const r = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/preview-session`, headers: H, payload: { format: 'test-wide', parentOrigin: UI_ORIGIN, renewFrom: a.token } });
+    expect(r.statusCode, r.body).toBe(200);
+    const b = r.json() as { token: string; staged?: StagedAsset[] };
+    expect(b.staged).toEqual([green]);
+    const body = await draft(slug, 1, 'test-wide', (c) => { clip(c, 'logo').src = green.path; }, [{ kind: 'clipMedia', clipId: 'logo', src: green.path }]);
+    body.staged = [green.path];
+    // With the old token: refused (its staging moved); with the new one: saved.
+    body.token = a.token;
+    expect((await save(slug, body)).statusCode).toBe(422);
+    body.token = b.token;
+    const saved = await save(slug, body);
+    expect(saved.statusCode, saved.body).toBe(200);
+    expect(readFileSync(join(compDir(slug, 2, 'test-wide'), green.path), 'utf8')).toBe(SVG2);
+  });
+
+  it('a renewal racing a save: the save either uses the old session\'s staging or is refused and works with the new token; never a half version', async () => {
+    const slug = await create(['test-wide']);
+    await registerLibrary({ 'green.svg': SVG2 });
+    const a = await mint(slug);
+    const green = await stage(slug, a.token, 'green.svg');
+    const body = await draft(slug, 1, 'test-wide', (c) => { clip(c, 'logo').src = green.path; }, [{ kind: 'clipMedia', clipId: 'logo', src: green.path }]);
+    body.staged = [green.path];
+    body.token = a.token;
+    const [first, renewed] = await Promise.all([
+      save(slug, body),
+      app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/preview-session`, headers: H, payload: { format: 'test-wide', parentOrigin: UI_ORIGIN, renewFrom: a.token } }),
+    ]);
+    expect(renewed.statusCode).toBe(200);
+    if (first.statusCode !== 200) {
+      expect(first.statusCode).toBe(422);
+      expect(await versionOf(slug, 2)).toBeUndefined();
+      expect(existsSync(join(store().dir(slug), 'outputs', 'v2'))).toBe(false);
+      const again = await save(slug, { ...body, token: (renewed.json() as { token: string }).token });
+      expect(again.statusCode, again.body).toBe(200);
+    }
+    expect(readFileSync(join(compDir(slug, 2, 'test-wide'), green.path), 'utf8')).toBe(SVG2);
+    expect(await versionOf(slug, 3)).toBeUndefined();
+  });
+
+  it('409 editor-staged-collision when a staged file has other content than the base\'s file of that name', async () => {
+    const slug = await create(['test-wide']);
+    await registerLibrary({ 'green.svg': SVG2 });
+    const a = await mint(slug);
+    const green = await stage(slug, a.token, 'green.svg');
+    const body = await draft(slug, 1, 'test-wide', (c) => { clip(c, 'logo').src = green.path; }, [{ kind: 'clipMedia', clipId: 'logo', src: green.path }]);
+    expect((await save(slug, { ...body, staged: [green.path], token: a.token })).statusCode).toBe(200);
+    // v2 has the file; a session on v2 stages the same name and its copy then differs (the base's name, other content).
+    const b = await mint(slug, 2);
+    const again = await stage(slug, b.token, 'green.svg');
+    expect(again.path).toBe(green.path);
+    writeFileSync(join(projectDir(), '.studio', 'cache', 'editor-staging', slug, stagingIdOf(b.token), ...green.path.split('/')), SVG3);
+    const body2 = await draft(slug, 2, 'test-wide', (c) => { clip(c, 'title').props.text = 'x'; }, [{ kind: 'clipProps', clipId: 'title', props: { text: 'x' } }]);
+    const r = await save(slug, { ...body2, staged: [green.path], token: b.token });
+    expect(r.statusCode, r.body).toBe(409);
+    expect(r.json().code).toBe('editor-staged-collision');
+    expect(await versionOf(slug, 3)).toBeUndefined();
+    expect(existsSync(join(store().dir(slug), 'outputs', 'v3'))).toBe(false);
+  });
+
+  (ffmpegInfo?.encoders.has('libx264') ? it : it.skip)('a staged video is copied into the version as staged (normalised at staging, the save only copies)', async () => {
+    const slug = await create(['test-wide']);
+    execFileSync(ffmpegInfo!.path, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=25:d=2', '-c:v', 'libx264', '-preset', 'ultrafast', join(projectDir(), 'assets', 'clip.mp4')]);
+    expect((await app.inject({ method: 'POST', url: '/api/projects/acme/assets/register', headers: H, payload: { files: ['clip.mp4'] } })).statusCode).toBeLessThan(300);
+    const s = await mint(slug);
+    const v = await stage(slug, s.token, 'clip.mp4');
+    expect(v.kind).toBe('video');
+    const body = await draft(slug, 1, 'test-wide', (c) => {
+      c.tracks.unshift({ id: 'bgv', kind: 'video', clips: [{ id: 'bgvideo', type: 'video', src: v.path, start: 0, duration: 1, props: { x: 0, y: 0, width: c.width, height: c.height } }] } as never);
+    });
+    const t0 = Date.now();
+    const r = await save(slug, { ...body, staged: [v.path], token: s.token });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(Date.now() - t0).toBeLessThan(20_000);
+    const dir = compDir(slug, 2, 'test-wide');
+    expect(sha(join(dir, v.path))).toBe(sha(join(projectDir(), 'assets', 'clip.mp4')));
+  }, 60_000);
 
   it('every src must be a file of the base or staged in the SAME session: not declared, another session\'s, or not staged at all is refused', async () => {
     const slug = await create(['test-wide']);

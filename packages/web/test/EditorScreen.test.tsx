@@ -772,8 +772,58 @@ describe('EditorScreen · staging and session renewal', () => {
     expect(peekDraft(KEY)!.ops).toHaveLength(1);
     await act(async () => { finish(asset); await result; });
     expect(media.addSessionMedia).toHaveBeenCalledWith(asset.path, asset.media);
-    expect(peekDraft(KEY)!.staged).toEqual([asset]);
+    // Kept with where it came from (to stage it again in a new session) and the session it is in.
+    expect(peekDraft(KEY)!.staged).toEqual([{ ...asset, from: { kind: 'library', file: 'assets/clip.mp4' } }]);
+    expect(peekDraft(KEY)!.stagedIn).toBe(`tok-${REEL}-v2`);
     expect(screen.queryByText(/Large videos are converted first/)).toBeNull();
+  });
+
+  it('a new session without the staged files (the old one ended too long ago): each used file is staged again from where it came from, Save waits meanwhile (decisions log 264)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    api.previewSession.mockImplementationOnce(async (_s, _c, n, format) => ({
+      url: `http://127.0.0.1:61234/tok-a/runtime/index.html?mode=preview&parentOrigin=x`, token: 'tok-a', origin: 'http://127.0.0.1:61234',
+      expiresAt: new Date(Date.now() + 66_000).toISOString(), format, hash: hashOf(n), width: 1080, height: 1920, duration: 6, fps: 30,
+    }));
+    api.previewSession.mockImplementationOnce(async (_s, _c, n, format) => ({
+      url: `http://127.0.0.1:61234/tok-b/runtime/index.html?mode=preview&parentOrigin=x`, token: 'tok-b', origin: 'http://127.0.0.1:61234',
+      expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), format, hash: hashOf(n), width: 1080, height: 1920, duration: 6, fps: 30,
+    }));
+    render(<Harness />);
+    await opened();
+    api.stageEditorAsset.mockResolvedValueOnce(asset);
+    await act(async () => { await probe.ctx!.stageAsset({ kind: 'library', file: 'assets/clip.mp4' }); });
+    store().apply({ kind: 'clipMedia', clipId: 'bgv', src: asset.path });
+    let finish: (a: StagedAsset) => void = () => {};
+    const again = { ...asset, media: { ...asset.media!, index: 0 } };
+    api.stageEditorAsset.mockImplementationOnce(() => new Promise<StagedAsset>((r) => { finish = r; }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(7000); });
+    await waitFor(() => expect(api.stageEditorAsset).toHaveBeenCalledTimes(2));
+    expect(api.stageEditorAsset).toHaveBeenLastCalledWith('acme', 'lancio', { token: 'tok-b', from: { kind: 'library', file: 'assets/clip.mp4' } });
+    // Save waits for it, with the reason.
+    const saveBtn = await screen.findByRole('button', { name: 'Save as v3' });
+    expect((saveBtn as HTMLButtonElement).disabled).toBe(true);
+    expect(saveBtn.getAttribute('title')).toBe('Wait for the file being added to be ready, then save.');
+    await act(async () => { finish(again); await vi.advanceTimersByTimeAsync(10); });
+    await waitFor(() => expect(peekDraft(KEY)!.stagedIn).toBe('tok-b'));
+    expect(peekDraft(KEY)!.staged[0]!.media!.index).toBe(0);
+    expect(media.addSessionMedia).toHaveBeenCalledWith(asset.path, again.media);
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Save as v3' }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it('a file that cannot be staged again in the new session is named, never dropped silently', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    api.previewSession.mockImplementationOnce(async (_s, _c, n, format) => ({
+      url: `http://127.0.0.1:61234/tok-a/runtime/index.html?mode=preview&parentOrigin=x`, token: 'tok-a', origin: 'http://127.0.0.1:61234',
+      expiresAt: new Date(Date.now() + 66_000).toISOString(), format, hash: hashOf(n), width: 1080, height: 1920, duration: 6, fps: 30,
+    }));
+    render(<Harness />);
+    await opened();
+    api.stageEditorAsset.mockResolvedValueOnce(asset);
+    await act(async () => { await probe.ctx!.stageAsset({ kind: 'library', file: 'assets/clip.mp4' }); });
+    store().apply({ kind: 'clipMedia', clipId: 'bgv', src: asset.path });
+    api.stageEditorAsset.mockRejectedValueOnce(new ApiError(400, 'not registered', 'editor-not-registered'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(7000); });
+    expect(await screen.findByText(`A file added to the draft is no longer available (${asset.path}): choose it again.`)).toBeTruthy();
   });
 
   it('a staging failure shows the translated error and stages nothing', async () => {
@@ -794,9 +844,11 @@ describe('EditorScreen · staging and session renewal', () => {
       url: `http://127.0.0.1:61234/tok-a/runtime/index.html?mode=preview&parentOrigin=x`, token: 'tok-a', origin: 'http://127.0.0.1:61234',
       expiresAt: new Date(Date.now() + 66_000).toISOString(), format, hash: hashOf(n), width: 1080, height: 1920, duration: 6, fps: 30,
     }));
+    // The core moved the staging: the new session reports it with ITS media index (final review M1).
+    const moved = { ...asset, media: { ...asset.media!, index: 7 } };
     api.previewSession.mockImplementationOnce(async (_s, _c, n, format) => ({
       url: `http://127.0.0.1:61234/tok-b/runtime/index.html?mode=preview&parentOrigin=x`, token: 'tok-b', origin: 'http://127.0.0.1:61234',
-      expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), format, hash: hashOf(n), width: 1080, height: 1920, duration: 6, fps: 30,
+      expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), format, hash: hashOf(n), width: 1080, height: 1920, duration: 6, fps: 30, staged: [moved],
     }));
     render(<Harness />);
     await opened();
@@ -813,8 +865,10 @@ describe('EditorScreen · staging and session renewal', () => {
     expect(api.previewSession).toHaveBeenLastCalledWith('acme', 'lancio', 2, REEL, location.origin, 'tok-a');
     expect(api.stageEditorAsset).toHaveBeenCalledTimes(1);
     await act(async () => { await vi.advanceTimersByTimeAsync(10); });
-    expect(media.addSessionMedia).toHaveBeenCalledWith(asset.path, asset.media);
+    expect(media.addSessionMedia).toHaveBeenCalledWith(asset.path, moved.media);
+    expect(media.addSessionMedia).not.toHaveBeenCalledWith(asset.path, asset.media);
     expect(media.setComposition).toHaveBeenCalled();
+    expect(peekDraft(KEY)!.staged[0]!.media!.index).toBe(7);
     // Staging and saving use the new token.
     await act(async () => { await probe.ctx!.stageAsset({ kind: 'library', file: 'assets/other.mp4' }); });
     expect(api.stageEditorAsset).toHaveBeenLastCalledWith('acme', 'lancio', expect.objectContaining({ token: 'tok-b' }));

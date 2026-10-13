@@ -105,6 +105,8 @@ export interface PreviewServiceDeps {
   media?: MediaTools;
   /** Lifetime of a live preview session in ms (tests; default the composition server's, 30 min). */
   sessionTtlMs?: number;
+  /** Tests: how long an ended session's staging waits for a renewal (default {@link STAGING_GRACE_MS}). */
+  stagingGraceMs?: number;
 }
 
 export interface VersionFormatRef { projectDir: string; creativeDir: string; creativeSlug: string; n: number }
@@ -143,10 +145,23 @@ interface LiveSession {
   ended: AbortController;
 }
 
+/** How long an ended session's staging waits for a renewal of the same creative, version and format (decisions log 264). */
+export const STAGING_GRACE_MS = 10 * 60_000;
+/** At most this many ended stagings wait at once (the oldest is removed first). */
+const MAX_ORPHAN_STAGINGS = 8;
+
+/** The staging of an ended session, kept for {@link STAGING_GRACE_MS} so a late renewal (`renewFrom`) can adopt it. */
+interface OrphanStaging {
+  staging: SessionStaging; projectDir: string; creativeDir: string; creativeSlug: string; n: number; format: string;
+  timer: NodeJS.Timeout;
+}
+
 export class PreviewService {
   readonly lane: PreviewLane;
   private server: Promise<CompositionServer> | null = null;
   private readonly sessions = new Map<string, LiveSession>();
+  /** Ended sessions' stagings in their grace, by the ended session's token (a renewal names it in `renewFrom`). */
+  private readonly orphans = new Map<string, OrphanStaging>();
   /** One staging (or its cleanup) at a time per session token. */
   private readonly stageLocks = new KeyedMutex();
   private readonly storyboardLocks = new KeyedMutex();
@@ -406,9 +421,35 @@ export class PreviewService {
     const task = this.stageLocks.run(token, async () => {
       const st = s.staging;
       s.staging = null;
+      // Staged files wait a while for a renewal that arrives late (a laptop asleep, a throttled tab, a busy answer, an
+      // eviction): only the files, the session itself is gone (decisions log 264). Not at app close.
+      if (st && st.assets.size > 0 && !this.closing.signal.aborted) { this.keepOrphan(token, s, st); return; }
       for (const r of st?.leases.splice(0) ?? []) r();
       // The folder of this token, made or not (a staging that failed half-way may have left it).
       await removeStaging(st?.root ?? stagingDirOf(s.projectDir, s.creativeSlug, token));
+    });
+    this.tasks.add(task);
+    void task.catch(() => {}).finally(() => this.tasks.delete(task));
+    return task;
+  }
+
+  /** Keeps an ended session's staging for the grace period (see `endSession`); the oldest goes past the cap. */
+  private keepOrphan(token: string, s: LiveSession, staging: SessionStaging): void {
+    const timer = setTimeout(() => { void this.dropOrphan(token); }, this.deps.stagingGraceMs ?? STAGING_GRACE_MS);
+    timer.unref();
+    this.orphans.set(token, { staging, projectDir: s.projectDir, creativeDir: s.creativeDir, creativeSlug: s.creativeSlug, n: s.n, format: s.format, timer });
+    while (this.orphans.size > MAX_ORPHAN_STAGINGS) void this.dropOrphan(this.orphans.keys().next().value!);
+  }
+
+  /** Ends an orphan staging: its leases go back and its folder is removed (under its token's staging lock). */
+  private dropOrphan(token: string): Promise<void> {
+    const o = this.orphans.get(token);
+    if (!o) return Promise.resolve();
+    this.orphans.delete(token);
+    clearTimeout(o.timer);
+    const task = this.stageLocks.run(token, async () => {
+      for (const r of o.staging.leases.splice(0)) r();
+      await removeStaging(o.staging.root);
     });
     this.tasks.add(task);
     void task.catch(() => {}).finally(() => this.tasks.delete(task));
@@ -421,17 +462,23 @@ export class PreviewService {
    * `from`'s staging lock, the folder is renamed (one atomic rename inside the creative's staging root) to `to`'s name and
    * attached to `to`; the staged videos' normalised files join `to`'s media with their leases. From then on `from` never
    * reaches those files (its folder name no longer exists, and the server checks the attached folder's real path at every
-   * request) and never stages again. Nothing moved (no such session, nothing staged, a refusal): null, and `to` starts
-   * with no staging. Never throws.
+   * request) and never stages again. `from` may also be a session that ended within {@link STAGING_GRACE_MS} (expired,
+   * evicted, revoked): its kept staging is adopted the same way, on the same checks (decisions log 264). Nothing moved (no
+   * such session, nothing staged, a refusal): null, and `to` starts with no staging. Never throws.
    */
   private async handOverStaging(from: string, to: string): Promise<StagedAsset[] | null> {
     if (from === to) return null;
     return this.stageLocks.run(from, async () => {
       const a = this.sessions.get(from);
       const b = this.sessions.get(to);
-      if (!a || !b || !a.session.live() || !b.session.live() || a.handedOver) return null;
-      if (a.creativeDir !== b.creativeDir || a.creativeSlug !== b.creativeSlug || a.projectDir !== b.projectDir || a.n !== b.n || a.format !== b.format) return null;
-      const st = a.staging;
+      if (!b || !b.session.live()) return null;
+      // `from` live, or ended within the grace period (decisions log 264): the same creative, version and format only.
+      const orphan = a ? undefined : this.orphans.get(from);
+      const src = a ?? orphan;
+      if (!src) return null;
+      if (a && (!a.session.live() || a.handedOver)) return null;
+      if (src.creativeDir !== b.creativeDir || src.creativeSlug !== b.creativeSlug || src.projectDir !== b.projectDir || src.n !== b.n || src.format !== b.format) return null;
+      const st = a ? a.staging : orphan!.staging;
       if (!st || st.assets.size === 0) return null;
       const parent = await realDirChain(b.projectDir, [...EDITOR_STAGING, b.creativeSlug]);
       const root = stagingDirOf(b.projectDir, b.creativeSlug, to);
@@ -441,8 +488,8 @@ export class PreviewService {
       } catch {
         return null;
       }
-      a.staging = null;
-      a.handedOver = true;
+      if (a) { a.staging = null; a.handedOver = true; }
+      if (orphan) { this.orphans.delete(from); clearTimeout(orphan.timer); }
       await noteCoreChange(parent).catch(() => {});
       const moved: SessionStaging = { root, assets: new Map(), leases: st.leases.splice(0), media: new Map() };
       b.staging = moved;
@@ -487,6 +534,7 @@ export class PreviewService {
   /** Whether `dir` is the staging folder of a live session (the cache sweep leaves it alone). */
   stagingInUse = (dir: string): boolean => {
     for (const [token, s] of this.sessions) if (stagingDirOf(s.projectDir, s.creativeSlug, token) === dir || s.staging?.root === dir) return true;
+    for (const o of this.orphans.values()) if (o.staging.root === dir) return true;
     return false;
   };
 
@@ -570,6 +618,7 @@ export class PreviewService {
     this.closing.abort(new Error('closed'));
     this.lane.close();
     for (const token of [...this.sessions.keys()]) void this.endSession(token);
+    for (const token of [...this.orphans.keys()]) void this.dropOrphan(token);
     await Promise.allSettled([...this.tasks]);
     this.sessions.clear();
     const server = this.server;

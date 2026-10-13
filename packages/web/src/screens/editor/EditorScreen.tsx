@@ -9,9 +9,11 @@
 //   422 with problems). A 409 base-changed keeps the draft and offers "Reopen on the latest version" (discards it only
 //   after a confirmation): the draft is never lost.
 // - Discard re-sends the BASE composition to the player (`clearDraft()` sends nothing).
-// - A renewed preview session moves the staged files in the core (the web never stages again): the frame is replaced by
-//   the player (a new `key`, never a new `src`), the staged videos' session media are sent again from the staged list, and
-//   staging and saving use the new token.
+// - A renewed preview session moves the staged files in the core (also from a session that ended within the core's grace,
+//   decisions log 264): the frame is replaced by the player (a new `key`, never a new `src`), the staged list is updated
+//   from the new session's `staged` (its media indices), a used file that did not come along is staged again from where it
+//   came from (Save waits meanwhile), the staged videos' session media are sent again, and staging and saving use the new
+//   token.
 // - The draft goes to the player with `setComposition` (coalesced per animation frame); a draft the runtime refuses is
 //   shown as a problem, never ignored.
 import {
@@ -238,7 +240,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
         }
       };
       const asset = await attemptStage();
-      actions.stage(asset);
+      actions.stage(asset, { from, token: tokenRef.current ?? undefined });
       if (asset.media && player) player.addSessionMedia(asset.path, asset.media);
       return asset;
     } catch (err) {
@@ -248,6 +250,42 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
       setStaging(false);
     }
   }, [slug, creative, actions, player, e]);
+
+  // A new preview session (a renewal, or a fresh one after an expiry or an eviction): the draft's staged files must be in it
+  // (decisions log 264). Those it took over come back in `session.staged`, with this session's media indices (final review
+  // M1); a file the draft uses that did not come along is staged again from where it came from, once. Save waits meanwhile.
+  const session = preview.state.kind === 'ready' ? preview.state.session : null;
+  const [restaging, setRestaging] = useState(false);
+  useEffect(() => {
+    const d = peekDraft(key);
+    if (!session || !d || d.stagedIn === session.token) return;
+    if (d.staged.length === 0) { actions.stagedIn(session.token); return; }
+    const tok = session.token;
+    const came = new Map((session.staged ?? []).map((a) => [a.path, a] as const));
+    for (const a of came.values()) if (d.staged.some((x) => x.path === a.path)) actions.stage(a, { token: tok });
+    const used = new Set(usedStaged(d));
+    const missing = d.staged.filter((x) => used.has(x.path) && !came.has(x.path));
+    if (missing.length === 0) { actions.stagedIn(tok); return; }
+    let alive = true;
+    setRestaging(true);
+    void (async () => {
+      let lost: string | null = null;
+      for (const m of missing) {
+        const again = m.from ? await api.stageEditorAsset(slug, creative, { token: tok, from: m.from }).catch(() => null) : null;
+        if (!alive || tokenRef.current !== tok) return;
+        if (again && again.path === m.path) {
+          actions.stage(again, { token: tok });
+          if (again.media && player) player.addSessionMedia(again.path, again.media);
+        } else lost ??= m.path;
+      }
+      actions.stagedIn(tok);
+      const now = peekDraft(key);
+      if (player && now) lastSeq.current = player.setComposition(now.composition);
+      if (lost) setStageError(e.stagedLost({ file: lost }));
+      else toast.show(e.stagedRestored);
+    })().finally(() => { if (alive) setRestaging(false); });
+    return () => { alive = false; };
+  }, [session?.token, key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Save as vN.
   const [saving, setSaving] = useState(false);
@@ -491,7 +529,9 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const blocked = !draft ? null
     : working ? e.busyAgent
       : baseMoved ? e.baseChangedTitle
-        : draft.problems.length > 0 ? compositionProblemText(draft.problems[0]!, locale) : null;
+        // A file being staged (a video converting) or staged again in a new session: the save would wait on it (M3).
+        : staging || restaging ? e.saveWhileStaging
+          : draft.problems.length > 0 ? compositionProblemText(draft.problems[0]!, locale) : null;
 
   const page = (
     <div ref={root} className={cx('ms-ed', video ? 'ms-ed-video' : 'ms-ed-image')} aria-busy={!draft || undefined}>
