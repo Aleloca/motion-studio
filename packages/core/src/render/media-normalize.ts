@@ -647,7 +647,13 @@ export class MediaNormalizer {
         return;
       } catch (e) {
         leave();
-        if (signal.aborted || this.closing.signal.aborted) throw cancelled();
+        if (signal.aborted || this.closing.signal.aborted) {
+          // This waiter's abort rejects at once, before the encode has reacted to it. When it was the last waiter (the encode
+          // is cancelled), wait for that encode to settle: its ffmpeg group has exited and its temp file is removed (`make`).
+          // A cancelled preparation then never settles while its encoder still runs or its temp file is still there.
+          if (cur.waiters <= 0) await cur.promise.catch(() => {});
+          throw cancelled();
+        }
         if (isCancel(e) && attempt === 0) continue;
         throw e;
       }
@@ -683,14 +689,33 @@ export class MediaNormalizer {
     const name = final.slice(dirname(final).length + 1);
     const temp = join(dirname(final), `.${name.slice(0, -'.mp4'.length)}.${randomBytes(6).toString('hex')}.tmp`);
     this.stats.encodes++;
+    let renamed = false;
     try {
+      // `done` settles on the leader's exit (reaped): ffmpeg starts no children, so nothing writes `temp` after it.
       await input((args, fds) => spawnFfmpeg(ff, [...args, ...normalizeArgs({ ...want, ...how, ...(this.o.x264Preset ? { preset: this.o.x264Preset } : {}) }), temp], { signal, fds }).done);
       if (signal.aborted) throw cancelled();
       await rename(temp, final);
+      renamed = true;
       await noteCoreChange(dirname(final));
       return { approximate: false };
     } finally {
-      await rm(temp, { force: true }).catch(() => {});
+      if (!renamed) await removeTempSettled(temp);
     }
+  }
+}
+
+/** Re-checks of a removed temp file, and the pause before each (a bounded window: about 100 ms in all). */
+const TEMP_RECHECKS = 4;
+const TEMP_RECHECK_MS = 25;
+
+/**
+ * Removes an encode's temp file once its ffmpeg has exited, then re-checks it a few times within a short bounded window and
+ * removes it again if it is back (belt and braces: a writer still flushing when the exit was reported). Never throws.
+ */
+export async function removeTempSettled(temp: string, o: { rechecks?: number; pauseMs?: number } = {}): Promise<void> {
+  await rm(temp, { force: true }).catch(() => {});
+  for (let i = 0; i < (o.rechecks ?? TEMP_RECHECKS); i++) {
+    await new Promise((r) => setTimeout(r, o.pauseMs ?? TEMP_RECHECK_MS));
+    if (await lstat(temp).then(() => true, () => false)) await rm(temp, { force: true }).catch(() => {});
   }
 }
