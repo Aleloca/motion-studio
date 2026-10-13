@@ -14,12 +14,10 @@ const LIMIT = 24;
 const CATEGORIES = ['Sans Serif', 'Serif', 'Display', 'Handwriting', 'Monospace'] as const;
 const ROLES: Array<BrandFont['role']> = ['heading', 'body', 'accent', 'other'];
 
-const previewWeight = (f: GoogleFamily) => (f.weights.includes(400) ? 400 : f.weights[0]!);
-
 function Row({ f, selected, onPick }: { f: GoogleFamily; selected: boolean; onPick(): void }) {
   const t = useT();
   const g = t.web.brand.fonts.google;
-  const preview = useFontPreview(api.googleFontPreviewUrl(f.family, previewWeight(f)));
+  const preview = useFontPreview(f.previewUrl);
   return (
     <button type="button" className={cx('ms-gf-row', selected && 'ms-on')} aria-pressed={selected} onClick={onPick}>
       <span className="ms-gf-name" style={{ fontFamily: specimenFamily(preview) }}>{f.family}</span>
@@ -42,7 +40,7 @@ export function GoogleFontPicker({ open, slug, locked, onClose, onAdded }: {
   const [result, setResult] = useState<GoogleFontSearch | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
-  const [picked, setPicked] = useState<string | null>(null);
+  const [family, setPicked] = useState<GoogleFamily | null>(null);
   const [weights, setWeights] = useState<number[]>([]);
   const [italic, setItalic] = useState(false);
   const [role, setRole] = useState<BrandFont['role']>('body');
@@ -63,9 +61,8 @@ export function GoogleFontPicker({ open, slug, locked, onClose, onAdded }: {
     return () => clearTimeout(timer);
   }, [open, text, category]);
 
-  const family = result?.families.find((f) => f.family === picked) ?? null;
   const pick = (f: GoogleFamily) => {
-    setPicked(f.family);
+    setPicked(f);
     setWeights(f.weights.includes(400) ? [400] : [f.weights[0]!]);
     setItalic(false);
   };
@@ -74,9 +71,9 @@ export function GoogleFontPicker({ open, slug, locked, onClose, onAdded }: {
     if (!family || !weights.length) return;
     setAdding(true);
     try {
-      const { font } = await api.addGoogleFont(slug, { family: family.family, weights, italic: italic && family.italic, role });
+      const { font, updated } = await api.addGoogleFont(slug, { family: family.family, weights, italic: italic && family.italic, role });
       onAdded(font);
-      toast.show(g.added({ family: font.family }), { tone: 'ok' });
+      toast.show(updated ? g.updated({ family: font.family }) : g.added({ family: font.family }), { tone: 'ok' });
       onClose();
     } catch (e) {
       toast.show(g.addFailed({ error: message(e) }));
@@ -101,7 +98,7 @@ export function GoogleFontPicker({ open, slug, locked, onClose, onAdded }: {
           <div className="ms-gf-list" role="group" aria-label={g.results} aria-busy={searching}>
             {searching && !result ? <Spinner size={16} /> : null}
             {result && !result.families.length && !searching ? <p className="ms-bempty-line">{g.empty}</p> : null}
-            {result?.families.map((f) => <Row key={f.family} f={f} selected={f.family === picked} onPick={() => pick(f)} />)}
+            {result?.families.map((f) => <Row key={f.family} f={f} selected={f.family === family?.family} onPick={() => pick(f)} />)}
           </div>
           <div className="ms-gf-side">
             {family ? (

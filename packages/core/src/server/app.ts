@@ -118,8 +118,8 @@ const BILLING_RETRY_MS = 60 * 1000;
 /** Routes reachable without the UI token: health, the MCP bridge (it has its own token) and files shown by <img>/<video>. */
 // The storyboard and pin frame images carry a signed URL instead (signed-urls.ts, fix I4).
 const UI_TOKEN_EXEMPT: Record<string, ReadonlySet<string>> = {
-  GET: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/fonts/google/preview', '/api/projects/:slug/creatives/:c/files/*', '/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:hash/:file', '/api/projects/:slug/creatives/:c/pin-frame-files/:n/:file']),
-  HEAD: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/fonts/google/preview', '/api/projects/:slug/creatives/:c/files/*', '/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:hash/:file', '/api/projects/:slug/creatives/:c/pin-frame-files/:n/:file']),
+  GET: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/fonts/google/preview/:weight/:family', '/api/projects/:slug/creatives/:c/files/*', '/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:hash/:file', '/api/projects/:slug/creatives/:c/pin-frame-files/:n/:file']),
+  HEAD: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/fonts/google/preview/:weight/:family', '/api/projects/:slug/creatives/:c/files/*', '/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:hash/:file', '/api/projects/:slug/creatives/:c/pin-frame-files/:n/:file']),
   POST: new Set(['/api/bridge/:tool']),
 };
 /** `code` is what the UI branches on; `error` is display text in the current language. */
@@ -454,7 +454,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   registerBrandRoutes(app, routeCtx);
   registerLibraryRoutes(app, routeCtx);
   const fontsHttp = deps.fontsHttp ?? { fetch: globalThis.fetch };
-  registerFontsRoutes(app, { ...routeCtx, catalog: new GoogleFontsCatalog({ configDir, http: fontsHttp }), http: fontsHttp, ...(deps.fontsInstallIo ? { installIo: deps.fontsInstallIo } : {}) });
+  registerFontsRoutes(app, { ...routeCtx, catalog: new GoogleFontsCatalog({ configDir, http: fontsHttp }), http: fontsHttp, signer: new UrlSigner(deps.signedUrlTtlMs), ...(deps.fontsInstallIo ? { installIo: deps.fontsInstallIo } : {}) });
   registerProjectRoutes(app, { requireWorkspace, jobKeyOf: projectJobKey, broadcast: (m) => hub.broadcast(m) });
 
   registerBridgeRoutes(app, {

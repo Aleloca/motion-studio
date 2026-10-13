@@ -4,11 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../src/i18n.tsx';
 import { __resetToasts, getToasts } from '../src/ui/toast.tsx';
 
-const fam = (family: string, extra: Record<string, unknown> = {}) => ({ family, category: 'Sans Serif', weights: [400, 700], italic: true, variable: false, ...extra });
+const fam = (family: string, extra: Record<string, unknown> = {}) => ({ family, category: 'Sans Serif', weights: [400, 700], italic: true, variable: false, previewUrl: `/api/fonts/google/preview/400/${encodeURIComponent(family)}?s=1.sig`, ...extra });
 const api = {
   searchGoogleFonts: vi.fn(async (_q: { q?: string; category?: string; limit?: number }) => ({ stale: false, fallback: false, families: [fam('Manrope', { variable: true }), fam('Lora', { category: 'Serif', italic: false })] })),
-  googleFontPreviewUrl: (family: string, weight: number) => `/api/fonts/google/preview?family=${encodeURIComponent(family)}&weight=${weight}`,
   addGoogleFont: vi.fn(async (_s: string, b: { family: string; weights: number[]; italic: boolean; role: string }) => ({
+    updated: false,
     font: { id: 'font-x', family: b.family, role: b.role, weights: b.weights, file: 'assets/fonts/X-400.ttf', source: { kind: 'manual', ref: null } }, files: ['assets/fonts/X-400.ttf'],
   })),
 };
@@ -51,13 +51,13 @@ describe('GoogleFontPicker', () => {
     expect(api.searchGoogleFonts.mock.calls.filter((c) => c[0].q === 'l' || c[0].q === 'lo')).toHaveLength(0);
   });
   it('loads previews only from the core URL, under a private family', async () => {
-    api.searchGoogleFonts.mockResolvedValueOnce({ stale: false, fallback: false, families: [fam('Manrope'), fam('Lora')].map((f) => ({ ...f, family: `Fresh ${f.family}` })) });
+    api.searchGoogleFonts.mockResolvedValueOnce({ stale: false, fallback: false, families: [fam('Fresh Manrope'), fam('Fresh Lora')] });
     open();
     await screen.findByText('Fresh Manrope');
     await waitFor(() => expect(faces.length).toBe(2));
     expect(faces.map((f) => f.source)).toEqual([
-      'url("/api/fonts/google/preview?family=Fresh%20Manrope&weight=400")',
-      'url("/api/fonts/google/preview?family=Fresh%20Lora&weight=400")',
+      'url("/api/fonts/google/preview/400/Fresh%20Manrope?s=1.sig")',
+      'url("/api/fonts/google/preview/400/Fresh%20Lora?s=1.sig")',
     ]);
     expect(faces.every((f) => f.family.startsWith('ms-brand-font-'))).toBe(true);
     expect(fetched.filter((u) => /^https?:\/\//.test(u))).toEqual([]);
@@ -92,6 +92,24 @@ describe('GoogleFontPicker', () => {
     api.searchGoogleFonts.mockResolvedValueOnce({ stale: true, fallback: false, families: [fam('Lora')] });
     open();
     expect(await screen.findByText(/saved copy of the catalog/)).toBeTruthy();
+  });
+  it('says updated when the family was already in the brand', async () => {
+    api.addGoogleFont.mockResolvedValueOnce({ updated: true, font: { id: 'f', family: 'Manrope', role: 'body', weights: [400, 700], file: null, source: { kind: 'manual', ref: null } }, files: [] } as never);
+    open();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: /Manrope/ }));
+    await user.click(screen.getByRole('button', { name: 'Add to the brand' }));
+    await waitFor(() => expect(getToasts().some((t) => t.text === 'Manrope updated: weights added')).toBe(true));
+  });
+  it('keeps the side panel on the picked family when a new search no longer lists it', async () => {
+    open();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: /Manrope/ }));
+    api.searchGoogleFonts.mockResolvedValueOnce({ stale: false, fallback: false, families: [fam('Zilla')] });
+    await user.type(screen.getByRole('textbox', { name: 'Search fonts' }), 'zi');
+    await screen.findByText('Zilla');
+    expect(screen.getByRole('checkbox', { name: 'Weight 700' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add to the brand' })).toBeTruthy();
   });
   it('shows a failed search', async () => {
     api.searchGoogleFonts.mockRejectedValueOnce(new Error('core down'));

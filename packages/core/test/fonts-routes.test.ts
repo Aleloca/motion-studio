@@ -57,20 +57,43 @@ describe('Google Fonts routes', () => {
     const h = await boot();
     expect((await app.inject('/api/fonts/google?q=man')).statusCode).toBe(401);
     const r = (await app.inject({ url: '/api/fonts/google?q=man&limit=5', headers: h })).json();
-    expect(r).toEqual({ stale: false, fallback: false, families: [{ family: 'Manrope', category: 'Sans Serif', weights: [400, 700], italic: false, variable: true }] });
+    expect(r).toMatchObject({ stale: false, fallback: false, families: [{ family: 'Manrope', category: 'Sans Serif', weights: [400, 700], italic: false, variable: true }] });
     expect((await app.inject({ url: '/api/fonts/google?category=Serif', headers: h })).json().families.map((f: { family: string }) => f.family)).toEqual(['Lora']);
   });
-  it('serves the preview as woff2 without a header token (FontFace cannot send one), private and cached', async () => {
-    await boot();
-    const r = await app.inject('/api/fonts/google/preview?family=Manrope&weight=700');
+  it('serves the preview only through the signed URL of the authenticated search', async () => {
+    const h = await boot();
+    const fams = (await app.inject({ url: '/api/fonts/google?q=man', headers: h })).json().families as Array<{ family: string; previewUrl: string }>;
+    const url = fams[0]!.previewUrl;
+    expect(url).toMatch(/^\/api\/fonts\/google\/preview\/400\/Manrope\?s=\d+\./);
+    const r = await app.inject(url); // no header token: FontFace cannot send one
     expect(r.statusCode).toBe(200);
     expect(r.headers['content-type']).toBe('font/woff2');
     expect(r.headers['cache-control']).toContain('private');
     expect(r.rawPayload.subarray(0, 4).toString()).toBe('wOF2');
-    await app.inject('/api/fonts/google/preview?family=Manrope&weight=700');
+    await app.inject(url);
     expect(urls.filter((u) => u.includes('css2'))).toHaveLength(1);
-    expect((await app.inject('/api/fonts/google/preview?family=Bad;Name')).statusCode).toBe(400);
-    expect((await app.inject('/api/fonts/google/preview?family=Manrope&weight=450')).statusCode).toBe(400);
+  });
+  it('refuses unsigned, tampered and other-family or other-weight previews with 403 and never reaches Google', async () => {
+    const h = await boot();
+    const [man, lora] = (await app.inject({ url: '/api/fonts/google', headers: h })).json().families as Array<{ family: string; previewUrl: string }>;
+    const sig = new URL(man!.previewUrl, 'http://x').searchParams.get('s')!;
+    const before = urls.length;
+    for (const bad of [
+      '/api/fonts/google/preview/400/Manrope',
+      '/api/fonts/google/preview/400/Manrope?s=1.abc',
+      `/api/fonts/google/preview/400/Lora?s=${sig}`,
+      `/api/fonts/google/preview/700/Manrope?s=${sig}`,
+      `/api/fonts/google/preview/400/Manrope?s=${new URL(lora!.previewUrl, 'http://x').searchParams.get('s')}`,
+      '/api/fonts/google/preview?family=Manrope&weight=400',
+    ]) expect([bad, (await app.inject(bad)).statusCode]).toEqual([bad, bad.includes('?family') ? 401 : 403]);
+    expect(urls.length).toBe(before);
+  });
+  it('an expired preview URL is refused', async () => {
+    await app.close();
+    const h = await boot({ signedUrlTtlMs: 30 });
+    const url = (await app.inject({ url: '/api/fonts/google?q=man', headers: h })).json().families[0].previewUrl;
+    await new Promise((r) => setTimeout(r, 60));
+    expect((await app.inject(url)).statusCode).toBe(403);
   });
   it('adds a family: files, library entries with origin google-fonts, brand font and a commit', async () => {
     const h = await boot();
@@ -94,6 +117,22 @@ describe('Google Fonts routes', () => {
     const again = await add('lora');
     expect(again.statusCode).toBe(200);
     expect((await app.inject({ url: `${P}/brand`, headers: h })).json().kit.fonts).toHaveLength(2);
+  });
+  it('adding a family already in the kit merges the weights, keeps role, file and old files, and says updated', async () => {
+    const h = await boot();
+    const add = (weights: number[], role: string) => app.inject({ method: 'POST', url: `${P}/brand/fonts/google`, headers: h, payload: { family: 'Lora', weights, italic: false, role } });
+    const first = (await add([400, 700], 'heading')).json();
+    expect(first.updated).toBe(false);
+    const second = (await add([700], 'accent')).json();
+    expect(second.updated).toBe(true);
+    expect(second.font).toMatchObject({ id: first.font.id, role: 'heading', weights: [400, 700], file: 'assets/fonts/Lora-400.ttf' });
+    const only700 = (await add([300], 'body')).json();
+    expect(only700.font.weights).toEqual([300, 400, 700]);
+    const kit = (await app.inject({ url: `${P}/brand`, headers: h })).json().kit;
+    expect(kit.fonts).toHaveLength(1);
+    // the earlier files are kept (a repeated weight is saved again under a new name)
+    const files = (await app.inject({ url: `${P}/assets`, headers: h })).json().assets.map((a: { file: string }) => a.file);
+    expect(files).toEqual(expect.arrayContaining(['fonts/Lora-400.ttf', 'fonts/Lora-700.ttf', 'fonts/Lora-700-2.ttf', 'fonts/Lora-300.ttf']));
   });
   it('rejects bad bodies and unknown families without leaving files', async () => {
     const h = await boot();

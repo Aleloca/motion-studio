@@ -90,7 +90,7 @@ async function upload<T>(url: string, files: File[]): Promise<T> {
 }
 
 /** One family of the Google Fonts catalog as the core serves it (the web never talks to Google). */
-export interface GoogleFamily { family: string; category: string; weights: number[]; italic: boolean; variable: boolean }
+export interface GoogleFamily { family: string; category: string; weights: number[]; italic: boolean; variable: boolean; /** Signed, short-lived core URL of the preview subset (FontFace cannot send the UI token). */ previewUrl: string }
 export interface GoogleFontSearch { stale: boolean; fallback: boolean; families: GoogleFamily[] }
 export interface CatalogState { presets: FormatPreset[]; error: string | null; path: string }
 const p = (slug: string) => `/api/projects/${encodeURIComponent(slug)}`;
@@ -154,10 +154,8 @@ export const api = {
     if (q.limit) params.set('limit', String(q.limit));
     return request<GoogleFontSearch>('GET', `/api/fonts/google?${params.toString()}`);
   },
-  /** A woff2 subset served and cached by the core; loaded through FontFace, so no header token (the route is exempt). */
-  googleFontPreviewUrl: (family: string, weight: number) => `/api/fonts/google/preview?family=${encodeURIComponent(family)}&weight=${weight}`,
   addGoogleFont: (slug: string, body: { family: string; weights: number[]; italic: boolean; role: BrandFont['role'] }) =>
-    request<{ font: BrandFont; files: string[] }>('POST', `${p(slug)}/brand/fonts/google`, body),
+    request<{ font: BrandFont; files: string[]; updated: boolean }>('POST', `${p(slug)}/brand/fonts/google`, body),
   projectFileUrl: (slug: string, rel: string) => `${p(slug)}/files/${enc(rel)}`,
   cancelJob: (id: string) => request<{ cancelled: boolean }>('POST', `/api/jobs/${encodeURIComponent(id)}/cancel`),
   getFormats: () => request<CatalogState>('GET', '/api/formats'),

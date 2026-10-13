@@ -94,3 +94,28 @@ describe('fetchGoogleFont', () => {
     expect(empty.message).toBe('Risposta non valida da Google Fonts');
   });
 });
+
+describe('fetchGoogleFont network path', () => {
+  it('sends the css2 request through the address check: a private address is refused before any fetch', async () => {
+    let called = 0;
+    const f = (async () => { called++; return new Response('x'); }) as unknown as typeof fetch;
+    const privateLookup: LookupFn = async () => [{ address: '10.0.0.5', family: 4 }];
+    const e = await fetchGoogleFont({ fetch: f, transport: fetchTransport(f), lookup: privateLookup }, { family: 'Manrope', weights: [400], italic: false }).catch((x) => x);
+    expect(e.status).toBe(502);
+    expect(called).toBe(0);
+  });
+  it('carries the caller abort signal on the css2 request and the downloads', async () => {
+    const signals: Array<AbortSignal | undefined> = [];
+    const f = (async (url: string, init: RequestInit = {}) => {
+      signals.push(init.signal ?? undefined);
+      return url.includes('googleapis')
+        ? new Response("@font-face { font-weight: 400; src: url(https://fonts.gstatic.com/a.ttf); }", { status: 200 })
+        : new Response(new Uint8Array([1]), { status: 200 });
+    }) as unknown as typeof fetch;
+    const ac = new AbortController();
+    await fetchGoogleFont(net(f), { family: 'Manrope', weights: [400], italic: false, signal: ac.signal });
+    expect(signals).toHaveLength(2);
+    ac.abort();
+    expect(signals.every((s) => s?.aborted)).toBe(true);
+  });
+});

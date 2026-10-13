@@ -131,7 +131,7 @@ export class GoogleFontsCatalog {
     return this.memo ? { families: this.memo.families, stale: true } : null;
   }
 
-  async search(q: { q?: string; category?: string; limit?: number }): Promise<GoogleSearch> {
+  async search(q: { q?: string; category?: string; limit?: number }, signal?: AbortSignal): Promise<GoogleSearch> {
     const limit = Math.min(Math.max(Math.trunc(q.limit ?? 50) || 50, 1), 200);
     const name = (q.q ?? '').trim();
     const cat = (q.category ?? '').trim().toLowerCase();
@@ -141,14 +141,14 @@ export class GoogleFontsCatalog {
       const families = rank(loaded.families.filter(cat0), name).slice(0, limit).map(({ popularity: _p, ...f }) => f);
       return { stale: loaded.stale, fallback: false, families };
     }
-    return { stale: false, fallback: true, families: await this.exactName(name) };
+    return { stale: false, fallback: true, families: await this.exactName(name, signal) };
   }
 
   /** No catalog at all: the typed name is looked up on css2 as it is; the weights offered are the common pair (the add reports what is missing). */
-  private async exactName(name: string): Promise<GoogleFamily[]> {
+  private async exactName(name: string, signal?: AbortSignal): Promise<GoogleFamily[]> {
     if (!validFamily(name)) return [];
     try {
-      const { bytes } = await downloadBytes(this.o.http, `https://fonts.googleapis.com/css2?family=${encodeURIComponent(name).replace(/%20/g, '+')}`, { headers: { 'user-agent': 'curl/8' } }, { provider: PROVIDER, secrets: [], maxBytes: 1024 * 1024 });
+      const { bytes } = await downloadBytes(this.o.http, `https://fonts.googleapis.com/css2?family=${encodeURIComponent(name).replace(/%20/g, '+')}`, { headers: { 'user-agent': 'curl/8' }, ...(signal ? { signal } : {}) }, { provider: PROVIDER, secrets: [], maxBytes: 1024 * 1024 });
       if (!parseFontCss(bytes.toString('utf8')).length) return [];
       return [{ family: name, category: '', weights: [400, 700], italic: false, variable: false }];
     } catch { return []; }
