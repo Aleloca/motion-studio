@@ -95,6 +95,32 @@ async function outcome(token: string, body: unknown): Promise<'auto' | 'asked'> 
 
 const bash = (command: string, extra: Record<string, unknown> = {}) => ({ tool_name: 'Bash', input: { command, description: 'Lists files', ...extra }, tool_use_id: 't' });
 
+describe('a translation turn (Phase 12, fix I1)', () => {
+  it('Bash and every writing tool are refused at once, with the setting on, sandboxed: no card, no automatic approval', async () => {
+    const token = bridge.register(ctxBase({ kind: 'localize' }));
+    for (const body of [
+      bash('ls -la'), bash('echo x > assets/a.txt'),
+      { tool_name: 'Write', input: { file_path: join(projectDir, 'assets', 'x.txt'), content: 'x' } },
+      { tool_name: 'Edit', input: { file_path: join(projectDir, 'brand', 'brand-kit.json'), old_string: 'a', new_string: 'b' } },
+      { tool_name: 'MultiEdit', input: { file_path: join(projectDir, 'a.txt'), edits: [] } },
+      { tool_name: 'NotebookEdit', input: { notebook_path: join(projectDir, 'a.ipynb') } },
+      { tool_name: 'WebFetch', input: { url: 'https://example.com' } },
+    ]) {
+      const r = await approve(token, body);
+      expect(r.json(), JSON.stringify(body)).toMatchObject({ behavior: 'deny' });
+    }
+    expect(shown).toEqual([]);
+    expect(approvals.pending()).toEqual([]);
+    expect(autoEvents()).toEqual([]);
+  });
+  it('a Read outside the project still asks the user (never automatic)', async () => {
+    const token = bridge.register(ctxBase({ kind: 'localize' }));
+    const file = join(claudeRoot, 'x.txt');
+    await writeFile(file, 'x');
+    expect(await outcome(token, { tool_name: 'Read', input: { file_path: file } })).toBe('asked');
+  });
+});
+
 describe('automatic approval in approve', () => {
   it('auto-allows Bash in a sandboxed job with the setting on, emits auto_approved, creates no approval', async () => {
     const token = bridge.register(ctxBase());

@@ -188,6 +188,29 @@ describe('localize: tools and sandbox', { timeout: 120_000 }, () => {
     expect(p.allowedTools.some((t) => t.startsWith('Bash('))).toBe(false);
   });
 
+  it('with automatic approval of sandboxed Bash on, a localize job still gets no Bash: denied outright and never auto-allowed', () => {
+    const p = buildAgentPolicy({ kind: 'localize', sandbox: true, projectDir: '/w/acme', home: '/Users/me', configDir: '/cfg', codebases: [], protectedFiles: [],
+      protectedDirs: [], extraDomains: [], projectAllowRules: ['Bash(ls:*)'], mcpTools: [], autoApproveSandboxed: true });
+    const sb = (p.settings as { sandbox: { autoAllowBashIfSandboxed: boolean } }).sandbox;
+    expect(sb.autoAllowBashIfSandboxed).toBe(false);
+    expect(p.disallowedTools).toEqual(expect.arrayContaining(['Bash', 'Edit', 'Write']));
+    // A creative turn keeps the setting.
+    const c = buildAgentPolicy({ kind: 'creative', sandbox: true, projectDir: '/w/acme', home: '/Users/me', configDir: '/cfg', codebases: [], protectedFiles: [],
+      protectedDirs: [], extraDomains: [], projectAllowRules: [], mcpTools: [], autoApproveSandboxed: true });
+    expect((c.settings as { sandbox: { autoAllowBashIfSandboxed: boolean } }).sandbox.autoAllowBashIfSandboxed).toBe(true);
+    expect(c.disallowedTools).not.toContain('Bash');
+  });
+
+  it('a file the agent writes anywhere in the project (assets, brand) is reported', async () => {
+    await boot();
+    const slug = await create();
+    process.env.FAKE_CLAUDE_LOCALIZE_WRITE = join(env.projectDir(), 'assets', 'stray.txt');
+    const job = await finished(await start(slug, 1, { locales: ['de'] }));
+    const conv = await env.store().readConversation(slug);
+    expect(conv.some((e) => e.type === 'system' && e.level === 'warning' && e.text.includes('assets/stray.txt'))).toBe(true);
+    expect(job.notes?.some((x) => x.includes('assets/stray.txt'))).toBe(true);
+  });
+
   it('a file the agent writes into the version folder anyway is reported in the chat', async () => {
     await boot();
     const slug = await create();

@@ -30,6 +30,8 @@ export interface BridgeRoutesContext {
 /** The analysis phases the agent reports; `queued` and `done` are the core's own markers. */
 export const AGENT_PHASES: readonly BrandPhase[] = ['reading', 'fonts', 'colors', 'logos', 'tone', 'writing'];
 
+/** What a translation turn's agent may still ask to use (reads outside the project): nothing else ever reaches a card. */
+const LOCALIZE_READ_TOOLS: ReadonlySet<string> = new Set(['Read', 'Glob', 'Grep']);
 const denyMessage = (d: 'deny' | 'expired' | 'cancelled'): string => (d === 'deny' ? t().approvals.denied : d === 'expired' ? t().approvals.expired : t().errors.jobCancelled);
 const MAX_GUIDELINES = 50_000;
 
@@ -47,6 +49,8 @@ async function autoApprovable(ctx: BridgeRoutesContext, c: BridgeContext, toolNa
 
 /** The job conditions shared by Bash and Read: sandboxed job, setting on at start and now, no request to leave the sandbox. */
 async function sameConditions(ctx: BridgeRoutesContext, c: BridgeContext, input: Record<string, unknown>): Promise<boolean> {
+  // A translation turn never gets anything approved by itself (Phase 12, fix I1).
+  if (c.kind === 'localize') return false;
   if (c.sandboxed !== true || c.autoApproveAtStart !== true) return false;
   if (Object.hasOwn(input, 'dangerouslyDisableSandbox') && input.dangerouslyDisableSandbox !== false) return false;
   if (!ctx.settings) return false;
@@ -91,6 +95,8 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
       const linked = toolUseId ? { toolUseId } : {};
       // Provider confirmations and Motion Studio's own tools never go through the agent's permission prompts.
       if (toolName.startsWith('provider:') || toolName.startsWith(`mcp__${MCP_SERVER}__`)) return { behavior: 'deny', message: t().approvals.invalidRequest };
+      // A translation turn only reads (Phase 12, fix I1): Bash and every tool that could write are refused without a card.
+      if (c.kind === 'localize' && !LOCALIZE_READ_TOOLS.has(toolName)) return { behavior: 'deny', message: t().approvals.readOnlyTurn };
       // Motion Studio's config folder (tokens) is never opened, whatever the tool, whoever would answer: denied before any
       // auto-approval or card. Bash is not parsed here: its pre-allowed commands never reach this prompt (see the README).
       if (await namesProtectedPath(toolName, input, ctx.protectedRoots ?? [], c.projectDir).catch(() => true)) {

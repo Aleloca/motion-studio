@@ -56,10 +56,11 @@ describe('submit_localization', { timeout: 120_000 }, () => {
       submit(full('de', 'test-tall', { texts: { title: 'Hallo' } })),        // a format not in this turn
       submit(full('de', '../evil', { texts: { title: 'Hallo' } })),
       submit({ locale: 'de' }),
+      submit(full('de', 'test-wide', { texts: { title: '  ' } })),     // a blank translation
     ]);
     await localize(slug, { locales: ['de'], formats: ['test-wide'] });
     const results = calls().filter((c) => c.tool === 'submit_localization' && !c.fix);
-    expect(results).toHaveLength(12);
+    expect(results).toHaveLength(13);
     for (const r of results) {
       expect(r.status).toBe(200);
       expect(r.body.ok).toBe(false);

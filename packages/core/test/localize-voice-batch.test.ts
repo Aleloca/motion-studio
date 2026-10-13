@@ -5,6 +5,7 @@
  * whole batch ("Always" for tts honoured), sequentially, with the brand voice, into `assets/audio/`. Fake fetch and
  * MemoryVault only: no request ever leaves the machine (the phase 11 network guard stays on).
  */
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -266,6 +267,33 @@ describe('translated voices in a localize turn', { timeout: 120_000 }, () => {
     expect(JSON.stringify(rendered.composition)).toContain((await overlayOf(slug, 'de')).voices.vo!.src);
   });
 
+  it('Ruling L: the row records the voice\'s hash; a voice replaced afterwards is a problem and is never rendered; carry-over keeps the hash', async () => {
+    await boot();
+    const slug = await create();
+    process.env.FAKE_CLAUDE_LOCALIZE_CALLS = JSON.stringify([submit('de', { voiceScripts: { vo: 'Willkommen bei Acme' } })]);
+    const id = await startJob(slug, { locales: ['de'] });
+    await answer('once');
+    await finished(id);
+    const src = (await overlayOf(slug, 'de')).voices.vo!.src;
+    const file = join(env.projectDir(), ...src.split('/'));
+    const row = await rowOf(slug, 'de');
+    expect(row.assetHashes).toEqual({ [src]: createHash('sha256').update(await readFile(file)).digest('hex') });
+    // A new version keeps the translation, and the hash with it.
+    await env.turn(slug, { text: 'again' });
+    const v2 = (await env.versionOf(slug, 2))!.localizations!.find((r) => r.locale === 'de')!;
+    expect(v2.assetHashes).toEqual(row.assetHashes);
+    // The file is replaced (by anyone): the localized render refuses it and records the problem.
+    await writeFile(file, 'someone else');
+    const before = env.fake.renders.length;
+    const r = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/render`, headers: H, payload: { locales: ['de'] } });
+    expect(r.statusCode, r.body).toBe(202);
+    const job = await env.waitJob((r.json() as JobSummary).id);
+    expect(job.state).toBe('failed');
+    expect(job.error).toContain(vt().assetChanged({ file: src }));
+    expect(env.fake.renders.length).toBe(before);
+    expect((await rowOf(slug, 'de')).problems).toContain(vt().assetChanged({ file: src }));
+  });
+
   it('a declined batch keeps the original voice, with the reason on the row', async () => {
     await boot();
     const slug = await create();
@@ -307,6 +335,7 @@ describe('translated voices in a localize turn', { timeout: 120_000 }, () => {
       submit('de', { voiceScripts: { vo: 'Willkommen LANG LANG' } }), submit('fr', { voiceScripts: { vo: 'Bienvenue' } }),
     ]);
     process.env.FAKE_CLAUDE_LOCALIZE_FIX_CALLS = JSON.stringify([submit('de', { voiceScripts: { vo: 'Willkommen' } })]);
+    const runs = env.agentRuns();
     const id = await startJob(slug, { locales: ['de', 'fr'], text: 'Keep it friendly' });
     const first = await answer('once');
     const second = await answer('once');
@@ -315,6 +344,8 @@ describe('translated voices in a localize turn', { timeout: 120_000 }, () => {
     // The regeneration: a new confirmation for that voice only.
     expect(second.paidBatch!.calls).toHaveLength(1);
     expect(speech).toEqual(['Willkommen LANG LANG', 'Bienvenue', 'Willkommen']);
+    // The shorter script of attempt 2 is voiced in attempt 2: no third attempt (fix I2).
+    expect(env.agentRuns()).toBe(runs + 2);
     const fix = env.promptTexts().at(-1)!;
     const long = vt().voiceTooLong({ clip: 'Voice', voice: 3, clipSec: 2 });
     expect(fix).toContain(long);

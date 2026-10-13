@@ -186,6 +186,12 @@ export const versionEntrySchema = z.object({
     /** Phase 12, Task 4: voice clips with no known script (no `script`, no tts description): they keep the original voice. */
     noScript: z.array(z.string().max(200)).max(200).optional(),
     /**
+     * Phase 12, Ruling L: the sha256 of each project file the core wrote or attached for this language (a translated voice in
+     * `assets/audio/`, a fallback font in `assets/fonts/`), by its overlay path. The localized render (and the export) checks
+     * the file it uses against it: a file changed since is a problem, never rendered silently. Absent: nothing recorded.
+     */
+    assetHashes: z.record(z.string().max(1024), z.string().regex(HEX64)).optional(),
+    /**
      * The latest render of this language and instance (`outputs/vN/<instanceId>.<locale>.<ext>`, Phase 12 §3.5), written by
      * the core. Current while `overlayHash` is the row's `hash` and `fromComposition` the instance's composition hash;
      * `forced`: rendered with open problems or outdated entries ("render anyway"), whose ids are in `stale`.

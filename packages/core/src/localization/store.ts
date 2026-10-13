@@ -73,6 +73,56 @@ export async function readOverlay(creativeDir: string, n: number, locale: Locale
  */
 export const voiceRootsOf = (ic: Pick<InstanceComposition, 'compDir'>, projectDir: string): string[] => [ic.compDir, projectDir];
 
+/**
+ * The asset hashes a row keeps (Ruling L): for every file the overlay takes from the PROJECT (its fallback-font files, and its
+ * voices that the composition folder does not have), the hash given now (`fresh`: a voice the core just wrote), else the one
+ * the row already had (`old`, kept through carry-over and edits), else, for a font file the core attached, the file's hash
+ * now. A voice with no recorded hash (an older row) gets none. Undefined when empty.
+ */
+export async function rowAssetHashes(o: { projectDir: string; compDir: string; overlay: Localization; old?: Record<string, string>; fresh?: Record<string, string> }): Promise<Record<string, string> | undefined> {
+  const out: Record<string, string> = {};
+  const inFolder = async (p: string) => Boolean((await lstat(join(o.compDir, ...p.split('/'))).catch(() => null))?.isFile());
+  for (const f of o.overlay.fonts) {
+    for (const p of f.files) {
+      const sha = o.fresh?.[p] ?? o.old?.[p] ?? (await confinedHash(o.projectDir, p))?.sha;
+      if (sha) out[p] = sha;
+    }
+  }
+  for (const v of Object.values(o.overlay.voices)) {
+    if (await inFolder(v.src)) continue;
+    const sha = o.fresh?.[v.src] ?? o.old?.[v.src];
+    if (sha) out[v.src] = sha;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/**
+ * The recorded asset files of `row` whose content is no longer the recorded one (Ruling L), as they would be used: the file
+ * at `<root>/<path>` for each root in order (a render's private copy, or the composition folder then the project), missing
+ * counted as changed. Only the paths `used` (the localized composition's files) are checked.
+ */
+export async function changedAssets(roots: readonly string[], row: Pick<LocalizationRow, 'assetHashes'>, used?: ReadonlySet<string>): Promise<string[]> {
+  const out: string[] = [];
+  for (const [p, sha] of Object.entries(row.assetHashes ?? {})) {
+    if (used && !used.has(p)) continue;
+    let found: { sha: string } | null = null;
+    for (const root of roots) {
+      if (!(await lstat(join(root, ...p.split('/'))).catch(() => null))?.isFile()) continue;
+      found = await confinedHash(root, p);
+      break;
+    }
+    if (found?.sha !== sha) out.push(p);
+  }
+  return out;
+}
+
+/** The project files a localized composition takes from its overlay: font files, and voices when they are applied. */
+export function overlayAssetPaths(overlay: Localization, row: Pick<LocalizationRow, 'voice' | 'stale'>): Set<string> {
+  const out = new Set(overlay.fonts.flatMap((f) => f.files));
+  if (row.voice === 'translated') for (const [id, v] of Object.entries(overlay.voices)) if (!row.stale.includes(id)) out.add(v.src);
+  return out;
+}
+
 /** Largest voice file hashed to find its tts description. */
 const MAX_VOICE_HASH_BYTES = 50 * 1024 * 1024;
 

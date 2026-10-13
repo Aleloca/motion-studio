@@ -180,7 +180,12 @@ function withLocaleSuffix(stem: string, locale: string): string {
  */
 export async function resolveLocalizedItems(creativeDir: string, versions: VersionEntry[], items: ExportItem[], locales: readonly string[],
   /** Whether the file still has its recorded content (`renderFileMatches`); absent: only that it is a usable file. */
-  matches?: (n: number, file: string, sha256: string) => Promise<boolean>):
+  matches?: (n: number, file: string, sha256: string) => Promise<boolean>,
+  /**
+   * Ruling L: whether the voice and font files the row recorded are still the ones it recorded; when not, the render is not
+   * current (rendering it again records the problem and fails, so the export says so). Absent: not checked.
+   */
+  assetsOk?: (n: number, row: NonNullable<VersionEntry['localizations']>[number]) => Promise<boolean>):
   Promise<{ items: ExportItem[]; missing: Array<{ format: string; n: number; locale: string }>; pending: Map<number, { formats: string[]; locales: string[] }> }> {
   const out: ExportItem[] = [];
   const missing: Array<{ format: string; n: number; locale: string }> = [];
@@ -193,7 +198,8 @@ export async function resolveLocalizedItems(creativeDir: string, versions: Versi
       if (!v || !comp || !row) { missing.push({ format: it.format, n: it.n, locale }); continue; }
       const r = row.render;
       const current = r !== undefined && r.overlayHash === row.hash && r.fromComposition === comp.hash && plainName(r.file)
-        && (await probeConfinedFile(creativeDir, `outputs/v${it.n}/${r.file}`)) === true && (!matches || await matches(it.n, r.file, r.sha256));
+        && (await probeConfinedFile(creativeDir, `outputs/v${it.n}/${r.file}`)) === true && (!matches || await matches(it.n, r.file, r.sha256))
+        && (!assetsOk || await assetsOk(it.n, row));
       if (!current) {
         const p = pending.get(it.n) ?? { formats: [], locales: [] };
         if (!p.formats.includes(it.format)) p.formats.push(it.format);

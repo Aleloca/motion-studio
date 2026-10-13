@@ -1,3 +1,4 @@
+import { lstat, readdir } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { z } from 'zod';
 import {
@@ -6,10 +7,10 @@ import {
   type LocalizationRow, type ServerMessage, type VersionEntry,
 } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
-import { detachLinksUnder } from '../agent/protected-links.ts';
+import { CREATIVE_CORE_FILES, detachLinksUnder } from '../agent/protected-links.ts';
 import { BrandStore } from '../brand/brand-store.ts';
 import type { VoiceBatchContext, VoiceBatchItem, VoiceBatchResult, VoiceUnavailable } from '../bridge/provider-tools.ts';
-import { snapshotChanges, snapshotOutputs, withoutCoreWrites } from '../creatives/carry-over.ts';
+import { earlierOutputDirs, snapshotChanges, snapshotOutputs, withoutCoreWrites } from '../creatives/carry-over.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeRef, CreativeTurnService } from '../creatives/creative-turns.ts';
 import { checkedPreviewTimes, type PreviewService } from '../creatives/previews.ts';
@@ -22,7 +23,7 @@ import type { HttpDeps } from '../providers/http.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
 import {
   emptyOverlay, finishOverlay, instanceComposition, knownVoiceScripts, localizedComposition, readOverlay, resolveFallbackFont, setLocalizationRow,
-  voiceRootsOf, writeOverlay, type FallbackResult, type InstanceComposition,
+  rowAssetHashes, voiceRootsOf, writeOverlay, type FallbackResult, type InstanceComposition,
 } from './store.ts';
 import { checkedInstance, checkedLocale, clipLabel } from './validate.ts';
 
@@ -50,8 +51,9 @@ export type LocalizeBody = z.infer<typeof localizeBodySchema>;
 const submitSchema = z.strictObject({
   locale: z.string().max(40),
   instanceId: z.string().max(200),
-  texts: z.record(z.string().max(COMPOSITION_LIMITS.id), z.string().max(COMPOSITION_LIMITS.text)).default({}),
-  params: z.record(z.string().max(200), z.string().max(COMPOSITION_LIMITS.text)).default({}),
+  // A translation is never blank (an empty title would pass every box check).
+  texts: z.record(z.string().max(COMPOSITION_LIMITS.id), z.string().max(COMPOSITION_LIMITS.text).refine((x) => x.trim() !== '', 'issue.textRequired')).default({}),
+  params: z.record(z.string().max(200), z.string().max(COMPOSITION_LIMITS.text).refine((x) => x.trim() !== '', 'issue.textRequired')).default({}),
   voiceScripts: z.record(z.string().max(COMPOSITION_LIMITS.id), z.string().trim().min(1).max(5000)).default({}),
   fit: z.record(z.string().max(COMPOSITION_LIMITS.id), z.number().min(0.7).max(1)).default({}),
 });
@@ -97,6 +99,34 @@ interface Pair {
 }
 
 const now = () => new Date().toISOString();
+
+/** Top-level project entries the stray-write check never looks at (git, the core's own state, tool caches). */
+const UNWATCHED = new Set(['.git', '.studio', '.cache', 'node_modules']);
+/** At most this many entries are fingerprinted; a larger project is compared on what fits (deepest entries last). */
+const MAX_WATCHED = 50_000;
+
+/**
+ * Path (project-relative) → type, size, mtime, inode of the project's entries, without `UNWATCHED`, the creative's `outputs/`
+ * (compared on its own, core writes left out) and its records (`CREATIVE_CORE_FILES`, written by the core while the agent runs).
+ */
+async function snapshotProject(projectDir: string, creativeRel: string): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const skip = new Set([`${creativeRel}/outputs`, ...CREATIVE_CORE_FILES.map((f) => `${creativeRel}/${f}`)]);
+  const walk = async (rel: string, depth: number): Promise<void> => {
+    const names = await readdir(rel ? join(projectDir, ...rel.split('/')) : projectDir).catch(() => [] as string[]);
+    for (const name of names.sort()) {
+      if (out.size >= MAX_WATCHED) return;
+      const child = rel ? `${rel}/${name}` : name;
+      if ((!rel && UNWATCHED.has(name)) || skip.has(child)) continue;
+      const info = await lstat(join(projectDir, ...child.split('/'))).catch(() => null);
+      if (!info) continue;
+      out.set(child, `${info.isDirectory() ? 'd' : info.isSymbolicLink() ? 'l' : 'f'}:${info.size}:${info.mtimeMs}:${info.ino}`);
+      if (info.isDirectory() && depth < 12) await walk(child, depth + 1);
+    }
+  };
+  await walk('', 0);
+  return out;
+}
 const localeName = (tag: string) => SUPPORTED_LOCALES.find((x) => x.tag === tag)?.name ?? tag;
 /** Estimated lines a box holds at a size (the prompt's "about N lines at most"). */
 const maxLines = (box: { h: number }, size: number) => Math.max(1, Math.floor(box.h / (size * 1.2) + 0.05));
@@ -273,6 +303,9 @@ export class LocalizeService {
             const had = done.overlay.voices[id];
             if (had && had.script === script && !done.stale.includes(id)) { pair.pending.delete(id); continue; }
             pair.pending.set(id, script);
+            // Its earlier problem (too long, too long to send) is answered by this script: the voice is made again in this
+            // attempt's batch, never left for a later attempt (fix I2).
+            pair.voiceProblems.delete(id);
           }
           await this.writeRows(store, creativeDir, n, pair, done.overlay, { origin: 'agent', stale: done.stale, problems: done.problems });
           pair.submitted = true;
@@ -313,7 +346,10 @@ export class LocalizeService {
       } else {
         const linked = await detachLinksUnder(versionDir, creativeDir);
         if (linked.length > 0) await say('warning', j.earlierLinksDetached({ list: linked.slice(0, 5).join(', ') + (linked.length > 5 ? ', …' : '') }));
-        const before = await snapshotOutputs(creativeDir, [`v${n}`]);
+        // The fallback fonts are fetched before the agent runs: during a run the core writes nothing in the project outside the
+        // version's overlays and the creative's own records, so any other change there is the agent's (fix I1).
+        for (const l of new Set(asked.map((p) => p.locale))) await fontOf(l);
+        const strays = new Set<string>();
         const kit = await new BrandStore(ref.projectDir).readKit().catch(() => EMPTY_BRAND_KIT as BrandKit);
         const requests = asked.map((p) => this.requestOf(p, presets));
         const model = (await this.deps.model()) ?? undefined;
@@ -333,6 +369,7 @@ export class LocalizeService {
             locale: ui,
           });
           const sandboxed = await this.deps.launcher.sandboxed();
+          const watch = await this.watchProject(ref, jobId);
           const run = await this.deps.launcher.start({
             kind: 'localize', jobId, projectSlug: ref.projectSlug, projectDir: ref.projectDir, creativeSlug: slug,
             // The version translated is not "earlier" for this turn: it and every other version folder are read-only for the agent.
@@ -358,6 +395,7 @@ export class LocalizeService {
           const outcome = await run.done.finally(() => signal.removeEventListener('abort', onAbort));
           run.killGroup?.();
           await lastWrite;
+          for (const x of await watch()) strays.add(x);
           if (outcome.status === 'cancelled') return await this.cancelled(ref, store);
           if (outcome.status === 'failed') throw new Error(outcome.error ?? t().errors.turnFailed);
           resumeSessionId = outcome.sessionId ?? resumeSessionId;
@@ -374,9 +412,13 @@ export class LocalizeService {
           await say('info', j.localizeChecking({ count: fixable, attempt: attempt + 1, max: this.maxAttempts }));
           this.deps.turns.changed(ref);
         }
-        const after = await snapshotOutputs(creativeDir, [`v${n}`]);
-        const changed = withoutCoreWrites(creativeDir, snapshotChanges(before, after), after);
-        if (changed.length > 0) await say('warning', j.localizeVersionChanged({ list: changed.slice(0, 5).join(', ') + (changed.length > 5 ? ', …' : '') }));
+        if (strays.size > 0) {
+          const list = [...strays].sort();
+          const text = j.localizeVersionChanged({ list: list.slice(0, 5).join(', ') + (list.length > 5 ? ', …' : '') });
+          await say('warning', text);
+          const notes = this.deps.queue.list().find((x) => x.id === jobId)?.notes ?? [];
+          this.deps.queue.patch(jobId, { notes: [...notes, text] });
+        }
       }
 
       // ---- the rows' final state: voice choice and fallback, problems ----
@@ -405,6 +447,30 @@ export class LocalizeService {
     }
   }
 
+  /**
+   * Fingerprints the project before one agent run and returns the check to call after it: the paths (project-relative) the
+   * run changed, added or removed (fix I1). The creative's `outputs/` leave out the core's own writes (overlays,
+   * renders); the creative's records (conversation, versions, creative.json), `.git`, `.studio`, `.cache` and `node_modules`
+   * are not looked at. Another job of the project running meanwhile (a turn of another creative, a Generate, a brand analysis)
+   * writes its own files: then only this creative's folder is compared.
+   */
+  private async watchProject(ref: CreativeRef, jobId: string): Promise<() => Promise<string[]>> {
+    const creativeRel = `creatives/${ref.creativeSlug}`;
+    const creativeDir = join(ref.projectDir, 'creatives', ref.creativeSlug);
+    const othersBusy = () => this.deps.queue.list().some((x) => x.id !== jobId && (x.state === 'queued' || x.state === 'running') && x.kind !== 'render'
+      && (x.key.endsWith(`:${ref.projectSlug}`) || x.key.includes(`:${ref.projectSlug}:`)));
+    const busyBefore = othersBusy();
+    const outputsOf = async () => snapshotOutputs(creativeDir, await earlierOutputDirs(creativeDir, -1));
+    const [projBefore, outBefore] = [await snapshotProject(ref.projectDir, creativeRel), await outputsOf()];
+    return async () => {
+      const [projAfter, outAfter] = [await snapshotProject(ref.projectDir, creativeRel), await outputsOf()];
+      const busy = busyBefore || othersBusy();
+      const proj = snapshotChanges(projBefore, projAfter).filter((p) => !busy || p === creativeRel || p.startsWith(`${creativeRel}/`));
+      const outs = withoutCoreWrites(creativeDir, snapshotChanges(outBefore, outAfter), outAfter).map((p) => `${creativeRel}/${p}`);
+      return [...proj, ...outs];
+    };
+  }
+
   private async cancelled(ref: CreativeRef, store: CreativeStore): Promise<'cancelled'> {
     await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: t().jobs.cancelledNote }).catch(() => {});
     await this.deps.turns.commitState(ref, t().jobs.stateCommit({ title: ref.creativeSlug }));
@@ -431,17 +497,19 @@ export class LocalizeService {
 
   /** Writes the overlay and the row of every instance of the pair's group (the caller holds the creative's lock). */
   private async writeRows(store: CreativeStore, creativeDir: string, n: number, pair: Pair, overlay: Localization,
-    o: { origin: LocalizationRow['origin']; stale: string[]; problems: string[]; voice?: LocalizationRow['voice']; final?: boolean }): Promise<void> {
+    o: { origin: LocalizationRow['origin']; stale: string[]; problems: string[]; voice?: LocalizationRow['voice']; final?: boolean; fresh?: Record<string, string> }): Promise<void> {
     const versions = await store.readVersions(basename(creativeDir));
     const rows = versions.find((v) => v.n === n)?.localizations ?? [];
     for (const member of pair.group.members) {
       const old = rows.find((r) => r.locale === pair.locale && r.instanceId === member);
       const hash = await writeOverlay(creativeDir, n, { ...overlay, instanceId: member });
       const voice = o.voice ?? old?.voice ?? 'original';
+      const assetHashes = await rowAssetHashes({ projectDir: dirname(dirname(creativeDir)), compDir: pair.group.ic.compDir, overlay, ...(old?.assetHashes ? { old: old.assetHashes } : {}), ...(o.fresh ? { fresh: o.fresh } : {}) });
       const row: LocalizationRow = {
         locale: pair.locale, instanceId: member, hash, origin: o.origin, stale: o.stale, voice,
         ...(o.problems.length ? { problems: o.problems } : {}),
         ...(old?.render ? { render: old.render } : {}),
+        ...(assetHashes ? { assetHashes } : {}),
         ...(o.final ? {
           ...(pair.fallback && pair.choice === 'translate' ? { voiceFallback: pair.fallback } : {}),
           ...(pair.choice === 'translate' && pair.noScript.length ? { noScript: pair.noScript } : {}),
@@ -562,13 +630,14 @@ export class LocalizeService {
       return;
     }
     for (const p of waiting) {
-      const made: Array<{ clipId: string; src: string; script: string }> = [];
+      const made: Array<{ clipId: string; src: string; script: string; sha256: string }> = [];
       const entries = new Map(localizableEntries(p.group.ic.composition).voices.map((x) => [x.clipId, x] as const));
       for (const [clipId, script] of [...p.pending]) {
         p.pending.delete(clipId);
         const r = result.files.get(`${p.key}|${clipId}`);
         const clip = clipLabel(p.group.ic.composition, clipId);
-        if (!r || 'error' in r) { p.voiceProblems.set(clipId, { text: va.voiceFailed({ clip, reason: r && 'error' in r ? r.error.slice(0, 200) : '?' }), fixable: false }); continue; }
+        // A script over the provider's limit is the agent's to shorten; any other failure is not.
+        if (!r || 'error' in r) { p.voiceProblems.set(clipId, { text: va.voiceFailed({ clip, reason: r && 'error' in r ? r.error.slice(0, 200) : '?' }), fixable: Boolean(r && 'error' in r && r.tooLong) }); continue; }
         const file = join(ref.projectDir, ...r.file.split('/'));
         const probed = this.deps.media.probeAudio ? await this.deps.media.probeAudio(file).catch(() => null) : await this.deps.media.probe(file).then((x) => (x ? { durationSec: x.durationSec } : null)).catch(() => null);
         const d = probed?.durationSec ?? null;
@@ -577,7 +646,7 @@ export class LocalizeService {
         // Never cut: a long voice is kept and reported with both durations (Review Focus 4).
         else if (d > clipSec + 0.05) p.voiceProblems.set(clipId, { text: va.voiceTooLong({ clip, voice: Math.round(d * 10) / 10, clipSec: Math.round(clipSec * 10) / 10 }), fixable: true });
         else p.voiceProblems.delete(clipId);
-        made.push({ clipId, src: r.file, script });
+        made.push({ clipId, src: r.file, script, sha256: r.sha256 });
       }
       if (made.length === 0) continue;
       await this.deps.turns.runLocked(ref, async () => {
@@ -590,7 +659,7 @@ export class LocalizeService {
         for (const x of made) overlay.voices[x.clipId] = { src: x.src, script: x.script, sourceScript: p.group.scripts.get(x.clipId)! };
         const done = await finishOverlay({ overlay, base: ic, voice: 'translated', chooseFit: new Set(), uiLocale: ui, projectDir: ref.projectDir,
           voiceRoots: voiceRootsOf(ic, ref.projectDir), scripts: p.group.scripts });
-        await this.writeRows(store, creativeDir, n, p, done.overlay, { origin: 'agent', stale: done.stale, problems: done.problems });
+        await this.writeRows(store, creativeDir, n, p, done.overlay, { origin: 'agent', stale: done.stale, problems: done.problems, fresh: Object.fromEntries(made.map((x) => [x.src, x.sha256])) });
       });
       this.deps.turns.changed(ref);
     }

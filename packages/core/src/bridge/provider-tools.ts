@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { extname, join } from 'node:path';
 import { rm } from 'node:fs/promises';
 import { brandKitSchema, effectiveServices, missingCapability, PROVIDER_IDS, serviceCapability, relativeFileSchema, webUrlSchema, type BriefServices, type KeyCapability, type ProviderId, type ServerMessage, type ServiceKind, type WorkspaceSettings } from '@motion-studio/shared';
@@ -329,9 +330,17 @@ export type VoiceBatchResult =
   | VoiceUnavailable
   | { status: 'declined'; message: string }
   | { status: 'failed'; message: string }
-  | { status: 'done'; provider: 'openai' | 'elevenlabs'; files: Map<string, { file: string } | { error: string }> };
+  | { status: 'done'; provider: 'openai' | 'elevenlabs'; files: Map<string, { file: string; sha256: string } | { error: string; tooLong?: true }> };
 /** The job a batch runs in: the paid context plus the brief's services read when the turn started. */
 export type VoiceBatchContext = PaidContext & { services?: BriefServices };
+
+/** The card's list of calls: at most 200 (the schema's cap); past 199 the rest are one line with their count and characters. */
+function cardCalls(items: VoiceBatchItem[]): Array<{ label: string; chars: number }> {
+  const calls = items.map((i) => ({ label: i.label.slice(0, 300), chars: i.text.length }));
+  if (calls.length <= 200) return calls;
+  const rest = calls.slice(199);
+  return [...calls.slice(0, 199), { label: t().approvals.moreCalls({ count: rest.length }), chars: rest.reduce((n, c) => n + c.chars, 0) }];
+}
 
 /**
  * The voice decision of a batch, before any confirmation or request: the provider `resolveService` gives for the brief's
@@ -380,11 +389,11 @@ export function voiceBatch(deps: ProviderToolsDeps): (c: VoiceBatchContext, item
     if (plan.status === 'unavailable') return plan;
     const { provider, apiKey } = plan;
     const http = { ...jobHttp(deps, c), apiKey };
-    const files = new Map<string, { file: string } | { error: string }>();
+    const files = new Map<string, { file: string; sha256: string } | { error: string; tooLong?: true }>();
     const max = TTS_MAX_CHARS[provider];
     const sendable = items.filter((i) => {
       if (i.text.length <= max) return true;
-      files.set(i.key, { error: t().providers.textTooLong({ provider: LABEL[provider], max }) });
+      files.set(i.key, { error: t().providers.textTooLong({ provider: LABEL[provider], max }), tooLong: true });
       return false;
     });
     if (sendable.length === 0) return { status: 'done', provider, files };
@@ -402,7 +411,7 @@ export function voiceBatch(deps: ProviderToolsDeps): (c: VoiceBatchContext, item
     try {
       await confirmPaidShared(deps, c, `provider:tts-${provider}`, t().approvals.generateVoices({ provider: LABEL[provider], count: sendable.length }),
         t().approvals.voicesBatchDetail({ count: sendable.length, chars, list }),
-        { provider, calls: sendable.slice(0, 200).map((i) => ({ label: i.label.slice(0, 300), chars: i.text.length })) });
+        { provider, calls: cardCalls(sendable) });
     } catch (e) {
       if (e instanceof ProviderError && e.status === 403) return { status: 'declined', message: e.message };
       throw e;
@@ -422,7 +431,8 @@ export function voiceBatch(deps: ProviderToolsDeps): (c: VoiceBatchContext, item
           await h.removeFiles(c.projectDir, [file]);
           throw e;
         }
-        files.set(item.key, { file: `assets/${file}` });
+        // The sha256 of the bytes written: the localization row keeps it, and the render checks it (Ruling L).
+        files.set(item.key, { file: `assets/${file}`, sha256: createHash('sha256').update(out.bytes).digest('hex') });
       } catch (e) {
         if (c.signal.aborted) throw new ProviderError(499, cancelled());
         files.set(item.key, { error: e instanceof Error ? e.message : String(e) });

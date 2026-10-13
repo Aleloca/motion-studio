@@ -70,8 +70,9 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
     ...(i.protectedFiles.length ? fileDenyRules(EDIT_TOOLS, i.protectedFiles) : []),
     ...dirDenyRules(EDIT_TOOLS, i.protectedDirs),
     ...globDenyRules(EDIT_TOOLS, i.protectedGlobs ?? []),
-    // A localize turn writes only through `submit_localization` (Phase 12): the editing tools are denied everywhere.
-    ...(i.kind === 'localize' ? EDIT_TOOLS : []),
+    // A localize turn writes only through `submit_localization` (Phase 12): the editing tools and Bash are denied everywhere,
+    // whatever `autoApproveSandboxed` says (fix I1).
+    ...(i.kind === 'localize' ? [...EDIT_TOOLS, 'Bash'] : []),
   ];
   const extra = [...i.projectAllowRules, ...i.mcpTools];
   if (!i.sandbox) {
@@ -90,7 +91,7 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
       // Phase 8 (spec §3.2, docs/superpowers/specs/2026-10-09-motion-studio-phase8-approvals-usage-design.md): the per-kind
       // AUTO_BASH table is gone. Every kind follows the workspace setting `autoApproveSandboxed`: brand and describe jobs
       // too, since their sandbox has no network, writes stay in the project and the configuration files are protected.
-      autoAllowBashIfSandboxed: i.autoApproveSandboxed,
+      autoAllowBashIfSandboxed: i.kind === 'localize' ? false : i.autoApproveSandboxed,
       filesystem: { denyRead: [...sensitiveHomePaths(i.home), i.configDir].map(sandboxPath), denyWrite: [...[...i.codebases, ...i.protectedFiles, ...i.protectedDirs].map(sandboxPath), ...(i.sandboxGlobs ?? [])] },
       ...(network ? { network } : {}),
     },

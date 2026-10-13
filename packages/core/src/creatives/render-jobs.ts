@@ -10,7 +10,7 @@ import {
 } from '@motion-studio/shared';
 import { copyConfinedFile, hashConfinedFile } from '../brand/agent-guard.ts';
 import { loadComposition, readCompositionFolder } from '../compositions/composition-files.ts';
-import { instanceComposition, localizedComposition, readOverlay } from '../localization/store.ts';
+import { changedAssets, instanceComposition, localizedComposition, overlayAssetPaths, readOverlay } from '../localization/store.ts';
 import { checkedLocale, clipLabel, voiceFileOk } from '../localization/validate.ts';
 import { realDirChain } from './core-files.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -641,6 +641,17 @@ export class RenderJobService {
           await copyConfinedFile(ref.projectDir, v.src, join(compDir, ...v.src.split('/')));
           have.add(v.src);
         }
+      }
+      // Ruling L: every voice and font file the core wrote or attached must still be the one it recorded, checked on the very
+      // file this render uses (the private copy). A changed file is a problem of the language, never rendered silently.
+      const changed = await changedAssets([compDir], row, overlayAssetPaths(read.overlay, row));
+      if (changed.length > 0) {
+        const texts = changed.map((file) => m.variants.assetChanged({ file }));
+        await store.updateVersion(ref.creativeSlug, n, (x) => ({
+          ...x, localizations: (x.localizations ?? []).map((r) => (r.locale !== tag || r.instanceId !== instanceId ? r : { ...r, problems: [...new Set([...(r.problems ?? []), ...texts])] })),
+        }));
+        this.deps.broadcast({ type: 'creative', project: ref.projectSlug, creative: ref.creativeSlug });
+        throw new Error(texts.join('; '));
       }
       const prepared = await this.deps.normalizer.prepare({ projectDir: ref.projectDir, compDir, composition, signal });
       const still = !(composition.duration > 0);

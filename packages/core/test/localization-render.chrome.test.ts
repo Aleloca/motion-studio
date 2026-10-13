@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { messages, type FormatPreset, type JobSummary, type ManifestV2 } from '@motion-studio/shared';
+import { messages, type Composition, type FormatPreset, type JobSummary, type ManifestV2 } from '@motion-studio/shared';
 import { AppConfigStore } from '../src/app-config.ts';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { readCompositionFolder } from '../src/compositions/composition-files.ts';
@@ -44,10 +44,11 @@ describe.skipIf(!tools.ok)('localized renders in real Chrome', () => {
   let work: string;
   let ws: string;
   let app: FastifyInstance;
+  let dist: string;
 
   beforeAll(async () => {
     work = mkdtempSync(join(tmpdir(), 'ms-test-l10n-chrome-'));
-    const dist = join(work, 'dist');
+    dist = join(work, 'dist');
     mkdirSync(join(work, 'render-tmp'));
     await buildRuntime(dist);
     ws = join(work, 'ws');
@@ -111,6 +112,24 @@ describe.skipIf(!tools.ok)('localized renders in real Chrome', () => {
     expect(row.render?.file).toBe('test-still@2.de.png');
     expect(row.render?.problems).toContain(measured);
     expect(row.problems).toContain(measured);
+  });
+
+  it('frames report each overflowing clip, also two equal boxes that overflow alike (Task 4 fix I3: the localize turn measure)', { timeout: 300_000 }, async () => {
+    const dir = join(work, 'frames-creative');
+    const comp = join(dir, 'outputs', 'v1', 'compositions', PRESET.id);
+    mkdirSync(join(comp, 'assets'), { recursive: true });
+    copyFileSync(FONT, join(comp, 'assets', 'Mono.woff2'));
+    const c = composition(LONG_DE);
+    const first = c.tracks[0]!.clips[0]!;
+    c.tracks[0]!.clips.push({ ...first, id: 'title2', name: 'Title 2', props: { ...first.props, y: 100 } });
+    writeFileSync(join(comp, 'composition.json'), JSON.stringify(c));
+    const engine = createRenderEngine({ provider: async () => new ChromeProvider({ exe: tools.chrome!.exe, kind: 'system', limits: { timeLimitMs: 10 * 60_000 } }) });
+    const r = await engine.frames({ dir, versionDir: 'outputs/v1', composition: c as unknown as Composition, format: PRESET, times: [0], width: 64, imageFormat: 'jpeg',
+      signal: new AbortController().signal, distDir: dist });
+    const over = r.errors.filter((e) => e.code === 'textOverflow');
+    // The same message for both (equal boxes, same text): still two reports, one per clip.
+    expect(new Set(over.map((e) => e.message)).size).toBe(1);
+    expect(over.map((e) => e.clipId).sort()).toEqual(['title', 'title2']);
   });
 
   it('a short translation: no overflow measured; the primary render of an overflowing source neither fails nor gains a problem', { timeout: 300_000 }, async () => {

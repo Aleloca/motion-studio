@@ -5,13 +5,17 @@
  * entries; the manifest records `locale`, `forced` and `stale`; no locale = today's file and manifest; export `locales` and
  * the `{locale}` token.
  */
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { messages, type JobSummary, type ManifestV2, type VersionEntry } from '@motion-studio/shared';
 import { currentLocale } from '../src/i18n.ts';
 import { H, startInstanceEnv, type InstanceEnv } from './helpers/instance-server.ts';
+import { FONT } from './helpers/render-env.ts';
+import { LibraryStore } from '../src/library/library-store.ts';
+import { NoMediaTools } from '../src/media/media-tools.ts';
 
 let env: InstanceEnv;
 let dest: string;
@@ -155,6 +159,34 @@ describe('render problems of a translation (Rulings I, J)', { timeout: 120_000 }
     const again = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, headers: H, payload: { destination: dest, picks: { 'test-wide': 1 }, locales: ['de'] } });
     expect(again.statusCode, again.body).toBe(200);
     expect(readdirSync(dest).sort()).toEqual(['launch-test-wide-de-v1.mp4', 'launch-test-wide-en-v1.mp4']);
+  });
+});
+
+describe('fallback font hashes (Ruling L)', { timeout: 120_000 }, () => {
+  it('the row records the attached font\'s hash; a font file replaced afterwards fails the render and the export, never silently', async () => {
+    const projectDir = env.projectDir();
+    mkdirSync(join(projectDir, 'assets', 'fonts'), { recursive: true });
+    const font = join(projectDir, 'assets', 'fonts', 'NotoSansJP-400.woff2');
+    copyFileSync(FONT, font);
+    await new LibraryStore(projectDir, NoMediaTools).registerAssets([{ file: 'fonts/NotoSansJP-400.woff2', origin: 'google-fonts', tags: ['font', 'Noto Sans JP'], description: 'Font Noto Sans JP' }]);
+    const slug = await env.create(['test-wide'], { links: {}, locales: { primary: 'en', extra: ['ja'] } });
+    const p = await put(slug, 1, 'ja', 'test-wide', { texts: { title: 'こんにちは' } });
+    expect(p.statusCode, p.body).toBe(200);
+    const path = 'assets/fonts/NotoSansJP-400.woff2';
+    const row = (await env.versionOf(slug, 1))!.localizations!.find((r) => r.locale === 'ja')!;
+    expect(row.assetHashes).toEqual({ [path]: createHash('sha256').update(readFileSync(font)).digest('hex') });
+    await done(await render(slug, 1, { locales: ['ja'], force: true }));
+    writeFileSync(font, 'not the font any more');
+    const r = await render(slug, 1, { locales: ['ja'], force: true });
+    expect(r.statusCode, r.body).toBe(202);
+    const job = await env.waitJob((r.json() as JobSummary).id);
+    expect(job.state).toBe('failed');
+    expect(job.error).toContain(v().assetChanged({ file: path }));
+    expect((await env.versionOf(slug, 1))!.localizations!.find((x) => x.locale === 'ja')!.problems).toContain(v().assetChanged({ file: path }));
+    // The export does not take the earlier render as current: it renders again, which fails, and says so.
+    const e = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, headers: H, payload: { destination: dest, picks: { 'test-wide': 1 }, locales: ['ja'], force: true } });
+    expect(e.statusCode, e.body).toBe(409);
+    expect(readdirSync(dest)).toEqual([]);
   });
 });
 

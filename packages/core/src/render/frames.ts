@@ -93,7 +93,8 @@ export async function renderFrames(o: RenderFramesOptions): Promise<RenderFrames
     }
     const seen = new Set<string>();
     const errors = [...page.info.errors, ...(await page.errors())]
-      .filter((e) => !IGNORED.has(e.code) && !seen.has(`${e.code}:${e.message}`) && (seen.add(`${e.code}:${e.message}`), true))
+      // Keyed by clip too: two clips with the same message (equal boxes that both overflow) are two reports (fix I3).
+      .filter((e) => !IGNORED.has(e.code) && !seen.has(`${e.code}:${e.clipId ?? ""}:${e.message}`) && (seen.add(`${e.code}:${e.clipId ?? ""}:${e.message}`), true))
       .slice(0, 20);
     return { frames, errors };
   } catch (e) {

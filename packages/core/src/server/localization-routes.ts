@@ -7,7 +7,7 @@ import {
 import { CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeRef, CreativeTurnService } from '../creatives/creative-turns.ts';
 import { editorCompositionView } from '../creatives/editor-staging.ts';
-import { emptyOverlay, finishOverlay, resolveFallbackFont, instanceComposition, localizedComposition, readOverlay, setLocalizationRow, voiceRootsOf, writeOverlay } from '../localization/store.ts';
+import { emptyOverlay, finishOverlay, resolveFallbackFont, instanceComposition, localizedComposition, readOverlay, rowAssetHashes, setLocalizationRow, voiceRootsOf, writeOverlay } from '../localization/store.ts';
 import { checkedInstance, checkedLocale } from '../localization/validate.ts';
 import type { LocalizeService } from '../localization/localize-turn.ts';
 import type { MediaTools } from '../media/media-tools.ts';
@@ -200,8 +200,12 @@ export function registerLocalizationRoutes(app: FastifyInstance, ctx: Localizati
         fallback,
       });
       const hash = await writeOverlay(creativeDir, v.n, done.overlay);
+      const assetHashes = await rowAssetHashes({ projectDir: ref.projectDir, compDir: ic.compDir, overlay: done.overlay, ...(row?.assetHashes ? { old: row.assetHashes } : {}) });
       const next: LocalizationRow = {
         locale: tag, instanceId, hash, origin: 'editor', stale: done.stale, voice,
+        // A voice choice made here replaces the fallback the turn recorded.
+        ...(row?.voiceFallback && !edit.voice ? { voiceFallback: row.voiceFallback } : {}), ...(row?.noScript ? { noScript: row.noScript } : {}),
+        ...(assetHashes ? { assetHashes } : {}),
         ...(done.problems.length ? { problems: done.problems } : {}), ...(row?.render ? { render: row.render } : {}),
       };
       await setLocalizationRow(ref.store, slug, v.n, next);

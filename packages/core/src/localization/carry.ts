@@ -1,5 +1,5 @@
 import type { Locale, VersionEntry } from '@motion-studio/shared';
-import { finishOverlay, readOverlay, voiceRootsOf, writeOverlay, type InstanceComposition } from './store.ts';
+import { finishOverlay, readOverlay, rowAssetHashes, voiceRootsOf, writeOverlay, type InstanceComposition } from './store.ts';
 import { voiceFileOk, withoutGone } from './validate.ts';
 
 /** A version folder of a creative: the creative folder and the version (the previous one, recorded) or its number (the new one). */
@@ -35,8 +35,12 @@ export async function carryLocalizations(prev: VersionDir, next: VersionDir, nex
       overlay, base, voice: row.voice, chooseFit: new Set(), uiLocale: o.uiLocale, projectDir: o.projectDir, voiceRoots, extraStale: missingVoices,
     });
     const hash = await writeOverlay(next.creativeDir, next.n, done.overlay);
+    // Ruling L: the hashes of the files the kept entries still use go along.
+    const assetHashes = await rowAssetHashes({ projectDir: o.projectDir, compDir: base.compDir, overlay: done.overlay, ...(row.assetHashes ? { old: row.assetHashes } : {}) });
     out.push({
       locale: row.locale, instanceId: row.instanceId, hash, origin: row.origin, stale: done.stale, voice: row.voice,
+      ...(row.voiceFallback ? { voiceFallback: row.voiceFallback } : {}), ...(row.noScript ? { noScript: row.noScript } : {}),
+      ...(assetHashes ? { assetHashes } : {}),
       ...(done.problems.length ? { problems: done.problems } : {}),
     });
   }
