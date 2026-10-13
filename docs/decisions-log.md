@@ -549,6 +549,16 @@ Legenda impatto: 🟢 basso · 🟡 medio · 🔴 alto (sicurezza o prodotto).
 
 236. 🟡 **Timeline, giro di correzioni 1** (implementatore; revisione del task 7). Il magnete è anche nel trasporto della timeline, sullo stesso stato del contesto dell'editor del pulsante del palco. Il cursore legge sempre l'ultimo `onChange` (ref), e lo zoom ancorato parte dall'ultimo zoom e scorrimento richiesti, non da quelli dell'ultimo render: più eventi nello stesso frame (rotella, trascinamento) si concatenano senza spostare l'àncora. Il secondo `seek` dopo uno scorrimento è saltato se la riproduzione è ripartita o se è arrivato un seek più recente; i bersagli di aggancio si ricalcolano a ogni frame del trascinamento (col ripple le scene si spostano); l'avviso di rifiuto sparisce dopo 6 s.
 
+## Fase 10b · editor delle immagini (task 9)
+
+244. 🟡 **Livelli: ordine di sovrapposizione e righe** (deciso dall'orchestratore, task 9). Il pannello elenca le tracce della composizione fissa dall'alto verso il basso nell'ordine visivo: l'ultima traccia dello schema sta in cima, come nelle corsie della timeline (task 7); dentro una traccia con più clip, l'ultima clip sta sopra. Righe di 44 px: occhio, icona del tipo (basta per la miniatura, nessuna rotta di miniature), nome, tipo, lucchetto. Nessun "+": il piede dice "Chiedi all'agente di aggiungere livelli". *Costo cambio:* basso.
+
+245. 🟡 **Occhio e lucchetto dei livelli** (implementatore). Una traccia con una sola clip è una riga e i suoi interruttori sono quelli della traccia (`trackFlags`); un'eventuale bandiera scritta dall'agente sulla clip stessa si vede e, spegnendola, viene tolta anche dalla clip (due operazioni, due passi di annullamento). Una traccia con più clip è una riga di intestazione con le bandiere della traccia e le clip annidate con le proprie (`clipFlags`). Un livello bloccato si può selezionare (le maniglie dicono che è bloccato) e sbloccare. Un rifiuto di `applyEdit` appare tradotto sopra l'elenco. *Costo cambio:* basso.
+
+246. 🟡 **Zoom dell'immagine** (implementatore). Barra in basso al palco: "Adatta" (predefinito, la dimensione del guscio) e un cursore in-house da 50 % a 400 % a passi di 10; sopra "Adatta" la cornice misura la percentuale dei pixel dell'immagine e il palco scorre. Lo zoom è dello stato dell'editor, non si salva e non entra nella bozza. Con "Adatta" il cursore sta a 100 % senza misurare lo spazio. *Costo cambio:* basso.
+
+247. 🟡 **Immagine fissa: ispettore e salvataggio senza codice nuovo** (implementatore). L'ispettore nasconde già Tempi e Animazione quando la durata è 0 (task 8), il salvataggio e la pillola "Bozza" sono quelli di ogni formato: un formato png produce una versione nuova `editor` con lo stesso `POST …/edits`, senza agente (test). *Costo cambio:* nessuno.
+
 ## Hotfix CI dopo il merge della fase 10a
 
 210. 🟡 **CI rossa dopo la fase 10a: cinque cause, nessuna nel prodotto** (hotfix `fix/ci-after-10a`; il 210 resta riservato a questa voce). Ogni guasto è stato riprodotto in locale prima della correzione; nessuna guardia e nessun rifiuto sono stati allentati.

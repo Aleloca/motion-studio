@@ -50,6 +50,8 @@ import { nudgeClip, nudgeable } from './nudge.ts';
 import { Stage } from './Stage.tsx';
 import { Timeline } from './Timeline.tsx';
 import { Inspector } from './Inspector.tsx';
+import { ZoomBar, zoomFrame } from './ImageEditor.tsx';
+import { LayersPanel } from './LayersPanel.tsx';
 import { useEditorKeys, useNudgeKeys } from './useEditorKeys.ts';
 import { usePlayerControls } from './usePlayerControls.ts';
 import { DEFAULT_EXPORT_NAME_PATTERN, editProblemText } from '@motion-studio/shared';
@@ -328,6 +330,8 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const [selection, setSelection] = useState<string | null>(null);
   // The magnet (stage guides now, the timeline's edges in Task 7): per editor, not saved.
   const [snap, setSnap] = useState(true);
+  /** The image editor's zoom: null is Fit, otherwise 50 to 400 %. Not saved. */
+  const [zoom, setZoom] = useState<number | null>(null);
   useEffect(() => { setSelection(null); }, [n, primary]);
   // The conversation's pins on the version being edited, as markers on the timeline ruler (numbered as in the format view).
   const [storedPins] = usePendingPins(pinsKey(slug, creative));
@@ -421,7 +425,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
       ? e.meta({ size: `${width}×${height}`, seconds: formatNumber(locale, draft.composition.duration, { maximumFractionDigits: 1 }), fps: draft.composition.fps })
       : e.metaImage({ size: `${width}×${height}` }))
     : '';
-  const frameStyle: CSSProperties = { width: `min(100cqw, calc(100cqh * ${width / height}))`, aspectRatio: `${width} / ${height}` };
+  const frameStyle: CSSProperties = zoomFrame(width, height, video ? null : zoom);
   const alsoList = followers.map(labelOf).join(', ');
   const blocked = !draft ? null
     : working ? e.busyAgent
@@ -454,8 +458,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
 
       <aside className="ms-ed-side ms-ed-left" aria-label={video ? e.scenes : e.layers} data-part="l">
         <div className="ms-fv-side-head"><b>{video ? e.scenes : e.layers}</b></div>
-        {/* Task 9 puts the layers panel in the image editor's slot. */}
-        {video && draft ? <ScenesColumn /> : (
+        {draft ? (video ? <ScenesColumn /> : <LayersPanel />) : (
           <div className="ms-ed-slot" data-slot={video ? 'scenes' : 'layers'}>
             <p>{video ? e.scenesSoon : e.layersSoon}</p>
           </div>
@@ -502,6 +505,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
         {draft && (dirty || saved) ? (
           <DraftPill edits={draft.ops.length} nextN={nextN} blocked={blocked} saving={saving} saved={saved} onSave={() => { void save(); }} onDiscard={discardDraft} />
         ) : null}
+        {draft && !video ? <ZoomBar zoom={zoom} onZoom={setZoom} /> : null}
         <div className="ms-ed-undo" role="toolbar" aria-label={e.draft({ n: draft?.ops.length ?? 0 })}>
           <Button size="sm" variant="ghost" icon aria-label={e.undo} title={e.undo} disabled={!draft || draft.past.length === 0} onClick={() => actions.undo()}><Icon name="undo" size={14} /></Button>
           <Button size="sm" variant="ghost" icon aria-label={e.redo} title={e.redo} disabled={!draft || draft.future.length === 0} onClick={() => actions.redo()}><Icon name="redo" size={14} /></Button>
