@@ -11,8 +11,8 @@
 // - Discard re-sends the BASE composition to the player (`clearDraft()` sends nothing).
 // - A renewed preview session moves the staged files in the core (also from a session that ended within the core's grace,
 //   decisions log 264): the frame is replaced by the player (a new `key`, never a new `src`), the staged list is updated
-//   from the new session's `staged` (its media indices), a used file that did not come along is staged again from where it
-//   came from (Save waits meanwhile), the staged videos' session media are sent again, and staging and saving use the new
+//   from the new session's `staged` (its media indices), a staged file that did not come along (used or not) is staged
+//   again from where it came from (Save waits meanwhile), the staged videos' session media are sent again, and staging and saving use the new
 //   token.
 // - The draft goes to the player with `setComposition` (coalesced per animation frame); a draft the runtime refuses is
 //   shown as a problem, never ignored.
@@ -253,7 +253,8 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
 
   // A new preview session (a renewal, or a fresh one after an expiry or an eviction): the draft's staged files must be in it
   // (decisions log 264). Those it took over come back in `session.staged`, with this session's media indices (final review
-  // M1); a file the draft uses that did not come along is staged again from where it came from, once. Save waits meanwhile.
+  // M1); a staged file that did not come along (used now or not: an undo may bring it back) is staged again from where it
+  // came from, once. Save waits meanwhile.
   const session = preview.state.kind === 'ready' ? preview.state.session : null;
   const [restaging, setRestaging] = useState(false);
   useEffect(() => {
@@ -263,8 +264,8 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     const tok = session.token;
     const came = new Map((session.staged ?? []).map((a) => [a.path, a] as const));
     for (const a of came.values()) if (d.staged.some((x) => x.path === a.path)) actions.stage(a, { token: tok });
-    const used = new Set(usedStaged(d));
-    const missing = d.staged.filter((x) => used.has(x.path) && !came.has(x.path));
+    // Every file staged for this draft, used now or not: an undo may bring an unused one back (final review N4).
+    const missing = d.staged.filter((x) => !came.has(x.path));
     if (missing.length === 0) { actions.stagedIn(tok); return; }
     let alive = true;
     setRestaging(true);

@@ -571,6 +571,39 @@ describe('a late renewal adopts an ended session\'s staging (decisions log 264)'
     expect(c.staged).toEqual([svg2]);
   });
 
+  it('an ended session\'s staging is never adopted by a renewal of another version or another format (it keeps waiting for the right one)', async () => {
+    const v2Dir = join(creativeDir, 'outputs', 'v2', 'compositions', 'test-wide');
+    mkdirSync(v2Dir, { recursive: true });
+    writeFileSync(join(v2Dir, 'composition.json'), readFileSync(join(compDir, 'composition.json')));
+    const version2 = { ...version, n: 2 } as VersionEntry;
+    const bDir = join(creativeDir, 'outputs', 'v1', 'compositions', 'test-wide-b');
+    mkdirSync(bDir, { recursive: true });
+    writeFileSync(join(bDir, 'composition.json'), readFileSync(join(compDir, 'composition.json')));
+    const versionB = { ...version, compositions: [...version.compositions!, { ...version.compositions![0]!, format: 'test-wide-b', dir: 'compositions/test-wide-b' }] } as VersionEntry;
+    await previews.close();
+    await normalizer.close();
+    normalizer = new MediaNormalizer({ ffmpeg: async () => ffmpeg });
+    previews = new PreviewService({ engine: undefined, normalizer, presets: async () => [PRESET, { ...PRESET, id: 'test-wide-b' }], uiOrigins: () => [UI], media, stagingGraceMs: 60_000 });
+    register(['logo.svg']);
+    const a = await previews.mintPreview(ref(), versionB, 'test-wide', UI, 'en');
+    const svg = await stage(a.token, { kind: 'library', file: 'logo.svg' });
+    const oldDir = stagingDirOf(projectDir, 'launch', a.token);
+    expect(previews.revokePreview(ref(), a.token)).toBe(true);
+    await new Promise((r) => setTimeout(r, 50));
+    // Another version of the same format.
+    const otherVersion = await previews.mintPreview({ ...ref(), n: 2 }, version2, 'test-wide', UI, 'en', { renewFrom: a.token });
+    expect(otherVersion.staged).toBeUndefined();
+    expect(existsSync(stagingDirOf(projectDir, 'launch', otherVersion.token))).toBe(false);
+    // Another format of the same version.
+    const otherFormat = await previews.mintPreview(ref(), versionB, 'test-wide-b', UI, 'en', { renewFrom: a.token });
+    expect(otherFormat.staged).toBeUndefined();
+    expect(existsSync(stagingDirOf(projectDir, 'launch', otherFormat.token))).toBe(false);
+    expect(existsSync(join(oldDir, svg.path))).toBe(true);
+    // The right renewal still adopts it.
+    const right = await previews.mintPreview(ref(), versionB, 'test-wide', UI, 'en', { renewFrom: a.token });
+    expect(right.staged).toEqual([svg]);
+  });
+
   it('after the grace, nothing is adopted and the folder is gone; app close removes waiting stagings', async () => {
     await previews.close();
     await normalizer.close();

@@ -810,6 +810,23 @@ describe('EditorScreen · staging and session renewal', () => {
     await waitFor(() => expect((screen.getByRole('button', { name: 'Save as v3' }) as HTMLButtonElement).disabled).toBe(false));
   });
 
+  it('a staged file the draft no longer uses is staged again too: an undo may bring it back (final review N4)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    api.previewSession.mockImplementationOnce(async (_s, _c, n, format) => ({
+      url: `http://127.0.0.1:61234/tok-a/runtime/index.html?mode=preview&parentOrigin=x`, token: 'tok-a', origin: 'http://127.0.0.1:61234',
+      expiresAt: new Date(Date.now() + 66_000).toISOString(), format, hash: hashOf(n), width: 1080, height: 1920, duration: 6, fps: 30,
+    }));
+    render(<Harness />);
+    await opened();
+    api.stageEditorAsset.mockResolvedValueOnce(asset);
+    await act(async () => { await probe.ctx!.stageAsset({ kind: 'library', file: 'assets/clip.mp4' }); });
+    // Staged, never used by the draft.
+    api.stageEditorAsset.mockResolvedValueOnce(asset);
+    await act(async () => { await vi.advanceTimersByTimeAsync(7000); });
+    await waitFor(() => expect(api.stageEditorAsset).toHaveBeenCalledTimes(2));
+    expect(api.stageEditorAsset).toHaveBeenLastCalledWith('acme', 'lancio', expect.objectContaining({ from: { kind: 'library', file: 'assets/clip.mp4' } }));
+  });
+
   it('a file that cannot be staged again in the new session is named, never dropped silently', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     api.previewSession.mockImplementationOnce(async (_s, _c, n, format) => ({
