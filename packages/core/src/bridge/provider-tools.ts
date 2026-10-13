@@ -3,7 +3,7 @@ import { rm } from 'node:fs/promises';
 import { brandKitSchema, relativeFileSchema, webUrlSchema, type ServerMessage, type WorkspaceSettings } from '@motion-studio/shared';
 import { MCP_TOOLS } from '../agent/launcher.ts';
 import type { ApprovalBroker } from '../approvals/broker.ts';
-import { isAllowedRule, PermissionsStore } from '../approvals/permissions-store.ts';
+import { confirmPaid as confirmPaidShared } from '../approvals/confirm-paid.ts';
 import { MAX_AGENT_BYTES, readConfinedBytes, readConfinedFile } from '../brand/agent-guard.ts';
 import { inspectSiteFonts } from '../brand/site-fonts.ts';
 import { LibraryStore } from '../library/library-store.ts';
@@ -32,7 +32,7 @@ export interface ProviderToolsDeps {
 }
 
 /** Network access of one job: every request (API call or download) also stops when the job is cancelled. */
-export function jobHttp(deps: { fetch?: typeof fetch; transport?: Transport; lookup?: LookupFn }, c: BridgeContext) {
+export function jobHttp(deps: { fetch?: typeof fetch; transport?: Transport; lookup?: LookupFn }, c: { signal: AbortSignal }) {
   const withJob = (init: RequestInit): RequestInit => ({ ...init, signal: init.signal ? AbortSignal.any([init.signal, c.signal]) : c.signal });
   const baseFetch = deps.fetch ?? globalThis.fetch;
   const baseTransport = deps.transport ?? (deps.fetch ? fetchTransport(deps.fetch) : nodeTransport);
@@ -73,20 +73,7 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
     if (!k) throw new ProviderError(400, t().providers.configureKey({ provider: LABEL[p] }));
     return k;
   };
-  const confirmPaid = async (c: BridgeContext, rule: string, title: string, detail: string) => {
-    if (!(await deps.settings()).confirmPaidProviders) return;
-    // A stored rule counts only when it is one "Sempre" could have produced; an unreadable store means ask.
-    if (isAllowedRule(rule) && await new PermissionsStore(c.projectDir).has(rule).catch(() => false)) return;
-    // No await between the check and the request: a cancelled job must never leave a prompt behind.
-    alive(c);
-    const pending = deps.approvals.request({ jobId: c.jobId, projectSlug: c.projectSlug, projectDir: c.projectDir, creativeSlug: c.creativeSlug, kind: 'provider', toolName: rule, input: {}, title, detail });
-    const onAbort = () => deps.approvals.cancelJob(c.jobId);
-    c.signal.addEventListener('abort', onAbort, { once: true });
-    let decision: Awaited<typeof pending>['decision'];
-    try { ({ decision } = await pending); } finally { c.signal.removeEventListener('abort', onAbort); }
-    alive(c);
-    if (decision !== 'once' && decision !== 'always') throw new ProviderError(403, t().approvals.providerNotApproved);
-  };
+  const confirmPaid = (c: BridgeContext, rule: string, title: string, detail: string) => confirmPaidShared(deps, c, rule, title, detail);
   const keyChecks = deps.keyChecks ?? new KeyCheckCache();
   /** A 401/403 from ElevenLabs means the key lacks this permission: remembered in memory, then the error goes on. */
   const withKeyCheck = async <T>(capability: string, permission: string, run: () => Promise<T>): Promise<T> => {

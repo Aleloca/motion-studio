@@ -13,6 +13,7 @@ import { Button, Check, Chip, Empty, Icon, Input, NavItem, Pill, Popover, Select
 import { Alert, UNDO_MS, message } from './common.tsx';
 import { KEEPALIVE, deferRemoval, isPendingRemoval, removalKey, usePendingRemovals } from './deferred.ts';
 import { AssetDetail } from './assets/AssetDetail.tsx';
+import { GenerateDialog } from './assets/GenerateDialog.tsx';
 import { KINDS, SORTS, baseName, mergeTags, sortAssets, splitTags, type AssetSort } from './assets/model.ts';
 import { Thumb } from './assets/Thumb.tsx';
 import './library.css';
@@ -95,6 +96,7 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
   // Deletes waiting for their Undo time: the cards are hidden until the delete goes out (or Undo brings them back).
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
   const [uploading, setUploading] = useState<string[]>([]);
+  const [generating, setGenerating] = useState(false);
   const [fresh, setFresh] = useState<Set<string>>(() => new Set());
   const [drag, setDrag] = useState(false);
   const dragDepth = useRef(0);
@@ -326,8 +328,10 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
             <Icon name="search" size={14} />
             <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={a.searchPlaceholder} aria-label={a.search} />
           </label>
+          <Button variant="outline" disabled={!canUpload} onClick={() => setGenerating(true)}><Icon name="sparkle" size={13} strokeWidth={1.7} />{t.web.library.generate.open}</Button>
           <Button variant="ink" disabled={!canUpload} onClick={pick}><Icon name="upload" size={13} strokeWidth={1.7} />{a.upload}</Button>
         </div>
+        <GenerateDialog open={generating} onClose={() => setGenerating(false)} slug={slug} live={live} />
 
         {listing.error ? <Alert>{a.listUnreadable({ detail: listing.error })}</Alert> : null}
         {listing.unregistered.length > 0 ? (

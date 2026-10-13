@@ -39,6 +39,7 @@ import { defaultChromeInstaller, registerRenderEngineRoutes, type ChromeInstalle
 import { CodedError, expandHome, WorkspaceError, WorkspaceStore } from '../workspace-store.ts';
 import { recoverWorkspace, registerCreativeRoutes, type RecoverOptions } from './creative-routes.ts';
 import { registerFontsRoutes } from './fonts-routes.ts';
+import { registerGenerateRoutes } from './generate-routes.ts';
 import { registerVoicesRoutes } from './voices-routes.ts';
 import { KeyCheckCache } from '../providers/key-check.ts';
 import { GoogleFontsCatalog } from '../providers/google-fonts-catalog.ts';
@@ -74,6 +75,8 @@ export interface ServerDeps {
   configDir?: string;
   /** Network of the Google Fonts catalog, previews and add (tests inject a fake fetch; default: the real one through the safe transport). */
   fontsHttp?: HttpDeps;
+  /** Network of the Assets Generate jobs (tests inject a fake fetch; default: the real one). */
+  generateHttp?: Pick<HttpDeps, 'fetch' | 'transport' | 'lookup' | 'timeoutMs'>;
   /** Network of the voice list and previews (tests inject a fake fetch; default: the real one through the safe transport). */
   voicesHttp?: HttpDeps;
   /** What the app has learned about the provider keys (core memory only; tests inject one to read it). */
@@ -193,7 +196,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const hub = new EventHub();
   const approvals = deps.approvals ?? new ApprovalBroker({ broadcast: (m) => hub.broadcast(m) });
   // Render jobs have their own lane of one slot (Task 5 M3): a render never blocks an agent turn, nor waits for one.
-  const queue = new JobQueue({ concurrency: 2, lanes: { render: 1 }, onUpdate: (job) => hub.broadcast({ type: 'job', job }) });
+  const queue = new JobQueue({ concurrency: 2, lanes: { render: 1, generate: 2 }, onUpdate: (job) => hub.broadcast({ type: 'job', job }) });
   const media = deps.media ?? NoMediaTools;
   const isJobActive = (key: string) => queue.list().some((j) => j.key === key && (j.state === 'queued' || j.state === 'running'));
   // Video sources are normalised for the renderer (and, Task 5b/8, the preview); close() kills whatever still runs.
@@ -464,6 +467,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   registerFontsRoutes(app, { ...routeCtx, catalog: new GoogleFontsCatalog({ configDir, http: fontsHttp }), http: fontsHttp, signer: new UrlSigner(deps.signedUrlTtlMs), ...(deps.fontsInstallIo ? { installIo: deps.fontsInstallIo } : {}) });
   const keyChecks = deps.keyChecks ?? new KeyCheckCache();
   registerVoicesRoutes(app, { vault, http: deps.voicesHttp ?? { fetch: globalThis.fetch }, signer: new UrlSigner(deps.signedUrlTtlMs), keyChecks });
+  registerGenerateRoutes(app, { requireWorkspace, vault, approvals, media, queue, keyChecks, http: deps.generateHttp ?? { fetch: globalThis.fetch }, broadcast: (m) => hub.broadcast(m) });
   registerProjectRoutes(app, { requireWorkspace, jobKeyOf: projectJobKey, broadcast: (m) => hub.broadcast(m) });
 
   registerBridgeRoutes(app, {

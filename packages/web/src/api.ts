@@ -95,6 +95,12 @@ export interface GoogleFontSearch { stale: boolean; fallback: boolean; families:
 /** One voice as the core lists it: the preview is a short-lived signed core URL, never a provider URL. */
 export interface VoiceInfo { id: string; name: string; labels: Record<string, string>; previewUrl: string | null }
 export interface VoiceList { provider: 'elevenlabs' | 'openai'; configured: boolean; voices: VoiceInfo[]; previewExpiresAt: number }
+/** POST /api/projects/:slug/generate: one request per kind; the core validates every field and answers with the job to follow. */
+export type GenerateRequest =
+  | { kind: 'image'; provider: 'openai'; prompt: string; options: { width: number; height: number; quality?: 'low' | 'medium' | 'high' | 'auto'; background?: 'transparent' | 'opaque' | 'auto'; name?: string } }
+  | { kind: 'voice'; provider: 'openai' | 'elevenlabs'; text: string; options: { voice?: string; instructions?: string; format?: 'mp3' | 'wav'; name?: string } }
+  | { kind: 'sfx'; provider: 'elevenlabs'; prompt: string; options: { durationSec?: number; loop?: boolean; name?: string } }
+  | { kind: 'music'; provider: 'elevenlabs'; prompt: string; options: { durationSec: number; instrumental?: boolean; name?: string } };
 export interface CatalogState { presets: FormatPreset[]; error: string | null; path: string }
 const p = (slug: string) => `/api/projects/${encodeURIComponent(slug)}`;
 const c = (slug: string, creative: string) => `${p(slug)}/creatives/${encodeURIComponent(creative)}`;
@@ -166,6 +172,7 @@ export const api = {
   addGoogleFont: (slug: string, body: { family: string; weights: number[]; italic: boolean; role: BrandFont['role'] }) =>
     request<{ font: BrandFont; files: string[]; updated: boolean }>('POST', `${p(slug)}/brand/fonts/google`, body),
   projectFileUrl: (slug: string, rel: string) => `${p(slug)}/files/${enc(rel)}`,
+  generateAsset: (slug: string, body: GenerateRequest) => request<{ jobId: string }>('POST', `${p(slug)}/generate`, body),
   cancelJob: (id: string) => request<{ cancelled: boolean }>('POST', `/api/jobs/${encodeURIComponent(id)}/cancel`),
   getFormats: () => request<CatalogState>('GET', '/api/formats'),
   recentCreatives: (limit?: number) => request<RecentCreative[]>('GET', `/api/recent-creatives${limit === undefined ? '' : `?limit=${limit}`}`),
