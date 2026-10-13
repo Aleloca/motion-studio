@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('motionStudio', {
   setBadge: (n: number): Promise<void> => ipcRenderer.invoke('ms:badge', n),
   // How many renders are queued or running (a whole count): closing the window with one asks first (Task 8).
   setRendersRunning: (n: number): Promise<void> => ipcRenderer.invoke('ms:renders-running', n),
+  // How many editor drafts have edits not saved yet (a whole count): closing the window with one asks first (Phase 10b).
+  setDraftsUnsaved: (n: number): Promise<void> => ipcRenderer.invoke('ms:drafts-unsaved', n),
   // A click on one of the app's notifications (the main process sends it only to the app's own page). The page gets
   // a plain call: never the IPC event or its sender. Returns the unsubscribe.
   onAttentionClick: (cb: () => void): (() => void) => {

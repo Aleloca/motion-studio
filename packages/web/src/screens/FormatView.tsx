@@ -306,6 +306,13 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
     go(href.creative(slug, creative));
   };
 
+  // The direct editor (Phase 10b): a v2 version with no agent or render at work. The version on screen is the one it opens.
+  const openEditor = () => {
+    pause();
+    keepVersion(viewing);
+    go(href.edit(slug, creative, format));
+  };
+
   // Comments.
   const place = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
@@ -458,6 +465,11 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
           ) : null}
           {versions.length && cr ? (
             <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={actions} buttonRef={versionButton} />
+          ) : null}
+          {comp !== null && !working && preview.state.kind !== 'legacy' ? (
+            <Button variant="outline" className="ms-cv-edit" aria-label={t.web.editor.editOf({ label })} onClick={openEditor}>
+              <Icon name="edit" size={13} strokeWidth={1.7} />{t.web.editor.edit}
+            </Button>
           ) : null}
           <Button variant="ink" className="ms-cv-export" disabled={!latest} onClick={() => { if (latest) setExporting({ open: true, snapshot: { versions, states } }); }}>
             <Icon name="download" size={13} strokeWidth={1.7} />{c.export}

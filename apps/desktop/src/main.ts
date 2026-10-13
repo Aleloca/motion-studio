@@ -230,22 +230,23 @@ async function run() {
   // A render running when the window closes or the app quits: ask first (carry 11). Attached, the renders belong to the
   // other instance and go on without this window: nothing to ask.
   const renders = createRenderGuard({
-    ask: async (count) => {
-      if (server.attached || win.isDestroyed()) return true;
-      const { response } = await dialog.showMessageBox(win, { type: 'warning', ...renderRunningPrompt(t().desktop, count) });
+    ask: async (count, drafts) => {
+      // Unsaved drafts live in this window: attached or not, closing loses them. Renders belong to the other instance then.
+      if (win.isDestroyed() || (server.attached && drafts === 0)) return true;
+      const { response } = await dialog.showMessageBox(win, { type: 'warning', ...renderRunningPrompt(t().desktop, server.attached ? 0 : count, drafts) });
       return response === 0;
     },
   });
   registerRenderGuard(ipcMain, { trusted, guard: renders, invalid: () => new Error(t().desktop.invalidRequest) });
   win.on('close', (e) => {
-    if (closing || renders.running() === 0 || renders.confirmed()) return;
+    if (closing || renders.pending() === 0 || renders.confirmed()) return;
     e.preventDefault();
     void renders.mayClose().then((yes) => { if (yes && !win.isDestroyed()) win.close(); });
   });
   app.on('before-quit', (e) => {
     if (closing) return;
     e.preventDefault();
-    if (renders.running() > 0 && !renders.confirmed()) {
+    if (renders.pending() > 0 && !renders.confirmed()) {
       void renders.mayClose().then((yes) => { if (yes) app.quit(); });
       return;
     }

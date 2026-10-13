@@ -46,6 +46,7 @@ describe('Phase 7 routes', () => {
     ['#/settings/usage', { name: 'settings', section: 'usage' }],
     ['#/settings/billing', { name: 'projects' }],
     ['#/p/acme/c/lancio/f/instagram-reel-9x16', { name: 'format', slug: 'acme', creative: 'lancio', format: 'instagram-reel-9x16' }],
+    ['#/p/acme/c/lancio/f/instagram-reel-9x16/edit', { name: 'edit', slug: 'acme', creative: 'lancio', format: 'instagram-reel-9x16' }],
     ['#/p/acme/c/lancio/f/', { name: 'projects' }],
     ['#/p/acme/c/lancio/f/../x', { name: 'projects' }],
   ])('%s', (hash, route) => { expect(parseRoute(hash)).toEqual(route); });
@@ -59,6 +60,8 @@ describe('Phase 7 routes', () => {
     expect(href.settings()).toBe('#/settings/general');
     expect(href.format('acme', 'c-1', 'tiktok-9x16')).toBe('#/p/acme/c/c-1/f/tiktok-9x16');
     expect(parseRoute(href.format('acme', 'c-1', 'tiktok-9x16'))).toEqual({ name: 'format', slug: 'acme', creative: 'c-1', format: 'tiktok-9x16' });
+    expect(href.edit('acme', 'c-1', 'tiktok-9x16')).toBe('#/p/acme/c/c-1/f/tiktok-9x16/edit');
+    expect(parseRoute(href.edit('acme', 'c-1', 'tiktok-9x16'))).toEqual({ name: 'edit', slug: 'acme', creative: 'c-1', format: 'tiktok-9x16' });
   });
 
   it('orders pages by depth (drives the T1 direction)', () => {

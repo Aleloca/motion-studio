@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { setLocale, t } from '@motion-studio/core';
-import { CONFIRM_TTL_MS, createRenderGuard, registerRenderGuard, rendersArg, renderRunningPrompt } from '../src/render-guard.ts';
+import { CONFIRM_TTL_MS, DRAFTS_UNSAVED, createRenderGuard, registerRenderGuard, rendersArg, renderRunningPrompt } from '../src/render-guard.ts';
 
 // Closing the UI window (or quitting) while a render runs asks first (Task 8, carry 11): the quit itself cancels the
 // renders cleanly (render-window.ts shutdownForQuit), this is only the confirmation.
@@ -42,7 +42,7 @@ describe('createRenderGuard', () => {
     g.set(1);
     expect(g.confirmed()).toBe(false);
     expect(await g.mayClose()).toBe(true);
-    expect(ask).toHaveBeenCalledWith(1);
+    expect(ask).toHaveBeenCalledWith(1, 0);
     expect(g.confirmed()).toBe(true);
     expect(await g.mayClose()).toBe(true);
     expect(ask).toHaveBeenCalledTimes(1);
@@ -100,5 +100,53 @@ describe('createRenderGuard', () => {
     expect(p.buttons).toHaveLength(2);
     expect(p.defaultId).toBe(1);
     expect(p.cancelId).toBe(1);
+  });
+});
+
+// The editor's unsaved drafts (Phase 10b) use the same guard and dialog path as running renders.
+describe('unsaved editor drafts', () => {
+  it('the page reports a whole count over its own channel, from the app page only', () => {
+    const handlers: Record<string, (e: unknown, arg: unknown) => unknown> = {};
+    const guard = createRenderGuard({ ask: vi.fn(async () => true) });
+    let trusted = true;
+    registerRenderGuard({ handle: (ch, fn) => { handlers[ch] = fn as never; } }, { trusted: () => trusted, guard, invalid: () => new Error('Invalid request') });
+    handlers[DRAFTS_UNSAVED]!({ sender: 'win' }, 2);
+    expect(guard.drafts()).toBe(2);
+    expect(guard.pending()).toBe(2);
+    expect(guard.running()).toBe(0);
+    expect(() => handlers[DRAFTS_UNSAVED]!({ sender: 'win' }, -1)).toThrow('Invalid request');
+    trusted = false;
+    expect(() => handlers[DRAFTS_UNSAVED]!({ sender: 'x' }, 0)).toThrow('Invalid request');
+    expect(guard.drafts()).toBe(2);
+  });
+  it('a draft alone makes the close ask, with the draft question', async () => {
+    const ask = vi.fn(async () => false);
+    const g = createRenderGuard({ ask });
+    g.setDrafts(1);
+    expect(await g.mayClose()).toBe(false);
+    expect(ask).toHaveBeenCalledWith(0, 1);
+    g.setDrafts(0);
+    expect(await g.mayClose()).toBe(true);
+  });
+  it('a yes is forgotten when another draft appears', async () => {
+    const ask = vi.fn(async () => true);
+    const g = createRenderGuard({ ask });
+    g.setDrafts(1);
+    await g.mayClose();
+    expect(g.confirmed()).toBe(true);
+    g.setDrafts(2);
+    expect(g.confirmed()).toBe(false);
+  });
+  it('the prompt: drafts only asks about the edits, keeping the editor as the default; with renders it names both', () => {
+    setLocale('en');
+    const only = renderRunningPrompt(t().desktop, 0, 2);
+    expect(only.message).toContain('2');
+    expect(only.buttons).toEqual([t().desktop.draftUnsavedQuit, t().desktop.draftUnsavedKeep]);
+    expect(only.defaultId).toBe(1);
+    expect(only.cancelId).toBe(1);
+    const both = renderRunningPrompt(t().desktop, 1, 1);
+    expect(both.message).toBe(t().desktop.renderRunningMessage({ count: 1 }));
+    expect(both.detail).toContain(t().desktop.draftUnsavedMessage({ count: 1 }));
+    expect(both.buttons).toEqual([t().desktop.renderRunningQuit, t().desktop.renderRunningKeep]);
   });
 });

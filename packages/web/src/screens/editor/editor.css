@@ -1,0 +1,37 @@
+/* The direct editor's shell (Phase 10b): the prototype's VideoEditor / ImageEditor grids (224 | 1fr | 288, timeline 262;
+   image 248 | 1fr | 280). Panels reuse the format view's side-column, stage and note styles (format.css). */
+.ms-ed { height: 100%; min-height: 0; display: grid; background: var(--bg); color: var(--text); }
+.ms-ed-video { grid-template-columns: 224px minmax(0, 1fr) 288px; grid-template-rows: minmax(0, 1fr) 262px; }
+.ms-ed-image { grid-template-columns: 248px minmax(0, 1fr) 280px; grid-template-rows: minmax(0, 1fr); }
+.ms-ed-side { min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--panel); overflow: hidden; }
+.ms-ed-left { border-right: 1px solid var(--line); }
+.ms-ed-right { border-left: 1px solid var(--line); }
+.ms-ed-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+.ms-ed-panel > .ms-conv, .ms-ed-panel > section { flex: 1; min-height: 0; }
+.ms-ed-slot { margin: 12px; padding: 14px; border-radius: 10px; border: 1px dashed var(--line); background: var(--bg); }
+.ms-ed-slot p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); text-wrap: pretty; overflow-wrap: anywhere; }
+.ms-ed-timeline { grid-column: 1 / 4; background: var(--panel); border-top: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+.ms-ed-image .ms-ed-timeline { display: none; }
+.ms-ed-main .ms-fv-stage { padding: 64px 32px 24px; }
+.ms-ed-stale { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ms-ed-staging { display: flex; align-items: center; gap: 8px; }
+.ms-ed-also, .ms-ed-version { flex: none; }
+
+/* The draft pill, at the top of the stage. */
+.ms-ed-pill {
+  position: absolute; left: 50%; top: 16px; transform: translateX(-50%); z-index: 4; height: 34px; padding: 0 5px 0 12px;
+  display: flex; align-items: center; gap: 8px; border-radius: 17px; background: var(--panel); color: var(--text);
+  box-shadow: 0 0 0 1px var(--line), 0 6px 20px var(--shadow); white-space: nowrap;
+}
+.ms-ed-pill[data-saved] { padding: 0 14px; }
+.ms-ed-pill-ok { display: inline-flex; align-items: center; gap: 6px; color: var(--ok); font-size: 13px; }
+.ms-ed-pill-text { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ms-ed-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+.ms-ed-undo { position: absolute; left: 16px; top: 16px; z-index: 3; display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--panel); box-shadow: 0 0 0 1px var(--line); }
+
+/* Dialogs (leave guard, discard, base changed). */
+.ms-ed-dialog { padding: 20px 22px; display: flex; flex-direction: column; gap: 10px; }
+.ms-ed-dialog h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.ms-ed-dialog p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted); text-wrap: pretty; overflow-wrap: anywhere; }
+.ms-ed-dialog-why { color: var(--warn) !important; }
+.ms-ed-dialog-foot { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 6px; }

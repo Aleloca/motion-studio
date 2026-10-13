@@ -53,6 +53,8 @@ export interface ConversationProps {
   canGenerate?: boolean;
   /** After a successful send, with the pins that went with it (pins added meanwhile stay pending). */
   onSent?(sent: { pins: Pin[] }): void;
+  /** Asked before a message goes out; false (or a rejection) keeps the text in the box (the editor's unsaved-draft prompt). */
+  beforeSend?(): boolean | Promise<boolean>;
   onSelectVersion?(n: number): void;
   /** Extra content of a version card, e.g. its token usage (nothing when it returns null). */
   versionExtra?(n: number): ReactNode;
@@ -155,7 +157,7 @@ function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], r
  * only in "Activity details", the job's approvals in the flow, typing dots while the agent works (T9), and the
  * composer with the pending comment chips and ⌘↵.
  */
-export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, onSelectVersion, versionExtra, versionNote, snapshots, appliesTo }: ConversationProps) {
+export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, onSelectVersion, versionExtra, versionNote, snapshots, appliesTo }: ConversationProps) {
   const t = useT();
   const c = t.web.chat;
   const working = active(job);
@@ -283,7 +285,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
           </Row>
         ))}
       </ol>
-      <Composer slug={slug} creative={creative} job={working ? job : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} onEditPin={onEditPin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} appliesTo={appliesTo} />
+      <Composer slug={slug} creative={creative} job={working ? job : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} onEditPin={onEditPin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} beforeSend={beforeSend} appliesTo={appliesTo} />
     </div>
   );
 }
@@ -512,8 +514,8 @@ const SEND_CODES = new Set(['formats-not-in-brief', 'job-running']);
 /** Longest wait for the job a send started before the composer unlocks anyway. */
 export const AWAIT_JOB_MS = 10_000;
 
-function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemovePin, onEditPin, formatName, canGenerate, onSent, appliesTo }: {
-  slug: string; creative: string; job: JobSummary | undefined; latestJobId: string | undefined; snapshots: number | undefined; pins: Pin[]; onRemovePin?(i: number): void; onEditPin?(i: number): void; formatName?(id: string): string; canGenerate?: boolean; onSent?(sent: { pins: Pin[] }): void;
+function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, appliesTo }: {
+  slug: string; creative: string; job: JobSummary | undefined; latestJobId: string | undefined; snapshots: number | undefined; pins: Pin[]; onRemovePin?(i: number): void; onEditPin?(i: number): void; formatName?(id: string): string; canGenerate?: boolean; onSent?(sent: { pins: Pin[] }): void; beforeSend?(): boolean | Promise<boolean>;
   appliesTo?: AppliesTo;
 }) {
   const t = useT();
@@ -575,6 +577,7 @@ function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemoveP
     inFlight.current = true;
     setError(null); setSending(true);
     try {
+      if (beforeSend && !(await beforeSend())) { inFlight.current = false; return; }
       const started = await api.sendCreativeTurn(slug, creative, body);
       if (started && typeof started.id === 'string' && started.id !== latestJobId) setAwaiting(started.id);
       else inFlight.current = false;
