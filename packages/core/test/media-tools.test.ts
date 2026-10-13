@@ -24,13 +24,13 @@ describe('createFfmpegTools', () => {
       return { code: 0, stdout: JSON.stringify({ streams: [{ codec_type: 'video', width: 1080, height: 1920 }], format: { duration: '15.04' } }), stderr: '', notFound: false };
     };
     const tools = await createFfmpegTools(exec);
-    expect(await tools.probe(ph('x.mp4'))).toEqual({ width: 1080, height: 1920, durationSec: 15.04 });
+    expect(await tools.probe(ph('x.mp4'))).toEqual({ width: 1080, height: 1920, durationSec: 15.04, audio: false });
   });
   it('treats still images as having no duration', async () => {
     const exec: CommandExec = async (_c, args) => args.includes('-version')
       ? { code: 0, stdout: '', stderr: '', notFound: false }
       : { code: 0, stdout: JSON.stringify({ streams: [{ codec_type: 'video', codec_name: 'png', width: 300, height: 250 }], format: { duration: '0.04' } }), stderr: '', notFound: false };
-    expect(await (await createFfmpegTools(exec)).probe(ph('x.png'))).toEqual({ width: 300, height: 250, durationSec: null });
+    expect(await (await createFfmpegTools(exec)).probe(ph('x.png'))).toEqual({ width: 300, height: 250, durationSec: null, videoCodec: 'png', audio: false });
   });
   it('returns null for unreadable files', async () => {
     const exec: CommandExec = async (_c, args) => args.includes('-version')

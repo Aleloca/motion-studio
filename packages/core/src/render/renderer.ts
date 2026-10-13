@@ -22,6 +22,7 @@ import { chooseEncoder, concatLine, countVideoFrames, findFfmpeg, h264Args, host
 import { findSystemChrome } from './system-chrome.ts';
 import { MP4_DEMUXERS, ownInput } from '../media/ffmpeg-exec.ts';
 import { renderFrames, type RenderFramesOptions, type RenderFramesResult } from './frames.ts';
+import { flattenPng, STORE_AUDIO_KBPS, withSilentAudio } from '../store-pack/flatten.ts';
 import type { WatchdogLimits } from './watchdog.ts';
 
 /**
@@ -91,6 +92,13 @@ export interface RenderCompositionOptions {
   media?: SessionMedia;
   /** Called with the finished temp file just before it is renamed to `out` (render jobs note its stamp first, Task 5 M1). */
   beforeRename?: (temp: string) => Promise<void>;
+  /**
+   * A store screenshot (Phase 12, spec §4.2): the PNG still is flattened onto this composition colour, so it has no alpha
+   * channel (`store-pack/flatten.ts`). Needs ffmpeg. Ignored for a video or a non-PNG still.
+   */
+  flattenOnto?: string;
+  /** An App Store preview (Phase 12): the audio is muxed at 256 kbps, and a silent track is added when there is no audio. */
+  storeAudio?: boolean;
 }
 
 /** The hidden temp file a render writes next to its output (`.<name>.render-<hex>.tmp`): the startup sweep removes old ones. */
@@ -172,8 +180,10 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
       throw new RenderError('compositionMismatch', `the composition is ${c.width}×${c.height}, the format ${o.format.width}×${o.format.height}`);
     }
     if (still ? !(ext in STILL_EXT) : !(ext in VIDEO_EXT)) throw new RenderError('unsupportedOutput', `cannot render ${still ? 'a still' : 'a video'} to ${ext || 'a file without extension'}`);
-    const ff = still ? null : (o.ffmpeg ?? await findFfmpeg());
+    const flatten = still && ext === '.png' && o.flattenOnto !== undefined;
+    const ff = still && !flatten ? null : (o.ffmpeg ?? await findFfmpeg());
     if (!still && !ff) throw new RenderError('noFfmpeg', 'ffmpeg is needed to render a video');
+    if (flatten && !ff) throw new RenderError('noFfmpeg', 'ffmpeg is needed to flatten a store screenshot');
     const distDir = o.distDir ?? RUNTIME_DIST_DIR;
     server = o.server ?? await startCompositionServer({ uiOrigins: [], distDir });
     session = await server.mintSession({ creativeDir: o.dir, versionDir: o.versionDir, format: o.format.id, composition: c, mode: 'render', ttlMs: (o.timeLimitMs ?? 300_000 + frames * 5_000) + 60_000, ...(o.media ? { media: o.media } : {}) });
@@ -199,7 +209,20 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
       warnings = warningsOf([all]);
       overflows = overflowsOf([page.info.errors, all]);
       tick();
-      await writeFile(tempOut, buf, { flag: 'wx', mode: 0o644 });
+      if (flatten) {
+        // Store screenshot: the capture goes to a second temp file, flattened into `tempOut` (no alpha channel).
+        const capture = join(dirname(o.out), `.${basename(o.out)}.render-${randomBytes(6).toString('hex')}.tmp`);
+        noteCoreTemp(capture);
+        try {
+          await writeFile(capture, buf, { flag: 'wx', mode: 0o644 });
+          await flattenPng(ff!, capture, tempOut, { width: c.width, height: c.height, background: o.flattenOnto! }, ctl.signal)
+            .catch((e: unknown) => { throw new RenderError('ffmpegFailed', e instanceof Error ? e.message : String(e)); });
+        } finally {
+          await rm(capture, { force: true }).catch(() => {});
+        }
+      } else {
+        await writeFile(tempOut, buf, { flag: 'wx', mode: 0o644 });
+      }
     } else {
       work = await makeOwnedTempDir(join(o.tempDir ?? tmpdir(), 'ms-render-'));
       const kbps = targetKbps(o.format, c.fps);
@@ -244,8 +267,11 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
       const list = join(work, 'segments.txt');
       await writeFile(list, segFiles.map(concatLine).join('\n') + '\n');
       await spawnFfmpeg(ff!, [...ownInput(list, { formats: ['concat', ...MP4_DEMUXERS], force: true, options: ['-safe', '0'] }), ...(hasAudio ? ownInput(wav, { formats: ['wav'] }) : []),
-        '-map', '0:v:0', ...(hasAudio ? ['-map', '1:a:0', '-c:a', 'aac', '-b:a', '128k', '-ar', '48000'] : []),
-        '-c:v', 'copy', '-movflags', '+faststart', '-f', VIDEO_EXT[ext]!, tempOut], { signal: ctl.signal }).done;
+        '-map', '0:v:0', ...(hasAudio ? ['-map', '1:a:0', '-c:a', 'aac', '-b:a', o.storeAudio ? `${STORE_AUDIO_KBPS}k` : '128k', '-ar', '48000'] : []),
+        '-c:v', 'copy', '-movflags', '+faststart', '-f', VIDEO_EXT[ext]!, hasAudio || !o.storeAudio ? tempOut : join(work, `muted${ext}`)], { signal: ctl.signal }).done;
+      // An App Store preview without audio gets a silent track of the video's length (Phase 12, spec §4.2).
+      if (!hasAudio && o.storeAudio) await withSilentAudio(ff!, join(work, `muted${ext}`), tempOut, { durationSec: frames / c.fps, container: VIDEO_EXT[ext] as 'mp4' | 'mov' }, ctl.signal);
+      const audioOut = hasAudio || o.storeAudio === true;
       const check = await countVideoFrames(ff!, tempOut);
       if (!check || check.frames !== frames || check.width !== c.width || check.height !== c.height) {
         throw new RenderError('ffmpegFailed', `the output has ${check ? `${check.frames} frames at ${check.width}×${check.height}` : 'no readable video'}, expected ${frames} at ${c.width}×${c.height}`);
@@ -253,7 +279,7 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
       const sha256 = await sha256File(tempOut);
       await o.beforeRename?.(tempOut);
       await rename(tempOut, o.out);
-      return { file: o.out, sha256, width: c.width, height: c.height, durationSec: c.duration, frames, encoder, audio: hasAudio, warnings, ...(overflows.length ? { textOverflows: overflows } : {}) };
+      return { file: o.out, sha256, width: c.width, height: c.height, durationSec: c.duration, frames, encoder, audio: audioOut, warnings, ...(overflows.length ? { textOverflows: overflows } : {}) };
     }
     const sha256 = await sha256File(tempOut);
     await o.beforeRename?.(tempOut);

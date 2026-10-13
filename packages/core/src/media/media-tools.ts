@@ -5,7 +5,11 @@ import { execFfVia, isRegularFileNow, mediaInput, type FfArg } from './ffmpeg-ex
 import { frameScaleFilter, waveformPcmFilter } from './ffmpeg-filters.ts';
 import { isSvgName, svgSize } from './svg-size.ts';
 
-export interface MediaInfo { width: number; height: number; durationSec: number | null; /** Average frame rate of the video stream, when known. */ fps?: number }
+export interface MediaInfo { width: number; height: number; durationSec: number | null; /** Average frame rate of the video stream, when known. */ fps?: number;
+  /** The video stream's codec (ffprobe name, e.g. `h264`), when known (Phase 12: store checks). */
+  videoCodec?: string;
+  /** Whether the file has an audio stream (Phase 12: the App Store preview needs one); absent when not probed by ffprobe. */
+  audio?: boolean }
 export interface MediaTools {
   readonly available: boolean;
   probe(file: string): Promise<MediaInfo | null>;
@@ -68,7 +72,8 @@ export async function createFfmpegTools(exec: CommandExec = execCommand): Promis
         const d = Number(data.format?.duration);
         const [num, den] = (s.avg_frame_rate ?? '').split('/').map(Number);
         const fps = num && den && Number.isFinite(num / den) ? num / den : undefined;
-        return { width: s.width, height: s.height, durationSec: !still && Number.isFinite(d) && d > 0 ? d : null, ...(fps && !still ? { fps } : {}) };
+        return { width: s.width, height: s.height, durationSec: !still && Number.isFinite(d) && d > 0 ? d : null, ...(fps && !still ? { fps } : {}),
+          ...(typeof s.codec_name === 'string' ? { videoCodec: s.codec_name } : {}), audio: data.streams?.some((x) => x.codec_type === 'audio') ?? false };
       } catch {
         return null;
       }

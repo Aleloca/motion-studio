@@ -24,10 +24,10 @@ const isInside = (p: string, base: string) => {
  * Copies `from` to `to` without overwriting (EEXIST when `to` exists). On a failure after creating `to`, the error carries
  * `targetCreated: true` so the export removes the partial file; without it nothing is removed.
  */
-type CopyFn = (from: string, to: string, mode: number) => Promise<void>;
+export type CopyFn = (from: string, to: string, mode: number) => Promise<void>;
 
 /** Copies without overwriting; null when the computed target would not be a direct child of `dir`. */
-async function copyUnique(copy: CopyFn, from: string, dir: string, stem: string, ext: string): Promise<string | null> {
+export async function copyUnique(copy: CopyFn, from: string, dir: string, stem: string, ext: string): Promise<string | null> {
   for (let i = 1; ; i++) {
     const to = join(dir, i === 1 ? `${stem}${ext}` : `${stem}-${i}${ext}`);
     if (dirname(to) !== dir) return null;
@@ -42,7 +42,8 @@ async function copyUnique(copy: CopyFn, from: string, dir: string, stem: string,
   }
 }
 
-function reasonOf(e: unknown): string {
+/** The export's text for a failed write (disk full, permission, quota, name too long, other). */
+export function reasonOf(e: unknown): string {
   switch ((e as NodeJS.ErrnoException).code) {
     case 'ENOSPC': return t().export.diskFull;
     case 'EACCES': case 'EPERM': case 'EROFS': return t().export.permissionDenied;
@@ -96,7 +97,8 @@ export interface ExportCommon {
   copy?: CopyFn;
 }
 
-const plainName = (f: string) => Boolean(f) && f !== '.' && f !== '..' && f === basename(f) && !f.includes('\\') && !f.includes('/');
+/** A plain file name (no folder part, not `.`/`..`). */
+export const plainName = (f: string) => Boolean(f) && f !== '.' && f !== '..' && f === basename(f) && !f.includes('\\') && !f.includes('/');
 
 /**
  * Copies the files of `items` into `destination`, named with the pattern, never overwriting (`-2`, `-3`…).
@@ -104,13 +106,31 @@ const plainName = (f: string) => Boolean(f) && f !== '.' && f !== '..' && f === 
  * folder) or with an unsafe name is `'refuse'`d (409 `export-file-missing`, nothing copied) or `'skip'`ped (listed in
  * `skipped`; 404 when nothing is left). Names that collide (case-insensitively) are refused before any copy.
  */
-async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refuse' | 'skip', emptyN: number): Promise<ExportResult> {
-  const dest = opts.destination.trim();
+/**
+ * The export destination rules, before anything is written: an absolute path (400 `export-invalid-destination`), never inside
+ * `forbiddenRoot` (the workspace), links resolved. Returns the trimmed destination.
+ */
+export async function checkDestination(destination: string, forbiddenRoot?: string): Promise<string> {
+  const dest = destination.trim();
   if (!isAbsolute(dest)) throw new CodedError(400, t().export.absoluteDestination, 'export-invalid-destination');
-  if (opts.forbiddenRoot) {
-    const root = await resolveLoose(opts.forbiddenRoot);
+  if (forbiddenRoot) {
+    const root = await resolveLoose(forbiddenRoot);
     if (isInside(await resolveLoose(dest), root)) throw new WorkspaceError(400, t().export.outsideWorkspace);
   }
+  return dest;
+}
+
+/** Creates the (checked) destination folder when needed and makes sure it is a writable folder (400 otherwise). */
+export async function ensureDestination(dest: string): Promise<void> {
+  const info = await lstat(dest).catch(() => null);
+  if (info && !info.isDirectory() && !info.isSymbolicLink()) throw new WorkspaceError(400, t().export.destinationIsFile);
+  try { await mkdir(dest, { recursive: true }); await access(dest, constants.W_OK); }
+  catch { throw new WorkspaceError(400, t().export.cannotWrite({ path: dest })); }
+  if (!(await stat(dest)).isDirectory()) throw new WorkspaceError(400, t().export.destinationIsFile);
+}
+
+async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refuse' | 'skip', emptyN: number): Promise<ExportResult> {
+  const dest = await checkDestination(opts.destination, opts.forbiddenRoot);
   const label = opts.label ?? ((f: string) => f);
   const skipped: string[] = [];
   const bad: ExportItem[] = [];
@@ -144,11 +164,7 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
   const collisions = exportNameCollisions(named.map((x) => `${x.stem}${x.ext}`));
   if (collisions.length) throw new CodedError(400, t().export.nameCollision({ list: collisions.join(', ') }), 'export-name-collision');
 
-  const info = await lstat(dest).catch(() => null);
-  if (info && !info.isDirectory() && !info.isSymbolicLink()) throw new WorkspaceError(400, t().export.destinationIsFile);
-  try { await mkdir(dest, { recursive: true }); await access(dest, constants.W_OK); }
-  catch { throw new WorkspaceError(400, t().export.cannotWrite({ path: dest })); }
-  if (!(await stat(dest)).isDirectory()) throw new WorkspaceError(400, t().export.destinationIsFile);
+  await ensureDestination(dest);
   const copy: CopyFn = opts.copy ?? ((from, to) => copyConfinedFile(opts.creativeDir, relative(opts.creativeDir, from).split(sep).join('/'), to));
   const files: ExportResult['files'] = [];
   for (const it of named) {

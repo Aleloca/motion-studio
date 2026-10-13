@@ -189,6 +189,20 @@ export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: st
   }
 }
 
+/**
+ * Ruling L: whether the voice and font files a translation's row recorded are still those files, as a render would take
+ * them (the composition folder, then the project). An unreadable overlay counts as fine here: the render reports it.
+ */
+export const localeAssetsCheck = (projectDir: string, creativeDir: string) => async (n: number, row: LocalizationRow): Promise<boolean> => {
+  if (!row.assetHashes) return true;
+  const read = await readOverlay(creativeDir, n, row.locale, row.instanceId);
+  if (!read) return true;
+  const v = (await new CreativeStore(projectDir).readVersions(basename(creativeDir))).find((x) => x.n === n);
+  const dir = v?.compositions?.find((c) => c.format === row.instanceId)?.dir;
+  if (!dir) return true;
+  return (await changedAssets([join(creativeDir, 'outputs', `v${n}`, ...dir.split('/')), projectDir], row, overlayAssetPaths(read.overlay, row))).length === 0;
+};
+
 export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutesContext): void {
   const catalog = () => new FormatCatalog(ctx.requireWorkspace().root);
   const refOf = async (slug: string, creativeSlug: string): Promise<CreativeRef & { store: CreativeStore }> => {
@@ -444,20 +458,6 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   });
 
   /**
-   * Ruling L: whether the voice and font files a translation's row recorded are still those files, as a render would take
-   * them (the composition folder, then the project). An unreadable overlay counts as fine here: the render reports it.
-   */
-  const assetsCheck = (projectDir: string, creativeDir: string) => async (n: number, row: LocalizationRow): Promise<boolean> => {
-    if (!row.assetHashes) return true;
-    const read = await readOverlay(creativeDir, n, row.locale, row.instanceId);
-    if (!read) return true;
-    const v = (await new CreativeStore(projectDir).readVersions(basename(creativeDir))).find((x) => x.n === n);
-    const dir = v?.compositions?.find((c) => c.format === row.instanceId)?.dir;
-    if (!dir) return true;
-    return (await changedAssets([join(creativeDir, 'outputs', `v${n}`, ...dir.split('/')), projectDir], row, overlayAssetPaths(read.overlay, row))).length === 0;
-  };
-
-  /**
    * The export items with their languages (Phase 12, spec §3.5): the primary-language files (when exported) carry the primary
    * tag, and each other language adds the translated renders of the same formats and versions. A translation without a
    * current render is rendered first (409 `localization-needs-force` when it has open problems or outdated entries and
@@ -471,7 +471,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     if (o.otherTags.length === 0) return { items: source, rendered };
     const v = messages(currentLocale()).variants;
     const matches = (n: number, file: string, sha: string) => renderFileMatches(ref.projectDir, creativeDir, ref.creativeSlug, n, file, sha);
-    const assets = assetsCheck(ref.projectDir, creativeDir);
+    const assets = localeAssetsCheck(ref.projectDir, creativeDir);
     let r = await resolveLocalizedItems(creativeDir, await ref.store.readVersions(ref.creativeSlug), items, o.otherTags, matches, assets);
     const refuseMissing = () => {
       if (r.missing.length === 0) return;
@@ -528,7 +528,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     }
     if (otherTags.length > 0) {
       const loc = await resolveLocalizedItems(creativeDir, versions, items, otherTags,
-        (n, file, sha) => renderFileMatches(ref.projectDir, creativeDir, ref.creativeSlug, n, file, sha), assetsCheck(ref.projectDir, creativeDir));
+        (n, file, sha) => renderFileMatches(ref.projectDir, creativeDir, ref.creativeSlug, n, file, sha), localeAssetsCheck(ref.projectDir, creativeDir));
       if (loc.missing.length > 0) {
         const list = loc.missing.map((x) => `${formatDisplayName(presetsForLabels, x.format, currentLocale(), creative.brief.formatLabels)} v${x.n} (${x.locale})`);
         const err = new CodedError(409, messages(currentLocale()).variants.localizationMissing({ list: list.slice(0, 10).join(', ') }), 'localization-missing');

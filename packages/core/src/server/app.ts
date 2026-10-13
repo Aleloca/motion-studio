@@ -47,6 +47,7 @@ import { KeyCheckCache } from '../providers/key-check.ts';
 import { GoogleFontsCatalog } from '../providers/google-fonts-catalog.ts';
 import type { HttpDeps } from '../providers/http.ts';
 import { registerLocalizationRoutes } from './localization-routes.ts';
+import { registerStorePackRoutes } from './store-pack-routes.ts';
 import type { InstallIo } from '../providers/google-fonts.ts';
 import { registerBrandRoutes } from './brand-routes.ts';
 import { EventHub } from './event-hub.ts';
@@ -468,6 +469,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.get('/api/preview/origin', async () => ({ origin: (await previews.compositionServer()).origin, uiOrigins: [...(deps.uiOrigins?.() ?? [])] }));
 
   registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m) });
+  registerStorePackRoutes(app, { requireWorkspace, turns, renders, media });
 
   const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m) };
   registerBrandRoutes(app, routeCtx);

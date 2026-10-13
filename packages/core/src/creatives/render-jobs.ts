@@ -23,6 +23,7 @@ import type { MediaTools } from '../media/media-tools.ts';
 import { RenderError } from '../render/errors.ts';
 import { sessionMediaOf, type MediaNormalizer } from '../render/media-normalize.ts';
 import { activeLocaleRenders } from '../render/render-sweep.ts';
+import { storeRenderOptions } from '../store-pack/flatten.ts';
 import type { RenderCompositionOptions, RenderEngine, RenderResult } from '../render/renderer.ts';
 import { CodedError } from '../workspace-store.ts';
 import { noteCoreOutputWrite } from './carry-over.ts';
@@ -320,6 +321,8 @@ export class RenderJobService {
       result = await this.deps.engine!.render({
         ...this.deps.renderOptions,
         dir: creativeDir, versionDir: `outputs/v${n}`, composition, format: preset, out: join(versionDir, file), signal, ...(sessionMediaOf(prepared) ? { media: sessionMediaOf(prepared)! } : {}),
+        // Store screenshots are flattened, the App Store preview gets its audio track (Phase 12, spec §4.2).
+        ...storeRenderOptions(format, composition),
         onProgress: (p) => o.progress({ format, phase: 'frames', done: p.frames, total: p.total }),
         // The stamp is noted before the rename (M1): a turn's check in between sees the core's own write.
         beforeRename: (temp) => noteCoreOutputWrite(creativeDir, `outputs/v${n}/${file}`, temp),
@@ -690,6 +693,7 @@ export class RenderJobService {
         result = await this.deps.engine!.render({
           ...this.deps.renderOptions,
           dir: root, versionDir: `outputs/v${n}`, composition, format: { ...preset, id: instanceId }, out: join(versionDir, file), signal,
+          ...storeRenderOptions(instanceId, composition),
           ...(sessionMediaOf(prepared) ? { media: sessionMediaOf(prepared)! } : {}),
           beforeRename: (temp) => noteCoreOutputWrite(creativeDir, `outputs/v${n}/${file}`, temp),
         });

@@ -54,9 +54,11 @@ function png(width: number, height: number): Buffer {
  * render's file is in place.
  */
 /** `measure`: when set, the clip ids frames report as `textOverflow` for a given composition (instead of `overflows`). */
-export interface FakeEngine { engine: RenderEngine; renders: RenderCompositionOptions[]; frameCalls: RenderFramesOptions[]; gate: Promise<void> | null; overflows: string[]; measure: ((c: Composition) => string[]) | null; after: ((o: RenderCompositionOptions) => void | Promise<void>) | null }
+/** `content`: when set, the bytes a render writes (Phase 12 Task 6: real PNG headers for the store checks); else a short text. */
+export interface FakeEngine { engine: RenderEngine; renders: RenderCompositionOptions[]; frameCalls: RenderFramesOptions[]; gate: Promise<void> | null; overflows: string[]; measure: ((c: Composition) => string[]) | null; after: ((o: RenderCompositionOptions) => void | Promise<void>) | null;
+  content: ((o: Omit<RenderCompositionOptions, 'provider'>) => Buffer | null) | null }
 function fakeEngine(): FakeEngine {
-  const f: FakeEngine = { renders: [], frameCalls: [], gate: null, overflows: [], measure: null, after: null, engine: null as unknown as RenderEngine };
+  const f: FakeEngine = { renders: [], frameCalls: [], gate: null, overflows: [], measure: null, after: null, content: null, engine: null as unknown as RenderEngine };
   f.engine = {
     info: async () => ({ kind: 'injected' }),
     provider: async () => { throw new Error('not used'); },
@@ -75,7 +77,7 @@ function fakeEngine(): FakeEngine {
       if (f.gate) await f.gate;
       const temp = join(dirname(o.out), `.${basename(o.out)}.render-${randomBytes(6).toString('hex')}.tmp`);
       noteCoreTemp(temp);
-      const body = `render of ${o.format.id} ${randomBytes(4).toString('hex')}`;
+      const body: Buffer | string = f.content?.(o) ?? `render of ${o.format.id} ${randomBytes(4).toString('hex')}`;
       await writeFile(temp, body);
       await o.beforeRename?.(temp);
       await rename(temp, o.out);

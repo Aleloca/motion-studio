@@ -1,4 +1,4 @@
-import type { CreativeFile, FormatPreset, Pin } from '@motion-studio/shared';
+import type { CreativeFile, FormatPreset, Pin, StorePack } from '@motion-studio/shared';
 import { formatDisplayName, presetOf, videoTargetBitrateKbps, type BrandKit, type BriefServices, type Locale } from '@motion-studio/shared';
 import { replyInstruction } from '../i18n.ts';
 import { findPreset } from '../formats/format-catalog.ts';
@@ -280,6 +280,41 @@ function repairRequestSection(userWords: string | undefined): string[] {
   ];
 }
 
+/**
+ * The series section of an App store pack (Phase 12, spec §4.1): the screenshots are one listing read in order, so the agent
+ * keeps one grid and style, puts the caption at the top and the app screen inside a generic device frame drawn in HTML/CSS,
+ * and never uses Apple or Google logos or device artwork. Store devices differ in size, so nothing is linked (Ruling D): the
+ * iPad and Google Play screenshot N adapt the iPhone screenshot N. User text (app name, tagline, captions) is quoted as data.
+ */
+export function storePackPromptSection(p: StorePack): string[] {
+  const n = p.screenshots.length;
+  const q = (s: string, max: number) => quotePromptString(oneLine(s, max));
+  const has = (store: StorePack['stores'][number], device: string) => p.stores.includes(store) && (p.devices[store] as readonly string[] | undefined)?.includes(device) === true;
+  const adapted = [
+    has('appstore', 'ipad-13') && 'iPad 13" (appstore-ipad-13)',
+    has('playstore', 'phone') && 'Google Play phone (playstore-phone-9x16)',
+    has('playstore', 'tablet') && 'Google Play tablet (playstore-tablet)',
+  ].filter((x): x is string => typeof x === 'string');
+  const lead = has('appstore', 'iphone-69') ? 'iPhone 6.9" (appstore-iphone-69)' : 'Google Play phone (playstore-phone-9x16)';
+  const lines = [
+    '## App store series',
+    `- These formats are the store listing of the app ${q(p.app.name, 60)}${p.app.tagline ? ` (tagline ${q(p.app.tagline, 120)})` : ''}: a series of ${n} screenshot${n === 1 ? '' : 's'} per device, read in order.`,
+    '- Instances: `<preset>` is screenshot 1 and `<preset>@k` is screenshot k (their labels read "k · caption").',
+    ...p.screenshots.map((s, i) => `- Screenshot ${i + 1}: caption ${q(s.caption, 80)}; ${s.screen ? `app screen ${s.screen} (project path: copy it into the composition's assets/)` : 'no app screen given: design a simple, plausible screen for this caption'}.`),
+    '- Keep the same grid and style across the whole series: the same background treatment, type scale, caption position, frame size and spacing on every screenshot of a device.',
+    '- Put the caption at the top of each screenshot, large and legible at store thumbnail size; the app screen goes below it.',
+    '- Show the app screen inside a generic device frame drawn with HTML/CSS: a rounded rectangle with a plain bezel, no notch or camera shapes, no buttons, no logos, no brand marks.',
+    '- Never use Apple or Google logos, product names as artwork, device artwork or photos of real devices (no iPhone, iPad or Pixel renderings).',
+    `- The story progresses from screenshot 1 to ${n}: each one shows the next step or benefit; screenshot 1 is the strongest.`,
+    ...(adapted.length > 0 ? [`- ${adapted.join(', ')}: each screenshot adapts the ${lead.startsWith('iPhone') ? 'iPhone 6.9"' : lead} screenshot of the same number: same caption, same story beat, re-laid-out for its own size (never a crop or a scaled copy).`] : []),
+    '- Opaque backgrounds only: store screenshots and the feature graphic must have no transparency.',
+    ...(p.preview && p.stores.includes('appstore') ? ['- App Store preview (appstore-preview): 15 to 30 seconds at 30 fps, the app in use in the same style as the screenshots; Motion Studio adds a silent audio track when it has no sound.'] : []),
+    ...(p.preview && p.stores.includes('playstore') ? ['- Google Play promo video (playstore-promo-16x9): 16:9, for YouTube; the first 30 seconds matter most.'] : []),
+    ...(has('playstore', 'feature') ? [`- Google Play feature graphic (playstore-feature, 1024×500): the app name and tagline in the series style, no device frame needed, nothing important near the edges.`] : []),
+  ];
+  return lines;
+}
+
 /** Said of two or more instances of one preset in a turn (Phase 12, spec §2). */
 export const SAME_SIZE_NOTE = 'These are separate designs of the same size; keep each one distinct unless the request says otherwise';
 
@@ -360,6 +395,7 @@ export function buildCreativePrompt(i: PromptInput): string {
     };
     parts.push(
       '', '## Required formats', ...compositionLines, ...sameSize,
+      ...(brief.storePack && i.kind !== 'fix' ? ['', ...storePackPromptSection(brief.storePack)] : []),
       '', ...COMPOSITION_SECTION,
       ...(i.sandboxed ? ['', ...SANDBOX_SECTION_COMPOSITIONS] : []),
       '', '## Where to work',
