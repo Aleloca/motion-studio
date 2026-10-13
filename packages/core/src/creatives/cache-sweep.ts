@@ -99,8 +99,11 @@ export async function sweepEditorStaging(projectDir: string, o: { now?: number; 
     for (const id of await readdir(cdir).catch(() => [] as string[])) {
       const dir = join(cdir, id);
       if (o.inUse?.(dir)) continue;
-      const m = await measure(dir);
-      if (now - m.newestMs <= maxAge) continue;
+      const st = await lstat(dir).catch(() => null);
+      if (!st) continue;
+      // A link (or any other non-folder) is judged by its own entry and removed as an entry: nothing is read through it.
+      const newest = st.isDirectory() ? (await measure(dir)).newestMs : st.mtimeMs;
+      if (now - newest <= maxAge) continue;
       await rm(dir, { recursive: true, force: true }).then(() => { removed.push(dir); any = true; }, () => {});
     }
     if (any) await noteCoreChange(cdir).catch(() => {});

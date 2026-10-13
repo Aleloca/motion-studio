@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { lstat, realpath } from 'node:fs/promises';
 import { basename, dirname, join, posix } from 'node:path';
@@ -319,8 +320,8 @@ async function checkedMedia(m: SessionMedia, realCreative: string): Promise<{ se
 
 /** The staging root of a creative, relative to its project: `.studio/cache/editor-staging/<creative>`. */
 export const EDITOR_STAGING = ['.studio', 'cache', 'editor-staging'] as const;
-/** A staging folder name (editor-staging.ts `stagingIdOf`): 32 lowercase hex characters. */
-const STAGING_NAME_RE = /^[0-9a-f]{32}$/;
+/** A session's staging folder name: the first 128 bits of its token's sha256, in hex (never the token itself). */
+export const stagingIdOf = (token: string): string => createHash('sha256').update(token).digest('hex').slice(0, 32);
 
 /** An exact serialized http(s) origin (`http://127.0.0.1:4318`), nothing more. */
 function isExactOrigin(o: unknown): o is string {
@@ -623,7 +624,8 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
         async attachStaging(dir) {
           liveData();
           const expected = join(dirname(dirname(realCreative)), ...EDITOR_STAGING, basename(realCreative), basename(dir));
-          if (typeof dir !== 'string' || !STAGING_NAME_RE.test(basename(dir)) || basename(dirname(realCreative)) !== 'creatives') throw new Error('composition server: not a staging folder');
+          // Only this session's own folder (named after its token), of its own creative.
+          if (typeof dir !== 'string' || basename(dir) !== stagingIdOf(token) || basename(dirname(realCreative)) !== 'creatives') throw new Error('composition server: not this session\'s staging folder');
           const real = await realpath(dir);
           if (real !== expected) throw new Error('composition server: the staging folder is reached through a link, or is not the creative\'s');
           const info = await lstat(real);

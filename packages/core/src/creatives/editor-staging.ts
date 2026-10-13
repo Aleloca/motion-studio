@@ -10,7 +10,7 @@ import {
 import { hashConfinedFile, withConfinedFile } from '../brand/agent-guard.ts';
 import { BrandStore } from '../brand/brand-store.ts';
 import { loadComposition } from '../compositions/composition-files.ts';
-import { EDITOR_STAGING } from '../compositions/composition-server.ts';
+import { EDITOR_STAGING, stagingIdOf } from '../compositions/composition-server.ts';
 import { noteCoreChange } from '../core-changes.ts';
 import { noteCoreTemp } from '../core-temps.ts';
 import { findPreset } from '../formats/format-catalog.ts';
@@ -53,8 +53,7 @@ export const STAGING_MAX_AGE_MS = 24 * 3600 * 1000;
 /** Collision candidates tried for one name. */
 const MAX_NAME_TRIES = 50;
 
-/** The staging folder name of a session token: hex, never the token itself. */
-export const stagingIdOf = (token: string): string => createHash('sha256').update(token).digest('hex').slice(0, 32);
+export { stagingIdOf };
 /** `<project>/.studio/cache/editor-staging/<creative>/<id>`. */
 export const stagingDirOf = (projectDir: string, creativeSlug: string, token: string): string =>
   join(projectDir, ...EDITOR_STAGING, creativeSlug, stagingIdOf(token));

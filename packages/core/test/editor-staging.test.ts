@@ -13,11 +13,13 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FormatPreset, StagedAsset, VersionEntry } from '@motion-studio/shared';
 import { readCompositionFolder } from '../src/compositions/composition-files.ts';
+import { startCompositionServer } from '../src/compositions/composition-server.ts';
 import { sweepEditorStaging } from '../src/creatives/cache-sweep.ts';
 import { editorFonts, STAGING_MAX_FILES, stagingDirOf, stagingIdOf } from '../src/creatives/editor-staging.ts';
 import { PreviewService } from '../src/creatives/previews.ts';
 import { createFfmpegTools, NoMediaTools, type MediaTools } from '../src/media/media-tools.ts';
 import { findFfmpeg, type FfmpegInfo } from '../src/render/encode.ts';
+import { RenderError } from '../src/render/errors.ts';
 import { MediaNormalizer } from '../src/render/media-normalize.ts';
 import { CodedError } from '../src/workspace-store.ts';
 import { FONT } from './helpers/render-env.ts';
@@ -60,8 +62,8 @@ function brand(fonts: Array<{ id: string; family: string; file: string | null; w
   }));
 }
 
-async function makeService(o: { ttlMs?: number; media?: MediaTools } = {}) {
-  normalizer = new MediaNormalizer({ ffmpeg: async () => ffmpeg });
+async function makeService(o: { ttlMs?: number; media?: MediaTools; normalizer?: MediaNormalizer } = {}) {
+  normalizer = o.normalizer ?? new MediaNormalizer({ ffmpeg: async () => ffmpeg });
   previews = new PreviewService({
     engine: undefined, normalizer, presets: async () => [PRESET], uiOrigins: () => [UI], media: o.media ?? media,
     ...(o.ttlMs ? { sessionTtlMs: o.ttlMs } : {}),
@@ -74,6 +76,31 @@ async function refused(p: Promise<unknown>): Promise<{ status: number; code: str
   const e = await p.then(() => null, (x: unknown) => x);
   expect(e, 'expected a refusal').toBeInstanceOf(CodedError);
   return { status: (e as CodedError).status, code: (e as CodedError).apiCode, message: (e as Error).message };
+}
+/** Polls `f` until true (at most `ms`). */
+async function until(f: () => boolean, ms = 5000): Promise<boolean> {
+  for (const t0 = Date.now(); Date.now() - t0 < ms; await new Promise((r) => setTimeout(r, 20))) if (f()) return true;
+  return f();
+}
+/**
+ * A normaliser whose staged-video encodes never finish on their own: each holds a slot until its signal aborts. A session's
+ * own composition (no staged video) is prepared at once, with nothing to normalise.
+ */
+function hangingNormalizer() {
+  const slots = { active: 0, started: 0, cancelled: 0 };
+  const n = {
+    inUse: () => false,
+    close: async () => {},
+    prepare: (p: { compDir: string; signal: AbortSignal }) => {
+      if (!p.compDir.includes(join('.studio', 'cache', 'editor-staging'))) return Promise.resolve({ media: { dir: '', clips: new Map() }, warnings: [], made: 0, cached: 0, release: () => {} });
+      slots.started++; slots.active++;
+      return new Promise((_, reject) => {
+        const stop = () => { slots.active--; slots.cancelled++; reject(new RenderError('cancelled', 'cancelled')); };
+        if (p.signal.aborted) stop(); else p.signal.addEventListener('abort', stop, { once: true });
+      });
+    },
+  };
+  return { normalizer: n as unknown as MediaNormalizer, slots };
 }
 /** A file of the session, through its URL on the composition server. */
 const served = (url: string, path: string, init?: RequestInit) => fetch(`${url.split('/runtime/')[0]}/outputs/v1/compositions/test-wide/${path}`, init);
@@ -293,8 +320,27 @@ describe('serving the overlay', () => {
   });
 });
 
+describe('attaching a staging folder (composition server)', () => {
+  it('takes only the session\'s own folder (named after its token), never another session\'s', async () => {
+    const server = await startCompositionServer({ uiOrigins: [UI] });
+    try {
+      const s = await server.mintSession({ creativeDir, versionDir: 'outputs/v1', format: 'test-wide', composition: {}, mode: 'preview', parentOrigin: UI });
+      const other = stagingDirOf(projectDir, 'launch', 'B'.repeat(43));
+      const own = stagingDirOf(projectDir, 'launch', s.token);
+      mkdirSync(other, { recursive: true });
+      mkdirSync(own, { recursive: true });
+      await expect(s.attachStaging(other)).rejects.toThrow(/staging folder/);
+      await expect(s.attachStaging(own)).resolves.toBeUndefined();
+      const render = await server.mintSession({ creativeDir, versionDir: 'outputs/v1', format: 'test-wide', composition: {}, mode: 'render' });
+      mkdirSync(stagingDirOf(projectDir, 'launch', render.token), { recursive: true });
+      await expect(render.attachStaging(stagingDirOf(projectDir, 'launch', render.token))).rejects.toThrow(/preview/);
+    } finally {
+      await server.close();
+    }
+  });
+});
+
 describe('cleanup', () => {
-  const settle = () => new Promise((r) => setTimeout(r, 100));
 
   it('the staging folder goes when the session is revoked, evicted or expires', async () => {
     register(['logo.svg']);
@@ -304,15 +350,13 @@ describe('cleanup', () => {
     expect(existsSync(dir)).toBe(true);
     expect(previews.stagingInUse(dir)).toBe(true);
     expect(previews.revokePreview(ref(), s.token)).toBe(true);
-    await settle();
-    expect(existsSync(dir)).toBe(false);
+    expect(await until(() => !existsSync(dir))).toBe(true);
     expect(previews.stagingInUse(dir)).toBe(false);
     // Evicted: the oldest of more than 8 sessions.
     const first = await mint();
     await stage(first.token, { kind: 'library', file: 'logo.svg' });
     for (let i = 0; i < 8; i++) await mint();
-    await settle();
-    expect(existsSync(stagingDirOf(projectDir, 'launch', first.token))).toBe(false);
+    expect(await until(() => !existsSync(stagingDirOf(projectDir, 'launch', first.token)))).toBe(true);
     // Expired.
     await previews.close();
     await normalizer.close();
@@ -320,9 +364,33 @@ describe('cleanup', () => {
     const short = await mint();
     await stage(short.token, { kind: 'library', file: 'logo.svg' });
     expect(existsSync(stagingDirOf(projectDir, 'launch', short.token))).toBe(true);
-    for (let i = 0; i < 40 && existsSync(stagingDirOf(projectDir, 'launch', short.token)); i++) await settle();
-    expect(existsSync(stagingDirOf(projectDir, 'launch', short.token))).toBe(false);
+    expect(await until(() => !existsSync(stagingDirOf(projectDir, 'launch', short.token)))).toBe(true);
   });
+
+  for (const how of ['revoked', 'expired'] as const) {
+    it(`a staged video's encode is cancelled when its session is ${how}: the slot is free, the request answers, the folder goes`, async () => {
+      writeFileSync(join(projectDir, 'assets', 'slow.mp4'), 'a video the double never finishes');
+      register(['slow.mp4']);
+      await previews.close();
+      await normalizer.close();
+      const { normalizer: hanging, slots } = hangingNormalizer();
+      await makeService({ media: NoMediaTools, normalizer: hanging, ...(how === 'expired' ? { ttlMs: 400 } : {}) });
+      const s = await mint();
+      const dir = stagingDirOf(projectDir, 'launch', s.token);
+      const pending = stage(s.token, { kind: 'library', file: 'slow.mp4' });
+      const answer = refused(pending);
+      expect(await until(() => slots.active === 1)).toBe(true);
+      expect(existsSync(dir)).toBe(true);
+      const t0 = Date.now();
+      if (how === 'revoked') expect(previews.revokePreview(ref(), s.token)).toBe(true);
+      expect(await answer).toMatchObject({ status: 404, code: 'editor-no-session' });
+      // Revoked: at once; expired: at the core's timer (TTL + 1 s), never after a full encode.
+      expect(Date.now() - t0).toBeLessThan(how === 'revoked' ? 1000 : 3000);
+      expect(slots).toEqual({ active: 0, started: 1, cancelled: 1 });
+      expect(await until(() => !existsSync(dir))).toBe(true);
+      expect(previews.stagingInUse(dir)).toBe(false);
+    });
+  }
 
   it('the sweep removes staging folders older than 24 h, never a live session\'s, and follows no link', async () => {
     register(['logo.svg']);
@@ -347,8 +415,9 @@ describe('cleanup', () => {
     expect(existsSync(fresh)).toBe(true);
     expect(existsSync(live)).toBe(true);
     expect(readFileSync(join(outside(), 'keep.txt'), 'utf8')).toBe('keep');
-    // Once the session ended, an old folder goes too.
-    expect(await sweepEditorStaging(projectDir, { now: Date.now() + 2 * 24 * 3600_000 })).toEqual(expect.arrayContaining([fresh, live]));
+    // Without a live session using it (the call gives no `inUse`), an old folder goes too; a link goes as an entry only.
+    expect(await sweepEditorStaging(projectDir, { now: Date.now() + 2 * 24 * 3600_000 })).toEqual(expect.arrayContaining([fresh, live, linked]));
+    expect(existsSync(linked)).toBe(false);
     expect(readFileSync(join(outside(), 'keep.txt'), 'utf8')).toBe('keep');
   });
 });

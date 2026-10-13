@@ -127,8 +127,10 @@ interface LiveSession {
   release: () => void; revoke: () => void; timer: NodeJS.Timeout; creativeDir: string; n: number;
   session: CompositionSession; projectDir: string; creativeSlug: string; compDir: string;
   /** The composition's frame (the box a staged video is normalised for) and rate. */
-  frame: { width: number; height: number; fps: number };
+  frame: Pick<Composition, 'width' | 'height' | 'fps'>;
   staging: SessionStaging | null;
+  /** Aborted when the session ends: a staged video's encode for it stops then (not only at app close). */
+  ended: AbortController;
 }
 
 export class PreviewService {
@@ -349,7 +351,7 @@ export class PreviewService {
       this.sessions.set(session.token, {
         release: prepared.release, revoke: session.revoke, timer, creativeDir: ref.creativeDir, n: ref.n,
         session, projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, compDir,
-        frame: { width: c0.width, height: c0.height, fps: c0.fps }, staging: null,
+        frame: { width: c0.width, height: c0.height, fps: c0.fps }, staging: null, ended: new AbortController(),
       });
       // At most MAX_PREVIEW_SESSIONS live at once (each holds media leases): the oldest ends first (fix minor 5).
       while (this.sessions.size > MAX_PREVIEW_SESSIONS) {
@@ -379,13 +381,15 @@ export class PreviewService {
   }
 
   /**
-   * Ends a live session (revoked, evicted, expired): its token stops working, its media leases go back, and its staging
-   * folder is removed (after a staging still running for it). Returns the removal.
+   * Ends a live session (revoked, evicted, expired): its token stops working, a staged video's encode for it is cancelled
+   * (the normaliser's slot is free again once no one else waits for that file), its media leases go back, and its staging
+   * folder is removed once the cancelled staging has let go of it. Returns the removal.
    */
   private endSession(token: string): Promise<void> {
     const s = this.sessions.get(token);
     if (!s) return Promise.resolve();
     clearTimeout(s.timer); s.revoke(); s.release(); this.sessions.delete(token);
+    s.ended.abort(new Error('the preview session ended'));
     const task = this.stageLocks.run(token, async () => {
       const st = s.staging;
       s.staging = null;
@@ -446,15 +450,18 @@ export class PreviewService {
 
   /** A staged video normalised as at a preview (the session's frame and rate) and added to the session's media. */
   private async normaliseStaged(s: LiveSession, staging: SessionStaging, asset: StagedAsset, locale: Locale): Promise<StagedAsset> {
-    const c = {
-      width: s.frame.width, height: s.frame.height, fps: s.frame.fps, duration: 1, scenes: [], fonts: [],
-      tracks: [{ id: 'staged', kind: 'visual', clips: [{ id: 'staged', type: 'video', src: asset.path, start: 0, duration: 1, props: {} }] }],
-    } as unknown as Composition;
+    // One video clip over the whole frame: what `videoNeeds` sizes the normalised file for.
+    const c: Composition = {
+      $schema: 'motion-studio/composition@1', width: s.frame.width, height: s.frame.height, fps: s.frame.fps, duration: 1, background: '#000000', fonts: [], scenes: [],
+      tracks: [{ id: 'staged', kind: 'video', clips: [{ id: 'staged', type: 'video', src: asset.path, start: 0, duration: 1, props: {} }] }],
+    };
     let prepared;
     try {
-      prepared = await this.deps.normalizer.prepare({ projectDir: s.projectDir, compDir: staging.root, composition: c, signal: this.closing.signal });
+      // Stops at app close and when this session ends (revoke, eviction, expiry).
+      prepared = await this.deps.normalizer.prepare({ projectDir: s.projectDir, compDir: staging.root, composition: c, signal: AbortSignal.any([this.closing.signal, s.ended.signal]) });
     } catch (err) {
       if (err instanceof RenderError && err.code === 'mediaUnreadable') throw new CodedError(400, messages(locale).editor.stageNotMedia({ file: asset.path }), 'editor-not-media');
+      if (s.ended.signal.aborted) throw new CodedError(404, messages(locale).editor.stageNoSession, 'editor-no-session');
       throw err;
     }
     const file = prepared.media.clips.get(asset.path);
