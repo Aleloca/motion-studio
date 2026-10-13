@@ -94,7 +94,9 @@ export function healthChecks(kit: BrandKit): Array<{ id: HealthId; ok: boolean }
   ];
 }
 
-export const kitIsEmpty = (k: BrandKit) => !k.colors.length && !k.fonts.length && !k.logos.length && !k.dos.length && !k.donts.length && !k.tone && !k.photoStyle;
+/** Whether the sound style has anything in it (an older kit has none). */
+export const soundIsSet = (s: BrandKit['sound']): boolean => Boolean(s && (s.genre.trim() || s.energy || s.instruments.length || s.avoid.length || s.voice));
+export const kitIsEmpty = (k: BrandKit) => !k.colors.length && !k.fonts.length && !k.logos.length && !k.dos.length && !k.donts.length && !k.tone && !k.photoStyle && !soundIsSet(k.sound);
 
 /** A project with nothing about its brand yet: no kit content, no guidelines, no sources, no analysis ever. */
 export function brandIsEmpty(o: BrandOverview, job: JobSummary | undefined): boolean {

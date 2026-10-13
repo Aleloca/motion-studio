@@ -92,6 +92,9 @@ async function upload<T>(url: string, files: File[]): Promise<T> {
 /** One family of the Google Fonts catalog as the core serves it (the web never talks to Google). */
 export interface GoogleFamily { family: string; category: string; weights: number[]; italic: boolean; variable: boolean; /** Signed, short-lived core URL of the preview subset (FontFace cannot send the UI token). */ previewUrl: string }
 export interface GoogleFontSearch { stale: boolean; fallback: boolean; families: GoogleFamily[] }
+/** One voice as the core lists it: the preview is a short-lived signed core URL, never a provider URL. */
+export interface VoiceInfo { id: string; name: string; labels: Record<string, string>; previewUrl: string | null }
+export interface VoiceList { provider: 'elevenlabs' | 'openai'; configured: boolean; voices: VoiceInfo[]; previewExpiresAt: number }
 export interface CatalogState { presets: FormatPreset[]; error: string | null; path: string }
 const p = (slug: string) => `/api/projects/${encodeURIComponent(slug)}`;
 const c = (slug: string, creative: string) => `${p(slug)}/creatives/${encodeURIComponent(creative)}`;
@@ -154,6 +157,11 @@ export const api = {
     if (q.category) params.set('category', q.category);
     if (q.limit) params.set('limit', String(q.limit));
     return request<GoogleFontSearch>('GET', `/api/fonts/google?${params.toString()}`);
+  },
+  listVoices: (q: { provider: 'elevenlabs' | 'openai'; q?: string }) => {
+    const params = new URLSearchParams({ provider: q.provider });
+    if (q.q) params.set('q', q.q);
+    return request<VoiceList>('GET', `/api/voices?${params.toString()}`);
   },
   addGoogleFont: (slug: string, body: { family: string; weights: number[]; italic: boolean; role: BrandFont['role'] }) =>
     request<{ font: BrandFont; files: string[]; updated: boolean }>('POST', `${p(slug)}/brand/fonts/google`, body),

@@ -10,7 +10,7 @@ import { applyChanges, brandIsEmpty, latestBrandJob, undoChanges, MANUAL, nextId
 import { useBrandSaver, type BrandSaver } from './brandSave.ts';
 import { isActive, BrandCtx, type SectionId, type Ctx } from './brandContext.tsx';
 import { BrandReview, type AppliedProposal } from './BrandReview.tsx';
-import { Colors, Typography, Logos } from './BrandKitSections.tsx';
+import { Colors, Typography, Logos, Sound } from './BrandKitSections.tsx';
 import { Overview, Voice, PhotoStyle, Guidelines } from './BrandTextSections.tsx';
 import { ProposalReady, AnalysisCard, AnalysisFailure, Sources, Health, History } from './BrandSide.tsx';
 import './brand.css';
@@ -184,7 +184,7 @@ function BrandPageBody({ slug, live, overview, setOverview, kit, saver, job, ass
 
   const nav: Array<[SectionId, string, number | undefined]> = [
     ['overview', b.nav.overview, undefined], ['colors', b.nav.colors, kit.colors.length], ['type', b.nav.type, kit.fonts.length],
-    ['logos', b.nav.logos, kit.logos.length], ['voice', b.nav.voice, undefined], ['photo', b.nav.photo, undefined], ['guidelines', b.nav.guidelines, undefined],
+    ['logos', b.nav.logos, kit.logos.length], ['voice', b.nav.voice, undefined], ['sound', b.nav.sound, undefined], ['photo', b.nav.photo, undefined], ['guidelines', b.nav.guidelines, undefined],
   ];
 
   return (
@@ -205,6 +205,7 @@ function BrandPageBody({ slug, live, overview, setOverview, kit, saver, job, ass
           <Typography />
           <Logos uploading={uploading} />
           <Voice />
+          <Sound />
           <div className="ms-bgrid2">
             <PhotoStyle references={references} />
             <Guidelines text={overview.guidelines} onSaved={(text) => setOverview((o) => (o ? { ...o, guidelines: text } : o))} />

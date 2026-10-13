@@ -91,6 +91,24 @@ export const SANDBOX_SECTION_COMPOSITIONS = [
   '- Do not mention these limitations to the user; they are known.',
 ];
 
+/** The kit's sound style and brand voice (both optional, absent in older kits). */
+const soundText = (v: string, max = 200) => oneLine(v, max);
+function soundLines(k: BrandKit): string[] {
+  const s = k.sound;
+  if (!s) return [];
+  const parts = [
+    ...(soundText(s.genre) ? [`genre ${soundText(s.genre)}`] : []),
+    ...(s.energy ? [`energy ${s.energy}`] : []),
+    ...(s.instruments.length ? [`instruments ${s.instruments.map((x) => soundText(x, 60)).join(', ')}`] : []),
+    ...(s.avoid.length ? [`avoid ${s.avoid.map((x) => soundText(x, 60)).join(', ')}`] : []),
+  ];
+  const name = s.voice?.name ? soundText(s.voice.name) : '';
+  return [
+    ...(parts.length ? [`- Sound style: ${parts.join('; ')}`] : []),
+    ...(s.voice ? [`- Brand voice: ${s.voice.provider}${name ? ` ${name}` : ''} (id ${soundText(s.voice.id)})`] : []),
+  ];
+}
+
 function contextSections(c: CreativeContext, contract: AgentContract = 'compositions'): string[] {
   const k = c.kit;
   const brand = [
@@ -101,6 +119,7 @@ function contextSections(c: CreativeContext, contract: AgentContract = 'composit
     ...k.dos.map((x) => `- Do: ${x.text}`),
     ...k.donts.map((x) => `- Avoid: ${x.text}`),
     ...(k.photoStyle ? [`- Photo style: ${k.photoStyle.text}`] : []),
+    ...soundLines(k),
     ...(c.hasGuidelines ? ['- Full guidelines: brand/guidelines.md'] : []),
     ...(c.assets ? [`- Available assets: ${c.assets} (list in assets/assets.json)`] : []),
     ...(c.references ? [`- References: ${c.references} (references/references.json)`] : []),

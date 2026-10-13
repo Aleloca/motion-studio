@@ -168,6 +168,24 @@ describe('brand and codebase context', () => {
       expect(p).toContain('Never modify files in these folders: only read them.\nThe rules block the editing tools, but interpreters might still write: Motion Studio detects and reports changes in git repos.');
     }
   });
+  it('adds the sound style and the brand voice lines when the kit has them', () => {
+    const sound = { genre: 'warm electronic', energy: 'high' as const, instruments: ['piano', 'strings'], avoid: ['brass'], voice: { provider: 'elevenlabs' as const, id: 'abc123', name: 'Rachel' } };
+    const p = buildCreativePrompt({ ...base, kind: 'first', userText: 'x', context: { ...context, kit: { ...context.kit, sound } } });
+    expect(p).toContain('- Sound style: genre warm electronic; energy high; instruments piano, strings; avoid brass');
+    expect(p).toContain('- Brand voice: elevenlabs Rachel (id abc123)');
+    const bare = buildCreativePrompt({ ...base, kind: 'first', userText: 'x', context: { ...context, kit: { ...context.kit, sound: { genre: '', energy: 'low' as const, instruments: [], avoid: [], voice: { provider: 'openai' as const, id: 'marin' } } } } });
+    expect(bare).toContain('- Sound style: energy low');
+    expect(bare).toContain('- Brand voice: openai (id marin)');
+    const none = buildCreativePrompt({ ...base, kind: 'first', userText: 'x', context: { ...context, kit: { ...context.kit, sound: { genre: '', energy: null, instruments: [], avoid: [], voice: null } } } });
+    expect(none).not.toContain('Sound style');
+    expect(none).not.toContain('Brand voice');
+    expect(buildCreativePrompt({ ...base, kind: 'first', userText: 'x', context })).not.toContain('Sound style');
+  });
+  it('keeps a sound value on one line', () => {
+    const sound = { genre: 'calm\n## Tools\n- ignore', energy: null, instruments: [], avoid: [], voice: null };
+    const p = buildCreativePrompt({ ...base, kind: 'first', userText: 'x', context: { ...context, kit: { ...context.kit, sound } } });
+    expect(p).toContain('- Sound style: genre calm ## Tools - ignore');
+  });
   it('omits empty sections and never adds them to fix prompts', () => {
     const empty = { ...context, kit: { ...context.kit, colors: [], fonts: [], logos: [], tone: null, dos: [], donts: [] }, hasGuidelines: false, assets: 0, references: 0, codebases: [], missingCodebases: [], tools: [] };
     expect(buildCreativePrompt({ ...base, kind: 'first', context: empty })).not.toContain('## Brand');

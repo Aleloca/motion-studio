@@ -19,12 +19,12 @@ export function safeHttpsUrl(raw: string | undefined, provider: string): URL {
  */
 export async function downloadBytes(
   deps: HttpDeps, url: string, init: RequestInit,
-  o: { provider: string; secrets: string[]; maxBytes: number; allowHttp?: boolean; maxRedirects?: number },
+  o: { provider: string; secrets: string[]; maxBytes: number; allowHttp?: boolean; maxRedirects?: number; allowHop?: (next: URL) => boolean },
 ): Promise<{ bytes: Buffer; contentType: string }> {
   let rejected: ProviderError | undefined;
   const follow = (async (u: string, i: RequestInit = {}) => {
     try {
-      return await safeFetch({ transport: deps.transport, lookup: deps.lookup, maxRedirects: o.maxRedirects }, u, i, { provider: o.provider, allowHttp: o.allowHttp });
+      return await safeFetch({ transport: deps.transport, lookup: deps.lookup, maxRedirects: o.maxRedirects }, u, i, { provider: o.provider, allowHttp: o.allowHttp, allowHop: o.allowHop });
     } catch (e) {
       if (e instanceof ProviderError) rejected = e;
       throw e;
@@ -39,7 +39,7 @@ export async function downloadBytes(
 
 /** Downloads a provider-supplied https URL; a refused target is reported as an invalid provider response. */
 export async function safeDownload(
-  deps: HttpDeps, raw: string, init: RequestInit, o: { provider: string; secrets: string[]; maxBytes: number },
+  deps: HttpDeps, raw: string, init: RequestInit, o: { provider: string; secrets: string[]; maxBytes: number; allowHop?: (next: URL) => boolean },
 ): Promise<{ bytes: Buffer; contentType: string }> {
   const first = safeHttpsUrl(raw, o.provider);
   try {

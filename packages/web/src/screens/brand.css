@@ -354,3 +354,20 @@
 .ms-gf-weight { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
 .ms-gf-foot { display: flex; justify-content: flex-end; }
 @media (max-width: 640px) { .ms-gf-body { grid-template-columns: minmax(0, 1fr); } .ms-gf-bar { grid-template-columns: minmax(0, 1fr); } }
+
+/* Sound section and voice picker. */
+.ms-bsound { display: flex; flex-direction: column; gap: 14px; }
+.ms-bsound-chips { list-style: none; margin: 0; padding: 0; }
+.ms-bsound-x { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; margin-left: 4px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: inherit; cursor: pointer; }
+.ms-bsound-x:hover { background: var(--field); }
+.ms-bsound-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ms-vp-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ms-vp-bar .ms-input, .ms-vp-bar input { flex: 1 1 200px; min-width: 0; }
+.ms-vp-list { display: flex; flex-direction: column; gap: 4px; max-height: 380px; overflow-y: auto; min-width: 0; }
+.ms-vp-row { display: flex; align-items: center; gap: 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); min-width: 0; }
+.ms-vp-row.ms-on { border-color: var(--accent); background: var(--sel); }
+.ms-vp-pick { flex: 1; display: flex; align-items: baseline; gap: 10px; min-width: 0; padding: 8px 10px; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; border-radius: 8px; }
+.ms-vp-pick:hover { background: var(--field); }
+.ms-vp-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ms-vp-nop { font-size: 11px; padding-right: 10px; }
+.ms-vp-nokey a { color: var(--accent); }
