@@ -1,5 +1,5 @@
 // Brand page side column: proposal ready, live analysis, sources, brand health and the analyses so far.
-import { shownTotal, type BrandOverview, type BrandProposal, type BrandSource, type JobSummary, type ProposalActivity } from '@motion-studio/shared';
+import { shownTotal, type BrandOverview, type BrandPhase, type BrandProposal, type BrandSource, type JobSummary, type ProposalActivity } from '@motion-studio/shared';
 import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { api } from '../api.ts';
 import { ApprovalCard } from '../components/ApprovalCard.tsx';
@@ -9,7 +9,7 @@ import type { EventsState } from '../eventsReducer.ts';
 import { formatWhen, relativeTime, useLocale, useT } from '../i18n.tsx';
 import { enter } from '../motion/index.ts';
 import { Button, cx, Icon, Input, Popover, Spinner, toast, Typing } from '../ui/index.ts';
-import { analysisSteps, healthChecks, hostOf, normalizeUrl, type HealthId } from './brandModel.ts';
+import { analysisPhases, analysisSteps, healthChecks, hostOf, normalizeUrl, type HealthId, type PhaseState } from './brandModel.ts';
 import { KEEPALIVE, deferRemoval, flushDeferred, isPendingRemoval, removalKey, usePendingRemovals } from './deferred.ts';
 import { isActive, useBrand, useAppear, type SectionId } from './brandContext.tsx';
 import { message } from './common.tsx';
@@ -84,6 +84,7 @@ export function AnalysisCard({ job, live }: { job: JobSummary; live: EventsState
   const ref = useRef<HTMLElement>(null);
   useLayoutEffect(() => { void enter(ref.current, { y: 8 }); }, []);
   const steps = analysisSteps(live.events[job.id]);
+  const phases = analysisPhases(live.events[job.id]);
   const approvals = Object.values(live.approvals).filter((x) => x.jobId === job.id);
   const [cancelling, setCancelling] = useState(false);
   const cancel = () => {
@@ -100,6 +101,7 @@ export function AnalysisCard({ job, live }: { job: JobSummary; live: EventsState
       </div>
       {/* report_progress carries text only: the bar is indeterminate, never a made-up percentage. */}
       <div className="ms-bbar" role="progressbar" aria-label={a.progress} aria-busy="true"><i /></div>
+      {phases ? <Phases phases={phases} /> : null}
       <ol className="ms-bsteps">
         {job.state === 'queued' ? <li className="ms-muted">{a.queued}</li> : null}
         {job.state === 'running' && !steps.length ? <li className="ms-muted">{a.starting}</li> : null}
@@ -108,6 +110,23 @@ export function AnalysisCard({ job, live }: { job: JobSummary; live: EventsState
       {job.state === 'running' ? <span className="ms-brow ms-muted ms-bworking"><Typing label={a.working} />{a.working}</span> : null}
       {approvals.map((x) => <ApprovalCard key={x.id} approval={x} />)}
     </section>
+  );
+}
+
+/** The analysis phases as a stepper: completed (check), current (marked as the current step), pending. */
+function Phases({ phases }: { phases: Array<{ phase: BrandPhase; state: PhaseState }> }) {
+  const t = useT();
+  const a = t.web.brand.analysis;
+  return (
+    <ol className="ms-bphases" aria-label={a.phasesLabel}>
+      {phases.map(({ phase, state }) => (
+        <li key={phase} className="ms-bphase" data-state={state} aria-current={state === 'current' ? 'step' : undefined}>
+          <span className="ms-bphase-mark" aria-hidden="true">{state === 'done' ? <Icon name="check" size={10} strokeWidth={2.4} /> : <i />}</span>
+          <span>{a.phases[phase]}</span>
+          <span className="ms-sr">{`: ${a.phaseState[state]}`}</span>
+        </li>
+      ))}
+    </ol>
   );
 }
 

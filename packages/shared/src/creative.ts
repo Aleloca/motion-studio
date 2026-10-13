@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SERVICE_CHOICES } from './services.ts';
 import type { AgentEvent } from './events.ts';
 import { linkedCodebaseSchema } from './schemas.ts';
 import { usageSummarySchema } from './usage.ts';
@@ -22,6 +23,11 @@ export const briefSchema = z.object({
    * consumers instead of making the creative unreadable.
    */
   links: z.record(z.string().min(1), z.string().min(1)).optional(),
+  /** Which external services the agent may use per kind (absent = all `auto`; see `effectiveServices`). */
+  services: z.object({
+    images: z.enum(SERVICE_CHOICES.images), voice: z.enum(SERVICE_CHOICES.voice),
+    music: z.enum(SERVICE_CHOICES.music), sfx: z.enum(SERVICE_CHOICES.sfx),
+  }).partial().optional(),
 });
 export type Brief = z.infer<typeof briefSchema>;
 

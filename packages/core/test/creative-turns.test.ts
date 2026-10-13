@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_FORMATS, type Brief, type ServerMessage } from '@motion-studio/shared';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { testLauncher } from './helpers/launcher.ts';
 import { AGENT_ALLOWED_TOOLS } from '../src/agent/runner.ts';
@@ -486,6 +486,27 @@ describe('CreativeTurnService', { timeout: 90_000 }, () => {
     expect((await store.get(ref.creativeSlug)).title).toBe('Nuovo');
     queue.cancel(job.id);
     await queue.whenIdle();
+  });
+
+  it('reads the brief services at the start of each turn: a change between turns applies to the next one', async () => {
+    const launcher = testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }));
+    // The tools section (and the services line) is written for MCP jobs: pretend the bridge is up (no MCP command, so none starts).
+    vi.spyOn(launcher, 'mcpActive').mockReturnValue(true);
+    const launched: Array<Parameters<typeof launcher.start>[0]> = [];
+    const start = launcher.start.bind(launcher);
+    vi.spyOn(launcher, 'start').mockImplementation((i) => { launched.push(i); return start(i); });
+    const svc = new CreativeTurnService({ agentContract: 'media', queue, git: new Git(), media: NoMediaTools, vault: new MemoryVault(), launcher,
+      presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {} });
+    expect(await finalState((await svc.start(ref)).id)).toBe('succeeded');
+    // An old brief: every service auto.
+    expect(launched[0]!.services).toEqual({ images: 'auto', voice: 'auto', music: 'auto', sfx: 'auto' });
+    expect(launched[0]!.request.prompt).toContain('Services for this creative: images auto; voice auto; music auto; sound effects auto.');
+    // The chat chip saves the brief (a normal update) between turns.
+    await svc.updateBrief(ref, { brief: { ...brief, services: { voice: 'none', images: 'stock' } } });
+    expect(await finalState((await svc.start(ref, { text: 'più veloce', pins: [] })).id)).toBe('succeeded');
+    const last = launched.at(-1)!;
+    expect(last.services).toEqual({ images: 'stock', voice: 'none', music: 'auto', sfx: 'auto' });
+    expect(last.request.prompt).toContain('Services for this creative: images stock only; voice none; music auto; sound effects auto.');
   });
 
   it('restore removes unsaved files in work/ (keeping ignored ones) and logs how many', async () => {

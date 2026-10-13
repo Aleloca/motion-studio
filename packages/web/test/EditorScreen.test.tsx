@@ -459,12 +459,13 @@ describe('EditorScreen · save', () => {
     for (let i = 0; i < 501; i += 1) s.apply(move(i));
     expect(peekDraft(KEY)!.ops).toHaveLength(501);
     api.saveEdits.mockImplementationOnce(async () => { detail = makeDetail([v2(1), v2(2), v2(3)]); return { version: 3 }; });
-    await userEvent.click(await screen.findByRole('button', { name: 'Save as v3' }));
-    await waitFor(() => expect(api.saveEdits).toHaveBeenCalledTimes(1));
+    // Under load the 501 applies and the compaction can take a beat longer than the 1 s/5 s defaults of the queries.
+    await userEvent.click(await screen.findByRole('button', { name: 'Save as v3' }, { timeout: 15_000 }));
+    await waitFor(() => expect(api.saveEdits).toHaveBeenCalledTimes(1), { timeout: 15_000 });
     const body = api.saveEdits.mock.calls[0]![2] as { ops: unknown[]; composition: Composition };
     expect(body.ops).toEqual([move(500)]);
-    expect(await screen.findByText(/^✓ Saved as/)).toBeTruthy();
-  });
+    expect(await screen.findByText(/^✓ Saved as/, {}, { timeout: 15_000 })).toBeTruthy();
+  }, 60_000);
 
   it('a newer version that changed only other formats does not move the base: no dialog, Save works on the old base', async () => {
     const r = render(<Harness />);

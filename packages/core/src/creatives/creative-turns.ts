@@ -1,7 +1,7 @@
 import { creativeJobKey } from '@motion-studio/shared';
 import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
-import { canFollow, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, formatLabel, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
+import { canFollow, effectiveServices, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, formatLabel, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { detachLinksUnder } from '../agent/protected-links.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -15,6 +15,7 @@ import type { Git } from '../git.ts';
 import { JobFailedError, type JobQueue } from '../jobs/job-queue.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { availableTools } from '../bridge/provider-tools.ts';
+import type { KeyCheckCache } from '../providers/key-check.ts';
 import type { SecretsVault } from '../secrets/vault.ts';
 import { compositionSchemaFile, CONTEXT_MD } from '../project-template.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
@@ -35,6 +36,8 @@ import { currentLocale, t } from '../i18n.ts';
 
 export interface CreativeTurnDeps {
   queue: JobQueue; launcher: AgentLauncher; git: Git; media: MediaTools; vault: SecretsVault;
+  /** What is known about the keys (F5: a capability checked `missing` is listed as unavailable in the prompt). */
+  keyChecks?: KeyCheckCache;
   presets: () => Promise<FormatPreset[]>;
   model: () => Promise<string | null>;
   broadcast: (msg: ServerMessage) => void;
@@ -140,7 +143,7 @@ export class CreativeTurnService {
   }
 
   /** Edits title and/or brief; refused while a generation is queued or running for the creative. */
-  async updateBrief(ref: CreativeRef, patch: { title?: string; brief?: Brief; linkedCodebases?: LinkedCodebase[] }): Promise<CreativeFile> {
+  async updateBrief(ref: CreativeRef, patch: { title?: string; brief?: Brief; services?: Brief['services']; linkedCodebases?: LinkedCodebase[] }): Promise<CreativeFile> {
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     return this.locks.run(key, async () => {
       if (this.isActive(key)) throw new WorkspaceError(409, t().errors.waitBeforeBrief);
@@ -158,6 +161,9 @@ export class CreativeTurnService {
         // Shared with the web, which tells before "Save and regenerate" whether a legacy creative converts (I4).
         const links = added.length > 0 ? linksAfterBriefSave(current, rest.formats, await this.deps.presets()) : current.links;
         brief = links ? { ...rest, links } : rest;
+      } else if (patch.services) {
+        // Only the service choices change: everything else comes from the brief stored now, never from the caller's copy.
+        brief = { ...(await store.get(ref.creativeSlug)).brief, services: patch.services };
       }
       const updated = await store.update(ref.creativeSlug, {
         ...(patch.title !== undefined ? { title: patch.title } : {}),
@@ -395,7 +401,7 @@ export class CreativeTurnService {
       const attemptUsage: Array<UsageRecord | null | undefined> = [];
 
       if (!noAgent) {
-        const { context, existing } = await this.buildContext(ref, store, creative.linkedCodebases);
+        const { context, existing } = await this.buildContext(ref, store, creative.linkedCodebases, creative.brief.services);
         // Spec §7: a legacy base (rendered media, v1 manifest) makes this change a conversion to compositions. The core
         // extracts reference frames of the old media into its protected cache; the chat says it costs more tokens once.
         let conversion: { formats: Awaited<ReturnType<typeof extractReferenceFrames>>; created: string[] } | undefined;
@@ -494,6 +500,8 @@ export class CreativeTurnService {
           const prompt = buildCreativePrompt({
             slug, creative, presets, version: n, kind, formats: targets,
             userText: kind === 'fix' ? undefined : request,
+            // A repair turn carries the user's own words (F4): only what they wrote, never a request the core made up.
+            userWords: kind === 'fix' ? message?.text || undefined : undefined,
             pins: kind === 'iteration' ? message?.pins : undefined,
             attachments: kind === 'iteration' ? attachments : undefined,
             problems, context, locale, sandboxed, contract: turnContract,
@@ -514,6 +522,8 @@ export class CreativeTurnService {
             protectedDirs: earlier.map((d) => join(creativeDir, 'outputs', d)),
             request: { prompt, resumeSessionId, forkSession, model },
             usage: { version: n, attempt }, sandboxed,
+            // The brief as read at this turn's start (Task 7): a change from the chat applies from the next turn.
+            services: effectiveServices(creative.brief),
             // After the agent's events written so far, so the chat keeps its order.
             onWarning: (text) => {
               lastWrite = lastWrite.then(() => store.appendConversation(slug, { type: 'system', at: now(), level: 'warning', text }));
@@ -920,7 +930,7 @@ export class CreativeTurnService {
     return { outputs: a.outputs, problems: a.problems, tools: [], renderCommand: null, compositions: a.compositions };
   }
 
-  private async buildContext(ref: CreativeRef, store: CreativeStore, creativeCodebases: LinkedCodebase[]): Promise<{ context: CreativeContext; existing: string[] }> {
+  private async buildContext(ref: CreativeRef, store: CreativeStore, creativeCodebases: LinkedCodebase[], services: Brief['services']): Promise<{ context: CreativeContext; existing: string[] }> {
     const note = (text: string) => store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text });
     const brand = new BrandStore(ref.projectDir);
     const library = new LibraryStore(ref.projectDir, this.deps.media);
@@ -945,7 +955,7 @@ export class CreativeTurnService {
     for (const c of checks.filter((x) => !x.exists)) await note(t().jobs.codebaseMissing({ path: c.path }));
     const existing = checks.filter((c) => c.exists);
     return {
-      context: { kit, hasGuidelines, assets, references, codebases: existing.map(({ path, note: n }) => ({ path, ...(n ? { note: n } : {}) })), missingCodebases: checks.filter((c) => !c.exists).map((c) => c.path), tools: this.deps.launcher.mcpActive() ? await availableTools(this.deps.vault) : [] },
+      context: { kit, hasGuidelines, assets, references, codebases: existing.map(({ path, note: n }) => ({ path, ...(n ? { note: n } : {}) })), missingCodebases: checks.filter((c) => !c.exists).map((c) => c.path), tools: this.deps.launcher.mcpActive() ? await availableTools(this.deps.vault, services, this.deps.keyChecks) : [] },
       existing: existing.map((c) => c.path),
     };
   }

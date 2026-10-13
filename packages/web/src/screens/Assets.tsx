@@ -1,51 +1,29 @@
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
 import type { AssetEntry, AssetKind, AssetOrigin, JobSummary } from '@motion-studio/shared';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from 'react';
 import { api } from '../api.ts';
-import { MediaThumb, SafeImg } from '../components/MediaThumb.tsx';
 import type { EventsState } from '../eventsReducer.ts';
-import { formatWhen, useLocale, useT } from '../i18n.tsx';
+import { useT } from '../i18n.tsx';
 import { brandJobFailedText, isActiveJob, isDescribeJob } from '../labels.ts';
 import { D, enter, exit, useEnter } from '../motion/index.ts';
 import { href } from '../routes.ts';
 import { requestNewCreativeWithAssets } from '../shell/intents.ts';
 import { go } from '../shell/ShellContext.tsx';
-import { Button, Check, Chip, Empty, Icon, Input, NavItem, Pill, Popover, Spinner, Tag, Textarea, Typing, cx, toast, type IconName } from '../ui/index.ts';
-import { useFontPreview, specimenFamily } from './brandFonts.ts';
+import { Button, Check, Chip, Empty, Icon, Input, NavItem, Pill, Popover, Select, Spinner, Tag, clockText, cx, toast, type IconName } from '../ui/index.ts';
 import { Alert, UNDO_MS, message } from './common.tsx';
 import { KEEPALIVE, deferRemoval, isPendingRemoval, removalKey, usePendingRemovals } from './deferred.ts';
-import { externalLinkRel } from '../desktop.ts';
+import { AssetDetail } from './assets/AssetDetail.tsx';
+import { GenerateDialog } from './assets/GenerateDialog.tsx';
+import { KINDS, SORTS, baseName, mergeTags, sortAssets, splitTags, type AssetSort } from './assets/model.ts';
+import { Thumb } from './assets/Thumb.tsx';
 import './library.css';
 
-const KINDS: AssetKind[] = ['image', 'svg', 'video', 'font', 'audio', 'other'];
+export { baseName, mergeTags };
+
 const ORIGINS: AssetOrigin[] = ['website', 'upload', 'generated', 'stock'];
-const MAX_TAGS = 30;
-const MAX_TAG = 40;
 
 type Listing = { assets: AssetEntry[]; error: string | null; unregistered: string[] };
-/** The file name without its folder (point 16: never the `brand/…` path as a title). */
-export const baseName = (file: string) => file.split('/').pop() ?? file;
-/** Tags typed by hand: trimmed, at most 40 characters, no duplicates (case-insensitive), at most 30 in all. */
-export function mergeTags(current: readonly string[], added: readonly string[]): string[] {
-  const out = [...current];
-  for (const raw of added) {
-    const tag = raw.trim().slice(0, MAX_TAG);
-    if (!tag || out.some((x) => x.toLowerCase() === tag.toLowerCase())) continue;
-    if (out.length >= MAX_TAGS) break;
-    out.push(tag);
-  }
-  return out;
-}
-const splitTags = (text: string) => text.split(',').map((x) => x.trim()).filter(Boolean);
 const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
-/** A light logo needs a dark stage to be seen: told by its name or its tags. */
-const wantsDarkStage = (a: AssetEntry) => /\b(white|light|inverse|negative|reversed|bianco|chiaro)\b/i.test(`${a.file} ${a.tags.join(' ')}`);
-/**
- * SVGs and formats with an alpha channel may be drawn in ink on nothing: they sit on a stage that suits them (a light,
- * theme-invariant stage as on the Brand page, or a dark one for light logos), never on the theme's tile colour.
- * Opaque pictures cover the stage entirely, so it only shows through transparent areas.
- */
-const mayBeTransparent = (a: AssetEntry) => a.kind === 'svg' || /\.(png|webp|gif|avif)$/i.test(a.file);
 
 /** The newest job of this project's brand key (analysis or description). Without the key, an active brand job of the slug. */
 function brandJob(jobs: Record<string, JobSummary>, jobKey: string | null, slug: string): JobSummary | undefined {
@@ -112,11 +90,13 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
   const [origin, setOrigin] = useState<AssetOrigin | null>(null);
   const [tag, setTag] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [sort, setSort] = useState<AssetSort>('date');
   const [sel, setSel] = useState<Set<string>>(() => new Set());
   const [open, setOpen] = useState<string | null>(null);
   // Deletes waiting for their Undo time: the cards are hidden until the delete goes out (or Undo brings them back).
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
   const [uploading, setUploading] = useState<string[]>([]);
+  const [generating, setGenerating] = useState(false);
   const [fresh, setFresh] = useState<Set<string>>(() => new Set());
   const [drag, setDrag] = useState(false);
   const dragDepth = useRef(0);
@@ -244,6 +224,14 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
     setListing((l) => (l ? { ...l, assets: l.assets.map((x) => (x.file === entry.file ? entry : x)) } : l));
   }, [setListing]);
 
+  // A renamed file is a new key everywhere: the listing, the selection and the open detail follow it.
+  const renamed = useCallback((from: string, entry: AssetEntry) => {
+    setListing((l) => (l ? { ...l, assets: l.assets.map((x) => (x.file === from ? entry : x)) } : l));
+    setSel((s) => (s.has(from) ? new Set([...s].map((f) => (f === from ? entry.file : f))) : s));
+    setOpen((o) => (o === from ? entry.file : o));
+    reload();
+  }, [setListing, reload]);
+
   const addTags = useCallback(async (files: string[], text: string) => {
     const added = splitTags(text);
     if (!added.length) return;
@@ -266,7 +254,7 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
   };
 
   // Filters.
-  const shown = assets.filter((x) => (type === 'all' || x.kind === type) && (!origin || x.origin === origin) && (!tag || x.tags.includes(tag))
+  const shown = sortAssets(assets, sort).filter((x) => (type === 'all' || x.kind === type) && (!origin || x.origin === origin) && (!tag || x.tags.includes(tag))
     && (!query.trim() || `${x.file} ${x.description} ${x.tags.join(' ')}`.toLowerCase().includes(query.trim().toLowerCase())));
   const filtered = type !== 'all' || origin !== null || tag !== null || query.trim() !== '';
   const clear = () => { setType('all'); setOrigin(null); setTag(null); setQuery(''); };
@@ -335,12 +323,15 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
           {sel.size ? <span className="ms-lib-muted">· {a.selectedCount({ count: sel.size })}</span> : null}
           {filtered ? <Button size="sm" variant="ghost" onClick={clear}>{a.clearFilters}</Button> : null}
           <div className="ms-grow" />
+          <Select className="ms-assets-sort" variant="pill" label={a.sort.label} value={sort} onChange={(v) => setSort(v as AssetSort)} options={SORTS.map((k) => ({ value: k, label: a.sort[k] }))} />
           <label className="ms-lib-search">
             <Icon name="search" size={14} />
             <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={a.searchPlaceholder} aria-label={a.search} />
           </label>
+          <Button variant="outline" disabled={!canUpload} onClick={() => setGenerating(true)}><Icon name="sparkle" size={13} strokeWidth={1.7} />{t.web.library.generate.open}</Button>
           <Button variant="ink" disabled={!canUpload} onClick={pick}><Icon name="upload" size={13} strokeWidth={1.7} />{a.upload}</Button>
         </div>
+        <GenerateDialog open={generating} onClose={() => setGenerating(false)} slug={slug} live={live} />
 
         {listing.error ? <Alert>{a.listUnreadable({ detail: listing.error })}</Alert> : null}
         {listing.unregistered.length > 0 ? (
@@ -381,7 +372,7 @@ function AssetsBody({ slug, live, listing, setListing, reload, job, projectName 
       <div className="ms-assets-detail">
         {detail ? (
           <AssetDetail key={detail.file} slug={slug} asset={detail} describing={describing.has(detail.file)} busy={busy}
-            onClose={() => setOpen(null)} onSaved={saved} onDescribe={() => void describe([detail.file])}
+            onClose={() => setOpen(null)} onSaved={saved} onRenamed={renamed} onDescribe={() => void describe([detail.file])}
             onUse={() => useInCreative([detail.file])} onDelete={() => void remove([detail.file])} />
         ) : null}
       </div>
@@ -424,38 +415,6 @@ function DescribeCard({ count, total, describing, busy, onDescribe }: { count: n
   );
 }
 
-/** The media of an asset: images and SVG as they are, a video frame, a font specimen with the real file, or the kind. */
-function Thumb({ slug, asset: x, big }: { slug: string; asset: AssetEntry; big?: boolean }) {
-  const url = api.projectFileUrl(slug, `assets/${x.file}`);
-  if (x.kind === 'image' || x.kind === 'svg') {
-    return (
-      <span className={cx('ms-athumb', x.kind === 'svg' && 'ms-athumb-svg', mayBeTransparent(x) && (wantsDarkStage(x) ? 'ms-stage-dark' : 'ms-stage-light'))}>
-        <SafeImg src={url} alt="" loading="lazy" small={!big} />
-      </span>
-    );
-  }
-  if (x.kind === 'video') return <span className="ms-athumb ms-athumb-video"><MediaThumb src={url} alt="" /><span className="ms-athumb-play"><Icon name="play" size={big ? 14 : 11} fill /></span></span>;
-  if (x.kind === 'font') return <FontThumb url={url} name={baseName(x.file)} />;
-  const ext = (x.file.split('.').pop() ?? '').toUpperCase();
-  return (
-    <span className="ms-athumb ms-athumb-file">
-      <Icon name={x.kind === 'audio' ? 'play' : 'folder'} size={18} />
-      <span>{ext}</span>
-    </span>
-  );
-}
-
-function FontThumb({ url, name }: { url: string; name: string }) {
-  const preview = useFontPreview(url);
-  const family = specimenFamily(preview);
-  return (
-    <span className="ms-athumb ms-athumb-font" style={{ fontFamily: family }}>
-      <span className="ms-athumb-aa">Aa</span>
-      <span className="ms-athumb-sample">{name.replace(/\.[a-z0-9]+$/i, '')}</span>
-    </span>
-  );
-}
-
 interface CardProps {
   slug: string; asset: AssetEntry; index: number; cascade: boolean; fresh: boolean; selected: boolean; active: boolean; describing: boolean;
   onSelect(): void; onOpen(): void;
@@ -476,6 +435,7 @@ function AssetCard({ slug, asset: x, index, cascade, fresh, selected, active, de
       <div className="ms-acard-media">
         <Thumb slug={slug} asset={x} />
         {x.width && x.height && (x.kind === 'image' || x.kind === 'video') ? <span className="ms-acard-dims">{x.width}×{x.height}</span> : null}
+        {x.durationSec && (x.kind === 'video' || x.kind === 'audio') ? <span className="ms-acard-dur" title={a.durationBadge({ time: clockText(x.durationSec) })}>{clockText(x.durationSec)}</span> : null}
         {describing ? (
           <>
             <span className="ms-shimmer" aria-hidden="true" />
@@ -562,115 +522,3 @@ function SelBar({ count, busy, onDescribe, onAddTags, onUse, onDelete, onClear }
   );
 }
 
-interface DetailProps {
-  slug: string; asset: AssetEntry; describing: boolean; busy: boolean;
-  onClose(): void; onSaved(entry: AssetEntry): void; onDescribe(): void; onUse(): void; onDelete(): void;
-}
-
-/** The detail panel (prototype AssetDetail, point 19): enters from +16 px; description and tag chips save themselves. */
-function AssetDetail({ slug, asset: x, describing, busy, onClose, onSaved, onDescribe, onUse, onDelete }: DetailProps) {
-  const t = useT();
-  const locale = useLocale();
-  const a = t.web.library.assets;
-  const d = a.detail;
-  const ref = useRef<HTMLElement>(null);
-  useLayoutEffect(() => { void enter(ref.current, { x: 16, y: 0 }); }, []);
-  // The description being typed wins over live reloads until it is saved (null: follow the server).
-  const [draft, setDraft] = useState<string | null>(null);
-  const [tags, setTags] = useState<string[]>(x.tags);
-  const [tagText, setTagText] = useState('');
-  const [status, setStatus] = useState<'saved' | null>(null);
-  const pendingTags = useRef(0);
-  const serverTags = x.tags.join('\n');
-  useEffect(() => { if (pendingTags.current === 0) setTags(x.tags); }, [serverTags]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (draft !== null && draft === x.description) setDraft(null); }, [x.description]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const fail = (e: unknown) => toast.show(d.saveFailed({ detail: message(e) }));
-  const saveDescription = async () => {
-    if (draft === null || draft === x.description) return;
-    try {
-      onSaved(await api.updateAsset(slug, x.file, { description: draft }));
-      setDraft(null);
-      setStatus('saved');
-    } catch (e) { fail(e); }
-  };
-  const saveTags = async (next: string[]) => {
-    const before = tags;
-    setTags(next);
-    pendingTags.current += 1;
-    try {
-      onSaved(await api.updateAsset(slug, x.file, { tags: next }));
-      setStatus('saved');
-    } catch (e) {
-      setTags(before);
-      fail(e);
-    } finally {
-      pendingTags.current -= 1;
-    }
-  };
-  const addTag = () => {
-    const next = mergeTags(tags, splitTags(tagText));
-    setTagText('');
-    if (next.length !== tags.length) void saveTags(next);
-  };
-  const onTagKey = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTag(); }
-    else if (e.key === 'Backspace' && !tagText && tags.length) { e.preventDefault(); void saveTags(tags.slice(0, -1)); }
-  };
-  let host = x.sourceUrl ?? '';
-  try { if (x.sourceUrl) host = new URL(x.sourceUrl).hostname; } catch { /* keep the raw address */ }
-
-  return (
-    <aside ref={ref} className="ms-adetail" aria-label={d.label}>
-      <div className="ms-adetail-head">
-        <b className="ms-adetail-name" title={x.file}>{baseName(x.file)}</b>
-        {status === 'saved' ? <span className="ms-adetail-saved" role="status">{d.saved}</span> : null}
-        <Button size="sm" variant="ghost" icon aria-label={d.close} onClick={onClose}><Icon name="close" size={12} /></Button>
-      </div>
-      <div className="ms-adetail-body">
-        <div className="ms-adetail-media"><Thumb slug={slug} asset={x} big /></div>
-        <div className="ms-adetail-field">
-          <div className="ms-lib-row">
-            <span className="ms-lib-label">{d.description}</span>
-            <span className="ms-lib-faint ms-lib-small">{d.descriptionHint}</span>
-            <Button size="sm" variant="ghost" icon className="ms-lib-push" aria-label={a.describeAgain} title={busy ? a.describeBusy : a.describeAgain} disabled={busy} onClick={onDescribe}>
-              <Icon name="refresh" size={12} />
-            </Button>
-          </div>
-          {describing ? (
-            <div className="ms-adetail-looking"><Typing />{d.looking}</div>
-          ) : (
-            <Textarea rows={5} aria-label={d.description} placeholder={d.descriptionPlaceholder} value={draft ?? x.description}
-              onChange={(e) => { setDraft(e.target.value); setStatus(null); }} onBlur={() => void saveDescription()} />
-          )}
-        </div>
-        <div className="ms-adetail-field">
-          <span className="ms-lib-label">{d.tags}</span>
-          <div className="ms-adetail-tags">
-            {tags.map((g) => (
-              <span key={g} className="ms-adetail-tag">
-                {g}
-                <button type="button" aria-label={d.removeTag({ tag: g })} onClick={() => void saveTags(tags.filter((y) => y !== g))}><Icon name="close" size={9} /></button>
-              </span>
-            ))}
-            {tags.length < MAX_TAGS ? (
-              <input className="ms-adetail-tagin" value={tagText} maxLength={MAX_TAG * 3} aria-label={d.addTag} placeholder={d.addTagPlaceholder}
-                title={d.tagRules} onChange={(e) => setTagText(e.target.value)} onKeyDown={onTagKey} onBlur={() => { if (tagText.trim()) addTag(); }} />
-            ) : null}
-          </div>
-        </div>
-        <dl className="ms-adetail-meta">
-          <dt>{d.file}</dt><dd className="ms-lib-mono">{x.file}</dd>
-          {x.width && x.height ? <><dt>{d.size}</dt><dd>{x.width}×{x.height}</dd></> : null}
-          <dt>{d.added}</dt><dd>{a.origins[x.origin]} · {formatWhen(locale, x.addedAt)}</dd>
-          {x.sourceUrl ? <><dt>{d.source}</dt><dd><a href={x.sourceUrl} target="_blank" rel={externalLinkRel()} title={x.sourceUrl}>{host}</a></dd></> : null}
-          {x.attribution ? <><dt>{d.credit}</dt><dd>{x.attribution}</dd></> : null}
-        </dl>
-        <div className="ms-lib-row">
-          <Button variant="ink" className="ms-grow" onClick={onUse}>{a.useInCreative}</Button>
-          <Button variant="danger" icon aria-label={d.delete} title={d.delete} onClick={onDelete}><Icon name="trash" size={14} /></Button>
-        </div>
-      </div>
-    </aside>
-  );
-}

@@ -15,7 +15,7 @@ const SAFE_ALWAYS = new Set(['ls', 'mkdir', 'ffprobe', 'cwebp', 'gifsicle', 'opt
 /** Ordered by how a system folder may be granted: never the folder itself nor anything inside it. */
 const SYSTEM_DIRS = ['/etc', '/private', '/usr', '/bin', '/sbin', '/System', '/Library', '/Applications'];
 const SHELL_CONTROL = /[;&|`$<>\n\r(){}]/;
-const PROVIDER_RULES = new Set(['provider:openai-images', 'provider:tts-openai', 'provider:tts-elevenlabs']);
+const PROVIDER_RULES = new Set(['provider:sfx-elevenlabs', 'provider:music-elevenlabs', 'provider:openai-images', 'provider:tts-openai', 'provider:tts-elevenlabs']);
 const STUDIO_RULES = new Set(['mcp__studio__report_progress']);
 /** Folders that configure Motion Studio, git or the agent (compared in lower case on case-insensitive volumes). */
 const PROTECTED_SEGMENTS = new Set(['.studio', '.git', '.claude']);

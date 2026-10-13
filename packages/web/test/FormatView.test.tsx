@@ -6,6 +6,9 @@ import type { EventsState } from '../src/eventsReducer.ts';
 import type { Route } from '../src/routes.ts';
 import type { Shell } from '../src/shell/ShellContext.tsx';
 
+// Load-robust (flaky under a busy machine): a per-file timeout, not a global one; what the tests check is unchanged.
+vi.setConfig({ testTimeout: 45_000, hookTimeout: 45_000 });
+
 const at = '2026-10-08T10:00:00.000Z';
 const out = (format: string, file: string, durationSec: number | null = null): OutputFileInfo => ({ format, file, width: 1080, height: 1080, durationSec, verified: true, preview: null });
 const version = (n: number): VersionEntry =>

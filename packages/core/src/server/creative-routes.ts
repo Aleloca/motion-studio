@@ -1,3 +1,5 @@
+import type { Git } from '../git.ts';
+import { recoverRenameJournal } from '../library/rename-recovery.ts';
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
@@ -50,7 +52,8 @@ const isInsideDir = (p: string, base: string | null) => Boolean(base && p.starts
 /** `formats`: the formats the request applies to (spec §2.5); absent or empty: all of them. */
 export const turnBodySchema = z.object({ text: z.string().max(10_000).optional(), pins: z.array(pinSchema).max(50).optional(), formats: z.array(z.string().min(1).max(200)).max(100).optional() });
 const createBody = z.object({ title: z.string(), brief: briefSchema, generate: z.boolean().optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
-const editBody = z.object({ title: z.string().optional(), brief: briefSchema.optional(), linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
+// `services` alone changes only that field of the stored brief (the composer's Services chip); `brief` replaces the brief.
+const editBody = z.object({ title: z.string().optional(), brief: briefSchema.optional(), services: briefSchema.shape.services, linkedCodebases: z.array(linkedCodebaseSchema).max(20).optional() });
 const pickBody = z.object({ format: z.string().min(1).max(200), version: z.number().int().min(1).nullable() });
 /**
  * Export of the ★ versions (spec §3.3): `picks` (format → vN), `follow` (followers, exported in their primary's version),
@@ -129,6 +132,8 @@ export interface RecoverOptions {
   mediaCacheMaxBytes?: number;
   /** Editor staging folders a live preview session uses (the sweep leaves them). */
   stagingInUse?: (dir: string) => boolean;
+  /** Commits what finishing an interrupted asset rename changed. */
+  git?: Git;
 }
 
 export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: string) => boolean = () => false, ro: RecoverOptions = {}): Promise<void> {
@@ -144,6 +149,8 @@ export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: st
       skipCreative: (slug) => ro.renderActive?.(p.slug, slug) ?? false,
       media: { ...(ro.mediaInUse ? { inUse: ro.mediaInUse } : {}), ...(ro.mediaCacheMaxBytes !== undefined ? { maxBytes: ro.mediaCacheMaxBytes } : {}) },
     }).catch((err: Error) => console.warn(`Motion Studio: render cleanup failed in project ${p.slug}: ${err.message}`));
+    // A rename of a library asset a crash interrupted: finished (or undone) before anything else reads the project.
+    await recoverRenameJournal(dir, ro.git).catch((err: Error) => console.warn(`Motion Studio: asset rename recovery failed in project ${p.slug}: ${err.message}`));
     await sweepStoryboardTemps(dir).catch(() => []);
     // The derived caches (storyboards, pin frames, agent originals, reference frames): old and over-cap version folders.
     await sweepDerivedCaches(dir, { skipCreative: (slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug)) }).catch(() => []);

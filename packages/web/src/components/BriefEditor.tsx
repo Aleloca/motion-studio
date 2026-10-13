@@ -1,11 +1,12 @@
 // Brief form of a creative ("Edit the brief" in the canvas panel), built from ui/ controls only: no native select,
 // checkbox or number field, no textarea resize. Saves it, or saves and starts a new generation.
-import { channelName, formatName, legacyTurnKind, linksAfterBriefSave, type Brief, type CreativeDetail, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
+import { channelName, formatName, legacyTurnKind, linksAfterBriefSave, type Brief, type BriefServices, type CreativeDetail, type FormatPreset, type LinkedCodebase } from '@motion-studio/shared';
 import { useId, useMemo, useState } from 'react';
 import { api } from '../api.ts';
 import { useLocale, useT } from '../i18n.tsx';
 import { Button, ChannelMark, Chip, channelOf, Icon, Input, Segmented, Textarea } from '../ui/index.ts';
 import { CodebaseList } from './CodebaseList.tsx';
+import { ServicesSelector, useConfiguredProviders, useKeyChecks } from './ServicesSelector.tsx';
 import './brief.css';
 import { message } from '../errors.ts';
 
@@ -26,6 +27,10 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged }: { sl
   const [custom, setCustom] = useState(() => (lengthChoice(c.brief.durationSec) === 'custom' ? String(c.brief.durationSec) : ''));
   const [assets, setAssets] = useState(c.brief.assets.join(', '));
   const [codebases, setCodebases] = useState<LinkedCodebase[]>(c.linkedCodebases);
+  // Services touched here, else (null) the creative's current ones: a change made meanwhile from the chat chip is kept.
+  const [services, setServices] = useState<BriefServices | null>(null);
+  const configured = useConfiguredProviders();
+  const keyChecks = useKeyChecks();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'save' | 'regenerate' | null>(null);
   const set = <K extends keyof Brief>(k: K, v: Brief[K]) => setBrief((b) => ({ ...b, [k]: v }));
@@ -57,7 +62,9 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged }: { sl
     setBusy(regenerate ? 'regenerate' : 'save');
     let saved = false;
     try {
-      await api.updateCreative(slug, detail.slug, { title, brief: { ...brief, durationSec: sec, assets: assets.split(',').map((a) => a.trim()).filter(Boolean) }, linkedCodebases: codebases });
+      const chosen = services ?? c.brief.services;
+      const { services: _draft, ...rest } = brief;
+      await api.updateCreative(slug, detail.slug, { title, brief: { ...rest, durationSec: sec, assets: assets.split(',').map((a) => a.trim()).filter(Boolean), ...(chosen ? { services: chosen } : {}) }, linkedCodebases: codebases });
       saved = true;
       if (regenerate) await api.sendCreativeTurn(slug, detail.slug, {});
     } catch (e) { setError(message(e)); }
@@ -99,6 +106,9 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged }: { sl
           </div>
         ))}
       </div>
+      <span className="ms-brief-lbl">{t.web.services.title}</span>
+      <p className="ms-brief-hint">{t.web.services.hint}</p>
+      <ServicesSelector value={services ?? c.brief.services} configured={configured} checks={keyChecks} disabled={disabled} onChange={setServices} />
       <span className="ms-brief-lbl">{nc.codebases}</span>
       <CodebaseList value={codebases} onChange={setCodebases} disabled={disabled} />
       {converts ? <p className="ms-brief-notice" role="note"><Icon name="warn" size={13} /><span>{cv.legacyConvertNotice}</span></p> : null}

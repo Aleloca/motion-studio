@@ -1,4 +1,4 @@
-import type { EditOp, EditorCompositionView, StagedAsset, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, ProviderId, UsageReport, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
+import type { BrandFont, EditOp, EditorCompositionView, StagedAsset, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
 
@@ -89,6 +89,18 @@ async function upload<T>(url: string, files: File[]): Promise<T> {
   return parse<T>(res);
 }
 
+/** One family of the Google Fonts catalog as the core serves it (the web never talks to Google). */
+export interface GoogleFamily { family: string; category: string; weights: number[]; italic: boolean; variable: boolean; /** Signed, short-lived core URL of the preview subset (FontFace cannot send the UI token). */ previewUrl: string }
+export interface GoogleFontSearch { stale: boolean; fallback: boolean; families: GoogleFamily[]; /** When the signed preview URLs stop working (epoch ms). */ previewExpiresAt?: number }
+/** One voice as the core lists it: the preview is a short-lived signed core URL, never a provider URL. */
+export interface VoiceInfo { id: string; name: string; labels: Record<string, string>; previewUrl: string | null }
+export interface VoiceList { provider: 'elevenlabs' | 'openai'; configured: boolean; voices: VoiceInfo[]; previewExpiresAt: number }
+/** POST /api/projects/:slug/generate: one request per kind; the core validates every field and answers with the job to follow. */
+export type GenerateRequest =
+  | { kind: 'image'; provider: 'openai'; prompt: string; options: { width: number; height: number; quality?: 'low' | 'medium' | 'high' | 'auto'; background?: 'transparent' | 'opaque' | 'auto'; name?: string } }
+  | { kind: 'voice'; provider: 'openai' | 'elevenlabs'; text: string; options: { voice?: string; instructions?: string; format?: 'mp3' | 'wav'; name?: string } }
+  | { kind: 'sfx'; provider: 'elevenlabs'; prompt: string; options: { durationSec?: number; loop?: boolean; name?: string } }
+  | { kind: 'music'; provider: 'elevenlabs'; prompt: string; options: { durationSec: number; instrumental?: boolean; name?: string } };
 export interface CatalogState { presets: FormatPreset[]; error: string | null; path: string }
 const p = (slug: string) => `/api/projects/${encodeURIComponent(slug)}`;
 const c = (slug: string, creative: string) => `${p(slug)}/creatives/${encodeURIComponent(creative)}`;
@@ -112,7 +124,10 @@ export const api = {
   updateSettings: (patch: Partial<WorkspaceSettings>) => request<WorkspaceSettings>('PUT', '/api/settings', patch),
   setLanguage: (language: LanguageSetting) => request<{ locale: Locale; languageSetting: LanguageSetting; systemLocale: Locale }>('PUT', '/api/settings/language', { language }),
   getSecrets: () => request<SecretStatus[]>('GET', '/api/secrets'),
-  setSecret: (provider: ProviderId, value: string) => request<SecretStatus>('PUT', `/api/secrets/${provider}`, { value }),
+  /** Saves only: the UI says "Saved · checking…" and then asks for the test with checkSecret. */
+  setSecret: (provider: ProviderId, value: string) => request<SecretStatus>('PUT', `/api/secrets/${provider}`, { value, check: false }),
+  checkSecret: (provider: ProviderId) => request<KeyCheckResult>('POST', `/api/secrets/${provider}/check`),
+  getKeyChecks: () => request<Record<ProviderId, KeyCheckResult | null>>('GET', '/api/secrets/checks'),
   deleteSecret: (provider: ProviderId) => request<SecretStatus>('DELETE', `/api/secrets/${provider}`),
   getApprovals: () => request<ApprovalRequest[]>('GET', '/api/approvals'),
   decideApproval: (id: string, decision: ApprovalDecision) => request<unknown>('POST', `/api/approvals/${encodeURIComponent(id)}`, { decision }),
@@ -139,12 +154,28 @@ export const api = {
   uploadFiles: (slug: string, kind: 'assets' | 'references', files: File[]) => upload<unknown>(`${p(slug)}/${kind}`, files),
   registerAssets: (slug: string, files: string[]) => request<{ assets: AssetEntry[] }>('POST', `${p(slug)}/assets/register`, { files }),
   describeAssets: (slug: string, files?: string[]) => request<JobSummary>('POST', `${p(slug)}/assets/describe`, { files }),
-  updateAsset: (slug: string, file: string, patch: { description?: string; tags?: string[] }) => request<AssetEntry>('PATCH', `${p(slug)}/assets/item/${enc(file)}`, patch),
+  updateAsset: (slug: string, file: string, patch: { name?: string; description?: string; tags?: string[] }) => request<AssetEntry>('PATCH', `${p(slug)}/assets/item/${enc(file)}`, patch),
+  assetWaveform: (slug: string, file: string) => request<{ peaks: number[] }>('GET', `${p(slug)}/assets/item/${enc(file)}/waveform`),
   deleteAsset: (slug: string, file: string, opts?: RequestOptions) => request<{ ok: true }>('DELETE', `${p(slug)}/assets/item/${enc(file)}`, undefined, opts),
   listReferences: (slug: string) => request<{ references: ReferenceEntry[]; error: string | null }>('GET', `${p(slug)}/references`),
   updateReference: (slug: string, file: string, patch: { note?: string; useForBrand?: boolean }) => request<ReferenceEntry>('PATCH', `${p(slug)}/references/item/${enc(file)}`, patch),
   deleteReference: (slug: string, file: string, opts?: RequestOptions) => request<{ ok: true }>('DELETE', `${p(slug)}/references/item/${enc(file)}`, undefined, opts),
+  searchGoogleFonts: (q: { q?: string; category?: string; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (q.q) params.set('q', q.q);
+    if (q.category) params.set('category', q.category);
+    if (q.limit) params.set('limit', String(q.limit));
+    return request<GoogleFontSearch>('GET', `/api/fonts/google?${params.toString()}`);
+  },
+  listVoices: (q: { provider: 'elevenlabs' | 'openai'; q?: string }) => {
+    const params = new URLSearchParams({ provider: q.provider });
+    if (q.q) params.set('q', q.q);
+    return request<VoiceList>('GET', `/api/voices?${params.toString()}`);
+  },
+  addGoogleFont: (slug: string, body: { family: string; weights: number[]; italic: boolean; role: BrandFont['role'] }) =>
+    request<{ font: BrandFont; files: string[]; updated: boolean }>('POST', `${p(slug)}/brand/fonts/google`, body),
   projectFileUrl: (slug: string, rel: string) => `${p(slug)}/files/${enc(rel)}`,
+  generateAsset: (slug: string, body: GenerateRequest) => request<{ jobId: string }>('POST', `${p(slug)}/generate`, body),
   cancelJob: (id: string) => request<{ cancelled: boolean }>('POST', `/api/jobs/${encodeURIComponent(id)}/cancel`),
   getFormats: () => request<CatalogState>('GET', '/api/formats'),
   recentCreatives: (limit?: number) => request<RecentCreative[]>('GET', `/api/recent-creatives${limit === undefined ? '' : `?limit=${limit}`}`),
@@ -152,7 +183,7 @@ export const api = {
   createCreative: (slug: string, body: { title: string; brief: Brief; generate: boolean; linkedCodebases?: LinkedCodebase[] }) =>
     request<{ slug: string; creative: CreativeFile; job: JobSummary | null }>('POST', `${p(slug)}/creatives`, body),
   getCreative: (slug: string, creative: string) => request<CreativeDetail>('GET', c(slug, creative)),
-  updateCreative: (slug: string, creative: string, body: { title?: string; brief?: Brief; linkedCodebases?: LinkedCodebase[] }) => request<CreativeFile>('PUT', c(slug, creative), body),
+  updateCreative: (slug: string, creative: string, body: { title?: string; brief?: Brief; services?: Brief['services']; linkedCodebases?: LinkedCodebase[] }) => request<CreativeFile>('PUT', c(slug, creative), body),
   /** Manual ★ of a format (`null` clears it; the version the default rule gives also clears it). */
   setExportPick: (slug: string, creative: string, format: string, version: number | null) =>
     request<CreativeDetail>('PUT', `${c(slug, creative)}/export-picks`, { format, version }),

@@ -38,6 +38,13 @@ import { registerSettingsRoutes } from './settings-routes.ts';
 import { defaultChromeInstaller, registerRenderEngineRoutes, type ChromeInstaller } from './render-engine-routes.ts';
 import { CodedError, expandHome, WorkspaceError, WorkspaceStore } from '../workspace-store.ts';
 import { recoverWorkspace, registerCreativeRoutes, type RecoverOptions } from './creative-routes.ts';
+import { registerFontsRoutes } from './fonts-routes.ts';
+import { registerGenerateRoutes } from './generate-routes.ts';
+import { registerVoicesRoutes } from './voices-routes.ts';
+import { KeyCheckCache } from '../providers/key-check.ts';
+import { GoogleFontsCatalog } from '../providers/google-fonts-catalog.ts';
+import type { HttpDeps } from '../providers/http.ts';
+import type { InstallIo } from '../providers/google-fonts.ts';
 import { registerBrandRoutes } from './brand-routes.ts';
 import { EventHub } from './event-hub.ts';
 import { registerLibraryRoutes } from './library-routes.ts';
@@ -66,6 +73,18 @@ export interface ServerDeps {
   /** Extra env for the MCP server process (see LauncherDeps.mcpEnv). */
   mcpEnv?: Record<string, string>;
   configDir?: string;
+  /** Network of the Google Fonts catalog, previews and add (tests inject a fake fetch; default: the real one through the safe transport). */
+  fontsHttp?: HttpDeps;
+  /** Network of the Assets Generate jobs (tests inject a fake fetch; default: the real one). */
+  generateHttp?: Pick<HttpDeps, 'fetch' | 'transport' | 'lookup' | 'timeoutMs'>;
+  /** Network of the voice list and previews (tests inject a fake fetch; default: the real one through the safe transport). */
+  voicesHttp?: HttpDeps;
+  /** What the app has learned about the provider keys (core memory only; tests inject one to read it). */
+  keyChecks?: KeyCheckCache;
+  /** Network of the key checks (tests inject a fake fetch; default: the real one). */
+  keyCheckHttp?: HttpDeps;
+  /** Test seam of the Google Fonts add (a failure on one file). */
+  fontsInstallIo?: InstallIo;
   /** Sandbox support of the system; defaults to a cached detectSandbox(). */
   sandbox?: () => Promise<SandboxSupport>;
   /**
@@ -110,8 +129,8 @@ const BILLING_RETRY_MS = 60 * 1000;
 /** Routes reachable without the UI token: health, the MCP bridge (it has its own token) and files shown by <img>/<video>. */
 // The storyboard and pin frame images carry a signed URL instead (signed-urls.ts, fix I4).
 const UI_TOKEN_EXEMPT: Record<string, ReadonlySet<string>> = {
-  GET: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/projects/:slug/creatives/:c/files/*', '/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:hash/:file', '/api/projects/:slug/creatives/:c/pin-frame-files/:n/:file']),
-  HEAD: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/projects/:slug/creatives/:c/files/*', '/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:hash/:file', '/api/projects/:slug/creatives/:c/pin-frame-files/:n/:file']),
+  GET: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/fonts/google/preview/:weight/:family', '/api/voices/preview/:provider/:id', '/api/projects/:slug/creatives/:c/files/*', '/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:hash/:file', '/api/projects/:slug/creatives/:c/pin-frame-files/:n/:file']),
+  HEAD: new Set(['/api/health', '/api/projects/:slug/files/*', '/api/fonts/google/preview/:weight/:family', '/api/voices/preview/:provider/:id', '/api/projects/:slug/creatives/:c/files/*', '/api/projects/:slug/creatives/:c/storyboard-files/:n/:folder/:hash/:file', '/api/projects/:slug/creatives/:c/pin-frame-files/:n/:file']),
   POST: new Set(['/api/bridge/:tool']),
 };
 /** `code` is what the UI branches on; `error` is display text in the current language. */
@@ -179,7 +198,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const hub = new EventHub();
   const approvals = deps.approvals ?? new ApprovalBroker({ broadcast: (m) => hub.broadcast(m) });
   // Render jobs have their own lane of one slot (Task 5 M3): a render never blocks an agent turn, nor waits for one.
-  const queue = new JobQueue({ concurrency: 2, lanes: { render: 1 }, onUpdate: (job) => hub.broadcast({ type: 'job', job }) });
+  const queue = new JobQueue({ concurrency: 2, lanes: { render: 1, generate: 2 }, onUpdate: (job) => hub.broadcast({ type: 'job', job }) });
   const media = deps.media ?? NoMediaTools;
   const isJobActive = (key: string) => queue.list().some((j) => j.key === key && (j.state === 'queued' || j.state === 'running'));
   // Video sources are normalised for the renderer (and, Task 5b/8, the preview); close() kills whatever still runs.
@@ -188,6 +207,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     renderActive: (project, creative) => queue.list().some((j) => (j.state === 'queued' || j.state === 'running') && j.key.startsWith(`render:${root}:${project}:${creative}:`)),
     mediaInUse: normalizer.inUse,
     stagingInUse: (dir) => previewsRef?.stagingInUse(dir) ?? false,
+    git: deps.git,
     ...(deps.mediaCacheMaxBytes !== undefined ? { mediaCacheMaxBytes: deps.mediaCacheMaxBytes } : {}),
   });
   let workspace: WorkspaceStore | null = null;
@@ -253,8 +273,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     ...(deps.onCompositionOrigin ? { onServerOrigin: deps.onCompositionOrigin } : {}),
   });
   previewsRef = previews;
+  // One cache of what is known about the keys: the prompt's tool list, the provider tools, voices, Generate and Settings.
+  const keyChecks = deps.keyChecks ?? new KeyCheckCache();
   const turns = new CreativeTurnService({
-    queue, launcher, git: deps.git, media, vault, previews,
+    queue, launcher, git: deps.git, media, vault, keyChecks, previews,
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     model: async () => (await requireWorkspace().readSettings()).model,
     broadcast: (msg) => hub.broadcast(msg),
@@ -445,18 +467,24 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m) };
   registerBrandRoutes(app, routeCtx);
   registerLibraryRoutes(app, routeCtx);
+  const fontsHttp = deps.fontsHttp ?? { fetch: globalThis.fetch };
+  registerFontsRoutes(app, { ...routeCtx, catalog: new GoogleFontsCatalog({ configDir, http: fontsHttp }), http: fontsHttp, signer: new UrlSigner(deps.signedUrlTtlMs), ...(deps.fontsInstallIo ? { installIo: deps.fontsInstallIo } : {}) });
+  registerVoicesRoutes(app, { vault, http: deps.voicesHttp ?? { fetch: globalThis.fetch }, signer: new UrlSigner(deps.signedUrlTtlMs), keyChecks });
+  registerGenerateRoutes(app, { requireWorkspace, vault, approvals, media, queue, keyChecks, http: deps.generateHttp ?? { fetch: globalThis.fetch }, broadcast: (m) => hub.broadcast(m) });
   registerProjectRoutes(app, { requireWorkspace, jobKeyOf: projectJobKey, broadcast: (m) => hub.broadcast(m) });
 
   registerBridgeRoutes(app, {
     bridge, approvals,
+    // The config folder holds the UI token and the bridge tokens: no permission prompt may open it.
+    protectedRoots: [configDir],
     // Read on every permission prompt: a setting changed mid-job applies to the next one.
     settings: () => requireWorkspace().readSettings(),
     extraTools: {
-      ...providerTools({ vault, approvals, media, settings: () => requireWorkspace().readSettings(), broadcast: (m) => hub.broadcast(m) }),
+      ...providerTools({ vault, approvals, media, keyChecks, settings: () => requireWorkspace().readSettings(), broadcast: (m) => hub.broadcast(m) }),
       download_file: downloadTool({ media, broadcast: (m) => hub.broadcast(m) }),
     },
   });
-  registerSettingsRoutes(app, { vault, approvals, requireWorkspace });
+  registerSettingsRoutes(app, { vault, approvals, requireWorkspace, keyChecks, keyCheckHttp: deps.keyCheckHttp ?? { fetch: globalThis.fetch } });
   registerRenderEngineRoutes(app, {
     engine: deps.render,
     installer: deps.chromeInstaller !== undefined ? deps.chromeInstaller : deps.render && deps.configDir ? defaultChromeInstaller(deps.configDir) : null,

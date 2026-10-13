@@ -1,6 +1,6 @@
 import { appendFile, lstat, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
-import { brandProposalSchema, issuesText, messages, relativeFileSchema, webUrlSchema, type AssetEntry, type Locale, type BrandKit, type BrandProposal, type JobSummary, type ServerMessage, type UsageSummary } from '@motion-studio/shared';
+import { brandProposalSchema, issuesText, messages, relativeFileSchema, webUrlSchema, type AssetEntry, type BrandPhase, type Locale, type BrandKit, type BrandProposal, type JobSummary, type ServerMessage, type UsageSummary } from '@motion-studio/shared';
 import { z } from 'zod';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import type { Git } from '../git.ts';
@@ -12,7 +12,7 @@ import { WorkspaceError } from '../workspace-store.ts';
 import { guardedPaths, readAgentFile, restoreGuarded, skipText, snapshotGuarded, type SkipReason } from './agent-guard.ts';
 import { applyBrandChanges, diffBrandKits } from './brand-diff.ts';
 import { buildBrandPrompt, buildDescribePrompt } from './brand-prompt.ts';
-import { BrandStore } from './brand-store.ts';
+import { applyLockKey, BrandStore, proposalLocks } from './brand-store.ts';
 import { parseProposedKit } from './proposed-kit.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { sumUsage } from '../usage/usage-tracker.ts';
@@ -27,6 +27,8 @@ const describedAsset = z.object({ file: relativeFileSchema, description: z.strin
 const MAX_GUIDELINES = 200_000;
 const MAX_DROPPED_SHOWN = 20;
 const MAX_SUMMARY = 5000;
+const MAX_SITE_NOTES = 40;
+const SITE_NOTES_SHOWN = 3;
 
 
 /** Valid items of a JSON array the agent wrote; `skipped` explains a file that was not read (symlink, too large). */
@@ -76,11 +78,11 @@ export class BrandService {
    * Runs one agent turn with the live metadata files denied to the editing tools; whatever the outcome, files the agent
    * still managed to change (e.g. through an interpreter) are restored. `tampered` receives one note per file the agent changed, in `locale`.
    */
-  private async runAgent(ref: ProjectRef, kind: 'brand-analysis' | 'describe', prompt: string, logFile: string | null, signal: AbortSignal, jobId: string, tampered: string[], locale: Locale, sandboxed: boolean): Promise<{ status: 'ok' | 'cancelled'; usage: UsageSummary | undefined }> {
+  private async runAgent(ref: ProjectRef, kind: 'brand-analysis' | 'describe', prompt: string, logFile: string | null, signal: AbortSignal, jobId: string, tampered: string[], locale: Locale, sandboxed: boolean, addNotes?: (lines: string[]) => void): Promise<{ status: 'ok' | 'cancelled'; usage: UsageSummary | undefined }> {
     const guard = await snapshotGuarded(ref.projectDir);
     try {
       const run = await this.deps.launcher.start({
-        kind, jobId, projectSlug: ref.projectSlug, projectDir: ref.projectDir, sandboxed,
+        kind, jobId, projectSlug: ref.projectSlug, projectDir: ref.projectDir, sandboxed, locale, ...(addNotes ? { addNotes } : {}),
         // The running proposal's log is passed explicitly: it may not exist yet at launch (it is created by the first event), so the launcher's directory scan could miss it.
         protectedFiles: [...(await guardedPaths(ref.projectDir)), ...(logFile ? [logFile] : [])],
         request: { prompt, model: (await this.deps.model()) ?? undefined },
@@ -103,7 +105,11 @@ export class BrandService {
     }
   }
 
+  /** A phase marker of the core (no text): the UI's stepper starts at `queued` and ends at `done`. */
+  private phase(jobId: string, phase: BrandPhase) { this.deps.broadcast({ type: 'agent', jobId, event: { kind: 'progress', text: '', phase } }); }
+
   private async runAnalysis(ref: ProjectRef, store: BrandStore, sources: Awaited<ReturnType<BrandStore['readSources']>>, signal: AbortSignal, jobId: string): Promise<void | 'cancelled'> {
+    this.phase(jobId, 'queued');
     // The job's language is fixed when it starts: the prompt and every line stored in the proposal use it, whatever
     // the setting becomes meanwhile. Errors that fail the job are shown live and use the current language.
     const locale = currentLocale();
@@ -127,8 +133,11 @@ export class BrandService {
         sources: sources.map((s) => ({ id: s.id, kind: s.kind, url: s.url, file: s.file })),
       };
       const tampered: string[] = [];
+      // Notes of the agent's tools (inspect_site_fonts: what it refused or cut), in the job's language, once each.
+      const siteNotes = new Set<string>();
+      const addNotes = (lines: string[]) => { for (const l of lines) if (siteNotes.size < MAX_SITE_NOTES) siteNotes.add(l); };
       const sandboxed = await this.deps.launcher.sandboxed();
-      const turn = await this.runAgent(ref, 'brand-analysis', buildBrandPrompt(block, locale, sandboxed), join(dir, 'log.jsonl'), signal, jobId, tampered, locale, sandboxed);
+      const turn = await this.runAgent(ref, 'brand-analysis', buildBrandPrompt(block, locale, sandboxed), join(dir, 'log.jsonl'), signal, jobId, tampered, locale, sandboxed, addNotes);
       if (turn.status === 'cancelled') {
         await rm(dir, { recursive: true, force: true });
         await noteCoreChange(join(ref.projectDir, 'brand', 'proposals'));
@@ -163,6 +172,11 @@ export class BrandService {
       pendingDownloads = null;
       const downloads = await this.registerDownloads(library, join(dir, 'assets.json'), before, locale);
       dropped.push(...downloads.dropped);
+      // Last, and as one line: the kit's own refusals stay visible whatever a site produced.
+      if (siteNotes.size) {
+        const notes = [...siteNotes];
+        dropped.push(m.brand.siteFontsSummary({ count: notes.length, list: notes.slice(0, SITE_NOTES_SHOWN).join(' · '), more: notes.length > SITE_NOTES_SHOWN }));
+      }
       const registered = downloads.registered;
 
       let proposedGuidelines = currentGuidelines;
@@ -190,12 +204,13 @@ export class BrandService {
       const valid = brandProposalSchema.safeParse(proposal);
       if (!valid.success) throw new Error(t().errors.proposalInvalid({ detail: issuesText(valid.error, currentLocale(), t().errors.rootPath) }));
       // Under the apply lock: a new proposal supersedes the open ones (they would diff against an outdated kit).
-      await this.locks.run(`apply:${ref.projectDir}`, async () => {
+      await proposalLocks.run(applyLockKey(ref.projectDir), async () => {
         for (const old of await store.listProposals()) if (old.status === 'open' && old.id !== id) await store.writeProposal({ ...old, status: 'discarded' });
         await store.writeProposal(proposal);
       });
       await store.markAnalyzed(proposal.sourceIds, proposal.createdAt);
       await this.deps.git.commitAll(ref.projectDir, t().brand.commitAnalysis({ id }));
+      this.phase(jobId, 'done');
       this.changed(ref, 'brand', 'library');
     } catch (err) {
       // A turn that completed but produced an unusable proposal still downloaded files: register them rather than leave them orphaned.
@@ -288,7 +303,7 @@ export class BrandService {
   }
 
   applyProposal(ref: ProjectRef, id: string, acceptedIds: string[], applyGuidelines: boolean): Promise<{ kit: BrandKit; proposal: BrandProposal }> {
-    return this.locks.run(`apply:${ref.projectDir}`, async () => {
+    return proposalLocks.run(applyLockKey(ref.projectDir), async () => {
       const store = new BrandStore(ref.projectDir);
       const proposal = await store.readProposal(id);
       if (proposal.status !== 'open') throw new WorkspaceError(409, t().errors.proposalClosed);
@@ -303,7 +318,7 @@ export class BrandService {
   }
 
   discardProposal(ref: ProjectRef, id: string): Promise<BrandProposal> {
-    return this.locks.run(`apply:${ref.projectDir}`, async () => {
+    return proposalLocks.run(applyLockKey(ref.projectDir), async () => {
       const store = new BrandStore(ref.projectDir);
       const proposal = await store.readProposal(id);
       if (proposal.status !== 'open') throw new WorkspaceError(409, t().errors.proposalClosed);

@@ -2,6 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll } from 'vitest';
+// No real request to a paid provider or Google Fonts from any test (Task 8 review): see the module.
+import './block-provider-network.ts';
 
 /**
  * Global test isolation (decisions log 141, round 5): every test file runs with its own throwaway config folder and home,

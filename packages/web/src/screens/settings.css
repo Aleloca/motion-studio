@@ -164,6 +164,17 @@
 .ms-key-form { display: flex; align-items: center; gap: 8px; padding: 0 18px 14px; flex-wrap: wrap; }
 .ms-key-form .ms-input { flex: 1 1 220px; min-width: 0; height: 32px; font-size: 12px; font-family: var(--mono); }
 .ms-key .ms-set-error { padding: 0 18px 12px; }
+.ms-key-checks { display: flex; flex-direction: column; gap: 8px; padding: 0 18px 14px; min-width: 0; }
+.ms-key-caps { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.ms-key-note { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; line-height: 1.45; color: var(--muted); overflow-wrap: anywhere; }
+.ms-key > .ms-key-note { padding: 0 18px 12px; }
+.ms-key-help { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px; background: var(--field); font-size: 12px; line-height: 1.45; color: var(--text); min-width: 0; }
+.ms-key-help b { font-weight: 600; }
+.ms-key-help p { margin: 0; color: var(--muted); overflow-wrap: anywhere; }
+.ms-key-help ul { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.ms-key-help li { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; color: var(--muted); }
+.ms-key-help li.ms-warn { color: var(--warn); }
+.ms-key-help code { font-family: var(--mono); font-size: 11px; color: var(--text); }
 
 /* Usage (Phase 8, prototype UsageCard): one series, so one neutral bar colour and today in accent. Thin bars with
    rounded tops on a recessive baseline; an empty day is a hairline, never a fake bar. Tokens only. */

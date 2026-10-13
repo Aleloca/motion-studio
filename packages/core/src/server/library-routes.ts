@@ -1,7 +1,7 @@
 import { rm } from 'node:fs/promises';
 import { join, posix } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import type { ServerMessage } from '@motion-studio/shared';
+import type { AssetEntry, ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import type { BrandService } from '../brand/brand-analysis.ts';
 import { BrandStore } from '../brand/brand-store.ts';
@@ -9,6 +9,7 @@ import type { Git } from '../git.ts';
 import { JsonFileError } from '../json-file.ts';
 import { LibraryStore } from '../library/library-store.ts';
 import { saveUploads } from '../library/upload.ts';
+import { assetWaveform } from '../library/asset-meta.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import { sendConfinedFile } from './serve-file.ts';
@@ -16,7 +17,7 @@ import { t } from '../i18n.ts';
 
 export interface LibraryRoutesContext { requireWorkspace: () => WorkspaceStore; brand: BrandService; media: MediaTools; git: Git; broadcast: (m: ServerMessage) => void }
 
-const assetPatch = z.object({ description: z.string().max(2000).optional(), tags: z.array(z.string().min(1).max(40)).max(30).optional() });
+const assetPatch = z.object({ name: z.string().min(1).max(200).optional(), description: z.string().max(2000).optional(), tags: z.array(z.string().min(1).max(40)).max(30).optional() });
 const refPatch = z.object({ note: z.string().max(2000).optional(), useForBrand: z.boolean().optional() });
 const filesBody = z.object({ files: z.array(z.string()).min(1).max(500) });
 const describeBody = z.object({ files: z.array(z.string()).max(500).optional() });
@@ -48,7 +49,11 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
 
   app.get<{ Params: { slug: string } }>('/api/projects/:slug/assets', async (req) => {
     const { lib } = await project(req.params.slug);
-    try { return { assets: await lib.listAssets(), error: null, unregistered: await lib.unregisteredAssets() }; }
+    try {
+      // Entries from before the metadata existed get it once (stored in assets.json); a failure here never hides the list.
+      const filled = await lib.fillMissingMeta().catch(() => null);
+      return { assets: filled?.assets ?? await lib.listAssets(), error: null, unregistered: await lib.unregisteredAssets() };
+    }
     catch (e) { if (e instanceof JsonFileError) return { assets: [], error: e.message, unregistered: [] }; throw e; }
   });
 
@@ -77,9 +82,36 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
 
   app.patch<{ Params: { slug: string; '*': string } }>('/api/projects/:slug/assets/item/*', async (req) => {
     const { lib, projectDir } = await project(req.params.slug);
-    const entry = await lib.updateAsset(req.params['*'], parse(assetPatch, req.body));
-    await done(projectDir, req.params.slug, t().jobs.updateAssetCommit({ file: entry.file }));
+    const { name, ...patch } = parse(assetPatch, req.body);
+    let file = req.params['*'];
+    let renamed: { from: string; brand: boolean; creatives: string[] } | null = null;
+    let entry: AssetEntry | undefined;
+    try {
+      if (name !== undefined) {
+        const r = await lib.renameAsset(file, name);
+        if (r.entry.file !== file) renamed = { from: file, brand: r.brand, creatives: r.creatives };
+        file = r.entry.file;
+        entry = r.entry;
+      }
+      if (Object.keys(patch).length > 0 || !entry) entry = await lib.updateAsset(file, patch);
+    } finally {
+      // A rename that went through is committed even when the rest of the request fails.
+      if (renamed) await done(projectDir, req.params.slug, t().jobs.renameAssetCommit({ from: renamed.from, to: file }), renamed.brand).catch(() => {});
+    }
+    if (!renamed) await done(projectDir, req.params.slug, t().jobs.updateAssetCommit({ file: entry!.file }));
+    for (const creative of renamed?.creatives ?? []) ctx.broadcast({ type: 'creative', project: req.params.slug, creative });
     return entry;
+  });
+
+  app.get<{ Params: { slug: string; '*': string } }>('/api/projects/:slug/assets/item/*', async (req) => {
+    const rest = req.params['*'];
+    if (!rest.endsWith('/waveform')) throw new WorkspaceError(404, t().errors.fileNotFoundShort);
+    const file = rest.slice(0, -'/waveform'.length);
+    const { lib, projectDir } = await project(req.params.slug);
+    const entry = (await lib.listAssets()).find((a) => a.file === file);
+    if (!entry) throw new WorkspaceError(404, t().errors.assetNotFound({ file }));
+    if (entry.kind !== 'audio') throw new WorkspaceError(422, t().errors.waveformUnavailable);
+    return { peaks: await assetWaveform({ media: ctx.media, projectDir }, file, await lib.existingFile('assets', file)) };
   });
 
   app.delete<{ Params: { slug: string; '*': string } }>('/api/projects/:slug/assets/item/*', async (req) => {

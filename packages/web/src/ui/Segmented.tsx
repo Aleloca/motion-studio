@@ -5,7 +5,11 @@ import type { IconName } from './icons.ts';
 import { rovingIndex } from './roving.ts';
 
 /** `accent`: the count is a state that needs the user (e.g. "Needs you"): shown as the orange count badge. */
-export interface SegmentedOption<V extends string> { value: V; label: string; icon?: IconName; count?: number; accent?: boolean }
+export interface SegmentedOption<V extends string> {
+  value: V; label: string; icon?: IconName; count?: number; accent?: boolean;
+  /** This option alone cannot be chosen (e.g. a provider without its key): arrows skip it; `title` says why. */
+  disabled?: boolean; title?: string;
+}
 
 export interface SegmentedProps<V extends string> {
   options: readonly SegmentedOption<V>[];
@@ -23,12 +27,18 @@ export interface SegmentedProps<V extends string> {
 /** Segmented control (role="radiogroup"): replaces radios and small selects; arrows move and select, wrapping. */
 export function Segmented<V extends string>({ options, value, onChange, label, className, disabled, describedBy }: SegmentedProps<V>) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
-  const current = Math.max(0, options.findIndex((o) => o.value === value));
+  const selected = Math.max(0, options.findIndex((o) => o.value === value));
+  // The Tab stop: the selected option, or the first choosable one when the selected one cannot be chosen any more.
+  const current = options[selected]?.disabled ? Math.max(0, options.findIndex((o) => !o.disabled)) : selected;
 
   const onKeyDown = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
-    const next = rovingIndex(e.key, i, options.length);
+    let next = rovingIndex(e.key, i, options.length);
     if (next === null) return;
     e.preventDefault();
+    // Skip the options that cannot be chosen, in the key's direction (Home moves forward, End backward).
+    const back = e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'End';
+    for (let n = 0; n < options.length && options[next]?.disabled; n++) next = (next + (back ? -1 : 1) + options.length) % options.length;
+    if (options[next]?.disabled) return;
     const opt = options[next];
     if (!opt) return;
     refs.current[next]?.focus();
@@ -47,8 +57,9 @@ export function Segmented<V extends string>({ options, value, onChange, label, c
             role="radio"
             aria-checked={on}
             tabIndex={i === current ? 0 : -1}
-            disabled={disabled}
-            className={cx(on && 'ms-on')}
+            disabled={disabled || o.disabled}
+            title={o.title}
+            className={cx(on && 'ms-on', o.disabled && 'ms-unavail')}
             onClick={() => { if (!on) onChange(o.value); }}
             onKeyDown={(e) => onKeyDown(e, i)}
           >

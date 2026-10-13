@@ -1,4 +1,4 @@
-import { workspaceSettingsSchema, type DoctorCheck, type JobSummary, type RenderEngineStatus, type SecretStatus } from '@motion-studio/shared';
+import { workspaceSettingsSchema, type DoctorCheck, type JobSummary, type KeyCheckResult, type RenderEngineStatus, type SecretStatus } from '@motion-studio/shared';
 import { render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -7,6 +7,15 @@ import type { SettingsSection } from '../src/routes.ts';
 import { __resetToasts, getToasts } from '../src/ui/toast.tsx';
 
 let secrets: SecretStatus[];
+let checks: Record<string, KeyCheckResult | null>;
+const restricted: KeyCheckResult = { provider: 'elevenlabs', checkedAt: '2026-10-13T10:00:00.000Z', capabilities: [
+  { capability: 'key', status: 'ok' },
+  { capability: 'account', status: 'missing', permission: 'user_read' },
+  { capability: 'voices', status: 'missing', permission: 'voices_read' },
+  { capability: 'tts', status: 'unverified', permission: 'text_to_speech' },
+  { capability: 'sfx', status: 'unverified', permission: 'sound_generation' },
+  { capability: 'music', status: 'missing', permission: 'music_generation' },
+] };
 const electron: RenderEngineStatus = { kind: 'electron', downloadable: false, download: { state: 'idle', bytes: 0, total: null } };
 const api = {
   getSecrets: vi.fn(async () => structuredClone(secrets)),
@@ -18,6 +27,8 @@ const api = {
     secrets = secrets.map((s) => (s.provider === provider ? { provider, configured: false, source: null } : s));
     return { provider, configured: false, source: null };
   }),
+  checkSecret: vi.fn(async (provider: SecretStatus['provider']): Promise<KeyCheckResult> => checks[provider] ?? { provider, checkedAt: 'x', capabilities: [{ capability: 'key', status: 'ok' }] }),
+  getKeyChecks: vi.fn(async () => structuredClone(checks)),
   setLanguage: vi.fn(),
   updateSettings: vi.fn(),
   getRenderEngine: vi.fn(async (): Promise<RenderEngineStatus> => electron),
@@ -49,6 +60,7 @@ const page = (section: SettingsSection, checks: DoctorCheck[] | null = okChecks)
 beforeEach(() => {
   __resetToasts();
   localStorage.clear();
+  checks = { openai: null, elevenlabs: null, pexels: null, unsplash: null };
   secrets = [
     { provider: 'openai', configured: true, source: 'keychain' },
     { provider: 'elevenlabs', configured: false, source: null },
@@ -173,12 +185,13 @@ describe('App settings · paid services', () => {
     expect(within(openai).getByText('Key saved in the Keychain')).toBeTruthy();
     const pexels = screen.getByText('Pexels').closest('.ms-key') as HTMLElement;
     expect(within(pexels).getByText('From the PEXELS_API_KEY environment variable')).toBeTruthy();
-    expect(within(pexels).queryByRole('button')).toBeNull();
+    // A key from the environment can only be tested.
+    expect(within(pexels).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Test the Pexels key']);
     const eleven = screen.getByText('ElevenLabs').closest('.ms-key') as HTMLElement;
     expect(within(eleven).getByText('Not connected')).toBeTruthy();
     await userEvent.click(within(eleven).getByRole('button', { name: 'Add key' }));
     const save = within(eleven).getByRole('button', { name: 'Save' });
-    expect(screen.queryByText(/test/i)).toBeNull();
+    expect(within(eleven).queryByRole('button', { name: /test/i })).toBeNull();
     expect((save as HTMLButtonElement).disabled).toBe(true);
     const field = within(eleven).getByLabelText('ElevenLabs API key') as HTMLInputElement;
     expect(field.type).toBe('password');
@@ -189,6 +202,57 @@ describe('App settings · paid services', () => {
     expect(await within(eleven).findByText('Key saved in the Keychain')).toBeTruthy();
     expect(screen.queryByDisplayValue('sk-secret')).toBeNull();
     expect(getToasts().some((x) => x.text === 'ElevenLabs key saved in the Keychain')).toBe(true);
+  });
+
+  it('after saving it says "Saved · checking…", then shows the results per capability with the permissions to enable', async () => {
+    checks.elevenlabs = restricted;
+    let finish!: () => void;
+    api.checkSecret.mockImplementationOnce(async () => { await new Promise<void>((r) => { finish = r; }); return restricted; });
+    en(page('paid'));
+    const eleven = (await screen.findByText('ElevenLabs')).closest('.ms-key') as HTMLElement;
+    await userEvent.click(within(eleven).getByRole('button', { name: 'Add key' }));
+    await userEvent.type(within(eleven).getByLabelText('ElevenLabs API key'), 'xi-secret-key{Enter}');
+    expect(await within(eleven).findByText('Saved · checking…')).toBeTruthy();
+    expect(api.setSecret).toHaveBeenCalledWith('elevenlabs', 'xi-secret-key');
+    await waitFor(() => expect(api.checkSecret).toHaveBeenCalledWith('elevenlabs'));
+    finish();
+    const list = await within(eleven).findByRole('list', { name: 'What the ElevenLabs key can do' });
+    // Restricted, not invalid: the key works, the read permissions are missing, generation is not verified.
+    expect(within(list).getByText('Key · works')).toBeTruthy();
+    expect(within(list).getByText('Account · missing')).toBeTruthy();
+    expect(within(list).getByText('Voice-over · not verified')).toBeTruthy();
+    expect(within(list).getByText('Music · missing')).toBeTruthy();
+    expect(within(eleven).queryByText(/refused this key or the request/)).toBeNull();
+    expect(within(eleven).queryByText('Saved · checking…')).toBeNull();
+    const help = within(eleven).getByRole('region', { name: 'Permissions to enable' });
+    for (const perm of ['text_to_speech', 'sound_generation', 'music_generation', 'voices_read', 'user_read']) expect(within(help).getByText(perm)).toBeTruthy();
+    expect(within(eleven).getByText(/The first real use updates it/)).toBeTruthy();
+    expect(document.body.textContent).not.toContain('xi-secret-key');
+  });
+
+  it('"Test" re-runs the checks, also for a key from the environment, and shows earlier results on open', async () => {
+    checks.openai = { provider: 'openai', checkedAt: 'x', capabilities: [{ capability: 'key', status: 'missing' }, { capability: 'images', status: 'missing' }, { capability: 'tts', status: 'missing' }] };
+    en(page('paid'));
+    const openai = (await screen.findByText('OpenAI')).closest('.ms-key') as HTMLElement;
+    expect(await within(openai).findByText('The service refused this key or the request: check the key, or a region, organization or firewall restriction at the provider.')).toBeTruthy();
+    expect(api.checkSecret).not.toHaveBeenCalled();
+    const pexels = screen.getByText('Pexels').closest('.ms-key') as HTMLElement;
+    checks.pexels = { provider: 'pexels', checkedAt: 'x', capabilities: [{ capability: 'key', status: 'error', detail: 'No answer within 15 s' }, { capability: 'search', status: 'error', detail: 'No answer within 15 s' }] };
+    await userEvent.click(within(pexels).getByRole('button', { name: 'Test the Pexels key' }));
+    expect(api.checkSecret).toHaveBeenCalledWith('pexels');
+    expect(await within(pexels).findByText('Search · error')).toBeTruthy();
+    expect(within(pexels).getByText('Some checks did not finish (No answer within 15 s). Press Test to try again.')).toBeTruthy();
+    // An error is never shown as a missing permission.
+    expect(within(pexels).queryByText(/refused this key or the request/)).toBeNull();
+    expect(within(pexels).queryByRole('region', { name: 'Permissions to enable' })).toBeNull();
+  });
+
+  it('explains a failed test', async () => {
+    api.checkSecret.mockRejectedValueOnce(new Error('core offline'));
+    en(page('paid'));
+    const openai = (await screen.findByText('OpenAI')).closest('.ms-key') as HTMLElement;
+    await userEvent.click(within(openai).getByRole('button', { name: 'Test the OpenAI key' }));
+    expect((await within(openai).findByRole('alert')).textContent).toBe('Test not run: core offline');
   });
 
   it('removes a key from the Keychain only after an inline confirmation', async () => {

@@ -1,6 +1,7 @@
 import type { LanguageSetting, Locale } from './i18n/index.ts';
 import type { Explanation } from './explain/index.ts';
 import type { ModelUsage, TokenCounts } from './usage.ts';
+import type { BrandPhase } from './services.ts';
 import type { ProjectFile, WorkspaceSettings, WorkspaceSettingsView } from './schemas.ts';
 
 /** Agent-neutral event stream produced by any AgentRunner. */
@@ -11,7 +12,11 @@ export type AgentEvent =
   | { kind: 'tool_use'; id: string; name: string; input: unknown }
   | { kind: 'tool_result'; toolUseId: string; isError: boolean; content: string }
   | { kind: 'rate_limit'; status: string; resetsAt?: number }
-  | { kind: 'progress'; text: string }
+  /**
+   * `phase` (brand analysis, Phase 11): where the analysis is. The agent reports reading…writing with report_progress; the
+   * core adds `queued` when the run starts and `done` when the proposal is written, with an empty `text` (markers only).
+   */
+  | { kind: 'progress'; text: string; phase?: BrandPhase }
   | { kind: 'stderr'; text: string }
   | { kind: 'parse_error'; line: string }
   | { kind: 'usage'; live: boolean; tokens: TokenCounts; costUsd: number | null; models?: ModelUsage[] }
@@ -31,7 +36,7 @@ export type AgentEvent =
 export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
 /** What a job does: logic and the UI branch on this, never on the (localized) label. */
-export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console' | 'render';
+export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console' | 'render' | 'asset-generation';
 
 /**
  * Progress of a render job (Task 5), per format: `media` while the video sources are normalised ("Preparing media…",

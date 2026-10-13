@@ -21,6 +21,7 @@ const api = {
   projectFileUrl: (s: string, rel: string) => `/files/${s}/${rel}`,
   createCreative,
   getFirstGenerations: vi.fn(async (): Promise<{ tokens: number[] }> => ({ tokens: [] })),
+  getSecrets: vi.fn(async () => [{ provider: 'openai', configured: true, source: 'keychain' }, { provider: 'elevenlabs', configured: false, source: null }]),
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
 const { NewCreative, titleFromBrief, maxLengthNote, similarRange } = await import('../src/screens/NewCreative.tsx');
@@ -104,6 +105,23 @@ describe('NewCreative · generate', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('disco pieno');
     expect((brief() as HTMLTextAreaElement).value).toBe('Lancio');
     expect(location.hash).toBe('');
+  });
+});
+
+describe('NewCreative · services', () => {
+  it('sends the services chosen under More options; untouched, the brief has none (all auto)', async () => {
+    render(<NewCreative slug="acme" />);
+    await board();
+    await userEvent.type(brief(), 'Lancio');
+    await userEvent.click(within(screen.getByRole('group', { name: 'Instagram' })).getByRole('button', { name: /Post 1:1/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Altre opzioni' }));
+    const voice = screen.getByRole('radiogroup', { name: 'Voce: servizio' });
+    await waitFor(() => expect((within(voice).getByRole('radio', { name: 'ElevenLabs' }) as HTMLButtonElement).disabled).toBe(true));
+    await userEvent.click(within(voice).getByRole('radio', { name: 'Spento' }));
+    await userEvent.click(within(screen.getByRole('radiogroup', { name: 'Immagini: servizio' })).getByRole('radio', { name: 'OpenAI' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Genera' }));
+    await waitFor(() => expect(createCreative).toHaveBeenCalledOnce());
+    expect((createCreative.mock.calls[0]![1] as { brief: { services?: unknown } }).brief.services).toEqual({ voice: 'none', images: 'openai' });
   });
 });
 

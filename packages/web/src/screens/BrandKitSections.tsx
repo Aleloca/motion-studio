@@ -1,14 +1,16 @@
 // Brand page sections that edit the visual kit: colors, typography and logos.
-import type { BrandColor, BrandFont, BrandLogo } from '@motion-studio/shared';
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { EMPTY_BRAND_SOUND, type BrandColor, type BrandFont, type BrandLogo, type BrandSound } from '@motion-studio/shared';
+import { useEffect, useRef, useState, type FormEvent, type RefObject } from 'react';
 import { api } from '../api.ts';
 import { useT } from '../i18n.tsx';
 import { enter } from '../motion/index.ts';
 import { Button, Chip, cx, Field, Icon, Input, Popover, Segmented, Select, Spinner, Tag, toast } from '../ui/index.ts';
 import { specimenFamily, useFontPreview } from './brandFonts.ts';
-import { hasLogoFor, MANUAL, nextId, normalizeFamily, normalizeHex, parseWeights, ratioText, stageColor, swatchText } from './brandModel.ts';
+import { GENRE_CANONICAL, GENRE_KEYS, genreKeyOf, hasLogoFor, MANUAL, nextId, normalizeFamily, normalizeHex, parseWeights, ratioText, stageColor, swatchText } from './brandModel.ts';
 import { TYPING_MS } from './brandSave.ts';
 import { useBrand, useAppear, removeWithUndo } from './brandContext.tsx';
+import { GoogleFontPicker } from './brand/GoogleFontPicker.tsx';
+import { VoicePicker } from './brand/VoicePicker.tsx';
 /* ---------- colors ---------- */
 
 const COLOR_ROLES: Array<BrandColor['role']> = ['primary', 'secondary', 'accent', 'background', 'text', 'other'];
@@ -115,8 +117,15 @@ function Swatch({ c, autoOpen }: { c: BrandColor; autoOpen: boolean }) {
 export function Typography() {
   const t = useT();
   const b = t.web.brand;
-  const { kit, locked, saver } = useBrand();
+  const { kit, locked, saver, slug, reloadAssets } = useBrand();
   const [fresh, setFresh] = useState<string | null>(null);
+  const [picker, setPicker] = useState(false);
+  // The core already added the files and the font to the kit; the local kit takes it too so the next save keeps it.
+  const added = (font: BrandFont) => {
+    saver.edit((k) => (k.fonts.some((x) => x.id === font.id) ? { ...k, fonts: k.fonts.map((x) => (x.id === font.id ? font : x)) } : { ...k, fonts: [...k.fonts, font] }));
+    reloadAssets();
+    setFresh(null);
+  };
   const add = () => {
     const id = nextId('font', kit.fonts.map((f) => f.id));
     saver.edit((k) => ({ ...k, fonts: [...k.fonts, { id, family: b.fonts.newFamily, role: 'body', weights: [400], file: null, source: MANUAL }] }));
@@ -127,8 +136,10 @@ export function Typography() {
       <div className="ms-bsection-head">
         <h2 id="ms-btype">{b.nav.type}</h2>
         <span className="ms-faint">{b.fonts.hint}</span>
+        <Button variant="ghost" size="sm" className="ms-blink" disabled={locked} onClick={() => setPicker(true)}>{b.fonts.addGoogle}</Button>
         <Button variant="ghost" size="sm" className="ms-blink" disabled={locked} onClick={add}>{b.fonts.add}</Button>
       </div>
+      <GoogleFontPicker open={picker} slug={slug} locked={locked} onClose={() => setPicker(false)} onAdded={added} />
       {kit.fonts.length ? (
         <div className="ms-bfonts">{kit.fonts.map((f) => <FontCard key={f.id} f={f} autoOpen={fresh === f.id} />)}</div>
       ) : <p className="ms-bempty-line">{b.fonts.empty}</p>}
@@ -349,5 +360,94 @@ function LogoCard({ l }: { l: BrandLogo }) {
         </div>
       </Popover>
     </div>
+  );
+}
+
+/* ---------- sound ---------- */
+
+const LIST_MAX = 20;
+const ITEM_MAX = 60;
+const ENERGIES = ['low', 'medium', 'high'] as const;
+
+/** A list of short texts shown as removable chips, with a field to add one. */
+function ChipList({ label, placeholder, items, locked, onChange }: { label: string; placeholder: string; items: string[]; locked: boolean; onChange(next: string[]): void }) {
+  const s = useT().web.brand.sound;
+  const [text, setText] = useState('');
+  const full = items.length >= LIST_MAX;
+  const add = (e: FormEvent) => {
+    e.preventDefault();
+    const value = text.trim().slice(0, ITEM_MAX);
+    if (!value || full) return;
+    if (!items.some((x) => x.toLowerCase() === value.toLowerCase())) onChange([...items, value]);
+    setText('');
+  };
+  return (
+    <div className="ms-bpop-field">
+      <span id={`ms-bsl-${label}`}>{label}</span>
+      {items.length ? (
+        <ul className="ms-bchips ms-bsound-chips" aria-labelledby={`ms-bsl-${label}`}>
+          {items.map((x) => (
+            <li key={x}>
+              <Chip>
+                {x}
+                <button type="button" className="ms-bsound-x" disabled={locked} aria-label={s.remove({ text: x })} onClick={() => onChange(items.filter((y) => y !== x))}><Icon name="close" size={10} /></button>
+              </Chip>
+            </li>
+          ))}
+        </ul>
+      ) : <span className="ms-faint">{s.none}</span>}
+      <form className="ms-brow" onSubmit={add}>
+        <Input className="ms-grow ms-bsmall" value={text} disabled={locked || full} aria-label={label} placeholder={placeholder} maxLength={ITEM_MAX} onChange={(e) => setText(e.target.value)} />
+        <Button type="submit" variant="ink" size="sm" disabled={locked || full || !text.trim()}>{s.add}</Button>
+      </form>
+      {full ? <small className="ms-bnote">{s.full}</small> : null}
+    </div>
+  );
+}
+
+export function Sound() {
+  const t = useT();
+  const b = t.web.brand;
+  const s = b.sound;
+  const { kit, locked, saver } = useBrand();
+  const sound = kit.sound ?? EMPTY_BRAND_SOUND;
+  const [genre, setGenre] = useState(sound.genre);
+  const [picking, setPicking] = useState(false);
+  // Keep the field in step with the kit (an Undo, a reload) unless it is being typed.
+  useEffect(() => { setGenre(sound.genre); }, [sound.genre]);
+  const update = (patch: Partial<BrandSound>, wait = 0) => saver.edit((k) => ({ ...k, sound: { ...(k.sound ?? EMPTY_BRAND_SOUND), ...patch } }), wait);
+  const energyLabel = { none: s.energyNone, low: s.energyLow, medium: s.energyMedium, high: s.energyHigh };
+  const voice = sound.voice;
+  return (
+    <section data-sec="sound" className="ms-card ms-bcard ms-bsound" aria-labelledby="ms-bsound" data-enter>
+      <div className="ms-bsection-head">
+        <h2 id="ms-bsound">{b.nav.sound}</h2>
+        <span className="ms-faint">{s.hint}</span>
+      </div>
+      <div className="ms-bpop-field">
+        <span>{s.genre}</span>
+        <Input value={genre} disabled={locked} maxLength={200} aria-label={s.genre} placeholder={s.genrePlaceholder}
+          onChange={(e) => { setGenre(e.target.value); update({ genre: e.target.value.trim() }, TYPING_MS); }} onBlur={() => saver.flush()} />
+        <div className="ms-bchips" role="group" aria-label={s.genreSuggestions}>
+          {GENRE_KEYS.map((k) => <Chip key={k} on={genreKeyOf(sound.genre) === k} onClick={locked ? undefined : () => { const off = genreKeyOf(sound.genre) === k; const next = off ? '' : GENRE_CANONICAL[k]; setGenre(next); update({ genre: next }); }}>{s.genreOptions[k]}</Chip>)}
+        </div>
+      </div>
+      <div className="ms-bpop-field">
+        <span>{s.energy}</span>
+        <Segmented value={sound.energy ?? 'none'} label={s.energy} disabled={locked} onChange={(v) => update({ energy: v === 'none' ? null : v })}
+          options={(['none', ...ENERGIES] as const).map((v) => ({ value: v, label: energyLabel[v] }))} />
+      </div>
+      <ChipList label={s.instruments} placeholder={s.instrumentsPlaceholder} items={sound.instruments} locked={locked} onChange={(instruments) => update({ instruments })} />
+      <ChipList label={s.avoid} placeholder={s.avoidPlaceholder} items={sound.avoid} locked={locked} onChange={(avoid) => update({ avoid })} />
+      <div className="ms-bpop-field">
+        <span>{s.voice}</span>
+        <div className="ms-brow">
+          {voice ? <b className="ms-ell">{s.voiceOf({ provider: s.picker.providers[voice.provider], name: voice.name ?? voice.id })}</b> : <span className="ms-faint">{s.noVoice}</span>}
+          <Button variant="outline" size="sm" disabled={locked} onClick={() => setPicking(true)}>{voice ? s.changeVoice : s.chooseVoice}</Button>
+          {voice ? <Button variant="ghost" size="sm" disabled={locked} onClick={() => update({ voice: null })}>{s.clearVoice}</Button> : null}
+        </div>
+      </div>
+      <VoicePicker open={picking} value={voice} onClose={() => setPicking(false)} onPick={(v) => { update({ voice: v }); setPicking(false); }} />
+    </section>
   );
 }

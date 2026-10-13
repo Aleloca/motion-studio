@@ -4,6 +4,9 @@ import { t } from '../i18n.ts';
 const MIN_PIXELS = 655_360, MAX_PIXELS = 8_294_400, MAX_EDGE = 3840;
 const r16 = (v: number) => Math.max(16, Math.round(v / 16) * 16);
 
+/** The OpenAI image model Motion Studio uses (the key check reads it, read-only). */
+export const OPENAI_IMAGE_MODEL = 'gpt-image-2';
+
 export function normalizeImageSize(width: number, height: number): { width: number; height: number } {
   if (!(Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0)) throw new ProviderError(400, t().providers.invalidImageSize);
   const ratio = Math.min(3, Math.max(1 / 3, width / height));
@@ -25,7 +28,7 @@ const MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg
 
 export async function generateImage(deps: HttpDeps & { apiKey: string }, req: ImageRequest) {
   const { width, height } = normalizeImageSize(req.width, req.height);
-  const common = { model: 'gpt-image-2', prompt: req.prompt.slice(0, 32_000), size: `${width}x${height}`, quality: req.quality ?? 'auto', background: req.background ?? 'auto', output_format: 'png' };
+  const common = { model: OPENAI_IMAGE_MODEL, prompt: req.prompt.slice(0, 32_000), size: `${width}x${height}`, quality: req.quality ?? 'auto', background: req.background ?? 'auto', output_format: 'png' };
   const auth = { authorization: `Bearer ${deps.apiKey}` };
   type Out = { data?: Array<{ b64_json?: string; revised_prompt?: string }> };
   let out: Out;

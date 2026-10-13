@@ -60,6 +60,11 @@ export function buildAgentPolicy(i: PolicyInput): AgentPolicy {
   const disallowedTools = [
     ...readOnlyRules(i.codebases),
     ...dirDenyRules(['Read'], [...sensitive.dirs, i.configDir]),
+    // Motion Studio's config folder holds the UI token and every live job's bridge token. Verified live with Claude Code
+    // 2.1.296 (decisions log): the Read rule above already denies Grep and Glob there, also a recursive search started from
+    // a parent folder (the folder is left out); `Grep(path)`/`Glob(path)` rules had no effect of their own. They are kept as
+    // the declared intent, harmless, in case a version honours them. The bridge's approve also refuses such paths.
+    ...dirDenyRules(['Grep', 'Glob'], [i.configDir]),
     ...fileDenyRules(['Read'], sensitive.files),
     ...(i.protectedFiles.length ? fileDenyRules(EDIT_TOOLS, i.protectedFiles) : []),
     ...dirDenyRules(EDIT_TOOLS, i.protectedDirs),

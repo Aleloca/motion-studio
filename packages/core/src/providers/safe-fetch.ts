@@ -31,6 +31,11 @@ export class BlockedUrlError extends ProviderError {
   constructor(message = t().providers.blockedAddress) { super(502, message); this.name = 'BlockedUrlError'; }
 }
 
+/** A redirect target the caller's `allowHop` refused (e.g. a stylesheet moved to another site); `url` is that target. */
+export class RedirectRefusedError extends BlockedUrlError {
+  constructor(readonly url: URL) { super(); this.name = 'RedirectRefusedError'; }
+}
+
 const CREDENTIAL_HEADERS = ['authorization', 'proxy-authorization', 'cookie', 'xi-api-key', 'x-api-key', 'api-key'];
 const REDIRECTS = new Set([301, 302, 303, 307, 308]);
 
@@ -173,7 +178,14 @@ function withoutCredentials(init: RequestInit): RequestInit {
  * re-validated (redirects followed by hand, no https→http downgrade, credential headers dropped on origin change).
  * Returns the final response, whatever its status.
  */
-export async function safeFetch(deps: SafeFetchDeps, url: string, init: RequestInit, o: { provider: string; allowHttp?: boolean }): Promise<Response> {
+export async function safeFetch(
+  deps: SafeFetchDeps, url: string, init: RequestInit,
+  /**
+   * `allowHop`: asked about every redirect target (never the first URL) after the policy checks, before it is requested;
+   * false stops with RedirectRefusedError. Callers that need the final URL record the last target it allowed.
+   */
+  o: { provider: string; allowHttp?: boolean; allowHop?: (next: URL) => boolean },
+): Promise<Response> {
   const transport = deps.transport ?? nodeTransport;
   const isBlocked = deps.isBlocked ?? isBlockedAddress;
   const resolve = pinnedResolver(deps.lookup, isBlocked);
@@ -191,6 +203,7 @@ export async function safeFetch(deps: SafeFetchDeps, url: string, init: RequestI
     let next: URL;
     try { next = checkUrl(new URL(loc, current).href, o.allowHttp === true); } catch { throw new BlockedUrlError(); }
     if (current.protocol === 'https:' && next.protocol === 'http:') throw new BlockedUrlError();
+    if (o.allowHop && !o.allowHop(next)) throw new RedirectRefusedError(next);
     if (next.origin !== current.origin) req = withoutCredentials(req);
     if (res.status === 303 && req.method && !['GET', 'HEAD'].includes(req.method.toUpperCase())) req = { ...req, method: 'GET', body: undefined };
     current = next;

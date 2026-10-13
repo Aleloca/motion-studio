@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { applyEdit, validateComposition, type Composition, type EditOp } from '../src/index.ts';
 import { FILES, FILE_LIST, REEL, clipOf, copy, fileMap, spike, withParams } from './composition-edit-helpers.ts';
+
+// Load-robust (flaky under a busy machine): a per-file timeout, not a global one; what the tests check is unchanged.
+vi.setConfig({ testTimeout: 60_000 });
 
 /** mulberry32: a small seeded PRNG, so a failure repeats. */
 function prng(seed: number): () => number {

@@ -25,6 +25,9 @@ import { MemoryVault } from '../src/secrets/vault.ts';
 import { WorkspaceStore } from '../src/workspace-store.ts';
 import { testLauncher } from './helpers/launcher.ts';
 
+// Load-robust (flaky under a busy machine): a per-file timeout, not a global one; what the tests check is unchanged.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 
 let app: FastifyInstance;

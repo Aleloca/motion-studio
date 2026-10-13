@@ -5,7 +5,7 @@ import { collapse, D, enter } from '../motion/index.ts';
 import type { BrandSaver } from './brandSave.ts';
 
 export const IMAGE = /\.(png|jpe?g|webp|gif|svg|avif)$/i;
-export const SECTIONS = ['overview', 'colors', 'type', 'logos', 'voice', 'photo', 'guidelines'] as const;
+export const SECTIONS = ['overview', 'colors', 'type', 'logos', 'voice', 'sound', 'photo', 'guidelines'] as const;
 export type SectionId = (typeof SECTIONS)[number];
 export const RULES_SHOWN = 3;
 export const isActive = (j: JobSummary | undefined) => Boolean(j && (j.state === 'queued' || j.state === 'running'));
@@ -17,6 +17,8 @@ export interface Ctx {
   locked: boolean;
   saver: BrandSaver;
   assets: AssetEntry[];
+  /** Reads the library again (the core added files, e.g. a Google Fonts family). */
+  reloadAssets(): void;
   /** True once the first data has rendered: items mounted after that are new and enter with scale(.96) (T14). */
   settled: RefObject<boolean>;
   upload(background: BrandLogo['background']): void;

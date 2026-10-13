@@ -9,6 +9,11 @@ import { fileLock } from '../file-locks.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { noteCoreChange } from '../core-changes.ts';
+import { KeyedMutex } from '../keyed-mutex.ts';
+
+/** Serializes everything that decides or rewrites a project's proposals: apply, discard, a new analysis and a rename. */
+export const proposalLocks = new KeyedMutex();
+export const applyLockKey = (projectDir: string) => `apply:${projectDir}`;
 
 const PROPOSAL_RE = /^p-\d{8}-\d{6}(-\d+)?$/;
 
@@ -102,9 +107,10 @@ export function isPrivateHost(hostname: string): boolean {
 
 export class BrandStore {
   private readonly dir: string;
+  private readonly projectDir: string;
   // Shared with every other instance (one per request) and with the brand jobs' guards: keys are the files' absolute paths.
   private readonly lock = { run: <T>(name: string, fn: () => Promise<T>): Promise<T> => fileLock.run(this.path(name), fn) };
-  constructor(projectDir: string) { this.dir = join(projectDir, 'brand'); }
+  constructor(projectDir: string) { this.projectDir = projectDir; this.dir = join(projectDir, 'brand'); }
 
   private path(name: string) { return join(this.dir, name); }
 
@@ -121,6 +127,85 @@ export class BrandStore {
   /** Read-modify-write of the kit under its lock; a corrupt file on disk refuses (JsonFileError). */
   updateReadableKit(updater: (current: BrandKit) => unknown): Promise<BrandKit> {
     return this.lock.run('brand-kit.json', async () => this.writeKitUnlocked(updater(await this.readKit())));
+  }
+
+  /** Whether a logo or a font of the kit uses project file `path` (a corrupt kit refuses with JsonFileError). */
+  async usesFile(path: string): Promise<boolean> {
+    const kit = await this.readKit();
+    return kit.logos.some((l) => l.file === path) || kit.fonts.some((f) => f.file === path);
+  }
+
+  /**
+   * Points the logos and fonts that use project file `from` (e.g. `assets/logo.png`) at `to`, under the kit's lock. Returns
+   * whether anything changed; a corrupt kit refuses (JsonFileError) before anything is written.
+   */
+  renameFileRefs(from: string, to: string): Promise<boolean> {
+    return this.lock.run('brand-kit.json', async () => {
+      const kit = await this.readKit();
+      const uses = kit.logos.some((l) => l.file === from) || kit.fonts.some((f) => f.file === from);
+      if (!uses) return false;
+      await this.writeKitUnlocked({
+        ...kit,
+        logos: kit.logos.map((l) => (l.file === from ? { ...l, file: to } : l)),
+        fonts: kit.fonts.map((f) => (f.file === from ? { ...f, file: to } : f)),
+      });
+      return true;
+    });
+  }
+
+  /**
+   * Points the open proposals' logo and font changes (and their added assets) at project file `from` → `to` (M5): a proposal
+   * applied after a rename must not link a file that no longer exists. Applied and discarded proposals are history and stay.
+   * Idempotent; returns the ids of the proposals that changed.
+   *
+   * Runs under the `apply:<projectDir>` lock, the one apply, discard and a new analysis take, and re-reads each proposal inside
+   * it: one that was applied or discarded meanwhile is skipped, never reopened. Lock order: the rename holds the library
+   * `assets` lock, then this lock, then one proposal.json file lock at a time; apply holds this lock and then the kit and
+   * proposal file locks, and nothing under this lock ever takes the `assets` lock, so there is no cycle. If a write fails,
+   * the proposals already rewritten are restored before the error goes on.
+   */
+  renameProposalRefs(from: string, to: string): Promise<string[]> {
+    return proposalLocks.run(applyLockKey(this.projectDir), () => this.renameProposalRefsUnlocked(from, to));
+  }
+
+  /**
+   * The whole brand step of a rename under ONE apply lock: the kit's logo and font refs, then the open proposals' (M5). An
+   * apply that holds the lock with the pre-rename proposal finishes first and writes its kit; the rename then rewrites that kit,
+   * so the kit never ends up linking the old, missing name. `kit: false` skips the kit (recovery of a rename that never
+   * touched it). If the proposals fail, the kit change is undone before the error goes on. Order: assets, apply, kit/proposal.
+   */
+  renameAllRefs(from: string, to: string, o: { kit?: boolean } = {}): Promise<{ kit: boolean; proposals: string[] }> {
+    return proposalLocks.run(applyLockKey(this.projectDir), async () => {
+      const kit = o.kit === false ? false : await this.renameFileRefs(from, to);
+      try { return { kit, proposals: await this.renameProposalRefsUnlocked(from, to) }; }
+      catch (err) { if (kit) await this.renameFileRefs(to, from).catch(() => false); throw err; }
+    });
+  }
+
+  private async renameProposalRefsUnlocked(from: string, to: string): Promise<string[]> {
+    const prefix = 'assets/';
+    const bare = (ref: string) => (ref.startsWith(prefix) ? ref.slice(prefix.length) : ref);
+    const point = (v: unknown): unknown => (v && typeof v === 'object' && (v as { file?: unknown }).file === from ? { ...(v as object), file: to } : v);
+    {
+      const done: BrandProposal[] = []; // the proposals as they were, in the order they were rewritten
+      try {
+        for (const listed of await this.listProposals()) {
+          if (listed.status !== 'open') continue;
+          let p: BrandProposal;
+          try { p = await this.readProposal(listed.id); } catch { continue; } // unreadable now: left alone
+          if (p.status !== 'open') continue;
+          const changes = p.changes.map((c) => (c.field === 'logos' || c.field === 'fonts') ? { ...c, before: point(c.before), after: point(c.after) } : c);
+          const assetsAdded = p.assetsAdded.map((f) => (f === bare(from) ? bare(to) : f));
+          if (JSON.stringify(changes) === JSON.stringify(p.changes) && assetsAdded.every((f, i) => f === p.assetsAdded[i])) continue;
+          done.push(p); // registered before the write: a write that fails half-way is restored too
+          await this.writeProposal({ ...p, changes, assetsAdded });
+        }
+      } catch (err) {
+        for (const original of done.reverse()) await this.writeProposal(original).catch(() => {});
+        throw err;
+      }
+      return done.map((p) => p.id);
+    }
   }
 
   writeKit(kit: unknown): Promise<BrandKit> {

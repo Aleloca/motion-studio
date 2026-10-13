@@ -1,0 +1,134 @@
+import { realpath } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
+
+/**
+ * The path arguments of Claude Code's file tools that a permission prompt can carry: Read/Edit/Write/MultiEdit (`file_path`),
+ * Grep/Glob/LS (`path`) and NotebookEdit (`notebook_path`). A Glob `pattern` is checked on its own (`patternReaches`).
+ */
+const PATH_FIELDS = ['file_path', 'path', 'notebook_path'] as const;
+
+/** Every path a tool input names (strings only, no NUL). */
+export function inputPaths(input: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  for (const f of PATH_FIELDS) {
+    const v = input[f];
+    if (typeof v === 'string' && v !== '' && !v.includes('\0')) out.push(v);
+  }
+  return out;
+}
+
+/**
+ * Splits a path on `/` outside braces: a brace group such as `{a/..,b}` stays in one segment (its alternatives may hold `/`,
+ * so cutting inside it would shift every later depth and hide the `..` climbs written inside).
+ */
+export function splitOutsideBraces(p: string): string[] {
+  const out: string[] = [];
+  let depth = 0, cur = '';
+  for (const ch of p) {
+    if (ch === '{') depth++;
+    else if (ch === '}' && depth > 0) depth--;
+    if (ch === '/' && depth === 0) { out.push(cur); cur = ''; } else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
+const segRegex = (seg: string): RegExp | null => {
+  // Classes and alternatives are not worth parsing here: such a segment counts as matching (this only ever denies).
+  if (/[[\]{}]/.test(seg)) return null;
+  const body = seg.replace(/[.+^$()|\\]/g, '\\$&').replace(/\*/g, '[^/]*').replace(/\?/g, '[^/]');
+  return new RegExp(`^${body}$`, process.platform === 'darwin' || process.platform === 'win32' ? 'i' : '');
+};
+
+/**
+ * Whether a glob pattern (absolute, after `~` and the base folder are applied) can match a path inside `root`: each of the
+ * root's segments must be matched by the pattern's segment at the same depth (a `**` matches the rest), and the pattern must
+ * go deeper than the root. A pattern that stops above the root only names folders, never a file inside it.
+ */
+export function patternReaches(pattern: string, root: string): boolean {
+  // A brace group holding `/` can stand for several folder levels: it is read as `**` (this only ever denies more).
+  const pat = splitOutsideBraces(pattern).filter((x, i) => i === 0 || x !== '').map((x) => (x.includes('{') && x.includes('/') ? '**' : x));
+  const segs = root.split('/').filter((x, i) => i === 0 || x !== '');
+  for (let i = 0; i < segs.length; i++) {
+    const ps = pat[i];
+    if (ps === undefined) return false;
+    if (ps.includes('**')) return true;
+    const re = segRegex(ps);
+    if (re && !re.test(segs[i]!)) return false;
+  }
+  return pat.length > segs.length;
+}
+
+// macOS and Windows file systems are case-insensitive by default: compare folded there.
+const fold = (p: string) => (process.platform === 'darwin' || process.platform === 'win32' ? p.toLowerCase() : p);
+const under = (p: string, root: string) => {
+  const a = fold(p);
+  const r = fold(root.endsWith(sep) && root.length > 1 ? root.slice(0, -1) : root);
+  return a === r || a.startsWith(r + sep);
+};
+
+/** `p` with every symlink of its longest existing ancestor resolved (the rest appended as written). */
+async function realish(p: string): Promise<string> {
+  const rest: string[] = [];
+  let cur = p;
+  for (;;) {
+    try { return join(await realpath(cur), ...rest.reverse()); }
+    catch {
+      const parent = dirname(cur);
+      if (parent === cur) return p;
+      rest.push(basename(cur));
+      cur = parent;
+    }
+  }
+}
+
+/**
+ * Whether a permission prompt's input names a path inside one of `roots`, or (Glob) a pattern that can match one (as written, resolved against the agent's working
+ * folder and `~`, and after resolving symlinks). Any doubt about a root counts against the request: this only ever denies.
+ */
+export async function namesProtectedPath(toolName: string, input: Record<string, unknown>, roots: readonly string[], cwd: string, home = homedir()): Promise<boolean> {
+  if (roots.length === 0) return false;
+  const tilde = (raw: string) => (raw === '~' ? home : raw.startsWith('~/') ? join(home, raw.slice(2)) : raw);
+  // `~user/…` (another user's home) is not expanded: refused, whatever it names (the file tools take absolute paths anyway).
+  // Only a `~user/` prefix: a relative file whose name starts with `~` (`~notes.md`) is an ordinary path.
+  const otherHome = (raw: string) => /^~[^/]+\//.test(raw);
+  const named = [...inputPaths(input), ...(toolName === 'Glob' && typeof input.pattern === 'string' ? [input.pattern] : [])];
+  if (named.some(otherHome)) return true;
+  const rootForms = (await Promise.all(roots.map(async (r) => [resolve(r), await realish(resolve(r))]))).flat();
+  for (const raw of inputPaths(input)) {
+    const written = resolve(cwd, tilde(raw));
+    const forms = [written, await realish(written)];
+    if (forms.some((f) => rootForms.some((r) => under(f, r)))) return true;
+  }
+  // Glob: the pattern applies under its `path` (or the working folder); its wildcards can reach the folder from above.
+  // (Grep's `pattern` is a regular expression over contents, not a path.)
+  if (toolName === 'Glob' && typeof input.pattern === 'string' && input.pattern !== '' && !input.pattern.includes('\0')) {
+    const base = typeof input.path === 'string' && input.path !== '' ? resolve(cwd, tilde(input.path)) : cwd;
+    const joined = isAbsolute(tilde(input.pattern)) ? tilde(input.pattern) : `${base}/${input.pattern}`;
+    // A `..` after a wildcard segment (or a brace segment that can expand to `..`, e.g. `{..,x}`) can land anywhere under
+    // the literal folder before the wildcard, raised by one level per such segment: read as `<that folder>/**`. Otherwise
+    // `..` and `.` are resolved (absolute patterns too) before the segments are compared.
+    // A brace group is one segment even when its alternatives hold `/` (`{a/..,b}`, `{../..,x}`); every `..` written inside it
+    // counts as a climb (an over-count only widens the refusal).
+    const parts = splitOutsideBraces(joined);
+    const firstWild = parts.findIndex((seg) => /[*?[\]{}]/.test(seg));
+    const climbs = (seg: string) => (seg === '..' ? 1 : seg.includes('{') ? (seg.match(/(?<=^|[{,/])\.\.(?=$|[},/])/g)?.length ?? 0) : 0);
+    const ups = firstWild === -1 ? 0 : parts.slice(firstWild).reduce((n, seg) => n + climbs(seg), 0);
+    let full: string;
+    if (ups > 0) {
+      let prefix = normalize(parts.slice(0, firstWild).join('/') || '/');
+      for (let i = 0; i < ups; i++) prefix = dirname(prefix);
+      full = `${prefix.replace(/\/$/, '')}/**`;
+    } else full = normalize(joined);
+    const bases = [full];
+    // The pattern's literal folder may be a symlink to the protected one.
+    const literal = splitOutsideBraces(full).findIndex((seg) => /[*?[\]{}]/.test(seg));
+    if (literal > 1) {
+      const segs = splitOutsideBraces(full);
+      bases.push(join(await realish(segs.slice(0, literal).join('/')), ...segs.slice(literal)));
+    }
+    if (bases.some((b) => rootForms.some((r) => patternReaches(b, r)))) return true;
+  }
+  return false;
+}

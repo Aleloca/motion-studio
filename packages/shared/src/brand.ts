@@ -50,6 +50,18 @@ export const brandLogoSchema = z.object({
 });
 export const brandNoteSchema = z.object({ id, text: z.string().trim().min(1, 'issue.textRequired').max(2000, 'issue.textTooLong'), source: sourceRefSchema });
 
+export const brandSoundSchema = z.object({
+  genre: z.string().max(200),
+  energy: z.enum(['low', 'medium', 'high']).nullable(),
+  instruments: z.array(z.string().min(1).max(60)).max(20),
+  avoid: z.array(z.string().min(1).max(60)).max(20),
+  voice: z.object({
+    provider: z.enum(['openai', 'elevenlabs']), id: z.string().min(1).max(200), name: z.string().max(200).optional(),
+  }).nullable(),
+});
+export type BrandSound = z.infer<typeof brandSoundSchema>;
+export const EMPTY_BRAND_SOUND: BrandSound = { genre: '', energy: null, instruments: [], avoid: [], voice: null };
+
 /** Maximum number of items per list in a brand kit. */
 export const BRAND_KIT_LIMITS = { colors: 40, fonts: 20, logos: 30, dos: 50, donts: 50 } as const;
 
@@ -64,6 +76,8 @@ export const brandKitSchema = z.object({
   dos: z.array(brandNoteSchema).max(BRAND_KIT_LIMITS.dos).default([]),
   donts: z.array(brandNoteSchema).max(BRAND_KIT_LIMITS.donts).default([]),
   photoStyle: brandNoteSchema.nullable().default(null),
+  /** Sound style (absent in older kits = empty, see `EMPTY_BRAND_SOUND`). */
+  sound: brandSoundSchema.optional(),
 }).refine((k) => [k.colors, k.fonts, k.logos, k.dos, k.donts].every(uniqueIds), { message: 'issue.duplicateIds' });
 export type BrandKit = z.infer<typeof brandKitSchema>;
 

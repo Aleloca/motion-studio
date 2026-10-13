@@ -1,0 +1,297 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { KeyCheckResult } from '@motion-studio/shared';
+import { BARE_MISSING_TTL_MS, checkKey, KEY_CHECK_TIMEOUT_MS, KeyCheckCache } from '../src/providers/key-check.ts';
+
+// Fake fetch only: no request ever leaves the process, not even with these fake keys.
+const KEY = 'sk-key-check-secret-0123456789';
+type Answer = (url: string, init: RequestInit) => Response | Promise<Response>;
+interface Sent { url: string; init: RequestInit; headers: Headers }
+const fake = (answer: Answer) => {
+  const sent: Sent[] = [];
+  const fetch = (async (url: string, init: RequestInit = {}) => {
+    sent.push({ url, init, headers: new Headers(init.headers) });
+    return answer(url, init);
+  }) as unknown as typeof globalThis.fetch;
+  return { sent, fetch };
+};
+const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+const cap = (r: KeyCheckResult, c: string) => r.capabilities.find((x) => x.capability === c);
+const statuses = (r: KeyCheckResult) => Object.fromEntries(r.capabilities.map((x) => [x.capability, x.status]));
+const noKey = (r: unknown) => expect(JSON.stringify(r)).not.toContain(KEY);
+// The words ElevenLabs uses for a key that is valid but restricted, and for a key it does not know.
+const elevenMissing = (perm: string) => json(401, { detail: { status: 'missing_permissions', message: `The API key you used is missing the permission ${perm} to execute this operation.` } });
+const elevenInvalid = () => json(401, { detail: { status: 'invalid_api_key', message: 'Invalid API key' } });
+
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+describe('checkKey · OpenAI', () => {
+  it('lists the models, then reads the two models Motion Studio uses, read-only and without redirects', async () => {
+    const f = fake(() => json(200, { id: 'x' }));
+    const r = await checkKey({ fetch: f.fetch }, 'openai', KEY);
+    expect(r.provider).toBe('openai');
+    expect(statuses(r)).toEqual({ key: 'ok', images: 'ok', tts: 'ok' });
+    expect(f.sent.map((s) => s.url).sort()).toEqual(['https://api.openai.com/v1/models', 'https://api.openai.com/v1/models/gpt-4o-mini-tts', 'https://api.openai.com/v1/models/gpt-image-2']);
+    for (const s of f.sent) {
+      expect(s.init.method ?? 'GET').toBe('GET');
+      expect(s.init.body).toBeUndefined();
+      expect(s.init.redirect).toBe('error');
+      expect(s.headers.get('authorization')).toBe(`Bearer ${KEY}`);
+    }
+    noKey(r);
+  });
+  it('a 401 on the model list is an invalid key: every capability is missing, without a permission', async () => {
+    const r = await checkKey({ fetch: fake(() => json(401, { error: { message: `Incorrect API key provided: ${KEY}` } })).fetch }, 'openai', KEY);
+    expect(statuses(r)).toEqual({ key: 'missing', images: 'missing', tts: 'missing' });
+    expect(r.capabilities.every((c) => c.permission === undefined)).toBe(true);
+    noKey(r);
+  });
+  it('a model the account cannot see is missing with the model name; a restricted key leaves images and voice unverified', async () => {
+    const a = await checkKey({ fetch: fake((u) => (u.endsWith('gpt-image-2') ? json(404, { error: { message: 'model not found' } }) : json(200, {}))).fetch }, 'openai', KEY);
+    expect(cap(a, 'images')).toMatchObject({ status: 'missing', permission: 'gpt-image-2' });
+    expect(cap(a, 'tts')).toMatchObject({ status: 'ok' });
+    const scopes = () => json(401, { error: { message: 'You have insufficient permissions for this operation. Missing scopes: api.model.read.' } });
+    const b = await checkKey({ fetch: fake(scopes).fetch }, 'openai', KEY);
+    expect(statuses(b)).toEqual({ key: 'ok', images: 'unverified', tts: 'unverified' });
+    expect(cap(b, 'images')!.permission).toBe('model.request');
+  });
+});
+
+describe('checkKey · ElevenLabs (Review Focus 3)', () => {
+  it('a key with only text_to_speech is not invalid: read permissions missing, generation unverified', async () => {
+    const f = fake((u) => (u.startsWith('https://api.elevenlabs.io/v1/user') ? elevenMissing('user_read') : elevenMissing('voices_read')));
+    const r = await checkKey({ fetch: f.fetch }, 'elevenlabs', KEY);
+    expect(statuses(r)).toEqual({ key: 'ok', account: 'missing', voices: 'missing', tts: 'unverified', sfx: 'unverified', music: 'unverified' });
+    expect(cap(r, 'account')!.permission).toBe('user_read');
+    expect(cap(r, 'voices')!.permission).toBe('voices_read');
+    expect(cap(r, 'tts')!.permission).toBe('text_to_speech');
+    expect(cap(r, 'sfx')!.permission).toBe('sound_generation');
+    expect(cap(r, 'music')!.permission).toBe('music_generation');
+    // Only the two free reads were called: generation is never tried.
+    expect(f.sent.map((s) => s.url).sort()).toEqual(['https://api.elevenlabs.io/v1/user', 'https://api.elevenlabs.io/v2/voices?page_size=1']);
+    for (const s of f.sent) { expect(s.headers.get('xi-api-key')).toBe(KEY); expect(s.init.method ?? 'GET').toBe('GET'); }
+  });
+  it('a full key: account and voices ok, generation still unverified', async () => {
+    const r = await checkKey({ fetch: fake(() => json(200, { voices: [] })).fetch }, 'elevenlabs', KEY);
+    expect(statuses(r)).toEqual({ key: 'ok', account: 'ok', voices: 'ok', tts: 'unverified', sfx: 'unverified', music: 'unverified' });
+  });
+  it('a 403 on the voices probe marks voices missing; an unknown key is invalid', async () => {
+    const a = await checkKey({ fetch: fake((u) => (u.includes('/v2/voices') ? new Response('', { status: 403 }) : json(200, {}))).fetch }, 'elevenlabs', KEY);
+    // A bare 403 may be a region, an organization verification or a firewall: missing, but no permission is named.
+    expect(cap(a, 'voices')).toMatchObject({ status: 'missing' });
+    expect(cap(a, 'voices')).not.toHaveProperty('permission');
+    expect(cap(a, 'key')!.status).toBe('ok');
+    // The permission is named only when the provider's own words did.
+    const named = await checkKey({ fetch: fake((u) => (u.includes('/v2/voices') ? json(403, { detail: { status: 'missing_permissions', message: 'The API key you used is missing the permission voices_read.' } }) : json(200, {}))).fetch }, 'elevenlabs', KEY);
+    expect(cap(named, 'voices')).toMatchObject({ status: 'missing', permission: 'voices_read' });
+    const b = await checkKey({ fetch: fake(elevenInvalid).fetch }, 'elevenlabs', KEY);
+    expect(statuses(b)).toEqual({ key: 'missing', account: 'missing', voices: 'missing', tts: 'missing', sfx: 'missing', music: 'missing' });
+  });
+  it('a network error or a 5xx is error, never missing', async () => {
+    const down = await checkKey({ fetch: fake(() => { throw new TypeError(`fetch failed for ${KEY}`); }).fetch }, 'elevenlabs', KEY);
+    expect(statuses(down)).toEqual({ key: 'error', account: 'error', voices: 'error', tts: 'unverified', sfx: 'unverified', music: 'unverified' });
+    expect(cap(down, 'account')!.detail).toBeTruthy();
+    noKey(down);
+    const busy = await checkKey({ fetch: fake(() => new Response(`overloaded ${KEY}`, { status: 503 })).fetch }, 'elevenlabs', KEY);
+    expect(cap(busy, 'voices')).toMatchObject({ status: 'error', detail: expect.stringContaining('503') });
+    expect(busy.capabilities.some((c) => c.status === 'missing')).toBe(false);
+    noKey(busy);
+    // One probe down, the other one answering: the key is known to work, the failed probe stays an error.
+    const half = await checkKey({ fetch: fake((u) => (u.includes('/v1/user') ? new Response('', { status: 500 }) : json(200, {}))).fetch }, 'elevenlabs', KEY);
+    expect(statuses(half)).toMatchObject({ key: 'ok', account: 'error', voices: 'ok' });
+  });
+});
+
+describe('checkKey · unrecognised refusals fail safe (Task 8 fix I2)', () => {
+  it('ElevenLabs: a 401 that names neither a permission nor an invalid key is error, never an invalid key', async () => {
+    const r = await checkKey({ fetch: fake(() => json(401, { detail: { status: 'something_new', message: 'Unauthorized' } })).fetch }, 'elevenlabs', KEY);
+    expect(statuses(r)).toEqual({ key: 'error', account: 'error', voices: 'error', tts: 'unverified', sfx: 'unverified', music: 'unverified' });
+    expect(cap(r, 'key')!.detail).toMatch(/rifiutato/);
+    const empty = await checkKey({ fetch: fake(() => new Response('', { status: 401 })).fetch }, 'elevenlabs', KEY);
+    expect(cap(empty, 'key')!.status).toBe('error');
+    expect(statuses(await checkKey({ fetch: fake(elevenInvalid).fetch }, 'elevenlabs', KEY)).key).toBe('missing');
+  });
+  it('OpenAI: only "Incorrect API key" / invalid_api_key make the key invalid', async () => {
+    const odd = await checkKey({ fetch: fake(() => new Response('{"error":{"message":"Unauthorized"}}', { status: 401 })).fetch }, 'openai', KEY);
+    expect(statuses(odd)).toEqual({ key: 'error', images: 'error', tts: 'error' });
+    const coded = await checkKey({ fetch: fake(() => json(401, { error: { message: 'nope', code: 'invalid_api_key' } })).fetch }, 'openai', KEY);
+    expect(statuses(coded)).toEqual({ key: 'missing', images: 'missing', tts: 'missing' });
+  });
+  it('a quota, payment or account refusal is error, never missing, even as a 403 (shared classifyRefusal, fix round 2)', async () => {
+    const r = await checkKey({ fetch: fake((u) => (u.includes('/v2/voices') ? json(403, { detail: { status: 'payment_required', message: 'Your subscription has no credits left' } }) : json(200, {}))).fetch }, 'elevenlabs', KEY);
+    expect(statuses(r)).toMatchObject({ key: 'ok', voices: 'error' });
+    const { classifyRefusal } = await import('../src/providers/http.ts');
+    expect(classifyRefusal('ElevenLabs', 401, '{"detail":{"status":"quota_exceeded"}}')).toBe('refused');
+    expect(classifyRefusal('ElevenLabs', 401, '{"detail":{"status":"missing_permissions","message":"missing the permission text_to_speech"}}')).toBe('permission');
+    expect(classifyRefusal('ElevenLabs', 403, '')).toBe('permission');
+    expect(classifyRefusal('OpenAI', 401, 'Incorrect API key provided')).toBe('invalid');
+    expect(classifyRefusal('OpenAI', 401, 'Unauthorized')).toBe('refused');
+    expect(classifyRefusal('OpenAI', 429, '')).toBe('rateLimited');
+    expect(classifyRefusal('Unsplash', 403, 'Rate Limit Exceeded')).toBe('rateLimited');
+    expect(classifyRefusal('Pexels', 401, '')).toBe('invalid');
+  });
+  it('a capability probe refused without a named permission is error, not missing', async () => {
+    const r = await checkKey({ fetch: fake((u) => (u.includes('/v2/voices') ? new Response('', { status: 401 }) : json(200, {}))).fetch }, 'elevenlabs', KEY);
+    expect(statuses(r)).toMatchObject({ key: 'ok', account: 'ok', voices: 'error' });
+  });
+});
+
+describe('checkKey · stock', () => {
+  it('Pexels: one search of one result', async () => {
+    const f = fake(() => json(200, { photos: [] }));
+    const r = await checkKey({ fetch: f.fetch }, 'pexels', KEY);
+    expect(statuses(r)).toEqual({ key: 'ok', search: 'ok' });
+    expect(f.sent[0]!.url).toBe('https://api.pexels.com/v1/search?query=test&per_page=1');
+    expect(f.sent[0]!.headers.get('authorization')).toBe(KEY);
+    expect(statuses(await checkKey({ fetch: fake(() => new Response('', { status: 401 })).fetch }, 'pexels', KEY))).toEqual({ key: 'missing', search: 'missing' });
+  });
+  it('Unsplash: one search with the Client-ID header; its 403 "Rate Limit Exceeded" is an error', async () => {
+    const f = fake(() => json(200, { results: [] }));
+    const r = await checkKey({ fetch: f.fetch }, 'unsplash', KEY);
+    expect(statuses(r)).toEqual({ key: 'ok', search: 'ok' });
+    expect(f.sent[0]!.url).toBe('https://api.unsplash.com/search/photos?query=test&per_page=1');
+    expect(f.sent[0]!.headers.get('authorization')).toBe(`Client-ID ${KEY}`);
+    const limited = await checkKey({ fetch: fake(() => new Response('Rate Limit Exceeded', { status: 403 })).fetch }, 'unsplash', KEY);
+    expect(statuses(limited)).toEqual({ key: 'error', search: 'error' });
+    const r429 = await checkKey({ fetch: fake(() => new Response('', { status: 429 })).fetch }, 'pexels', KEY);
+    expect(statuses(r429)).toEqual({ key: 'error', search: 'error' });
+    expect(statuses(await checkKey({ fetch: fake(() => new Response('', { status: 401 })).fetch }, 'unsplash', KEY))).toEqual({ key: 'missing', search: 'missing' });
+  });
+});
+
+describe('checkKey · timing', () => {
+  it('runs the probes in parallel, each with a 15 s deadline', async () => {
+    expect(KEY_CHECK_TIMEOUT_MS).toBe(15_000);
+    vi.useFakeTimers();
+    const f = fake((_u, init) => new Promise<Response>((_res, rej) => init.signal!.addEventListener('abort', () => rej(new Error('aborted')))));
+    let done: KeyCheckResult | null = null;
+    void checkKey({ fetch: f.fetch }, 'openai', KEY).then((r) => { done = r; });
+    await vi.advanceTimersByTimeAsync(0);
+    // All three requests are out before any answer.
+    expect(f.sent).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(KEY_CHECK_TIMEOUT_MS - 1);
+    expect(done).toBeNull();
+    await vi.advanceTimersByTimeAsync(1);
+    // One deadline for all of them (parallel), not three in a row.
+    expect(done).not.toBeNull();
+    expect(statuses(done!)).toEqual({ key: 'error', images: 'error', tts: 'error' });
+    expect(cap(done!, 'key')!.detail).toMatch(/15/);
+    for (const s of f.sent) expect(s.init.signal!.aborted).toBe(true);
+  });
+  it('never throws, whatever fetch does', async () => {
+    const r = await checkKey({ fetch: (() => Promise.reject(new Error(KEY))) as unknown as typeof fetch }, 'unsplash', KEY);
+    expect(statuses(r)).toEqual({ key: 'error', search: 'error' });
+    noKey(r);
+  });
+});
+
+describe('KeyCheckCache', () => {
+  const check = (caps: KeyCheckResult['capabilities']): KeyCheckResult => ({ provider: 'elevenlabs', checkedAt: '2026-10-13T10:00:00.000Z', capabilities: caps });
+  it('a first real music call answering 403 marks music missing with its permission', () => {
+    const c = new KeyCheckCache();
+    expect(c.get('elevenlabs')).toBeNull();
+    c.merge('elevenlabs', check([{ capability: 'key', status: 'ok' }, { capability: 'music', status: 'unverified', permission: 'music_generation' }]));
+    c.record('elevenlabs', 'music', 'missing', 'music_generation');
+    expect(c.capabilities('elevenlabs').music).toMatchObject({ status: 'missing', permission: 'music_generation' });
+    c.record('elevenlabs', 'music', 'ok');
+    expect(c.capabilities('elevenlabs').music).toEqual({ capability: 'music', status: 'ok' });
+  });
+  it('a user\'s Test replaces every learned state, unverified included (fix round 2)', () => {
+    const c = new KeyCheckCache();
+    c.record('elevenlabs', 'tts', 'missing', 'text_to_speech');
+    c.record('elevenlabs', 'music', 'ok');
+    const out = c.merge('elevenlabs', check([{ capability: 'key', status: 'ok' }, { capability: 'tts', status: 'unverified', permission: 'text_to_speech' }, { capability: 'music', status: 'unverified', permission: 'music_generation' }]));
+    expect(statuses(out)).toEqual({ key: 'ok', tts: 'unverified', music: 'unverified' });
+  });
+  it('a background check keeps what real use learned for capabilities it cannot verify, and replaces the rest', () => {
+    const c = new KeyCheckCache();
+    c.record('elevenlabs', 'tts', 'ok');
+    c.record('elevenlabs', 'voices', 'missing', 'voices_read');
+    const out = c.merge('elevenlabs', check([{ capability: 'key', status: 'ok' }, { capability: 'voices', status: 'ok' }, { capability: 'tts', status: 'unverified', permission: 'text_to_speech' }]), { keepLearned: true });
+    expect(statuses(out)).toEqual({ key: 'ok', voices: 'ok', tts: 'ok' });
+    // An invalid key replaces everything.
+    const bad = c.merge('elevenlabs', check([{ capability: 'key', status: 'missing' }, { capability: 'tts', status: 'missing' }]));
+    expect(statuses(bad)).toMatchObject({ key: 'missing', tts: 'missing' });
+    c.clear('elevenlabs');
+    expect(c.get('elevenlabs')).toBeNull();
+  });
+  it('a fresh probe result corrects a capability that real use learned as missing', () => {
+    const c = new KeyCheckCache();
+    c.record('elevenlabs', 'voices', 'missing', 'voices_read');
+    const out = c.merge('elevenlabs', check([{ capability: 'key', status: 'ok' }, { capability: 'voices', status: 'ok' }]));
+    expect(cap(out, 'voices')).toEqual({ capability: 'voices', status: 'ok' });
+  });
+  it('a success proves the key; results come in a stable order', () => {
+    const c = new KeyCheckCache();
+    c.merge('elevenlabs', check([{ capability: 'key', status: 'missing' }]));
+    c.record('elevenlabs', 'music', 'ok');
+    c.record('elevenlabs', 'sfx', 'ok');
+    expect(c.get('elevenlabs')!.capabilities.map((x) => x.capability)).toEqual(['key', 'sfx', 'music']);
+    expect(c.capabilities('elevenlabs').key!.status).toBe('ok');
+  });
+  it('caps and cleans the permission and detail strings (Task 0 minor)', () => {
+    const c = new KeyCheckCache();
+    c.merge('openai', { provider: 'openai', checkedAt: 'x', capabilities: [{ capability: 'key', status: 'error', detail: `bad\u0007${'y'.repeat(5000)}` }] });
+    c.record('openai', 'images', 'missing', `perm\u0000\n${'x'.repeat(500)}`);
+    const r = c.get('openai')!;
+    expect(cap(r, 'images')!.permission!.length).toBeLessThanOrEqual(64);
+    expect(cap(r, 'images')!.permission).not.toMatch(/[\u0000-\u001f]/);
+    expect(cap(r, 'key')!.detail!.length).toBeLessThanOrEqual(200);
+    expect(cap(r, 'key')!.detail).not.toMatch(/[\u0000-\u001f]/);
+  });
+});
+
+describe('KeyCheckCache · real calls learn only about the current key (final review M2)', () => {
+  const vaultOf = (key: string | null) => ({ current: key, get: async function (this: { current: string | null }) { return this.current; } });
+  it('records while the key is unchanged, never after it changed (even without a clear) or after a clear', async () => {
+    const cache = new KeyCheckCache();
+    const vault = vaultOf('sk-one-0123456789');
+    const lease = cache.lease('openai', 'sk-one-0123456789');
+    expect(await cache.recordUse(vault, lease, 'tts', 'ok')).toBe(true);
+    expect(cache.capabilities('openai').tts).toMatchObject({ status: 'ok' });
+    // The key changed under the call (e.g. an environment key), no clear: the fingerprint differs.
+    vault.current = 'sk-two-0123456789';
+    expect(await cache.recordUse(vault, lease, 'images', 'missing', 'model.request')).toBe(false);
+    expect(cache.capabilities('openai').images).toBeUndefined();
+    // Saved back to the same value, but the cache was cleared meanwhile: the old lease is stale.
+    vault.current = 'sk-one-0123456789';
+    cache.clear('openai');
+    expect(await cache.recordUse(vault, lease, 'images', 'missing', 'model.request')).toBe(false);
+    expect(cache.get('openai')).toBeNull();
+    // No key any more: nothing is learned.
+    expect(await cache.recordUse(vaultOf(null), cache.lease('openai', 'sk-one-0123456789'), 'tts', 'ok')).toBe(false);
+  });
+  it('a lease holds a fingerprint, never the key', () => {
+    const lease = new KeyCheckCache().lease('elevenlabs', 'xi-secret-0123456789');
+    expect(JSON.stringify(lease)).not.toContain('xi-secret-0123456789');
+    expect(lease.fingerprint).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  });
+});
+
+describe('a bare-403 missing learned from real use expires', () => {
+  it('after the TTL; a named permission and anything a Test found stay until a Test', () => {
+    let now = 1_000_000;
+    const cache = new KeyCheckCache(() => now);
+    cache.record('elevenlabs', 'sfx', 'missing');
+    cache.record('elevenlabs', 'music', 'missing', 'music_generation');
+    expect(cache.capabilities('elevenlabs').sfx).toMatchObject({ status: 'missing' });
+    now += BARE_MISSING_TTL_MS - 1;
+    expect(cache.capabilities('elevenlabs').sfx).toMatchObject({ status: 'missing' });
+    now += 2;
+    expect(cache.capabilities('elevenlabs').sfx).toBeUndefined();
+    expect(cache.capabilities('elevenlabs').music).toMatchObject({ status: 'missing', permission: 'music_generation' });
+    now += 24 * 3600_000;
+    expect(cache.capabilities('elevenlabs').music).toMatchObject({ status: 'missing', permission: 'music_generation' });
+    // A Test's own bare missing (merge) does not expire.
+    cache.merge('elevenlabs', { provider: 'elevenlabs', checkedAt: '', capabilities: [{ capability: 'voices', status: 'missing' }] });
+    now += 24 * 3600_000;
+    expect(cache.capabilities('elevenlabs').voices).toMatchObject({ status: 'missing' });
+  });
+  it('a later success or a named permission replaces the pending expiry', () => {
+    let now = 0;
+    const cache = new KeyCheckCache(() => now);
+    cache.record('openai', 'images', 'missing');
+    cache.record('openai', 'images', 'missing', 'model.request');
+    now += BARE_MISSING_TTL_MS * 2;
+    expect(cache.capabilities('openai').images).toMatchObject({ permission: 'model.request' });
+  });
+});

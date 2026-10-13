@@ -78,11 +78,22 @@ describe('mcp-studio server', () => {
     expect(res.result.isError).toBeUndefined();
     expect(calls.at(-1)).toMatchObject({ url: '/api/bridge/download_file', body: { url: 'https://acme.example/logo.svg', dest: 'assets/brand/logo.svg' } });
   });
+  it('lists inspect_site_fonts for brand analysis and the phase of report_progress', async () => {
+    child.kill();
+    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,read_brand_kit,fonts_fetch,download_file,inspect_site_fonts' });
+    const tools = (await rpc(3, 'tools/list')).result.tools as Array<{ name: string; inputSchema: { required?: string[]; properties: Record<string, { type?: string; enum?: string[] }> } }>;
+    const inspect = tools.find((t) => t.name === 'inspect_site_fonts')!;
+    expect(inspect.inputSchema.required).toEqual(['url']);
+    expect(inspect.inputSchema.properties.url!.type).toBe('string');
+    expect(tools.find((t) => t.name === 'report_progress')!.inputSchema.properties.phase!.enum).toEqual(['reading', 'fonts', 'colors', 'logos', 'tone', 'writing']);
+    await rpc(4, 'tools/call', { name: 'inspect_site_fonts', arguments: { url: 'https://acme.example' } });
+    expect(calls.at(-1)).toMatchObject({ url: '/api/bridge/inspect_site_fonts', body: { url: 'https://acme.example' } });
+  });
   it('describes every tool in English', async () => {
     child.kill();
-    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,validate_composition,preview_frames,read_brand_kit,generate_image,tts,stock_search,stock_download,fonts_fetch,download_file' });
+    startChild({ MOTION_STUDIO_BRIDGE_TOKEN: 'tok', MOTION_STUDIO_TOOLS: 'report_progress,validate_composition,preview_frames,read_brand_kit,generate_image,tts,stock_search,stock_download,fonts_fetch,download_file,inspect_site_fonts' });
     const tools = (await rpc(3, 'tools/list')).result.tools as Array<{ name: string }>;
-    expect(tools).toHaveLength(11);
+    expect(tools).toHaveLength(12);
     const text = JSON.stringify(tools);
     expect(text).not.toMatch(/[àèéìòù]|\b(Genera|Scarica|Cerca|Legge|Controlla|Comunica|Uso interno|italiano)\b/);
     expect(text).toContain('Searches photos or videos on Pexels or Unsplash.');

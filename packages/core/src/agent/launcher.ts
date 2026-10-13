@@ -22,9 +22,9 @@ import { UsageTracker } from '../usage/usage-tracker.ts';
 const RUN_DIR = 'run';
 export const MCP_SERVER = 'studio';
 export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
-  creative: ['report_progress', 'validate_composition', 'preview_frames', 'read_brand_kit', 'generate_image', 'tts', 'stock_search', 'stock_download', 'fonts_fetch'],
-  console: ['report_progress', 'read_brand_kit', 'generate_image', 'tts', 'stock_search', 'stock_download', 'fonts_fetch'],
-  'brand-analysis': ['report_progress', 'read_brand_kit', 'fonts_fetch', 'download_file'],
+  creative: ['report_progress', 'validate_composition', 'preview_frames', 'read_brand_kit', 'generate_image', 'tts', 'sound_effect', 'music', 'list_voices', 'stock_search', 'stock_download', 'fonts_fetch'],
+  console: ['report_progress', 'read_brand_kit', 'generate_image', 'tts', 'sound_effect', 'music', 'list_voices', 'stock_search', 'stock_download', 'fonts_fetch'],
+  'brand-analysis': ['report_progress', 'read_brand_kit', 'fonts_fetch', 'download_file', 'inspect_site_fonts'],
   describe: ['report_progress'],
 };
 
@@ -34,6 +34,8 @@ export const GLOB_CHARS = /[[\]*?]/;
 const PROTECTED_PROJECT_DIRS = ['.git', '.claude', '.studio'];
 /** `.gitattributes` too (decisions log 141): it can drive a git filter, so it is tripwired; the core's own maintenance write is noted. */
 const PROTECTED_PROJECT_FILES = ['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json', '.gitattributes'];
+/** The intent journal of an asset rename (decisions log 339): the core reads it back at open, so it is named on its own besides `.studio`. */
+export const RENAME_JOURNAL_FILE = '.studio/rename-journal.json';
 /*
  * Transparency logs the UI shows as facts ("N commands ran in the sandbox", Activity): the core writes them from outside
  * the sandbox, the agent must never alter them. Per creative: CREATIVE_CORE_FILES; per brand proposal: PROPOSAL_LOG.
@@ -68,6 +70,11 @@ export interface LaunchInput {
   onEvent(e: AgentEvent): void;
   validateComposition?: BridgeContext['validateComposition'];
   previewFrames?: BridgeContext['previewFrames'];
+  /** Brand analysis: the job's language and where its tools' notes go (see BridgeContext). */
+  locale?: BridgeContext['locale'];
+  addNotes?: BridgeContext['addNotes'];
+  /** Creative turns: the brief's services read at the turn's start (see BridgeContext). */
+  services?: BridgeContext['services'];
   /** What the run's ledger line is about (a creative's version and fix-loop attempt); null for other jobs. */
   usage?: { version: number | null; attempt: number | null };
   /**
@@ -139,7 +146,7 @@ export class AgentLauncher {
     const protectedDirs = roots.flatMap((d) => PROTECTED_PROJECT_DIRS.map((n) => join(d, n)));
     // Caller-supplied files get both spellings (plain and realpath) like the project entries.
     const spellings = (f: string) => (f.startsWith(`${i.projectDir}/`) && realDir !== i.projectDir ? [f, join(realDir, f.slice(i.projectDir.length + 1))] : [f]);
-    const protectedFiles = [...(i.protectedFiles ?? []).flatMap(spellings), ...roots.flatMap((d) => PROTECTED_PROJECT_FILES.map((n) => join(d, n)))];
+    const protectedFiles = [...(i.protectedFiles ?? []).flatMap(spellings), ...roots.flatMap((d) => [...PROTECTED_PROJECT_FILES, RENAME_JOURNAL_FILE].map((n) => join(d, n)))];
     protectedDirs.push(...(i.protectedDirs ?? []).flatMap(spellings));
     const logGlobs = roots.flatMap((d) => [
       ...CREATIVE_CORE_FILES.map((n) => `${escapeGlob(join(d, 'creatives'))}/*/${n}`),
@@ -189,6 +196,8 @@ export class AgentLauncher {
           // The same value as the policy's autoAllowBashIfSandboxed: a setting turned on later never reaches this job.
           autoApproveAtStart,
           emit: i.onEvent, signal: abort.signal, ...(i.validateComposition ? { validateComposition: i.validateComposition } : {}), ...(i.previewFrames ? { previewFrames: i.previewFrames } : {}),
+          ...(i.locale ? { locale: i.locale } : {}), ...(i.addNotes ? { addNotes: i.addNotes } : {}),
+          ...(i.services ? { services: i.services } : {}),
         });
         // The paths are recorded before writing, so release() also removes a half-written pair.
         const files = await prepareRunFiles(configDir, i.jobId);

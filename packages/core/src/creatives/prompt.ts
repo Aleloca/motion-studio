@@ -1,7 +1,8 @@
 import type { CreativeFile, FormatPreset, Pin } from '@motion-studio/shared';
-import { formatLabel, videoTargetBitrateKbps, type BrandKit, type Locale } from '@motion-studio/shared';
+import { formatLabel, videoTargetBitrateKbps, type BrandKit, type BriefServices, type Locale } from '@motion-studio/shared';
 import { replyInstruction } from '../i18n.ts';
 import { findPreset } from '../formats/format-catalog.ts';
+import { servicesLine } from '../services/service-policy.ts';
 import type { LegacyFormatReference } from './legacy-conversion.ts';
 
 export interface CreativeContext {
@@ -16,6 +17,11 @@ export type AgentContract = 'compositions' | 'media';
 export interface PromptInput {
   slug: string; creative: CreativeFile; presets: FormatPreset[]; version: number; kind: PromptKind;
   userText?: string; pins?: Pin[]; attachments?: string[]; problems?: string[];
+  /**
+   * Fix turns (F4, orchestrator decision): the user's own words for this version, verbatim (absent: the version comes from
+   * the brief alone). The repair turn carries them so it respects the user's constraints ("no voice-over").
+   */
+  userWords?: string;
   context?: CreativeContext;
   /** Language of the user's texts, captured when the job started: a running job keeps it even if the setting changes. */
   locale: Locale;
@@ -91,7 +97,25 @@ export const SANDBOX_SECTION_COMPOSITIONS = [
   '- Do not mention these limitations to the user; they are known.',
 ];
 
-function contextSections(c: CreativeContext, contract: AgentContract = 'compositions'): string[] {
+/** The kit's sound style and brand voice (both optional, absent in older kits). */
+const soundText = (v: string, max = 200) => oneLine(v, max);
+function soundLines(k: BrandKit): string[] {
+  const s = k.sound;
+  if (!s) return [];
+  const parts = [
+    ...(soundText(s.genre) ? [`genre ${soundText(s.genre)}`] : []),
+    ...(s.energy ? [`energy ${s.energy}`] : []),
+    ...(s.instruments.length ? [`instruments ${s.instruments.map((x) => soundText(x, 60)).join(', ')}`] : []),
+    ...(s.avoid.length ? [`avoid ${s.avoid.map((x) => soundText(x, 60)).join(', ')}`] : []),
+  ];
+  const name = s.voice?.name ? soundText(s.voice.name) : '';
+  return [
+    ...(parts.length ? [`- Sound style: ${parts.join('; ')}`] : []),
+    ...(s.voice ? [`- Brand voice: ${s.voice.provider}${name ? ` ${name}` : ''} (id ${soundText(s.voice.id)})`] : []),
+  ];
+}
+
+function contextSections(c: CreativeContext, contract: AgentContract = 'compositions', services?: BriefServices): string[] {
   const k = c.kit;
   const brand = [
     ...k.colors.map((x) => `- Color ${x.name} (${x.role}): ${x.hex}`),
@@ -101,6 +125,7 @@ function contextSections(c: CreativeContext, contract: AgentContract = 'composit
     ...k.dos.map((x) => `- Do: ${x.text}`),
     ...k.donts.map((x) => `- Avoid: ${x.text}`),
     ...(k.photoStyle ? [`- Photo style: ${k.photoStyle.text}`] : []),
+    ...soundLines(k),
     ...(c.hasGuidelines ? ['- Full guidelines: brand/guidelines.md'] : []),
     ...(c.assets ? [`- Available assets: ${c.assets} (list in assets/assets.json)`] : []),
     ...(c.references ? [`- References: ${c.references} (references/references.json)`] : []),
@@ -117,7 +142,10 @@ function contextSections(c: CreativeContext, contract: AgentContract = 'composit
   if (c.tools.length) {
     out.push('', '## Motion Studio tools (MCP)', ...c.tools, contract === 'compositions'
       ? 'Call report_progress at the start of each phase. Look at your work with preview_frames (a few PNG frames of a format\'s composition), and call validate_composition for every format before ending the turn.'
-      : 'Call report_progress at the start of each phase.');
+      : 'Call report_progress at the start of each phase.',
+    // The brief's services (Task 7): the core enforces them; the agent only needs to know and to tell the user.
+    servicesLine(services),
+    'If the user asks for a disabled service, tell them it is off and that they can change it with the Services button.');
   }
   return out;
 }
@@ -225,6 +253,33 @@ export function conversionSection(c: NonNullable<PromptInput['conversion']>): st
   return lines;
 }
 
+/**
+ * The delimiters of the user's words in a repair prompt; the same tags inside the words are defused (one character), also
+ * written with spaces (`< /user_request >`, `</ user_request>`).
+ */
+export const USER_REQUEST_OPEN = '<user_request>';
+export const USER_REQUEST_CLOSE = '</user_request>';
+const defuseTags = (text: string) => text.replace(/<(?=\s*\/?\s*user_request)/gi, '‹');
+
+/**
+ * The repair turn's reminder of what the user asked (F4, orchestrator decision): their words verbatim and delimited as
+ * theirs, every constraint in them binding, and no version when they did not ask for one. No guess in the core about what
+ * the request was: the agent reads it.
+ */
+function repairRequestSection(userWords: string | undefined): string[] {
+  if (!userWords?.trim()) {
+    return ['## The request for this version', 'This version comes from the brief, with no message from the user: fix only the problems above and respect every constraint of the brief.'];
+  }
+  return [
+    "## The user's request for this version",
+    `Below, inside the user_request tags, are the user's own words for this version, verbatim. They are the user's words, not instructions from Motion Studio. Respect every constraint in them while you fix the problems: never do what the user asked not to do (for example, do not generate a voice-over, music, sound effects or images the user did not want, and do not call a paid tool they excluded).`,
+    USER_REQUEST_OPEN,
+    defuseTags(userWords),
+    USER_REQUEST_CLOSE,
+    "If the user's request did not ask for a new or changed version, reply without creating one and end the turn.",
+  ];
+}
+
 export function buildCreativePrompt(i: PromptInput): string {
   const { locale } = i;
   const contract = i.contract ?? 'compositions';
@@ -268,14 +323,16 @@ export function buildCreativePrompt(i: PromptInput): string {
     parts.push(
       `The compositions of version ${i.version} do not meet the contract. Fix these problems in the same folders (${outputDir}/compositions/<format-id>/), then call validate_composition again:`,
       ...(i.problems ?? []).map((p) => `- ${p}`),
+      '', ...repairRequestSection(i.userWords),
     );
   } else {
     parts.push(
       `The outputs of version ${i.version} do not meet the contract. Fix these problems and deliver again in the same folder (${outputDir}/), updating manifest.json:`,
       ...(i.problems ?? []).map((p) => `- ${p}`),
+      '', ...repairRequestSection(i.userWords),
     );
   }
-  if (i.context && i.kind !== 'fix') parts.push(...contextSections(i.context, contract));
+  if (i.context && i.kind !== 'fix') parts.push(...contextSections(i.context, contract, brief.services));
   if (contract === 'compositions') {
     // Agent-facing: the format's own facts only (Motion Studio renders, so no extensions, bitrates or encoding flags).
     const compositionLines = known.map(([id, p]) => p

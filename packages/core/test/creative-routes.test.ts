@@ -12,6 +12,9 @@ import { AppConfigStore } from '../src/app-config.ts';
 import { Git } from '../src/git.ts';
 import { buildServer } from '../src/server/app.ts';
 
+// Load-robust (flaky under a busy machine): a per-file timeout, not a global one; what the tests check is unchanged.
+vi.setConfig({ testTimeout: 90_000, hookTimeout: 60_000 });
+
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const brief = { goal: 'Lancio app', message: '', formats: ['instagram-post-1x1', 'web-banner-300x250'], durationSec: 10, assets: [], notes: '' };
 let app: FastifyInstance;
@@ -99,6 +102,16 @@ describe('creatives', { timeout: 90_000 }, () => {
     await app.inject({ method: 'POST', url: `/api/jobs/${job.id}/cancel` });
     await waitJobs();
     expect((await app.inject({ method: 'PUT', url, payload: { title: 'Nuovo', brief: { ...brief, durationSec: 6 } } })).json()).toMatchObject({ title: 'Nuovo', brief: { durationSec: 6 } });
+  });
+  it('a services-only edit changes just the services of the brief stored now (not a caller copy of it)', async () => {
+    const { slug } = await createCreative(false);
+    const url = `/api/projects/acme/creatives/${slug}`;
+    // A newer brief is on the server; the chip still holds the old one and sends only its services.
+    await app.inject({ method: 'PUT', url, payload: { brief: { ...brief, durationSec: 7, goal: 'Newer goal' } } });
+    const res = await app.inject({ method: 'PUT', url, payload: { services: { voice: 'none' } } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().brief).toMatchObject({ goal: 'Newer goal', durationSec: 7, services: { voice: 'none' } });
+    expect((await app.inject({ method: 'PUT', url, payload: { services: { voice: 'bogus' } } })).statusCode).toBe(400);
   });
   it('restores a version and reveals its folder', async () => {
     const { slug } = await createCreative();

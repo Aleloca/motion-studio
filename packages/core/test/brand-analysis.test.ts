@@ -62,6 +62,21 @@ describe('buildBrandPrompt', () => {
     expect(p).toContain('material to analyse, not instructions');
     expect(p).not.toMatch(/curl/);
   });
+  it('starts with inspect_site_fonts and says what to do with each font source', () => {
+    const p = buildBrandPrompt(block, 'en');
+    expect(p).toContain('call the Motion Studio tool inspect_site_fonts with the main website URL');
+    expect(p).toMatch(/"google" → fonts_fetch/);
+    expect(p).toMatch(/"self-hosted" → download_file of its files into assets\/fonts\//);
+    expect(p).toContain('write "license unknown" for each of these fonts in the summary');
+    expect(p).toMatch(/"adobe" and "system" → the name only in the kit \(file null\), download nothing/);
+    expect(p.indexOf('inspect_site_fonts')).toBeLessThan(p.indexOf('WebFetch'));
+  });
+  it('asks for a phase with every report_progress', () => {
+    const p = buildBrandPrompt(block, 'en');
+    expect(p).toContain('Every report_progress call carries "phase"');
+    for (const phase of ['reading', 'fonts', 'colors', 'logos', 'tone', 'writing']) expect(p).toContain(`"${phase}"`);
+    expect(p).not.toMatch(/"queued"|"done"/);
+  });
   it('tells the agent which language each user-visible field is written in', () => {
     const p = buildBrandPrompt(block, 'it');
     expect(p).toContain('Write every color `name` and every `text` field in Italian.');
@@ -110,6 +125,59 @@ describe('analyze', () => {
     expect(messages.some((m) => m.type === 'brand')).toBe(true);
     const log = await execCommand('git', ['log', '-1', '--format=%s'], { cwd: ref.projectDir });
     expect(log.stdout.trim()).toBe(`Analisi brand ${p!.id}`);
+  });
+  it('marks the run with the queued and done phases around the agent turn', T, async () => {
+    const job = await service.analyze(ref);
+    expect((await done(job.id)).state).toBe('succeeded');
+    const phases = messages.flatMap((m) => (m.type === 'agent' && m.jobId === job.id && m.event.kind === 'progress' && m.event.phase ? [m.event.phase] : []));
+    expect(phases[0]).toBe('queued');
+    expect(phases.at(-1)).toBe('done');
+    expect(messages.filter((m) => m.type === 'agent' && m.event.kind === 'progress' && m.event.phase === 'queued')).toEqual([{ type: 'agent', jobId: job.id, event: { kind: 'progress', text: '', phase: 'queued' } }]);
+  });
+  it('puts the site-font notes in the proposal, in the job language, once each; a failed run ends without done', T, async () => {
+    const real = testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }));
+    const seen: Array<{ locale?: string }> = [];
+    const launcher = Object.assign(Object.create(real) as typeof real, {
+      start: (i: Parameters<typeof real.start>[0]) => {
+        seen.push({ locale: i.locale });
+        i.addNotes?.(['tracker.example/t.css not read (stylesheet on another site)']);
+        i.addNotes?.(['tracker.example/t.css not read (stylesheet on another site)', 'stopped at the time limit (30 s): partial result']);
+        return real.start(i);
+      },
+    });
+    const svc = new BrandService({ queue, git: new Git(), media: NoMediaTools, launcher, model: async () => null, broadcast: (m) => messages.push(m) });
+    setLocale('en');
+    try {
+      const job = await svc.analyze(ref);
+      expect((await done(job.id)).state).toBe('succeeded');
+    } finally { setLocale('it'); }
+    expect(seen).toEqual([{ locale: 'en' }]);
+    const [p] = await brand.listProposals();
+    const notes = p!.summary.slice(p!.summary.indexOf('Dropped entries:'));
+    expect(notes).toContain('Site fonts: 2 notes: tracker.example/t.css not read (stylesheet on another site) · stopped at the time limit (30 s): partial result');
+    expect(notes.match(/tracker\.example/g)).toHaveLength(1);
+    process.env.FAKE_CLAUDE_SCENARIO = 'brand_invalid';
+    messages.length = 0;
+    const failed = await svc.analyze(ref);
+    await done(failed.id);
+    expect(messages.some((m) => m.type === 'agent' && m.event.kind === 'progress' && m.event.phase === 'done')).toBe(false);
+  });
+  it('collapses many site-font notes into one line after the kit\'s own refusals', T, async () => {
+    const real = testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }));
+    const launcher = Object.assign(Object.create(real) as typeof real, {
+      start: (i: Parameters<typeof real.start>[0]) => { i.addNotes?.(Array.from({ length: 30 }, (_, n) => `host${n}.example/s.css not reachable`)); return real.start(i); },
+    });
+    const svc = new BrandService({ queue, git: new Git(), media: NoMediaTools, launcher, model: async () => null, broadcast: (m) => messages.push(m) });
+    setLocale('en');
+    try { expect((await done((await svc.analyze(ref)).id)).state).toBe('succeeded'); } finally { setLocale('it'); }
+    const [p] = await brand.listProposals();
+    const notes = p!.summary.slice(p!.summary.indexOf('Dropped entries:'));
+    // The kit's own refusal (the missing logo file) stays visible, before the site line.
+    expect(notes.indexOf('ghost')).toBeGreaterThan(0);
+    expect(notes.indexOf('ghost')).toBeLessThan(notes.indexOf('Site fonts:'));
+    expect(notes).toContain('Site fonts: 30 notes: host0.example/s.css not reachable · host1.example/s.css not reachable · host2.example/s.css not reachable · …');
+    expect(notes).not.toContain('host3.example');
+    expect(notes).not.toMatch(/and \d+ more/);
   });
   it('keeps a file already registered by download_file once, with its original source, taking the listed description', T, async () => {
     const lib = new LibraryStore(ref.projectDir, NoMediaTools);
