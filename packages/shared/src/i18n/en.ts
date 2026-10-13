@@ -268,6 +268,7 @@ export const en = {
     audioDetail: (p: { provider: string; seconds: number | null; prompt: string }) => `${p.provider}, ${p.seconds === null ? 'duration chosen by the service' : `${p.seconds} s`}: ${p.prompt}`,
     denied: 'The user denied this action.',
     expired: 'No answer within 10 minutes: action denied.',
+    protectedPath: "Motion Studio's configuration folder is off limits to the agent (it holds access tokens): request denied without asking the user.",
     invalidRequest: 'Invalid request.',
     unknownTool: 'unknown',
     providerNotApproved: 'The user did not approve the use of the provider',

@@ -74,6 +74,23 @@ describe('buildAgentPolicy hardening', () => {
       ]));
     }
   });
+  it('denies Grep and Glob on the config folder (bridge and UI tokens), with the same shape as the Read rule, with and without sandbox', () => {
+    for (const sandbox of [true, false]) {
+      for (const kind of ['creative', 'console', 'brand-analysis', 'describe'] as const) {
+        const d = buildAgentPolicy({ ...base, kind, sandbox }).disallowedTools;
+        expect(d).toEqual(expect.arrayContaining([
+          'Read(//Users/me/Library/Application Support/Motion Studio/**)',
+          'Grep(//Users/me/Library/Application Support/Motion Studio/**)',
+          'Glob(//Users/me/Library/Application Support/Motion Studio/**)',
+        ]));
+      }
+    }
+    // A config folder with glob characters is escaped as the Read rule is.
+    const odd = buildAgentPolicy({ ...base, configDir: '/cfg [x]/Motion Studio' }).disallowedTools;
+    const read = odd.find((r) => r.startsWith('Read(//cfg'))!;
+    expect(odd).toContain(read.replace(/^Read/, 'Grep'));
+    expect(odd).toContain(read.replace(/^Read/, 'Glob'));
+  });
   it('console: network on, auto-allowed Bash, no default tools', () => {
     const p = buildAgentPolicy({ ...base, kind: 'console', projectAllowRules: [], mcpTools: [] });
     const s = p.settings as Sb;

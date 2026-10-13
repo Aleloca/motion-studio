@@ -266,6 +266,7 @@ export const it: Messages = {
     audioDetail: (p) => `${p.provider}, ${p.seconds === null ? 'durata scelta dal servizio' : `${p.seconds} s`}: ${p.prompt}`,
     denied: 'L\'utente ha negato questa azione.',
     expired: 'Nessuna risposta entro 10 minuti: azione negata.',
+    protectedPath: "La cartella di configurazione di Motion Studio è vietata all'agente (contiene token di accesso): richiesta negata senza chiedere all'utente.",
     invalidRequest: 'Richiesta non valida.',
     unknownTool: 'sconosciuto',
     providerNotApproved: 'L\'utente non ha approvato l\'uso del provider',

@@ -8,6 +8,7 @@ import { WorkspaceError } from '../workspace-store.ts';
 import type { AgentBridge, BridgeContext } from './bridge.ts';
 import { cleanProgress } from '../display-text.ts';
 import { defaultClaudeTmpRoot, isInsideClaudeTmp } from './claude-tmp.ts';
+import { namesProtectedPath } from './protected-paths.ts';
 import { t } from '../i18n.ts';
 
 export { cleanProgress };
@@ -19,6 +20,11 @@ export interface BridgeRoutesContext {
   settings?: () => Promise<{ autoApproveSandboxed: boolean }>;
   /** Claude Code's per-user temp root (tests only; default: claudeTmpRootFor(process.env, uid)). null: no Read is auto-allowed. */
   claudeTmpRoot?: string | null;
+  /**
+   * Folders no permission prompt may open (Motion Studio's config folder: the UI token and every live job's bridge token).
+   * A request whose path argument resolves inside one is denied at once, without a card.
+   */
+  protectedRoots?: string[];
 }
 
 /** The analysis phases the agent reports; `queued` and `done` are the core's own markers. */
@@ -85,6 +91,11 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
       const linked = toolUseId ? { toolUseId } : {};
       // Provider confirmations and Motion Studio's own tools never go through the agent's permission prompts.
       if (toolName.startsWith('provider:') || toolName.startsWith(`mcp__${MCP_SERVER}__`)) return { behavior: 'deny', message: t().approvals.invalidRequest };
+      // Motion Studio's config folder (tokens) is never opened, whatever the tool, whoever would answer: denied before any
+      // auto-approval or card. Bash is not parsed here: its pre-allowed commands never reach this prompt (see the README).
+      if (await namesProtectedPath(toolName, input, ctx.protectedRoots ?? [], c.projectDir).catch(() => true)) {
+        return { behavior: 'deny', message: t().approvals.protectedPath };
+      }
       const auto = (await autoApprovable(ctx, c, a.tool_name, input)) ? { tool: 'Bash', shown: input.command as string }
         : (await autoApprovableRead(ctx, c, a.tool_name, input)) ? { tool: 'Read', shown: input.file_path as string }
           : null;

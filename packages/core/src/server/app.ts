@@ -475,6 +475,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   registerBridgeRoutes(app, {
     bridge, approvals,
+    // The config folder holds the UI token and the bridge tokens: no permission prompt may open it.
+    protectedRoots: [configDir],
     // Read on every permission prompt: a setting changed mid-job applies to the next one.
     settings: () => requireWorkspace().readSettings(),
     extraTools: {
