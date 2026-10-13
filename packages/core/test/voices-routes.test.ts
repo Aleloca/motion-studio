@@ -20,6 +20,7 @@ let app: FastifyInstance;
 let base: string;
 let calls: Array<{ url: string; key: string | null }>;
 let listStatus: number;
+let listBody: string;
 let big: boolean;
 
 const voice = (id: string, name: string, preview: unknown, labels: Record<string, unknown> = { accent: 'british' }) => ({ voice_id: id, name, labels, preview_url: preview });
@@ -38,7 +39,7 @@ const fakeFetch = (async (url: string, init?: RequestInit) => {
   const h = new Headers(init?.headers);
   calls.push({ url, key: h.get('xi-api-key') });
   if (url.startsWith('https://api.elevenlabs.io/v2/voices')) {
-    if (listStatus !== 200) return new Response('denied', { status: listStatus });
+    if (listStatus !== 200) return new Response(listBody, { status: listStatus });
     const s = new URL(url).searchParams.get('search');
     const all = voicesJson();
     return new Response(JSON.stringify(s ? { voices: all.voices.filter((v) => v.name.toLowerCase().includes(s.toLowerCase())) } : all), { status: 200 });
@@ -61,7 +62,7 @@ async function boot(opts: { key?: boolean; extra?: Record<string, unknown> } = {
   });
   return { 'x-motion-studio-ui': TOKEN };
 }
-beforeEach(async () => { base = await mkdtemp(join(tmpdir(), 'ms-vr-')); calls = []; listStatus = 200; big = false; });
+beforeEach(async () => { base = await mkdtemp(join(tmpdir(), 'ms-vr-')); calls = []; listStatus = 200; listBody = JSON.stringify({ detail: { status: 'missing_permissions', message: 'The API key you used is missing the permission voices_read to execute this operation.' } }); big = false; });
 afterEach(async () => { await app.close(); vi.restoreAllMocks(); });
 
 describe('voices routes', () => {
@@ -174,6 +175,15 @@ describe('voices routes', () => {
     expect(cache.capabilities('elevenlabs').voices).toMatchObject({ status: 'missing', permission: 'voices_read' });
     expect(r.body).not.toContain(KEY);
     expect(JSON.stringify([warn.mock.calls, log.mock.calls, err.mock.calls])).not.toContain(KEY);
+  });
+  it('a quota or unknown refusal of the list never records voices as missing (fix round 2)', async () => {
+    const cache = new KeyCheckCache();
+    const h = await boot({ extra: { keyChecks: cache } });
+    for (const [status, body] of [[401, '{"detail":{"status":"quota_exceeded","message":"This request exceeds your quota"}}'], [401, 'denied'], [403, 'Rate limit exceeded']] as const) {
+      listStatus = status; listBody = body;
+      expect((await app.inject({ url: '/api/voices?provider=elevenlabs', headers: h })).statusCode).toBe(503);
+    }
+    expect(cache.capabilities('elevenlabs').voices).toBeUndefined();
   });
 });
 

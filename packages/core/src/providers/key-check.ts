@@ -2,7 +2,7 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { KEY_CAPABILITIES, KEY_PERMISSIONS, type KeyCapability, type KeyCheckResult, type KeyCheckStatus, type ProviderId } from '@motion-studio/shared';
 import { redact } from '../secrets/vault.ts';
 import { t } from '../i18n.ts';
-import { ProviderError, requestProbe, type HttpDeps } from './http.ts';
+import { classifyRefusal, ProviderError, requestProbe, type HttpDeps } from './http.ts';
 import { OPENAI_IMAGE_MODEL } from './openai-images.ts';
 import { OPENAI_TTS_MODEL } from './tts.ts';
 
@@ -80,25 +80,15 @@ const plan = (provider: ProviderId, apiKey: string): Plan => {
   }
 };
 
-/** The words a provider uses for a known key that lacks a permission (ElevenLabs `missing_permissions`, OpenAI scopes). */
-const PERMISSION_WORDS = /missing_permissions|missing the permission|insufficient permissions|missing scopes/i;
-/**
- * The words of a key the provider does not know (ElevenLabs `invalid_api_key` / "Invalid API key", OpenAI "Incorrect API key"
- * / `invalid_api_key`). Only these make a key invalid: any other 401 is an `error`, so a restricted key worded in a new way is
- * never shown as invalid (Review Focus 3).
- */
-const INVALID_WORDS = /invalid_api_key|invalid api key|incorrect api key/i;
-const RATE_LIMIT_WORDS = /rate limit/i;
-
 async function probe(deps: HttpDeps, p: Plan, pr: Probe, apiKey: string): Promise<Outcome> {
   try {
     const a = await requestProbe({ ...deps, timeoutMs: KEY_CHECK_TIMEOUT_MS }, pr.url, { method: 'GET', headers: p.headers }, { provider: p.label, secrets: [apiKey] });
     if (a.status >= 200 && a.status < 300) return { kind: 'ok' };
-    if (a.status === 429 || (a.status === 403 && RATE_LIMIT_WORDS.test(a.body))) return { kind: 'error', detail: t().keyChecks.rateLimited };
-    if (a.status === 401 || a.status === 403) {
-      if (!p.scoped) return { kind: 'denied', why: 'invalid' };
-      if (a.status === 403 || PERMISSION_WORDS.test(a.body)) return { kind: 'denied', why: 'permission' };
-      if (INVALID_WORDS.test(a.body)) return { kind: 'denied', why: 'invalid' };
+    if (a.status === 429 || a.status === 401 || a.status === 403) {
+      // The same classification as real calls (`classifyRefusal`).
+      const r = classifyRefusal(p.label, a.status, a.body);
+      if (r === 'rateLimited') return { kind: 'error', detail: t().keyChecks.rateLimited };
+      if (r === 'permission' || r === 'invalid') return { kind: 'denied', why: r };
       return { kind: 'error', detail: t().keyChecks.refused };
     }
     if (a.status === 404 && pr.notFound) return { kind: 'notFound' };

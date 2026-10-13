@@ -120,7 +120,7 @@ export function registerGenerateRoutes(app: FastifyInstance, ctx: GenerateRoutes
       let out: T;
       try { out = await call(); }
       catch (e) {
-        if (e instanceof ProviderError && (e.upstreamStatus === 401 || e.upstreamStatus === 403)) await keyChecks.recordUse(ctx.vault, { ...lease, provider }, capability, 'missing', KEY_PERMISSIONS[provider][capability]);
+        if (e instanceof ProviderError && e.refusal === 'permission') await keyChecks.recordUse(ctx.vault, { ...lease, provider }, capability, 'missing', KEY_PERMISSIONS[provider][capability]);
         throw e;
       }
       await keyChecks.recordUse(ctx.vault, { ...lease, provider }, capability, 'ok');

@@ -103,7 +103,7 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
     let out: T;
     try { out = await run(); }
     catch (e) {
-      if (e instanceof ProviderError && (e.upstreamStatus === 401 || e.upstreamStatus === 403)) await keyChecks.recordUse(deps.vault, lease, capability, 'missing', KEY_PERMISSIONS[provider][capability]);
+      if (e instanceof ProviderError && e.refusal === 'permission') await keyChecks.recordUse(deps.vault, lease, capability, 'missing', KEY_PERMISSIONS[provider][capability]);
       throw e;
     }
     await keyChecks.recordUse(deps.vault, lease, capability, 'ok');

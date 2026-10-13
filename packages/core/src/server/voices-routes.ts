@@ -56,8 +56,8 @@ export function registerVoicesRoutes(app: FastifyInstance, ctx: VoicesRoutesCont
     const list = await asHttp(async () => {
       try { return await elevenlabsVoices({ ...ctx.http, apiKey }, { search: q.q, pageSize: 30 }); }
       catch (e) {
-        // A 401/403 means the key lacks the voices permission: remembered in memory, then the error goes on.
-        if (e instanceof ProviderError && (e.upstreamStatus === 401 || e.upstreamStatus === 403)) await ctx.keyChecks.recordUse(ctx.vault, lease, 'voices', 'missing', 'voices_read');
+        // A refusal classified as a missing permission (classifyRefusal) is remembered in memory; the error goes on.
+        if (e instanceof ProviderError && e.refusal === 'permission') await ctx.keyChecks.recordUse(ctx.vault, lease, 'voices', 'missing', 'voices_read');
         throw e;
       }
     });

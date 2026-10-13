@@ -111,6 +111,19 @@ describe('checkKey · unrecognised refusals fail safe (Task 8 fix I2)', () => {
     const coded = await checkKey({ fetch: fake(() => json(401, { error: { message: 'nope', code: 'invalid_api_key' } })).fetch }, 'openai', KEY);
     expect(statuses(coded)).toEqual({ key: 'missing', images: 'missing', tts: 'missing' });
   });
+  it('a quota, payment or account refusal is error, never missing, even as a 403 (shared classifyRefusal, fix round 2)', async () => {
+    const r = await checkKey({ fetch: fake((u) => (u.includes('/v2/voices') ? json(403, { detail: { status: 'payment_required', message: 'Your subscription has no credits left' } }) : json(200, {}))).fetch }, 'elevenlabs', KEY);
+    expect(statuses(r)).toMatchObject({ key: 'ok', voices: 'error' });
+    const { classifyRefusal } = await import('../src/providers/http.ts');
+    expect(classifyRefusal('ElevenLabs', 401, '{"detail":{"status":"quota_exceeded"}}')).toBe('refused');
+    expect(classifyRefusal('ElevenLabs', 401, '{"detail":{"status":"missing_permissions","message":"missing the permission text_to_speech"}}')).toBe('permission');
+    expect(classifyRefusal('ElevenLabs', 403, '')).toBe('permission');
+    expect(classifyRefusal('OpenAI', 401, 'Incorrect API key provided')).toBe('invalid');
+    expect(classifyRefusal('OpenAI', 401, 'Unauthorized')).toBe('refused');
+    expect(classifyRefusal('OpenAI', 429, '')).toBe('rateLimited');
+    expect(classifyRefusal('Unsplash', 403, 'Rate Limit Exceeded')).toBe('rateLimited');
+    expect(classifyRefusal('Pexels', 401, '')).toBe('invalid');
+  });
   it('a capability probe refused without a named permission is error, not missing', async () => {
     const r = await checkKey({ fetch: fake((u) => (u.includes('/v2/voices') ? new Response('', { status: 401 }) : json(200, {}))).fetch }, 'elevenlabs', KEY);
     expect(statuses(r)).toMatchObject({ key: 'ok', account: 'ok', voices: 'error' });

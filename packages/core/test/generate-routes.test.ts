@@ -148,9 +148,10 @@ describe('generate route', () => {
     const job = await settle((await post({ kind: 'music', provider: 'elevenlabs', prompt: 'Calm piano', options: { durationSec: 30 } })).json().jobId);
     expect(job.state).toBe('failed');
     expect(keyChecks.capabilities('elevenlabs').music).toMatchObject({ status: 'missing', permission: 'music_generation' });
+    // A 401 that does not read as a missing permission (here a bare "denied") is not recorded (fix round 2).
     status = 401;
     await settle((await post({ kind: 'image', provider: 'openai', prompt: 'x' })).json().jobId);
-    expect(keyChecks.capabilities('openai').images).toMatchObject({ status: 'missing' });
+    expect(keyChecks.capabilities('openai').images).toBeUndefined();
     const everything = JSON.stringify([(await app.inject('/api/jobs')).json(), keyChecks.get('elevenlabs'), keyChecks.get('openai')]);
     expect(everything).not.toContain(ELEVEN);
     expect(everything).not.toContain(OPENAI);

@@ -2,8 +2,41 @@ import { redact } from '../secrets/vault.ts';
 import type { LookupFn, Transport } from './safe-fetch.ts';
 import { t } from '../i18n.ts';
 
+/**
+ * How a provider's refusal reads, for key checks and for what real calls learn (one classification for both, fix round 2):
+ * `permission` (a known key that lacks a permission), `invalid` (a key the provider does not know), `rateLimited`, or
+ * `refused` (anything else: quota, billing, account state, unknown wording). Only `permission` ever makes a capability
+ * `missing` from a real call.
+ */
+export type Refusal = 'permission' | 'invalid' | 'rateLimited' | 'refused';
+
 export class ProviderError extends Error {
-  constructor(public readonly status: number, message: string, public readonly upstreamStatus?: number) { super(message); this.name = 'ProviderError'; }
+  constructor(public readonly status: number, message: string, public readonly upstreamStatus?: number, public readonly refusal?: Refusal) { super(message); this.name = 'ProviderError'; }
+}
+
+/** The words a provider uses for a known key that lacks a permission (ElevenLabs `missing_permissions`, OpenAI scopes). */
+export const PERMISSION_WORDS = /missing_permissions|missing the permission|insufficient permissions|missing scopes/i;
+/**
+ * The words of a key the provider does not know (ElevenLabs `invalid_api_key` / "Invalid API key", OpenAI "Incorrect API key"
+ * / `invalid_api_key`). Only these make a key invalid: any other 401 is `refused`, so a restricted key worded in a new way is
+ * never shown as invalid (Review Focus 3).
+ */
+export const INVALID_WORDS = /invalid_api_key|invalid api key|incorrect api key/i;
+const RATE_LIMIT_WORDS = /rate limit/i;
+/** Refusals about money or the account, never about a permission of the key (e.g. ElevenLabs `quota_exceeded`). */
+const ACCOUNT_WORDS = /quota|billing|credits?\b|payment|subscription|suspended|unusual activity|unusual_activity|account (?:is )?(?:disabled|inactive|deactivated)/i;
+/** The providers whose keys have permissions (Pexels and Unsplash keys have none: any refusal means the key). */
+const SCOPED = new Set(['OpenAI', 'ElevenLabs']);
+
+/** Classifies a 401/403/429 answer from `provider` (its label) by status and body: the one rule key checks and real calls share. */
+export function classifyRefusal(provider: string, status: number, body: string): Refusal {
+  if (status === 429 || (status === 403 && RATE_LIMIT_WORDS.test(body))) return 'rateLimited';
+  if (!SCOPED.has(provider)) return 'invalid';
+  if (PERMISSION_WORDS.test(body)) return 'permission';
+  if (ACCOUNT_WORDS.test(body)) return 'refused';
+  if (status === 403) return 'permission';
+  if (INVALID_WORDS.test(body)) return 'invalid';
+  return 'refused';
 }
 export interface HttpDeps {
   fetch: typeof fetch; timeoutMs?: number;
@@ -13,6 +46,7 @@ export interface HttpDeps {
 interface Opts { provider: string; secrets: string[] }
 
 const ERROR_BODY_MAX = 64 * 1024;
+const REFUSAL_BODY_MAX = 8 * 1024;
 const JSON_MAX = 64 * 1024 * 1024;
 
 const reason = (e: unknown): string => (e as Error | undefined)?.message ?? String(e);
@@ -27,7 +61,12 @@ async function send(deps: HttpDeps, url: string, init: RequestInit, o: Opts): Pr
   try { res = await deps.fetch(url, { redirect: 'error', ...init, signal }); }
   catch (e) { throw unreachable(o, e); }
   if (res.ok) return { res, signal };
-  if (res.status === 401 || res.status === 403) { await res.body?.cancel().catch(() => {}); throw new ProviderError(401, t().providers.invalidKey({ provider: o.provider }), res.status); }
+  if (res.status === 401 || res.status === 403) {
+    // Read (bounded) only to classify the refusal; the body itself goes nowhere.
+    let body = '';
+    try { body = (await readBounded(res, REFUSAL_BODY_MAX, false)).toString('utf8'); } catch { /* unreadable: classified on the status */ }
+    throw new ProviderError(401, t().providers.invalidKey({ provider: o.provider }), res.status, classifyRefusal(o.provider, res.status, body));
+  }
   if (res.status === 429) { await res.body?.cancel().catch(() => {}); throw new ProviderError(429, t().providers.rateLimited({ provider: o.provider }), 429); }
   let text = '';
   try { text = (await readBounded(res, ERROR_BODY_MAX, false)).toString('utf8'); } catch { /* unreadable error body */ }

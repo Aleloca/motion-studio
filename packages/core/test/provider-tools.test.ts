@@ -345,9 +345,10 @@ describe('key checks from real calls (Task 8)', () => {
     deny = /text-to-speech/;
     await t.tts!(ctx, { text: 'Ciao', provider: 'elevenlabs' }).catch(() => {});
     expect(cache.capabilities('elevenlabs').tts).toMatchObject({ status: 'missing', permission: 'text_to_speech' });
+    // Pexels keys have no permissions: a refusal means the key itself, which only a Test can tell (fix round 2).
     deny = /api\.pexels\.com\/v1\/search/;
     await t.stock_search!(ctx, { query: 'mare' }).catch(() => {});
-    expect(cache.capabilities('pexels').search).toMatchObject({ status: 'missing' });
+    expect(cache.capabilities('pexels').search).toBeUndefined();
     deny = null;
     // F5: a capability known as missing is unavailable, refused before any request, until the key is saved or tested again.
     const before = sent.length;
@@ -452,7 +453,7 @@ describe('ElevenLabs sound effects, music and voices', () => {
     const { KeyCheckCache } = await import('../src/providers/key-check.ts');
     const cache = new KeyCheckCache();
     const t = withKey({ confirmPaidProviders: false }, { keyChecks: cache });
-    answer = () => new Response(`nope ${KEY}`, { status: 401 });
+    answer = () => new Response(JSON.stringify({ detail: { status: 'missing_permissions', message: `The API key you used (${KEY}) is missing the permission sound_generation to execute this operation.` } }), { status: 401 });
     const e1 = await t.sound_effect!(ctx, { prompt: 'x' }).catch((e) => e) as Error;
     answer = () => new Response('', { status: 403 });
     const e2 = await t.music!(ctx, { prompt: 'x', durationSec: 12 }).catch((e) => e) as Error;
@@ -465,6 +466,27 @@ describe('ElevenLabs sound effects, music and voices', () => {
     expect(cache2.capabilities('elevenlabs')).toEqual({});
     for (const e of [e1, e2, e3, e4]) expect(e.message).not.toContain(KEY);
     expect(await readdirAssets()).toEqual([]);
+  });
+  it('only a refusal classified as a missing permission records missing: quota, account, unknown or rate-limit refusals never do (fix round 2)', async () => {
+    const { KeyCheckCache } = await import('../src/providers/key-check.ts');
+    const cache = new KeyCheckCache();
+    const t = withKey({ confirmPaidProviders: false }, { keyChecks: cache });
+    for (const [status, body] of [
+      [401, '{"detail":{"status":"quota_exceeded","message":"This request exceeds your quota of 10000."}}'],
+      [403, '{"detail":{"status":"payment_required","message":"Your subscription has no credits left"}}'],
+      [401, '{"detail":{"status":"detected_unusual_activity","message":"Unusual activity detected"}}'],
+      [401, 'nope'],
+      [403, 'Rate limit exceeded'],
+      [500, 'boom'],
+    ] as const) {
+      answer = () => new Response(body, { status });
+      await t.sound_effect!(ctx, { prompt: 'x' }).catch(() => {});
+    }
+    expect(cache.capabilities('elevenlabs').sfx).toBeUndefined();
+    // The same classification as the key check: a bare 403 from a provider with permissions is a missing permission.
+    answer = () => new Response('', { status: 403 });
+    await t.sound_effect!(ctx, { prompt: 'x' }).catch(() => {});
+    expect(cache.capabilities('elevenlabs').sfx).toMatchObject({ status: 'missing', permission: 'sound_generation' });
   });
   it('aborts mid-request, saving and registering nothing', async () => {
     answer = () => { throw new Error('unused'); };
