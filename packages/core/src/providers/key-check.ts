@@ -13,6 +13,9 @@ const DETAIL_MAX = 200;
 
 export { KEY_CAPABILITIES, KEY_PERMISSIONS };
 
+/** How long a `missing` learned from a bare 403 (no permission named) blocks the service. */
+export const BARE_MISSING_TTL_MS = 15 * 60_000;
+
 // Per process: a fingerprint means nothing outside this run of the core.
 const FINGERPRINT_SALT = randomBytes(32);
 /** A one-way, salted fingerprint of a key: what the cache compares, so it never holds or compares the key itself. */
@@ -142,8 +145,24 @@ export class KeyCheckCache {
   private readonly byProvider = new Map<ProviderId, { checkedAt: string; caps: Map<KeyCapability, Entry> }>();
   /** Bumped by every `clear` (a key saved or removed): a lease from before no longer records anything. */
   private readonly generations = new Map<ProviderId, number>();
+  /**
+   * When a `missing` learned from a real call without a permission name (a bare 403: a region, an organization verification, a
+   * firewall, perhaps transient) stops counting. A named permission, and anything a Test found, stays until a Test.
+   */
+  private readonly bareExpiry = new Map<string, number>();
+  constructor(private readonly now: () => number = Date.now) {}
+
+  private expire(provider: ProviderId): void {
+    const cur = this.byProvider.get(provider);
+    if (!cur) return;
+    for (const [capability, e] of cur.caps) {
+      const until = this.bareExpiry.get(`${provider}:${capability}`);
+      if (until !== undefined && this.now() >= until && e.status === 'missing' && !e.permission) { cur.caps.delete(capability); this.bareExpiry.delete(`${provider}:${capability}`); }
+    }
+  }
 
   get(provider: ProviderId): KeyCheckResult | null {
+    this.expire(provider);
     const cur = this.byProvider.get(provider);
     if (!cur) return null;
     const order = KEY_CAPABILITIES[provider];
@@ -160,6 +179,8 @@ export class KeyCheckCache {
   record(provider: ProviderId, capability: KeyCapability, status: KeyCheckStatus, permission?: string): void {
     const cur = this.slot(provider);
     cur.caps.set(capability, entry(capability, status, status === 'ok' ? undefined : permission));
+    if (status === 'missing' && !permission) this.bareExpiry.set(`${provider}:${capability}`, this.now() + BARE_MISSING_TTL_MS);
+    else this.bareExpiry.delete(`${provider}:${capability}`);
     if (status === 'ok' && capability !== 'key' && cur.caps.get('key')?.status !== 'ok') cur.caps.set('key', entry('key', 'ok'));
   }
 
@@ -175,6 +196,7 @@ export class KeyCheckCache {
     for (const c of fresh.capabilities) {
       const learned = before?.get(c.capability);
       const keep = c.status === 'unverified' && learned !== undefined && (learned.status === 'ok' || learned.status === 'missing');
+      if (!keep) this.bareExpiry.delete(`${provider}:${c.capability}`);
       caps.set(c.capability, keep ? learned : entry(c.capability, c.status, c.permission, c.detail));
     }
     this.byProvider.set(provider, { checkedAt: new Date().toISOString(), caps });
@@ -184,6 +206,7 @@ export class KeyCheckCache {
   /** Forgets a provider (its key was replaced or removed). */
   clear(provider: ProviderId): void {
     this.byProvider.delete(provider);
+    for (const k of [...this.bareExpiry.keys()]) if (k.startsWith(`${provider}:`)) this.bareExpiry.delete(k);
     this.generations.set(provider, (this.generations.get(provider) ?? 0) + 1);
   }
 

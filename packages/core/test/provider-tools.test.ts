@@ -857,6 +857,14 @@ describe('F5 under auto: a provider known to lack the capability is skipped, non
     expect(approvals.pending()).toEqual([]);
     expect(sent).toEqual([]);
   });
+  it('a bare refusal (no permission named) is told to the agent as a refusal, not as a key to fix', async () => {
+    const t = await withCache((c) => { c.record('openai', 'tts', 'missing'); c.record('elevenlabs', 'tts', 'missing'); });
+    const e = await t.tts!(ctx, { text: 'Ciao' }).then(() => null, (x: unknown) => x) as Error;
+    expect(e.message).toContain('refused the key or the request without naming a permission');
+    expect(e.message).toContain('region, organization or firewall');
+    expect(e.message).not.toContain('does not accept');
+    expect(approvals.pending()).toEqual([]);
+  });
   it('list_voices looks at the voice list permission, not text-to-speech', async () => {
     const t = await withCache((c) => c.record('elevenlabs', 'tts', 'missing', 'text_to_speech'));
     await expect(t.list_voices!(ctx, {})).resolves.toMatchObject({ voices: [expect.anything()] });

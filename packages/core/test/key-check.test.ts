@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { KeyCheckResult } from '@motion-studio/shared';
-import { checkKey, KEY_CHECK_TIMEOUT_MS, KeyCheckCache } from '../src/providers/key-check.ts';
+import { BARE_MISSING_TTL_MS, checkKey, KEY_CHECK_TIMEOUT_MS, KeyCheckCache } from '../src/providers/key-check.ts';
 
 // Fake fetch only: no request ever leaves the process, not even with these fake keys.
 const KEY = 'sk-key-check-secret-0123456789';
@@ -264,5 +264,34 @@ describe('KeyCheckCache · real calls learn only about the current key (final re
     const lease = new KeyCheckCache().lease('elevenlabs', 'xi-secret-0123456789');
     expect(JSON.stringify(lease)).not.toContain('xi-secret-0123456789');
     expect(lease.fingerprint).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  });
+});
+
+describe('a bare-403 missing learned from real use expires', () => {
+  it('after the TTL; a named permission and anything a Test found stay until a Test', () => {
+    let now = 1_000_000;
+    const cache = new KeyCheckCache(() => now);
+    cache.record('elevenlabs', 'sfx', 'missing');
+    cache.record('elevenlabs', 'music', 'missing', 'music_generation');
+    expect(cache.capabilities('elevenlabs').sfx).toMatchObject({ status: 'missing' });
+    now += BARE_MISSING_TTL_MS - 1;
+    expect(cache.capabilities('elevenlabs').sfx).toMatchObject({ status: 'missing' });
+    now += 2;
+    expect(cache.capabilities('elevenlabs').sfx).toBeUndefined();
+    expect(cache.capabilities('elevenlabs').music).toMatchObject({ status: 'missing', permission: 'music_generation' });
+    now += 24 * 3600_000;
+    expect(cache.capabilities('elevenlabs').music).toMatchObject({ status: 'missing', permission: 'music_generation' });
+    // A Test's own bare missing (merge) does not expire.
+    cache.merge('elevenlabs', { provider: 'elevenlabs', checkedAt: '', capabilities: [{ capability: 'voices', status: 'missing' }] });
+    now += 24 * 3600_000;
+    expect(cache.capabilities('elevenlabs').voices).toMatchObject({ status: 'missing' });
+  });
+  it('a later success or a named permission replaces the pending expiry', () => {
+    let now = 0;
+    const cache = new KeyCheckCache(() => now);
+    cache.record('openai', 'images', 'missing');
+    cache.record('openai', 'images', 'missing', 'model.request');
+    now += BARE_MISSING_TTL_MS * 2;
+    expect(cache.capabilities('openai').images).toMatchObject({ permission: 'model.request' });
   });
 });
