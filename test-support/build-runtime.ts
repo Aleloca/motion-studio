@@ -12,6 +12,8 @@ import { pathToFileURL } from 'node:url';
 
 const PKG = join(import.meta.dirname, '..', 'packages', 'composition-runtime');
 const DIST = join(PKG, 'dist');
+/** The shared composition schema is bundled into runtime.js and preview.js (the zod parser): a change there makes them stale too. */
+const SHARED = join(import.meta.dirname, '..', 'packages', 'shared', 'src', 'composition');
 /** What the core serves and the packaged apps copy (the CLI and desktop builds check the same list). */
 const OUTPUTS = ['index.html', 'runtime.js', 'layer.js', 'clock.js', 'preview.js'];
 
@@ -29,7 +31,7 @@ function upToDate(): boolean {
   for (const f of OUTPUTS) {
     try { oldest = Math.min(oldest, statSync(join(DIST, f)).mtimeMs); } catch { return false; }
   }
-  return oldest >= Math.max(newestSource(join(PKG, 'src')), statSync(join(PKG, 'tsup.config.ts')).mtimeMs);
+  return oldest >= Math.max(newestSource(join(PKG, 'src')), newestSource(SHARED), statSync(join(PKG, 'tsup.config.ts')).mtimeMs);
 }
 
 export default async function setup(): Promise<void> {
