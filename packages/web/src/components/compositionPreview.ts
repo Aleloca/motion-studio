@@ -109,7 +109,11 @@ function sessionOf(e: SessionEntry): Promise<PreviewSessionInfo> {
   if (usable(e.session)) return Promise.resolve(e.session);
   if (e.pending) return e.pending;
   endIdle(e.key);
-  const p = Promise.resolve().then(() => api.previewSession(e.slug, e.creative, e.n, e.format, window.location.origin)).then((s) => {
+  // A renewal names the session it renews: the editor's staged files move to the new one (Phase 10b).
+  const renewing = (e.session as PreviewSessionInfo | null)?.token;
+  const p = Promise.resolve().then(() => (renewing
+    ? api.previewSession(e.slug, e.creative, e.n, e.format, window.location.origin, renewing)
+    : api.previewSession(e.slug, e.creative, e.n, e.format, window.location.origin))).then((s) => {
     const old = e.session;
     e.pending = null;
     if (sessions.get(e.key) !== e) { revokeOnCore(e, s); throw new Error('released'); }

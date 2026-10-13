@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { compositionProblemText, messages, type Composition, type FormatPreset, type Locale, type PreviewSessionInfo, type StagedAsset, type VersionEntry } from '@motion-studio/shared';
 import { loadComposition } from '../compositions/composition-files.ts';
-import { startCompositionServer, type CompositionServer, type CompositionSession } from '../compositions/composition-server.ts';
+import { EDITOR_STAGING, startCompositionServer, type CompositionServer, type CompositionSession, type SessionMediaFile } from '../compositions/composition-server.ts';
 import { noteCoreChange } from '../core-changes.ts';
 import { noteCoreTemp } from '../core-temps.ts';
 import { findPreset } from '../formats/format-catalog.ts';
@@ -120,12 +120,22 @@ function entryOf(version: VersionEntry | undefined, format: string): { folder: s
   return { folder, hash: e.hash };
 }
 
-/** The editor's staging of one live session (editor-staging.ts): its folder, files, and the leases of staged videos. */
-interface SessionStaging { root: string; assets: Map<string, StagedAsset>; leases: Array<() => void> }
+/**
+ * The editor's staging of one live session (editor-staging.ts): its folder, files, the leases of staged videos and their
+ * normalised files (added to the session's media; added again to a renewed session's, `mintPreview`'s `renewFrom`).
+ */
+interface SessionStaging { root: string; assets: Map<string, StagedAsset>; leases: Array<() => void>; media: Map<string, SessionMediaFile> }
+
+/** A live session's staged files, as `withStaging` hands them to a direct save (`DirectEditService.save`). */
+export interface StagingView { root: string; assets: ReadonlyMap<string, StagedAsset> }
 
 interface LiveSession {
   release: () => void; revoke: () => void; timer: NodeJS.Timeout; creativeDir: string; n: number;
   session: CompositionSession; projectDir: string; creativeSlug: string; compDir: string;
+  /** The composition folder shown (`compositions/<format>`). */
+  format: string;
+  /** Its staging moved to a renewed session (`renewFrom`): it never stages again. */
+  handedOver: boolean;
   /** The composition's frame (the box a staged video is normalised for) and rate. */
   frame: Pick<Composition, 'width' | 'height' | 'fps'>;
   staging: SessionStaging | null;
@@ -327,7 +337,7 @@ export class PreviewService {
    * re-hashed and validated (it must still be the recorded one), its media normalised, and a preview-mode session minted
    * for `parentOrigin` (one of the UI origins, else 403). The media lease ends when the session expires.
    */
-  async mintPreview(ref: VersionFormatRef, version: VersionEntry, format: string, parentOrigin: string, locale: Locale): Promise<PreviewSessionInfo> {
+  async mintPreview(ref: VersionFormatRef, version: VersionEntry, format: string, parentOrigin: string, locale: Locale, o: { renewFrom?: string } = {}): Promise<PreviewSessionInfo> {
     const e = messages(locale).errors;
     const entry = entryOf(version, format);
     if (!entry) throw new CodedError(404, e.compositionNotFound({ format, n: version.n }), 'composition-not-found');
@@ -350,9 +360,11 @@ export class PreviewService {
       const c0 = loaded.composition;
       this.sessions.set(session.token, {
         release: prepared.release, revoke: session.revoke, timer, creativeDir: ref.creativeDir, n: ref.n,
-        session, projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, compDir,
+        session, projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, compDir, format: entry.folder, handedOver: false,
         frame: { width: c0.width, height: c0.height, fps: c0.fps }, staging: null, ended: new AbortController(),
       });
+      // A renewal of the editor's session: its staged files move to this one (never re-staged, nor re-encoded).
+      const staged = o.renewFrom !== undefined ? await this.handOverStaging(o.renewFrom, session.token) : null;
       // At most MAX_PREVIEW_SESSIONS live at once (each holds media leases): the oldest ends first (fix minor 5).
       while (this.sessions.size > MAX_PREVIEW_SESSIONS) {
         const [token] = this.sessions.entries().next().value!;
@@ -362,6 +374,7 @@ export class PreviewService {
       return {
         url: session.url, token: session.token, origin: session.origin, expiresAt: new Date(Date.now() + ttl).toISOString(),
         format: entry.folder, hash: entry.hash, width: c.width, height: c.height, duration: c.duration, fps: c.fps,
+        ...(staged ? { staged } : {}),
       };
     } catch (err) {
       prepared.release();
@@ -402,6 +415,75 @@ export class PreviewService {
     return task;
   }
 
+  /**
+   * Moves the staging of the live session `from` to the new session `to` (Phase 10b, the web renews its session about every
+   * 30 minutes while the editor is open): only when both show the same creative, version and composition folder. Under
+   * `from`'s staging lock, the folder is renamed (one atomic rename inside the creative's staging root) to `to`'s name and
+   * attached to `to`; the staged videos' normalised files join `to`'s media with their leases. From then on `from` never
+   * reaches those files (its folder name no longer exists, and the server checks the attached folder's real path at every
+   * request) and never stages again. Nothing moved (no such session, nothing staged, a refusal): null, and `to` starts
+   * with no staging. Never throws.
+   */
+  private async handOverStaging(from: string, to: string): Promise<StagedAsset[] | null> {
+    if (from === to) return null;
+    return this.stageLocks.run(from, async () => {
+      const a = this.sessions.get(from);
+      const b = this.sessions.get(to);
+      if (!a || !b || !a.session.live() || !b.session.live() || a.handedOver) return null;
+      if (a.creativeDir !== b.creativeDir || a.creativeSlug !== b.creativeSlug || a.projectDir !== b.projectDir || a.n !== b.n || a.format !== b.format) return null;
+      const st = a.staging;
+      if (!st || st.assets.size === 0) return null;
+      const parent = await realDirChain(b.projectDir, [...EDITOR_STAGING, b.creativeSlug]);
+      const root = stagingDirOf(b.projectDir, b.creativeSlug, to);
+      if (!parent || dirname(st.root) !== parent || dirname(root) !== parent || (await lstat(root).catch(() => null))) return null;
+      try {
+        await rename(st.root, root);
+      } catch {
+        return null;
+      }
+      a.staging = null;
+      a.handedOver = true;
+      await noteCoreChange(parent).catch(() => {});
+      const moved: SessionStaging = { root, assets: new Map(), leases: st.leases.splice(0), media: new Map() };
+      b.staging = moved;
+      try {
+        await b.session.attachStaging(root);
+      } catch {
+        // `to` ended meanwhile: its own end removes the folder (it is its staging now).
+        return null;
+      }
+      for (const [path, asset] of st.assets) {
+        const file = st.media.get(path);
+        let next: StagedAsset = asset;
+        if (file && asset.media) {
+          const added = await b.session.addMedia(path, file).catch(() => null);
+          if (added) { moved.media.set(path, file); next = { ...asset, media: { ...asset.media, index: added.index } }; }
+          else { const { media: _dropped, ...rest } = asset; next = rest; } // plays the staged file as it is
+        }
+        moved.assets.set(path, next);
+      }
+      return [...moved.assets.values()];
+    }).catch(() => null);
+  }
+
+  /**
+   * Runs `fn` with the staged files of the live session `token`, under its staging lock (nothing is staged or removed
+   * meanwhile): only a session of this creative's version `n` showing the composition folder `format`, else `fn(null)`.
+   * For a direct save (`DirectEditService.save`), which copies the files the draft uses into the new version.
+   */
+  async withStaging<T>(ref: Pick<VersionFormatRef, 'creativeDir' | 'creativeSlug' | 'n'>, token: string, format: string, fn: (staging: StagingView | null) => Promise<T>): Promise<T> {
+    const pick = () => {
+      const s = this.sessions.get(token);
+      return s && s.creativeDir === ref.creativeDir && s.creativeSlug === ref.creativeSlug && s.n === ref.n && s.format === format && s.session.live() && !s.handedOver
+        ? s.staging : null;
+    };
+    if (!this.sessions.has(token)) return fn(null);
+    return this.stageLocks.run(token, () => {
+      const st = pick();
+      return fn(st ? { root: st.root, assets: st.assets } : null);
+    });
+  }
+
   /** Whether `dir` is the staging folder of a live session (the cache sweep leaves it alone). */
   stagingInUse = (dir: string): boolean => {
     for (const [token, s] of this.sessions) if (stagingDirOf(s.projectDir, s.creativeSlug, token) === dir || s.staging?.root === dir) return true;
@@ -419,13 +501,13 @@ export class PreviewService {
     const noSession = () => new CodedError(404, e.stageNoSession, 'editor-no-session');
     const live = () => {
       const s = this.sessions.get(token);
-      return s && s.creativeDir === ref.creativeDir && s.creativeSlug === ref.creativeSlug && s.session.live() && !this.closing.signal.aborted ? s : null;
+      return s && s.creativeDir === ref.creativeDir && s.creativeSlug === ref.creativeSlug && s.session.live() && !s.handedOver && !this.closing.signal.aborted ? s : null;
     };
     if (!live()) throw noSession();
     return this.stageLocks.run(token, async () => {
       const s = live();
       if (!s) throw noSession();
-      const staging = s.staging ?? { root: stagingDirOf(s.projectDir, s.creativeSlug, token), assets: new Map<string, StagedAsset>(), leases: [] };
+      const staging = s.staging ?? { root: stagingDirOf(s.projectDir, s.creativeSlug, token), assets: new Map<string, StagedAsset>(), leases: [], media: new Map<string, SessionMediaFile>() };
       const { asset, root, created } = await stageFile({
         projectDir: s.projectDir, creativeSlug: s.creativeSlug, token, compDir: s.compDir, from, media: this.deps.media ?? NoMediaTools, locale, staged: staging.assets,
       });
@@ -469,6 +551,7 @@ export class PreviewService {
     try {
       const added = await s.session.addMedia(asset.path, file);
       staging.leases.push(prepared.release);
+      staging.media.set(asset.path, file);
       return {
         ...asset,
         media: {

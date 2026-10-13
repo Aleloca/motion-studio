@@ -29,6 +29,12 @@ export interface PreviewSessionInfo {
   height: number;
   duration: number;
   fps: number;
+  /**
+   * A renewal (`renewFrom`, Phase 10b) of a session of the same version and format: the files staged for the draft on the
+   * old session, now this session's (moved, not copied again; a staged video keeps its normalised file, with its index in
+   * this session's media). Absent when nothing was moved.
+   */
+  staged?: StagedAsset[];
 }
 
 /** A storyboard frame: a scene start or the poster, with its short-lived signed image URL. */

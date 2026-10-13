@@ -130,27 +130,11 @@ export async function assembleCompositions(o: {
   for (const p of o.carried) {
     const cc = o.carriedComps.get(p);
     if (!cc || !base) continue;
-    const destRel = `${vRel}/${compositionDirOf(p)}`;
-    const dest = join(creativeDir, ...destRel.split('/'));
-    let ok = true;
-    let changed = false;
-    await mkdir(dest, { recursive: true });
-    for (const f of cc.files) {
-      const fromRel = `outputs/v${base.n}/${cc.entry.dir}/${f.path}`;
-      await mkdir(dirname(join(dest, ...f.path.split('/'))), { recursive: true });
-      const sha = await copyVerified(creativeDir, fromRel, `${destRel}/${f.path}`, f.sha256);
-      if (sha === null) {
-        ok = false;
-        const now = await confinedSha(creativeDir, fromRel);
-        changed = now !== null && now !== f.sha256;
-        break;
-      }
+    const r = await copyComposition(creativeDir, base.n, cc, `${vRel}/${compositionDirOf(p)}`);
+    if (r !== 'ok') {
+      problem(r === 'changedAfter' ? j.copyChangedAfter({ format: o.label(p) }) : r === 'changed' ? j.carriedChanged({ format: o.label(p), n: base.n }) : j.copyFailed({ format: o.label(p) }));
+      continue;
     }
-    if (ok) {
-      const copy = await readCompositionFolder(dest).catch(() => null);
-      if (!copy || copy.hash !== cc.entry.hash) { ok = false; problem(j.copyChangedAfter({ format: o.label(p) })); }
-    } else problem(changed ? j.carriedChanged({ format: o.label(p), n: base.n }) : j.copyFailed({ format: o.label(p) }));
-    if (!ok) { await rm(dest, { recursive: true, force: true }); continue; }
     const inherited = cc.entry.problems ?? [];
     for (const x of inherited) problem(x);
     entries.set(p, { format: p, dir: compositionDirOf(p), hash: cc.entry.hash, problems: [...inherited] });
@@ -210,6 +194,35 @@ export async function assembleCompositions(o: {
   };
   await writeJsonFileAtomic(join(vdir, 'manifest.json'), manifest);
   return { compositions, outputs, problems, notDelivered, stray, touched, check };
+}
+
+/**
+ * Copies the composition `cc` of version `baseN` to `destRel` (under `creativeDir`, a folder that must not hold those
+ * files yet): every file with `copyVerified` against the sha256 read when `cc` was taken (never the source's bytes now),
+ * then the copied folder must hash to the recorded hash. Anything short of that removes the copy: `changed` (a source file
+ * is no longer the one read), `changedAfter` (the copy does not hash to the recorded hash), `failed`. Shared by carried
+ * primaries and by a direct edit's base folder (`DirectEditService.save`).
+ */
+export async function copyComposition(creativeDir: string, baseN: number, cc: CarriedComposition, destRel: string): Promise<'ok' | 'changed' | 'changedAfter' | 'failed'> {
+  const dest = join(creativeDir, ...destRel.split('/'));
+  let result: 'ok' | 'changed' | 'changedAfter' | 'failed' = 'ok';
+  await mkdir(dest, { recursive: true });
+  for (const f of cc.files) {
+    const fromRel = `outputs/v${baseN}/${cc.entry.dir}/${f.path}`;
+    await mkdir(dirname(join(dest, ...f.path.split('/'))), { recursive: true });
+    const sha = await copyVerified(creativeDir, fromRel, `${destRel}/${f.path}`, f.sha256);
+    if (sha === null) {
+      const now = await confinedSha(creativeDir, fromRel);
+      result = now !== null && now !== f.sha256 ? 'changed' : 'failed';
+      break;
+    }
+  }
+  if (result === 'ok') {
+    const copy = await readCompositionFolder(dest).catch(() => null);
+    if (!copy || copy.hash !== cc.entry.hash) result = 'changedAfter';
+  }
+  if (result !== 'ok') await rm(dest, { recursive: true, force: true });
+  return result;
 }
 
 /** `format:sha256` → `renderedAt` of the base's manifest v2 renders (a carried render keeps its date). */

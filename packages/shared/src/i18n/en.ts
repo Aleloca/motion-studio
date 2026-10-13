@@ -377,6 +377,17 @@ export const en = {
     stageUnknownBrandFont: 'This font is not in the brand kit',
     stageBrandFontNoFile: (p: { family: string }) => `${p.family} has no font file in the brand kit`,
     stagedCollision: (p: { path: string }) => `${p.path} already exists in this composition with other content: add the file again`,
+    /** Saving a draft as a new version (Task 4, `DirectEditService.save`). */
+    summaryNone: 'Direct edits',
+    busy: 'The agent or a render is working on this creative: save the draft when it has finished',
+    baseChanged: (p: { format: string; n: number }) => `${p.format} changed in v${p.n} while you were editing: reopen the editor on the latest version (your draft is kept until you discard it)`,
+    carryFailed: (p: { format: string; n: number }) => `${p.format} in v${p.n} is no longer the composition recorded for it: ask the agent to make it again before saving`,
+    saveInvalid: (p: { text: string }) => `The draft cannot be saved: ${p.text}`,
+    srcUnavailable: (p: { clip: string; path: string }) => `Clip ${p.clip}: ${p.path} is neither a file of this version nor a file added to this draft`,
+    fontUnavailable: (p: { family: string; path: string }) => `Font ${p.family}: ${p.path} is neither a file of this version nor a file added to this draft`,
+    htmlChanged: (p: { clip: string }) => `Clip ${p.clip}: its HTML layer can only be changed by the agent`,
+    htmlNew: (p: { clip: string }) => `Clip ${p.clip}: HTML clips can only be added by the agent`,
+    layersChanged: 'The HTML layer files can only be changed by the agent',
   },
   render: {
     jobLabel: (p: { title: string; n: number }) => `Render · ${p.title} v${p.n}`,

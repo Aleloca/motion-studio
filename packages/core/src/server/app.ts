@@ -16,6 +16,7 @@ import { isLocale, workspaceSettingsSchema, type DoctorCheck, type UsageBilling,
 import { BrandService } from '../brand/brand-analysis.ts';
 import { UPLOAD_LIMITS } from '../library/upload.ts';
 import { CreativeTurnService } from '../creatives/creative-turns.ts';
+import { DirectEditService } from '../creatives/direct-edit.ts';
 import { FormatCatalog } from '../formats/format-catalog.ts';
 import { NoMediaTools, type MediaTools } from '../media/media-tools.ts';
 import { AgentLauncher } from '../agent/launcher.ts';
@@ -161,7 +162,7 @@ export function errorReply(error: unknown, _req: FastifyRequest, reply: FastifyR
   const err = error as Error;
   if (err instanceof CodedError) {
     if (err.retryAfterSec !== undefined) reply.header('Retry-After', String(err.retryAfterSec));
-    return reply.status(err.status).send({ error: err.message, code: err.apiCode });
+    return reply.status(err.status).send({ error: err.message, code: err.apiCode, ...(err.problems ? { problems: err.problems } : {}) });
   }
   if (err instanceof WorkspaceError) return reply.status(err.status).send({ error: err.message });
   if (err instanceof JobConflictError) return reply.status(409).send({ error: err.message });
@@ -259,6 +260,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     broadcast: (msg) => hub.broadcast(msg),
     ...(deps.agentContract ? { agentContract: deps.agentContract } : {}),
     ...(deps.previewFramesPerTurn !== undefined ? { previewFramesPerTurn: deps.previewFramesPerTurn } : {}),
+  });
+
+  // Direct edits (Phase 10b): a draft saved as a version under the creative's lock, with no agent.
+  const edits = new DirectEditService({
+    turns, queue, git: deps.git, previews,
+    presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
   });
 
   const renders = new RenderJobService({
@@ -433,7 +440,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // The live preview's composition server origin (Task 8 frames it; started on first use).
   app.get('/api/preview/origin', async () => ({ origin: (await previews.compositionServer()).origin, uiOrigins: [...(deps.uiOrigins?.() ?? [])] }));
 
-  registerCreativeRoutes(app, { requireWorkspace, turns, renders, previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m) });
+  registerCreativeRoutes(app, { requireWorkspace, turns, edits, renders, previews, signer: new UrlSigner(deps.signedUrlTtlMs), media, openPath: deps.openPath ?? (async () => {}), isJobActive, broadcast: (m) => hub.broadcast(m) });
 
   const routeCtx = { requireWorkspace, brand: brandService, media, git: deps.git, broadcast: (m: ServerMessage) => hub.broadcast(m) };
   registerBrandRoutes(app, routeCtx);

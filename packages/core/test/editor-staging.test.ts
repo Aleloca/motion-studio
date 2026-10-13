@@ -422,6 +422,104 @@ describe('cleanup', () => {
   });
 });
 
+describe('a renewed session takes over the staging (Phase 10b, Task 4)', () => {
+  const renew = (from: string, o: { n?: number; version?: VersionEntry; format?: string } = {}) =>
+    previews.mintPreview({ ...ref(), n: o.n ?? 1 }, o.version ?? version, o.format ?? 'test-wide', UI, 'en', { renewFrom: from });
+
+  it('moves the staged files to the new session: served under the new token, no longer under the old one, and staged no more there', async () => {
+    register(['logo.svg', 'Mono.woff2']);
+    const a = await mint();
+    const svg = await stage(a.token, { kind: 'library', file: 'logo.svg' });
+    const font = await stage(a.token, { kind: 'library', file: 'Mono.woff2' });
+    const oldDir = stagingDirOf(projectDir, 'launch', a.token);
+    const ino = (await import('node:fs')).statSync(oldDir).ino;
+    const b = await renew(a.token);
+    expect(b.staged).toEqual([svg, font]);
+    const newDir = stagingDirOf(projectDir, 'launch', b.token);
+    // One rename: the same folder (inode), now under the new token's name.
+    expect(existsSync(oldDir)).toBe(false);
+    expect((await import('node:fs')).statSync(newDir).ino).toBe(ino);
+    expect(previews.stagingInUse(newDir)).toBe(true);
+    const r = await served(b.url, svg.path);
+    expect(r.status).toBe(200);
+    expect(await r.text()).toBe(SVG);
+    // The old token reaches nothing staged any more, and cannot stage again.
+    expect((await served(a.url, svg.path)).status).toBe(404);
+    expect((await served(a.url, font.path)).status).toBe(404);
+    expect(await refused(stage(a.token, { kind: 'library', file: 'logo.svg' }))).toMatchObject({ status: 404, code: 'editor-no-session' });
+    // The new one stages on top of what it took over (the same file: the same path, not counted twice).
+    expect(await stage(b.token, { kind: 'library', file: 'logo.svg' })).toEqual(svg);
+    // Ending the old session never removes the moved folder; ending the new one does.
+    expect(previews.revokePreview(ref(), a.token)).toBe(true);
+    await new Promise((res) => setTimeout(res, 100));
+    expect(existsSync(join(newDir, svg.path))).toBe(true);
+    expect(previews.revokePreview(ref(), b.token)).toBe(true);
+    expect(await until(() => !existsSync(newDir))).toBe(true);
+  });
+
+  it('a session of another version or another format, or of nothing staged, inherits nothing', async () => {
+    register(['logo.svg']);
+    // Version 2 (the same composition) and a second format of version 1.
+    const v2Dir = join(creativeDir, 'outputs', 'v2', 'compositions', 'test-wide');
+    mkdirSync(v2Dir, { recursive: true });
+    writeFileSync(join(v2Dir, 'composition.json'), readFileSync(join(compDir, 'composition.json')));
+    const version2 = { ...version, n: 2 } as VersionEntry;
+    const bDir = join(creativeDir, 'outputs', 'v1', 'compositions', 'test-wide-b');
+    mkdirSync(bDir, { recursive: true });
+    writeFileSync(join(bDir, 'composition.json'), readFileSync(join(compDir, 'composition.json')));
+    const versionB = { ...version, compositions: [...version.compositions!, { ...version.compositions![0]!, format: 'test-wide-b', dir: 'compositions/test-wide-b' }] } as VersionEntry;
+    await previews.close();
+    await normalizer.close();
+    normalizer = new MediaNormalizer({ ffmpeg: async () => ffmpeg });
+    previews = new PreviewService({ engine: undefined, normalizer, presets: async () => [PRESET, { ...PRESET, id: 'test-wide-b' }], uiOrigins: () => [UI], media });
+    const a = await previews.mintPreview(ref(), versionB, 'test-wide', UI, 'en');
+    const svg = await stage(a.token, { kind: 'library', file: 'logo.svg' });
+    const oldDir = stagingDirOf(projectDir, 'launch', a.token);
+    const other = await renew(a.token, { n: 2, version: version2 });
+    expect(other.staged).toBeUndefined();
+    expect((await fetch(`${other.url.split('/runtime/')[0]}/outputs/v2/compositions/test-wide/${svg.path}`)).status).toBe(404);
+    expect(existsSync(stagingDirOf(projectDir, 'launch', other.token))).toBe(false);
+    const otherFormat = await previews.mintPreview(ref(), versionB, 'test-wide-b', UI, 'en', { renewFrom: a.token });
+    expect(otherFormat.staged).toBeUndefined();
+    expect(existsSync(stagingDirOf(projectDir, 'launch', otherFormat.token))).toBe(false);
+    // The old session keeps its staging all along.
+    expect(existsSync(join(oldDir, svg.path))).toBe(true);
+    expect((await served(a.url, svg.path)).status).toBe(200);
+    // Nothing staged: nothing to move. An unknown or ended token: nothing either.
+    const empty = await previews.mintPreview(ref(), versionB, 'test-wide', UI, 'en');
+    expect((await previews.mintPreview(ref(), versionB, 'test-wide', UI, 'en', { renewFrom: empty.token })).staged).toBeUndefined();
+    expect(previews.revokePreview(ref(), a.token)).toBe(true);
+    expect((await previews.mintPreview(ref(), versionB, 'test-wide', UI, 'en', { renewFrom: a.token })).staged).toBeUndefined();
+  });
+
+  withFfmpeg('a staged video keeps its normalised file: it joins the new session\'s media with its lease, never encoded again', async () => {
+    ff(ffmpeg!, ['-f', 'lavfi', '-i', 'testsrc2=s=160x90:r=25:d=2', '-c:v', 'libx264', '-preset', 'ultrafast', join(projectDir, 'assets', 'clip.mp4')]);
+    register(['clip.mp4']);
+    const a = await mint();
+    const v = await stage(a.token, { kind: 'library', file: 'clip.mp4' });
+    expect(v.media).toBeDefined();
+    const cached = readdirSync(join(projectDir, '.studio', 'cache', 'media')).filter((n) => n.endsWith('.mp4'));
+    expect(cached).toHaveLength(1);
+    const file = join(projectDir, '.studio', 'cache', 'media', cached[0]!);
+    const mtime = (await import('node:fs')).statSync(file).mtimeMs;
+    const b = await renew(a.token);
+    expect(b.staged).toEqual([{ ...v, media: { ...v.media!, index: expect.any(Number) } }]);
+    const index = b.staged![0]!.media!.index;
+    const r = await served(b.url, `media/${index}.mp4`, { headers: { range: 'bytes=0-7' } });
+    expect(r.status).toBe(206);
+    expect((await served(b.url, v.path, { method: 'HEAD' })).status).toBe(200);
+    // Not encoded again: still the one cached file, untouched; leased by the new session even once the old one ends.
+    expect(readdirSync(join(projectDir, '.studio', 'cache', 'media')).filter((n) => n.endsWith('.mp4'))).toEqual(cached);
+    expect((await import('node:fs')).statSync(file).mtimeMs).toBe(mtime);
+    expect(previews.revokePreview(ref(), a.token)).toBe(true);
+    await new Promise((res) => setTimeout(res, 50));
+    expect(normalizer.inUse(file)).toBe(true);
+    previews.revokePreview(ref(), b.token);
+    await new Promise((res) => setTimeout(res, 50));
+    expect(normalizer.inUse(file)).toBe(false);
+  }, 60_000);
+});
+
 describe('editor fonts', () => {
   it('lists the composition\'s families with their weights, then brand fonts not already declared', () => {
     const fonts = editorFonts({ fonts: [

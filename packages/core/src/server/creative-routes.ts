@@ -18,6 +18,7 @@ import type { RenderJobService } from '../creatives/render-jobs.ts';
 import { reconcileRenders } from '../creatives/render-stamps.ts';
 import { sweepDerivedCaches, sweepEditorStaging } from '../creatives/cache-sweep.ts';
 import { editorCompositionView } from '../creatives/editor-staging.ts';
+import { directEditBodySchema, type DirectEditService } from '../creatives/direct-edit.ts';
 import { sweepProjectRenders } from '../render/render-sweep.ts';
 import { FormatCatalog } from '../formats/format-catalog.ts';
 import type { MediaTools } from '../media/media-tools.ts';
@@ -29,6 +30,8 @@ import { currentLocale, t } from '../i18n.ts';
 export interface CreativeRoutesContext {
   requireWorkspace: () => WorkspaceStore;
   turns: CreativeTurnService;
+  /** Direct edits saved as versions (Phase 10b). */
+  edits: DirectEditService;
   media: MediaTools;
   openPath: (p: string) => Promise<void>;
   isJobActive: (key: string) => boolean;
@@ -69,8 +72,12 @@ const exportBody = z.object({
 const linkBody = z.object({ follower: z.string().min(1).max(200), primary: z.string().min(1).max(200).nullable() });
 /** A render request (Task 5): `formats` to render (a follower stands for its primary); absent or empty: every primary. */
 const renderBody = z.object({ formats: z.array(z.string().min(1).max(200)).max(100).optional() }).strict();
-/** A live preview session (Task 5b): the format, and the exact origin of the UI page that embeds the iframe. */
-const previewBody = z.object({ format: z.string().min(1).max(200), parentOrigin: z.string().min(1).max(200) }).strict();
+/**
+ * A live preview session (Task 5b): the format, and the exact origin of the UI page that embeds the iframe. `renewFrom`
+ * (Phase 10b): the session this one renews; the editor's staged files move to the new one when both show the same version
+ * and format.
+ */
+const previewBody = z.object({ format: z.string().min(1).max(200), parentOrigin: z.string().min(1).max(200), renewFrom: z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional() }).strict();
 /** Staging a file for an editor draft (Phase 10b): the live preview session, and a library asset or a brand font. */
 const stageBody = z.object({
   token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
@@ -415,7 +422,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const version = Number.isInteger(n) && n > 0 ? (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === n) : undefined;
     if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
     const body = parse(previewBody, req.body);
-    return ctx.previews.mintPreview({ projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), creativeSlug: ref.creativeSlug, n }, version, body.format, body.parentOrigin, currentLocale());
+    return ctx.previews.mintPreview({ projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), creativeSlug: ref.creativeSlug, n }, version, body.format, body.parentOrigin, currentLocale(),
+      body.renewFrom !== undefined ? { renewFrom: body.renewFrom } : {});
   });
 
   /**
@@ -455,6 +463,17 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const ref = await refOf(req.params.slug, req.params.c);
     const body = parse(stageBody, req.body);
     return ctx.previews.stage({ projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), creativeSlug: ref.creativeSlug }, body.token, body.from, currentLocale());
+  });
+
+  /**
+   * Saves an editor draft as a new version (Phase 10b, `DirectEditService.save`): no agent, no tokens. 409 `editor-busy`
+   * while a turn or a render runs, 409 `editor-base-changed` when the format moved on, 422 `editor-invalid` with the
+   * translated `problems`. The body holds a whole composition: up to its own 5 MB limit, plus the ops.
+   */
+  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/edits', { bodyLimit: 8 * 1024 * 1024 }, async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const body = parse(directEditBodySchema, req.body);
+    return ctx.edits.save({ root: ref.root, projectSlug: ref.projectSlug, projectDir: ref.projectDir, creativeSlug: ref.creativeSlug }, body, currentLocale());
   });
 
   /**

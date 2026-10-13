@@ -408,6 +408,9 @@ describe('usePreviewSession', () => {
     expect(api.previewSession).toHaveBeenCalledTimes(1);
     await act(async () => { await vi.advanceTimersByTimeAsync(20); });
     expect(api.previewSession).toHaveBeenCalledTimes(2);
+    // The renewal names the session it renews (the editor's staged files move to the new one, Phase 10b); the first does not.
+    expect(api.previewSession.mock.calls[0]).toHaveLength(5);
+    expect(api.previewSession.mock.calls[1]![5]).toBe('a');
     expect(h.result.current.state).toMatchObject({ kind: 'ready', session: { url: expect.stringContaining('/b/') } });
   });
   it('other refusals are an error with their message', async () => {

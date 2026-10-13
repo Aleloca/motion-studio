@@ -178,8 +178,9 @@ export const api = {
    * A live preview session of one format of a saved v2 version, embeddable by `parentOrigin` (this page's origin). 404 for
    * a legacy version (no composition), 429 `preview-busy` when the previews are busy.
    */
-  previewSession: (slug: string, creative: string, n: number, format: string, parentOrigin: string) =>
-    request<PreviewSessionInfo>('POST', `${c(slug, creative)}/versions/${n}/preview-session`, { format, parentOrigin }),
+  /** `renewFrom`: the session this one renews (the editor's staged files move to the new one, Phase 10b). */
+  previewSession: (slug: string, creative: string, n: number, format: string, parentOrigin: string, renewFrom?: string) =>
+    request<PreviewSessionInfo>('POST', `${c(slug, creative)}/versions/${n}/preview-session`, { format, parentOrigin, ...(renewFrom ? { renewFrom } : {}) }),
   /** Ends a live preview session early (a hover preview no longer shown); sent with keepalive so it survives a page close. */
   revokePreview: (slug: string, creative: string, n: number, token: string) =>
     request<{ revoked: true }>('DELETE', `${c(slug, creative)}/versions/${n}/preview-session/${encodeURIComponent(token)}`, undefined, { keepalive: true }),

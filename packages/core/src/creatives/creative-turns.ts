@@ -278,6 +278,19 @@ export class CreativeTurnService {
     });
   }
 
+  /**
+   * Runs `fn` under the creative's lock, the one turns, restores, brief edits, links and picks take (shared with
+   * `DirectEditService.save`, Phase 10b).
+   */
+  runLocked<T>(ref: CreativeRef, fn: () => Promise<T>): Promise<T> {
+    return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), fn);
+  }
+
+  /** Whether a turn of the creative is queued or running. */
+  turnActive(ref: CreativeRef): boolean {
+    return this.isActive(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug));
+  }
+
   async restore(ref: CreativeRef, n: number): Promise<CreativeFile> {
     return this.locks.run(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), () => this.restoreLocked(ref, n));
   }
@@ -691,7 +704,7 @@ export class CreativeTurnService {
   }
 
   /** Removes the links of `followers` from the stored brief: from the next turn on each is its own primary. */
-  private async unlinkFollowers(store: CreativeStore, slug: string, followers: string[]): Promise<CreativeFile> {
+  async unlinkFollowers(store: CreativeStore, slug: string, followers: string[]): Promise<CreativeFile> {
     const fresh = await store.get(slug);
     const links = effectiveLinks(fresh.brief.links, fresh.brief.formats);
     for (const f of followers) delete links[f];
@@ -853,9 +866,10 @@ export class CreativeTurnService {
   /**
    * Completes a composition turn's `outputs/v<n>` (output contract v2, composition-turn.ts) and tells the chat what the core
    * did: followers that cannot follow any more (unlinked), formats the agent wrote although they were not targets,
-   * entries it left that Motion Studio removed, and the advisory layer checks.
+   * entries it left that Motion Studio removed, and the advisory layer checks. Shared with `DirectEditService.save`, whose
+   * single target is the edited format (its folder written by the core).
    */
-  private async finishCompositions(ref: CreativeRef, store: CreativeStore, plan: TurnPlan, presets: FormatPreset[], base: VersionEntry | undefined, n: number,
+  async finishCompositions(ref: CreativeRef, store: CreativeStore, plan: Pick<TurnPlan, 'creative' | 'targets' | 'carried' | 'carriedComps' | 'links'>, presets: FormatPreset[], base: VersionEntry | undefined, n: number,
     label: (id: string) => string, locale: Locale): Promise<{ outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: null; compositions: VersionComposition[] }> {
     const slug = ref.creativeSlug;
     const j = t().jobs;
@@ -914,7 +928,7 @@ export class CreativeTurnService {
   }
 
   /** Best-effort commit of the creative's metadata: never throws, so it cannot change the outcome of a turn. */
-  private async commitState(ref: CreativeRef, message: string): Promise<void> {
+  async commitState(ref: CreativeRef, message: string): Promise<void> {
     try { await this.deps.git.commitAll(ref.projectDir, message); } catch { /* the tree stays dirty until the next commit */ }
   }
 
@@ -932,7 +946,7 @@ export class CreativeTurnService {
    * outputs/v<n> of a version that was never saved (e.g. a failed earlier turn) must not leak into this one.
    * A saved version's folder is never touched, even if n were already taken.
    */
-  private async clearStaleOutputs(store: CreativeStore, slug: string, n: number, versions: VersionEntry[]): Promise<void> {
+  async clearStaleOutputs(store: CreativeStore, slug: string, n: number, versions: VersionEntry[]): Promise<void> {
     if (versions.some((v) => v.n === n)) return;
     const dir = store.outputsDir(slug, n);
     const info = await lstat(dir).catch(() => null);
@@ -976,7 +990,7 @@ export class CreativeTurnService {
   }
 
   /** The storyboards of version `n`, detached (see the caller); the clients are told when they are there. Never throws. */
-  private storyboardsLater(ref: CreativeRef, store: CreativeStore, n: number): void {
+  storyboardsLater(ref: CreativeRef, store: CreativeStore, n: number): void {
     const previews = this.deps.previews;
     if (!previews) return;
     void (async () => {
@@ -988,7 +1002,8 @@ export class CreativeTurnService {
     })().catch(() => {});
   }
 
-  private changed(ref: CreativeRef) {
+  /** Tells the clients the creative changed (one `creative` event). */
+  changed(ref: CreativeRef) {
     this.deps.broadcast({ type: 'creative', project: ref.projectSlug, creative: ref.creativeSlug });
   }
 }
