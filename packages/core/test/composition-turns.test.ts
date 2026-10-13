@@ -32,6 +32,8 @@ import { PreviewLane, PreviewLaneBusyError } from '../src/render/preview-lane.ts
 import { RenderError } from '../src/render/errors.ts';
 import type { RenderCompositionOptions, RenderEngine, RenderResult } from '../src/render/renderer.ts';
 import { buildServer } from '../src/server/app.ts';
+import { KeyCheckCache } from '../src/providers/key-check.ts';
+import { MemoryVault } from '../src/secrets/vault.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 const TOKEN = 'ef'.repeat(32);
@@ -105,16 +107,22 @@ let bridge: AgentBridge;
 
 const ENV = ['FAKE_CLAUDE_NO_SCENES', 'FAKE_CLAUDE_SYMLINKS', 'FAKE_CLAUDE_SCENARIO', 'FAKE_CLAUDE_PROMPT_FILE', 'FAKE_CLAUDE_COMP_TAG', 'FAKE_CLAUDE_STRAY', 'FAKE_CLAUDE_ALWAYS_INVALID', 'FAKE_CLAUDE_BRIDGE_CALLS', 'FAKE_CLAUDE_BRIDGE_LOG'];
 
-beforeEach(async () => {
-  base = mkdtempSync(join(tmpdir(), 'ms-test-comp-turns-'));
-  fake = fakeEngine();
-  bridge = new AgentBridge();
+/** The server under test; `extra` adds deps (the final-wave wiring tests). */
+async function boot(extra: Partial<Parameters<typeof buildServer>[0]> = {}) {
   app = await buildServer({
     uiToken: TOKEN, sandbox: async () => ({ available: false, reason: 'test' }),
     appConfig: new AppConfigStore(join(base, 'config')), git: new Git(),
     runner: new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }), doctor: async () => [],
     render: fake.engine, uiOrigins: () => [UI_ORIGIN], bridge, mcpCommand: [process.execPath, '-e', ''],
+    ...extra,
   });
+}
+
+beforeEach(async () => {
+  base = mkdtempSync(join(tmpdir(), 'ms-test-comp-turns-'));
+  fake = fakeEngine();
+  bridge = new AgentBridge();
+  await boot();
   ws = join(base, 'ws');
   await app.inject({ method: 'PUT', url: '/api/workspace', headers: H, payload: { path: ws } });
   await app.inject({ method: 'POST', url: '/api/projects', headers: H, payload: { name: 'Acme' } });
@@ -171,6 +179,38 @@ async function render(slug: string, n: number, formats?: string[]) {
   expect(r.statusCode, r.body).toBe(202);
   return waitJob((r.json() as JobSummary).id);
 }
+
+describe('final wave wiring through buildServer', { timeout: 120_000 }, () => {
+  it('what the key checks know reaches the creative-turn prompt as "(missing permission: …)" (F5)', async () => {
+    await app.close();
+    const vault = new MemoryVault();
+    await vault.set('elevenlabs', 'el-fake-0123456789');
+    const keyChecks = new KeyCheckCache();
+    keyChecks.record('elevenlabs', 'tts', 'missing', 'text_to_speech');
+    await boot({ vault, keyChecks });
+    // The MCP tools are listed only when the bridge has an address (never contacted here: the fake agent makes no call).
+    bridge.setOrigin('http://127.0.0.1:1');
+    await app.inject({ method: 'PUT', url: '/api/workspace', headers: H, payload: { path: ws } });
+    expect((await app.inject({ method: 'PUT', url: '/api/formats', headers: H, payload: { presets: PRESETS } })).statusCode).toBe(200);
+    await create(['test-wide']);
+    const prompt = prompts()[0]!.prompt;
+    expect(prompt).toContain('- tts: voice-over with OpenAI or ElevenLabs (missing permission: text_to_speech)');
+    expect(prompt).toContain('- sound_effect: sound effects with ElevenLabs (ready)');
+  });
+  it('the config folder reaches the approve handler: a request for a path inside it is denied without a card (P4)', async () => {
+    await app.close();
+    const configDir = join(base, 'cfg-under-test');
+    mkdirSync(join(configDir, 'run'), { recursive: true });
+    writeFileSync(join(configDir, 'run', 'j9-fake.token'), 'fake-token-for-tests\n', { mode: 0o600 });
+    await boot({ configDir, appConfig: new AppConfigStore(configDir) });
+    const t = bridge.register({ jobId: 'jw', kind: 'creative', projectSlug: 'acme', projectDir: projectDir(), creativeSlug: 'c1', sandboxed: false, autoApproveAtStart: false, emit: () => {}, signal: new AbortController().signal });
+    const r = await app.inject({ method: 'POST', url: '/api/bridge/approve', headers: { 'x-motion-studio-bridge': t }, payload: { tool_name: 'Read', input: { file_path: join(configDir, 'run', 'j9-fake.token') } } });
+    expect(r.statusCode).toBe(200);
+    expect(r.json()).toMatchObject({ behavior: 'deny' });
+    expect(r.json().message).toContain('Motion Studio');
+    expect((await app.inject({ url: '/api/approvals', headers: H })).json()).toEqual([]);
+  });
+});
 
 describe('a composition turn', { timeout: 120_000 }, () => {
   it('delivers a validated, hashed composition per format, the manifest v2 and storyboards; the prompt points to the schema', async () => {
