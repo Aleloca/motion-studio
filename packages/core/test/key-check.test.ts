@@ -177,11 +177,18 @@ describe('KeyCheckCache', () => {
     c.record('elevenlabs', 'music', 'ok');
     expect(c.capabilities('elevenlabs').music).toEqual({ capability: 'music', status: 'ok' });
   });
-  it('a new check keeps what real use learned for capabilities it cannot verify, and replaces the rest', () => {
+  it('a user\'s Test replaces every learned state, unverified included (fix round 2)', () => {
+    const c = new KeyCheckCache();
+    c.record('elevenlabs', 'tts', 'missing', 'text_to_speech');
+    c.record('elevenlabs', 'music', 'ok');
+    const out = c.merge('elevenlabs', check([{ capability: 'key', status: 'ok' }, { capability: 'tts', status: 'unverified', permission: 'text_to_speech' }, { capability: 'music', status: 'unverified', permission: 'music_generation' }]));
+    expect(statuses(out)).toEqual({ key: 'ok', tts: 'unverified', music: 'unverified' });
+  });
+  it('a background check keeps what real use learned for capabilities it cannot verify, and replaces the rest', () => {
     const c = new KeyCheckCache();
     c.record('elevenlabs', 'tts', 'ok');
     c.record('elevenlabs', 'voices', 'missing', 'voices_read');
-    const out = c.merge('elevenlabs', check([{ capability: 'key', status: 'ok' }, { capability: 'voices', status: 'ok' }, { capability: 'tts', status: 'unverified', permission: 'text_to_speech' }]));
+    const out = c.merge('elevenlabs', check([{ capability: 'key', status: 'ok' }, { capability: 'voices', status: 'ok' }, { capability: 'tts', status: 'unverified', permission: 'text_to_speech' }]), { keepLearned: true });
     expect(statuses(out)).toEqual({ key: 'ok', voices: 'ok', tts: 'ok' });
     // An invalid key replaces everything.
     const bad = c.merge('elevenlabs', check([{ capability: 'key', status: 'missing' }, { capability: 'tts', status: 'missing' }]));

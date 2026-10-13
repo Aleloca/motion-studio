@@ -172,11 +172,13 @@ export class KeyCheckCache {
   }
 
   /**
-   * A fresh check replaces what is known, except for the capabilities it cannot verify, where what real use learned (`ok` or
-   * `missing`) stays. Returns the merged result.
+   * A fresh check replaces what is known. A user's Test (the default) replaces EVERY learned state, so a learned `missing`
+   * (perhaps from a transient refusal) never outlives it, even where the check can only say `unverified` (fix round 2).
+   * Only a background check (`keepLearned`) keeps what real use learned (`ok` or `missing`) for the capabilities it cannot
+   * verify. Returns the merged result.
    */
-  merge(provider: ProviderId, fresh: KeyCheckResult): KeyCheckResult {
-    const before = this.byProvider.get(provider)?.caps;
+  merge(provider: ProviderId, fresh: KeyCheckResult, opts: { keepLearned?: boolean } = {}): KeyCheckResult {
+    const before = opts.keepLearned ? this.byProvider.get(provider)?.caps : undefined;
     const caps = new Map<KeyCapability, Entry>();
     for (const c of fresh.capabilities) {
       const learned = before?.get(c.capability);

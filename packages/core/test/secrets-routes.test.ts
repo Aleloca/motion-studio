@@ -85,7 +85,25 @@ describe('secrets API', () => {
     expect((await app.inject({ method: 'POST', url: '/api/secrets/pexels/check' })).statusCode).toBe(409);
     expect((await app.inject({ method: 'POST', url: '/api/secrets/nope/check' })).statusCode).toBe(400);
   });
-  it('a check keeps what a real call learned, a network error is error, and no key reaches the logs', async () => {
+  it('a Test (POST /check) clears a learned tts: missing, also for a key from the environment (fix round 2)', async () => {
+    await app.inject({ method: 'PUT', url: '/api/secrets/elevenlabs', payload: { value: 'xi-saved-0123456789', check: false } });
+    keyChecks.record('elevenlabs', 'tts', 'missing', 'text_to_speech');
+    keyChecks.record('elevenlabs', 'music', 'missing', 'music_generation');
+    const r = await app.inject({ method: 'POST', url: '/api/secrets/elevenlabs/check' });
+    expect(r.statusCode).toBe(200);
+    expect(keyChecks.capabilities('elevenlabs')).toMatchObject({ tts: { status: 'unverified' }, music: { status: 'unverified' }, key: { status: 'ok' } });
+    // An environment key (Unsplash here): the Test runs on it and replaces what was learned.
+    keyChecks.record('unsplash', 'search', 'missing');
+    const env = await app.inject({ method: 'POST', url: '/api/secrets/unsplash/check' });
+    expect(env.statusCode).toBe(200);
+    expect(keyChecks.capabilities('unsplash').search).toEqual({ capability: 'search', status: 'ok' });
+  });
+  it('the check after PUT replaces what was learned too', async () => {
+    keyChecks.record('openai', 'tts', 'missing', 'model.request');
+    await app.inject({ method: 'PUT', url: '/api/secrets/openai', payload: { value: 'sk-new-0123456789' } });
+    expect(keyChecks.capabilities('openai').tts).toEqual({ capability: 'tts', status: 'ok' });
+  });
+  it('a check replaces what a real call learned, a network error is error, and no key reaches the logs', async () => {
     const KEY = 'sk-log-secret-0123456789';
     const logged: string[] = [];
     for (const m of ['log', 'info', 'warn', 'error', 'debug'] as const) vi.spyOn(console, m).mockImplementation((...a: unknown[]) => { logged.push(a.map(String).join(' ')); });
@@ -97,7 +115,7 @@ describe('secrets API', () => {
       answer = () => { throw new TypeError(`connect ECONNREFUSED ${KEY}`); };
       const r = await app.inject({ method: 'POST', url: '/api/secrets/elevenlabs/check' });
       const st = Object.fromEntries(r.json().capabilities.map((c: { capability: string; status: string }) => [c.capability, c.status]));
-      expect(st).toEqual({ key: 'error', account: 'error', voices: 'error', tts: 'unverified', sfx: 'unverified', music: 'missing' });
+      expect(st).toEqual({ key: 'error', account: 'error', voices: 'error', tts: 'unverified', sfx: 'unverified', music: 'unverified' });
       expect(r.body).not.toContain(KEY);
       expect(JSON.stringify(keyChecks.get('elevenlabs'))).not.toContain(KEY);
     } finally { out.mockRestore(); err.mockRestore(); }
