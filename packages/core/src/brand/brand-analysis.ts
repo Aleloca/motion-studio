@@ -28,6 +28,7 @@ const MAX_GUIDELINES = 200_000;
 const MAX_DROPPED_SHOWN = 20;
 const MAX_SUMMARY = 5000;
 const MAX_SITE_NOTES = 40;
+const SITE_NOTES_SHOWN = 3;
 
 
 /** Valid items of a JSON array the agent wrote; `skipped` explains a file that was not read (symlink, too large). */
@@ -143,7 +144,7 @@ export class BrandService {
         return 'cancelled';
       }
       pendingDownloads = () => this.registerDownloads(library, join(dir, 'assets.json'), before, locale);
-      const dropped: string[] = [...tampered, ...siteNotes];
+      const dropped: string[] = [...tampered];
       const kitFile = await readAgentFile(join(dir, 'brand-kit.json'));
       if (kitFile === null || 'skipped' in kitFile) throw new Error(t().errors.proposalKitFile({ reason: kitFile ? skipText(kitFile.skipped) : t().errors.proposalMissing }));
       let json: unknown;
@@ -171,6 +172,11 @@ export class BrandService {
       pendingDownloads = null;
       const downloads = await this.registerDownloads(library, join(dir, 'assets.json'), before, locale);
       dropped.push(...downloads.dropped);
+      // Last, and as one line: the kit's own refusals stay visible whatever a site produced.
+      if (siteNotes.size) {
+        const notes = [...siteNotes];
+        dropped.push(m.brand.siteFontsSummary({ count: notes.length, list: notes.slice(0, SITE_NOTES_SHOWN).join(' · '), more: notes.length > SITE_NOTES_SHOWN }));
+      }
       const registered = downloads.registered;
 
       let proposedGuidelines = currentGuidelines;

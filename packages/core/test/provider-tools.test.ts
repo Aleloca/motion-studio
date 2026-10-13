@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/prom
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workspaceSettingsSchema, type ServerMessage } from '@motion-studio/shared';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setLocale } from '../src/i18n.ts';
 import { ApprovalBroker } from '../src/approvals/broker.ts';
 import { PermissionsStore } from '../src/approvals/permissions-store.ts';
 import type { BridgeContext } from '../src/bridge/bridge.ts';
@@ -133,12 +134,14 @@ describe('inspect_site_fonts', () => {
     return new Response('', { status: 404 });
   }) as unknown as typeof fetch;
   const brandCtx = (notes: string[]): BridgeContext => ({ ...ctx, kind: 'brand-analysis', creativeSlug: null, locale: 'en', addNotes: (l) => notes.push(...l) });
+  beforeEach(() => setLocale('en'));
+  afterEach(() => setLocale('it'));
 
   it('lists the site fonts and adds its warnings to the proposal notes, in the job language', async () => {
     const notes: string[] = [];
     const out = await tools({}, {}, siteFetch).inspect_site_fonts!(brandCtx(notes), { url: 'https://acme.example/' }) as { fonts: Array<{ family: string; source: string }>; warnings: string[] };
     expect(out.fonts).toEqual([expect.objectContaining({ family: 'Acme Display', source: 'system', roles: ['heading'] })]);
-    expect(out.warnings).toEqual(['Site fonts: tracker.example/t.css not read (stylesheet on another site)']);
+    expect(out.warnings).toEqual(['tracker.example/t.css not read (stylesheet on another site)']);
     expect(notes).toEqual(out.warnings);
     expect(sent).toEqual(['https://acme.example/', 'https://acme.example/s.css']);
   });
@@ -149,6 +152,17 @@ describe('inspect_site_fonts', () => {
   it.each([undefined, 42, 'file:///etc/passwd', 'javascript:alert(1)', 'acme.example', `https://acme.example/${'a'.repeat(2000)}`])('refuses the url %j with 400', async (url) => {
     expect(await tools({}, {}, siteFetch).inspect_site_fonts!(brandCtx([]), { url }).catch(status)).toBe(400);
     expect(sent).toEqual([]);
+  });
+  it('allows at most 5 inspections per job', async () => {
+    const t = tools({}, {}, siteFetch);
+    for (let i = 0; i < 5; i++) await t.inspect_site_fonts!(brandCtx([]), { url: 'https://acme.example/' });
+    const before = sent.length;
+    const e = await t.inspect_site_fonts!(brandCtx([]), { url: 'https://acme.example/' }).catch((x) => x);
+    expect(e).toMatchObject({ status: 429, message: 'inspect_site_fonts can be used at most 5 times per analysis' });
+    expect(sent).toHaveLength(before);
+    // Another job has its own count.
+    const other = { ...brandCtx([]), jobId: 'j2', signal: new AbortController().signal };
+    await expect(t.inspect_site_fonts!(other, { url: 'https://acme.example/' })).resolves.toBeTruthy();
   });
   it('reports a cancelled job as cancelled', async () => {
     const hang = (async (_u: string, init: RequestInit) => new Promise((_ok, fail) => init.signal?.addEventListener('abort', () => fail(new Error('aborted'))))) as unknown as typeof fetch;

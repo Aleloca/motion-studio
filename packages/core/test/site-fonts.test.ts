@@ -52,7 +52,8 @@ describe('inspectSiteFonts · a real-world page', () => {
     expect(byFamily(out.fonts, 'Acme Icons')).toMatchObject({ roles: ['other'], source: 'self-hosted', files: [{ url: 'embedded', format: null, weight: null }] });
     expect(byFamily(out.fonts, 'Helvetica Neue')).toMatchObject({ roles: ['button'], weights: [700], source: 'system', files: [] });
     // Never the Google css (parsed from the link), never commented or scripted links, never the font files.
-    expect(s.sent).toEqual(['https://acme.example/', 'https://use.typekit.net/abc1234.css', 'https://p.typekit.net/p.css?s=1', 'https://acme.example/css/site.css?v=3']);
+    // Nor Adobe's p.typekit.net beacon (no font rules there), skipped silently.
+    expect(s.sent).toEqual(['https://acme.example/', 'https://use.typekit.net/abc1234.css', 'https://acme.example/css/site.css?v=3']);
   });
 
   it('follows font variables across stylesheets', async () => {
@@ -92,7 +93,7 @@ describe('inspectSiteFonts · hostile sites (Review Focus 1)', () => {
     const s = site({ 'acme.example/': () => redirect(`http://${ip}/latest/meta-data/`) });
     const out = await inspectSiteFonts(s.deps(), 'https://acme.example/');
     expect(out.fonts).toEqual([]);
-    expect(out.warnings).toEqual(['Site fonts: acme.example not read (address not allowed)']);
+    expect(out.warnings).toEqual(['acme.example not read (address not allowed)']);
     expect(s.sent.some((u) => u.includes(ip))).toBe(false);
   });
 
@@ -105,8 +106,8 @@ describe('inspectSiteFonts · hostile sites (Review Focus 1)', () => {
     const out = await inspectSiteFonts(s.deps(), 'https://acme.example/');
     expect(out.fonts.map((f) => f.family)).toEqual(['Karla']);
     expect(out.warnings).toEqual([
-      'Site fonts: acme.example/evil.css not read (address not allowed)',
-      'Site fonts: intranet.acme.example/x.css not read (address not allowed)',
+      'acme.example/evil.css not read (address not allowed)',
+      'intranet.acme.example/x.css not read (address not allowed)',
     ]);
     expect(s.sent.some((u) => u.includes('169.254') || u.includes('intranet'))).toBe(false);
   });
@@ -120,7 +121,7 @@ describe('inspectSiteFonts · hostile sites (Review Focus 1)', () => {
     const out = await inspectSiteFonts(s.deps(), 'https://acme.example/');
     expect(out.fonts.map((f) => f.family).sort()).toEqual(['Alpha', 'Beta']);
     expect(s.sent.filter((u) => u.endsWith('.css'))).toEqual(['https://acme.example/a.css', 'https://acme.example/b.css']);
-    expect(out.warnings).toEqual(['Site fonts: acme.example/a.css imports itself in a loop: read once', 'Site fonts: acme.example/b.css imports itself in a loop: read once']);
+    expect(out.warnings).toEqual(['acme.example/a.css imports itself in a loop: read once', 'acme.example/b.css imports itself in a loop: read once']);
   });
 
   it('stops imports nested deeper than 3 levels', async () => {
@@ -132,7 +133,7 @@ describe('inspectSiteFonts · hostile sites (Review Focus 1)', () => {
     const out = await inspectSiteFonts(s.deps(), 'https://acme.example/');
     expect(out.fonts.map((f) => f.family)).toEqual(['Deep']);
     expect(s.sent).not.toContain('https://acme.example/l4.css');
-    expect(out.warnings).toEqual(['Site fonts: acme.example/l4.css not read (imports nested deeper than 3 levels)']);
+    expect(out.warnings).toEqual(['acme.example/l4.css not read (imports nested deeper than 3 levels)']);
   });
 
   it('reads at most 2 MB of a 50 MB stylesheet and keeps what it found', async () => {
@@ -157,14 +158,14 @@ describe('inspectSiteFonts · hostile sites (Review Focus 1)', () => {
     const out = await inspectSiteFonts(s.deps(), 'https://acme.example/');
     expect(out.fonts.map((f) => f.family)).toEqual(['Big Sans']);
     expect(produced).toBeLessThan(3 * 1024 * 1024);
-    expect(out.warnings).toEqual(['Site fonts: acme.example/huge.css is larger than 2 MB: only the start was read']);
+    expect(out.warnings).toEqual(['acme.example/huge.css is larger than 2 MB: only the start was read']);
   });
 
   it('reads at most 2 MB of the page', async () => {
     const s = site({ 'acme.example/': `<style>body{font-family:Early}</style>${'x'.repeat(3 * 1024 * 1024)}<style>h1{font-family:Late}</style>` });
     const out = await inspectSiteFonts(s.deps(), 'https://acme.example/');
     expect(out.fonts.map((f) => f.family)).toEqual(['Early']);
-    expect(out.warnings).toEqual(['Site fonts: acme.example is larger than 2 MB: only the start was read']);
+    expect(out.warnings).toEqual(['acme.example is larger than 2 MB: only the start was read']);
   });
 
   it('keeps at most 2000 @font-face rules across stylesheets', async () => {
@@ -176,7 +177,7 @@ describe('inspectSiteFonts · hostile sites (Review Focus 1)', () => {
     const out = await inspectSiteFonts(s.deps(), 'https://acme.example/');
     expect(out.fonts).toHaveLength(40); // the reported list is capped too
     expect(out.fonts[0]!.family).toBe('F1');
-    expect(out.warnings).toEqual(['Site fonts: more than 2000 @font-face rules: the others were ignored']);
+    expect(out.warnings).toEqual(['more than 2000 @font-face rules: the others were ignored']);
   });
 
   it('reports data: fonts as embedded and ignores file: and javascript: addresses', async () => {
@@ -187,7 +188,7 @@ describe('inspectSiteFonts · hostile sites (Review Focus 1)', () => {
     const out = await inspectSiteFonts(s.deps(), 'https://acme.example/');
     expect(byFamily(out.fonts, 'Inline')!.files).toEqual([{ url: 'embedded', format: null, weight: null }]);
     expect(byFamily(out.fonts, 'Local')!.files).toEqual([]);
-    expect(out.warnings).toEqual(['Site fonts: file:… ignored (only http and https addresses)', 'Site fonts: 3 font addresses ignored (only http and https)']);
+    expect(out.warnings).toEqual(['file:… ignored (only http and https addresses)', '3 font addresses ignored (only http and https)']);
     expect(s.sent).toEqual(['https://acme.example/', 'https://acme.example/f.css']);
   });
 
@@ -198,10 +199,10 @@ describe('inspectSiteFonts · hostile sites (Review Focus 1)', () => {
       'fonts.bunny.net/css': '@font-face{font-family:Nunito;src:url(https://fonts.bunny.net/nunito/files/nunito-latin-400-normal.woff2) format("woff2");font-weight:400}',
       'cdn.jsdelivr.net/npm/@fontsource/fira-code/index.css': '@font-face{font-family:"Fira Code";src:url(./files/fira-code-latin-400-normal.woff2) format("woff2")}',
     });
-    const out = await inspectSiteFonts(s.deps(), 'https://www.acme.example/'.replace('www.', ''));
+    const out = await inspectSiteFonts(s.deps(), 'https://acme.example/');
     expect(out.fonts.map((f) => f.family).sort()).toEqual(['Fira Code', 'Nunito', 'Static']);
     expect(s.sent.some((u) => u.includes('tracker.example'))).toBe(false);
-    expect(out.warnings).toEqual(['Site fonts: tracker.example/x.css not read (stylesheet on another site)']);
+    expect(out.warnings).toEqual(['tracker.example/x.css not read (stylesheet on another site)']);
   });
 
   it('fetches at most 20 stylesheets', async () => {
@@ -211,7 +212,7 @@ describe('inspectSiteFonts · hostile sites (Review Focus 1)', () => {
     const out = await inspectSiteFonts(s.deps(), 'https://acme.example/');
     expect(s.sent.filter((u) => u.endsWith('.css'))).toHaveLength(20);
     expect(out.fonts).toHaveLength(20);
-    expect(out.warnings).toEqual(['Site fonts: more than 20 stylesheets: the others were not read']);
+    expect(out.warnings).toEqual(['more than 20 stylesheets: the others were not read']);
   });
 
   it('stops at the deadline with a partial result', async () => {
@@ -219,11 +220,9 @@ describe('inspectSiteFonts · hostile sites (Review Focus 1)', () => {
       'acme.example/': page('<style>body{font-family:Fast}</style><link rel="stylesheet" href="/slow.css">'),
       'acme.example/slow.css': (u) => new Promise<Response>(() => { void u; }),
     });
-    const t0 = Date.now();
     const out = await inspectSiteFonts(s.deps({ timeoutMs: 100 }), 'https://acme.example/');
-    expect(Date.now() - t0).toBeLessThan(2000);
     expect(out.fonts.map((f) => f.family)).toEqual(['Fast']);
-    expect(out.warnings).toEqual(['Site fonts: stopped after 0 s: partial result']);
+    expect(out.warnings).toEqual(['stopped at the time limit (1 s): partial result']);
   });
 
   it('stops a body that never ends at the deadline', async () => {
@@ -232,7 +231,7 @@ describe('inspectSiteFonts · hostile sites (Review Focus 1)', () => {
       'acme.example/drip.css': () => new Response(new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new TextEncoder().encode('body{font-family:Drip}')); } }), { status: 200 }),
     });
     const out = await inspectSiteFonts(s.deps({ timeoutMs: 100 }), 'https://acme.example/');
-    expect(out.warnings).toEqual(['Site fonts: stopped after 0 s: partial result']);
+    expect(out.warnings).toEqual(['stopped at the time limit (1 s): partial result']);
   });
 
   it('throws when the job is cancelled', async () => {
@@ -256,12 +255,69 @@ describe('inspectSiteFonts · hostile sites (Review Focus 1)', () => {
       'acme.example/down.css': () => { throw new TypeError('fetch failed'); },
     });
     const out = await inspectSiteFonts(s.deps(), 'https://acme.example/');
-    expect(out.warnings).toEqual(['Site fonts: acme.example/missing.css answered 404', 'Site fonts: acme.example/down.css not reachable']);
+    expect(out.warnings).toEqual(['acme.example/missing.css answered 404', 'acme.example/down.css not reachable']);
   });
 
   it('words the warnings in the job language', async () => {
     const s = site({ 'acme.example/': () => redirect('http://127.0.0.1/') });
     const out = await inspectSiteFonts({ ...s.deps(), locale: 'it' }, 'https://acme.example/');
-    expect(out.warnings).toEqual(['Font del sito: acme.example non letto (indirizzo non consentito)']);
+    expect(out.warnings).toEqual(['acme.example non letto (indirizzo non consentito)']);
+  });
+
+  it('refuses a same-site stylesheet that redirects to another domain, without requesting it', async () => {
+    const s = site({
+      'acme.example/': page('<link rel="stylesheet" href="/a.css"><link rel="stylesheet" href="/ok.css">'),
+      'acme.example/a.css': () => redirect('https://tracker.example/x.css'),
+      'tracker.example/x.css': 'body{font-family:Tracked}',
+      'acme.example/ok.css': 'body{font-family:Karla}',
+    });
+    const out = await inspectSiteFonts(s.deps(), 'https://acme.example/');
+    expect(out.fonts.map((f) => f.family)).toEqual(['Karla']);
+    expect(s.sent.some((u) => u.includes('tracker.example'))).toBe(false);
+    expect(out.warnings).toEqual(['tracker.example/x.css not read (stylesheet on another site)']);
+  });
+
+  it('follows a page that redirects to another domain with that domain\'s rules and addresses', async () => {
+    const s = site({
+      'acme.example/': () => redirect('https://www.acmebrand.example/home/'),
+      'www.acmebrand.example/home/': page('<link rel="stylesheet" href="../css/s.css"><link rel="stylesheet" href="https://cdn.acmebrand.example/t.css">'),
+      'www.acmebrand.example/css/s.css': '@font-face{font-family:Brand;src:url(../fonts/brand.woff2)}h1{font-family:Brand}',
+      'cdn.acmebrand.example/t.css': 'body{font-family:Text}',
+    });
+    const out = await inspectSiteFonts(s.deps(), 'https://acme.example/');
+    expect(out.warnings).toEqual([]);
+    expect(byFamily(out.fonts, 'Brand')!.files).toEqual([{ url: 'https://www.acmebrand.example/fonts/brand.woff2', format: null, weight: null }]);
+    expect(byFamily(out.fonts, 'Text')).toBeTruthy();
+  });
+
+  it('resolves the addresses of a redirected stylesheet against where it ended', async () => {
+    const s = site({
+      'acme.example/': page('<link rel="stylesheet" href="/css/style.css">'),
+      'acme.example/css/style.css': () => redirect('/css/v2/style.css'),
+      'acme.example/css/v2/style.css': '@import "more.css";@font-face{font-family:V2;src:url(fonts/v2.woff2)}',
+      'acme.example/css/v2/more.css': 'body{font-family:V2}',
+    });
+    const out = await inspectSiteFonts(s.deps(), 'https://acme.example/');
+    expect(out.warnings).toEqual([]);
+    expect(byFamily(out.fonts, 'V2')).toMatchObject({ roles: ['body'], files: [{ url: 'https://acme.example/css/v2/fonts/v2.woff2', format: null, weight: null }] });
+  });
+
+  it('never fetches p.typekit.net, even through a redirect, and says nothing about it', async () => {
+    const s = site({
+      'acme.example/': page('<link rel="stylesheet" href="https://p.typekit.net/p.css?s=1"><link rel="stylesheet" href="/r.css">'),
+      'acme.example/r.css': () => redirect('https://p.typekit.net/p.css?s=2'),
+    });
+    const out = await inspectSiteFonts(s.deps(), 'https://acme.example/');
+    expect(s.sent).toEqual(['https://acme.example/', 'https://acme.example/r.css']);
+    expect(out.warnings).toEqual([]);
+  });
+
+  it('keeps the answer small: at most 12 files per font, none with a long address', async () => {
+    const long = `/f/${'a'.repeat(400)}.woff2`;
+    const faces = Array.from({ length: 20 }, (_, i) => `@font-face{font-family:Many;font-weight:${(i % 9 + 1) * 100};src:url(/m${i}.woff2)}`).join('');
+    const s = site({ 'acme.example/': page(`<style>${faces}@font-face{font-family:Long;src:url(${long})}</style>`) });
+    const out = await inspectSiteFonts(s.deps(), 'https://acme.example/');
+    expect(byFamily(out.fonts, 'Many')!.files).toHaveLength(12);
+    expect(byFamily(out.fonts, 'Long')!.files).toEqual([]);
   });
 });

@@ -5,7 +5,7 @@
 // Whatever is refused or cut is reported as a warning; the fonts found so far are still returned.
 import { messages, type Locale } from '@motion-studio/shared';
 import { currentLocale } from '../i18n.ts';
-import { BlockedUrlError, safeFetch, type SafeFetchDeps } from '../providers/safe-fetch.ts';
+import { BlockedUrlError, RedirectRefusedError, safeFetch, type SafeFetchDeps } from '../providers/safe-fetch.ts';
 import { newScanBudget, scanCss, cleanFamily, splitTopLevel, type CssScan, type FontRole, type ScanBudget, type Usage } from './css-scan.ts';
 
 export type SiteFontSource = 'google' | 'self-hosted' | 'adobe' | 'system';
@@ -26,10 +26,14 @@ const MB = 1024 * 1024;
 export const SITE_LIMITS = { pageBytes: 2 * MB, sheetBytes: 2 * MB, maxSheets: 20, maxImportDepth: 3, maxFaces: 2000, totalMs: 30_000 } as const;
 export const FONT_CDNS = ['fonts.googleapis.com', 'fonts.gstatic.com', 'use.typekit.net', 'p.typekit.net', 'fonts.bunny.net', 'cdn.jsdelivr.net'] as const;
 const ADOBE_HOSTS = new Set(['use.typekit.net', 'p.typekit.net']);
+/** Known but never fetched, and never reported: p.typekit.net is Adobe's page-view beacon and holds no font rules. */
+const SILENT_HOSTS = new Set(['p.typekit.net']);
 const MAX_FONTS = 40;
 const MAX_FILES = 12;
 /** Longer font addresses are left out of the answer (it goes back to the agent: kept small). */
-const MAX_FILE_URL = 1000;
+const MAX_FILE_URL = 300;
+/** All the font addresses of one answer together, in characters. */
+const MAX_FILES_TOTAL = 32 * 1024;
 const MAX_WARNINGS = 20;
 const MAX_LINKS = 100;
 const MAX_STYLE_BLOCKS = 50;
@@ -68,7 +72,9 @@ class Inspection {
   readonly visited = new Set<string>();
   fetched = 0;
   timedOut = false;
-  constructor(readonly m: ReturnType<typeof messages>['brand'], readonly site: string) {}
+  /** The page's registrable name, taken from where the page ended (after its redirects). */
+  site: string;
+  constructor(readonly m: ReturnType<typeof messages>['brand'], site: string) { this.site = site; }
   warn(key: string, text: string) {
     if (this.warnings.length >= MAX_WARNINGS || this.warnings.some((w) => w.key === key)) return;
     this.warnings.push({ key, text });
@@ -77,15 +83,21 @@ class Inspection {
 
 class Timeout extends Error {}
 
-/** GETs `url` through safeFetch and reads at most `max` bytes (the rest is never pulled from the socket). */
-async function getText(deps: InspectDeps, signal: AbortSignal, url: URL, max: number): Promise<{ text: string; truncated: boolean }> {
-  const res = await untilAborted(safeFetch(deps.fetch, url.href, { signal, headers: { accept: 'text/html,text/css,*/*;q=0.5' } }, { provider: url.hostname, allowHttp: true }), signal);
+/**
+ * GETs `url` through safeFetch and reads at most `max` bytes (the rest is never pulled from the socket). `allowHop` judges
+ * every redirect target; `final` is where the response came from (the base for its relative addresses).
+ */
+async function getText(deps: InspectDeps, signal: AbortSignal, url: URL, max: number, allowHop: (next: URL) => boolean): Promise<{ text: string; truncated: boolean; final: URL }> {
+  let final = url;
+  const res = await untilAborted(safeFetch(deps.fetch, url.href, { signal, headers: { accept: 'text/html,text/css,*/*;q=0.5' } }, {
+    provider: url.hostname, allowHttp: true, allowHop: (next) => { if (!allowHop(next)) return false; final = next; return true; },
+  }), signal);
   if (!res.ok) {
     await res.body?.cancel().catch(() => {});
     throw new StatusError(res.status);
   }
   const reader = res.body?.getReader();
-  if (!reader) return { text: '', truncated: false };
+  if (!reader) return { text: '', truncated: false, final };
   const onAbort = () => { void reader.cancel().catch(() => {}); };
   signal.addEventListener('abort', onAbort, { once: true });
   const chunks: Uint8Array[] = [];
@@ -110,7 +122,7 @@ async function getText(deps: InspectDeps, signal: AbortSignal, url: URL, max: nu
     signal.removeEventListener('abort', onAbort);
   }
   if (signal.aborted) throw signal.reason instanceof Error ? signal.reason : new Error('aborted');
-  return { text: new TextDecoder('utf-8').decode(Buffer.concat(chunks)), truncated };
+  return { text: new TextDecoder('utf-8').decode(Buffer.concat(chunks)), truncated, final };
 }
 /** Settles with `p`, or rejects as soon as `signal` aborts (a transport that ignores the signal cannot hold the deadline). */
 function untilAborted(p: Promise<Response>, signal: AbortSignal): Promise<Response> {
@@ -225,8 +237,8 @@ const isAllowedHost = (host: string, site: string) => siteOf(host) === site || (
 export async function inspectSiteFonts(deps: InspectDeps, url: string): Promise<{ fonts: SiteFont[]; warnings: string[] }> {
   const m = messages(deps.locale ?? currentLocale()).brand;
   let page: URL;
-  try { page = new URL(url); } catch { return { fonts: [], warnings: [m.siteFontsNote({ text: m.siteScheme({ url: shownUrl(url) }) })] }; }
-  if (page.protocol !== 'http:' && page.protocol !== 'https:') return { fonts: [], warnings: [m.siteFontsNote({ text: m.siteScheme({ url: shownUrl(url) }) })] };
+  try { page = new URL(url); } catch { return { fonts: [], warnings: [m.siteScheme({ url: shownUrl(url) })] }; }
+  if (page.protocol !== 'http:' && page.protocol !== 'https:') return { fonts: [], warnings: [m.siteScheme({ url: shownUrl(url) })] };
   const ins = new Inspection(m, siteOf(page.hostname));
   const deadline = new AbortController();
   const timer = setTimeout(() => { ins.timedOut = true; deadline.abort(new Timeout()); }, deps.timeoutMs ?? SITE_LIMITS.totalMs);
@@ -234,15 +246,17 @@ export async function inspectSiteFonts(deps: InspectDeps, url: string): Promise<
   const cancelled = () => deps.signal.aborted;
 
   /** One request; failures become warnings (null). A cancelled job throws. */
-  const fetchText = async (u: URL, max: number): Promise<string | null> => {
+  const fetchText = async (u: URL, max: number, allowHop: (next: URL) => boolean): Promise<{ text: string; final: URL } | null> => {
     try {
-      const { text, truncated } = await getText(deps, signal, u, max);
+      const { text, truncated, final } = await getText(deps, signal, u, max, allowHop);
       if (truncated) ins.warn(`big:${u.href}`, m.siteTooLarge({ url: shownUrl(u), mb: max / MB }));
-      return text;
+      return { text, final };
     } catch (e) {
       if (cancelled()) throw e;
       if (ins.timedOut) return null;
-      if (e instanceof BlockedUrlError) ins.warn(`blocked:${u.href}`, m.siteBlocked({ url: shownUrl(u) }));
+      if (e instanceof RedirectRefusedError) {
+        if (!SILENT_HOSTS.has(e.url.hostname.toLowerCase())) ins.warn(`off:${e.url.hostname}`, m.siteOffSite({ url: shownUrl(e.url) }));
+      } else if (e instanceof BlockedUrlError) ins.warn(`blocked:${u.href}`, m.siteBlocked({ url: shownUrl(u) }));
       else if (e instanceof StatusError) ins.warn(`status:${u.href}`, m.siteStatus({ url: shownUrl(u), status: e.status }));
       else ins.warn(`down:${u.href}`, m.siteUnreachable({ url: shownUrl(u) }));
       return null;
@@ -262,24 +276,32 @@ export async function inspectSiteFonts(deps: InspectDeps, url: string): Promise<
     if (chain.includes(key)) { ins.warn(`cycle:${key}`, m.siteImportCycle({ url: shownUrl(u) })); return; }
     if (ins.visited.has(key)) return;
     if (u.hostname === 'fonts.googleapis.com') { ins.googleLinks.push(u); return; }
+    if (SILENT_HOSTS.has(u.hostname.toLowerCase())) return;
     if (!isAllowedHost(u.hostname, ins.site)) { ins.warn(`off:${u.hostname}`, m.siteOffSite({ url: shownUrl(u) })); return; }
     if (depth > SITE_LIMITS.maxImportDepth) { ins.warn(`depth:${key}`, m.siteImportDepth({ url: shownUrl(u), max: SITE_LIMITS.maxImportDepth })); return; }
     if (ins.fetched >= SITE_LIMITS.maxSheets) { ins.warn('sheets', m.siteTooManySheets({ max: SITE_LIMITS.maxSheets })); return; }
     ins.visited.add(key);
     ins.fetched++;
-    const css = await fetchText(u, SITE_LIMITS.sheetBytes);
-    if (css === null) return;
-    const scan = scanSheet(css, u, ADOBE_HOSTS.has(u.hostname.toLowerCase()));
-    for (const imp of scan.imports) await visit(imp, depth + 1, [...chain, key]);
+    // Every redirect hop of a stylesheet must stay on the site or on a font CDN (a Google css link is parsed, never fetched).
+    const got = await fetchText(u, SITE_LIMITS.sheetBytes, (next) => !SILENT_HOSTS.has(next.hostname.toLowerCase()) && next.hostname !== 'fonts.googleapis.com' && isAllowedHost(next.hostname, ins.site));
+    if (got === null) return;
+    const finalKey = got.final.href.split('#')[0]!;
+    ins.visited.add(finalKey);
+    // Relative imports and font files resolve against where the sheet really is.
+    const scan = scanSheet(got.text, got.final, ADOBE_HOSTS.has(got.final.hostname.toLowerCase()));
+    for (const imp of scan.imports) await visit(imp, depth + 1, [...chain, key, finalKey]);
   };
 
   try {
-    const html = await fetchText(page, SITE_LIMITS.pageBytes);
-    if (html !== null) {
-      const found = scanHtml(html, page);
+    // The page may move to another site (acme.com → acmebrand.com): the site and the base become the final ones.
+    const got = await fetchText(page, SITE_LIMITS.pageBytes, () => true);
+    if (got !== null) {
+      ins.site = siteOf(got.final.hostname);
+      const base = got.final;
+      const found = scanHtml(got.text, base);
       if (found.rejected.length) ins.warn('scheme', m.siteScheme({ url: shownUrl(found.rejected[0]!) }));
       for (const style of found.styles) {
-        const scan = scanSheet(style, page, false);
+        const scan = scanSheet(style, base, false);
         for (const imp of scan.imports) await visit(imp, 1, []);
       }
       for (const sheet of found.sheets) await visit(sheet, 0, []);
@@ -289,11 +311,11 @@ export async function inspectSiteFonts(deps: InspectDeps, url: string): Promise<
   } finally {
     clearTimeout(timer);
   }
-  if (ins.timedOut) ins.warn('timeout', m.siteTimeout({ seconds: Math.round((deps.timeoutMs ?? SITE_LIMITS.totalMs) / 1000) }));
+  if (ins.timedOut) ins.warn('timeout', m.siteTimeout({ seconds: Math.max(1, Math.round((deps.timeoutMs ?? SITE_LIMITS.totalMs) / 1000)) }));
   if (ins.budget.facesTruncated) ins.warn('faces', m.siteTooManyFaces({ max: SITE_LIMITS.maxFaces }));
   const rejected = ins.scans.reduce((n, s) => n + s.scan.rejected, 0);
   if (rejected > 0) ins.warn('rejected', m.siteFontUrlsIgnored({ count: rejected }));
-  return { fonts: collect(ins), warnings: ins.warnings.map((w) => m.siteFontsNote({ text: w.text })) };
+  return { fonts: collect(ins), warnings: ins.warnings.map((w) => w.text) };
 }
 
 interface Draft { family: string; roles: Set<FontRole>; weights: Set<number>; italic: boolean; source: SiteFontSource | null; files: SiteFont['files']; uses: number; faces: number }
@@ -314,6 +336,7 @@ function collect(ins: Inspection): SiteFont[] {
     if (u.italic) d.italic = true;
     d.uses += u.count;
   };
+  let fileChars = 0;
   const variables = new Map<string, string>();
   for (const { scan } of ins.scans) for (const [k, v] of scan.variables) variables.set(k, v);
   for (const { scan, adobe } of ins.scans) {
@@ -335,7 +358,11 @@ function collect(ins: Inspection): SiteFont[] {
       const src: SiteFontSource = adobe || hosts.some((h) => ADOBE_HOSTS.has(h)) ? 'adobe' : hosts.some((h) => h === 'fonts.gstatic.com') ? 'google' : 'self-hosted';
       if (d.source === null || d.source === 'self-hosted') d.source = src;
       const weight = f.weights.length === 1 ? f.weights[0]! : null;
-      for (const file of f.files) if (d.files.length < MAX_FILES && file.url.length <= MAX_FILE_URL && !d.files.some((x) => x.url === file.url)) d.files.push({ url: file.url, format: file.format, weight });
+      for (const file of f.files) {
+        if (d.files.length >= MAX_FILES || file.url.length > MAX_FILE_URL || fileChars + file.url.length > MAX_FILES_TOTAL || d.files.some((x) => x.url === file.url)) continue;
+        fileChars += file.url.length;
+        d.files.push({ url: file.url, format: file.format, weight });
+      }
       if (f.embedded && d.files.length < MAX_FILES) d.files.push({ url: EMBEDDED, format: null, weight });
     }
   }

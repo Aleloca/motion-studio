@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { fetchTransport, isBlockedAddress, nodeTransport, pinnedResolver, safeFetch, type LookupFn } from '../src/providers/safe-fetch.ts';
+import { fetchTransport, isBlockedAddress, nodeTransport, pinnedResolver, RedirectRefusedError, safeFetch, type LookupFn } from '../src/providers/safe-fetch.ts';
 
 const PUBLIC = '93.184.216.34';
 const table = (map: Record<string, string[]>): LookupFn => async (host) => (map[host] ?? [PUBLIC]).map((address) => ({ address, family: address.includes(':') ? 6 : 4 }));
@@ -97,6 +97,19 @@ describe('safeFetch', () => {
     expect(calls.map((c) => new Headers(c.init.headers).get('authorization'))).toEqual(['secret', 'secret', null]);
     expect(new Headers(calls[2]!.init.headers).get('cookie')).toBeNull();
     expect(new Headers(calls[2]!.init.headers).get('accept')).toBe('x');
+  });
+  it('asks allowHop about every redirect target (never the first URL) and stops on a refusal', async () => {
+    const { calls, transport } = recorder((url) => (url.endsWith('/a') ? redirect('/b') : url.endsWith('/b') ? redirect('https://tracker.example/c') : new Response('ok')));
+    const asked: string[] = [];
+    const e = await safeFetch({ transport, lookup: table({}) }, 'https://acme.example/a', {}, { ...P, allowHop: (u) => { asked.push(u.href); return u.hostname === 'acme.example'; } }).catch((x) => x);
+    expect(e).toBeInstanceOf(RedirectRefusedError);
+    expect((e as RedirectRefusedError).url.href).toBe('https://tracker.example/c');
+    expect(asked).toEqual(['https://acme.example/b', 'https://tracker.example/c']);
+    expect(calls.map((c) => c.url)).toEqual(['https://acme.example/a', 'https://acme.example/b']);
+  });
+  it('without allowHop, follows redirects as before', async () => {
+    const { transport } = recorder((url) => (url.endsWith('/a') ? redirect('https://other.example/b') : new Response('ok')));
+    expect((await safeFetch({ transport, lookup: table({}) }, 'https://acme.example/a', {}, P)).status).toBe(200);
   });
   it('returns non-redirect responses as they are', async () => {
     const { transport } = recorder(() => new Response('nope', { status: 404 }));

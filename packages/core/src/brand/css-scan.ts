@@ -101,14 +101,62 @@ function familyStack(value: string): { first: string | null; vars: string[] } {
   return { first, vars };
 }
 
-/** The family part of a `font` shorthand: everything after the size (and optional /line-height). */
+const SIZE_KEYWORDS = new Set(['xx-small', 'x-small', 'small', 'medium', 'large', 'x-large', 'xx-large', 'xxx-large', 'smaller', 'larger']);
+const SIZE_FUNCTIONS = new Set(['calc', 'clamp', 'min', 'max', 'var']);
+const LENGTH = /^[+]?(?:\d+\.?\d*|\.\d+)(?:px|pt|em|rem|%|vw|vh|ex|ch|pc|cm|mm|in|q|vmin|vmax)$/i;
+
+/** End of the top-level token starting at `i` (whitespace ends it outside parentheses and strings); -1 if a parenthesis never closes. */
+function tokenEnd(v: string, i: number): number {
+  let depth = 0;
+  for (let j = i; j < v.length; j++) {
+    const c = v.charCodeAt(j);
+    if (c === 34 || c === 39) { j = skipString(v, j) - 1; continue; }
+    if (c === 40) depth++;
+    else if (c === 41) { if (depth > 0) depth--; }
+    else if (depth === 0 && (isSpace(c) || c === 47)) return j; // '/' ends a size token too (16px/1.5)
+  }
+  return depth === 0 ? v.length : -1;
+}
+
+/** A font-size token: a length or percentage, a size keyword, or a balanced calc()/clamp()/min()/max()/var(). */
+function isSize(tok: string): boolean {
+  if (LENGTH.test(tok) || SIZE_KEYWORDS.has(tok.toLowerCase())) return true;
+  const open = tok.indexOf('(');
+  return open > 0 && tok.endsWith(')') && SIZE_FUNCTIONS.has(tok.slice(0, open).toLowerCase());
+}
+
+/**
+ * The family part of a `font` shorthand: everything after the size (and an optional `/ line-height`). A single walk over
+ * top-level tokens (no regex over the value): an unbalanced function ends the walk with no family.
+ */
 function shorthandFamily(value: string): string | null {
-  const v = value.trim();
-  if (/^var\(/.test(v)) return v;
-  // Sizes: a number with a unit or %, or a keyword size; the family list starts after it.
-  const m = /(?:^|\s)(?:[\d.]+(?:px|pt|em|rem|%|vw|vh|ex|ch|pc|cm|mm|in|q|vmin|vmax)|xx-small|x-small|small|medium|large|x-large|xx-large|xxx-large|smaller|larger|(?:calc|clamp|min|max|var)\([^)]*\))(?:\s*\/\s*[^\s,]+)?\s+/i.exec(v.length > MAX_VALUE ? v.slice(0, MAX_VALUE) : v);
-  if (!m) return null;
-  return v.slice(m.index + m[0].length);
+  const v = value.length > MAX_VALUE ? value.slice(0, MAX_VALUE) : value;
+  let i = 0;
+  const skipWs = () => { while (i < v.length && isSpace(v.charCodeAt(i))) i++; };
+  for (let n = 0; n < 6; n++) { // style, variant, weight, stretch, then the size at the latest
+    skipWs();
+    if (i >= v.length) return null;
+    const end = tokenEnd(v, i);
+    if (end < 0) return null;
+    if (end === i) return null; // a stray '/'
+    const tok = v.slice(i, end);
+    i = end;
+    if (!isSize(tok)) continue;
+    skipWs();
+    if (v.charCodeAt(i) === 47) { // '/' line-height
+      i++;
+      skipWs();
+      const lh = tokenEnd(v, i);
+      if (lh < 0) return null;
+      i = lh;
+    }
+    skipWs();
+    const rest = v.slice(i);
+    // `font: var(--brand-font)`: the whole shorthand in one variable, resolved later like a font-family stack.
+    if (!rest && /^var\(/i.test(tok)) return tok;
+    return rest || null;
+  }
+  return null;
 }
 
 /** CSS font-weight value → numbers (a variable range gives both ends). */

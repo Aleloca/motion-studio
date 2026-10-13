@@ -39,6 +39,9 @@ export function jobHttp(deps: { fetch?: typeof fetch; transport?: Transport; loo
   };
 }
 
+/** inspect_site_fonts calls allowed per job (each may take up to 30 s and a few MB of reads). */
+export const SITE_FONTS_CALLS_PER_JOB = 5;
+
 const LABEL = { openai: 'OpenAI', elevenlabs: 'ElevenLabs', pexels: 'Pexels', unsplash: 'Unsplash' } as const;
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 const VOICE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -54,6 +57,8 @@ const slug = (t: string) => t.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g
 
 export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHandler> {
   const httpFor = (c: BridgeContext) => jobHttp(deps, c);
+  // Per job, keyed by the job's own abort signal (one per run): nothing to clean up when the job ends.
+  const siteCalls = new WeakMap<AbortSignal, number>();
   const allowed = (c: BridgeContext, tool: string) => {
     if (!MCP_TOOLS[c.kind].includes(tool)) throw new ProviderError(403, t().errors.toolUnavailable);
   };
@@ -180,6 +185,9 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       allowed(c, 'inspect_site_fonts');
       const url = a.url;
       if (typeof url !== 'string' || url.length > 2000 || !webUrlSchema.safeParse(url).success) throw new ProviderError(400, t().providers.invalidUrl);
+      const used = siteCalls.get(c.signal) ?? 0;
+      if (used >= SITE_FONTS_CALLS_PER_JOB) throw new ProviderError(429, t().providers.siteFontsLimit({ max: SITE_FONTS_CALLS_PER_JOB }));
+      siteCalls.set(c.signal, used + 1);
       const { transport, lookup } = httpFor(c);
       const out = await inspectSiteFonts({ fetch: { transport, lookup }, signal: c.signal, ...(c.locale ? { locale: c.locale } : {}) }, url);
       alive(c);

@@ -58,6 +58,23 @@ describe('scanCss · fixtures', () => {
     expect(s.varUses).toEqual([{ name: '--font-heading', roles: ['heading'], weights: [], italic: false }]);
   });
 
+  it.each([
+    ['700 16px/1.5 "Inter", sans-serif', 'Inter'],
+    ['italic bold 12px / 30px Georgia, serif', 'Georgia'],
+    ['clamp(1rem, 2vw + .5rem, 2rem)/1.2 "Fraunces"', 'Fraunces'],
+    ['small-caps 600 calc(1rem + 2px) Lato', 'Lato'],
+    ['1.25em "Open Sans",Arial', 'Open Sans'],
+    ['100% Karla', 'Karla'],
+    ['x-large/110% "New Century Schoolbook", serif', 'New Century Schoolbook'],
+  ])('reads the family of the font shorthand %s', (value, family) => {
+    expect([...scan(`h1{font:${value}}`).families.values()].map((u) => u.family)).toEqual([family]);
+  });
+  it('keeps a shorthand made of one variable for later resolution', () => {
+    expect(scan('h1{font:var(--font-display)}').varUses).toEqual([{ name: '--font-display', roles: ['heading'], weights: [], italic: false }]);
+  });
+  it('ignores a font shorthand without a size or with unbalanced functions', () => {
+    expect(scan('h1{font:caption}h2{font:bold calc(1rem "X"}').families.size).toBe(0);
+  });
   it('handles nested rules (CSS nesting) with their own selector', () => {
     const s = scan('.card { font-family: Inter; & h2 { font-family: Outfit } }');
     expect([...s.families.get('outfit')!.roles]).toEqual(['heading']);
@@ -107,6 +124,8 @@ describe('scanCss · hostile input', () => {
     ['many tiny rules', fill('h1{font-family:A;font-weight:700}')],
     ['many @font-face rules', fill('@font-face{font-family:F;src:url(/a.woff2) format("woff2"),url(data:x;base64,AAAA)}')],
     ['huge selector lists', fill('h1,p,.btn,a b>c~d+e,') + '{font-family:Z}'],
+    ['font shorthands with unclosed calc( chains', fill('p{font: calc( calc( calc( calc( }')],
+    ['font shorthands with long unclosed functions', fill(`h1{font:bold ${'min( '.repeat(200)}x}`)],
     ['one huge declaration', `p{font-family:${fill('A,')}}`],
     ['a mix', fill('@media x{@supports y{.a{font:700 1em/1 "Q",serif;--font-x:"R";font-family:var(--font-x)}}}/**/"\'}')],
   ])('scans 5 MB of %s in under 200 ms', (_name, css) => {

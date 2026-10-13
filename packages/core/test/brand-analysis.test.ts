@@ -140,8 +140,8 @@ describe('analyze', () => {
     const launcher = Object.assign(Object.create(real) as typeof real, {
       start: (i: Parameters<typeof real.start>[0]) => {
         seen.push({ locale: i.locale });
-        i.addNotes?.(['Site fonts: tracker.example/t.css not read (stylesheet on another site)']);
-        i.addNotes?.(['Site fonts: tracker.example/t.css not read (stylesheet on another site)', 'Site fonts: stopped after 30 s: partial result']);
+        i.addNotes?.(['tracker.example/t.css not read (stylesheet on another site)']);
+        i.addNotes?.(['tracker.example/t.css not read (stylesheet on another site)', 'stopped at the time limit (30 s): partial result']);
         return real.start(i);
       },
     });
@@ -154,13 +154,30 @@ describe('analyze', () => {
     expect(seen).toEqual([{ locale: 'en' }]);
     const [p] = await brand.listProposals();
     const notes = p!.summary.slice(p!.summary.indexOf('Dropped entries:'));
+    expect(notes).toContain('Site fonts: 2 notes: tracker.example/t.css not read (stylesheet on another site) · stopped at the time limit (30 s): partial result');
     expect(notes.match(/tracker\.example/g)).toHaveLength(1);
-    expect(notes).toContain('Site fonts: stopped after 30 s: partial result');
     process.env.FAKE_CLAUDE_SCENARIO = 'brand_invalid';
     messages.length = 0;
     const failed = await svc.analyze(ref);
     await done(failed.id);
     expect(messages.some((m) => m.type === 'agent' && m.event.kind === 'progress' && m.event.phase === 'done')).toBe(false);
+  });
+  it('collapses many site-font notes into one line after the kit\'s own refusals', T, async () => {
+    const real = testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 }));
+    const launcher = Object.assign(Object.create(real) as typeof real, {
+      start: (i: Parameters<typeof real.start>[0]) => { i.addNotes?.(Array.from({ length: 30 }, (_, n) => `host${n}.example/s.css not reachable`)); return real.start(i); },
+    });
+    const svc = new BrandService({ queue, git: new Git(), media: NoMediaTools, launcher, model: async () => null, broadcast: (m) => messages.push(m) });
+    setLocale('en');
+    try { expect((await done((await svc.analyze(ref)).id)).state).toBe('succeeded'); } finally { setLocale('it'); }
+    const [p] = await brand.listProposals();
+    const notes = p!.summary.slice(p!.summary.indexOf('Dropped entries:'));
+    // The kit's own refusal (the missing logo file) stays visible, before the site line.
+    expect(notes.indexOf('ghost')).toBeGreaterThan(0);
+    expect(notes.indexOf('ghost')).toBeLessThan(notes.indexOf('Site fonts:'));
+    expect(notes).toContain('Site fonts: 30 notes: host0.example/s.css not reachable · host1.example/s.css not reachable · host2.example/s.css not reachable · …');
+    expect(notes).not.toContain('host3.example');
+    expect(notes).not.toMatch(/and \d+ more/);
   });
   it('keeps a file already registered by download_file once, with its original source, taking the listed description', T, async () => {
     const lib = new LibraryStore(ref.projectDir, NoMediaTools);
