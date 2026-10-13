@@ -649,8 +649,9 @@ export class MediaNormalizer {
         leave();
         if (signal.aborted || this.closing.signal.aborted) {
           // This waiter's abort rejects at once, before the encode has reacted to it. When it was the last waiter (the encode
-          // is cancelled), wait for that encode to settle: its ffmpeg group has exited and its temp file is removed (`make`).
-          // A cancelled preparation then never settles while its encoder still runs or its temp file is still there.
+          // is cancelled), wait for that encode to settle: its ffmpeg (the group's leader process) has exited and its temp
+          // file is removed (`make`). The group was sent the kill, but only the leader's exit is observed, not the whole
+          // group's. A cancelled preparation then never settles while its encoder still runs or its temp file is still there.
           if (cur.waiters <= 0) await cur.promise.catch(() => {});
           throw cancelled();
         }

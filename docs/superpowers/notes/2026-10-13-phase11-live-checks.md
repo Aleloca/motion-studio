@@ -177,7 +177,7 @@ Because that turn delivered no version, the core started its usual repair turn: 
 
 The agent then delivered v2 without audio.
 
-**No request reached a provider.** The guard log has no refused request and the approvals log is empty. Had the key still been set, the call would have asked for approval and then hit the guard. That is why the guard exists.
+**No request reached a provider.** The guard log has no refused request and the approvals log is empty. Had the key still been set, the call would have asked for approval and then hit the guard, but only because confirmations were on and no "Always for this project" rule existed for `provider:tts-*`. With such a rule, or with "Ask before using paid providers" off, the repair turn would have spent money against the user's explicit "no voice-over" without any prompt (final review M8). The final wave fixed F4: the repair turn now carries the user's words verbatim and must respect them.
 
 ## 5. Key checks (fake endpoint)
 
