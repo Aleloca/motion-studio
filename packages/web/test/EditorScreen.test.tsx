@@ -305,6 +305,19 @@ describe('EditorScreen · draft pill and the live preview', () => {
     expect(document.getElementById(save.getAttribute('aria-describedby')!)!.textContent).toMatch(/agent or a render/);
   });
 
+  it('Save is disabled while a render of any version of the creative runs, and available again when it ends (final review M2)', async () => {
+    const renderJob = (state: string) => ({ ...emptyLive(), jobs: { r1: { id: 'r1', key: 'render:/w:acme:lancio:v1', kind: 'render', label: 'x', state, createdAt: at } } }) as unknown as EventsState;
+    live = renderJob('running');
+    const ui = render(<Harness />);
+    await opened();
+    store().apply(move(5));
+    const save = await screen.findByRole('button', { name: 'Save as v3' });
+    expect((save as HTMLButtonElement).disabled).toBe(true);
+    live = renderJob('done');
+    ui.rerender(<Harness />);
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Save as v3' }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
   it('a draft the runtime refuses is shown, not ignored', async () => {
     render(<Harness />);
     await opened();

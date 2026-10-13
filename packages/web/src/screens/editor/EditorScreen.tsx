@@ -152,6 +152,9 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     return mine.find((j) => j.state === 'queued' || j.state === 'running') ?? mine.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   }, [live.jobs, detail]);
   const working = job?.state === 'queued' || job?.state === 'running';
+  // A render of any version of this creative also stops a save (the core answers 409 `editor-busy`): final review M2.
+  const renderPrefix = detail && detail.jobKey.startsWith('creative:') ? `render:${detail.jobKey.slice('creative:'.length)}:v` : null;
+  const rendering = renderPrefix !== null && Object.values(live.jobs).some((j) => j.key.startsWith(renderPrefix) && (j.state === 'queued' || j.state === 'running'));
 
   // The base moved under the draft: another version changed the format.
   const dirty = draft !== null && isDirty(draft);
@@ -528,7 +531,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const frameStyle: CSSProperties = zoomFrame(width, height, video ? null : zoom);
   const alsoList = followers.map(labelOf).join(', ');
   const blocked = !draft ? null
-    : working ? e.busyAgent
+    : working || rendering ? e.busyAgent
       : baseMoved ? e.baseChangedTitle
         // A file being staged (a video converting) or staged again in a new session: the save would wait on it (M3).
         : staging || restaging ? e.saveWhileStaging
