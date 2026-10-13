@@ -105,7 +105,7 @@ let ws: string;
 let app: FastifyInstance;
 let fake: Fake;
 let prompts: string;
-const ENV = ['FAKE_CLAUDE_SCENARIO', 'FAKE_CLAUDE_PROMPT_FILE', 'FAKE_CLAUDE_FONT', 'FAKE_CLAUDE_TEXT', 'FAKE_CLAUDE_IMAGE', 'FAKE_CLAUDE_COMP_TAG'];
+const ENV = ['FAKE_CLAUDE_DURATION', 'FAKE_CLAUDE_SCENARIO', 'FAKE_CLAUDE_PROMPT_FILE', 'FAKE_CLAUDE_FONT', 'FAKE_CLAUDE_TEXT', 'FAKE_CLAUDE_IMAGE', 'FAKE_CLAUDE_COMP_TAG'];
 
 beforeEach(async () => {
   base = mkdtempSync(join(tmpdir(), 'ms-test-direct-edit-'));
@@ -433,6 +433,54 @@ describe('saving a draft as a new version', { timeout: 120_000 }, () => {
     expect(starOf(await store().readVersions(slug), 'test-wide', undefined, undefined).version).toBe(2);
   });
 
+  describe('a duration chosen in the editor, against the next agent turns (decisions log 270)', () => {
+    const lastPrompt = () => (JSON.parse(readFileSync(prompts, 'utf8').trim().split('\n').at(-1)!) as { prompt: string }).prompt;
+    const setBrief = async (slug: string, durationSec: number) => {
+      const c = await store().get(slug);
+      expect((await app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}`, headers: H, payload: { brief: { ...c.brief, durationSec } } })).statusCode).toBe(200);
+    };
+    const offBrief = (v: VersionEntry | undefined) => (v?.problems ?? []).some((p) => /5\.8/.test(p) || /requested|richiest/.test(p));
+    const extend = (slug: string) => draft(slug, 1, 'test-wide', (c) => { c.duration = 5.8; c.scenes[1]!.duration = Math.round((5.8 - c.scenes[1]!.start) * 10) / 10; }, [{ kind: 'sceneDuration', sceneId: 'two', duration: 3.3 }]);
+
+    it('an agent version far from a brief changed since is still flagged (nothing recorded, nothing accepted)', async () => {
+      process.env.FAKE_CLAUDE_DURATION = '4';
+      const slug = await create(['test-wide']); // brief 4 s, the agent made 4 s
+      await setBrief(slug, 6);
+      await turn(slug, { text: 'again' }); // the agent keeps 4 s
+      expect(lastPrompt()).not.toContain('Keep the current duration');
+      const v2 = (await versionOf(slug, 2))!;
+      expect(v2.status).toBe('incomplete');
+      expect(v2.compositions![0]!.userDuration).toBeUndefined();
+    });
+
+    it('an editor version under an unchanged brief: recorded, accepted, kept by the agent and carried', async () => {
+      const slug = await create(['test-wide']);
+      expect((await save(slug, await extend(slug))).statusCode).toBe(200);
+      expect((await versionOf(slug, 2))!.compositions![0]!.userDuration).toEqual({ durationSec: 5.8, briefDurationSec: 4 });
+      process.env.FAKE_CLAUDE_DURATION = '5.8';
+      await turn(slug, { text: 'louder' });
+      expect(lastPrompt()).toContain('Keep the current duration (test-wide: 5.8s) unless the user explicitly asks for another one');
+      const v3 = (await versionOf(slug, 3))!;
+      expect(v3.status).toBe('complete');
+      expect(v3.compositions![0]!.userDuration).toEqual({ durationSec: 5.8, briefDurationSec: 4 });
+      // Still held at the next turn (the agent's own version carries the user's choice).
+      await turn(slug, { text: 'again' });
+      expect((await versionOf(slug, 4))!.status).toBe('complete');
+    });
+
+    it('an editor version, then a brief change: flagged again', async () => {
+      const slug = await create(['test-wide']);
+      expect((await save(slug, await extend(slug))).statusCode).toBe(200);
+      await setBrief(slug, 7);
+      process.env.FAKE_CLAUDE_DURATION = '5.8';
+      await turn(slug, { text: 'louder' });
+      expect(lastPrompt()).not.toContain('Keep the current duration');
+      const v3 = (await versionOf(slug, 3))!;
+      expect(v3.status).toBe('incomplete');
+      expect(offBrief(v3)).toBe(true);
+    });
+  });
+
   it('the next agent turn starts from the edited version: work/editor/ is its exact copy, the prompt names it with the summary, the session is resumed (decisions log 263)', async () => {
     const slug = await create(['test-wide', 'test-tall']);
     const v1 = (await versionOf(slug, 1))!;
@@ -456,8 +504,9 @@ describe('saving a draft as a new version', { timeout: 120_000 }, () => {
     expect(agentRuns()).toBe(runs + 1);
     const last = JSON.parse(readFileSync(prompts, 'utf8').trim().split('\n').at(-1)!) as { prompt: string; args: string[] };
     expect(last.prompt).toContain(`v2 contains direct edits by the user: ${v2.request}. Build on v2; keep those edits unless the user asks to change them.`);
+    // The folder the turn starts from is named as the current source (the byte-for-byte check above is on that folder).
+    expect(last.prompt).toContain(`creatives/${slug}/work/editor/<format-id>/\` is the current source of those formats (test-wide, test-tall)`);
     expect(last.prompt).toContain(`creatives/${slug}/outputs/v2/compositions/<format-id>/`);
-    expect(last.prompt).toContain(`creatives/${slug}/work/editor/<format-id>/`);
     expect(last.prompt).toContain('assets/lib/');
     // Resumed: the session of the agent's last version, now told explicitly what changed.
     expect(last.args).toContain('--resume');

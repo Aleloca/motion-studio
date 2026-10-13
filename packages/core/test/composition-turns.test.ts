@@ -564,26 +564,20 @@ describe('units', () => {
     expect(lane.load).toEqual({ active: 0, waiting: 0 });
   });
 
-  it('acceptedDurationsOf: only an own composition of the base, recorded with no problem, off the brief, of a video format', async () => {
-    const creativeDir = mkdtempSync(join(tmpdir(), 'ms-test-acc-'));
-    try {
-      const write = (format: string, duration: number) => {
-        const d = join(creativeDir, 'outputs', 'v3', 'compositions', format);
-        mkdirSync(d, { recursive: true });
-        writeFileSync(join(d, 'composition.json'), JSON.stringify({ $schema: 'motion-studio/composition@1', width: 320, height: 180, fps: 30, duration, background: '#000000', fonts: [], scenes: [], tracks: [] }));
-      };
-      write('test-wide', 7); write('test-wide-b', 7); write('test-short', 4.2);
-      const entry = (format: string, problems: string[] = [], followsFormat?: string) => ({ format, dir: `compositions/${format}`, hash: 'a'.repeat(64), problems, ...(followsFormat ? { followsFormat } : {}) });
-      const base = { n: 3, commit: null, sessionId: null, status: 'complete', createdAt: '2026-10-13T10:00:00.000Z', request: 'r', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: 2,
-        compositions: [entry('test-wide'), entry('test-wide-b', ['compositions/test-wide-b: off']), entry('test-short')] } as unknown as VersionEntry;
-      const got = await acceptedDurationsOf(creativeDir, base, ['test-wide', 'test-wide-b', 'test-short', 'missing'], PRESETS, 4);
-      // test-wide: 7 s against 4 s, clean → accepted; test-wide-b has a problem; test-short is within the brief's tolerance.
-      expect([...got]).toEqual([['test-wide', 7]]);
-      expect((await acceptedDurationsOf(creativeDir, base, ['test-wide'], PRESETS, null)).size).toBe(0);
-      expect((await acceptedDurationsOf(creativeDir, undefined, ['test-wide'], PRESETS, 4)).size).toBe(0);
-    } finally {
-      rmSync(creativeDir, { recursive: true, force: true });
-    }
+  it('acceptedDurationsOf: only a duration the user chose in the editor, recorded, clean, and only while the brief is unchanged (decisions log 270)', () => {
+    const entry = (format: string, o: { problems?: string[]; userDuration?: { durationSec: number; briefDurationSec: number }; followsFormat?: string } = {}) =>
+      ({ format, dir: `compositions/${format}`, hash: 'a'.repeat(64), problems: o.problems ?? [], ...(o.userDuration ? { userDuration: o.userDuration } : {}), ...(o.followsFormat ? { followsFormat: o.followsFormat } : {}) });
+    const version = (compositions: unknown[], origin?: 'editor') => ({ n: 3, commit: null, sessionId: null, status: 'complete', createdAt: '2026-10-13T10:00:00.000Z', request: 'r', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: 2, compositions, ...(origin ? { origin } : {}) }) as unknown as VersionEntry;
+    // An agent version at 10 s, the brief since changed to 6 s: nothing recorded, so nothing accepted (flagged again).
+    expect(acceptedDurationsOf(version([entry('test-wide')]), ['test-wide'], PRESETS, 6).size).toBe(0);
+    // An editor version that chose 7 s against a 4 s brief: accepted while the brief still says 4 s.
+    const edited = version([entry('test-wide', { userDuration: { durationSec: 7, briefDurationSec: 4 } }), entry('test-wide-b', { problems: ['p'], userDuration: { durationSec: 7, briefDurationSec: 4 } }), entry('test-short', { followsFormat: 'test-wide', userDuration: { durationSec: 7, briefDurationSec: 4 } })], 'editor');
+    expect([...acceptedDurationsOf(edited, ['test-wide', 'test-wide-b', 'test-short', 'missing'], PRESETS, 4)]).toEqual([['test-wide', 7]]);
+    // The brief changed since (to 6 s, or to 7 s itself): the choice no longer holds.
+    expect(acceptedDurationsOf(edited, ['test-wide'], PRESETS, 6).size).toBe(0);
+    expect(acceptedDurationsOf(edited, ['test-wide'], PRESETS, 7).size).toBe(0);
+    expect(acceptedDurationsOf(edited, ['test-wide'], PRESETS, null).size).toBe(0);
+    expect(acceptedDurationsOf(undefined, ['test-wide'], PRESETS, 4).size).toBe(0);
   });
 
   it('names equal after NFC are a clear problem; links are refused; the json is normalised after the agent', async () => {

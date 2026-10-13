@@ -417,7 +417,7 @@ export class CreativeTurnService {
             await clearReferenceFrames(ref.projectDir, slug, n);
           }
         }
-        accepted = turnContract === 'compositions' ? await acceptedDurationsOf(creativeDir, base, targets, presets, creative.brief.durationSec) : new Map();
+        accepted = turnContract === 'compositions' ? acceptedDurationsOf(base, targets, presets, creative.brief.durationSec) : new Map();
         const uncheckable = new Set<string>();
         let forkSession = Boolean(creative.resumeFrom);
         let kind: PromptKind = versions.length === 0 ? 'first' : 'iteration';
@@ -908,6 +908,7 @@ export class CreativeTurnService {
       carriedComps: plan.carriedComps, links: plan.links, presets, locale, label,
       briefDurationSec: 'direct' in duration ? null : plan.creative.brief.durationSec,
       acceptedDurations: 'accepted' in duration ? duration.accepted : undefined,
+      ...('direct' in duration ? { direct: { briefDurationSec: plan.creative.brief.durationSec } } : {}),
     });
     const say = (level: 'info' | 'warning', text: string) => store.appendConversation(slug, { type: 'system', at: now(), level, text });
     for (const x of a.notDelivered) await say('warning', x.text);

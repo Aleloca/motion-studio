@@ -47,18 +47,20 @@ export async function carriableComposition(creativeDir: string, base: VersionEnt
 }
 
 /**
- * The durations off the brief that `base` has for `targets` and recorded with no problem (decisions log 262): a direct
- * edit's, since a direct save does not check the brief's duration. An agent turn that keeps such a duration is not told to
- * bring it back to the brief; one that changes it to another duration off the brief is, as before.
+ * The durations the user chose in the editor that `base` still carries for `targets` (decisions log 262, 270): only an own
+ * composition with a recorded `userDuration`, no problem, and a brief that still says the duration it was chosen against. An
+ * agent's own off-brief duration is never accepted, and a brief changed since the choice ends it. An agent turn that keeps
+ * an accepted duration is not told to bring it back to the brief; one that changes it to another off-brief duration is.
  */
-export async function acceptedDurationsOf(creativeDir: string, base: VersionEntry | undefined, targets: readonly string[], presets: FormatPreset[], briefDurationSec: number | null): Promise<Map<string, number>> {
+export function acceptedDurationsOf(base: VersionEntry | undefined, targets: readonly string[], presets: FormatPreset[], briefDurationSec: number | null): Map<string, number> {
   const out = new Map<string, number>();
   if (!base || briefDurationSec === null) return out;
   for (const f of targets) {
     const entry = base.compositions?.find((c) => c.format === f && c.followsFormat === undefined);
-    if (!entry || (entry.problems ?? []).length > 0 || findPreset(presets, f)?.kind !== 'video') continue;
-    const d = await compositionDuration(join(creativeDir, 'outputs', `v${base.n}`, ...entry.dir.split('/')));
-    if (d !== null && isDurationOffBrief(d, briefDurationSec)) out.set(f, d);
+    const u = entry?.userDuration;
+    if (!entry || !u || (entry.problems ?? []).length > 0 || findPreset(presets, f)?.kind !== 'video') continue;
+    if (u.briefDurationSec !== briefDurationSec || !isDurationOffBrief(u.durationSec, briefDurationSec)) continue;
+    out.set(f, u.durationSec);
   }
   return out;
 }
@@ -93,6 +95,8 @@ export async function assembleCompositions(o: {
   presets: FormatPreset[]; briefDurationSec: number | null; locale: Locale; label: (id: string) => string;
   /** Durations of the base kept without a problem (see `checkComposition`). */
   acceptedDurations?: ReadonlyMap<string, number>;
+  /** A direct save (decisions log 270): the brief's duration, to record a target's duration far from it as the user's choice. */
+  direct?: { briefDurationSec: number | null };
 }): Promise<AssembledCompositions> {
   const m = messages(o.locale);
   const j = m.jobs;
@@ -141,7 +145,15 @@ export async function assembleCompositions(o: {
       const own = check.byFormat.get(c.format) ?? [];
       const present = c.hash !== null && c.folder !== null && c.folder.files.some((f) => f.path === 'composition.json');
       if (!present) continue;
-      entries.set(c.format, { format: c.format, dir: compositionDirOf(c.format), hash: c.hash!, problems: own });
+      // The user's duration choice (decisions log 270): recorded by a direct save when far from the brief, kept by an agent
+      // turn that keeps the accepted duration.
+      const d = c.composition?.duration;
+      const accepted = o.acceptedDurations?.get(c.format);
+      const brief = o.direct ? o.direct.briefDurationSec : o.briefDurationSec;
+      const userDuration = d === undefined || brief === null || findPreset(o.presets, c.format)?.kind !== 'video' ? undefined
+        : o.direct && isDurationOffBrief(d, brief) ? { durationSec: d, briefDurationSec: brief }
+          : accepted !== undefined && Math.abs(d - accepted) < 0.0005 ? { durationSec: accepted, briefDurationSec: brief } : undefined;
+      entries.set(c.format, { format: c.format, dir: compositionDirOf(c.format), hash: c.hash!, problems: own, ...(userDuration ? { userDuration } : {}) });
       durations.set(c.format, c.composition ? c.composition.duration : undefined);
     }
   }
@@ -157,7 +169,7 @@ export async function assembleCompositions(o: {
     }
     const inherited = cc.entry.problems ?? [];
     for (const x of inherited) problem(x);
-    entries.set(p, { format: p, dir: compositionDirOf(p), hash: cc.entry.hash, problems: [...inherited] });
+    entries.set(p, { format: p, dir: compositionDirOf(p), hash: cc.entry.hash, problems: [...inherited], ...(cc.entry.userDuration ? { userDuration: cc.entry.userDuration } : {}) });
     durations.set(p, cc.duration ?? undefined);
   }
 

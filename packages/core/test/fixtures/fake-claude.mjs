@@ -102,7 +102,7 @@ rl.once('line', async (line) => {
       const dir = f.compositionDir ?? join(block.outputDir, 'compositions', f.id);
       mkdirSync(dir, { recursive: true });
       const still = f.kind === 'image';
-      let duration = still ? 0 : (block.durationSec ?? 10);
+      let duration = still ? 0 : (process.env.FAKE_CLAUDE_DURATION ? Number(process.env.FAKE_CLAUDE_DURATION) : (block.durationSec ?? 10));
       if (f.maxDurationSec) duration = Math.min(duration, f.maxDurationSec);
       const half = Math.round(duration * 5) / 10;
       const clips = [{ id: 'bg', name: `${tag}`, type: 'shape', start: 0, duration, props: { x: 0, y: 0, width: f.width, height: f.height, fill: '#2060c0' } }];

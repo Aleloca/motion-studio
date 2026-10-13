@@ -110,6 +110,12 @@ export const versionCompositionSchema = z.object({
    * format from a broken one in the same v2 version (`starOf`). Absent: the version-level `problems` count for it.
    */
   problems: z.array(z.string()).optional(),
+  /**
+   * A duration far from the brief that the USER chose in the editor (decisions log 270): the duration, and the brief's duration
+   * it was chosen against. Carried while the composition keeps that duration; an agent turn is not told to bring it back to
+   * the brief only while the brief still says `briefDurationSec`. Absent: no such choice.
+   */
+  userDuration: z.object({ durationSec: z.number().positive(), briefDurationSec: z.number().positive() }).optional(),
 });
 export type VersionComposition = z.infer<typeof versionCompositionSchema>;
 
