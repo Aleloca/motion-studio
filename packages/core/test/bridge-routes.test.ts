@@ -351,7 +351,12 @@ describe('the config folder is never opened through a permission prompt (bridge 
     // A brace segment that can expand to .. climbs too (fix round 2).
     expect(await namesProtectedPath('Glob', { pattern: `${dirname(configDir)}/x/{..,y}/${basename(configDir)}/run/*` }, [configDir], projectDir)).toBe(true);
     expect(await namesProtectedPath('Glob', { pattern: `${dirname(configDir)}/{..,y}/${basename(dirname(configDir))}/${basename(configDir)}/*` }, [configDir], projectDir)).toBe(true);
+    // A brace group whose alternatives hold `/` is one segment: the `..` written inside it still count as climbs (before,
+    // they were split apart and undercounted).
+    expect(await namesProtectedPath('Glob', { pattern: `${dirname(configDir)}/x/{a/..,..}/${basename(configDir)}/run/*` }, [configDir], projectDir)).toBe(true);
+    expect(await namesProtectedPath('Glob', { pattern: `${dirname(configDir)}/x/y/{../..,z}/${basename(configDir)}/run/*` }, [configDir], projectDir)).toBe(true);
     // Unrelated patterns stay unrelated.
+    expect(await namesProtectedPath('Glob', { pattern: `${projectDir}/src/{a/b,c}/*.png` }, [configDir], projectDir)).toBe(false);
     expect(await namesProtectedPath('Glob', { pattern: `${projectDir}/src/../assets/*.png` }, [configDir], projectDir)).toBe(false);
   });
   it('refuses ~user/ paths (another user\'s home is never expanded)', async () => {

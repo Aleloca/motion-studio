@@ -18,6 +18,22 @@ export function inputPaths(input: Record<string, unknown>): string[] {
   return out;
 }
 
+/**
+ * Splits a path on `/` outside braces: a brace group such as `{a/..,b}` stays in one segment (its alternatives may hold `/`,
+ * so cutting inside it would shift every later depth and hide the `..` climbs written inside).
+ */
+export function splitOutsideBraces(p: string): string[] {
+  const out: string[] = [];
+  let depth = 0, cur = '';
+  for (const ch of p) {
+    if (ch === '{') depth++;
+    else if (ch === '}' && depth > 0) depth--;
+    if (ch === '/' && depth === 0) { out.push(cur); cur = ''; } else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
 const segRegex = (seg: string): RegExp | null => {
   // Classes and alternatives are not worth parsing here: such a segment counts as matching (this only ever denies).
   if (/[[\]{}]/.test(seg)) return null;
@@ -31,7 +47,8 @@ const segRegex = (seg: string): RegExp | null => {
  * go deeper than the root. A pattern that stops above the root only names folders, never a file inside it.
  */
 export function patternReaches(pattern: string, root: string): boolean {
-  const pat = pattern.split('/').filter((x, i) => i === 0 || x !== '');
+  // A brace group holding `/` can stand for several folder levels: it is read as `**` (this only ever denies more).
+  const pat = splitOutsideBraces(pattern).filter((x, i) => i === 0 || x !== '').map((x) => (x.includes('{') && x.includes('/') ? '**' : x));
   const segs = root.split('/').filter((x, i) => i === 0 || x !== '');
   for (let i = 0; i < segs.length; i++) {
     const ps = pat[i];
@@ -92,9 +109,12 @@ export async function namesProtectedPath(toolName: string, input: Record<string,
     // A `..` after a wildcard segment (or a brace segment that can expand to `..`, e.g. `{..,x}`) can land anywhere under
     // the literal folder before the wildcard, raised by one level per such segment: read as `<that folder>/**`. Otherwise
     // `..` and `.` are resolved (absolute patterns too) before the segments are compared.
-    const parts = joined.split('/');
+    // A brace group is one segment even when its alternatives hold `/` (`{a/..,b}`, `{../..,x}`); every `..` written inside it
+    // counts as a climb (an over-count only widens the refusal).
+    const parts = splitOutsideBraces(joined);
     const firstWild = parts.findIndex((seg) => /[*?[\]{}]/.test(seg));
-    const ups = firstWild === -1 ? 0 : parts.slice(firstWild).filter((seg) => seg === '..' || (seg.includes('{') && seg.includes('..'))).length;
+    const climbs = (seg: string) => (seg === '..' ? 1 : seg.includes('{') ? (seg.match(/(?<=^|[{,/])\.\.(?=$|[},/])/g)?.length ?? 0) : 0);
+    const ups = firstWild === -1 ? 0 : parts.slice(firstWild).reduce((n, seg) => n + climbs(seg), 0);
     let full: string;
     if (ups > 0) {
       let prefix = normalize(parts.slice(0, firstWild).join('/') || '/');
@@ -103,9 +123,9 @@ export async function namesProtectedPath(toolName: string, input: Record<string,
     } else full = normalize(joined);
     const bases = [full];
     // The pattern's literal folder may be a symlink to the protected one.
-    const literal = full.split('/').findIndex((seg) => /[*?[\]{}]/.test(seg));
+    const literal = splitOutsideBraces(full).findIndex((seg) => /[*?[\]{}]/.test(seg));
     if (literal > 1) {
-      const segs = full.split('/');
+      const segs = splitOutsideBraces(full);
       bases.push(join(await realish(segs.slice(0, literal).join('/')), ...segs.slice(literal)));
     }
     if (bases.some((b) => rootForms.some((r) => patternReaches(b, r)))) return true;
