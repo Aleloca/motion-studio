@@ -3,7 +3,7 @@ import { rm } from 'node:fs/promises';
 import { brandKitSchema, effectiveServices, missingCapability, PROVIDER_IDS, serviceCapability, relativeFileSchema, webUrlSchema, type BriefServices, type KeyCapability, type ProviderId, type ServerMessage, type ServiceKind, type WorkspaceSettings } from '@motion-studio/shared';
 import { MCP_TOOLS } from '../agent/launcher.ts';
 import type { ApprovalBroker } from '../approvals/broker.ts';
-import { confirmPaid as confirmPaidShared } from '../approvals/confirm-paid.ts';
+import { confirmPaid as confirmPaidShared, type PaidContext } from '../approvals/confirm-paid.ts';
 import { MAX_AGENT_BYTES, readConfinedBytes, readConfinedFile } from '../brand/agent-guard.ts';
 import { inspectSiteFonts } from '../brand/site-fonts.ts';
 import { LibraryStore } from '../library/library-store.ts';
@@ -16,7 +16,7 @@ import { KEY_PERMISSIONS, KeyCheckCache } from '../providers/key-check.ts';
 import { fetchTransport, nodeTransport, type LookupFn, type Transport } from '../providers/safe-fetch.ts';
 import { generateImage, normalizeImageSize, OPENAI_IMAGE_MODEL } from '../providers/openai-images.ts';
 import { stockDownload, stockSearch, type StockProvider } from '../providers/stock.ts';
-import { ELEVENLABS_TTS_MODEL, elevenlabsDefaultVoice, elevenlabsSpeech, OPENAI_TTS_MODEL, openaiSpeech } from '../providers/tts.ts';
+import { ELEVENLABS_TTS_MODEL, elevenlabsDefaultVoice, elevenlabsSpeech, OPENAI_TTS_MODEL, openaiSpeech, TTS_MAX_CHARS } from '../providers/tts.ts';
 import { canonicalVoice, voiceProviderOf } from '../providers/voices.ts';
 import type { SecretsVault } from '../secrets/vault.ts';
 import { overrideNote, refusalText, resolveService, type MissingCapabilities } from '../services/service-policy.ts';
@@ -62,37 +62,32 @@ const s = (v: unknown, max = 4000) => (typeof v === 'string' ? v.trim().slice(0,
 const num = (v: unknown): number | undefined => (v === undefined || v === null || v === '' ? undefined : typeof v === 'number' ? v : Number.NaN);
 const slug = (t: string) => t.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'file';
 
-export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHandler> {
-  const httpFor = (c: BridgeContext) => jobHttp(deps, c);
-  // Per job, keyed by the job's own abort signal (one per run): nothing to clean up when the job ends.
-  const siteCalls = new WeakMap<AbortSignal, number>();
-  const allowed = (c: BridgeContext, tool: string) => {
-    if (!MCP_TOOLS[c.kind].includes(tool)) throw new ProviderError(403, t().errors.toolUnavailable);
-  };
-  const alive = (c: BridgeContext) => { if (c.signal.aborted) throw new ProviderError(499, cancelled()); };
+/** The sound voice of the project's brand kit, when one is set (unreadable or invalid kits count as none). */
+async function readBrandVoice(projectDir: string) {
+  try {
+    const k = await readConfinedFile(projectDir, 'brand/brand-kit.json');
+    if (!k || !('text' in k)) return null;
+    const parsed = brandKitSchema.safeParse(JSON.parse(k.text));
+    const v = parsed.success ? parsed.data.sound?.voice : null;
+    return v && VOICE.test(v.id) ? v : null;
+  } catch { return null; }
+}
+
+/** The helpers every paid path shares (the agent tools and the localize turn's voices): keys, services, key checks, files. */
+function paidHelpers(deps: ProviderToolsDeps) {
   const keyOf = async (p: keyof typeof LABEL) => {
     const k = await deps.vault.get(p);
     if (!k) throw new ProviderError(400, t().providers.configureKey({ provider: LABEL[p] }));
     return k;
   };
-  const confirmPaid = (c: BridgeContext, rule: string, title: string, detail: string) => confirmPaidShared(deps, c, rule, title, detail);
   /** The providers whose key is in the vault (never the key checks: a key that is set counts, Ruling G). */
   const configured = async () => new Set((await Promise.all(PROVIDER_IDS.map(async (p) => ((await deps.vault.get(p)) ? p : null)))).filter((p): p is ProviderId => p !== null));
-  /**
-   * The brief's word on this call (Task 7), checked first: a refusal comes before any argument check, confirmation, file
-   * read or request. Returns the provider to use (the brief's one wins over `requested`).
-   */
   const keyChecks = deps.keyChecks ?? new KeyCheckCache();
   /** F5: per provider, what the key checks know against `capability` (absent: nothing; default: the kind's capability). */
   const missingFor = (kind: ServiceKind, capability?: KeyCapability): MissingCapabilities => new Map(PROVIDER_IDS.flatMap((p) => {
     const m = missingCapability(keyChecks.get(p), capability ?? serviceCapability(kind, p));
     return m ? [[p, m] as const] : [];
   }));
-  const service = async (c: BridgeContext, kind: ServiceKind, requested?: unknown, capability?: KeyCapability): Promise<string> => {
-    const d = resolveService(c.services, kind, typeof requested === 'string' ? requested : undefined, await configured(), missingFor(kind, capability));
-    if (!d.ok) throw new ProviderError(d.reason === 'disabled' ? 403 : 400, refusalText(d, kind, c.services));
-    return d.provider;
-  };
   /**
    * What a real call says about the key (Task 8): a 401/403 means the key lacks this capability's permission, a success that
    * it has it. Remembered in memory only; the error goes on unchanged.
@@ -109,18 +104,32 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
     await keyChecks.recordUse(deps.vault, lease, capability, 'ok');
     return out;
   };
-  /** The sound voice of the project's brand kit, when one is set (unreadable or invalid kits count as none). */
-  const brandVoice = async (c: BridgeContext) => {
-    try {
-      const k = await readConfinedFile(c.projectDir, 'brand/brand-kit.json');
-      if (!k || !('text' in k)) return null;
-      const parsed = brandKitSchema.safeParse(JSON.parse(k.text));
-      const v = parsed.success ? parsed.data.sound?.voice : null;
-      return v && VOICE.test(v.id) ? v : null;
-    } catch { return null; }
+  const removeFiles = (projectDir: string, files: string[]) =>
+    Promise.all(files.map((f) => rm(join(projectDir, 'assets', ...f.split('/')), { force: true }).catch(() => {})));
+  return { keyOf, configured, keyChecks, missingFor, withKeyCheck, removeFiles };
+}
+
+export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHandler> {
+  const httpFor = (c: BridgeContext) => jobHttp(deps, c);
+  // Per job, keyed by the job's own abort signal (one per run): nothing to clean up when the job ends.
+  const siteCalls = new WeakMap<AbortSignal, number>();
+  const allowed = (c: BridgeContext, tool: string) => {
+    if (!MCP_TOOLS[c.kind].includes(tool)) throw new ProviderError(403, t().errors.toolUnavailable);
   };
-  const removeFiles = (c: BridgeContext, files: string[]) =>
-    Promise.all(files.map((f) => rm(join(c.projectDir, 'assets', ...f.split('/')), { force: true }).catch(() => {})));
+  const alive = (c: BridgeContext) => { if (c.signal.aborted) throw new ProviderError(499, cancelled()); };
+  const { keyOf, configured, keyChecks, missingFor, withKeyCheck, removeFiles: removeIn } = paidHelpers(deps);
+  const confirmPaid = (c: BridgeContext, rule: string, title: string, detail: string) => confirmPaidShared(deps, c, rule, title, detail);
+  /**
+   * The brief's word on this call (Task 7), checked first: a refusal comes before any argument check, confirmation, file
+   * read or request. Returns the provider to use (the brief's one wins over `requested`).
+   */
+  const service = async (c: BridgeContext, kind: ServiceKind, requested?: unknown, capability?: KeyCapability): Promise<string> => {
+    const d = resolveService(c.services, kind, typeof requested === 'string' ? requested : undefined, await configured(), missingFor(kind, capability));
+    if (!d.ok) throw new ProviderError(d.reason === 'disabled' ? 403 : 400, refusalText(d, kind, c.services));
+    return d.provider;
+  };
+  const brandVoice = (c: BridgeContext) => readBrandVoice(c.projectDir);
+  const removeFiles = (c: BridgeContext, files: string[]) => removeIn(c.projectDir, files);
   const register = async (c: BridgeContext, files: string[], item: (f: string) => Parameters<LibraryStore['registerAssets']>[0][number]) => {
     try {
       alive(c);
@@ -310,6 +319,118 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       throw e;
     }
   }) as BridgeHandler]));
+}
+
+/** One translated voice of a localize turn's batch: `key` identifies it in the result, `label` is shown on the card. */
+export interface VoiceBatchItem { key: string; label: string; text: string; name: string }
+/** Why the voices of a batch cannot be made before anything is asked or sent (`resolveService` on `brief.services.voice`, F5). */
+export type VoiceUnavailable = { status: 'unavailable'; reason: 'off' | 'noKey' | 'missingPermission'; message: string };
+export type VoiceBatchResult =
+  | VoiceUnavailable
+  | { status: 'declined'; message: string }
+  | { status: 'failed'; message: string }
+  | { status: 'done'; provider: 'openai' | 'elevenlabs'; files: Map<string, { file: string } | { error: string }> };
+/** The job a batch runs in: the paid context plus the brief's services read when the turn started. */
+export type VoiceBatchContext = PaidContext & { services?: BriefServices };
+
+/**
+ * The voice decision of a batch, before any confirmation or request: the provider `resolveService` gives for the brief's
+ * `voice` (F5: a key known to lack text-to-speech is unavailable; `none` is unavailable), and the voice to use (the brand kit's
+ * voice when it belongs to that provider). Same rules as the agent's `tts` with no provider or voice asked.
+ */
+async function voicePlan(deps: ProviderToolsDeps, h: ReturnType<typeof paidHelpers>, c: { projectDir: string; services?: BriefServices }):
+  Promise<VoiceUnavailable | { status: 'ok'; provider: 'openai' | 'elevenlabs'; voiceId: string | undefined; apiKey: string }> {
+  const d = resolveService(c.services, 'voice', undefined, await h.configured(), h.missingFor('voice'));
+  if (!d.ok) {
+    const reason = d.reason === 'disabled' ? 'off' : d.reason === 'noKey' ? 'noKey' : 'missingPermission';
+    return { status: 'unavailable', reason, message: refusalText(d, 'voice', c.services) };
+  }
+  const chosen = d.provider as 'openai' | 'elevenlabs';
+  const forced = effectiveServices({ services: c.services }).voice !== 'auto' ? chosen : null;
+  const brand = await readBrandVoice(c.projectDir);
+  const brandUsable = brand !== null && Boolean(await deps.vault.get(brand.provider)) && !missingCapability(h.keyChecks.get(brand.provider), 'tts');
+  const provider = forced ?? (brandUsable ? brand!.provider : chosen);
+  const apiKey = await deps.vault.get(provider);
+  // `auto` with no key at all resolves to the first provider: no key is unavailable, never a request.
+  if (!apiKey) return { status: 'unavailable', reason: 'noKey', message: t().providers.configureKey({ provider: LABEL[provider] }) };
+  return { status: 'ok', provider, voiceId: brand && brand.provider === provider ? brand.id : undefined, apiKey };
+}
+
+/** Whether the voices of a batch can be made under `services` (no confirmation, no request): null when they can. */
+export function voiceAvailability(deps: ProviderToolsDeps): (c: { projectDir: string; services?: BriefServices }) => Promise<VoiceUnavailable | null> {
+  const h = paidHelpers(deps);
+  return async (c) => {
+    const p = await voicePlan(deps, h, c);
+    return p.status === 'unavailable' ? p : null;
+  };
+}
+
+/**
+ * The translated voices of a localize turn (Phase 12, spec §3.2), made by the core with the phase 11 tts path: the brief's
+ * voice service (`voicePlan`), ONE `paid-batch` confirmation listing every call and its characters (a project "Always" rule
+ * for the provider's tts covers it), then each voice in order with the brand voice, saved into `assets/audio/` and registered
+ * in the library with the script as its description. A text over the provider's limit is refused alone, before the card.
+ * A cancelled job throws (499) and leaves no card; a declined card sends nothing.
+ */
+export function voiceBatch(deps: ProviderToolsDeps): (c: VoiceBatchContext, items: VoiceBatchItem[]) => Promise<VoiceBatchResult> {
+  const h = paidHelpers(deps);
+  return async (c, items) => {
+    const alive = () => { if (c.signal.aborted) throw new ProviderError(499, cancelled()); };
+    const plan = await voicePlan(deps, h, c);
+    if (plan.status === 'unavailable') return plan;
+    const { provider, apiKey } = plan;
+    const http = { ...jobHttp(deps, c), apiKey };
+    const files = new Map<string, { file: string } | { error: string }>();
+    const max = TTS_MAX_CHARS[provider];
+    const sendable = items.filter((i) => {
+      if (i.text.length <= max) return true;
+      files.set(i.key, { error: t().providers.textTooLong({ provider: LABEL[provider], max }) });
+      return false;
+    });
+    if (sendable.length === 0) return { status: 'done', provider, files };
+    let voice = plan.voiceId;
+    try {
+      // ElevenLabs with no brand voice: the account's first voice, a free read, BEFORE the confirmation (as `tts`, M3).
+      if (provider === 'elevenlabs' && !voice) voice = await h.withKeyCheck('elevenlabs', apiKey, 'voices', () => elevenlabsDefaultVoice(http));
+    } catch (e) {
+      alive();
+      return { status: 'failed', message: e instanceof Error ? e.message : String(e) };
+    }
+    alive();
+    const chars = sendable.reduce((n, i) => n + i.text.length, 0);
+    const list = sendable.slice(0, 8).map((i) => i.label).join('; ') + (sendable.length > 8 ? '; …' : '');
+    try {
+      await confirmPaidShared(deps, c, `provider:tts-${provider}`, t().approvals.generateVoices({ provider: LABEL[provider], count: sendable.length }),
+        t().approvals.voicesBatchDetail({ count: sendable.length, chars, list }),
+        { provider, calls: sendable.slice(0, 200).map((i) => ({ label: i.label.slice(0, 300), chars: i.text.length })) });
+    } catch (e) {
+      if (e instanceof ProviderError && e.status === 403) return { status: 'declined', message: e.message };
+      throw e;
+    }
+    const library = new LibraryStore(c.projectDir, deps.media);
+    const model = provider === 'openai' ? OPENAI_TTS_MODEL : ELEVENLABS_TTS_MODEL;
+    for (const item of sendable) {
+      alive();
+      try {
+        const req = { text: item.text, voice, format: 'mp3' } as const;
+        const out = await h.withKeyCheck(provider, apiKey, 'tts', () => (provider === 'openai' ? openaiSpeech(http, req) : elevenlabsSpeech(http, req)));
+        alive();
+        const file = await saveGeneratedFile(c.projectDir, 'audio', `${slug(item.name)}.mp3`, out.bytes);
+        try {
+          await library.registerAssets([{ file, origin: 'generated', description: item.text.slice(0, 2000), tags: [t().providers.voiceTag, provider], attribution: t().providers.voiceAttribution({ provider: LABEL[provider] }), provider, model }]);
+        } catch (e) {
+          await h.removeFiles(c.projectDir, [file]);
+          throw e;
+        }
+        files.set(item.key, { file: `assets/${file}` });
+      } catch (e) {
+        if (c.signal.aborted) throw new ProviderError(499, cancelled());
+        files.set(item.key, { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    deps.broadcast({ type: 'library', project: c.projectSlug });
+    return { status: 'done', provider, files };
+  };
 }
 
 /**

@@ -2,10 +2,12 @@ import { createHash, randomBytes } from 'node:crypto';
 import { lstat, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
-  applyLocalization, LOCALIZATION_SCHEMA_ID, LocalizationMismatch, localizationSchema, messages,
+  applyLocalization, localizableEntries, LOCALIZATION_SCHEMA_ID, LocalizationMismatch, localizationSchema, messages,
   type Composition, type FormatPreset, type Locale, type LocaleTag, type Localization, type LocalizationRow, type VersionComposition, type VersionEntry,
 } from '@motion-studio/shared';
-import { readConfinedFile } from '../brand/agent-guard.ts';
+import { readConfinedBytes, readConfinedFile } from '../brand/agent-guard.ts';
+import { LibraryStore } from '../library/library-store.ts';
+import { NoMediaTools, type MediaTools } from '../media/media-tools.ts';
 import { loadComposition, type CompositionFolder } from '../compositions/composition-files.ts';
 import { noteCoreTemp } from '../core-temps.ts';
 import { findPreset } from '../formats/format-catalog.ts';
@@ -62,6 +64,54 @@ export async function readOverlay(creativeDir: string, n: number, locale: Locale
   const parsed = localizationSchema.safeParse(raw);
   if (!parsed.success || parsed.data.locale !== locale || parsed.data.instanceId !== instanceId) return null;
   return { overlay: parsed.data, hash: createHash('sha256').update(r.text).digest('hex') };
+}
+
+/**
+ * Where an overlay's voice files may live (Phase 12, Task 4): the instance's composition folder, then the project (the
+ * voices a localize turn generates are project assets, `assets/audio/…`). A path the folder has wins, everywhere: the checks,
+ * the preview and the localized render's private copy.
+ */
+export const voiceRootsOf = (ic: Pick<InstanceComposition, 'compDir'>, projectDir: string): string[] => [ic.compDir, projectDir];
+
+/** Largest voice file hashed to find its tts description. */
+const MAX_VOICE_HASH_BYTES = 50 * 1024 * 1024;
+
+async function confinedHash(dir: string, rel: string): Promise<{ sha: string; size: number } | null> {
+  const r = await readConfinedBytes(dir, rel, MAX_VOICE_HASH_BYTES).catch(() => null);
+  if (!r || !('bytes' in r)) return null;
+  return { sha: createHash('sha256').update(r.bytes).digest('hex'), size: r.bytes.length };
+}
+
+/**
+ * The known script of each voice clip of `ic` (spec §3.1): its `script`, else the description of the project asset generated
+ * by `tts` with the very same bytes (a generated audio asset of the library: same size and sha256). Clips with neither are
+ * absent: they cannot be translated.
+ */
+export async function knownVoiceScripts(ic: Pick<InstanceComposition, 'compDir' | 'composition'>, projectDir: string, media: MediaTools = NoMediaTools): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const voices = localizableEntries(ic.composition).voices;
+  const missing: Array<{ clipId: string; src: string }> = [];
+  for (const v of voices) {
+    if (v.script !== null) { out.set(v.clipId, v.script); continue; }
+    const clip = ic.composition.tracks.flatMap((t) => t.clips).find((c) => c.id === v.clipId);
+    if (clip?.type === 'audio') missing.push({ clipId: v.clipId, src: clip.src });
+  }
+  if (missing.length === 0) return out;
+  const assets = (await new LibraryStore(projectDir, media).listAssets().catch(() => []))
+    .filter((a) => a.kind === 'audio' && a.origin === 'generated' && a.description.trim() !== '');
+  if (assets.length === 0) return out;
+  const hashes = new Map<string, { sha: string; size: number } | null>();
+  for (const m of missing) {
+    const own = await confinedHash(ic.compDir, m.src);
+    if (!own) continue;
+    for (const a of assets) {
+      if (a.bytes !== undefined && a.bytes !== own.size) continue;
+      if (!hashes.has(a.file)) hashes.set(a.file, await confinedHash(projectDir, `assets/${a.file}`));
+      const h = hashes.get(a.file);
+      if (h && h.sha === own.sha) { out.set(m.clipId, a.description.slice(0, 5000)); break; }
+    }
+  }
+  return out;
 }
 
 /** The bytes an overlay is stored as. */
@@ -159,6 +209,8 @@ export async function finishOverlay(o: {
   projectDir: string; voiceRoots: readonly string[];
   /** Ids outdated for another reason (carry-over: a voice file the new version does not have). */
   extraStale?: readonly string[];
+  /** The known voice scripts (`knownVoiceScripts`); absent: computed here. */
+  scripts?: ReadonlyMap<string, string>;
   /**
    * The language's fallback font, resolved beforehand (`resolveFallbackFont`, outside the creative's lock: it may download);
    * absent: the fonts the overlay has are kept as they are.
@@ -169,7 +221,8 @@ export async function finishOverlay(o: {
   const problems: string[] = [];
   const add = (t: string) => { if (!problems.includes(t)) problems.push(t); };
   let overlay = o.overlay;
-  const stale = [...new Set([...staleIds(overlay, o.base.composition), ...(o.extraStale ?? [])])];
+  const scripts = o.scripts ?? await knownVoiceScripts(o.base, o.projectDir);
+  const stale = [...new Set([...staleIds(overlay, o.base.composition, scripts), ...(o.extraStale ?? [])])];
   const font = o.fallback;
   if (font && 'unavailable' in font) add(v.fallbackFontUnavailable({ family: font.unavailable }));
   else if (font) overlay = { ...overlay, fonts: [...overlay.fonts.filter((f) => f.family !== font.family), { family: font.family, files: font.files }] };

@@ -11,7 +11,7 @@ import {
 import { copyConfinedFile, hashConfinedFile } from '../brand/agent-guard.ts';
 import { loadComposition, readCompositionFolder } from '../compositions/composition-files.ts';
 import { instanceComposition, localizedComposition, readOverlay } from '../localization/store.ts';
-import { checkedLocale, clipLabel } from '../localization/validate.ts';
+import { checkedLocale, clipLabel, voiceFileOk } from '../localization/validate.ts';
 import { realDirChain } from './core-files.ts';
 import { noteCoreChange } from '../core-changes.ts';
 import { noteCoreTemp } from '../core-temps.ts';
@@ -629,6 +629,17 @@ export class RenderJobService {
           await mkdir(dirname(join(compDir, ...p.split('/'))), { recursive: true });
           await copyConfinedFile(ref.projectDir, p, join(compDir, ...p.split('/')));
           have.add(p);
+        }
+      }
+      // The translated voices the core generated are project assets (Task 4, `voiceRootsOf`): copied in too, unless the
+      // composition folder has that path (it wins, as in the checks). Stale or unused voices are not needed.
+      if (row.voice === 'translated') {
+        for (const [id, v] of Object.entries(read.overlay.voices)) {
+          if (have.has(v.src) || row.stale.includes(id)) continue;
+          if (!(await voiceFileOk([ref.projectDir], v.src))) throw new Error(m.variants.voiceFileInvalid({ clip: clipLabel(ic.composition, id) }));
+          await mkdir(dirname(join(compDir, ...v.src.split('/'))), { recursive: true });
+          await copyConfinedFile(ref.projectDir, v.src, join(compDir, ...v.src.split('/')));
+          have.add(v.src);
         }
       }
       const prepared = await this.deps.normalizer.prepare({ projectDir: ref.projectDir, compDir, composition, signal });

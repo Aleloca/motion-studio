@@ -22,7 +22,9 @@ export interface BridgeContext {
   /** Creative turns (output contract v2): the checks of the turn's compositions, all or one format's (`validate_composition`). */
   validateComposition?: (format?: string) => Promise<unknown>;
   /** Creative turns: a few PNG frames of a composition (`preview_frames`), rate-limited per turn. */
-  previewFrames?: (args: { format: unknown; times: unknown }) => Promise<unknown>;
+  previewFrames?: (args: { format: unknown; times: unknown; locale?: unknown }) => Promise<unknown>;
+  /** Localize turns (Phase 12): validates and merges a translation into the overlay (`submit_localization`). */
+  submitLocalization?: (args: Record<string, unknown>) => Promise<unknown>;
   /** The language the job started with (brand analysis): tool notes that end up in its proposal use it. */
   locale?: Locale;
   /** Brand analysis: notes a tool adds to the proposal (e.g. inspect_site_fonts warnings), already in `locale`. */

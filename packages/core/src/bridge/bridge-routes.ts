@@ -135,7 +135,11 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
     },
     preview_frames: async (c, a) => {
       if (!c.previewFrames) throw new WorkspaceError(400, t().errors.validateOnlyCreatives);
-      return c.previewFrames({ format: a.format, times: a.times });
+      return c.previewFrames({ format: a.format, times: a.times, ...(Object.hasOwn(a, 'locale') ? { locale: a.locale } : {}) });
+    },
+    submit_localization: async (c, a) => {
+      if (!c.submitLocalization) throw new WorkspaceError(400, t().errors.toolUnavailable);
+      return c.submitLocalization(a);
     },
     // The core is not sandboxed: never follow the agent's symlinks, never read special or huge files.
     read_brand_kit: async (c) => {

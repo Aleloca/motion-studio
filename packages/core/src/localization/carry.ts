@@ -1,5 +1,5 @@
 import type { Locale, VersionEntry } from '@motion-studio/shared';
-import { finishOverlay, readOverlay, writeOverlay, type InstanceComposition } from './store.ts';
+import { finishOverlay, readOverlay, voiceRootsOf, writeOverlay, type InstanceComposition } from './store.ts';
 import { voiceFileOk, withoutGone } from './validate.ts';
 
 /** A version folder of a creative: the creative folder and the version (the previous one, recorded) or its number (the new one). */
@@ -28,7 +28,7 @@ export async function carryLocalizations(prev: VersionDir, next: VersionDir, nex
     if (!read || read.hash !== row.hash) continue;
     const overlay = withoutGone(read.overlay, base.composition);
     if (Object.keys(overlay.texts).length + Object.keys(overlay.params).length + Object.keys(overlay.voices).length === 0) continue;
-    const voiceRoots = [base.compDir];
+    const voiceRoots = voiceRootsOf(base, o.projectDir);
     const missingVoices: string[] = [];
     for (const [id, v] of Object.entries(overlay.voices)) if (!(await voiceFileOk(voiceRoots, v.src))) missingVoices.push(id);
     const done = await finishOverlay({

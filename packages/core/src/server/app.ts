@@ -27,7 +27,9 @@ import { defaultConfigDir, type AppConfigStore } from '../app-config.ts';
 import { AgentBridge } from '../bridge/bridge.ts';
 import { registerBridgeRoutes } from '../bridge/bridge-routes.ts';
 import { downloadTool } from '../bridge/download-tool.ts';
-import { providerTools } from '../bridge/provider-tools.ts';
+import { providerTools, voiceAvailability, voiceBatch } from '../bridge/provider-tools.ts';
+import { LocalizeService } from '../localization/localize-turn.ts';
+import type { LookupFn, Transport } from '../providers/safe-fetch.ts';
 import { checkCodebases, codebaseOverlaps, normalizeCodebaseList } from '../codebases.ts';
 import type { Git } from '../git.ts';
 import { JobConflictError, JobQueue } from '../jobs/job-queue.ts';
@@ -80,6 +82,8 @@ export interface ServerDeps {
   generateHttp?: Pick<HttpDeps, 'fetch' | 'transport' | 'lookup' | 'timeoutMs'>;
   /** Network of the voice list and previews (tests inject a fake fetch; default: the real one through the safe transport). */
   voicesHttp?: HttpDeps;
+  /** Network of a localize turn's translated voices (tests inject a fake fetch; default: the real one). */
+  localizeHttp?: { fetch?: typeof fetch; transport?: Transport; lookup?: LookupFn };
   /** What the app has learned about the provider keys (core memory only; tests inject one to read it). */
   keyChecks?: KeyCheckCache;
   /** Network of the key checks (tests inject a fake fetch; default: the real one). */
@@ -470,8 +474,19 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   registerLibraryRoutes(app, routeCtx);
   const fontsHttp = deps.fontsHttp ?? { fetch: globalThis.fetch };
   registerFontsRoutes(app, { ...routeCtx, catalog: new GoogleFontsCatalog({ configDir, http: fontsHttp }), http: fontsHttp, signer: new UrlSigner(deps.signedUrlTtlMs), ...(deps.fontsInstallIo ? { installIo: deps.fontsInstallIo } : {}) });
+  // Localize turns (Phase 12, Task 4): the agent translates through submit_localization; the core makes the voices.
+  const voiceDeps = { vault, approvals, media, keyChecks, settings: () => requireWorkspace().readSettings(), broadcast: (m: ServerMessage) => hub.broadcast(m), ...deps.localizeHttp };
+  const localize = new LocalizeService({
+    turns, queue, launcher, media, previews,
+    presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
+    model: async () => (await requireWorkspace().readSettings()).model,
+    broadcast: (msg) => hub.broadcast(msg),
+    voices: { available: voiceAvailability(voiceDeps), batch: voiceBatch(voiceDeps) },
+    fonts: { http: fontsHttp, ...(deps.fontsInstallIo ? { io: deps.fontsInstallIo } : {}) },
+    ...(deps.previewFramesPerTurn !== undefined ? { previewFramesPerTurn: deps.previewFramesPerTurn } : {}),
+  });
   registerLocalizationRoutes(app, { requireWorkspace, turns, media, presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets, fontsHttp,
-    ...(deps.fontsInstallIo ? { fontsIo: deps.fontsInstallIo } : {}) });
+    ...(deps.fontsInstallIo ? { fontsIo: deps.fontsInstallIo } : {}), localize });
   registerVoicesRoutes(app, { vault, http: deps.voicesHttp ?? { fetch: globalThis.fetch }, signer: new UrlSigner(deps.signedUrlTtlMs), keyChecks });
   registerGenerateRoutes(app, { requireWorkspace, vault, approvals, media, queue, keyChecks, http: deps.generateHttp ?? { fetch: globalThis.fetch }, broadcast: (m) => hub.broadcast(m) });
   registerProjectRoutes(app, { requireWorkspace, jobKeyOf: projectJobKey, broadcast: (m) => hub.broadcast(m) });

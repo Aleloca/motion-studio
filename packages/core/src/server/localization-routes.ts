@@ -7,8 +7,9 @@ import {
 import { CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeRef, CreativeTurnService } from '../creatives/creative-turns.ts';
 import { editorCompositionView } from '../creatives/editor-staging.ts';
-import { emptyOverlay, finishOverlay, resolveFallbackFont, instanceComposition, localizedComposition, readOverlay, setLocalizationRow, writeOverlay } from '../localization/store.ts';
+import { emptyOverlay, finishOverlay, resolveFallbackFont, instanceComposition, localizedComposition, readOverlay, setLocalizationRow, voiceRootsOf, writeOverlay } from '../localization/store.ts';
 import { checkedInstance, checkedLocale } from '../localization/validate.ts';
+import type { LocalizeService } from '../localization/localize-turn.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import type { InstallIo } from '../providers/google-fonts.ts';
 import type { HttpDeps } from '../providers/http.ts';
@@ -29,6 +30,8 @@ export interface LocalizationRoutesContext {
   /** The Google Fonts network for the fallback fonts (tests: a fake fetch). */
   fontsHttp: HttpDeps;
   fontsIo?: InstallIo;
+  /** Localize turns (Task 4): `POST …/versions/:n/localize`. */
+  localize: LocalizeService;
 }
 
 const clipId = z.string().max(COMPOSITION_LIMITS.id);
@@ -136,6 +139,13 @@ export function registerLocalizationRoutes(app: FastifyInstance, ctx: Localizati
   type P = { slug: string; c: string; n: string };
   type PL = P & { locale: string; instanceId: string };
 
+  // A localize turn on an existing version (Task 4): checked, then queued (job kind `localize`, the agents' lane).
+  app.post<{ Params: P }>('/api/projects/:slug/creatives/:c/versions/:n/localize', async (req, reply) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const job = await ctx.localize.start(ref, versionNumber(req.params.n), req.body);
+    return reply.status(202).send({ jobId: job.id });
+  });
+
   app.get<{ Params: P }>(base, async (req) => {
     const ref = await refOf(req.params.slug, req.params.c);
     const v = await versionOf(ref.store, ref.creativeSlug, req.params.n);
@@ -186,7 +196,7 @@ export function registerLocalizationRoutes(app: FastifyInstance, ctx: Localizati
       const { overlay, chooseFit } = applyEdit(current, edit, localizableEntries(ic.composition), ui);
       const voice: LocalizationRow['voice'] = edit.voice ?? row?.voice ?? (Object.keys(overlay.voices).length > 0 ? 'translated' : 'original');
       const done = await finishOverlay({
-        overlay, base: ic, voice, chooseFit, uiLocale: ui, projectDir: ref.projectDir, voiceRoots: [ic.compDir],
+        overlay, base: ic, voice, chooseFit, uiLocale: ui, projectDir: ref.projectDir, voiceRoots: voiceRootsOf(ic, ref.projectDir),
         fallback,
       });
       const hash = await writeOverlay(creativeDir, v.n, done.overlay);

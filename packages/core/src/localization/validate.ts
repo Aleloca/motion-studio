@@ -100,11 +100,12 @@ export async function checkOverlay(raw: unknown, o: { composition: Composition; 
  * overlay's `source`, a voice whose clip's script is not its `sourceScript`; `fit` follows its text. Entries whose clip is
  * gone are not listed here (`withoutGone` drops them).
  */
-export function staleIds(overlay: Localization, composition: Composition): string[] {
+export function staleIds(overlay: Localization, composition: Composition, scripts?: ReadonlyMap<string, string>): string[] {
   const e = localizableEntries(composition);
   const texts = new Map(e.texts.map((t) => [t.clipId, t.text] as const));
   const params = new Map(e.params.map((p) => [p.key, p.text] as const));
-  const voices = new Map(e.voices.map((x) => [x.clipId, x.script] as const));
+  // A voice clip's script, or (Phase 12, Task 4) the known script the caller found for it (the tts asset's description).
+  const voices = new Map(e.voices.map((x) => [x.clipId, x.script ?? scripts?.get(x.clipId) ?? null] as const));
   const out: string[] = [];
   for (const [id, t] of Object.entries(overlay.texts)) if (texts.has(id) && texts.get(id) !== t.source) out.push(id);
   for (const [key, t] of Object.entries(overlay.params)) if (params.has(key) && params.get(key) !== t.source) out.push(key);

@@ -10,7 +10,7 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { expect } from 'vitest';
-import type { FormatPreset, JobSummary, VersionEntry } from '@motion-studio/shared';
+import type { Composition, FormatPreset, JobSummary, VersionEntry } from '@motion-studio/shared';
 import { AppConfigStore } from '../../src/app-config.ts';
 import { ClaudeCodeRunner } from '../../src/agent/claude-code-runner.ts';
 import { AgentBridge } from '../../src/bridge/bridge.ts';
@@ -34,7 +34,9 @@ export const PRESETS: FormatPreset[] = [
   { id: 'foo', channel: 'Test', name: 'Foo', width: 200, height: 200, kind: 'video', extensions: ['mp4'] },
   { id: 'foo-2', channel: 'Test', name: 'Foo two', width: 200, height: 200, kind: 'video', extensions: ['mp4'] },
 ];
-const ENV = ['FAKE_CLAUDE_DURATION', 'FAKE_CLAUDE_SCENARIO', 'FAKE_CLAUDE_PROMPT_FILE', 'FAKE_CLAUDE_FONT', 'FAKE_CLAUDE_TEXT', 'FAKE_CLAUDE_IMAGE', 'FAKE_CLAUDE_COMP_TAG'];
+const ENV = ['FAKE_CLAUDE_DURATION', 'FAKE_CLAUDE_SCENARIO', 'FAKE_CLAUDE_PROMPT_FILE', 'FAKE_CLAUDE_FONT', 'FAKE_CLAUDE_TEXT', 'FAKE_CLAUDE_IMAGE', 'FAKE_CLAUDE_COMP_TAG',
+  'FAKE_CLAUDE_TEXT_VALUE', 'FAKE_CLAUDE_VOICE', 'FAKE_CLAUDE_VOICE_SCRIPT', 'FAKE_CLAUDE_LOCALIZE_CALLS', 'FAKE_CLAUDE_LOCALIZE_FIX_CALLS', 'FAKE_CLAUDE_BRIDGE_LOG',
+  'FAKE_CLAUDE_LOCALIZE_WRITE', 'FAKE_CLAUDE_ARGS_FILE'];
 
 function png(width: number, height: number): Buffer {
   const b = Buffer.alloc(33);
@@ -51,16 +53,22 @@ function png(width: number, height: number): Buffer {
  * `overflows`: clip ids every render reports as advisory `textOverflow` (Phase 12, Ruling I); `after`: runs right after a
  * render's file is in place.
  */
-export interface FakeEngine { engine: RenderEngine; renders: RenderCompositionOptions[]; gate: Promise<void> | null; overflows: string[]; after: ((o: RenderCompositionOptions) => void | Promise<void>) | null }
+/** `measure`: when set, the clip ids frames report as `textOverflow` for a given composition (instead of `overflows`). */
+export interface FakeEngine { engine: RenderEngine; renders: RenderCompositionOptions[]; frameCalls: RenderFramesOptions[]; gate: Promise<void> | null; overflows: string[]; measure: ((c: Composition) => string[]) | null; after: ((o: RenderCompositionOptions) => void | Promise<void>) | null }
 function fakeEngine(): FakeEngine {
-  const f: FakeEngine = { renders: [], gate: null, overflows: [], after: null, engine: null as unknown as RenderEngine };
+  const f: FakeEngine = { renders: [], frameCalls: [], gate: null, overflows: [], measure: null, after: null, engine: null as unknown as RenderEngine };
   f.engine = {
     info: async () => ({ kind: 'injected' }),
     provider: async () => { throw new Error('not used'); },
     frames: async (o: Omit<RenderFramesOptions, 'provider'>): Promise<RenderFramesResult> => {
       const c = o.composition;
       const height = Math.round((o.width * c.height) / c.width);
-      return { frames: o.times.map((t) => ({ t: frameTime(c, t), data: png(o.width, height), width: o.width, height })), errors: [] };
+      f.frameCalls.push(o as RenderFramesOptions);
+      // The browser's text measure (Ruling I) reported by frames too: the clips of `overflows` present in the composition.
+      const present = new Set(c.tracks.flatMap((t) => t.clips.map((x) => x.id)));
+      const ids = f.measure ? f.measure(c) : f.overflows;
+      const errors = ids.filter((id) => present.has(id)).map((clipId) => ({ code: 'textOverflow', message: `text overflows its box (${clipId})`, clipId }));
+      return { frames: o.times.map((t) => ({ t: frameTime(c, t), data: png(o.width, height), width: o.width, height })), errors };
     },
     render: async (o: Omit<RenderCompositionOptions, 'provider'>): Promise<RenderResult> => {
       f.renders.push(o as RenderCompositionOptions);
@@ -89,7 +97,7 @@ export interface InstanceEnv {
   versionOf(slug: string, n: number): Promise<VersionEntry | undefined>;
   waitJob(id: string): Promise<JobSummary>;
   waitRunning(id: string): Promise<void>;
-  create(formats: string[], o?: { links?: Record<string, string>; formatLabels?: Record<string, string>; locales?: { primary: string; extra: string[] } }): Promise<string>;
+  create(formats: string[], o?: { links?: Record<string, string>; formatLabels?: Record<string, string>; locales?: { primary: string; extra: string[] }; brief?: Record<string, unknown> }): Promise<string>;
   turn(slug: string, payload: object): Promise<void>;
   render(slug: string, n: number): Promise<void>;
   close(): Promise<void>;
@@ -140,7 +148,7 @@ export async function startInstanceEnv(prefix: string, extra: Partial<Parameters
     },
     async create(formats, o = {}) {
       const r = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', headers: H, payload: {
-        title: 'Launch', generate: true, brief: { goal: 'g', message: '', formats, durationSec: 4, assets: [], notes: '', ...(o.links ? { links: o.links } : {}), ...(o.formatLabels ? { formatLabels: o.formatLabels } : {}), ...(o.locales ? { locales: o.locales } : {}) },
+        title: 'Launch', generate: true, brief: { goal: 'g', message: '', formats, durationSec: 4, assets: [], notes: '', ...(o.links ? { links: o.links } : {}), ...(o.formatLabels ? { formatLabels: o.formatLabels } : {}), ...(o.locales ? { locales: o.locales } : {}), ...o.brief },
       } });
       expect(r.statusCode, r.body).toBe(201);
       const done = await waitJob((r.json().job as JobSummary).id);

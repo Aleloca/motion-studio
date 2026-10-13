@@ -263,6 +263,37 @@ export class PreviewService {
     };
   }
 
+  /**
+   * `preview_frames` of a localize turn (Phase 12): frames of a localized composition held in memory (the version's composition
+   * folder `folder`, with the overlay applied), same limits as `agentFrames`.
+   */
+  async localizedAgentFrames(o: { ref: VersionFormatRef; format: string; folder: string; preset: FormatPreset; composition: Composition; times: unknown; locale: Locale; signal: AbortSignal }): Promise<Record<string, unknown>> {
+    const times = checkedPreviewTimes(o.times, o.locale);
+    const c = o.composition;
+    const r = await this.frames({ ref: o.ref, folder: o.folder, preset: o.preset, composition: c, times, width: Math.min(AGENT_FRAME_MAX_WIDTH, c.width), imageFormat: 'png', signal: o.signal });
+    return {
+      format: o.format, ok: true,
+      frames: r.frames.map((f) => ({ t: f.t, width: f.width, height: f.height })),
+      ...(r.errors.length ? { runtimeErrors: r.errors.map((x) => ({ code: x.code, message: x.message, ...(x.clipId ? { clipId: x.clipId } : {}) })) } : {}),
+      images: r.frames.map((f) => ({ mimeType: 'image/png', data: f.data.toString('base64') })),
+    };
+  }
+
+  /**
+   * The browser's text measure of a composition held in memory (Phase 12, Ruling I): one small frame in render mode, whose
+   * runtime lays out every boxed text clip once and reports a text that needs more room than its box (`textOverflow`).
+   * Returns the clip ids that overflow, or null when no renderer can run it now (no engine, busy lane, a failure).
+   */
+  async measureTextOverflow(o: { ref: VersionFormatRef; folder: string; preset: FormatPreset; composition: Composition; signal?: AbortSignal }): Promise<string[] | null> {
+    if (!this.deps.engine) return null;
+    try {
+      const r = await this.frames({ ref: o.ref, folder: o.folder, preset: o.preset, composition: o.composition, times: [0], width: Math.min(64, o.composition.width), imageFormat: 'jpeg', ...(o.signal ? { signal: o.signal } : {}) });
+      return [...new Set(r.errors.filter((e) => e.code === 'textOverflow' && e.clipId).map((e) => e.clipId!))];
+    } catch {
+      return null;
+    }
+  }
+
   /** The storyboard index of (version, format) when it exists and matches `hash`; null otherwise. */
   async readStoryboard(ref: VersionFormatRef, folder: string, hash: string): Promise<Storyboard | null> {
     const sb = await readJsonFile(join(storyboardDir(ref.projectDir, ref.creativeSlug, ref.n, folder), 'storyboard.json'), storyboardSchema).catch(() => null);

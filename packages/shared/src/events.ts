@@ -37,7 +37,8 @@ export type AgentEvent =
 export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
 /** What a job does: logic and the UI branch on this, never on the (localized) label. */
-export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console' | 'render' | 'asset-generation';
+/** `localize` (Phase 12): an agent turn that translates an existing version (overlays only, no new version). */
+export type JobKind = 'creative' | 'brand-analysis' | 'asset-description' | 'console' | 'render' | 'asset-generation' | 'localize';
 
 /**
  * Progress of a render job (Task 5), per format: `media` while the video sources are normalised ("Preparing media…",

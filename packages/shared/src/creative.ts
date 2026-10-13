@@ -178,6 +178,14 @@ export const versionEntrySchema = z.object({
     origin: z.enum(['agent', 'editor']), stale: z.array(z.string()),
     voice: z.enum(['translated', 'original', 'muted']), problems: z.array(z.string()).optional(),
     /**
+     * Phase 12, Task 4: why a language asked to translate its voices keeps a fallback (`voice` is then `original`): the brief's
+     * voice service is off, no key, a key known to lack text-to-speech (F5), the batch confirmation declined, or the
+     * generation failed. Absent: no fallback.
+     */
+    voiceFallback: z.enum(['off', 'noKey', 'missingPermission', 'declined', 'failed']).optional(),
+    /** Phase 12, Task 4: voice clips with no known script (no `script`, no tts description): they keep the original voice. */
+    noScript: z.array(z.string().max(200)).max(200).optional(),
+    /**
      * The latest render of this language and instance (`outputs/vN/<instanceId>.<locale>.<ext>`, Phase 12 §3.5), written by
      * the core. Current while `overlayHash` is the row's `hash` and `fromComposition` the instance's composition hash;
      * `forced`: rendered with open problems or outdated entries ("render anyway"), whose ids are in `stale`.
