@@ -118,7 +118,7 @@ const pct = (v: number) => `${Math.round(v * 100)}%`;
 
 /** `- <format> @ <t>s, point (x%, y%)[, clip <clipId> "<name>"][, range <a>–<b>s]: <note>` (Phase 10b adds the last two). */
 function pinLine(p: Pin): string {
-  const clip = p.clipId ? `, clip ${p.clipId}${p.clipName ? ` "${p.clipName.replace(/[\r\n"]+/g, ' ')}"` : ''}` : '';
+  const clip = p.clipId ? `, clip ${p.clipId.replace(/[\r\n"]+/g, ' ')}${p.clipName ? ` "${p.clipName.replace(/[\r\n"]+/g, ' ')}"` : ''}` : '';
   const range = p.range ? `, range ${p.range.start.toFixed(1)}\u2013${p.range.end.toFixed(1)}s` : '';
   return `- ${p.format}${p.timeSec !== null ? ` @ ${p.timeSec.toFixed(1)}s` : ''}, point (${pct(p.x)}, ${pct(p.y)})${clip}${range}${p.note ? `: ${p.note}` : ''}`;
 }

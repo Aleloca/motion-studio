@@ -50,6 +50,8 @@ export interface TimelineProps {
   onRange?(r: { start: number; end: number }): void;
   /** The "Comment on clip" button (the `C` key does the same); `canCommentClip` is false with no clip selected. */
   onCommentClip?(): void;
+  /** The "Comment on range" button (the `R` key does the same): a dialog for the range's start and end. */
+  onCommentRange?(): void;
   canCommentClip?: boolean;
 }
 
@@ -89,7 +91,7 @@ function Playhead({ clock, pps }: { clock: ReturnType<typeof useEditor>['control
   return <span className="ms-tl-playhead" style={{ left: HEADER_W + timeToPx(time, pps) }} aria-hidden="true" />;
 }
 
-export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay, onRange, onCommentClip, canCommentClip = true }: TimelineProps) {
+export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay, onRange, onCommentClip, onCommentRange, canCommentClip = true }: TimelineProps) {
   const t = useT();
   const e = t.web.editor;
   const f = t.web.formatView;
@@ -388,6 +390,7 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay, on
             <span className="ms-fv-sep" aria-hidden="true" />
             <Button size="sm" variant="outline" className="ms-tl-comment" aria-keyshortcuts="C" title={canCommentClip ? e2.rangeHint : e2.clipCommentNeeds}
               disabled={!canCommentClip} onClick={onCommentClip}><Icon name="comment" size={13} />{e2.clipComment}</Button>
+            {onCommentRange ? <Button size="sm" variant="outline" className="ms-tl-comment" aria-keyshortcuts="R" disabled={disabled} onClick={onCommentRange}><Icon name="comment" size={13} />{e2.rangeComment}</Button> : null}
           </>
         ) : null}
         <span className="ms-grow" />

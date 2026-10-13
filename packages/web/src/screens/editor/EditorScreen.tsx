@@ -38,6 +38,7 @@ import { pinsKey, usePendingPins } from '../pendingPins.ts';
 import { clipPin, findClipById, rangePin, rangeTimes } from '../pinModel.ts';
 import { PinNoteDialog } from './PinNoteDialog.tsx';
 import { RangeSpans } from './RangeSpans.tsx';
+import { RangeDialog } from './RangeDialog.tsx';
 import { boardLabel } from '../CanvasBoard.tsx';
 import { ExportDialog, type ExportSnapshot } from '../ExportDialog.tsx';
 import { compositionOf } from '../renderModel.ts';
@@ -346,6 +347,8 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const pinSource = detail ? detail.creative.resumeFrom?.version ?? latest?.n ?? null : null;
   const canComment = n !== null && n === pinSource;
   const sourcePins = useMemo(() => storedPins.flatMap((p, i) => (p.version === pinSource ? [{ pin: p.pin, at: i }] : [])), [storedPins, pinSource]);
+  const [rangeOpen, setRangeOpen] = useState(false);
+  const askRange = () => { if (commentVideo) setRangeOpen(true); };
   const [noteFor, setNoteFor] = useState<{ pin: Pin; index: number | null } | null>(null);
   const commentVideo = Boolean(draft && draft.composition.duration > 0);
   const startComment = (pin: Pin) => {
@@ -396,6 +399,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   // Keys.
   useEditorKeys(root, Boolean(draft) && active && leave === null, {
     commentClip,
+    commentRange: askRange,
     undo: () => actions.undo(),
     redo: () => actions.redo(),
     toggle: controls.toggle,
@@ -565,6 +569,11 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
         <div className="ms-ed-undo" role="toolbar" aria-label={e.draft({ n: draft?.ops.length ?? 0 })}>
           <Button size="sm" variant="ghost" icon aria-label={e.undo} title={e.undo} disabled={!draft || draft.past.length === 0} onClick={() => actions.undo()}><Icon name="undo" size={14} /></Button>
           <Button size="sm" variant="ghost" icon aria-label={e.redo} title={e.redo} disabled={!draft || draft.future.length === 0} onClick={() => actions.redo()}><Icon name="redo" size={14} /></Button>
+          {draft && !video ? (
+            <Button size="sm" variant="outline" className="ms-ed-comment" aria-keyshortcuts="C" disabled={selection === null} title={selection === null ? t.web.conversation.clipCommentNeeds : undefined} onClick={commentClip}>
+              <Icon name="comment" size={13} />{t.web.conversation.clipComment}
+            </Button>
+          ) : null}
           <Button size="sm" variant="ghost" icon className="ms-ed-snap" aria-label={e.snap} title={e.snap} aria-pressed={snap} onClick={() => setSnap(!snap)}><Icon name="magnet" size={14} /></Button>
         </div>
       </main>
@@ -587,9 +596,11 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
 
       <section className="ms-ed-timeline" aria-label={e.timeline} data-part="b" data-slot="timeline">
         {video && draft ? <Timeline loop={loop} onLoop={setLoop} speed={rate} onSpeed={setRate} marks={marks}
-          overlay={({ pps }) => <RangeSpans marks={marks} pps={pps} />} onRange={commentRange} onCommentClip={commentClip} canCommentClip={selection !== null} /> : null}
+          overlay={({ pps }) => <RangeSpans marks={marks} pps={pps} />} onRange={commentRange} onCommentClip={commentClip} onCommentRange={askRange} canCommentClip={selection !== null} /> : null}
       </section>
 
+      {rangeOpen ? <RangeDialog open playhead={player?.currentTime ?? controls.clock.get().time} duration={draft?.composition.duration ?? 0}
+        onSubmit={(r) => { setRangeOpen(false); commentRange(r); }} onCancel={() => setRangeOpen(false)} /> : null}
       <PinNoteDialog open={noteFor !== null} title={noteTitle} initial={noteFor?.pin.note ?? ''} adding={noteFor?.index === null} onSubmit={submitNote} onCancel={() => setNoteFor(null)} />
       <Modal open={leave !== null} onClose={leaveKeep} label={e.leaveTitle} width={480} dismissible={!saving}>
         <div className="ms-ed-dialog">

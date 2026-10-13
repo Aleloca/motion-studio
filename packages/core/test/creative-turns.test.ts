@@ -407,6 +407,25 @@ describe('CreativeTurnService', { timeout: 90_000 }, () => {
     expect(sent).toContain('range 2.0\u20133.5s');
   });
 
+  it('a range ending at the duration still gets its end frame, grabbed at the last frame', async () => {
+    await finalState((await service.start(ref)).id);
+    const asked: number[] = [];
+    const media: MediaTools = {
+      available: true, probe: async (p) => (p.endsWith('.png') ? { width: 300, height: 250, durationSec: null } : { width: 1080, height: 1080, durationSec: 10 }), poster: async () => false,
+      frame: async (_input, out, at) => { asked.push(at); await writeFile(out, Buffer.from([0xff, 0xd8, 0xff, 0xd9])); return true; },
+    };
+    const svc = new CreativeTurnService({ agentContract: 'media',
+      queue, git: new Git(), media, vault: new MemoryVault(), launcher: testLauncher(new ClaudeCodeRunner([process.execPath, FAKE], { killGraceMs: 200 })),
+      presets: async () => DEFAULT_FORMATS, model: async () => null, broadcast: () => {},
+    });
+    await finalState((await svc.start(ref, { text: 'x', pins: [{ format: 'instagram-post-1x1', x: 0.5, y: 0.5, timeSec: 8, range: { start: 8, end: 10 }, clipId: 'a\nb' }] })).id);
+    expect(asked[0]).toBe(8);
+    expect(asked[1]).toBeCloseTo(10 - 1 / 30, 6);
+    const dir = join(ref.projectDir, '.studio', 'cache', 'pin-frames', ref.creativeSlug, 'v2');
+    expect((await readdir(dir)).filter((f) => f.endsWith('.jpg')).sort()).toEqual(['2-1.jpg', '2-1e.jpg']);
+    expect((await prompts()).find((p) => p.prompt.includes('## Pinned comments'))!.prompt).toContain(', clip a b, range 8.0\u201310.0s');
+  });
+
   it('a pins-only message uses a neutral instruction as request and prompt', async () => {
     await finalState((await service.start(ref)).id);
     await finalState((await service.start(ref, { text: '', pins: [{ format: 'instagram-post-1x1', x: 0.1, y: 0.2, timeSec: null, note: 'più luce' }] })).id);

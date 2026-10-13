@@ -333,6 +333,59 @@ describe('the editor', () => {
     expect(peekDraft(KEY)!.ops).toHaveLength(0);
   });
 
+  it('R opens the range dialog, Start and End are typed, and a range pin results: keyboard only', async () => {
+    render(<Page kind="edit" />);
+    await opened();
+    media.currentTime = 2;
+    media.emit('timeupdate');
+    key({ key: 'r' });
+    const d = await dialog();
+    const field = (name: RegExp) => within(screen.getByRole('dialog')).getByRole('spinbutton', { name }) as HTMLInputElement;
+    await waitFor(() => expect(field(/Start/).value).toBe('2'));
+    expect(field(/End/).value).toBe('3');
+    const end = field(/End/);
+    await userEvent.clear(end);
+    await userEvent.type(end, '4.5{Enter}');
+    await userEvent.click(within(d).getByRole('button', { name: 'Continue' }));
+    const note = await screen.findByRole('heading', { name: 'Comment on 2.0–4.5 s' });
+    expect(note).toBeTruthy();
+    await userEvent.type(screen.getByLabelText('Your comment'), 'lento{Control>}{Enter}{/Control}');
+    await waitFor(() => expect(pending()).toHaveLength(1));
+    expect(pending()[0]!.pin).toMatchObject({ timeSec: 2, range: { start: 2, end: 4.5 }, note: 'lento' });
+  });
+
+  it('R never fires while typing, and the Comment on range button does the same as R', async () => {
+    render(<Page kind="edit" />);
+    await opened();
+    const input = document.createElement('input');
+    document.body.append(input);
+    input.focus();
+    key({ key: 'r' }, input);
+    key({ key: 'r', ctrlKey: true });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    input.remove();
+    await userEvent.click(screen.getByRole('button', { name: 'Comment on range' }));
+    expect(await dialog()).toBeTruthy();
+    // The end is clamped to the duration, and an empty range cannot continue.
+    const d = screen.getByRole('dialog');
+    const start = within(d).getByRole('spinbutton', { name: /Start/ });
+    await userEvent.clear(start);
+    await userEvent.type(start, '99{Enter}');
+    expect((within(d).getByRole('spinbutton', { name: /Start/ }) as HTMLInputElement).value).toBe('6');
+    expect((within(d).getByRole('button', { name: 'Continue' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('the image editor shows a visible Comment on clip button', async () => {
+    const still = structuredClone(spike);
+    still.duration = 0;
+    api.getEditorComposition.mockImplementation(async (_s, _c, n) => ({ ...view(n), composition: still }));
+    render(<Page kind="edit" />);
+    await screen.findByTestId('player');
+    const b = await screen.findByRole('button', { name: 'Comment on clip' });
+    expect((b as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Comment on range' })).toBeNull();
+  });
+
   it('a click with Shift (no drag) makes no range, and a plain drag seeks', async () => {
     render(<Page kind="edit" />);
     await opened();
@@ -426,6 +479,22 @@ describe('the format view', () => {
     await userEvent.type(within(bubble).getByRole('textbox'), 'ok');
     await userEvent.click(within(bubble).getByRole('button', { name: 'Comment' }));
     expect(pending()[0]!.pin).toMatchObject({ clipId: 'logo1', timeSec: 1 });
+  });
+
+  it('Comment on range and R open the range dialog; continuing starts the bubble: keyboard only', async () => {
+    render(<Page kind="format" />);
+    await ready();
+    media.currentTime = 1;
+    media.emit('timeupdate');
+    key({ key: 'r' });
+    const d = await dialog();
+    await userEvent.click(within(d).getByRole('button', { name: 'Continue' }));
+    const bubble = await screen.findByRole('group', { name: /Comment 1/ });
+    expect(within(bubble).getByText('Comment on 1.0–2.0 s')).toBeTruthy();
+    await userEvent.type(within(bubble).getByRole('textbox'), 'ok');
+    await userEvent.click(within(bubble).getByRole('button', { name: 'Comment' }));
+    expect(pending()[0]!.pin).toMatchObject({ timeSec: 1, range: { start: 1, end: 2 } });
+    expect(screen.getByRole('button', { name: 'Comment on range' })).toBeTruthy();
   });
 
   it('Shift + drag on the transport makes a range comment with a span; a plain drag only seeks', async () => {

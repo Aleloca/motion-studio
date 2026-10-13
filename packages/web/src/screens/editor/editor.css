@@ -242,3 +242,4 @@ button.ms-layer-main:focus-visible { outline: 2px solid var(--accent); outline-o
 .ms-tl-span { position: absolute; top: 0; bottom: 0; background: var(--accent); opacity: .16; border-inline: 2px solid var(--accent); box-sizing: border-box; }
 .ms-tl-picking { position: absolute; top: 0; bottom: 0; background: var(--accent); opacity: .3; pointer-events: none; }
 .ms-tl-comment[disabled] { opacity: .5; }
+.ms-range-fields { display: flex; gap: 12px; margin: 12px 0; }

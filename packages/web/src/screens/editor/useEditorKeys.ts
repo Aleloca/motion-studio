@@ -1,5 +1,5 @@
 // The editor's keyboard map (Phase 10b): ⌘Z / ⇧⌘Z (Ctrl+Z / Ctrl+Shift+Z, Ctrl+Y outside macOS) undo and redo, Space plays
-// and pauses, ← → step one frame, Delete explains that clips cannot be removed here, Esc deselects, C comments on the selected clip. Never while the user is
+// and pauses, ← → step one frame, Delete explains that clips cannot be removed here, Esc deselects, C comments on the selected clip, R on a time range. Never while the user is
 // typing in a field, never from a modal or popover on top, never from a page that is leaving (usePageShortcut).
 import { useRef, type RefObject } from 'react';
 import { usePageShortcut } from '../../motion/index.ts';
@@ -17,6 +17,8 @@ export interface EditorKeyHandlers {
   remove(): void;
   /** `C`: comment on the selected clip (Task 10). Absent: the key is left alone. */
   commentClip?(): void;
+  /** `R`: comment on a time range, typed in a dialog (the keyboard path of Shift + drag). */
+  commentRange?(): void;
 }
 
 /** ⌘ on macOS, Ctrl elsewhere (the same rule as ⌘K in App). */
@@ -34,6 +36,7 @@ export function useEditorKeys(root: RefObject<Element | null>, enabled: boolean,
   usePageShortcut(root, (e) => plain(e) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !activatesControl(e, PLAYER_CONTROLS), (e) => handlers.current.step(e.key === 'ArrowRight' ? 1 : -1));
   usePageShortcut(root, (e) => plain(e) && (e.key === 'Delete' || e.key === 'Backspace'), () => handlers.current.remove());
   usePageShortcut(root, (e) => plain(e) && letter(e, 'c') && !activatesControl(e) && Boolean(handlers.current.commentClip), () => handlers.current.commentClip?.());
+  usePageShortcut(root, (e) => plain(e) && letter(e, 'r') && !activatesControl(e) && Boolean(handlers.current.commentRange), () => handlers.current.commentRange?.());
   usePageShortcut(root, (e) => plain(e) && e.key === 'Escape', () => handlers.current.deselect());
 }
 

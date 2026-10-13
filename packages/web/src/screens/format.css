@@ -145,3 +145,4 @@
 .ms-fv-span { position: absolute; top: 0; bottom: 0; background: var(--accent); opacity: .18; border-inline: 2px solid var(--accent); box-sizing: border-box; }
 .ms-fv-span.ms-picking { opacity: .32; }
 .ms-fv-clippick { display: inline-flex; margin: 4px 0 0 8px; }
+.ms-fv-rangebtn { margin: 4px 0 0 8px; }

@@ -37,6 +37,7 @@ import { channelOf, lastStep } from './creativeState.ts';
 import { ExportDialog, type ExportSnapshot } from './ExportDialog.tsx';
 import { activatesControl, bare, inOverlay, isTyping } from './keys.ts';
 import { pinsKey, usePendingPins } from './pendingPins.ts';
+import { RangeDialog } from './editor/RangeDialog.tsx';
 import { clipLabel, clipPin, clipsAt, rangePin, rangeTimes } from './pinModel.ts';
 import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from './FormatVersions.tsx';
 import { boardSource, entryAt, followersOf, formatStates, isRendering, renderingOf, shownOf, type FormatState } from './versionModel.ts';
@@ -271,7 +272,9 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   const keysOn = (e: KeyboardEvent) => bare(e) && !e.shiftKey && !isTyping(e) && !inOverlay(e) && !activatesControl(e, PLAYER_CONTROLS) && video && (livePlayer ? playerReady : Boolean(out)) && !failed;
   usePageShortcut(root, (e) => (e.key === ' ' || e.code === 'Space') && keysOn(e), toggle);
   usePageShortcut(root, (e) => (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && keysOn(e), (e) => stepFrame(e.key === 'ArrowRight' ? 1 : -1));
+  const [rangeOpen, setRangeOpen] = useState(false);
   const commentTopRef = useRef<() => void>(() => {});
+  usePageShortcut(root, (e) => e.key.toLowerCase() === 'r' && keysOn(e) && canComment && !draft && duration > 0 && !playing, () => setRangeOpen(true));
   usePageShortcut(root, (e) => e.key.toLowerCase() === 'c' && keysOn(e) && canComment && !draft && clipComp !== null && !playing, () => commentTopRef.current());
 
   // Zoom (image): Fit follows the stage; a number is the scale of the picture's own pixels.
@@ -615,6 +618,10 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
         </section>
         {canComment && ready && !draft && (!video || !playing) ? <CommentHint clock={clock} video={video} /> : null}
         {video && canComment && ready && clipComp ? <ClipPicker clock={clock} comp={clipComp} onPick={commentClip} /> : null}
+        {video && canComment && ready && duration > 0 ? (
+          <Button size="sm" variant="outline" className="ms-fv-rangebtn" aria-keyshortcuts="R" onClick={() => { if (playing) pause(); setRangeOpen(true); }}><Icon name="comment" size={13} />{t.web.conversation.rangeComment}</Button>
+        ) : null}
+        {rangeOpen ? <RangeDialog open playhead={media.current?.currentTime ?? clock.get().time} duration={duration} onSubmit={(r) => { setRangeOpen(false); commentRange(r); }} onCancel={() => setRangeOpen(false)} /> : null}
         {lock ? <div className="ms-cv-hint ms-lock ms-fv-hint" id="ms-fv-comment-lock" role="status">{c.versions.commentsOn({ n: pinSource })}</div> : null}
         {preset?.safeZone && (out || livePlayer) ? (
           <span className="ms-fv-safe-toggle"><Toggle size="sm" on={safe} onChange={setSafe} label={c.safeZones} /><span aria-hidden="true">{c.safeZones}</span></span>

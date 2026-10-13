@@ -971,9 +971,11 @@ export class CreativeTurnService {
       const wanted: Array<{ name: string; at: number }> = pin.range
         ? [{ name: `${n}-${i + 1}.jpg`, at: pin.range.start }, { name: `${n}-${i + 1}e.jpg`, at: pin.range.end }]
         : pin.timeSec !== null ? [{ name: `${n}-${i + 1}.jpg`, at: pin.timeSec }] : [];
-      for (const { name, at } of wanted) {
+      for (const { name, at: asked } of wanted) {
         try {
           const output = source.outputs.find((o) => o.format === pin.format);
+          // A range that ends at the duration still gets its end frame: the grab is clamped to the last frame (a seek at EOF finds none).
+          const at = output?.durationSec ? Math.min(asked, Math.max(0, output.durationSec - 1 / 30)) : asked;
           // A v2 version without a current render: the frame comes from its composition (Task 5b).
           const fromComposition = source.compositions?.some((c) => c.format === pin.format) && renderState(source, pin.format) !== 'rendered';
           let made = false;
