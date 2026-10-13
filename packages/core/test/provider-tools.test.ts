@@ -191,6 +191,52 @@ describe('availableTools', () => {
   });
 });
 
+describe('availableTools and what is known about the keys (F5)', () => {
+  const line = (lines: string[], tool: string) => lines.find((l) => l.startsWith(`- ${tool}`))!;
+  it('a capability checked missing is not ready: the prompt names the missing permission', async () => {
+    const { KeyCheckCache } = await import('../src/providers/key-check.ts');
+    const cache = new KeyCheckCache();
+    cache.record('elevenlabs', 'tts', 'missing', 'text_to_speech');
+    cache.record('elevenlabs', 'music', 'missing', 'music_generation');
+    const vault = new MemoryVault({ ELEVENLABS_API_KEY: 'e' });
+    const lines = await availableTools(vault, { voice: 'elevenlabs' }, cache);
+    expect(line(lines, 'tts')).toContain('(missing permission: text_to_speech)');
+    expect(line(lines, 'tts')).not.toContain('(ready)');
+    expect(line(lines, 'music')).toContain('(missing permission: music_generation)');
+    // Not known as missing: ready.
+    expect(line(lines, 'sound_effect')).toContain('(ready)');
+  });
+  it('unverified and error stay available; a key the provider does not accept blocks every capability', async () => {
+    const { KeyCheckCache } = await import('../src/providers/key-check.ts');
+    const cache = new KeyCheckCache();
+    cache.merge('openai', { provider: 'openai', checkedAt: '', capabilities: [{ capability: 'key', status: 'ok' }, { capability: 'images', status: 'unverified', permission: 'model.request' }, { capability: 'tts', status: 'error', detail: 'timeout' }] });
+    const vault = new MemoryVault({ OPENAI_API_KEY: 'k' });
+    let lines = await availableTools(vault, undefined, cache);
+    expect(line(lines, 'generate_image')).toContain('(ready)');
+    expect(line(lines, 'tts')).toContain('(ready)');
+    cache.merge('openai', { provider: 'openai', checkedAt: '', capabilities: [{ capability: 'key', status: 'missing' }, { capability: 'images', status: 'missing' }, { capability: 'tts', status: 'missing' }] });
+    lines = await availableTools(vault, undefined, cache);
+    expect(line(lines, 'generate_image')).toContain('(missing permission: OpenAI does not accept the key)');
+    expect(line(lines, 'tts')).toContain('(missing permission: OpenAI does not accept the key)');
+  });
+  it('auto voice is ready when either provider can speak; with neither, it lists what is missing', async () => {
+    const { KeyCheckCache } = await import('../src/providers/key-check.ts');
+    const cache = new KeyCheckCache();
+    cache.record('openai', 'tts', 'missing', 'model.request');
+    const vault = new MemoryVault({ OPENAI_API_KEY: 'k', ELEVENLABS_API_KEY: 'e' });
+    expect(line(await availableTools(vault, { voice: 'auto' }, cache), 'tts')).toContain('(ready)');
+    cache.record('elevenlabs', 'tts', 'missing', 'text_to_speech');
+    expect(line(await availableTools(vault, { voice: 'auto' }, cache), 'tts')).toContain('(missing permission: model.request, text_to_speech)');
+  });
+  it('a forced voice provider without its key is never shown ready because the other provider has one (T7 minor)', async () => {
+    const onlyEleven = new MemoryVault({ ELEVENLABS_API_KEY: 'e' });
+    expect(line(await availableTools(onlyEleven, { voice: 'openai' }), 'tts')).toContain('(not configured: the OpenAI key is missing)');
+    expect(line(await availableTools(onlyEleven, { voice: 'elevenlabs' }), 'tts')).toContain('(ready)');
+    expect(line(await availableTools(new MemoryVault({ OPENAI_API_KEY: 'k' }), { voice: 'elevenlabs' }), 'tts')).toContain('(not configured: the ElevenLabs key is missing)');
+    expect(line(await availableTools(onlyEleven, { voice: 'auto' }), 'tts')).toContain('(ready)');
+  });
+});
+
 describe('cancellation before asking', () => {
   it('never creates an approval when the job is cancelled while settings are read', async () => {
     // The settings read is held open until the test has aborted the job, so the

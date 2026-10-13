@@ -49,5 +49,24 @@ export const KEY_PERMISSIONS: Record<ProviderId, Partial<Record<KeyCapability, s
   unsplash: {},
 };
 
+/** The key capability each service choice uses (`stock` stands for the stock tools, which search Pexels or Unsplash). */
+export function serviceCapability(kind: ServiceKind, provider: ProviderId): KeyCapability {
+  if (provider === 'pexels' || provider === 'unsplash') return 'search';
+  return kind === 'voice' ? 'tts' : kind;
+}
+
+/**
+ * What is known against using `capability` of a provider's key (F5, orchestrator decision): a capability, or the key itself,
+ * checked `missing` makes it unavailable, with the permission to enable when known (none: the provider does not accept the
+ * key). `unverified`, `error` and nothing known keep it available. null: nothing against it.
+ */
+export function missingCapability(check: KeyCheckResult | null | undefined, capability: KeyCapability): { permission?: string } | null {
+  if (!check) return null;
+  const cap = check.capabilities.find((c) => c.capability === capability);
+  if (cap?.status === 'missing') return cap.permission ? { permission: cap.permission } : {};
+  if (check.capabilities.find((c) => c.capability === 'key')?.status === 'missing') return {};
+  return null;
+}
+
 export const BRAND_PHASES = ['queued', 'reading', 'fonts', 'colors', 'logos', 'tone', 'writing', 'done'] as const;
 export type BrandPhase = typeof BRAND_PHASES[number];

@@ -2,7 +2,7 @@ import { canFollow, channelName, formatLabel, formatName, type AssetEntry, type 
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { api } from '../api.ts';
 import { CodebaseList } from '../components/CodebaseList.tsx';
-import { ServicesSelector, useConfiguredProviders } from '../components/ServicesSelector.tsx';
+import { ServicesSelector, useConfiguredProviders, useKeyChecks } from '../components/ServicesSelector.tsx';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { anim, E, flash, isSubmitChord, useEnter, usePageShortcut } from '../motion/index.ts';
 import { href } from '../routes.ts';
@@ -153,6 +153,7 @@ export function NewCreative({ slug }: { slug: string }) {
   // Untouched (undefined): the brief has no services (all auto), like a brief from before they existed.
   const [services, setServices] = useState<BriefServices | undefined>(undefined);
   const configured = useConfiguredProviders();
+  const keyChecks = useKeyChecks();
   const [options, setOptions] = useState(false);
   const [busy, setBusy] = useState<'generate' | 'draft' | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -427,7 +428,7 @@ export function NewCreative({ slug }: { slug: string }) {
                 <span className="ms-nc-lbl">{n.codebases} <span className="ms-nc-faint">{n.codebasesHint}</span></span>
                 <CodebaseList value={codebases} onChange={setCodebases} />
                 <span className="ms-nc-lbl">{t.web.services.title} <span className="ms-nc-faint">{t.web.services.hint}</span></span>
-                <ServicesSelector value={services} configured={configured} onChange={setServices} />
+                <ServicesSelector value={services} configured={configured} checks={keyChecks} onChange={setServices} />
               </div>
             ) : null}
           </section>

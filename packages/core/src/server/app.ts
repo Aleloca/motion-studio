@@ -273,8 +273,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     ...(deps.onCompositionOrigin ? { onServerOrigin: deps.onCompositionOrigin } : {}),
   });
   previewsRef = previews;
+  // One cache of what is known about the keys: the prompt's tool list, the provider tools, voices, Generate and Settings.
+  const keyChecks = deps.keyChecks ?? new KeyCheckCache();
   const turns = new CreativeTurnService({
-    queue, launcher, git: deps.git, media, vault, previews,
+    queue, launcher, git: deps.git, media, vault, keyChecks, previews,
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     model: async () => (await requireWorkspace().readSettings()).model,
     broadcast: (msg) => hub.broadcast(msg),
@@ -467,7 +469,6 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   registerLibraryRoutes(app, routeCtx);
   const fontsHttp = deps.fontsHttp ?? { fetch: globalThis.fetch };
   registerFontsRoutes(app, { ...routeCtx, catalog: new GoogleFontsCatalog({ configDir, http: fontsHttp }), http: fontsHttp, signer: new UrlSigner(deps.signedUrlTtlMs), ...(deps.fontsInstallIo ? { installIo: deps.fontsInstallIo } : {}) });
-  const keyChecks = deps.keyChecks ?? new KeyCheckCache();
   registerVoicesRoutes(app, { vault, http: deps.voicesHttp ?? { fetch: globalThis.fetch }, signer: new UrlSigner(deps.signedUrlTtlMs), keyChecks });
   registerGenerateRoutes(app, { requireWorkspace, vault, approvals, media, queue, keyChecks, http: deps.generateHttp ?? { fetch: globalThis.fetch }, broadcast: (m) => hub.broadcast(m) });
   registerProjectRoutes(app, { requireWorkspace, jobKeyOf: projectJobKey, broadcast: (m) => hub.broadcast(m) });

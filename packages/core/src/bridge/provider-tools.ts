@@ -1,6 +1,6 @@
 import { extname, join } from 'node:path';
 import { rm } from 'node:fs/promises';
-import { brandKitSchema, effectiveServices, PROVIDER_IDS, relativeFileSchema, webUrlSchema, type BriefServices, type KeyCapability, type ProviderId, type ServerMessage, type ServiceKind, type WorkspaceSettings } from '@motion-studio/shared';
+import { brandKitSchema, effectiveServices, missingCapability, PROVIDER_IDS, relativeFileSchema, webUrlSchema, type BriefServices, type KeyCapability, type ProviderId, type ServerMessage, type ServiceKind, type WorkspaceSettings } from '@motion-studio/shared';
 import { MCP_TOOLS } from '../agent/launcher.ts';
 import type { ApprovalBroker } from '../approvals/broker.ts';
 import { confirmPaid as confirmPaidShared } from '../approvals/confirm-paid.ts';
@@ -303,20 +303,39 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
   }) as BridgeHandler]));
 }
 
-/** Agent-facing lines (English): which Motion Studio tools can be used this turn, and which the brief's services turn off. */
-export async function availableTools(vault: SecretsVault, services?: BriefServices): Promise<string[]> {
-  const has = async (p: keyof typeof LABEL) => Boolean(await vault.get(p));
-  const st = (ok: boolean, missing: string) => (ok ? '(ready)' : `(not configured: ${missing})`);
+/**
+ * Agent-facing lines (English): which Motion Studio tools can be used this turn, and which the brief's services turn off. A
+ * provider is ready when its key is set and what is known about the key (`keyChecks`) does not say the capability is
+ * `missing` (F5: then "(missing permission: …)"; `unverified` and `error` stay ready). Under a provider the brief names, only
+ * that provider counts (a forced provider without its key is never "ready" because the other one has a key).
+ */
+export async function availableTools(vault: SecretsVault, services?: BriefServices, keyChecks?: KeyCheckCache): Promise<string[]> {
   const s = effectiveServices({ services });
-  const off = (isOff: boolean, status: string, why = '') => (isOff ? `(off for this creative${why})` : status);
-  const [openai, eleven, pexels, unsplash] = await Promise.all([has('openai'), has('elevenlabs'), has('pexels'), has('unsplash')]);
+  const [openai, eleven, pexels, unsplash] = await Promise.all((['openai', 'elevenlabs', 'pexels', 'unsplash'] as const).map(async (p) => Boolean(await vault.get(p))));
+  const keyed: Record<keyof typeof LABEL, boolean> = { openai: openai!, elevenlabs: eleven!, pexels: pexels!, unsplash: unsplash! };
+  /** null when usable; otherwise why not (with a key: the permission the check found missing). */
+  const blocked = (p: keyof typeof LABEL, capability: KeyCapability): { noKey: true } | { permission: string } | null => {
+    if (!keyed[p]) return { noKey: true };
+    const m = missingCapability(keyChecks?.get(p), capability);
+    return m ? { permission: m.permission ?? `${LABEL[p]} does not accept the key` } : null;
+  };
+  /** The status of a tool usable through any of `options`, with the text for "no key at all". */
+  const status = (options: Array<[keyof typeof LABEL, KeyCapability]>, noKey: string): string => {
+    const why = options.map(([p, c]) => blocked(p, c));
+    if (why.some((w) => w === null)) return '(ready)';
+    const perms = why.flatMap((w) => (w && 'permission' in w ? [w.permission] : []));
+    return perms.length ? `(missing permission: ${[...new Set(perms)].join(', ')})` : `(not configured: ${noKey})`;
+  };
+  const off = (isOff: boolean, st: () => string, why = '') => (isOff ? `(off for this creative${why})` : st());
+  const voiceOptions: Array<[keyof typeof LABEL, KeyCapability]> = s.voice === 'openai' ? [['openai', 'tts']] : s.voice === 'elevenlabs' ? [['elevenlabs', 'tts']] : [['openai', 'tts'], ['elevenlabs', 'tts']];
+  const voiceNoKey = s.voice === 'openai' ? 'the OpenAI key is missing' : s.voice === 'elevenlabs' ? 'the ElevenLabs key is missing' : 'no TTS key';
   return [
-    `- generate_image: images with gpt-image-2 ${s.images === 'stock' ? off(true, '', ': stock images only') : off(s.images === 'none', st(openai, 'the OpenAI key is missing'))}`,
-    `- tts: voice-over with OpenAI or ElevenLabs ${off(s.voice === 'none', st(openai || eleven, 'no TTS key'))}`,
-    `- sound_effect: sound effects with ElevenLabs ${off(s.sfx === 'none', st(eleven, 'the ElevenLabs key is missing'))}`,
-    `- music: music tracks with ElevenLabs ${off(s.music === 'none', st(eleven, 'the ElevenLabs key is missing'))}`,
-    `- list_voices: ElevenLabs voices of the account (free) ${off(s.voice === 'none' || s.voice === 'openai', st(eleven, 'the ElevenLabs key is missing'))}`,
-    `- stock_search / stock_download: photos and videos from Pexels and Unsplash ${off(s.images === 'none', st(pexels || unsplash, 'no Pexels or Unsplash key'))}`,
+    `- generate_image: images with gpt-image-2 ${s.images === 'stock' ? off(true, () => '', ': stock images only') : off(s.images === 'none', () => status([['openai', 'images']], 'the OpenAI key is missing'))}`,
+    `- tts: voice-over with OpenAI or ElevenLabs ${off(s.voice === 'none', () => status(voiceOptions, voiceNoKey))}`,
+    `- sound_effect: sound effects with ElevenLabs ${off(s.sfx === 'none', () => status([['elevenlabs', 'sfx']], 'the ElevenLabs key is missing'))}`,
+    `- music: music tracks with ElevenLabs ${off(s.music === 'none', () => status([['elevenlabs', 'music']], 'the ElevenLabs key is missing'))}`,
+    `- list_voices: ElevenLabs voices of the account (free) ${off(s.voice === 'none' || s.voice === 'openai', () => status([['elevenlabs', 'voices']], 'the ElevenLabs key is missing'))}`,
+    `- stock_search / stock_download: photos and videos from Pexels and Unsplash ${off(s.images === 'none', () => status([['pexels', 'search'], ['unsplash', 'search']], 'no Pexels or Unsplash key'))}`,
     '- fonts_fetch: Google Fonts fonts (ready)',
     '- report_progress, validate_composition, preview_frames, read_brand_kit (ready)',
   ];

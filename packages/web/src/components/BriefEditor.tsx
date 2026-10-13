@@ -6,7 +6,7 @@ import { api } from '../api.ts';
 import { useLocale, useT } from '../i18n.tsx';
 import { Button, ChannelMark, Chip, channelOf, Icon, Input, Segmented, Textarea } from '../ui/index.ts';
 import { CodebaseList } from './CodebaseList.tsx';
-import { ServicesSelector, useConfiguredProviders } from './ServicesSelector.tsx';
+import { ServicesSelector, useConfiguredProviders, useKeyChecks } from './ServicesSelector.tsx';
 import './brief.css';
 import { message } from '../errors.ts';
 
@@ -30,6 +30,7 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged }: { sl
   // Services touched here, else (null) the creative's current ones: a change made meanwhile from the chat chip is kept.
   const [services, setServices] = useState<BriefServices | null>(null);
   const configured = useConfiguredProviders();
+  const keyChecks = useKeyChecks();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'save' | 'regenerate' | null>(null);
   const set = <K extends keyof Brief>(k: K, v: Brief[K]) => setBrief((b) => ({ ...b, [k]: v }));
@@ -107,7 +108,7 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged }: { sl
       </div>
       <span className="ms-brief-lbl">{t.web.services.title}</span>
       <p className="ms-brief-hint">{t.web.services.hint}</p>
-      <ServicesSelector value={services ?? c.brief.services} configured={configured} disabled={disabled} onChange={setServices} />
+      <ServicesSelector value={services ?? c.brief.services} configured={configured} checks={keyChecks} disabled={disabled} onChange={setServices} />
       <span className="ms-brief-lbl">{nc.codebases}</span>
       <CodebaseList value={codebases} onChange={setCodebases} disabled={disabled} />
       {converts ? <p className="ms-brief-notice" role="note"><Icon name="warn" size={13} /><span>{cv.legacyConvertNotice}</span></p> : null}

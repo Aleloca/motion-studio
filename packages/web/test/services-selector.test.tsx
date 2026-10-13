@@ -6,9 +6,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../src/i18n.tsx';
 
 let secrets: SecretStatus[];
+let keyChecks: Record<string, unknown>;
 const secret = (provider: SecretStatus['provider'], configured: boolean): SecretStatus => ({ provider, configured, source: configured ? 'keychain' : null });
 const api = {
   getSecrets: vi.fn(async () => secrets),
+  getKeyChecks: vi.fn(async () => keyChecks),
   updateCreative: vi.fn(async (_s: string, _c: string, _b: unknown) => ({})),
   sendCreativeTurn: vi.fn(async () => ({})),
   cancelJob: vi.fn(async () => ({ cancelled: true })),
@@ -34,6 +36,7 @@ const lastSaved = () => api.updateCreative.mock.calls.at(-1)![2] as { brief: Bri
 beforeEach(() => {
   vi.clearAllMocks();
   secrets = [secret('openai', true), secret('elevenlabs', false), secret('pexels', false), secret('unsplash', false)];
+  keyChecks = { openai: null, elevenlabs: null, pexels: null, unsplash: null };
 });
 
 describe('ServicesSelector', () => {
@@ -60,6 +63,35 @@ describe('ServicesSelector', () => {
     expect(document.getElementById(group('Images').getAttribute('aria-describedby')!)!.textContent).toBe('Stock only needs the Pexels or Unsplash key: add it in Settings → Paid services.');
   });
 
+  it('a capability the key check found missing disables that provider with the permission; unverified and error stay available (F5)', () => {
+    const checks = {
+      elevenlabs: { provider: 'elevenlabs' as const, checkedAt: '', capabilities: [
+        { capability: 'key' as const, status: 'ok' as const }, { capability: 'tts' as const, status: 'missing' as const, permission: 'text_to_speech' },
+        { capability: 'music' as const, status: 'unverified' as const, permission: 'music_generation' }, { capability: 'sfx' as const, status: 'error' as const, detail: 'timeout' },
+      ] },
+      openai: { provider: 'openai' as const, checkedAt: '', capabilities: [{ capability: 'key' as const, status: 'missing' as const }, { capability: 'images' as const, status: 'missing' as const }, { capability: 'tts' as const, status: 'missing' as const }] },
+    };
+    render(en(<ServicesSelector value={undefined} configured={new Set(['openai', 'elevenlabs'])} checks={checks} onChange={() => {}} />));
+    expect(option('Voice', 'ElevenLabs').disabled).toBe(true);
+    expect(option('Voice', 'ElevenLabs').title).toBe('ElevenLabs is unavailable: the ElevenLabs key lacks the permission text_to_speech. Enable it at ElevenLabs, then test the key again in Settings → Paid services.');
+    expect(option('Voice', 'OpenAI').disabled).toBe(true);
+    expect(option('Voice', 'OpenAI').title).toBe('OpenAI is unavailable: OpenAI does not accept the saved key. Check or replace it in Settings → Paid services.');
+    expect(option('Images', 'OpenAI').disabled).toBe(true);
+    expect(option('Music', 'ElevenLabs').disabled).toBe(false);
+    expect(option('Sound effects', 'ElevenLabs').disabled).toBe(false);
+    expect(option('Voice', 'Auto').disabled).toBe(false);
+    expect(document.getElementById(group('Voice').getAttribute('aria-describedby')!)!.textContent).toContain('text_to_speech');
+  });
+  it('the Services chip reads the key checks and disables a provider whose capability is missing (F5)', async () => {
+    secrets = [secret('openai', true), secret('elevenlabs', true), secret('pexels', false), secret('unsplash', false)];
+    keyChecks = { openai: null, elevenlabs: { provider: 'elevenlabs', checkedAt: '', capabilities: [{ capability: 'key', status: 'ok' }, { capability: 'tts', status: 'missing', permission: 'text_to_speech' }] }, pexels: null, unsplash: null };
+    const { ServicesChip } = await import('../src/components/ServicesSelector.tsx');
+    const user = userEvent.setup();
+    render(en(<ServicesChip slug="acme" creative="c1" brief={brief} busy={false} onSaved={() => {}} />));
+    await user.click(screen.getByRole('button', { name: /Services/ }));
+    await waitFor(() => expect(option('Voice', 'ElevenLabs').disabled).toBe(true));
+    expect(option('Voice', 'OpenAI').disabled).toBe(false);
+  });
   it('changes one kind, keeping the others; arrows skip a disabled provider', async () => {
     const onChange = vi.fn();
     render(en(<ServicesSelector value={{ images: 'stock' }} configured={new Set(['openai', 'pexels'])} onChange={onChange} />));

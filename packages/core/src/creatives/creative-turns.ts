@@ -15,6 +15,7 @@ import type { Git } from '../git.ts';
 import { JobFailedError, type JobQueue } from '../jobs/job-queue.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { availableTools } from '../bridge/provider-tools.ts';
+import type { KeyCheckCache } from '../providers/key-check.ts';
 import type { SecretsVault } from '../secrets/vault.ts';
 import { compositionSchemaFile, CONTEXT_MD } from '../project-template.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
@@ -35,6 +36,8 @@ import { currentLocale, t } from '../i18n.ts';
 
 export interface CreativeTurnDeps {
   queue: JobQueue; launcher: AgentLauncher; git: Git; media: MediaTools; vault: SecretsVault;
+  /** What is known about the keys (F5: a capability checked `missing` is listed as unavailable in the prompt). */
+  keyChecks?: KeyCheckCache;
   presets: () => Promise<FormatPreset[]>;
   model: () => Promise<string | null>;
   broadcast: (msg: ServerMessage) => void;
@@ -949,7 +952,7 @@ export class CreativeTurnService {
     for (const c of checks.filter((x) => !x.exists)) await note(t().jobs.codebaseMissing({ path: c.path }));
     const existing = checks.filter((c) => c.exists);
     return {
-      context: { kit, hasGuidelines, assets, references, codebases: existing.map(({ path, note: n }) => ({ path, ...(n ? { note: n } : {}) })), missingCodebases: checks.filter((c) => !c.exists).map((c) => c.path), tools: this.deps.launcher.mcpActive() ? await availableTools(this.deps.vault, services) : [] },
+      context: { kit, hasGuidelines, assets, references, codebases: existing.map(({ path, note: n }) => ({ path, ...(n ? { note: n } : {}) })), missingCodebases: checks.filter((c) => !c.exists).map((c) => c.path), tools: this.deps.launcher.mcpActive() ? await availableTools(this.deps.vault, services, this.deps.keyChecks) : [] },
       existing: existing.map((c) => c.path),
     };
   }
