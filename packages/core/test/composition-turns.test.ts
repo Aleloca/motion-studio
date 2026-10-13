@@ -246,6 +246,21 @@ describe('a composition turn', { timeout: 120_000 }, () => {
     expect(await versionOf(slug, 1)).toMatchObject({ status: 'complete', problems: [] });
   });
 
+  it('the repair turn carries the user\'s words verbatim, delimited as theirs, so their constraints reach it (F4)', async () => {
+    const slug = await create(['test-wide']);
+    process.env.FAKE_CLAUDE_SCENARIO = 'composition_invalid';
+    const words = 'Make the title bigger. Do not generate any voice-over.';
+    await turn(slug, { text: words });
+    const all = prompts();
+    const fix = all.at(-1)!.prompt;
+    expect(fix).toContain('do not meet the contract');
+    expect(fix).toContain(`<user_request>\n${words}\n</user_request>`);
+    expect(fix).toContain('Respect every constraint in them');
+    expect(fix).toContain("If the user's request did not ask for a new or changed version, reply without creating one and end the turn.");
+    // The first attempt of that turn had the request as usual; the brief's own repair (first turn) has no user words.
+    expect(all.at(-2)!.prompt).toContain(words);
+  });
+
   it('a composition still invalid after the fix attempts: an incomplete version whose problems the follower shares', async () => {
     process.env.FAKE_CLAUDE_SCENARIO = 'composition_invalid';
     process.env.FAKE_CLAUDE_ALWAYS_INVALID = '1';

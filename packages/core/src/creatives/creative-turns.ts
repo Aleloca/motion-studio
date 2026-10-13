@@ -494,6 +494,8 @@ export class CreativeTurnService {
           const prompt = buildCreativePrompt({
             slug, creative, presets, version: n, kind, formats: targets,
             userText: kind === 'fix' ? undefined : request,
+            // A repair turn carries the user's own words (F4): only what they wrote, never a request the core made up.
+            userWords: kind === 'fix' ? message?.text || undefined : undefined,
             pins: kind === 'iteration' ? message?.pins : undefined,
             attachments: kind === 'iteration' ? attachments : undefined,
             problems, context, locale, sandboxed, contract: turnContract,

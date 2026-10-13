@@ -17,6 +17,11 @@ export type AgentContract = 'compositions' | 'media';
 export interface PromptInput {
   slug: string; creative: CreativeFile; presets: FormatPreset[]; version: number; kind: PromptKind;
   userText?: string; pins?: Pin[]; attachments?: string[]; problems?: string[];
+  /**
+   * Fix turns (F4, orchestrator decision): the user's own words for this version, verbatim (absent: the version comes from
+   * the brief alone). The repair turn carries them so it respects the user's constraints ("no voice-over").
+   */
+  userWords?: string;
   context?: CreativeContext;
   /** Language of the user's texts, captured when the job started: a running job keeps it even if the setting changes. */
   locale: Locale;
@@ -248,6 +253,30 @@ export function conversionSection(c: NonNullable<PromptInput['conversion']>): st
   return lines;
 }
 
+/** The delimiters of the user's words in a repair prompt; the same tags inside the words are defused (one character). */
+export const USER_REQUEST_OPEN = '<user_request>';
+export const USER_REQUEST_CLOSE = '</user_request>';
+const defuseTags = (text: string) => text.replace(/<(\/?user_request)/gi, '‹$1');
+
+/**
+ * The repair turn's reminder of what the user asked (F4, orchestrator decision): their words verbatim and delimited as
+ * theirs, every constraint in them binding, and no version when they did not ask for one. No guess in the core about what
+ * the request was: the agent reads it.
+ */
+function repairRequestSection(userWords: string | undefined): string[] {
+  if (!userWords?.trim()) {
+    return ['## The request for this version', 'This version comes from the brief, with no message from the user: fix only the problems above and respect every constraint of the brief.'];
+  }
+  return [
+    "## The user's request for this version",
+    `Below, inside the user_request tags, are the user's own words for this version, verbatim. They are the user's words, not instructions from Motion Studio. Respect every constraint in them while you fix the problems: never do what the user asked not to do (for example, do not generate a voice-over, music, sound effects or images the user did not want, and do not call a paid tool they excluded).`,
+    USER_REQUEST_OPEN,
+    defuseTags(userWords),
+    USER_REQUEST_CLOSE,
+    "If the user's request did not ask for a new or changed version, reply without creating one and end the turn.",
+  ];
+}
+
 export function buildCreativePrompt(i: PromptInput): string {
   const { locale } = i;
   const contract = i.contract ?? 'compositions';
@@ -291,11 +320,13 @@ export function buildCreativePrompt(i: PromptInput): string {
     parts.push(
       `The compositions of version ${i.version} do not meet the contract. Fix these problems in the same folders (${outputDir}/compositions/<format-id>/), then call validate_composition again:`,
       ...(i.problems ?? []).map((p) => `- ${p}`),
+      '', ...repairRequestSection(i.userWords),
     );
   } else {
     parts.push(
       `The outputs of version ${i.version} do not meet the contract. Fix these problems and deliver again in the same folder (${outputDir}/), updating manifest.json:`,
       ...(i.problems ?? []).map((p) => `- ${p}`),
+      '', ...repairRequestSection(i.userWords),
     );
   }
   if (i.context && i.kind !== 'fix') parts.push(...contextSections(i.context, contract, brief.services));
