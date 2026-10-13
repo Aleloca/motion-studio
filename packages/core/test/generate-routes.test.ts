@@ -194,6 +194,17 @@ describe('generate route', () => {
     expect(broker.pending()).toEqual([]);
     expect(calls).toEqual([]);
   });
+  it("refuses at POST a text over the provider's limit (4096 OpenAI, 5000 ElevenLabs), before any job, confirmation or request (task 6 M1)", async () => {
+    await boot(undefined, { confirmPaidProviders: true });
+    const long = (n: number) => 'a'.repeat(n);
+    const r1 = await post({ kind: 'voice', provider: 'openai', text: long(4097), options: {} });
+    expect(r1.statusCode).toBe(400); expect(r1.json().error).toContain('4096');
+    const r2 = await post({ kind: 'voice', provider: 'elevenlabs', text: long(5001), options: {} });
+    expect(r2.statusCode).toBe(400);
+    // Exactly at the limits it is accepted (and queued).
+    expect((await post({ kind: 'voice', provider: 'openai', text: long(4096), options: {} })).statusCode).toBe(202);
+    expect(calls).toEqual([]);
+  });
   it('ElevenLabs with no voice: the default voice is read before the confirmation, so a key without voices_read gets no approval card (M3)', async () => {
     await boot(undefined, { confirmPaidProviders: true });
     voicesDenied = true;

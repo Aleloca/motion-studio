@@ -15,7 +15,7 @@ import { saveGeneratedFile } from '../providers/files.ts';
 import { ProviderError, type HttpDeps } from '../providers/http.ts';
 import { KEY_PERMISSIONS, type KeyCheckCache } from '../providers/key-check.ts';
 import { generateImage, normalizeImageSize, OPENAI_IMAGE_MODEL } from '../providers/openai-images.ts';
-import { ELEVENLABS_TTS_MODEL, elevenlabsDefaultVoice, elevenlabsSpeech, OPENAI_TTS_MODEL, openaiSpeech } from '../providers/tts.ts';
+import { ELEVENLABS_TTS_MODEL, elevenlabsDefaultVoice, elevenlabsSpeech, OPENAI_TTS_MODEL, openaiSpeech, TTS_MAX_CHARS } from '../providers/tts.ts';
 import { canonicalVoice, voiceProviderOf } from '../providers/voices.ts';
 import type { SecretsVault } from '../secrets/vault.ts';
 import { WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
@@ -71,6 +71,8 @@ export function registerGenerateRoutes(app: FastifyInstance, ctx: GenerateRoutes
       if (b.kind === 'voice') {
         const text = b.text.trim();
         if (!text) throw new ProviderError(400, t().providers.writeText);
+        // Over the provider's limit would be refused only after the paid confirmation: refused here.
+        if (text.length > TTS_MAX_CHARS[b.provider]) throw new ProviderError(400, t().providers.textTooLong({ provider: LABEL[b.provider], max: TTS_MAX_CHARS[b.provider] }));
         // A voice of the other provider would be refused only after the paid confirmation (I1): refused here.
         const v = b.options.voice;
         if (v && voiceProviderOf(v) !== b.provider) throw new ProviderError(400, t().providers.voiceWrongProvider({ voice: v, provider: LABEL[b.provider] }));

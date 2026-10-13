@@ -9,9 +9,11 @@ export interface TtsRequest { text: string; voice?: string; instructions?: strin
 const MAX = 50 * 1024 * 1024;
 
 const VOICE = /^[A-Za-z0-9_-]{1,64}$/;
+/** The documented text limits, checked at the POST and in the provider calls (before anything is confirmed or sent). */
+export const TTS_MAX_CHARS = { openai: 4096, elevenlabs: 5000 } as const;
 
 export async function openaiSpeech(deps: HttpDeps & { apiKey: string }, req: TtsRequest) {
-  if (req.text.length > 4096) throw new ProviderError(400, t().providers.textTooLong({ provider: 'OpenAI', max: 4096 }));
+  if (req.text.length > TTS_MAX_CHARS.openai) throw new ProviderError(400, t().providers.textTooLong({ provider: 'OpenAI', max: TTS_MAX_CHARS.openai }));
   const voice = req.voice ?? 'marin';
   if (!VOICE.test(voice)) throw new ProviderError(400, t().providers.invalidVoice);
   const body = { model: OPENAI_TTS_MODEL, input: req.text, voice, ...(req.instructions ? { instructions: req.instructions } : {}), response_format: req.format };
@@ -33,7 +35,7 @@ export async function elevenlabsDefaultVoice(deps: HttpDeps & { apiKey: string }
 }
 
 export async function elevenlabsSpeech(deps: HttpDeps & { apiKey: string }, req: TtsRequest) {
-  if (req.text.length > 5000) throw new ProviderError(400, t().providers.textTooLong({ provider: 'ElevenLabs', max: 5000 }));
+  if (req.text.length > TTS_MAX_CHARS.elevenlabs) throw new ProviderError(400, t().providers.textTooLong({ provider: 'ElevenLabs', max: TTS_MAX_CHARS.elevenlabs }));
   const headers = { 'xi-api-key': deps.apiKey };
   if (req.voice !== undefined && !VOICE.test(req.voice)) throw new ProviderError(400, t().providers.invalidVoice);
   const voice = req.voice || await elevenlabsDefaultVoice(deps);
