@@ -16,7 +16,7 @@ import { findFfmpeg, h264Args, runFfmpeg, type FfmpegInfo } from '../src/render/
 import { filterArgv, gamutStage, hdrStage, testPatternInput } from '../src/media/ffmpeg-filters.ts';
 import { alignVideoAudio, mixAudio } from '../src/render/audio-mix.ts';
 import {
-  clipScaleBound, MAX_MEDIA_DIM, MEDIA_TEMP_RE, MediaNormalizer, normalisedFieldsOf, normalizeArgs, pruneMediaCache, targetSize, videoNeeds,
+  clipScaleBound, MAX_MEDIA_DIM, MEDIA_TEMP_RE, MediaNormalizer, normalisedFieldsOf, normalizeArgs, pruneMediaCache, removeTempSettled, targetSize, videoNeeds,
 } from '../src/render/media-normalize.ts';
 import { listProcesses, liveGroupCount } from '../src/render/watchdog.ts';
 import { burstWav, decodeAudio, decodeStrips, frameCodedVideo, onset, readCode } from './helpers/render-env.ts';
@@ -229,6 +229,34 @@ describe.skipIf(!ffmpeg)('normalisation with ffmpeg', () => {
     await closed.close();
     await expect(prepare(closed, comp([video('assets/hd.mp4')]))).rejects.toMatchObject({ code: 'cancelled' });
   }, 600_000);
+
+  it('an aborted preparation settles only after its encoder group has exited and its temp file is gone (no timing window)', async () => {
+    // From the second round on (at the latest) the source hash is memoised, so nothing between the abort and the
+    // rejection does any I/O: the rejection is reached through promise jobs alone. Checked synchronously at that moment
+    // (no ps, no timer in between), a preparation that settled before its encode had reaped ffmpeg and removed the temp
+    // file shows both, every time.
+    // (CI, ffmpeg 6.1 on Ubuntu: the `.…-n1.<hex>.tmp` was still there after `cancelled`.)
+    for (let round = 0; round < 3; round++) {
+      const n = normalizer();
+      const ac = new AbortController();
+      const run = prepare(n, comp([video('assets/heavy.mp4', { props: { width: 1920, height: 1080 } })], { width: 1920, height: 1080, fps: 60 }), ac.signal);
+      run.catch(() => {});
+      const t0 = Date.now();
+      // Running and writing: its temp file exists.
+      const writing = () => existsSync(cache) && readdirSync(cache).some((f) => MEDIA_TEMP_RE.test(f) && statSync(join(cache, f)).size > 0);
+      while (!writing() && Date.now() - t0 < 120_000) await new Promise((r) => setTimeout(r, 20));
+      expect(writing(), `round ${round}`).toBe(true);
+      expect(liveGroupCount(), `round ${round}`).toBe(1);
+      ac.abort();
+      const e = await run.catch((x: unknown) => x);
+      const groups = liveGroupCount();
+      const temps = readdirSync(cache).filter((f) => MEDIA_TEMP_RE.test(f));
+      expect((e as RenderError).code, `round ${round}`).toBe('cancelled');
+      // Both at once, so a failure shows the running group and the temp file together.
+      expect({ groups, temps }, `round ${round}: state when prepare settled`).toEqual({ groups: 0, temps: [] });
+      expect(n.sharedWaiters(), `round ${round}`).toBe(0);
+    }
+  }, 600_000);
 });
 
 describe('cache maintenance (pure files)', () => {
@@ -258,6 +286,23 @@ describe('cache maintenance (pure files)', () => {
       // d, e and f now count (1200 > 1000): d goes; f is recent, e in use.
       expect(again).toEqual([lru2]);
       expect(existsSync(used) && existsSync(recent)).toBe(true);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('a temp file written again shortly after its removal (a late writer) is removed again within the bounded window', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ms-test-media-temp-'));
+    try {
+      const temp = join(dir, `.${'a'.repeat(64)}-30-320x180-n1.0123456789ab.tmp`);
+      writeFileSync(temp, 'partial');
+      // A delayed writer: the file is back 10 ms after the first removal, inside the window (4 re-checks, 25 ms apart).
+      const late = new Promise<void>((r) => setTimeout(() => { writeFileSync(temp, 'late'); r(); }, 10));
+      await removeTempSettled(temp);
+      await late;
+      expect(existsSync(temp)).toBe(false);
+      // Nothing there: returns quietly; the window is bounded.
+      const t0 = Date.now();
+      await removeTempSettled(temp, { rechecks: 2, pauseMs: 5 });
+      expect(Date.now() - t0).toBeLessThan(1000);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 
