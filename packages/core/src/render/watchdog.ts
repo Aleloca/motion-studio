@@ -51,7 +51,7 @@ export interface ProcessRow {
   /** Parent pid (1: an orphan re-parented to init/launchd; on Linux possibly a subreaper, see `sweepCandidates`). */
   ppid: number;
   uid: number;
-  /** Start time, ms since the epoch (whole seconds: `ps` lstart); NaN when unreadable. */
+  /** Start time, ms since the epoch (whole seconds: `ps` lstart, printed and read in UTC); NaN when unreadable. */
   startMs: number;
   /** `startMs` is precise to a clock tick (Linux `/proc`, `preciseLinuxStarts`), not whole seconds. */
   startPrecise?: boolean;
@@ -60,6 +60,23 @@ export interface ProcessRow {
 /** `ps -o lstart` in the C locale: `Mon Oct 12 20:53:17 2026` (the day padded with a space). */
 const LSTART = String.raw`\w{3} \w{3} [ \d]\d \d\d:\d\d:\d\d \d{4}`;
 const ROW = new RegExp(String.raw`^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(${LSTART})\s+(.*)$`);
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * The environment of the `ps` spawn: the C locale (English month names) and `TZ=UTC`, so `lstart` is printed in UTC and
+ * the hour repeated at a DST fall-back can never shift a start by an hour (decisions log 267).
+ */
+export const psEnv = (): NodeJS.ProcessEnv => ({ ...process.env, LC_ALL: 'C', LANG: 'C', TZ: 'UTC' });
+
+/** An `lstart` printed in UTC (`psEnv`), as ms since the epoch; NaN when it is not one. Never the local time zone. */
+export function parseLstartUtc(text: string): number {
+  const m = /^\w{3} (\w{3}) +(\d{1,2}) (\d\d):(\d\d):(\d\d) (\d{4})$/.exec(text.trim());
+  const month = m ? MONTHS.indexOf(m[1]!) : -1;
+  if (!m || month < 0) return Number.NaN;
+  const [day, h, min, sec, year] = [m[2], m[3], m[4], m[5], m[6]].map(Number) as [number, number, number, number, number];
+  if (day < 1 || day > 31 || h > 23 || min > 59 || sec > 60) return Number.NaN;
+  return Date.UTC(year, month, day, h, min, sec);
+}
 
 /**
  * Every process (pid, parent, group, owner, start, whole command line: `-ww`, never cut at the terminal width); empty on
@@ -67,12 +84,12 @@ const ROW = new RegExp(String.raw`^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(${LSTART}
  */
 export async function listProcesses(): Promise<ProcessRow[]> {
   if (process.platform === 'win32') return [];
-  const out = await run('ps', ['-ww', '-A', '-o', 'pid=,ppid=,pgid=,uid=,lstart=,command='], 30_000, { ...process.env, LC_ALL: 'C', LANG: 'C' });
+  const out = await run('ps', ['-ww', '-A', '-o', 'pid=,ppid=,pgid=,uid=,lstart=,command='], 30_000, psEnv());
   if (out === null) return [];
   const rows: ProcessRow[] = [];
   for (const line of out.split('\n')) {
     const m = ROW.exec(line);
-    if (m) rows.push({ pid: Number(m[1]), ppid: Number(m[2]), pgid: Number(m[3]), uid: Number(m[4]), startMs: Date.parse(m[5]!), command: m[6]! });
+    if (m) rows.push({ pid: Number(m[1]), ppid: Number(m[2]), pgid: Number(m[3]), uid: Number(m[4]), startMs: parseLstartUtc(m[5]!), command: m[6]! });
   }
   return rows;
 }
