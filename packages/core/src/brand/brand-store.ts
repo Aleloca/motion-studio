@@ -123,6 +123,24 @@ export class BrandStore {
     return this.lock.run('brand-kit.json', async () => this.writeKitUnlocked(updater(await this.readKit())));
   }
 
+  /**
+   * Points the logos and fonts that use project file `from` (e.g. `assets/logo.png`) at `to`, under the kit's lock. Returns
+   * whether anything changed; a corrupt kit refuses (JsonFileError) before anything is written.
+   */
+  renameFileRefs(from: string, to: string): Promise<boolean> {
+    return this.lock.run('brand-kit.json', async () => {
+      const kit = await this.readKit();
+      const uses = kit.logos.some((l) => l.file === from) || kit.fonts.some((f) => f.file === from);
+      if (!uses) return false;
+      await this.writeKitUnlocked({
+        ...kit,
+        logos: kit.logos.map((l) => (l.file === from ? { ...l, file: to } : l)),
+        fonts: kit.fonts.map((f) => (f.file === from ? { ...f, file: to } : f)),
+      });
+      return true;
+    });
+  }
+
   writeKit(kit: unknown): Promise<BrandKit> {
     return this.lock.run('brand-kit.json', () => this.writeKitUnlocked(kit));
   }

@@ -24,9 +24,12 @@ const conversationLock = new KeyedMutex();
 /** yyyy-mm-dd in the user's local time zone (a creative made at 23:30 belongs to that day). */
 const localDay = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
+/** Per-creative and create locks for the whole process, keyed by the creatives folder: every store instance of a project shares them. */
+const creativeLocks = new KeyedMutex();
+
 export class CreativeStore {
   private readonly root: string;
-  private readonly lock = new KeyedMutex();
+  private readonly lock = { run: <T>(key: string, fn: () => Promise<T>): Promise<T> => creativeLocks.run(`${this.root}\0${key}`, fn) };
 
   constructor(private readonly projectDir: string) { this.root = join(projectDir, 'creatives'); }
 
@@ -108,6 +111,28 @@ export class CreativeStore {
       await writeJsonFileAtomic(this.file(slug, 'creative.json'), parsed.data);
       return parsed.data;
     });
+  }
+
+  /**
+   * Replaces the project path `from` with `to` in every creative's brief `assets`, each creative under its own lock. A
+   * creative that cannot be read is left alone (it cannot be opened either). Returns the slugs changed.
+   */
+  async renameBriefAsset(from: string, to: string): Promise<string[]> {
+    const changed: string[] = [];
+    const entries = await readdir(this.root, { withFileTypes: true }).catch(() => []);
+    for (const e of entries) {
+      if (!e.isDirectory() || !CREATIVE_SLUG_RE.test(e.name)) continue;
+      await this.lock.run(`c:${e.name}`, async () => {
+        const current = await readJsonFile(this.file(e.name, 'creative.json'), creativeFileSchema).catch(() => null);
+        if (!current?.brief.assets.includes(from)) return;
+        const assets = [...new Set(current.brief.assets.map((a) => (a === from ? to : a)))];
+        const parsed = creativeFileSchema.safeParse({ ...current, brief: { ...current.brief, assets } });
+        if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidCreative({ detail: issuesText(parsed.error, currentLocale()) }));
+        await writeJsonFileAtomic(this.file(e.name, 'creative.json'), parsed.data);
+        changed.push(e.name);
+      });
+    }
+    return changed;
   }
 
   async readVersions(slug: string): Promise<VersionEntry[]> {

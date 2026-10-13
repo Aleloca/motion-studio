@@ -24,6 +24,7 @@ const api = {
     return structuredClone(a);
   }),
   deleteAsset: vi.fn(async () => ({ ok: true })),
+  assetWaveform: vi.fn(async (): Promise<{ peaks: number[] }> => ({ peaks: [0.1, 0.5, 1, 0.3] })),
   projectFileUrl: (s: string, r: string) => `/f/${s}/${r}`,
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
@@ -432,5 +433,103 @@ describe('Assets · upload and states', () => {
     const btn = await screen.findByRole('button', { name: 'Describe it' });
     expect((btn as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText('Claude is working on this project’s brand. Describe when it finishes.')).toBeTruthy();
+  });
+});
+
+describe('Assets · sorting', () => {
+  const names = () => [...document.querySelectorAll<HTMLElement>('.ms-acard[data-file]')].map((el) => el.dataset.file);
+  beforeEach(() => {
+    listing.assets = [
+      asset({ file: 'b.mp4', kind: 'video', addedAt: '2026-10-01T10:00:00.000Z', durationSec: 5 }),
+      asset({ file: 'a.png', kind: 'image', addedAt: '2026-10-03T10:00:00.000Z' }),
+      asset({ file: 'c.wav', kind: 'audio', addedAt: '2026-10-02T10:00:00.000Z', durationSec: 12.5 }),
+      asset({ file: 'd.svg', kind: 'svg', addedAt: '2026-10-04T10:00:00.000Z' }),
+    ];
+  });
+  it('orders by date (default, newest first), name, type and duration', async () => {
+    const user = userEvent.setup();
+    en(<Assets slug="acme" live={live()} />);
+    await screen.findByText('a.png');
+    expect(names()).toEqual(['d.svg', 'a.png', 'c.wav', 'b.mp4']);
+    for (const [label, order] of [['Name', ['a.png', 'b.mp4', 'c.wav', 'd.svg']], ['Type', ['a.png', 'd.svg', 'b.mp4', 'c.wav']], ['Longest first', ['c.wav', 'b.mp4', 'a.png', 'd.svg']], ['Newest first', ['d.svg', 'a.png', 'c.wav', 'b.mp4']]] as const) {
+      await user.click(screen.getByRole('button', { name: /^Sort by/ }));
+      await user.click(await screen.findByRole('option', { name: label }));
+      expect(names(), label).toEqual(order);
+    }
+  });
+  it('shows the duration of audio and video on the cards', async () => {
+    en(<Assets slug="acme" live={live()} />);
+    const c = (await screen.findByRole('button', { name: 'Open c.wav' })).closest('.ms-acard') as HTMLElement;
+    expect(within(c).getByText('0:12')).toBeTruthy();
+  });
+});
+
+describe('Assets · rename and playback', () => {
+  it('renames from the detail panel with Enter, and the card follows the new name', async () => {
+    const user = userEvent.setup();
+    en(<Assets slug="acme" live={live()} />);
+    await user.click(await screen.findByRole('button', { name: 'Open night.jpg' }));
+    api.updateAsset.mockImplementationOnce(async (_s: string, file: string, patch: Partial<AssetEntry> & { name?: string }) => {
+      const a = listing.assets.find((x) => x.file === file)!;
+      a.file = patch.name!;
+      return structuredClone(a);
+    });
+    await user.click(screen.getByRole('button', { name: 'Rename file' }));
+    const field = screen.getByRole('textbox', { name: 'New file name' });
+    expect((field as HTMLInputElement).value).toBe('night.jpg');
+    await user.clear(field);
+    await user.type(field, 'street.jpg{Enter}');
+    expect(api.updateAsset).toHaveBeenCalledWith('acme', 'night.jpg', { name: 'street.jpg' });
+    expect(await screen.findByRole('button', { name: 'Open street.jpg' })).toBeTruthy();
+    expect(card('night.jpg')).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'New file name' })).toBeNull();
+    expect(getToasts().some((x) => /Renamed to street\.jpg/.test(x.text))).toBe(true);
+  });
+  it('Escape cancels the rename without a request; a refused name keeps the form and says why', async () => {
+    const user = userEvent.setup();
+    en(<Assets slug="acme" live={live()} />);
+    await user.click(await screen.findByRole('button', { name: 'Open night.jpg' }));
+    await user.click(screen.getByRole('button', { name: 'Rename file' }));
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('textbox', { name: 'New file name' })).toBeNull();
+    expect(api.updateAsset).not.toHaveBeenCalled();
+    api.updateAsset.mockRejectedValueOnce(new Error('A file named x.jpg already exists'));
+    await user.click(screen.getByRole('button', { name: 'Rename file' }));
+    const field = screen.getByRole('textbox', { name: 'New file name' });
+    await user.clear(field);
+    await user.type(field, 'x.jpg{Enter}');
+    await waitFor(() => expect(getToasts().some((x) => /Not renamed: A file named x\.jpg already exists/.test(x.text))).toBe(true));
+    expect(screen.getByRole('textbox', { name: 'New file name' })).toBeTruthy();
+    expect(card('night.jpg')).toBeTruthy();
+  });
+  it('plays audio in the detail panel with the core waveform, and video with its own player (no native controls)', async () => {
+    const user = userEvent.setup();
+    listing.assets = [
+      asset({ file: 'tune.mp3', kind: 'audio', durationSec: 42, bytes: 1_234_567 }),
+      asset({ file: 'clip.mp4', kind: 'video', durationSec: 9, bytes: 800 }),
+    ];
+    en(<Assets slug="acme" live={live()} />);
+    await user.click(await screen.findByRole('button', { name: 'Open tune.mp3' }));
+    expect(await screen.findByRole('region', { name: 'Audio player: tune.mp3' })).toBeTruthy();
+    expect(api.assetWaveform).toHaveBeenCalledWith('acme', 'tune.mp3');
+    await waitFor(() => expect(document.querySelectorAll('.ms-player-wave rect').length).toBe(8));
+    expect(document.querySelector('audio')!.hasAttribute('controls')).toBe(false);
+    const meta = document.querySelector('.ms-adetail-meta') as HTMLElement;
+    expect(within(meta).getByText('Duration').nextElementSibling!.textContent).toBe('0:42');
+    expect(screen.getByText('1.2 MB')).toBeTruthy();
+    expect(screen.getByRole('slider', { name: 'Position' })).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Open clip.mp4' }));
+    expect(await screen.findByRole('region', { name: 'Video player: clip.mp4' })).toBeTruthy();
+    expect(document.querySelector('video')!.hasAttribute('controls')).toBe(false);
+    expect(screen.getByText('800 B')).toBeTruthy();
+  });
+  it('keeps the plain bar when the waveform is not available', async () => {
+    const user = userEvent.setup();
+    api.assetWaveform.mockRejectedValueOnce(new Error('no'));
+    listing.assets = [asset({ file: 'tune.mp3', kind: 'audio', durationSec: 42 })];
+    en(<Assets slug="acme" live={live()} />);
+    await user.click(await screen.findByRole('button', { name: 'Open tune.mp3' }));
+    expect(await screen.findByRole('slider', { name: 'Position' })).toBeTruthy();
+    expect(document.querySelector('.ms-player-wave')).toBeNull();
   });
 });

@@ -1,11 +1,15 @@
-import { lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises';
+import { link, lstat, mkdir, readdir, realpath, rename, rm, unlink } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import {
   assetKindOf, assetsFileSchema, referencesFileSchema, relativeFileSchema,
   type AssetEntry, type AssetOrigin, type ReferenceEntry,
 } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
-import { svgSize } from '../media/svg-size.ts';
+import { readAssetMeta, needsMeta } from './asset-meta.ts';
+import { realDirChain } from '../creatives/core-files.ts';
+import { BrandStore } from '../brand/brand-store.ts';
+import { CreativeStore } from '../creatives/creative-store.ts';
+import { sanitizeFileName } from './upload.ts';
 import { fileLock } from '../file-locks.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { WorkspaceError } from '../workspace-store.ts';
@@ -98,21 +102,104 @@ export class LibraryStore {
       for (const item of items) {
         const abs = await this.mustBeFile('assets', item.file);
         const kind = assetKindOf(item.file);
-        // SVG: its size from a plain text scan (never ffprobe, never resolving references); images and videos: ffprobe.
-        const probed = kind === 'svg' ? await svgSize(abs) : (kind === 'image' || kind === 'video') && this.media.available ? await this.media.probe(abs) : null;
+        // Metadata read once, here: size on disk, picture size, duration (SVG by a text scan, never ffprobe).
+        const meta = await readAssetMeta({ media: this.media }, abs, kind);
         const existing = assets.find((a) => a.file === item.file);
         const entry: AssetEntry = {
           file: item.file, kind, origin: item.origin, sourceUrl: item.sourceUrl ?? existing?.sourceUrl ?? null,
           description: item.description || existing?.description || '', tags: item.tags?.length ? item.tags : existing?.tags ?? [],
-          width: probed?.width ?? existing?.width ?? null, height: probed?.height ?? existing?.height ?? null,
+          width: meta.width ?? existing?.width ?? null, height: meta.height ?? existing?.height ?? null,
+          durationSec: meta.durationSec ?? existing?.durationSec ?? null, bytes: item.bytes ?? meta.bytes,
           addedAt: existing?.addedAt ?? now(), attribution: item.attribution ?? existing?.attribution ?? null,
-          ...(item.bytes !== undefined ? { bytes: item.bytes } : existing?.bytes !== undefined ? { bytes: existing.bytes } : {}),
+          ...(existing?.provider ? { provider: existing.provider } : {}), ...(existing?.model ? { model: existing.model } : {}), ...(existing?.loop !== undefined ? { loop: existing.loop } : {}),
         };
         if (existing) assets[assets.indexOf(existing)] = entry; else assets.push(entry);
         out.push(entry);
       }
       await this.writeAssets(assets);
       return out;
+    });
+  }
+
+  /**
+   * Entries registered before the metadata existed get it once: size, duration, picture size (stored, so it is never read
+   * again). A file that is gone is left as it is. Returns the entries after the fill and whether any changed.
+   */
+  fillMissingMeta(): Promise<{ assets: AssetEntry[]; changed: boolean }> {
+    return this.lock.run('assets', async () => {
+      const assets = await this.listAssets();
+      if (!assets.some(needsMeta)) return { assets, changed: false };
+      let changed = false;
+      const next: AssetEntry[] = [];
+      for (const a of assets) {
+        if (!needsMeta(a)) { next.push(a); continue; }
+        const abs = await this.mustBeFile('assets', a.file).catch(() => null);
+        if (!abs) { next.push(a); continue; }
+        const meta = await readAssetMeta({ media: this.media }, abs, a.kind);
+        next.push({ ...a, width: a.width ?? meta.width, height: a.height ?? meta.height, durationSec: a.durationSec ?? meta.durationSec, bytes: meta.bytes });
+        changed = true;
+      }
+      if (changed) await this.writeAssets(next);
+      return { assets: next, changed };
+    });
+  }
+
+  /**
+   * Renames a registered asset inside its own folder (no overwrite, never through a link), then points the brand's logos and
+   * fonts and every creative's brief `assets` at the new path, each under its own lock. Anything that fails undoes the steps
+   * before it. Editor staging copies are not touched (they are copies in `.studio/cache`). Returns the new entry and what changed.
+   */
+  renameAsset(file: string, name: string): Promise<{ entry: AssetEntry; brand: boolean; creatives: string[] }> {
+    return this.lock.run('assets', async () => {
+      const assets = await this.listAssets();
+      const i = assets.findIndex((a) => a.file === file);
+      if (i < 0) throw new WorkspaceError(404, t().errors.assetNotFound({ file }));
+      if (!name.trim() || /[\\/\0]/.test(name)) throw new WorkspaceError(400, t().errors.assetRenameInvalid);
+      const clean = sanitizeFileName(name.trim());
+      const slash = file.lastIndexOf('/');
+      const folder = slash < 0 ? '' : file.slice(0, slash);
+      const toFile = folder ? `${folder}/${clean}` : clean;
+      if (!relativeFileSchema.safeParse(toFile).success || isReservedName('assets', toFile) || isReservedName('assets', clean)) throw new WorkspaceError(400, t().errors.assetRenameInvalid);
+      const entry = assets[i]!;
+      if (toFile === file) return { entry, brand: false, creatives: [] };
+      if (assetKindOf(toFile) !== entry.kind) throw new WorkspaceError(400, t().errors.assetRenameKind({ file: clean }));
+      if (assets.some((a) => a.file !== file && a.file.toLowerCase() === toFile.toLowerCase())) throw new WorkspaceError(409, t().errors.assetRenameExists({ file: clean }));
+
+      // The source is a regular file inside the library, and every folder on the way is a real directory (no link anywhere).
+      const from = await this.mustBeFile('assets', file);
+      if (!(await realDirChain(this.dir('assets'), folder ? folder.split('/') : []))) throw new WorkspaceError(400, t().errors.fileOutsideFolder({ kind: 'assets', file }));
+      const to = this.resolve('assets', toFile);
+      const taken = await lstat(to).catch(() => null);
+      if (taken) {
+        // Only a change of letter case of the very same file is allowed onto an existing name (case-insensitive volumes).
+        const src = await lstat(from);
+        if (!(src.ino === taken.ino && src.dev === taken.dev && file.toLowerCase() === toFile.toLowerCase())) throw new WorkspaceError(409, t().errors.assetRenameExists({ file: clean }));
+        await rename(from, to);
+      } else {
+        // link + unlink claims the new name without ever replacing a file; volumes without hard links fall back to rename.
+        try { await link(from, to); await unlink(from); }
+        catch (err) {
+          const code = (err as { code?: string }).code;
+          if (code === 'EEXIST') throw new WorkspaceError(409, t().errors.assetRenameExists({ file: clean }));
+          if (code && ['EPERM', 'ENOTSUP', 'EXDEV', 'ENOSYS'].includes(code) && !(await lstat(to).catch(() => null))) await rename(from, to);
+          else throw err;
+        }
+      }
+      const undo: Array<() => Promise<unknown>> = [() => rename(to, from)];
+      try {
+        const brand = new BrandStore(this.projectDir), creatives = new CreativeStore(this.projectDir);
+        const brandChanged = await brand.renameFileRefs(`assets/${file}`, `assets/${toFile}`);
+        if (brandChanged) undo.unshift(() => brand.renameFileRefs(`assets/${toFile}`, `assets/${file}`));
+        const slugs = await creatives.renameBriefAsset(`assets/${file}`, `assets/${toFile}`);
+        if (slugs.length) undo.unshift(() => creatives.renameBriefAsset(`assets/${toFile}`, `assets/${file}`));
+        const renamed = { ...entry, file: toFile };
+        await this.writeAssets(assets.map((a, k) => (k === i ? renamed : a)));
+        return { entry: renamed, brand: brandChanged, creatives: slugs };
+      } catch (err) {
+        for (const step of undo) await step().catch(() => {});
+        if (err instanceof WorkspaceError || err instanceof JsonFileError) throw err;
+        throw new WorkspaceError(500, t().errors.assetRenameFailed);
+      }
     });
   }
 

@@ -2,7 +2,7 @@ import { mkdir, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { execCommand, type CommandExec } from '../exec.ts';
 import { execFfVia, isRegularFileNow, mediaInput, type FfArg } from './ffmpeg-exec.ts';
-import { frameScaleFilter } from './ffmpeg-filters.ts';
+import { frameScaleFilter, waveformPcmFilter } from './ffmpeg-filters.ts';
 import { isSvgName, svgSize } from './svg-size.ts';
 
 export interface MediaInfo { width: number; height: number; durationSec: number | null; /** Average frame rate of the video stream, when known. */ fps?: number }
@@ -11,6 +11,11 @@ export interface MediaTools {
   probe(file: string): Promise<MediaInfo | null>;
   /** An audio file's duration (null when unknown); null when it has no audio stream or cannot be read. Optional: test doubles. */
   probeAudio?(file: string): Promise<{ durationSec: number | null } | null>;
+  /**
+   * Decodes the first audio stream of `file` (at most `maxSec` seconds) to raw mono s16le PCM at `sampleRate` in `out`
+   * (a fresh path the caller owns). False when the file has no decodable audio. Optional: test doubles.
+   */
+  decodePcm?(file: string, out: string, o: { sampleRate: number; maxSec: number }): Promise<boolean>;
   poster(video: string, out: string, atSec?: number): Promise<boolean>;
   /** One frame at `atSec` (or the first one when the clip is shorter). `width`: shrink to at most this width (never enlarge). */
   frame(video: string, out: string, atSec: number, opts?: { width?: number }): Promise<boolean>;
@@ -80,6 +85,11 @@ export async function createFfmpegTools(exec: CommandExec = execCommand): Promis
       } catch {
         return null;
       }
+    },
+    async decodePcm(file, out, o) {
+      if (isSvgName(file) || !isRegularFileNow(file)) return false;
+      const r = await execFfVia(exec, 'ffmpeg', ['-y', '-loglevel', 'error', ...mediaInput({ file }), '-vn', '-map', '0:a:0', '-t', String(Math.max(1, Math.round(o.maxSec))), waveformPcmFilter(o.sampleRate), '-f', 's16le', out], { timeoutMs: 120_000 });
+      return r.code === 0 && ((await stat(out).catch(() => null))?.size ?? 0) > 0;
     },
     poster: (video, out, atSec = 0.5) => grab(video, out, atSec),
     frame: (video, out, atSec, opts) => grab(video, out, atSec, opts),

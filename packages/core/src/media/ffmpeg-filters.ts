@@ -167,3 +167,11 @@ export function testPatternInput(width: number, height: number, fps: number): Fi
 export function ssimCompareFilter(): FilterArg {
   return mint(['-lavfi', '[0:v]format=yuv420p[a];[1:v]scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[b];[a][b]ssim']);
 }
+
+/**
+ * The `-af` of a waveform decode: resampled to `sampleRate` (a low rate: peaks need no bandwidth) and converted to mono
+ * signed 16-bit samples, so the PCM written after it is bounded by `sampleRate × 2 bytes × seconds`.
+ */
+export function waveformPcmFilter(sampleRate: number): FilterArg {
+  return mint(['-af', `aresample=${int(sampleRate, 1000, 48_000, 'sample rate')},aformat=sample_fmts=s16:channel_layouts=mono`]);
+}
