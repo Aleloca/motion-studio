@@ -1,25 +1,43 @@
 import http from 'node:http';
 import https from 'node:https';
 import { syncBuiltinESMExports } from 'node:module';
+import { afterEach } from 'vitest';
 
 /**
  * Global test guard (Task 8 review): no test may reach a paid provider or Google Fonts for real, not even with a fake key.
  * Under vitest, `fetch`, `http(s).request` and `http(s).get` (the node transport of safe-fetch) refuse these hosts before any
  * socket opens, so a default real-network dependency (`keyCheckHttp`, `fontsHttp`, `voicesHttp`, `generateHttp`, provider
  * tools without an injected fetch) fails loudly instead of calling out. A test that really means it opts in with
- * `MS_ALLOW_PROVIDER_NETWORK=1`. Imported by isolate-user-data.ts, so every package's setup has it.
+ * `allowProviderNetwork()`, which returns its own restore and is undone after every test anyway. No environment variable can
+ * open it: an inherited `MS_ALLOW_PROVIDER_NETWORK` (an old opt-in) is deleted when the guard loads. Imported by
+ * isolate-user-data.ts, so every package's setup has it.
  */
 export const BLOCKED_PROVIDER_HOSTS = [
   'api.openai.com', 'api.elevenlabs.io', 'api.pexels.com', 'api.unsplash.com', 'fonts.googleapis.com', 'fonts.gstatic.com',
 ] as const;
 
 export class ProviderNetworkBlocked extends Error {
-  constructor(host: string) { super(`Test network guard: real request to ${host} refused (set MS_ALLOW_PROVIDER_NETWORK=1 to opt in)`); this.name = 'ProviderNetworkBlocked'; }
+  constructor(host: string) { super(`Test network guard: real request to ${host} refused (a test that means it calls allowProviderNetwork())`); this.name = 'ProviderNetworkBlocked'; }
 }
+
+// The opt-in lives on globalThis (one value per worker, whichever copy of this module asks).
+const OPEN = Symbol.for('motion-studio.provider-network-open');
+const state = globalThis as typeof globalThis & { [OPEN]?: boolean };
+
+/** The old environment opt-in, inherited from a shell or CI: removed, so it can never switch the guard off. */
+export const INHERITED_OPT_IN = 'MS_ALLOW_PROVIDER_NETWORK';
+export function scrubInheritedOptIn(env: NodeJS.ProcessEnv = process.env): void { delete env[INHERITED_OPT_IN]; }
+
+/** Lets the current test reach the blocked hosts. Returns the restore; the guard also closes again after every test. */
+export function allowProviderNetwork(): () => void {
+  state[OPEN] = true;
+  return () => { state[OPEN] = false; };
+}
+export function closeProviderNetwork(): void { state[OPEN] = false; }
 
 const norm = (h: string) => h.toLowerCase().replace(/\.$/, '').replace(/^\[|\]$/g, '');
 export function isBlockedProviderHost(host: string): boolean {
-  if (process.env.MS_ALLOW_PROVIDER_NETWORK === '1') return false;
+  if (state[OPEN] === true) return false;
   return (BLOCKED_PROVIDER_HOSTS as readonly string[]).includes(norm(host));
 }
 
@@ -45,6 +63,11 @@ const record = (host: string) => {
   process.stderr.write(`[provider-network-guard] blocked ${host}\n`);
   return new ProviderNetworkBlocked(host);
 };
+
+scrubInheritedOptIn();
+closeProviderNetwork();
+// Backstop: an opt-in never outlives its test, even when the test forgets its restore.
+afterEach(() => { closeProviderNetwork(); });
 
 const MARK = Symbol.for('motion-studio.provider-network-guard');
 const g = globalThis as typeof globalThis & { [MARK]?: boolean };
