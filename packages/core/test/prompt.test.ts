@@ -44,6 +44,21 @@ describe('buildCreativePrompt', () => {
     expect(p).toContain('work/.feedback/p1.jpg');
     expect(p).toContain('outputs/v2/');
   });
+  it('iteration: pin lines for a plain, a clip, a range and a clip-and-range comment', () => {
+    const at = { format: 'instagram-post-1x1', x: 0.25, y: 0.5 };
+    const p = buildCreativePrompt({ ...base, kind: 'iteration', userText: 'x', pins: [
+      { ...at, timeSec: 4.2, note: 'plain' },
+      { ...at, timeSec: 1, clipId: 'title', clipName: 'Headline', note: 'clip' },
+      { ...at, timeSec: 2, range: { start: 2, end: 3.5 }, note: 'range' },
+      { ...at, timeSec: 2, clipId: 'logo', clipName: 'Logo', range: { start: 2, end: 3.5 }, note: 'both' },
+      { ...at, timeSec: 1, clipId: 'bare' },
+    ] });
+    expect(p).toContain('- instagram-post-1x1 @ 4.2s, point (25%, 50%): plain\n');
+    expect(p).toContain('- instagram-post-1x1 @ 1.0s, point (25%, 50%), clip title "Headline": clip\n');
+    expect(p).toContain('- instagram-post-1x1 @ 2.0s, point (25%, 50%), range 2.0\u20133.5s: range\n');
+    expect(p).toContain('- instagram-post-1x1 @ 2.0s, point (25%, 50%), clip logo "Logo", range 2.0\u20133.5s: both\n');
+    expect(p).toContain('- instagram-post-1x1 @ 1.0s, point (25%, 50%), clip bare\n');
+  });
   it('fix: lists the problems', () => {
     const p = buildCreativePrompt({ ...base, kind: 'fix', problems: ['Manca il formato Web · Banner 300×250 (web-banner-300x250)'] });
     expect(p).toContain('- Manca il formato Web · Banner 300×250 (web-banner-300x250)');

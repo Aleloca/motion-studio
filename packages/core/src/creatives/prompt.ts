@@ -116,6 +116,13 @@ function contextSections(c: CreativeContext, contract: AgentContract = 'composit
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 
+/** `- <format> @ <t>s, point (x%, y%)[, clip <clipId> "<name>"][, range <a>–<b>s]: <note>` (Phase 10b adds the last two). */
+function pinLine(p: Pin): string {
+  const clip = p.clipId ? `, clip ${p.clipId}${p.clipName ? ` "${p.clipName.replace(/[\r\n"]+/g, ' ')}"` : ''}` : '';
+  const range = p.range ? `, range ${p.range.start.toFixed(1)}\u2013${p.range.end.toFixed(1)}s` : '';
+  return `- ${p.format}${p.timeSec !== null ? ` @ ${p.timeSec.toFixed(1)}s` : ''}, point (${pct(p.x)}, ${pct(p.y)})${clip}${range}${p.note ? `: ${p.note}` : ''}`;
+}
+
 /**
  * The composition format in short (the full JSON Schema is `.studio/composition.schema.json`, about 27 KB, so it is not
  * inlined). The examples are minimal and valid; `.studio/context.md` has more.
@@ -206,7 +213,7 @@ export function buildCreativePrompt(i: PromptInput): string {
     parts.push(`New request for the creative "${i.creative.title}": produce version ${i.version}.`, '', '## Request', i.userText ?? '');
     if (i.pins?.length) {
       parts.push('', '## Pinned comments');
-      for (const p of i.pins) parts.push(`- ${p.format}${p.timeSec !== null ? ` @ ${p.timeSec.toFixed(1)}s` : ''}, point (${pct(p.x)}, ${pct(p.y)})${p.note ? `: ${p.note}` : ''}`);
+      for (const p of i.pins) parts.push(pinLine(p));
     }
     if (i.attachments?.length) parts.push('', '## Attached frames (read them)', ...i.attachments.map((a) => `- ${a}`));
     if (i.conversion && contract === 'compositions') parts.push('', ...conversionSection(i.conversion));

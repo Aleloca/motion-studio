@@ -65,6 +65,17 @@ describe('GET …/pin-frames/:n', () => {
     expect(img.rawPayload.equals(JPEG)).toBe(true);
     expect(img.headers['cross-origin-resource-policy']).toBe('same-origin');
   });
+  it('lists the end frame of a range pin right after its start frame', async () => {
+    mkdirSync(framesDir(2), { recursive: true });
+    for (const f of ['2-2.jpg', '2-1e.jpg', '2-1.jpg', '2-2e.jpg', '2-1x.jpg', '2-e1.jpg', '3-1e.jpg']) writeFileSync(join(framesDir(2), f), JPEG);
+    const body = (await list(2)).json() as PinFramesView;
+    expect(body.frames.map((f) => f.file)).toEqual(['2-1.jpg', '2-1e.jpg', '2-2.jpg', '2-2e.jpg']);
+    const img = await app.inject({ url: body.frames[1]!.url });
+    expect(img.statusCode).toBe(200);
+    expect(img.rawPayload.equals(JPEG)).toBe(true);
+    // The signature is bound to the exact name: the start frame's cannot open the end frame.
+    expect((await app.inject({ url: body.frames[0]!.url.replace('2-1.jpg', '2-1e.jpg') })).statusCode).toBe(403);
+  });
   it('nothing made yet: an empty list (never creating folders)', async () => {
     const r = await list(5);
     expect(r.json()).toEqual({ n: 5, expiresAt: null, frames: [] });

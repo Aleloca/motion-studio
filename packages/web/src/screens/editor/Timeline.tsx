@@ -9,7 +9,8 @@
 //   animation frame with a `drag:<clip>` coalescing key and closed with `endRun()`: a drag is one undo step.
 // - Scrubbing the ruler sends `seek` coalesced per animation frame. The runtime can drop a seek that arrives after several
 //   follow-up seeks during a re-mount, so the LAST position is always sent when the scrub ends (and once more shortly after).
-// - Range comments (Task 10) go in through `overlay`, drawn over the lanes; this file does not know about them.
+// - Range comments (Task 10): the spans are drawn by the caller through `overlay`; a Shift + drag on the ruler picks a range
+//   (shown while dragging) and hands it to `onRange`; the "Comment on clip" button calls `onCommentClip`. Neither touches the draft.
 import { compositionProblem, editProblemText, snapTargets, type Clip, type Track } from '@motion-studio/shared';
 import {
   forwardRef, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type Ref,
@@ -45,6 +46,11 @@ export interface TimelineProps {
   marks?: Mark[];
   /** Drawn over the lanes, in the time area (Task 10: range comments as shaded spans). */
   overlay?: (o: { pps: number }) => ReactNode;
+  /** A Shift + drag on the ruler ended on this range (seconds, start < end). Absent: Shift + drag scrubs like any drag. */
+  onRange?(r: { start: number; end: number }): void;
+  /** The "Comment on clip" button (the `C` key does the same); `canCommentClip` is false with no clip selected. */
+  onCommentClip?(): void;
+  canCommentClip?: boolean;
 }
 
 const Ticks = memo(function Ticks({ pps, fps, t0, t1, seconds }: { pps: number; fps: number; t0: number; t1: number; seconds: (n: number) => string }) {
@@ -83,10 +89,11 @@ function Playhead({ clock, pps }: { clock: ReturnType<typeof useEditor>['control
   return <span className="ms-tl-playhead" style={{ left: HEADER_W + timeToPx(time, pps) }} aria-hidden="true" />;
 }
 
-export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay }: TimelineProps) {
+export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay, onRange, onCommentClip, canCommentClip = true }: TimelineProps) {
   const t = useT();
   const e = t.web.editor;
   const f = t.web.formatView;
+  const e2 = t.web.conversation;
   const r = t.web.render;
   const locale = useLocale();
   const { slug, creative, primary, draft, actions, controls, selection, select, snap, setSnap } = useEditor();
@@ -101,14 +108,16 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay }: 
   const [guide, setGuide] = useState<number | null>(null);
   const [viewport, setViewport] = useState(FALLBACK_VIEWPORT);
   const [scrollLeft, setScrollLeft] = useState(0);
+  /** The range being picked with Shift + drag on the ruler. */
+  const [picking, setPicking] = useState<{ a: number; b: number } | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const area = useRef<HTMLDivElement>(null);
   const pps = pxPerSec(viewport, comp.duration, zoom);
   const contentW = Math.ceil(comp.duration * pps);
 
   // The live values a gesture reads each frame (they can change under it: the magnet, the ripple toggle, the zoom).
-  const live = useRef({ snap, ripple, pps, comp, fps, controls, actions });
-  live.current = { snap, ripple, pps, comp, fps, controls, actions };
+  const live = useRef({ snap, ripple, pps, comp, fps, controls, actions, onRange });
+  live.current = { snap, ripple, pps, comp, fps, controls, actions, onRange };
 
   // Viewport width: the scroller without the lane headers.
   useLayoutEffect(() => {
@@ -277,8 +286,32 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay }: 
     const x = clientX - (rect?.left ?? 0);
     return Math.min(live.current.comp.duration, Math.max(0, pxToTime(x, live.current.pps)));
   };
+  /** Shift + drag on the ruler: a range comment. Nothing seeks; the range is picked frame by frame and handed over on release. */
+  const beginRange = (ev: ReactPointerEvent<HTMLElement>) => {
+    cleanup.current();
+    const a = frameRound(timeAt(ev.clientX), live.current.fps);
+    let b = a;
+    setPicking({ a, b });
+    const move = (m: PointerEvent) => { b = frameRound(timeAt(m.clientX), live.current.fps); setPicking({ a, b }); };
+    const end = (m: PointerEvent) => {
+      if (m.type === 'pointerup') b = frameRound(timeAt(m.clientX), live.current.fps);
+      cleanup.current();
+      if (m.type === 'pointerup' && Math.abs(b - a) >= 0.1) live.current.onRange?.({ start: Math.min(a, b), end: Math.max(a, b) });
+    };
+    cleanup.current = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+      setPicking(null);
+      cleanup.current = () => {};
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+  };
   const beginScrub = (ev: ReactPointerEvent<HTMLElement>) => {
     if (ev.button !== 0 || !controls.ready) return;
+    if (ev.shiftKey && live.current.onRange) { beginRange(ev); return; }
     cleanup.current();
     const s = scrub.current;
     window.clearTimeout(s.resend);
@@ -350,6 +383,13 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay }: 
         <span className="ms-fv-sep" aria-hidden="true" />
         <Button size="sm" variant="outline" icon className={cx('ms-tl-toggle', snap && 'ms-on')} aria-label={e.snap} title={e.snap} aria-pressed={snap} onClick={() => setSnap(!snap)}><Icon name="magnet" size={13} /></Button>
         <Button size="sm" variant="outline" icon className={cx('ms-tl-toggle', ripple && 'ms-on')} aria-label={e.tlRipple} title={e.tlRipple} aria-pressed={ripple} onClick={() => setRipple(!ripple)}><Icon name="link" size={13} /></Button>
+        {onCommentClip ? (
+          <>
+            <span className="ms-fv-sep" aria-hidden="true" />
+            <Button size="sm" variant="outline" className="ms-tl-comment" aria-keyshortcuts="C" title={canCommentClip ? e2.rangeHint : e2.clipCommentNeeds}
+              disabled={!canCommentClip} onClick={onCommentClip}><Icon name="comment" size={13} />{e2.clipComment}</Button>
+          </>
+        ) : null}
         <span className="ms-grow" />
         {notice ? <span className="ms-tl-notice" role="alert">{notice}</span> : null}
         <span className="ms-tl-zoom">
@@ -366,6 +406,7 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay }: 
             <div className="ms-tl-corner" />
             <RulerRef ref={area} clock={controls.clock} duration={comp.duration} label={e.tlRuler} disabled={disabled} width={contentW} onPointerDown={beginScrub} onKeyDown={rulerKeys}>
               <Ticks pps={pps} fps={fps} t0={t0} t1={t1} seconds={seconds} />
+              {picking ? <span className="ms-tl-picking" aria-hidden="true" style={{ left: timeToPx(Math.min(picking.a, picking.b), pps), width: timeToPx(Math.abs(picking.b - picking.a), pps) }} /> : null}
               {marks.filter((m) => m.pin.timeSec !== null).map(({ pin, number }) => (
                 <button key={number} type="button" className="ms-tl-mark" style={{ left: timeToPx(pin.timeSec!, pps) }} title={pin.note} disabled={disabled}
                   aria-label={f.marker({ n: number, time: timecode(pin.timeSec!) })}

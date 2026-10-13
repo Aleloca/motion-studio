@@ -187,6 +187,8 @@ export const pinSchema = z.object({
   note: z.string().optional(),
   /** The composition clip the comment is about (Phase 10b). Absent on older pins. */
   clipId: z.string().max(64).optional(),
+  /** The clip's name when the comment was placed (for the chip and the agent's prompt; the clip may be renamed or gone later). */
+  clipName: z.string().max(200).optional(),
   /** The time range, in seconds, the comment is about (Phase 10b): `0 <= start < end`. */
   range: z.object({ start: z.number().min(0), end: z.number() }).refine((r) => r.start < r.end).optional(),
 });

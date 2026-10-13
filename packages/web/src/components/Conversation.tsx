@@ -4,6 +4,7 @@ import { api, ApiError } from '../api.ts';
 import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
 import { enter, isSubmitChord } from '../motion/index.ts';
 import { isMac } from '../platform.ts';
+import { clipRangeChip } from '../screens/pinModel.ts';
 import { Button, Chip, Empty, Icon, Markdown, Textarea, Typing, cx, type IconName } from '../ui/index.ts';
 import { defaultTargets } from '../screens/versionModel.ts';
 import { errorCode, versionErrorText } from '../screens/versionErrors.ts';
@@ -313,7 +314,11 @@ const AgentMark = () => (
 );
 
 function pinText(p: Pin, n: number, formatName: ((id: string) => string) | undefined, t: ReturnType<typeof useT>, locale: ReturnType<typeof useLocale>) {
-  const base = t.web.chat.pin({ n, format: formatName?.(p.format) ?? p.format });
+  const format = formatName?.(p.format) ?? p.format;
+  // A comment on a clip or a time range reads `Reel · "Title" clip` / `Reel · 2.0–3.5 s` (Phase 10b); older ones as always.
+  const special = clipRangeChip(p, format, t, locale);
+  if (special) return special;
+  const base = t.web.chat.pin({ n, format });
   if (p.timeSec === null) return base;
   return `${base} ${t.web.conversation.atSeconds({ time: formatNumber(locale, p.timeSec, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) })}`;
 }

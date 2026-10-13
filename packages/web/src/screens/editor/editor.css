@@ -237,3 +237,8 @@ button.ms-layer-main:focus-visible { outline: 2px solid var(--accent); outline-o
 }
 .ms-ed-zoom-slider { width: 150px; }
 .ms-ed-zoom-value { min-width: 38px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); }
+
+/* Comments on time ranges (Task 10): shaded spans over the lanes, the range being picked on the ruler, the clip comment button. */
+.ms-tl-span { position: absolute; top: 0; bottom: 0; background: var(--accent); opacity: .16; border-inline: 2px solid var(--accent); box-sizing: border-box; }
+.ms-tl-picking { position: absolute; top: 0; bottom: 0; background: var(--accent); opacity: .3; pointer-events: none; }
+.ms-tl-comment[disabled] { opacity: .5; }

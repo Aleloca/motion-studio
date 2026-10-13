@@ -11,7 +11,7 @@
 // (Transport.tsx, shared with Compare), the comment layer and the hint read, so the page (bar, chat) does not
 // re-render while the video plays.
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
-import { channelName, DEFAULT_EXPORT_NAME_PATTERN, DEFAULT_FORMATS, formatName, type FormatPreset, type Pin, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
+import { channelName, DEFAULT_EXPORT_NAME_PATTERN, DEFAULT_FORMATS, formatName, type Composition, type FormatPreset, type Pin, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import {
   useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type CSSProperties, type MouseEvent,
@@ -28,7 +28,7 @@ import { href, routeKey } from '../routes.ts';
 import { useBarClaim } from '../shell/barSlots.ts';
 import { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } from '../shell/intents.ts';
 import { go, ShellContext } from '../shell/ShellContext.tsx';
-import { Button, ChannelMark, Empty, Icon, Pill, Spinner, Toggle, cx } from '../ui/index.ts';
+import { Button, ChannelMark, Empty, Icon, Pill, Select, Spinner, Toggle, cx } from '../ui/index.ts';
 import { useCreative } from '../useCreative.ts';
 import { boardLabel, PinBubble, SafeZoneBands, type Draft } from './CanvasBoard.tsx';
 import { outputUrl, pointIn, ratioText } from './canvasModel.ts';
@@ -37,6 +37,7 @@ import { channelOf, lastStep } from './creativeState.ts';
 import { ExportDialog, type ExportSnapshot } from './ExportDialog.tsx';
 import { activatesControl, bare, inOverlay, isTyping } from './keys.ts';
 import { pinsKey, usePendingPins } from './pendingPins.ts';
+import { clipLabel, clipPin, clipsAt, rangePin, rangeTimes } from './pinModel.ts';
 import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from './FormatVersions.tsx';
 import { boardSource, entryAt, followersOf, formatStates, isRendering, renderingOf, shownOf, type FormatState } from './versionModel.ts';
 import { compositionOf } from './renderModel.ts';
@@ -54,7 +55,7 @@ const ZOOMS = [0.1, 0.25, 0.33, 0.5, 0.67, 0.75, 1, 1.25, 1.5, 2, 3, 4];
 const FLIP_WINDOW_MS = 400;
 
 /** The comment being written, with the time it is on (videos). */
-type FDraft = Draft & { timeSec: number | null };
+type FDraft = Draft & { timeSec: number | null; clip?: { id: string; name: string }; range?: { start: number; end: number } };
 /** What the transport drives: the <video> of a legacy version, or the live composition player (v2). */
 type PlayerMedia = Pick<HTMLVideoElement, 'currentTime' | 'playbackRate' | 'defaultPlaybackRate' | 'pause'> & { play(): Promise<void> | void };
 
@@ -159,6 +160,18 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   useEffect(() => { if (!canComment) setDraft(null); }, [canComment]);
   useEffect(() => { setDraft(null); }, [pinSource]);
 
+  // The composition's clips (Phase 10b): the picker of "Comment on clip" lists those playing at the playhead. A version without
+  // an editable composition (a legacy one) simply has no picker.
+  const clipsOf = livePlayer && canComment && version ? version.n : null;
+  const [clipComp, setClipComp] = useState<Composition | null>(null);
+  useEffect(() => {
+    setClipComp(null);
+    if (clipsOf === null) return;
+    let alive = true;
+    Promise.resolve().then(() => api.getEditorComposition(slug, creative, clipsOf, source.format)).then((v) => { if (alive) setClipComp(v.composition); }).catch(() => {});
+    return () => { alive = false; };
+  }, [slug, creative, clipsOf, source.format]);
+
   // Playback (video). jsdom and some codecs never fire `play`: the state follows the call and the media events.
   const [clock] = useState(createClock);
   const media = useRef<PlayerMedia | null>(null);
@@ -258,6 +271,8 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   const keysOn = (e: KeyboardEvent) => bare(e) && !e.shiftKey && !isTyping(e) && !inOverlay(e) && !activatesControl(e, PLAYER_CONTROLS) && video && (livePlayer ? playerReady : Boolean(out)) && !failed;
   usePageShortcut(root, (e) => (e.key === ' ' || e.code === 'Space') && keysOn(e), toggle);
   usePageShortcut(root, (e) => (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && keysOn(e), (e) => stepFrame(e.key === 'ArrowRight' ? 1 : -1));
+  const commentTopRef = useRef<() => void>(() => {});
+  usePageShortcut(root, (e) => e.key.toLowerCase() === 'c' && keysOn(e) && canComment && !draft && clipComp !== null && !playing, () => commentTopRef.current());
 
   // Zoom (image): Fit follows the stage; a number is the scale of the picture's own pixels.
   const [zoom, setZoom] = useState<'fit' | number>('fit');
@@ -320,6 +335,31 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
     const at = video ? round3(media.current?.currentTime ?? clock.get().time) : null;
     setDraft((d) => ({ format, x: pt.x, y: pt.y, text: d && d.index === null ? d.text : '', index: null, timeSec: at }));
   };
+  /** "Comment on clip": the clip's centre at the current time. */
+  const commentClip = (id: string) => {
+    const clip = clipComp ? clipsAt(clipComp, round3(media.current?.currentTime ?? clock.get().time)).find((x) => x.id === id) : null;
+    if (!clipComp || !clip) return;
+    if (playing) pause();
+    const time = round3(media.current?.currentTime ?? clock.get().time);
+    const pin = clipPin({ format, comp: clipComp, clip, time });
+    setDraft({ format, x: pin.x, y: pin.y, text: '', index: null, timeSec: time, clip: { id: clip.id, name: clipLabel(clip) } });
+  };
+  /** The range of a Shift + drag on the transport. */
+  const commentRange = (r: { start: number; end: number }) => {
+    const pin = rangePin({ format, start: r.start, end: r.end, duration });
+    if (!pin) return;
+    if (playing) pause();
+    setDraft({ format, x: pin.x, y: pin.y, text: '', index: null, timeSec: pin.timeSec, range: pin.range });
+  };
+  /** `C`: comments on the clip on top at the playhead. */
+  const commentTopClip = () => {
+    if (!clipComp) return;
+    const at = clipsAt(clipComp, round3(media.current?.currentTime ?? clock.get().time));
+    // The track list runs bottom to top; audio is heard, not seen, so the top clip is the last one with a picture.
+    const top = at.filter((x) => x.type !== 'audio').at(-1) ?? at.at(-1);
+    if (top) commentClip(top.id);
+  };
+  commentTopRef.current = commentTopClip;
   /** Opens comment `number` (1-based among the pin source's): here, on its version and time, or in its format. */
   const openPin = (number: number) => {
     const pin = pins[number - 1];
@@ -334,7 +374,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
       go(href.format(slug, creative, pin.format));
       return;
     }
-    const d: FDraft = { format, x: pin.x, y: pin.y, text: pin.note ?? '', index: number - 1, timeSec: pin.timeSec };
+    const d: FDraft = { format, x: pin.x, y: pin.y, text: pin.note ?? '', index: number - 1, timeSec: pin.timeSec, ...(pin.clipId ? { clip: { id: pin.clipId, name: pin.clipName ?? pin.clipId } } : {}), ...(pin.range ? { range: pin.range } : {}) };
     if (!canComment) {
       // Another version is on screen: go to the one comments apply to, then open it there.
       const entry = entryAt(versions, states[source.format], pinSource);
@@ -357,7 +397,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
     const note = draft.text.trim();
     if (!note) return;
     if (draft.index === null) {
-      const pin: Pin = { format, x: draft.x, y: draft.y, timeSec: video ? draft.timeSec ?? 0 : null, note };
+      const pin: Pin = { format, x: draft.x, y: draft.y, timeSec: video ? draft.timeSec ?? 0 : null, note, ...(draft.clip ? { clipId: draft.clip.id, clipName: draft.clip.name } : {}), ...(draft.range ? { range: draft.range } : {}) };
       if (pinSource !== null) setStored((ps) => [...ps, { pin, version: pinSource }]);
     } else {
       const at = sourcePins[draft.index]?.at;
@@ -434,6 +474,12 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   const primaryLabel = state?.follows ? formatLabel(state.follows) : null;
   const primaryStar = state?.follows ? states[state.follows]?.star.version ?? null : null;
   const ready = !loading && (livePlayer ? playerReady : Boolean(out)) && !failed;
+  /** The bubble's second line: the time of a frame comment, the clip too, or the range. */
+  const bubbleTime = (d: FDraft): string | undefined => {
+    if (d.range) return t.web.conversation.noteTitleRange(rangeTimes(locale, d.range));
+    const at = video && d.timeSec !== null ? f.pinAt({ time: timecode(d.timeSec) }) : undefined;
+    return d.clip ? [t.web.conversation.noteTitleClip({ name: d.clip.name }), at].filter(Boolean).join(' · ') : at;
+  };
 
   return (
     <div ref={root} className={cx('ms-fv', video ? 'ms-fv-video' : 'ms-fv-image')} aria-busy={loading || undefined}>
@@ -561,13 +607,14 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
             {canComment && ready ? <PinLayer clock={clock} video={video} marks={marks} open={draft?.index ?? null} onOpen={openPin} /> : null}
             {draft && canComment ? (
               <PinBubble draft={draft} number={draft.index === null ? pins.length + 1 : draft.index + 1} video={video}
-                time={video && draft.timeSec !== null ? f.pinAt({ time: timecode(draft.timeSec) }) : undefined}
+                time={bubbleTime(draft)}
                 onText={(text) => setDraft((d) => (d ? { ...d, text } : d))} onCommit={commitDraft} onCancel={() => setDraft(null)}
                 onDelete={() => { if (draft.index !== null) removePin(draft.index); }} />
             ) : null}
           </div>
         </section>
         {canComment && ready && !draft && (!video || !playing) ? <CommentHint clock={clock} video={video} /> : null}
+        {video && canComment && ready && clipComp ? <ClipPicker clock={clock} comp={clipComp} onPick={commentClip} /> : null}
         {lock ? <div className="ms-cv-hint ms-lock ms-fv-hint" id="ms-fv-comment-lock" role="status">{c.versions.commentsOn({ n: pinSource })}</div> : null}
         {preset?.safeZone && (out || livePlayer) ? (
           <span className="ms-fv-safe-toggle"><Toggle size="sm" on={safe} onChange={setSafe} label={c.safeZones} /><span aria-hidden="true">{c.safeZones}</span></span>
@@ -583,7 +630,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
           </div>
         ) : null}
         {video ? (
-          <Transport clock={clock} duration={duration} playing={playing} disabled={!ready} marks={canComment ? marks : []} hint={canComment ? f.keys : f.keysLocked}
+          <Transport clock={clock} duration={duration} playing={playing} disabled={!ready} marks={canComment ? marks : []} onRange={canComment ? commentRange : undefined} hint={canComment ? f.keys : f.keysLocked}
             onToggle={toggle} onStep={stepFrame} onSeek={seek} onPause={pause} onResume={play}
             loop={loop} onLoop={setLoop} speed={rate} onSpeed={setRate} />
         ) : null}
@@ -621,7 +668,7 @@ function HitArea({ clock, video, label, onPlace }: { clock: Clock; video: boolea
 function PinLayer({ clock, video, marks, open, onOpen }: { clock: Clock; video: boolean; marks: Mark[]; open: number | null; onOpen(number: number): void }) {
   const c = useT().web.canvas;
   const { time } = useClock(clock);
-  const visible = video ? marks.filter((m) => m.pin.timeSec === null || Math.abs(m.pin.timeSec - time) <= PIN_WINDOW + 1e-6) : marks;
+  const visible = video ? marks.filter((m) => m.pin.timeSec === null || (m.pin.range ? time >= m.pin.range.start - 1e-6 && time <= m.pin.range.end + 1e-6 : Math.abs(m.pin.timeSec - time) <= PIN_WINDOW + 1e-6)) : marks;
   return (
     <>
       {visible.map(({ pin, number }) => (
@@ -631,6 +678,20 @@ function PinLayer({ clock, video, marks, open, onOpen }: { clock: Clock; video: 
         </button>
       ))}
     </>
+  );
+}
+
+/** "Comment on a clip": the clips playing at the playhead, topmost last; choosing one starts a comment on it (`C` takes the topmost). */
+function ClipPicker({ clock, comp, onPick }: { clock: Clock; comp: Composition; onPick(id: string): void }) {
+  const cv = useT().web.conversation;
+  const { settled } = useClock(clock);
+  const clips = clipsAt(comp, settled);
+  return (
+    <span className="ms-fv-clippick" data-part="clip-picker">
+      <Select<string> variant="pill" label={cv.clipPick} value="" display={clips.length ? cv.clipPick : cv.clipPickNone} disabled={clips.length === 0}
+        options={[{ value: '', label: cv.clipPick, disabled: true }, ...[...clips].reverse().map((x) => ({ value: x.id, label: clipLabel(x) }))]}
+        onChange={(id) => { if (id) onPick(id); }} />
+    </span>
   );
 }
 

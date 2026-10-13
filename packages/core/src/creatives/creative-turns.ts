@@ -956,34 +956,38 @@ export class CreativeTurnService {
   }
 
   /**
-   * The feedback frames of the pinned comments (the agent reads them): one JPEG per pin with a time, from the base's media
+   * The feedback frames of the pinned comments (the agent reads them): one JPEG per pin with a time (two for a range pin: its start and its end), from the base's media
    * or, for a v2 version without a current render, from its composition. They go to the protected core cache
    * `.studio/cache/pin-frames/<creative>/v<n>/<n>-<i>.jpg` (the agent can read `.studio`, never write it), through real
    * directories and a fresh temp file renamed into place (fix I1): never through a link someone planted.
    */
   private async extractPinFrames(ref: CreativeRef, store: CreativeStore, pins: Pin[], source: VersionEntry | undefined, n: number): Promise<string[]> {
-    if (!source || !pins.some((p) => p.timeSec !== null)) return [];
+    if (!source || !pins.some((p) => p.timeSec !== null || p.range)) return [];
     const dir = await realDirChain(ref.projectDir, ['.studio', 'cache', 'pin-frames', ref.creativeSlug, `v${n}`]).catch(() => null);
     if (!dir) return [];
     const out: string[] = [];
     for (const [i, pin] of pins.entries()) {
-      if (pin.timeSec === null) continue;
-      const name = `${n}-${i + 1}.jpg`;
-      try {
-        const output = source.outputs.find((o) => o.format === pin.format);
-        // A v2 version without a current render: the frame comes from its composition (Task 5b).
-        const fromComposition = source.compositions?.some((c) => c.format === pin.format) && renderState(source, pin.format) !== 'rendered';
-        let made = false;
-        if (fromComposition && this.deps.previews) {
-          const jpeg = await this.deps.previews.frameJpeg({ projectDir: ref.projectDir, creativeDir: store.dir(ref.creativeSlug), creativeSlug: ref.creativeSlug, n: source.n }, source, pin.format, pin.timeSec);
-          made = jpeg !== null && await writeThroughTemp(dir, name, async (temp) => { await writeFile(temp, jpeg, { flag: 'wx' }); return true; });
-        } else if (output && this.deps.media.available) {
-          // ffmpeg writes a fresh random temp name (its `-y` never meets an existing entry), then it is renamed into place.
-          made = await writeThroughTemp(dir, name, (temp) => this.deps.media.frame(join(store.outputsDir(ref.creativeSlug, source.n), output.file), temp, pin.timeSec!));
+      // A range pin (Phase 10b) gets its start frame `<n>-<i>.jpg` and its end frame `<n>-<i>e.jpg`; any other pin with a time one frame.
+      const wanted: Array<{ name: string; at: number }> = pin.range
+        ? [{ name: `${n}-${i + 1}.jpg`, at: pin.range.start }, { name: `${n}-${i + 1}e.jpg`, at: pin.range.end }]
+        : pin.timeSec !== null ? [{ name: `${n}-${i + 1}.jpg`, at: pin.timeSec }] : [];
+      for (const { name, at } of wanted) {
+        try {
+          const output = source.outputs.find((o) => o.format === pin.format);
+          // A v2 version without a current render: the frame comes from its composition (Task 5b).
+          const fromComposition = source.compositions?.some((c) => c.format === pin.format) && renderState(source, pin.format) !== 'rendered';
+          let made = false;
+          if (fromComposition && this.deps.previews) {
+            const jpeg = await this.deps.previews.frameJpeg({ projectDir: ref.projectDir, creativeDir: store.dir(ref.creativeSlug), creativeSlug: ref.creativeSlug, n: source.n }, source, pin.format, at);
+            made = jpeg !== null && await writeThroughTemp(dir, name, async (temp) => { await writeFile(temp, jpeg, { flag: 'wx' }); return true; });
+          } else if (output && this.deps.media.available) {
+            // ffmpeg writes a fresh random temp name (its `-y` never meets an existing entry), then it is renamed into place.
+            made = await writeThroughTemp(dir, name, (temp) => this.deps.media.frame(join(store.outputsDir(ref.creativeSlug, source.n), output.file), temp, at));
+          }
+          if (made) out.push(relative(ref.projectDir, join(dir, name)).split(sep).join('/'));
+        } catch {
+          // The feedback frame is optional: the pin still travels as text.
         }
-        if (made) out.push(relative(ref.projectDir, join(dir, name)).split(sep).join('/'));
-      } catch {
-        // The feedback frame is optional: the pin still travels as text.
       }
     }
     return out;

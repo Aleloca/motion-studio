@@ -15,7 +15,7 @@
 // - The draft goes to the player with `setComposition` (coalesced per animation frame); a draft the runtime refuses is
 //   shown as a problem, never ignored.
 import {
-  channelName, compositionProblemText, formatName, type Composition, type EditorCompositionView, type FormatPreset, type StagedAsset, type StageRequest,
+  channelName, compositionProblemText, formatName, type Composition, type EditorCompositionView, type FormatPreset, type Pin, type StagedAsset, type StageRequest,
 } from '@motion-studio/shared';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
@@ -35,6 +35,9 @@ import { go, ShellContext } from '../../shell/ShellContext.tsx';
 import { Button, Empty, Icon, Modal, Pill, Spinner, Tabs, cx, toast } from '../../ui/index.ts';
 import { useCreative } from '../../useCreative.ts';
 import { pinsKey, usePendingPins } from '../pendingPins.ts';
+import { clipPin, findClipById, rangePin, rangeTimes } from '../pinModel.ts';
+import { PinNoteDialog } from './PinNoteDialog.tsx';
+import { RangeSpans } from './RangeSpans.tsx';
 import { boardLabel } from '../CanvasBoard.tsx';
 import { ExportDialog, type ExportSnapshot } from '../ExportDialog.tsx';
 import { compositionOf } from '../renderModel.ts';
@@ -334,12 +337,65 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const [zoom, setZoom] = useState<number | null>(null);
   useEffect(() => { setSelection(null); }, [n, primary]);
   // The conversation's pins on the version being edited, as markers on the timeline ruler (numbered as in the format view).
-  const [storedPins] = usePendingPins(pinsKey(slug, creative));
+  const [storedPins, setStoredPins] = usePendingPins(pinsKey(slug, creative));
   const marks = useMemo<Mark[]>(() => storedPins.filter((p) => p.version === n).map((p, i) => ({ pin: p.pin, number: i + 1 }))
     .filter((m) => m.pin.format === format || m.pin.format === primary), [storedPins, n, format, primary]);
 
+  // Comments on clips and ranges (Task 10). Like the format view's, they go on the pin source (the version resumed from, else
+  // the latest) and become chips in the conversation; the note is asked in a small dialog.
+  const pinSource = detail ? detail.creative.resumeFrom?.version ?? latest?.n ?? null : null;
+  const canComment = n !== null && n === pinSource;
+  const sourcePins = useMemo(() => storedPins.flatMap((p, i) => (p.version === pinSource ? [{ pin: p.pin, at: i }] : [])), [storedPins, pinSource]);
+  const [noteFor, setNoteFor] = useState<{ pin: Pin; index: number | null } | null>(null);
+  const commentVideo = Boolean(draft && draft.composition.duration > 0);
+  const startComment = (pin: Pin) => {
+    if (!canComment) { toast.show(t.web.conversation.onlyOnVersion({ n: pinSource ?? 0 })); return; }
+    setNoteFor({ pin, index: null });
+  };
+  const commentClip = () => {
+    if (!draft) return;
+    const clip = selection ? findClipById(draft.composition, selection) : null;
+    if (!clip) { toast.show(t.web.conversation.clipCommentNeeds); return; }
+    const drawn = player?.clipBounds && player.clipBounds.clipId === clip.id ? player.clipBounds : null;
+    const time = commentVideo ? controls.clock.get().time : 0;
+    const pin = clipPin({ format: primary, comp: draft.composition, clip, time, drawn });
+    startComment(commentVideo ? pin : { ...pin, timeSec: null });
+  };
+  const commentRange = (r: { start: number; end: number }) => {
+    if (!draft) return;
+    const pin = rangePin({ format: primary, start: r.start, end: r.end, duration: draft.composition.duration });
+    if (pin) startComment(pin);
+  };
+  const submitNote = (note: string) => {
+    const open = noteFor;
+    setNoteFor(null);
+    if (!open || pinSource === null) return;
+    const withNote: Pin = { ...open.pin, ...(note ? { note } : {}) };
+    if (!note) delete withNote.note;
+    if (open.index === null) {
+      setStoredPins((ps) => [...ps, { pin: withNote, version: pinSource }]);
+      setTab('chat');
+    } else {
+      const at = sourcePins[open.index]?.at;
+      setStoredPins((ps) => ps.map((p, k) => (k === at ? { ...p, pin: withNote } : p)));
+    }
+  };
+  const removePin = useCallback((i: number) => {
+    const at = sourcePins[i]?.at;
+    setStoredPins((ps) => ps.filter((_, k) => k !== at));
+  }, [sourcePins, setStoredPins]);
+  const editPin = useCallback((i: number) => {
+    const pin = sourcePins[i]?.pin;
+    if (pin) setNoteFor({ pin, index: i });
+  }, [sourcePins]);
+  const pinsSent = useCallback(({ pins: sentPins }: { pins: Pin[] }) => { setStoredPins((ps) => ps.filter((p) => !sentPins.includes(p.pin))); }, [setStoredPins]);
+  const noteTitle = noteFor ? (noteFor.pin.clipId && !noteFor.pin.range
+    ? t.web.conversation.noteTitleClip({ name: noteFor.pin.clipName ?? noteFor.pin.clipId })
+    : noteFor.pin.range ? t.web.conversation.noteTitleRange(rangeTimes(locale, noteFor.pin.range)) : t.web.conversation.clipComment) : '';
+
   // Keys.
   useEditorKeys(root, Boolean(draft) && active && leave === null, {
+    commentClip,
     undo: () => actions.undo(),
     redo: () => actions.redo(),
     toggle: controls.toggle,
@@ -390,7 +446,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     followerOf: (id: string) => states[id]?.follows ?? null,
     fallback: [primary],
   } : undefined), [versions.length, primaries.join(','), states, labelOf, primary]); // eslint-disable-line react-hooks/exhaustive-deps
-  const onSent = useCallback(() => { reload(); }, [reload]);
+  const onSent = useCallback((sent: { pins: Pin[] }) => { pinsSent(sent); reload(); }, [reload, pinsSent]);
 
   const ctx: EditorState | null = draft ? {
     slug, creative, format, primary, draft, actions, player, controls, selection, select: setSelection, snap, setSnap, token, stageAsset, staging,
@@ -520,6 +576,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
           {tab === 'chat' ? (
             detail ? (
               <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={job} live={chatLive}
+                pins={sourcePins.map((p) => p.pin)} onRemovePin={removePin} onEditPin={editPin}
                 formatName={labelOf} canGenerate={versions.length === 0} onSent={onSent} beforeSend={beforeSend} snapshots={live.snapshots} appliesTo={appliesTo} />
             ) : <div className="ms-cv-state"><Spinner size={16} label={c.loading} /></div>
           ) : (
@@ -529,9 +586,11 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
       </aside>
 
       <section className="ms-ed-timeline" aria-label={e.timeline} data-part="b" data-slot="timeline">
-        {video && draft ? <Timeline loop={loop} onLoop={setLoop} speed={rate} onSpeed={setRate} marks={marks} /> : null}
+        {video && draft ? <Timeline loop={loop} onLoop={setLoop} speed={rate} onSpeed={setRate} marks={marks}
+          overlay={({ pps }) => <RangeSpans marks={marks} pps={pps} />} onRange={commentRange} onCommentClip={commentClip} canCommentClip={selection !== null} /> : null}
       </section>
 
+      <PinNoteDialog open={noteFor !== null} title={noteTitle} initial={noteFor?.pin.note ?? ''} adding={noteFor?.index === null} onSubmit={submitNote} onCancel={() => setNoteFor(null)} />
       <Modal open={leave !== null} onClose={leaveKeep} label={e.leaveTitle} width={480} dismissible={!saving}>
         <div className="ms-ed-dialog">
           <h2>{e.leaveTitle}</h2>
