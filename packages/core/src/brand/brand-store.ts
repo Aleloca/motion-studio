@@ -165,10 +165,28 @@ export class BrandStore {
    * the proposals already rewritten are restored before the error goes on.
    */
   renameProposalRefs(from: string, to: string): Promise<string[]> {
+    return proposalLocks.run(applyLockKey(this.projectDir), () => this.renameProposalRefsUnlocked(from, to));
+  }
+
+  /**
+   * The whole brand step of a rename under ONE apply lock: the kit's logo and font refs, then the open proposals' (M5). An
+   * apply that holds the lock with the pre-rename proposal finishes first and writes its kit; the rename then rewrites that kit,
+   * so the kit never ends up linking the old, missing name. `kit: false` skips the kit (recovery of a rename that never
+   * touched it). If the proposals fail, the kit change is undone before the error goes on. Order: assets, apply, kit/proposal.
+   */
+  renameAllRefs(from: string, to: string, o: { kit?: boolean } = {}): Promise<{ kit: boolean; proposals: string[] }> {
+    return proposalLocks.run(applyLockKey(this.projectDir), async () => {
+      const kit = o.kit === false ? false : await this.renameFileRefs(from, to);
+      try { return { kit, proposals: await this.renameProposalRefsUnlocked(from, to) }; }
+      catch (err) { if (kit) await this.renameFileRefs(to, from).catch(() => false); throw err; }
+    });
+  }
+
+  private async renameProposalRefsUnlocked(from: string, to: string): Promise<string[]> {
     const prefix = 'assets/';
     const bare = (ref: string) => (ref.startsWith(prefix) ? ref.slice(prefix.length) : ref);
     const point = (v: unknown): unknown => (v && typeof v === 'object' && (v as { file?: unknown }).file === from ? { ...(v as object), file: to } : v);
-    return proposalLocks.run(applyLockKey(this.projectDir), async () => {
+    {
       const done: BrandProposal[] = []; // the proposals as they were, in the order they were rewritten
       try {
         for (const listed of await this.listProposals()) {
@@ -187,7 +205,7 @@ export class BrandStore {
         throw err;
       }
       return done.map((p) => p.id);
-    });
+    }
   }
 
   writeKit(kit: unknown): Promise<BrandKit> {

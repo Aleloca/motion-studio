@@ -224,10 +224,10 @@ export class LibraryStore {
         await this.writeAssets(assets.map((a, k) => (k === i ? renamed : a)));
         undo.unshift(() => this.writeAssets(assets));
         await step('assets');
-        const brandChanged = await brand.renameFileRefs(fromRef, toRef);
-        if (brandChanged) undo.unshift(() => brand.renameFileRefs(toRef, fromRef));
-        // Open brand-analysis proposals follow too (their copies of the kit would link the old name when applied).
-        if ((await brand.renameProposalRefs(fromRef, toRef)).length) undo.unshift(() => brand.renameProposalRefs(toRef, fromRef));
+        // Kit and open proposals under one apply lock (an apply holding the old proposal cannot slip its kit in between).
+        const refs = await brand.renameAllRefs(fromRef, toRef);
+        const brandChanged = refs.kit;
+        if (refs.kit || refs.proposals.length) undo.unshift(() => brand.renameAllRefs(toRef, fromRef));
         await step('brand');
         const changes = await creatives.renameBriefAsset(fromRef, toRef);
         if (changes.length) undo.unshift(() => creatives.restoreBriefAssets(changes));
@@ -282,8 +282,7 @@ export class LibraryStore {
     };
     // The repair is limited to what the journal recorded the rename affected (brand logos and fonts, those briefs).
     const refs = async (a: string, b: string) => {
-      if (journal.brandRefs) await brand.renameFileRefs(`assets/${a}`, `assets/${b}`);
-      await brand.renameProposalRefs(`assets/${a}`, `assets/${b}`).catch(() => []);
+      await brand.renameAllRefs(`assets/${a}`, `assets/${b}`, { kit: journal.brandRefs }).catch((e) => { if (journal.brandRefs) throw e; });
       if (journal.briefSlugs.length) await creatives.renameBriefAsset(`assets/${a}`, `assets/${b}`, journal.briefSlugs);
     };
     if (toInfo) {

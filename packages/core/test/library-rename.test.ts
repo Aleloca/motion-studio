@@ -87,6 +87,25 @@ describe('renaming an asset (store)', () => {
       });
     }
 
+    it('a rename racing an apply that read the pre-rename proposal ends with a kit that links the NEW name', async () => {
+      const brand = new BrandStore(project);
+      const id = await mk(brand, 1_000_000_000_000);
+      let rename!: Promise<unknown>;
+      await proposalLocks.run(applyLockKey(project), async () => {
+        const proposal = await brand.readProposal(id); // read before the rename
+        rename = lib.renameAsset('logo.png', 'New Logo.png');
+        await afterTick();
+        // What apply does with it: write the kit from the proposal's changes (old name), then close the proposal.
+        await brand.updateReadableKit((kit) => ({ ...kit, logos: [...kit.logos, proposal.changes[0]!.after as typeof logo] }));
+        await brand.writeProposal({ ...proposal, status: 'applied' });
+      });
+      await rename;
+      const kit = await brand.readKit();
+      expect(kit.logos.map((l) => l.file)).toEqual(['assets/New-Logo.png']);
+      expect(await readFile(join(project, 'assets', 'New-Logo.png'), 'utf8')).toBe('x');
+      for (const l of kit.logos) await expect(stat(join(project, l.file))).resolves.toBeTruthy();
+    });
+
     it('a write that fails half-way restores the proposals already rewritten, and the rename undoes everything', async () => {
       const brand = new BrandStore(project);
       const a = await mk(brand, 1_000_000_000_000), b = await mk(brand, 1_000_000_100_000);
