@@ -468,9 +468,9 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
   /**
    * Saves an editor draft as a new version (Phase 10b, `DirectEditService.save`): no agent, no tokens. 409 `editor-busy`
    * while a turn or a render runs, 409 `editor-base-changed` when the format moved on, 422 `editor-invalid` with the
-   * translated `problems`. The body holds a whole composition: up to its own 5 MB limit, plus the ops.
+   * translated `problems`. The body holds a whole composition: up to its own 5 MB limit, plus up to 20 000 ops (12 MB in all).
    */
-  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/edits', { bodyLimit: 8 * 1024 * 1024 }, async (req) => {
+  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/edits', { bodyLimit: 12 * 1024 * 1024 }, async (req) => {
     const ref = await refOf(req.params.slug, req.params.c);
     const body = parse(directEditBodySchema, req.body);
     return ctx.edits.save({ root: ref.root, projectSlug: ref.projectSlug, projectDir: ref.projectDir, creativeSlug: ref.creativeSlug }, body, currentLocale());

@@ -43,6 +43,9 @@ import type { PreviewService, StagingView } from './previews.ts';
  *    recorded removes `outputs/v<n>/` (a crash leaves it to the next save, which clears it first).
  */
 
+/** Most ops a save body may list: bound by the body size (8 MB of composition + ops at ~200 B each), not by what an editor session makes. */
+export const OPS_MAX = 20_000;
+
 /** `POST /api/projects/:slug/creatives/:c/edits`. */
 export const directEditBodySchema = z.strictObject({
   baseVersion: z.number().int().positive(),
@@ -50,7 +53,7 @@ export const directEditBodySchema = z.strictObject({
   baseHash: z.string(), // composition hash of the base
   composition: z.unknown(), // validated in the core
   staged: z.array(z.string()).max(20), // staged paths used by the draft
-  ops: z.array(editOpSchema).max(500), // for the summary and the log only; the composition is authoritative
+  ops: z.array(editOpSchema).max(OPS_MAX), // for the summary and the log only; the composition is authoritative, so the count must never fail a save
   token: z.string(), // the preview session that owns the staging
 });
 export type DirectEditBody = z.infer<typeof directEditBodySchema>;

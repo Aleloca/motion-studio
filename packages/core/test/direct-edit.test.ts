@@ -359,6 +359,34 @@ describe('saving a draft as a new version', { timeout: 120_000 }, () => {
   });
 });
 
+describe('a long editing session', { timeout: 120_000 }, () => {
+  it('2000 ops (not compacted) never fail a save, and the summary lists the distinct items with the true "and N more"', async () => {
+    const slug = await create(['test-wide']);
+    const ops: unknown[] = [];
+    for (let i = 0; i < 2000; i += 1) {
+      const k = i % 4;
+      ops.push(k === 0 ? { kind: 'clipProps', clipId: 'title', props: { x: i } }
+        : k === 1 ? { kind: 'clipProps', clipId: 'title', props: { fontSize: 20 + (i % 50) } }
+        : k === 2 ? { kind: 'clipProps', clipId: 'title', props: { text: `t${i}` } }
+        : { kind: 'clipFlags', clipId: 'title', hidden: i % 8 === 3 });
+    }
+    const body = await draft(slug, 1, 'test-wide', (c) => { clip(c, 'title').props.text = 't1998'; }, ops);
+    const r = await save(slug, body);
+    expect(r.statusCode, r.body).toBe(200);
+    const e = messages(currentLocale()).editor;
+    const v2 = (await versionOf(slug, 2))!;
+    // Four distinct items on one clip: three named, one more.
+    expect(v2.request).toBe(e.summary({ items: [e.itemLayout({ name: 'Title' }), e.itemStyle({ name: 'Title' }), e.itemText({ name: 'Title' })].join(', '), more: 1 }));
+  });
+  it('more ops than the bound is a plain 400, never a half-written version', async () => {
+    const slug = await create(['test-wide']);
+    const body = await draft(slug, 1, 'test-wide', (c) => { clip(c, 'title').props.text = 'x'; }, Array.from({ length: 20_001 }, () => ({ kind: 'clipProps', clipId: 'title', props: { x: 1 } })));
+    const r = await save(slug, body);
+    expect(r.statusCode).toBe(400);
+    expect(await versionOf(slug, 2)).toBeFalsy();
+  });
+});
+
 describe('links changed between the base and the save', { timeout: 120_000 }, () => {
   it('followers are recomputed from the CURRENT links: an unlinked follower keeps the base composition as its own, a newly linked format follows the edit', async () => {
     PRESETS.push({ id: 'test-wide-c', channel: 'Test', name: 'Wide C', width: 320, height: 180, kind: 'video', extensions: ['mp4'] });

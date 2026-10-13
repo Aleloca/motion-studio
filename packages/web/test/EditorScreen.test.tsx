@@ -342,6 +342,8 @@ describe('EditorScreen · save', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'This format changed while you were editing' })).toBeNull());
     expect(peekDraft(KEY)!.ops).toHaveLength(1);
+    // The version list is asked again at the 409, so the reopen can really land on the latest version.
+    await waitFor(() => expect(api.getCreative.mock.calls.length).toBeGreaterThan(1));
     // The note stays, with Save off; Reopen asks first and only then discards.
     expect((screen.getByRole('button', { name: 'Save as v3' }) as HTMLButtonElement).disabled).toBe(true);
     await userEvent.click(screen.getByRole('button', { name: 'Reopen on the latest version' }));
@@ -350,11 +352,43 @@ describe('EditorScreen · save', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Discard the draft and reopen?' })).toBeNull());
     expect(peekDraft(KEY)!.ops).toHaveLength(1);
     api.getEditorComposition.mockClear();
+    api.getCreative.mockClear();
     await userEvent.click(screen.getByRole('button', { name: 'Reopen on the latest version' }));
     await userEvent.click(within(await screen.findByRole('dialog', { name: 'Discard the draft and reopen?' })).getByRole('button', { name: 'Discard and reopen' }));
     await waitFor(() => expect(api.getEditorComposition).toHaveBeenCalledWith('acme', 'lancio', 2, REEL));
     await waitFor(() => expect(peekDraft(KEY)?.ops).toHaveLength(0));
     expect(screen.queryByText(/Draft ·/)).toBeNull();
+  });
+
+  it('hundreds of edits still save: the ops are compacted, one per object, last value winning', async () => {
+    render(<Harness />);
+    await opened();
+    const s = store();
+    for (let i = 0; i < 501; i += 1) s.apply(move(i));
+    expect(peekDraft(KEY)!.ops).toHaveLength(501);
+    api.saveEdits.mockImplementationOnce(async () => { detail = makeDetail([v2(1), v2(2), v2(3)]); return { version: 3 }; });
+    await userEvent.click(await screen.findByRole('button', { name: 'Save as v3' }));
+    await waitFor(() => expect(api.saveEdits).toHaveBeenCalledTimes(1));
+    const body = api.saveEdits.mock.calls[0]![2] as { ops: unknown[]; composition: Composition };
+    expect(body.ops).toEqual([move(500)]);
+    expect(await screen.findByText(/^✓ Saved as/)).toBeTruthy();
+  });
+
+  it('a newer version that changed only other formats does not move the base: no dialog, Save works on the old base', async () => {
+    const r = render(<Harness />);
+    await opened();
+    store().apply(move(1));
+    detail = makeDetail([v2(1), v2(2), { ...v2(3), compositions: [{ format: REEL, dir: `compositions/${REEL}`, hash: hashOf(2) }] }]);
+    live = { ...emptyLive(), creativeTicks: { 'acme/lancio': 1 } } as unknown as EventsState;
+    r.rerender(<Harness />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save as v4' })).toBeTruthy());
+    expect(screen.queryByRole('dialog', { name: 'This format changed while you were editing' })).toBeNull();
+    const save = screen.getByRole('button', { name: 'Save as v4' }) as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    expect(peekDraft(KEY)!.base.n).toBe(2);
+    await userEvent.click(save);
+    await waitFor(() => expect(api.saveEdits).toHaveBeenCalledTimes(1));
+    expect(api.saveEdits.mock.calls[0]![2]).toMatchObject({ baseVersion: 2, baseHash: hashOf(2) });
   });
 
   it('another version that changed the format while editing shows the same dialog, and keeps the draft', async () => {

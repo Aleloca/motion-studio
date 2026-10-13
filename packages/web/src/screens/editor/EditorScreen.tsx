@@ -39,6 +39,7 @@ import { ExportDialog, type ExportSnapshot } from '../ExportDialog.tsx';
 import { compositionOf } from '../renderModel.ts';
 import { Transport, FPS as DEFAULT_FPS, type Speed } from '../Transport.tsx';
 import { boardSource, followersOf, formatStates } from '../versionModel.ts';
+import { compactOps } from './opsCompact.ts';
 import { DraftPill, SAVED_MS } from './DraftPill.tsx';
 import { draftKey, isDirty, peekDraft, useDraft, type Draft } from './draftStore.ts';
 import { EditorContext, type EditorState } from './editorContext.ts';
@@ -59,6 +60,9 @@ export interface EditorScreenProps {
 
 /** What asked to leave with unsaved edits: a route change (go there afterwards) or a chat message (send it afterwards). */
 type Leave = { mode: 'route'; target: string } | { mode: 'chat'; resolve(ok: boolean): void };
+
+/** What the core accepts in a save body (`directEditBodySchema`); the ops are compacted (opsCompact.ts) so the body stays small. */
+const SAVE_STAGED_MAX = 20;
 
 /** The staged files the composition names (only those go with a save). */
 function usedStaged(d: Draft): string[] {
@@ -247,7 +251,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     setSaving(true);
     setSaveError(null);
     const body = (tok: string) => ({
-      baseVersion: d.base.n, format: d.primaryFormat, baseHash: d.base.hash, composition: d.composition, staged: usedStaged(d), ops: d.ops, token: tok,
+      baseVersion: d.base.n, format: d.primaryFormat, baseHash: d.base.hash, composition: d.composition, staged: usedStaged(d).slice(0, SAVE_STAGED_MAX), ops: compactOps(d.ops), token: tok,
     });
     try {
       const first = tokenRef.current;
@@ -271,7 +275,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
       savedTimer.current = window.setTimeout(() => setSaved(null), SAVED_MS);
       return true;
     } catch (err) {
-      if (err instanceof ApiError && err.code === 'editor-base-changed') { setConflict(true); setMoved(true); setSaveError(err.message); } else if (err instanceof ApiError && err.problems?.length) setSaveError(err.message);
+      if (err instanceof ApiError && err.code === 'editor-base-changed') { setConflict(true); setMoved(true); setSaveError(err.message); reload(); } else if (err instanceof ApiError && err.problems?.length) setSaveError(err.message);
       else setSaveError(err instanceof ApiError ? err.message : e.saveFailed({ detail: message(err) }));
       return false;
     } finally {
