@@ -56,28 +56,24 @@ describe('MOTION_STUDIO_USER_DATA_DIR', () => {
     expect(check(join(appData, 'Motion Studio Electron', 'x'))).toMatchObject({ error: expect.any(String) });
     mkdirSync(join(appData, 'Motion Studio Electron'));
   });
-  it('case variants on macOS and Windows: MOTION STUDIO, a lowercased appData, a link into the real folder (N2)', () => {
-    const ci = (value: string, platform = process.platform === 'win32' ? 'win32' : 'darwin') => userDataOverride({ [USER_DATA_ENV]: value }, appData, platform);
+  it('case variants, on every platform (Linux too, decisions log 268): MOTION STUDIO, a lowercased appData, a link into the real folder (N2)', () => {
     for (const bad of [
       join(appData, 'MOTION STUDIO', 'sub'), join(appData, 'motion studio electron'), join(appData, 'Motion studio beta', 'x'),
       join(appData.toLowerCase(), 'motion studio electron'), join(appData.toUpperCase(), 'MOTION STUDIO'),
       join(appData, 'MOTION STUDIO NEXT', 'x'), // a Motion Studio* folder that does not exist yet, in any case
       join(appData, 'Motion \u017Ftudio Next', 'x'), join(appData, 'Motion \u017Ftudio'), // ſ, folded to s by APFS (M1)
       join(appData, 'Ｍotion Studio Wide', 'x'), // a fullwidth M (NFKC)
-      // Another case of the link's NAME reaches the link only on a volume that ignores case (APFS and NTFS by default). On a
-      // case-sensitive volume (Linux CI's /tmp) `LINK-TO-CONFIG` is simply another folder, not a link: nothing to refuse
-      // there. The link itself is refused on every platform (the test above, and the Linux check below).
+      // Another case of the link's NAME reaches the link only on a volume that ignores case (APFS and NTFS by default); on a
+      // case-sensitive volume `LINK-TO-CONFIG` is another folder, whose folded path still is not a real folder's.
       ...(volumeIgnoresCase ? [join(root, 'LINK-TO-CONFIG', 'new')] : []),
-    ]) expect(ci(bad), bad).toMatchObject({ error: expect.stringContaining(USER_DATA_ENV) });
-    expect(ci(join(scratch, 'Electron'))).toEqual({ dir: join(scratch, 'Electron') });
-    // Linux volumes are case-sensitive: another case is another folder (when the volume itself is case-sensitive).
-    expect(userDataOverride({ [USER_DATA_ENV]: join(appData, 'Motion Studio', 'x') }, appData, 'linux')).toMatchObject({ error: expect.any(String) });
+    ]) expect(check(bad), bad).toMatchObject({ error: expect.stringContaining(USER_DATA_ENV) });
+    expect(check(join(scratch, 'Electron'))).toEqual({ dir: join(scratch, 'Electron') });
+    expect(check(join(appData, 'Motion Studio', 'x'))).toMatchObject({ error: expect.any(String) });
   });
-  it('Linux rules (case-sensitive compare) still resolve links into the real folders, on any host', () => {
-    const linux = (value: string) => userDataOverride({ [USER_DATA_ENV]: value }, appData, 'linux');
-    for (const bad of [join(root, 'link-to-config'), join(root, 'link-to-config', 'new'), join(root, 'link-to-appdata', 'Motion Studio Electron', 'x')]) {
-      expect(linux(bad), bad).toMatchObject({ error: expect.stringContaining(USER_DATA_ENV) });
+  it('links into the real folders are resolved first, whatever the case', () => {
+    for (const bad of [join(root, 'link-to-config'), join(root, 'link-to-config', 'new'), join(root, 'link-to-appdata', 'Motion Studio Electron', 'x'), join(root, 'link-to-appdata', 'MOTION STUDIO ELECTRON', 'x')]) {
+      expect(check(bad), bad).toMatchObject({ error: expect.stringContaining(USER_DATA_ENV) });
     }
-    expect(linux(join(scratch, 'electron'))).toEqual({ dir: join(scratch, 'electron') });
+    expect(check(join(scratch, 'electron'))).toEqual({ dir: join(scratch, 'electron') });
   });
 });
