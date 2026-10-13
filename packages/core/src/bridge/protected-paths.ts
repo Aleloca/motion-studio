@@ -74,7 +74,8 @@ export async function namesProtectedPath(toolName: string, input: Record<string,
   if (roots.length === 0) return false;
   const tilde = (raw: string) => (raw === '~' ? home : raw.startsWith('~/') ? join(home, raw.slice(2)) : raw);
   // `~user/…` (another user's home) is not expanded: refused, whatever it names (the file tools take absolute paths anyway).
-  const otherHome = (raw: string) => /^~[^/]/.test(raw);
+  // Only a `~user/` prefix: a relative file whose name starts with `~` (`~notes.md`) is an ordinary path.
+  const otherHome = (raw: string) => /^~[^/]+\//.test(raw);
   const named = [...inputPaths(input), ...(toolName === 'Glob' && typeof input.pattern === 'string' ? [input.pattern] : [])];
   if (named.some(otherHome)) return true;
   const rootForms = (await Promise.all(roots.map(async (r) => [resolve(r), await realish(resolve(r))]))).flat();
@@ -88,13 +89,18 @@ export async function namesProtectedPath(toolName: string, input: Record<string,
   if (toolName === 'Glob' && typeof input.pattern === 'string' && input.pattern !== '' && !input.pattern.includes('\0')) {
     const base = typeof input.path === 'string' && input.path !== '' ? resolve(cwd, tilde(input.path)) : cwd;
     const joined = isAbsolute(tilde(input.pattern)) ? tilde(input.pattern) : `${base}/${input.pattern}`;
-    // A `..` after a wildcard segment can land anywhere under the literal folder before it: read as `<that folder>/**`.
-    // Otherwise `..` and `.` are resolved (absolute patterns too) before the segments are compared.
+    // A `..` after a wildcard segment (or a brace segment that can expand to `..`, e.g. `{..,x}`) can land anywhere under
+    // the literal folder before the wildcard, raised by one level per such segment: read as `<that folder>/**`. Otherwise
+    // `..` and `.` are resolved (absolute patterns too) before the segments are compared.
     const parts = joined.split('/');
     const firstWild = parts.findIndex((seg) => /[*?[\]{}]/.test(seg));
-    const full = firstWild !== -1 && parts.slice(firstWild + 1).includes('..')
-      ? `${normalize(parts.slice(0, firstWild).join('/') || '/').replace(/\/$/, '')}/**`
-      : normalize(joined);
+    const ups = firstWild === -1 ? 0 : parts.slice(firstWild).filter((seg) => seg === '..' || (seg.includes('{') && seg.includes('..'))).length;
+    let full: string;
+    if (ups > 0) {
+      let prefix = normalize(parts.slice(0, firstWild).join('/') || '/');
+      for (let i = 0; i < ups; i++) prefix = dirname(prefix);
+      full = `${prefix.replace(/\/$/, '')}/**`;
+    } else full = normalize(joined);
     const bases = [full];
     // The pattern's literal folder may be a symlink to the protected one.
     const literal = full.split('/').findIndex((seg) => /[*?[\]{}]/.test(seg));

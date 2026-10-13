@@ -348,6 +348,9 @@ describe('the config folder is never opened through a permission prompt (bridge 
     expect(await namesProtectedPath('Glob', { pattern: `${dirname(configDir)}/x/../${basename(configDir)}/run/*` }, [configDir], projectDir)).toBe(true);
     // A wildcard followed by .. deeper down still reaches it.
     expect(await namesProtectedPath('Glob', { pattern: `${dirname(configDir)}/*/x/../../${basename(configDir)}/run/*` }, [configDir], projectDir)).toBe(true);
+    // A brace segment that can expand to .. climbs too (fix round 2).
+    expect(await namesProtectedPath('Glob', { pattern: `${dirname(configDir)}/x/{..,y}/${basename(configDir)}/run/*` }, [configDir], projectDir)).toBe(true);
+    expect(await namesProtectedPath('Glob', { pattern: `${dirname(configDir)}/{..,y}/${basename(dirname(configDir))}/${basename(configDir)}/*` }, [configDir], projectDir)).toBe(true);
     // Unrelated patterns stay unrelated.
     expect(await namesProtectedPath('Glob', { pattern: `${projectDir}/src/../assets/*.png` }, [configDir], projectDir)).toBe(false);
   });
@@ -356,6 +359,9 @@ describe('the config folder is never opened through a permission prompt (bridge 
     expect(await namesProtectedPath('Read', { file_path: '~someone/Library/x.token' }, [configDir], projectDir)).toBe(true);
     expect(await namesProtectedPath('Glob', { pattern: '~someone/**' }, [configDir], projectDir)).toBe(true);
     expect(await ask('Read', { file_path: '~someone/x' })).toEqual(DENY);
+    // A relative file whose name starts with ~ is an ordinary path (fix round 2).
+    expect(await namesProtectedPath('Read', { file_path: '~notes.md' }, [configDir], projectDir)).toBe(false);
+    expect(await namesProtectedPath('Read', { file_path: '~' + 'x' }, [configDir], projectDir)).toBe(false);
     // Without protected roots nothing is refused at all.
     expect(await namesProtectedPath('Read', { file_path: '~someone/x' }, [], projectDir)).toBe(false);
   });
