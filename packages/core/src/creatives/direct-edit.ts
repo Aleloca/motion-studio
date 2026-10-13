@@ -175,9 +175,14 @@ export class DirectEditService {
     if (!baseComp || !baseLoaded?.ok || baseLoaded.hash !== latestEntry.hash) throw carryFailed(format);
     const carried: string[] = [];
     const carriedComps = new Map<string, CarriedComposition>();
+    // The CURRENT links decide (they may have changed since the base was taken): a primary now is carried; one that was a
+    // follower in the latest version keeps the composition it showed there (its former primary's, before this edit) as its
+    // own folder; a format linked since then follows through `finishCompositions`.
     for (const p of formats.filter((f) => f !== format && !Object.hasOwn(links, f))) {
-      if (!own(latest, p)) continue; // not in the latest version (an added format): the agent makes it
-      const cc = await carriableComposition(creativeDir, latest, p);
+      const followed = latest.compositions?.find((c) => c.format === p && c.followsFormat !== undefined)?.followsFormat;
+      const from = own(latest, p) ? p : followed !== undefined && own(latest, followed) ? followed : null;
+      if (from === null) continue; // not in the latest version (an added format): the agent makes it
+      const cc = await carriableComposition(creativeDir, latest, from);
       if (!cc) throw carryFailed(p);
       carried.push(p);
       carriedComps.set(p, cc);

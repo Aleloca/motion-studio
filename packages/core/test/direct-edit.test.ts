@@ -359,6 +359,43 @@ describe('saving a draft as a new version', { timeout: 120_000 }, () => {
   });
 });
 
+describe('links changed between the base and the save', { timeout: 120_000 }, () => {
+  it('followers are recomputed from the CURRENT links: an unlinked follower keeps the base composition as its own, a newly linked format follows the edit', async () => {
+    PRESETS.push({ id: 'test-wide-c', channel: 'Test', name: 'Wide C', width: 320, height: 180, kind: 'video', extensions: ['mp4'] });
+    try {
+      expect((await app.inject({ method: 'PUT', url: '/api/formats', headers: H, payload: { presets: PRESETS } })).statusCode).toBe(200);
+      // v1: test-wide-b follows test-wide; test-wide-c is its own primary.
+      const slug = await create(['test-wide', 'test-wide-b', 'test-wide-c'], { links: { 'test-wide-b': 'test-wide' } });
+      const v1 = (await versionOf(slug, 1))!;
+      const wide1 = v1.compositions!.find((c) => c.format === 'test-wide')!;
+      expect(v1.compositions!.find((c) => c.format === 'test-wide-b')).toMatchObject({ followsFormat: 'test-wide', hash: wide1.hash });
+      expect(v1.compositions!.find((c) => c.format === 'test-wide-c')!.followsFormat).toBeUndefined();
+      // The draft is taken now, from v1.
+      const body = await draft(slug, 1, 'test-wide', (c) => { clip(c, 'title').props.text = 'Linked'; }, [{ kind: 'clipProps', clipId: 'title', props: { text: 'Linked' } }]);
+      // Then the links change: test-wide-b is unlinked, test-wide-c now follows test-wide.
+      const link = (follower: string, primary: string | null) => app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}/links`, headers: H, payload: { follower, primary } });
+      expect((await link('test-wide-b', null)).statusCode).toBe(200);
+      expect((await link('test-wide-c', 'test-wide')).statusCode).toBe(200);
+      const runs = agentRuns();
+      const r = await save(slug, body);
+      expect(r.statusCode, r.body).toBe(200);
+      const v2 = (await versionOf(slug, 2))!;
+      const wide2 = v2.compositions!.find((c) => c.format === 'test-wide')!;
+      expect(wide2.hash).not.toBe(wide1.hash);
+      // test-wide-c follows the edited composition (current link).
+      expect(v2.compositions!.find((c) => c.format === 'test-wide-c')).toEqual({ ...wide2, format: 'test-wide-c', followsFormat: 'test-wide' });
+      // test-wide-b is no longer a follower: it keeps the composition it had (v1's, before the edit) as its own folder.
+      const b2 = v2.compositions!.find((c) => c.format === 'test-wide-b')!;
+      expect(b2).toEqual({ format: 'test-wide-b', dir: 'compositions/test-wide-b', hash: wide1.hash, problems: [] });
+      expect((await readCompositionFolder(compDir(slug, 2, 'test-wide-b'))).hash).toBe(wide1.hash);
+      expect(v2.status).toBe('complete');
+      expect(agentRuns()).toBe(runs);
+    } finally {
+      PRESETS.pop();
+    }
+  });
+});
+
 describe('refusals', { timeout: 120_000 }, () => {
   it('409 editor-busy while a turn runs and while a render runs; nothing is written', async () => {
     const slug = await create(['test-wide']);
