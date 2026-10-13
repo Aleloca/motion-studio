@@ -235,6 +235,27 @@ describe('FormatView · shared element and bar', () => {
     expect(takeFrameOrigin('canvas:acme/lancio/tiktok-9x16')).not.toBeNull();
   });
 
+  it('says discreetly when the duration is far from the brief, and that a direct edit chose it (decisions log 262)', async () => {
+    detail = makeDetail([version(1)], { brief: { goal: 'g', message: 'm', formats: ['instagram-post-1x1', 'tiktok-9x16'], durationSec: 6, assets: [], notes: '' } });
+    const { unmount } = render(<Harness format={VIDEO} />);
+    await player();
+    const bar = () => document.querySelector('.ms-topbar') as HTMLElement;
+    expect(within(bar()).getByText('1080×1920 · 9:16 · 8 s · brief 6 s')).toBeTruthy();
+    unmount();
+    __resetPreviewSessions();
+    detail = makeDetail([{ ...version(1), origin: 'editor' }], { brief: { goal: 'g', message: 'm', formats: ['instagram-post-1x1', 'tiktok-9x16'], durationSec: 6, assets: [], notes: '' } });
+    render(<Harness format={VIDEO} />);
+    await player();
+    expect(within(bar()).getByText('1080×1920 · 9:16 · 8 s · brief 6 s (modifica diretta)')).toBeTruthy();
+  });
+
+  it('no note when the duration is within the brief', async () => {
+    detail = makeDetail([version(1)], { brief: { goal: 'g', message: 'm', formats: ['instagram-post-1x1', 'tiktok-9x16'], durationSec: 7.5, assets: [], notes: '' } });
+    render(<Harness format={VIDEO} />);
+    await player();
+    expect(within(document.querySelector('.ms-topbar') as HTMLElement).getByText('1080×1920 · 9:16 · 8 s')).toBeTruthy();
+  });
+
   it('puts the format, its ★ badge, the Versions timeline and Export in the bar', async () => {
     render(<Harness format={VIDEO} />);
     await player();

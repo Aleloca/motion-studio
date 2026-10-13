@@ -1229,6 +1229,8 @@ Variabili: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (array JSON)`,
     },
     formatView: {
       stage: (p) => `Anteprima di ${p.label}`,
+      briefDuration: (p) => `brief ${p.n} s`,
+      briefDurationEdited: (p) => `brief ${p.n} s (modifica diretta)`,
       scenes: 'Scene',
       scenesSoon: 'Modifica scene, testi e tempi direttamente — arriva con la timeline',
       play: 'Riproduci (Spazio)',

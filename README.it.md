@@ -93,7 +93,7 @@ Nella vista di un formato, **Modifica** (o **Apri l’editor** su una tavola) ap
   - un turno su un altro formato non blocca il salvataggio.
 - **Commenti per l'agente:** oltre che su un punto del quadro, un commento può riguardare una clip (**Commenta la clip**, o `C` con una clip selezionata) o un intervallo di tempo (**Commenta un intervallo**, o `R`, o Maiusc+trascinamento sul righello), nell'editor e nella vista formato. Il chip nella chat nomina la clip o l'intervallo, e il prompt dell'agente riporta id e nome della clip o l'intervallo, con un fotogramma (due per un intervallo).
 
-Una durata cambiata nell'editor viene ancora confrontata con quella del brief: una composizione molto diversa (oltre il maggiore tra 1 s e il 10%) rende la versione incompleta, quindi cambia anche la durata del brief.
+Una durata cambiata nell'editor è una tua scelta: la versione resta completa anche se è molto diversa da quella del brief, e la vista formato mostra accanto la durata del brief ("7 s · brief 6 s (modifica diretta)"). Al turno successivo l'agente riceve l'indicazione di mantenere la durata attuale, a meno che tu non ne chieda un'altra; se vuoi che coincidano, aggiorna tu la durata del brief.
 
 Limiti attuali: le build desktop firmate dipendono dai certificati dei maintainer (vedi Rilascio). Su Ubuntu 24.04 e successive l'AppImage può non avviarsi perché il sistema limita i namespace utente non privilegiati (AppArmor, `kernel.apparmor_restrict_unprivileged_userns`), che servono alla sandbox di Chromium: serve un profilo AppArmor per l'app (o, a tuo rischio, disattivare quella restrizione); evita `--no-sandbox`, che toglie l'isolamento della finestra.
 

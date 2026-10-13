@@ -11,7 +11,7 @@
 // (Transport.tsx, shared with Compare), the comment layer and the hint read, so the page (bar, chat) does not
 // re-render while the video plays.
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
-import { channelName, pinClipName, DEFAULT_EXPORT_NAME_PATTERN, DEFAULT_FORMATS, formatName, type Composition, type FormatPreset, type Pin, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
+import { channelName, isDurationOffBrief, pinClipName, DEFAULT_EXPORT_NAME_PATTERN, DEFAULT_FORMATS, formatName, type Composition, type FormatPreset, type Pin, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import {
   useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type CSSProperties, type MouseEvent,
@@ -468,7 +468,12 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
 
   const cr = detail?.creative ?? null;
   const n = version?.n ?? null;
-  const meta = [`${width}×${height}`, ratioText({ width, height }), video && duration ? c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) }) : null].filter(Boolean).join(' · ');
+  // The version's duration against the brief's (decisions log 262): a discreet note, never a change of the brief.
+  const briefSec = cr?.brief.durationSec ?? null;
+  const offBrief = video && duration > 0 && briefSec !== null && isDurationOffBrief(duration, briefSec)
+    ? (version?.origin === 'editor' ? f.briefDurationEdited : f.briefDuration)({ n: formatNumber(locale, briefSec, { maximumFractionDigits: 1 }) })
+    : null;
+  const meta = [`${width}×${height}`, ratioText({ width, height }), video && duration ? c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) }) : null, offBrief].filter(Boolean).join(' · ');
   const frameStyle: CSSProperties = zoom === 'fit' || video
     ? { width: `min(100cqw, calc(100cqh * ${width / height}))`, aspectRatio: `${width} / ${height}` }
     : { width: Math.round(width * zoom), aspectRatio: `${width} / ${height}` };

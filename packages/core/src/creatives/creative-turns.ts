@@ -28,7 +28,7 @@ import { clearReferenceFrames, conversionPlan, extractReferenceFrames } from './
 import { buildCreativePrompt, type AgentContract, type CreativeContext, type PromptKind } from './prompt.ts';
 import { checkTargets } from './composition-contract.ts';
 import { realDirChain, writeThroughTemp } from './core-files.ts';
-import { assembleCompositions, carriableComposition, type CarriedComposition } from './composition-turn.ts';
+import { acceptedDurationsOf, assembleCompositions, carriableComposition, type CarriedComposition } from './composition-turn.ts';
 import { checkedPreviewTimes, type PreviewService } from './previews.ts';
 import { sumUsage } from '../usage/usage-tracker.ts';
 import { currentLocale, t } from '../i18n.ts';
@@ -373,6 +373,8 @@ export class CreativeTurnService {
             ?? (targets.length < primaries.length ? j.regenerateFormatsRequest({ formats: listText(targets.map(label), locale) }) : j.regenerateRequest)));
 
       let resumeSessionId = creative.resumeFrom?.sessionId ?? latest?.sessionId ?? undefined;
+      // Durations of the base the agent keeps without being told to bring them back to the brief (decisions log 262).
+      let accepted: ReadonlyMap<string, number> = new Map();
       let result = null as ValidationResult | null;
       // One ledger record per attempt: the version's usage is their sum (fix loop included). No agent: no record, no usage.
       const attemptUsage: Array<UsageRecord | null | undefined> = [];
@@ -400,6 +402,7 @@ export class CreativeTurnService {
             await clearReferenceFrames(ref.projectDir, slug, n);
           }
         }
+        accepted = turnContract === 'compositions' ? await acceptedDurationsOf(creativeDir, base, targets, presets, creative.brief.durationSec) : new Map();
         const uncheckable = new Set<string>();
         let forkSession = Boolean(creative.resumeFrom);
         let kind: PromptKind = versions.length === 0 ? 'first' : 'iteration';
@@ -412,7 +415,7 @@ export class CreativeTurnService {
         });
         const checkCompositions = (only?: string) => checkTargets({
           versionDir: store.outputsDir(slug, n), targets: only === undefined ? targets : targets.filter((f) => f === only), presets,
-          briefDurationSec: creative.brief.durationSec, locale,
+          briefDurationSec: creative.brief.durationSec, locale, acceptedDurations: accepted,
         });
         // The agent's MCP tools on its compositions (output contract v2): the same checks as after the turn, and a few frames.
         let previewCalls = 0;
@@ -556,7 +559,7 @@ export class CreativeTurnService {
 
       finalizing = true;
       let saved: { outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: string | null; compositions?: VersionComposition[] };
-      if (turnContract === 'compositions') saved = await this.finishCompositions(ref, store, plan, presets, base, n, label, locale);
+      if (turnContract === 'compositions') saved = await this.finishCompositions(ref, store, plan, presets, base, n, label, locale, { accepted });
       else {
         const assembled = await this.assemble(ref, store, plan, presets, base, n, result, label, locale);
         // Hashed by the core from the files, after the agent is done: never taken from anything the agent wrote.
@@ -870,12 +873,16 @@ export class CreativeTurnService {
    * single target is the edited format (its folder written by the core).
    */
   async finishCompositions(ref: CreativeRef, store: CreativeStore, plan: Pick<TurnPlan, 'creative' | 'targets' | 'carried' | 'carriedComps' | 'links'>, presets: FormatPreset[], base: VersionEntry | undefined, n: number,
-    label: (id: string) => string, locale: Locale): Promise<{ outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: null; compositions: VersionComposition[] }> {
+    label: (id: string) => string, locale: Locale,
+    /** `direct`: a direct edit (decisions log 262): the brief's duration is not checked. `accepted`: see `acceptedDurationsOf`. */
+    duration: { direct: true } | { accepted: ReadonlyMap<string, number> } = { accepted: new Map() }): Promise<{ outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: null; compositions: VersionComposition[] }> {
     const slug = ref.creativeSlug;
     const j = t().jobs;
     const a = await assembleCompositions({
       projectDir: ref.projectDir, creativeSlug: slug, creativeDir: store.dir(slug), n, base, formats: plan.creative.brief.formats, targets: plan.targets, carried: plan.carried,
-      carriedComps: plan.carriedComps, links: plan.links, presets, briefDurationSec: plan.creative.brief.durationSec, locale, label,
+      carriedComps: plan.carriedComps, links: plan.links, presets, locale, label,
+      briefDurationSec: 'direct' in duration ? null : plan.creative.brief.durationSec,
+      acceptedDurations: 'accepted' in duration ? duration.accepted : undefined,
     });
     const say = (level: 'info' | 'warning', text: string) => store.appendConversation(slug, { type: 'system', at: now(), level, text });
     for (const x of a.notDelivered) await say('warning', x.text);

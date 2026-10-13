@@ -93,7 +93,7 @@ In a format's view, **Edit** (or **Open editor** on a board) opens the editor on
   - a turn on another format does not block the save.
 - **Comments for the agent:** besides a spot of the frame, a comment can be on a clip (**Comment on clip**, or `C` with a clip selected) or on a time range (**Comment on range**, or `R`, or Shift+drag on the ruler), in the editor and in the format view. The chip in the chat names the clip or the range, and the agent's prompt carries the clip's id and name or the range, with a frame (two for a range).
 
-A duration changed in the editor is still checked against the brief's duration: a composition far from it (more than the greater of 1 s and 10%) makes the version incomplete, so change the brief's duration too.
+A duration changed in the editor is your choice: the version stays complete even when it is far from the brief's duration, and the format view shows the brief's next to it ("7 s · brief 6 s (direct edit)"). The next agent turn is told to keep the current duration unless you ask for another one; update the brief's duration yourself if you want it to match.
 
 Current limits: signed desktop builds depend on the maintainers' certificates (see Release). On Ubuntu 24.04 and later the AppImage may fail to start because the system restricts unprivileged user namespaces (AppArmor, `kernel.apparmor_restrict_unprivileged_userns`), which Chromium's sandbox needs: you need an AppArmor profile for the app (or, at your own risk, disable that restriction); avoid `--no-sandbox`, which removes the window's isolation.
 

@@ -1239,6 +1239,9 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
     },
     formatView: {
       stage: (p: { label: string }) => `Preview of ${p.label}`,
+      /** After the duration in the header, when it is far from the brief's (decisions log 262); the user may update the brief. */
+      briefDuration: (p: { n: string }) => `brief ${p.n} s`,
+      briefDurationEdited: (p: { n: string }) => `brief ${p.n} s (direct edit)`,
       scenes: 'Scenes',
       scenesSoon: 'Edit scenes, text and timing directly — coming with the timeline',
       play: 'Play (Space)',

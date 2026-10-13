@@ -102,7 +102,7 @@ The editor changes a composition without the agent. Saving (`POST …/creatives/
 - in `versions.json`, `origin: "editor"` (absent means `"agent"`), `request` = the summary of the edits ("Direct edits: Title text, font Schibsted Grotesk and 2 more"), `basedOn` = the version edited, no `usage`;
 - a `version` chat entry and a git commit.
 
-Followers, carried primaries and carried renders follow the targeted-turn rules above. The composition goes through the same `validateComposition` (with the format) and `loadComposition` as an agent's, including the check of the duration against the brief's (see "Checks"). On top of those, the core refuses an editor save when:
+Followers, carried primaries and carried renders follow the targeted-turn rules above. The composition goes through the same `validateComposition` (with the format) and `loadComposition` as an agent's (size, kind and the format's maximum duration stay hard rules), but NOT the check of the duration against the brief's: a direct edit's duration is the user's choice. An agent turn that keeps such a duration (the base's, recorded with no problem) is not asked to bring it back to the brief; one that changes it to another duration far from the brief is, as before. On top of those, the core refuses an editor save when:
 - a `src` (of a clip or a font) is neither a file of the base version under `assets/` nor a file staged for this draft in the same preview session;
 - an `html` clip's `src` changes, or an `html` clip is added;
 - the `layers/` files are not byte-identical to the base's;

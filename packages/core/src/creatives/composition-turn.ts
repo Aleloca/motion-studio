@@ -1,7 +1,7 @@
 import { lstat, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
-  anyManifestSchema, canFollow, messages, normalizeComposition, renderState,
+  anyManifestSchema, canFollow, isDurationOffBrief, messages, normalizeComposition, renderState,
   type FormatPreset, type Locale, type ManifestV2, type OutputFileInfo, type VersionComposition, type VersionEntry,
 } from '@motion-studio/shared';
 import { readCompositionFolder, readCompositionJson, type CompositionFile } from '../compositions/composition-files.ts';
@@ -45,6 +45,23 @@ export async function carriableComposition(creativeDir: string, base: VersionEnt
   return { entry, files: folder.files, duration: await compositionDuration(compDir) };
 }
 
+/**
+ * The durations off the brief that `base` has for `targets` and recorded with no problem (decisions log 262): a direct
+ * edit's, since a direct save does not check the brief's duration. An agent turn that keeps such a duration is not told to
+ * bring it back to the brief; one that changes it to another duration off the brief is, as before.
+ */
+export async function acceptedDurationsOf(creativeDir: string, base: VersionEntry | undefined, targets: readonly string[], presets: FormatPreset[], briefDurationSec: number | null): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (!base || briefDurationSec === null) return out;
+  for (const f of targets) {
+    const entry = base.compositions?.find((c) => c.format === f && c.followsFormat === undefined);
+    if (!entry || (entry.problems ?? []).length > 0 || findPreset(presets, f)?.kind !== 'video') continue;
+    const d = await compositionDuration(join(creativeDir, 'outputs', `v${base.n}`, ...entry.dir.split('/')));
+    if (d !== null && isDurationOffBrief(d, briefDurationSec)) out.set(f, d);
+  }
+  return out;
+}
+
 /** The (normalised) duration of a composition folder, or null when `composition.json` cannot be read. */
 export async function compositionDuration(compDir: string): Promise<number | null> {
   const parsed = await readCompositionJson(compDir).catch(() => null);
@@ -73,6 +90,8 @@ export async function assembleCompositions(o: {
   projectDir: string; creativeSlug: string; creativeDir: string; n: number; base: VersionEntry | undefined; formats: readonly string[]; targets: readonly string[];
   carried: readonly string[]; carriedComps: ReadonlyMap<string, CarriedComposition>; links: Readonly<Record<string, string>>;
   presets: FormatPreset[]; briefDurationSec: number | null; locale: Locale; label: (id: string) => string;
+  /** Durations of the base kept without a problem (see `checkComposition`). */
+  acceptedDurations?: ReadonlyMap<string, number>;
 }): Promise<AssembledCompositions> {
   const m = messages(o.locale);
   const j = m.jobs;
@@ -115,7 +134,7 @@ export async function assembleCompositions(o: {
         if (dir) await writeThroughTemp(dir, `${t}.json`, async (temp) => { await writeFile(temp, bytes, { flag: 'wx' }); return true; });
       }).catch(() => {});
     }
-    check = await checkTargets({ versionDir: vdir, targets: o.targets, presets: o.presets, briefDurationSec: o.briefDurationSec, locale: o.locale });
+    check = await checkTargets({ versionDir: vdir, targets: o.targets, presets: o.presets, briefDurationSec: o.briefDurationSec, locale: o.locale, acceptedDurations: o.acceptedDurations });
     for (const p of check.problems) problem(p);
     for (const c of check.checks) {
       const own = check.byFormat.get(c.format) ?? [];

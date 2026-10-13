@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
-import { formatLabel, messages, type Composition, type EditorCompositionView, type FormatPreset, type JobSummary, type ManifestV2, type ServerMessage, type StagedAsset, type VersionEntry } from '@motion-studio/shared';
+import { formatLabel, messages, starOf, type Composition, type EditorCompositionView, type FormatPreset, type JobSummary, type ManifestV2, type ServerMessage, type StagedAsset, type VersionEntry } from '@motion-studio/shared';
 import { AppConfigStore } from '../src/app-config.ts';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AgentBridge } from '../src/bridge/bridge.ts';
@@ -327,6 +327,23 @@ describe('saving a draft as a new version', { timeout: 120_000 }, () => {
     expect(r.statusCode).toBe(422);
     expect((await store().readVersions(slug)).length).toBe(versions + 1);
     expect(existsSync(join(store().dir(slug), 'outputs', `v${versions + 2}`))).toBe(false);
+  });
+
+  it('a duration off the brief is the user\'s choice: the version is complete and its format has no problem (decisions log 262)', async () => {
+    const slug = await create(['test-wide']);
+    // The brief says 4 s; 5.8 s is far off it (the agent's turns would be told to fix it).
+    const body = await draft(slug, 1, 'test-wide', (c) => {
+      c.duration = 5.8;
+      c.scenes[1]!.duration = Math.round((5.8 - c.scenes[1]!.start) * 10) / 10;
+    }, [{ kind: 'sceneDuration', sceneId: 'two', duration: 3.3 }]);
+    const r = await save(slug, body);
+    expect(r.statusCode, r.body).toBe(200);
+    const v2 = (await versionOf(slug, 2))!;
+    expect(v2).toMatchObject({ status: 'complete', problems: [], origin: 'editor' });
+    expect(v2.compositions!.find((c) => c.format === 'test-wide')!.problems).toEqual([]);
+    expect((await store().get(slug)).status).toBe('ready');
+    // The default ★ is the edited version.
+    expect(starOf(await store().readVersions(slug), 'test-wide', undefined, undefined).version).toBe(2);
   });
 
   it('a follower that still fits follows the new composition; one that no longer fits is unlinked with a chat warning and keeps its previous version', async () => {

@@ -179,6 +179,14 @@ export type ManifestV2 = z.infer<typeof manifestV2Schema>;
 export const anyManifestSchema = z.discriminatedUnion('schemaVersion', [manifestSchema, manifestV2Schema]);
 export type AnyManifest = z.infer<typeof anyManifestSchema>;
 
+/**
+ * Whether a video lasts far from the brief's duration (the phase 8 rule: more than 1 s and more than 10 % off): the agent's
+ * compositions are checked with it; a direct edit's duration is the user's choice (decisions log 262) and only shown.
+ */
+export function isDurationOffBrief(duration: number, briefDurationSec: number | null | undefined): boolean {
+  return briefDurationSec !== null && briefDurationSec !== undefined && duration > 0 && Math.abs(duration - briefDurationSec) > Math.max(1, briefDurationSec * 0.1);
+}
+
 /** C0 and C1 control characters (newlines included), DEL and the Unicode line/paragraph separators: never in a pin's clip id or name. */
 const PIN_LABEL_FORBIDDEN = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 /** A clip name as a pin may carry it: control characters and separators become spaces, at most 200 characters. */

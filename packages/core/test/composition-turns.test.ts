@@ -20,6 +20,7 @@ import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AgentBridge } from '../src/bridge/bridge.ts';
 import { CompositionFolderError, folderProblem, readCompositionFolder } from '../src/compositions/composition-files.ts';
 import { checkComposition, checkTargets, writeNormalized } from '../src/creatives/composition-contract.ts';
+import { acceptedDurationsOf } from '../src/creatives/composition-turn.ts';
 import { UrlSigner } from '../src/server/signed-urls.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { storyboardDir, storyboardPlan, sweepStoryboardTemps } from '../src/creatives/previews.ts';
@@ -563,6 +564,28 @@ describe('units', () => {
     expect(lane.load).toEqual({ active: 0, waiting: 0 });
   });
 
+  it('acceptedDurationsOf: only an own composition of the base, recorded with no problem, off the brief, of a video format', async () => {
+    const creativeDir = mkdtempSync(join(tmpdir(), 'ms-test-acc-'));
+    try {
+      const write = (format: string, duration: number) => {
+        const d = join(creativeDir, 'outputs', 'v3', 'compositions', format);
+        mkdirSync(d, { recursive: true });
+        writeFileSync(join(d, 'composition.json'), JSON.stringify({ $schema: 'motion-studio/composition@1', width: 320, height: 180, fps: 30, duration, background: '#000000', fonts: [], scenes: [], tracks: [] }));
+      };
+      write('test-wide', 7); write('test-wide-b', 7); write('test-short', 4.2);
+      const entry = (format: string, problems: string[] = [], followsFormat?: string) => ({ format, dir: `compositions/${format}`, hash: 'a'.repeat(64), problems, ...(followsFormat ? { followsFormat } : {}) });
+      const base = { n: 3, commit: null, sessionId: null, status: 'complete', createdAt: '2026-10-13T10:00:00.000Z', request: 'r', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: 2,
+        compositions: [entry('test-wide'), entry('test-wide-b', ['compositions/test-wide-b: off']), entry('test-short')] } as unknown as VersionEntry;
+      const got = await acceptedDurationsOf(creativeDir, base, ['test-wide', 'test-wide-b', 'test-short', 'missing'], PRESETS, 4);
+      // test-wide: 7 s against 4 s, clean → accepted; test-wide-b has a problem; test-short is within the brief's tolerance.
+      expect([...got]).toEqual([['test-wide', 7]]);
+      expect((await acceptedDurationsOf(creativeDir, base, ['test-wide'], PRESETS, null)).size).toBe(0);
+      expect((await acceptedDurationsOf(creativeDir, undefined, ['test-wide'], PRESETS, 4)).size).toBe(0);
+    } finally {
+      rmSync(creativeDir, { recursive: true, force: true });
+    }
+  });
+
   it('names equal after NFC are a clear problem; links are refused; the json is normalised after the agent', async () => {
     expect(folderProblem(new CompositionFolderError('ambiguous', 'assets/é.png')).key).toBe('composition.ambiguousNames');
     const dir = mkdtempSync(join(tmpdir(), 'ms-test-comp-'));
@@ -574,6 +597,11 @@ describe('units', () => {
       expect((await checkComposition(dir, 'test-wide', preset, 2)).ok).toBe(true);
       // Far from the brief's duration: a problem (the phase 8 rule).
       expect((await checkComposition(dir, 'test-wide', preset, 10)).problems.map((p) => p.key)).toEqual(['composition.durationOffBrief']);
+      // A duration the base accepted (a direct edit's) is not off the brief while it is kept; another one is (decisions log 262).
+      expect((await checkComposition(dir, 'test-wide', preset, 10, 2)).ok).toBe(true);
+      expect((await checkComposition(dir, 'test-wide', preset, 10, 3)).problems.map((p) => p.key)).toEqual(['composition.durationOffBrief']);
+      // No brief duration (a direct save): never checked.
+      expect((await checkComposition(dir, 'test-wide', preset, null)).ok).toBe(true);
       mkdirSync(join(dir, 'layers'));
       writeFileSync(join(dir, 'layers', 'x.html'), '<script>new Worker("w.js")</script>');
       const warned = await checkComposition(dir, 'test-wide', preset, 2);

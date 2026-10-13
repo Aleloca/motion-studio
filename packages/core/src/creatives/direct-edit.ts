@@ -262,7 +262,7 @@ export class DirectEditService {
           throw invalid([f.path.startsWith('layers/') ? e.layersChanged : e.srcUnavailable({ clip: '-', path: f.path })]);
         }
 
-        const saved = await this.deps.turns.finishCompositions(ref, store, { creative, targets: [format], carried, carriedComps, links }, presets, latest, n, label, locale);
+        const saved = await this.deps.turns.finishCompositions(ref, store, { creative, targets: [format], carried, carriedComps, links }, presets, latest, n, label, locale, { direct: true });
         const { problems } = saved;
         const status = problems.length === 0 ? 'complete' : 'incomplete';
         const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${n}`);
