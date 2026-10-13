@@ -1,6 +1,6 @@
 // Comments on clips and on time ranges (Phase 10b, Task 10): how such a pin is made and how it reads. Pure, so the editor and
 // the format view build the same pins and the conversation, the timeline and the transport show them the same way.
-import type { Clip, Composition, Pin } from '@motion-studio/shared';
+import { pinClipName, type Clip, type Composition, type Pin } from '@motion-studio/shared';
 import { formatNumber, type useLocale, type useT } from '../i18n.tsx';
 
 /** A range shorter than this (seconds) is a click, not a range. */
@@ -46,7 +46,7 @@ export function clipCentre(comp: Composition, clip: Clip, drawn?: { bounds: { x:
 /** A clip comment: on the clip's centre, at `time`. */
 export function clipPin(o: { format: string; comp: Composition; clip: Clip; time: number; drawn?: Parameters<typeof clipCentre>[2]; note?: string }): Pin {
   const c = clipCentre(o.comp, o.clip, o.drawn);
-  return { format: o.format, x: c.x, y: c.y, timeSec: round3(o.time), clipId: o.clip.id, clipName: clipLabel(o.clip), ...(o.note ? { note: o.note } : {}) };
+  return { format: o.format, x: c.x, y: c.y, timeSec: round3(o.time), clipId: o.clip.id, clipName: pinClipName(clipLabel(o.clip)), ...(o.note ? { note: o.note } : {}) };
 }
 
 /** A range comment: its time is the range start, its point the middle of the picture. Null when the range is too short. */

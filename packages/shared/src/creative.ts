@@ -181,6 +181,8 @@ export type AnyManifest = z.infer<typeof anyManifestSchema>;
 
 /** C0 and C1 control characters (newlines included), DEL and the Unicode line/paragraph separators: never in a pin's clip id or name. */
 const PIN_LABEL_FORBIDDEN = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+/** A clip name as a pin may carry it: control characters and separators become spaces, at most 200 characters. */
+export const pinClipName = (name: string): string => name.replace(new RegExp(PIN_LABEL_FORBIDDEN.source, 'g'), ' ').slice(0, 200);
 const pinLabel = (max: number) => z.string().max(max).refine((s) => !PIN_LABEL_FORBIDDEN.test(s), { message: 'control characters are not allowed' });
 
 export const pinSchema = z.object({

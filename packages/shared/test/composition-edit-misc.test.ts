@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DESCRIBE_MAX_ITEMS, compositionSchema, describeEdits, editOpSchema, editProblemText, pinSchema, snapTargets, snapTime, versionEntrySchema,
+  DESCRIBE_MAX_ITEMS, compositionSchema, describeEdits, editOpSchema, editProblemText, pinClipName, pinSchema, snapTargets, snapTime, versionEntrySchema,
   compositionJsonSchema, type EditOp,
 } from '../src/index.ts';
 import { readFileSync } from 'node:fs';
@@ -87,6 +87,11 @@ describe('schema additions', () => {
     expect(pinSchema.safeParse({ ...base, range: { start: 1, end: 1 } }).success).toBe(false);
     expect(pinSchema.safeParse({ ...base, range: { start: 2, end: 1 } }).success).toBe(false);
     expect(pinSchema.safeParse({ ...base, range: { start: -1, end: 1 } }).success).toBe(false);
+  });
+  it('pinClipName makes any clip name a valid pin name', () => {
+    expect(pinClipName('Riga 1\nRiga 2\u2028x')).toBe('Riga 1 Riga 2 x');
+    expect(pinClipName('n'.repeat(300))).toHaveLength(200);
+    expect(pinSchema.safeParse({ format: 'f', x: 0, y: 0, timeSec: 0, clipName: pinClipName('a\u0000\u0085\tb') }).success).toBe(true);
   });
   it('version entries take an optional origin', () => {
     const entry = { n: 1, commit: null, sessionId: null, status: 'complete', createdAt: '2026-10-13T10:00:00.000Z', request: 'r', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: null };

@@ -11,7 +11,7 @@
 // (Transport.tsx, shared with Compare), the comment layer and the hint read, so the page (bar, chat) does not
 // re-render while the video plays.
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
-import { channelName, DEFAULT_EXPORT_NAME_PATTERN, DEFAULT_FORMATS, formatName, type Composition, type FormatPreset, type Pin, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
+import { channelName, pinClipName, DEFAULT_EXPORT_NAME_PATTERN, DEFAULT_FORMATS, formatName, type Composition, type FormatPreset, type Pin, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import {
   useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type CSSProperties, type MouseEvent,
@@ -400,7 +400,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
     const note = draft.text.trim();
     if (!note) return;
     if (draft.index === null) {
-      const pin: Pin = { format, x: draft.x, y: draft.y, timeSec: video ? draft.timeSec ?? 0 : null, note, ...(draft.clip ? { clipId: draft.clip.id, clipName: draft.clip.name } : {}), ...(draft.range ? { range: draft.range } : {}) };
+      const pin: Pin = { format, x: draft.x, y: draft.y, timeSec: video ? draft.timeSec ?? 0 : null, note, ...(draft.clip ? { clipId: draft.clip.id, clipName: pinClipName(draft.clip.name) } : {}), ...(draft.range ? { range: draft.range } : {}) };
       if (pinSource !== null) setStored((ps) => [...ps, { pin, version: pinSource }]);
     } else {
       const at = sourcePins[draft.index]?.at;
