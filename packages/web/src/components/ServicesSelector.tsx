@@ -116,6 +116,7 @@ export function ServicesSelector({ value, onChange, configured, checks, disabled
         const reasons = choices.map((c) => unavailable(kind, c)).filter((r): r is string => r !== null);
         // Under auto, say which provider it skips for a missing permission, and where to fix it (fix round 2).
         const skipped = s[kind] === 'auto' ? autoSkipped(kind, configured, checks) : [];
+        const others = choices.filter((c) => !skipped.some((x) => x.provider === c)).map((c) => unavailable(kind, c)).filter((r): r is string => r !== null);
         const noteId = `${id}-${kind}-why`;
         return (
           <div key={kind} className="ms-services-row">
@@ -131,7 +132,8 @@ export function ServicesSelector({ value, onChange, configured, checks, disabled
               <p id={noteId} className="ms-services-why">
                 {skipped.map((x) => sv.autoSkipped({ kind: sv.kinds[kind], provider: PROVIDER_LABEL[x.provider], why: x.permission ? sv.whyPermission({ permission: x.permission }) : sv.whyKeyRefused })).join(' ')}
                 {skipped.length ? <> <a href={href.settings('paid')}>{sv.testInSettings}</a> </> : null}
-                {choices.filter((c) => !skipped.some((x) => x.provider === c)).map((c) => unavailable(kind, c)).filter((r): r is string => r !== null).join(' ')}
+                {others.join(' ')}
+                {others.length && !skipped.length ? <> <a href={href.settings('paid')}>{sv.openSettings}</a></> : null}
               </p>
             ) : null}
           </div>

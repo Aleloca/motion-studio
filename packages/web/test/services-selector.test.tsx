@@ -59,11 +59,15 @@ describe('ServicesSelector', () => {
     expect(option('Voice', 'OpenAI').disabled).toBe(false);
     expect(option('Images', 'Stock only').disabled).toBe(true);
     expect(option('Music', 'Off').disabled).toBe(false);
+    // Spec §6 (M4): a disabled provider's reason comes with a link to Settings.
+    const links = screen.getAllByRole('link', { name: 'Add a key in Settings' });
+    expect(links.length).toBeGreaterThan(0);
+    for (const l of links) expect(l.getAttribute('href')).toBe('#/settings/paid');
     const why = 'ElevenLabs needs the ElevenLabs key: add it in Settings → Paid services.';
     expect(option('Voice', 'ElevenLabs').title).toBe(why);
     const note = document.getElementById(group('Voice').getAttribute('aria-describedby')!)!;
-    expect(note.textContent).toBe(why);
-    expect(document.getElementById(group('Images').getAttribute('aria-describedby')!)!.textContent).toBe('Stock only needs the Pexels or Unsplash key: add it in Settings → Paid services.');
+    expect(note.textContent).toBe(`${why} Add a key in Settings`);
+    expect(document.getElementById(group('Images').getAttribute('aria-describedby')!)!.textContent).toBe('Stock only needs the Pexels or Unsplash key: add it in Settings → Paid services. Add a key in Settings');
   });
 
   it('a capability the key check found missing disables that provider with the permission; unverified and error stay available (F5)', () => {
