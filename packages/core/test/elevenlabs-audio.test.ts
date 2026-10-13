@@ -56,6 +56,21 @@ describe('elevenlabsSoundEffect', () => {
   });
 });
 
+describe('limits passed to http.ts', () => {
+  it('refuses a response over 50 MB and hands fetch a live signal (timeout) and redirect:error', async () => {
+    let init: RequestInit | undefined;
+    const big = (async (_u: string, i: RequestInit) => { init = i; return new Response(new Uint8Array(50 * 1024 * 1024 + 1), { status: 200 }); }) as unknown as typeof fetch;
+    const e = await elevenlabsSoundEffect({ fetch: big, apiKey: KEY }, { prompt: 'a' }).catch((x) => x);
+    expect(e.status).toBe(413);
+    expect(init!.redirect).toBe('error');
+    expect(init!.signal).toBeInstanceOf(AbortSignal);
+  });
+  it('honours the deps timeout', async () => {
+    const hang = ((_u: string, i: RequestInit) => new Promise((_r, rej) => i.signal!.addEventListener('abort', () => rej(new Error('t'))))) as unknown as typeof fetch;
+    expect((await elevenlabsMusic({ fetch: hang, apiKey: KEY, timeoutMs: 20 }, { prompt: 'a', durationSec: 12 }).catch((x) => x)).status).toBe(502);
+  });
+});
+
 describe('elevenlabsMusic', () => {
   it('posts the prompt, the length in milliseconds and the instrumental flag', async () => {
     const { calls, fetchImpl } = recorder([audio()]);

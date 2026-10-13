@@ -622,7 +622,6 @@ export const en = {
     promptRequired: 'Describe the sound to generate',
     promptTooLong: (p: { max: number }) => `Description too long (maximum ${p.max} characters)`,
     durationOutOfRange: (p: { min: number; max: number }) => `Duration out of range (${p.min} to ${p.max} seconds)`,
-    optionInfluence: 'Prompt influence (0 to 1)',
     voiceAttribution: (p: { provider: string }) => `AI-generated voice (${p.provider})`,
     searchWhat: 'Say what to search for',
     fontsAttribution: 'Google Fonts · OFL / Apache 2.0',

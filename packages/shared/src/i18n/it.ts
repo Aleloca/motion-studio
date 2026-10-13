@@ -615,7 +615,6 @@ export const it: Messages = {
     promptRequired: 'Descrivi il suono da generare',
     promptTooLong: (p) => `Descrizione troppo lunga (massimo ${p.max} caratteri)`,
     durationOutOfRange: (p) => `Durata fuori intervallo (da ${p.min} a ${p.max} secondi)`,
-    optionInfluence: 'Influenza della descrizione (da 0 a 1)',
     voiceAttribution: (p) => `Voce generata con AI (${p.provider})`,
     searchWhat: 'Indica cosa cercare',
     fontsAttribution: 'Google Fonts · OFL / Apache 2.0',

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workspaceSettingsSchema, type ServerMessage } from '@motion-studio/shared';
@@ -380,6 +380,46 @@ describe('ElevenLabs sound effects, music and voices', () => {
     seen.length = 0;
     await t.tts!(ctx, { text: 'Ciao', voice: 'other' });
     expect(seen[0]!.url).toContain('/v1/text-to-speech/other');
+  });
+  describe('tts brand voice (decision 346)', () => {
+    const kit = (provider: string) => JSON.stringify({ schemaVersion: 1, sound: { genre: '', energy: null, instruments: [], avoid: [], voice: { provider, id: 'brandVoice1' } } });
+    const setKit = async (text: string) => { await mkdir(join(projectDir, 'brand'), { recursive: true }); await writeFile(join(projectDir, 'brand', 'brand-kit.json'), text); };
+    const both = () => providerTools({
+      vault: new MemoryVault({ OPENAI_API_KEY: 'sk-o', ELEVENLABS_API_KEY: KEY }), approvals, media, fetch: audioFetch, lookup: publicLookup, broadcast: () => {},
+      settings: async () => workspaceSettingsSchema.parse({ schemaVersion: 1, confirmPaidProviders: false }),
+    });
+    const openaiVoice = () => JSON.parse(seen.find((x) => x.url.includes('api.openai.com'))!.body).voice;
+    it('prefers the brand voice provider over OpenAI when both keys are set', async () => {
+      await setKit(kit('elevenlabs'));
+      expect(await both().tts!(ctx, { text: 'Ciao' })).toMatchObject({ provider: 'elevenlabs', voice: 'brandVoice1' });
+      expect(seen.map((x) => x.url).join(' ')).toContain('/v1/text-to-speech/brandVoice1');
+    });
+    it('falls back to the default provider and voice when the brand voice provider has no key', async () => {
+      await setKit(kit('elevenlabs'));
+      const onlyOpenai = providerTools({
+        vault: new MemoryVault({ OPENAI_API_KEY: 'sk-o' }), approvals, media, fetch: audioFetch, lookup: publicLookup, broadcast: () => {},
+        settings: async () => workspaceSettingsSchema.parse({ schemaVersion: 1, confirmPaidProviders: false }),
+      });
+      expect(await onlyOpenai.tts!(ctx, { text: 'Ciao' })).toMatchObject({ provider: 'openai', voice: 'marin' });
+      expect(openaiVoice()).toBe('marin');
+      expect(seen.map((x) => x.url).join(' ')).not.toContain('brandVoice1');
+    });
+    it('an explicit provider wins and uses its own default voice, not the brand one', async () => {
+      await setKit(kit('elevenlabs'));
+      expect(await both().tts!(ctx, { text: 'Ciao', provider: 'openai' })).toMatchObject({ provider: 'openai', voice: 'marin' });
+      expect(openaiVoice()).toBe('marin');
+      expect(seen.map((x) => x.url).join(' ')).not.toContain('brandVoice1');
+    });
+    it('an invalid or unreadable kit changes nothing: the usual default (OpenAI)', async () => {
+      await setKit('{ not json');
+      expect(await both().tts!(ctx, { text: 'Ciao' })).toMatchObject({ provider: 'openai', voice: 'marin' });
+      await setKit(JSON.stringify({ schemaVersion: 1, sound: { voice: { provider: 'nope', id: 'x' } } }));
+      expect(await both().tts!(ctx, { text: 'Ciao' })).toMatchObject({ provider: 'openai' });
+      await rm(join(projectDir, 'brand', 'brand-kit.json'));
+      await mkdir(join(projectDir, 'brand', 'brand-kit.json'));
+      expect(await both().tts!(ctx, { text: 'Ciao' })).toMatchObject({ provider: 'openai' });
+      expect(seen.map((x) => x.url).join(' ')).not.toContain('elevenlabs');
+    });
   });
   it('availableTools lists the new tools', async () => {
     const lines = (await availableTools(new MemoryVault({ ELEVENLABS_API_KEY: 'k' }))).join('\n');
