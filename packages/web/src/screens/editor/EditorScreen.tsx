@@ -292,7 +292,8 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     return () => { alive = false; setRestaging(false); };
   }, [session?.token, key]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Save as vN.
+  // Save as vN. (`retargetPins` is set below, where the pending comments are.)
+  const retargetPins = useRef<(base: number, to: number) => void>(() => {});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState<{ name: string; n: number } | null>(null);
@@ -319,6 +320,8 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
         if (err instanceof ApiError && tokenRef.current && tokenRef.current !== first && (err.status === 422 || err.status === 404)) res = await api.saveEdits(slug, creative, body(tokenRef.current));
         else throw err;
       }
+      // Comments not sent yet move to the new version (final review I4): the pin source becomes it, and the clip ids carry over.
+      retargetPins.current(d.base.n, res.version);
       actions.discard();
       setView(null);
       setOpenN(res.version);
@@ -391,6 +394,8 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const pinSource = detail ? detail.creative.resumeFrom?.version ?? latest?.n ?? null : null;
   const canComment = n !== null && entryAt(versions, states[primary], pinSource) === n;
   const sourcePins = useMemo(() => storedPins.flatMap((p, i) => (p.version === pinSource ? [{ pin: p.pin, at: i }] : [])), [storedPins, pinSource]);
+  retargetPins.current = (base, to) => setStoredPins((ps) => (ps.some((p) => p.version === base || p.version === pinSource)
+    ? ps.map((p) => (p.version === base || p.version === pinSource ? { ...p, version: to } : p)) : ps));
   const [rangeOpen, setRangeOpen] = useState(false);
   const askRange = () => { if (commentVideo) setRangeOpen(true); };
   const [noteFor, setNoteFor] = useState<{ pin: Pin; index: number | null } | null>(null);

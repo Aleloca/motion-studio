@@ -107,6 +107,7 @@ const { useHashRoute } = await import('../src/App.tsx');
 const { getToasts, __resetToasts } = await import('../src/ui/toast.tsx');
 const { useEditorKeys } = await import('../src/screens/editor/useEditorKeys.ts');
 const { SAVED_MS } = await import('../src/screens/editor/DraftPill.tsx');
+const { __resetPendingPins, pinsKey, usePendingPins } = await import('../src/screens/pendingPins.ts');
 
 const KEY = draftKey('acme', 'lancio', REEL);
 const emptyLive = (): EventsState => ({ approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {}, snapshots: 0 } as unknown as EventsState);
@@ -150,6 +151,7 @@ const opened = async (o: { probe?: boolean } = {}) => {
 beforeEach(() => {
   __resetPreviewSessions();
   __resetDrafts();
+  __resetPendingPins();
   __resetToasts();
   vi.clearAllMocks();
   // A test that queued a one-off answer it never used must not leak it into the next.
@@ -393,6 +395,20 @@ describe('EditorScreen · save', () => {
     await userEvent.click(await screen.findByRole('tab', { name: 'Chat' }));
     expect(await screen.findByText('Edited title text')).toBeTruthy();
     expect(document.querySelectorAll('.ms-convo-version-summary')).toHaveLength(1);
+  });
+
+  it('comments not sent yet move to the new version on a save, and stay chips in the chat (I4)', async () => {
+    api.saveEdits.mockImplementationOnce(async () => { detail = makeDetail([v2(1), v2(2), v2(3)]); return { version: 3 }; });
+    const pins = renderHook(() => usePendingPins(pinsKey('acme', 'lancio')));
+    act(() => pins.result.current[1](() => [{ version: 2, pin: { format: REEL, clipId: 'title', clipName: 'Title', timeSec: 1, note: 'bigger' } as never }]));
+    render(<Harness />);
+    await opened();
+    await userEvent.click(await screen.findByRole('tab', { name: 'Chat' }));
+    expect(await screen.findByText(/bigger/)).toBeTruthy();
+    store().apply(move(111));
+    await userEvent.click(await screen.findByRole('button', { name: 'Save as v3' }));
+    await waitFor(() => expect(pins.result.current[0]).toMatchObject([{ version: 3, pin: { clipId: 'title', note: 'bigger' } }]));
+    expect(await screen.findByText(/bigger/)).toBeTruthy();
   });
 
   it('a staged file the composition does not use is not sent; a used one is', async () => {
