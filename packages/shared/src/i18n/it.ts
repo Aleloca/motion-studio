@@ -577,6 +577,7 @@ export const it: Messages = {
     openFromLink: 'Apri Motion Studio dal link mostrato nel terminale',
   },
   keyChecks: {
+    refused: 'Il servizio ha rifiutato la richiesta: premi Prova di nuovo o controlla la chiave e i suoi permessi',
     timeout: (p) => `Nessuna risposta entro ${p.seconds} s`,
     network: 'Servizio non raggiungibile',
     status: (p) => `Il servizio ha risposto ${p.status}`,

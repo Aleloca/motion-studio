@@ -12,6 +12,7 @@ import { buildServer } from '../src/server/app.ts';
 
 let app: FastifyInstance;
 let keyChecks: KeyCheckCache;
+let vault: MemoryVault;
 // Fake fetch only: the key checks that PUT and POST run never leave the process.
 let probes: Array<{ url: string; auth: string | null }>;
 let answer: (url: string) => Response;
@@ -25,10 +26,11 @@ beforeEach(async () => {
   probes = [];
   answer = () => new Response('{}', { status: 200 });
   keyChecks = new KeyCheckCache();
+  vault = new MemoryVault({ UNSPLASH_ACCESS_KEY: 'env-key-0123456789' });
   app = await buildServer({ uiToken: null, sandbox: async () => ({ available: false, reason: 'test' }), appConfig: new AppConfigStore(join(base, 'c')), git: new Git(), doctor: async () => [], runner: new ClaudeCodeRunner(['true']),
-    vault: new MemoryVault({ UNSPLASH_ACCESS_KEY: 'env-key-0123456789' }), keyChecks, keyCheckHttp: { fetch: fakeFetch } });
+    vault, keyChecks, keyCheckHttp: { fetch: fakeFetch } });
 });
-afterEach(() => app.close());
+afterEach(async () => { vi.restoreAllMocks(); await app.close(); });
 
 describe('secrets API', () => {
   it('sets, reports and deletes keys without ever returning them', async () => {
@@ -100,5 +102,12 @@ describe('secrets API', () => {
       expect(JSON.stringify(keyChecks.get('elevenlabs'))).not.toContain(KEY);
     } finally { out.mockRestore(); err.mockRestore(); }
     expect(logged.join('\n')).not.toContain(KEY);
+  });
+  it('a check that finishes after the key was replaced is not remembered for the new key', async () => {
+    await vault.set('openai', 'sk-first-0123456789');
+    answer = () => { void vault.set('openai', 'sk-second-0123456789'); return new Response('{}', { status: 200 }); };
+    const r = await app.inject({ method: 'POST', url: '/api/secrets/openai/check' });
+    expect(r.statusCode).toBe(200);
+    expect(keyChecks.get('openai')).toBeNull();
   });
 });

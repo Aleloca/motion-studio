@@ -19,16 +19,22 @@ export async function openaiSpeech(deps: HttpDeps & { apiKey: string }, req: Tts
   return { bytes, voice };
 }
 
+/**
+ * The voice ElevenLabs speech uses when none is given: the first of the account's list (`voices_read`). Callers that track key
+ * capabilities resolve it on its own, so a refused list is blamed on the voices and not on `text_to_speech`.
+ */
+export async function elevenlabsDefaultVoice(deps: HttpDeps & { apiKey: string }): Promise<string> {
+  const list = await requestJson<{ voices?: Array<{ voice_id: string }> }>(deps, 'https://api.elevenlabs.io/v2/voices?page_size=10', { headers: { 'xi-api-key': deps.apiKey } }, { provider: 'ElevenLabs', secrets: [deps.apiKey] });
+  const voice = list.voices?.[0]?.voice_id;
+  if (!voice) throw new ProviderError(502, t().providers.noVoice);
+  return voice;
+}
+
 export async function elevenlabsSpeech(deps: HttpDeps & { apiKey: string }, req: TtsRequest) {
   if (req.text.length > 5000) throw new ProviderError(400, t().providers.textTooLong({ provider: 'ElevenLabs', max: 5000 }));
   const headers = { 'xi-api-key': deps.apiKey };
   if (req.voice !== undefined && !VOICE.test(req.voice)) throw new ProviderError(400, t().providers.invalidVoice);
-  let voice = req.voice;
-  if (!voice) {
-    const list = await requestJson<{ voices?: Array<{ voice_id: string }> }>(deps, 'https://api.elevenlabs.io/v2/voices?page_size=10', { headers }, { provider: 'ElevenLabs', secrets: [deps.apiKey] });
-    voice = list.voices?.[0]?.voice_id;
-    if (!voice) throw new ProviderError(502, t().providers.noVoice);
-  }
+  const voice = req.voice || await elevenlabsDefaultVoice(deps);
   const format = req.format === 'wav' ? 'wav_44100' : 'mp3_44100_128';
   const { bytes } = await requestBytes(deps, `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=${format}`, {
     method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ text: req.text, model_id: 'eleven_multilingual_v2' }),

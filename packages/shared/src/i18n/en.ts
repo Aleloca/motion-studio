@@ -584,6 +584,7 @@ export const en = {
     openFromLink: 'Open Motion Studio from the link shown in the terminal',
   },
   keyChecks: {
+    refused: 'The service refused the request: press Test again or check the key and its permissions',
     timeout: (p: { seconds: number }) => `No answer within ${p.seconds} s`,
     network: 'The service could not be reached',
     status: (p: { status: number }) => `The service answered ${p.status}`,

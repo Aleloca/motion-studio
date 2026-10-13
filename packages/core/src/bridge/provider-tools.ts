@@ -16,7 +16,7 @@ import { KEY_PERMISSIONS, KeyCheckCache } from '../providers/key-check.ts';
 import { fetchTransport, nodeTransport, type LookupFn, type Transport } from '../providers/safe-fetch.ts';
 import { generateImage, normalizeImageSize } from '../providers/openai-images.ts';
 import { stockDownload, stockSearch, type StockProvider } from '../providers/stock.ts';
-import { elevenlabsSpeech, openaiSpeech } from '../providers/tts.ts';
+import { elevenlabsDefaultVoice, elevenlabsSpeech, openaiSpeech } from '../providers/tts.ts';
 import type { SecretsVault } from '../secrets/vault.ts';
 import { overrideNote, refusalText, resolveService } from '../services/service-policy.ts';
 import type { BridgeContext } from './bridge.ts';
@@ -182,8 +182,11 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       const format = a.format === 'wav' ? 'wav' : 'mp3';
       await confirmPaid(c, `provider:tts-${provider}`, t().approvals.generateVoice({ provider: LABEL[provider] }), text.slice(0, 300));
       alive(c);
-      const req = { text, voice: voiceId, instructions: s(a.instructions, 1000) || undefined, format } as const;
       const http = { ...httpFor(c), apiKey };
+      // ElevenLabs with no voice: the account's first voice, read under `voices` (a refused list is not a missing text_to_speech).
+      const resolved = provider === 'elevenlabs' && !voiceId ? await withKeyCheck('elevenlabs', 'voices', () => elevenlabsDefaultVoice(http)) : voiceId;
+      alive(c);
+      const req = { text, voice: resolved, instructions: s(a.instructions, 1000) || undefined, format } as const;
       const out = await withKeyCheck(provider, 'tts', () => (provider === 'openai' ? openaiSpeech(http, req) : elevenlabsSpeech(http, req)));
       alive(c);
       const file = await saveGeneratedFile(c.projectDir, 'audio', `${s(a.name, 60) || slug(text)}.${format}`, out.bytes);

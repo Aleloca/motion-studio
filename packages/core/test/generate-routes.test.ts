@@ -27,10 +27,12 @@ let keyChecks: KeyCheckCache;
 let calls: Array<{ url: string; body: string }>;
 let status: number;
 let hang: boolean;
+let voicesDenied = false;
 const media: MediaTools = { ...NoMediaTools, available: true, probe: async () => ({ width: 8, height: 8, durationSec: null }) as never, probeAudio: async () => ({ durationSec: 4.5 }) };
 
 const fakeFetch = (async (url: string, init?: RequestInit) => {
   calls.push({ url, body: typeof init?.body === 'string' ? init.body : '' });
+  if (voicesDenied && url.startsWith('https://api.elevenlabs.io/v2/voices')) return new Response(JSON.stringify({ detail: { status: 'missing_permissions', message: 'The API key you used is missing the permission voices_read to execute this operation.' } }), { status: 401 });
   if (hang) return new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => reject(new Error('aborted'))));
   if (status !== 200) return new Response('{"error":"denied"}', { status });
   if (url.startsWith('https://api.openai.com/v1/images')) return new Response(JSON.stringify({ data: [{ b64_json: PNG.toString('base64') }] }), { status: 200 });
@@ -57,7 +59,7 @@ const settle = async (jobId: string) => {
 };
 const assets = async () => new LibraryStore(join(base, 'ws', 'acme'), media).listAssets();
 
-beforeEach(async () => { base = await mkdtemp(join(tmpdir(), 'ms-gen-')); broker = new ApprovalBroker({ broadcast: () => {} }); keyChecks = new KeyCheckCache(); calls = []; status = 200; hang = false; });
+beforeEach(async () => { base = await mkdtemp(join(tmpdir(), 'ms-gen-')); broker = new ApprovalBroker({ broadcast: () => {} }); keyChecks = new KeyCheckCache(); calls = []; status = 200; hang = false; voicesDenied = false; });
 afterEach(async () => { await app.close(); vi.restoreAllMocks(); });
 
 describe('generate route', () => {
@@ -152,6 +154,19 @@ describe('generate route', () => {
     const everything = JSON.stringify([(await app.inject('/api/jobs')).json(), keyChecks.get('elevenlabs'), keyChecks.get('openai')]);
     expect(everything).not.toContain(ELEVEN);
     expect(everything).not.toContain(OPENAI);
+  });
+  it('ElevenLabs voice with no voice id: a refused voice list blames voices_read, not text_to_speech (Review Focus 3 key)', async () => {
+    await boot();
+    voicesDenied = true;
+    const job = await settle((await post({ kind: 'voice', provider: 'elevenlabs', text: 'Ciao a tutti', options: {} })).json().jobId);
+    expect(job.state).toBe('failed');
+    expect(keyChecks.capabilities('elevenlabs').voices).toMatchObject({ status: 'missing', permission: 'voices_read' });
+    expect(keyChecks.capabilities('elevenlabs').tts).toBeUndefined();
+    expect(calls.some((c) => c.url.includes('/v1/text-to-speech/'))).toBe(false);
+    voicesDenied = false;
+    const ok = await settle((await post({ kind: 'voice', provider: 'elevenlabs', text: 'Ciao a tutti', options: {} })).json().jobId);
+    expect(ok.state).toBe('succeeded');
+    expect(keyChecks.capabilities('elevenlabs')).toMatchObject({ voices: { status: 'ok' }, tts: { status: 'ok' } });
   });
   it('validates before queuing anything: shapes, limits and missing keys, with localized messages', async () => {
     await boot({ elevenlabs: ELEVEN });

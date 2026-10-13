@@ -30,7 +30,10 @@ export function registerSettingsRoutes(app: FastifyInstance, ctx: SettingsRoutes
   const runCheck = async (p: ProviderId): Promise<KeyCheckResult | null> => {
     const key = await ctx.vault.get(p);
     if (!key) return null;
-    return ctx.keyChecks.merge(p, await checkKey(ctx.keyCheckHttp, p, key));
+    const fresh = await checkKey(ctx.keyCheckHttp, p, key);
+    // The key was replaced or removed while the probes ran: the result belongs to the old key and is not remembered.
+    if ((await ctx.vault.get(p)) !== key) return fresh;
+    return ctx.keyChecks.merge(p, fresh);
   };
   app.get('/api/secrets', async () => ctx.vault.status());
   app.get('/api/secrets/checks', async () => Object.fromEntries(PROVIDER_IDS.map((p) => [p, ctx.keyChecks.get(p)])));

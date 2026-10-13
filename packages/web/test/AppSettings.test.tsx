@@ -243,6 +243,7 @@ describe('App settings · paid services', () => {
     expect(await within(pexels).findByText('Search · error')).toBeTruthy();
     expect(within(pexels).getByText('Some checks did not finish (No answer within 15 s). Press Test to try again.')).toBeTruthy();
     // An error is never shown as a missing permission.
+    expect(within(pexels).queryByText(/does not accept this key/)).toBeNull();
     expect(within(pexels).queryByRole('region', { name: 'Permissions to enable' })).toBeNull();
   });
 

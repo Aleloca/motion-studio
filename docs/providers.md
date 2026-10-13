@@ -59,9 +59,12 @@ When a key is saved in **Settings → Paid services**, and with the **Test** but
 
 Outcomes:
 - `ok`: the request worked.
-- `missing`: the key lacks the permission named in the result. With no permission name, on the key itself, the provider does not know the key (401 on the base request, not a permission refusal); then every capability is `missing`.
+- `missing`: the key lacks the permission named in the result. With no permission name, on the key itself, the provider does not know the key; then every capability is `missing`. For ElevenLabs and OpenAI this needs the provider's own words for an unknown key (`invalid_api_key`, "Invalid API key", "Incorrect API key"): any other 401 is `error` ("the service refused the request"), so a restricted key is never shown as invalid.
 - `unverified`: no free request can tell. The first real use updates it: a 401/403 marks it `missing`, a success `ok` (`generate_image`, `tts`, `sound_effect`, `music`, `list_voices`, stock search and download, the Assets Generate jobs and the voice picker all report into the same cache). A later Test keeps what real use learned for these capabilities.
 - `error`: network failure, deadline, 5xx or rate limit (429, or Unsplash's 403 "Rate Limit Exceeded"). Never `missing`.
+- With no voice given, ElevenLabs voice-over first reads the account's voice list: that read is recorded under the voice list (`voices_read`), not under voice-over.
+
+Tests never reach these hosts: `test-support/block-provider-network.ts` refuses real requests to the provider and Google Fonts hosts under vitest (opt in with `MS_ALLOW_PROVIDER_NETWORK=1`).
 
 A restricted ElevenLabs key (for example one with only `text_to_speech`) answers `401` with `missing_permissions` to the read requests: the key is shown as working, the read permissions as missing and generation as unverified, never as an invalid key.
 

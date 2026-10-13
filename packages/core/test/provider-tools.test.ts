@@ -313,6 +313,26 @@ describe('key checks from real calls (Task 8)', () => {
   });
 });
 
+describe('tts key checks with a text_to_speech-only ElevenLabs key (Task 8 fix I1)', () => {
+  it('a refused default-voice lookup marks voices missing, never tts', async () => {
+    const { KeyCheckCache } = await import('../src/providers/key-check.ts');
+    const cache = new KeyCheckCache();
+    const restricted = (async (url: string, init?: RequestInit) => (url.startsWith('https://api.elevenlabs.io/v2/voices')
+      ? new Response(JSON.stringify({ detail: { status: 'missing_permissions', message: 'missing the permission voices_read' } }), { status: 401 })
+      : fakeFetch(url, init))) as unknown as typeof fetch;
+    const t = providerTools({
+      vault: new MemoryVault({ ELEVENLABS_API_KEY: 'xi-tts-only-0123456789' }), approvals, media: NoMediaTools, fetch: restricted, lookup: publicLookup,
+      broadcast: () => {}, keyChecks: cache, settings: async () => workspaceSettingsSchema.parse({ schemaVersion: 1, confirmPaidProviders: false }),
+    });
+    await expect(t.tts!(ctx, { text: 'Ciao', provider: 'elevenlabs' })).rejects.toBeTruthy();
+    expect(cache.capabilities('elevenlabs').voices).toMatchObject({ status: 'missing', permission: 'voices_read' });
+    expect(cache.capabilities('elevenlabs').tts).toBeUndefined();
+    // With a voice given, speech works: tts is ok and voices keeps what it learned.
+    await t.tts!(ctx, { text: 'Ciao', provider: 'elevenlabs', voice: 'v9' });
+    expect(cache.capabilities('elevenlabs')).toMatchObject({ tts: { status: 'ok' }, voices: { status: 'missing' } });
+  });
+});
+
 describe('ElevenLabs sound effects, music and voices', () => {
   const KEY = 'xi-secret-777';
   const seen: Array<{ url: string; body: string; key: string | undefined }> = [];

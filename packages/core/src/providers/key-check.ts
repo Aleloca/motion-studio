@@ -14,7 +14,10 @@ export { KEY_CAPABILITIES, KEY_PERMISSIONS };
 
 type Entry = KeyCheckResult['capabilities'][number];
 const CONTROL = /[\u0000-\u001f\u007f]/g;
-/** Bounded, single-line, redacted: what a result may carry in `permission` and `detail`. */
+/**
+ * Bounded and single-line: what a result may carry in `permission` and `detail`. `checkKey` also redacts the key; the cache
+ * (which never sees a key) only bounds and cleans, its strings coming from constants and the catalogs.
+ */
 const clean = (v: string | undefined, max: number, secrets: string[]): string | undefined => {
   if (v === undefined) return undefined;
   const out = redact(String(v), secrets).replace(CONTROL, ' ').trim().slice(0, max);
@@ -70,6 +73,12 @@ const plan = (provider: ProviderId, apiKey: string): Plan => {
 
 /** The words a provider uses for a known key that lacks a permission (ElevenLabs `missing_permissions`, OpenAI scopes). */
 const PERMISSION_WORDS = /missing_permissions|missing the permission|insufficient permissions|missing scopes/i;
+/**
+ * The words of a key the provider does not know (ElevenLabs `invalid_api_key` / "Invalid API key", OpenAI "Incorrect API key"
+ * / `invalid_api_key`). Only these make a key invalid: any other 401 is an `error`, so a restricted key worded in a new way is
+ * never shown as invalid (Review Focus 3).
+ */
+const INVALID_WORDS = /invalid_api_key|invalid api key|incorrect api key/i;
 const RATE_LIMIT_WORDS = /rate limit/i;
 
 async function probe(deps: HttpDeps, p: Plan, pr: Probe, apiKey: string): Promise<Outcome> {
@@ -79,7 +88,9 @@ async function probe(deps: HttpDeps, p: Plan, pr: Probe, apiKey: string): Promis
     if (a.status === 429 || (a.status === 403 && RATE_LIMIT_WORDS.test(a.body))) return { kind: 'error', detail: t().keyChecks.rateLimited };
     if (a.status === 401 || a.status === 403) {
       if (!p.scoped) return { kind: 'denied', why: 'invalid' };
-      return { kind: 'denied', why: a.status === 403 || PERMISSION_WORDS.test(a.body) ? 'permission' : 'invalid' };
+      if (a.status === 403 || PERMISSION_WORDS.test(a.body)) return { kind: 'denied', why: 'permission' };
+      if (INVALID_WORDS.test(a.body)) return { kind: 'denied', why: 'invalid' };
+      return { kind: 'error', detail: t().keyChecks.refused };
     }
     if (a.status === 404 && pr.notFound) return { kind: 'notFound' };
     return { kind: 'error', detail: t().keyChecks.status({ status: a.status }) };

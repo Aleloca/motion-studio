@@ -96,6 +96,27 @@ describe('checkKey · ElevenLabs (Review Focus 3)', () => {
   });
 });
 
+describe('checkKey · unrecognised refusals fail safe (Task 8 fix I2)', () => {
+  it('ElevenLabs: a 401 that names neither a permission nor an invalid key is error, never an invalid key', async () => {
+    const r = await checkKey({ fetch: fake(() => json(401, { detail: { status: 'something_new', message: 'Unauthorized' } })).fetch }, 'elevenlabs', KEY);
+    expect(statuses(r)).toEqual({ key: 'error', account: 'error', voices: 'error', tts: 'unverified', sfx: 'unverified', music: 'unverified' });
+    expect(cap(r, 'key')!.detail).toMatch(/rifiutato/);
+    const empty = await checkKey({ fetch: fake(() => new Response('', { status: 401 })).fetch }, 'elevenlabs', KEY);
+    expect(cap(empty, 'key')!.status).toBe('error');
+    expect(statuses(await checkKey({ fetch: fake(elevenInvalid).fetch }, 'elevenlabs', KEY)).key).toBe('missing');
+  });
+  it('OpenAI: only "Incorrect API key" / invalid_api_key make the key invalid', async () => {
+    const odd = await checkKey({ fetch: fake(() => new Response('{"error":{"message":"Unauthorized"}}', { status: 401 })).fetch }, 'openai', KEY);
+    expect(statuses(odd)).toEqual({ key: 'error', images: 'error', tts: 'error' });
+    const coded = await checkKey({ fetch: fake(() => json(401, { error: { message: 'nope', code: 'invalid_api_key' } })).fetch }, 'openai', KEY);
+    expect(statuses(coded)).toEqual({ key: 'missing', images: 'missing', tts: 'missing' });
+  });
+  it('a capability probe refused without a named permission is error, not missing', async () => {
+    const r = await checkKey({ fetch: fake((u) => (u.includes('/v2/voices') ? new Response('', { status: 401 }) : json(200, {}))).fetch }, 'elevenlabs', KEY);
+    expect(statuses(r)).toMatchObject({ key: 'ok', account: 'ok', voices: 'error' });
+  });
+});
+
 describe('checkKey · stock', () => {
   it('Pexels: one search of one result', async () => {
     const f = fake(() => json(200, { photos: [] }));
@@ -167,6 +188,12 @@ describe('KeyCheckCache', () => {
     expect(statuses(bad)).toMatchObject({ key: 'missing', tts: 'missing' });
     c.clear('elevenlabs');
     expect(c.get('elevenlabs')).toBeNull();
+  });
+  it('a fresh probe result corrects a capability that real use learned as missing', () => {
+    const c = new KeyCheckCache();
+    c.record('elevenlabs', 'voices', 'missing', 'voices_read');
+    const out = c.merge('elevenlabs', check([{ capability: 'key', status: 'ok' }, { capability: 'voices', status: 'ok' }]));
+    expect(cap(out, 'voices')).toEqual({ capability: 'voices', status: 'ok' });
   });
   it('a success proves the key; results come in a stable order', () => {
     const c = new KeyCheckCache();
