@@ -1,3 +1,4 @@
+import type { Composition } from './composition/schema.ts';
 import type { JobSummary } from './events.ts';
 
 /** The job key of a creative's turns (core creative-turns): `creative:<root>:<project>:<creative>`; the root may hold ':'. */
@@ -53,3 +54,29 @@ export interface ChromeDownloadOffer { version: string; sizeBytes: number }
 
 /** `GET …/pin-frames/:n`: the feedback frames the core made for the comments sent with the turn that made version n. */
 export interface PinFramesView { n: number; expiresAt: string | null; frames: Array<{ file: string; url: string }> }
+
+/**
+ * `GET …/versions/:n/compositions/:format` (Phase 10b editor): the **primary** composition of `format` in a saved v2 version.
+ * Asking for a follower answers with its primary's composition; `primaryFormat` is then the primary's folder (for a primary
+ * it equals `format`). `files`: every file of the composition folder (for `validateComposition`); `fonts`: the families the
+ * inspector offers, the composition's own first, then the brand kit's not already declared.
+ */
+export type EditorCompositionView = { n: number; format: string; primaryFormat: string; hash: string; composition: Composition; files: { path: string; size: number }[]; fonts: EditorFontOption[] };
+/** A font the inspector offers. A brand font is `staged: false` here: choosing it stages its file first (`StagedAsset`). */
+export type EditorFontOption = { family: string; weights: number[]; source: 'composition' | 'brand'; brandFontId?: string; staged: boolean };
+
+/** `POST …/editor/stage`: a library asset (its `assets.json` path) or a brand font, staged for the preview session `token`. */
+export type StageRequest = { token: string; from: { kind: 'library'; file: string } | { kind: 'brandFont'; id: string } };
+
+/**
+ * A staged video's normalised file in the preview session (the core's media cache, served as `media/<index>.mp4`), with the
+ * probed source fields: the web passes it to the runtime (`sessionMedia`), so a draft clip naming `path` plays it as the
+ * session's own videos do. `audioStart` only when the original has sound (played from `path` itself).
+ */
+export type StagedVideoMedia = { index: number; sourceFps: number; sourceStart: number; sourceVideoEnd: number; audioStart?: number };
+
+/**
+ * A file staged for a draft: `path` is composition-relative (`assets/lib/<sha8>-<name>`), served under the session's token
+ * (base folder first). `media`: a video that was normalised (absent when it could not be: it then plays as it is).
+ */
+export type StagedAsset = { path: string; size: number; kind: 'image' | 'svg' | 'video' | 'audio' | 'font'; width?: number; height?: number; durationSec?: number | null; media?: StagedVideoMedia };

@@ -164,6 +164,8 @@ function createLivePreview(o: {
 }): BridgePlayer {
   const doc = o.root.ownerDocument;
   const videos = sessionVideos(o.composition);
+  /** The videos the parent may add (`sessionMedia`, staged ones): bounded like the core's session media. */
+  const MAX_VIDEOS = 1000;
   let current = o.first;
   let holder: HTMLElement | null = null; // the first mount lives directly in the root
   let selected: string | null = null;
@@ -249,6 +251,14 @@ function createLivePreview(o: {
       const draft = { composition, keepTime: d.keepTime, seq: d.seq };
       if (applying) { pending = draft; return; }
       void apply(draft);
+    },
+    addSessionMedia: (m) => {
+      if (!videos.has(m.src) && videos.size >= MAX_VIDEOS) return;
+      // As the core's `withSessionMedia` writes a session video into the inlined composition.
+      videos.set(m.src, {
+        src: `media/${m.index}.mp4`, sourceFps: m.sourceFps, sourceStart: m.sourceStart, sourceVideoEnd: m.sourceVideoEnd, sourceTrusted: true,
+        ...(m.audioStart !== undefined ? { audioSrc: m.src, audioStart: m.audioStart } : {}),
+      });
     },
   };
 }

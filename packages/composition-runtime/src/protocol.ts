@@ -87,7 +87,14 @@ export type PreviewIncoming =
    * `keepTime` the current time is kept (clamped to the new duration), else the new one starts at 0. Play state, scale,
    * mute and the selected clip (when it still exists) are kept. Answered by `compositionApplied` with this `seq`.
    */
-  | { type: 'setComposition'; composition: Composition; keepTime?: boolean; seq: number };
+  | { type: 'setComposition'; composition: Composition; keepTime?: boolean; seq: number }
+  /**
+   * Preview only (Phase 10b): a video the core staged for the editor's draft was normalised and added to this session's
+   * media (`media/<index>.mp4`, served by the core only for the indices it added). A draft video clip whose `src` is `src`
+   * then plays that file with these source fields, as the session's own videos do; its sound (when `audioStart` is given)
+   * plays from `src` itself. Applies to the drafts that follow.
+   */
+  | { type: 'sessionMedia'; src: string; index: number; sourceFps: number; sourceStart: number; sourceVideoEnd: number; audioStart?: number };
 
 export const RATE_MIN = 0.1;
 export const RATE_MAX = 4;
@@ -104,6 +111,23 @@ const keysWithin = (o: Obj, allowed: readonly string[]) => Object.keys(o).every(
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const isClipId = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= CLIP_ID_MAX;
 const isSeq = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= SEQ_MAX;
+/** Media fields as the core checks them (composition-server `checkMediaFile`). */
+const MEDIA_SEC_MAX = 36_000;
+const inRange = (v: unknown, min: number, max: number, open = false): v is number => finite(v) && (open ? v > min : v >= min) && v <= max;
+/**
+ * A staged asset path the draft may name: `assets/…`, at most 512 characters, no empty, `.` or `..` segment, none of the
+ * characters a composition path refuses in a URL (`\`, `:`, `%`, `?`, `#`) and no control character. (The draft's clip
+ * paths are checked by the schema; this one is only a key they are compared with.)
+ */
+function isAssetPath(v: unknown): v is string {
+  if (typeof v !== 'string' || v.length > 512 || !v.startsWith('assets/')) return false;
+  if (v.split('/').some((seg) => seg.trim() === '' || seg === '.' || seg === '..')) return false;
+  for (let i = 0; i < v.length; i++) {
+    const c = v.charCodeAt(i);
+    if (c < 0x20 || (c >= 0x7f && c <= 0x9f) || c === 0x5c || c === 0x3a || c === 0x25 || c === 0x3f || c === 0x23) return false;
+  }
+  return true;
+}
 
 /** Validates a draft composition (see `./draft`): a fresh, structurally valid copy, or null. */
 export type DraftParser = (value: unknown) => Composition | null;
@@ -138,6 +162,16 @@ export function parseIncoming(data: unknown, parseDraft?: DraftParser): PreviewI
       const composition = parseDraft ? parseDraft(data.composition) : null;
       if (!composition) return null;
       return { type: 'setComposition', composition, ...(data.keepTime !== undefined ? { keepTime: data.keepTime } : {}), seq: data.seq };
+    }
+    case 'sessionMedia': {
+      if (!keysWithin(data, ['type', 'src', 'index', 'sourceFps', 'sourceStart', 'sourceVideoEnd', 'audioStart'])) return null;
+      if (!isAssetPath(data.src) || !(typeof data.index === 'number' && Number.isInteger(data.index) && data.index >= 0 && data.index < 10_000)) return null;
+      if (!inRange(data.sourceFps, 0, 240, true) || !inRange(data.sourceStart, 0, MEDIA_SEC_MAX) || !inRange(data.sourceVideoEnd, 0, MEDIA_SEC_MAX, true)) return null;
+      if (data.audioStart !== undefined && !inRange(data.audioStart, 0, MEDIA_SEC_MAX)) return null;
+      return {
+        type: 'sessionMedia', src: data.src, index: data.index, sourceFps: data.sourceFps, sourceStart: data.sourceStart, sourceVideoEnd: data.sourceVideoEnd,
+        ...(data.audioStart !== undefined ? { audioStart: data.audioStart } : {}),
+      };
     }
     default:
       return null;

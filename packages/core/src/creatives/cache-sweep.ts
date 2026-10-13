@@ -80,3 +80,30 @@ export async function sweepDerivedCaches(projectDir: string, o: { now?: number; 
   }
   return removed;
 }
+
+/**
+ * The editor's staging folders (`.studio/cache/editor-staging/<creative>/<id>`, editor-staging.ts) whose newest file is
+ * older than `maxAgeMs` (default 24 h), never one a live preview session uses (`inUse`, by its path). A session's folder is
+ * also removed when the session ends; this catches the ones a crash or a quit left behind. Links are never followed.
+ */
+export async function sweepEditorStaging(projectDir: string, o: { now?: number; maxAgeMs?: number; inUse?: (dir: string) => boolean } = {}): Promise<string[]> {
+  const now = o.now ?? Date.now();
+  const maxAge = o.maxAgeMs ?? 24 * 3600 * 1000;
+  const root = join(projectDir, '.studio', 'cache', 'editor-staging');
+  const removed: string[] = [];
+  if (!(await lstat(root).catch(() => null))?.isDirectory()) return removed;
+  for (const creative of await readdir(root).catch(() => [] as string[])) {
+    const cdir = join(root, creative);
+    if (!(await lstat(cdir).catch(() => null))?.isDirectory()) continue;
+    let any = false;
+    for (const id of await readdir(cdir).catch(() => [] as string[])) {
+      const dir = join(cdir, id);
+      if (o.inUse?.(dir)) continue;
+      const m = await measure(dir);
+      if (now - m.newestMs <= maxAge) continue;
+      await rm(dir, { recursive: true, force: true }).then(() => { removed.push(dir); any = true; }, () => {});
+    }
+    if (any) await noteCoreChange(cdir).catch(() => {});
+  }
+  return removed;
+}

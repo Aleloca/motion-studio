@@ -186,9 +186,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const recoverOptions = (root: string): RecoverOptions => ({
     renderActive: (project, creative) => queue.list().some((j) => (j.state === 'queued' || j.state === 'running') && j.key.startsWith(`render:${root}:${project}:${creative}:`)),
     mediaInUse: normalizer.inUse,
+    stagingInUse: (dir) => previewsRef?.stagingInUse(dir) ?? false,
     ...(deps.mediaCacheMaxBytes !== undefined ? { mediaCacheMaxBytes: deps.mediaCacheMaxBytes } : {}),
   });
   let workspace: WorkspaceStore | null = null;
+  /** The live previews (set once made): the startup recovery runs before, when no session can be live. */
+  let previewsRef: PreviewService | null = null;
   // Why the configured workspace could not be opened at startup (shown by the onboarding).
   let workspaceProblem: { path: string; error: WorkspaceProblem } | null = null;
 
@@ -242,12 +245,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const vault = deps.vault ?? new MemoryVault();
   // Storyboards, the agent's preview_frames and the live preview sessions (Task 5b), in their own small lane.
   const previews = new PreviewService({
-    engine: deps.render, normalizer,
+    engine: deps.render, normalizer, media,
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     uiOrigins: deps.uiOrigins ?? (() => []),
     ...(deps.renderOptions?.distDir ? { distDir: deps.renderOptions.distDir } : {}),
     ...(deps.onCompositionOrigin ? { onServerOrigin: deps.onCompositionOrigin } : {}),
   });
+  previewsRef = previews;
   const turns = new CreativeTurnService({
     queue, launcher, git: deps.git, media, vault, previews,
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,

@@ -21,7 +21,7 @@
 //   that composition's files, are what confine it. The desktop app adds its frame filter (apps/desktop preview-filter.ts).
 import { parseIncoming, parseOutgoing, RATE_MAX, RATE_MIN, SEQ_MAX, type PreviewIncoming, type PreviewOutgoing, type RuntimeError, type RuntimeErrorCode } from '@motion-studio/composition-runtime/protocol';
 import { parseDraft } from '@motion-studio/composition-runtime/draft';
-import type { Composition, PreviewSessionInfo } from '@motion-studio/shared';
+import type { Composition, PreviewSessionInfo, StagedVideoMedia } from '@motion-studio/shared';
 import { useEffect, useRef, useState } from 'react';
 import { useT } from '../i18n.tsx';
 import { cx } from '../ui/index.ts';
@@ -71,6 +71,8 @@ export class CompositionMedia implements SyncMedia {
   error: unknown = null;
   /** The editor's draft (Phase 10b): the latest one, its `seq`, sent once per animation frame and again to a new frame. */
   private draft: { composition: Composition; seq: number } | null = null;
+  /** Staged videos' session media, by source (sent to each new frame before the draft). */
+  private readonly sessionMedia = new Map<string, { token: string; cmd: PreviewIncoming }>();
   private seq = 0;
   /** The `seq` last sent to the active frame (none: -1). */
   private sentSeq = -1;
@@ -133,7 +135,20 @@ export class CompositionMedia implements SyncMedia {
     return this.seq;
   }
   /** Forgets the draft (the editor closed): a new frame shows the session's own composition. Sends nothing. */
-  clearDraft(): void { this.draft = null; }
+  clearDraft(): void { this.draft = null; this.sessionMedia.clear(); }
+  /**
+   * A staged video's normalised file in the session shown (`StagedAsset.media`, Phase 10b): a draft clip naming `src` plays
+   * it. Sent now, and again to a new frame of the same session (before the draft), so call it before the draft that uses
+   * it. Never sent to another session (its media indices are its own). False when no frame is shown or the protocol
+   * refuses it (it is then not kept).
+   */
+  addSessionMedia(src: string, media: StagedVideoMedia): boolean {
+    const cmd: PreviewIncoming = { type: 'sessionMedia', src, ...media };
+    if (!this.active || !parseIncoming(cmd)) return false;
+    this.sessionMedia.set(src, { token: sessionTokenOf(this.active.id), cmd });
+    this.post(cmd);
+    return true;
+  }
   addEventListener(type: string, listener: EventListener): void { this.events.addEventListener(type, listener); }
   removeEventListener(type: string, listener: EventListener): void { this.events.removeEventListener(type, listener); }
 
@@ -163,6 +178,9 @@ export class CompositionMedia implements SyncMedia {
       if (this.isMuted) this.post({ type: 'mute', muted: true });
       if (this.time > 0) this.post({ type: 'seek', t: Math.min(this.time, msg.duration) });
       this.sentSeq = -1;
+      // A new session has media of its own: what was added to another one is dropped, never sent.
+      const token = sessionTokenOf(id);
+      for (const [src, m] of this.sessionMedia) if (m.token !== token) this.sessionMedia.delete(src); else this.post(m.cmd);
       this.flushDraft(); // after the restoring seek: the draft keeps that time
       if (!this.isPaused) this.post(this.playCommand());
       this.emit('loadedmetadata');
@@ -229,6 +247,11 @@ export class CompositionMedia implements SyncMedia {
   private emit(type: string): void {
     this.events.dispatchEvent(new Event(type));
   }
+}
+
+/** The session token of a frame id (the runtime page URL, `<origin>/<token>/runtime/index.html?…`); the id itself otherwise. */
+function sessionTokenOf(id: string): string {
+  try { return new URL(id).pathname.split('/')[1] || id; } catch { return id; }
 }
 
 export interface CompositionPlayerProps {

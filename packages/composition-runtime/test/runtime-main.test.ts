@@ -221,6 +221,37 @@ describe('setComposition (preview, same document)', () => {
     } finally { /* the window is discarded */ }
   }, 15_000);
 
+  it('a staged video the core normalised (sessionMedia) plays its session media in the drafts that follow, its sound from the staged file', async () => {
+    const p = preview(comp({ tracks: [{ id: 'v', kind: 'video', clips: [] }] }), 'preview', (w) => {
+      const mp = w.HTMLMediaElement.prototype as unknown as Record<string, unknown>;
+      mp.pause = () => {}; mp.load = () => {};
+      Object.defineProperty(w.HTMLMediaElement.prototype, 'readyState', { configurable: true, get: () => 4 });
+      const times = new WeakMap<object, number>();
+      Object.defineProperty(w.HTMLMediaElement.prototype, 'currentTime', { configurable: true,
+        get(this: object) { return times.get(this) ?? 0; },
+        set(this: HTMLMediaElement, t: number) { times.set(this, t); setTimeout(() => this.dispatchEvent(new w.Event('seeked')), 0); } });
+    });
+    const draft = (seq: number) => ({ type: 'setComposition', seq, composition: comp({ tracks: [{ id: 'v', kind: 'video', clips: [
+      { id: 'b', type: 'video', src: 'assets/lib/0a1b2c3d-new.mp4', start: 0, duration: 2, props: {} },
+      { id: 'c', type: 'video', src: 'assets/lib/9f9f9f9f-mute.mp4', start: 2, duration: 2, props: {} },
+    ] }] }) });
+    const base = 'http://127.0.0.1:9999/tok/v1/compositions/story/';
+    const srcs = () => [...p.w.document.querySelectorAll('video')].map((v) => v.getAttribute('src'));
+    await p.until(() => p.sent.some((m) => m.type === 'ready'));
+    // Before the core said anything, the staged files play as they are.
+    p.post(draft(1));
+    await p.until(() => p.sent.some((m) => m.type === 'compositionApplied' && m.seq === 1), 10_000);
+    expect(srcs()).toEqual([`${base}assets/lib/0a1b2c3d-new.mp4`, `${base}assets/lib/9f9f9f9f-mute.mp4`]);
+    p.post({ type: 'sessionMedia', src: 'assets/lib/0a1b2c3d-new.mp4', index: 3, sourceFps: 30, sourceStart: 0, sourceVideoEnd: 2, audioStart: 0.05 });
+    p.post({ type: 'sessionMedia', src: 'assets/lib/9f9f9f9f-mute.mp4', index: 4, sourceFps: 30, sourceStart: 0, sourceVideoEnd: 2 });
+    p.post({ type: 'sessionMedia', src: 'assets/../evil.mp4', index: 5, sourceFps: 30, sourceStart: 0, sourceVideoEnd: 2 }); // refused
+    p.post(draft(2));
+    await p.until(() => p.sent.some((m) => m.type === 'compositionApplied' && m.seq === 2), 10_000);
+    expect(srcs()).toEqual([`${base}media/3.mp4`, `${base}media/4.mp4`]);
+    // The sound of the one with audio plays from the staged original; the other has none.
+    expect([...p.w.document.querySelectorAll('audio')].map((a) => a.getAttribute('src'))).toEqual([`${base}assets/lib/0a1b2c3d-new.mp4`]);
+  }, 20_000);
+
   it('render mode ignores setComposition, even from a parent that names itself in the URL', async () => {
     const p = preview(comp(), 'render');
     await p.api.ready();

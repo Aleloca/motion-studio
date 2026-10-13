@@ -46,6 +46,12 @@ import { SessionTokens } from './serve-token.ts';
  *   start with `assets/` or `layers/`). There is no general route into `.studio`. A media file gets the same checks as a
  *   composition file: the media folder must still be the real folder minted (dev, ino), and the file a regular,
  *   single-linked file directly in it, opened `O_NOFOLLOW`, with the same headers and byte ranges.
+ * - **staging overlay** (Phase 10b editor): a preview session may get a staging folder (`attachStaging`, the core's own
+ *   `<project>/.studio/cache/editor-staging/<creative>/<id>`), where the core copies library assets and brand fonts a draft
+ *   uses (`assets/lib/<sha8>-<name>`). A request for `assets/lib/…` is served from the composition folder when the file is
+ *   there (the base always wins), and only when it is missing there from the staging folder, with the same confined-read
+ *   checks, the same headers and byte ranges; the staging folder must still be the real folder attached (dev, ino). A staged
+ *   video's normalised file joins the session's media (`addMedia`), served as `media/<i>.mp4` like the others.
  */
 
 /** The CSP of every response (spec §5.2). `frame-ancestors` is appended on the runtime page only (README "Headers"). */
@@ -151,6 +157,9 @@ export interface SessionMedia {
   clips: ReadonlyMap<string, SessionMediaFile>;
 }
 
+/** What a staged video adds to a session: its served index (`media/<index>.mp4`) and the probed source fields. */
+export interface AddedMedia { index: number; media: SessionMediaFile }
+
 export interface CompositionSession {
   /** The session token (256 random bits, base64url). */
   token: string;
@@ -164,6 +173,20 @@ export interface CompositionSession {
   revoke(): void;
   /** Restarts the TTL of a live session; the new expiry, or null when it already ended. */
   renew(): number | null;
+  /** Whether the token still works (not revoked, not expired). */
+  live(): boolean;
+  /**
+   * Preview only: serves `assets/lib/…` files missing from the composition folder from `dir` (see the module comment).
+   * `dir` must be a real folder, exactly `<project>/.studio/cache/editor-staging/<creative>/<name>` of the session's own
+   * creative. Throws when refused or when the session ended. Attaching again replaces it.
+   */
+  attachStaging(dir: string): Promise<void>;
+  /**
+   * Preview only: adds a staged video's normalised file (a file of the creative project's media cache, checked like
+   * `mintSession`'s media) to the session's media, under the clip source `src` (`assets/…`). Returns its served index.
+   * Throws when refused, when the session ended or when it already serves 1000 media files.
+   */
+  addMedia(src: string, media: SessionMediaFile): Promise<AddedMedia>;
 }
 
 export interface CompositionServer {
@@ -196,6 +219,10 @@ interface Session {
   sandboxed: boolean;
   /** The normalised media served to this session: the real media folder (and its identity) and the file names by index. */
   media: { dir: string; dev: number; ino: number; names: string[] } | null;
+  /** Real path of the creative folder when minted (the staging folder and added media must belong to its project). */
+  realCreative: string;
+  /** The staging overlay (preview only): the real staging folder and its identity. */
+  staging: { dir: string; dev: number; ino: number } | null;
 }
 
 const VIDEO_SOURCE_FIELDS = ['sourceStart', 'sourceVideoEnd', 'sourceTrusted', 'audioSrc', 'audioStart', 'originalSrc'] as const;
@@ -236,41 +263,64 @@ export function withSessionMedia(composition: unknown, srcIndex: ReadonlyMap<str
 
 const finitePositive = (n: unknown, max: number) => typeof n === 'number' && Number.isFinite(n) && n > 0 && n <= max;
 
-/** Checks a session's media and indexes it: the real folder, each file's served index, the clip map. Throws when refused. */
-async function checkedMedia(m: SessionMedia, realCreative: string): Promise<{ session: NonNullable<Session['media']>; bySrc: Map<string, { index: number; media: SessionMediaFile }> }> {
-  if (typeof m !== 'object' || m === null || typeof m.dir !== 'string' || !(m.clips instanceof Map)) throw new Error('composition server: bad media');
-  if (m.clips.size > 1000) throw new Error('composition server: too many media files');
-  // Only the core's media cache, `<project>/.studio/cache/media`, with no link from the project folder down.
+/** Most media files one session serves (minted and added together). */
+const MAX_SESSION_MEDIA = 1000;
+
+/**
+ * Checks a media cache folder: only the core's, `<project>/.studio/cache/media`, with no link from the project folder down,
+ * and the one of the creative's own project (`<project>/creatives/<slug>`). The real folder and its identity; throws when refused.
+ */
+async function checkedMediaDir(dir: string, realCreative: string): Promise<NonNullable<Session['media']>> {
   const tail = ['.studio', 'cache', 'media'];
-  if (!m.dir.endsWith(join('', ...tail)) || basename(dirname(dirname(m.dir))) !== '.studio') throw new Error('composition server: not a media cache folder');
-  const real = await realpath(m.dir);
-  if (real !== join(await realpath(join(m.dir, '..', '..', '..')), ...tail)) throw new Error('composition server: the media folder is reached through a link');
-  // And it is the media cache of the creative's own project (`<project>/creatives/<slug>`).
+  if (typeof dir !== 'string' || !dir.endsWith(join('', ...tail)) || basename(dirname(dirname(dir))) !== '.studio') throw new Error('composition server: not a media cache folder');
+  const real = await realpath(dir);
+  if (real !== join(await realpath(join(dir, '..', '..', '..')), ...tail)) throw new Error('composition server: the media folder is reached through a link');
   if (basename(dirname(realCreative)) !== 'creatives' || real !== join(dirname(dirname(realCreative)), ...tail)) {
     throw new Error('composition server: the media folder is not the creative project\'s');
   }
   const info = await lstat(real);
   if (!info.isDirectory()) throw new Error('composition server: the media folder is not a directory');
-  const names: string[] = [];
+  return { dir: real, dev: info.dev, ino: info.ino, names: [] };
+}
+
+/** Checks one media file of the folder `dir` (as given) for the clip source `src`; throws when refused. */
+async function checkMediaFile(src: unknown, f: SessionMediaFile, dir: string): Promise<void> {
+  if (typeof src !== 'string' || !isCompositionPath(src) || !src.startsWith('assets/')) throw new Error('composition server: bad media clip source');
+  if (typeof f?.file !== 'string' || dirname(f.file) !== dir || !MEDIA_FILE_RE.test(basename(f.file))) throw new Error('composition server: bad media file');
+  if (!finitePositive(f.sourceFps, 240) || !finitePositive(f.sourceVideoEnd, 36_000) || typeof f.sourceStart !== 'number' || !(f.sourceStart >= 0 && f.sourceStart <= 36_000)) {
+    throw new Error('composition server: bad media source fields');
+  }
+  if (f.originalVideoStart !== undefined && !(typeof f.originalVideoStart === 'number' && f.originalVideoStart >= 0 && f.originalVideoStart <= 36_000)) {
+    throw new Error('composition server: bad media source fields');
+  }
+  const st = await lstat(f.file);
+  if (!st.isFile() || st.nlink !== 1) throw new Error('composition server: a media file is not a single-linked regular file');
+}
+
+/** The served index of `name` in `names`, appended when new. */
+function mediaIndex(names: string[], name: string): number {
+  let index = names.indexOf(name);
+  if (index < 0) { index = names.length; names.push(name); }
+  return index;
+}
+
+/** Checks a session's media and indexes it: the real folder, each file's served index, the clip map. Throws when refused. */
+async function checkedMedia(m: SessionMedia, realCreative: string): Promise<{ session: NonNullable<Session['media']>; bySrc: Map<string, { index: number; media: SessionMediaFile }> }> {
+  if (typeof m !== 'object' || m === null || typeof m.dir !== 'string' || !(m.clips instanceof Map)) throw new Error('composition server: bad media');
+  if (m.clips.size > MAX_SESSION_MEDIA) throw new Error('composition server: too many media files');
+  const session = await checkedMediaDir(m.dir, realCreative);
   const bySrc = new Map<string, { index: number; media: SessionMediaFile }>();
   for (const [src, f] of m.clips) {
-    if (typeof src !== 'string' || !isCompositionPath(src) || !src.startsWith('assets/')) throw new Error('composition server: bad media clip source');
-    if (typeof f?.file !== 'string' || dirname(f.file) !== m.dir || !MEDIA_FILE_RE.test(basename(f.file))) throw new Error('composition server: bad media file');
-    if (!finitePositive(f.sourceFps, 240) || !finitePositive(f.sourceVideoEnd, 36_000) || typeof f.sourceStart !== 'number' || !(f.sourceStart >= 0 && f.sourceStart <= 36_000)) {
-      throw new Error('composition server: bad media source fields');
-    }
-    if (f.originalVideoStart !== undefined && !(typeof f.originalVideoStart === 'number' && f.originalVideoStart >= 0 && f.originalVideoStart <= 36_000)) {
-      throw new Error('composition server: bad media source fields');
-    }
-    const st = await lstat(f.file);
-    if (!st.isFile() || st.nlink !== 1) throw new Error('composition server: a media file is not a single-linked regular file');
-    const name = basename(f.file);
-    let index = names.indexOf(name);
-    if (index < 0) { index = names.length; names.push(name); }
-    bySrc.set(src, { index, media: f });
+    await checkMediaFile(src, f, m.dir);
+    bySrc.set(src, { index: mediaIndex(session.names, basename(f.file)), media: f });
   }
-  return { session: { dir: real, dev: info.dev, ino: info.ino, names }, bySrc };
+  return { session, bySrc };
 }
+
+/** The staging root of a creative, relative to its project: `.studio/cache/editor-staging/<creative>`. */
+export const EDITOR_STAGING = ['.studio', 'cache', 'editor-staging'] as const;
+/** A staging folder name (editor-staging.ts `stagingIdOf`): 32 lowercase hex characters. */
+const STAGING_NAME_RE = /^[0-9a-f]{32}$/;
 
 /** An exact serialized http(s) origin (`http://127.0.0.1:4318`), nothing more. */
 function isExactOrigin(o: unknown): o is string {
@@ -477,6 +527,22 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
       return st !== null && st.isDirectory() && st.dev === session.compDev && st.ino === session.compIno;
     };
     if (!(await stillThere())) return notFound();
+    // The staging overlay: an `assets/lib/…` file missing from the composition folder (only then) comes from the staging one.
+    const staging = session.staging;
+    if (staging && rel.startsWith('assets/lib/')) {
+      const inBase = await lstat(join(session.compDir, ...rel.split('/'))).then(() => true, (e: NodeJS.ErrnoException) => (e.code === 'ENOENT' || e.code === 'ENOTDIR' ? false : null));
+      if (inBase === null) return notFound();
+      if (!inBase) {
+        const stagingStill = async () => {
+          if ((await realpath(staging.dir).catch(() => null)) !== staging.dir) return false;
+          const st = await lstat(staging.dir).catch(() => null);
+          return st !== null && st.isDirectory() && st.dev === staging.dev && st.ino === staging.ino;
+        };
+        if (!(await stagingStill())) return notFound();
+        const served = await serveFile(req, res, staging.dir, rel, fileHeaders, { maxBytes: maxFileBytes, ranges: true, check: stagingStill });
+        return served ? undefined : notFound();
+      }
+    }
     const ok = await serveFile(req, res, session.compDir, rel, fileHeaders, layer
       ? { maxBytes: maxLayerBytes, ranges: false, check: stillThere, transform: (html) => injectLayerBootstrap(html, `/${target.token}/runtime/layer.js`) }
       : { maxBytes: maxFileBytes, ranges: true, check: stillThere });
@@ -534,17 +600,48 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
       if (!dirInfo.isDirectory()) throw new Error('composition server: the composition folder is not a directory');
       const media = o.media === undefined ? null : await checkedMedia(o.media, realCreative);
       if (closed) throw new Error('composition server: closed');
-      const { token, expiresAt } = tokens.mint({
+      const data: Session = {
         versionSegments: segs, versionDir: segs.join('/'), format: o.format, compDir, compDev: dirInfo.dev, compIno: dirInfo.ino,
         composition: media ? withSessionMedia(o.composition, media.bySrc) : o.composition, frameAncestors, sandboxed: o.mode === 'preview',
-        media: media?.session ?? null,
-      }, ttl);
+        media: media?.session ?? null, realCreative, staging: null,
+      };
+      const { token, expiresAt } = tokens.mint(data, ttl);
+      const preview = o.mode === 'preview';
+      const liveData = () => {
+        const d = tokens.get(token);
+        if (d !== data) throw new Error('composition server: the session ended');
+        if (!preview) throw new Error('composition server: only a preview session takes staged files');
+        return d;
+      };
       const query = o.mode === 'preview' ? `mode=preview&parentOrigin=${encodeURIComponent(frameAncestors)}` : 'mode=render';
       return {
         token, origin, expiresAt,
         url: `${origin}/${token}/runtime/index.html?${query}`,
         revoke: () => tokens.revoke(token),
         renew: () => tokens.renew(token),
+        live: () => tokens.get(token) === data,
+        async attachStaging(dir) {
+          liveData();
+          const expected = join(dirname(dirname(realCreative)), ...EDITOR_STAGING, basename(realCreative), basename(dir));
+          if (typeof dir !== 'string' || !STAGING_NAME_RE.test(basename(dir)) || basename(dirname(realCreative)) !== 'creatives') throw new Error('composition server: not a staging folder');
+          const real = await realpath(dir);
+          if (real !== expected) throw new Error('composition server: the staging folder is reached through a link, or is not the creative\'s');
+          const info = await lstat(real);
+          if (!info.isDirectory()) throw new Error('composition server: the staging folder is not a directory');
+          liveData().staging = { dir: real, dev: info.dev, ino: info.ino };
+        },
+        async addMedia(src, f) {
+          liveData();
+          const dir = typeof f?.file === 'string' ? dirname(f.file) : '';
+          const checked = await checkedMediaDir(dir, realCreative);
+          await checkMediaFile(src, f, dir);
+          const d = liveData();
+          if (d.media && (d.media.dir !== checked.dir || d.media.dev !== checked.dev || d.media.ino !== checked.ino)) throw new Error('composition server: another media folder');
+          d.media ??= checked;
+          const name = basename(f.file);
+          if (!d.media.names.includes(name) && d.media.names.length >= MAX_SESSION_MEDIA) throw new Error('composition server: too many media files');
+          return { index: mediaIndex(d.media.names, name), media: f };
+        },
       };
     },
     async close() {

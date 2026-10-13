@@ -366,6 +366,17 @@ export const en = {
     itemParam: (p: { name: string; key: string }) => `${p.name} ${p.key}`,
     itemFont: (p: { family: string }) => `font ${p.family}`,
     summary: (p: { items: string; more: number }) => `Direct edits: ${p.items}${p.more > 0 ? ` and ${p.more} more` : ''}`,
+    /** Staging (Task 3): a library asset or a brand font copied for a draft, served to its preview session. */
+    stageNoSession: 'This preview has ended: open the editor again',
+    stageNotRegistered: (p: { file: string }) => `${p.file} is not an asset of the project library`,
+    stageUnreadable: (p: { file: string }) => `${p.file} cannot be read safely: it must be a regular file inside the project assets folder`,
+    stageUnsupported: (p: { file: string }) => `${p.file} cannot be used in a composition: use an image, SVG, video, audio or font file`,
+    stageNotMedia: (p: { file: string }) => `${p.file} is not a readable media file`,
+    stageTooLarge: (p: { file: string; maxMB: number }) => `${p.file} is larger than ${p.maxMB} MB`,
+    stageTooMany: (p: { max: number }) => `At most ${p.max} files can be added to one draft: save it as a new version first`,
+    stageUnknownBrandFont: 'This font is not in the brand kit',
+    stageBrandFontNoFile: (p: { family: string }) => `${p.family} has no font file in the brand kit`,
+    stagedCollision: (p: { path: string }) => `${p.path} already exists in this composition with other content: add the file again`,
   },
   render: {
     jobLabel: (p: { title: string; n: number }) => `Render · ${p.title} v${p.n}`,

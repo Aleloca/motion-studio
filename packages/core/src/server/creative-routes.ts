@@ -16,7 +16,8 @@ import { withLazyHashes } from '../creatives/output-hashes.ts';
 import { creativeJobKey, PICK_RETRY_AFTER_SEC, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
 import type { RenderJobService } from '../creatives/render-jobs.ts';
 import { reconcileRenders } from '../creatives/render-stamps.ts';
-import { sweepDerivedCaches } from '../creatives/cache-sweep.ts';
+import { sweepDerivedCaches, sweepEditorStaging } from '../creatives/cache-sweep.ts';
+import { editorCompositionView } from '../creatives/editor-staging.ts';
 import { sweepProjectRenders } from '../render/render-sweep.ts';
 import { FormatCatalog } from '../formats/format-catalog.ts';
 import type { MediaTools } from '../media/media-tools.ts';
@@ -70,6 +71,14 @@ const linkBody = z.object({ follower: z.string().min(1).max(200), primary: z.str
 const renderBody = z.object({ formats: z.array(z.string().min(1).max(200)).max(100).optional() }).strict();
 /** A live preview session (Task 5b): the format, and the exact origin of the UI page that embeds the iframe. */
 const previewBody = z.object({ format: z.string().min(1).max(200), parentOrigin: z.string().min(1).max(200) }).strict();
+/** Staging a file for an editor draft (Phase 10b): the live preview session, and a library asset or a brand font. */
+const stageBody = z.object({
+  token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  from: z.discriminatedUnion('kind', [
+    z.object({ kind: z.literal('library'), file: z.string().min(1).max(300) }).strict(),
+    z.object({ kind: z.literal('brandFont'), id: z.string().min(1).max(64) }).strict(),
+  ]),
+}).strict();
 const FOLDER_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const FRAME_FILE_RE = /^f-\d{1,3}\.jpg$/;
 /** A pin frame of version n: `<n>-<i>.jpg` (creative-turns `extractPinFrames`). */
@@ -111,6 +120,8 @@ export interface RecoverOptions {
   /** Media cache files a live session uses, and the cache cap (`pruneMediaCache`). */
   mediaInUse?: (file: string) => boolean;
   mediaCacheMaxBytes?: number;
+  /** Editor staging folders a live preview session uses (the sweep leaves them). */
+  stagingInUse?: (dir: string) => boolean;
 }
 
 export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: string) => boolean = () => false, ro: RecoverOptions = {}): Promise<void> {
@@ -129,6 +140,8 @@ export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: st
     await sweepStoryboardTemps(dir).catch(() => []);
     // The derived caches (storyboards, pin frames, agent originals, reference frames): old and over-cap version folders.
     await sweepDerivedCaches(dir, { skipCreative: (slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug)) }).catch(() => []);
+    // The editor's staging folders a quit or a crash left behind (older than 24 h; never a live session's).
+    await sweepEditorStaging(dir, { ...(ro.stagingInUse ? { inUse: ro.stagingInUse } : {}) }).catch(() => []);
     await Promise.all([sweepProject(dir, !isJobActive(brandJobKey(ws.root, p.slug))), completeGitignore(dir)]).catch((err: Error) => {
       console.warn(`Motion Studio: cleanup failed in project ${p.slug}: ${err.message}`);
     });
@@ -416,6 +429,32 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     if (n < 1 || !/^[A-Za-z0-9_-]{43}$/.test(req.params.token)) throw new WorkspaceError(404, t().errors.previewSessionNotFound);
     if (!ctx.previews.revokePreview({ creativeDir: ref.store.dir(ref.creativeSlug), n }, req.params.token)) throw new WorkspaceError(404, t().errors.previewSessionNotFound);
     return { revoked: true };
+  });
+
+  /**
+   * The editor's view of one format of a saved v2 version (Phase 10b): the primary's composition (a follower's is its
+   * primary's, `primaryFormat`), its files and the fonts offered. 404 for a legacy version or a format it lacks.
+   */
+  app.get<{ Params: { slug: string; c: string; n: string; format: string } }>('/api/projects/:slug/creatives/:c/versions/:n/compositions/:format', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const n = /^\d{1,6}$/.test(req.params.n) ? Number(req.params.n) : 0;
+    const version = n > 0 ? (await ref.store.readVersions(ref.creativeSlug)).find((v) => v.n === n) : undefined;
+    if (!version) throw new WorkspaceError(404, t().errors.versionNotFound);
+    return editorCompositionView({
+      projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), version, format: req.params.format,
+      presets: (await catalog().load()).presets, locale: currentLocale(),
+    });
+  });
+
+  /**
+   * Stages a library asset or a brand font for a draft (Phase 10b): copied, confined, into the staging folder of the live
+   * preview session `token` of this creative, and served under that token. An upload goes through the library's own route
+   * first, then is staged from the library.
+   */
+  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/editor/stage', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    const body = parse(stageBody, req.body);
+    return ctx.previews.stage({ projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), creativeSlug: ref.creativeSlug }, body.token, body.from, currentLocale());
   });
 
   /**

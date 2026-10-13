@@ -32,7 +32,7 @@ export class WorkspaceError extends Error {
  * `retryAfterSec` adds a `Retry-After` header (503).
  */
 export class CodedError extends WorkspaceError {
-  constructor(status: 400 | 403 | 404 | 409 | 429 | 503, message: string, public readonly apiCode: string, public readonly retryAfterSec?: number) {
+  constructor(status: 400 | 403 | 404 | 409 | 413 | 429 | 503, message: string, public readonly apiCode: string, public readonly retryAfterSec?: number) {
     super(status, message);
     this.name = 'CodedError';
   }

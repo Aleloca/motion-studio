@@ -320,6 +320,30 @@ describe('CompositionMedia.setComposition (the editor draft, Phase 10b)', () => 
     expect(m.duration).toBe(8);
   });
 
+  it('a staged video\'s session media is sent at once (before the draft that uses it), never to another session, and a bad one is refused', async () => {
+    const p = mount();
+    const m = p.media();
+    const media = { index: 2, sourceFps: 30, sourceStart: 0, sourceVideoEnd: 3, audioStart: 0.02 };
+    // No frame shown yet: nothing to tell.
+    expect(m.addSessionMedia('assets/lib/0a1b2c3d-clip.mp4', media)).toBe(false);
+    fromRuntime(READY);
+    p.posted.mockClear();
+    expect(m.addSessionMedia('assets/lib/0a1b2c3d-clip.mp4', media)).toBe(true);
+    expect(m.addSessionMedia('assets/../x.mp4', media)).toBe(false);
+    expect(m.addSessionMedia('assets/lib/x.mp4', { ...media, index: -1 })).toBe(false);
+    m.setComposition(draft('a'));
+    await nextFrame();
+    const types = p.posted.mock.calls.map((c) => c[0] as { type: string });
+    expect(types.map((c) => c.type)).toEqual(['sessionMedia', 'setComposition']);
+    expect(types[0]).toEqual({ type: 'sessionMedia', src: 'assets/lib/0a1b2c3d-clip.mp4', ...media });
+    // Another session (a refresh mints a new token) has media of its own: the old indices are never sent to it.
+    p.rerender(<I18nProvider locale="en"><CompositionPlayer session={session('tok2')} title="Reel v2" onMedia={() => {}} /></I18nProvider>);
+    const second = document.querySelectorAll('iframe')[1]!;
+    const posted = vi.spyOn(second.contentWindow!, 'postMessage');
+    fromRuntime(READY, { source: second.contentWindow });
+    expect(posted.mock.calls.map((c) => (c[0] as { type: string }).type)).toEqual(['setComposition']);
+  });
+
   it('a draft the runtime could not mount does not change the duration (M1)', async () => {
     const p = mount();
     const m = p.media();

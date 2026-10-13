@@ -2,20 +2,23 @@ import { randomBytes } from 'node:crypto';
 import { lstat, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import { compositionProblemText, messages, type Composition, type FormatPreset, type Locale, type PreviewSessionInfo, type VersionEntry } from '@motion-studio/shared';
+import { compositionProblemText, messages, type Composition, type FormatPreset, type Locale, type PreviewSessionInfo, type StagedAsset, type VersionEntry } from '@motion-studio/shared';
 import { loadComposition } from '../compositions/composition-files.ts';
-import { startCompositionServer, type CompositionServer } from '../compositions/composition-server.ts';
+import { startCompositionServer, type CompositionServer, type CompositionSession } from '../compositions/composition-server.ts';
 import { noteCoreChange } from '../core-changes.ts';
 import { noteCoreTemp } from '../core-temps.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { currentLocale } from '../i18n.ts';
 import { readJsonFile } from '../json-file.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
+import { NoMediaTools, type MediaTools } from '../media/media-tools.ts';
+import { RenderError } from '../render/errors.ts';
 import { sessionMediaOf, type MediaNormalizer, type PreparedMedia } from '../render/media-normalize.ts';
 import { PreviewLane, PreviewLaneBusyError } from '../render/preview-lane.ts';
 import type { RenderEngine } from '../render/renderer.ts';
 import { CodedError } from '../workspace-store.ts';
 import { isRealDirChain, realDirChain } from './core-files.ts';
+import { removeStaging, stageFile, stagingDirOf, type StageSource } from './editor-staging.ts';
 
 /**
  * Everything the core shows of a composition without a final render (Task 5b):
@@ -98,6 +101,10 @@ export interface PreviewServiceDeps {
    * frames to that exact origin, Task 7).
    */
   onServerOrigin?: (origin: string | null) => void;
+  /** Probes staged files (Phase 10b editor); without it they are staged unprobed. */
+  media?: MediaTools;
+  /** Lifetime of a live preview session in ms (tests; default the composition server's, 30 min). */
+  sessionTtlMs?: number;
 }
 
 export interface VersionFormatRef { projectDir: string; creativeDir: string; creativeSlug: string; n: number }
@@ -113,10 +120,23 @@ function entryOf(version: VersionEntry | undefined, format: string): { folder: s
   return { folder, hash: e.hash };
 }
 
+/** The editor's staging of one live session (editor-staging.ts): its folder, files, and the leases of staged videos. */
+interface SessionStaging { root: string; assets: Map<string, StagedAsset>; leases: Array<() => void> }
+
+interface LiveSession {
+  release: () => void; revoke: () => void; timer: NodeJS.Timeout; creativeDir: string; n: number;
+  session: CompositionSession; projectDir: string; creativeSlug: string; compDir: string;
+  /** The composition's frame (the box a staged video is normalised for) and rate. */
+  frame: { width: number; height: number; fps: number };
+  staging: SessionStaging | null;
+}
+
 export class PreviewService {
   readonly lane: PreviewLane;
   private server: Promise<CompositionServer> | null = null;
-  private readonly sessions = new Map<string, { release: () => void; revoke: () => void; timer: NodeJS.Timeout; creativeDir: string; n: number }>();
+  private readonly sessions = new Map<string, LiveSession>();
+  /** One staging (or its cleanup) at a time per session token. */
+  private readonly stageLocks = new KeyedMutex();
   private readonly storyboardLocks = new KeyedMutex();
   private readonly closing = new AbortController();
   /** Storyboard runs in flight: `close()` waits for them, so nothing is written after the app closed. */
@@ -136,7 +156,9 @@ export class PreviewService {
   compositionServer(): Promise<CompositionServer> {
     // After close() no server starts, and one that finished starting after it is closed at once and never announced (C12).
     if (this.closing.signal.aborted) return Promise.reject(new Error('closed'));
-    this.server ??= startCompositionServer({ uiOrigins: this.deps.uiOrigins, ...(this.deps.distDir ? { distDir: this.deps.distDir } : {}) })
+    this.server ??= startCompositionServer({
+      uiOrigins: this.deps.uiOrigins, ...(this.deps.distDir ? { distDir: this.deps.distDir } : {}), ...(this.deps.sessionTtlMs ? { ttlMs: this.deps.sessionTtlMs } : {}),
+    })
       .then(async (s) => {
         if (this.closing.signal.aborted) { await s.close().catch(() => {}); throw new Error('closed'); }
         this.deps.onServerOrigin?.(s.origin);
@@ -321,13 +343,18 @@ export class PreviewService {
         mode: 'preview', parentOrigin, ...withMedia(prepared),
       });
       const ttl = Math.max(0, session.expiresAt - Date.now());
-      const timer = setTimeout(() => { prepared.release(); this.sessions.delete(session.token); }, ttl + 1000);
+      const timer = setTimeout(() => { this.endSession(session.token); }, ttl + 1000);
       timer.unref();
-      this.sessions.set(session.token, { release: prepared.release, revoke: session.revoke, timer, creativeDir: ref.creativeDir, n: ref.n });
+      const c0 = loaded.composition;
+      this.sessions.set(session.token, {
+        release: prepared.release, revoke: session.revoke, timer, creativeDir: ref.creativeDir, n: ref.n,
+        session, projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, compDir,
+        frame: { width: c0.width, height: c0.height, fps: c0.fps }, staging: null,
+      });
       // At most MAX_PREVIEW_SESSIONS live at once (each holds media leases): the oldest ends first (fix minor 5).
       while (this.sessions.size > MAX_PREVIEW_SESSIONS) {
-        const [token, old] = this.sessions.entries().next().value!;
-        clearTimeout(old.timer); old.revoke(); old.release(); this.sessions.delete(token);
+        const [token] = this.sessions.entries().next().value!;
+        this.endSession(token);
       }
       const c = loaded.composition;
       return {
@@ -347,16 +374,113 @@ export class PreviewService {
   revokePreview(ref: Pick<VersionFormatRef, 'creativeDir' | 'n'>, token: string): boolean {
     const s = this.sessions.get(token);
     if (!s || s.creativeDir !== ref.creativeDir || s.n !== ref.n) return false;
-    clearTimeout(s.timer); s.revoke(); s.release(); this.sessions.delete(token);
+    this.endSession(token);
     return true;
+  }
+
+  /**
+   * Ends a live session (revoked, evicted, expired): its token stops working, its media leases go back, and its staging
+   * folder is removed (after a staging still running for it). Returns the removal.
+   */
+  private endSession(token: string): Promise<void> {
+    const s = this.sessions.get(token);
+    if (!s) return Promise.resolve();
+    clearTimeout(s.timer); s.revoke(); s.release(); this.sessions.delete(token);
+    const task = this.stageLocks.run(token, async () => {
+      const st = s.staging;
+      s.staging = null;
+      for (const r of st?.leases.splice(0) ?? []) r();
+      // The folder of this token, made or not (a staging that failed half-way may have left it).
+      await removeStaging(st?.root ?? stagingDirOf(s.projectDir, s.creativeSlug, token));
+    });
+    this.tasks.add(task);
+    void task.catch(() => {}).finally(() => this.tasks.delete(task));
+    return task;
+  }
+
+  /** Whether `dir` is the staging folder of a live session (the cache sweep leaves it alone). */
+  stagingInUse = (dir: string): boolean => {
+    for (const [token, s] of this.sessions) if (stagingDirOf(s.projectDir, s.creativeSlug, token) === dir || s.staging?.root === dir) return true;
+    return false;
+  };
+
+  /**
+   * Stages a library asset or a brand font for the live preview session `token` of this creative (editor-staging.ts): the
+   * file is copied, probed and, for a video, normalised for the session's frame and added to its media (`media/<i>.mp4`),
+   * so a draft clip naming it plays the normalised file. 404 `editor-no-session` when the token is not a live session of
+   * this creative; the other refusals are translated `CodedError`s.
+   */
+  async stage(ref: Pick<VersionFormatRef, 'projectDir' | 'creativeDir' | 'creativeSlug'>, token: string, from: StageSource, locale: Locale): Promise<StagedAsset> {
+    const e = messages(locale).editor;
+    const noSession = () => new CodedError(404, e.stageNoSession, 'editor-no-session');
+    const live = () => {
+      const s = this.sessions.get(token);
+      return s && s.creativeDir === ref.creativeDir && s.creativeSlug === ref.creativeSlug && s.session.live() && !this.closing.signal.aborted ? s : null;
+    };
+    if (!live()) throw noSession();
+    return this.stageLocks.run(token, async () => {
+      const s = live();
+      if (!s) throw noSession();
+      const staging = s.staging ?? { root: stagingDirOf(s.projectDir, s.creativeSlug, token), assets: new Map<string, StagedAsset>(), leases: [] };
+      const { asset, root, created } = await stageFile({
+        projectDir: s.projectDir, creativeSlug: s.creativeSlug, token, compDir: s.compDir, from, media: this.deps.media ?? NoMediaTools, locale, staged: staging.assets,
+      });
+      if (!live()) throw noSession();
+      if (!s.staging) { await s.session.attachStaging(root); staging.root = root; s.staging = staging; }
+      const known = staging.assets.get(asset.path);
+      if (known) return known;
+      let staged = asset;
+      if (asset.kind === 'video') {
+        try {
+          staged = await this.normaliseStaged(s, staging, asset, locale);
+        } catch (err) {
+          // Not staged after all: a file made by this call goes again.
+          if (created) await rm(join(root, ...asset.path.split('/')), { force: true }).catch(() => {});
+          throw err;
+        }
+      }
+      staging.assets.set(staged.path, staged);
+      return staged;
+    });
+  }
+
+  /** A staged video normalised as at a preview (the session's frame and rate) and added to the session's media. */
+  private async normaliseStaged(s: LiveSession, staging: SessionStaging, asset: StagedAsset, locale: Locale): Promise<StagedAsset> {
+    const c = {
+      width: s.frame.width, height: s.frame.height, fps: s.frame.fps, duration: 1, scenes: [], fonts: [],
+      tracks: [{ id: 'staged', kind: 'visual', clips: [{ id: 'staged', type: 'video', src: asset.path, start: 0, duration: 1, props: {} }] }],
+    } as unknown as Composition;
+    let prepared;
+    try {
+      prepared = await this.deps.normalizer.prepare({ projectDir: s.projectDir, compDir: staging.root, composition: c, signal: this.closing.signal });
+    } catch (err) {
+      if (err instanceof RenderError && err.code === 'mediaUnreadable') throw new CodedError(400, messages(locale).editor.stageNotMedia({ file: asset.path }), 'editor-not-media');
+      throw err;
+    }
+    const file = prepared.media.clips.get(asset.path);
+    if (!file) { prepared.release(); return asset; } // not normalised (no ffmpeg, or it failed): the clip plays the staged file
+    try {
+      const added = await s.session.addMedia(asset.path, file);
+      staging.leases.push(prepared.release);
+      return {
+        ...asset,
+        media: {
+          index: added.index, sourceFps: file.sourceFps, sourceStart: file.sourceStart, sourceVideoEnd: file.sourceVideoEnd,
+          ...(file.originalAudio === true ? { audioStart: file.originalVideoStart ?? 0 } : {}),
+        },
+      };
+    } catch (err) {
+      prepared.release();
+      throw err;
+    }
   }
 
   /** App quit: running frames aborted, sessions ended, media leases returned, the server closed. */
   async close(): Promise<void> {
     this.closing.abort(new Error('closed'));
     this.lane.close();
+    for (const token of [...this.sessions.keys()]) void this.endSession(token);
     await Promise.allSettled([...this.tasks]);
-    for (const s of this.sessions.values()) { clearTimeout(s.timer); s.release(); }
     this.sessions.clear();
     const server = this.server;
     this.server = null;

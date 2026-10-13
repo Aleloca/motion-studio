@@ -1,5 +1,5 @@
 import type { Composition } from '@motion-studio/shared';
-import { parseIncoming, parseOutgoing, type DraftParser, type PreviewOutgoing } from './protocol.ts';
+import { parseIncoming, parseOutgoing, type DraftParser, type PreviewIncoming, type PreviewOutgoing } from './protocol.ts';
 
 /** Where `preview.js` puts the draft parser on the runtime's window (entry/preview.ts). */
 export const DRAFT_PARSER_KEY = '__msDraft';
@@ -14,6 +14,8 @@ export interface BridgePlayer {
   setMuted(muted: boolean): void;
   /** A validated draft (a fresh copy, `parseIncoming`): re-mount it in place (runtime-main). */
   setComposition(composition: Composition, o: { keepTime: boolean; seq: number }): void;
+  /** A staged video's normalised session file (`sessionMedia`), for the drafts that follow. */
+  addSessionMedia(m: Extract<PreviewIncoming, { type: 'sessionMedia' }>): void;
 }
 
 export interface PreviewBridge {
@@ -47,6 +49,7 @@ export function createPreviewBridge(o: {
       case 'setScale': o.player.setScale(cmd.scale); break;
       case 'mute': o.player.setMuted(cmd.muted); break;
       case 'setComposition': o.player.setComposition(cmd.composition, { keepTime: cmd.keepTime ?? false, seq: cmd.seq }); break;
+      case 'sessionMedia': o.player.addSessionMedia(cmd); break;
     }
   };
   return {

@@ -138,11 +138,31 @@ describe('parent origin', () => {
   });
 });
 
+describe('sessionMedia (Phase 10b: a staged video normalised by the core)', () => {
+  const ok = { type: 'sessionMedia', src: 'assets/lib/0a1b2c3d-clip.mp4', index: 2, sourceFps: 30, sourceStart: 0, sourceVideoEnd: 4.5 };
+  it('accepts the fields the core gives, with or without its sound', () => {
+    expect(parseIncoming(ok)).toEqual(ok);
+    expect(parseIncoming({ ...ok, audioStart: 0.02 })).toEqual({ ...ok, audioStart: 0.02 });
+    expect(parseIncoming({ ...ok, index: 0, sourceStart: 0.5 })).toEqual({ ...ok, index: 0, sourceStart: 0.5 });
+  });
+  it('refuses a bad source, index or field, and any extra field', () => {
+    for (const src of ['media/0.mp4', 'layers/x.html', 'assets/../x.mp4', 'assets//x.mp4', 'assets/a\\b.mp4', 'assets/a:b.mp4', 'assets/%2e.mp4', 'assets/a?.mp4',
+      'assets/a#b', 'assets/\u0000x', '/assets/x.mp4', 'https://evil.example/x.mp4', `assets/${'x'.repeat(520)}`, 7, null]) {
+      expect(parseIncoming({ ...ok, src }), String(src)).toBeNull();
+    }
+    for (const index of [-1, 1.5, 10_000, '1', null]) expect(parseIncoming({ ...ok, index })).toBeNull();
+    for (const bad of [{ sourceFps: 0 }, { sourceFps: 241 }, { sourceFps: Number.NaN }, { sourceStart: -1 }, { sourceVideoEnd: 0 }, { sourceVideoEnd: 36_001 },
+      { audioStart: -0.1 }, { audioStart: Number.POSITIVE_INFINITY }, { extra: 1 }, { sourceTrusted: true }]) {
+      expect(parseIncoming({ ...ok, ...bad }), JSON.stringify(bad)).toBeNull();
+    }
+  });
+});
+
 describe('preview bridge', () => {
   const ORIGIN = 'http://127.0.0.1:4317';
   function setup() {
     const parent = { postMessage: vi.fn() };
-    const player = { seek: vi.fn(async () => {}), play: vi.fn(), pause: vi.fn(), select: vi.fn(), setScale: vi.fn(), setMuted: vi.fn(), setComposition: vi.fn() };
+    const player = { seek: vi.fn(async () => {}), play: vi.fn(), pause: vi.fn(), select: vi.fn(), setScale: vi.fn(), setMuted: vi.fn(), setComposition: vi.fn(), addSessionMedia: vi.fn() };
     const bridge = createPreviewBridge({ parent, parentOrigin: ORIGIN, player, parseDraft: () => parseDraft });
     return { parent, player, bridge };
   }
@@ -176,7 +196,7 @@ describe('preview bridge', () => {
   });
   it('a draft that comes before the parser has loaded waits for it (the latest only), then applies', () => {
     const parent = { postMessage: vi.fn() };
-    const player = { seek: vi.fn(async () => {}), play: vi.fn(), pause: vi.fn(), select: vi.fn(), setScale: vi.fn(), setMuted: vi.fn(), setComposition: vi.fn() };
+    const player = { seek: vi.fn(async () => {}), play: vi.fn(), pause: vi.fn(), select: vi.fn(), setScale: vi.fn(), setMuted: vi.fn(), setComposition: vi.fn(), addSessionMedia: vi.fn() };
     let parser: typeof parseDraft | undefined;
     const bridge = createPreviewBridge({ parent, parentOrigin: ORIGIN, player, parseDraft: () => parser });
     bridge.handle({ data: { type: 'setComposition', composition: smallComp(), seq: 1 }, origin: ORIGIN, source: parent });
@@ -191,6 +211,16 @@ describe('preview bridge', () => {
     expect(player.setComposition.mock.calls[0]![1]).toEqual({ keepTime: false, seq: 3 });
     bridge.parserReady(); // nothing left
     expect(player.setComposition).toHaveBeenCalledTimes(1);
+  });
+  it('passes a valid sessionMedia from the parent to the player, and nothing else', () => {
+    const { parent, player, bridge } = setup();
+    const m = { type: 'sessionMedia', src: 'assets/lib/0a1b2c3d-clip.mp4', index: 1, sourceFps: 25, sourceStart: 0, sourceVideoEnd: 2 };
+    bridge.handle({ data: m, origin: ORIGIN, source: {} });
+    bridge.handle({ data: m, origin: 'null', source: parent });
+    bridge.handle({ data: { ...m, index: -1 }, origin: ORIGIN, source: parent });
+    expect(player.addSessionMedia).not.toHaveBeenCalled();
+    bridge.handle({ data: m, origin: ORIGIN, source: parent });
+    expect(player.addSessionMedia).toHaveBeenCalledWith(m);
   });
   it('ignores a wrong origin, a source other than the parent and unknown types', () => {
     const { parent, player, bridge } = setup();
