@@ -638,7 +638,8 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
               <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={job} live={chatLive}
                 pins={sourcePins.map((p) => p.pin)} onRemovePin={removePin} onEditPin={editPin}
                 formatName={labelOf} canGenerate={versions.length === 0} onSent={onSent} beforeSend={beforeSend} snapshots={live.snapshots}
-                versionSummary={(vn) => { const v = versions.find((x) => x.n === vn); return v?.origin === 'editor' && v.request ? v.request : null; }} appliesTo={appliesTo} />
+                versionSummary={(vn) => { const v = versions.find((x) => x.n === vn); return v?.origin === 'editor' && v.request ? v.request : null; }} appliesTo={appliesTo}
+                brief={detail.creative.brief} onBriefSaved={reload} />
             ) : <div className="ms-cv-state"><Spinner size={16} label={c.loading} /></div>
           ) : (
             ctx ? <Inspector /> : <div className="ms-ed-slot" data-slot="inspector"><p>{e.inspectorSoon}</p></div>

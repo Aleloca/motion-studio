@@ -1,7 +1,7 @@
 import { creativeJobKey } from '@motion-studio/shared';
 import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
-import { canFollow, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, formatLabel, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
+import { canFollow, effectiveServices, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, formatLabel, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { detachLinksUnder } from '../agent/protected-links.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -395,7 +395,7 @@ export class CreativeTurnService {
       const attemptUsage: Array<UsageRecord | null | undefined> = [];
 
       if (!noAgent) {
-        const { context, existing } = await this.buildContext(ref, store, creative.linkedCodebases);
+        const { context, existing } = await this.buildContext(ref, store, creative.linkedCodebases, creative.brief.services);
         // Spec §7: a legacy base (rendered media, v1 manifest) makes this change a conversion to compositions. The core
         // extracts reference frames of the old media into its protected cache; the chat says it costs more tokens once.
         let conversion: { formats: Awaited<ReturnType<typeof extractReferenceFrames>>; created: string[] } | undefined;
@@ -514,6 +514,8 @@ export class CreativeTurnService {
             protectedDirs: earlier.map((d) => join(creativeDir, 'outputs', d)),
             request: { prompt, resumeSessionId, forkSession, model },
             usage: { version: n, attempt }, sandboxed,
+            // The brief as read at this turn's start (Task 7): a change from the chat applies from the next turn.
+            services: effectiveServices(creative.brief),
             // After the agent's events written so far, so the chat keeps its order.
             onWarning: (text) => {
               lastWrite = lastWrite.then(() => store.appendConversation(slug, { type: 'system', at: now(), level: 'warning', text }));
@@ -920,7 +922,7 @@ export class CreativeTurnService {
     return { outputs: a.outputs, problems: a.problems, tools: [], renderCommand: null, compositions: a.compositions };
   }
 
-  private async buildContext(ref: CreativeRef, store: CreativeStore, creativeCodebases: LinkedCodebase[]): Promise<{ context: CreativeContext; existing: string[] }> {
+  private async buildContext(ref: CreativeRef, store: CreativeStore, creativeCodebases: LinkedCodebase[], services: Brief['services']): Promise<{ context: CreativeContext; existing: string[] }> {
     const note = (text: string) => store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text });
     const brand = new BrandStore(ref.projectDir);
     const library = new LibraryStore(ref.projectDir, this.deps.media);
@@ -945,7 +947,7 @@ export class CreativeTurnService {
     for (const c of checks.filter((x) => !x.exists)) await note(t().jobs.codebaseMissing({ path: c.path }));
     const existing = checks.filter((c) => c.exists);
     return {
-      context: { kit, hasGuidelines, assets, references, codebases: existing.map(({ path, note: n }) => ({ path, ...(n ? { note: n } : {}) })), missingCodebases: checks.filter((c) => !c.exists).map((c) => c.path), tools: this.deps.launcher.mcpActive() ? await availableTools(this.deps.vault) : [] },
+      context: { kit, hasGuidelines, assets, references, codebases: existing.map(({ path, note: n }) => ({ path, ...(n ? { note: n } : {}) })), missingCodebases: checks.filter((c) => !c.exists).map((c) => c.path), tools: this.deps.launcher.mcpActive() ? await availableTools(this.deps.vault, services) : [] },
       existing: existing.map((c) => c.path),
     };
   }

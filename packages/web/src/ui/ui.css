@@ -100,6 +100,7 @@
 .ms-seg button:disabled { cursor: default; }
 .ms-seg button:disabled:hover { color: var(--muted); }
 .ms-seg button.ms-on:disabled:hover { color: var(--text); }
+.ms-seg button.ms-unavail:not(.ms-on), .ms-seg button.ms-unavail:not(.ms-on):hover { color: var(--faint); }
 .ms-seg button.ms-on { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px var(--shadow), 0 0 0 1px var(--line2); }
 .ms-seg .ms-n { color: var(--faint); font-weight: 400; font-variant-numeric: tabular-nums; }
 /* A count that needs the user: the orange badge (text in --onAccentStrong for AA). */

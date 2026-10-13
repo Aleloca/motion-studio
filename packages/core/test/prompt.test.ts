@@ -200,6 +200,19 @@ describe('brand and codebase context', () => {
     expect(p2).toContain('call validate_composition for every format before ending the turn');
     expect(p2).toContain('preview_frames');
   });
+  it('lists the brief services with the tools, and says how to turn a disabled one back on', () => {
+    const tools = ['- tts: voice-over (ready)'];
+    const withServices = { ...creative, brief: { ...creative.brief, services: { images: 'stock' as const, voice: 'elevenlabs' as const, music: 'none' as const } } };
+    for (const kind of ['first', 'iteration'] as const) {
+      const p = buildCreativePrompt({ ...v2, creative: withServices, kind, userText: 'x', context: { ...context, tools } });
+      expect(p).toContain('Services for this creative: images stock only; voice ElevenLabs; music none; sound effects auto.');
+      expect(p).toContain('If the user asks for a disabled service, tell them it is off and that they can change it with the Services button.');
+    }
+    // An old brief: every service auto.
+    expect(buildCreativePrompt({ ...v2, kind: 'first', context: { ...context, tools } })).toContain('Services for this creative: images auto; voice auto; music auto; sound effects auto.');
+    // Without the tools (no MCP) there is nothing to choose from.
+    expect(buildCreativePrompt({ ...v2, creative: withServices, kind: 'first', context })).not.toContain('Services for this creative');
+  });
 });
 
 describe('Motion Studio tools in CONTEXT_MD', () => {

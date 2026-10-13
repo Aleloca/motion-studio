@@ -9,6 +9,7 @@ import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, u
 import { createPortal } from 'react-dom';
 import { api } from '../api.ts';
 import { BriefEditor } from '../components/BriefEditor.tsx';
+import { servicesSummary } from '../components/ServicesSelector.tsx';
 import { Conversation } from '../components/Conversation.tsx';
 import type { EventsState } from '../eventsReducer.ts';
 import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
@@ -563,7 +564,7 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
             pins={pins} onRemovePin={removePin} onEditPin={(i) => editPin(i + 1)} formatName={formatLabel}
             canGenerate={versions.length === 0} onSent={({ pins: sent }) => { setStored((ps) => ps.filter((p) => !sent.includes(p.pin))); setViewing({}); reload(); }}
             onSelectVersion={viewAll} snapshots={live.snapshots}
-            appliesTo={appliesTo}
+            appliesTo={appliesTo} brief={detail.creative.brief} onBriefSaved={reload}
             versionExtra={(n) => <UsageBadge usage={versions.find((v) => v.n === n)?.usage} billing={live.today?.billing ?? null} />}
             versionSummary={(n) => { const v = versions.find((x) => x.n === n); return v?.origin === 'editor' && v.request ? v.request : null; }}
             versionNote={(n) => <OutputWarnings outputs={versions.find((v) => v.n === n)?.outputs ?? []} formatLabel={formatLabel} />} />
@@ -810,6 +811,7 @@ function BriefTab({ project, detail, presets, disabled, formatLabel, onChanged }
       {row(c.formats, <span className="ms-cv-brief-tags">{b.formats.map((f) => <Tag key={f}>{formatLabel(f)}</Tag>)}</span>)}
       {b.assets.length ? row(c.assets, <span className="ms-cv-brief-tags">{b.assets.map((a) => <Tag key={a}>{a.replace(/^assets\//, '')}</Tag>)}</span>) : null}
       {b.notes ? row(c.notes, b.notes) : null}
+      {row(c.services, servicesSummary(b.services, t))}
       <CreativeTokens project={project} creative={detail.slug} versions={detail.versions}
         refresh={`${detail.versions.map((v) => `${v.n}:${v.status}`).join(',')}|${detail.creative.status}|${detail.creative.updatedAt}`} />
       <Button variant="outline" className="ms-cv-brief-edit-btn" onClick={() => setEditing(true)}><Icon name="edit" size={13} />{c.edit}</Button>

@@ -1,7 +1,8 @@
 import type { CreativeFile, FormatPreset, Pin } from '@motion-studio/shared';
-import { formatLabel, videoTargetBitrateKbps, type BrandKit, type Locale } from '@motion-studio/shared';
+import { formatLabel, videoTargetBitrateKbps, type BrandKit, type BriefServices, type Locale } from '@motion-studio/shared';
 import { replyInstruction } from '../i18n.ts';
 import { findPreset } from '../formats/format-catalog.ts';
+import { servicesLine } from '../services/service-policy.ts';
 import type { LegacyFormatReference } from './legacy-conversion.ts';
 
 export interface CreativeContext {
@@ -109,7 +110,7 @@ function soundLines(k: BrandKit): string[] {
   ];
 }
 
-function contextSections(c: CreativeContext, contract: AgentContract = 'compositions'): string[] {
+function contextSections(c: CreativeContext, contract: AgentContract = 'compositions', services?: BriefServices): string[] {
   const k = c.kit;
   const brand = [
     ...k.colors.map((x) => `- Color ${x.name} (${x.role}): ${x.hex}`),
@@ -136,7 +137,10 @@ function contextSections(c: CreativeContext, contract: AgentContract = 'composit
   if (c.tools.length) {
     out.push('', '## Motion Studio tools (MCP)', ...c.tools, contract === 'compositions'
       ? 'Call report_progress at the start of each phase. Look at your work with preview_frames (a few PNG frames of a format\'s composition), and call validate_composition for every format before ending the turn.'
-      : 'Call report_progress at the start of each phase.');
+      : 'Call report_progress at the start of each phase.',
+    // The brief's services (Task 7): the core enforces them; the agent only needs to know and to tell the user.
+    servicesLine(services),
+    'If the user asks for a disabled service, tell them it is off and that they can change it with the Services button.');
   }
   return out;
 }
@@ -294,7 +298,7 @@ export function buildCreativePrompt(i: PromptInput): string {
       ...(i.problems ?? []).map((p) => `- ${p}`),
     );
   }
-  if (i.context && i.kind !== 'fix') parts.push(...contextSections(i.context, contract));
+  if (i.context && i.kind !== 'fix') parts.push(...contextSections(i.context, contract, brief.services));
   if (contract === 'compositions') {
     // Agent-facing: the format's own facts only (Motion Studio renders, so no extensions, bitrates or encoding flags).
     const compositionLines = known.map(([id, p]) => p

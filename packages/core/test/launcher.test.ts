@@ -359,6 +359,23 @@ describe('AgentLauncher', () => {
     expect(notes).toEqual(['a']);
     run.cancel();
   });
+  it('hands the creative\'s services to the bridge context as a frozen copy', async () => {
+    const bridge = new AgentBridge();
+    bridge.setOrigin('http://127.0.0.1:4317');
+    let token = '';
+    const runner: AgentRunner = { start: (req) => {
+      token = readFileSync(req.mcpConfigPath!.replace(/\.mcp\.json$/, '.token'), 'utf8');
+      return { done: new Promise(() => {}), cancel: () => {} };
+    } };
+    const services = { images: 'auto' as const, voice: 'none' as const, music: 'auto' as const, sfx: 'auto' as const };
+    const run = await testLauncher(runner, { bridge, mcpCommand: ['node', '/x/server.mjs'] }).start({ kind: 'creative', jobId: 'j7', projectSlug: 'acme', projectDir: await newProject(), creativeSlug: 'c1', request: { prompt: 'x' }, onEvent: () => {}, services });
+    // The caller's object changing later never reaches the running job.
+    (services as { voice: string }).voice = 'openai';
+    const c = bridge.resolve(token)!;
+    expect(c.services).toEqual({ images: 'auto', voice: 'none', music: 'auto', sfx: 'auto' });
+    expect(Object.isFrozen(c.services)).toBe(true);
+    run.cancel();
+  });
   it('frees the token and the MCP config file when the runner fails to start', async () => {
     const bridge = new AgentBridge();
     bridge.setOrigin('http://127.0.0.1:4317');

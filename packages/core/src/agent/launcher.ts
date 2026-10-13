@@ -73,6 +73,8 @@ export interface LaunchInput {
   /** Brand analysis: the job's language and where its tools' notes go (see BridgeContext). */
   locale?: BridgeContext['locale'];
   addNotes?: BridgeContext['addNotes'];
+  /** Creative turns: the brief's services read at the turn's start (see BridgeContext). */
+  services?: BridgeContext['services'];
   /** What the run's ledger line is about (a creative's version and fix-loop attempt); null for other jobs. */
   usage?: { version: number | null; attempt: number | null };
   /**
@@ -195,6 +197,7 @@ export class AgentLauncher {
           autoApproveAtStart,
           emit: i.onEvent, signal: abort.signal, ...(i.validateComposition ? { validateComposition: i.validateComposition } : {}), ...(i.previewFrames ? { previewFrames: i.previewFrames } : {}),
           ...(i.locale ? { locale: i.locale } : {}), ...(i.addNotes ? { addNotes: i.addNotes } : {}),
+          ...(i.services ? { services: i.services } : {}),
         });
         // The paths are recorded before writing, so release() also removes a half-written pair.
         const files = await prepareRunFiles(configDir, i.jobId);

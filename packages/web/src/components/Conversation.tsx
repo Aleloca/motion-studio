@@ -1,4 +1,4 @@
-import type { AgentEvent, ApprovalRequest, ConversationEntry, ExplainContext, JobSummary, Pin } from '@motion-studio/shared';
+import type { AgentEvent, ApprovalRequest, Brief, ConversationEntry, ExplainContext, JobSummary, Pin } from '@motion-studio/shared';
 import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { api, ApiError } from '../api.ts';
 import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
@@ -10,6 +10,7 @@ import { defaultTargets } from '../screens/versionModel.ts';
 import { errorCode, versionErrorText } from '../screens/versionErrors.ts';
 import { message } from '../errors.ts';
 import { ApprovalCard } from './ApprovalCard.tsx';
+import { ServicesChip } from './ServicesSelector.tsx';
 import { explanationView, RiskChips } from './RiskChips.tsx';
 import { useApprovalPresence, type ShownApproval } from './approvalPresence.ts';
 import { commandLog, webExplainContext, WorkspacePathContext, type CommandLog, type CommandMark, type CommandRow } from './commandLog.ts';
@@ -67,6 +68,10 @@ export interface ConversationProps {
   snapshots?: number;
   /** The composer's "Applies to" (spec §2.5): absent when there is nothing to choose (one primary, no version yet). */
   appliesTo?: AppliesTo;
+  /** The creative's brief: with it the composer shows the "Services" chip, which saves the brief's services (Task 7). */
+  brief?: Brief;
+  /** After the chip saved the brief (reload the creative). */
+  onBriefSaved?(): void;
 }
 
 /** What a change can apply to: the primary formats (with their followers' labels) and how a format maps to its primary. */
@@ -160,7 +165,7 @@ function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], r
  * only in "Activity details", the job's approvals in the flow, typing dots while the agent works (T9), and the
  * composer with the pending comment chips and ⌘↵.
  */
-export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, onSelectVersion, versionExtra, versionNote, versionSummary, snapshots, appliesTo }: ConversationProps) {
+export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, onSelectVersion, versionExtra, versionNote, versionSummary, snapshots, appliesTo, brief, onBriefSaved }: ConversationProps) {
   const t = useT();
   const c = t.web.chat;
   const working = active(job);
@@ -288,7 +293,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
           </Row>
         ))}
       </ol>
-      <Composer slug={slug} creative={creative} job={working ? job : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} onEditPin={onEditPin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} beforeSend={beforeSend} appliesTo={appliesTo} />
+      <Composer slug={slug} creative={creative} job={working ? job : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} onEditPin={onEditPin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} beforeSend={beforeSend} appliesTo={appliesTo} brief={brief} onBriefSaved={onBriefSaved} />
     </div>
   );
 }
@@ -524,9 +529,9 @@ const SEND_CODES = new Set(['formats-not-in-brief', 'job-running']);
 /** Longest wait for the job a send started before the composer unlocks anyway. */
 export const AWAIT_JOB_MS = 10_000;
 
-function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, appliesTo }: {
+function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, appliesTo, brief, onBriefSaved }: {
   slug: string; creative: string; job: JobSummary | undefined; latestJobId: string | undefined; snapshots: number | undefined; pins: Pin[]; onRemovePin?(i: number): void; onEditPin?(i: number): void; formatName?(id: string): string; canGenerate?: boolean; onSent?(sent: { pins: Pin[] }): void; beforeSend?(): boolean | Promise<boolean>;
-  appliesTo?: AppliesTo;
+  appliesTo?: AppliesTo; brief?: Brief; onBriefSaved?(): void;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -648,6 +653,7 @@ function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemoveP
           placeholder={job ? c.busyPlaceholder : c.placeholder} aria-keyshortcuts={isMac() ? 'Meta+Enter' : 'Control+Enter'} />
         {error && <p role="alert" className="ms-composer-error">{error}</p>}
         <div className="ms-composer-foot">
+          {brief ? <ServicesChip slug={slug} creative={creative} brief={brief} busy={busy} onSaved={() => onBriefSaved?.()} /> : null}
           {job
             ? <span className="ms-composer-hint">{c.working}</span>
             : <span className="ms-composer-hint">{c.sendHint({ keys: isMac() ? '⌘↵' : 'Ctrl ↵' })}</span>}

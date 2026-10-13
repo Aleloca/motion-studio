@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import type { AgentEvent, Locale } from '@motion-studio/shared';
+import type { AgentEvent, BriefServices, Locale } from '@motion-studio/shared';
 import type { AgentJobKind } from '../agent/policy.ts';
 
 /** What a bridge token gives access to: the job that owns it. */
@@ -27,6 +27,11 @@ export interface BridgeContext {
   locale?: Locale;
   /** Brand analysis: notes a tool adds to the proposal (e.g. inspect_site_fonts warnings), already in `locale`. */
   addNotes?: (lines: string[]) => void;
+  /**
+   * Creative turns: the brief's services as read when the turn started (Task 7), which the provider tools enforce. Absent
+   * (other jobs, old briefs read before Phase 11): every kind `auto`. Frozen with the context: the agent never changes it.
+   */
+  readonly services?: Readonly<Required<BriefServices>>;
 }
 
 /** Per-job tokens that let the `studio` MCP server call back into the core on behalf of one agent job. */
@@ -37,7 +42,10 @@ export class AgentBridge {
   register(ctx: BridgeContext): string {
     const t = randomBytes(32).toString('hex');
     // A frozen copy: later changes to the caller's object (or to a resolved context) can never flip the flags.
-    this.contexts.set(t, Object.freeze({ ...ctx, sandboxed: ctx.sandboxed === true, autoApproveAtStart: ctx.autoApproveAtStart === true }));
+    this.contexts.set(t, Object.freeze({
+      ...ctx, sandboxed: ctx.sandboxed === true, autoApproveAtStart: ctx.autoApproveAtStart === true,
+      ...(ctx.services ? { services: Object.freeze({ ...ctx.services }) } : {}),
+    }));
     return t;
   }
   unregister(token: string) { this.contexts.delete(token); }

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { workspaceSettingsSchema, type ServerMessage } from '@motion-studio/shared';
+import { effectiveServices, workspaceSettingsSchema, type BriefServices, type ServerMessage } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setLocale } from '../src/i18n.ts';
 import { ApprovalBroker } from '../src/approvals/broker.ts';
@@ -177,6 +177,17 @@ describe('availableTools', () => {
     const lines = await availableTools(new MemoryVault({ OPENAI_API_KEY: 'k' }));
     expect(lines.find((l) => l.startsWith('- generate_image'))).toContain('(ready)');
     expect(lines.find((l) => l.startsWith('- stock_search'))).toContain('not configured');
+  });
+  it('says which tools the brief turns off (old briefs: all on)', async () => {
+    const vault = new MemoryVault({ OPENAI_API_KEY: 'k', ELEVENLABS_API_KEY: 'e', PEXELS_API_KEY: 'p' });
+    const lines = await availableTools(vault, { images: 'stock', voice: 'none', music: 'none', sfx: 'auto' });
+    expect(lines.find((l) => l.startsWith('- generate_image'))).toContain('(off for this creative: stock images only)');
+    expect(lines.find((l) => l.startsWith('- tts'))).toContain('(off for this creative)');
+    expect(lines.find((l) => l.startsWith('- list_voices'))).toContain('(off for this creative)');
+    expect(lines.find((l) => l.startsWith('- stock_search'))).toContain('(ready)');
+    expect(lines.find((l) => l.startsWith('- sound_effect'))).toContain('(ready)');
+    expect(lines.find((l) => l.startsWith('- music'))).toContain('(off for this creative)');
+    expect(await availableTools(vault, undefined)).toEqual(await availableTools(vault));
   });
 });
 
@@ -429,4 +440,131 @@ describe('ElevenLabs sound effects, music and voices', () => {
   });
   afterEach(() => setLocale('it'));
   const readdirAssets = async () => (await new LibraryStore(projectDir, media).listAssets());
+});
+
+describe('brief services (Review Focus 2)', () => {
+  const ALL_KEYS = { OPENAI_API_KEY: 'sk-test', ELEVENLABS_API_KEY: 'el-test', PEXELS_API_KEY: 'px-test', UNSPLASH_ACCESS_KEY: 'us-test' };
+  const withServices = (services: BriefServices | undefined, over: Partial<BridgeContext> = {}): BridgeContext => ({ ...ctx, ...over, ...(services ? { services: effectiveServices({ services }) } : {}) });
+  beforeEach(() => setLocale('en'));
+  afterEach(() => setLocale('it'));
+
+  /** A refusal: the tool fails before any approval request and any network request. */
+  const refused = async (run: Promise<unknown>) => {
+    const asked = vi.spyOn(approvals, 'request');
+    const e = await run.then(() => null, (x: unknown) => x) as { status: number; message: string } | null;
+    expect(e).not.toBeNull();
+    expect(asked).not.toHaveBeenCalled();
+    expect(approvals.pending()).toEqual([]);
+    expect(sent).toEqual([]);
+    expect(await new LibraryStore(projectDir, NoMediaTools).listAssets()).toEqual([]);
+    return e!;
+  };
+  const OFF = {
+    Images: "Images are turned off in this creative's brief: tell the user they are off and that they can change this with the Services button",
+    Voice: "Voice is turned off in this creative's brief: tell the user it is off and that they can change this with the Services button",
+    Music: "Music is turned off in this creative's brief: tell the user it is off and that they can change this with the Services button",
+    'Sound effects': "Sound effects are turned off in this creative's brief: tell the user they are off and that they can change this with the Services button",
+  };
+
+  it.each([
+    ['tts', { voice: 'none' }, { text: 'Ciao', provider: 'openai' }, 'Voice'],
+    ['tts', { voice: 'none' }, { text: 'Ciao' }, 'Voice'],
+    ['list_voices', { voice: 'none' }, {}, 'Voice'],
+    ['generate_image', { images: 'none' }, { prompt: 'x', width: 1024, height: 1024 }, 'Images'],
+    ['stock_search', { images: 'none' }, { query: 'sea' }, 'Images'],
+    ['stock_download', { images: 'none' }, { id: '5' }, 'Images'],
+    ['music', { music: 'none' }, { prompt: 'calm piano', durationSec: 10 }, 'Music'],
+    ['sound_effect', { sfx: 'none' }, { prompt: 'whoosh' }, 'Sound effects'],
+  ] as const)('%s with %j is refused with the translated reason, without asking or paying', async (tool, services, args, service) => {
+    const e = await refused(tools({}, ALL_KEYS)[tool]!(withServices(services), args));
+    expect(e).toMatchObject({ status: 403, message: OFF[service] });
+  });
+
+  it('refuses in the language of the core (Italian)', async () => {
+    setLocale('it');
+    const e = await refused(tools({}, ALL_KEYS).tts!(withServices({ voice: 'none' }), { text: 'Ciao' }));
+    expect(e.message).toBe("La voce è disattivata nel brief di questo creativo: dillo all'utente, che può cambiarlo con il pulsante Servizi");
+  });
+
+  it('refuses before checking the arguments: a forbidden call never reaches validation either', async () => {
+    const e = await refused(tools({}, ALL_KEYS).tts!(withServices({ voice: 'none' }), {}));
+    expect(e.status).toBe(403);
+  });
+
+  it('images "stock only": generate_image points to stock_search, the stock tools work', async () => {
+    const e = await refused(tools({}, ALL_KEYS).generate_image!(withServices({ images: 'stock' }), { prompt: 'x', width: 1024, height: 1024 }));
+    expect(e).toMatchObject({ status: 403, message: 'This creative uses stock images only: use stock_search and stock_download instead of generate_image' });
+    const out = await tools({}, ALL_KEYS).stock_search!(withServices({ images: 'stock' }), { query: 'sea' }) as { results: unknown[] };
+    expect(out.results).toHaveLength(1);
+    // Stock is free: allowed under OpenAI too.
+    await expect(tools({}, ALL_KEYS).stock_search!(withServices({ images: 'openai' }), { query: 'sea' })).resolves.toBeTruthy();
+  });
+
+  it('voice OpenAI: a tts call asking for ElevenLabs uses OpenAI and says so in the result', async () => {
+    const bodies: string[] = [];
+    const recording = (async (url: string, init?: RequestInit) => { bodies.push(String(init?.body ?? '')); return fakeFetch(url, init); }) as unknown as typeof fetch;
+    const t = tools({}, ALL_KEYS, recording);
+    const pending = t.tts!(withServices({ voice: 'openai' }), { text: 'Ciao', provider: 'elevenlabs', voice: 'JBFqnCBsd6RMkjVDRZzb' });
+    await waitForPending();
+    const [req] = approvals.pending();
+    expect(req).toMatchObject({ toolName: 'provider:tts-openai' });
+    await approvals.decide(req!.id, 'once');
+    const out = await pending as { provider: string; note?: string };
+    expect(out.provider).toBe('openai');
+    expect(out.note).toBe("This creative's brief chooses OpenAI for voice: used instead of ElevenLabs");
+    expect(sent.every((u) => u.startsWith('https://api.openai.com/'))).toBe(true);
+    expect(sent.length).toBeGreaterThan(0);
+    // The ElevenLabs voice id did not travel to OpenAI.
+    expect(bodies.join('\n')).not.toContain('JBFqnCBsd6RMkjVDRZzb');
+  });
+
+  it('voice OpenAI without an OpenAI key: refused, never switched to ElevenLabs', async () => {
+    const e = await refused(tools({}, { ELEVENLABS_API_KEY: 'el-test' }).tts!(withServices({ voice: 'openai' }), { text: 'Ciao', provider: 'elevenlabs' }));
+    expect(e).toMatchObject({ status: 400, message: "This creative's brief chooses OpenAI for voice, but the OpenAI key is not set: add it in the Motion Studio settings, or the user can change the service with the Services button" });
+  });
+
+  it('voice ElevenLabs: a tts call without a provider uses ElevenLabs even when OpenAI is set', async () => {
+    const out = await tools({ confirmPaidProviders: false }, ALL_KEYS).tts!(withServices({ voice: 'elevenlabs' }), { text: 'Ciao' }) as { provider: string; note?: string };
+    expect(out.provider).toBe('elevenlabs');
+    expect(out.note).toBeUndefined();
+    expect(sent.every((u) => u.startsWith('https://api.elevenlabs.io/'))).toBe(true);
+  });
+
+  it('images OpenAI without a key, music and sound effects ElevenLabs without a key: refused before asking', async () => {
+    expect((await refused(tools({}, { ELEVENLABS_API_KEY: 'el' }).generate_image!(withServices({ images: 'openai' }), { prompt: 'x', width: 1024, height: 1024 }))).status).toBe(400);
+    expect((await refused(tools({}, { OPENAI_API_KEY: 'sk' }).music!(withServices({ music: 'elevenlabs' }), { prompt: 'calm', durationSec: 10 }))).status).toBe(400);
+    expect((await refused(tools({}, { OPENAI_API_KEY: 'sk' }).sound_effect!(withServices({ sfx: 'elevenlabs' }), { prompt: 'whoosh' }))).status).toBe(400);
+  });
+
+  it('list_voices follows the voice choice: off under OpenAI (ElevenLabs is not this creative\'s voice), on under auto and ElevenLabs', async () => {
+    expect((await refused(tools({}, ALL_KEYS).list_voices!(withServices({ voice: 'openai' }), {}))).status).toBe(403);
+    await expect(tools({}, ALL_KEYS).list_voices!(withServices({ voice: 'elevenlabs' }), {})).resolves.toMatchObject({ voices: [expect.anything()] });
+    await expect(tools({}, ALL_KEYS).list_voices!(withServices({ voice: 'auto' }), {})).resolves.toBeTruthy();
+  });
+
+  it('a context without services (old brief, console job) keeps today\'s behaviour', async () => {
+    const out = await tools({ confirmPaidProviders: false }, ALL_KEYS).tts!(withServices(undefined), { text: 'Ciao', provider: 'elevenlabs' }) as { provider: string; note?: string };
+    expect(out).toMatchObject({ provider: 'elevenlabs' });
+    expect(out.note).toBeUndefined();
+    await expect(tools({ confirmPaidProviders: false }, ALL_KEYS).generate_image!(withServices(undefined, { kind: 'console', creativeSlug: null }), { prompt: 'x', width: 1024, height: 1024 })).resolves.toBeTruthy();
+  });
+
+  it('auto keeps today\'s choice: the brand voice\'s provider when no provider is asked', async () => {
+    await mkdir(join(projectDir, 'brand'), { recursive: true });
+    const { EMPTY_BRAND_KIT } = await import('@motion-studio/shared');
+    await writeFile(join(projectDir, 'brand', 'brand-kit.json'), JSON.stringify({ ...EMPTY_BRAND_KIT, sound: { genre: '', energy: null, instruments: [], avoid: [], voice: { provider: 'elevenlabs', id: 'JBFqnCBsd6RMkjVDRZzb' } } }));
+    const out = await tools({ confirmPaidProviders: false }, ALL_KEYS).tts!(withServices({ voice: 'auto' }), { text: 'Ciao' }) as { provider: string };
+    expect(out.provider).toBe('elevenlabs');
+  });
+
+  it('the brand voice follows a chosen provider only when it is that provider\'s voice', async () => {
+    await mkdir(join(projectDir, 'brand'), { recursive: true });
+    const { EMPTY_BRAND_KIT } = await import('@motion-studio/shared');
+    await writeFile(join(projectDir, 'brand', 'brand-kit.json'), JSON.stringify({ ...EMPTY_BRAND_KIT, sound: { genre: '', energy: null, instruments: [], avoid: [], voice: { provider: 'elevenlabs', id: 'JBFqnCBsd6RMkjVDRZzb' } } }));
+    const seenBodies: string[] = [];
+    const recording = (async (url: string, init?: RequestInit) => { seenBodies.push(String(init?.body ?? '')); return fakeFetch(url, init); }) as unknown as typeof fetch;
+    const out = await tools({ confirmPaidProviders: false }, ALL_KEYS, recording).tts!(withServices({ voice: 'openai' }), { text: 'Ciao' }) as { provider: string };
+    expect(out.provider).toBe('openai');
+    expect(seenBodies.join('\n')).not.toContain('JBFqnCBsd6RMkjVDRZzb');
+  });
 });

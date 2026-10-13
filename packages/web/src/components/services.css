@@ -1,0 +1,15 @@
+/* Brief services selector (ServicesSelector) and the composer's "Services" chip. */
+.ms-services { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ms-services-row { display: grid; grid-template-columns: minmax(84px, auto) minmax(0, 1fr); align-items: center; gap: 4px 10px; min-width: 0; }
+.ms-services-kind { font-size: 12px; font-weight: 600; color: var(--muted); }
+.ms-services-seg { flex-wrap: wrap; justify-self: start; max-width: 100%; }
+.ms-services-why { grid-column: 2; margin: 0; font-size: 11px; line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }
+.ms-services-pop { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; font-size: 12px; }
+.ms-services-hint { margin: 0; color: var(--muted); line-height: 1.4; }
+.ms-services-error { margin: 0; color: var(--warn); overflow-wrap: anywhere; }
+.ms-services-chip { gap: 6px; max-width: 100%; min-width: 0; }
+.ms-services-chip-sum { color: var(--muted); font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+@media (max-width: 420px) {
+  .ms-services-row { grid-template-columns: minmax(0, 1fr); }
+  .ms-services-why { grid-column: 1; }
+}
