@@ -44,6 +44,8 @@ import { DraftPill, SAVED_MS } from './DraftPill.tsx';
 import { draftKey, isDirty, peekDraft, useDraft, type Draft } from './draftStore.ts';
 import { EditorContext, type EditorState } from './editorContext.ts';
 import { registerLeaveGuard } from './leaveGuard.ts';
+import { ScenesColumn } from './ScenesColumn.tsx';
+import { Stage } from './Stage.tsx';
 import { useEditorKeys } from './useEditorKeys.ts';
 import { usePlayerControls } from './usePlayerControls.ts';
 import { DEFAULT_EXPORT_NAME_PATTERN } from '@motion-studio/shared';
@@ -320,6 +322,8 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
 
   // Selection (set by the stage handles, the timeline, the layers and the scenes: Tasks 6 to 9).
   const [selection, setSelection] = useState<string | null>(null);
+  // The magnet (stage guides now, the timeline's edges in Task 7): per editor, not saved.
+  const [snap, setSnap] = useState(true);
   useEffect(() => { setSelection(null); }, [n, primary]);
 
   // Keys.
@@ -364,7 +368,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const onSent = useCallback(() => { reload(); }, [reload]);
 
   const ctx: EditorState | null = draft ? {
-    slug, creative, format, primary, draft, actions, player, controls, selection, select: setSelection, token, stageAsset, staging,
+    slug, creative, format, primary, draft, actions, player, controls, selection, select: setSelection, snap, setSnap, token, stageAsset, staging,
   } : null;
 
   // ---- states without an editor
@@ -429,10 +433,12 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
 
       <aside className="ms-ed-side ms-ed-left" aria-label={video ? e.scenes : e.layers} data-part="l">
         <div className="ms-fv-side-head"><b>{video ? e.scenes : e.layers}</b></div>
-        {/* Task 6 puts the scenes column here; Task 9 the layers panel. */}
-        <div className="ms-ed-slot" data-slot={video ? 'scenes' : 'layers'}>
-          <p>{video ? e.scenesSoon : e.layersSoon}</p>
-        </div>
+        {/* Task 9 puts the layers panel in the image editor's slot. */}
+        {video && draft ? <ScenesColumn /> : (
+          <div className="ms-ed-slot" data-slot={video ? 'scenes' : 'layers'}>
+            <p>{video ? e.scenesSoon : e.layersSoon}</p>
+          </div>
+        )}
       </aside>
 
       <main className="ms-fv-main ms-ed-main" aria-label={e.stage({ label })}>
@@ -469,7 +475,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
                 </span>
               ) : null}
             </div>
-            {/* Task 6 draws the selection handles over the frame. */}
+            {draft ? <Stage /> : null}
           </div>
         </section>
         {draft && (dirty || saved) ? (
@@ -478,6 +484,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
         <div className="ms-ed-undo" role="toolbar" aria-label={e.draft({ n: draft?.ops.length ?? 0 })}>
           <Button size="sm" variant="ghost" icon aria-label={e.undo} title={e.undo} disabled={!draft || draft.past.length === 0} onClick={() => actions.undo()}><Icon name="undo" size={14} /></Button>
           <Button size="sm" variant="ghost" icon aria-label={e.redo} title={e.redo} disabled={!draft || draft.future.length === 0} onClick={() => actions.redo()}><Icon name="redo" size={14} /></Button>
+          <Button size="sm" variant="ghost" icon className="ms-ed-snap" aria-label={e.snap} title={e.snap} aria-pressed={snap} onClick={() => setSnap(!snap)}><Icon name="magnet" size={14} /></Button>
         </div>
       </main>
 

@@ -20,6 +20,9 @@ export interface EditorState {
   /** The selected clip id (or null). */
   selection: string | null;
   select(id: string | null): void;
+  /** Snap to guides (the stage) and to clip edges and scene bounds (the timeline): the magnet button. Per editor, not saved. */
+  snap: boolean;
+  setSnap(on: boolean): void;
   /** The live preview session's token, which owns the staging (the latest, after a renewal). */
   token: string | null;
   /**

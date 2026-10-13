@@ -60,6 +60,8 @@ const media = vi.hoisted(() => {
     seq: 0, applied: null as null | { seq: number; errors: Array<{ code: string; message: string }> }, currentTime: 0, duration: 6, loop: false, playbackRate: 1, paused: true,
     setComposition: vi.fn((_c: unknown) => { m.seq += 1; return m.seq; }),
     addSessionMedia: vi.fn((_src: string, _m: unknown) => true),
+    clipBounds: null as unknown,
+    select: vi.fn((_id: string | null) => {}),
     play: vi.fn(async () => { m.paused = false; events.dispatchEvent(new Event('play')); }),
     pause: vi.fn(() => { m.paused = true; events.dispatchEvent(new Event('pause')); }),
     addEventListener: (t: string, l: EventListener) => events.addEventListener(t, l),
@@ -187,6 +189,24 @@ describe('EditorScreen · shell', () => {
     expect(within(bar).getByText('1080×1920 · 6 s · 30 fps')).toBeTruthy();
     expect(within(bar).getByText('v2')).toBeTruthy();
     expect(within(bar).getByRole('button', { name: 'Back to the preview' })).toBeTruthy();
+  });
+
+  it('the stage and the scenes column are wired: the selection reaches the runtime, the magnet is shared and not saved', async () => {
+    render(<Harness />);
+    await opened();
+    expect(document.querySelector('.ms-stage-layer')).not.toBeNull();
+    expect(screen.getByRole('list', { name: 'Scenes of this composition' })).toBeTruthy();
+    // The magnet is on by default and goes to the context the timeline reads.
+    const magnet = screen.getByRole('button', { name: 'Snap to guides and edges' });
+    expect(magnet.getAttribute('aria-pressed')).toBe('true');
+    expect((probe.ctx as unknown as { snap: boolean }).snap).toBe(true);
+    await userEvent.click(magnet);
+    expect(magnet.getAttribute('aria-pressed')).toBe('false');
+    expect((probe.ctx as unknown as { snap: boolean }).snap).toBe(false);
+    // Picking a clip in "In this scene" selects it and tells the runtime.
+    await userEvent.click(within(screen.getByRole('region', { name: 'In this scene' })).getByRole('button', { name: 'title' }));
+    expect(media.select).toHaveBeenLastCalledWith('title');
+    expect(probe.ctx?.selection).toBe('title');
   });
 
   it('an image format has the layers panel and no timeline', async () => {

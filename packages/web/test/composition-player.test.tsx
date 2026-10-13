@@ -130,6 +130,25 @@ describe('CompositionPlayer', () => {
     expect(m.paused).toBe(true);
     expect(seen).toEqual(['loadedmetadata', 'play', 'timeupdate', 'timeupdate', 'pause', 'ended']);
   });
+  it('select goes to the frame (again once a frame is ready); the drawn box comes back as clipbounds from the active frame only', () => {
+    const p = mount();
+    const m = p.media();
+    const seen: string[] = [];
+    m.addEventListener('clipbounds', () => seen.push(JSON.stringify(m.clipBounds)));
+    m.select('title');
+    expect(p.posted).not.toHaveBeenCalled();
+    fromRuntime(READY);
+    expect(p.posted.mock.calls.map((c) => c[0])).toEqual([{ type: 'select', clipId: 'title' }]);
+    fromRuntime({ type: 'clipBounds', clipId: 'title', bounds: { x: 10, y: 20, width: 300, height: 100 }, scale: 0.5 });
+    expect(m.clipBounds).toEqual({ clipId: 'title', bounds: { x: 10, y: 20, width: 300, height: 100 }, scale: 0.5 });
+    expect(seen).toHaveLength(1);
+    m.select(null);
+    expect(p.posted).toHaveBeenLastCalledWith({ type: 'select', clipId: null }, '*');
+    expect(m.clipBounds).toEqual({ clipId: null, bounds: null, scale: 0.5 });
+    // A message from something that is not the frame is not heard.
+    fromRuntime({ type: 'clipBounds', clipId: 'title', bounds: { x: 1, y: 1, width: 1, height: 1 }, scale: 1 }, { source: window });
+    expect(m.clipBounds?.bounds).toBeNull();
+  });
   it('muted: sent as a mute command once ready, and again to a new frame', () => {
     const p = mount({ muted: true });
     expect(p.posted).not.toHaveBeenCalled();

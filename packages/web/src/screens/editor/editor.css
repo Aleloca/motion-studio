@@ -35,3 +35,65 @@
 .ms-ed-dialog p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted); text-wrap: pretty; overflow-wrap: anywhere; }
 .ms-ed-dialog-why { color: var(--warn) !important; }
 .ms-ed-dialog-foot { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+
+/* The stage overlay (Task 6): selection box, handles, label and snap guides, over the player's frame. */
+.ms-stage-layer { position: absolute; inset: 0; z-index: 2; overflow: visible; touch-action: none; }
+.ms-stage-box {
+  position: absolute; left: 0; top: 0; transform-origin: 50% 50%; cursor: move; touch-action: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+.ms-stage-box.ms-locked { box-shadow: none; outline: 1.5px dashed var(--accent); outline-offset: 0; cursor: not-allowed; }
+.ms-stage-move { position: absolute; inset: 0; }
+.ms-stage-handle {
+  position: absolute; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px; border-radius: 3px; box-sizing: border-box;
+  background: var(--panel); box-shadow: 0 0 0 1.5px var(--accent); touch-action: none;
+}
+.ms-locked .ms-stage-handle { box-shadow: none; outline: 1.5px dashed var(--accent); cursor: not-allowed; }
+.ms-h-nw { left: 0; top: 0; cursor: nwse-resize; }
+.ms-h-ne { left: 100%; top: 0; cursor: nesw-resize; }
+.ms-h-se { left: 100%; top: 100%; cursor: nwse-resize; }
+.ms-h-sw { left: 0; top: 100%; cursor: nesw-resize; }
+.ms-stage-stem { position: absolute; left: 50%; top: -24px; width: 1.5px; height: 24px; margin-left: -.75px; background: var(--accent); }
+.ms-locked .ms-stage-stem { display: none; }
+.ms-h-rot {
+  left: 50%; top: -24px; width: 20px; height: 20px; margin: -20px 0 0 -10px; border-radius: 50%; cursor: grab;
+  display: flex; align-items: center; justify-content: center; color: var(--accentText);
+}
+.ms-locked .ms-h-rot { display: none; }
+.ms-dragging, .ms-dragging .ms-h-rot { cursor: grabbing; }
+.ms-stage-label {
+  position: absolute; transform: translateX(-50%); padding: 2px 8px; border-radius: 6px; background: var(--panel); color: var(--text);
+  box-shadow: 0 0 0 1px var(--line); font: 11px/1.5 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.ms-stage-guide { position: absolute; background: var(--accent); pointer-events: none; }
+.ms-stage-guide.ms-gx { top: 0; bottom: 0; width: 1px; }
+.ms-stage-guide.ms-gy { left: 0; right: 0; height: 1px; }
+.ms-ed-snap[aria-pressed='true'] { background: var(--sel); color: var(--accentText); }
+
+/* The scenes column. */
+.ms-sc { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+.ms-sc-card { position: relative; display: flex; align-items: center; gap: 2px; border-radius: 8px; }
+.ms-sc-card .ms-fv-sb-item { flex: 1; min-width: 0; }
+.ms-sc-card.ms-over { box-shadow: 0 0 0 2px var(--accent); }
+.ms-sc-thumb { width: 64px; height: 36px; flex: none; border-radius: 4px; background: var(--field); }
+.ms-sc-grip-wrap { flex: none; }
+.ms-sc-grip {
+  width: 24px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted);
+  display: flex; align-items: center; justify-content: center; cursor: grab; touch-action: none;
+}
+.ms-sc-grip:hover:not(:disabled) { background: var(--field); color: var(--text); }
+.ms-sc-grip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ms-sc-grip:disabled { opacity: .45; cursor: not-allowed; }
+.ms-sc-why { margin: 0 12px 8px; font-size: 11.5px; line-height: 1.45; color: var(--muted); text-wrap: pretty; overflow-wrap: anywhere; }
+.ms-sc-in { padding: 8px 12px 12px; border-top: 1px solid var(--line2); }
+.ms-sc-in h3 { margin: 0 0 6px; font-size: 11px; font-weight: 600; color: var(--faint); text-transform: uppercase; letter-spacing: .04em; }
+.ms-sc-in ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.ms-sc-clip {
+  width: 100%; padding: 5px 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text);
+  display: flex; align-items: center; gap: 8px; text-align: left; font: inherit; font-size: 12px; cursor: pointer;
+}
+.ms-sc-clip b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-sc-clip:hover { background: var(--field); }
+.ms-sc-clip.ms-on { border-color: var(--accent); background: var(--sel); }
+.ms-sc-clip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

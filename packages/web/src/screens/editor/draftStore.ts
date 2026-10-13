@@ -46,6 +46,8 @@ export type DraftActions = {
   redo(): void;
   discard(): void;
   stage(asset: StagedAsset): void;
+  /** Ends the coalescing run: the next edit is a new undo step even with the same key (the end of a drag). */
+  endRun(): void;
 };
 
 export const draftKey = (project: string, creative: string, format: string) => `${project}/${creative}/${format}`;
@@ -150,6 +152,7 @@ const actionsOf = (key: string): DraftActions => ({
   redo: () => travel(key, 'redo'),
   discard: () => discard(key),
   stage: (asset) => stage(key, asset),
+  endRun: () => { runs.delete(key); },
 });
 
 export function useDraft(key: string): [Draft | null, DraftActions] {

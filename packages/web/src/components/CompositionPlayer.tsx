@@ -79,6 +79,10 @@ export class CompositionMedia implements SyncMedia {
   private flushQueued = false;
   /** The runtime's answer to the latest draft it applied: its `seq` and load problems. */
   applied: { seq: number; errors: RuntimeError[] } | null = null;
+  /** The clip the editor selected (sent to a new frame once ready), and where the runtime last drew it (event `clipbounds`). */
+  private selectedId: string | null = null;
+  /** `bounds`: the drawn box in CSS pixels of the frame (transforms and animations included), null when not visible; `scale`: frame pixels per composition pixel. */
+  clipBounds: { clipId: string | null; bounds: { x: number; y: number; width: number; height: number } | null; scale: number } | null = null;
 
   get currentTime(): number { return this.time; }
   set currentTime(t: number) {
@@ -134,6 +138,12 @@ export class CompositionMedia implements SyncMedia {
     }
     return this.seq;
   }
+  /** Selects a clip in the runtime (its drawn box comes back as `clipBounds`, event `clipbounds`); null clears. */
+  select(clipId: string | null): void {
+    this.selectedId = clipId;
+    if (clipId === null && this.clipBounds?.clipId) { this.clipBounds = { ...this.clipBounds, clipId: null, bounds: null }; this.emit('clipbounds'); }
+    this.post({ type: 'select', clipId });
+  }
   /** Forgets the draft (the editor closed): a new frame shows the session's own composition. Sends nothing. */
   clearDraft(): void { this.draft = null; this.sessionMedia.clear(); }
   /**
@@ -181,6 +191,7 @@ export class CompositionMedia implements SyncMedia {
       // A new session has media of its own: what was added to another one is dropped, never sent.
       const token = sessionTokenOf(id);
       for (const [src, m] of this.sessionMedia) if (m.token !== token) this.sessionMedia.delete(src); else this.post(m.cmd);
+      if (this.selectedId !== null) this.post({ type: 'select', clipId: this.selectedId });
       this.flushDraft(); // after the restoring seek: the draft keeps that time
       if (!this.isPaused) this.post(this.playCommand());
       this.emit('loadedmetadata');
@@ -206,6 +217,12 @@ export class CompositionMedia implements SyncMedia {
         if (d !== this.dur) { this.dur = d; this.emit('durationchange'); }
       }
       this.emit('compositionapplied');
+      return false;
+    }
+    if (msg.type === 'clipBounds') {
+      if (this.active?.id !== id) return false;
+      this.clipBounds = { clipId: msg.clipId, bounds: msg.bounds, scale: msg.scale };
+      this.emit('clipbounds');
       return false;
     }
     if (msg.type !== 'time' || this.active?.id !== id) return false;
