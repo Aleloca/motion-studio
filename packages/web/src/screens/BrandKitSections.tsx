@@ -6,7 +6,7 @@ import { useT } from '../i18n.tsx';
 import { enter } from '../motion/index.ts';
 import { Button, Chip, cx, Field, Icon, Input, Popover, Segmented, Select, Spinner, Tag, toast } from '../ui/index.ts';
 import { specimenFamily, useFontPreview } from './brandFonts.ts';
-import { hasLogoFor, MANUAL, nextId, normalizeFamily, normalizeHex, parseWeights, ratioText, stageColor, swatchText } from './brandModel.ts';
+import { GENRE_CANONICAL, GENRE_KEYS, genreKeyOf, hasLogoFor, MANUAL, nextId, normalizeFamily, normalizeHex, parseWeights, ratioText, stageColor, swatchText } from './brandModel.ts';
 import { TYPING_MS } from './brandSave.ts';
 import { useBrand, useAppear, removeWithUndo } from './brandContext.tsx';
 import { GoogleFontPicker } from './brand/GoogleFontPicker.tsx';
@@ -367,7 +367,6 @@ function LogoCard({ l }: { l: BrandLogo }) {
 
 const LIST_MAX = 20;
 const ITEM_MAX = 60;
-const GENRES = ['cinematic', 'electronic', 'acoustic', 'hiphop', 'corporate', 'ambient', 'jazz', 'pop'] as const;
 const ENERGIES = ['low', 'medium', 'high'] as const;
 
 /** A list of short texts shown as removable chips, with a field to add one. */
@@ -430,7 +429,7 @@ export function Sound() {
         <Input value={genre} disabled={locked} maxLength={200} aria-label={s.genre} placeholder={s.genrePlaceholder}
           onChange={(e) => { setGenre(e.target.value); update({ genre: e.target.value.trim() }, TYPING_MS); }} onBlur={() => saver.flush()} />
         <div className="ms-bchips" role="group" aria-label={s.genreSuggestions}>
-          {GENRES.map((k) => s.genreOptions[k]).map((g) => <Chip key={g} on={sound.genre === g} onClick={locked ? undefined : () => { setGenre(g); update({ genre: sound.genre === g ? '' : g }); }}>{g}</Chip>)}
+          {GENRE_KEYS.map((k) => <Chip key={k} on={genreKeyOf(sound.genre) === k} onClick={locked ? undefined : () => { const off = genreKeyOf(sound.genre) === k; const next = off ? '' : GENRE_CANONICAL[k]; setGenre(next); update({ genre: next }); }}>{s.genreOptions[k]}</Chip>)}
         </div>
       </div>
       <div className="ms-bpop-field">

@@ -235,3 +235,25 @@ export function splitSummary(summary: string): { text: string; details: string[]
   }).join('\n\n').trim();
   return { text, details };
 }
+
+/**
+ * Sound genre suggestions. The kit stores the canonical (English) text, never a localized label, so a language switch keeps
+ * the chip selected and the sound prompt in one language. A label saved by an older build (any locale's) maps back.
+ */
+export const GENRE_KEYS = ['cinematic', 'electronic', 'acoustic', 'hiphop', 'corporate', 'ambient', 'jazz', 'pop'] as const;
+export type GenreKey = typeof GENRE_KEYS[number];
+export const GENRE_CANONICAL: Record<GenreKey, string> = { cinematic: 'cinematic', electronic: 'electronic', acoustic: 'acoustic', hiphop: 'hip hop', corporate: 'corporate', ambient: 'ambient', jazz: 'jazz', pop: 'pop' };
+/** The suggestion a stored genre stands for (its canonical text or an old localized label), or null for free text. */
+export function genreKeyOf(genre: string): GenreKey | null {
+  const g = genre.trim().toLowerCase();
+  if (!g) return null;
+  for (const k of GENRE_KEYS) {
+    if (GENRE_CANONICAL[k] === g || LOCALES.some((l) => (messages(l).web.brand.sound.genreOptions[k] as string).toLowerCase() === g)) return k;
+  }
+  return null;
+}
+/** The genre as the canonical text when it is a known suggestion (old localized labels included), else as typed. */
+export function canonicalGenre(genre: string): string {
+  const k = genreKeyOf(genre);
+  return k ? GENRE_CANONICAL[k] : genre.trim();
+}

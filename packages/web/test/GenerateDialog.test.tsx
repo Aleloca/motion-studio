@@ -15,7 +15,7 @@ const api = {
   cancelJob: vi.fn(async () => ({ cancelled: true })),
 };
 vi.mock('../src/api.ts', () => ({ api, ApiError: class extends Error {} }));
-const { GenerateDialog } = await import('../src/screens/assets/GenerateDialog.tsx');
+const { GenerateDialog, soundStylePrompt } = await import('../src/screens/assets/GenerateDialog.tsx');
 
 const job = (over: Partial<JobSummary> = {}): JobSummary => ({ id: 'job-1', key: 'generate:x:acme', kind: 'asset-generation', label: 'Generate', state: 'running', createdAt: '2026-01-01T00:00:00Z', ...over });
 const live = (jobs: JobSummary[] = []): EventsState => ({ approvals: {}, jobs: Object.fromEntries(jobs.map((j) => [j.id, j])), events: {}, creativeTicks: {}, projectTicks: {} });
@@ -27,6 +27,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   secrets = [secret('openai', true), secret('elevenlabs', true), secret('pexels', false)];
   overview = { kit: structuredClone(EMPTY_BRAND_KIT), kitError: null, guidelines: '', sources: [], sourcesError: null, proposals: [], jobKey: 'k' };
+});
+
+describe('soundStylePrompt', () => {
+  it('writes the genre in its canonical English text, also for a label saved by an older build', () => {
+    const base = { energy: null, instruments: [], avoid: [], voice: null };
+    expect(soundStylePrompt({ ...base, genre: 'Elettronica' })).toBe('electronic');
+    expect(soundStylePrompt({ ...base, genre: 'Hip hop' })).toBe('hip hop');
+    expect(soundStylePrompt({ ...base, genre: 'warm electronic' })).toBe('warm electronic');
+  });
 });
 
 describe('GenerateDialog', () => {

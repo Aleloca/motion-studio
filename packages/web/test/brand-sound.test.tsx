@@ -71,9 +71,9 @@ describe('Brand · Sound section', () => {
     const s = await sound();
     const user = userEvent.setup();
     await user.click(s.getByRole('button', { name: 'Ambient' }));
-    await waitFor(() => expect(lastKit().sound).toMatchObject({ genre: 'Ambient', energy: null, instruments: [], avoid: [], voice: null }));
+    await waitFor(() => expect(lastKit().sound).toMatchObject({ genre: 'ambient', energy: null, instruments: [], avoid: [], voice: null }));
     await user.click(s.getByRole('radio', { name: 'High' }));
-    await waitFor(() => expect(lastKit().sound).toMatchObject({ genre: 'Ambient', energy: 'high' }));
+    await waitFor(() => expect(lastKit().sound).toMatchObject({ genre: 'ambient', energy: 'high' }));
     await user.type(s.getByRole('textbox', { name: 'Instruments' }), 'piano{Enter}');
     await waitFor(() => expect(lastKit().sound!.instruments).toEqual(['piano']));
     await user.type(s.getByRole('textbox', { name: 'Instruments' }), 'Piano{Enter}');
@@ -83,6 +83,18 @@ describe('Brand · Sound section', () => {
     await waitFor(() => expect(lastKit().sound!.instruments).toEqual([]));
     await user.click(s.getByRole('radio', { name: 'Not set' }));
     await waitFor(() => expect(lastKit().sound!.energy).toBeNull());
+  });
+
+  it('stores the canonical genre, not the localized label; an old saved label (any language) still selects its chip', async () => {
+    overview.kit = { ...overview.kit, sound: { genre: 'Elettronica', energy: null, instruments: [], avoid: [], voice: null } };
+    en();
+    const s = await sound();
+    expect(s.getByRole('button', { name: 'Electronic' }).getAttribute('aria-pressed')).toBe('true');
+    const user = userEvent.setup();
+    await user.click(s.getByRole('button', { name: 'Hip hop' }));
+    await waitFor(() => expect(lastKit().sound!.genre).toBe('hip hop'));
+    await user.click(s.getByRole('button', { name: 'Hip hop' }));
+    await waitFor(() => expect(lastKit().sound!.genre).toBe(''));
   });
 
   it('saves a typed genre after a pause', async () => {

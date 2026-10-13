@@ -7,6 +7,7 @@ import { isActiveJob } from '../../labels.ts';
 import { href } from '../../routes.ts';
 import { Button, Icon, Input, Modal, NumberField, Segmented, Select, Spinner, Tabs, Textarea, Toggle, toast, type IconName } from '../../ui/index.ts';
 import { ApprovalCard } from '../../components/ApprovalCard.tsx';
+import { canonicalGenre } from '../brandModel.ts';
 import { Alert, message } from '../common.tsx';
 
 type Kind = 'image' | 'voice' | 'sfx' | 'music';
@@ -24,7 +25,7 @@ export const MUSIC_SECONDS = { min: 10, max: 300 };
 /** The brand's sound style as a starting prompt (empty when the brand has none). */
 export function soundStylePrompt(s: BrandSound | undefined): string {
   if (!s) return '';
-  const parts = [s.genre.trim(), s.energy ? `${s.energy} energy` : '', s.instruments.length ? `instruments: ${s.instruments.join(', ')}` : '', s.avoid.length ? `avoid: ${s.avoid.join(', ')}` : ''].filter(Boolean);
+  const parts = [canonicalGenre(s.genre), s.energy ? `${s.energy} energy` : '', s.instruments.length ? `instruments: ${s.instruments.join(', ')}` : '', s.avoid.length ? `avoid: ${s.avoid.join(', ')}` : ''].filter(Boolean);
   return parts.join(', ');
 }
 
