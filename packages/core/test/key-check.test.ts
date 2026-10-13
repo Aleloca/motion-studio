@@ -214,3 +214,30 @@ describe('KeyCheckCache', () => {
     expect(cap(r, 'key')!.detail).not.toMatch(/[\u0000-\u001f]/);
   });
 });
+
+describe('KeyCheckCache · real calls learn only about the current key (final review M2)', () => {
+  const vaultOf = (key: string | null) => ({ current: key, get: async function (this: { current: string | null }) { return this.current; } });
+  it('records while the key is unchanged, never after it changed (even without a clear) or after a clear', async () => {
+    const cache = new KeyCheckCache();
+    const vault = vaultOf('sk-one-0123456789');
+    const lease = cache.lease('openai', 'sk-one-0123456789');
+    expect(await cache.recordUse(vault, lease, 'tts', 'ok')).toBe(true);
+    expect(cache.capabilities('openai').tts).toMatchObject({ status: 'ok' });
+    // The key changed under the call (e.g. an environment key), no clear: the fingerprint differs.
+    vault.current = 'sk-two-0123456789';
+    expect(await cache.recordUse(vault, lease, 'images', 'missing', 'model.request')).toBe(false);
+    expect(cache.capabilities('openai').images).toBeUndefined();
+    // Saved back to the same value, but the cache was cleared meanwhile: the old lease is stale.
+    vault.current = 'sk-one-0123456789';
+    cache.clear('openai');
+    expect(await cache.recordUse(vault, lease, 'images', 'missing', 'model.request')).toBe(false);
+    expect(cache.get('openai')).toBeNull();
+    // No key any more: nothing is learned.
+    expect(await cache.recordUse(vaultOf(null), cache.lease('openai', 'sk-one-0123456789'), 'tts', 'ok')).toBe(false);
+  });
+  it('a lease holds a fingerprint, never the key', () => {
+    const lease = new KeyCheckCache().lease('elevenlabs', 'xi-secret-0123456789');
+    expect(JSON.stringify(lease)).not.toContain('xi-secret-0123456789');
+    expect(lease.fingerprint).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  });
+});

@@ -1,3 +1,4 @@
+import { createHmac, randomBytes } from 'node:crypto';
 import { KEY_CAPABILITIES, KEY_PERMISSIONS, type KeyCapability, type KeyCheckResult, type KeyCheckStatus, type ProviderId } from '@motion-studio/shared';
 import { redact } from '../secrets/vault.ts';
 import { t } from '../i18n.ts';
@@ -11,6 +12,14 @@ const PERMISSION_MAX = 64;
 const DETAIL_MAX = 200;
 
 export { KEY_CAPABILITIES, KEY_PERMISSIONS };
+
+// Per process: a fingerprint means nothing outside this run of the core.
+const FINGERPRINT_SALT = randomBytes(32);
+/** A one-way, salted fingerprint of a key: what the cache compares, so it never holds or compares the key itself. */
+export const keyFingerprint = (key: string): string => createHmac('sha256', FINGERPRINT_SALT).update(key).digest('base64url');
+
+/** Which key a real call used (its fingerprint) and what the cache knew then: enough to drop what it learns about an old key. */
+export interface KeyLease { readonly provider: ProviderId; readonly fingerprint: string; readonly generation: number }
 
 type Entry = KeyCheckResult['capabilities'][number];
 const CONTROL = /[\u0000-\u001f\u007f]/g;
@@ -139,6 +148,8 @@ export async function checkKey(deps: HttpDeps, provider: ProviderId, apiKey: str
  */
 export class KeyCheckCache {
   private readonly byProvider = new Map<ProviderId, { checkedAt: string; caps: Map<KeyCapability, Entry> }>();
+  /** Bumped by every `clear` (a key saved or removed): a lease from before no longer records anything. */
+  private readonly generations = new Map<ProviderId, number>();
 
   get(provider: ProviderId): KeyCheckResult | null {
     const cur = this.byProvider.get(provider);
@@ -177,7 +188,30 @@ export class KeyCheckCache {
   }
 
   /** Forgets a provider (its key was replaced or removed). */
-  clear(provider: ProviderId): void { this.byProvider.delete(provider); }
+  clear(provider: ProviderId): void {
+    this.byProvider.delete(provider);
+    this.generations.set(provider, (this.generations.get(provider) ?? 0) + 1);
+  }
+
+  /** Taken when a real call reads its key: `recordUse` then learns only while that key is still the current one. */
+  lease(provider: ProviderId, apiKey: string): KeyLease {
+    return { provider, fingerprint: keyFingerprint(apiKey), generation: this.generations.get(provider) ?? 0 };
+  }
+
+  /**
+   * What a real call learned, recorded only when the key it used is still the vault's (same fingerprint, no `clear` since):
+   * a call that waited for a confirmation, or a queued Generate job, can end after the user replaced the key, and its 401
+   * says nothing about the new key (final review M2). Returns whether it was recorded.
+   */
+  async recordUse(vault: { get(p: ProviderId): Promise<string | null> }, lease: KeyLease, capability: KeyCapability, status: KeyCheckStatus, permission?: string): Promise<boolean> {
+    const same = () => (this.generations.get(lease.provider) ?? 0) === lease.generation;
+    if (!same()) return false;
+    let current: string | null;
+    try { current = await vault.get(lease.provider); } catch { return false; }
+    if (!current || keyFingerprint(current) !== lease.fingerprint || !same()) return false;
+    this.record(lease.provider, capability, status, permission);
+    return true;
+  }
 
   private slot(provider: ProviderId) {
     let cur = this.byProvider.get(provider);
