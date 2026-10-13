@@ -6,6 +6,7 @@ import { api, type GoogleFamily, type GoogleFontSearch } from '../../api.ts';
 import { useT } from '../../i18n.tsx';
 import { Button, Check, cx, Input, Modal, Select, Spinner, Toggle, toast } from '../../ui/index.ts';
 import { message } from '../common.tsx';
+import { useRefreshBefore } from './useRefreshBefore.ts';
 import { specimenFamily, useFontPreview } from '../brandFonts.ts';
 
 /** Quiet time after typing before the catalog is asked. */
@@ -46,6 +47,9 @@ export function GoogleFontPicker({ open, slug, locked, onClose, onAdded }: {
   const [role, setRole] = useState<BrandFont['role']>('body');
   const [adding, setAdding] = useState(false);
   const seq = useRef(0);
+  const lastRefresh = useRef(0);
+  // The preview URLs are signed for a while: the list is asked again before they expire (T1).
+  const refresh = useRefreshBefore(result?.previewExpiresAt);
 
   // Debounced search: only the answer to the latest query counts.
   useEffect(() => {
@@ -57,9 +61,10 @@ export function GoogleFontPicker({ open, slug, locked, onClose, onAdded }: {
         (r) => { if (seq.current === mine) { setResult(r); setError(null); setSearching(false); } },
         (e: unknown) => { if (seq.current === mine) { setError(message(e)); setSearching(false); } },
       );
-    }, text ? SEARCH_MS : 0);
+    }, text && refresh === lastRefresh.current ? SEARCH_MS : 0);
+    lastRefresh.current = refresh;
     return () => clearTimeout(timer);
-  }, [open, text, category]);
+  }, [open, text, category, refresh]);
 
   const pick = (f: GoogleFamily) => {
     setPicked(f);

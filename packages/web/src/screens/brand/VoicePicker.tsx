@@ -7,6 +7,7 @@ import { useT } from '../../i18n.tsx';
 import { href } from '../../routes.ts';
 import { Button, cx, Icon, Input, Modal, Segmented, Spinner, toast } from '../../ui/index.ts';
 import { message } from '../common.tsx';
+import { useRefreshBefore } from './useRefreshBefore.ts';
 
 type Voice = NonNullable<BrandSound['voice']>;
 type Provider = Voice['provider'];
@@ -25,6 +26,9 @@ export function VoicePicker({ open, value, onClose, onPick }: { open: boolean; v
   const [playing, setPlaying] = useState<string | null>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
   const seq = useRef(0);
+  const lastRefresh = useRef(0);
+  // The preview URLs are signed for a while: the list is asked again before they expire (T1).
+  const refresh = useRefreshBefore(list?.previewExpiresAt);
 
   const stop = () => {
     const a = audio.current;
@@ -44,9 +48,10 @@ export function VoicePicker({ open, value, onClose, onPick }: { open: boolean; v
         (r) => { if (seq.current === mine) { setList(r); setError(null); setLoading(false); } },
         (e: unknown) => { if (seq.current === mine) { setList(null); setError(message(e)); setLoading(false); } },
       );
-    }, text ? VOICE_SEARCH_MS : 0);
+    }, text && refresh === lastRefresh.current ? VOICE_SEARCH_MS : 0);
+    lastRefresh.current = refresh;
     return () => clearTimeout(timer);
-  }, [open, provider, text]);
+  }, [open, provider, text, refresh]);
 
   const play = (id: string, url: string) => {
     if (playing === id) { stop(); return; }
