@@ -31,6 +31,8 @@ const voicesJson = () => ({ voices: [
   voice('v5', 'Redirected', 'https://files.elevenlabs.io/redirect.mp3'),
   voice('v6', 'Nopreview', null),
   voice('bad id!', 'Weird', 'https://files.elevenlabs.io/p7.mp3'),
+  voice('v8', 'Rebucketed', 'https://files.elevenlabs.io/to-bucket.mp3'),
+  voice('v9', 'Squatter', 'https://storage.googleapis.com/eleven-public-attacker/p9.mp3'),
 ] });
 const fakeFetch = (async (url: string, init?: RequestInit) => {
   const h = new Headers(init?.headers);
@@ -41,6 +43,7 @@ const fakeFetch = (async (url: string, init?: RequestInit) => {
     const all = voicesJson();
     return new Response(JSON.stringify(s ? { voices: all.voices.filter((v) => v.name.toLowerCase().includes(s.toLowerCase())) } : all), { status: 200 });
   }
+  if (url === 'https://files.elevenlabs.io/to-bucket.mp3') return new Response(null, { status: 302, headers: { location: 'https://storage.googleapis.com/eleven-public-attacker/p.mp3' } });
   if (url === 'https://files.elevenlabs.io/redirect.mp3') return new Response(null, { status: 302, headers: { location: 'https://evil.example/stolen.mp3' } });
   if (url.startsWith('https://files.elevenlabs.io/') || url.startsWith('https://storage.googleapis.com/eleven-public-prod/')) {
     return new Response(new Uint8Array(big ? 2 * 1024 * 1024 + 1 : 8).fill(7), { status: 200, headers: { 'content-type': 'audio/mpeg' } });
@@ -78,11 +81,11 @@ describe('voices routes', () => {
     const r = (await app.inject({ url: '/api/voices?provider=elevenlabs', headers: h })).json();
     expect(cache.capabilities('elevenlabs').voices).toMatchObject({ status: 'ok' });
     expect(r.configured).toBe(true);
-    expect(r.voices.map((v: { id: string }) => v.id)).toEqual(['v1', 'v2', 'v3', 'v4', 'v5', 'v6']);
+    expect(r.voices.map((v: { id: string }) => v.id)).toEqual(['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v8', 'v9']);
     const prev = Object.fromEntries(r.voices.map((v: { id: string; previewUrl: string | null }) => [v.id, v.previewUrl]));
     expect(prev.v1).toMatch(/^\/api\/voices\/preview\/elevenlabs\/v1\?s=\d+\./);
     expect(prev.v2).toMatch(/^\/api\/voices\/preview\/elevenlabs\/v2\?s=/);
-    expect([prev.v3, prev.v4, prev.v6]).toEqual([null, null, null]);
+    expect([prev.v3, prev.v4, prev.v6, prev.v9]).toEqual([null, null, null, null]);
     expect(r.voices[0]).toMatchObject({ name: 'Rachel', labels: { accent: 'british' } });
     expect(JSON.stringify(r)).not.toContain('evil.example');
     expect(JSON.stringify(r)).not.toContain(KEY);
@@ -152,6 +155,13 @@ describe('voices routes', () => {
     big = true;
     expect((await app.inject(list[0]!.previewUrl)).statusCode).toBe(503);
   });
+  it('refuses a preview whose redirect hops to another Google Cloud Storage bucket', async () => {
+    const h = await boot();
+    const list = (await app.inject({ url: '/api/voices?provider=elevenlabs', headers: h })).json().voices as Array<{ id: string; previewUrl: string }>;
+    const r = await app.inject(list.find((v) => v.id === 'v8')!.previewUrl);
+    expect(r.statusCode).toBe(503);
+    expect(calls.filter((c) => c.url.includes('eleven-public-attacker'))).toEqual([]);
+  });
   it('a 401 from ElevenLabs is an answer, not a UI-token failure, never carries the key and feeds the key check', async () => {
     listStatus = 401;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -169,7 +179,26 @@ describe('voices routes', () => {
 
 describe('isElevenLabsPreviewUrl', () => {
   it('accepts https on the ElevenLabs hosts and their public bucket only', () => {
-    for (const ok of ['https://files.elevenlabs.io/a.mp3', 'https://elevenlabs.io/a.mp3', 'https://storage.googleapis.com/eleven-public-prod/a.mp3', 'https://storage.googleapis.com/eleven-public-cdn/a.mp3']) expect(isElevenLabsPreviewUrl(ok)).toBe(true);
+    for (const ok of ['https://files.elevenlabs.io/a.mp3', 'https://elevenlabs.io/a.mp3', 'https://storage.googleapis.com/eleven-public-prod/a.mp3', 'https://storage.googleapis.com/eleven-public-prod/premade/voices/v1/0f1e2d3c.mp3']) expect(isElevenLabsPreviewUrl(ok)).toBe(true);
     for (const bad of ['http://files.elevenlabs.io/a.mp3', 'https://evilelevenlabs.io/a.mp3', 'https://files.elevenlabs.io.evil.example/a', 'https://storage.googleapis.com/other-bucket/a.mp3', 'https://u:p@files.elevenlabs.io/a', 'https://files.elevenlabs.io:8443/a', 'ftp://files.elevenlabs.io/a', 'javascript:alert(1)', '/relative', '']) expect([bad, isElevenLabsPreviewUrl(bad)]).toEqual([bad, false]);
+  });
+  it('pins the bucket to exactly eleven-public-prod (anyone can create a bucket with the same prefix)', () => {
+    for (const bad of [
+      'https://storage.googleapis.com/eleven-public-attacker/a.mp3', 'https://storage.googleapis.com/eleven-public-prodx/a.mp3',
+      'https://storage.googleapis.com/eleven-public-cdn/a.mp3', 'https://storage.googleapis.com/eleven-public-prod', 'https://storage.googleapis.com/eleven-public-prod/',
+      'https://eleven-public-prod.storage.googleapis.com/a.mp3',
+    ]) expect([bad, isElevenLabsPreviewUrl(bad)]).toEqual([bad, false]);
+  });
+  it('refuses an encoded traversal, an encoded slash or a backslash out of the bucket', () => {
+    for (const bad of [
+      'https://storage.googleapis.com/eleven-public-prod/../eleven-public-attacker/a.mp3',
+      'https://storage.googleapis.com/eleven-public-prod/%2e%2e/eleven-public-attacker/a.mp3',
+      'https://storage.googleapis.com/eleven-public-prod/%2E%2E/eleven-public-attacker/a.mp3',
+      'https://storage.googleapis.com/eleven-public-prod%2Fx/a.mp3',
+      'https://storage.googleapis.com/eleven-public-prod/%2F..%2Feleven-public-attacker/a.mp3',
+      'https://storage.googleapis.com/eleven-public-prod/a%2fb.mp3',
+      'https://storage.googleapis.com/eleven-public-prod/a%5Cb.mp3',
+      'https://storage.googleapis.com/eleven-public-prod/..%2Fx.mp3',
+    ]) expect([bad, isElevenLabsPreviewUrl(bad)]).toEqual([bad, false]);
   });
 });
