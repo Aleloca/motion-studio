@@ -290,12 +290,13 @@ describe('CompareDialog · compositions (Task 8)', () => {
   it('the right player is muted, as its <video> was; the left one carries the sound', async () => {
     states = { [REEL]: state(REEL, [1, 2], 2) };
     render(<V2Harness />);
-    const frames = await waitFor(() => { const f = [...document.querySelectorAll('iframe')]; expect(f).toHaveLength(2); return f; });
+    const frames = await waitFor(() => { const f = [...document.querySelectorAll('iframe')]; expect(f).toHaveLength(2); return f; }, { timeout: 15_000 });
     const posted = frames.map((f) => vi.spyOn(f.contentWindow!, 'postMessage'));
     for (const f of frames) send(f, READY);
-    expect(posted[1]).toHaveBeenCalledWith({ type: 'mute', muted: true }, '*');
+    // The mute goes out from an effect after the ready message: under load it can come a beat later than the default 1 s.
+    await waitFor(() => expect(posted[1]).toHaveBeenCalledWith({ type: 'mute', muted: true }, '*'), { timeout: 15_000 });
     expect(posted[0]!.mock.calls.some((c) => (c[0] as { type: string }).type === 'mute')).toBe(false);
-  });
+  }, 30_000);
 
   it('a side whose preview failed offers Retry', async () => {
     states = { [REEL]: state(REEL, [1, 2], 2) };

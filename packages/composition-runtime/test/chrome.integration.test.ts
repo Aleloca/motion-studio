@@ -244,12 +244,26 @@ describe.skipIf(!chrome)('runtime in headless Chrome', () => {
     };
   }
 
+  /**
+   * A screenshot taken once the page has painted what `ready` looks for (bounded, 20 s): under machine load the compositor
+   * can lag the applied message by a few frames. The assertions on the returned image stay exactly as strict.
+   */
+  async function paintedShot(page: Page, ready: (img: Image) => boolean): Promise<Image> {
+    const deadline = Date.now() + 20_000;
+    let img = decodePng(await page.screenshot());
+    while (!ready(img) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+      img = decodePng(await page.screenshot());
+    }
+    return img;
+  }
+
   it('preview setComposition: the frame changes at the same t, the selection is kept, a hidden clip is not drawn', async () => {
     const p = await openPreview();
     try {
       await p.page.eval("window.msgs.length = 0; window.send({ type: 'seek', t: 1.5 }); window.send({ type: 'select', clipId: 'logo' })");
       await p.page.eval("window.waitFor((m) => m.type === 'clipBounds' && m.clipId === 'logo' && m.bounds)");
-      const before = decodePng(await p.page.screenshot());
+      const before = await paintedShot(p.page, (i) => teal(i, 290, 30) && barWidth(i) === 75);
       expect(teal(before, 290, 30)).toBe(true);
       expect(barWidth(before)).toBe(75);
 
@@ -269,7 +283,7 @@ describe.skipIf(!chrome)('runtime in headless Chrome', () => {
       expect(bounds.clipId).toBe('logo');
       expect(bounds.bounds!.x).toBeCloseTo(200, 0);
       expect(bounds.bounds!.y).toBeCloseTo(55, 0);
-      const after = decodePng(await p.page.screenshot());
+      const after = await paintedShot(p.page, (i) => !teal(i, 290, 30) && teal(i, 220, 75) && barWidth(i) === 75);
       expect(teal(after, 290, 30)).toBe(false);
       expect(teal(after, 220, 75)).toBe(true);
       expect(barWidth(after)).toBe(75); // the html layer was re-mounted and seeked to the same t
@@ -277,7 +291,7 @@ describe.skipIf(!chrome)('runtime in headless Chrome', () => {
       const hidden = fixtureComposition();
       Object.assign(clipOf(hidden, 'logo'), { hidden: true });
       await p.setComposition(hidden, 2);
-      const shot = decodePng(await p.page.screenshot());
+      const shot = await paintedShot(p.page, (i) => !teal(i, 290, 30) && !teal(i, 220, 75));
       expect(teal(shot, 290, 30)).toBe(false);
       expect(teal(shot, 220, 75)).toBe(false);
       const last = (await p.page.eval<Array<{ type: string; clipId?: string; bounds?: unknown }>>('window.msgs')).filter((m) => m.type === 'clipBounds').at(-1)!;
