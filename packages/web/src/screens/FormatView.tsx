@@ -624,7 +624,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
         {canComment && ready && !draft && (!video || !playing) ? <CommentHint clock={clock} video={video} /> : null}
         {video && canComment && ready && clipComp ? <ClipPicker clock={clock} comp={clipComp} onPick={commentClip} /> : null}
         {video && canComment && ready && duration > 0 ? (
-          <Button size="sm" variant="outline" className="ms-fv-rangebtn" aria-keyshortcuts="R" onClick={() => { if (playing) pause(); setRangeOpen(true); }}><Icon name="comment" size={13} />{t.web.conversation.rangeComment}</Button>
+          <Button size="sm" variant="outline" className="ms-fv-rangebtn" aria-keyshortcuts="R" disabled={draft !== null} onClick={() => { if (playing) pause(); setRangeOpen(true); }}><Icon name="comment" size={13} />{t.web.conversation.rangeComment}</Button>
         ) : null}
         {rangeOpen ? <RangeDialog open playhead={media.current?.currentTime ?? clock.get().time} duration={duration} onSubmit={(r) => { setRangeOpen(false); commentRange(r); }} onCancel={() => setRangeOpen(false)} /> : null}
         {lock ? <div className="ms-cv-hint ms-lock ms-fv-hint" id="ms-fv-comment-lock" role="status">{c.versions.commentsOn({ n: pinSource })}</div> : null}

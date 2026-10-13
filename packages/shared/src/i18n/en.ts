@@ -334,7 +334,6 @@ export const en = {
     ambiguousNames: (p: { path: string }) => `Two files of the composition folder have the same name once Unicode-normalised (${p.path}): rename one of them`,
     durationOffBrief: (p: { duration: number; target: number }) => `The composition lasts ${p.duration}s, but about ${p.target}s were requested: adjust the duration and the scenes`,
   },
-  /** Render jobs (Task 5): the core renders a v2 version's compositions on demand. */
   /** Direct editing (Phase 10b): refusals of `applyEdit` (key `editor.<name>`) and the lines of an edit summary. */
   editor: {
     locked: (p: { clip: string }) => `Clip ${p.clip} is locked: unlock it to edit it`,
@@ -393,6 +392,7 @@ export const en = {
     htmlNew: (p: { clip: string }) => `Clip ${p.clip}: HTML clips can only be added by the agent`,
     layersChanged: 'The HTML layer files can only be changed by the agent',
   },
+  /** Render jobs (Task 5): the core renders a v2 version's compositions on demand. */
   render: {
     jobLabel: (p: { title: string; n: number }) => `Render · ${p.title} v${p.n}`,
     notV2: (p: { n: number }) => `v${p.n} has no compositions to render: its media files are the result`,

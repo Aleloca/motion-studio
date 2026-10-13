@@ -508,10 +508,12 @@ describe('the format view', () => {
     await userEvent.click(within(d).getByRole('button', { name: 'Continue' }));
     const bubble = await screen.findByRole('group', { name: /Comment 1/ });
     expect(within(bubble).getByText('Comment on 1.0–2.0 s')).toBeTruthy();
+    // While a bubble is open the range button is off, like the R key (Task 10 minor).
+    expect((screen.getByRole('button', { name: 'Comment on range' }) as HTMLButtonElement).disabled).toBe(true);
     await userEvent.type(within(bubble).getByRole('textbox'), 'ok');
     await userEvent.click(within(bubble).getByRole('button', { name: 'Comment' }));
     expect(pending()[0]!.pin).toMatchObject({ timeSec: 1, range: { start: 1, end: 2 } });
-    expect(screen.getByRole('button', { name: 'Comment on range' })).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Comment on range' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('Shift + drag on the transport makes a range comment with a span; a plain drag only seeks', async () => {
