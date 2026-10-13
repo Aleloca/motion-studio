@@ -1,4 +1,4 @@
-import type { Clip } from '@motion-studio/shared';
+import { COMPOSITION_BOUNDS, type Clip } from '@motion-studio/shared';
 import { useT } from '../../../i18n.tsx';
 import { NumberField, Slider } from '../../../ui/index.ts';
 import { Row, Section, type Ctl } from './common.tsx';
@@ -18,9 +18,9 @@ export function AudioSection({ ctl }: { ctl: Ctl }) {
       </Row>
       <Row ctl={ctl} field="volume">
         <div className="ms-insp-vol">
-          <NumberField label={e.fVolume} prefix="VOL" value={volume} min={0} max={2} step={0.05} decimals={2} disabled={ctl.locked} invalid={bad('volume')} describedBy={ctl.errId('volume')}
+          <NumberField label={e.fVolume} prefix="VOL" value={volume} min={0} max={COMPOSITION_BOUNDS.volume} step={0.05} decimals={2} disabled={ctl.locked} invalid={bad('volume')} describedBy={ctl.errId('volume')}
             onChange={(v) => put('volume', { volume: v })} onEnd={ctl.end} />
-          <Slider label={e.fVolume} value={volume} min={0} max={2} step={0.05} disabled={ctl.locked} valueText={`${Math.round(volume * 100)}%`} className="ms-insp-slider" onChange={(v) => put('volume', { volume: v })} />
+          <Slider label={e.fVolume} value={volume} min={0} max={COMPOSITION_BOUNDS.volume} step={0.05} disabled={ctl.locked} valueText={`${Math.round(volume * 100)}%`} className="ms-insp-slider" onChange={(v) => put('volume', { volume: v })} />
         </div>
       </Row>
       <div className="ms-insp-grid2">

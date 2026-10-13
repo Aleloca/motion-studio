@@ -1,4 +1,4 @@
-import type { Clip } from '@motion-studio/shared';
+import { COMPOSITION_BOUNDS, type Clip } from '@motion-studio/shared';
 import { useT } from '../../../i18n.tsx';
 import { ColorField, NumberField } from '../../../ui/index.ts';
 import { Row, Section, type Ctl } from './common.tsx';
@@ -15,7 +15,7 @@ export function ShapeSection({ ctl }: { ctl: Ctl }) {
           groups={colorGroups(e, ctl)} onChange={(hex) => put('fill', { fill: hex })} onEnd={ctl.end} />
       </Row>
       <Row ctl={ctl} field="radius">
-        <NumberField label={e.fRadius} prefix="R" value={clip.props.radius ?? 0} min={0} max={100_000} step={1} disabled={ctl.locked} invalid={ctl.problems('radius', ['radius']).length > 0}
+        <NumberField label={e.fRadius} prefix="R" value={clip.props.radius ?? 0} min={0} max={COMPOSITION_BOUNDS.coord} step={1} disabled={ctl.locked} invalid={ctl.problems('radius', ['radius']).length > 0}
           describedBy={ctl.errId('radius')} onChange={(v) => put('radius', { radius: v })} onEnd={ctl.end} />
       </Row>
     </Section>

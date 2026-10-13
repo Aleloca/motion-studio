@@ -1,3 +1,4 @@
+import { declaredWeights, weightNumber } from './fonts.ts';
 import type { FormatPreset } from '../formats.ts';
 import { compositionProblem, type CompositionProblem } from './problems.ts';
 import { implicitSceneId } from './normalize.ts';
@@ -269,6 +270,13 @@ function semantic(c: Composition, ctx: CompositionContext): { problems: Composit
         const family = k.props.fontFamily ?? c.fonts[0]?.family;
         if (family === undefined) out.push(p('fontMissing', { clip: k.id }));
         else if (!families.has(family.toLowerCase())) out.push(p('unknownFont', { clip: k.id, family }));
+        else {
+          // A weight the family does not declare is drawn synthesised or from a neighbour: a warning, not a problem (one file for
+          // regular and bold is common and renders), and only for families that declare weights at all.
+          const declared = declaredWeights(c.fonts, family);
+          const weight = weightNumber(k.props.fontWeight);
+          if (declared && !declared.includes(weight)) warnings.push(p('fontWeightUndeclared', { clip: k.id, family, weight, declared: declared.join(', ') }));
+        }
       }
       if (k.type === 'html') {
         if (!k.src.startsWith('layers/') || !k.src.toLowerCase().endsWith('.html')) out.push(p('layerNotHtml', { clip: k.id, src: k.src }));

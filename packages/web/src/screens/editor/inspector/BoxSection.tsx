@@ -1,10 +1,10 @@
+import { COMPOSITION_BOUNDS } from '@motion-studio/shared';
 import { useT } from '../../../i18n.tsx';
 import { NumberField, Slider } from '../../../ui/index.ts';
 import { useEditor } from '../editorContext.ts';
 import { Row, Section, type Ctl } from './common.tsx';
 
-/** Schema bounds of the box (composition.schema: coordinates ±100000, size 0..100000, rotation ±3600, opacity 0..1). */
-export const BOX_BOUNDS = { coord: 100_000, size: 100_000, rotation: 3600 } as const;
+const BOX_BOUNDS = COMPOSITION_BOUNDS;
 
 /**
  * X, Y, W, H, rotation and opacity: the keyboard path for every boxed clip (↑ ↓ step, Shift ×10, Enter / Escape). There is no

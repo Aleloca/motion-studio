@@ -9,6 +9,8 @@ export interface Ctl {
   locked: boolean;
   /** Applies an edit; a refusal is kept (translated) for `field`. Edits with a `coalesce` key are one undo step per burst. */
   run(field: string, op: EditOp, coalesce?: string): EditResult;
+  /** Shows a message under `field` as a refusal (cleared by the next successful edit of it). */
+  refuse(field: string, text: string): void;
   /** The end of a burst of edits (Enter, blur, a click): the next edit is an undo step of its own. */
   end(): void;
   /** The texts to show under a field: the last refusal of `field` and the draft's validation problems about `names`. */
@@ -21,8 +23,8 @@ export interface Ctl {
 }
 
 /** One field with its problems underneath. */
-export function Row({ ctl, field, fields = [field], children, className }: { ctl: Ctl; field: string; fields?: string[]; children: ReactNode; className?: string }) {
-  const texts = ctl.problems(field, fields);
+export function Row({ ctl, field, fields = [field], children, className, extra = [] }: { ctl: Ctl; field: string; fields?: string[]; children: ReactNode; className?: string; extra?: string[] }) {
+  const texts = [...ctl.problems(field, fields), ...extra];
   return (
     <div className={cx('ms-insp-row', className)}>
       {children}

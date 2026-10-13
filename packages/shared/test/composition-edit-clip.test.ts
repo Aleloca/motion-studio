@@ -194,3 +194,16 @@ describe('addFont', () => {
     refused(spike, { kind: 'addFont', font: { family: 'Other', src: 'assets/missing.ttf' } }, 'editor.badAsset', { files: FILES });
   });
 });
+
+describe('font weights', () => {
+  const declaring = (c: Composition) => { c.fonts = [{ family: 'SpikeFont', src: 'assets/spikefont.ttf', weight: 400 }]; return c; };
+  it('refuses a weight the family declares it does not have, and accepts a declared one', () => {
+    const base = declaring(copy(spike));
+    refused(base, { kind: 'clipProps', clipId: 'title', props: { fontWeight: 700 } }, 'editor.badWeight');
+    refused(base, { kind: 'clipProps', clipId: 'title', props: { fontWeight: 'bold' } }, 'editor.badWeight');
+    ok(base, { kind: 'clipProps', clipId: 'title', props: { fontWeight: 400 } });
+  });
+  it('leaves families without declared weights free (agent compositions use one file for regular and bold)', () => {
+    ok(spike, { kind: 'clipProps', clipId: 'title', props: { fontWeight: 700 } });
+  });
+});

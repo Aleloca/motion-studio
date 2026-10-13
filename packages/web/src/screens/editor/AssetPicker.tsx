@@ -60,6 +60,7 @@ export function AssetPicker({ open, onClose, kinds, onPick }: AssetPickerProps) 
       setEntries((cur) => [...(cur ?? []).filter((a) => !added.some((n) => n.file === a.file)), ...added]);
       const first = fits(added)[0];
       if (first) await choose(first);
+      else if (added.length > 0) setError(e.pickerWrongKind({ kind: kindLabel }));
     } catch (err) {
       setError(e.pickerUploadFailed({ detail: message(err) }));
     } finally {
@@ -67,7 +68,8 @@ export function AssetPicker({ open, onClose, kinds, onPick }: AssetPickerProps) 
     }
   };
 
-  const kindName = kinds.map((k) => (k === 'image' ? e.kindImageFile : k === 'svg' ? e.kindSvgFile : k === 'video' ? e.kindVideoFile : k === 'audio' ? e.kindAudioFile : k)).join(' / ');
+  const kindLabel = kinds.map((k) => (k === 'image' ? e.kindImageFile : k === 'svg' ? e.kindSvgFile : k === 'video' ? e.kindVideoFile : k === 'audio' ? e.kindAudioFile : k)).join(' / ');
+  const kindName = kindLabel;
   const shown = entries ? fits(entries) : [];
   const working = uploading || busy !== null || staging;
   return (

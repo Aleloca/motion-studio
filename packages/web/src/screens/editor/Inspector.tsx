@@ -51,6 +51,7 @@ function InspectorBody({ clip, locked }: { clip: Clip; locked: boolean }) {
 
   const ctl: Ctl = {
     clip, locked, run, end: actions.endRun, problems,
+    refuse: (field, text) => setRefused((prev) => ({ ...prev, [field]: text })),
     errId: (field) => `insp-${clip.id}-${field}-err`.replace(/[^A-Za-z0-9_-]/g, '_'),
     brandColors: brand.colors, compositionColors: palette, problemsOf: draft.problems,
   };

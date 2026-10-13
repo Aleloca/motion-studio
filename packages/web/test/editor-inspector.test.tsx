@@ -442,6 +442,29 @@ describe('the asset picker', () => {
     expect(screen.queryByText(/lasts 4 s/)).toBeNull();
   });
 
+  it('"Fit clip to video" never makes a zero-length clip: with the trim at or past the video it explains instead', async () => {
+    stageImpl = async () => ({ path: 'assets/lib/clip.mp4', size: 9, kind: 'video', durationSec: 2 });
+    await mount('bgv');
+    typeNum('Trim start (seconds)', '3');
+    const dialog = await open();
+    fireEvent.click(await within(dialog).findByRole('button', { name: /clip\.mp4/ }));
+    const warn = await screen.findByRole('alert');
+    fireEvent.click(within(warn).getByRole('button', { name: 'Fit clip to video' }));
+    expect(ops().some((o) => o.kind === 'clipTiming')).toBe(false);
+    expect(screen.getByText('The trim start (3 s) is at or past the end of this video (2 s): lower the trim start first')).toBeTruthy();
+    expect(clipData('bgv')).toMatchObject({ duration: 6 });
+  });
+
+  it('an upload of the wrong kind says so and picks nothing', async () => {
+    api.uploadFiles.mockResolvedValue({ assets: [asset('assets/song2.mp3', 'audio')] });
+    await mount('photo1');
+    const dialog = await open();
+    await within(dialog).findByRole('button', { name: /new\.png/ });
+    fireEvent.change(within(dialog).getByLabelText('File to upload'), { target: { files: [new File(['x'], 'song2.mp3')] } });
+    expect(await within(dialog).findByText('The uploaded file is a different kind: this clip needs image. Nothing was replaced')).toBeTruthy();
+    expect(stageSpy).not.toHaveBeenCalled();
+  });
+
   it('the warning counts the trim start', async () => {
     stageImpl = async () => ({ path: 'assets/lib/clip.mp4', size: 9, kind: 'video', durationSec: 8 });
     await mount('bgv');
@@ -491,12 +514,35 @@ describe('brand fonts and weights', () => {
     await waitFor(() => expect(clipData('title')).toMatchObject({ props: { fontFamily: 'Playfair' } }));
     expect(stageSpy).toHaveBeenCalledWith({ kind: 'brandFont', id: 'f1' });
     const o = ops();
-    expect(o[0]).toEqual({ kind: 'addFont', font: { family: 'Playfair', src: 'assets/lib/ab12cd34-playfair.ttf' } });
+    // The kit lists three weights for one file: nothing says which the file has, so only 400 is declared.
+    expect(o[0]).toEqual({ kind: 'addFont', font: { family: 'Playfair', src: 'assets/lib/ab12cd34-playfair.ttf', weight: 400 } });
     expect(o[1]).toMatchObject({ kind: 'clipProps', clipId: 'title', props: { fontFamily: 'Playfair' } });
     expect(comp().fonts.map((f) => f.family)).toContain('Playfair');
-    // The kit lists 400, 600 and 800 for it: the weight select offers those.
+    // Only the declared weight is offered, never the kit's other weights.
     fireEvent.click(screen.getByRole('button', { name: /Weight/ }));
-    expect((await screen.findAllByRole('option')).map((x) => x.textContent)).toEqual(['400', '600', '800']);
+    expect((await screen.findAllByRole('option')).map((x) => x.textContent)).toEqual(['400']);
+  });
+
+  it('a brand font the kit lists with one weight declares that weight, and the clip weight moves to it', async () => {
+    fonts = [{ family: 'SpikeFont', weights: [400], source: 'composition', staged: false }, { family: 'Boldy', weights: [700], source: 'brand', brandFontId: 'f3', staged: false }];
+    api.getBrand.mockResolvedValue({ kit: { colors: [], fonts: [{ id: 'f3', family: 'Boldy', role: 'heading', weights: [700], file: 'brand/boldy.ttf', source: { kind: 'manual', ref: null } }] } });
+    stageImpl = async () => ({ path: 'assets/lib/aa-boldy.ttf', size: 1, kind: 'font' });
+    await mount('title');
+    await pickOption(/Font/, /Boldy/);
+    await waitFor(() => expect(clipData('title')).toMatchObject({ props: { fontFamily: 'Boldy', fontWeight: 700 } }));
+    expect(ops()[0]).toMatchObject({ kind: 'addFont', font: { family: 'Boldy', weight: 700 } });
+  });
+
+  it('an undeclared weight is refused at the UI level and the field says so when the clip has one', async () => {
+    const c = comp0();
+    c.fonts = [{ family: 'SpikeFont', src: 'assets/spikefont.ttf', weight: 400 }];
+    (c.tracks.flatMap((t) => t.clips).find((k) => k.id === 'title') as { props: { fontWeight?: number } }).props.fontWeight = 700;
+    await mount('title', c);
+    const row = screen.getByRole('button', { name: /Weight/ }).closest('.ms-insp-row')!;
+    expect(row.querySelector('.ms-insp-err')?.textContent).toBe('Weight 700 is not one this font declares: choose one from the list');
+    const r = peekDraft(KEY)!;
+    const refused = (await import('@motion-studio/shared')).applyEdit(r.composition, { kind: 'clipProps', clipId: 'title', props: { fontWeight: 600 } });
+    expect(refused.ok).toBe(false);
   });
 
   it('a composition font offers only the weights it declares, and a family change moves an unavailable weight to the nearest', async () => {

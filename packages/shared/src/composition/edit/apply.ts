@@ -1,5 +1,6 @@
 import { compositionProblem, type CompositionProblem } from '../problems.ts';
 import { normalizeComposition } from '../normalize.ts';
+import { declaredWeights, weightNumber } from '../fonts.ts';
 import { isCompositionPath } from '../paths.ts';
 import { COMPOSITION_LIMITS, compositionSchema, type Clip, type Composition, type Scene, type Track } from '../schema.ts';
 import type { EditContext, EditOp, EditResult } from './ops.ts';
@@ -231,6 +232,13 @@ function clipProps(w: Composition, op: Extract<EditOp, { kind: 'clipProps' }>): 
       if (!w.fonts.some((f) => f.family.toLowerCase() === family)) refuse('composition.unknownFont', { clip: clip.id, family: String(value) });
     }
     props![key] = value;
+  }
+  // A text weight the family does not declare is refused (the editor never produces one); families without declared weights are free.
+  if (clip.type === 'text' && ('fontWeight' in op.props || 'fontFamily' in op.props)) {
+    const family = clip.props.fontFamily ?? w.fonts[0]?.family;
+    const declared = family ? declaredWeights(w.fonts, family) : null;
+    const weight = weightNumber(clip.props.fontWeight);
+    if (family && declared && !declared.includes(weight)) refuse('editor.badWeight', { clip: clip.id, family, weight, declared: declared.join(', ') });
   }
 }
 
