@@ -129,15 +129,15 @@ export class CreativeStore {
 
   /**
    * Replaces the project path `from` with `to` in every creative's brief `assets`, each creative under its own lock. A
-   * creative that cannot be read is left alone (it cannot be opened either). Returns what each changed brief held before,
+   * creative that cannot be read is left alone (it cannot be opened either). `only` limits it to those creatives. Returns what each changed brief held before,
    * exactly, so `restoreBriefAssets` can put it back. The record of a creative is made BEFORE its write: when a write fails,
    * every creative already changed (and the failing one) is restored before the error goes on.
    */
-  async renameBriefAsset(from: string, to: string): Promise<BriefAssetChange[]> {
+  async renameBriefAsset(from: string, to: string, only?: readonly string[]): Promise<BriefAssetChange[]> {
     const changes: BriefAssetChange[] = [];
     try {
       for (const e of await readdir(this.root, { withFileTypes: true }).catch(() => [])) {
-        if (!e.isDirectory() || !CREATIVE_SLUG_RE.test(e.name)) continue;
+        if (!e.isDirectory() || !CREATIVE_SLUG_RE.test(e.name) || (only && !only.includes(e.name))) continue;
         await this.lock.run(`c:${e.name}`, async () => {
           const current = await readJsonFile(this.file(e.name, 'creative.json'), creativeFileSchema).catch(() => null);
           if (!current?.brief.assets.includes(from)) return;

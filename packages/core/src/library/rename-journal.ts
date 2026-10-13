@@ -2,6 +2,7 @@ import { lstat, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { relativeFileSchema } from '@motion-studio/shared';
 import { z } from 'zod';
+import { CREATIVE_SLUG_RE } from '../creatives/creative-store.ts';
 import { realDirChain } from '../creatives/core-files.ts';
 import { writeJsonFileAtomic } from '../json-file.ts';
 
@@ -17,7 +18,7 @@ export const renameJournalSchema = z.object({
   /** Whether a brand logo or font pointed at the file when the rename started. */
   brandRefs: z.boolean(),
   /** The creatives whose brief listed the file when the rename started. */
-  briefSlugs: z.array(z.string().min(1)).max(10_000),
+  briefSlugs: z.array(z.string().regex(CREATIVE_SLUG_RE)).max(10_000),
 });
 export type RenameJournal = z.infer<typeof renameJournalSchema>;
 
@@ -31,7 +32,7 @@ export async function writeRenameJournal(projectDir: string, journal: RenameJour
 }
 
 export async function removeRenameJournal(projectDir: string): Promise<void> {
-  await rm(journalPathOf(projectDir), { force: true });
+  await rm(journalPathOf(projectDir), { recursive: true, force: true });
 }
 
 /** The leftover journal, null when there is none; `'invalid'` when it exists but cannot be read. */

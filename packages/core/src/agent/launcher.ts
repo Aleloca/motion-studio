@@ -34,6 +34,8 @@ export const GLOB_CHARS = /[[\]*?]/;
 const PROTECTED_PROJECT_DIRS = ['.git', '.claude', '.studio'];
 /** `.gitattributes` too (decisions log 141): it can drive a git filter, so it is tripwired; the core's own maintenance write is noted. */
 const PROTECTED_PROJECT_FILES = ['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json', '.gitattributes'];
+/** The intent journal of an asset rename (decisions log 339): the core reads it back at open, so it is named on its own besides `.studio`. */
+export const RENAME_JOURNAL_FILE = '.studio/rename-journal.json';
 /*
  * Transparency logs the UI shows as facts ("N commands ran in the sandbox", Activity): the core writes them from outside
  * the sandbox, the agent must never alter them. Per creative: CREATIVE_CORE_FILES; per brand proposal: PROPOSAL_LOG.
@@ -142,7 +144,7 @@ export class AgentLauncher {
     const protectedDirs = roots.flatMap((d) => PROTECTED_PROJECT_DIRS.map((n) => join(d, n)));
     // Caller-supplied files get both spellings (plain and realpath) like the project entries.
     const spellings = (f: string) => (f.startsWith(`${i.projectDir}/`) && realDir !== i.projectDir ? [f, join(realDir, f.slice(i.projectDir.length + 1))] : [f]);
-    const protectedFiles = [...(i.protectedFiles ?? []).flatMap(spellings), ...roots.flatMap((d) => PROTECTED_PROJECT_FILES.map((n) => join(d, n)))];
+    const protectedFiles = [...(i.protectedFiles ?? []).flatMap(spellings), ...roots.flatMap((d) => [...PROTECTED_PROJECT_FILES, RENAME_JOURNAL_FILE].map((n) => join(d, n)))];
     protectedDirs.push(...(i.protectedDirs ?? []).flatMap(spellings));
     const logGlobs = roots.flatMap((d) => [
       ...CREATIVE_CORE_FILES.map((n) => `${escapeGlob(join(d, 'creatives'))}/*/${n}`),

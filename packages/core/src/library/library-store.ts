@@ -1,12 +1,12 @@
 import { link, lstat, mkdir, readdir, realpath, rename, rm, unlink } from 'node:fs/promises';
-import { join, relative, sep } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import {
   assetKindOf, assetsFileSchema, referencesFileSchema, relativeFileSchema,
   type AssetEntry, type AssetOrigin, type ReferenceEntry,
 } from '@motion-studio/shared';
 import { JsonFileError, readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import { readAssetMeta, needsMeta } from './asset-meta.ts';
-import { realDirChain } from '../creatives/core-files.ts';
+import { isRealDirChain, realDirChain } from '../creatives/core-files.ts';
 import { BrandStore } from '../brand/brand-store.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
 import { sanitizeFileName } from './upload.ts';
@@ -250,29 +250,53 @@ export class LibraryStore {
   private async recoverRenameUnlocked(): Promise<'completed' | 'rolled-back' | 'discarded' | null> {
     const journal = await readRenameJournal(this.projectDir);
     if (journal === null) return null;
-    if (journal === 'invalid') { await removeRenameJournal(this.projectDir); return 'discarded'; }
+    // The journal sits where a sandboxed agent could once write: it is a hint, never trusted (decisions log 339).
+    const discard = async (why: string): Promise<'discarded'> => {
+      console.warn(`Motion Studio: a rename journal was discarded without changing anything (${why})`);
+      await removeRenameJournal(this.projectDir);
+      return 'discarded';
+    };
+    if (journal === 'invalid') return discard('unreadable');
     const { from, to } = journal;
+    const folder = from.includes('/') ? from.slice(0, from.lastIndexOf('/')) : '';
+    const toFolder = to.includes('/') ? to.slice(0, to.lastIndexOf('/')) : '';
+    const nameOf = (f: string) => f.slice(f.lastIndexOf('/') + 1);
+    if (folder !== toFolder || from === to || assetKindOf(from) !== assetKindOf(to)) return discard('the names are not a rename within one folder');
+    let fromPath: string, toPath: string;
+    try { fromPath = this.resolve('assets', from); toPath = this.resolve('assets', to); }
+    catch { return discard('reserved or invalid names'); }
+    // The same confinement as the rename itself: assets/ and every folder on the way are real directories, no link anywhere.
+    if ((await isRealDirChain(this.projectDir, ['assets', ...(folder ? folder.split('/') : [])])) !== 'ok') return discard('a folder is a link or missing');
+    // Exact names, not lstat: on a case-insensitive volume both spellings of a case-only rename resolve to the one file.
+    const names = new Set(await readdir(dirname(toPath)));
+    const fromHere = names.has(nameOf(from)), toHere = names.has(nameOf(to));
+    const fromInfo = fromHere ? await lstat(fromPath) : null, toInfo = toHere ? await lstat(toPath) : null;
+    if ((fromInfo && !fromInfo.isFile()) || (toInfo && !toInfo.isFile())) return discard('not a regular file');
     const brand = new BrandStore(this.projectDir), creatives = new CreativeStore(this.projectDir);
-    const toPath = this.resolve('assets', to), fromPath = this.resolve('assets', from);
-    const newFile = await lstat(toPath).catch(() => null);
     const assets = await this.listAssets().catch(() => null);
     const retarget = async (a: string, b: string) => {
       if (assets && assets.some((x) => x.file === a) && !assets.some((x) => x.file === b)) await this.writeAssets(assets.map((x) => (x.file === a ? { ...x, file: b } : x)));
     };
-    if (newFile?.isFile()) {
-      // The new name exists: finish. A hard link left behind under the old name is the same file; it goes.
-      const old = await lstat(fromPath).catch(() => null);
-      if (old?.isFile() && old.ino === newFile.ino && old.dev === newFile.dev && from !== to && from.toLowerCase() !== to.toLowerCase()) await unlink(fromPath);
+    // The repair is limited to what the journal recorded the rename affected (brand logos and fonts, those briefs).
+    const refs = async (a: string, b: string) => {
+      if (journal.brandRefs) await brand.renameFileRefs(`assets/${a}`, `assets/${b}`);
+      if (journal.briefSlugs.length) await creatives.renameBriefAsset(`assets/${a}`, `assets/${b}`, journal.briefSlugs);
+    };
+    if (toInfo) {
+      if (fromInfo) {
+        // Both names exist: only the hard link the crash left between link and unlink is a rename in progress.
+        if (!(fromInfo.ino === toInfo.ino && fromInfo.dev === toInfo.dev)) return discard('the old name is a different file');
+        await unlink(fromPath);
+      }
       await retarget(from, to);
-      await brand.renameFileRefs(`assets/${from}`, `assets/${to}`);
-      await creatives.renameBriefAsset(`assets/${from}`, `assets/${to}`);
+      await refs(from, to);
       await removeRenameJournal(this.projectDir);
       return 'completed';
     }
+    if (!fromInfo) return discard('neither name exists');
     // The file never moved: every reference goes back to the old name.
     await retarget(to, from);
-    await brand.renameFileRefs(`assets/${to}`, `assets/${from}`);
-    await creatives.renameBriefAsset(`assets/${to}`, `assets/${from}`);
+    await refs(to, from);
     await removeRenameJournal(this.projectDir);
     return 'rolled-back';
   }

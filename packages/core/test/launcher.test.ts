@@ -274,13 +274,13 @@ describe('AgentLauncher', () => {
         const { args } = await launch({ sandbox: async () => ({ available, reason: 'x' }) }, kind, linked);
         for (const d of [linked, realDir]) {
           expect(args).toEqual(expect.arrayContaining([...protectedDirRules(d, '.git'), ...protectedDirRules(d, '.claude')]));
-          for (const f of ['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json', '.gitattributes']) {
+          for (const f of ['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json', '.gitattributes', '.studio/rename-journal.json']) {
             expect(args).toEqual(expect.arrayContaining(tools.map((t) => `${t}(/${escapeGlob(join(d, f))})`)));
           }
           if (available) {
             const settings = JSON.parse(args[args.indexOf('--settings') + 1]!);
             expect(settings.sandbox.filesystem.denyWrite).toEqual(expect.arrayContaining(
-              ['.git', '.claude', '.studio', 'CLAUDE.md', 'CLAUDE.local.md', '.mcp.json', '.gitattributes'].map((n) => join(d, n)),
+              ['.git', '.claude', '.studio', 'CLAUDE.md', 'CLAUDE.local.md', '.mcp.json', '.gitattributes', '.studio/rename-journal.json'].map((n) => join(d, n)),
             ));
           }
         }

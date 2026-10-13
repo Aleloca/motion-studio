@@ -258,6 +258,123 @@ describe('renaming an asset: crash consistency and partial failures', () => {
     expect((await execCommand('git', ['-C', dir, 'log', '-1', '--format=%s'])).stdout.trim()).toMatch(/interrotta|interrupted/);
   });
 
+  it('a crash partway through the brief loop is finished from the journal: every brief ends on the new path', async () => {
+    const orig = CreativeStore.prototype.renameBriefAsset;
+    const spy = vi.spyOn(CreativeStore.prototype, 'renameBriefAsset').mockImplementationOnce(async function (this: CreativeStore, f, t2) {
+      await orig.call(this, f, t2, [slugs[0]!]); // one brief written, then the process dies
+      throw new RenameInterrupted();
+    });
+    expect(await lib.renameAsset('logo.png', 'new.png').catch((e) => e)).toBeInstanceOf(RenameInterrupted);
+    spy.mockRestore();
+    expect((await new CreativeStore(project).get(slugs[0]!)).brief.assets[0]).toBe('assets/new.png');
+    expect((await new CreativeStore(project).get(slugs[1]!)).brief.assets[0]).toBe('assets/logo.png');
+    expect(await recoverRenameJournal(project)).toBe('completed');
+    await expectConsistent('new.png');
+  });
+
+  it('a crash during the recovery itself is repaired by the next recovery', async () => {
+    expect(await crashAfter('file')).toBeInstanceOf(RenameInterrupted);
+    const spy = vi.spyOn(BrandStore.prototype, 'renameFileRefs').mockRejectedValueOnce(new Error('died'));
+    await expect(recoverRenameJournal(project)).rejects.toThrow('died');
+    spy.mockRestore();
+    expect(await exists('.studio/rename-journal.json')).toBe(true);
+    expect(await recoverRenameJournal(project)).toBe('completed');
+    await expectConsistent('new.png');
+  });
+
+  it('a case-only rename: a crash before the move rolls back, after it completes, and the disk name is the new case', async () => {
+    const before = lib.renameAsset('logo.png', 'Logo.png', { afterStep: (s) => { if (s === 'journal') throw new RenameInterrupted(); } }).catch((e) => e);
+    expect(await before).toBeInstanceOf(RenameInterrupted);
+    expect(await recoverRenameJournal(project)).toBe('rolled-back');
+    await expectConsistent('logo.png');
+    expect((await readdir(join(project, 'assets'))).includes('logo.png')).toBe(true);
+    expect(await lib.renameAsset('logo.png', 'Logo.png', { afterStep: (s) => { if (s === 'file') throw new RenameInterrupted(); } }).catch((e) => e)).toBeInstanceOf(RenameInterrupted);
+    expect(await recoverRenameJournal(project)).toBe('completed');
+    await expectConsistent('Logo.png');
+    const names = await readdir(join(project, 'assets'));
+    expect(names).toContain('Logo.png');
+    expect(names).not.toContain('logo.png');
+  });
+
+  it('the journal is never committed (git exclude)', async () => {
+    const git = new Git();
+    await git.init(project);
+    expect(await crashAfter('file')).toBeInstanceOf(RenameInterrupted);
+    await git.commitAll(project, 'during the window');
+    const files = (await execCommand('git', ['-C', project, 'ls-files'])).stdout;
+    expect(files).not.toContain('rename-journal');
+    expect(files).toContain('assets/');
+  });
+
+  describe('a hostile or damaged journal changes nothing', () => {
+    const plant = (j: unknown) => mkdir(join(project, '.studio'), { recursive: true }).then(() => writeFile(journalPathOf(project), typeof j === 'string' ? j : JSON.stringify({ schemaVersion: 1, startedAt: '2026-10-13T10:00:00.000Z', brandRefs: true, briefSlugs: [], ...(j as object) })));
+    let warn: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => { warn = vi.spyOn(console, 'warn').mockImplementation(() => {}); });
+    afterEach(() => warn.mockRestore());
+    const untouched = async () => {
+      expect((await new BrandStore(project).readKit()).logos[0]!.file).toBe('assets/logo.png');
+      for (const slug of slugs) expect((await new CreativeStore(project).get(slug)).brief.assets).toEqual(['assets/logo.png', 'assets/keep.png']);
+      expect((await lib.listAssets()).map((a) => a.file)).toEqual(['logo.png']);
+      expect(await exists('.studio/rename-journal.json')).toBe(false);
+      expect(warn).toHaveBeenCalled();
+    };
+
+    it('a folder that is a link: nothing outside assets/ is touched', async () => {
+      const outside = await mkdtemp(join(tmpdir(), 'ms-outside '));
+      await writeFile(join(outside, 'b.png'), 'o');
+      const { link } = await import('node:fs/promises');
+      await link(join(outside, 'b.png'), join(outside, 'a.png'));
+      await symlink(outside, join(project, 'assets', 'sub'));
+      await plant({ from: 'sub/a.png', to: 'sub/b.png' });
+      expect(await recoverRenameJournal(project)).toBe('discarded');
+      expect(await readdir(outside)).toEqual(['a.png', 'b.png']);
+      await untouched();
+    });
+
+    it('from and to are two different files: the references are not redirected', async () => {
+      await writeFile(join(project, 'assets', 'other.png'), 'different');
+      await plant({ from: 'logo.png', to: 'other.png' });
+      expect(await recoverRenameJournal(project)).toBe('discarded');
+      expect(await readFile(join(project, 'assets', 'logo.png'), 'utf8')).toBe('x');
+      await untouched();
+    });
+
+    it('a name that is a link is refused', async () => {
+      await writeFile(join(project, 'outside.png'), 'o');
+      await symlink(join(project, 'outside.png'), join(project, 'assets', 'link.png'));
+      await plant({ from: 'logo.png', to: 'link.png' });
+      expect(await recoverRenameJournal(project)).toBe('discarded');
+      await untouched();
+    });
+
+    it.each([
+      ['paths outside assets/', { from: '../project.json', to: '../x.json' }],
+      ['an absolute path', { from: '/etc/hosts', to: '/etc/hosts2' }],
+      ['different folders', { from: 'logo.png', to: 'sub/logo.png' }],
+      ['the metadata file', { from: 'logo.png', to: 'assets.json' }],
+      ['a type change', { from: 'logo.png', to: 'logo.mp4' }],
+      ['the same name', { from: 'logo.png', to: 'logo.png' }],
+      ['neither file existing', { from: 'ghost.png', to: 'ghost2.png' }],
+      ['hostile slugs', { from: 'logo.png', to: 'new.png', briefSlugs: ['../../x'] }],
+    ])('%s', async (_n, j) => {
+      await plant(j);
+      expect(await recoverRenameJournal(project)).toBe('discarded');
+      await untouched();
+    });
+
+    it.each([['not JSON', '{nope'], ['an array', '[]'], ['wrong types', '{"schemaVersion":1,"from":1,"to":2}']])('a malformed journal: %s', async (_n, text) => {
+      await plant(text);
+      expect(await recoverRenameJournal(project)).toBe('discarded');
+      await untouched();
+    });
+
+    it('a journal that is a folder or a link is discarded too', async () => {
+      await mkdir(join(project, '.studio', 'rename-journal.json'), { recursive: true });
+      expect(await recoverRenameJournal(project)).toBe('discarded');
+      expect(warn).toHaveBeenCalled();
+    });
+  });
+
   it('a rename racing updates of the same creatives loses neither', async () => {
     const creatives = new CreativeStore(project);
     const bumps = slugs.flatMap((slug) => [creatives.update(slug, { status: 'ready' }), creatives.update(slug, { error: 'e' })]);
