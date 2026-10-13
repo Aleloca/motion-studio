@@ -65,6 +65,36 @@ Dalla pagina della creatività, **Esporta** copia la versione ★ di ogni format
 ### Aggiungere formati
 Se in una creatività già generata aggiungi formati al brief e premi di nuovo **Genera**, Motion Studio chiede all'agente di aggiungere solo le composizioni mancanti, riusando i sorgenti già presenti in `work/` e lo stesso stile della versione precedente. Un formato collegato a un altro (per esempio TikTok che segue il Reel) non richiede l'agente: condivide la composizione e il render del suo principale. In una creatività fatta prima delle composizioni, aggiungere solo formati collegati continua a non richiedere l'agente: sono copie del video del loro principale, come prima. Aggiungere un altro formato, o rigenerare, converte ogni formato in composizione con l'agente; l'editor del brief lo dice prima di **Salva e rigenera**, perché quel turno costa più token.
 
+### Modificare una composizione direttamente
+Nella vista di un formato, **Modifica** (o **Apri l’editor** su una tavola) apre l'editor sulla versione mostrata. Un formato che ne segue un altro apre la composizione del suo principale, e l'intestazione dice quali formati la condividono. L'editor ha le scene (o, per un'immagine fissa, i livelli) a sinistra, il palco con l'anteprima dal vivo al centro, la timeline sotto un video, e **Ispettore** e **Chat** a destra.
+
+- **Cosa puoi cambiare:**
+  - di un testo, contenuto, carattere (uno della composizione, o un carattere del brand kit che ha un file: il file viene aggiunto alla composizione), peso (solo quelli dichiarati per il carattere), dimensione, colore e allineamento;
+  - posizione, dimensione, rotazione e opacità: con le maniglie sul palco (con aggancio a guide, area sicura e quadro), con i numeri dell'ispettore, o spostando con Alt+frecce;
+  - i tempi: accorciare e spostare le clip sulla timeline (con aggancio, che Alt disattiva), con **Ripple** per spingere le scene successive quando una clip si allunga; l'ordine delle scene, quando ogni clip sta in una sola scena;
+  - le animazioni predefinite di entrata e di uscita;
+  - un file di immagine, immagine vettoriale, video o audio, sostituito dalla libreria del progetto o caricato lì (un video più corto della clip lo segnala e propone "Adatta la clip al video"); inizio del taglio e volume di un video; volume e dissolvenze di una clip audio;
+  - i parametri di un livello HTML;
+  - nascondere e bloccare clip e tracce, e silenziare le tracce audio.
+
+  Nuove clip, livelli, animazioni personalizzate, effetti e nuove scene restano all'agente: chiedili in chat.
+- **Annulla e ripristina:** ⌘Z e ⇧⌘Z (Ctrl su Windows e Linux), mai mentre scrivi in un campo. Un trascinamento, o una raffica di battute, è un passo solo.
+- **Salva:** la pillola "Bozza · N modifiche" offre **Salva come vN** e **Scarta**.
+  - Il salvataggio crea una nuova versione normale (`origin: editor`) la cui richiesta è il riepilogo delle modifiche, per esempio "Direct edits: Title text, font Schibsted Grotesk".
+  - Non parte nessun agente e non si usano token: il registro dei consumi non riceve righe.
+  - Gli altri formati vengono portati; i formati che seguono quello modificato vengono ricontrollati (uno che non può più seguirlo, per esempio perché supera la sua durata massima, viene scollegato e la chat lo dice).
+  - I render vengono portati solo per le composizioni invariate, e le storyboard si rifanno.
+- **La bozza non si perde per sorpresa:**
+  - uscire dall'editor con modifiche non salvate (indietro, un altro formato o versione, un link, un messaggio in chat) chiede "Salva · Scarta · Continua a modificare";
+  - ricaricare o chiudere la pagina chiede la conferma del browser (o dell'app), e un ricaricamento la bozza la perde davvero.
+- **Mentre altri lavorano:**
+  - mentre gira un turno dell'agente o un render della creatività, il salvataggio non è disponibile (anche il core lo rifiuta);
+  - se nel frattempo un turno o un altro salvataggio ha cambiato lo stesso formato, il salvataggio viene rifiutato e la bozza resta; **Riapri sull'ultima versione** la scarta dopo una conferma;
+  - un turno su un altro formato non blocca il salvataggio.
+- **Commenti per l'agente:** oltre che su un punto del quadro, un commento può riguardare una clip (**Commenta la clip**, o `C` con una clip selezionata) o un intervallo di tempo (**Commenta un intervallo**, o `R`, o Maiusc+trascinamento sul righello), nell'editor e nella vista formato. Il chip nella chat nomina la clip o l'intervallo, e il prompt dell'agente riporta id e nome della clip o l'intervallo, con un fotogramma (due per un intervallo).
+
+Una durata cambiata nell'editor viene ancora confrontata con quella del brief: una composizione molto diversa (oltre il maggiore tra 1 s e il 10%) rende la versione incompleta, quindi cambia anche la durata del brief.
+
 Limiti attuali: le build desktop firmate dipendono dai certificati dei maintainer (vedi Rilascio). Su Ubuntu 24.04 e successive l'AppImage può non avviarsi perché il sistema limita i namespace utente non privilegiati (AppArmor, `kernel.apparmor_restrict_unprivileged_userns`), che servono alla sandbox di Chromium: serve un profilo AppArmor per l'app (o, a tuo rischio, disattivare quella restrizione); evita `--no-sandbox`, che toglie l'isolamento della finestra.
 
 ## Sicurezza

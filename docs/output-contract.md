@@ -95,6 +95,45 @@ Details: `docs/superpowers/notes/2026-10-12-phase10a-live-checks.md`.
 
 A ★ whose v2 version has no current render (or whose render file is gone) is rendered first: `POST …/export` enqueues the render job of that version (or joins the active one), waits for it, then copies; the response lists what was rendered (`rendered`). `POST …/export/prepare` starts those renders at once and returns their jobs, so the UI can show their progress before the copy. A render that fails is `409 export-render-failed` and nothing is copied. Legacy versions export their media as before. In the per-format summary `starRender` is `rendered`, `notRendered` or `stale`; `starFileMissing` is only for legacy files (or a follower with no qualifying version).
 
+### Direct edits (the editor, phase 10b)
+
+The editor changes a composition without the agent. Saving (`POST …/creatives/:c/edits`) makes a **normal v2 version**:
+- `manifest.json` v2;
+- in `versions.json`, `origin: "editor"` (absent means `"agent"`), `request` = the summary of the edits ("Direct edits: Title text, font Schibsted Grotesk and 2 more"), `basedOn` = the version edited, no `usage`;
+- a `version` chat entry and a git commit.
+
+Followers, carried primaries and carried renders follow the targeted-turn rules above. The composition goes through the same `validateComposition` (with the format) and `loadComposition` as an agent's, including the check of the duration against the brief's (see "Checks"). On top of those, the core refuses an editor save when:
+- a `src` (of a clip or a font) is neither a file of the base version under `assets/` nor a file staged for this draft in the same preview session;
+- an `html` clip's `src` changes, or an `html` clip is added;
+- the `layers/` files are not byte-identical to the base's;
+- a turn or a render of the creative is queued or running (`409 editor-busy`);
+- the edited format's latest composition is no longer the draft's base (`409 editor-base-changed`; the draft is kept).
+
+**`assets/lib/` is reserved for files the editor adds:** library assets and brand font files picked in the editor.
+- They are named `assets/lib/<first 8 hex of the sha256>-<name>`.
+- While the draft is open they live in the preview session's staging folder, `.studio/cache/editor-staging/<creative>/<id>/assets/lib/`. The composition server serves a session's `assets/lib/…` path from there only when the composition folder has no such file (the version always wins).
+- At save, only the staged files the composition uses are copied into the new version, verified.
+- An agent that edits such a composition keeps these files and their names. It should put its own files elsewhere under `assets/`: the contract does not forbid writing there and no check enforces it. A staged name that a version holds with other content is refused at save (`409 editor-staged-collision`).
+
+**User flags on clips and tracks.** They are optional, and the agent leaves them as they are (the schema's descriptions say so):
+- `hidden` on a clip: it is not drawn, and an audio clip is not heard;
+- `hidden` on a track: its clips are neither drawn nor heard;
+- `muted` on a track: its audio is silent;
+- `locked`: the editor refuses edits of that clip or track; scene operations still carry a locked clip with its scene.
+
+**Comments (pins).** A pin may also carry:
+- `clipId` (up to 64 characters) and `clipName` (up to 200; the name when the comment was made);
+- `range: { start, end }`, in seconds, `0 ≤ start < end`.
+
+Older pins without them are read as before. The prompt line is `- <format> @ <t>s, point (x%, y%)[, clip <id> "<name>"][, range <a>–<b>s]: <note>`. A range comment has two frames in the pin-frame cache: `<n>-<i>.jpg` at its start and `<n>-<i>e.jpg` at its end.
+
+*Verified live (phase 10b, 2026-10-13):*
+- editor saves made versions with `origin: editor` and no agent run;
+- a staged upload and a brand font ended up under `assets/lib/`;
+- Haiku received the clip and range lines above and edited that clip.
+
+Details: `docs/superpowers/notes/2026-10-13-phase10b-live-checks.md`.
+
 ---
 
 ## Version 1: rendered media (legacy)
