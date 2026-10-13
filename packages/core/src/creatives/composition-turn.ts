@@ -9,7 +9,8 @@ import { findPreset } from '../formats/format-catalog.ts';
 import { readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import { checkTargets, compositionDirOf, writeNormalized, type TargetsCheck } from './composition-contract.ts';
 import { confinedSha, copyVerified, versionDirReady, type FollowFailure } from './carry-over.ts';
-import { realDirChain, writeThroughTemp } from './core-files.ts';
+import { isRealDirChain, realDirChain, writeThroughTemp } from './core-files.ts';
+import { noteCoreChange } from '../core-changes.ts';
 
 /**
  * A turn under output contract v2 (Task 5b): what phase 9's carry-over and links become with composition folders.
@@ -248,4 +249,45 @@ export async function copyComposition(creativeDir: string, baseN: number, cc: Ca
 async function baseRenders(creativeDir: string, n: number): Promise<Map<string, string>> {
   const m = await readJsonFile(join(creativeDir, 'outputs', `v${n}`, 'manifest.json'), anyManifestSchema).catch(() => null);
   return new Map(m?.schemaVersion === 2 ? m.renders.map((r) => [`${r.format}:${r.sha256}`, r.renderedAt] as const) : []);
+}
+
+/** `creatives/<slug>/work/editor/`: the core's copies of an editor version's compositions (decisions log 263). */
+export const EDITOR_WORK_DIR = ['work', 'editor'] as const;
+
+/**
+ * Aligns `work/editor/<format>/` with `version` (decisions log 263): after a direct edit the agent's workspace holds an exact
+ * copy of each of that version's own compositions, so the next turn starts from the edited files and not from sources in
+ * `work/` that predate the edits. A copy already identical (same composition hash) is kept; any other entry of
+ * `work/editor/` is removed. A version that is not an editor one leaves no `work/editor/` (a stale copy would mislead).
+ * Runs only while no agent runs (under the creative's lock); `work/` is the agent's folder, so every folder is a real one
+ * (`realDirChain`) and a link anywhere is removed as an entry, never followed. Returns the formats copied there.
+ */
+export async function alignEditorCopies(creativeDir: string, version: VersionEntry | undefined): Promise<string[]> {
+  const editorDir = join(creativeDir, ...EDITOR_WORK_DIR);
+  const st = await lstat(editorDir).catch(() => null);
+  const own = version?.origin === 'editor' ? (version.compositions ?? []).filter((c) => c.followsFormat === undefined) : [];
+  if (own.length === 0) {
+    if (st) { await rm(editorDir, { recursive: true, force: true }); await noteCoreChange(join(creativeDir, 'work')).catch(() => {}); }
+    return [];
+  }
+  if (st && !st.isDirectory()) await rm(editorDir, { force: true });
+  const root = await realDirChain(creativeDir, [...EDITOR_WORK_DIR]);
+  if (!root) return [];
+  const wanted = new Map(own.map((c) => [c.format, c] as const));
+  for (const name of await readdir(root).catch(() => [] as string[])) {
+    const entry = wanted.get(name);
+    const here = join(root, name);
+    const kept = entry !== undefined && (await isRealDirChain(root, [name])) === 'ok' && (await readCompositionFolder(here).catch(() => null))?.hash === entry.hash;
+    if (!kept) await rm(here, { recursive: true, force: true });
+  }
+  const copied: string[] = [];
+  for (const c of own) {
+    const here = join(root, c.format);
+    if (await lstat(here).catch(() => null)) { copied.push(c.format); continue; } // identical, kept above
+    const cc = await carriableComposition(creativeDir, version!, c.format);
+    if (!cc) continue;
+    if ((await copyComposition(creativeDir, version!.n, cc, `${EDITOR_WORK_DIR.join('/')}/${c.format}`)) === 'ok') copied.push(c.format);
+  }
+  await noteCoreChange(root).catch(() => {});
+  return copied;
 }

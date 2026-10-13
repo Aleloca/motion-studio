@@ -28,7 +28,7 @@ import { clearReferenceFrames, conversionPlan, extractReferenceFrames } from './
 import { buildCreativePrompt, type AgentContract, type CreativeContext, type PromptKind } from './prompt.ts';
 import { checkTargets } from './composition-contract.ts';
 import { realDirChain, writeThroughTemp } from './core-files.ts';
-import { acceptedDurationsOf, assembleCompositions, carriableComposition, type CarriedComposition } from './composition-turn.ts';
+import { acceptedDurationsOf, alignEditorCopies, assembleCompositions, carriableComposition, type CarriedComposition } from './composition-turn.ts';
 import { checkedPreviewTimes, type PreviewService } from './previews.ts';
 import { sumUsage } from '../usage/usage-tracker.ts';
 import { currentLocale, t } from '../i18n.ts';
@@ -110,6 +110,21 @@ export const PICK_HASH_BUDGET_MS = 60_000;
 export const PICK_RETRY_AFTER_SEC = 5;
 
 class AgentFailure extends Error {}
+
+/**
+ * The edit summaries of `base` and of the editor versions right before it in its line (`basedOn`), oldest first: what the
+ * user changed directly since the agent's last version (decisions log 263).
+ */
+export function editorLineSummary(versions: readonly VersionEntry[], base: VersionEntry): string {
+  const out: string[] = [];
+  let v: VersionEntry | undefined = base;
+  for (let i = 0; v?.origin === 'editor' && i < versions.length; i++) {
+    out.unshift(v.request);
+    const from: number | null = v.basedOn;
+    v = from === null ? undefined : versions.find((x) => x.n === from);
+  }
+  return out.join('; ');
+}
 
 export class CreativeTurnService {
   private readonly maxAttempts: number;
@@ -454,6 +469,14 @@ export class CreativeTurnService {
           if (!(await lstat(join(creativeDir, d)).catch(() => null))) { await mkdir(join(creativeDir, d), { recursive: true }); madeDirs = true; }
         }
         if (madeDirs) await noteCoreChange(creativeDir);
+        // A base made in the editor (decisions log 263): `work/editor/` holds an exact copy of its compositions, and the prompt
+        // says so; any other base leaves no stale copy there.
+        let directEdit: { version: number; summary: string; copies: string[] } | undefined;
+        if (turnContract === 'compositions') {
+          const copies = await alignEditorCopies(creativeDir, base);
+          if (base?.origin === 'editor') directEdit = { version: base.n, summary: editorLineSummary(versions, base), copies };
+        }
+        const keptDurations = [...accepted].map(([format, durationSec]) => ({ format, durationSec }));
         const earlier = await earlierOutputDirs(creativeDir, n);
         // A hard link made while a version folder was still writable (during its own turn) would stay a writable second
         // name for its files: the sandbox only refuses new links. Detached before the snapshot, so the check below sees
@@ -475,6 +498,8 @@ export class CreativeTurnService {
             attachments: kind === 'iteration' ? attachments : undefined,
             problems, context, locale, sandboxed, contract: turnContract,
             conversion: kind === 'iteration' ? conversion : undefined,
+            directEdit: kind === 'iteration' ? directEdit : undefined,
+            keptDurations: kind === 'iteration' ? keptDurations : undefined,
           });
           const snapshotsBefore = await Promise.all(existing.map((p) => codebaseSnapshot(p)));
           for (const [k, p] of existing.entries()) {

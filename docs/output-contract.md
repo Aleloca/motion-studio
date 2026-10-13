@@ -113,7 +113,13 @@ Followers, carried primaries and carried renders follow the targeted-turn rules 
 - They are named `assets/lib/<first 8 hex of the sha256>-<name>`.
 - While the draft is open they live in the preview session's staging folder, `.studio/cache/editor-staging/<creative>/<id>/assets/lib/`. The composition server serves a session's `assets/lib/…` path from there only when the composition folder has no such file (the version always wins).
 - At save, only the staged files the composition uses are copied into the new version, verified.
-- An agent that edits such a composition keeps these files and their names. It should put its own files elsewhere under `assets/`: the contract does not forbid writing there and no check enforces it. A staged name that a version holds with other content is refused at save (`409 editor-staged-collision`).
+- An agent that edits such a composition keeps these files and their names. It should put its own files elsewhere under `assets/`: the prompt and `.studio/context.md` say so, but no check enforces it. A staged name that a version holds with other content is refused at save (`409 editor-staged-collision`).
+
+**The next agent turn after a direct edit.** It builds on the editor version, never on what the agent remembers:
+- At save, the core copies each own composition of the new version, byte for byte and verified, to `creatives/<slug>/work/editor/<format>/`, and the copy is in the version's commit (a restart from that version finds it). Before every agent turn the core aligns `work/editor/` with the base: an editor base gets its copies (an identical copy is kept), any other base leaves no `work/editor/`.
+- The iteration prompt has a section "Direct edits by the user": `vN contains direct edits by the user: <summary>. Build on vN; keep those edits unless the user asks to change them.` (the summaries of consecutive editor versions in the base's line, oldest first, on one line), the folders to start from (`outputs/vN/compositions/<format-id>/` and the copy in `work/editor/`), that the earlier sources in `work/` predate the edits, and to keep the user's values and the `assets/lib/` files.
+- A duration far from the brief that the base keeps by the user's choice adds "Keep the current duration (…) unless the user explicitly asks for another one".
+- The session is resumed as before (the agent's last session): the prompt section tells it explicitly what changed.
 
 **User flags on clips and tracks.** They are optional, and the agent leaves them as they are (the schema's descriptions say so):
 - `hidden` on a clip: it is not drawn, and an audio clip is not heard;

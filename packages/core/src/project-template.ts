@@ -49,6 +49,7 @@ The full JSON Schema is \`.studio/composition.schema.json\`. In short:
 - **Animations** (times relative to the clip start): a preset \`{ preset, duration, start?, ease? }\` (fadeIn, fadeOut, slideUp, slideDown, slideLeft, slideRight, popIn, scaleIn, wipe), a tween \`{ prop, from, to, duration, start?, ease? }\` or keyframes \`{ prop, keyframes: [{ t: 0..1, v, ease? }], duration, start? }\`. Props: opacity, x, y, scale, rotation, color (hex), blur. Several animations combine (e.g. slideUp + fadeIn).
 - **Paths** are relative to the composition folder, under \`assets/\` or \`layers/\`: no \`..\`, no absolute paths, no URLs.
 - **Fonts**: every font is a local file under \`assets/\` (.woff2, .woff, .ttf, .otf) declared in \`fonts[]\` as \`{ family, src, weight?, style? }\`; Motion Studio loads it with \`FontFace\` before every frame. Text clips name a declared \`fontFamily\`: generic families (sans-serif…) are not allowed. Use the brand fonts (\`fonts_fetch\` downloads Google Fonts into the project \`assets/fonts/\`: copy the file into the composition's \`assets/\`).
+- **\`assets/lib/\`** inside a composition folder is reserved for the files Motion Studio's editor adds (library assets and brand fonts the user picked in a direct edit): keep them and their names when you build on that composition, and never put your own files there. A version made in the editor names it in the next request, and an exact copy of its compositions is in \`creatives/<slug>/work/editor/<format-id>/\`.
 
 ### html layers (\`layers/*.html\`)
 For effects the clips cannot express (particles, charts, custom typography). A layer runs in an isolated frame, in time with the composition:
@@ -70,7 +71,7 @@ Example (a 1080×1080 still):
   "fonts": [{ "family": "Inter", "src": "assets/Inter-700.woff2", "weight": 700 }], "scenes": [],
   "tracks": [
     { "id": "bg", "kind": "visual", "clips": [{ "id": "photo", "type": "image", "src": "assets/photo.jpg", "start": 0, "duration": 0, "props": { "x": 0, "y": 0, "width": 1080, "height": 1080, "fit": "cover" } }] },
-    { "id": "text", "kind": "text", "clips": [{ "id": "title", "type": "text", "start": 0, "duration": 0, "props": { "text": "Book in 3 taps", "x": 80, "y": 820, "width": 920, "fontFamily": "Inter", "fontSize": 96, "color": "#ffffff", "align": "left" } }] }
+    { "id": "text", "kind": "text", "clips": [{ "id": "title", "type": "text", "start": 0, "duration": 0, "props": { "text": "Book in 3 taps", "x": 80, "y": 820, "width": 920, "fontFamily": "Inter", "fontSize": 96, "fontWeight": 700, "color": "#ffffff", "align": "left" } }] }
   ] }
 \`\`\`
 

@@ -137,6 +137,8 @@ describe('CONTEXT_MD', () => {
     const files = new Map([['assets/Inter-700.woff2', { size: 10 }], ['assets/photo.jpg', { size: 10 }]]);
     const r = validateComposition(normalizeComposition(c), { format: { id: 'sq', channel: 'T', name: 'Sq', width: 1080, height: 1080, kind: 'image', extensions: ['png'] }, files });
     expect(r.problems).toEqual([]);
+    // Every text uses a declared weight (no fontWeightUndeclared warning).
+    expect(r.warnings).toEqual([]);
   });
 });
 
@@ -292,9 +294,29 @@ describe('buildCreativePrompt, output contract v2 (Task 5b)', () => {
     const p = buildCreativePrompt({ ...v2, kind: 'first' });
     const start = p.indexOf('```json\n') + 8;
     const c = JSON.parse(p.slice(start, p.indexOf('\n```', start)));
-    const files = new Map(['assets/Inter-700.woff2', 'assets/photo.jpg', 'assets/music.mp3'].map((f) => [f, { size: 10 }] as const));
+    const files = new Map(['assets/Inter-400.woff2', 'assets/Inter-700.woff2', 'assets/photo.jpg', 'assets/music.mp3'].map((f) => [f, { size: 10 }] as const));
     const r = validateComposition(normalizeComposition(c), { format: { id: 'reel', channel: 'T', name: 'Reel', width: 1080, height: 1920, kind: 'video', extensions: ['mp4'] }, files });
     expect(r.problems).toEqual([]);
+    // Inter is declared at 400 and 700: the text without a weight (400) and the bold title use declared weights.
+    expect(r.warnings).toEqual([]);
+  });
+  it('assets/lib/ is reserved in the agent context and in the prompt', () => {
+    expect(buildCreativePrompt({ ...v2, kind: 'first' })).toContain('`assets/lib/` is reserved for the files Motion Studio\'s editor adds');
+    expect(CONTEXT_MD).toContain('`assets/lib/`** inside a composition folder is reserved');
+  });
+  it('direct edits: the exact sentence, the folders, assets/lib, control characters flattened; kept durations', () => {
+    const p = buildCreativePrompt({ ...v2, kind: 'iteration', userText: 'louder', directEdit: { version: 4, summary: 'Direct edits: title\ntext\u2028x', copies: ['instagram-post-1x1'] },
+      keptDurations: [{ format: 'instagram-post-1x1', durationSec: 7.04 }] });
+    expect(p).toContain('## Direct edits by the user\nv4 contains direct edits by the user: Direct edits: title text x. Build on v4; keep those edits unless the user asks to change them.');
+    expect(p).toContain('outputs/v4/compositions/<format-id>/');
+    expect(p).toContain('work/editor/<format-id>/` (instagram-post-1x1)');
+    expect(p).toMatch(/Keep the current duration \(instagram-post-1x1: 7s\) unless the user explicitly asks for another one/);
+    const alone = buildCreativePrompt({ ...v2, kind: 'iteration', userText: 'x', keptDurations: [{ format: 'instagram-post-1x1', durationSec: 7 }] });
+    expect(alone).toContain('## Durations');
+    expect(alone).not.toContain('direct edits by the user');
+    expect(buildCreativePrompt({ ...v2, kind: 'iteration', userText: 'x' })).not.toMatch(/## Durations|## Direct edits/);
+    // Never in a fix prompt: it repeats the problems only.
+    expect(buildCreativePrompt({ ...v2, kind: 'fix', problems: ['p'], directEdit: { version: 4, summary: 's', copies: [] } })).not.toContain('## Direct edits');
   });
   it('the sandbox section of a composition turn has no rendering-engine advice', () => {
     const p = buildCreativePrompt({ ...v2, kind: 'first', sandboxed: true });

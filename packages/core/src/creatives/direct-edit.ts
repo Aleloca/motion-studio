@@ -15,7 +15,7 @@ import type { JobQueue } from '../jobs/job-queue.ts';
 import { CodedError } from '../workspace-store.ts';
 import { versionDirReady } from './carry-over.ts';
 import { compositionDirOf } from './composition-contract.ts';
-import { carriableComposition, copyComposition, type CarriedComposition } from './composition-turn.ts';
+import { alignEditorCopies, carriableComposition, copyComposition, type CarriedComposition } from './composition-turn.ts';
 import { writeThroughTemp } from './core-files.ts';
 import { CreativeStore } from './creative-store.ts';
 import type { CreativeRef, CreativeTurnService } from './creative-turns.ts';
@@ -265,6 +265,9 @@ export class DirectEditService {
         const saved = await this.deps.turns.finishCompositions(ref, store, { creative, targets: [format], carried, carriedComps, links }, presets, latest, n, label, locale, { direct: true });
         const { problems } = saved;
         const status = problems.length === 0 ? 'complete' : 'incomplete';
+        // The agent's workspace gets an exact copy of this version's compositions (decisions log 263), committed with it so a
+        // restart from this version finds it too. Best effort: the next prompt names the version's folders anyway.
+        await alignEditorCopies(creativeDir, { n, origin: 'editor', compositions: saved.compositions } as VersionEntry).catch(() => []);
         const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${n}`);
         const request = body.ops.length > 0 ? describeEdits(body.ops, baseLoaded.composition, locale) : e.summaryNone;
         await store.appendVersion(slug, {

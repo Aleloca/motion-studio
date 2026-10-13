@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { rename, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -344,6 +344,52 @@ describe('saving a draft as a new version', { timeout: 120_000 }, () => {
     expect((await store().get(slug)).status).toBe('ready');
     // The default ★ is the edited version.
     expect(starOf(await store().readVersions(slug), 'test-wide', undefined, undefined).version).toBe(2);
+  });
+
+  it('the next agent turn starts from the edited version: work/editor/ is its exact copy, the prompt names it with the summary, the session is resumed (decisions log 263)', async () => {
+    const slug = await create(['test-wide', 'test-tall']);
+    const v1 = (await versionOf(slug, 1))!;
+    const body = await draft(slug, 1, 'test-wide', (c) => { clip(c, 'title').props.text = 'Goodbye'; }, [{ kind: 'clipProps', clipId: 'title', props: { text: 'Goodbye' } }]);
+    expect((await save(slug, body)).statusCode).toBe(200);
+    const v2 = (await versionOf(slug, 2))!;
+    const work = join(store().dir(slug), 'work', 'editor');
+    const filesOf = (dir: string): string[] => readdirSync(dir, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => relative(dir, join(e.parentPath, e.name))).sort();
+    // Every own composition of v2 is copied byte for byte (the edited one and the carried one).
+    for (const f of ['test-wide', 'test-tall']) {
+      const from = compDir(slug, 2, f);
+      expect(filesOf(join(work, f))).toEqual(filesOf(from));
+      for (const rel of filesOf(from)) expect(readFileSync(join(work, f, rel)).equals(readFileSync(join(from, rel)))).toBe(true);
+    }
+    expect(JSON.parse(readFileSync(join(work, 'test-wide', 'composition.json'), 'utf8')).tracks.flatMap((t: { clips: Array<{ id: string; props?: { text?: string } }> }) => t.clips).find((k: { id: string }) => k.id === 'title').props.text).toBe('Goodbye');
+    // The copy is in the version's commit: a restart from v2 finds it too.
+    const tree = execFileSync('git', ['ls-tree', '-r', '--name-only', v2.commit!], { cwd: projectDir(), encoding: 'utf8' });
+    expect(tree).toContain(`creatives/${slug}/work/editor/test-wide/composition.json`);
+    const runs = agentRuns();
+    await turn(slug, { text: 'Make the music louder' });
+    expect(agentRuns()).toBe(runs + 1);
+    const last = JSON.parse(readFileSync(prompts, 'utf8').trim().split('\n').at(-1)!) as { prompt: string; args: string[] };
+    expect(last.prompt).toContain(`v2 contains direct edits by the user: ${v2.request}. Build on v2; keep those edits unless the user asks to change them.`);
+    expect(last.prompt).toContain(`creatives/${slug}/outputs/v2/compositions/<format-id>/`);
+    expect(last.prompt).toContain(`creatives/${slug}/work/editor/<format-id>/`);
+    expect(last.prompt).toContain('assets/lib/');
+    // Resumed: the session of the agent's last version, now told explicitly what changed.
+    expect(last.args).toContain('--resume');
+    expect(last.args[last.args.indexOf('--resume') + 1]).toBe(v1.sessionId);
+    // v3 is the agent's: the next turn finds no stale copy.
+    expect((await versionOf(slug, 3))!.origin).toBeUndefined();
+    await turn(slug, { text: 'again' });
+    expect(existsSync(work)).toBe(false);
+    expect(JSON.parse(readFileSync(prompts, 'utf8').trim().split('\n').at(-1)!).prompt).not.toContain('direct edits by the user');
+  });
+
+  it('two editor saves in a row: the prompt lists both summaries, oldest first', async () => {
+    const slug = await create(['test-wide']);
+    expect((await save(slug, await draft(slug, 1, 'test-wide', (c) => { clip(c, 'title').props.text = 'One'; }, [{ kind: 'clipProps', clipId: 'title', props: { text: 'One' } }]))).statusCode).toBe(200);
+    expect((await save(slug, await draft(slug, 2, 'test-wide', (c) => { clip(c, 'title').props.color = '#ff0000'; }, [{ kind: 'clipProps', clipId: 'title', props: { color: '#ff0000' } }]))).statusCode).toBe(200);
+    const [v2, v3] = [(await versionOf(slug, 2))!, (await versionOf(slug, 3))!];
+    await turn(slug, { text: 'x' });
+    const prompt = (JSON.parse(readFileSync(prompts, 'utf8').trim().split('\n').at(-1)!) as { prompt: string }).prompt;
+    expect(prompt).toContain(`v3 contains direct edits by the user: ${v2.request}; ${v3.request}. Build on v3;`);
   });
 
   it('a follower that still fits follows the new composition; one that no longer fits is unlinked with a chat warning and keeps its previous version', async () => {
