@@ -103,7 +103,10 @@ function familyStack(value: string): { first: string | null; vars: string[] } {
 
 const SIZE_KEYWORDS = new Set(['xx-small', 'x-small', 'small', 'medium', 'large', 'x-large', 'xx-large', 'xxx-large', 'smaller', 'larger']);
 const SIZE_FUNCTIONS = new Set(['calc', 'clamp', 'min', 'max', 'var']);
-const LENGTH = /^[+]?(?:\d+\.?\d*|\.\d+)(?:px|pt|em|rem|%|vw|vh|ex|ch|pc|cm|mm|in|q|vmin|vmax)$/i;
+/** One way only to split digits (no `\.?` between two digit runs): a run of digits that ends without a unit fails in linear time. */
+const LENGTH = /^\+?(?:\d+(?:\.\d*)?|\.\d+)(?:px|pt|em|rem|%|vw|vh|ex|ch|pc|cm|mm|in|q|vmin|vmax)$/i;
+/** No real font size is longer: anything longer is not tested at all. */
+const MAX_SIZE_TOKEN = 32;
 
 /** End of the top-level token starting at `i` (whitespace ends it outside parentheses and strings); -1 if a parenthesis never closes. */
 function tokenEnd(v: string, i: number): number {
@@ -120,7 +123,7 @@ function tokenEnd(v: string, i: number): number {
 
 /** A font-size token: a length or percentage, a size keyword, or a balanced calc()/clamp()/min()/max()/var(). */
 function isSize(tok: string): boolean {
-  if (LENGTH.test(tok) || SIZE_KEYWORDS.has(tok.toLowerCase())) return true;
+  if (tok.length <= MAX_SIZE_TOKEN && (LENGTH.test(tok) || SIZE_KEYWORDS.has(tok.toLowerCase()))) return true;
   const open = tok.indexOf('(');
   return open > 0 && tok.endsWith(')') && SIZE_FUNCTIONS.has(tok.slice(0, open).toLowerCase());
 }

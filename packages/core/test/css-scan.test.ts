@@ -125,12 +125,15 @@ describe('scanCss · hostile input', () => {
     ['many @font-face rules', fill('@font-face{font-family:F;src:url(/a.woff2) format("woff2"),url(data:x;base64,AAAA)}')],
     ['huge selector lists', fill('h1,p,.btn,a b>c~d+e,') + '{font-family:Z}'],
     ['font shorthands with unclosed calc( chains', fill('p{font: calc( calc( calc( calc( }')],
+    ['font shorthands with long digit runs and no unit', fill(`p{font:${'1'.repeat(900)}z}`)],
+    ['font shorthands with long decimal runs and no unit', fill(`p{font:bold ${'1'.repeat(450)}.${'1'.repeat(450)}z Inter}`)],
     ['font shorthands with long unclosed functions', fill(`h1{font:bold ${'min( '.repeat(200)}x}`)],
     ['one huge declaration', `p{font-family:${fill('A,')}}`],
     ['a mix', fill('@media x{@supports y{.a{font:700 1em/1 "Q",serif;--font-x:"R";font-family:var(--font-x)}}}/**/"\'}')],
   ])('scans 5 MB of %s in under 200 ms', (_name, css) => {
-    // The best of two runs: a GC pause or a busy machine must not make a linear scan look slow.
-    const times = [0, 1].map(() => { const t0 = performance.now(); scanCss(css, base, newScanBudget()); return performance.now() - t0; });
+    // CPU time of this worker process (vitest forks one per file), not wall time: the full suite saturates the machine and
+    // would make a linear scan look slow. A quadratic case costs seconds of CPU and still fails. Best of three runs.
+    const times = [0, 1, 2].map(() => { const t0 = process.cpuUsage(); scanCss(css, base, newScanBudget()); const d = process.cpuUsage(t0); return (d.user + d.system) / 1000; });
     expect(Math.min(...times)).toBeLessThan(200);
   });
 });

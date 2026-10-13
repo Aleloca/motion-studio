@@ -83,15 +83,27 @@ class Inspection {
 
 class Timeout extends Error {}
 
+/** What to do with a redirect target: follow it, refuse it (reported), or skip it quietly (already handled elsewhere). */
+type HopVerdict = 'follow' | 'refuse' | 'skip';
+/** A redirect skipped on purpose (already read, a Google link, a beacon): no request, no warning. */
+class SkippedRedirect extends Error {}
+
 /**
  * GETs `url` through safeFetch and reads at most `max` bytes (the rest is never pulled from the socket). `allowHop` judges
  * every redirect target; `final` is where the response came from (the base for its relative addresses).
  */
-async function getText(deps: InspectDeps, signal: AbortSignal, url: URL, max: number, allowHop: (next: URL) => boolean): Promise<{ text: string; truncated: boolean; final: URL }> {
+async function getText(deps: InspectDeps, signal: AbortSignal, url: URL, max: number, allowHop: (next: URL) => HopVerdict): Promise<{ text: string; truncated: boolean; final: URL }> {
   let final = url;
+  let skipped = false;
   const res = await untilAborted(safeFetch(deps.fetch, url.href, { signal, headers: { accept: 'text/html,text/css,*/*;q=0.5' } }, {
-    provider: url.hostname, allowHttp: true, allowHop: (next) => { if (!allowHop(next)) return false; final = next; return true; },
-  }), signal);
+    provider: url.hostname, allowHttp: true,
+    allowHop: (next) => {
+      const v = allowHop(next);
+      if (v === 'follow') { final = next; return true; }
+      skipped = v === 'skip';
+      return false;
+    },
+  }).catch((e: unknown) => { throw skipped && e instanceof RedirectRefusedError ? new SkippedRedirect() : e; }), signal);
   if (!res.ok) {
     await res.body?.cancel().catch(() => {});
     throw new StatusError(res.status);
@@ -246,7 +258,7 @@ export async function inspectSiteFonts(deps: InspectDeps, url: string): Promise<
   const cancelled = () => deps.signal.aborted;
 
   /** One request; failures become warnings (null). A cancelled job throws. */
-  const fetchText = async (u: URL, max: number, allowHop: (next: URL) => boolean): Promise<{ text: string; final: URL } | null> => {
+  const fetchText = async (u: URL, max: number, allowHop: (next: URL) => HopVerdict): Promise<{ text: string; final: URL } | null> => {
     try {
       const { text, truncated, final } = await getText(deps, signal, u, max, allowHop);
       if (truncated) ins.warn(`big:${u.href}`, m.siteTooLarge({ url: shownUrl(u), mb: max / MB }));
@@ -254,6 +266,7 @@ export async function inspectSiteFonts(deps: InspectDeps, url: string): Promise<
     } catch (e) {
       if (cancelled()) throw e;
       if (ins.timedOut) return null;
+      if (e instanceof SkippedRedirect) return null;
       if (e instanceof RedirectRefusedError) {
         if (!SILENT_HOSTS.has(e.url.hostname.toLowerCase())) ins.warn(`off:${e.url.hostname}`, m.siteOffSite({ url: shownUrl(e.url) }));
       } else if (e instanceof BlockedUrlError) ins.warn(`blocked:${u.href}`, m.siteBlocked({ url: shownUrl(u) }));
@@ -283,7 +296,18 @@ export async function inspectSiteFonts(deps: InspectDeps, url: string): Promise<
     ins.visited.add(key);
     ins.fetched++;
     // Every redirect hop of a stylesheet must stay on the site or on a font CDN (a Google css link is parsed, never fetched).
-    const got = await fetchText(u, SITE_LIMITS.sheetBytes, (next) => !SILENT_HOSTS.has(next.hostname.toLowerCase()) && next.hostname !== 'fonts.googleapis.com' && isAllowedHost(next.hostname, ins.site));
+    const got = await fetchText(u, SITE_LIMITS.sheetBytes, (next) => {
+      const host = next.hostname.toLowerCase();
+      if (SILENT_HOSTS.has(host)) return 'skip';
+      // A redirect to Google Fonts is a Google link like any other: parsed from its URL, never fetched.
+      if (host === 'fonts.googleapis.com') { ins.googleLinks.push(next); return 'skip'; }
+      if (!isAllowedHost(host, ins.site)) return 'refuse';
+      // Several addresses that lead to the same sheet: it is read once (its faces count once toward the budget).
+      const hopKey = next.href.split('#')[0]!;
+      if (ins.visited.has(hopKey)) return 'skip';
+      ins.visited.add(hopKey);
+      return 'follow';
+    });
     if (got === null) return;
     const finalKey = got.final.href.split('#')[0]!;
     ins.visited.add(finalKey);
@@ -294,7 +318,7 @@ export async function inspectSiteFonts(deps: InspectDeps, url: string): Promise<
 
   try {
     // The page may move to another site (acme.com → acmebrand.com): the site and the base become the final ones.
-    const got = await fetchText(page, SITE_LIMITS.pageBytes, () => true);
+    const got = await fetchText(page, SITE_LIMITS.pageBytes, () => 'follow');
     if (got !== null) {
       ins.site = siteOf(got.final.hostname);
       const base = got.final;
@@ -311,7 +335,7 @@ export async function inspectSiteFonts(deps: InspectDeps, url: string): Promise<
   } finally {
     clearTimeout(timer);
   }
-  if (ins.timedOut) ins.warn('timeout', m.siteTimeout({ seconds: Math.max(1, Math.round((deps.timeoutMs ?? SITE_LIMITS.totalMs) / 1000)) }));
+  if (ins.timedOut) ins.warn('timeout', m.siteTimeout({ seconds: Math.round((deps.timeoutMs ?? SITE_LIMITS.totalMs) / 100) / 10 }));
   if (ins.budget.facesTruncated) ins.warn('faces', m.siteTooManyFaces({ max: SITE_LIMITS.maxFaces }));
   const rejected = ins.scans.reduce((n, s) => n + s.scan.rejected, 0);
   if (rejected > 0) ins.warn('rejected', m.siteFontUrlsIgnored({ count: rejected }));

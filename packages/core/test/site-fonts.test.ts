@@ -222,7 +222,7 @@ describe('inspectSiteFonts · hostile sites (Review Focus 1)', () => {
     });
     const out = await inspectSiteFonts(s.deps({ timeoutMs: 100 }), 'https://acme.example/');
     expect(out.fonts.map((f) => f.family)).toEqual(['Fast']);
-    expect(out.warnings).toEqual(['stopped at the time limit (1 s): partial result']);
+    expect(out.warnings).toEqual(['stopped at the time limit (0.1 s): partial result']);
   });
 
   it('stops a body that never ends at the deadline', async () => {
@@ -231,7 +231,7 @@ describe('inspectSiteFonts · hostile sites (Review Focus 1)', () => {
       'acme.example/drip.css': () => new Response(new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new TextEncoder().encode('body{font-family:Drip}')); } }), { status: 200 }),
     });
     const out = await inspectSiteFonts(s.deps({ timeoutMs: 100 }), 'https://acme.example/');
-    expect(out.warnings).toEqual(['stopped at the time limit (1 s): partial result']);
+    expect(out.warnings).toEqual(['stopped at the time limit (0.1 s): partial result']);
   });
 
   it('throws when the job is cancelled', async () => {
@@ -300,6 +300,30 @@ describe('inspectSiteFonts · hostile sites (Review Focus 1)', () => {
     const out = await inspectSiteFonts(s.deps(), 'https://acme.example/');
     expect(out.warnings).toEqual([]);
     expect(byFamily(out.fonts, 'V2')).toMatchObject({ roles: ['body'], files: [{ url: 'https://acme.example/css/v2/fonts/v2.woff2', format: null, weight: null }] });
+  });
+
+  it('keeps the families of a stylesheet that redirects to Google Fonts, without fetching it', async () => {
+    const s = site({
+      'acme.example/': page('<link rel="stylesheet" href="/fonts.css">'),
+      'acme.example/fonts.css': () => redirect('https://fonts.googleapis.com/css2?family=Inter:wght@400;700'),
+    });
+    const out = await inspectSiteFonts(s.deps(), 'https://acme.example/');
+    expect(out.warnings).toEqual([]);
+    expect(byFamily(out.fonts, 'Inter')).toMatchObject({ source: 'google', weights: [400, 700] });
+    expect(s.sent).toEqual(['https://acme.example/', 'https://acme.example/fonts.css']);
+  });
+
+  it('reads a stylesheet once when several addresses redirect to it', async () => {
+    const s = site({
+      'acme.example/': page('<link rel="stylesheet" href="/a.css"><link rel="stylesheet" href="/b.css"><link rel="stylesheet" href="/c.css">'),
+      'acme.example/a.css': () => redirect('/c.css'),
+      'acme.example/b.css': () => redirect('/c.css'),
+      'acme.example/c.css': '@font-face{font-family:Once;src:url(/once.woff2)}',
+    });
+    const out = await inspectSiteFonts(s.deps(), 'https://acme.example/');
+    expect(s.sent.filter((u) => u.endsWith('/c.css'))).toHaveLength(1);
+    expect(out.warnings).toEqual([]);
+    expect(byFamily(out.fonts, 'Once')!.files).toHaveLength(1);
   });
 
   it('never fetches p.typekit.net, even through a redirect, and says nothing about it', async () => {
