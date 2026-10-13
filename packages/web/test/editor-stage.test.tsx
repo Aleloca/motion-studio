@@ -177,6 +177,28 @@ describe('stage handles', () => {
     expect(box().style.transform).toBe('translate(95px, 280px) rotate(0deg)');
   });
 
+  it('move: a drag held still for longer than the coalescing window is still one undo step', async () => {
+    // Live check (Task 11): a busy main thread (or a long rest) split a drag into several undo steps.
+    await mountStage();
+    let now = 1_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const frame = () => act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+    const el = box();
+    fireEvent.pointerDown(el, stagePoint(el, 200, 300));
+    for (const x of [210, 230, 250]) {
+      fireEvent.pointerMove(window, { clientX: x, clientY: 300, pointerId: 1 });
+      await frame();
+      now += 900;
+    }
+    fireEvent.pointerUp(window, { clientX: 250, clientY: 300, pointerId: 1 });
+    expect(clip('card').props.x).toBe(190);
+    expect(peekDraft(KEY)!.ops).toHaveLength(1);
+    expect(peekDraft(KEY)!.past).toHaveLength(1);
+    // The next drag is a step of its own.
+    drag(box(), [200, 300], [210, 300]);
+    expect(peekDraft(KEY)!.past).toHaveLength(2);
+  });
+
   it('a click without movement is not an edit', async () => {
     await mountStage();
     const el = box();

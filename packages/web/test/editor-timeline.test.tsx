@@ -156,6 +156,32 @@ describe('trimming', () => {
     expect(peekDraft(KEY)!.past).toHaveLength(1);
   });
 
+  it('a drag held still for longer than the coalescing window is still one undo step', async () => {
+    // Live check (Task 11): a pause in the middle of a timeline drag split it into several undo steps.
+    await mount();
+    let now = 1_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    // Each move gets its animation frame (an edit), then the pointer is held still for 900 ms.
+    const frame = () => act(async () => { await new Promise((r) => setTimeout(r, 40)); });
+    fireEvent.pointerDown(edge('title', 'end'), { clientX: 200, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 190, pointerId: 1 });
+    await frame();
+    now += 900;
+    fireEvent.pointerMove(window, { clientX: 170, pointerId: 1 });
+    await frame();
+    now += 900;
+    fireEvent.pointerMove(window, { clientX: 150, pointerId: 1 });
+    await frame();
+    fireEvent.pointerUp(window, { clientX: 150, pointerId: 1 });
+    expect(clipData('title')).toMatchObject({ start: 0.2, duration: near(1.3) });
+    expect(ops()).toHaveLength(1);
+    expect(peekDraft(KEY)!.past).toHaveLength(1);
+    // The next drag is a step of its own.
+    now += 100;
+    drag(edge('title', 'end'), 150, [160]);
+    expect(peekDraft(KEY)!.past).toHaveLength(2);
+  });
+
   it('drags the start edge: the end stays', async () => {
     await mount();
     drag(edge('subtitle', 'start'), 60, [80, 100]);

@@ -6,7 +6,8 @@
 //
 // Notes:
 // - Gestures read the state they STARTED with and the total pointer movement (timelineMath.ts); one is applied per
-//   animation frame with a `drag:<clip>` coalescing key and closed with `endRun()`: a drag is one undo step.
+//   animation frame with a `drag:<clip>` coalescing key and `hold` (a rest in the middle does not split it), and closed with
+//   `endRun()`: a drag is one undo step.
 // - Scrubbing the ruler sends `seek` coalesced per animation frame. The runtime can drop a seek that arrives after several
 //   follow-up seeks during a re-mount, so the LAST position is always sent when the scrub ends (and once more shortly after).
 // - Range comments (Task 10): the spans are drawn by the caller through `overlay`; a Shift + drag on the ruler picks a range
@@ -185,7 +186,7 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay, on
   const refuse = useCallback((problem: Parameters<typeof editProblemText>[0]) => setNotice(editProblemText(problem, locale)), [locale]);
   const timing = useCallback((clipId: string, to: Timing, coalesce?: string): boolean => {
     const { actions: a, ripple: rip } = live.current;
-    const res = a.apply({ kind: 'clipTiming', clipId, start: to.start, duration: to.duration, ripple: rip }, coalesce ? { coalesce } : undefined);
+    const res = a.apply({ kind: 'clipTiming', clipId, start: to.start, duration: to.duration, ripple: rip }, coalesce ? { coalesce, hold: true } : undefined);
     if (res.ok) setNotice(''); else refuse(res.problem);
     return res.ok;
   }, [refuse]);
@@ -202,6 +203,8 @@ export function Timeline({ loop, onLoop, speed, onSpeed, marks = [], overlay, on
     if (clip.locked || track.locked) { refuse(lockedProblem(clip)); return; }
     if (live.current.comp.duration === 0) return;
     cleanup.current();
+    // A new gesture never joins the run of an earlier one (its edits hold the run open until the end).
+    live.current.actions.endRun();
     const from: Timing = { start: clip.start, duration: clip.duration };
     const x0 = ev.clientX;
     let latest = { x: x0, alt: ev.altKey };

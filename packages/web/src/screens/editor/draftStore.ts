@@ -11,7 +11,10 @@ import { useMemo, useSyncExternalStore } from 'react';
 
 /** Undo steps kept (the oldest is dropped). */
 export const HISTORY_MAX = 200;
-/** Edits with the same `coalesce` key this close together are one undo step (a drag, typing). */
+/**
+ * Edits with the same `coalesce` key this close together are one undo step (typing, a slider). A pointer gesture passes
+ * `hold`: its edits join whatever the time between them (a drag held still), until `endRun()` closes it.
+ */
 export const COALESCE_MS = 500;
 
 /** One point of the history: what an undo restores. Staged files are not part of it (they stay in the session). */
@@ -41,7 +44,7 @@ export type Draft = {
 export type DraftActions = {
   /** Starts a draft from the editor's view of a version. An existing draft with edits is kept as it is (never lost). */
   open(view: EditorCompositionView, preset?: FormatPreset): void;
-  apply(op: EditOp, opts?: { coalesce?: string }): EditResult;
+  apply(op: EditOp, opts?: { coalesce?: string; hold?: boolean }): EditResult;
   undo(): void;
   redo(): void;
   discard(): void;
@@ -90,14 +93,14 @@ function open(key: string, view: EditorCompositionView, preset: FormatPreset = p
   bump();
 }
 
-function apply(key: string, op: EditOp, opts?: { coalesce?: string }): EditResult {
+function apply(key: string, op: EditOp, opts?: { coalesce?: string; hold?: boolean }): EditResult {
   const d = store.get(key);
   if (!d) return { ok: false, problem: compositionProblem('editor.badOp') };
   const r = applyEdit(d.composition, op, { files: new Set(d.files.keys()) });
   if (!r.ok) return r;
   const now = Date.now();
   const run = runs.get(key);
-  const joins = opts?.coalesce !== undefined && run?.key === opts.coalesce && now - run.at <= COALESCE_MS && d.past.length > 0;
+  const joins = opts?.coalesce !== undefined && run?.key === opts.coalesce && (opts.hold === true || now - run.at <= COALESCE_MS) && d.past.length > 0;
   let past = d.past;
   let ops = d.ops;
   if (joins) {

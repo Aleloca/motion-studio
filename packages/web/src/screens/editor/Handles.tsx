@@ -4,9 +4,9 @@
 // rotation and scale. Everything a drag writes is computed by stageMath.ts from the props the gesture started with: base
 // props only, nothing accumulates, and animations are never baked in.
 //
-// A drag applies one `clipProps` edit per animation frame under the key `drag:<clipId>` (one undo step: the store joins
-// edits with the same key within 500 ms; a heartbeat keeps a held pointer inside that window and the end of the gesture
-// closes the run so the next drag is a step of its own). The playhead is paused for the gesture. While it lasts the box
+// A drag applies one `clipProps` edit per animation frame under the key `drag:<clipId>` with `hold` (one undo step: the store
+// joins them however long the pointer rests; the start and the end of the gesture close the run, so the next drag is a step
+// of its own). The playhead is paused for the gesture. While it lasts the box
 // is drawn from the draft's own props (the runtime re-mounts per edit and its bounds trail behind); afterwards it holds
 // that position until the runtime's bounds catch up, so the box never jumps back.
 import type { Clip } from '@motion-studio/shared';
@@ -24,8 +24,6 @@ export type Guide = { axis: 'x' | 'y'; at: number };
 
 /** After a drag the box stays where the draft put it for at most this long while the runtime's bounds catch up. */
 export const HOLD_MS = 600;
-/** A held pointer re-sends its last edit this often, so the store keeps joining it into the drag's undo step (window: 500 ms). */
-const HEARTBEAT_MS = 250;
 const r2 = (n: number) => Math.round(n * 1e2) / 1e2;
 const CORNERS: readonly Corner[] = ['nw', 'ne', 'se', 'sw'];
 
@@ -46,9 +44,7 @@ interface Gesture {
   lines: GuideLines;
   pending: { x: number; y: number; shift: boolean } | null;
   last: Patch | null;
-  lastAt: number;
   raf: number;
-  heartbeat: number;
 }
 
 const frame = (f: () => void): number => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(f) : window.setTimeout(f, 16));
@@ -77,8 +73,7 @@ function runGesture(g: Gesture, p: { x: number; y: number; shift: boolean }, L: 
   const changed = !unmoved && (Object.keys(patch) as Array<keyof BoxProps>).some((k) => patch[k] !== was[k]);
   if (!changed && g.last === null) return; // a click is not an edit
   g.last = patch;
-  g.lastAt = Date.now();
-  L.actions.apply({ kind: 'clipProps', clipId: g.clipId, props: patch }, { coalesce: `drag:${g.clipId}` });
+  L.actions.apply({ kind: 'clipProps', clipId: g.clipId, props: patch }, { coalesce: `drag:${g.clipId}`, hold: true });
 }
 
 export interface HandlesProps {
@@ -142,7 +137,6 @@ export function Handles({ clip, locked, bounds, scale, origin, onGuides }: Handl
       window.removeEventListener('pointerup', h.end);
       window.removeEventListener('pointercancel', h.end);
       unframe(g.raf);
-      window.clearInterval(g.heartbeat);
       return g;
     };
     const h = {
@@ -184,20 +178,15 @@ export function Handles({ clip, locked, bounds, scale, origin, onGuides }: Handl
     const o = origin();
     if (!o || !(L.scale > 0)) return;
     L.controls.pause();
+    L.actions.endRun(); // a new gesture never joins an earlier one's run
     try { ev.currentTarget.setPointerCapture?.(ev.pointerId); } catch { /* the window listeners still get the gesture */ }
     const start = L.live;
     const base: Point = { x: (start.x + start.width / 2) * L.scale, y: (start.y + start.height / 2) * L.scale };
     const g: Gesture = {
       kind, clipId, start, from: { x: ev.clientX, y: ev.clientY }, scale: L.scale,
       centre: { x: o.left + centre.x, y: o.top + centre.y }, off: { x: centre.x - base.x, y: centre.y - base.y },
-      lines: guideLines(L.comp.width, L.comp.height, L.safe), pending: null, last: null, lastAt: 0, raf: 0, heartbeat: 0,
+      lines: guideLines(L.comp.width, L.comp.height, L.safe), pending: null, last: null, raf: 0,
     };
-    g.heartbeat = window.setInterval(() => {
-      if (g.last && Date.now() - g.lastAt >= HEARTBEAT_MS) {
-        g.lastAt = Date.now();
-        L.actions.apply({ kind: 'clipProps', clipId: g.clipId, props: g.last }, { coalesce: `drag:${g.clipId}` });
-      }
-    }, HEARTBEAT_MS);
     window.clearTimeout(holdTimer.current);
     setHold(null);
     drag.current = g;
