@@ -140,6 +140,7 @@ function BrandPageBody({ slug, live, overview, setOverview, kit, saver, job, ass
 
   const ctx: Ctx = {
     slug, kit, locked, saver, assets, settled, upload, go,
+    reloadAssets: () => { void Promise.resolve().then(() => api.listAssets(slug)).then((r) => setAssets(r.assets)).catch(() => { /* the next load shows them */ }); },
     addLogoFromAsset: (file, background) => addLogos([file], background),
   };
 

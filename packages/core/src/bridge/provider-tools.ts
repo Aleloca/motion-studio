@@ -8,7 +8,7 @@ import { MAX_AGENT_BYTES, readConfinedBytes } from '../brand/agent-guard.ts';
 import { LibraryStore } from '../library/library-store.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { saveGeneratedFile } from '../providers/files.ts';
-import { fetchGoogleFont } from '../providers/google-fonts.ts';
+import { installGoogleFont } from '../providers/google-fonts.ts';
 import { ProviderError } from '../providers/http.ts';
 import { fetchTransport, nodeTransport, type LookupFn, type Transport } from '../providers/safe-fetch.ts';
 import { generateImage, normalizeImageSize } from '../providers/openai-images.ts';
@@ -170,16 +170,8 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       allowed(c, 'fonts_fetch');
       const family = s(a.family, 60);
       const weights = Array.isArray(a.weights) ? a.weights.map(Number) : [];
-      const fonts = await fetchGoogleFont(httpFor(c), { family, weights, italic: a.italic === true });
-      alive(c);
-      const files: string[] = [];
-      try {
-        for (const f of fonts) files.push(await saveGeneratedFile(c.projectDir, 'fonts', `${family.replace(/ /g, '')}-${f.weight}${f.italic ? '-italic' : ''}.${f.ext}`, f.bytes));
-      } catch (e) {
-        await removeFiles(c, files);
-        throw e;
-      }
-      await register(c, files, (f) => ({ file: f, origin: 'website', sourceUrl: `https://fonts.google.com/specimen/${family.replace(/ /g, '+')}`, description: `Font ${family}`, tags: ['font', family] }));
+      const { files } = await installGoogleFont({ http: httpFor(c), projectDir: c.projectDir, media: deps.media, family, weights, italic: a.italic === true, alive: () => alive(c) });
+      deps.broadcast({ type: 'library', project: c.projectSlug });
       return { files: files.map((f) => `assets/${f}`), license: t().providers.fontsLicense };
     },
   };

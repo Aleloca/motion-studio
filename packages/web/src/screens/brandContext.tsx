@@ -17,6 +17,8 @@ export interface Ctx {
   locked: boolean;
   saver: BrandSaver;
   assets: AssetEntry[];
+  /** Reads the library again (the core added files, e.g. a Google Fonts family). */
+  reloadAssets(): void;
   /** True once the first data has rendered: items mounted after that are new and enter with scale(.96) (T14). */
   settled: RefObject<boolean>;
   upload(background: BrandLogo['background']): void;

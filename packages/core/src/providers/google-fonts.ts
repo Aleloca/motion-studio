@@ -1,6 +1,14 @@
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { LibraryStore } from '../library/library-store.ts';
+import type { MediaTools } from '../media/media-tools.ts';
+import { saveGeneratedFile } from './files.ts';
 import { ProviderError, requestBytes, type HttpDeps } from './http.ts';
 import { safeDownload } from './safe-url.ts';
 import { t } from '../i18n.ts';
+
+export const validFamily = (f: string): boolean => /^[A-Za-z0-9 ]{1,60}$/.test(f);
 
 export interface FontFile { weight: number; italic: boolean; url: string }
 
@@ -17,7 +25,7 @@ export function parseFontCss(css: string): FontFile[] {
 
 export async function fetchGoogleFont(deps: HttpDeps, q: { family: string; weights: number[]; italic: boolean }) {
   const family = q.family.trim();
-  if (!/^[A-Za-z0-9 ]{1,60}$/.test(family)) throw new ProviderError(400, t().providers.invalidFontName);
+  if (!validFamily(family)) throw new ProviderError(400, t().providers.invalidFontName);
   const weights = [...new Set(q.weights.length ? q.weights : [400, 700])].filter((w) => Number.isInteger(w) && w >= 100 && w <= 900 && w % 100 === 0).slice(0, 9).sort((a, b) => a - b);
   if (!weights.length) throw new ProviderError(400, t().providers.invalidFontWeights);
   const axis = q.italic ? `ital,wght@${[0, 1].flatMap((i) => weights.map((w) => `${i},${w}`)).join(';')}` : `wght@${weights.join(';')}`;
@@ -40,4 +48,62 @@ export async function fetchGoogleFont(deps: HttpDeps, q: { family: string; weigh
     out.push({ weight: f.weight, italic: f.italic, bytes, ext: f.url.endsWith('.woff2') ? 'woff2' : f.url.endsWith('.otf') ? 'otf' : 'ttf' });
   }
   return out;
+}
+
+export type GoogleFontFile = Awaited<ReturnType<typeof fetchGoogleFont>>[number];
+
+/** Seams of the install (tests inject a failure on one file). */
+export interface InstallIo { save?: typeof saveGeneratedFile }
+
+const fileName = (family: string, f: GoogleFontFile) => `${family.replace(/ /g, '')}-${f.weight}${f.italic ? '-italic' : ''}.${f.ext}`;
+
+/**
+ * The whole set or nothing: every file is written to a temp folder first, then moved into assets/fonts one by one;
+ * a failure on any of them removes the ones already moved. Returns the paths relative to assets/ (`fonts/<name>`).
+ */
+export async function saveGoogleFontFiles(projectDir: string, family: string, fonts: GoogleFontFile[], io: InstallIo = {}): Promise<string[]> {
+  const save = io.save ?? saveGeneratedFile;
+  const stage = await mkdtemp(join(tmpdir(), 'ms-gfont-'));
+  const moved: string[] = [];
+  try {
+    const staged: string[] = [];
+    for (const [i, f] of fonts.entries()) {
+      const path = join(stage, `${i}.bin`);
+      await writeFile(path, f.bytes);
+      staged.push(path);
+    }
+    for (const [i, f] of fonts.entries()) moved.push(await save(projectDir, 'fonts', fileName(family, f), await readFile(staged[i]!)));
+    return moved;
+  } catch (e) {
+    await Promise.all(moved.map((m) => rm(join(projectDir, 'assets', ...m.split('/')), { force: true }).catch(() => {})));
+    throw e;
+  } finally {
+    await rm(stage, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export const fontAttribution = (): string => t().providers.fontsAttribution;
+
+/**
+ * Downloads a family (the one path of the brand picker and of the agent's fonts_fetch), saves all its files and registers
+ * them in the library with origin `google-fonts` and the bytes. Nothing stays behind when any step fails.
+ */
+export async function installGoogleFont(o: {
+  http: HttpDeps; projectDir: string; media: MediaTools; family: string; weights: number[]; italic: boolean; io?: InstallIo; alive?: () => void;
+}): Promise<{ files: string[]; fonts: GoogleFontFile[] }> {
+  const fonts = await fetchGoogleFont(o.http, { family: o.family, weights: o.weights, italic: o.italic });
+  o.alive?.();
+  const family = o.family.trim();
+  const files = await saveGoogleFontFiles(o.projectDir, family, fonts, o.io);
+  try {
+    o.alive?.();
+    await new LibraryStore(o.projectDir, o.media).registerAssets(files.map((file, i) => ({
+      file, origin: 'google-fonts', sourceUrl: `https://fonts.google.com/specimen/${family.replace(/ /g, '+')}`,
+      description: `Font ${family}`, tags: ['font', family], attribution: fontAttribution(), bytes: fonts[i]!.bytes.length,
+    })));
+  } catch (e) {
+    await Promise.all(files.map((m) => rm(join(o.projectDir, 'assets', ...m.split('/')), { force: true }).catch(() => {})));
+    throw e;
+  }
+  return { files, fonts };
 }

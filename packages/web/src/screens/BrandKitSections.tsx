@@ -9,6 +9,7 @@ import { specimenFamily, useFontPreview } from './brandFonts.ts';
 import { hasLogoFor, MANUAL, nextId, normalizeFamily, normalizeHex, parseWeights, ratioText, stageColor, swatchText } from './brandModel.ts';
 import { TYPING_MS } from './brandSave.ts';
 import { useBrand, useAppear, removeWithUndo } from './brandContext.tsx';
+import { GoogleFontPicker } from './brand/GoogleFontPicker.tsx';
 /* ---------- colors ---------- */
 
 const COLOR_ROLES: Array<BrandColor['role']> = ['primary', 'secondary', 'accent', 'background', 'text', 'other'];
@@ -115,8 +116,15 @@ function Swatch({ c, autoOpen }: { c: BrandColor; autoOpen: boolean }) {
 export function Typography() {
   const t = useT();
   const b = t.web.brand;
-  const { kit, locked, saver } = useBrand();
+  const { kit, locked, saver, slug, reloadAssets } = useBrand();
   const [fresh, setFresh] = useState<string | null>(null);
+  const [picker, setPicker] = useState(false);
+  // The core already added the files and the font to the kit; the local kit takes it too so the next save keeps it.
+  const added = (font: BrandFont) => {
+    saver.edit((k) => (k.fonts.some((x) => x.id === font.id) ? { ...k, fonts: k.fonts.map((x) => (x.id === font.id ? font : x)) } : { ...k, fonts: [...k.fonts, font] }));
+    reloadAssets();
+    setFresh(null);
+  };
   const add = () => {
     const id = nextId('font', kit.fonts.map((f) => f.id));
     saver.edit((k) => ({ ...k, fonts: [...k.fonts, { id, family: b.fonts.newFamily, role: 'body', weights: [400], file: null, source: MANUAL }] }));
@@ -127,8 +135,10 @@ export function Typography() {
       <div className="ms-bsection-head">
         <h2 id="ms-btype">{b.nav.type}</h2>
         <span className="ms-faint">{b.fonts.hint}</span>
+        <Button variant="ghost" size="sm" className="ms-blink" disabled={locked} onClick={() => setPicker(true)}>{b.fonts.addGoogle}</Button>
         <Button variant="ghost" size="sm" className="ms-blink" disabled={locked} onClick={add}>{b.fonts.add}</Button>
       </div>
+      <GoogleFontPicker open={picker} slug={slug} locked={locked} onClose={() => setPicker(false)} onAdded={added} />
       {kit.fonts.length ? (
         <div className="ms-bfonts">{kit.fonts.map((f) => <FontCard key={f.id} f={f} autoOpen={fresh === f.id} />)}</div>
       ) : <p className="ms-bempty-line">{b.fonts.empty}</p>}

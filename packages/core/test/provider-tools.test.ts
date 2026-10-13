@@ -118,7 +118,7 @@ describe('fonts_fetch', () => {
   it('downloads the font into assets/fonts without a key', async () => {
     const out = await tools({}, {}).fonts_fetch!(ctx, { family: 'Manrope', weights: [400] }) as { files: string[] };
     expect(out.files).toEqual(['assets/fonts/Manrope-400.ttf']);
-    expect((await new LibraryStore(projectDir, NoMediaTools).listAssets())[0]).toMatchObject({ kind: 'font', origin: 'website', sourceUrl: 'https://fonts.google.com/specimen/Manrope' });
+    expect((await new LibraryStore(projectDir, NoMediaTools).listAssets())[0]).toMatchObject({ kind: 'font', origin: 'google-fonts', bytes: 1, attribution: expect.stringContaining('Google Fonts'), sourceUrl: 'https://fonts.google.com/specimen/Manrope' });
   });
   it('is not available to describe jobs', async () => {
     expect(await tools({}, {}).fonts_fetch!({ ...ctx, kind: 'describe' }, { family: 'Manrope' }).catch(status)).toBe(403);

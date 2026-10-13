@@ -1,4 +1,4 @@
-import type { EditOp, EditorCompositionView, StagedAsset, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, ProviderId, UsageReport, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
+import type { BrandFont, EditOp, EditorCompositionView, StagedAsset, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, ProviderId, UsageReport, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
 
@@ -89,6 +89,9 @@ async function upload<T>(url: string, files: File[]): Promise<T> {
   return parse<T>(res);
 }
 
+/** One family of the Google Fonts catalog as the core serves it (the web never talks to Google). */
+export interface GoogleFamily { family: string; category: string; weights: number[]; italic: boolean; variable: boolean }
+export interface GoogleFontSearch { stale: boolean; fallback: boolean; families: GoogleFamily[] }
 export interface CatalogState { presets: FormatPreset[]; error: string | null; path: string }
 const p = (slug: string) => `/api/projects/${encodeURIComponent(slug)}`;
 const c = (slug: string, creative: string) => `${p(slug)}/creatives/${encodeURIComponent(creative)}`;
@@ -144,6 +147,17 @@ export const api = {
   listReferences: (slug: string) => request<{ references: ReferenceEntry[]; error: string | null }>('GET', `${p(slug)}/references`),
   updateReference: (slug: string, file: string, patch: { note?: string; useForBrand?: boolean }) => request<ReferenceEntry>('PATCH', `${p(slug)}/references/item/${enc(file)}`, patch),
   deleteReference: (slug: string, file: string, opts?: RequestOptions) => request<{ ok: true }>('DELETE', `${p(slug)}/references/item/${enc(file)}`, undefined, opts),
+  searchGoogleFonts: (q: { q?: string; category?: string; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (q.q) params.set('q', q.q);
+    if (q.category) params.set('category', q.category);
+    if (q.limit) params.set('limit', String(q.limit));
+    return request<GoogleFontSearch>('GET', `/api/fonts/google?${params.toString()}`);
+  },
+  /** A woff2 subset served and cached by the core; loaded through FontFace, so no header token (the route is exempt). */
+  googleFontPreviewUrl: (family: string, weight: number) => `/api/fonts/google/preview?family=${encodeURIComponent(family)}&weight=${weight}`,
+  addGoogleFont: (slug: string, body: { family: string; weights: number[]; italic: boolean; role: BrandFont['role'] }) =>
+    request<{ font: BrandFont; files: string[] }>('POST', `${p(slug)}/brand/fonts/google`, body),
   projectFileUrl: (slug: string, rel: string) => `${p(slug)}/files/${enc(rel)}`,
   cancelJob: (id: string) => request<{ cancelled: boolean }>('POST', `/api/jobs/${encodeURIComponent(id)}/cancel`),
   getFormats: () => request<CatalogState>('GET', '/api/formats'),

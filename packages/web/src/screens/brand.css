@@ -326,3 +326,21 @@
 .ms-bauto-pop { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; font-size: 12px; }
 .ms-bauto-pop b { font-weight: 600; }
 .ms-bauto-pop .ms-convo-log { max-height: 320px; }
+
+/* Google Fonts picker. */
+.ms-gf { display: flex; flex-direction: column; gap: 12px; padding: 20px; min-width: 0; }
+.ms-gf-title { margin: 0; font-size: 16px; }
+.ms-gf-bar { display: grid; grid-template-columns: minmax(0, 1fr) 190px; gap: 8px; align-items: center; }
+.ms-gf-body { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 16px; min-height: 280px; }
+.ms-gf-list { display: flex; flex-direction: column; gap: 4px; max-height: 360px; overflow-y: auto; min-width: 0; }
+.ms-gf-row { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; min-width: 0; }
+.ms-gf-row:hover { background: var(--field); }
+.ms-gf-row.ms-on { border-color: var(--accent); background: var(--sel); }
+.ms-gf-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ms-gf-name { font-size: 20px; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-gf-meta { font-size: 11px; }
+.ms-gf-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.ms-gf-weights { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.ms-gf-weight { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.ms-gf-foot { display: flex; justify-content: flex-end; }
+@media (max-width: 640px) { .ms-gf-body { grid-template-columns: minmax(0, 1fr); } .ms-gf-bar { grid-template-columns: minmax(0, 1fr); } }
