@@ -489,6 +489,7 @@ export const it: Messages = {
     deleteReferenceCommit: (p) => `Elimina riferimento ${p.file}`,
     createProjectCommit: (p) => `Crea progetto ${p.name}`,
     updateAssetCommit: (p) => `Aggiorna asset ${p.file}`,
+    renameAssetRecoveredCommit: 'Completa una rinomina di asset interrotta',
     renameAssetCommit: (p) => `Rinomina asset ${p.from} in ${p.to}`,
     updateReferenceCommit: (p) => `Aggiorna riferimento ${p.file}`,
     turnLabel: (p) => `Turno · ${p.name}`,

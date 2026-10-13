@@ -141,3 +141,27 @@ describe.skipIf(!hasFfmpeg)('metadata and waveforms with real ffmpeg', () => {
     expect(await readdir(other)).toEqual([]);
   });
 });
+
+describe('lazy fill without ffmpeg and under concurrency', () => {
+  const old = (file: string, kind: string) => ({ file, kind, origin: 'upload', sourceUrl: null, description: '', tags: [], width: null, height: null, addedAt: '2026-01-01T00:00:00.000Z', attribution: null });
+  it('leaves media unmeasured for a later listing when no media tools exist, and fills a font anyway', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'ms-fill '));
+    await mkdir(join(project, 'assets'));
+    await writeFile(join(project, 'assets', 'p.png'), 'x');
+    await writeFile(join(project, 'assets', 'f.woff2'), 'ff');
+    await writeFile(join(project, 'assets', 'assets.json'), JSON.stringify({ schemaVersion: 1, assets: [old('p.png', 'image'), old('f.woff2', 'font')] }));
+    const r = await new LibraryStore(project, NoMediaTools).fillMissingMeta();
+    expect(r.assets[0]!.bytes).toBeUndefined();
+    expect(r.assets[1]).toMatchObject({ bytes: 2 });
+  });
+  it('concurrent listings read each file once', async () => {
+    const project = await mkdtemp(join(tmpdir(), 'ms-fill2 '));
+    await mkdir(join(project, 'assets'));
+    await writeFile(join(project, 'assets', 'a.png'), 'x');
+    await writeFile(join(project, 'assets', 'assets.json'), JSON.stringify({ schemaVersion: 1, assets: [old('a.png', 'image')] }));
+    let probes = 0;
+    const media: MediaTools = { ...NoMediaTools, available: true, probe: async () => { probes++; return { width: 10, height: 10, durationSec: null }; } };
+    await Promise.all([1, 2, 3].map(() => new LibraryStore(project, media).fillMissingMeta()));
+    expect(probes).toBe(1);
+  });
+});

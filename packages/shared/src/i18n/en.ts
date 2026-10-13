@@ -496,6 +496,7 @@ export const en = {
     deleteReferenceCommit: (p: { file: string }) => `Delete reference ${p.file}`,
     createProjectCommit: (p: { name: string }) => `Create project ${p.name}`,
     updateAssetCommit: (p: { file: string }) => `Update asset ${p.file}`,
+    renameAssetRecoveredCommit: 'Finish an interrupted asset rename',
     renameAssetCommit: (p: { from: string; to: string }) => `Rename asset ${p.from} to ${p.to}`,
     updateReferenceCommit: (p: { file: string }) => `Update reference ${p.file}`,
     turnLabel: (p: { name: string }) => `Turn · ${p.name}`,

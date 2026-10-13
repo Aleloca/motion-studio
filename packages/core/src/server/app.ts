@@ -196,6 +196,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     renderActive: (project, creative) => queue.list().some((j) => (j.state === 'queued' || j.state === 'running') && j.key.startsWith(`render:${root}:${project}:${creative}:`)),
     mediaInUse: normalizer.inUse,
     stagingInUse: (dir) => previewsRef?.stagingInUse(dir) ?? false,
+    git: deps.git,
     ...(deps.mediaCacheMaxBytes !== undefined ? { mediaCacheMaxBytes: deps.mediaCacheMaxBytes } : {}),
   });
   let workspace: WorkspaceStore | null = null;

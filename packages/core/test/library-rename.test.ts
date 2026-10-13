@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,8 +10,12 @@ import { BrandStore } from '../src/brand/brand-store.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { execCommand } from '../src/exec.ts';
 import { Git } from '../src/git.ts';
-import { LibraryStore } from '../src/library/library-store.ts';
+import { LibraryStore, RenameInterrupted, type RenameStep } from '../src/library/library-store.ts';
+import { journalPathOf } from '../src/library/rename-journal.ts';
+import { recoverRenameJournal } from '../src/library/rename-recovery.ts';
 import { NoMediaTools } from '../src/media/media-tools.ts';
+import { WorkspaceStore } from '../src/workspace-store.ts';
+import { recoverWorkspace } from '../src/server/creative-routes.ts';
 import { buildServer } from '../src/server/app.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
@@ -127,6 +131,140 @@ describe('renaming an asset (store)', () => {
     await writeFile(join(project, 'brand', 'brand-kit.json'), '{bad');
     await expect(lib.renameAsset('logo.png', 'later.png')).rejects.toThrow();
     expect(await readFile(join(project, 'assets', 'logo.png'), 'utf8')).toBe('x');
+  });
+});
+
+describe('renaming an asset: crash consistency and partial failures', () => {
+  let project: string;
+  let lib: LibraryStore;
+  let slugs: string[];
+  const src = { kind: 'manual' as const, ref: null };
+  const exists = (rel: string) => stat(join(project, rel)).then(() => true, () => false);
+  beforeEach(async () => {
+    project = await mkdtemp(join(tmpdir(), 'ms-crash è '));
+    await mkdir(join(project, 'assets'), { recursive: true });
+    await mkdir(join(project, 'brand'), { recursive: true });
+    lib = new LibraryStore(project, { ...NoMediaTools, available: true });
+    await writeFile(join(project, 'assets', 'logo.png'), 'x');
+    await lib.registerAssets([{ file: 'logo.png', origin: 'upload' }]);
+    await new BrandStore(project).writeKit({
+      schemaVersion: 1, colors: [], tone: null, dos: [], donts: [], photoStyle: null, fonts: [],
+      logos: [{ id: 'l1', file: 'assets/logo.png', variant: 'primary', background: 'any', source: src }],
+    });
+    const creatives = new CreativeStore(project);
+    slugs = [];
+    for (const title of ['One', 'Two', 'Three']) slugs.push((await creatives.create({ title, brief: brief(['assets/logo.png', 'assets/keep.png']) })).slug);
+  });
+  /** Every registered file, brand reference and brief reference exists on disk; no journal is left. */
+  const expectConsistent = async (name: string) => {
+    const assets = await lib.listAssets();
+    expect(assets.map((a) => a.file), name).toEqual([name]);
+    expect(await exists(`assets/${name}`)).toBe(true);
+    expect((await new BrandStore(project).readKit()).logos.map((l) => l.file)).toEqual([`assets/${name}`]);
+    for (const slug of slugs) expect((await new CreativeStore(project).get(slug)).brief.assets).toEqual([`assets/${name}`, 'assets/keep.png']);
+    expect(await exists('.studio/rename-journal.json')).toBe(false);
+  };
+  const crashAfter = (at: RenameStep) => lib.renameAsset('logo.png', 'new.png', { afterStep: (s) => { if (s === at) throw new RenameInterrupted(); } }).catch((e) => e);
+
+  it('writes the journal before the file moves, with what is affected', async () => {
+    const err = await crashAfter('journal');
+    expect(err).toBeInstanceOf(RenameInterrupted);
+    const journal = JSON.parse(await readFile(journalPathOf(project), 'utf8'));
+    expect(journal).toMatchObject({ from: 'logo.png', to: 'new.png', brandRefs: true });
+    expect(journal.briefSlugs.sort()).toEqual([...slugs].sort());
+    expect(await exists('assets/logo.png')).toBe(true);
+  });
+
+  it.each(['file', 'assets', 'brand', 'briefs'] as const)('a crash after the %s step is finished by the next open: nothing dangles', async (step) => {
+    expect(await crashAfter(step)).toBeInstanceOf(RenameInterrupted);
+    expect(await exists('.studio/rename-journal.json')).toBe(true);
+    expect(await recoverRenameJournal(project)).toBe('completed');
+    await expectConsistent('new.png');
+    expect(await recoverRenameJournal(project)).toBeNull();
+  });
+
+  it('a crash before the file moved is undone: everything keeps the old name', async () => {
+    expect(await crashAfter('journal')).toBeInstanceOf(RenameInterrupted);
+    expect(await recoverRenameJournal(project)).toBe('rolled-back');
+    await expectConsistent('logo.png');
+  });
+
+  it('a hard link left under the old name by a crash between link and unlink is removed on completion', async () => {
+    const { link } = await import('node:fs/promises');
+    expect(await crashAfter('journal')).toBeInstanceOf(RenameInterrupted);
+    await link(join(project, 'assets', 'logo.png'), join(project, 'assets', 'new.png'));
+    expect(await recoverRenameJournal(project)).toBe('completed');
+    await expectConsistent('new.png');
+    expect(await exists('assets/logo.png')).toBe(false);
+  });
+
+  it('finishing commits once; an unreadable journal is discarded; a new rename settles a leftover first', async () => {
+    const git = new Git();
+    await git.init(project);
+    await git.commitAll(project, 'base');
+    expect(await crashAfter('assets')).toBeInstanceOf(RenameInterrupted);
+    expect(await recoverRenameJournal(project, git)).toBe('completed');
+    const log = (await execCommand('git', ['-C', project, 'log', '--format=%s'])).stdout.trim().split('\n');
+    expect(log).toHaveLength(2);
+    await writeFile(journalPathOf(project), '{nope');
+    expect(await recoverRenameJournal(project, git)).toBe('discarded');
+    expect(await exists('.studio/rename-journal.json')).toBe(false);
+    // A leftover from an earlier crash is settled by the next rename itself.
+    expect(await new LibraryStore(project, { ...NoMediaTools, available: true }).renameAsset('new.png', 'newer.png', { afterStep: (s) => { if (s === 'brand') throw new RenameInterrupted(); } }).catch((e) => e)).toBeInstanceOf(RenameInterrupted);
+    const again = await lib.renameAsset('newer.png', 'final.png'); // the leftover new.png -> newer.png is finished first
+    expect(again.entry.file).toBe('final.png');
+    await expectConsistent('final.png');
+  });
+
+  it('an in-process failure leaves no journal and nothing changed', async () => {
+    const spy = vi.spyOn(CreativeStore.prototype, 'renameBriefAsset').mockRejectedValueOnce(new Error('boom'));
+    await expect(lib.renameAsset('logo.png', 'new.png')).rejects.toMatchObject({ status: 500 });
+    spy.mockRestore();
+    await expectConsistent('logo.png');
+  });
+
+  it('a creative that cannot be written restores every brief already changed, exactly, and the file goes back', async () => {
+    const creatives = new CreativeStore(project);
+    // One brief lists both names, so the dedupe of the rename would lose an entry unless the original array is restored.
+    await creatives.update(slugs[0]!, { brief: { ...(await creatives.get(slugs[0]!)).brief, assets: ['assets/new.png', 'assets/logo.png', 'assets/keep.png'] } });
+    const locked = join(project, 'creatives', slugs[2]!);
+    await chmod(locked, 0o555);
+    try {
+      await expect(lib.renameAsset('logo.png', 'new.png')).rejects.toBeTruthy();
+    } finally { await chmod(locked, 0o755); }
+    expect((await creatives.get(slugs[0]!)).brief.assets).toEqual(['assets/new.png', 'assets/logo.png', 'assets/keep.png']);
+    for (const slug of slugs.slice(1)) expect((await creatives.get(slug)).brief.assets).toEqual(['assets/logo.png', 'assets/keep.png']);
+    expect((await new BrandStore(project).readKit()).logos[0]!.file).toBe('assets/logo.png');
+    expect(await exists('assets/logo.png')).toBe(true);
+    expect(await exists('assets/new.png')).toBe(false);
+    expect((await lib.listAssets()).map((a) => a.file)).toEqual(['logo.png']);
+    expect(await exists('.studio/rename-journal.json')).toBe(false);
+  });
+
+  it('opening the workspace finishes an interrupted rename of a project (recoverWorkspace)', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'ms-crash-ws '));
+    const git = new Git();
+    const ws = await WorkspaceStore.open(root, git, { create: true });
+    await ws.createProject({ name: 'Acme' });
+    const dir = ws.projectDir('acme');
+    const l = new LibraryStore(dir, { ...NoMediaTools, available: true });
+    await writeFile(join(dir, 'assets', 'logo.png'), 'x');
+    await l.registerAssets([{ file: 'logo.png', origin: 'upload' }]);
+    await git.commitAll(dir, 'base');
+    await l.renameAsset('logo.png', 'new.png', { afterStep: (s) => { if (s === 'file') throw new RenameInterrupted(); } }).catch(() => {});
+    await recoverWorkspace(ws, () => false, { git });
+    expect((await l.listAssets()).map((a) => a.file)).toEqual(['new.png']);
+    expect(await stat(journalPathOf(dir)).then(() => true, () => false)).toBe(false);
+    expect((await execCommand('git', ['-C', dir, 'log', '-1', '--format=%s'])).stdout.trim()).toMatch(/interrotta|interrupted/);
+  });
+
+  it('a rename racing updates of the same creatives loses neither', async () => {
+    const creatives = new CreativeStore(project);
+    const bumps = slugs.flatMap((slug) => [creatives.update(slug, { status: 'ready' }), creatives.update(slug, { error: 'e' })]);
+    const [renamed] = await Promise.all([lib.renameAsset('logo.png', 'new.png'), ...bumps]);
+    expect(renamed.creatives.length).toBeLessThanOrEqual(3);
+    await expectConsistent('new.png');
+    for (const slug of slugs) expect(await creatives.get(slug)).toMatchObject({ status: 'ready', error: 'e' });
   });
 });
 

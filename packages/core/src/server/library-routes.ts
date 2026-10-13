@@ -1,7 +1,7 @@
 import { rm } from 'node:fs/promises';
 import { join, posix } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import type { ServerMessage } from '@motion-studio/shared';
+import type { AssetEntry, ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import type { BrandService } from '../brand/brand-analysis.ts';
 import { BrandStore } from '../brand/brand-store.ts';
@@ -85,13 +85,20 @@ export function registerLibraryRoutes(app: FastifyInstance, ctx: LibraryRoutesCo
     const { name, ...patch } = parse(assetPatch, req.body);
     let file = req.params['*'];
     let renamed: { from: string; brand: boolean; creatives: string[] } | null = null;
-    if (name !== undefined) {
-      const r = await lib.renameAsset(file, name);
-      if (r.entry.file !== file) renamed = { from: file, brand: r.brand, creatives: r.creatives };
-      file = r.entry.file;
+    let entry: AssetEntry | undefined;
+    try {
+      if (name !== undefined) {
+        const r = await lib.renameAsset(file, name);
+        if (r.entry.file !== file) renamed = { from: file, brand: r.brand, creatives: r.creatives };
+        file = r.entry.file;
+        entry = r.entry;
+      }
+      if (Object.keys(patch).length > 0 || !entry) entry = await lib.updateAsset(file, patch);
+    } finally {
+      // A rename that went through is committed even when the rest of the request fails.
+      if (renamed) await done(projectDir, req.params.slug, t().jobs.renameAssetCommit({ from: renamed.from, to: file }), renamed.brand).catch(() => {});
     }
-    const entry = Object.keys(patch).length > 0 || !renamed ? await lib.updateAsset(file, patch) : (await lib.listAssets()).find((a) => a.file === file)!;
-    await done(projectDir, req.params.slug, renamed ? t().jobs.renameAssetCommit({ from: renamed.from, to: entry.file }) : t().jobs.updateAssetCommit({ file: entry.file }), renamed?.brand);
+    if (!renamed) await done(projectDir, req.params.slug, t().jobs.updateAssetCommit({ file: entry!.file }));
     for (const creative of renamed?.creatives ?? []) ctx.broadcast({ type: 'creative', project: req.params.slug, creative });
     return entry;
   });

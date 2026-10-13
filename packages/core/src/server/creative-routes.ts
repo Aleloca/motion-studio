@@ -1,3 +1,5 @@
+import type { Git } from '../git.ts';
+import { recoverRenameJournal } from '../library/rename-recovery.ts';
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
@@ -129,6 +131,8 @@ export interface RecoverOptions {
   mediaCacheMaxBytes?: number;
   /** Editor staging folders a live preview session uses (the sweep leaves them). */
   stagingInUse?: (dir: string) => boolean;
+  /** Commits what finishing an interrupted asset rename changed. */
+  git?: Git;
 }
 
 export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: string) => boolean = () => false, ro: RecoverOptions = {}): Promise<void> {
@@ -144,6 +148,8 @@ export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: st
       skipCreative: (slug) => ro.renderActive?.(p.slug, slug) ?? false,
       media: { ...(ro.mediaInUse ? { inUse: ro.mediaInUse } : {}), ...(ro.mediaCacheMaxBytes !== undefined ? { maxBytes: ro.mediaCacheMaxBytes } : {}) },
     }).catch((err: Error) => console.warn(`Motion Studio: render cleanup failed in project ${p.slug}: ${err.message}`));
+    // A rename of a library asset a crash interrupted: finished (or undone) before anything else reads the project.
+    await recoverRenameJournal(dir, ro.git).catch((err: Error) => console.warn(`Motion Studio: asset rename recovery failed in project ${p.slug}: ${err.message}`));
     await sweepStoryboardTemps(dir).catch(() => []);
     // The derived caches (storyboards, pin frames, agent originals, reference frames): old and over-cap version folders.
     await sweepDerivedCaches(dir, { skipCreative: (slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug)) }).catch(() => []);

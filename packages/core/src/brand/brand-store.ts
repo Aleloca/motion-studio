@@ -123,6 +123,12 @@ export class BrandStore {
     return this.lock.run('brand-kit.json', async () => this.writeKitUnlocked(updater(await this.readKit())));
   }
 
+  /** Whether a logo or a font of the kit uses project file `path` (a corrupt kit refuses with JsonFileError). */
+  async usesFile(path: string): Promise<boolean> {
+    const kit = await this.readKit();
+    return kit.logos.some((l) => l.file === path) || kit.fonts.some((f) => f.file === path);
+  }
+
   /**
    * Points the logos and fonts that use project file `from` (e.g. `assets/logo.png`) at `to`, under the kit's lock. Returns
    * whether anything changed; a corrupt kit refuses (JsonFileError) before anything is written.

@@ -33,6 +33,7 @@ export function AssetDetail({ slug, asset: x, describing, busy, onClose, onSaved
   const [peaks, setPeaks] = useState<number[] | null>(null);
   // The waveform of an audio file, from the core (cached there); a failure leaves the plain bar.
   useEffect(() => {
+    setPeaks(null);
     if (x.kind !== 'audio') return;
     let alive = true;
     Promise.resolve().then(() => api.assetWaveform(slug, x.file)).then((w) => { if (alive) setPeaks(w.peaks); }).catch(() => { /* plain bar */ });

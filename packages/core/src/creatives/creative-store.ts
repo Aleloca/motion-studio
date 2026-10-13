@@ -27,6 +27,9 @@ const localDay = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pa
 /** Per-creative and create locks for the whole process, keyed by the creatives folder: every store instance of a project shares them. */
 const creativeLocks = new KeyedMutex();
 
+/** What a creative's brief `assets` held before a rename changed it. */
+export interface BriefAssetChange { slug: string; before: string[] }
+
 export class CreativeStore {
   private readonly root: string;
   private readonly lock = { run: <T>(key: string, fn: () => Promise<T>): Promise<T> => creativeLocks.run(`${this.root}\0${key}`, fn) };
@@ -113,26 +116,58 @@ export class CreativeStore {
     });
   }
 
+  /** The creatives whose brief lists project path `path`. Unreadable ones are left out (they cannot be opened either). */
+  async briefSlugsUsing(path: string): Promise<string[]> {
+    const out: string[] = [];
+    for (const e of await readdir(this.root, { withFileTypes: true }).catch(() => [])) {
+      if (!e.isDirectory() || !CREATIVE_SLUG_RE.test(e.name)) continue;
+      const c = await readJsonFile(this.file(e.name, 'creative.json'), creativeFileSchema).catch(() => null);
+      if (c?.brief.assets.includes(path)) out.push(e.name);
+    }
+    return out;
+  }
+
   /**
    * Replaces the project path `from` with `to` in every creative's brief `assets`, each creative under its own lock. A
-   * creative that cannot be read is left alone (it cannot be opened either). Returns the slugs changed.
+   * creative that cannot be read is left alone (it cannot be opened either). Returns what each changed brief held before,
+   * exactly, so `restoreBriefAssets` can put it back. The record of a creative is made BEFORE its write: when a write fails,
+   * every creative already changed (and the failing one) is restored before the error goes on.
    */
-  async renameBriefAsset(from: string, to: string): Promise<string[]> {
-    const changed: string[] = [];
-    const entries = await readdir(this.root, { withFileTypes: true }).catch(() => []);
-    for (const e of entries) {
-      if (!e.isDirectory() || !CREATIVE_SLUG_RE.test(e.name)) continue;
-      await this.lock.run(`c:${e.name}`, async () => {
-        const current = await readJsonFile(this.file(e.name, 'creative.json'), creativeFileSchema).catch(() => null);
-        if (!current?.brief.assets.includes(from)) return;
-        const assets = [...new Set(current.brief.assets.map((a) => (a === from ? to : a)))];
-        const parsed = creativeFileSchema.safeParse({ ...current, brief: { ...current.brief, assets } });
-        if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidCreative({ detail: issuesText(parsed.error, currentLocale()) }));
-        await writeJsonFileAtomic(this.file(e.name, 'creative.json'), parsed.data);
-        changed.push(e.name);
-      });
+  async renameBriefAsset(from: string, to: string): Promise<BriefAssetChange[]> {
+    const changes: BriefAssetChange[] = [];
+    try {
+      for (const e of await readdir(this.root, { withFileTypes: true }).catch(() => [])) {
+        if (!e.isDirectory() || !CREATIVE_SLUG_RE.test(e.name)) continue;
+        await this.lock.run(`c:${e.name}`, async () => {
+          const current = await readJsonFile(this.file(e.name, 'creative.json'), creativeFileSchema).catch(() => null);
+          if (!current?.brief.assets.includes(from)) return;
+          changes.push({ slug: e.name, before: [...current.brief.assets] });
+          const assets = [...new Set(current.brief.assets.map((a) => (a === from ? to : a)))];
+          const parsed = creativeFileSchema.safeParse({ ...current, brief: { ...current.brief, assets } });
+          if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidCreative({ detail: issuesText(parsed.error, currentLocale()) }));
+          await writeJsonFileAtomic(this.file(e.name, 'creative.json'), parsed.data);
+        });
+      }
+    } catch (err) {
+      await this.restoreBriefAssets(changes).catch(() => { /* the journal repairs what could not be restored */ });
+      throw err;
     }
-    return changed;
+    return changes;
+  }
+
+  /** Puts back the `assets` of the briefs `renameBriefAsset` changed, exactly as they were (only where they differ now). */
+  async restoreBriefAssets(changes: readonly BriefAssetChange[]): Promise<void> {
+    let failure: unknown = null;
+    for (const c of [...changes].reverse()) {
+      try {
+        await this.lock.run(`c:${c.slug}`, async () => {
+          const current = await readJsonFile(this.file(c.slug, 'creative.json'), creativeFileSchema);
+          if (current.brief.assets.length === c.before.length && current.brief.assets.every((a, i) => a === c.before[i])) return;
+          await writeJsonFileAtomic(this.file(c.slug, 'creative.json'), { ...current, brief: { ...current.brief, assets: [...c.before] } });
+        });
+      } catch (err) { failure ??= err; }
+    }
+    if (failure) throw failure;
   }
 
   async readVersions(slug: string): Promise<VersionEntry[]> {

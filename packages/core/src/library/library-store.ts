@@ -10,10 +10,17 @@ import { realDirChain } from '../creatives/core-files.ts';
 import { BrandStore } from '../brand/brand-store.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
 import { sanitizeFileName } from './upload.ts';
+import { readRenameJournal, removeRenameJournal, writeRenameJournal } from './rename-journal.ts';
 import { fileLock } from '../file-locks.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { WorkspaceError } from '../workspace-store.ts';
 import { t } from '../i18n.ts';
+
+/** The steps of a rename, in order. */
+export type RenameStep = 'journal' | 'file' | 'assets' | 'brand' | 'briefs';
+/** Thrown by a test seam to stand for the process dying: nothing is undone and the journal stays. */
+export class RenameInterrupted extends Error {}
+export interface RenameOptions { /** Called after each step (a test seam: throw `RenameInterrupted` to simulate a crash). */ afterStep?(step: RenameStep): void | Promise<void> }
 
 export type LibraryKind = 'assets' | 'references';
 const now = () => new Date().toISOString();
@@ -134,7 +141,8 @@ export class LibraryStore {
       for (const a of assets) {
         if (!needsMeta(a)) { next.push(a); continue; }
         const abs = await this.mustBeFile('assets', a.file).catch(() => null);
-        if (!abs) { next.push(a); continue; }
+        // Without ffmpeg a picture or a clip cannot be measured yet: left for a later listing instead of recorded as empty.
+        if (!abs || (!this.media.available && (a.kind === 'image' || a.kind === 'video' || a.kind === 'audio'))) { next.push(a); continue; }
         const meta = await readAssetMeta({ media: this.media }, abs, a.kind);
         next.push({ ...a, width: a.width ?? meta.width, height: a.height ?? meta.height, durationSec: a.durationSec ?? meta.durationSec, bytes: meta.bytes });
         changed = true;
@@ -146,11 +154,15 @@ export class LibraryStore {
 
   /**
    * Renames a registered asset inside its own folder (no overwrite, never through a link), then points the brand's logos and
-   * fonts and every creative's brief `assets` at the new path, each under its own lock. Anything that fails undoes the steps
-   * before it. Editor staging copies are not touched (they are copies in `.studio/cache`). Returns the new entry and what changed.
+   * fonts and every creative's brief `assets` at the new path. Crash-consistent (decisions log 336): an intent journal
+   * (`.studio/rename-journal.json`) is written first and removed last; the steps run in a fixed order (journal, file,
+   * assets.json, brand, briefs). A failure undoes the steps already done in reverse; a crash leaves the journal, and the next
+   * open of the workspace finishes or undoes the rename (`recoverRename`). Editor staging copies are not touched (they are
+   * copies in `.studio/cache`). Returns the new entry and what changed.
    */
-  renameAsset(file: string, name: string): Promise<{ entry: AssetEntry; brand: boolean; creatives: string[] }> {
+  renameAsset(file: string, name: string, o: RenameOptions = {}): Promise<{ entry: AssetEntry; brand: boolean; creatives: string[] }> {
     return this.lock.run('assets', async () => {
+      await this.recoverRenameUnlocked(); // an earlier interrupted rename is settled first
       const assets = await this.listAssets();
       const i = assets.findIndex((a) => a.file === file);
       if (i < 0) throw new WorkspaceError(404, t().errors.assetNotFound({ file }));
@@ -170,37 +182,99 @@ export class LibraryStore {
       if (!(await realDirChain(this.dir('assets'), folder ? folder.split('/') : []))) throw new WorkspaceError(400, t().errors.fileOutsideFolder({ kind: 'assets', file }));
       const to = this.resolve('assets', toFile);
       const taken = await lstat(to).catch(() => null);
+      let sameFile = false;
       if (taken) {
         // Only a change of letter case of the very same file is allowed onto an existing name (case-insensitive volumes).
         const src = await lstat(from);
-        if (!(src.ino === taken.ino && src.dev === taken.dev && file.toLowerCase() === toFile.toLowerCase())) throw new WorkspaceError(409, t().errors.assetRenameExists({ file: clean }));
-        await rename(from, to);
-      } else {
-        // link + unlink claims the new name without ever replacing a file; volumes without hard links fall back to rename.
-        try { await link(from, to); await unlink(from); }
-        catch (err) {
-          const code = (err as { code?: string }).code;
-          if (code === 'EEXIST') throw new WorkspaceError(409, t().errors.assetRenameExists({ file: clean }));
-          if (code && ['EPERM', 'ENOTSUP', 'EXDEV', 'ENOSYS'].includes(code) && !(await lstat(to).catch(() => null))) await rename(from, to);
-          else throw err;
-        }
+        sameFile = src.ino === taken.ino && src.dev === taken.dev && file.toLowerCase() === toFile.toLowerCase();
+        if (!sameFile) throw new WorkspaceError(409, t().errors.assetRenameExists({ file: clean }));
       }
-      const undo: Array<() => Promise<unknown>> = [() => rename(to, from)];
+
+      const brand = new BrandStore(this.projectDir), creatives = new CreativeStore(this.projectDir);
+      const fromRef = `assets/${file}`, toRef = `assets/${toFile}`;
+      // What is affected, known before anything moves (a corrupt brand kit refuses here, with nothing changed).
+      const brandRefs = await brand.usesFile(fromRef);
+      const briefSlugs = await creatives.briefSlugsUsing(fromRef);
+      if (!(await writeRenameJournal(this.projectDir, { schemaVersion: 1, from: file, to: toFile, startedAt: now(), brandRefs, briefSlugs }))) {
+        throw new WorkspaceError(500, t().errors.assetRenameFailed);
+      }
+      const undo: Array<() => Promise<unknown>> = [];
+      const step = async (s: RenameStep) => { await o.afterStep?.(s); };
       try {
-        const brand = new BrandStore(this.projectDir), creatives = new CreativeStore(this.projectDir);
-        const brandChanged = await brand.renameFileRefs(`assets/${file}`, `assets/${toFile}`);
-        if (brandChanged) undo.unshift(() => brand.renameFileRefs(`assets/${toFile}`, `assets/${file}`));
-        const slugs = await creatives.renameBriefAsset(`assets/${file}`, `assets/${toFile}`);
-        if (slugs.length) undo.unshift(() => creatives.renameBriefAsset(`assets/${toFile}`, `assets/${file}`));
+        await step('journal');
+        if (sameFile) await rename(from, to);
+        else {
+          // link + unlink claims the new name without ever replacing a file; volumes without hard links fall back to rename.
+          try { await link(from, to); }
+          catch (err) {
+            const code = (err as { code?: string }).code;
+            if (code === 'EEXIST') throw new WorkspaceError(409, t().errors.assetRenameExists({ file: clean }));
+            if (code && ['EPERM', 'ENOTSUP', 'EXDEV', 'ENOSYS'].includes(code) && !(await lstat(to).catch(() => null))) await rename(from, to);
+            else throw err;
+          }
+          if (await lstat(from).catch(() => null)) {
+            try { await unlink(from); }
+            catch { await rm(to, { force: true }).catch(() => {}); throw new WorkspaceError(500, t().errors.assetRenameFailed); }
+          }
+        }
+        undo.unshift(() => rename(to, from));
+        await step('file');
         const renamed = { ...entry, file: toFile };
         await this.writeAssets(assets.map((a, k) => (k === i ? renamed : a)));
-        return { entry: renamed, brand: brandChanged, creatives: slugs };
+        undo.unshift(() => this.writeAssets(assets));
+        await step('assets');
+        const brandChanged = await brand.renameFileRefs(fromRef, toRef);
+        if (brandChanged) undo.unshift(() => brand.renameFileRefs(toRef, fromRef));
+        await step('brand');
+        const changes = await creatives.renameBriefAsset(fromRef, toRef);
+        if (changes.length) undo.unshift(() => creatives.restoreBriefAssets(changes));
+        await step('briefs');
+        await removeRenameJournal(this.projectDir);
+        return { entry: renamed, brand: brandChanged, creatives: changes.map((c) => c.slug) };
       } catch (err) {
-        for (const step of undo) await step().catch(() => {});
+        if (err instanceof RenameInterrupted) throw err; // a (simulated) crash: nothing is undone, the journal stays
+        let undone = true;
+        for (const u of undo) await u().catch(() => { undone = false; });
+        if (undone) await removeRenameJournal(this.projectDir).catch(() => {});
         if (err instanceof WorkspaceError || err instanceof JsonFileError) throw err;
         throw new WorkspaceError(500, t().errors.assetRenameFailed);
       }
     });
+  }
+
+  /** Settles a rename a crash interrupted (see `rename-recovery.ts`). */
+  recoverRename(): Promise<'completed' | 'rolled-back' | 'discarded' | null> {
+    return this.lock.run('assets', () => this.recoverRenameUnlocked());
+  }
+
+  private async recoverRenameUnlocked(): Promise<'completed' | 'rolled-back' | 'discarded' | null> {
+    const journal = await readRenameJournal(this.projectDir);
+    if (journal === null) return null;
+    if (journal === 'invalid') { await removeRenameJournal(this.projectDir); return 'discarded'; }
+    const { from, to } = journal;
+    const brand = new BrandStore(this.projectDir), creatives = new CreativeStore(this.projectDir);
+    const toPath = this.resolve('assets', to), fromPath = this.resolve('assets', from);
+    const newFile = await lstat(toPath).catch(() => null);
+    const assets = await this.listAssets().catch(() => null);
+    const retarget = async (a: string, b: string) => {
+      if (assets && assets.some((x) => x.file === a) && !assets.some((x) => x.file === b)) await this.writeAssets(assets.map((x) => (x.file === a ? { ...x, file: b } : x)));
+    };
+    if (newFile?.isFile()) {
+      // The new name exists: finish. A hard link left behind under the old name is the same file; it goes.
+      const old = await lstat(fromPath).catch(() => null);
+      if (old?.isFile() && old.ino === newFile.ino && old.dev === newFile.dev && from !== to && from.toLowerCase() !== to.toLowerCase()) await unlink(fromPath);
+      await retarget(from, to);
+      await brand.renameFileRefs(`assets/${from}`, `assets/${to}`);
+      await creatives.renameBriefAsset(`assets/${from}`, `assets/${to}`);
+      await removeRenameJournal(this.projectDir);
+      return 'completed';
+    }
+    // The file never moved: every reference goes back to the old name.
+    await retarget(to, from);
+    await brand.renameFileRefs(`assets/${to}`, `assets/${from}`);
+    await creatives.renameBriefAsset(`assets/${to}`, `assets/${from}`);
+    await removeRenameJournal(this.projectDir);
+    return 'rolled-back';
   }
 
   updateAsset(file: string, patch: { description?: string; tags?: string[] }): Promise<AssetEntry> {
