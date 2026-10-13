@@ -651,6 +651,7 @@ export const it: Messages = {
     serviceStockOnly: 'Questo creativo usa solo immagini stock: usa stock_search e stock_download invece di generate_image',
     serviceNoKey: (p) => `Il brief di questo creativo sceglie ${p.provider} per ${p.service}, ma la chiave ${p.provider} non è impostata: aggiungila nelle Impostazioni di Motion Studio, oppure l'utente può cambiare il servizio con il pulsante Servizi`,
     serviceOverridden: (p) => `Il brief di questo creativo sceglie ${p.provider} per ${p.service}: usato al posto di ${p.requested}`,
+    serviceMissingPermission: (p) => `La chiave ${p.provider} non si può usare per ${p.service}: ${p.permission ? `le manca il permesso ${p.permission}` : `${p.provider} non la accetta`}. Di' all'utente di sistemare la chiave nelle impostazioni di Motion Studio (e di provarla di nuovo), oppure di cambiare il servizio con il pulsante Servizi`,
     serviceVoicesUnused: "Il brief di questo creativo sceglie OpenAI per la voce: le voci ElevenLabs non si possono usare, quindi non c'è nulla da elencare",
     voiceDropped: (p) => `La voce ${p.voice} è una voce ${p.owner} e questa voce fuori campo usa ${p.provider}: non è stata usata, al suo posto c'è ${p.brand ? `la voce ${p.provider} del brand` : `la voce predefinita di ${p.provider}`}`,
     voiceWrongProvider: (p) => `La voce ${p.voice} non è una voce ${p.provider}: scegline una fra le voci ${p.provider}`,

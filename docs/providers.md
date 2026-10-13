@@ -15,7 +15,8 @@ A creative's brief can choose, per kind, which service the agent may use: `image
 - `none`: the tool is refused with a message that tells the agent to point the user at the **Services** button;
 - a named provider wins over the one the agent asked for, and without its key the tool is refused (never a silent switch to another provider);
 - `stock` (images only): `generate_image` is refused, the free stock tools stay allowed (they are allowed under every images choice but `none`);
-- `auto`: the provider the agent asked for, else the first one with a key.
+- `auto`: the provider the agent asked for, else the first one with a key;
+- a provider whose key is known to lack the capability (a key check or a real call said `missing`) is unavailable: under `auto` with no provider asked the next configured one is used; when none is left, or the provider was named (by the agent or the brief), the tool is refused with the missing permission before any confirmation. `unverified` and `error` stay usable.
 
 The choice is read when the turn starts and written into the prompt ("Services for this creative: …", and "off for this creative" next to the tools that are off). The chat's **Services** chip saves the brief with the new `services`; the change applies from the next message, and the chip is disabled while a turn runs. The project console has no brief and runs with every kind `auto`. **Generate** in Assets is a direct user action and ignores `brief.services`.
 

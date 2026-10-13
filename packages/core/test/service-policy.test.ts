@@ -36,6 +36,51 @@ function expected(kind: ServiceKind, choice: string, requested: string | undefin
   return has.has(choice as ProviderId) ? ok(choice) : NO_KEY;
 }
 
+/** F5: the table again, with every subset of OpenAI and ElevenLabs known to lack the kind's capability. */
+const missingDecision = (provider: ProviderId, permission?: string): ServiceDecision =>
+  ({ ok: false, reason: 'missingPermission', messageKey: 'providers.serviceMissingPermission', provider, ...(permission ? { permission } : {}) });
+function expectedWithMissing(kind: ServiceKind, choice: string, requested: string | undefined, has: Set<ProviderId>, missing: Set<ProviderId>): ServiceDecision {
+  const blocked = (p: string) => has.has(p as ProviderId) && missing.has(p as ProviderId);
+  const base = expected(kind, choice, requested, has);
+  if (!base.ok || base.provider === 'stock') return base;
+  if (choice === 'auto' && !requested) {
+    const order: ProviderId[] = kind === 'images' ? ['openai'] : kind === 'voice' ? ['openai', 'elevenlabs'] : ['elevenlabs'];
+    const usable = order.find((p) => has.has(p) && !missing.has(p));
+    if (usable) return ok(usable);
+    const first = order.find((p) => has.has(p));
+    return first ? missingDecision(first, `perm-${first}`) : ok(order[0]!);
+  }
+  return blocked(base.provider) ? missingDecision(base.provider as ProviderId, `perm-${base.provider}`) : base;
+}
+
+describe('resolveService with capabilities known as missing (F5)', () => {
+  it('follows the table: auto skips a provider known to lack the capability, a named or forced one is refused, none left is refused', () => {
+    let cases = 0;
+    for (const kind of SERVICE_KINDS) {
+      for (const choice of SERVICE_CHOICES[kind]) {
+        for (const requested of REQUESTED[kind]) {
+          for (const keys of subsets(ALL)) {
+            for (const miss of subsets(['openai', 'elevenlabs'])) {
+              const has = new Set(keys);
+              const missing = new Map(miss.map((p) => [p, { permission: `perm-${p}` }] as const));
+              const got = resolveService({ [kind]: choice } as BriefServices, kind, requested, has, missing);
+              expect(got, `${kind}=${choice} requested=${requested} keys=${keys.join('+')} missing=${miss.join('+')}`).toEqual(expectedWithMissing(kind, choice, requested, has, new Set(miss)));
+              cases++;
+            }
+          }
+        }
+      }
+    }
+    expect(cases).toBe(36 * 16 * 4);
+  });
+  it('a missing capability on a provider without a key changes nothing (that is "no key"), and a refused key has no permission', () => {
+    const missing = new Map([['openai', {}], ['elevenlabs', { permission: 'text_to_speech' }]] as const);
+    expect(resolveService(undefined, 'voice', undefined, new Set(['elevenlabs']), new Map([['openai', {}]]))).toEqual(ok('elevenlabs'));
+    expect(resolveService(undefined, 'voice', undefined, new Set(['openai', 'elevenlabs']), missing)).toEqual(missingDecision('openai'));
+    expect(resolveService({ voice: 'elevenlabs' }, 'voice', undefined, new Set(['elevenlabs']), missing)).toEqual(missingDecision('elevenlabs', 'text_to_speech'));
+  });
+});
+
 describe('resolveService', () => {
   it('follows the table for every kind × choice × requested provider × configured keys', () => {
     let cases = 0;

@@ -1,6 +1,6 @@
 import { extname, join } from 'node:path';
 import { rm } from 'node:fs/promises';
-import { brandKitSchema, effectiveServices, missingCapability, PROVIDER_IDS, relativeFileSchema, webUrlSchema, type BriefServices, type KeyCapability, type ProviderId, type ServerMessage, type ServiceKind, type WorkspaceSettings } from '@motion-studio/shared';
+import { brandKitSchema, effectiveServices, missingCapability, PROVIDER_IDS, serviceCapability, relativeFileSchema, webUrlSchema, type BriefServices, type KeyCapability, type ProviderId, type ServerMessage, type ServiceKind, type WorkspaceSettings } from '@motion-studio/shared';
 import { MCP_TOOLS } from '../agent/launcher.ts';
 import type { ApprovalBroker } from '../approvals/broker.ts';
 import { confirmPaid as confirmPaidShared } from '../approvals/confirm-paid.ts';
@@ -19,7 +19,7 @@ import { stockDownload, stockSearch, type StockProvider } from '../providers/sto
 import { ELEVENLABS_TTS_MODEL, elevenlabsDefaultVoice, elevenlabsSpeech, OPENAI_TTS_MODEL, openaiSpeech } from '../providers/tts.ts';
 import { voiceProviderOf } from '../providers/voices.ts';
 import type { SecretsVault } from '../secrets/vault.ts';
-import { overrideNote, refusalText, resolveService } from '../services/service-policy.ts';
+import { overrideNote, refusalText, resolveService, type MissingCapabilities } from '../services/service-policy.ts';
 import type { BridgeContext } from './bridge.ts';
 import type { BridgeHandler } from './bridge-routes.ts';
 import { t } from '../i18n.ts';
@@ -82,12 +82,17 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
    * The brief's word on this call (Task 7), checked first: a refusal comes before any argument check, confirmation, file
    * read or request. Returns the provider to use (the brief's one wins over `requested`).
    */
-  const service = async (c: BridgeContext, kind: ServiceKind, requested?: unknown): Promise<string> => {
-    const d = resolveService(c.services, kind, typeof requested === 'string' ? requested : undefined, await configured());
-    if (!d.ok) throw new ProviderError(d.reason === 'noKey' ? 400 : 403, refusalText(d, kind, c.services));
+  const keyChecks = deps.keyChecks ?? new KeyCheckCache();
+  /** F5: per provider, what the key checks know against `capability` (absent: nothing; default: the kind's capability). */
+  const missingFor = (kind: ServiceKind, capability?: KeyCapability): MissingCapabilities => new Map(PROVIDER_IDS.flatMap((p) => {
+    const m = missingCapability(keyChecks.get(p), capability ?? serviceCapability(kind, p));
+    return m ? [[p, m] as const] : [];
+  }));
+  const service = async (c: BridgeContext, kind: ServiceKind, requested?: unknown, capability?: KeyCapability): Promise<string> => {
+    const d = resolveService(c.services, kind, typeof requested === 'string' ? requested : undefined, await configured(), missingFor(kind, capability));
+    if (!d.ok) throw new ProviderError(d.reason === 'disabled' ? 403 : 400, refusalText(d, kind, c.services));
     return d.provider;
   };
-  const keyChecks = deps.keyChecks ?? new KeyCheckCache();
   /**
    * What a real call says about the key (Task 8): a 401/403 means the key lacks this capability's permission, a success that
    * it has it. Remembered in memory only; the error goes on unchanged.
@@ -182,7 +187,10 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       const fixed = forced ?? requested ?? voiceOwner;
       // No usable voice asked: the brand kit's voice, with its provider when the caller did not pick one and that key is set.
       const brand = fixed !== null && voiceOwner === fixed ? null : await brandVoice(c);
-      const provider = fixed ?? (brand && (await deps.vault.get(brand.provider)) ? brand.provider : (await deps.vault.get('openai')) ? 'openai' : (await deps.vault.get('elevenlabs')) ? 'elevenlabs' : 'openai');
+      // Nothing asked: the brand voice's provider when its key is set and usable, else the policy's choice under `auto` (the
+      // first configured provider not known to lack text_to_speech, F5).
+      const brandUsable = brand !== null && Boolean(await deps.vault.get(brand.provider)) && !missingCapability(keyChecks.get(brand.provider), 'tts');
+      const provider = fixed ?? (brandUsable ? brand!.provider : (chosen as 'openai' | 'elevenlabs'));
       // A voice of the other provider is dropped before any confirmation, with a note in the result.
       const voice = voiceOwner === provider ? rawVoice : undefined;
       if (voice !== undefined && !VOICE.test(voice)) throw new ProviderError(400, t().providers.invalidVoice);
@@ -241,7 +249,7 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       allowed(c, 'list_voices');
       // ElevenLabs voices are of use only when the brief's voice can be ElevenLabs (auto or ElevenLabs).
       if (effectiveServices(c).voice === 'openai') throw new ProviderError(403, t().providers.serviceVoicesUnused);
-      await service(c, 'voice', 'elevenlabs');
+      await service(c, 'voice', 'elevenlabs', 'voices');
       const apiKey = await keyOf('elevenlabs');
       const voices = await withKeyCheck('elevenlabs', apiKey, 'voices', () => elevenlabsVoices({ ...httpFor(c), apiKey }, { search: s(a.search, 100) || undefined, pageSize: num(a.limit) }));
       alive(c);

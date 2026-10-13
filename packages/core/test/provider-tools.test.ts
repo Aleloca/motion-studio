@@ -349,6 +349,12 @@ describe('key checks from real calls (Task 8)', () => {
     await t.stock_search!(ctx, { query: 'mare' }).catch(() => {});
     expect(cache.capabilities('pexels').search).toMatchObject({ status: 'missing' });
     deny = null;
+    // F5: a capability known as missing is unavailable, refused before any request, until the key is saved or tested again.
+    const before = sent.length;
+    await expect(t.generate_image!(ctx, { prompt: 'x', width: 1024, height: 1024 })).rejects.toMatchObject({ status: 400 });
+    expect(sent.length).toBe(before);
+    cache.clear('openai');
+    cache.clear('pexels');
     await t.generate_image!(ctx, { prompt: 'x', width: 1024, height: 1024 });
     await t.tts!(ctx, { text: 'Ciao', provider: 'openai' });
     await t.stock_search!(ctx, { query: 'mare' });
@@ -785,5 +791,48 @@ describe('key checks follow only the current key (final review M2)', () => {
     await approvals.decide(approvals.pending()[0]!.id, 'once');
     expect(await run).toBeTruthy();
     expect(cache.get('openai')).toBeNull();
+  });
+});
+
+describe('F5 under auto: a provider known to lack the capability is skipped, none left is refused', () => {
+  const BOTH = { OPENAI_API_KEY: 'sk-test', ELEVENLABS_API_KEY: 'el-test' };
+  beforeEach(() => setLocale('en'));
+  afterEach(() => setLocale('it'));
+  const withCache = async (record: (c: InstanceType<typeof import('../src/providers/key-check.ts').KeyCheckCache>) => void, settings = {}) => {
+    const { KeyCheckCache } = await import('../src/providers/key-check.ts');
+    const cache = new KeyCheckCache();
+    record(cache);
+    return providerTools({
+      vault: new MemoryVault(BOTH), approvals, media: NoMediaTools, fetch: fakeFetch, lookup: publicLookup, broadcast: () => {}, keyChecks: cache,
+      settings: async () => workspaceSettingsSchema.parse({ schemaVersion: 1, ...settings }),
+    });
+  };
+  it('tts with both keys: OpenAI lacks text-to-speech, so ElevenLabs is asked for and used', async () => {
+    const t = await withCache((c) => c.record('openai', 'tts', 'missing', 'model.request'));
+    const run = t.tts!(ctx, { text: 'Ciao' });
+    await waitForPending();
+    const [req] = approvals.pending();
+    expect(req!.toolName).toBe('provider:tts-elevenlabs');
+    await approvals.decide(req!.id, 'once');
+    expect(await run).toMatchObject({ provider: 'elevenlabs' });
+    expect(sent.some((u) => u.startsWith('https://api.openai.com/'))).toBe(false);
+  });
+  it('unverified and error stay usable', async () => {
+    const t = await withCache((c) => c.merge('openai', { provider: 'openai', checkedAt: '', capabilities: [{ capability: 'key', status: 'ok' }, { capability: 'images', status: 'unverified' }, { capability: 'tts', status: 'error', detail: 'x' }] }), { confirmPaidProviders: false });
+    expect(await t.tts!(ctx, { text: 'Ciao' })).toMatchObject({ provider: 'openai' });
+    await expect(t.generate_image!(ctx, { prompt: 'x', width: 1024, height: 1024 })).resolves.toBeTruthy();
+  });
+  it('both lack it: refused with the reason before any confirmation or request', async () => {
+    const t = await withCache((c) => { c.record('openai', 'tts', 'missing', 'model.request'); c.record('elevenlabs', 'tts', 'missing', 'text_to_speech'); });
+    const e = await t.tts!(ctx, { text: 'Ciao' }).then(() => null, (x: unknown) => x);
+    expect(e).toMatchObject({ status: 400, message: 'The OpenAI key cannot be used for voice: it lacks the permission model.request. Tell the user to fix the key in the Motion Studio settings (then test it again), or to change the service with the Services button' });
+    expect(approvals.pending()).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+  it('list_voices looks at the voice list permission, not text-to-speech', async () => {
+    const t = await withCache((c) => c.record('elevenlabs', 'tts', 'missing', 'text_to_speech'));
+    await expect(t.list_voices!(ctx, {})).resolves.toMatchObject({ voices: [expect.anything()] });
+    const t2 = await withCache((c) => c.record('elevenlabs', 'voices', 'missing', 'voices_read'));
+    await expect(t2.list_voices!(ctx, {})).rejects.toMatchObject({ status: 400 });
   });
 });
