@@ -163,7 +163,7 @@ export function ServicesChip({ slug, creative, brief, busy, onSaved }: { slug: s
   const save = async (services: BriefServices) => {
     setError(null); setSaving(true); setPending(services);
     try {
-      await api.updateCreative(slug, creative, { brief: { ...brief, services } });
+      await api.updateCreative(slug, creative, { services });
       onSaved();
     } catch (e) {
       setPending(null);

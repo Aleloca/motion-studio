@@ -2,6 +2,8 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { DEFAULT_FORMATS, type Brief, type BriefServices, type CreativeDetail, type JobSummary, type SecretStatus } from '@motion-studio/shared';
 import type { ReactNode } from 'react';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../src/i18n.tsx';
 
@@ -32,6 +34,7 @@ const en = (node: ReactNode) => <I18nProvider locale="en">{node}</I18nProvider>;
 const group = (name: string) => screen.getByRole('radiogroup', { name: `${name}: service` });
 const option = (g: string, name: string) => within(group(g)).getByRole('radio', { name }) as HTMLButtonElement;
 const lastSaved = () => api.updateCreative.mock.calls.at(-1)![2] as { brief: Brief };
+const lastBody = () => api.updateCreative.mock.calls.at(-1)![2] as Record<string, unknown>;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -155,7 +158,8 @@ describe('the composer "Services" chip', () => {
     await userEvent.click(within(within(dialog).getByRole('radiogroup', { name: 'Voice: service' })).getByRole('radio', { name: 'Off' }));
     await waitFor(() => expect(api.updateCreative).toHaveBeenCalledOnce());
     expect(api.updateCreative.mock.calls[0]!.slice(0, 2)).toEqual(['acme', 'c1']);
-    expect(lastSaved()).toEqual({ brief: { ...brief, services: { images: 'stock', voice: 'none' } } });
+    // Only `services` is sent (Q2): the server merges it into the brief it stores now, so a newer brief is never overwritten.
+    expect(lastBody()).toEqual({ services: { images: 'stock', voice: 'none' } });
     await waitFor(() => expect(onBriefSaved).toHaveBeenCalledOnce());
   });
 
@@ -181,6 +185,23 @@ describe('the composer "Services" chip', () => {
   it('is not shown without a brief', () => {
     render(en(<Conversation {...props} />));
     expect(screen.queryByRole('button', { name: /^Services:/ })).toBeNull();
+  });
+});
+
+describe('composer footer layout (D1)', () => {
+  const css = readFileSync(resolve(import.meta.dirname, '../src/components/conversation.css'), 'utf8');
+  const rule = (sel: string) => css.split('}').map((r) => r.trim()).find((r) => r.replace(/\/\*[\s\S]*?\*\//g, '').trim().startsWith(sel + ' {'))!.replace(/\/\*[\s\S]*?\*\//g, '');
+  it('the hint stays on one line with an ellipsis and the Services chip shrinks first', () => {
+    const hint = rule('.ms-composer-hint');
+    expect(hint).toMatch(/white-space:\s*nowrap/); expect(hint).toMatch(/text-overflow:\s*ellipsis/); expect(hint).toMatch(/overflow:\s*hidden/);
+    const shrink = (r: string) => Number(/flex:\s*\S+\s+(\d+)/.exec(r)![1]);
+    expect(shrink(rule('.ms-composer-foot > .ms-services-chip'))).toBeGreaterThan(shrink(hint));
+  });
+  it('renders the chip and the hint as siblings in the footer', () => {
+    const { container } = render(en(<Conversation slug="acme" creative="c1" entries={[]} approvals={[]} job={undefined} brief={brief} />));
+    const foot = container.querySelector('.ms-composer-foot')!;
+    expect(foot.querySelector(':scope > .ms-services-chip')).toBeTruthy();
+    expect(foot.querySelector(':scope > .ms-composer-hint')).toBeTruthy();
   });
 });
 

@@ -100,6 +100,16 @@ describe('creatives', { timeout: 90_000 }, () => {
     await waitJobs();
     expect((await app.inject({ method: 'PUT', url, payload: { title: 'Nuovo', brief: { ...brief, durationSec: 6 } } })).json()).toMatchObject({ title: 'Nuovo', brief: { durationSec: 6 } });
   });
+  it('a services-only edit changes just the services of the brief stored now (not a caller copy of it)', async () => {
+    const { slug } = await createCreative(false);
+    const url = `/api/projects/acme/creatives/${slug}`;
+    // A newer brief is on the server; the chip still holds the old one and sends only its services.
+    await app.inject({ method: 'PUT', url, payload: { brief: { ...brief, durationSec: 7, goal: 'Newer goal' } } });
+    const res = await app.inject({ method: 'PUT', url, payload: { services: { voice: 'none' } } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().brief).toMatchObject({ goal: 'Newer goal', durationSec: 7, services: { voice: 'none' } });
+    expect((await app.inject({ method: 'PUT', url, payload: { services: { voice: 'bogus' } } })).statusCode).toBe(400);
+  });
   it('restores a version and reveals its folder', async () => {
     const { slug } = await createCreative();
     await waitJobs();

@@ -143,7 +143,7 @@ export class CreativeTurnService {
   }
 
   /** Edits title and/or brief; refused while a generation is queued or running for the creative. */
-  async updateBrief(ref: CreativeRef, patch: { title?: string; brief?: Brief; linkedCodebases?: LinkedCodebase[] }): Promise<CreativeFile> {
+  async updateBrief(ref: CreativeRef, patch: { title?: string; brief?: Brief; services?: BriefServices; linkedCodebases?: LinkedCodebase[] }): Promise<CreativeFile> {
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     return this.locks.run(key, async () => {
       if (this.isActive(key)) throw new WorkspaceError(409, t().errors.waitBeforeBrief);
@@ -161,6 +161,9 @@ export class CreativeTurnService {
         // Shared with the web, which tells before "Save and regenerate" whether a legacy creative converts (I4).
         const links = added.length > 0 ? linksAfterBriefSave(current, rest.formats, await this.deps.presets()) : current.links;
         brief = links ? { ...rest, links } : rest;
+      } else if (patch.services) {
+        // Only the service choices change: everything else comes from the brief stored now, never from the caller's copy.
+        brief = { ...(await store.get(ref.creativeSlug)).brief, services: patch.services };
       }
       const updated = await store.update(ref.creativeSlug, {
         ...(patch.title !== undefined ? { title: patch.title } : {}),

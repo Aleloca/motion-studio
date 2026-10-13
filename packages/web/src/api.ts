@@ -183,7 +183,7 @@ export const api = {
   createCreative: (slug: string, body: { title: string; brief: Brief; generate: boolean; linkedCodebases?: LinkedCodebase[] }) =>
     request<{ slug: string; creative: CreativeFile; job: JobSummary | null }>('POST', `${p(slug)}/creatives`, body),
   getCreative: (slug: string, creative: string) => request<CreativeDetail>('GET', c(slug, creative)),
-  updateCreative: (slug: string, creative: string, body: { title?: string; brief?: Brief; linkedCodebases?: LinkedCodebase[] }) => request<CreativeFile>('PUT', c(slug, creative), body),
+  updateCreative: (slug: string, creative: string, body: { title?: string; brief?: Brief; services?: Brief['services']; linkedCodebases?: LinkedCodebase[] }) => request<CreativeFile>('PUT', c(slug, creative), body),
   /** Manual ★ of a format (`null` clears it; the version the default rule gives also clears it). */
   setExportPick: (slug: string, creative: string, format: string, version: number | null) =>
     request<CreativeDetail>('PUT', `${c(slug, creative)}/export-picks`, { format, version }),
