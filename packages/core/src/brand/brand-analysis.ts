@@ -12,7 +12,7 @@ import { WorkspaceError } from '../workspace-store.ts';
 import { guardedPaths, readAgentFile, restoreGuarded, skipText, snapshotGuarded, type SkipReason } from './agent-guard.ts';
 import { applyBrandChanges, diffBrandKits } from './brand-diff.ts';
 import { buildBrandPrompt, buildDescribePrompt } from './brand-prompt.ts';
-import { BrandStore } from './brand-store.ts';
+import { applyLockKey, BrandStore, proposalLocks } from './brand-store.ts';
 import { parseProposedKit } from './proposed-kit.ts';
 import { currentLocale, t } from '../i18n.ts';
 import { sumUsage } from '../usage/usage-tracker.ts';
@@ -204,7 +204,7 @@ export class BrandService {
       const valid = brandProposalSchema.safeParse(proposal);
       if (!valid.success) throw new Error(t().errors.proposalInvalid({ detail: issuesText(valid.error, currentLocale(), t().errors.rootPath) }));
       // Under the apply lock: a new proposal supersedes the open ones (they would diff against an outdated kit).
-      await this.locks.run(`apply:${ref.projectDir}`, async () => {
+      await proposalLocks.run(applyLockKey(ref.projectDir), async () => {
         for (const old of await store.listProposals()) if (old.status === 'open' && old.id !== id) await store.writeProposal({ ...old, status: 'discarded' });
         await store.writeProposal(proposal);
       });
@@ -303,7 +303,7 @@ export class BrandService {
   }
 
   applyProposal(ref: ProjectRef, id: string, acceptedIds: string[], applyGuidelines: boolean): Promise<{ kit: BrandKit; proposal: BrandProposal }> {
-    return this.locks.run(`apply:${ref.projectDir}`, async () => {
+    return proposalLocks.run(applyLockKey(ref.projectDir), async () => {
       const store = new BrandStore(ref.projectDir);
       const proposal = await store.readProposal(id);
       if (proposal.status !== 'open') throw new WorkspaceError(409, t().errors.proposalClosed);
@@ -318,7 +318,7 @@ export class BrandService {
   }
 
   discardProposal(ref: ProjectRef, id: string): Promise<BrandProposal> {
-    return this.locks.run(`apply:${ref.projectDir}`, async () => {
+    return proposalLocks.run(applyLockKey(ref.projectDir), async () => {
       const store = new BrandStore(ref.projectDir);
       const proposal = await store.readProposal(id);
       if (proposal.status !== 'open') throw new WorkspaceError(409, t().errors.proposalClosed);

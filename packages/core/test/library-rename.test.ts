@@ -6,7 +6,7 @@ import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AppConfigStore } from '../src/app-config.ts';
-import { BrandStore } from '../src/brand/brand-store.ts';
+import { applyLockKey, BrandStore, proposalLocks } from '../src/brand/brand-store.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { execCommand } from '../src/exec.ts';
 import { Git } from '../src/git.ts';
@@ -55,6 +55,71 @@ describe('renaming an asset (store)', () => {
     expect(o.assetsAdded).toEqual(['New-Logo.png', 'other.png']);
     expect((a.changes[0]!.after as { file: string }).file).toBe('assets/logo.png');
     expect(a.assetsAdded).toEqual(['logo.png', 'other.png']);
+  });
+
+  describe('open proposals and the apply lock (M5)', () => {
+    const logo = { id: 'l1', file: 'assets/logo.png', variant: 'primary', background: 'any', source: { kind: 'manual' as const, ref: null } };
+    const mk = async (brand: BrandStore, at: number) => {
+      const id = await brand.newProposalId(new Date(at));
+      await brand.writeProposal({ schemaVersion: 1, id, createdAt: '2026-10-07T10:00:00.000Z', sourceIds: [], status: 'open', summary: 's', guidelines: null,
+        changes: [{ id: 'c1', field: 'logos', op: 'add', itemId: 'l1', before: null, after: logo }], assetsAdded: ['logo.png'] });
+      return id;
+    };
+    const fileOf = async (brand: BrandStore, id: string) => ((await brand.readProposal(id)).changes[0]!.after as { file: string }).file;
+    const afterTick = () => new Promise((r) => setTimeout(r, 50));
+
+    for (const decision of ['applied', 'discarded'] as const) {
+      it(`a rename racing ${decision === 'applied' ? 'an apply' : 'a discard'} waits for it: the proposal stays ${decision}, never reopened, and keeps the old name`, async () => {
+        const brand = new BrandStore(project);
+        const id = await mk(brand, 1_000_000_000_000);
+        let rename!: Promise<unknown>;
+        // What apply / discard do: decide under the apply lock. The rename starts while the lock is held and must queue behind it.
+        await proposalLocks.run(applyLockKey(project), async () => {
+          rename = lib.renameAsset('logo.png', 'New Logo.png');
+          await afterTick();
+          expect((await brand.readProposal(id)).status).toBe('open'); // the rename has not touched it
+          await brand.writeProposal({ ...(await brand.readProposal(id)), status: decision });
+        });
+        await rename;
+        const p = await brand.readProposal(id);
+        expect(p.status).toBe(decision);
+        expect(await fileOf(brand, id)).toBe('assets/logo.png'); // history is not rewritten
+      });
+    }
+
+    it('a write that fails half-way restores the proposals already rewritten, and the rename undoes everything', async () => {
+      const brand = new BrandStore(project);
+      const a = await mk(brand, 1_000_000_000_000), b = await mk(brand, 1_000_000_100_000);
+      const real = BrandStore.prototype.writeProposal;
+      let calls = 0;
+      const spy = vi.spyOn(BrandStore.prototype, 'writeProposal').mockImplementation(function (this: BrandStore, p) {
+        calls++;
+        if (calls === 2) return Promise.reject(new Error('disk full'));
+        return real.call(this, p);
+      });
+      await expect(lib.renameAsset('logo.png', 'New Logo.png')).rejects.toBeTruthy();
+      spy.mockRestore();
+      expect(await fileOf(brand, a)).toBe('assets/logo.png');
+      expect(await fileOf(brand, b)).toBe('assets/logo.png');
+      expect((await lib.listAssets()).map((x) => x.file)).toContain('logo.png');
+      // The lock was released: a later rename works.
+      await lib.renameAsset('logo.png', 'Again.png');
+      expect(await fileOf(brand, a)).toBe('assets/Again.png');
+    });
+
+    it('apply holding its lock while a rename waits cannot deadlock: nothing under the apply lock takes the assets lock', async () => {
+      const brand = new BrandStore(project);
+      await mk(brand, 1_000_000_000_000);
+      // An "apply" that also writes the kit (the locks it takes) while a rename is queued and a second apply follows.
+      let rename!: Promise<unknown>;
+      const first = proposalLocks.run(applyLockKey(project), async () => {
+        rename = lib.renameAsset('logo.png', 'New Logo.png');
+        await brand.writeKit({ ...(await brand.readKit()) });
+        await afterTick();
+      });
+      const second = proposalLocks.run(applyLockKey(project), async () => { await brand.writeKit({ ...(await brand.readKit()) }); });
+      await Promise.race([Promise.all([first, rename, second]), new Promise((_, rej) => setTimeout(() => rej(new Error('deadlock')), 10_000))]);
+    });
   });
 
   it('renames, updates the brand and every brief under their locks, and leaves staging copies alone', async () => {
