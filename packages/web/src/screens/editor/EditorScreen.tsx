@@ -1,5 +1,5 @@
 // The direct editor's shell (Phase 10b, Task 5): the layout of the prototype's VideoEditor / ImageEditor with a slot for each
-// panel the next tasks fill (scenes column and stage handles: Task 6, timeline: 7, inspector: 8, layers: 9, comments: 10).
+// panel the next tasks fill (scenes column and stage handles: Task 6, timeline: Task 7, inspector: 8, layers: 9, comments: 10).
 // What lives here: the draft (draftStore.ts) opened on the format's composition, the stage player showing the live draft,
 // the "Draft · Save as vN" pill, saving through `POST …/edits`, the leave guard and the keyboard map.
 //
@@ -34,10 +34,11 @@ import { setShownVersions, takeShownVersions } from '../../shell/intents.ts';
 import { go, ShellContext } from '../../shell/ShellContext.tsx';
 import { Button, Empty, Icon, Modal, Pill, Spinner, Tabs, cx, toast } from '../../ui/index.ts';
 import { useCreative } from '../../useCreative.ts';
+import { pinsKey, usePendingPins } from '../pendingPins.ts';
 import { boardLabel } from '../CanvasBoard.tsx';
 import { ExportDialog, type ExportSnapshot } from '../ExportDialog.tsx';
 import { compositionOf } from '../renderModel.ts';
-import { Transport, FPS as DEFAULT_FPS, type Speed } from '../Transport.tsx';
+import { FPS as DEFAULT_FPS, type Mark, type Speed } from '../Transport.tsx';
 import { boardSource, followersOf, formatStates } from '../versionModel.ts';
 import { compactOps } from './opsCompact.ts';
 import { DraftPill, SAVED_MS } from './DraftPill.tsx';
@@ -46,6 +47,7 @@ import { EditorContext, type EditorState } from './editorContext.ts';
 import { registerLeaveGuard } from './leaveGuard.ts';
 import { ScenesColumn } from './ScenesColumn.tsx';
 import { Stage } from './Stage.tsx';
+import { Timeline } from './Timeline.tsx';
 import { useEditorKeys } from './useEditorKeys.ts';
 import { usePlayerControls } from './usePlayerControls.ts';
 import { DEFAULT_EXPORT_NAME_PATTERN } from '@motion-studio/shared';
@@ -325,6 +327,10 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   // The magnet (stage guides now, the timeline's edges in Task 7): per editor, not saved.
   const [snap, setSnap] = useState(true);
   useEffect(() => { setSelection(null); }, [n, primary]);
+  // The conversation's pins on the version being edited, as markers on the timeline ruler (numbered as in the format view).
+  const [storedPins] = usePendingPins(pinsKey(slug, creative));
+  const marks = useMemo<Mark[]>(() => storedPins.filter((p) => p.version === n).map((p, i) => ({ pin: p.pin, number: i + 1 }))
+    .filter((m) => m.pin.format === format || m.pin.format === primary), [storedPins, n, format, primary]);
 
   // Keys.
   useEditorKeys(root, Boolean(draft) && active && leave === null, {
@@ -505,12 +511,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
       </aside>
 
       <section className="ms-ed-timeline" aria-label={e.timeline} data-part="b" data-slot="timeline">
-        {/* Task 7 puts the timeline here; until then the transport drives the playhead. */}
-        {video ? (
-          <Transport clock={controls.clock} duration={controls.duration} playing={controls.playing} disabled={!controls.ready} hint={e.timelineSoon}
-            onToggle={controls.toggle} onStep={controls.step} onSeek={controls.seek} onPause={controls.pause} onResume={controls.toggle}
-            loop={loop} onLoop={setLoop} speed={rate} onSpeed={setRate} />
-        ) : null}
+        {video && draft ? <Timeline loop={loop} onLoop={setLoop} speed={rate} onSpeed={setRate} marks={marks} /> : null}
       </section>
 
       <Modal open={leave !== null} onClose={leaveKeep} label={e.leaveTitle} width={480} dismissible={!saving}>

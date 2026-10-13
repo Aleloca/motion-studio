@@ -261,3 +261,14 @@ button.ms-avatar:active { transform: scale(.95); }
 .ms-toast-action:hover { text-decoration: underline; }
 .ms-toast-action:focus-visible { outline: 2px solid var(--accentText); outline-offset: 1px; }
 .ms-toast-action:disabled { opacity: 0.5; cursor: default; }
+
+/* Slider: a drawn range control (the timeline zoom; the inspector's sliders reuse it). */
+.ms-slider { position: relative; width: 120px; height: 20px; flex: none; cursor: pointer; touch-action: none; border-radius: 10px; }
+.ms-slider::before { content: ''; position: absolute; left: 0; right: 0; top: 8px; height: 4px; border-radius: 2px; background: var(--line); }
+.ms-slider-fill { position: absolute; left: 0; top: 8px; height: 4px; border-radius: 2px; background: var(--accent); }
+.ms-slider-thumb {
+  position: absolute; top: 3px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; box-sizing: border-box;
+  background: var(--panel); box-shadow: 0 0 0 1.5px var(--accent), 0 1px 3px var(--shadow);
+}
+.ms-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ms-slider.ms-off { opacity: .45; cursor: default; }

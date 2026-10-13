@@ -6,6 +6,7 @@ export { Button, type ButtonProps, type ButtonSize, type ButtonVariant } from '.
 export { CHANNELS, CHANNEL_COLORS, CHANNEL_GLYPH_COLOR, ChannelMark, channelOf, type Channel, type ChannelMarkProps } from './ChannelMark.tsx';
 export { Field, type FieldProps } from './Field.tsx';
 export { Input, Textarea } from './Input.tsx';
+export { Slider, type SliderProps } from './Slider.tsx';
 export { Toggle, type ToggleProps } from './Toggle.tsx';
 export { Check, type CheckProps } from './Check.tsx';
 export { Segmented, type SegmentedOption, type SegmentedProps } from './Segmented.tsx';

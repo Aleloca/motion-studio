@@ -86,13 +86,13 @@ vi.mock('../src/components/CompositionPlayer.tsx', async () => {
     },
   };
 });
-// The timeline slot's transport reports the editor context (what Tasks 6 to 9 get).
-const probe = vi.hoisted(() => ({ ctx: null as null | { stageAsset(from: unknown): Promise<unknown>; token: string | null; staging: boolean; selection: string | null } }));
-vi.mock('../src/screens/Transport.tsx', async (orig) => {
-  const m = await orig<typeof import('../src/screens/Transport.tsx')>();
+// The timeline slot reports the editor context (what Tasks 6 to 9 get); `probe.real` renders the real timeline in it.
+const probe = vi.hoisted(() => ({ real: false, ctx: null as null | { stageAsset(from: unknown): Promise<unknown>; token: string | null; staging: boolean; selection: string | null } }));
+vi.mock('../src/screens/editor/Timeline.tsx', async (orig) => {
+  const m = await orig<typeof import('../src/screens/editor/Timeline.tsx')>();
   const ed = await import('../src/screens/editor/editorContext.ts');
   const React = await import('react');
-  return { ...m, Transport: () => { probe.ctx = React.useContext(ed.EditorContext) as never; return null; } };
+  return { ...m, Timeline: (p: React.ComponentProps<typeof m.Timeline>) => { probe.ctx = React.useContext(ed.EditorContext) as never; return probe.real ? React.createElement(m.Timeline, p) : null; } };
 });
 
 const { EditorScreen } = await import('../src/screens/editor/EditorScreen.tsx');
@@ -161,6 +161,7 @@ beforeEach(() => {
     expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), format, hash: hashOf(n), width: 1080, height: 1920, duration: 6, fps: 30,
   }));
   probe.ctx = null;
+  probe.real = false;
   media.seq = 0;
   media.currentTime = 0;
   media.paused = true;
@@ -207,6 +208,26 @@ describe('EditorScreen · shell', () => {
     await userEvent.click(within(screen.getByRole('region', { name: 'In this scene' })).getByRole('button', { name: 'title' }));
     expect(media.select).toHaveBeenLastCalledWith('title');
     expect(probe.ctx?.selection).toBe('title');
+  });
+
+  it('the real timeline fills the slot: play, frame step and a clip bar work against the editor context', async () => {
+    probe.real = true;
+    render(<Harness />);
+    await opened();
+    const timeline = screen.getByRole('region', { name: 'Timeline' });
+    await userEvent.click(within(timeline).getByRole('button', { name: 'Play (Space)' }));
+    expect(media.play).toHaveBeenCalled();
+    await userEvent.click(within(timeline).getByRole('button', { name: /^Next frame/ }));
+    expect(media.currentTime).toBeCloseTo(1 / 30, 4);
+    // A clip bar selects through the shared context (and the runtime hears it); a lane flag is an edit of the draft.
+    await userEvent.click(within(timeline).getByRole('button', { name: /^title, text,/ }));
+    expect(probe.ctx?.selection).toBe('title');
+    expect(media.select).toHaveBeenLastCalledWith('title');
+    await userEvent.click(within(timeline).getByRole('button', { name: 'Lock Text 1' }));
+    expect(peekDraft(KEY)!.ops.at(-1)).toEqual({ kind: 'trackFlags', trackId: 'text', locked: true });
+    // The magnet is the stage's: one state.
+    await userEvent.click(screen.getByRole('button', { name: 'Snap to guides and edges' }));
+    expect((probe.ctx as unknown as { snap: boolean }).snap).toBe(false);
   });
 
   it('an image format has the layers panel and no timeline', async () => {
