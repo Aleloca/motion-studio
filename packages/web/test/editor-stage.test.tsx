@@ -387,10 +387,17 @@ describe('scenes column', () => {
     const grips = screen.getAllByRole('button', { name: /^Reorder/ });
     expect(grips).toHaveLength(3);
     for (const g of grips) expect((g as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByRole('note').textContent).toMatch(/Scenes can’t be reordered/);
-    expect(screen.getByRole('note').textContent).toMatch(/bgv/);
+    // One sentence (live check, Task 11: the reason used to repeat "Scenes can't be reordered"), naming the clip as the editor does.
+    expect(screen.getByRole('note').textContent).toBe('Scenes cannot be reordered: clip bgv is not inside a single scene');
     fireEvent.keyDown(grips[0]!, { key: 'ArrowDown' });
     expect(peekDraft(KEY)!.ops).toHaveLength(0);
+  });
+
+  it('the reason names the clip by its name when it has one', async () => {
+    const named = structuredClone(spike);
+    for (const t of named.tracks) for (const c of t.clips) if (c.id === 'bgv') c.name = 'Background video';
+    await mountScenes(named);
+    expect(screen.getByRole('note').textContent).toBe('Scenes cannot be reordered: clip Background video is not inside a single scene');
   });
 
   it('reorders with the keyboard and with the pointer when every clip lies in one scene', async () => {

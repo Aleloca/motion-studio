@@ -34,7 +34,9 @@ export function ScenesColumn() {
   const { time } = useClock(controls.clock);
   const current = sceneAt(scenes, time);
   const allowed = useMemo(() => sceneOrderAllowed(comp), [comp]);
-  const reason = allowed.ok ? null : e.reorderBlocked({ reason: editProblemText(compositionProblem('editor.sceneOrderBlocked', { clip: allowed.clipId }), locale) });
+  // The problem's own sentence, naming the clip as the editor does (its name, else its id).
+  const blocking = allowed.ok ? null : comp.tracks.flatMap((tr) => tr.clips).find((c) => c.id === allowed.clipId);
+  const reason = allowed.ok ? null : editProblemText(compositionProblem('editor.sceneOrderBlocked', { clip: blocking?.name ?? allowed.clipId }), locale);
 
   // Thumbnails: the opened version's storyboard (edits are not rendered into it; the card follows the scene by id).
   const { storyboard, state } = useStoryboard({ slug, creative, n: draft.base.n, format: primary, hash: draft.base.hash, enabled: true });
