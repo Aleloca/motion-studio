@@ -19,6 +19,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    # A normal run takes about 10 minutes (Ubuntu: tests 5 min); a hang must not hold a runner for GitHub's 6 hours.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -32,9 +34,11 @@ jobs:
       # Google Chrome; install it when an image does not. Chromium's own sandbox stays on: never --no-sandbox.
       # Linux: Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor
       # (kernel.apparmor_restrict_unprivileged_userns=1), and Chromium's namespace sandbox needs them. Lift the restriction on
-      # this throwaway VM (older kernels use kernel.unprivileged_userns_clone), then prove a sandboxed headless launch works.
+      # this throwaway VM (older kernels use kernel.unprivileged_userns_clone), then prove a sandboxed headless launch works
+      # (scripts/ci-chrome-probe.sh: CI-safe flags and a hard deadline; on macOS a bare --dump-dom never exited).
       - name: Ensure Chrome (sandboxed)
         shell: bash
+        timeout-minutes: 10
         run: |
           set -euo pipefail
           if [ "$RUNNER_OS" = "macOS" ]; then
@@ -50,9 +54,7 @@ jobs:
             if [ -e /proc/sys/kernel/unprivileged_userns_clone ]; then sudo sysctl -w kernel.unprivileged_userns_clone=1; fi
           fi
           "$CHROME" --version
-          PROFILE="$(mktemp -d)"
-          "$CHROME" --headless=new --user-data-dir="$PROFILE" --dump-dom about:blank > /dev/null
-          rm -rf "$PROFILE"
+          bash scripts/ci-chrome-probe.sh "$CHROME" 120
           echo "CHROME_PATH=$CHROME" >> "$GITHUB_ENV"
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
