@@ -115,6 +115,62 @@ describe('duplicating a format', { timeout: 120_000 }, () => {
     expect((await detail(slug)).creative.brief.formats).toEqual(['test-wide']);
   });
 
+  it('refuses while a render runs (409), without touching the brief', async () => {
+    const slug = await env.create(['test-wide'], { links: {} });
+    let release!: () => void;
+    env.fake.gate = new Promise((res) => { release = res; });
+    const rr = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/render`, headers: H, payload: {} });
+    expect(rr.statusCode, rr.body).toBe(202);
+    const job = rr.json() as JobSummary;
+    await env.waitRunning(job.id);
+    const r = await duplicate(slug, 1, { instanceId: 'test-wide' });
+    expect(r.statusCode).toBe(409);
+    expect(r.json().code).toBe('duplicate-busy');
+    release();
+    env.fake.gate = null;
+    await env.waitJob(job.id);
+    expect((await detail(slug)).creative.brief.formats).toEqual(['test-wide']);
+    expect((await env.store().readVersions(slug)).map((x) => x.n)).toEqual([1]);
+    expect((await duplicate(slug, 1, { instanceId: 'test-wide' })).statusCode).toBe(200);
+  });
+
+  it('a freed id taken again is a primary with no pick: link @2 → bare, remove @2, duplicate the bare one (review repro)', async () => {
+    const slug = await env.create(['test-wide', 'test-wide@2'], { links: {} });
+    await env.turn(slug, { text: 'again' });
+    const linked = await env.app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}/links`, headers: H, payload: { follower: 'test-wide@2', primary: 'test-wide' } });
+    expect(linked.statusCode, linked.body).toBe(200);
+    await putBrief(slug, (br) => ({ ...br, formats: ['test-wide'] }));
+    const r = await duplicate(slug, 2, { instanceId: 'test-wide' });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().instanceId).toBe('test-wide@2');
+    const d = await detail(slug);
+    expect(d.creative.brief.links ?? {}).toEqual({});
+    expect(d.creative.exportPicks).toBeUndefined();
+    const summary = d.formats!.find((f) => f.id === 'test-wide@2')!;
+    expect(summary.star).toMatchObject({ follows: null, manual: false });
+    // The next turn iterates it as a design of its own.
+    await env.turn(slug, { text: 'once more' });
+    expect(entry(await env.versionOf(slug, 4), 'test-wide@2')!.followsFormat).toBeUndefined();
+  });
+
+  it('stale state stored for a free id (written before the cleanup existed) is dropped by the duplicate, in the same save', async () => {
+    const slug = await env.create(['test-wide', 'test-tall'], { links: {} });
+    await env.turn(slug, { text: 'again' });
+    const file = join(env.store().dir(slug), 'creative.json');
+    const c = JSON.parse(readFileSync(file, 'utf8'));
+    c.brief.links = { 'test-wide@2': 'test-wide', 'test-tall': 'test-wide@2' };
+    c.exportPicks = { 'test-wide@2': 1, 'test-tall': 1 };
+    writeFileSync(file, JSON.stringify(c));
+    const r = await duplicate(slug, 2, { instanceId: 'test-wide' });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().instanceId).toBe('test-wide@2');
+    const d = await detail(slug);
+    expect(d.creative.brief.links).toEqual({});
+    expect(d.creative.exportPicks).toEqual({ 'test-tall': 1 });
+    expect(d.formats!.find((f) => f.id === 'test-wide@2')!.star).toMatchObject({ follows: null, manual: false });
+    expect(d.formats!.find((f) => f.id === 'test-tall')!.star.follows).toBeNull();
+  });
+
   it('refuses 20 instances, a source not in version n (409), a source not in the brief (400), an unknown version (404) and a bad body (400)', async () => {
     const slug = await env.create(['test-wide'], { links: {} });
     const twenty = ['test-wide', ...Array.from({ length: 19 }, (_, i) => `test-wide@${i + 2}`)];

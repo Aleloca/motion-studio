@@ -202,6 +202,32 @@ describe('two instances of the same preset (Review Focus 3)', { timeout: 120_000
     expect(compsOf(await env.versionOf(slug, 1)).map((c) => c.format)).toEqual(['test-wide', 'test-wide@2']);
   });
 
+  it('removing an instance drops its links (either end) and its manual pick; the others stay', async () => {
+    const slug = await env.create(['test-wide', 'test-wide@2', 'test-wide-b', 'test-tall'], { links: {} });
+    await env.turn(slug, { text: 'again' });
+    for (const [follower, primary] of [['test-wide@2', 'test-wide'], ['test-wide-b', 'test-wide']]) {
+      const r = await env.app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}/links`, headers: H, payload: { follower, primary } });
+      expect(r.statusCode, r.body).toBe(200);
+    }
+    for (const format of ['test-wide', 'test-tall']) {
+      const r = await env.app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}/export-picks`, headers: H, payload: { format, version: 1 } });
+      expect(r.statusCode, r.body).toBe(200);
+    }
+    const versions = readFileSync(join(env.store().dir(slug), 'versions.json'), 'utf8');
+    // Removing the primary: both links that name it go, and its pick; the tall pick stays.
+    let d = await detail(slug);
+    let r = await env.app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}`, headers: H, payload: { brief: { ...d.creative.brief, formats: ['test-wide@2', 'test-wide-b', 'test-tall'] } } });
+    expect(r.statusCode, r.body).toBe(200);
+    d = await detail(slug);
+    expect(d.creative.brief.links).toEqual({});
+    expect(d.creative.exportPicks).toEqual({ 'test-tall': 1 });
+    // Removing the last picked format: no picks at all.
+    r = await env.app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}`, headers: H, payload: { brief: { ...d.creative.brief, formats: ['test-wide@2', 'test-wide-b'] } } });
+    expect(r.statusCode, r.body).toBe(200);
+    expect((await detail(slug)).creative.exportPicks).toBeUndefined();
+    expect(readFileSync(join(env.store().dir(slug), 'versions.json'), 'utf8')).toBe(versions);
+  });
+
   it('the editor, the storyboards and the live preview serve an instance under its own folder', async () => {
     const slug = await env.create(['test-wide', 'test-wide@2'], { links: {} });
     const v1 = (await env.versionOf(slug, 1))!;

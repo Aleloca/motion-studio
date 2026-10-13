@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { lstat, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import { compositionProblemText, messages, type Composition, type FormatPreset, type Locale, type PreviewSessionInfo, type StagedAsset, type VersionEntry } from '@motion-studio/shared';
+import { compositionProblemText, INSTANCE_FOLDER_SOURCE, messages, type Composition, type FormatPreset, type Locale, type PreviewSessionInfo, type StagedAsset, type VersionEntry } from '@motion-studio/shared';
 import { loadComposition } from '../compositions/composition-files.ts';
 import { EDITOR_STAGING, startCompositionServer, type CompositionServer, type CompositionSession, type SessionMediaFile } from '../compositions/composition-server.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -671,6 +671,9 @@ export class PreviewService {
  * Leftover storyboard temp folders (`<format>.<hex>.tmp`, a crash while one was written) of a project, older than
  * `olderThanMs` (default 10 min, so a storyboard being written now is never touched). Startup and workspace switch.
  */
+/** `<folder>.<hex>.tmp`: a storyboard folder being written (`folder` a preset or an instance id). */
+const STORYBOARD_TEMP_RE = new RegExp(`^${INSTANCE_FOLDER_SOURCE}\\.[0-9a-f]{12}\\.tmp$`);
+
 export async function sweepStoryboardTemps(projectDir: string, o: { now?: number; olderThanMs?: number } = {}): Promise<string[]> {
   const root = join(projectDir, '.studio', 'cache', 'storyboards');
   const limit = (o.now ?? Date.now()) - (o.olderThanMs ?? 10 * 60_000);
@@ -682,7 +685,7 @@ export async function sweepStoryboardTemps(projectDir: string, o: { now?: number
       const vdir = join(cdir, v);
       if (!/^v\d+$/.test(v) || !(await lstat(vdir).catch(() => null))?.isDirectory()) continue;
       for (const name of await readdir(vdir).catch(() => [] as string[])) {
-        if (!/^[a-z0-9][a-z0-9-]{0,62}(@([2-9]|1[0-9]|20))?\.[0-9a-f]{12}\.tmp$/.test(name)) continue;
+        if (!STORYBOARD_TEMP_RE.test(name)) continue;
         const st = await lstat(join(vdir, name)).catch(() => null);
         if (!st || st.mtimeMs > limit) continue;
         await rm(join(vdir, name), { recursive: true, force: true }).catch(() => {});

@@ -3,7 +3,7 @@ import { SERVICE_CHOICES } from './services.ts';
 import type { AgentEvent } from './events.ts';
 import { linkedCodebaseSchema } from './schemas.ts';
 import { usageSummarySchema } from './usage.ts';
-import { INSTANCE_ID_RE } from './format-instance.ts';
+import { INSTANCE_FOLDER_SOURCE, INSTANCE_ID_RE } from './format-instance.ts';
 import { storePackSchema } from './store-pack.ts';
 import { localeTag } from './localization/schema.ts';
 import { channelName, DEFAULT_FORMATS, formatDisplayName } from './formats.ts';
@@ -75,7 +75,7 @@ export type CreativeFile = z.infer<typeof creativeFileSchema>;
 const HEX64 = /^[0-9a-f]{64}$/;
 const FILE_NAME = /^[^/\\]+$/;
 /** `compositions/<instance id>`: a composition folder inside `outputs/vN/`. */
-const COMPOSITION_DIR = /^compositions\/[a-z0-9][a-z0-9-]{0,62}(@([2-9]|1[0-9]|20))?$/;
+const COMPOSITION_DIR = new RegExp(`^compositions/${INSTANCE_FOLDER_SOURCE}$`);
 
 /**
  * A non-blocking note on an output file: never a problem, never triggers the fix loop. `key` is an i18n key

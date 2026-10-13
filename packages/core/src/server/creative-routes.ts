@@ -3,7 +3,7 @@ import { recoverRenameJournal } from '../library/rename-recovery.ts';
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { briefSchema, briefWriteSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
+import { INSTANCE_FOLDER_RE, briefSchema, briefWriteSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -90,7 +90,7 @@ const stageBody = z.object({
   ]),
 }).strict();
 /** A composition folder's name: a preset id, or an instance id `<preset>@<k>` (Phase 12). */
-const FOLDER_RE = /^[a-z0-9][a-z0-9-]{0,62}(@([2-9]|1[0-9]|20))?$/;
+const FOLDER_RE = INSTANCE_FOLDER_RE;
 const FRAME_FILE_RE = /^f-\d{1,3}\.jpg$/;
 /** A pin frame of version n: `<n>-<i>.jpg` (creative-turns `extractPinFrames`). */
 const PIN_FRAME_RE = /^(\d{1,6})-(\d{1,3})(e?)\.jpg$/;

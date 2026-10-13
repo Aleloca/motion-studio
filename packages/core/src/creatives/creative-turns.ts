@@ -129,6 +129,17 @@ export function editorLineSummary(versions: readonly VersionEntry[], base: Versi
   return out.join('; ');
 }
 
+/**
+ * The stored links without those whose follower or primary is in `gone`, and the manual picks without `gone`'s (Phase 12): what
+ * a removed format, or a freed instance id taken again, must not carry. Empty picks become absent; links keep their shape.
+ */
+export function withoutFormatState(links: Record<string, string> | undefined, picks: Record<string, number> | undefined, gone: ReadonlySet<string>):
+  { links: Record<string, string> | undefined; exportPicks: Record<string, number> | undefined } {
+  const l = links === undefined ? undefined : Object.fromEntries(Object.entries(links).filter(([f, p]) => !gone.has(f) && !gone.has(p)));
+  const k = picks === undefined ? undefined : Object.fromEntries(Object.entries(picks).filter(([f]) => !gone.has(f)));
+  return { links: l, exportPicks: k && Object.keys(k).length > 0 ? k : undefined };
+}
+
 export class CreativeTurnService {
   private readonly maxAttempts: number;
   private readonly locks = new KeyedMutex();
@@ -154,12 +165,22 @@ export class CreativeTurnService {
       // save adds get the default links against the primaries already there (and each other), with the duration unknown
       // (`undefined`): it is checked on the real file when the follower is materialized (spec §2.4).
       let brief: Brief | undefined;
+      let exportPicks: { exportPicks: CreativeFile['exportPicks'] } | undefined;
       if (patch.brief) {
         const { links: _ignored, ...rest } = patch.brief;
-        const current = (await store.get(ref.creativeSlug)).brief;
+        const stored = await store.get(ref.creativeSlug);
+        const current = stored.brief;
         const added = rest.formats.filter((f) => !current.formats.includes(f));
         // Shared with the web, which tells before "Save and regenerate" whether a legacy creative converts (I4).
-        const links = added.length > 0 ? linksAfterBriefSave(current, rest.formats, await this.deps.presets()) : current.links;
+        let links = added.length > 0 ? linksAfterBriefSave(current, rest.formats, await this.deps.presets()) : current.links;
+        // Formats the save removes leave no link (either end) and no manual pick behind (Phase 12): a freed instance id
+        // reused later starts clean. Saved versions are not touched.
+        const gone = new Set(current.formats.filter((f) => !rest.formats.includes(f)));
+        if (gone.size > 0) {
+          const pruned = withoutFormatState(links, stored.exportPicks, gone);
+          links = pruned.links;
+          exportPicks = { exportPicks: pruned.exportPicks };
+        }
         brief = links ? { ...rest, links } : rest;
       } else if (patch.services) {
         // Only the service choices change: everything else comes from the brief stored now, never from the caller's copy.
@@ -168,6 +189,7 @@ export class CreativeTurnService {
       const updated = await store.update(ref.creativeSlug, {
         ...(patch.title !== undefined ? { title: patch.title } : {}),
         ...(brief ? { brief } : {}),
+        ...(exportPicks ?? {}),
         ...(linkedCodebases ? { linkedCodebases } : {}),
       });
       await this.commitState(ref, t().jobs.briefUpdatedCommit({ title: updated.title }));

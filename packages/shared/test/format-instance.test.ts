@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_FORMATS, INSTANCE_ID_RE, briefSchema, briefWriteSchema, checkLink, creativeFileSchema, defaultLinks, formatDisplayName, formatLabel, instanceIndex, instanceLabel, instancePreset, linksAfterBriefSave, nextInstanceId, presetOf, versionsFileSchema } from '../src/index.ts';
+import { DEFAULT_FORMATS, INSTANCE_FOLDER_RE, INSTANCE_FOLDER_SOURCE, INSTANCE_ID_RE, INSTANCE_SUFFIX_SOURCE, briefSchema, briefWriteSchema, checkLink, creativeFileSchema, defaultLinks, formatDisplayName, formatLabel, instanceIndex, instanceLabel, instancePreset, linksAfterBriefSave, nextInstanceId, presetOf, versionsFileSchema } from '../src/index.ts';
 
 const now = '2026-10-07T10:00:00.000Z';
 const oldBrief = { goal: 'Far capire che prenotare è immediato', message: '', formats: ['instagram-post-1x1', 'instagram-reel-9x16'], durationSec: 15, assets: [], notes: '' };
@@ -137,5 +137,14 @@ describe('instance presets, names and links (Phase 12, Task 1)', () => {
     expect(linksAfterBriefSave({ formats: [STORY.id], links: {} }, [STORY.id, at2], DEFAULT_FORMATS)).toEqual({});
     // Another preset of the same size still follows by default, as before.
     expect(linksAfterBriefSave({ formats: [STORY.id, at2], links: {} }, [STORY.id, at2, 'tiktok-9x16'], DEFAULT_FORMATS)).toEqual({ 'tiktok-9x16': STORY.id });
+  });
+});
+
+describe('the shared instance suffix (one definition)', () => {
+  it('INSTANCE_FOLDER_RE: a preset id (63 characters at most) plus @2..@20, nothing else', () => {
+    for (const ok of ['x', 'x@2', 'x@20', 'a'.repeat(63), `${'a'.repeat(63)}@12`]) expect(INSTANCE_FOLDER_RE.test(ok), ok).toBe(true);
+    for (const bad of ['x@1', 'x@21', 'x@2/..', '../x', 'X', 'a'.repeat(64), 'x%402', 'x@2.tmp', '']) expect(INSTANCE_FOLDER_RE.test(bad), bad).toBe(false);
+    expect(INSTANCE_FOLDER_SOURCE.endsWith(INSTANCE_SUFFIX_SOURCE)).toBe(true);
+    expect(INSTANCE_ID_RE.source).toContain(INSTANCE_SUFFIX_SOURCE);
   });
 });

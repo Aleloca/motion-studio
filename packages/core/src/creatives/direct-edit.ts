@@ -5,7 +5,7 @@ import { z } from 'zod';
 import {
   COMPOSITION_LIMITS, compositionProblem, compositionProblemText, describeEdits, draftSizeProblem, editOpSchema, effectiveLinks, formatDisplayName, INSTANCE_ID_RE, isCompositionPath, MAX_INSTANCES, messages,
   nextInstanceId, normalizeComposition, presetOf, renderJobKey, validateComposition,
-  type Brief, type CompositionProblem, type FormatPreset, type Locale, type StagedAsset, type VersionEntry,
+  type Brief, type CompositionProblem, type CreativeFile, type FormatPreset, type Locale, type StagedAsset, type VersionEntry,
 } from '@motion-studio/shared';
 import { hashConfinedFile } from '../brand/agent-guard.ts';
 import { loadComposition, readCompositionFolder } from '../compositions/composition-files.ts';
@@ -18,7 +18,7 @@ import { compositionDirOf } from './composition-contract.ts';
 import { alignEditorCopies, carriableComposition, compositionDuration, copyComposition, type CarriedComposition } from './composition-turn.ts';
 import { writeThroughTemp } from './core-files.ts';
 import { CreativeStore } from './creative-store.ts';
-import type { CreativeRef, CreativeTurnService } from './creative-turns.ts';
+import { withoutFormatState, type CreativeRef, type CreativeTurnService } from './creative-turns.ts';
 import type { PreviewService, StagingView } from './previews.ts';
 
 /**
@@ -220,7 +220,12 @@ export class DirectEditService {
     const nextFormats = [...formats];
     nextFormats.splice(formats.indexOf(source) + 1, 0, instanceId);
     const labels = body.label !== undefined ? { ...creative.brief.formatLabels, [instanceId]: body.label } : creative.brief.formatLabels;
-    const withInstance = (b: Brief): Brief => ({ ...b, formats: nextFormats, ...(labels ? { formatLabels: labels } : {}) });
+    // A freed id taken again (a gap) starts clean: no stored link at either end, no manual pick (Phase 12).
+    const fresh = (c: CreativeFile) => {
+      const pruned = withoutFormatState(c.brief.links, c.exportPicks, new Set([instanceId]));
+      const brief: Brief = { ...c.brief, formats: nextFormats, ...(labels ? { formatLabels: labels } : {}), ...(pruned.links ? { links: pruned.links } : {}) };
+      return { brief, exportPicks: pruned.exportPicks };
+    };
     const newLabel = (id: string) => label(id, labels);
 
     const newN = await store.nextVersionNumber(slug);
@@ -228,17 +233,17 @@ export class DirectEditService {
     await versionDirReady(creativeDir, newN);
     const vdir = store.outputsDir(slug, newN);
     let recorded = false;
-    let briefBefore: Brief | null = null;
+    let before: { brief: Brief; exportPicks: CreativeFile['exportPicks'] } | null = null;
     try {
       if ((await copyComposition(creativeDir, n, cc, `outputs/v${newN}/${compositionDirOf(instanceId)}`)) !== 'ok') throw carryFailed(source, n);
-      const plan = { creative: { ...creative, brief: withInstance(creative.brief) }, targets: [instanceId], carried, carriedComps, links };
+      const plan = { creative: { ...creative, brief: fresh(creative).brief }, targets: [instanceId], carried, carriedComps, links };
       const saved = await this.deps.turns.finishCompositions(ref, store, plan, presets, latest, newN, newLabel, locale,
         { direct: true, base: { durationSec: cc.duration, ...(srcEntry.userDuration ? { userDuration: srcEntry.userDuration } : {}) } });
       const status = saved.problems.length === 0 ? 'complete' : 'incomplete';
       // The brief as stored now (a follower unlinked by the save above stays unlinked), with the new instance.
-      const fresh = await store.get(slug);
-      briefBefore = fresh.brief;
-      await store.update(slug, { brief: withInstance(fresh.brief) });
+      const stored = await store.get(slug);
+      before = { brief: stored.brief, exportPicks: stored.exportPicks };
+      await store.update(slug, fresh(stored));
       await alignEditorCopies(creativeDir, { n: newN, origin: 'editor', compositions: saved.compositions } as VersionEntry).catch(() => []);
       const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${newN}`);
       await store.appendVersion(slug, {
@@ -257,7 +262,7 @@ export class DirectEditService {
       return { version: entry, instanceId };
     } catch (err) {
       if (!recorded) {
-        if (briefBefore) await store.update(slug, { brief: briefBefore }).catch(() => {});
+        if (before) await store.update(slug, before).catch(() => {});
         const st = await lstat(vdir).catch(() => null);
         if (st) await rm(vdir, st.isDirectory() ? { recursive: true, force: true } : { force: true }).catch(() => {});
       }

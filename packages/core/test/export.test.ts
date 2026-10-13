@@ -361,8 +361,10 @@ describe('export names of format instances (Phase 12, Ruling C)', () => {
       'instagram-story@2.mp4': 'summer-instagram-v1-instagram-story-2.mp4',
       'instagram-story@3.mp4': 'summer-instagram-v1-instagram-story-3.mp4',
     });
-    // Without a collision nothing is added.
-    expect(named(await run([`${story}@2`], '{title}-{channel}-v{v}'))).toEqual({ 'instagram-story@2.mp4': 'summer-instagram-v1-2.mp4' });
+    // Without a collision nothing is added (a fresh destination, so the no-overwrite counter adds nothing either).
+    const alone = await exportPicks({ creativeDir, versions: [v], presets, title: 'Summer', slug: 's', destination: join(base, 'alone'), now: '2026-10-13',
+      picks: { [`${story}@2`]: 1 }, pattern: '{title}-{channel}-v{v}' });
+    expect(named(alone)).toEqual({ 'instagram-story@2.mp4': 'summer-instagram-v1.mp4' });
   });
   it('a user preset foo-2 next to the instance foo@2 (same slug): the instance gets the suffix, both are copied', async () => {
     const r = await run(['foo', 'foo-2', 'foo@2']);

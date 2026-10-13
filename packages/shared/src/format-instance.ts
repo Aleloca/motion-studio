@@ -1,8 +1,14 @@
 // Format instances (Phase 12, spec §2): a brief's `formats` hold instance ids, `<presetId>` for the first instance of a preset and
 // `<presetId>@<k>` (k from 2 to 20) for the others. Only the helpers here split or build an id: never `split('@')` elsewhere.
 
+/** The optional instance suffix `@2`..`@20`, as a regex source: the one definition every id or folder pattern builds on. */
+export const INSTANCE_SUFFIX_SOURCE = '(@([2-9]|1[0-9]|20))?';
 /** An instance id: a preset id plus an optional `@2`..`@20`. The preset part is checked against the catalog where the id is used. */
-export const INSTANCE_ID_RE = /^[a-z0-9][a-z0-9-]*(@([2-9]|1[0-9]|20))?$/;
+export const INSTANCE_ID_RE = new RegExp(`^[a-z0-9][a-z0-9-]*${INSTANCE_SUFFIX_SOURCE}$`);
+/** A composition folder's name, as a regex source: a preset id (the catalog's 63-character limit) plus the instance suffix. */
+export const INSTANCE_FOLDER_SOURCE = `[a-z0-9][a-z0-9-]{0,62}${INSTANCE_SUFFIX_SOURCE}`;
+/** A composition folder's name (`compositions/<this>`): a preset id or an instance id. */
+export const INSTANCE_FOLDER_RE = new RegExp(`^${INSTANCE_FOLDER_SOURCE}$`);
 /** The most instances of one preset in a creative. */
 export const MAX_INSTANCES = 20;
 

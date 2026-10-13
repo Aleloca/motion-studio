@@ -46,9 +46,10 @@ function png(width: number, height: number): Buffer {
   return b;
 }
 
-export interface FakeEngine { engine: RenderEngine; renders: RenderCompositionOptions[] }
+/** `gate`: while set, every render waits for it (a render that is running). */
+export interface FakeEngine { engine: RenderEngine; renders: RenderCompositionOptions[]; gate: Promise<void> | null }
 function fakeEngine(): FakeEngine {
-  const f: FakeEngine = { renders: [], engine: null as unknown as RenderEngine };
+  const f: FakeEngine = { renders: [], gate: null, engine: null as unknown as RenderEngine };
   f.engine = {
     info: async () => ({ kind: 'injected' }),
     provider: async () => { throw new Error('not used'); },
@@ -59,6 +60,7 @@ function fakeEngine(): FakeEngine {
     },
     render: async (o: Omit<RenderCompositionOptions, 'provider'>): Promise<RenderResult> => {
       f.renders.push(o as RenderCompositionOptions);
+      if (f.gate) await f.gate;
       const temp = join(dirname(o.out), `.${basename(o.out)}.render-${randomBytes(6).toString('hex')}.tmp`);
       noteCoreTemp(temp);
       const body = `render of ${o.format.id} ${randomBytes(4).toString('hex')}`;
@@ -80,6 +82,7 @@ export interface InstanceEnv {
   agentRuns(): number;
   versionOf(slug: string, n: number): Promise<VersionEntry | undefined>;
   waitJob(id: string): Promise<JobSummary>;
+  waitRunning(id: string): Promise<void>;
   create(formats: string[], o?: { links?: Record<string, string>; formatLabels?: Record<string, string> }): Promise<string>;
   turn(slug: string, payload: object): Promise<void>;
   render(slug: string, n: number): Promise<void>;
@@ -120,6 +123,14 @@ export async function startInstanceEnv(prefix: string): Promise<InstanceEnv> {
     agentRuns: () => promptTexts().length,
     versionOf: async (slug, n) => (await store().readVersions(slug)).find((v) => v.n === n),
     waitJob,
+    async waitRunning(id) {
+      for (let i = 0; i < 3000; i++) {
+        const j = ((await app.inject({ url: '/api/jobs', headers: H })).json() as JobSummary[]).find((x) => x.id === id);
+        if (j?.state === 'running') return;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      throw new Error('timeout waiting for the job to run');
+    },
     async create(formats, o = {}) {
       const r = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', headers: H, payload: {
         title: 'Launch', generate: true, brief: { goal: 'g', message: '', formats, durationSec: 4, assets: [], notes: '', ...(o.links ? { links: o.links } : {}), ...(o.formatLabels ? { formatLabels: o.formatLabels } : {}) },
