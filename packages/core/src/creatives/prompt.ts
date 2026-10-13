@@ -253,10 +253,13 @@ export function conversionSection(c: NonNullable<PromptInput['conversion']>): st
   return lines;
 }
 
-/** The delimiters of the user's words in a repair prompt; the same tags inside the words are defused (one character). */
+/**
+ * The delimiters of the user's words in a repair prompt; the same tags inside the words are defused (one character), also
+ * written with spaces (`< /user_request >`, `</ user_request>`).
+ */
 export const USER_REQUEST_OPEN = '<user_request>';
 export const USER_REQUEST_CLOSE = '</user_request>';
-const defuseTags = (text: string) => text.replace(/<(\/?user_request)/gi, '‹$1');
+const defuseTags = (text: string) => text.replace(/<(?=\s*\/?\s*user_request)/gi, '‹');
 
 /**
  * The repair turn's reminder of what the user asked (F4, orchestrator decision): their words verbatim and delimited as

@@ -9,7 +9,10 @@ export const OPENAI_VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable'
  * The provider a voice id belongs to: OpenAI's voices are a fixed, documented list; any other id is an ElevenLabs one (their
  * ids are opaque strings, never one of OpenAI's names).
  */
-export const voiceProviderOf = (voice: string): 'openai' | 'elevenlabs' => ((OPENAI_VOICES as readonly string[]).includes(voice) ? 'openai' : 'elevenlabs');
+export const voiceProviderOf = (voice: string): 'openai' | 'elevenlabs' => ((OPENAI_VOICES as readonly string[]).includes(voice.toLowerCase()) ? 'openai' : 'elevenlabs');
+
+/** The voice as its provider writes it: OpenAI names in lower case (`Alloy` → `alloy`); ElevenLabs ids unchanged. */
+export const canonicalVoice = (voice: string): string => (voiceProviderOf(voice) === 'openai' ? voice.toLowerCase() : voice);
 
 /** A voice id as the providers write it; anything else never reaches a URL or the brand kit. */
 export const VOICE_ID = /^[A-Za-z0-9_-]{1,64}$/;

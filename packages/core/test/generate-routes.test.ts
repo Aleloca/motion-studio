@@ -213,4 +213,11 @@ describe('generate route', () => {
     expect((await settle(jobId)).state).toBe('failed');
     expect(keyChecks.get('openai')).toBeNull();
   });
+  it('accepts an OpenAI voice name in any case and sends it in lower case (review minor)', async () => {
+    await boot();
+    const job = await settle((await post({ kind: 'voice', provider: 'openai', text: 'Hello', options: { voice: 'Alloy' } })).json().jobId);
+    expect(job.state).toBe('succeeded');
+    expect(JSON.parse(calls.find((c) => c.url.includes('/v1/audio/speech'))!.body).voice).toBe('alloy');
+    expect((await post({ kind: 'voice', provider: 'elevenlabs', text: 'Ciao', options: { voice: 'ALLOY' } })).statusCode).toBe(400);
+  });
 });

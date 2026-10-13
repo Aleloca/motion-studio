@@ -1,6 +1,6 @@
 import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 
 /**
  * The path arguments of Claude Code's file tools that a permission prompt can carry: Read/Edit/Write/MultiEdit (`file_path`),
@@ -73,6 +73,10 @@ async function realish(p: string): Promise<string> {
 export async function namesProtectedPath(toolName: string, input: Record<string, unknown>, roots: readonly string[], cwd: string, home = homedir()): Promise<boolean> {
   if (roots.length === 0) return false;
   const tilde = (raw: string) => (raw === '~' ? home : raw.startsWith('~/') ? join(home, raw.slice(2)) : raw);
+  // `~user/…` (another user's home) is not expanded: refused, whatever it names (the file tools take absolute paths anyway).
+  const otherHome = (raw: string) => /^~[^/]/.test(raw);
+  const named = [...inputPaths(input), ...(toolName === 'Glob' && typeof input.pattern === 'string' ? [input.pattern] : [])];
+  if (named.some(otherHome)) return true;
   const rootForms = (await Promise.all(roots.map(async (r) => [resolve(r), await realish(resolve(r))]))).flat();
   for (const raw of inputPaths(input)) {
     const written = resolve(cwd, tilde(raw));
@@ -83,7 +87,14 @@ export async function namesProtectedPath(toolName: string, input: Record<string,
   // (Grep's `pattern` is a regular expression over contents, not a path.)
   if (toolName === 'Glob' && typeof input.pattern === 'string' && input.pattern !== '' && !input.pattern.includes('\0')) {
     const base = typeof input.path === 'string' && input.path !== '' ? resolve(cwd, tilde(input.path)) : cwd;
-    const full = isAbsolute(tilde(input.pattern)) ? tilde(input.pattern) : join(base, input.pattern);
+    const joined = isAbsolute(tilde(input.pattern)) ? tilde(input.pattern) : `${base}/${input.pattern}`;
+    // A `..` after a wildcard segment can land anywhere under the literal folder before it: read as `<that folder>/**`.
+    // Otherwise `..` and `.` are resolved (absolute patterns too) before the segments are compared.
+    const parts = joined.split('/');
+    const firstWild = parts.findIndex((seg) => /[*?[\]{}]/.test(seg));
+    const full = firstWild !== -1 && parts.slice(firstWild + 1).includes('..')
+      ? `${normalize(parts.slice(0, firstWild).join('/') || '/').replace(/\/$/, '')}/**`
+      : normalize(joined);
     const bases = [full];
     // The pattern's literal folder may be a symlink to the protected one.
     const literal = full.split('/').findIndex((seg) => /[*?[\]{}]/.test(seg));

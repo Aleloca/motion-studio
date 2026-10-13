@@ -836,3 +836,21 @@ describe('F5 under auto: a provider known to lack the capability is skipped, non
     await expect(t2.list_voices!(ctx, {})).rejects.toMatchObject({ status: 400 });
   });
 });
+
+describe('OpenAI voice names in any case (review minor)', () => {
+  it('voiceProviderOf and canonicalVoice ignore case for OpenAI names, never for ElevenLabs ids', async () => {
+    const { canonicalVoice, voiceProviderOf } = await import('../src/providers/voices.ts');
+    expect(voiceProviderOf('Alloy')).toBe('openai');
+    expect(voiceProviderOf('MARIN')).toBe('openai');
+    expect(voiceProviderOf('JBFqnCBsd6RMkjVDRZzb')).toBe('elevenlabs');
+    expect(canonicalVoice('Alloy')).toBe('alloy');
+    expect(canonicalVoice('JBFqnCBsd6RMkjVDRZzb')).toBe('JBFqnCBsd6RMkjVDRZzb');
+  });
+  it('tts with both keys and "Alloy": OpenAI, voice sent in lower case', async () => {
+    const bodies: string[] = [];
+    const recording = (async (url: string, init?: RequestInit) => { bodies.push(String(init?.body ?? '')); return fakeFetch(url, init); }) as unknown as typeof fetch;
+    const out = await tools({ confirmPaidProviders: false }, { OPENAI_API_KEY: 'sk-test', ELEVENLABS_API_KEY: 'el-test' }, recording).tts!(ctx, { text: 'Ciao', voice: 'Alloy' });
+    expect(out).toMatchObject({ provider: 'openai', voice: 'alloy' });
+    expect(sent.some((u) => u.startsWith('https://api.elevenlabs.io/'))).toBe(false);
+  });
+});

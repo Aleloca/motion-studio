@@ -16,7 +16,7 @@ import { ProviderError, type HttpDeps } from '../providers/http.ts';
 import { KEY_PERMISSIONS, type KeyCheckCache } from '../providers/key-check.ts';
 import { generateImage, normalizeImageSize, OPENAI_IMAGE_MODEL } from '../providers/openai-images.ts';
 import { ELEVENLABS_TTS_MODEL, elevenlabsDefaultVoice, elevenlabsSpeech, OPENAI_TTS_MODEL, openaiSpeech } from '../providers/tts.ts';
-import { voiceProviderOf } from '../providers/voices.ts';
+import { canonicalVoice, voiceProviderOf } from '../providers/voices.ts';
 import type { SecretsVault } from '../secrets/vault.ts';
 import { WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import { t } from '../i18n.ts';
@@ -152,7 +152,7 @@ export function registerGenerateRoutes(app: FastifyInstance, ctx: GenerateRoutes
         const text = checked.prompt;
         // ElevenLabs with no voice: the account's first voice, a free read under `voices`, BEFORE the confirmation (M3): a key
         // that cannot list voices fails the job without an approval card (and a refused list is not a missing text_to_speech).
-        const voice = b.provider === 'elevenlabs' && !b.options.voice ? await checkedCall('elevenlabs', 'voices', () => elevenlabsDefaultVoice(http)) : b.options.voice;
+        const voice = b.provider === 'elevenlabs' && !b.options.voice ? await checkedCall('elevenlabs', 'voices', () => elevenlabsDefaultVoice(http)) : b.options.voice && canonicalVoice(b.options.voice);
         alive();
         await paid(`provider:tts-${b.provider}`, t().approvals.generateVoice({ provider: LABEL[b.provider] }), text.slice(0, 300));
         alive();

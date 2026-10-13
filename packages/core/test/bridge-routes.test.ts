@@ -339,6 +339,26 @@ describe('the config folder is never opened through a permission prompt (bridge 
     await above;
     expect(asked).toBe(3);
   });
+  it('normalises absolute Glob patterns, and reads a .. after a wildcard as reaching anywhere below (review minor)', async () => {
+    const { namesProtectedPath } = await import('../src/bridge/protected-paths.ts');
+    const parts = configDir.split('/').filter(Boolean);
+    // /<wildcard>/../<the rest of the path>/**: the wildcard and .. cancel out, the pattern lands inside the folder.
+    expect(await namesProtectedPath('Glob', { pattern: `/*/../${parts.join('/')}/**` }, [configDir], projectDir)).toBe(true);
+    // A .. that steps into it from a sibling.
+    expect(await namesProtectedPath('Glob', { pattern: `${dirname(configDir)}/x/../${basename(configDir)}/run/*` }, [configDir], projectDir)).toBe(true);
+    // A wildcard followed by .. deeper down still reaches it.
+    expect(await namesProtectedPath('Glob', { pattern: `${dirname(configDir)}/*/x/../../${basename(configDir)}/run/*` }, [configDir], projectDir)).toBe(true);
+    // Unrelated patterns stay unrelated.
+    expect(await namesProtectedPath('Glob', { pattern: `${projectDir}/src/../assets/*.png` }, [configDir], projectDir)).toBe(false);
+  });
+  it('refuses ~user/ paths (another user\'s home is never expanded)', async () => {
+    const { namesProtectedPath } = await import('../src/bridge/protected-paths.ts');
+    expect(await namesProtectedPath('Read', { file_path: '~someone/Library/x.token' }, [configDir], projectDir)).toBe(true);
+    expect(await namesProtectedPath('Glob', { pattern: '~someone/**' }, [configDir], projectDir)).toBe(true);
+    expect(await ask('Read', { file_path: '~someone/x' })).toEqual(DENY);
+    // Without protected roots nothing is refused at all.
+    expect(await namesProtectedPath('Read', { file_path: '~someone/x' }, [], projectDir)).toBe(false);
+  });
   it('expands ~ against the home folder', async () => {
     const { namesProtectedPath } = await import('../src/bridge/protected-paths.ts');
     const home = dirname(configDir);

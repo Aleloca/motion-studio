@@ -17,7 +17,7 @@ import { fetchTransport, nodeTransport, type LookupFn, type Transport } from '..
 import { generateImage, normalizeImageSize, OPENAI_IMAGE_MODEL } from '../providers/openai-images.ts';
 import { stockDownload, stockSearch, type StockProvider } from '../providers/stock.ts';
 import { ELEVENLABS_TTS_MODEL, elevenlabsDefaultVoice, elevenlabsSpeech, OPENAI_TTS_MODEL, openaiSpeech } from '../providers/tts.ts';
-import { voiceProviderOf } from '../providers/voices.ts';
+import { canonicalVoice, voiceProviderOf } from '../providers/voices.ts';
 import type { SecretsVault } from '../secrets/vault.ts';
 import { overrideNote, refusalText, resolveService, type MissingCapabilities } from '../services/service-policy.ts';
 import type { BridgeContext } from './bridge.ts';
@@ -175,7 +175,8 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       allowed(c, 'tts');
       // A voice names its provider (I1): OpenAI's voices are a fixed list, any other id is an ElevenLabs one. With no
       // provider asked, the voice's own provider is the one asked, so an ElevenLabs id never goes to OpenAI.
-      const rawVoice = s(a.voice, 100) || undefined;
+      const given = s(a.voice, 100);
+      const rawVoice = given ? canonicalVoice(given) : undefined;
       const voiceOwner = rawVoice === undefined ? null : voiceProviderOf(rawVoice);
       const chosen = await service(c, 'voice', a.provider ?? voiceOwner ?? undefined);
       const text = s(a.text, 5000);
