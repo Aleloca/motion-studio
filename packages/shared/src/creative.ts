@@ -3,6 +3,9 @@ import { SERVICE_CHOICES } from './services.ts';
 import type { AgentEvent } from './events.ts';
 import { linkedCodebaseSchema } from './schemas.ts';
 import { usageSummarySchema } from './usage.ts';
+import { INSTANCE_ID_RE } from './format-instance.ts';
+import { storePackSchema } from './store-pack.ts';
+import { localeTag } from './localization/schema.ts';
 import { channelName, DEFAULT_FORMATS, formatLabel } from './formats.ts';
 import { messages, type Locale } from './i18n/index.ts';
 import type { FormatSummary } from './formats/link.ts';
@@ -13,7 +16,10 @@ export type CreativeStatus = z.infer<typeof creativeStatusSchema>;
 export const briefSchema = z.object({
   goal: z.string().trim().min(1),
   message: z.string(),
-  formats: z.array(z.string().min(1)).min(1),
+  /** Format instance ids (`<presetId>` or `<presetId>@<k>`, Phase 12): the order is the display and export order. */
+  formats: z.array(z.string().regex(INSTANCE_ID_RE)).min(1).refine((f) => new Set(f).size === f.length, 'issue.duplicateFormats'),
+  /** A label per instance (1..60 characters); a key that is not in `formats` is refused. */
+  formatLabels: z.record(z.string(), z.string().min(1).max(60)).optional(),
   durationSec: z.number().int().min(1).max(600).nullable(),
   assets: z.array(z.string()),
   notes: z.string(),
@@ -28,7 +34,14 @@ export const briefSchema = z.object({
     images: z.enum(SERVICE_CHOICES.images), voice: z.enum(SERVICE_CHOICES.voice),
     music: z.enum(SERVICE_CHOICES.music), sfx: z.enum(SERVICE_CHOICES.sfx),
   }).partial().optional(),
-});
+  /** The languages of the creative (Phase 12); absent: no localization. `extra` has up to 10 languages, never the primary. */
+  locales: z.object({
+    primary: localeTag,
+    extra: z.array(localeTag).max(10),
+  }).refine((l) => new Set(l.extra).size === l.extra.length && !l.extra.includes(l.primary), 'issue.badLocales').optional(),
+  /** The App Store / Google Play pack choices (Phase 12). */
+  storePack: storePackSchema.optional(),
+}).refine((b) => Object.keys(b.formatLabels ?? {}).every((k) => b.formats.includes(k)), { message: 'issue.labelNotInFormats', path: ['formatLabels'] });
 export type Brief = z.infer<typeof briefSchema>;
 
 export const creativeFileSchema = z.object({
@@ -51,8 +64,8 @@ export type CreativeFile = z.infer<typeof creativeFileSchema>;
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const FILE_NAME = /^[^/\\]+$/;
-/** `compositions/<format id>`: a composition folder inside `outputs/vN/`. */
-const COMPOSITION_DIR = /^compositions\/[a-z0-9][a-z0-9-]{0,62}$/;
+/** `compositions/<instance id>`: a composition folder inside `outputs/vN/`. */
+const COMPOSITION_DIR = /^compositions\/[a-z0-9][a-z0-9-]{0,62}(@([2-9]|1[0-9]|20))?$/;
 
 /**
  * A non-blocking note on an output file: never a problem, never triggers the fix loop. `key` is an i18n key
@@ -145,6 +158,16 @@ export const versionEntrySchema = z.object({
   compositions: z.array(versionCompositionSchema).optional(),
   /** Who wrote the version: the agent (default when absent) or a direct edit in the editor (Phase 10b). */
   origin: z.enum(['agent', 'editor']).optional(),
+  /**
+   * Localization overlays of this version (Phase 12): one per language and format instance. `hash` is the overlay file's hash;
+   * `stale` lists the ids (clips, `<clipId>.<key>` params) whose source text changed since the translation; `voice` says what
+   * the voices of that language do. Absent on versions without localizations.
+   */
+  localizations: z.array(z.object({
+    locale: localeTag, instanceId: z.string().regex(INSTANCE_ID_RE), hash: z.string().regex(HEX64),
+    origin: z.enum(['agent', 'editor']), stale: z.array(z.string()),
+    voice: z.enum(['translated', 'original', 'muted']), problems: z.array(z.string()).optional(),
+  })).optional(),
 });
 export type VersionEntry = z.infer<typeof versionEntrySchema>;
 

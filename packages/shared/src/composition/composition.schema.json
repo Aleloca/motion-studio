@@ -1187,6 +1187,11 @@
             "music",
             "sfx"
           ]
+        },
+        "script": {
+          "description": "The spoken text of a voice clip (role \"voice\" only); used to translate the voice.",
+          "type": "string",
+          "maxLength": 5000
         }
       },
       "required": [

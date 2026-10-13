@@ -171,7 +171,8 @@ const audioClip = z.strictObject({
   fadeIn: seconds.optional(),
   fadeOut: seconds.optional(),
   role: z.enum(['voice', 'music', 'sfx']).optional().describe('Lets the mixer duck music under voice.'),
-});
+  script: z.string().max(5000).optional().describe('The spoken text of a voice clip (role "voice" only); used to translate the voice.'),
+}).refine((c) => c.script === undefined || c.role === 'voice', { message: 'composition.scriptNeedsVoice', path: ['script'] });
 
 export const CLIP_TYPES = ['text', 'shape', 'image', 'svg', 'video', 'html', 'audio'] as const;
 export const clipSchema = z.discriminatedUnion('type', [textClip, shapeClip, imageClip, svgClip, videoClip, htmlClip, audioClip]);

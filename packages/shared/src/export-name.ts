@@ -3,10 +3,13 @@
 // Every regex here is linear-time: single character classes, no nested or overlapping quantifiers.
 import type { FormatPreset } from './formats.ts';
 
-export const EXPORT_NAME_TOKENS = ['title', 'channel', 'format', 'ratio', 'v', 'date'] as const;
+export const EXPORT_NAME_TOKENS = ['title', 'channel', 'format', 'ratio', 'v', 'date', 'locale'] as const;
 export type ExportNameToken = (typeof EXPORT_NAME_TOKENS)[number];
-export type ExportNameVars = Record<ExportNameToken, string | number>;
+/** `locale` is optional: absent or empty, the token renders as nothing (a creative without extra languages). */
+export type ExportNameVars = Record<Exclude<ExportNameToken, 'locale'>, string | number> & { locale?: string | number };
 export const DEFAULT_EXPORT_NAME_PATTERN = '{title}-{format}-v{v}';
+/** The default pattern; with languages (a creative with extra locales) the file name carries the language. */
+export const defaultPattern = (hasLocales: boolean): string => (hasLocales ? '{title}-{format}-{locale}-v{v}' : DEFAULT_EXPORT_NAME_PATTERN);
 /** The longest name, extension excluded. */
 export const EXPORT_NAME_MAX = 120;
 
@@ -59,7 +62,7 @@ export function renderName(pattern: string, vars: ExportNameVars): RenderedName 
       while (j < pattern.length && isLetter(pattern[j]!)) j++;
       if (j > i + 1 && pattern[j] === '}') {
         const name = pattern.slice(i + 1, j);
-        if ((EXPORT_NAME_TOKENS as readonly string[]).includes(name)) raw += slugToken(String(vars[name as ExportNameToken]));
+        if ((EXPORT_NAME_TOKENS as readonly string[]).includes(name)) raw += slugToken(String(vars[name as ExportNameToken] ?? ''));
         else unknown.add(name);
         i = j;
         continue;
@@ -135,11 +138,12 @@ function titleBase(title: string | undefined): string | null {
 }
 
 /**
- * The variables of one exported file: the title (the creative slug when the title has no letters or digits), the preset's
+ * The variables of one exported file (`format` is the instance id, rendered as a slug: `instagram-story-9x16@2` → `instagram-story-9x16-2`;
+ * `locale` is empty unless given): the title (the creative slug when the title has no letters or digits), the preset's
  * channel and ratio (the output's size when the format is not in the catalog), the format id, the version and the date.
  */
 export function exportNameVars(o: { title?: string; slug: string; format: string; preset: Pick<FormatPreset, 'channel' | 'width' | 'height'> | undefined;
-  size?: { width: number; height: number }; version: number; date: Date | string }): ExportNameVars {
+  size?: { width: number; height: number }; version: number; date: Date | string; locale?: string }): ExportNameVars {
   const size = o.preset ?? o.size;
   return {
     title: titleBase(o.title) ?? slugToken(o.slug),
@@ -148,5 +152,6 @@ export function exportNameVars(o: { title?: string; slug: string; format: string
     ratio: size ? ratioToken(size.width, size.height) : '',
     v: o.version,
     date: typeof o.date === 'string' ? o.date : exportDate(o.date),
+    ...(o.locale !== undefined ? { locale: o.locale } : {}),
   };
 }
