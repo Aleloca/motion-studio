@@ -47,9 +47,13 @@ function png(width: number, height: number): Buffer {
 }
 
 /** `gate`: while set, every render waits for it (a render that is running). */
-export interface FakeEngine { engine: RenderEngine; renders: RenderCompositionOptions[]; gate: Promise<void> | null }
+/**
+ * `overflows`: clip ids every render reports as advisory `textOverflow` (Phase 12, Ruling I); `after`: runs right after a
+ * render's file is in place.
+ */
+export interface FakeEngine { engine: RenderEngine; renders: RenderCompositionOptions[]; gate: Promise<void> | null; overflows: string[]; after: ((o: RenderCompositionOptions) => void | Promise<void>) | null }
 function fakeEngine(): FakeEngine {
-  const f: FakeEngine = { renders: [], gate: null, engine: null as unknown as RenderEngine };
+  const f: FakeEngine = { renders: [], gate: null, overflows: [], after: null, engine: null as unknown as RenderEngine };
   f.engine = {
     info: async () => ({ kind: 'injected' }),
     provider: async () => { throw new Error('not used'); },
@@ -67,8 +71,10 @@ function fakeEngine(): FakeEngine {
       await writeFile(temp, body);
       await o.beforeRename?.(temp);
       await rename(temp, o.out);
+      await f.after?.(o as RenderCompositionOptions);
       return { file: o.out, sha256: createHash('sha256').update(body).digest('hex'), width: o.composition.width, height: o.composition.height,
-        durationSec: o.composition.duration, frames: 1, encoder: 'libx264', audio: false, warnings: [] };
+        durationSec: o.composition.duration, frames: 1, encoder: 'libx264', audio: false, warnings: [],
+        ...(f.overflows.length ? { textOverflows: f.overflows.map((clipId) => ({ code: 'textOverflow', message: 'text overflows its box', clipId })) } : {}) };
     },
   } as unknown as RenderEngine;
   return f;

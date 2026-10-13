@@ -129,6 +129,25 @@ describe('carry-over on every new version', { timeout: 120_000 }, () => {
     expect((await readOverlay(env.store().dir(slug), 2, 'de', 'test-wide'))!.hash).toBe((await env.versionOf(slug, 2))!.localizations![0]!.hash);
   });
 
+  it('a direct edit that changes the source text carries the overlay with the entry stale', async () => {
+    const slug = await env.create(['test-wide'], { links: {}, locales: { primary: 'en', extra: ['de'] } });
+    expect((await put(slug, 1, { texts: { title: 'Hallo' } })).statusCode).toBe(200);
+    const view = (await env.app.inject({ url: `/api/projects/acme/creatives/${slug}/versions/1/compositions/test-wide`, headers: H })).json() as { hash: string; composition: Composition };
+    const c = structuredClone(view.composition);
+    (c.tracks.flatMap((t) => t.clips).find((k) => k.id === 'title') as unknown as { props: { text: string } }).props.text = 'Goodbye';
+    const r = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/edits`, headers: H,
+      payload: { baseVersion: 1, format: 'test-wide', baseHash: view.hash, composition: c, staged: [], ops: [], token: 'A'.repeat(43) } });
+    expect(r.statusCode, r.body).toBe(200);
+    const v2 = (await env.versionOf(slug, 2))!;
+    expect(v2.origin).toBe('editor');
+    expect(v2.localizations).toEqual([expect.objectContaining({ locale: 'de', instanceId: 'test-wide', stale: ['title'] })]);
+    // The preview shows the source text for it, flagged.
+    const loc = (await env.app.inject({ url: `/api/projects/acme/creatives/${slug}/versions/2/compositions/test-wide?locale=de`, headers: H })).json();
+    expect(loc.localization.stale).toEqual(['title']);
+    expect(JSON.stringify(loc.composition)).toContain('Goodbye');
+    expect(JSON.stringify(loc.composition)).not.toContain('Hallo');
+  });
+
   it('a duplicate carries the overlays of the other instances', async () => {
     const slug = await env.create(['test-wide'], { links: {}, locales: { primary: 'en', extra: ['de'] } });
     expect((await put(slug, 1, { texts: { title: 'Hallo' } })).statusCode).toBe(200);

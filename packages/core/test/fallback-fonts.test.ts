@@ -19,8 +19,10 @@ import { H, startInstanceEnv, type InstanceEnv } from './helpers/instance-server
 
 let urls: string[];
 let offline: boolean;
+let gate: Promise<void> | null = null;
 const fakeFetch = (async (url: string) => {
   urls.push(url);
+  if (gate) await gate;
   if (offline) throw new TypeError('fetch failed');
   if (url.startsWith('https://fonts.googleapis.com/css2')) {
     const fam = decodeURIComponent(/family=([^:&]+)/.exec(url)![1]!).replace(/\+/g, ' ');
@@ -31,7 +33,7 @@ const fakeFetch = (async (url: string) => {
   return new Response('no', { status: 404 });
 }) as unknown as typeof fetch;
 const http = () => ({ fetch: fakeFetch, transport: fetchTransport(fakeFetch), lookup: async () => [{ address: '142.250.180.3', family: 4 }] }) as never;
-beforeEach(() => { urls = []; offline = false; });
+beforeEach(() => { urls = []; offline = false; gate = null; });
 
 describe('ensureFallbackFont', () => {
   let projectDir: string;
@@ -92,6 +94,19 @@ describe('fallback fonts in the overlays', { timeout: 120_000 }, () => {
     const c = env.fake.renders.at(-1)!.composition;
     expect(c.fontFallbacks).toEqual(['Noto Sans JP']);
     expect(c.fonts.filter((f) => f.family === 'Noto Sans JP').map((f) => f.src)).toEqual(['assets/fonts/NotoSansJP-400.ttf', 'assets/fonts/NotoSansJP-700.ttf']);
+  });
+
+  it('the download happens before the creative lock: a duplicate is not held up by it', async () => {
+    const slug = await env.create(['test-wide'], { links: {}, locales: { primary: 'en', extra: ['ja'] } });
+    let open!: () => void;
+    gate = new Promise<void>((r) => { open = r; });
+    const pending = put(slug, 'test-wide', { texts: { title: 'こんにちは' } });
+    for (let i = 0; i < 200 && urls.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(urls.length).toBeGreaterThan(0);
+    const dup = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/duplicate-format`, headers: H, payload: { instanceId: 'test-wide' } });
+    expect(dup.statusCode, dup.body).toBe(200);
+    open();
+    expect((await pending).statusCode).toBe(200);
   });
 
   it('offline: the overlay is stored with "fallback font unavailable"', async () => {

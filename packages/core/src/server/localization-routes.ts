@@ -7,7 +7,7 @@ import {
 import { CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeRef, CreativeTurnService } from '../creatives/creative-turns.ts';
 import { editorCompositionView } from '../creatives/editor-staging.ts';
-import { emptyOverlay, finishOverlay, instanceComposition, localizedComposition, readOverlay, setLocalizationRow, writeOverlay } from '../localization/store.ts';
+import { emptyOverlay, finishOverlay, resolveFallbackFont, instanceComposition, localizedComposition, readOverlay, setLocalizationRow, writeOverlay } from '../localization/store.ts';
 import { checkedInstance, checkedLocale } from '../localization/validate.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import type { InstallIo } from '../providers/google-fonts.ts';
@@ -46,7 +46,9 @@ export const localizationEditSchema = z.strictObject({
 export type LocalizationEdit = z.infer<typeof localizationEditSchema>;
 
 /** What an overlay GET (and PUT) answers. */
-export interface LocalizationView { overlay: Localization; problems: string[]; stale: string[]; voice: LocalizationRow['voice']; origin: LocalizationRow['origin']; hash: string }
+export interface LocalizationView { overlay: Localization; problems: string[]; stale: string[]; voice: LocalizationRow['voice']; origin: LocalizationRow['origin']; hash: string;
+  /** PUT only: advisory checks of the localized composition (html layers), as in a turn. */
+  warnings?: string[] }
 
 /** Aborts the work of a request whose client went away. */
 const abortOnClose = (reply: FastifyReply): AbortSignal => {
@@ -163,6 +165,10 @@ export function registerLocalizationRoutes(app: FastifyInstance, ctx: Localizati
     }
     const edit = parsed.data;
     const signal = abortOnClose(reply);
+    // Checked again under the lock; first here, so no font is downloaded for a language the creative does not have.
+    if (!(await ref.store.get(ref.creativeSlug)).brief.locales?.extra.includes(tag)) throw new CodedError(409, va.localeNotInBrief({ tag }), 'locale-not-in-brief');
+    // The fallback font may be downloaded: before the creative's lock, so a turn or an edit never waits on the network.
+    const fallback = await resolveFallbackFont({ projectDir: ref.projectDir, http: ctx.fontsHttp, media: ctx.media, ...(ctx.fontsIo ? { io: ctx.fontsIo } : {}) }, tag, signal);
     return ctx.turns.runLocked(ref, async () => {
       if (ctx.turns.turnActive(ref)) throw new CodedError(409, va.localizationBusy, 'localization-busy');
       const slug = ref.creativeSlug;
@@ -181,7 +187,7 @@ export function registerLocalizationRoutes(app: FastifyInstance, ctx: Localizati
       const voice: LocalizationRow['voice'] = edit.voice ?? row?.voice ?? (Object.keys(overlay.voices).length > 0 ? 'translated' : 'original');
       const done = await finishOverlay({
         overlay, base: ic, voice, chooseFit, uiLocale: ui, projectDir: ref.projectDir, voiceRoots: [ic.compDir],
-        fonts: { project: { projectDir: ref.projectDir, http: ctx.fontsHttp, media: ctx.media, ...(ctx.fontsIo ? { io: ctx.fontsIo } : {}) }, signal },
+        fallback,
       });
       const hash = await writeOverlay(creativeDir, v.n, done.overlay);
       const next: LocalizationRow = {
@@ -190,7 +196,7 @@ export function registerLocalizationRoutes(app: FastifyInstance, ctx: Localizati
       };
       await setLocalizationRow(ref.store, slug, v.n, next);
       ctx.turns.changed(ref);
-      return viewOf(next, done.overlay);
+      return { ...viewOf(next, done.overlay), ...(done.warnings.length ? { warnings: done.warnings } : {}) };
     });
   });
 }

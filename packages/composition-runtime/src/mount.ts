@@ -711,8 +711,30 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
 
   let readyPromise: Promise<ReadyInfo> | null = null;
   let loadPromise: Promise<void> | null = null;
+  /**
+   * Render mode (Phase 12, Ruling I): each text clip with an explicit width or height is laid out once, hidden, with its fonts
+   * loaded, and a text that needs more room than its box (its scroll size past its client size, in the dimensions the clip
+   * sets) is reported as an advisory `textOverflow`. Never throws; nothing is changed on screen.
+   */
+  const measureText = () => {
+    if (opts.mode !== 'render' || destroyed) return;
+    for (const m of mounted) {
+      if (m.clip.type !== 'text') continue;
+      const p = m.clip.props;
+      if (p.width === undefined && p.height === undefined) continue;
+      try {
+        const { display, visibility } = m.box.style;
+        Object.assign(m.box.style, { display: 'block', visibility: 'hidden' });
+        const need = { w: m.content.scrollWidth, h: m.content.scrollHeight };
+        const box = { w: m.content.clientWidth, h: m.content.clientHeight };
+        Object.assign(m.box.style, { display, visibility });
+        const over = (p.width !== undefined && need.w > box.w + 1) || (p.height !== undefined && need.h > box.h + 1);
+        if (over && box.w > 0 && box.h > 0) report('textOverflow', `text overflows its box: needs ${need.w}x${need.h}, box ${box.w}x${box.h}`, m.clip.id);
+      } catch { /* advisory only */ }
+    }
+  };
   const load = () => (loadPromise ??= Promise.all([fontsLoaded, ...mounted.map((m) => m.prepare),
-    ...audios.map((a) => (a.derived ? loadDerivedAudio(a) : loadMedia(a.el, a.clip.id, a.clip.src)))]).then(() => {}));
+    ...audios.map((a) => (a.derived ? loadDerivedAudio(a) : loadMedia(a.el, a.clip.id, a.clip.src)))]).then(() => { measureText(); }));
   const player: Player = {
     duration: still ? 0 : c.duration,
     fps: c.fps,

@@ -41,7 +41,9 @@ describe('localization routes', { timeout: 120_000 }, () => {
     expect(readdirSync(join(env.store().dir(slug), 'outputs', 'v1', 'locales', 'de'))).toEqual(['test-wide.json']);
     const g = await get(slug, 1, 'de', 'test-wide');
     expect(g.statusCode).toBe(200);
-    expect(g.json()).toEqual(body);
+    // The PUT also returns the advisory warnings of the checks (Ruling K); the GET only the stored view.
+    const { warnings: _w, ...stored } = body as typeof body & { warnings?: string[] };
+    expect(g.json()).toEqual(stored);
     const list = await env.app.inject({ url: url(slug, 1), headers: H });
     expect(list.json()).toEqual({ entries: after[0]!.localizations, available: ['de', 'fr', 'ja'] });
     // A later edit merges: the voice choice and a removal.

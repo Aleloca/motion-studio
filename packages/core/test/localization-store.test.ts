@@ -4,14 +4,17 @@
  * atomic store and its hash, the stale ids, and the text-box estimate (Review Focus 1).
  */
 import { createHash } from 'node:crypto';
-import { existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { readCompositionFolder } from '../src/compositions/composition-files.ts';
+import { checkCompositionObject } from '../src/creatives/composition-contract.ts';
+import { activeLocaleRenders, sweepProjectRenders } from '../src/render/render-sweep.ts';
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { LOCALIZATION_SCHEMA_ID, messages, type Composition, type Localization, type VersionEntry } from '@motion-studio/shared';
 import { currentLocale } from '../src/i18n.ts';
 import { emptyOverlay, overlayText, readOverlay, writeOverlay } from '../src/localization/store.ts';
-import { checkedInstance, checkedLocale, checkOverlay, estimateLines, fitTexts, staleIds, voiceFileOk, withoutGone } from '../src/localization/validate.ts';
+import { checkedInstance, checkedLocale, checkLocalizedComposition, checkOverlay, estimateLines, fitTexts, staleIds, voiceFileOk, withoutGone } from '../src/localization/validate.ts';
 import { CodedError } from '../src/workspace-store.ts';
 
 let base: string;
@@ -189,5 +192,53 @@ describe('the text-box estimate (Review Focus 1)', () => {
     const source = 'One two three four five six seven eight nine ten eleven twelve';
     const c = comp(source);
     expect(fitTexts(c, overlay({ texts: { title: { source, text: 'Eins zwei drei vier fünf sechs sieben acht neun' } } }), [], new Set(['title'])).overflowing).toEqual([]);
+  });
+});
+
+describe('the checks a turn runs, on a composition object (Ruling K)', () => {
+  it('validateComposition, the html layers\' static checks (warnings) and the duration against the brief', async () => {
+    const dir = join(base, 'comp');
+    mkdirSync(join(dir, 'layers'), { recursive: true });
+    mkdirSync(join(dir, 'assets'), { recursive: true });
+    writeFileSync(join(dir, 'assets', 'Mono.woff2'), 'wOF2');
+    writeFileSync(join(dir, 'layers', 'fx.html'), '<!doctype html><html><body><script>fetch("https://example.com/x")</script></body></html>');
+    const c = {
+      $schema: 'motion-studio/composition@1', width: 320, height: 180, fps: 30, duration: 2, background: '#101010', fonts: [{ family: 'Mono', src: 'assets/Mono.woff2', weight: 400 }], scenes: [],
+      tracks: [{ id: 'v', kind: 'visual', clips: [
+        { id: 'fx', type: 'html', src: 'layers/fx.html', start: 0, duration: 2, props: { x: 0, y: 0, width: 320, height: 180 } },
+        { id: 'title', type: 'text', start: 0, duration: 2, props: { x: 0, y: 0, width: 100, height: 30, text: 'Hallo', fontSize: 20 } },
+      ] }],
+    };
+    writeFileSync(join(dir, 'composition.json'), JSON.stringify(c));
+    const folder = await readCompositionFolder(dir);
+    const preset = { id: 'test-wide', channel: 'T', name: 'W', width: 320, height: 180, kind: 'video' as const, extensions: ['mp4'] };
+    const r = await checkCompositionObject(c, { preset, compDir: dir, folder, briefDurationSec: 10 });
+    expect(r.warnings.length).toBeGreaterThan(0);
+    expect(r.problems.map((p) => p.key)).toEqual(['composition.durationOffBrief']);
+    const loc = await checkLocalizedComposition(c as unknown as Composition, { preset, compDir: dir, folder, files: folder.sizes, uiLocale: currentLocale() });
+    expect(loc.problems).toEqual([]);
+    expect(loc.warnings.length).toBeGreaterThan(0);
+    // A file the localized composition names but the folder lacks is a problem.
+    const missing = { ...c, fonts: [...c.fonts, { family: 'Noto Sans JP', src: 'assets/fonts/x.ttf' }] };
+    expect((await checkLocalizedComposition(missing as unknown as Composition, { preset, compDir: dir, folder, files: folder.sizes, uiLocale: currentLocale() })).problems).not.toEqual([]);
+  });
+});
+
+describe('startup sweep of localized render copies', () => {
+  it('removes old r-<16 hex> folders only: never a young one, one in use, another name or a link', async () => {
+    const root = join(base, 'p', '.studio', 'cache', 'locale-render');
+    const mk = (name: string, old: boolean) => { mkdirSync(join(root, name, 'outputs'), { recursive: true }); if (old) utimesSync(join(root, name), new Date(0), new Date(0)); return join(root, name); };
+    const old = mk('r-0123456789abcdef', true);
+    const young = mk('r-1123456789abcdef', false);
+    const busy = mk('r-2123456789abcdef', true);
+    const other = mk('keep-me', true);
+    mkdirSync(join(base, 'outside'));
+    symlinkSync(join(base, 'outside'), join(root, 'r-3123456789abcdef'));
+    activeLocaleRenders.add(busy);
+    try {
+      const removed = await sweepProjectRenders(join(base, 'p'));
+      expect(removed).toEqual([old]);
+    } finally { activeLocaleRenders.delete(busy); }
+    expect([existsSync(old), existsSync(young), existsSync(busy), existsSync(other), existsSync(join(base, 'outside'))]).toEqual([false, true, true, true, true]);
   });
 });

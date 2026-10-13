@@ -14,7 +14,8 @@ import { listProcesses } from './watchdog.ts';
  * - in a project: hidden render temp outputs `outputs/vN/.<name>.render-<hex>.tmp` (also in `.previews/`), media temp
  *   files `.studio/cache/media/.<key>.<hex>.tmp`, and the atomic JSON writes' temps (`manifest.json`, `versions.json`,
  *   `creative.json`, `source-hashes.json` + `.<12 hex>.tmp`) in their own folders; never through a linked creative or version folder. Then the media
- *   cache is pruned (`pruneMediaCache`: older recipes, unused for 30 days, the size cap), never a file in use;
+ *   cache is pruned (`pruneMediaCache`: older recipes, unused for 30 days, the size cap), never a file in use; and the
+ *   private copies of localized renders `.studio/cache/locale-render/r-<16 hex>/` (Phase 12), never one in use;
  * - in the OS temp folder: exactly the renderer's temp folder names (`RENDER_TEMP_DIR_RE`) that hold its owner marker
  *   (`owner.pid`) whose pid is gone, and that no live process names on its command line.
  * The project part runs at startup AND on a workspace switch (`recoverWorkspace`), when renders may be running: the age
@@ -22,6 +23,10 @@ import { listProcesses } from './watchdog.ts';
  */
 
 export const SWEEP_MIN_AGE_MS = 10 * 60 * 1000;
+/** A localized render's private copy (`render-jobs.ts` `renderLocalized`). */
+export const LOCALE_RENDER_DIR_RE = /^r-[0-9a-f]{16}$/;
+/** The private copies of the localized renders running in this process (absolute paths): never swept. */
+export const activeLocaleRenders = new Set<string>();
 const CREATIVE_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const VERSION_RE = /^v\d{1,6}$/;
 /** A `writeJsonFileAtomic` temp of `name` (`<name>.<12 hex>.tmp`), left by a killed app. */
@@ -79,6 +84,17 @@ export async function sweepProjectRenders(projectDir: string, o: { minAgeMs?: nu
     for (const slug of await readdir(stamps).catch(() => [] as string[])) {
       const sdir = join(stamps, slug);
       if (CREATIVE_SLUG_RE.test(slug) && (await lstat(sdir).catch(() => null))?.isDirectory()) removed.push(...await sweepFiles(sdir, STAMP_TEMP_RE, minAgeMs, now));
+    }
+  }
+  // Localized renders' private copies (Phase 12): `.studio/cache/locale-render/r-<16 hex>/`, old and not in use.
+  const localeRender = join(cache, 'locale-render');
+  if ((await lstat(localeRender).catch(() => null))?.isDirectory()) {
+    for (const name of await readdir(localeRender).catch(() => [] as string[])) {
+      const p = join(localeRender, name);
+      if (!LOCALE_RENDER_DIR_RE.test(name) || activeLocaleRenders.has(p)) continue;
+      const st = await oldEnough(p, minAgeMs, now);
+      if (!st?.isDirectory()) continue; // a link or a file is not ours
+      await rm(p, { recursive: true, force: true, maxRetries: 2 }).then(() => removed.push(p), () => {});
     }
   }
   const media = mediaCacheDir(projectDir);

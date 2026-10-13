@@ -75,7 +75,9 @@ export interface ExportItem { format: string; n: number; v?: number; file: strin
   /** The language of the file (Phase 12): the `{locale}` of its name; absent for a creative without extra languages. */
   locale?: string;
   /** A translated render (not the primary language's file). */
-  localized?: boolean }
+  localized?: boolean;
+  /** A translated render's own problems (its checks and the browser's overflow measure, Phase 12 Rulings I and J). */
+  problems?: string[] }
 
 export interface ExportCommon {
   creativeDir: string;
@@ -176,7 +178,9 @@ function withLocaleSuffix(stem: string, locale: string): string {
  * language, its row's render when it is current (made from the row's overlay and the version's composition of that format,
  * still a usable file); `missing`: no translation at all; `stale`: a translation whose render is not current (to render first).
  */
-export async function resolveLocalizedItems(creativeDir: string, versions: VersionEntry[], items: ExportItem[], locales: readonly string[]):
+export async function resolveLocalizedItems(creativeDir: string, versions: VersionEntry[], items: ExportItem[], locales: readonly string[],
+  /** Whether the file still has its recorded content (`renderFileMatches`); absent: only that it is a usable file. */
+  matches?: (n: number, file: string, sha256: string) => Promise<boolean>):
   Promise<{ items: ExportItem[]; missing: Array<{ format: string; n: number; locale: string }>; pending: Map<number, { formats: string[]; locales: string[] }> }> {
   const out: ExportItem[] = [];
   const missing: Array<{ format: string; n: number; locale: string }> = [];
@@ -189,7 +193,7 @@ export async function resolveLocalizedItems(creativeDir: string, versions: Versi
       if (!v || !comp || !row) { missing.push({ format: it.format, n: it.n, locale }); continue; }
       const r = row.render;
       const current = r !== undefined && r.overlayHash === row.hash && r.fromComposition === comp.hash && plainName(r.file)
-        && (await probeConfinedFile(creativeDir, `outputs/v${it.n}/${r.file}`)) === true;
+        && (await probeConfinedFile(creativeDir, `outputs/v${it.n}/${r.file}`)) === true && (!matches || await matches(it.n, r.file, r.sha256));
       if (!current) {
         const p = pending.get(it.n) ?? { formats: [], locales: [] };
         if (!p.formats.includes(it.format)) p.formats.push(it.format);
@@ -197,7 +201,8 @@ export async function resolveLocalizedItems(creativeDir: string, versions: Versi
         pending.set(it.n, p);
         continue;
       }
-      out.push({ format: it.format, n: it.n, ...(it.v !== undefined ? { v: it.v } : {}), file: r.file, width: r.width, height: r.height, locale, localized: true });
+      out.push({ format: it.format, n: it.n, ...(it.v !== undefined ? { v: it.v } : {}), file: r.file, width: r.width, height: r.height, locale, localized: true,
+        ...(r.problems?.length ? { problems: r.problems } : {}) });
     }
   }
   return { items: out, missing, pending };

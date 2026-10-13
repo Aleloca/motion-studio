@@ -2,8 +2,10 @@ import { lstat, realpath } from 'node:fs/promises';
 import { join, sep } from 'node:path';
 import {
   applyLocalization, compositionProblemText, INSTANCE_ID_RE, isRtlLocale, isSupportedLocale, localizableEntries, LocalizationMismatch, localizationSchema,
-  messages, validateComposition, type Composition, type FormatPreset, type Locale, type LocaleTag, type Localization, type VersionEntry,
+  messages, type Composition, type FormatPreset, type Locale, type LocaleTag, type Localization, type VersionEntry,
 } from '@motion-studio/shared';
+import type { CompositionFolder } from '../compositions/composition-files.ts';
+import { checkCompositionObject } from '../creatives/composition-contract.ts';
 import { CodedError } from '../workspace-store.ts';
 
 /**
@@ -197,10 +199,12 @@ export function clipLabel(c: Composition, id: string): string {
 }
 
 /**
- * The composition checks of a localized composition (the entry point that takes a composition object): `validateComposition`
- * against the format with the folder's files (plus the overlay's font and voice files), as translated texts.
+ * The composition checks of a localized composition (Ruling K: the same checks a turn runs, `checkCompositionObject`): the
+ * problems and the advisory warnings (html layer static checks), as translated texts. The folder is the instance's composition
+ * folder; `files` adds the overlay's font and voice files.
  */
-export function checkLocalizedComposition(localized: Composition, o: { preset: FormatPreset; files: ReadonlyMap<string, { size: number }>; uiLocale: Locale }): string[] {
-  const r = validateComposition(localized, { format: o.preset, files: o.files });
-  return r.problems.map((p) => compositionProblemText(p, o.uiLocale));
+export async function checkLocalizedComposition(localized: Composition, o: { preset: FormatPreset; compDir: string; folder: CompositionFolder;
+  files: ReadonlyMap<string, { size: number }>; uiLocale: Locale }): Promise<{ problems: string[]; warnings: string[] }> {
+  const r = await checkCompositionObject(localized, { preset: o.preset, compDir: o.compDir, folder: o.folder, files: o.files });
+  return { problems: r.problems.map((p) => compositionProblemText(p, o.uiLocale)), warnings: r.warnings.map((p) => compositionProblemText(p, o.uiLocale)) };
 }

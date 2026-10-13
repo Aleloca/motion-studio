@@ -1,0 +1,149 @@
+// @vitest-environment node
+/**
+ * Localized renders in real Chrome (Phase 12, Task 3 fix round 1, Ruling I): the runtime measures each text clip after
+ * layout and reports an advisory `textOverflow`; a localized render records it as a problem of that language, while the
+ * primary-language render of the same overflowing composition stays as it was (never a failure, no new problem). The render
+ * runs on the private copy (an `@2` instance id, the fallback font file present). Skipped without Chrome, unless
+ * MS_REQUIRE_CHROME=1 (CI).
+ */
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import type { FastifyInstance } from 'fastify';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { messages, type FormatPreset, type JobSummary, type ManifestV2 } from '@motion-studio/shared';
+import { AppConfigStore } from '../src/app-config.ts';
+import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
+import { readCompositionFolder } from '../src/compositions/composition-files.ts';
+import { CreativeStore } from '../src/creatives/creative-store.ts';
+import { Git } from '../src/git.ts';
+import { currentLocale } from '../src/i18n.ts';
+import { createFfmpegTools, NoMediaTools } from '../src/media/media-tools.ts';
+import { LibraryStore } from '../src/library/library-store.ts';
+import { ChromeProvider } from '../src/render/chromium-provider.ts';
+import { createRenderEngine } from '../src/render/renderer.ts';
+import { buildServer } from '../src/server/app.ts';
+import { buildRuntime, FONT, renderTools } from './helpers/render-env.ts';
+
+const tools = await renderTools('localized render tests');
+const TOKEN = 'ce'.repeat(32);
+const H = { 'x-motion-studio-ui': TOKEN };
+const PRESET: FormatPreset = { id: 'test-still', channel: 'Test', name: 'Still', width: 320, height: 180, kind: 'image', extensions: ['png'] };
+const LONG_DE = 'Herzlich willkommen zur brandneuen Version unserer wunderbaren Anwendung';
+
+const composition = (text: string) => ({
+  $schema: 'motion-studio/composition@1', width: 320, height: 180, fps: 30, duration: 0, background: '#000000',
+  fonts: [{ family: 'Mono', src: 'assets/Mono.woff2', weight: 400 }], scenes: [],
+  tracks: [{ id: 'v', kind: 'visual', clips: [
+    // A narrow box: one line of 20 px text, 140 px wide.
+    { id: 'title', name: 'Title', type: 'text', start: 0, duration: 0, props: { x: 10, y: 10, width: 140, height: 26, text, fontSize: 20, fontFamily: 'Mono', color: '#ffffff' } },
+  ] }],
+});
+
+describe.skipIf(!tools.ok)('localized renders in real Chrome', () => {
+  let work: string;
+  let ws: string;
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    work = mkdtempSync(join(tmpdir(), 'ms-test-l10n-chrome-'));
+    const dist = join(work, 'dist');
+    mkdirSync(join(work, 'render-tmp'));
+    await buildRuntime(dist);
+    ws = join(work, 'ws');
+    app = await buildServer({
+      uiToken: TOKEN, sandbox: async () => ({ available: false, reason: 'test' }),
+      appConfig: new AppConfigStore(join(work, 'config')), git: new Git(),
+      runner: new ClaudeCodeRunner([process.execPath, '-e', ''], { killGraceMs: 200 }), doctor: async () => [],
+      media: await createFfmpegTools(),
+      render: createRenderEngine({ provider: async () => new ChromeProvider({ exe: tools.chrome!.exe, kind: 'system', limits: { timeLimitMs: 10 * 60_000 } }) }),
+      renderOptions: { distDir: dist, tempDir: join(work, 'render-tmp'), parallel: 1, encoder: 'libx264' },
+    });
+    await app.inject({ method: 'PUT', url: '/api/workspace', headers: H, payload: { path: ws } });
+    await app.inject({ method: 'POST', url: '/api/projects', headers: H, payload: { name: 'Acme' } });
+    await app.inject({ method: 'PUT', url: '/api/formats', headers: H, payload: { presets: [PRESET] } });
+  }, 600_000);
+  afterAll(async () => { await app?.close(); if (work) rmSync(work, { recursive: true, force: true }); });
+
+  async function waitJob(id: string): Promise<JobSummary> {
+    for (const t0 = Date.now(); Date.now() - t0 < 300_000;) {
+      const j = ((await app.inject({ url: '/api/jobs', headers: H })).json() as JobSummary[]).find((x) => x.id === id);
+      if (j && j.state !== 'queued' && j.state !== 'running') return j;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    throw new Error('timeout waiting for the job');
+  }
+
+  /** A creative with the `@2` instance of the still preset, its v1 composition showing `source`. */
+  async function creative(source: string) {
+    const format = 'test-still@2';
+    const r = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', headers: H, payload: {
+      title: 'Lang', generate: false, brief: { goal: 'g', message: '', formats: ['test-still', format], durationSec: null, assets: [], notes: '', links: {}, locales: { primary: 'en', extra: ['de', 'ja'] } },
+    } });
+    expect(r.statusCode, r.body).toBe(201);
+    const slug = r.json().slug as string;
+    const store = new CreativeStore(join(ws, 'acme'));
+    const vdir = store.outputsDir(slug, 1);
+    const compositions = [];
+    for (const f of ['test-still', format]) {
+      const dir = join(vdir, 'compositions', f);
+      mkdirSync(join(dir, 'assets'), { recursive: true });
+      copyFileSync(FONT, join(dir, 'assets', 'Mono.woff2'));
+      writeFileSync(join(dir, 'composition.json'), JSON.stringify(composition(source)));
+      compositions.push({ format: f, dir: `compositions/${f}`, hash: (await readCompositionFolder(dir)).hash, problems: [] });
+    }
+    writeFileSync(join(vdir, 'manifest.json'), JSON.stringify({ schemaVersion: 2, compositions, renders: [] } satisfies ManifestV2));
+    await store.appendVersion(slug, { n: 1, commit: null, sessionId: null, status: 'complete', createdAt: new Date().toISOString(), request: 'r', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: null, compositions });
+    return { slug, store, format };
+  }
+
+  it('a German text too long for a narrow box: the render measures it and records the problem on that language', { timeout: 300_000 }, async () => {
+    const { slug, store, format } = await creative('Welcome');
+    // The user's fit 1 (kept): the estimate already flags it, so the render needs force.
+    const put = await app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}/versions/1/localizations/de/${encodeURIComponent(format)}`, headers: H, payload: { texts: { title: LONG_DE }, fit: { title: 1 } } });
+    expect(put.statusCode, put.body).toBe(200);
+    const r = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/render`, headers: H, payload: { formats: [format], locales: ['de'], force: true } });
+    expect(r.statusCode, r.body).toBe(202);
+    const job = await waitJob((r.json() as JobSummary).id);
+    expect(job.state, job.error).toBe('succeeded');
+    const row = (await store.readVersions(slug))[0]!.localizations!.find((x) => x.locale === 'de')!;
+    const measured = messages(currentLocale()).variants.textOverflowMeasured({ clip: 'Title', fit: 100 });
+    expect(row.render?.file).toBe('test-still@2.de.png');
+    expect(row.render?.problems).toContain(measured);
+    expect(row.problems).toContain(measured);
+  });
+
+  it('a short translation: no overflow measured; the primary render of an overflowing source neither fails nor gains a problem', { timeout: 300_000 }, async () => {
+    const { slug, store, format } = await creative(LONG_DE);
+    const put = await app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}/versions/1/localizations/de/${encodeURIComponent(format)}`, headers: H, payload: { texts: { title: 'Hallo' } } });
+    expect(put.json().problems).toEqual([]);
+    const loc = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/render`, headers: H, payload: { formats: [format], locales: ['de'] } });
+    expect(loc.statusCode, loc.body).toBe(202);
+    expect((await waitJob((loc.json() as JobSummary).id)).state).toBe('succeeded');
+    const row = (await store.readVersions(slug))[0]!.localizations!.find((x) => x.locale === 'de')!;
+    expect(row.render?.problems).toBeUndefined();
+    const primary = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/render`, headers: H, payload: { formats: [format] } });
+    const done = await waitJob((primary.json() as JobSummary).id);
+    expect(done.state, done.error).toBe('succeeded');
+    const out = (await store.readVersions(slug))[0]!.outputs.find((o) => o.format === format)!;
+    expect(out.problems).toEqual([]);
+  });
+
+  it('a Japanese translation renders with its fallback font in the private copy (from the library: no download)', { timeout: 300_000 }, async () => {
+    const { slug, store, format } = await creative('Hello');
+    const projectDir = join(ws, 'acme');
+    mkdirSync(join(projectDir, 'assets', 'fonts'), { recursive: true });
+    copyFileSync(FONT, join(projectDir, 'assets', 'fonts', 'NotoSansJP-400.woff2'));
+    await new LibraryStore(projectDir, NoMediaTools).registerAssets([{ file: 'fonts/NotoSansJP-400.woff2', origin: 'google-fonts', tags: ['font', 'Noto Sans JP'], description: 'Font Noto Sans JP' }]);
+    const put = await app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}/versions/1/localizations/ja/${encodeURIComponent(format)}`, headers: H, payload: { texts: { title: 'こんにちは' } } });
+    expect(put.statusCode, put.body).toBe(200);
+    expect(put.json().overlay.fonts).toEqual([{ family: 'Noto Sans JP', files: ['assets/fonts/NotoSansJP-400.woff2'] }]);
+    expect(put.json().problems).toEqual([]);
+    const r = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/render`, headers: H, payload: { formats: [format], locales: ['ja'] } });
+    expect(r.statusCode, r.body).toBe(202);
+    const job = await waitJob((r.json() as JobSummary).id);
+    expect(job.state, job.error).toBe('succeeded');
+    const row = (await store.readVersions(slug))[0]!.localizations!.find((x) => x.locale === 'ja')!;
+    expect(row.render).toMatchObject({ file: 'test-still@2.ja.png', forced: false });
+  });
+});

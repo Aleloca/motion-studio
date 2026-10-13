@@ -3,7 +3,7 @@ import { recoverRenameJournal } from '../library/rename-recovery.ts';
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { DEFAULT_EXPORT_NAME_PATTERN, defaultPattern, messages, INSTANCE_FOLDER_RE, briefSchema, briefWriteSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_NAME_PATTERN, defaultPattern, messages, type JobSummary, INSTANCE_FOLDER_RE, briefSchema, briefWriteSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -18,7 +18,7 @@ import { formatSummaries } from '../creatives/format-summary.ts';
 import { withLazyHashes } from '../creatives/output-hashes.ts';
 import { creativeJobKey, PICK_RETRY_AFTER_SEC, type CreativeRef, type CreativeTurnService } from '../creatives/creative-turns.ts';
 import type { RenderJobService } from '../creatives/render-jobs.ts';
-import { reconcileRenders } from '../creatives/render-stamps.ts';
+import { reconcileRenders, renderFileMatches } from '../creatives/render-stamps.ts';
 import { sweepDerivedCaches, sweepEditorStaging } from '../creatives/cache-sweep.ts';
 import { editorCompositionView } from '../creatives/editor-staging.ts';
 import { directEditBodySchema, type DirectEditService } from '../creatives/direct-edit.ts';
@@ -368,8 +368,10 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const pattern = typeof body.pattern === 'string' ? body.pattern
       : settingsPattern === DEFAULT_EXPORT_NAME_PATTERN ? defaultPattern(extraLocales.length > 0) : settingsPattern!;
     const tags = body.locales ? [...new Set(body.locales.map((x) => checkedLocale(x, currentLocale())))] : null;
-    const includeSource = tags === null || (primaryLocale !== undefined && tags.includes(primaryLocale));
-    const otherTags = tags === null ? [] : tags.filter((x) => x !== primaryLocale);
+    // The brief's primary language is today's file, also for a creative whose extra languages were all removed.
+    const briefPrimary = creative.brief.locales?.primary;
+    const includeSource = tags === null || (briefPrimary !== undefined && tags.includes(briefPrimary));
+    const otherTags = tags === null ? [] : tags.filter((x) => x !== briefPrimary);
     const common = { creativeDir, destination, slug: ref.creativeSlug, title: creative.title, forbiddenRoot: ref.root, presets, pattern,
       ...(typeof body.date === 'string' ? { now: body.date } : {}),
       label: (id: string) => formatDisplayName(presets, id, currentLocale(), creative.brief.formatLabels) };
@@ -407,7 +409,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     // reported apart (`excluded`, with its problems and their codes: P2, never a silent exclusion); the dialog then shows
     // the problems and copies it once the row is ticked again.
     const problems: string[] = [];
-    const excluded: Array<{ format: string; version: number; problems: string[]; issues: OutputIssue[] }> = [];
+    const excluded: Array<{ format: string; version: number; problems: string[]; issues: OutputIssue[]; locale?: string }> = [];
     if (rendered.length > 0) {
       const versions = await ref.store.readVersions(ref.creativeSlug);
       items = items.filter((it) => {
@@ -421,10 +423,23 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       });
       if (!items.length) throw new CodedError(409, t().export.renderProblemsOnly({ list: problems.join(', ') }), 'export-render-problems');
     }
-    if (tags !== null || primaryLocale !== undefined) items = await withLocales(ref, creativeDir, items, { includeSource, primaryLocale, otherTags, force: body.force === true, label: common.label });
-    const result = await exportResolved(items, common);
+    const localeRendered: Array<{ version: number; formats: string[]; locale: string }> = [];
+    if (tags !== null || primaryLocale !== undefined) {
+      const loc = await withLocales(ref, creativeDir, items, { includeSource, primaryLocale, otherTags, force: body.force === true, label: common.label });
+      localeRendered.push(...loc.rendered);
+      // Ruling J: a translation rendered now with problems is not copied either: reported in `excluded`, as the primary's (I2).
+      items = loc.items.filter((it) => {
+        if (!it.localized || !it.problems?.length || !loc.rendered.some((r) => r.version === it.n && r.locale === it.locale && r.formats.includes(it.format))) return true;
+        problems.push(t().export.renderProblems({ item: `${common.label(it.format)} v${it.n} (${it.locale})`, list: it.problems.join('; ') }));
+        excluded.push({ format: it.format, version: it.n, locale: it.locale!, problems: it.problems, issues: [] });
+        return false;
+      });
+      if (!items.length) throw new CodedError(409, t().export.renderProblemsOnly({ list: problems.join(', ') }), 'export-render-problems');
+    }
+    const result = await exportResolved(items.map(({ problems: _p, ...it }) => it), common);
     const withProblems = excluded.length ? { ...result, excluded } : result;
-    return rendered.length > 0 ? { ...withProblems, rendered } : withProblems;
+    const allRendered = [...rendered, ...localeRendered];
+    return allRendered.length > 0 ? { ...withProblems, rendered: allRendered } : withProblems;
   });
 
   /**
@@ -434,11 +449,14 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
    * `force` is not set: the dialog asks "render anyway"); a format with no translation is refused (409 `localization-missing`).
    */
   async function withLocales(ref: CreativeRef & { store: CreativeStore }, creativeDir: string, items: ExportItem[],
-    o: { includeSource: boolean; primaryLocale: string | undefined; otherTags: string[]; force: boolean; label: (id: string) => string }): Promise<ExportItem[]> {
+    o: { includeSource: boolean; primaryLocale: string | undefined; otherTags: string[]; force: boolean; label: (id: string) => string }):
+    Promise<{ items: ExportItem[]; rendered: Array<{ version: number; formats: string[]; locale: string }> }> {
     const source = o.includeSource ? items.map((it) => (o.primaryLocale !== undefined ? { ...it, locale: o.primaryLocale } : it)) : [];
-    if (o.otherTags.length === 0) return source;
+    const rendered: Array<{ version: number; formats: string[]; locale: string }> = [];
+    if (o.otherTags.length === 0) return { items: source, rendered };
     const v = messages(currentLocale()).variants;
-    let r = await resolveLocalizedItems(creativeDir, await ref.store.readVersions(ref.creativeSlug), items, o.otherTags);
+    const matches = (n: number, file: string, sha: string) => renderFileMatches(ref.projectDir, creativeDir, ref.creativeSlug, n, file, sha);
+    let r = await resolveLocalizedItems(creativeDir, await ref.store.readVersions(ref.creativeSlug), items, o.otherTags, matches);
     const refuseMissing = () => {
       if (r.missing.length === 0) return;
       const list = r.missing.map((x) => `${o.label(x.format)} v${x.n} (${x.locale})`);
@@ -448,15 +466,18 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     };
     refuseMissing();
     if (r.pending.size > 0) {
-      for (const [n, p] of r.pending) await ctx.renders.renderLocalesAndWait(ref, n, p.formats, p.locales, o.force);
-      r = await resolveLocalizedItems(creativeDir, await ref.store.readVersions(ref.creativeSlug), items, o.otherTags);
+      for (const [n, p] of r.pending) {
+        await ctx.renders.renderLocalesAndWait(ref, n, p.formats, p.locales, o.force);
+        for (const locale of p.locales) rendered.push({ version: n, formats: [...p.formats], locale });
+      }
+      r = await resolveLocalizedItems(creativeDir, await ref.store.readVersions(ref.creativeSlug), items, o.otherTags, matches);
       refuseMissing();
       if (r.pending.size > 0) {
         const list = [...r.pending].flatMap(([n, p]) => p.formats.map((f) => `${o.label(f)} v${n}`)).join(', ');
         throw new CodedError(409, t().export.renderFailed({ list }), 'export-render-failed');
       }
     }
-    return [...source, ...r.items];
+    return { items: [...source, ...r.items], rendered };
   }
 
   /**
@@ -469,19 +490,39 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     if (!r.success || (r.data.picks === undefined && r.data.follow === undefined)) throw new CodedError(400, t().export.invalidPicks, 'export-invalid-picks');
     const creative = await ref.store.get(ref.creativeSlug);
     const creativeDir = ref.store.dir(ref.creativeSlug);
+    const presetsForLabels = r.data.locales ? (await catalog().load()).presets : [];
     await reconcileRenders({ projectDir: ref.projectDir, store: ref.store, creativeSlug: ref.creativeSlug }).catch(() => false);
     const { versions, complete } = await withLazyHashes({ projectDir: ref.projectDir, creativeSlug: ref.creativeSlug, creativeDir, versions: await ref.store.readVersions(ref.creativeSlug) });
     // As for the export: a follower's version is never decided on partial hashes.
     if (!complete && r.data.follow !== undefined) throw new CodedError(503, t().errors.hashesPending, 'hashes-pending', PICK_RETRY_AFTER_SEC);
     const items = resolveExportPicks({ creativeDir, destination: '/', slug: ref.creativeSlug, versions, picks: (r.data.picks ?? {}) as Record<string, number>,
       follow: r.data.follow as string[] | Record<string, number> | undefined, links: effectiveLinks(creative.brief.links, creative.brief.formats), storedPicks: creative.exportPicks });
-    const pending = await pendingRenders(creativeDir, versions, items);
-    const renders = [];
+    // Languages (Phase 12): the primary one is today's file; the others' translations without a current render are started too.
+    const briefPrimary = creative.brief.locales?.primary;
+    const tags = r.data.locales ? [...new Set(r.data.locales.map((x) => checkedLocale(x, currentLocale())))] : null;
+    const includeSource = tags === null || (briefPrimary !== undefined && tags.includes(briefPrimary));
+    const otherTags = tags === null ? [] : tags.filter((x) => x !== briefPrimary);
+    const pending = includeSource ? await pendingRenders(creativeDir, versions, items) : new Map<number, string[]>();
+    const renders: Array<{ version: number; formats: string[]; job: JobSummary; covers: boolean; locales?: string[] }> = [];
     // Answers at once: an active job of that version is reused for the formats it covers and a follow-up job is queued for
     // the rest (I3), so the job returned covers them all.
     for (const [version, formats] of pending) {
       const { job, covers } = await ctx.renders.ensureJob(ref, version, formats, { wait: false });
       renders.push({ version, formats, job, covers });
+    }
+    if (otherTags.length > 0) {
+      const loc = await resolveLocalizedItems(creativeDir, versions, items, otherTags,
+        (n, file, sha) => renderFileMatches(ref.projectDir, creativeDir, ref.creativeSlug, n, file, sha));
+      if (loc.missing.length > 0) {
+        const list = loc.missing.map((x) => `${formatDisplayName(presetsForLabels, x.format, currentLocale(), creative.brief.formatLabels)} v${x.n} (${x.locale})`);
+        const err = new CodedError(409, messages(currentLocale()).variants.localizationMissing({ list: list.slice(0, 10).join(', ') }), 'localization-missing');
+        err.problems = list.slice(0, 50);
+        throw err;
+      }
+      for (const [version, p] of loc.pending) {
+        const job = await ctx.renders.start(ref, version, p.formats, { locales: p.locales, force: r.data.force === true });
+        renders.push({ version, formats: p.formats, job, covers: true, locales: p.locales });
+      }
     }
     return { renders };
   });

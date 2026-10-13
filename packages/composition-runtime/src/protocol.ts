@@ -42,6 +42,12 @@ export const RUNTIME_ERROR_CODES = [
    * the clip plays silent. Never holds up `ready()` for more than a short bound.
    */
   'clipAudioFailed',
+  /**
+   * Render mode, advisory (Phase 12, Ruling I): once fonts and media are loaded, a text clip with an explicit width or height
+   * whose laid-out text needs more room than its box. `message` is `text overflows its box: needs <w>x<h>, box <w>x<h>`. The
+   * renderer never fails on it; a localized render records it as a problem of that language.
+   */
+  'textOverflow',
 ] as const;
 export type RuntimeErrorCode = (typeof RUNTIME_ERROR_CODES)[number];
 /** A problem the runtime met. `message` is a developer detail in English; the UI shows its own text for `code`. */

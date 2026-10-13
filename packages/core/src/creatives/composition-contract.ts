@@ -2,7 +2,7 @@ import { rename, rm, writeFile } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import {
-  COMPOSITION_LIMITS, compositionHash, compositionProblem, compositionProblemText, formatLabel, isDurationOffBrief, messages, normalizeComposition, staticLayerCheck,
+  COMPOSITION_LIMITS, compositionHash, compositionProblem, compositionProblemText, formatLabel, isDurationOffBrief, messages, normalizeComposition, staticLayerCheck, validateComposition,
   type Composition, type CompositionProblem, type FormatPreset, type Locale,
 } from '@motion-studio/shared';
 import { readConfinedFile, withConfinedFile } from '../brand/agent-guard.ts';
@@ -84,6 +84,25 @@ export async function checkComposition(compDir: string, format: string, preset: 
     problems.push(compositionProblem('composition.durationOffBrief', { duration: Math.round(c.duration * 10) / 10, target: briefDurationSec }));
   }
   return { format, dir, ok: problems.length === 0, hash: loaded.hash, finalHash, problems, warnings, composition: c, folder };
+}
+
+/**
+ * The checks a turn runs on a composition (`checkComposition`), for a composition OBJECT that is not on disk as such (Phase
+ * 12, Ruling K: a localized composition; Task 4's `submit_localization` and repair call it too): `validateComposition`
+ * against the format with `files` (the folder's files plus any the object adds), the static checks of the folder's html
+ * layers (`staticLayerCheck`, warnings), and, given `briefDurationSec`, a video duration far from the brief (a problem).
+ */
+export async function checkCompositionObject(composition: unknown, o: {
+  preset: FormatPreset; compDir: string; folder: CompositionFolder; files?: ReadonlyMap<string, { size: number }>; briefDurationSec?: number | null;
+}): Promise<{ problems: CompositionProblem[]; warnings: CompositionProblem[] }> {
+  const v = validateComposition(composition, { format: o.preset, files: o.files ?? o.folder.sizes });
+  const problems = [...v.problems];
+  const warnings = [...v.warnings, ...(await layerWarnings(o.compDir, o.folder))];
+  const d = (composition as { duration?: unknown } | null)?.duration;
+  if (v.ok && o.preset.kind === 'video' && typeof d === 'number' && o.briefDurationSec != null && isDurationOffBrief(d, o.briefDurationSec)) {
+    problems.push(compositionProblem('composition.durationOffBrief', { duration: Math.round(d * 10) / 10, target: o.briefDurationSec }));
+  }
+  return { problems, warnings: warnings.slice(0, 50) };
 }
 
 export interface TargetsCheck {

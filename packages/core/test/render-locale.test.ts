@@ -90,6 +90,16 @@ describe('render per language', { timeout: 120_000 }, () => {
     expect(manifest(slug, 1).renders.find((r) => r.locale === 'fr')).toMatchObject({ forced: true, stale: ['title'] });
   });
 
+  it('with no v2 manifest yet, the localized render starts one from the version\'s compositions', async () => {
+    const slug = await create();
+    await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
+    rmSync(join(env.store().dir(slug), 'outputs', 'v1', 'manifest.json'));
+    await done(await render(slug, 1, { formats: ['test-wide'], locales: ['de'] }));
+    const m = manifest(slug, 1);
+    expect(m.compositions.map((c) => c.format)).toEqual(['test-wide', 'test-tall']);
+    expect(m.renders).toEqual([expect.objectContaining({ file: 'test-wide.de.mp4', locale: 'de' })]);
+  });
+
   it('refuses a language without translation (409), an RTL or unknown tag (400), before anything renders', async () => {
     const slug = await create();
     await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
@@ -101,6 +111,50 @@ describe('render per language', { timeout: 120_000 }, () => {
     expect(rtl.json()).toMatchObject({ code: 'locale-rtl', error: v().localeRtl({ tag: 'ar' }) });
     expect((await render(slug, 1, { locales: ['../x'] })).json().code).toBe('locale-unsupported');
     expect(env.fake.renders).toHaveLength(0);
+  });
+});
+
+describe('render problems of a translation (Rulings I, J)', { timeout: 120_000 }, () => {
+  it('a measured overflow is a problem of the language (row and render), never of the primary render', async () => {
+    const slug = await create();
+    await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
+    env.fake.overflows = ['title'];
+    await done(await render(slug, 1, { formats: ['test-wide'], locales: ['de'] }));
+    await done(await render(slug, 1, { formats: ['test-wide'] }));
+    const ver = (await env.versionOf(slug, 1))!;
+    const text = v().textOverflowMeasured({ clip: 'Title', fit: 100 });
+    const row = ver.localizations!.find((r) => r.locale === 'de')!;
+    expect(row.render!.problems).toEqual([text]);
+    expect(row.problems).toEqual([text]);
+    expect(ver.outputs.find((o) => o.format === 'test-wide')!.problems).toEqual([]);
+    expect(ver.problems).toEqual([]);
+    // Now it has an open problem: a new render needs force.
+    expect((await render(slug, 1, { formats: ['test-wide'], locales: ['de'] })).json().code).toBe('localization-needs-force');
+  });
+
+  it('a check that cannot run after the render is a problem, never a clean record', async () => {
+    const slug = await create();
+    await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
+    env.fake.after = (o) => { rmSync(o.out); };
+    await done(await render(slug, 1, { formats: ['test-wide'], locales: ['de'] }));
+    const row = (await env.versionOf(slug, 1))!.localizations!.find((r) => r.locale === 'de')!;
+    expect(row.render!.problems).toEqual([v().renderCheckFailed({ file: 'test-wide.de.mp4' })]);
+  });
+
+  it('a translation rendered by the export with problems is excluded and listed (as the primary I2 rule), copied once seen', async () => {
+    const slug = await create();
+    await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
+    env.fake.overflows = ['title'];
+    const r = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, headers: H, payload: { destination: dest, picks: { 'test-wide': 1 }, locales: ['en', 'de'] } });
+    expect(r.statusCode, r.body).toBe(200);
+    const body = r.json();
+    expect(readdirSync(dest)).toEqual(['launch-test-wide-en-v1.mp4']);
+    expect(body.excluded).toEqual([{ format: 'test-wide', version: 1, locale: 'de', problems: [v().textOverflowMeasured({ clip: 'Title', fit: 100 })], issues: [] }]);
+    expect(body.rendered).toEqual(expect.arrayContaining([{ version: 1, formats: ['test-wide'], locale: 'de' }]));
+    // Asked again (the user has seen the problems): copied.
+    const again = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, headers: H, payload: { destination: dest, picks: { 'test-wide': 1 }, locales: ['de'] } });
+    expect(again.statusCode, again.body).toBe(200);
+    expect(readdirSync(dest).sort()).toEqual(['launch-test-wide-de-v1.mp4', 'launch-test-wide-en-v1.mp4']);
   });
 });
 
@@ -144,6 +198,36 @@ describe('export per language', { timeout: 120_000 }, () => {
     expect(none.statusCode).toBe(409);
     expect(none.json().code).toBe('localization-missing');
     expect((await exportPicks(slug, { picks: { 'test-wide': 1 }, locales: ['he'] })).json().code).toBe('locale-rtl');
+  });
+
+  it('the primary tag of a creative without extra languages exports today\'s file', async () => {
+    const slug = await env.create(['test-wide'], { links: {}, locales: { primary: 'en', extra: [] } });
+    const r = await exportPicks(slug, { picks: { 'test-wide': 1 }, locales: ['en'] });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(readdirSync(dest)).toEqual(['launch-test-wide-v1.mp4']);
+  });
+
+  it('a translated file replaced on disk is no longer current: rendered again before export', async () => {
+    const slug = await create();
+    await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
+    await done(await render(slug, 1, { formats: ['test-wide'], locales: ['de'] }));
+    const before = env.fake.renders.length;
+    writeFileSync(join(env.store().dir(slug), 'outputs', 'v1', 'test-wide.de.mp4'), 'replaced');
+    const r = await exportPicks(slug, { picks: { 'test-wide': 1 }, locales: ['de'] });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(env.fake.renders.slice(before).map((x) => x.out.split('/').pop())).toContain('test-wide.de.mp4');
+    expect(readFileSync(join(dest, readdirSync(dest)[0]!), 'utf8')).not.toBe('replaced');
+  });
+
+  it('export/prepare starts the translations\' renders too', async () => {
+    const slug = await create();
+    await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
+    const r = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export/prepare`, headers: H, payload: { picks: { 'test-wide': 1 }, locales: ['de'] } });
+    expect(r.statusCode, r.body).toBe(200);
+    const renders = r.json().renders as Array<{ version: number; formats: string[]; locales?: string[]; job: JobSummary }>;
+    expect(renders.map((x) => [x.version, x.formats, x.locales])).toEqual([[1, ['test-wide'], ['de']]]);
+    await env.waitJob(renders[0]!.job.id);
+    expect(existsSync(join(env.store().dir(slug), 'outputs', 'v1', 'test-wide.de.mp4'))).toBe(true);
   });
 
   it('without extra languages the names are today\'s', async () => {

@@ -94,13 +94,6 @@ export async function writeOverlay(creativeDir: string, n: number, overlay: Loca
   return createHash('sha256').update(text).digest('hex');
 }
 
-/** Removes an overlay file (carry-over drops nothing on disk of the previous version; this is for the version being written). */
-export async function removeOverlay(creativeDir: string, n: number, locale: LocaleTag, instanceId: string): Promise<void> {
-  const rel = overlayRel(n, locale, instanceId);
-  const st = await lstat(join(creativeDir, ...rel.split('/'))).catch(() => null);
-  if (st && !st.isDirectory()) await rm(join(creativeDir, ...rel.split('/')), { force: true });
-}
-
 /** Sets (adds or replaces) the row of `row.locale` and `row.instanceId` in version `n` (under the versions.json lock). */
 export function setLocalizationRow(store: CreativeStore, slug: string, n: number, row: LocalizationRow): Promise<VersionEntry> {
   return store.updateVersion(slug, n, (v) => {
@@ -134,7 +127,25 @@ async function extraFiles(o: { projectDir: string; voiceRoots: readonly string[]
   return files;
 }
 
-export interface FinishedOverlay { overlay: Localization; stale: string[]; problems: string[] }
+/** `warnings`: advisory (the html layers' static checks), never stored as problems, as in a turn. */
+/** A language's fallback font: its family and files, `unavailable` (offline), or null when its script needs none. */
+export type FallbackResult = { family: string; files: string[] } | { unavailable: string } | null;
+
+/**
+ * The fallback font of `locale` (`ensureFallbackFont`), as `finishOverlay` takes it: offline it is `unavailable` (a problem,
+ * the overlay goes on); a request whose client went away (`signal` aborted) throws, never recorded as unavailable.
+ */
+export async function resolveFallbackFont(project: ProjectRef, locale: LocaleTag, signal: AbortSignal): Promise<FallbackResult> {
+  try {
+    return await ensureFallbackFont(project, locale, signal);
+  } catch (e) {
+    if (signal.aborted) throw e;
+    if (e instanceof FallbackFontUnavailable) return { unavailable: e.family };
+    throw e;
+  }
+}
+
+export interface FinishedOverlay { overlay: Localization; stale: string[]; problems: string[]; warnings: string[] }
 
 /**
  * Completes an overlay against its composition before it is stored (shared by the PUT route, the carry-over and Task 4):
@@ -148,23 +159,20 @@ export async function finishOverlay(o: {
   projectDir: string; voiceRoots: readonly string[];
   /** Ids outdated for another reason (carry-over: a voice file the new version does not have). */
   extraStale?: readonly string[];
-  /** The Google Fonts path for the fallback font; absent: the fonts the overlay has are kept as they are. */
-  fonts?: { project: ProjectRef; signal: AbortSignal };
+  /**
+   * The language's fallback font, resolved beforehand (`resolveFallbackFont`, outside the creative's lock: it may download);
+   * absent: the fonts the overlay has are kept as they are.
+   */
+  fallback?: FallbackResult;
 }): Promise<FinishedOverlay> {
   const v = messages(o.uiLocale).variants;
   const problems: string[] = [];
   const add = (t: string) => { if (!problems.includes(t)) problems.push(t); };
   let overlay = o.overlay;
   const stale = [...new Set([...staleIds(overlay, o.base.composition), ...(o.extraStale ?? [])])];
-  if (o.fonts) {
-    try {
-      const font = await ensureFallbackFont(o.fonts.project, overlay.locale, o.fonts.signal);
-      if (font) overlay = { ...overlay, fonts: [...overlay.fonts.filter((f) => f.family !== font.family), { family: font.family, files: font.files }] };
-    } catch (e) {
-      if (!(e instanceof FallbackFontUnavailable)) throw e;
-      add(v.fallbackFontUnavailable({ family: e.family }));
-    }
-  }
+  const font = o.fallback;
+  if (font && 'unavailable' in font) add(v.fallbackFontUnavailable({ family: font.unavailable }));
+  else if (font) overlay = { ...overlay, fonts: [...overlay.fonts.filter((f) => f.family !== font.family), { family: font.family, files: font.files }] };
   const fitted = fitTexts(o.base.composition, overlay, stale, o.chooseFit);
   overlay = fitted.overlay;
   for (const id of fitted.overflowing) add(v.textOverflow({ clip: clipLabel(o.base.composition, id) }));
@@ -178,11 +186,14 @@ export async function finishOverlay(o: {
     if (!(e instanceof LocalizationMismatch)) throw e;
     add(e.reason === 'tooManyFonts' || e.reason === 'tooManyFallbacks' ? v.tooManyFonts : v.localizationMismatch({ entry: e.entry.slice(0, 100) }));
   }
+  let warnings: string[] = [];
   if (localized) {
     const files = await extraFiles(o, overlay, new Map(o.base.folder.sizes));
-    for (const p of checkLocalizedComposition(localized, { preset: o.base.preset, files, uiLocale: o.uiLocale })) add(p);
+    const checked = await checkLocalizedComposition(localized, { preset: o.base.preset, compDir: o.base.compDir, folder: o.base.folder, files, uiLocale: o.uiLocale });
+    for (const p of checked.problems) add(p);
+    warnings = checked.warnings;
   }
-  return { overlay, stale, problems };
+  return { overlay, stale, problems, warnings };
 }
 
 /** The localized composition shown and rendered for a row: stale ids keep the source (Review Focus 2); null when it no longer applies. */

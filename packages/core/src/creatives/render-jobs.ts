@@ -11,7 +11,7 @@ import {
 import { copyConfinedFile, hashConfinedFile } from '../brand/agent-guard.ts';
 import { loadComposition, readCompositionFolder } from '../compositions/composition-files.ts';
 import { instanceComposition, localizedComposition, readOverlay } from '../localization/store.ts';
-import { checkedLocale } from '../localization/validate.ts';
+import { checkedLocale, clipLabel } from '../localization/validate.ts';
 import { realDirChain } from './core-files.ts';
 import { noteCoreChange } from '../core-changes.ts';
 import { noteCoreTemp } from '../core-temps.ts';
@@ -21,6 +21,7 @@ import { JobFailedError, type JobQueue } from '../jobs/job-queue.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { RenderError } from '../render/errors.ts';
 import { sessionMediaOf, type MediaNormalizer } from '../render/media-normalize.ts';
+import { activeLocaleRenders } from '../render/render-sweep.ts';
 import type { RenderCompositionOptions, RenderEngine, RenderResult } from '../render/renderer.ts';
 import { CodedError } from '../workspace-store.ts';
 import { noteCoreOutputWrite } from './carry-over.ts';
@@ -613,6 +614,7 @@ export class RenderJobService {
     if (!cache) throw new Error(m.render.compositionChanged({ format: instanceId }));
     const root = join(cache, `r-${randomBytes(8).toString('hex')}`);
     const compDir = join(root, 'outputs', `v${n}`, 'compositions', instanceId);
+    activeLocaleRenders.add(root);
     try {
       await mkdir(compDir, { recursive: true });
       for (const f of ic.folder.files) {
@@ -645,18 +647,31 @@ export class RenderJobService {
       }
       await noteCoreChange(versionDir);
       const info = await this.describe({ creativeDir, versionDir, n, preset, file, composition, sha256: result.sha256, hash: ic.entry.hash, locale, poster: false })
-        .catch(() => ({ width: result.width, height: result.height, durationSec: result.durationSec, problems: [] as string[] }));
+        // A check that could not run is a problem of the render, never a clean record (Ruling J).
+        .catch(() => ({ width: result.width, height: result.height, durationSec: result.durationSec, problems: [m.variants.renderCheckFailed({ file })] }));
+      // The browser's own measure (Ruling I): a text that overflows its box at the applied fit is a problem of this language.
+      const overflows = (result.textOverflows ?? []).filter((e) => e.clipId !== undefined).map((e) => {
+        const fit = Math.round((read.overlay.fit[e.clipId!] ?? 1) * 100);
+        return m.variants.textOverflowMeasured({ clip: clipLabel(ic.composition, e.clipId!), fit });
+      });
+      const problems = [...new Set([...(info.problems ?? []), ...overflows])];
       const at = new Date().toISOString();
       const render: NonNullable<LocalizationRow['render']> = {
         file, width: info.width, height: info.height, durationSec: info.durationSec !== null && info.durationSec > 0 ? info.durationSec : null,
         sha256: result.sha256, fromComposition: ic.entry.hash, overlayHash: row.hash, forced, stale: [...row.stale],
-        ...(info.problems?.length ? { problems: info.problems } : {}), renderedAt: at,
+        ...(problems.length ? { problems } : {}), renderedAt: at,
       };
       await store.updateVersion(ref.creativeSlug, n, (x) => ({
-        ...x, localizations: (x.localizations ?? []).map((r) => (r.locale === tag && r.instanceId === instanceId ? { ...r, render } : r)),
+        ...x, localizations: (x.localizations ?? []).map((r) => {
+          if (r.locale !== tag || r.instanceId !== instanceId) return r;
+          // A measured overflow is also an open problem of the translation (while it is the overlay rendered).
+          const own = r.hash === row.hash ? [...new Set([...(r.problems ?? []), ...overflows])] : r.problems ?? [];
+          return { ...r, render, ...(own.length ? { problems: own } : {}) };
+        }),
       }));
-      await updateVersionManifest(creativeDir, n, (current) => {
-        if (current?.schemaVersion !== 2) return null;
+      await updateVersionManifest(creativeDir, n, (found) => {
+        // No v2 manifest yet: one is started from the version's compositions, as the primary record does.
+        const current: ManifestV2 = found?.schemaVersion === 2 ? found : { schemaVersion: 2, compositions: version.compositions ?? [], renders: [] };
         return {
           ...current,
           renders: [
@@ -666,9 +681,11 @@ export class RenderJobService {
           ],
         };
       });
+      await noteRenderStamps(ref.projectDir, creativeDir, ref.creativeSlug, n, [{ file, sha256: result.sha256 }]).catch(() => {});
       this.deps.broadcast({ type: 'creative', project: ref.projectSlug, creative: ref.creativeSlug });
     } finally {
       await rm(root, { recursive: true, force: true }).catch(() => {});
+      activeLocaleRenders.delete(root);
     }
   }
 

@@ -44,6 +44,11 @@ export interface RenderResult {
   file: string; sha256: string; width: number; height: number; durationSec: number | null; frames: number; encoder: VideoEncoder | null; audio: boolean;
   /** Non-fatal runtime reports (`videoFrameMismatch`: an untrusted source's frame drawn on stability), at most 50. */
   warnings: RuntimeErrorInfo[];
+  /**
+   * Advisory `textOverflow` reports (Phase 12, Ruling I): text clips whose laid-out text needs more room than their box.
+   * Never a failure; only a localized render turns them into problems. Absent from engines that do not measure.
+   */
+  textOverflows?: RuntimeErrorInfo[];
 }
 
 export interface RenderProgress { frames: number; total: number }
@@ -94,7 +99,7 @@ export { RENDER_OWNER_FILE } from './owner.ts';
 
 export const DEFAULT_PARALLEL = 4;
 /** Runtime reports that never fail a render: `audioBlocked` (preview only) and `videoFrameMismatch` (a warning). */
-const IGNORED_RUNTIME_ERRORS = new Set(['audioBlocked', 'videoFrameMismatch']);
+const IGNORED_RUNTIME_ERRORS = new Set(['audioBlocked', 'videoFrameMismatch', 'textOverflow']);
 const VIDEO_EXT: Record<string, string> = { '.mp4': 'mp4', '.m4v': 'mp4', '.mov': 'mov' };
 const STILL_EXT: Record<string, CaptureFormat> = { '.png': 'png', '.jpg': 'jpeg', '.jpeg': 'jpeg', '.webp': 'webp' };
 
@@ -109,6 +114,11 @@ const failing = (errors: RuntimeErrorInfo[]) => errors.filter((e) => !IGNORED_RU
 const warningsOf = (lists: RuntimeErrorInfo[][]) => {
   const seen = new Set<string>();
   return lists.flat().filter((e) => e.code === 'videoFrameMismatch' && !seen.has(e.message) && (seen.add(e.message), true)).slice(0, 50);
+};
+/** The advisory `textOverflow` reports (Phase 12, Ruling I), one per clip, at most 50. */
+const overflowsOf = (lists: RuntimeErrorInfo[][]) => {
+  const seen = new Set<string>();
+  return lists.flat().filter((e) => e.code === 'textOverflow' && !seen.has(e.clipId ?? e.message) && (seen.add(e.clipId ?? e.message), true)).slice(0, 50);
 };
 
 async function sha256File(file: string): Promise<string> {
@@ -145,6 +155,7 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
   let session: CompositionSession | null = null;
   const pages: RenderPage[] = [];
   let warnings: RuntimeErrorInfo[] = [];
+  let overflows: RuntimeErrorInfo[] = [];
   /** The error the render reports: the browser's own failure, a user cancel, the time limit, else the first error. */
   const reason = (e: unknown): RenderError => {
     const f = o.provider.failure;
@@ -186,6 +197,7 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
       const bad = failing(all);
       if (bad.length) throw new RenderError('runtimeErrors', `the composition has errors: ${bad.map((e) => e.code).join(', ')}`, bad);
       warnings = warningsOf([all]);
+      overflows = overflowsOf([page.info.errors, all]);
       tick();
       await writeFile(tempOut, buf, { flag: 'wx', mode: 0o644 });
     } else {
@@ -226,6 +238,7 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
         if (bad.length) throw new RenderError('runtimeErrors', `the composition has errors: ${bad.map((e) => e.code).join(', ')}`, bad);
       }
       warnings = warningsOf(reports);
+      overflows = overflowsOf([...pages.map((p) => p.info.errors), ...reports]);
       await Promise.all(pages.splice(0).map((p) => p.close().catch(() => {})));
       const hasAudio = await audio;
       const list = join(work, 'segments.txt');
@@ -240,12 +253,12 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
       const sha256 = await sha256File(tempOut);
       await o.beforeRename?.(tempOut);
       await rename(tempOut, o.out);
-      return { file: o.out, sha256, width: c.width, height: c.height, durationSec: c.duration, frames, encoder, audio: hasAudio, warnings };
+      return { file: o.out, sha256, width: c.width, height: c.height, durationSec: c.duration, frames, encoder, audio: hasAudio, warnings, ...(overflows.length ? { textOverflows: overflows } : {}) };
     }
     const sha256 = await sha256File(tempOut);
     await o.beforeRename?.(tempOut);
     await rename(tempOut, o.out);
-    return { file: o.out, sha256, width: c.width, height: c.height, durationSec: null, frames: 1, encoder: null, audio: false, warnings };
+    return { file: o.out, sha256, width: c.width, height: c.height, durationSec: null, frames: 1, encoder: null, audio: false, warnings, ...(overflows.length ? { textOverflows: overflows } : {}) };
   } catch (e) {
     const err = reason(e);
     // Failed: the browser goes first, as a whole group (a page may be stuck in a loop; closing it politely would wait).

@@ -61,6 +61,19 @@ export async function noteRenderStamps(projectDir: string, creativeDir: string, 
 }
 
 /**
+ * Whether `outputs/v<n>/<file>` still has the content `sha256` (a localized render, Phase 12 Minor 4): its stamp's size and
+ * mtime when they match, else the file hashed again (confined read). A file that is missing or refused does not match.
+ */
+export async function renderFileMatches(projectDir: string, creativeDir: string, creativeSlug: string, n: number, file: string, sha256: string): Promise<boolean> {
+  const st = await lstat(join(creativeDir, 'outputs', `v${n}`, file)).catch(() => null);
+  if (!st?.isFile()) return false;
+  const s = (await read(renderStampPath(projectDir, creativeSlug, n)))[file];
+  if (s && s.size === st.size && s.mtimeMs === st.mtimeMs && s.sha256 === sha256) return true;
+  const h = await hashConfinedFile(creativeDir, `outputs/v${n}/${file}`);
+  return h !== null && 'sha256' in h && h.sha256 === sha256;
+}
+
+/**
  * Checks the rendered outputs (`fromComposition` set) of every v2 version against their stamps; returns whether a record
  * was corrected. A missing file is left to the callers (export reports it); a file that cannot be hashed is skipped.
  */
