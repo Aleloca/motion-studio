@@ -511,7 +511,7 @@ export const it: Messages = {
     localizeDone: (p) => `Traduzioni della v${p.n} salvate: ${p.list}`,
     localizeOpenProblems: (p) => `${p.count === 1 ? 'Resta aperto 1 problema di traduzione' : `Restano aperti ${p.count} problemi di traduzione`}: vedi il pannello Lingue`,
     localizeCommit: (p) => `${p.title}: traduzioni della v${p.n}`,
-    localizeVersionChanged: (p) => `Attenzione: il turno di traduzione ha cambiato file del progetto (${p.list}). Un turno di traduzione legge soltanto: le traduzioni le scrive Motion Studio.`,
+    localizeVersionChanged: (p) => `Attenzione: durante il turno di traduzione sono cambiati file del progetto (${p.list}). Un turno di traduzione legge soltanto: controlla queste modifiche se non le ha fatte nessun altro.`,
     voicesNotGenerated: (p) => `Voci tradotte non generate (${p.reason}): ${p.locales} tengono la voce originale`,
     brandAnalysisLabel: 'Analisi brand',
     assetDescriptionLabel: 'Descrizione asset',

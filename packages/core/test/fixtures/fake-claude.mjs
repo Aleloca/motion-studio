@@ -138,6 +138,11 @@ rl.once('line', async (line) => {
         ] });
       }
       writeFileSync(join(dir, 'composition.json'), JSON.stringify(composition, null, 2));
+      // FAKE_CLAUDE_COMP_FILES=<json [[path, content], …]>: extra files the agent puts in every composition folder.
+      for (const [rel, content] of JSON.parse(process.env.FAKE_CLAUDE_COMP_FILES ?? '[]')) {
+        mkdirSync(dirname(join(dir, rel)), { recursive: true });
+        writeFileSync(join(dir, rel), content);
+      }
       if (process.env.FAKE_CLAUDE_STRAY) writeFileSync(join(block.outputDir, `${f.id}.mp4`), 'agent media');
     }
     if (process.env.FAKE_CLAUDE_STRAY) writeFileSync(join(block.outputDir, 'manifest.json'), JSON.stringify({ schemaVersion: 1, files: [], renderCommand: 'node render.js' }));

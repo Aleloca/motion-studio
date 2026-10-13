@@ -5,12 +5,12 @@ import { copyFile, lstat, mkdir, rename, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
   compositionProblemText, effectiveLinks, formatDisplayName, messages, renderProblems, renderState,
-  type Brief, type Composition, type FormatPreset, type JobProgress, type JobSummary, type Locale, type LocaleTag, type LocalizationRow, type ManifestV2, type OutputFileInfo,
+  type Brief, type Composition, type FormatPreset, type JobProgress, type JobSummary, type Locale, type LocaleTag, type Localization, type LocalizationRow, type ManifestV2, type OutputFileInfo,
   type OutputIssue, type ServerMessage, type VersionComposition, type VersionEntry,
 } from '@motion-studio/shared';
 import { copyConfinedFile, hashConfinedFile } from '../brand/agent-guard.ts';
 import { loadComposition, readCompositionFolder } from '../compositions/composition-files.ts';
-import { changedAssets, instanceComposition, localizedComposition, overlayAssetPaths, readOverlay } from '../localization/store.ts';
+import { changedAssets, instanceComposition, isAssetChangedProblem, localizedComposition, overlayAssetPaths, readOverlay } from '../localization/store.ts';
 import { checkedLocale, clipLabel, voiceFileOk } from '../localization/validate.ts';
 import { realDirChain } from './core-files.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -523,6 +523,29 @@ export class RenderJobService {
   }
 
   /**
+   * Ruling L, checked again before every localized render: an "asset changed" problem of the row whose file is the recorded one
+   * again is cleared (files looked up as the render takes them: the composition folder first, then the project). Returns the
+   * row as it is now.
+   */
+  private async reverifyAssets(ref: CreativeRef, n: number, row: LocalizationRow, overlay: Localization, compDir: string): Promise<LocalizationRow> {
+    const recorded = Object.keys(row.assetHashes ?? {});
+    if (recorded.length === 0 || !(row.problems ?? []).some((p) => isAssetChangedProblem(p, recorded))) return row;
+    const still = new Set(await changedAssets([compDir, ref.projectDir], row, overlayAssetPaths(overlay, row)));
+    const cleared = recorded.filter((p) => !still.has(p));
+    if (!(row.problems ?? []).some((p) => isAssetChangedProblem(p, cleared))) return row;
+    const strip = (r: LocalizationRow): LocalizationRow => {
+      const { problems: _p, ...rest } = r;
+      const left = (r.problems ?? []).filter((p) => !isAssetChangedProblem(p, cleared));
+      return left.length ? { ...rest, problems: left } : rest;
+    };
+    await new CreativeStore(ref.projectDir).updateVersion(ref.creativeSlug, n, (x) => ({
+      ...x, localizations: (x.localizations ?? []).map((r) => (r.locale === row.locale && r.instanceId === row.instanceId ? strip(r) : r)),
+    }));
+    this.deps.broadcast({ type: 'creative', project: ref.projectSlug, creative: ref.creativeSlug });
+    return strip(row);
+  }
+
+  /**
    * A render in other languages (Phase 12, spec §3.5): every requested instance (all of the version's when none; a follower
    * is rendered with its OWN overlay on the composition it shows) in every requested language, into
    * `outputs/vN/<instanceId>.<locale>.<ext>`. Refused before anything is queued: a language not in the curated list (400),
@@ -543,9 +566,11 @@ export class RenderJobService {
     const creativeDir = new CreativeStore(ref.projectDir).dir(ref.creativeSlug);
     for (const tag of tags) {
       for (const id of instances) {
-        const row = version.localizations?.find((r) => r.locale === tag && r.instanceId === id);
-        const read = row ? await readOverlay(creativeDir, version.n, tag, id) : null;
-        if (!row || !read || read.hash !== row.hash) { missing.push(label(id, tag)); continue; }
+        const found = version.localizations?.find((r) => r.locale === tag && r.instanceId === id);
+        const read = found ? await readOverlay(creativeDir, version.n, tag, id) : null;
+        if (!found || !read || read.hash !== found.hash) { missing.push(label(id, tag)); continue; }
+        const dir = comps.find((c) => c.format === id)?.dir;
+        const row = dir ? await this.reverifyAssets(ref, version.n, found, read.overlay, join(creativeDir, 'outputs', `v${version.n}`, ...dir.split('/'))) : found;
         if ((row.problems?.length ?? 0) > 0 || row.stale.length > 0) needsForce.push(label(id, tag));
       }
     }
@@ -603,10 +628,12 @@ export class RenderJobService {
     const row = version?.localizations?.find((r) => r.locale === tag && r.instanceId === instanceId);
     const read = row ? await readOverlay(creativeDir, n, tag, instanceId) : null;
     if (!version || !row || !read || read.hash !== row.hash) throw new Error(m.variants.localizationNotFound({ locale: tag, format: instanceId, n }));
-    const forced = (row.problems?.length ?? 0) > 0 || row.stale.length > 0;
-    if (forced && !force) throw new Error(m.variants.renderNeedsForce({ list: `${instanceId} (${tag})` }));
     const ic = await instanceComposition(creativeDir, version, instanceId, presets);
     if (!ic) throw new Error(m.render.compositionChanged({ format: instanceId }));
+    const used = overlayAssetPaths(read.overlay, row);
+    row.problems = (await this.reverifyAssets(ref, n, row, read.overlay, ic.compDir)).problems;
+    const forced = (row.problems?.length ?? 0) > 0 || row.stale.length > 0;
+    if (forced && !force) throw new Error(m.variants.renderNeedsForce({ list: `${instanceId} (${tag})` }));
     const composition = localizedComposition(ic.composition, read.overlay, row);
     if (!composition) throw new Error(m.variants.localizationUnusable({ locale: tag, format: instanceId }));
     const preset = findPreset(presets, instanceId) ?? { ...ic.preset, id: instanceId };
@@ -644,7 +671,7 @@ export class RenderJobService {
       }
       // Ruling L: every voice and font file the core wrote or attached must still be the one it recorded, checked on the very
       // file this render uses (the private copy). A changed file is a problem of the language, never rendered silently.
-      const changed = await changedAssets([compDir], row, overlayAssetPaths(read.overlay, row));
+      const changed = await changedAssets([compDir], row, used);
       if (changed.length > 0) {
         const texts = changed.map((file) => m.variants.assetChanged({ file }));
         await store.updateVersion(ref.creativeSlug, n, (x) => ({

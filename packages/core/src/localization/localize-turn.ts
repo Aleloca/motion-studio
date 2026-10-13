@@ -23,7 +23,7 @@ import type { HttpDeps } from '../providers/http.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
 import {
   emptyOverlay, finishOverlay, instanceComposition, knownVoiceScripts, localizedComposition, readOverlay, resolveFallbackFont, setLocalizationRow,
-  rowAssetHashes, voiceRootsOf, writeOverlay, type FallbackResult, type InstanceComposition,
+  attachedFontHashes, rowAssetHashes, voiceRootsOf, writeOverlay, type FallbackResult, type InstanceComposition,
 } from './store.ts';
 import { checkedInstance, checkedLocale, clipLabel } from './validate.ts';
 
@@ -69,8 +69,33 @@ export interface LocalizeDeps {
   /** The Google Fonts network of the fallback fonts (as the localization routes). */
   fonts: { http: HttpDeps; io?: InstallIo };
   previews?: PreviewService;
+  /** What was changed in a project by others while a run went on (the server's event stream); absent: nothing is known. */
+  activity?: ProjectActivity;
   previewFramesPerTurn?: number;
   maxAttempts?: number;
+}
+
+/**
+ * When each area of a project last changed by something the server announced (a library or brand change, a project edit, a
+ * creative's change): fed by every `ServerMessage` broadcast, read by the localize turn's stray-write check (fix round 2).
+ */
+export class ProjectActivity {
+  private readonly last = new Map<string, number>();
+  note(msg: ServerMessage): void {
+    const at = Date.now();
+    if (msg.type === 'library' || msg.type === 'brand' || msg.type === 'project') this.mark(msg.project, msg.type, at);
+    else if (msg.type === 'creative') this.mark(msg.project, `creative:${msg.creative}`, at);
+  }
+  /** The areas of `project` changed at or after `t` (`library`, `brand`, `project`, `creative:<slug>`). */
+  since(project: string, t: number): Set<string> {
+    const out = new Set<string>();
+    for (const [k, at] of this.last) if (at >= t && k.startsWith(`${project}\u0000`)) out.add(k.slice(project.length + 1));
+    return out;
+  }
+  private mark(project: string, area: string, at: number) {
+    this.last.set(`${project}\u0000${area}`, at);
+    if (this.last.size > 2000) this.last.delete(this.last.keys().next().value!);
+  }
 }
 
 /** The instances of a version that show one composition (a primary and its followers): translated once, written for each. */
@@ -307,7 +332,9 @@ export class LocalizeService {
             // attempt's batch, never left for a later attempt (fix I2).
             pair.voiceProblems.delete(id);
           }
-          await this.writeRows(store, creativeDir, n, pair, done.overlay, { origin: 'agent', stale: done.stale, problems: done.problems });
+          // The fallback font the core attached now is hashed now (Ruling L); a recorded hash is kept.
+          const fresh = await attachedFontHashes(ref.projectDir, fallback, row?.assetHashes);
+          await this.writeRows(store, creativeDir, n, pair, done.overlay, { origin: 'agent', stale: done.stale, problems: done.problems, fresh });
           pair.submitted = true;
           this.deps.turns.changed(ref);
           const missing = this.missing(pair, done.overlay, done.stale).map((id) => va.notTranslated({ clip: clipLabel(ic.composition, id) }));
@@ -451,21 +478,36 @@ export class LocalizeService {
    * Fingerprints the project before one agent run and returns the check to call after it: the paths (project-relative) the
    * run changed, added or removed (fix I1). The creative's `outputs/` leave out the core's own writes (overlays,
    * renders); the creative's records (conversation, versions, creative.json), `.git`, `.studio`, `.cache` and `node_modules`
-   * are not looked at. Another job of the project running meanwhile (a turn of another creative, a Generate, a brand analysis)
-   * writes its own files: then only this creative's folder is compared.
+   * are not looked at. What someone else may have written meanwhile is left out (fix round 2): with another job of the project
+   * running (a turn, a render or a Generate of another creative, a brand analysis) only this creative's folder is compared, and
+   * the areas a user action changed during the run (`activity`: a library upload, a brand edit, another creative's edit) are
+   * left out. Attribution stays a best effort: the warning says files changed during the turn, never who wrote them.
    */
   private async watchProject(ref: CreativeRef, jobId: string): Promise<() => Promise<string[]>> {
     const creativeRel = `creatives/${ref.creativeSlug}`;
     const creativeDir = join(ref.projectDir, 'creatives', ref.creativeSlug);
-    const othersBusy = () => this.deps.queue.list().some((x) => x.id !== jobId && (x.state === 'queued' || x.state === 'running') && x.kind !== 'render'
-      && (x.key.endsWith(`:${ref.projectSlug}`) || x.key.includes(`:${ref.projectSlug}:`)));
+    const ownRender = `:${ref.projectSlug}:${ref.creativeSlug}:`;
+    const othersBusy = () => this.deps.queue.list().some((x) => x.id !== jobId && (x.state === 'queued' || x.state === 'running')
+      && (x.key.endsWith(`:${ref.projectSlug}`) || x.key.includes(`:${ref.projectSlug}:`))
+      // This creative's own renders write only noted core files in its outputs/.
+      && !(x.kind === 'render' && x.key.includes(ownRender)));
     const busyBefore = othersBusy();
+    const since = Date.now();
     const outputsOf = async () => snapshotOutputs(creativeDir, await earlierOutputDirs(creativeDir, -1));
     const [projBefore, outBefore] = [await snapshotProject(ref.projectDir, creativeRel), await outputsOf()];
     return async () => {
       const [projAfter, outAfter] = [await snapshotProject(ref.projectDir, creativeRel), await outputsOf()];
       const busy = busyBefore || othersBusy();
-      const proj = snapshotChanges(projBefore, projAfter).filter((p) => !busy || p === creativeRel || p.startsWith(`${creativeRel}/`));
+      const touched = this.deps.activity?.since(ref.projectSlug, since) ?? new Set<string>();
+      const someoneElse = (p: string) => {
+        const top = p.split('/')[0]!;
+        if (touched.has('library') && top === 'assets') return true;
+        if (touched.has('brand') && top === 'brand') return true;
+        if (touched.has('project') && !p.includes('/')) return true;
+        const other = top === 'creatives' ? p.split('/')[1] : undefined;
+        return other !== undefined && other !== ref.creativeSlug && touched.has(`creative:${other}`);
+      };
+      const proj = snapshotChanges(projBefore, projAfter).filter((p) => (!busy || p === creativeRel || p.startsWith(`${creativeRel}/`)) && !someoneElse(p));
       const outs = withoutCoreWrites(creativeDir, snapshotChanges(outBefore, outAfter), outAfter).map((p) => `${creativeRel}/${p}`);
       return [...proj, ...outs];
     };
@@ -504,7 +546,7 @@ export class LocalizeService {
       const old = rows.find((r) => r.locale === pair.locale && r.instanceId === member);
       const hash = await writeOverlay(creativeDir, n, { ...overlay, instanceId: member });
       const voice = o.voice ?? old?.voice ?? 'original';
-      const assetHashes = await rowAssetHashes({ projectDir: dirname(dirname(creativeDir)), compDir: pair.group.ic.compDir, overlay, ...(old?.assetHashes ? { old: old.assetHashes } : {}), ...(o.fresh ? { fresh: o.fresh } : {}) });
+      const assetHashes = rowAssetHashes({ overlay, ...(old?.assetHashes ? { old: old.assetHashes } : {}), ...(o.fresh ? { fresh: o.fresh } : {}) });
       const row: LocalizationRow = {
         locale: pair.locale, instanceId: member, hash, origin: o.origin, stale: o.stale, voice,
         ...(o.problems.length ? { problems: o.problems } : {}),

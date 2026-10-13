@@ -283,6 +283,7 @@ describe('translated voices in a localize turn', { timeout: 120_000 }, () => {
     const v2 = (await env.versionOf(slug, 2))!.localizations!.find((r) => r.locale === 'de')!;
     expect(v2.assetHashes).toEqual(row.assetHashes);
     // The file is replaced (by anyone): the localized render refuses it and records the problem.
+    const original = await readFile(file);
     await writeFile(file, 'someone else');
     const before = env.fake.renders.length;
     const r = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/render`, headers: H, payload: { locales: ['de'] } });
@@ -292,6 +293,38 @@ describe('translated voices in a localize turn', { timeout: 120_000 }, () => {
     expect(job.error).toContain(vt().assetChanged({ file: src }));
     expect(env.fake.renders.length).toBe(before);
     expect((await rowOf(slug, 'de')).problems).toContain(vt().assetChanged({ file: src }));
+    // Restored: the next render checks again, clears the problem and renders.
+    await writeFile(file, original);
+    const again = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/render`, headers: H, payload: { locales: ['de'] } });
+    expect(again.statusCode, again.body).toBe(202);
+    const ok = await env.waitJob((again.json() as JobSummary).id);
+    expect(ok.state, ok.error).toBe('succeeded');
+    expect(env.fake.renders.length).toBe(before + 1);
+    expect((await rowOf(slug, 'de')).problems ?? []).not.toContain(vt().assetChanged({ file: src }));
+  });
+
+  it('a file planted at the voice\'s path in the next version\'s composition folder keeps the recorded hash and is a problem, never rendered', async () => {
+    await boot();
+    const slug = await create();
+    process.env.FAKE_CLAUDE_LOCALIZE_CALLS = JSON.stringify([submit('de', { voiceScripts: { vo: 'Willkommen bei Acme' } })]);
+    const id = await startJob(slug, { locales: ['de'] });
+    await answer('once');
+    await finished(id);
+    const src = (await overlayOf(slug, 'de')).voices.vo!.src;
+    const hashes = (await rowOf(slug, 'de')).assetHashes;
+    expect(hashes?.[src]).toMatch(/^[0-9a-f]{64}$/);
+    // The next creative turn's agent puts its own file at that path in the new composition folder.
+    process.env.FAKE_CLAUDE_COMP_FILES = JSON.stringify([[src, 'planted voice']]);
+    await env.turn(slug, { text: 'again' });
+    const v2row = (await env.versionOf(slug, 2))!.localizations!.find((r) => r.locale === 'de')!;
+    expect(v2row.assetHashes).toEqual(hashes);
+    const before = env.fake.renders.length;
+    const r = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/2/render`, headers: H, payload: { locales: ['de'] } });
+    expect(r.statusCode, r.body).toBe(202);
+    const job = await env.waitJob((r.json() as JobSummary).id);
+    expect(job.state).toBe('failed');
+    expect(job.error).toContain(vt().assetChanged({ file: src }));
+    expect(env.fake.renders.length).toBe(before);
   });
 
   it('a declined batch keeps the original voice, with the reason on the row', async () => {

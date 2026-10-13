@@ -74,26 +74,39 @@ export async function readOverlay(creativeDir: string, n: number, locale: Locale
 export const voiceRootsOf = (ic: Pick<InstanceComposition, 'compDir'>, projectDir: string): string[] => [ic.compDir, projectDir];
 
 /**
- * The asset hashes a row keeps (Ruling L): for every file the overlay takes from the PROJECT (its fallback-font files, and its
- * voices that the composition folder does not have), the hash given now (`fresh`: a voice the core just wrote), else the one
- * the row already had (`old`, kept through carry-over and edits), else, for a font file the core attached, the file's hash
- * now. A voice with no recorded hash (an older row) gets none. Undefined when empty.
+ * The asset hashes a row keeps (Ruling L), for the voice and font files its overlay uses: a voice the core just wrote
+ * (`fresh`, hashed from the bytes it wrote), else the hash the row already had (`old`, kept verbatim through carry-over and
+ * edits, never recomputed from a folder an agent may write). Nothing else is hashed here: a fallback font is hashed only when
+ * the core attaches it (`attachedFontHashes`). Undefined when empty.
  */
-export async function rowAssetHashes(o: { projectDir: string; compDir: string; overlay: Localization; old?: Record<string, string>; fresh?: Record<string, string> }): Promise<Record<string, string> | undefined> {
+export function rowAssetHashes(o: { overlay: Localization; old?: Record<string, string>; fresh?: Record<string, string> }): Record<string, string> | undefined {
   const out: Record<string, string> = {};
-  const inFolder = async (p: string) => Boolean((await lstat(join(o.compDir, ...p.split('/'))).catch(() => null))?.isFile());
-  for (const f of o.overlay.fonts) {
-    for (const p of f.files) {
-      const sha = o.fresh?.[p] ?? o.old?.[p] ?? (await confinedHash(o.projectDir, p))?.sha;
-      if (sha) out[p] = sha;
-    }
-  }
-  for (const v of Object.values(o.overlay.voices)) {
-    if (await inFolder(v.src)) continue;
-    const sha = o.fresh?.[v.src] ?? o.old?.[v.src];
-    if (sha) out[v.src] = sha;
+  for (const p of [...o.overlay.fonts.flatMap((f) => f.files), ...Object.values(o.overlay.voices).map((v) => v.src)]) {
+    const sha = o.fresh?.[p] ?? o.old?.[p];
+    if (sha) out[p] = sha;
   }
   return Object.keys(out).length ? out : undefined;
+}
+
+/**
+ * The hashes of the fallback-font files the core attaches now (`resolveFallbackFont`: files of the project it installed or
+ * reused), for the paths the row has no hash for yet (`old`): a recorded hash is never replaced by today's file.
+ */
+export async function attachedFontHashes(projectDir: string, fallback: FallbackResult | undefined, old?: Record<string, string>): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  if (!fallback || 'unavailable' in fallback) return out;
+  for (const p of fallback.files) {
+    if (old?.[p]) continue;
+    const h = await confinedHash(projectDir, p);
+    if (h) out[p] = h.sha;
+  }
+  return out;
+}
+
+/** Whether `problem` is an `assetChanged` problem (in either language) of one of `paths`. */
+export function isAssetChangedProblem(problem: string, paths: Iterable<string>): boolean {
+  for (const file of paths) for (const l of ['en', 'it'] as const) if (problem === messages(l).variants.assetChanged({ file })) return true;
+  return false;
 }
 
 /**

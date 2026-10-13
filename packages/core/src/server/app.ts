@@ -28,7 +28,7 @@ import { AgentBridge } from '../bridge/bridge.ts';
 import { registerBridgeRoutes } from '../bridge/bridge-routes.ts';
 import { downloadTool } from '../bridge/download-tool.ts';
 import { providerTools, voiceAvailability, voiceBatch } from '../bridge/provider-tools.ts';
-import { LocalizeService } from '../localization/localize-turn.ts';
+import { LocalizeService, ProjectActivity } from '../localization/localize-turn.ts';
 import type { LookupFn, Transport } from '../providers/safe-fetch.ts';
 import { checkCodebases, codebaseOverlaps, normalizeCodebaseList } from '../codebases.ts';
 import type { Git } from '../git.ts';
@@ -476,8 +476,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   registerFontsRoutes(app, { ...routeCtx, catalog: new GoogleFontsCatalog({ configDir, http: fontsHttp }), http: fontsHttp, signer: new UrlSigner(deps.signedUrlTtlMs), ...(deps.fontsInstallIo ? { installIo: deps.fontsInstallIo } : {}) });
   // Localize turns (Phase 12, Task 4): the agent translates through submit_localization; the core makes the voices.
   const voiceDeps = { vault, approvals, media, keyChecks, settings: () => requireWorkspace().readSettings(), broadcast: (m: ServerMessage) => hub.broadcast(m), ...deps.localizeHttp };
+  const activity = new ProjectActivity();
+  hub.listen((m) => activity.note(m));
   const localize = new LocalizeService({
-    turns, queue, launcher, media, previews,
+    turns, queue, launcher, media, previews, activity,
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     model: async () => (await requireWorkspace().readSettings()).model,
     broadcast: (msg) => hub.broadcast(msg),

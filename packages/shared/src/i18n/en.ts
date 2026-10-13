@@ -518,7 +518,7 @@ export const en = {
     localizeDone: (p: { n: number; list: string }) => `Translations of v${p.n} saved: ${p.list}`,
     localizeOpenProblems: (p: { count: number }) => `${p.count === 1 ? '1 translation problem is' : `${p.count} translation problems are`} still open: see the Languages panel`,
     localizeCommit: (p: { title: string; n: number }) => `${p.title}: v${p.n} translations`,
-    localizeVersionChanged: (p: { list: string }) => `Warning: the translation turn changed project files (${p.list}). A translation turn only reads: Motion Studio writes the translations.`,
+    localizeVersionChanged: (p: { list: string }) => `Warning: project files changed during the translation turn (${p.list}). A translation turn only reads: check these changes if nobody else made them.`,
     voicesNotGenerated: (p: { locales: string; reason: string }) => `Translated voices not generated (${p.reason}): ${p.locales} keep the original voice`,
     brandAnalysisLabel: 'Brand analysis',
     assetDescriptionLabel: 'Asset description',

@@ -36,7 +36,8 @@ export async function carryLocalizations(prev: VersionDir, next: VersionDir, nex
     });
     const hash = await writeOverlay(next.creativeDir, next.n, done.overlay);
     // Ruling L: the hashes of the files the kept entries still use go along.
-    const assetHashes = await rowAssetHashes({ projectDir: o.projectDir, compDir: base.compDir, overlay: done.overlay, ...(row.assetHashes ? { old: row.assetHashes } : {}) });
+    // Verbatim from the previous row (never recomputed from the new composition folder, which the agent wrote).
+    const assetHashes = rowAssetHashes({ overlay: done.overlay, ...(row.assetHashes ? { old: row.assetHashes } : {}) });
     out.push({
       locale: row.locale, instanceId: row.instanceId, hash, origin: row.origin, stale: done.stale, voice: row.voice,
       ...(row.voiceFallback ? { voiceFallback: row.voiceFallback } : {}), ...(row.noScript ? { noScript: row.noScript } : {}),

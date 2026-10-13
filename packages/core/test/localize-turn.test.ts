@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { messages, type JobSummary, type Localization } from '@motion-studio/shared';
 import { MCP_TOOLS } from '../src/agent/launcher.ts';
 import { buildAgentPolicy } from '../src/agent/policy.ts';
+import { ProjectActivity } from '../src/localization/localize-turn.ts';
 import { AgentBridge } from '../src/bridge/bridge.ts';
 import { currentLocale } from '../src/i18n.ts';
 import { NoMediaTools, type MediaTools } from '../src/media/media-tools.ts';
@@ -220,6 +221,18 @@ describe('localize: tools and sandbox', { timeout: 120_000 }, () => {
     await finished(await start(slug, 1, { locales: ['de'] }));
     const conv = await env.store().readConversation(slug);
     expect(conv.some((e) => e.type === 'system' && e.level === 'warning' && e.text.includes('outputs/v1/locales/stray.json'))).toBe(true);
+  });
+});
+
+describe('project activity (stray-write attribution)', () => {
+  it('tells which areas of a project the server announced as changed since a time', () => {
+    const a = new ProjectActivity();
+    const t0 = Date.now();
+    a.note({ type: 'library', project: 'acme' });
+    a.note({ type: 'brand', project: 'other' });
+    a.note({ type: 'creative', project: 'acme', creative: 'promo' });
+    expect([...a.since('acme', t0)].sort()).toEqual(['creative:promo', 'library']);
+    expect(a.since('acme', Date.now() + 1000).size).toBe(0);
   });
 });
 
