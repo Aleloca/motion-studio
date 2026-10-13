@@ -55,6 +55,8 @@ Everything lives under one token prefix on the composition server's own origin (
     mutes the clip's `<video>` and plays `audioSrc` in an `<audio>` element kept on the timeline like an audio clip, at
     `audioStart + trimStart + (t − start)`, with the clip's volume and its track's mute. In **render** mode nothing
     changes: the core mixes the sound from the original with ffmpeg, aligned to the first video frame the same way.
+- **Hidden clips and tracks** (`hidden: true`, the editor's eye) are not mounted, in either mode: not drawn, not heard. The
+  core's audio mix skips them too. A `muted` track is silent in the preview and left out of the mix.
 - **No `<base>` element** is used, so `base-uri 'none'` stays.
 
 ### Headers the runtime needs (learned in real Chrome, see the integration test)
@@ -250,6 +252,9 @@ than 200 scenes or errors.
 | in | `{ type: 'pause' }` |
 | in | `{ type: 'select', clipId: string \| null }` |
 | in | `{ type: 'setScale', scale: 'fit' \| 0.01–8 }`. `fit` letterboxes the stage in the viewport. A number zooms and keeps the stage centred. |
+| in | `{ type: 'mute', muted }` silences every sound of the preview, or restores each one's own setting. |
+| in | `{ type: 'setComposition', composition, keepTime?, seq }` (Phase 10b, preview only; render mode never listens). `parseIncoming` serialises the draft once, refuses it above `COMPOSITION_LIMITS.jsonBytes` (UTF-8) and checks it with `compositionSchema` (structure only). The runtime mounts it below the mount shown, in the same document, loads it, seeks it to the kept time (clamped; 0 without `keepTime`), then swaps it in and destroys the old mount (animations cancelled, media and layer frames released, fonts deleted). Scale, mute, play state and the selection (when its clip still exists) carry over. Drafts that arrive during a re-mount wait; only the latest is mounted next. A video clip whose `src` is a source the session normalised (`originalSrc` in the inlined copy) plays the same `media/<i>.mp4`. |
+| out | `{ type: 'compositionApplied', seq, errors }` after a draft is shown (its `time` and `clipBounds` go first), or after it failed to mount (the old one stays). `errors` are the draft's load problems; they are not also sent one by one. |
 
 ## Animations
 

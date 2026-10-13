@@ -198,13 +198,15 @@ interface Session {
   media: { dir: string; dev: number; ino: number; names: string[] } | null;
 }
 
-const VIDEO_SOURCE_FIELDS = ['sourceStart', 'sourceVideoEnd', 'sourceTrusted', 'audioSrc', 'audioStart'] as const;
+const VIDEO_SOURCE_FIELDS = ['sourceStart', 'sourceVideoEnd', 'sourceTrusted', 'audioSrc', 'audioStart', 'originalSrc'] as const;
 
 /**
  * The composition the runtime page inlines: a copy whose video clips use the session's media (`media/<i>.mp4` and the
  * probed source fields, `sourceTrusted: true`), with their sound named separately: `audioSrc` (the original asset, still
  * served from `assets/`) and `audioStart` (the original's first video frame on its media timeline), which the preview plays
  * in an `<audio>` element because the normalised file has no audio. Any other video clip loses the core-only fields.
+ * `originalSrc` names the clip's own `src` (`assets/…`): the preview runtime maps an editor draft's video clips, which name
+ * that source, to the same session media (`setComposition`, Phase 10b).
  */
 export function withSessionMedia(composition: unknown, srcIndex: ReadonlyMap<string, { index: number; media: SessionMediaFile }>): unknown {
   const copy = structuredClone(composition) as { tracks?: unknown };
@@ -221,6 +223,7 @@ export function withSessionMedia(composition: unknown, srcIndex: ReadonlyMap<str
         clip.audioSrc = clip.src;
         clip.audioStart = m.media.originalVideoStart ?? 0;
       }
+      clip.originalSrc = clip.src;
       clip.src = `media/${m.index}.mp4`;
       clip.sourceFps = m.media.sourceFps;
       clip.sourceStart = m.media.sourceStart;

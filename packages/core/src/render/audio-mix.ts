@@ -38,14 +38,17 @@ export interface MixClip {
   fromVideo: boolean;
 }
 
-/** Every audio clip, and every video clip with a volume, of the unmuted tracks, in timeline order; clips past the end are cut. */
+/**
+ * Every audio clip, and every video clip with a volume, of the unmuted tracks, in timeline order; clips past the end are cut.
+ * Hidden clips and the clips of hidden tracks are not heard (the editor's eye, Phase 10b; the preview runtime agrees).
+ */
 export function mixClips(c: Composition): MixClip[] {
   const out: MixClip[] = [];
   if (!(c.duration > 0)) return out;
   for (const track of c.tracks) {
-    if (track.muted) continue;
+    if (track.muted || track.hidden) continue;
     for (const clip of track.clips) {
-      if (clip.type !== 'audio' && clip.type !== 'video') continue;
+      if (clip.hidden || (clip.type !== 'audio' && clip.type !== 'video')) continue;
       const volume = clip.volume ?? 1;
       if (!(volume > 0) || !(clip.duration > 0) || clip.start >= c.duration) continue;
       const duration = Math.min(clip.duration, c.duration - clip.start);

@@ -1,3 +1,4 @@
+import { COMPOSITION_LIMITS, type Composition } from '@motion-studio/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { parseLayerReply } from '../src/layer-protocol.ts';
 import { parseIncoming, parseOutgoing, parseParentOrigin } from '../src/protocol.ts';
@@ -28,7 +29,77 @@ describe('incoming messages', () => {
   });
 });
 
+function smallComp(over: Record<string, unknown> = {}): Composition {
+  return {
+    $schema: 'motion-studio/composition@1', width: 320, height: 180, fps: 30, duration: 4, background: '#000000', fonts: [],
+    scenes: [{ id: 's', start: 0, duration: 4 }],
+    tracks: [{ id: 't', kind: 'visual', clips: [{ id: 'logo', type: 'svg', src: 'assets/logo.svg', start: 0, duration: 4, hidden: true, props: {} }] }],
+    ...over,
+  } as Composition;
+}
+
+describe('setComposition (incoming)', () => {
+  it('accepts a structurally valid composition with a seq and an optional keepTime, and returns a clean copy', () => {
+    const c = smallComp();
+    const parsed = parseIncoming({ type: 'setComposition', composition: c, keepTime: true, seq: 7 });
+    expect(parsed).toEqual({ type: 'setComposition', composition: c, keepTime: true, seq: 7 });
+    expect(parsed && parsed.type === 'setComposition' && parsed.composition).not.toBe(c); // a copy, never the sender's object
+    expect(parseIncoming({ type: 'setComposition', composition: c, seq: 0 })).toEqual({ type: 'setComposition', composition: c, seq: 0 });
+  });
+  it('refuses a malformed composition, extra fields, a bad seq or keepTime', () => {
+    const c = smallComp();
+    for (const bad of [
+      { type: 'setComposition', seq: 1 },
+      { type: 'setComposition', composition: c },
+      { type: 'setComposition', composition: c, seq: -1 }, { type: 'setComposition', composition: c, seq: 1.5 },
+      { type: 'setComposition', composition: c, seq: 2 ** 31 }, { type: 'setComposition', composition: c, seq: '1' },
+      { type: 'setComposition', composition: c, seq: 1, keepTime: 'yes' },
+      { type: 'setComposition', composition: c, seq: 1, extra: true },
+      { type: 'setComposition', composition: { ...c, width: 10 }, seq: 1 },
+      { type: 'setComposition', composition: { ...c, script: 'x' }, seq: 1 },
+      { type: 'setComposition', composition: 'json', seq: 1 },
+      { type: 'setComposition', composition: null, seq: 1 },
+      // No src outside assets/ or layers/: no scheme, no parent folder, no core media path.
+      ...['https://evil.test/x.svg', '../x.svg', 'media/0.mp4', '/abs.svg', 'assets/../../x.svg'].map((src) => ({
+        type: 'setComposition', seq: 1, composition: smallComp({ tracks: [{ id: 't', kind: 'visual', clips: [{ id: 'logo', type: 'svg', src, start: 0, duration: 4, props: {} }] }] }),
+      })),
+      // Core-only video fields are not part of the schema.
+      { type: 'setComposition', seq: 1, composition: smallComp({ tracks: [{ id: 't', kind: 'video', clips: [{ id: 'v', type: 'video', src: 'assets/v.mp4', sourceTrusted: true, start: 0, duration: 4, props: {} }] }] }) },
+    ]) expect(parseIncoming(bad)).toBeNull();
+  });
+  it('refuses a cyclic or non-JSON value without throwing', () => {
+    const cyclic: Record<string, unknown> = { ...smallComp() };
+    cyclic.self = cyclic;
+    expect(parseIncoming({ type: 'setComposition', composition: cyclic, seq: 1 })).toBeNull();
+    expect(parseIncoming({ type: 'setComposition', composition: { ...smallComp(), n: 10n }, seq: 1 })).toBeNull();
+  });
+  it('refuses a composition above COMPOSITION_LIMITS.jsonBytes (UTF-8), accepts one just below', () => {
+    const name = (n: number) => smallComp({ scenes: [{ id: 's', name: 'x'.repeat(10), start: 0, duration: 4 }], tracks: [{ id: 't', kind: 'visual', name: 'é'.repeat(n), clips: [] }] });
+    // Track names are bounded by the schema (200), so the size is reached with many text clips instead.
+    const big = (count: number, text: string) => smallComp({ tracks: Array.from({ length: 4 }, (_, k) => ({ id: `t${k}`, kind: 'text', clips: Array.from({ length: count }, (_, i) => ({
+      id: `c${k}-${i}`, type: 'text', start: 0, duration: 4, props: { text } })) })) });
+    expect(parseIncoming({ type: 'setComposition', composition: name(10), seq: 1 })).not.toBeNull();
+    const huge = big(500, 'é'.repeat(1990)); // 2000 clips × ~4 KB of UTF-8: about 8 MB
+    expect(JSON.stringify(huge).length).toBeLessThan(COMPOSITION_LIMITS.jsonBytes); // UTF-16 length is below the bound…
+    expect(new TextEncoder().encode(JSON.stringify(huge)).length).toBeGreaterThan(COMPOSITION_LIMITS.jsonBytes); // …its bytes are not
+    expect(parseIncoming({ type: 'setComposition', composition: huge, seq: 1 })).toBeNull();
+    const fits = big(500, 'a'.repeat(1990)); // about 4.2 MB
+    expect(new TextEncoder().encode(JSON.stringify(fits)).length).toBeLessThan(COMPOSITION_LIMITS.jsonBytes);
+    expect(parseIncoming({ type: 'setComposition', composition: fits, seq: 1 })).not.toBeNull();
+  });
+});
+
 describe('outgoing messages (for the UI side)', () => {
+  it('validates compositionApplied: an integer seq and bounded errors', () => {
+    expect(parseOutgoing({ type: 'compositionApplied', seq: 3, errors: [{ code: 'assetLoadFailed', message: 'x', clipId: 'a' }], k: 1 }))
+      .toEqual({ type: 'compositionApplied', seq: 3, errors: [{ code: 'assetLoadFailed', message: 'x', clipId: 'a' }] });
+    for (const bad of [
+      { type: 'compositionApplied', seq: -1, errors: [] }, { type: 'compositionApplied', seq: 1.5, errors: [] },
+      { type: 'compositionApplied', seq: 1 }, { type: 'compositionApplied', seq: 1, errors: [{ code: 'nope', message: 'x' }] },
+      { type: 'compositionApplied', seq: 1, errors: Array.from({ length: 201 }, () => ({ code: 'layerError', message: 'x' })) },
+    ]) expect(parseOutgoing(bad)).toBeNull();
+  });
+
   it('validates what the runtime sends', () => {
     expect(parseOutgoing({ type: 'time', t: 1, playing: true })).toEqual({ type: 'time', t: 1, playing: true });
     expect(parseOutgoing({ type: 'error', error: { code: 'fontLoadFailed', message: 'x' } })).not.toBeNull();
@@ -66,7 +137,7 @@ describe('preview bridge', () => {
   const ORIGIN = 'http://127.0.0.1:4317';
   function setup() {
     const parent = { postMessage: vi.fn() };
-    const player = { seek: vi.fn(async () => {}), play: vi.fn(), pause: vi.fn(), select: vi.fn(), setScale: vi.fn(), setMuted: vi.fn() };
+    const player = { seek: vi.fn(async () => {}), play: vi.fn(), pause: vi.fn(), select: vi.fn(), setScale: vi.fn(), setMuted: vi.fn(), setComposition: vi.fn() };
     const bridge = createPreviewBridge({ parent, parentOrigin: ORIGIN, player });
     return { parent, player, bridge };
   }
@@ -84,6 +155,19 @@ describe('preview bridge', () => {
     expect(player.pause).toHaveBeenCalled();
     expect(player.select).toHaveBeenCalledWith('title');
     expect(player.setScale).toHaveBeenCalledWith('fit');
+  });
+  it('passes a valid setComposition (a validated copy) to the player, ignores an invalid one or one not from the parent', () => {
+    const { parent, player, bridge } = setup();
+    const c = smallComp();
+    bridge.handle({ data: { type: 'setComposition', composition: c, keepTime: true, seq: 4 }, origin: ORIGIN, source: parent });
+    expect(player.setComposition).toHaveBeenCalledWith(c, { keepTime: true, seq: 4 });
+    expect(player.setComposition.mock.calls[0]![0]).not.toBe(c);
+    bridge.handle({ data: { type: 'setComposition', composition: c, seq: 5 }, origin: ORIGIN, source: {} });
+    bridge.handle({ data: { type: 'setComposition', composition: c, seq: 6 }, origin: 'null', source: parent });
+    bridge.handle({ data: { type: 'setComposition', composition: { ...c, fps: 7 }, seq: 7 }, origin: ORIGIN, source: parent });
+    expect(player.setComposition).toHaveBeenCalledTimes(1);
+    bridge.handle({ data: { type: 'setComposition', composition: c, seq: 8 }, origin: ORIGIN, source: parent });
+    expect(player.setComposition).toHaveBeenLastCalledWith(c, { keepTime: false, seq: 8 });
   });
   it('ignores a wrong origin, a source other than the parent and unknown types', () => {
     const { parent, player, bridge } = setup();

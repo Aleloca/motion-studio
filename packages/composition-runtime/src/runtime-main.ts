@@ -2,8 +2,8 @@ import type { Composition } from '@motion-studio/shared';
 import { installVirtualClock, nativesOf } from './clock.ts';
 import { mount, type Player, type ReadyInfo } from './mount.ts';
 import { COMPOSITION_DATA_ID, readCompositionData } from './page.ts';
-import { createPreviewBridge, type PreviewBridge } from './preview-bridge.ts';
-import { parseParentOrigin, PREVIEW_PROTOCOL_VERSION, RUNTIME_QUERY, type RuntimeError, type RuntimeMode } from './protocol.ts';
+import { createPreviewBridge, type BridgePlayer, type PreviewBridge } from './preview-bridge.ts';
+import { parseParentOrigin, PREVIEW_PROTOCOL_VERSION, RUNTIME_QUERY, type PreviewOutgoing, type RuntimeError, type RuntimeMode } from './protocol.ts';
 
 /** The render-mode API on `window.__ms` (driven over CDP by the core renderer). */
 export interface RuntimeApi {
@@ -21,6 +21,11 @@ export interface RuntimeApi {
 }
 
 const MAX_ERRORS = 200;
+/**
+ * Load limits of a re-mounted draft (ms): shorter than a first mount's, so one slow or missing file cannot hold the
+ * drafts queued behind it for minutes. A file that loads later still shows; the timeout is only reported.
+ */
+const REMOUNT_TIMEOUTS = { load: 15_000, layer: 15_000 };
 
 /** Starts the runtime in `w`: the entry of `runtime.js`. */
 export function startRuntime(w: Window & typeof globalThis): RuntimeApi {
@@ -74,10 +79,11 @@ export function startRuntime(w: Window & typeof globalThis): RuntimeApi {
   ready.catch(() => {});
 
   if (parentOrigin) {
-    const b = createPreviewBridge({ parent: w.parent, parentOrigin, player });
-    // Nothing but errors goes out before `ready`.
-    player.onTime = (t, playing) => { if (bridge) b.post({ type: 'time', t, playing }); };
-    player.onBounds = () => { if (bridge) b.post({ type: 'clipBounds', clipId: player.selected, bounds: player.selectedBounds(), scale: player.scale }); };
+    const live = createLivePreview({
+      w, root, first: player, composition: comp as Composition, base: base.href, natives, report,
+      post: (m) => { if (bridge) bridge.post(m); },
+    });
+    const b = createPreviewBridge({ parent: w.parent, parentOrigin, player: live });
     void ready.then((info) => {
       bridge = b;
       w.addEventListener('message', (ev) => b.handle(ev));
@@ -99,4 +105,132 @@ export function startRuntime(w: Window & typeof globalThis): RuntimeApi {
     height: player.height,
     get errors() { return [...errors]; },
   };
+}
+
+/** The normalised media of the inlined composition's video clips, by their original `src` (core: `withSessionMedia`). */
+type SessionVideo = Record<string, unknown> & { src: string };
+const SESSION_VIDEO_FIELDS = ['src', 'sourceFps', 'sourceStart', 'sourceVideoEnd', 'sourceTrusted', 'audioSrc', 'audioStart'] as const;
+
+function sessionVideos(c: Composition): Map<string, SessionVideo> {
+  const out = new Map<string, SessionVideo>();
+  for (const track of c.tracks) {
+    for (const clip of track.clips as Array<Record<string, unknown>>) {
+      const original = clip.originalSrc;
+      if (clip.type !== 'video' || typeof clip.src !== 'string' || !clip.src.startsWith('media/') || typeof original !== 'string' || !original.startsWith('assets/')) continue;
+      const v: Record<string, unknown> = {};
+      for (const k of SESSION_VIDEO_FIELDS) if (clip[k] !== undefined) v[k] = clip[k];
+      out.set(original, v as SessionVideo);
+    }
+  }
+  return out;
+}
+
+/** A draft's video clips that name a source the session normalised play that file, as the inlined composition does. */
+function withSessionVideos(c: Composition, videos: ReadonlyMap<string, SessionVideo>): Composition {
+  if (videos.size === 0) return c;
+  for (const track of c.tracks) {
+    for (const clip of track.clips) {
+      if (clip.type !== 'video') continue;
+      const v = videos.get(clip.src);
+      if (v) Object.assign(clip, v);
+    }
+  }
+  return c;
+}
+
+/**
+ * The preview's player as the bridge sees it: the mounted composition, replaced in place by `setComposition` (Phase 10b).
+ *
+ * A draft is mounted below the one shown (same document, never hidden: a hidden cross-origin layer frame may get no
+ * animation frames), loaded, seeked to the kept time, then swapped in: the old mount is destroyed (animations cancelled,
+ * media and layer frames released, fonts deleted). Commands meanwhile go to the mount shown; scale, mute, play state and
+ * the selection (when its clip still exists) carry over. Drafts arriving during a re-mount wait, and only the latest of
+ * them is mounted next. Each applied draft is answered by `compositionApplied` with its `seq` and its load errors (those
+ * are not posted one by one).
+ */
+function createLivePreview(o: {
+  w: Window & typeof globalThis; root: HTMLElement; first: Player; composition: Composition; base: string;
+  natives: ReturnType<typeof nativesOf>; report(e: RuntimeError): void; post(m: PreviewOutgoing): void;
+}): BridgePlayer {
+  const doc = o.root.ownerDocument;
+  const videos = sessionVideos(o.composition);
+  let current = o.first;
+  let holder: HTMLElement | null = null; // the first mount lives directly in the root
+  let selected: string | null = null;
+  let scale: number | 'fit' = 'fit';
+  let muted = false;
+  let playOpts: { loop: boolean; rate: number } | null = null;
+  let applying = false;
+  let pending: { composition: Composition; keepTime: boolean; seq: number } | null = null;
+
+  const wire = (p: Player) => {
+    p.onTime = (t, playing) => o.post({ type: 'time', t, playing });
+    p.onBounds = () => o.post({ type: 'clipBounds', clipId: p.selected, bounds: p.selectedBounds(), scale: p.scale });
+  };
+  wire(current);
+
+  const apply = async (d: { composition: Composition; keepTime: boolean; seq: number }) => {
+    applying = true;
+    const errors: RuntimeError[] = [];
+    let collecting = true;
+    const report = (e: RuntimeError) => { if (!collecting) o.report(e); else if (errors.length < MAX_ERRORS) errors.push(e); };
+    const box = doc.createElement('div');
+    box.className = 'ms-mount';
+    Object.assign(box.style, { position: 'absolute', inset: '0', overflow: 'hidden', zIndex: '0' });
+    o.root.insertBefore(box, o.root.firstChild); // below the mount shown
+    let next: Player | null = null;
+    try {
+      const c = withSessionVideos(d.composition, videos);
+      next = mount(box, c, { mode: 'preview', base: o.base, natives: o.natives, clock: null, report, timeouts: REMOUNT_TIMEOUTS });
+      next.setScale(scale);
+      await next.load();
+      const ids = idsOf(c);
+      const keep = selected !== null && ids.has(selected) ? selected : null;
+      await next.seek(d.keepTime ? current.time : 0);
+      const resume = current.playing && playOpts ? playOpts : null;
+      // Swap: the old mount goes, the new one is the one shown.
+      current.destroy();
+      holder?.remove();
+      box.style.zIndex = '';
+      current = next;
+      holder = box;
+      selected = keep;
+      collecting = false;
+      if (muted) next.setMuted(true);
+      next.select(keep);
+      wire(next);
+      if (resume) next.play(resume);
+      o.post({ type: 'time', t: next.time, playing: next.playing });
+      o.post({ type: 'clipBounds', clipId: next.selected, bounds: next.selectedBounds(), scale: next.scale });
+    } catch (e) {
+      // The mount shown stays; the draft's failure is its answer.
+      if (errors.length < MAX_ERRORS) errors.push({ code: 'compositionInvalid', message: `the draft could not be mounted: ${String(e instanceof Error ? e.message : e).slice(0, 300)}` });
+      next?.destroy();
+      box.remove();
+    } finally {
+      o.post({ type: 'compositionApplied', seq: d.seq, errors });
+      applying = false;
+      if (pending) { const p = pending; pending = null; void apply(p); }
+    }
+  };
+
+  return {
+    seek: (t) => { playOpts = null; return current.seek(t); },
+    play: (p) => { playOpts = p; current.play(p); },
+    pause: () => { playOpts = null; current.pause(); },
+    select: (id) => { selected = id; current.select(id); },
+    setScale: (s) => { scale = s; current.setScale(s); },
+    setMuted: (m) => { muted = m; current.setMuted(m); },
+    setComposition: (composition, d) => {
+      const draft = { composition, keepTime: d.keepTime, seq: d.seq };
+      if (applying) { pending = draft; return; }
+      void apply(draft);
+    },
+  };
+}
+
+function idsOf(c: Composition): Set<string> {
+  const ids = new Set<string>();
+  for (const t of c.tracks) for (const clip of t.clips) ids.add(clip.id);
+  return ids;
 }

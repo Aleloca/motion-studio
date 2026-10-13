@@ -225,6 +225,96 @@ describe('CompositionPlayer', () => {
   });
 });
 
+describe('CompositionMedia.setComposition (the editor draft, Phase 10b)', () => {
+  const draft = (text: string, duration = 8) => ({
+    $schema: 'motion-studio/composition@1' as const, width: 1080, height: 1920, fps: 30 as const, duration, background: '#000000', fonts: [],
+    scenes: [{ id: 's1', start: 0, duration }],
+    tracks: [{ id: 't', kind: 'text' as const, clips: [{ id: 'title', type: 'text' as const, start: 0, duration, props: { text } }] }],
+  });
+  const nextFrame = () => act(() => new Promise<void>((r) => { requestAnimationFrame(() => r()); }));
+  const setCalls = (posted: ReturnType<typeof vi.spyOn>) => posted.mock.calls.map((c) => c[0] as { type: string; seq?: number; composition?: ReturnType<typeof draft> })
+    .filter((c) => c.type === 'setComposition');
+
+  it('sends at most one setComposition per animation frame, the latest, validated and with keepTime', async () => {
+    const p = mount();
+    const m = p.media();
+    fromRuntime(READY);
+    p.posted.mockClear();
+    m.setComposition(draft('a'));
+    m.setComposition(draft('b'));
+    const seq = m.setComposition(draft('c'));
+    expect(setCalls(p.posted)).toEqual([]);
+    await nextFrame();
+    const sent = setCalls(p.posted);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ type: 'setComposition', keepTime: true, seq });
+    expect(sent[0]!.composition!.tracks[0]!.clips[0]!.props.text).toBe('c');
+    expect(parseIncoming(sent[0])).toEqual(sent[0]);
+    expect(p.posted.mock.calls[0]![1]).toBe('*');
+    await nextFrame();
+    expect(setCalls(p.posted)).toHaveLength(1); // nothing new: nothing sent
+    m.setComposition(draft('d'));
+    await nextFrame();
+    expect(setCalls(p.posted)).toHaveLength(2);
+  });
+
+  it('compositionApplied of the latest draft updates the duration and the inline problems; an older seq does not', async () => {
+    const p = mount();
+    const m = p.media();
+    fromRuntime(READY);
+    const applied = vi.fn();
+    m.addEventListener('compositionapplied', applied);
+    const first = m.setComposition(draft('a', 5));
+    await nextFrame();
+    const second = m.setComposition(draft('b', 6));
+    await nextFrame();
+    fromRuntime({ type: 'compositionApplied', seq: first, errors: [] });
+    expect(m.duration).toBe(8);
+    fromRuntime({ type: 'compositionApplied', seq: second, errors: [{ code: 'assetLoadFailed', message: 'assets/lib/x.png', clipId: 'pic' }] });
+    expect(m.duration).toBe(6);
+    expect(m.applied).toEqual({ seq: second, errors: [{ code: 'assetLoadFailed', message: 'assets/lib/x.png', clipId: 'pic' }] });
+    expect(applied).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('status', { name: 'Preview problems' }).textContent).toContain('A file could not be loaded (pic)');
+    // A clean draft clears them.
+    const third = m.setComposition(draft('c', 6));
+    await nextFrame();
+    fromRuntime({ type: 'compositionApplied', seq: third, errors: [] });
+    expect(screen.queryByRole('status', { name: 'Preview problems' })).toBeNull();
+  });
+
+  it('a draft set before ready waits for it; a new frame gets the draft again after the restored time', async () => {
+    const p = mount();
+    const m = p.media();
+    m.setComposition(draft('a'));
+    await nextFrame();
+    expect(p.posted).not.toHaveBeenCalled();
+    fromRuntime(READY);
+    fromRuntime({ type: 'time', t: 2, playing: false });
+    expect(setCalls(p.posted)).toHaveLength(1);
+    p.rerender(<I18nProvider locale="en"><CompositionPlayer session={session('tok2')} title="Reel v2" onMedia={() => {}} /></I18nProvider>);
+    const second = document.querySelectorAll('iframe')[1]!;
+    const posted = vi.spyOn(second.contentWindow!, 'postMessage');
+    fromRuntime(READY, { source: second.contentWindow });
+    expect(posted.mock.calls.map((c) => (c[0] as { type: string }).type)).toEqual(['seek', 'setComposition']);
+    m.clearDraft();
+    p.rerender(<I18nProvider locale="en"><CompositionPlayer session={session('tok3')} title="Reel v2" onMedia={() => {}} /></I18nProvider>);
+    const third = document.querySelectorAll('iframe')[1]!;
+    const posted3 = vi.spyOn(third.contentWindow!, 'postMessage');
+    fromRuntime(READY, { source: third.contentWindow });
+    expect(posted3.mock.calls.map((c) => (c[0] as { type: string }).type)).toEqual(['seek']);
+  });
+
+  it('a draft the protocol refuses is never sent', async () => {
+    const p = mount();
+    const m = p.media();
+    fromRuntime(READY);
+    p.posted.mockClear();
+    m.setComposition({ ...draft('a'), width: 1 });
+    await nextFrame();
+    expect(p.posted).not.toHaveBeenCalled();
+  });
+});
+
 describe('usePreviewSession', () => {
   beforeEach(() => { vi.useFakeTimers(); });
   const hook = (enabled = true) => renderHook(({ on }) => usePreviewSession({ slug: 'acme', creative: 'launch', n: 2, format: 'tiktok-9x16', enabled: on }), { initialProps: { on: enabled } });

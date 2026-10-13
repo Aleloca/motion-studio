@@ -1,3 +1,4 @@
+import type { Composition } from '@motion-studio/shared';
 import { parseIncoming, parseOutgoing, type PreviewOutgoing } from './protocol.ts';
 
 /** What the bridge drives: the mounted player. */
@@ -8,6 +9,8 @@ export interface BridgePlayer {
   select(clipId: string | null): void;
   setScale(scale: number | 'fit'): void;
   setMuted(muted: boolean): void;
+  /** A validated draft (a fresh copy, `parseIncoming`): re-mount it in place (runtime-main). */
+  setComposition(composition: Composition, o: { keepTime: boolean; seq: number }): void;
 }
 
 export interface PreviewBridge {
@@ -30,6 +33,7 @@ export function createPreviewBridge(o: { parent: { postMessage(msg: unknown, tar
         case 'select': o.player.select(cmd.clipId); break;
         case 'setScale': o.player.setScale(cmd.scale); break;
         case 'mute': o.player.setMuted(cmd.muted); break;
+        case 'setComposition': o.player.setComposition(cmd.composition, { keepTime: cmd.keepTime ?? false, seq: cmd.seq }); break;
       }
     },
     post(msg) {
