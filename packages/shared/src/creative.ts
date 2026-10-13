@@ -131,6 +131,8 @@ export const versionEntrySchema = z.object({
    * (`formatHistory`). Absent on legacy versions, whose identity is the file's `sha256`.
    */
   compositions: z.array(versionCompositionSchema).optional(),
+  /** Who wrote the version: the agent (default when absent) or a direct edit in the editor (Phase 10b). */
+  origin: z.enum(['agent', 'editor']).optional(),
 });
 export type VersionEntry = z.infer<typeof versionEntrySchema>;
 
@@ -183,6 +185,10 @@ export const pinSchema = z.object({
   y: z.number().min(0).max(1),
   timeSec: z.number().min(0).nullable(),
   note: z.string().optional(),
+  /** The composition clip the comment is about (Phase 10b). Absent on older pins. */
+  clipId: z.string().max(64).optional(),
+  /** The time range, in seconds, the comment is about (Phase 10b): `0 <= start < end`. */
+  range: z.object({ start: z.number().min(0), end: z.number() }).refine((r) => r.start < r.end).optional(),
 });
 export type Pin = z.infer<typeof pinSchema>;
 

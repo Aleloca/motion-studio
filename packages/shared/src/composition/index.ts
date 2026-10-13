@@ -5,3 +5,4 @@ export * from './problems.ts';
 export * from './validate.ts';
 export * from './normalize.ts';
 export * from './layer-check.ts';
+export * from './edit/index.ts';

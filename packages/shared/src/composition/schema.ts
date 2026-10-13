@@ -110,6 +110,8 @@ const clipBase = {
   scene: id.optional().describe('The scene this clip belongs to: moving the scene moves the clip. The clip must lie inside it.'),
   start: seconds.describe('Seconds, absolute on the composition timeline.'),
   duration: seconds,
+  hidden: z.boolean().optional().describe('The editor hides the clip: it is not rendered. Set by the user; leave it as it is.'),
+  locked: z.boolean().optional().describe('The user locked the clip against direct edits in the editor. Set by the user; leave it as it is.'),
 };
 const animations = z.array(animationSchema).max(COMPOSITION_LIMITS.animations).optional();
 const kenBurnsEnd = z.strictObject({ scale: z.number().min(0).max(100).optional(), x: coord.optional(), y: coord.optional() });
