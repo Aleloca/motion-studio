@@ -208,3 +208,54 @@ Recorded, not fixed:
 - `assets/lib/` is reserved for the editor's files by convention only: the agent's context does not mention it and no check enforces it (see `docs/output-contract.md`).
 - The core accepts editor saves whose base hash is current even when `brief.durationSec` differs a lot from the composition (D2); a decision should cover both the save and the next turn.
 - The live check used headless Chrome instead of the desktop app: the desktop-only paths of the editor (the native close dialog with unsaved drafts) were covered by the unit tests only.
+
+## Second live check: agent turn after a direct edit (final wave)
+
+**Result: PASS. Resumed: yes.** After an editor save (v2), a real Haiku turn on the same format resumed the session and made v3. v3 keeps the title text and both positions from v2 and changes only the background (and, on its own initiative, the two text colours).
+
+### Setup
+
+Same method as the check above, in a fresh scratch folder:
+- a throwaway core started by the 10b driver, with an in-memory vault, a config dir inside the scratch folder, and the worktree's existing `packages/web/dist` (not rebuilt);
+- the 10b `claude` wrapper, which logs every spawn and tees stdin and stdout; mode `real` for the two agent turns and `forbid` during the editor save;
+- model `haiku`, `sandboxMode: auto`, the calling session's Claude Code variables stripped;
+- one project, one format (`instagram-reel-9x16`), 4 s, text clips only; no browser and no app, everything through the API.
+
+### Steps
+
+1. **v1 (real Haiku).** Light grey background `#e5e7eb`, title "Autumn sale" at x 60, y 840, label "SHOP" at x 60, y 260. The `sessionId` was kept. 10 turns, 32 s.
+2. **Direct save, v2.** `POST …/edits` with `baseVersion: 1` and three `clipProps` ops: title text "Zebra Moonlight 7731", title position x 137, y 1333, label position x 211, y 455. Response `{"version":2}`. The entry has `origin: "editor"`, `basedOn: 1`, no `usage`, the `sessionId` carried over from v1 and no `userDuration`. No spawn during the save and no ledger line. `work/editor/<format>/` is an exact copy of v2.
+3. **Agent turn, v3.** "Change the background colour to dark blue." on the same format. The argv has `--resume` with the v1 session, and the stream reports the same session. 9 turns, 20 s, 0 approvals, `basedOn: 2`.
+
+### Evidence
+
+- **Titles and positions identical** in v2 and v3: text "Zebra Moonlight 7731" at x 137, y 1333; "SHOP" at x 211, y 455.
+- **Background changed:** `#e5e7eb` to `#0b1f4a`.
+- **`diff v2 v3` has 3 lines:** the background, and both text colours `#111827` to `#ffffff`. Everything else is byte for byte the same.
+- **Prompt section**, from the recorded stdin:
+
+```
+## Direct edits by the user
+v2 contains direct edits by the user: Direct edits: title text, title position, shop-label position. Build on v2; keep those edits unless the user asks to change them.
+- `creatives/2026-10-13-edit-keep/work/editor/<format-id>/` is the current source of that format (instagram-reel-9x16): an exact copy of `creatives/2026-10-13-edit-keep/outputs/v2/compositions/<format-id>/` with the user's edits. Build on it; any other copy of its composition elsewhere in `creatives/2026-10-13-edit-keep/work/` is superseded.
+- Your generators and scripts in `creatives/2026-10-13-edit-keep/work/` predate these edits: if you run one again, reapply the edits to what it produces; otherwise edit the composition directly.
+- Keep the values the user set (texts, colours, fonts, positions, timing, durations) and keep the files under `assets/lib/` of those compositions: copy them with the composition.
+```
+
+The agent compared the editor copy with `outputs/v2/`, copied from `outputs/v2/` (the two are identical), made three `Edit` calls, then ran `validate_composition` (no problems) and `preview_frames`. It wrote no generator script.
+
+### Cost
+
+$0.0207 in total: v1 $0.0139, v3 $0.0068. The editor save cost nothing.
+
+### mtimes
+
+Unchanged before and after, for `~/Library/Application Support/Motion Studio`, `~/MotionStudio` and `~/Library/Application Support/Motion Studio Electron`; `~/Library/Application Support/Electron` was absent both times.
+
+### Concerns
+
+- The agent changed more than it was asked: it set both text colours to white for contrast. A colour the user had set in the editor would be at risk from the same reasoning on a background change; the prompt's "keep the values the user set" is the only guard.
+- This is a single Haiku sample on a simple text-only composition. It does not measure reliability on complex compositions or with generator scripts in `work/`.
+- The prompt names `work/editor/<format-id>/` as the source, but the agent copied from `outputs/v2/`. The result is the same here because the two are identical.
+- After the v3 turn the editor copy still holds v2. This is by design: `alignEditorCopies` removes it at the start of the next turn, and nothing reads it in between.
+- Claude Code again created the empty `.claude/.cc-writes/` in the creative folder (D4 above); this time the conversation has no tripwire notice.
