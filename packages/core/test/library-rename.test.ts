@@ -36,6 +36,27 @@ describe('renaming an asset (store)', () => {
     await lib.registerAssets([{ file: 'logo.png', origin: 'upload' }, { file: 'other.png', origin: 'upload' }, { file: 'brand/mark.svg', origin: 'upload' }, { file: 'font.woff2', origin: 'upload' }]);
   });
 
+  it('open brand-analysis proposals follow a rename; applied ones stay as they were (M5)', async () => {
+    const src = { kind: 'manual' as const, ref: null };
+    const brand = new BrandStore(project);
+    const logo = { id: 'l1', file: 'assets/logo.png', variant: 'primary', background: 'any', source: src };
+    const mk = async (status: 'open' | 'applied') => {
+      const id = await brand.newProposalId(new Date(status === 'open' ? 1_000_000_000_000 : 1_000_000_100_000));
+      await brand.writeProposal({ schemaVersion: 1, id, createdAt: '2026-10-07T10:00:00.000Z', sourceIds: [], status, summary: 's', guidelines: null,
+        changes: [{ id: 'c1', field: 'logos', op: 'add', itemId: 'l1', before: null, after: logo }, { id: 'c2', field: 'tone', op: 'update', itemId: null, before: null, after: 'warm' }],
+        assetsAdded: ['logo.png', 'other.png'] });
+      return id;
+    };
+    const open = await mk('open'), applied = await mk('applied');
+    await lib.renameAsset('logo.png', 'New Logo.png');
+    const o = await brand.readProposal(open), a = await brand.readProposal(applied);
+    expect((o.changes[0]!.after as { file: string }).file).toBe('assets/New-Logo.png');
+    expect(o.changes[1]!.after).toBe('warm');
+    expect(o.assetsAdded).toEqual(['New-Logo.png', 'other.png']);
+    expect((a.changes[0]!.after as { file: string }).file).toBe('assets/logo.png');
+    expect(a.assetsAdded).toEqual(['logo.png', 'other.png']);
+  });
+
   it('renames, updates the brand and every brief under their locks, and leaves staging copies alone', async () => {
     const src = { kind: 'manual' as const, ref: null };
     await new BrandStore(project).writeKit({

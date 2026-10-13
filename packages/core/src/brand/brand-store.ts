@@ -147,6 +147,27 @@ export class BrandStore {
     });
   }
 
+  /**
+   * Points the open proposals' logo and font changes (and their added assets) at project file `from` → `to` (M5): a proposal
+   * applied after a rename must not link a file that no longer exists. Applied and discarded proposals are history and stay.
+   * Idempotent; returns the ids of the proposals that changed. A proposal that cannot be read is left alone.
+   */
+  async renameProposalRefs(from: string, to: string): Promise<string[]> {
+    const prefix = 'assets/';
+    const bare = (ref: string) => (ref.startsWith(prefix) ? ref.slice(prefix.length) : ref);
+    const point = (v: unknown): unknown => (v && typeof v === 'object' && (v as { file?: unknown }).file === from ? { ...(v as object), file: to } : v);
+    const changed: string[] = [];
+    for (const p of await this.listProposals()) {
+      if (p.status !== 'open') continue;
+      const changes = p.changes.map((c) => (c.field === 'logos' || c.field === 'fonts') ? { ...c, before: point(c.before), after: point(c.after) } : c);
+      const assetsAdded = p.assetsAdded.map((f) => (f === bare(from) ? bare(to) : f));
+      if (JSON.stringify(changes) === JSON.stringify(p.changes) && assetsAdded.every((f, i) => f === p.assetsAdded[i])) continue;
+      await this.writeProposal({ ...p, changes, assetsAdded });
+      changed.push(p.id);
+    }
+    return changed;
+  }
+
   writeKit(kit: unknown): Promise<BrandKit> {
     return this.lock.run('brand-kit.json', () => this.writeKitUnlocked(kit));
   }
