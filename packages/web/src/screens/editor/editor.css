@@ -97,3 +97,7 @@
 .ms-sc-clip:hover { background: var(--field); }
 .ms-sc-clip.ms-on { border-color: var(--accent); background: var(--sel); }
 .ms-sc-clip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* No room above the box: the rotate handle goes below it. */
+.ms-flip .ms-stage-stem { top: 100%; }
+.ms-flip .ms-h-rot { top: calc(100% + 44px); }

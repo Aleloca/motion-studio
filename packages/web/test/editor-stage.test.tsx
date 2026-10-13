@@ -119,7 +119,11 @@ describe('stage handles', () => {
     expect(box().style.width).toBe('450px');
     expect(box().style.height).toBe('350px');
     expect(box().style.transform).toBe('translate(45px, 250px) rotate(0deg)');
-    expect(within(box()).getAllByRole('button').map((b) => b.getAttribute('data-handle')).sort()).toEqual(['ne', 'nw', 'rotate', 'se', 'sw']);
+    expect([...box().querySelectorAll('[data-handle]')].map((b) => b.getAttribute('data-handle')).sort()).toEqual(['ne', 'nw', 'rotate', 'se', 'sw']);
+    // Not focusable controls: hidden from assistive tech, not buttons; the box is named by the clip's name.
+    expect(within(box()).queryAllByRole('button')).toHaveLength(0);
+    expect([...box().querySelectorAll('[data-handle]')].every((b) => b.getAttribute('aria-hidden') === 'true' && !b.hasAttribute('role'))).toBe(true);
+    expect(box().getAttribute('aria-label')).toBe('Selected: card');
     player.report('card', { x: 100, y: 120, width: 450, height: 350 }, 0.5);
     expect(box().style.transform).toBe('translate(100px, 120px) rotate(0deg)');
     // The label is in composition pixels.
@@ -206,6 +210,25 @@ describe('stage handles', () => {
     drag(within(box()).getByLabelText('Rotate (Shift snaps to 15°)'), [270, 200], [270 + 225 * Math.sin(a), 425 - 225 * Math.cos(a)], { shiftKey: true });
     expect(clip('card').props.rotation! % 15).toBe(0);
     expect(clip('card').props.rotation).toBe(105);
+  });
+
+  it('the box label shows the clip name, not its id', async () => {
+    const c = structuredClone(spike);
+    (c.tracks.find((t) => t.id === 'visual')!.clips.find((k) => k.id === 'card') as { name?: string }).name = 'Main card';
+    await mountStage({ comp: c });
+    expect(box().getAttribute('aria-label')).toBe('Selected: Main card');
+  });
+
+  it('a click on the rotate handle is not an edit, with Shift or a base rotation beyond 180', async () => {
+    const c = structuredClone(spike);
+    (c.tracks.find((t) => t.id === 'visual')!.clips.find((k) => k.id === 'card') as unknown as { props: Record<string, number> }).props.rotation = 270;
+    await mountStage({ comp: c, bounds: { x: 95, y: 200, width: 350, height: 450 } });
+    const rot = within(box()).getByLabelText('Rotate (Shift snaps to 15°)');
+    fireEvent.pointerDown(rot, stagePoint(rot, 270, 200));
+    fireEvent.pointerUp(window, { clientX: 270, clientY: 200, pointerId: 1, shiftKey: true });
+    fireEvent.pointerDown(rot, stagePoint(rot, 270, 200));
+    fireEvent.pointerUp(window, { clientX: 270, clientY: 200, pointerId: 1 });
+    expect(peekDraft(KEY)!.ops).toHaveLength(0);
   });
 
   it('refuses to drag a locked clip: dashed handles, "Locked", no edit, no pause', async () => {

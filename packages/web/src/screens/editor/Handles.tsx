@@ -16,7 +16,7 @@ import { Icon, cx } from '../../ui/index.ts';
 import type { DraftActions } from './draftStore.ts';
 import { useEditor } from './editorContext.ts';
 import {
-  guideLines, movePatch, resizePatch, resolveBox, rotatePatch, sizeFromBounds, snapMove, snapResize,
+  guideLines, movePatch, resizePatch, resolveBox, rotatePatch, sizeFromBounds, snapMove, snapResize, wrapAngle,
   type BoxProps, type Corner, type GuideLines, type Point, type Rect, type SafeZone,
 } from './stageMath.ts';
 
@@ -26,6 +26,7 @@ export type Guide = { axis: 'x' | 'y'; at: number };
 export const HOLD_MS = 600;
 /** A held pointer re-sends its last edit this often, so the store keeps joining it into the drag's undo step (window: 500 ms). */
 const HEARTBEAT_MS = 250;
+const r2 = (n: number) => Math.round(n * 1e2) / 1e2;
 const CORNERS: readonly Corner[] = ['nw', 'ne', 'se', 'sw'];
 
 type Kind = { k: 'move' } | { k: 'resize'; corner: Corner } | { k: 'rotate' };
@@ -70,7 +71,10 @@ function runGesture(g: Gesture, p: { x: number; y: number; shift: boolean }, L: 
     patch = rotatePatch(g.start, g.centre, g.from, { x: p.x, y: p.y }, { snap: p.shift });
   }
   L.onGuides(guides);
-  const changed = (Object.keys(patch) as Array<keyof BoxProps>).some((k) => patch[k] !== g.start[k]);
+  // Compare with the start as it would be written (a rotation of 270 is stored as -90), and a rotate that did not move is a click.
+  const was: BoxProps = { ...g.start, rotation: r2(wrapAngle(g.start.rotation)) };
+  const unmoved = g.kind.k === 'rotate' && dx === 0 && dy === 0;
+  const changed = !unmoved && (Object.keys(patch) as Array<keyof BoxProps>).some((k) => patch[k] !== was[k]);
   if (!changed && g.last === null) return; // a click is not an edit
   g.last = patch;
   g.lastAt = Date.now();
@@ -205,23 +209,25 @@ export function Handles({ clip, locked, bounds, scale, origin, onGuides }: Handl
 
   if (!centre || !(scale > 0)) return null;
   const w = live.width * live.scale * scale, h = live.height * live.scale * scale;
+  // The rotate handle sits 24 px above the top edge; with no room above (the clip at the top of the frame) it goes below.
+  const flip = centre.y - (h / 2 + 30) * Math.cos((live.rotation * Math.PI) / 180) < 4;
   const label = e.coords({ x: String(Math.round(live.x)), y: String(Math.round(live.y)), w: String(Math.round(live.width)), h: String(Math.round(live.height)) });
   const cornerLabel: Record<Corner, string> = { nw: e.resizeNw, ne: e.resizeNe, se: e.resizeSe, sw: e.resizeSw };
   return (
     <>
       <div
-        className={cx('ms-stage-box', locked && 'ms-locked', dragging && 'ms-dragging')} data-clip={clipId} role="group" aria-label={e.selectionBox({ clip: clipId })}
+        className={cx('ms-stage-box', locked && 'ms-locked', dragging && 'ms-dragging', flip && 'ms-flip')} data-clip={clipId} role="group" aria-label={e.selectionBox({ clip: clip.name ?? clipId })}
         title={locked ? e.locked : undefined} aria-disabled={locked || undefined}
         style={{ width: w, height: h, transform: `translate(${centre.x - w / 2}px, ${centre.y - h / 2}px) rotate(${live.rotation}deg)` }}
         onPointerDown={begin({ k: 'move' })}
       >
         <span className="ms-stage-move" aria-label={e.moveHandle} />
         {CORNERS.map((c) => (
-          <span key={c} className={cx('ms-stage-handle', `ms-h-${c}`)} data-handle={c} role="button" aria-label={cornerLabel[c]} aria-disabled={locked || undefined}
+          <span key={c} className={cx('ms-stage-handle', `ms-h-${c}`)} data-handle={c} aria-hidden="true" aria-label={cornerLabel[c]}
             title={locked ? e.locked : undefined} onPointerDown={begin({ k: 'resize', corner: c })} />
         ))}
         <span className="ms-stage-stem" aria-hidden="true" />
-        <span className="ms-stage-handle ms-h-rot" data-handle="rotate" role="button" aria-label={e.rotateHandle} aria-disabled={locked || undefined}
+        <span className="ms-stage-handle ms-h-rot" data-handle="rotate" aria-hidden="true" aria-label={e.rotateHandle}
           title={locked ? e.locked : undefined} onPointerDown={begin({ k: 'rotate' })}><Icon name="rotate" size={11} /></span>
       </div>
       <div className={cx('ms-stage-label', locked && 'ms-locked')} role="status" style={{ left: centre.x, top: centre.y + Math.max(w, h) / 2 + 14 }}>
