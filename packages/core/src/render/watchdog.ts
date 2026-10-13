@@ -48,11 +48,13 @@ const run = (cmd: string, args: string[], timeoutMs: number, env?: NodeJS.Proces
 
 export interface ProcessRow {
   pid: number; pgid: number; command: string;
-  /** Parent pid (1: an orphan, re-parented to init/launchd). */
+  /** Parent pid (1: an orphan re-parented to init/launchd; on Linux possibly a subreaper, see `sweepCandidates`). */
   ppid: number;
   uid: number;
   /** Start time, ms since the epoch (whole seconds: `ps` lstart); NaN when unreadable. */
   startMs: number;
+  /** `startMs` is precise to a clock tick (Linux `/proc`, `preciseLinuxStarts`), not whole seconds. */
+  startPrecise?: boolean;
 }
 
 /** `ps -o lstart` in the C locale: `Mon Oct 12 20:53:17 2026` (the day padded with a space). */
@@ -98,8 +100,11 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * The processes `sweepByMarker` may kill (final wave B5), from a `ps` listing: owned by `uid`, carrying `marker` (our
  * unique temp profile path) as a whole path in an argument (`--user-data-dir=<marker>`, or a path that is the marker or
  * starts with `<marker>/`), never as a mere substring; and either a descendant of `rootPid` (our Chromium), or an orphan
- * (parent 1) started at or after `since` (the launch, whole seconds as `ps` reports), or a marked descendant of one of those.
- * Never this process. (Under a Linux subreaper orphans never get parent 1: they are left to the group kill.)
+ * started at or after `since` (the launch; within its second when the start is `ps`'s whole seconds), or a marked descendant of one of those. Never this
+ * process. An orphan's parent is 1 (init/launchd) or, on Linux, a child subreaper (`systemd --user`, a CI runner): the kernel
+ * re-parents an orphan to its nearest living subreaper ancestor, and our Chromium's helpers descend from us, so that
+ * subreaper is always a proper ancestor of this process (`self`). A parent that is anything else (this process, an
+ * unrelated live process) means the process is not an orphan of ours.
  */
 export function sweepCandidates(rows: readonly ProcessRow[], marker: string, o: { rootPid: number; since: number; uid: number; self: number }): ProcessRow[] {
   if (marker.length < 12) return []; // never a short, ambiguous marker
@@ -109,9 +114,16 @@ export function sweepCandidates(rows: readonly ProcessRow[], marker: string, o: 
     for (let p = parent.get(pid), hops = 0; p !== undefined && p > 1 && hops < 64; p = parent.get(p), hops++) if (p === o.rootPid) return true;
     return false;
   };
+  // The proper ancestors of this process (never itself): where Linux re-parents an orphan of ours under a subreaper.
+  const ancestors = new Set<number>();
+  for (let p = parent.get(o.self), hops = 0; p !== undefined && p > 1 && p !== o.self && hops < 64; p = parent.get(p), hops++) ancestors.add(p);
+  const orphan = (r: ProcessRow) => r.ppid === 1 || ancestors.has(r.ppid);
+  // `ps` gives whole seconds: a start in the launch's second counts. A precise start (Linux /proc) is compared exactly, so
+  // a process started before the launch is never taken.
   const since = Math.floor(o.since / 1000) * 1000;
+  const startedAfter = (r: ProcessRow) => r.startMs >= (r.startPrecise ? o.since : since);
   const marked = rows.filter((r) => r.pid !== o.self && r.pid !== o.rootPid && r.uid === o.uid && token.test(r.command));
-  const picked = new Set(marked.filter((r) => descends(r.pid) || (r.ppid === 1 && r.startMs >= since)).map((r) => r.pid));
+  const picked = new Set(marked.filter((r) => descends(r.pid) || (orphan(r) && startedAfter(r))).map((r) => r.pid));
   // Grandchildren: a marked process whose parent chain reaches a picked one (its parent was re-parented to 1, e.g. a
   // zygote's renderers), found in the same snapshot.
   const reaches = (pid: number) => {
@@ -126,6 +138,60 @@ export function sweepCandidates(rows: readonly ProcessRow[], marker: string, o: 
 }
 
 /**
+ * The start time (clock ticks since boot) in a `/proc/<pid>/stat` line, field 22, or null. The command name (field 2) is in
+ * parentheses and may hold spaces and parentheses itself, so the fields are counted after the LAST `)`.
+ */
+export function procStatStartTicks(stat: string): number | null {
+  const close = stat.lastIndexOf(')');
+  if (close < 0) return null;
+  const fields = stat.slice(close + 1).trim().split(/\s+/); // fields[0] is field 3 (state)
+  const v = fields[22 - 3];
+  if (v === undefined || !/^\d+$/.test(v)) return null;
+  const n = Number(v);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
+/** The uptime in seconds, the first number of `/proc/uptime`, or null. */
+export function procUptimeSeconds(text: string): number | null {
+  const m = /^\s*(\d+(?:\.\d+)?)\s/.exec(text);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * A process start in ms since the epoch from its start `ticks` (since boot), the uptime read at `nowMs` and the tick rate
+ * `hz`: `nowMs - (uptime - ticks / hz)`. Unlike `ps lstart` (the boot time truncated to the second, then the start printed
+ * in whole seconds: up to about 1 s early), it is precise to a tick.
+ */
+export function linuxStartMs(ticks: number, uptimeSec: number, nowMs: number, hz: number): number {
+  return nowMs - (uptimeSec - ticks / hz) * 1000;
+}
+
+let clockTicks: Promise<number> | null = null;
+const clkTck = () => (clockTicks ??= run('getconf', ['CLK_TCK'], 5_000).then((out) => {
+  const n = Number(out?.trim());
+  return Number.isInteger(n) && n > 0 ? n : 100;
+}));
+
+/**
+ * Linux: the rows whose command line contains `marker` get their start time from `/proc/<pid>/stat` and `/proc/uptime`
+ * (precise), not from `ps lstart` (whole seconds over a truncated boot time: a helper started just after the launch could
+ * read as started before it, and escape the sweep). A row that cannot be read keeps the `ps` value.
+ */
+export async function preciseLinuxStarts(rows: ProcessRow[], marker: string, io: { read(path: string): Promise<string>; now(): number; hz(): Promise<number> } = linuxIo): Promise<ProcessRow[]> {
+  const uptime = procUptimeSeconds(await io.read('/proc/uptime').catch(() => ''));
+  const nowMs = io.now();
+  if (uptime === null) return rows;
+  const hz = await io.hz();
+  return Promise.all(rows.map(async (r) => {
+    if (!r.command.includes(marker)) return r;
+    const ticks = procStatStartTicks(await io.read(`/proc/${r.pid}/stat`).catch(() => ''));
+    return ticks === null ? r : { ...r, startMs: linuxStartMs(ticks, uptime, nowMs, hz), startPrecise: true };
+  }));
+}
+
+const linuxIo = { read: (path: string) => readFile(path, 'utf8'), now: () => Date.now(), hz: clkTck };
+
+/**
  * SIGKILLs the processes `sweepCandidates` picks: the last sweep after the group kill, for Chromium helpers that left the
  * group. `rootPid`: the Chromium we launched; `since`: when (ms). Returns how many it found.
  */
@@ -133,7 +199,9 @@ export async function sweepByMarker(marker: string, o: { rootPid: number; since:
   if (process.platform === 'win32') return 0;
   const uid = process.getuid?.();
   if (uid === undefined) return 0;
-  const rows = sweepCandidates(await listProcesses(), marker, { ...o, uid, self: process.pid });
+  let all = await listProcesses();
+  if (process.platform === 'linux') all = await preciseLinuxStarts(all, marker);
+  const rows = sweepCandidates(all, marker, { ...o, uid, self: process.pid });
   for (const r of rows) { try { process.kill(r.pid, 'SIGKILL'); } catch { /* gone */ } }
   return rows.length;
 }
