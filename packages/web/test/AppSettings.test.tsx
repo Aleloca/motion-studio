@@ -222,7 +222,7 @@ describe('App settings · paid services', () => {
     expect(within(list).getByText('Account · missing')).toBeTruthy();
     expect(within(list).getByText('Voice-over · not verified')).toBeTruthy();
     expect(within(list).getByText('Music · missing')).toBeTruthy();
-    expect(within(eleven).queryByText(/does not accept this key/)).toBeNull();
+    expect(within(eleven).queryByText(/refused this key or the request/)).toBeNull();
     expect(within(eleven).queryByText('Saved · checking…')).toBeNull();
     const help = within(eleven).getByRole('region', { name: 'Permissions to enable' });
     for (const perm of ['text_to_speech', 'sound_generation', 'music_generation', 'voices_read', 'user_read']) expect(within(help).getByText(perm)).toBeTruthy();
@@ -234,7 +234,7 @@ describe('App settings · paid services', () => {
     checks.openai = { provider: 'openai', checkedAt: 'x', capabilities: [{ capability: 'key', status: 'missing' }, { capability: 'images', status: 'missing' }, { capability: 'tts', status: 'missing' }] };
     en(page('paid'));
     const openai = (await screen.findByText('OpenAI')).closest('.ms-key') as HTMLElement;
-    expect(await within(openai).findByText('The service does not accept this key: check it or replace it.')).toBeTruthy();
+    expect(await within(openai).findByText('The service refused this key or the request: check the key, or a region, organization or firewall restriction at the provider.')).toBeTruthy();
     expect(api.checkSecret).not.toHaveBeenCalled();
     const pexels = screen.getByText('Pexels').closest('.ms-key') as HTMLElement;
     checks.pexels = { provider: 'pexels', checkedAt: 'x', capabilities: [{ capability: 'key', status: 'error', detail: 'No answer within 15 s' }, { capability: 'search', status: 'error', detail: 'No answer within 15 s' }] };
@@ -243,7 +243,7 @@ describe('App settings · paid services', () => {
     expect(await within(pexels).findByText('Search · error')).toBeTruthy();
     expect(within(pexels).getByText('Some checks did not finish (No answer within 15 s). Press Test to try again.')).toBeTruthy();
     // An error is never shown as a missing permission.
-    expect(within(pexels).queryByText(/does not accept this key/)).toBeNull();
+    expect(within(pexels).queryByText(/refused this key or the request/)).toBeNull();
     expect(within(pexels).queryByRole('region', { name: 'Permissions to enable' })).toBeNull();
   });
 

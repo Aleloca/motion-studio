@@ -82,7 +82,7 @@ describe('ServicesSelector', () => {
     expect(option('Voice', 'ElevenLabs').disabled).toBe(true);
     expect(option('Voice', 'ElevenLabs').title).toBe('ElevenLabs is unavailable: the ElevenLabs key lacks the permission text_to_speech. Enable it at ElevenLabs, then test the key again in Settings → Paid services.');
     expect(option('Voice', 'OpenAI').disabled).toBe(true);
-    expect(option('Voice', 'OpenAI').title).toBe('OpenAI is unavailable: OpenAI does not accept the saved key. Check or replace it in Settings → Paid services.');
+    expect(option('Voice', 'OpenAI').title).toBe('OpenAI is unavailable: OpenAI refused the saved key or the request. Check the key, or a region, organization or firewall restriction, in Settings → Paid services.');
     expect(option('Images', 'OpenAI').disabled).toBe(true);
     expect(option('Music', 'ElevenLabs').disabled).toBe(false);
     expect(option('Sound effects', 'ElevenLabs').disabled).toBe(false);
