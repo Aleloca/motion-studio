@@ -85,4 +85,11 @@ export type StagedVideoMedia = { index: number; sourceFps: number; sourceStart: 
  * A file staged for a draft: `path` is composition-relative (`assets/lib/<sha8>-<name>`), served under the session's token
  * (base folder first). `media`: a video that was normalised (absent when it could not be: it then plays as it is).
  */
-export type StagedAsset = { path: string; size: number; kind: 'image' | 'svg' | 'video' | 'audio' | 'font'; width?: number; height?: number; durationSec?: number | null; media?: StagedVideoMedia };
+export type StagedAsset = {
+  path: string; size: number; kind: 'image' | 'svg' | 'video' | 'audio' | 'font'; width?: number; height?: number; durationSec?: number | null; media?: StagedVideoMedia;
+  /**
+   * A font's weights as its file says (core font probe): a variable font's `wght` axis `[min, max]`, or a static font's
+   * `OS/2` weight (`min === max`). Absent when the file could not be read that far (the editor then keeps its rule).
+   */
+  fontWeights?: { min: number; max: number };
+};

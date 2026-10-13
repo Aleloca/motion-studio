@@ -533,6 +533,31 @@ describe('brand fonts and weights', () => {
     expect(ops()[0]).toMatchObject({ kind: 'addFont', font: { family: 'Boldy', weight: 700 } });
   });
 
+  it('a variable brand font (the probe read its range) declares the kit weights inside it, in one step', async () => {
+    fonts = brandFonts;
+    api.getBrand.mockResolvedValue({ kit });
+    stageImpl = async () => ({ path: 'assets/lib/ab12cd34-playfair.ttf', size: 100, kind: 'font', fontWeights: { min: 100, max: 900 } });
+    await mount('title');
+    await waitFor(() => expect(api.getBrand).toHaveBeenCalled());
+    await pickOption(/Font/, /Playfair/);
+    await waitFor(() => expect(clipData('title')).toMatchObject({ props: { fontFamily: 'Playfair' } }));
+    expect(ops()[0]).toEqual({ kind: 'addFont', font: { family: 'Playfair', src: 'assets/lib/ab12cd34-playfair.ttf' }, weights: [400, 600, 800] });
+    expect(comp().fonts.filter((f) => f.family === 'Playfair').map((f) => f.weight)).toEqual([400, 600, 800]);
+    fireEvent.click(screen.getByRole('button', { name: /Weight/ }));
+    expect((await screen.findAllByRole('option')).map((x) => x.textContent)).toEqual(['400', '600', '800']);
+  });
+
+  it('a static brand font declares the weight its file says', async () => {
+    fonts = brandFonts;
+    api.getBrand.mockResolvedValue({ kit });
+    stageImpl = async () => ({ path: 'assets/lib/ab12cd34-playfair.ttf', size: 100, kind: 'font', fontWeights: { min: 600, max: 600 } });
+    await mount('title');
+    await waitFor(() => expect(api.getBrand).toHaveBeenCalled());
+    await pickOption(/Font/, /Playfair/);
+    await waitFor(() => expect(clipData('title')).toMatchObject({ props: { fontFamily: 'Playfair' } }));
+    expect(ops()[0]).toEqual({ kind: 'addFont', font: { family: 'Playfair', src: 'assets/lib/ab12cd34-playfair.ttf', weight: 600 } });
+  });
+
   it('an undeclared weight is refused at the UI level and the field says so when the clip has one', async () => {
     const c = comp0();
     c.fonts = [{ family: 'SpikeFont', src: 'assets/spikefont.ttf', weight: 400 }];

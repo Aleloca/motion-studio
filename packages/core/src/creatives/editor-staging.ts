@@ -17,6 +17,7 @@ import { findPreset } from '../formats/format-catalog.ts';
 import { LibraryStore } from '../library/library-store.ts';
 import { sanitizeFileName } from '../library/upload.ts';
 import { NoMediaTools, type MediaTools } from '../media/media-tools.ts';
+import { probeFontWeights } from '../media/font-probe.ts';
 import { svgSize } from '../media/svg-size.ts';
 import { CodedError } from '../workspace-store.ts';
 import { isRealDirChain, realDirChain } from './core-files.ts';
@@ -38,7 +39,7 @@ import { isRealDirChain, realDirChain } from './core-files.ts';
  * - **Names:** `<first 8 hex of the copy's sha256>-<sanitised name>`. The same name with other content (in the composition
  *   folder, or already staged) is a collision: the next free name (`-2`, `-3`, …) is taken. The same content reuses its name.
  * - **Probe:** images and videos through `MediaTools.probe`, audio through `MediaTools.probeAudio` (both the single
- *   ffprobe helper), SVG through `svg-size`, fonts by their signature. A file that is not what its name says is refused.
+ *   ffprobe helper), SVG through `svg-size`, fonts by their signature and then their weights (`font-probe.ts`, bounded). A file that is not what its name says is refused.
  * - **Limits:** 500 MB per file (as a composition folder), 20 files per session.
  * - **Lifetime:** removed when the session is revoked, evicted or expires (`PreviewService`), and by the cache sweep
  *   (`sweepEditorStaging`) when older than 24 h.
@@ -156,14 +157,17 @@ async function isFontFile(file: string): Promise<boolean> {
 }
 
 /** The probe data of a staged file; null when it is not what its kind says. */
-async function probeStaged(file: string, kind: StagedKind, media: MediaTools): Promise<Pick<StagedAsset, 'width' | 'height' | 'durationSec'> | null> {
+async function probeStaged(file: string, kind: StagedKind, media: MediaTools): Promise<Pick<StagedAsset, 'width' | 'height' | 'durationSec' | 'fontWeights'> | null> {
   switch (kind) {
     case 'svg': {
       const s = await svgSize(file);
       return s ? { width: s.width, height: s.height } : null;
     }
-    case 'font':
-      return (await isFontFile(file)) ? {} : null;
+    case 'font': {
+      if (!(await isFontFile(file))) return null;
+      const weights = await probeFontWeights(file);
+      return weights ? { fontWeights: weights } : {};
+    }
     case 'audio': {
       if (!media.available || !media.probeAudio) return { durationSec: null };
       const a = await media.probeAudio(file);

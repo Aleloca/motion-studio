@@ -3,7 +3,7 @@ import { normalizeComposition } from '../normalize.ts';
 import { declaredWeights, weightNumber } from '../fonts.ts';
 import { isCompositionPath } from '../paths.ts';
 import { COMPOSITION_LIMITS, compositionSchema, type Clip, type Composition, type Scene, type Track } from '../schema.ts';
-import type { EditContext, EditOp, EditResult } from './ops.ts';
+import { ADD_FONT_MAX_WEIGHTS, type EditContext, type EditOp, type EditResult } from './ops.ts';
 
 /** Tolerance on times (seconds), well below one frame at 60 fps (same as the validator). */
 const EPS = 1e-4;
@@ -352,5 +352,10 @@ function addFont(w: Composition, op: Extract<EditOp, { kind: 'addFont' }>, ctx: 
   const src = assetPath('', 'src', font.src, ctx);
   if (!FONT_EXT.some((e) => src.toLowerCase().endsWith(e))) refuse('editor.badFont', { family: font.family });
   if (w.fonts.some((f) => f.family.toLowerCase() === font.family.toLowerCase())) refuse('editor.fontExists', { family: font.family });
-  w.fonts.push({ ...font, src });
+  if (op.weights === undefined) { w.fonts.push({ ...font, src }); return; }
+  const weights = op.weights;
+  if (!Array.isArray(weights) || weights.length === 0 || weights.length > ADD_FONT_MAX_WEIGHTS || new Set(weights).size !== weights.length
+    || !weights.every((x) => Number.isInteger(x) && x >= 1 && x <= 1000)) refuse('editor.badFont', { family: font.family });
+  if (w.fonts.length + weights.length > COMPOSITION_LIMITS.fonts) refuse('editor.badFont', { family: font.family });
+  for (const weight of [...weights].sort((a, b) => a - b)) w.fonts.push({ ...font, src, weight });
 }

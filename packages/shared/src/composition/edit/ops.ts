@@ -22,13 +22,19 @@ export type EditOp =
   | { kind: 'sceneOrder'; order: string[] }
   | { kind: 'animationPreset'; clipId: string; slot: 'in' | 'out'; preset: AnimationPreset | null; duration: number }
   | { kind: 'htmlParam'; clipId: string; key: string; value: string | number }
-  | { kind: 'addFont'; font: FontRef };
+  /**
+   * Declares a font file. `weights` (a variable font: several weights from one file) declares one entry per weight, each
+   * with the same family and file, and `font.weight` is then ignored.
+   */
+  | { kind: 'addFont'; font: FontRef; weights?: number[] };
 
 export type EditResult = { ok: true; composition: Composition } | { ok: false; problem: CompositionProblem };
 
 /** What the caller knows beyond the composition: the files of the composition folder (plus staged ones), by relative path. */
 export interface EditContext { files?: ReadonlySet<string> }
 
+/** Most weights one `addFont` declares (100–900 in steps of 100). */
+export const ADD_FONT_MAX_WEIGHTS = 9;
 const id = z.string().min(1).max(COMPOSITION_LIMITS.id);
 const time = z.number().min(0).max(COMPOSITION_LIMITS.durationSec);
 const text = z.string().max(COMPOSITION_LIMITS.text);
@@ -60,5 +66,5 @@ export const editOpSchema = z.discriminatedUnion('kind', [
     kind: z.literal('animationPreset'), clipId: id, slot: z.enum(['in', 'out']), preset: z.enum(ANIMATION_PRESETS).nullable(), duration: time,
   }),
   z.strictObject({ kind: z.literal('htmlParam'), clipId: id, key: z.string().min(1).max(64), value: z.union([text, z.number()]) }),
-  z.strictObject({ kind: z.literal('addFont'), font: fontRefSchema }),
+  z.strictObject({ kind: z.literal('addFont'), font: fontRefSchema, weights: z.array(z.number().int().min(1).max(1000)).min(1).max(ADD_FONT_MAX_WEIGHTS).optional() }),
 ]);

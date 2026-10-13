@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyEdit, type Composition, type EditOp } from '../src/index.ts';
+import { applyEdit, editOpSchema, type Composition, type EditOp } from '../src/index.ts';
 import { FILES, clipOf, copy, expectValid, mutate, spike, withParams } from './composition-edit-helpers.ts';
 
 function ok(c: Composition, op: EditOp, ctx?: Parameters<typeof applyEdit>[2]): Composition {
@@ -179,6 +179,26 @@ describe('htmlParam', () => {
     refused(c, set('nope', 'x'), 'editor.unknownParam');
     refused(c, set('__proto__', 'x'), 'editor.unknownParam');
     refused(c, { kind: 'htmlParam', clipId: 'title', key: 'a', value: 'x' }, 'editor.wrongType');
+  });
+});
+
+describe('addFont with weights (a variable font, decisions log 261)', () => {
+  it('declares one entry per weight, sorted, with the same family and file', () => {
+    const out = ok(spike, { kind: 'addFont', font: { family: 'Var', src: 'assets/other.ttf', weight: 999 }, weights: [700, 300, 500] }, { files: FILES });
+    expect(out.fonts.filter((f) => f.family === 'Var')).toEqual([300, 500, 700].map((weight) => ({ family: 'Var', src: 'assets/other.ttf', weight })));
+  });
+  it('refuses duplicate, out-of-range, empty or too many weights, and more fonts than the limit', () => {
+    for (const weights of [[400, 400], [0], [1001], [], [100, 200, 300, 400, 500, 600, 700, 800, 900, 950], [400.5]]) {
+      refused(spike, { kind: 'addFont', font: { family: 'Var', src: 'assets/other.ttf' }, weights }, 'editor.badFont', { files: FILES });
+    }
+    const full = structuredClone(spike);
+    while (full.fonts.length < 30) full.fonts.push({ family: `F${full.fonts.length}`, src: 'assets/other.ttf' });
+    refused(full, { kind: 'addFont', font: { family: 'Var', src: 'assets/other.ttf' }, weights: [100, 200, 300] }, 'editor.badFont', { files: FILES });
+  });
+  it('the wire schema bounds the list', () => {
+    expect(editOpSchema.safeParse({ kind: 'addFont', font: { family: 'F', src: 'assets/f.ttf' }, weights: [100, 900] }).success).toBe(true);
+    expect(editOpSchema.safeParse({ kind: 'addFont', font: { family: 'F', src: 'assets/f.ttf' }, weights: Array.from({ length: 10 }, (_, i) => 100 + i) }).success).toBe(false);
+    expect(editOpSchema.safeParse({ kind: 'addFont', font: { family: 'F', src: 'assets/f.ttf' }, weights: [1.5] }).success).toBe(false);
   });
 });
 

@@ -6,6 +6,7 @@ import { useEditor } from '../editorContext.ts';
 import { Row, Section, type Ctl } from './common.tsx';
 import type { BrandInfo } from './useBrand.ts';
 import { colorGroups } from './colors.ts';
+import { weightsToDeclare } from './fontWeights.ts';
 
 type TextClip = Extract<Clip, { type: 'text' }>;
 const weightOf = weightNumber;
@@ -55,12 +56,15 @@ export function TextSection({ ctl, brand }: { ctl: Ctl; brand: BrandInfo }) {
     try {
       const staged = await stageAsset({ kind: 'brandFont', id: option.brandFontId });
       if (!staged) return;
-      // The file's weight: the kit's when it lists exactly one (per-file data), else 400. The kit keeps one file per font and no
-      // weight per file, and the staged file reports none.
-      const weight = option.weights.length === 1 ? option.weights[0]! : 400;
-      const added = ctl.run('fontFamily', { kind: 'addFont', font: { family: option.family, src: staged.path, weight } });
+      // The file's weights as the core's probe read them (a variable font's range, a static font's own weight), else the
+      // kit's single weight or 400 (weightsToDeclare).
+      const declared = weightsToDeclare(staged, option.weights);
+      const op = declared.length === 1
+        ? { kind: 'addFont' as const, font: { family: option.family, src: staged.path, weight: declared[0]! } }
+        : { kind: 'addFont' as const, font: { family: option.family, src: staged.path }, weights: declared };
+      const added = ctl.run('fontFamily', op);
       if (!added.ok && added.problem.key !== 'editor.fontExists') return;
-      useFamily(option.family, [weight]);
+      useFamily(option.family, added.ok ? declared : undefined);
     } finally {
       setAdding(null);
     }

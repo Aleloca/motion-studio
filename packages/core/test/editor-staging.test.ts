@@ -143,7 +143,8 @@ describe('staging from the library and the brand kit', () => {
     const svg = await stage(s.token, { kind: 'library', file: 'logo.svg' });
     expect(svg).toEqual({ path: `assets/lib/${sha8(Buffer.from(SVG))}-logo.svg`, size: SVG.length, kind: 'svg', width: 40, height: 20 });
     const font = await stage(s.token, { kind: 'library', file: 'Mono.woff2' });
-    expect(font).toMatchObject({ path: `assets/lib/${sha8(readFileSync(FONT))}-Mono.woff2`, kind: 'font' });
+    // The probe reads the static font's OS/2 weight (decisions log 261).
+    expect(font).toMatchObject({ path: `assets/lib/${sha8(readFileSync(FONT))}-Mono.woff2`, kind: 'font', fontWeights: { min: 400, max: 400 } });
     const dir = stagingDirOf(projectDir, 'launch', s.token);
     // The folder is named by a digest of the token, never the token itself.
     expect(dir.endsWith(stagingIdOf(s.token))).toBe(true);
