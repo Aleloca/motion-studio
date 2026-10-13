@@ -44,6 +44,8 @@ const status = (e: unknown) => (e instanceof ApiError ? e.status : (e as { statu
 interface SessionEntry {
   key: string; slug: string; creative: string; n: number; format: string;
   session: PreviewSessionInfo | null;
+  /** The last session handed out, kept after a stall drops it: the next one renews it (its staged files move, decisions log 264). */
+  last: string | null;
   pending: Promise<PreviewSessionInfo> | null;
   users: number;
   idle: number;
@@ -93,7 +95,7 @@ function endIdle(keep: string): void {
 
 function hold(o: { key: string; slug: string; creative: string; n: number; format: string }): SessionEntry {
   let e = sessions.get(o.key);
-  if (!e) { e = { ...o, session: null, pending: null, users: 0, idle: 0, shown: new Map(), retired: new Map() }; sessions.set(o.key, e); }
+  if (!e) { e = { ...o, session: null, last: null, pending: null, users: 0, idle: 0, shown: new Map(), retired: new Map() }; sessions.set(o.key, e); }
   window.clearTimeout(e.idle);
   e.users += 1;
   return e;
@@ -109,11 +111,17 @@ function sessionOf(e: SessionEntry): Promise<PreviewSessionInfo> {
   if (usable(e.session)) return Promise.resolve(e.session);
   if (e.pending) return e.pending;
   endIdle(e.key);
-  const p = Promise.resolve().then(() => api.previewSession(e.slug, e.creative, e.n, e.format, window.location.origin)).then((s) => {
+  // A renewal names the session it renews, also one a stall dropped or the core already ended: the editor's staged files
+  // move to the new one (Phase 10b; the core keeps an ended session's staging a while for this, decisions log 264).
+  const renewing = (e.session as PreviewSessionInfo | null)?.token ?? e.last ?? undefined;
+  const p = Promise.resolve().then(() => (renewing
+    ? api.previewSession(e.slug, e.creative, e.n, e.format, window.location.origin, renewing)
+    : api.previewSession(e.slug, e.creative, e.n, e.format, window.location.origin))).then((s) => {
     const old = e.session;
     e.pending = null;
     if (sessions.get(e.key) !== e) { revokeOnCore(e, s); throw new Error('released'); }
     e.session = s;
+    e.last = s.token;
     // A renewed session: the players move to the new one, each keeping its frame of the old one until the new frame is
     // ready; the old one is ended once no player shows it (A5).
     if (old && old.token !== s.token) retire(e, old);

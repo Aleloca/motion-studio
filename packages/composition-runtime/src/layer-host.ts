@@ -17,6 +17,8 @@ export interface LayerHost {
   seek(t: number): Promise<void>;
   /** Preview playback: applies `t` without waiting. */
   tick(t: number): void;
+  /** Closes the channel and refuses every later request (the mount is torn down); pending requests time out quietly. */
+  dispose(): void;
 }
 
 /**
@@ -68,5 +70,10 @@ export function connectLayer(frame: HTMLIFrameElement, natives: Natives, timeout
     async ready() { const r = await request('ready'); return r.warnings ?? []; },
     async seek(t: number) { await request('seek', t); },
     tick(t: number) { port?.postMessage({ op: 'tick', t }); },
+    dispose() {
+      dead = 'the layer was removed';
+      frame.removeEventListener('load', connect);
+      if (port) { port.onmessage = null; port.close(); port = null; }
+    },
   };
 }

@@ -20,6 +20,7 @@ export * from './creatives/output-contract.ts';
 export * from './creatives/prompt.ts';
 export * from './media/media-tools.ts';
 export * from './creatives/creative-turns.ts';
+export * from './creatives/direct-edit.ts';
 export * from './server/creative-routes.ts';
 export * from './brand/brand-diff.ts';
 export * from './brand/brand-store.ts';

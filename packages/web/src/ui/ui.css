@@ -261,3 +261,35 @@ button.ms-avatar:active { transform: scale(.95); }
 .ms-toast-action:hover { text-decoration: underline; }
 .ms-toast-action:focus-visible { outline: 2px solid var(--accentText); outline-offset: 1px; }
 .ms-toast-action:disabled { opacity: 0.5; cursor: default; }
+
+/* Slider: a drawn range control (the timeline zoom; the inspector's sliders reuse it). */
+.ms-slider { position: relative; width: 120px; height: 20px; flex: none; cursor: pointer; touch-action: none; border-radius: 10px; }
+.ms-slider::before { content: ''; position: absolute; left: 0; right: 0; top: 8px; height: 4px; border-radius: 2px; background: var(--line); }
+.ms-slider-fill { position: absolute; left: 0; top: 8px; height: 4px; border-radius: 2px; background: var(--accent); }
+.ms-slider-thumb {
+  position: absolute; top: 3px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; box-sizing: border-box;
+  background: var(--panel); box-shadow: 0 0 0 1.5px var(--accent), 0 1px 3px var(--shadow);
+}
+.ms-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ms-slider.ms-off { opacity: .45; cursor: default; }
+
+/* Select: grouped and disabled options. */
+.ms-option-group { padding: 8px 10px 4px; font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--muted); }
+.ms-option.ms-off { cursor: default; color: var(--muted); }
+.ms-option-hint { display: block; font-size: 11px; font-weight: 400; color: var(--muted); }
+
+/* NumberField and ColorField (Phase 10b inspector). */
+.ms-field[aria-invalid="true"], .ms-field.ms-invalid { box-shadow: inset 0 0 0 1px var(--warn); }
+.ms-field.ms-off { opacity: .55; }
+.ms-field-unit { font-family: var(--mono); font-size: 10px; color: var(--faint); flex: none; }
+.ms-color { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ms-color-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ms-color-chip { width: 28px; height: 28px; flex: none; border-radius: 6px; box-shadow: inset 0 0 0 1px var(--line); }
+.ms-color-top .ms-field { flex: 1; }
+.ms-color-group { display: flex; flex-direction: column; gap: 4px; }
+.ms-color-cap { font-size: 11px; color: var(--muted); }
+.ms-color-swatches { display: flex; flex-wrap: wrap; gap: 6px; }
+.ms-color-swatch { width: 26px; height: 26px; padding: 0; margin: 0; border: 0; border-radius: 6px; cursor: pointer; box-shadow: inset 0 0 0 1px var(--line); transition: box-shadow var(--d-s) var(--e-std); }
+.ms-color-swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--accent); }
+.ms-color-swatch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ms-color-swatch:disabled { opacity: .55; cursor: default; }

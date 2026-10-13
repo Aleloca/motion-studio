@@ -3,14 +3,14 @@
  * The runtime in a real headless Chrome (system Chrome or CHROME_PATH; never downloaded). Skipped with a message when
  * no Chrome is found, unless MS_REQUIRE_CHROME=1 (CI), which turns the skip into a failure. No wall-clock assertions.
  */
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { build } from 'tsup';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { runtimeBuildOptions } from '../tsup.config.ts';
 import { sourceFrameIndex, videoSourceTime } from '../src/timing.ts';
-import { findChrome, launchChrome, type Browser, type Page } from './support/chrome.ts';
+import { findChrome, launchChrome, Page, type Browser } from './support/chrome.ts';
 import { COMP_PATH, findFfmpeg, H, LAYER, VIDEO, W, writeFixture } from './support/fixture.ts';
 import { decodePng, diffRatio, meanGrey, type Image } from './support/png.ts';
 import { startCompositionServer, startUiServer, type TestServer } from './support/server.ts';
@@ -86,6 +86,8 @@ describe.skipIf(!chrome)('runtime in headless Chrome', () => {
       expect(await page.eval('[window.__ms.mode, window.__ms.duration, window.__ms.fps, typeof window.__ms.seek]')).toEqual(['render', 4, 30, 'function']);
       // No network API was used: every request went to the token-prefixed paths of the composition server.
       expect(server.requests.filter((p) => p !== '/favicon.ico').every((p) => p.startsWith(`/${server.token}/`))).toBe(true);
+      // A render page never loads the draft parser (zod): that script is the preview's only.
+      expect(server.requests.some((p) => p.endsWith('/runtime/preview.js'))).toBe(false);
     });
   }, 240_000);
 
@@ -191,4 +193,177 @@ describe.skipIf(!chrome)('runtime in headless Chrome', () => {
       await ui.close();
     }
   }, 300_000);
+
+  /** The fixture's composition, as written to disk (a fresh copy). */
+  const fixtureComposition = () => JSON.parse(readFileSync(join(work, 'site', COMP_PATH, 'composition.json'), 'utf8')) as {
+    tracks: Array<{ id: string; clips: Array<{ id: string; hidden?: boolean; props: Record<string, unknown> }> }>;
+  };
+  const clipOf = (c: ReturnType<typeof fixtureComposition>, id: string) => c.tracks.flatMap((t) => t.clips).find((x) => x.id === id)!;
+  /** The logo's teal (#2dd4bf) at (x, y). */
+  const teal = (img: Image, x: number, y: number) => { const [r, g, b] = img.px(x, y); return r < 120 && g > 150 && b > 140; };
+
+  /**
+   * A UI page on its own origin with the runtime in a sandboxed preview frame. `messages` are the frame's, in order;
+   * `inFrame` evaluates in the runtime frame's own document (CDP execution context), for counting what it holds.
+   */
+  async function openPreview() {
+    const ui = await startUiServer(() => '<!doctype html><html><body style="margin:0;background:#000">'
+      + `<iframe id="f" sandbox="allow-scripts" allow="autoplay" style="border:0;width:${W}px;height:${H}px;display:block"></iframe>`
+      + '<script>window.msgs=[];const f=document.getElementById("f");'
+      + 'addEventListener("message",(e)=>{if(e.source===f.contentWindow)window.msgs.push(e.data);});'
+      + 'window.send=(m)=>{f.contentWindow.postMessage(m,"*");return true;};'
+      + 'window.waitFor=(pred)=>new Promise((res,rej)=>{const t0=Date.now();(function poll(){const v=window.msgs.find(pred);if(v)return res(v);'
+      + 'if(Date.now()-t0>180000)return rej(new Error("timeout"));setTimeout(poll,5);})();});</script></body></html>');
+    const prev = await startCompositionServer({ distDir: join(work, 'dist'), root: join(work, 'site'), compPath: COMP_PATH, frameAncestors: ui.origin });
+    const page = await browser.newPage(W, H);
+    // The sandboxed runtime frame runs out of process: it is reached as its own target (auto-attached, flat session).
+    const frames: Array<{ sessionId: string; targetId: string }> = [];
+    page.on('Target.attachedToTarget', (p) => {
+      const info = p.targetInfo as { type: string; targetId: string };
+      if (info.type === 'iframe') frames.push({ sessionId: p.sessionId as string, targetId: info.targetId });
+    });
+    await page.send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
+    await page.goto(`${ui.origin}/`);
+    await page.eval(`document.getElementById('f').src = ${JSON.stringify(prev.pageUrl(`mode=preview&parentOrigin=${encodeURIComponent(ui.origin)}`))}; true`);
+    const ready = await page.eval<{ errors: unknown[] }>("window.waitFor((m) => m.type === 'ready')", 200_000);
+    expect(ready.errors).toEqual([]);
+    const infos = ((await browser.send('Target.getTargets')) as { targetInfos: Array<{ targetId: string; url: string }> }).targetInfos;
+    const target = frames.find((f) => infos.some((i) => i.targetId === f.targetId && i.url.includes('/runtime/index.html')));
+    const frame = target ? new Page(browser, target.sessionId) : null;
+    /** Live frame targets of the whole browser (an out-of-process layer frame is one). */
+    const frameTargets = async () => ((await browser.send('Target.getTargets')) as { targetInfos: Array<{ type: string }> }).targetInfos.filter((t) => t.type === 'iframe').length;
+    const setComposition = async (composition: unknown, seq: number, keepTime = true) => {
+      await page.eval(`window.msgs.length = 0; window.send(${JSON.stringify({ type: 'setComposition', composition, keepTime, seq })})`);
+      return page.eval<{ seq: number; errors: unknown[] }>(`window.waitFor((m) => m.type === 'compositionApplied' && m.seq === ${seq})`, 200_000);
+    };
+    return {
+      page, setComposition, frameTargets,
+      // Same process (no separate target): the UI page's own context of the frame cannot be told apart, so this fails loudly.
+      inFrame: <T>(expr: string) => { if (!frame) throw new Error('the runtime frame is not a separate target'); return frame.eval<T>(expr); },
+      close: async () => { await page.close(); await prev.close(); await ui.close(); },
+    };
+  }
+
+  /**
+   * A screenshot taken once the page has painted what `ready` looks for (bounded, 20 s): under machine load the compositor
+   * can lag the applied message by a few frames. The assertions on the returned image stay exactly as strict.
+   */
+  async function paintedShot(page: Page, ready: (img: Image) => boolean): Promise<Image> {
+    const deadline = Date.now() + 20_000;
+    let img = decodePng(await page.screenshot());
+    while (!ready(img) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+      img = decodePng(await page.screenshot());
+    }
+    return img;
+  }
+
+  it('preview setComposition: the frame changes at the same t, the selection is kept, a hidden clip is not drawn', async () => {
+    const p = await openPreview();
+    try {
+      await p.page.eval("window.msgs.length = 0; window.send({ type: 'seek', t: 1.5 }); window.send({ type: 'select', clipId: 'logo' })");
+      await p.page.eval("window.waitFor((m) => m.type === 'clipBounds' && m.clipId === 'logo' && m.bounds)");
+      const before = await paintedShot(p.page, (i) => teal(i, 290, 30) && barWidth(i) === 75);
+      expect(teal(before, 290, 30)).toBe(true);
+      expect(barWidth(before)).toBe(75);
+
+      // zod runs jitless in the runtime: loading the parser (zod builds the schema then) and validating a draft raise no CSP
+      // violation (no `new Function`, M2). preview.js is loaded once more under a listener to see its load (its second
+      // definition of the parser throws, harmlessly).
+      await p.inFrame("window.__violations = []; document.addEventListener('securitypolicyviolation', (e) => window.__violations.push(`${e.violatedDirective} ${e.blockedURI}`)); "
+        + "new Promise((r) => { const s = document.createElement('script'); s.src = 'preview.js'; s.onload = s.onerror = () => r(true); document.head.appendChild(s); })");
+      const moved = fixtureComposition();
+      Object.assign(clipOf(moved, 'logo').props, { x: 200, y: 55 });
+      const applied = await p.setComposition(moved, 1);
+      expect(applied.errors).toEqual([]);
+      expect(await p.inFrame('window.__violations')).toEqual([]);
+      const msgs = await p.page.eval<Array<{ type: string; t?: number; clipId?: string; bounds?: { x: number; y: number } | null }>>('window.msgs');
+      expect(msgs.filter((m) => m.type === 'time').at(-1)).toMatchObject({ t: 1.5, playing: false });
+      const bounds = msgs.filter((m) => m.type === 'clipBounds').at(-1)!;
+      expect(bounds.clipId).toBe('logo');
+      expect(bounds.bounds!.x).toBeCloseTo(200, 0);
+      expect(bounds.bounds!.y).toBeCloseTo(55, 0);
+      const after = await paintedShot(p.page, (i) => !teal(i, 290, 30) && teal(i, 220, 75) && barWidth(i) === 75);
+      expect(teal(after, 290, 30)).toBe(false);
+      expect(teal(after, 220, 75)).toBe(true);
+      expect(barWidth(after)).toBe(75); // the html layer was re-mounted and seeked to the same t
+
+      const hidden = fixtureComposition();
+      Object.assign(clipOf(hidden, 'logo'), { hidden: true });
+      await p.setComposition(hidden, 2);
+      const shot = await paintedShot(p.page, (i) => !teal(i, 290, 30) && !teal(i, 220, 75));
+      expect(teal(shot, 290, 30)).toBe(false);
+      expect(teal(shot, 220, 75)).toBe(false);
+      const last = (await p.page.eval<Array<{ type: string; clipId?: string; bounds?: unknown }>>('window.msgs')).filter((m) => m.type === 'clipBounds').at(-1)!;
+      expect(last).toMatchObject({ clipId: 'logo', bounds: null }); // still selected (the clip exists), not drawn
+      expect(await p.inFrame<number>("document.querySelectorAll('[data-clip-id=\"logo\"]').length")).toBe(0);
+    } finally {
+      await p.close();
+    }
+  }, 300_000);
+
+  it('preview: 200 consecutive setComposition keep the media elements, layer frames, fonts and animations constant', async () => {
+    const p = await openPreview();
+    try {
+      const counts = () => p.inFrame<number[]>("[document.querySelectorAll('video, audio').length, document.querySelectorAll('iframe').length, "
+        + "document.querySelectorAll('.ms-stage').length, document.fonts.size, document.getAnimations().length]");
+      const first = fixtureComposition();
+      await p.setComposition(first, 1);
+      const base = await counts();
+      const targetsBase = await p.frameTargets();
+      expect(base[1]).toBe(1); // the layer frame
+      expect(base[2]).toBe(1);
+      const c = fixtureComposition();
+      // In the page: post the next draft once the previous one is applied, 200 times.
+      await p.page.eval(`(async () => {
+        const c = ${JSON.stringify(c)};
+        for (let i = 2; i <= 201; i++) {
+          c.tracks.find((t) => t.id === 'text').clips[0].props.text = 'Hi ' + i;
+          window.msgs.length = 0;
+          window.send({ type: 'setComposition', composition: c, keepTime: true, seq: i });
+          const a = await window.waitFor((m) => m.type === 'compositionApplied' && m.seq === i);
+          if (a.errors.length) throw new Error(JSON.stringify(a.errors));
+        }
+        return true;
+      })()`, 280_000);
+      expect(await counts()).toEqual(base);
+      // No frame of an old mount lives on as a target either.
+      expect(await p.frameTargets()).toBe(targetsBase);
+    } finally {
+      await p.close();
+    }
+  }, 320_000);
+
+  it('render mode ignores setComposition: the captured frame is unchanged', async () => {
+    await withRender(async (page) => {
+      const a = await shot(page, 1.5);
+      expect(teal(a, 290, 30)).toBe(true);
+      const hidden = fixtureComposition();
+      Object.assign(clipOf(hidden, 'logo'), { hidden: true });
+      await page.eval(`window.postMessage(${JSON.stringify({ type: 'setComposition', composition: hidden, seq: 1 })}, '*'); true`);
+      await new Promise((r) => setTimeout(r, 500)); // the page's own timers run on the frozen virtual clock
+      const b = await shot(page, 1.5);
+      expect(teal(b, 290, 30)).toBe(true);
+      expect(diffRatio(a, b)).toBeLessThan(0.002);
+    });
+  }, 240_000);
+
+  it('render mode does not draw a hidden clip', async () => {
+    const hidden = fixtureComposition();
+    Object.assign(clipOf(hidden, 'logo'), { hidden: true });
+    const site = join(work, 'site-hidden');
+    writeFixture(site, FONT, null);
+    writeFileSync(join(site, COMP_PATH, 'composition.json'), JSON.stringify({ ...hidden, tracks: hidden.tracks.filter((t) => t.id !== 'bg') }));
+    const srv = await startCompositionServer({ distDir: join(work, 'dist'), root: site, compPath: COMP_PATH });
+    const page = await browser.newPage(W, H);
+    try {
+      await page.goto(srv.pageUrl('mode=render'));
+      await page.eval('window.__ms.ready()');
+      await page.eval('window.__ms.seek(1.5)');
+      expect(teal(decodePng(await page.screenshot()), 290, 30)).toBe(false);
+    } finally {
+      await page.close();
+      await srv.close();
+    }
+  }, 240_000);
 });

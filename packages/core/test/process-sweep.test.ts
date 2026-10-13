@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { linuxStartMs, listProcesses, preciseLinuxStarts, procStat, procUptimeSeconds, sweepByMarker, sweepCandidates, type ProcessRow } from '../src/render/watchdog.ts';
+import { linuxStartMs, listProcesses, parseLstartUtc, psEnv, preciseLinuxStarts, procStat, procUptimeSeconds, sweepByMarker, sweepCandidates, type ProcessRow } from '../src/render/watchdog.ts';
 
 const M = '/tmp/ms-render-chrome-abcdef123456';
 const row = (pid: number, ppid: number, command: string, o: Partial<ProcessRow> = {}): ProcessRow => ({ pid, ppid, pgid: pid, uid: 501, startMs: Date.parse('Mon Oct 12 20:00:05 2026'), command, ...o });
@@ -188,6 +188,20 @@ describe('Linux start times from /proc (pure, injected /proc)', () => {
 });
 
 const posix = process.platform !== 'win32';
+describe('ps lstart is read in UTC (decisions log 267)', () => {
+  it('the ps spawn runs with TZ=UTC in the C locale', () => {
+    expect(psEnv()).toMatchObject({ TZ: 'UTC', LC_ALL: 'C', LANG: 'C' });
+  });
+  it('parses lstart as UTC, never the local zone: the DST fall-back hour is not ambiguous', () => {
+    expect(parseLstartUtc('Sun Oct 25 01:30:00 2026')).toBe(Date.UTC(2026, 9, 25, 1, 30, 0));
+    // The same wall-clock hour twice in Europe/Rome that night: in UTC, two distinct instants an hour apart.
+    expect(parseLstartUtc('Sun Oct 25 00:30:00 2026')).toBe(parseLstartUtc('Sun Oct 25 01:30:00 2026') - 3600_000);
+    expect(parseLstartUtc('Mon Oct  5 20:53:17 2026')).toBe(Date.UTC(2026, 9, 5, 20, 53, 17));
+    expect(parseLstartUtc('Wed Dec 31 23:59:59 2025')).toBe(Date.UTC(2025, 11, 31, 23, 59, 59));
+    for (const bad of ['', 'Mon Foo 12 20:53:17 2026', 'Mon Oct 12 25:00:00 2026', 'Oct 12 20:53:17 2026', 'Mon Oct 32 20:53:17 2026']) expect(parseLstartUtc(bad)).toBeNaN();
+  });
+});
+
 describe.skipIf(!posix)('listProcesses and sweepByMarker on real processes', () => {
   const marker = mkdtempSync(join(tmpdir(), 'ms-test-sweep-'));
   const ours = new Set<number>();
@@ -228,7 +242,8 @@ describe.skipIf(!posix)('listProcesses and sweepByMarker on real processes', () 
     expect(me.command).toContain(long);
     expect(me.ppid).toBe(process.pid);
     expect(me.uid).toBe(process.getuid!());
-    expect(Math.abs(me.startMs - Date.now())).toBeLessThan(120_000);
+    // Printed in UTC and read as UTC: a mismatch would be off by the zone's offset (an hour or more).
+    expect(Math.abs(me.startMs - Date.now())).toBeLessThan(30_000);
   }, 60_000);
 
   it('kills our Chromium\'s marked descendants and orphans started after the launch; leaves the rest', async () => {

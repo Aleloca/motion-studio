@@ -1,4 +1,4 @@
-import type { ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, ProviderId, UsageReport, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
+import type { EditOp, EditorCompositionView, StagedAsset, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, ProviderId, UsageReport, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
 
@@ -7,7 +7,8 @@ import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
  * response's `Retry-After` in seconds, when it has one (e.g. `hashes-pending`).
  */
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string, public readonly code?: string, public readonly retryAfterSec?: number) { super(message); this.name = 'ApiError'; }
+  /** `problems`: every translated problem behind a 422 (a draft that does not validate). */
+  constructor(public readonly status: number, message: string, public readonly code?: string, public readonly retryAfterSec?: number, public readonly problems?: string[]) { super(message); this.name = 'ApiError'; }
 }
 
 /** `Retry-After` as seconds (the delay form only; a date or a bad value is ignored). */
@@ -52,7 +53,9 @@ async function parse<T>(res: Response): Promise<T> {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const code = (data as { code?: unknown }).code;
-    throw new ApiError(res.status, (data as { error?: string }).error ?? currentMessages().web.api.httpError({ status: res.status }), typeof code === 'string' ? code : undefined, retryAfter(res));
+    const problems = (data as { problems?: unknown }).problems;
+    throw new ApiError(res.status, (data as { error?: string }).error ?? currentMessages().web.api.httpError({ status: res.status }), typeof code === 'string' ? code : undefined, retryAfter(res),
+      Array.isArray(problems) ? problems.filter((x): x is string => typeof x === 'string') : undefined);
   }
   return data as T;
 }
@@ -69,6 +72,9 @@ async function request<T>(method: string, url: string, body?: unknown, opts: Req
   }));
   return parse<T>(res);
 }
+
+/** The body of a direct save (Task 4): `format` is the PRIMARY edited; `staged` the staged paths the draft uses; `token` the session that owns them. */
+export interface SaveEditsBody { baseVersion: number; format: string; baseHash: string; composition: unknown; staged: string[]; ops: EditOp[]; token: string }
 
 /** A render made during an export that had problems, so not copied (final wave P2): said in the summary. */
 export interface ExportExcluded { format: string; version: number; problems: string[]; issues: OutputIssue[] }
@@ -178,8 +184,16 @@ export const api = {
    * A live preview session of one format of a saved v2 version, embeddable by `parentOrigin` (this page's origin). 404 for
    * a legacy version (no composition), 429 `preview-busy` when the previews are busy.
    */
-  previewSession: (slug: string, creative: string, n: number, format: string, parentOrigin: string) =>
-    request<PreviewSessionInfo>('POST', `${c(slug, creative)}/versions/${n}/preview-session`, { format, parentOrigin }),
+  /** `renewFrom`: the session this one renews (the editor's staged files move to the new one, Phase 10b). */
+  previewSession: (slug: string, creative: string, n: number, format: string, parentOrigin: string, renewFrom?: string) =>
+    request<PreviewSessionInfo>('POST', `${c(slug, creative)}/versions/${n}/preview-session`, { format, parentOrigin, ...(renewFrom ? { renewFrom } : {}) }),
+  /** The editor's view of one format of a saved v2 version (Phase 10b): the primary's composition, its files and the fonts offered. */
+  getEditorComposition: (slug: string, creative: string, n: number, format: string) =>
+    request<EditorCompositionView>('GET', `${c(slug, creative)}/versions/${n}/compositions/${encodeURIComponent(format)}`),
+  /** Stages a library asset or a brand font for the draft of preview session `token`; a large video answers once it is normalised. */
+  stageEditorAsset: (slug: string, creative: string, body: StageRequest) => request<StagedAsset>('POST', `${c(slug, creative)}/editor/stage`, body),
+  /** Saves a draft as a new version, with no agent. 409 `editor-busy` / `editor-base-changed` / `editor-carry-failed`, 422 with `problems`. */
+  saveEdits: (slug: string, creative: string, body: SaveEditsBody) => request<{ version: number }>('POST', `${c(slug, creative)}/edits`, body),
   /** Ends a live preview session early (a hover preview no longer shown); sent with keepalive so it survives a page close. */
   revokePreview: (slug: string, creative: string, n: number, token: string) =>
     request<{ revoked: true }>('DELETE', `${c(slug, creative)}/versions/${n}/preview-session/${encodeURIComponent(token)}`, undefined, { keepalive: true }),

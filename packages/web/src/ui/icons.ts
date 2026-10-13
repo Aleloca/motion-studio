@@ -52,6 +52,17 @@ export const ICONS = {
   pin: 'M8 14s4.5-4.2 4.5-7.5a4.5 4.5 0 0 0-9 0C3.5 9.8 8 14 8 14ZM8 5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Z',
   pause: 'M5.5 3.5v9M10.5 3.5v9',
   user: 'M8 8a2.75 2.75 0 1 0 0-5.5A2.75 2.75 0 0 0 8 8ZM2.5 13.5c.7-2.4 2.9-3.8 5.5-3.8s4.8 1.4 5.5 3.8',
+  // Added for the editor (same drawing rules): undo/redo/unlock/eyeOff/rotate/music/scissors/magnet.
+  undo: 'M5.5 3.5 2.5 6.5l3 3M2.5 6.5H9a4 4 0 0 1 0 8H6',
+  redo: 'm10.5 3.5 3 3-3 3M13.5 6.5H7a4 4 0 0 0 0 8h3',
+  unlock: 'M4.5 7.5h7v6h-7ZM6 7.5V5.5a2 2 0 0 1 3.9-.6',
+  eyeOff: 'M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8ZM2.5 2.5l11 11',
+  rotate: 'M13 8a5 5 0 1 1-1.5-3.5M13 2.5v3h-3M8 6v2.5l1.5 1',
+  music: 'M6 11.5V3.5l7-1.5v8M6 11.5a1.75 1.75 0 1 1-3.5 0 1.75 1.75 0 0 1 3.5 0ZM13 10a1.75 1.75 0 1 1-3.5 0 1.75 1.75 0 0 1 3.5 0Z',
+  scissors: 'M4.5 6a1.75 1.75 0 1 0 0-3.5 1.75 1.75 0 0 0 0 3.5ZM4.5 13.5a1.75 1.75 0 1 0 0-3.5 1.75 1.75 0 0 0 0 3.5ZM6 5l7.5 8M6 11l7.5-8',
+  volume: 'M3 6.5h2.5L9 3.5v9L5.5 9.5H3ZM11.5 5.5a3.5 3.5 0 0 1 0 5',
+  mute: 'M3 6.5h2.5L9 3.5v9L5.5 9.5H3ZM11 6l3 4M14 6l-3 4',
+  magnet: 'M3 13.5v-6a5 5 0 0 1 10 0v6M3 11h2.5M10.5 11H13',
 } as const;
 
 export type IconName = keyof typeof ICONS;

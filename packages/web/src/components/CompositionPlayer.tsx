@@ -12,13 +12,16 @@
 //   Then `parseOutgoing` validates it.
 // - Commands are validated with `parseIncoming` and posted to this frame's window only. The target origin is '*': an opaque
 //   origin matches no named target, so a named one would never be delivered. Commands carry no secrets (times, a rate).
+// - The editor's draft (`setComposition`, Phase 10b) goes the same way: validated by `parseIncoming` (structure and size),
+//   posted to this frame only, at most once per animation frame. The runtime accepts it only from its parent, in preview.
 // - The frame's `src` is never changed: a new session (a renewal, the composition server restarted on another port) mounts
 //   a new frame (React `key`), whose origin the desktop filter checks afresh.
 // - Web residual (documented, carry 5): in a plain browser the preview's network is not locked down like a render's
 //   (no request interception, no dead proxy); the CSP (`connect-src 'none'`) and the session token, which exposes only
 //   that composition's files, are what confine it. The desktop app adds its frame filter (apps/desktop preview-filter.ts).
-import { parseIncoming, parseOutgoing, RATE_MAX, RATE_MIN, type PreviewIncoming, type PreviewOutgoing, type RuntimeError, type RuntimeErrorCode } from '@motion-studio/composition-runtime/protocol';
-import type { PreviewSessionInfo } from '@motion-studio/shared';
+import { parseIncoming, parseOutgoing, RATE_MAX, RATE_MIN, SEQ_MAX, type PreviewIncoming, type PreviewOutgoing, type RuntimeError, type RuntimeErrorCode } from '@motion-studio/composition-runtime/protocol';
+import { parseDraft } from '@motion-studio/composition-runtime/draft';
+import type { Composition, PreviewSessionInfo, StagedVideoMedia } from '@motion-studio/shared';
 import { useEffect, useRef, useState } from 'react';
 import { useT } from '../i18n.tsx';
 import { cx } from '../ui/index.ts';
@@ -35,6 +38,10 @@ const END_EPS = 1 / 60;
 const MAX_ERRORS = 20;
 
 const clampRate = (r: number) => Math.min(RATE_MAX, Math.max(RATE_MIN, Number.isFinite(r) ? r : 1));
+/** The next animation frame (a timer where there is none). */
+const onNextFrame = (f: () => void) => {
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => f()); else setTimeout(f, 16);
+};
 
 /**
  * The player as a media element. The time is the runtime's (`time` messages); `paused` is ours (what was asked last), so a
@@ -62,6 +69,20 @@ export class CompositionMedia implements SyncMedia {
   loop = false;
   private isMuted = false;
   error: unknown = null;
+  /** The editor's draft (Phase 10b): the latest one, its `seq`, sent once per animation frame and again to a new frame. */
+  private draft: { composition: Composition; seq: number } | null = null;
+  /** Staged videos' session media, by source (sent to each new frame before the draft). */
+  private readonly sessionMedia = new Map<string, { token: string; cmd: PreviewIncoming }>();
+  private seq = 0;
+  /** The `seq` last sent to the active frame (none: -1). */
+  private sentSeq = -1;
+  private flushQueued = false;
+  /** The runtime's answer to the latest draft it applied: its `seq` and load problems. */
+  applied: { seq: number; errors: RuntimeError[] } | null = null;
+  /** The clip the editor selected (sent to a new frame once ready), and where the runtime last drew it (event `clipbounds`). */
+  private selectedId: string | null = null;
+  /** `bounds`: the drawn box in CSS pixels of the frame (transforms and animations included), null when not visible; `scale`: frame pixels per composition pixel. */
+  clipBounds: { clipId: string | null; bounds: { x: number; y: number; width: number; height: number } | null; scale: number } | null = null;
 
   get currentTime(): number { return this.time; }
   set currentTime(t: number) {
@@ -102,6 +123,42 @@ export class CompositionMedia implements SyncMedia {
     this.post({ type: 'pause' });
     this.emit('pause');
   }
+  /**
+   * Shows `composition` (the editor's draft) in place of the session's, keeping the time. Coalesced: at most one message
+   * per animation frame, the latest wins; a frame mounted later (a renewal) gets it once ready. Returns its `seq`, which
+   * `applied` (event `compositionapplied`) names once the runtime shows it. A draft the protocol refuses is never sent: it is
+   * answered at once, locally, with a `compositionInvalid` error.
+   */
+  setComposition(composition: Composition): number {
+    this.seq = this.seq >= SEQ_MAX ? 1 : this.seq + 1;
+    this.draft = { composition, seq: this.seq };
+    if (!this.flushQueued) {
+      this.flushQueued = true;
+      onNextFrame(() => { this.flushQueued = false; this.flushDraft(); });
+    }
+    return this.seq;
+  }
+  /** Selects a clip in the runtime (its drawn box comes back as `clipBounds`, event `clipbounds`); null clears. */
+  select(clipId: string | null): void {
+    this.selectedId = clipId;
+    if (clipId === null && this.clipBounds?.clipId) { this.clipBounds = { ...this.clipBounds, clipId: null, bounds: null }; this.emit('clipbounds'); }
+    this.post({ type: 'select', clipId });
+  }
+  /** Forgets the draft (the editor closed): a new frame shows the session's own composition. Sends nothing. */
+  clearDraft(): void { this.draft = null; this.sessionMedia.clear(); }
+  /**
+   * A staged video's normalised file in the session shown (`StagedAsset.media`, Phase 10b): a draft clip naming `src` plays
+   * it. Sent now, and again to a new frame of the same session (before the draft), so call it before the draft that uses
+   * it. Never sent to another session (its media indices are its own). False when no frame is shown or the protocol
+   * refuses it (it is then not kept).
+   */
+  addSessionMedia(src: string, media: StagedVideoMedia): boolean {
+    const cmd: PreviewIncoming = { type: 'sessionMedia', src, ...media };
+    if (!this.active || !parseIncoming(cmd)) return false;
+    this.sessionMedia.set(src, { token: sessionTokenOf(this.active.id), cmd });
+    this.post(cmd);
+    return true;
+  }
   addEventListener(type: string, listener: EventListener): void { this.events.addEventListener(type, listener); }
   removeEventListener(type: string, listener: EventListener): void { this.events.removeEventListener(type, listener); }
 
@@ -130,6 +187,12 @@ export class CompositionMedia implements SyncMedia {
       this.error = null;
       if (this.isMuted) this.post({ type: 'mute', muted: true });
       if (this.time > 0) this.post({ type: 'seek', t: Math.min(this.time, msg.duration) });
+      this.sentSeq = -1;
+      // A new session has media of its own: what was added to another one is dropped, never sent.
+      const token = sessionTokenOf(id);
+      for (const [src, m] of this.sessionMedia) if (m.token !== token) this.sessionMedia.delete(src); else this.post(m.cmd);
+      if (this.selectedId !== null) this.post({ type: 'select', clipId: this.selectedId });
+      this.flushDraft(); // after the restoring seek: the draft keeps that time
       if (!this.isPaused) this.post(this.playCommand());
       this.emit('loadedmetadata');
       this.emit('durationchange');
@@ -142,6 +205,24 @@ export class CompositionMedia implements SyncMedia {
         this.isPaused = true;
         this.emit('error');
       }
+      return false;
+    }
+    if (msg.type === 'compositionApplied') {
+      if (this.active?.id !== id) return false;
+      this.applied = { seq: msg.seq, errors: msg.errors };
+      // A draft that could not be mounted leaves the previous one shown: its duration does not count (M1).
+      const shown = !msg.errors.some((e) => e.code === 'compositionInvalid');
+      if (shown && this.draft && msg.seq === this.draft.seq) {
+        const d = this.draft.composition.duration > 0 ? this.draft.composition.duration : 0;
+        if (d !== this.dur) { this.dur = d; this.emit('durationchange'); }
+      }
+      this.emit('compositionapplied');
+      return false;
+    }
+    if (msg.type === 'clipBounds') {
+      if (this.active?.id !== id) return false;
+      this.clipBounds = { clipId: msg.clipId, bounds: msg.bounds, scale: msg.scale };
+      this.emit('clipbounds');
       return false;
     }
     if (msg.type !== 'time' || this.active?.id !== id) return false;
@@ -160,18 +241,34 @@ export class CompositionMedia implements SyncMedia {
     return false;
   }
 
+  private flushDraft(): void {
+    if (!this.draft || !this.active || this.draft.seq === this.sentSeq) return;
+    const { composition, seq } = this.draft;
+    this.sentSeq = seq;
+    if (!this.post({ type: 'setComposition', composition, keepTime: true, seq })) {
+      // Refused here (structure or size): the runtime would refuse it too. The caller hears it as its answer (M4).
+      this.applied = { seq, errors: [{ code: 'compositionInvalid', message: 'the draft was refused by the preview protocol (structure or size)' }] };
+      this.emit('compositionapplied');
+    }
+  }
   private playCommand(): PreviewIncoming {
     return { type: 'play', loop: this.loop, rate: this.rate };
   }
-  private post(cmd: PreviewIncoming): void {
-    // Only the protocol's commands ever leave (a malformed one is a bug here: dropped).
-    if (!this.active || !parseIncoming(cmd)) return;
+  /** Whether `cmd` was sent: only the protocol's commands ever leave (a malformed one is a bug here, or a refused draft). */
+  private post(cmd: PreviewIncoming): boolean {
+    if (!this.active || !parseIncoming(cmd, parseDraft)) return false;
     if (cmd.type === 'play') this.awaitingPlay = true;
     this.active.send(cmd);
+    return true;
   }
   private emit(type: string): void {
     this.events.dispatchEvent(new Event(type));
   }
+}
+
+/** The session token of a frame id (the runtime page URL, `<origin>/<token>/runtime/index.html?…`); the id itself otherwise. */
+function sessionTokenOf(id: string): string {
+  try { return new URL(id).pathname.split('/')[1] || id; } catch { return id; }
 }
 
 export interface CompositionPlayerProps {
@@ -237,6 +334,7 @@ export function CompositionPlayer({ session, title, onMedia, onStall, onShowing,
         <RuntimeFrame key={f.u} url={f.u} session={f.s} title={title} media={media} next={f.next}
           onReady={(errs) => { setShown(f.s); setErrors(errs.slice(0, MAX_ERRORS)); callbacks.current.onShowing?.(f.s.token); }}
           onError={(e) => setErrors((list) => (list.length >= MAX_ERRORS ? list : [...list, e]))}
+          onApplied={(errs) => setErrors(errs.slice(0, MAX_ERRORS))}
           onStall={() => callbacks.current.onStall?.()} />
       ))}
       {errors.length ? (
@@ -253,13 +351,13 @@ export function CompositionPlayer({ session, title, onMedia, onStall, onShowing,
  * `ready`. `next`: a newer session's frame loading below the one shown (never hidden: a hidden cross-origin frame may get
  * no animation frames, and the runtime's ready needs them).
  */
-function RuntimeFrame({ url, session, title, media, next, onReady, onError, onStall }: {
+function RuntimeFrame({ url, session, title, media, next, onReady, onError, onApplied, onStall }: {
   url: string; session: PreviewSessionInfo; title: string; media: CompositionMedia; next: boolean;
-  onReady(errors: RuntimeError[]): void; onError(e: RuntimeError): void; onStall(): void;
+  onReady(errors: RuntimeError[]): void; onError(e: RuntimeError): void; onApplied(errors: RuntimeError[]): void; onStall(): void;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
-  const cb = useRef({ onReady, onError, onStall });
-  cb.current = { onReady, onError, onStall };
+  const cb = useRef({ onReady, onError, onApplied, onStall });
+  cb.current = { onReady, onError, onApplied, onStall };
   useEffect(() => {
     const el = frame.current;
     if (!el) return;
@@ -271,6 +369,8 @@ function RuntimeFrame({ url, session, title, media, next, onReady, onError, onSt
       const msg = parseOutgoing(ev.data);
       if (!msg) return;
       if (msg.type === 'error' && media.counts(url)) cb.current.onError(msg.error);
+      // The draft's own problems replace the list (a fixed draft clears them).
+      if (msg.type === 'compositionApplied' && media.counts(url)) cb.current.onApplied(msg.errors);
       if (media.receive(msg, url) && msg.type === 'ready') { ready = true; cb.current.onReady(msg.errors); }
     };
     window.addEventListener('message', onMessage);

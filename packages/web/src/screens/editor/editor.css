@@ -1,0 +1,245 @@
+/* The direct editor's shell (Phase 10b): the prototype's VideoEditor / ImageEditor grids (224 | 1fr | 288, timeline 262;
+   image 248 | 1fr | 280). Panels reuse the format view's side-column, stage and note styles (format.css). */
+.ms-ed { height: 100%; min-height: 0; display: grid; background: var(--bg); color: var(--text); }
+.ms-ed-video { grid-template-columns: 224px minmax(0, 1fr) 288px; grid-template-rows: minmax(0, 1fr) 262px; }
+.ms-ed-image { grid-template-columns: 248px minmax(0, 1fr) 280px; grid-template-rows: minmax(0, 1fr); }
+.ms-ed-side { min-height: 0; min-width: 0; display: flex; flex-direction: column; background: var(--panel); overflow: hidden; }
+.ms-ed-left { border-right: 1px solid var(--line); }
+.ms-ed-right { border-left: 1px solid var(--line); }
+.ms-ed-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+.ms-ed-panel > .ms-conv, .ms-ed-panel > section { flex: 1; min-height: 0; }
+.ms-ed-slot { margin: 12px; padding: 14px; border-radius: 10px; border: 1px dashed var(--line); background: var(--bg); }
+.ms-ed-slot p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); text-wrap: pretty; overflow-wrap: anywhere; }
+.ms-ed-timeline { grid-column: 1 / 4; background: var(--panel); border-top: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+.ms-ed-image .ms-ed-timeline { display: none; }
+.ms-ed-main .ms-fv-stage { padding: 64px 32px 24px; }
+.ms-ed-stale { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ms-ed-staging { display: flex; align-items: center; gap: 8px; }
+.ms-ed-also, .ms-ed-version { flex: none; }
+
+/* The draft pill, at the top of the stage. */
+.ms-ed-pill {
+  position: absolute; left: 50%; top: 16px; transform: translateX(-50%); z-index: 4; height: 34px; padding: 0 5px 0 12px;
+  display: flex; align-items: center; gap: 8px; border-radius: 17px; background: var(--panel); color: var(--text);
+  box-shadow: 0 0 0 1px var(--line), 0 6px 20px var(--shadow); white-space: nowrap;
+}
+.ms-ed-pill[data-saved] { padding: 0 14px; }
+.ms-ed-pill-ok { display: inline-flex; align-items: center; gap: 6px; color: var(--ok); font-size: 13px; }
+.ms-ed-pill-text { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ms-ed-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+.ms-ed-undo { position: absolute; left: 16px; top: 16px; z-index: 3; display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--panel); box-shadow: 0 0 0 1px var(--line); }
+
+/* Dialogs (leave guard, discard, base changed). */
+.ms-ed-dialog { padding: 20px 22px; display: flex; flex-direction: column; gap: 10px; }
+.ms-ed-dialog h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.ms-ed-dialog p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted); text-wrap: pretty; overflow-wrap: anywhere; }
+.ms-ed-dialog-why { color: var(--warn) !important; }
+.ms-ed-dialog-foot { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+
+/* The stage overlay (Task 6): selection box, handles, label and snap guides, over the player's frame. */
+.ms-stage-layer { position: absolute; inset: 0; z-index: 2; overflow: visible; touch-action: none; }
+.ms-stage-box {
+  position: absolute; left: 0; top: 0; transform-origin: 50% 50%; cursor: move; touch-action: none;
+  box-shadow: 0 0 0 1.5px var(--accent);
+}
+.ms-stage-box.ms-locked { box-shadow: none; outline: 1.5px dashed var(--accent); outline-offset: 0; cursor: not-allowed; }
+.ms-stage-move { position: absolute; inset: 0; }
+.ms-stage-handle {
+  position: absolute; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px; border-radius: 3px; box-sizing: border-box;
+  background: var(--panel); box-shadow: 0 0 0 1.5px var(--accent); touch-action: none;
+}
+.ms-locked .ms-stage-handle { box-shadow: none; outline: 1.5px dashed var(--accent); cursor: not-allowed; }
+.ms-h-nw { left: 0; top: 0; cursor: nwse-resize; }
+.ms-h-ne { left: 100%; top: 0; cursor: nesw-resize; }
+.ms-h-se { left: 100%; top: 100%; cursor: nwse-resize; }
+.ms-h-sw { left: 0; top: 100%; cursor: nesw-resize; }
+.ms-stage-stem { position: absolute; left: 50%; top: -24px; width: 1.5px; height: 24px; margin-left: -.75px; background: var(--accent); }
+.ms-locked .ms-stage-stem { display: none; }
+.ms-h-rot {
+  left: 50%; top: -24px; width: 20px; height: 20px; margin: -20px 0 0 -10px; border-radius: 50%; cursor: grab;
+  display: flex; align-items: center; justify-content: center; color: var(--accentText);
+}
+.ms-locked .ms-h-rot { display: none; }
+.ms-dragging, .ms-dragging .ms-h-rot { cursor: grabbing; }
+.ms-stage-label {
+  position: absolute; transform: translateX(-50%); padding: 2px 8px; border-radius: 6px; background: var(--panel); color: var(--text);
+  box-shadow: 0 0 0 1px var(--line); font: 11px/1.5 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.ms-stage-guide { position: absolute; background: var(--accent); pointer-events: none; }
+.ms-stage-guide.ms-gx { top: 0; bottom: 0; width: 1px; }
+.ms-stage-guide.ms-gy { left: 0; right: 0; height: 1px; }
+.ms-ed-snap[aria-pressed='true'] { background: var(--sel); color: var(--accentText); }
+
+/* The scenes column. */
+.ms-sc { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+.ms-sc-card { position: relative; display: flex; align-items: center; gap: 2px; border-radius: 8px; }
+.ms-sc-card .ms-fv-sb-item { flex: 1; min-width: 0; }
+.ms-sc-card.ms-over { box-shadow: 0 0 0 2px var(--accent); }
+.ms-sc-thumb { width: 64px; height: 36px; flex: none; border-radius: 4px; background: var(--field); }
+.ms-sc-grip-wrap { flex: none; }
+.ms-sc-grip {
+  width: 24px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted);
+  display: flex; align-items: center; justify-content: center; cursor: grab; touch-action: none;
+}
+.ms-sc-grip:hover:not(:disabled) { background: var(--field); color: var(--text); }
+.ms-sc-grip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ms-sc-grip:disabled { opacity: .45; cursor: not-allowed; }
+.ms-sc-why { margin: 0 12px 8px; font-size: 11.5px; line-height: 1.45; color: var(--muted); text-wrap: pretty; overflow-wrap: anywhere; }
+.ms-sc-in { padding: 8px 12px 12px; border-top: 1px solid var(--line2); }
+.ms-sc-in h3 { margin: 0 0 6px; font-size: 11px; font-weight: 600; color: var(--faint); text-transform: uppercase; letter-spacing: .04em; }
+.ms-sc-in ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.ms-sc-clip {
+  width: 100%; padding: 5px 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text);
+  display: flex; align-items: center; gap: 8px; text-align: left; font: inherit; font-size: 12px; cursor: pointer;
+}
+.ms-sc-clip b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-sc-clip:hover { background: var(--field); }
+.ms-sc-clip.ms-on { border-color: var(--accent); background: var(--sel); }
+.ms-sc-clip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* No room above the box: the rotate handle goes below it. */
+.ms-flip .ms-stage-stem { top: 100%; }
+.ms-flip .ms-h-rot { top: calc(100% + 44px); }
+
+/* The timeline (Task 7). */
+.ms-ed-timeline { overflow: hidden; }
+.ms-tl { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ms-tl-bar { display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-bottom: 1px solid var(--line2); min-width: 0; flex: none; }
+.ms-tl-zoom { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); flex: none; }
+.ms-tl-notice { font-size: 12px; color: var(--danger); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-tl-toggle.ms-on { background: var(--sel); color: var(--accentText); }
+.ms-tl-scroll { flex: 1; min-height: 0; overflow: auto; position: relative; }
+.ms-tl-inner { position: relative; min-width: 100%; }
+.ms-tl-row { display: flex; min-width: 0; border-bottom: 1px solid var(--line2); }
+.ms-tl-head, .ms-tl-corner {
+  position: sticky; left: 0; z-index: 3; width: 168px; flex: none; box-sizing: border-box; background: var(--panel); border-right: 1px solid var(--line);
+  display: flex; align-items: center; gap: 4px; padding: 0 6px 0 10px; color: var(--muted);
+}
+.ms-tl-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text); margin-left: 2px; }
+.ms-tl-head.ms-dim .ms-tl-name { color: var(--muted); }
+.ms-tl-rulerrow { position: sticky; top: 0; z-index: 4; background: var(--panel); }
+.ms-tl-rulerrow .ms-tl-corner { z-index: 5; }
+.ms-tl-ruler { position: relative; height: 26px; flex: none; cursor: col-resize; touch-action: none; overflow: hidden; }
+.ms-tl-ruler:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ms-tl-tick { position: absolute; bottom: 0; pointer-events: none; }
+.ms-tl-tick.ms-m { top: 0; border-left: 1px solid var(--line); }
+.ms-tl-tick.ms-m b { position: absolute; left: 4px; top: 4px; font: 500 10.5px/1 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ms-tl-tick.ms-f { height: 6px; border-left: 1px solid var(--line2); }
+.ms-tl-mark {
+  position: absolute; bottom: 2px; width: 16px; height: 16px; margin-left: -8px; padding: 0; border: 0; border-radius: 50%; cursor: pointer;
+  background: var(--accent); color: var(--onAccentStrong); font: 600 10px/16px var(--sans); text-align: center;
+}
+.ms-tl-mark:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
+.ms-tl-lane { position: relative; flex: none; height: 34px; }
+.ms-tl-lane.ms-dim { opacity: .55; }
+.ms-tl-scenes .ms-tl-lane { height: 46px; }
+.ms-tl-scene {
+  position: absolute; top: 3px; bottom: 3px; padding: 0; border: 0; border-radius: 6px; overflow: hidden; cursor: pointer; text-align: left;
+  background: var(--field); color: var(--text); box-shadow: inset 0 0 0 1px var(--line); box-sizing: border-box;
+}
+.ms-tl-scene img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: .55; pointer-events: none; }
+.ms-tl-scene span { position: absolute; left: 6px; top: 3px; right: 6px; font-size: 11px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-tl-scene:disabled { cursor: default; }
+.ms-tl-scene:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ms-tl-clip {
+  position: absolute; top: 4px; bottom: 4px; box-sizing: border-box; border-radius: 6px; display: flex; align-items: center; gap: 4px; padding: 0 8px; overflow: hidden;
+  background: color-mix(in srgb, var(--k, var(--muted)) 24%, var(--panel)); box-shadow: inset 0 0 0 1px var(--k, var(--muted)); color: var(--text);
+  cursor: grab; user-select: none; touch-action: none; font-size: 11.5px;
+}
+.ms-tl-clip.ms-k-text { --k: var(--accent); }
+.ms-tl-clip.ms-k-shape, .ms-tl-clip.ms-k-html { --k: var(--warn); }
+.ms-tl-clip.ms-k-image, .ms-tl-clip.ms-k-svg { --k: var(--ok); }
+.ms-tl-clip.ms-k-video { --k: var(--text); }
+.ms-tl-clip.ms-k-audio { --k: var(--muted); }
+.ms-tl-clip.ms-on { box-shadow: inset 0 0 0 2px var(--accent); background: var(--sel); }
+.ms-tl-clip.ms-locked { cursor: not-allowed; background-image: repeating-linear-gradient(135deg, transparent 0 6px, var(--line) 6px 7px); }
+.ms-tl-clip.ms-dim { opacity: .55; }
+.ms-tl-clip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; z-index: 1; }
+.ms-tl-clip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+.ms-tl-edge { position: absolute; top: 0; bottom: 0; width: 7px; cursor: ew-resize; touch-action: none; }
+.ms-tl-edge::after { content: ''; position: absolute; top: 8px; bottom: 8px; width: 2px; border-radius: 1px; background: var(--k, var(--muted)); opacity: 0; }
+.ms-tl-clip:hover .ms-tl-edge::after, .ms-tl-clip.ms-on .ms-tl-edge::after { opacity: .9; }
+.ms-e-start { left: 0; } .ms-e-start::after { left: 2px; }
+.ms-e-end { right: 0; } .ms-e-end::after { right: 2px; }
+.ms-tl-locked .ms-tl-edge, .ms-tl-clip.ms-locked .ms-tl-edge { cursor: not-allowed; }
+.ms-tl-playhead { position: absolute; top: 0; bottom: 0; width: 1px; margin-left: -.5px; background: var(--accent); z-index: 2; pointer-events: none; }
+.ms-tl-guide { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--accentText); z-index: 2; pointer-events: none; }
+.ms-tl-overlay { position: absolute; top: 26px; bottom: 0; right: 0; pointer-events: none; z-index: 1; }
+
+/* The inspector (Task 8): sections of the selected clip, rows with their problems, the asset picker. */
+.ms-insp-wrap, .ms-insp-empty { display: flex; flex-direction: column; min-height: 0; }
+.ms-insp-empty { padding: 24px 16px; }
+.ms-insp { display: flex; flex-direction: column; min-width: 0; }
+.ms-insp-head { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-bottom: 1px solid var(--line2); }
+.ms-insp-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-insp-kind { font-size: 11px; color: var(--muted); }
+.ms-insp-locked { display: flex; align-items: center; gap: 6px; margin: 0; padding: 8px 14px; font-size: 12px; color: var(--muted); background: var(--field); }
+.ms-insp-sec { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line2); min-width: 0; }
+.ms-insp-sec > h4 { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: .02em; color: var(--muted); }
+.ms-insp-row { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ms-insp-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 0; }
+.ms-insp-grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; min-width: 0; }
+.ms-insp-err { margin: 0; font-size: 11.5px; line-height: 1.4; color: var(--warn); overflow-wrap: anywhere; }
+.ms-insp-note { margin: 0; font-size: 11.5px; line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }
+.ms-insp-slider { width: 100%; }
+.ms-insp-vol { display: flex; flex-direction: column; gap: 6px; }
+.ms-insp-cap { font-size: 11px; color: var(--muted); }
+.ms-insp-param { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ms-insp-file { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ms-insp-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11.5px; }
+.ms-insp-warn { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 10px; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--warn); }
+.ms-insp-warn p { margin: 0; font-size: 12px; line-height: 1.45; color: var(--text); }
+.ms-insp-slot { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ms-insp-slot-name { font-size: 12px; }
+.ms-picker { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px; min-width: 0; }
+.ms-picker-head { display: flex; align-items: center; gap: 10px; }
+.ms-picker-head h2 { flex: 1; margin: 0; font-size: 16px; font-weight: 600; }
+.ms-picker-state, .ms-picker-empty { margin: 0; padding: 18px 0; font-size: 13px; color: var(--muted); text-align: center; }
+.ms-picker-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 340px; overflow: auto; }
+.ms-picker-item { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 10px; border: 0; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.ms-picker-item:hover:not(:disabled), .ms-picker-item.ms-on { box-shadow: inset 0 0 0 1px var(--accent); }
+.ms-picker-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ms-picker-item:disabled { cursor: default; opacity: .7; }
+.ms-picker-name { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.ms-picker-desc { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.ms-picker-busy { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--muted); }
+.ms-picker-foot { display: flex; justify-content: flex-end; }
+
+/* The image editor (Task 9): the layers panel and the zoom bar. */
+.ms-layers { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ms-layers-list, .ms-layers-sub { list-style: none; margin: 0; padding: 0; }
+.ms-layers-list { flex: 1; min-height: 0; overflow: auto; }
+.ms-layers-list > li { border-bottom: 1px solid var(--line2); }
+.ms-layer { height: 44px; box-sizing: border-box; display: flex; align-items: center; gap: 4px; padding: 0 6px 0 8px; color: var(--muted); }
+.ms-layer.ms-nested { padding-left: 24px; }
+.ms-layer.ms-sel { background: var(--sel); }
+.ms-layer.ms-dim .ms-layer-name, .ms-layer.ms-dim .ms-layer-thumb { opacity: .55; }
+.ms-layer-thumb {
+  width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 6px; background: var(--field); color: var(--muted);
+  box-shadow: 0 0 0 1px var(--line2);
+}
+.ms-layer-main {
+  flex: 1; min-width: 0; height: 100%; padding: 0 4px; border: 0; background: none; font: inherit; text-align: left;
+  display: flex; flex-direction: column; justify-content: center; gap: 1px; color: var(--text);
+}
+button.ms-layer-main { cursor: pointer; }
+button.ms-layer-main:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 4px; }
+.ms-layer-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 500; }
+.ms-layer-kind { font-size: 11px; color: var(--muted); }
+.ms-layer.ms-sel .ms-layer-thumb { color: var(--accentText); }
+.ms-layers-notice { margin: 8px 12px 0; font-size: 12px; color: var(--danger); text-wrap: pretty; }
+.ms-layers-empty { margin: 12px; font-size: 12.5px; color: var(--muted); }
+.ms-layers-foot { flex: none; margin: 0; padding: 12px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); text-wrap: pretty; }
+.ms-ed-zoom {
+  position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 3; display: flex; align-items: center; gap: 10px; padding: 4px 12px 4px 6px;
+  border-radius: 8px; background: var(--panel); box-shadow: 0 0 0 1px var(--line);
+}
+.ms-ed-zoom-slider { width: 150px; }
+.ms-ed-zoom-value { min-width: 38px; text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); }
+
+/* Comments on time ranges (Task 10): shaded spans over the lanes, the range being picked on the ruler, the clip comment button. */
+.ms-tl-span { position: absolute; top: 0; bottom: 0; background: var(--accent); opacity: .16; border-inline: 2px solid var(--accent); box-sizing: border-box; }
+.ms-tl-picking { position: absolute; top: 0; bottom: 0; background: var(--accent); opacity: .3; pointer-events: none; }
+.ms-tl-comment[disabled] { opacity: .5; }
+.ms-range-fields { display: flex; gap: 12px; margin: 12px 0; }

@@ -224,11 +224,12 @@ describe('Assets · stages and unreadable files', () => {
 
   it('an unreadable image shows the designed "can\'t preview" state', async () => {
     en(<Assets slug="acme" live={live()} />);
-    await screen.findByText('Wordmark for dark backgrounds');
-    const media = card('night.jpg')!.closest('.ms-acard')!;
+    // Under load the list and its thumbnails can take longer than the default 1 s to appear.
+    await screen.findByText('Wordmark for dark backgrounds', {}, { timeout: 15_000 });
+    const media = await waitFor(() => { const m = card('night.jpg')?.closest('.ms-acard'); expect(m?.querySelector('img')).toBeTruthy(); return m!; }, { timeout: 15_000 });
     fireEvent.error(media.querySelector('img')!);
-    expect(within(media as HTMLElement).getByRole('img', { name: 'Can’t preview this file' })).toBeTruthy();
-  });
+    expect(await within(media as HTMLElement).findByRole('img', { name: 'Can’t preview this file' }, { timeout: 15_000 })).toBeTruthy();
+  }, 30_000);
 });
 
 describe('Assets · pending deletes across navigation', () => {

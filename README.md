@@ -65,6 +65,36 @@ From the creative's page, **Export** copies the starred (★) version of each fo
 ### Adding formats
 If you add formats to the brief of an already generated creative and press **Generate** again, Motion Studio asks the agent to add only the missing compositions, reusing the sources already in `work/` and the same style as the previous version. A format linked to another one (for example TikTok following the Reel) needs no agent: it shares its primary's composition and render. On a creative made before compositions, adding only linked formats still needs no agent: they are copies of their primary's video, as before. Adding any other format, or regenerating, converts every format to a composition with the agent; the brief editor says so before **Save and regenerate**, since that turn costs more tokens.
 
+### Editing a composition directly
+In a format's view, **Edit** (or **Open editor** on a board) opens the editor on the version shown. A format that follows another opens its primary's composition, and the header says which formats share it. The editor has the scenes (or, for a still, the layers) on the left, the stage with the live preview in the middle, the timeline below a video, and the **Inspector** and the **Chat** on the right.
+
+- **What you can change:**
+  - a text's content, font (one of the composition's, or a brand kit font that has a file: the file is added to the composition), weight (only those declared for the font), size, colour and alignment;
+  - position, size, rotation and opacity: with the handles on the stage (with snapping to guides, the safe area and the frame), with the inspector's numbers, or by nudging with Alt+arrows;
+  - timing: trim and move clips on the timeline (snapping, Alt disables it), with **Ripple** to push the later scenes when a clip grows; the scene order, when every clip lies in one scene;
+  - the entry and exit animation presets;
+  - an image, vector image, video or audio file, replaced from the project's library or uploaded there (a video shorter than the clip says so and offers "Fit clip to video"); a video's trim start and volume; an audio clip's volume and fades;
+  - an HTML layer's parameters;
+  - hiding and locking clips and tracks, and muting audio tracks.
+
+  New clips, layers, custom animations, effects and new scenes stay with the agent: ask for them in the chat.
+- **Undo and redo:** ⌘Z and ⇧⌘Z (Ctrl on Windows and Linux), never while you type in a field. A drag, or a burst of typing, is one step.
+- **Save:** the pill "Draft · N edits" offers **Save as vN** and **Discard**.
+  - Saving makes a normal new version (`origin: editor`) whose request is a summary of the edits, e.g. "Direct edits: Title text, font Schibsted Grotesk".
+  - No agent runs and no tokens are used: the usage ledger gets no line.
+  - The other formats are carried; formats that follow the edited one are checked again (one that can no longer follow, e.g. over its maximum duration, is unlinked and the chat says so).
+  - Renders are carried only for unchanged compositions, and the storyboards are made again.
+- **The draft is never lost by surprise:**
+  - leaving the editor with unsaved edits (back, another format or version, a link, a chat message) asks "Save · Discard · Keep editing";
+  - reloading or closing the page asks the browser's (or the app's) confirmation (in the app too for ⌘R and View → Reload), and a confirmed reload does lose the draft.
+- **While someone else works:**
+  - while an agent turn or a render of the creative runs, Save is not available (the core refuses it too);
+  - if a turn or another save changed the same format meanwhile, Save is refused and the draft is kept; **Reopen on the latest version** discards it after a confirmation;
+  - a turn on another format does not block the save.
+- **Comments for the agent:** besides a spot of the frame, a comment can be on a clip (**Comment on clip**, or `C` with a clip selected) or on a time range (**Comment on range**, or `R`, or Shift+drag on the ruler), in the editor and in the format view. The chip in the chat names the clip or the range, and the agent's prompt carries the clip's id and name or the range, with a frame (two for a range).
+
+A duration changed in the editor is your choice: the version stays complete even when it is far from the brief's duration, and the format view shows the brief's next to it ("7 s · brief 6 s (direct edit)"). The next agent turn is told to keep the current duration unless you ask for another one; update the brief's duration yourself if you want it to match.
+
 Current limits: signed desktop builds depend on the maintainers' certificates (see Release). On Ubuntu 24.04 and later the AppImage may fail to start because the system restricts unprivileged user namespaces (AppArmor, `kernel.apparmor_restrict_unprivileged_userns`), which Chromium's sandbox needs: you need an AppArmor profile for the app (or, at your own risk, disable that restriction); avoid `--no-sandbox`, which removes the window's isolation.
 
 ## Security

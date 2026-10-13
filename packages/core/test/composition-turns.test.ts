@@ -20,6 +20,7 @@ import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AgentBridge } from '../src/bridge/bridge.ts';
 import { CompositionFolderError, folderProblem, readCompositionFolder } from '../src/compositions/composition-files.ts';
 import { checkComposition, checkTargets, writeNormalized } from '../src/creatives/composition-contract.ts';
+import { acceptedDurationsOf } from '../src/creatives/composition-turn.ts';
 import { UrlSigner } from '../src/server/signed-urls.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { storyboardDir, storyboardPlan, sweepStoryboardTemps } from '../src/creatives/previews.ts';
@@ -563,6 +564,22 @@ describe('units', () => {
     expect(lane.load).toEqual({ active: 0, waiting: 0 });
   });
 
+  it('acceptedDurationsOf: only a duration the user chose in the editor, recorded, clean, and only while the brief is unchanged (decisions log 270)', () => {
+    const entry = (format: string, o: { problems?: string[]; userDuration?: { durationSec: number; briefDurationSec: number }; followsFormat?: string } = {}) =>
+      ({ format, dir: `compositions/${format}`, hash: 'a'.repeat(64), problems: o.problems ?? [], ...(o.userDuration ? { userDuration: o.userDuration } : {}), ...(o.followsFormat ? { followsFormat: o.followsFormat } : {}) });
+    const version = (compositions: unknown[], origin?: 'editor') => ({ n: 3, commit: null, sessionId: null, status: 'complete', createdAt: '2026-10-13T10:00:00.000Z', request: 'r', outputs: [], problems: [], tools: [], renderCommand: null, basedOn: 2, compositions, ...(origin ? { origin } : {}) }) as unknown as VersionEntry;
+    // An agent version at 10 s, the brief since changed to 6 s: nothing recorded, so nothing accepted (flagged again).
+    expect(acceptedDurationsOf(version([entry('test-wide')]), ['test-wide'], PRESETS, 6).size).toBe(0);
+    // An editor version that chose 7 s against a 4 s brief: accepted while the brief still says 4 s.
+    const edited = version([entry('test-wide', { userDuration: { durationSec: 7, briefDurationSec: 4 } }), entry('test-wide-b', { problems: ['p'], userDuration: { durationSec: 7, briefDurationSec: 4 } }), entry('test-short', { followsFormat: 'test-wide', userDuration: { durationSec: 7, briefDurationSec: 4 } })], 'editor');
+    expect([...acceptedDurationsOf(edited, ['test-wide', 'test-wide-b', 'test-short', 'missing'], PRESETS, 4)]).toEqual([['test-wide', 7]]);
+    // The brief changed since (to 6 s, or to 7 s itself): the choice no longer holds.
+    expect(acceptedDurationsOf(edited, ['test-wide'], PRESETS, 6).size).toBe(0);
+    expect(acceptedDurationsOf(edited, ['test-wide'], PRESETS, 7).size).toBe(0);
+    expect(acceptedDurationsOf(edited, ['test-wide'], PRESETS, null).size).toBe(0);
+    expect(acceptedDurationsOf(undefined, ['test-wide'], PRESETS, 4).size).toBe(0);
+  });
+
   it('names equal after NFC are a clear problem; links are refused; the json is normalised after the agent', async () => {
     expect(folderProblem(new CompositionFolderError('ambiguous', 'assets/é.png')).key).toBe('composition.ambiguousNames');
     const dir = mkdtempSync(join(tmpdir(), 'ms-test-comp-'));
@@ -574,6 +591,11 @@ describe('units', () => {
       expect((await checkComposition(dir, 'test-wide', preset, 2)).ok).toBe(true);
       // Far from the brief's duration: a problem (the phase 8 rule).
       expect((await checkComposition(dir, 'test-wide', preset, 10)).problems.map((p) => p.key)).toEqual(['composition.durationOffBrief']);
+      // A duration the base accepted (a direct edit's) is not off the brief while it is kept; another one is (decisions log 262).
+      expect((await checkComposition(dir, 'test-wide', preset, 10, 2)).ok).toBe(true);
+      expect((await checkComposition(dir, 'test-wide', preset, 10, 3)).problems.map((p) => p.key)).toEqual(['composition.durationOffBrief']);
+      // No brief duration (a direct save): never checked.
+      expect((await checkComposition(dir, 'test-wide', preset, null)).ok).toBe(true);
       mkdirSync(join(dir, 'layers'));
       writeFileSync(join(dir, 'layers', 'x.html'), '<script>new Worker("w.js")</script>');
       const warned = await checkComposition(dir, 'test-wide', preset, 2);
@@ -617,6 +639,21 @@ describe('review fixes (Task 5b)', { timeout: 150_000 }, () => {
     } finally {
       rmSync(outside, { recursive: true, force: true });
     }
+  });
+
+  it('T10: a range ending at the duration of a composition never rendered gets its end frame, grabbed at the last frame', async () => {
+    const slug = await create(['test-wide']);
+    const c = JSON.parse(readFileSync(join(store().dir(slug), 'outputs', 'v1', 'compositions', 'test-wide', 'composition.json'), 'utf8')) as { duration: number; fps: 24 | 25 | 30 | 50 | 60 };
+    expect(renderState((await store().readVersions(slug))[0]!, 'test-wide')).not.toBe('rendered');
+    const before = fake.frames.length;
+    await turn(slug, { text: 'end', pins: [{ format: 'test-wide', x: 0.5, y: 0.5, timeSec: 1, range: { start: 1, end: c.duration } }] });
+    // The pin frames are single-time grabs (a storyboard asks for several times at once, and may land meanwhile).
+    const asked = fake.frames.slice(before).filter((o) => o.imageFormat === 'jpeg' && o.times.length === 1).map((o) => o.times[0]!);
+    expect(asked[0]).toBe(frameTime(c, 1));
+    // The end: the last frame, never the duration itself.
+    expect(asked[1]).toBeCloseTo(c.duration - 1 / c.fps, 6);
+    const cache = join(projectDir(), '.studio', 'cache', 'pin-frames', slug, 'v2');
+    expect(readdirSync(cache).filter((f) => f.endsWith('.jpg')).sort()).toEqual(['2-1.jpg', '2-1e.jpg']);
   });
 
   it('I2: an export waits for a render job of other formats, then renders its own', async () => {

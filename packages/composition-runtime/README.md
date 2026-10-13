@@ -6,7 +6,7 @@ real time in the live preview. It uses no network API: the page gets the composi
 browser through `<img>`, `<video>`, `<audio>`, `FontFace` and `<iframe>`, from the composition server only.
 
 ```
-pnpm --filter @motion-studio/composition-runtime build   # → dist/index.html, runtime.js, layer.js, clock.js
+pnpm --filter @motion-studio/composition-runtime build   # → dist/index.html, runtime.js, layer.js, clock.js, preview.js
 ```
 
 `dist/` holds three classic scripts (IIFE: no imports, no chunks) and one page, built with tsup:
@@ -17,6 +17,7 @@ pnpm --filter @motion-studio/composition-runtime build   # → dist/index.html, 
 | `runtime.js` | The runtime, and the only script of `index.html`. |
 | `layer.js` | The html layer bootstrap. The core injects it as the first script of every layer. |
 | `clock.js` | The virtual clock alone, for `Page.addScriptToEvaluateOnNewDocument` (optional, belt and braces). |
+| `preview.js` | The draft parser (`parseDraft`: zod, jitless, and the composition schema). `runtime.js` adds it to the page in preview mode only, so a render page never loads zod. |
 
 Node-side helpers for the core: `@motion-studio/composition-runtime/page` (`renderRuntimePage`, `injectLayerBootstrap`,
 `RUNTIME_FILES`) and `@motion-studio/composition-runtime/dist` (`RUNTIME_DIST_DIR`). Protocol types for the web:
@@ -55,6 +56,8 @@ Everything lives under one token prefix on the composition server's own origin (
     mutes the clip's `<video>` and plays `audioSrc` in an `<audio>` element kept on the timeline like an audio clip, at
     `audioStart + trimStart + (t − start)`, with the clip's volume and its track's mute. In **render** mode nothing
     changes: the core mixes the sound from the original with ffmpeg, aligned to the first video frame the same way.
+- **Hidden clips and tracks** (`hidden: true`, the editor's eye) are not mounted, in either mode: not drawn, not heard. The
+  core's audio mix skips them too. A `muted` track is silent in the preview and left out of the mix.
 - **No `<base>` element** is used, so `base-uri 'none'` stays.
 
 ### Headers the runtime needs (learned in real Chrome, see the integration test)
@@ -255,6 +258,10 @@ than 200 scenes or errors.
 | in | `{ type: 'pause' }` |
 | in | `{ type: 'select', clipId: string \| null }` |
 | in | `{ type: 'setScale', scale: 'fit' \| 0.01–8 }`. `fit` letterboxes the stage in the viewport. A number zooms and keeps the stage centred. |
+| in | `{ type: 'mute', muted }` silences every sound of the preview, or restores each one's own setting. |
+| in | `{ type: 'setComposition', composition, keepTime?, seq }` (Phase 10b, preview only; render mode never listens). `parseIncoming` needs the draft parser (`./draft`, loaded from `preview.js`; without it the draft is refused): it serialises the draft once, refuses it above `COMPOSITION_LIMITS.jsonBytes` (UTF-8) and checks it with `compositionSchema` (structure only). The runtime mounts it below the mount shown, in the same document, loads it, seeks it to the kept time (clamped; 0 without `keepTime`), then swaps it in and destroys the old mount (animations cancelled, media and layer frames released, fonts deleted). Scale, mute, play state and the selection (when its clip still exists) carry over. Drafts that arrive during a re-mount wait; only the latest is mounted next. A video clip whose `src` is a source the session normalised (`originalSrc` in the inlined copy) plays the same `media/<i>.mp4`. |
+| in | `{ type: 'sessionMedia', src, index, sourceFps, sourceStart, sourceVideoEnd, audioStart? }` (Phase 10b, preview only): a video the core staged for the draft (`assets/lib/…`) was normalised and added to the session's media. A draft video clip whose `src` is `src` then plays `media/<index>.mp4` with these source fields (trusted), and its sound, when `audioStart` is given, from `src` itself. The core serves only the indices it added to that session. Applies to the drafts that follow. |
+| out | `{ type: 'compositionApplied', seq, errors }` after a draft is shown (its `time` and `clipBounds` go first), or after it failed to mount (the old one stays). `errors` are the draft's load problems; they are not also sent one by one. |
 
 ## Animations
 

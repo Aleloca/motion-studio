@@ -11,7 +11,8 @@ export type Route =
   | { name: 'project'; slug: string; tab: ProjectTab }
   | { name: 'new-creative'; slug: string }
   | { name: 'creative'; slug: string; creative: string }
-  | { name: 'format'; slug: string; creative: string; format: string };
+  | { name: 'format'; slug: string; creative: string; format: string }
+  | { name: 'edit'; slug: string; creative: string; format: string };
 
 const SLUG = '[a-z0-9][a-z0-9-]*';
 /** The old project "Agent console" tab: its technical events now live in the conversation's Activity details. */
@@ -33,6 +34,8 @@ export function parseRoute(hash: string): Route {
   if (hash === '#/welcome') return { name: 'welcome' };
   m = hash.match(/^#\/welcome\/([123])$/);
   if (m) return { name: 'welcome', step: Number(m[1]) as WelcomeStep };
+  m = hash.match(new RegExp(`^#/p/(${SLUG})/c/(${SLUG})/f/(${SLUG})/edit$`));
+  if (m) return { name: 'edit', slug: m[1]!, creative: m[2]!, format: m[3]! };
   m = hash.match(new RegExp(`^#/p/(${SLUG})/c/(${SLUG})/f/(${SLUG})$`));
   if (m) return { name: 'format', slug: m[1]!, creative: m[2]!, format: m[3]! };
   m = hash.match(new RegExp(`^#/p/(${SLUG})/c/(${SLUG})$`));
@@ -57,6 +60,8 @@ export const href = {
   newCreative: (slug: string) => `#/p/${slug}/new`,
   creative: (slug: string, c: string) => `#/p/${slug}/c/${c}`,
   format: (slug: string, c: string, format: string) => `#/p/${slug}/c/${c}/f/${format}`,
+  /** The direct editor of a format (Phase 10b). */
+  edit: (slug: string, c: string, format: string) => `#/p/${slug}/c/${c}/f/${format}/edit`,
 };
 
 /** Route depth: drives the direction of the page transition (T1): deeper slides in from the right. */
@@ -67,6 +72,7 @@ export function depthOf(r: Route): number {
     case 'settings': case 'project': return 2;
     case 'new-creative': case 'creative': return 3;
     case 'format': return 4;
+    case 'edit': return 5;
   }
 }
 
@@ -78,10 +84,11 @@ export function routeKey(r: Route): string {
     case 'new-creative': return `new:${r.slug}`;
     case 'creative': return `creative:${r.slug}/${r.creative}`;
     case 'format': return `format:${r.slug}/${r.creative}/${r.format}`;
+    case 'edit': return `edit:${r.slug}/${r.creative}/${r.format}`;
   }
 }
 
 /** The project a route belongs to, if any. */
 export function projectOf(r: Route): string | null {
-  return r.name === 'project' || r.name === 'new-creative' || r.name === 'creative' || r.name === 'format' ? r.slug : null;
+  return r.name === 'project' || r.name === 'new-creative' || r.name === 'creative' || r.name === 'format' || r.name === 'edit' ? r.slug : null;
 }

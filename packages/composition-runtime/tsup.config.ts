@@ -6,13 +6,14 @@ import { defineConfig, type Options } from 'tsup';
  * The runtime bundle: three self-contained classic scripts (IIFE, no imports, no chunks) plus the page.
  * - `runtime.js`: the page's runtime (dist/index.html loads it);
  * - `layer.js`: the html layer bootstrap (the core injects it first in each layer);
- * - `clock.js`: the virtual clock alone (for CDP `Page.addScriptToEvaluateOnNewDocument`).
+ * - `clock.js`: the virtual clock alone (for CDP `Page.addScriptToEvaluateOnNewDocument`);
+ * - `preview.js`: the draft parser (zod and the composition schema), loaded by `runtime.js` in preview mode only.
  * Exported as a function so the integration tests build the same bundle into a temporary folder.
  */
 export function runtimeBuildOptions(outDir: string): Options {
   const here = import.meta.dirname;
   return {
-    entry: { runtime: join(here, 'src/entry/runtime.ts'), layer: join(here, 'src/entry/layer.ts'), clock: join(here, 'src/entry/clock.ts') },
+    entry: { runtime: join(here, 'src/entry/runtime.ts'), layer: join(here, 'src/entry/layer.ts'), clock: join(here, 'src/entry/clock.ts'), preview: join(here, 'src/entry/preview.ts') },
     outDir,
     format: ['iife'],
     platform: 'browser',

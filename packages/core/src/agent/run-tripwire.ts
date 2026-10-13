@@ -10,6 +10,25 @@ interface DirMark { ino: number; mtimeMs: number; ctimeMs: number; names: Readon
 
 /** macOS Finder metadata: an entry Finder may add at the top of a folder the user has open. Never a record. */
 const isFinderMetadata = (n: string) => n === '.DS_Store' || n.startsWith('._') || n === 'Icon\r';
+/**
+ * Claude Code (2.1.296) leaves an empty `.claude/.cc-writes/` in the folder a Bash command `cd`s into (decisions log 259,
+ * orchestrator's decision). A new top-level `.claude` in a record folder is ignored ONLY when it is a real folder (lstat, no
+ * link) that holds exactly `.cc-writes`, itself a real, empty folder. Anything else (a file, a link, another entry, a
+ * non-empty `.cc-writes`) is reported as today. Bounded: at most two directory reads.
+ */
+async function isEmptyCcWrites(dir: string): Promise<boolean> {
+  const claude = join(dir, '.claude');
+  const st = await lstat(claude).catch(() => null);
+  if (!st?.isDirectory()) return false;
+  const names = await readdir(claude).catch(() => null);
+  if (names === null || names.length !== 1 || names[0] !== '.cc-writes') return false;
+  const cc = join(claude, '.cc-writes');
+  const ccSt = await lstat(cc).catch(() => null);
+  if (!ccSt?.isDirectory()) return false;
+  const inner = await readdir(cc).catch(() => null);
+  return inner !== null && inner.length === 0;
+}
+
 interface LogMark { ino: number; size: number; ctimeMs: number; sha: string }
 export interface TripwireResult {
   /** Protected files the core never writes during a run (or wrote itself and noted) that changed, appeared or vanished: an unambiguous tamper. The job fails and the project is quarantined. */
@@ -117,10 +136,13 @@ export async function armTripwire(projectDir: string, opts: { logs: boolean }): 
         }
         if (st.mtimeMs === mark.mtimeMs && st.ctimeMs === mark.ctimeMs) continue;
         if (explained({ ino: st.ino, ctimeMs: st.ctimeMs }, lastCoreChange(d))) continue;
-        // Only Finder metadata came or went (and nothing else changed in the names): not a move.
+        // Only Finder metadata came or went, or Claude Code's empty `.claude/.cc-writes/` came (and nothing else changed in
+        // the names): not a move. A `.claude` that went away is never ignored.
         const now = new Set(await readdir(d).catch(() => [] as string[]));
-        const diff = [...now].filter((n) => !mark.names.has(n)).concat([...mark.names].filter((n) => !now.has(n)));
-        if (diff.length > 0 && diff.every(isFinderMetadata)) continue;
+        const added = [...now].filter((n) => !mark.names.has(n));
+        const diff = added.concat([...mark.names].filter((n) => !now.has(n)));
+        const ccWrites = added.includes('.claude') && (await isEmptyCcWrites(d));
+        if (diff.length > 0 && diff.every((n) => isFinderMetadata(n) || (n === '.claude' && ccWrites))) continue;
         moved.push(relative(projectDir, d));
       }
 

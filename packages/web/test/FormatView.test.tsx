@@ -65,7 +65,8 @@ const { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } =
 const { D } = await import('../src/motion/motion.ts');
 const { I18nProvider } = await import('../src/i18n.tsx');
 
-const emptyLive = (): EventsState => ({ approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} } as unknown as EventsState);
+let jobsNow: Record<string, unknown> = {};
+const emptyLive = (): EventsState => ({ approvals: {}, jobs: jobsNow, events: {}, creativeTicks: {}, projectTicks: {} } as unknown as EventsState);
 const VIDEO = 'tiktok-9x16';
 const IMAGE = 'instagram-post-1x1';
 
@@ -115,6 +116,7 @@ beforeEach(() => {
   __resetPreviewSessions();
   vi.clearAllMocks();
   detail = makeDetail([version(1)]);
+  jobsNow = {};
   __resetPendingPins();
   location.hash = '#/p/acme/c/lancio/f/tiktok-9x16';
   play = vi.fn(() => Promise.resolve());
@@ -231,6 +233,27 @@ describe('FormatView · shared element and bar', () => {
     await userEvent.click(within(document.querySelector('.ms-topbar') as HTMLElement).getByRole('button', { name: 'Tutti i formati' }));
     expect(location.hash).toBe('#/p/acme/c/lancio');
     expect(takeFrameOrigin('canvas:acme/lancio/tiktok-9x16')).not.toBeNull();
+  });
+
+  it('says discreetly when the duration is far from the brief, and that a direct edit chose it (decisions log 262)', async () => {
+    detail = makeDetail([version(1)], { brief: { goal: 'g', message: 'm', formats: ['instagram-post-1x1', 'tiktok-9x16'], durationSec: 6, assets: [], notes: '' } });
+    const { unmount } = render(<Harness format={VIDEO} />);
+    await player();
+    const bar = () => document.querySelector('.ms-topbar') as HTMLElement;
+    expect(within(bar()).getByText('1080×1920 · 9:16 · 8 s · brief 6 s')).toBeTruthy();
+    unmount();
+    __resetPreviewSessions();
+    detail = makeDetail([{ ...version(1), origin: 'editor' }], { brief: { goal: 'g', message: 'm', formats: ['instagram-post-1x1', 'tiktok-9x16'], durationSec: 6, assets: [], notes: '' } });
+    render(<Harness format={VIDEO} />);
+    await player();
+    expect(within(bar()).getByText('1080×1920 · 9:16 · 8 s · brief 6 s (modifica diretta)')).toBeTruthy();
+  });
+
+  it('no note when the duration is within the brief', async () => {
+    detail = makeDetail([version(1)], { brief: { goal: 'g', message: 'm', formats: ['instagram-post-1x1', 'tiktok-9x16'], durationSec: 7.5, assets: [], notes: '' } });
+    render(<Harness format={VIDEO} />);
+    await player();
+    expect(within(document.querySelector('.ms-topbar') as HTMLElement).getByText('1080×1920 · 9:16 · 8 s')).toBeTruthy();
   });
 
   it('puts the format, its ★ badge, the Versions timeline and Export in the bar', async () => {
@@ -600,5 +623,37 @@ describe('FormatView · live composition player (Task 8)', () => {
     expect(await screen.findByText('Le anteprime sono occupate: riprovo tra un momento…')).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
     await frame();
+  });
+});
+
+// The Edit button (Phase 10b, Task 5): next to Export, only for a v2 version with no agent or render at work.
+describe('FormatView · Edit button', () => {
+  const comp = (n: number): VersionEntry => ({
+    ...version(n), outputs: [out('instagram-post-1x1', 'post.png')],
+    compositions: [{ format: VIDEO, dir: `compositions/${VIDEO}`, hash: 'b'.repeat(64) }],
+  });
+  const editButton = () => screen.queryByRole('button', { name: 'Modifica TikTok · Video 9:16 direttamente' });
+  it('shows for a version with a composition and opens the editor of the format', async () => {
+    detail = makeDetail([comp(1)]);
+    render(<Harness format={VIDEO} />);
+    const btn = await screen.findByRole('button', { name: 'Modifica TikTok · Video 9:16 direttamente' });
+    const bar = document.querySelector('.ms-topbar') as HTMLElement;
+    expect(bar.contains(btn)).toBe(true);
+    expect(bar.querySelector('.ms-cv-edit + .ms-cv-export')).not.toBeNull();
+    await userEvent.click(btn);
+    expect(location.hash).toBe(`#/p/acme/c/lancio/f/${VIDEO}/edit`);
+  });
+  it('is not offered for a legacy version (no composition)', async () => {
+    detail = makeDetail([version(1)]);
+    render(<Harness format={VIDEO} />);
+    await screen.findByLabelText('TikTok · Video 9:16 v1', { selector: 'video' });
+    expect(editButton()).toBeNull();
+  });
+  it('is not offered while an agent turn or a render is at work', async () => {
+    detail = makeDetail([comp(1)]);
+    jobsNow = { j1: { id: 'j1', key: 'creative:/w:acme:lancio', kind: 'creative', label: 'x', state: 'running', createdAt: at } };
+    render(<Harness format={VIDEO} />);
+    await waitFor(() => expect(document.querySelector('.ms-cv-export')).not.toBeNull());
+    expect(editButton()).toBeNull();
   });
 });

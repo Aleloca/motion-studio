@@ -139,3 +139,10 @@
 .ms-fv-sep { width: 1px; height: 18px; background: var(--line); flex: none; margin: 0 2px; }
 .ms-fv-loop.ms-on { background: var(--sel); color: var(--accentText); box-shadow: inset 0 0 0 1px var(--accent); }
 .ms-select.ms-fv-speed { flex: none; height: 28px; font-family: var(--mono); font-size: 11px; }
+
+/* Comments on time ranges (Task 10): shaded spans over the scrub bar, drawn under the markers. */
+.ms-fv-spans { position: absolute; left: 16px; right: 16px; top: 4px; height: 40px; pointer-events: none; }
+.ms-fv-span { position: absolute; top: 0; bottom: 0; background: var(--accent); opacity: .18; border-inline: 2px solid var(--accent); box-sizing: border-box; }
+.ms-fv-span.ms-picking { opacity: .32; }
+.ms-fv-clippick { display: inline-flex; margin: 4px 0 0 8px; }
+.ms-fv-rangebtn { margin: 4px 0 0 8px; }

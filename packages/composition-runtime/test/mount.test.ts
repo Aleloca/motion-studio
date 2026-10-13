@@ -9,8 +9,10 @@ import type { RuntimeError } from '../src/protocol.ts';
 import { PRE_SEEK_SETTLE_MS } from '../src/timing.ts';
 
 /** jsdom has no WAAPI, FontFace or media loading: minimal stand-ins record what the mount asks for. */
-interface FakeAnimation { keyframes: unknown; options: KeyframeAnimationOptions; currentTime: number | null; pause(): void }
+interface FakeAnimation { keyframes: unknown; options: KeyframeAnimationOptions; currentTime: number | null; cancelled: boolean; pause(): void; cancel(): void }
 const created: Array<{ el: Element } & FakeAnimation> = [];
+/** The FontFaces the mount added to document.fonts and has not deleted. */
+const fontSet = new Set<unknown>();
 const BASE = 'http://127.0.0.1:9999/tok/v1/compositions/story/';
 const natives: Natives = {
   setTimeout: (fn, ms) => setTimeout(fn, ms) as unknown as number,
@@ -23,12 +25,13 @@ beforeEach(() => {
   created.length = 0;
   document.body.innerHTML = '<div id="ms-root"></div>';
   (Element.prototype as unknown as { animate: unknown }).animate = function (this: Element, keyframes: unknown, options: KeyframeAnimationOptions) {
-    const a = { el: this, keyframes, options, currentTime: 0 as number | null, pause() {} };
+    const a = { el: this, keyframes, options, currentTime: 0 as number | null, cancelled: false, pause() {}, cancel() { a.cancelled = true; } };
     created.push(a);
     return a;
   };
   (globalThis as unknown as { FontFace: unknown }).FontFace = class { constructor(readonly family: string, readonly src: string) {} load() { return Promise.resolve(this); } };
-  Object.defineProperty(document, 'fonts', { value: { add() {} }, configurable: true });
+  fontSet.clear();
+  Object.defineProperty(document, 'fonts', { value: { add(f: unknown) { fontSet.add(f); }, delete(f: unknown) { return fontSet.delete(f); } }, configurable: true });
   (HTMLImageElement.prototype as unknown as { decode: () => Promise<void> }).decode = () => Promise.resolve();
 });
 afterEach(() => { delete (Element.prototype as unknown as { animate?: unknown }).animate; });
@@ -427,5 +430,134 @@ describe('render mode video frames (fake VideoFrame)', () => {
     await player.seek(2);
     expect(errors.map((e) => e.code)).toEqual(['videoFrameMismatch']);
     expect(errors[0]!.message).toMatch(/, held until the seek deadline$/); // the stall is visible in the warning (M1)
+  });
+});
+
+describe('visibility: hidden clips and tracks, muted tracks', () => {
+  const visComp = () => comp({ tracks: [
+    { id: 'v', kind: 'visual', clips: [
+      { id: 'shown', type: 'shape', start: 0, duration: 6, props: {} },
+      { id: 'gone', type: 'shape', start: 0, duration: 6, hidden: true, props: {} },
+      { id: 'vid', type: 'video', src: 'assets/v.mp4', start: 0, duration: 6, hidden: true, props: {} },
+    ] },
+    { id: 'ht', kind: 'visual', hidden: true, clips: [{ id: 'in-hidden-track', type: 'shape', start: 0, duration: 6, props: {} }] },
+    { id: 'a', kind: 'audio', clips: [
+      { id: 'heard', type: 'audio', src: 'assets/a.wav', start: 0, duration: 6 },
+      { id: 'hidden-audio', type: 'audio', src: 'assets/b.wav', start: 0, duration: 6, hidden: true },
+    ] },
+    { id: 'm', kind: 'audio', muted: true, clips: [{ id: 'quiet', type: 'audio', src: 'assets/c.wav', start: 0, duration: 6 }] },
+    { id: 'ha', kind: 'audio', hidden: true, clips: [{ id: 'in-hidden-audio-track', type: 'audio', src: 'assets/d.wav', start: 0, duration: 6 }] },
+  ] } as Partial<Composition>);
+
+  for (const mode of ['render', 'preview'] as const) {
+    it(`${mode}: a hidden clip or a clip of a hidden track is not mounted at all`, async () => {
+      const { root, box, player } = run(visComp(), mode);
+      expect(box('shown')).not.toBeNull();
+      for (const id of ['gone', 'vid', 'in-hidden-track']) expect(box(id)).toBeNull();
+      expect(root.querySelector('video')).toBeNull();
+      await player.ready();
+      expect(box('shown')!.style.display).toBe('');
+    });
+  }
+
+  it('preview: a hidden audio clip and the clips of a hidden track are silent (no element); a muted track plays muted', () => {
+    const { root } = run(visComp(), 'preview');
+    const srcs = [...root.querySelectorAll('audio')].map((a) => a.getAttribute('src'));
+    expect(srcs).toEqual([`${BASE}assets/a.wav`, `${BASE}assets/c.wav`]);
+  });
+});
+
+describe('load (a re-mount seeks straight to its time)', () => {
+  it('loads fonts and media without showing a frame; ready() is load then t = 0', async () => {
+    const shown: number[] = [];
+    const { player, box } = run(comp(), 'preview');
+    player.onTime = (t) => shown.push(t);
+    await player.load();
+    expect(shown).toEqual([]);
+    expect(box('card')!.style.display).toBe('none');
+    await player.seek(2);
+    expect(shown).toEqual([2]);
+    expect(box('title')!.style.display).toBe('');
+  });
+});
+
+describe('play from (a re-mount resumes where the old mount had got to, M5)', () => {
+  it('starts at `from`, not at the time last shown', async () => {
+    const times: Array<[number, boolean]> = [];
+    const { player } = run(comp({ tracks: [{ id: 'v', kind: 'visual', clips: [{ id: 'card', type: 'shape', start: 0, duration: 6, props: {} }] }] } as Partial<Composition>), 'preview');
+    await player.load();
+    await player.seek(1);
+    player.onTime = (t, playing) => times.push([t, playing]);
+    player.play({ from: 2.5 });
+    await new Promise((r) => setTimeout(r, 30));
+    player.pause();
+    const first = times.find(([, p]) => p)!;
+    expect(first[0]).toBeGreaterThanOrEqual(2.5);
+    expect(first[0]).toBeLessThan(2.7);
+  });
+});
+
+describe('destroy (the re-mount of setComposition)', () => {
+  // jsdom implements no media loading: pause and load are stand-ins here (they only print "not implemented").
+  const proto = HTMLMediaElement.prototype as unknown as Record<string, unknown>;
+  const saved = { pause: proto.pause, load: proto.load };
+  beforeEach(() => { proto.pause = () => {}; proto.load = () => {}; });
+  afterEach(() => { proto.pause = saved.pause; proto.load = saved.load; });
+  const full = () => comp({ tracks: [
+    { id: 'v', kind: 'video', clips: [
+      { id: 'n', type: 'video', src: 'media/0.mp4', audioSrc: 'assets/v.mp4', start: 0, duration: 6, props: {}, animations: [{ preset: 'fadeIn', duration: 0.5 }] },
+    ] },
+    { id: 'l', kind: 'visual', clips: [
+      { id: 'layer', type: 'html', src: 'layers/x.html', start: 0, duration: 6, props: {} },
+      { id: 'pic', type: 'image', src: 'assets/p.png', start: 0, duration: 6, props: { kenBurns: { from: { scale: 1 }, to: { scale: 1.2 } } } },
+    ] },
+    { id: 't', kind: 'text', clips: [{ id: 'title', type: 'text', start: 0, duration: 6, props: { text: 'Hi' }, animations: [{ preset: 'fadeIn', duration: 0.5 }] }] },
+    { id: 'a', kind: 'audio', clips: [{ id: 'music', type: 'audio', src: 'assets/m.wav', start: 0, duration: 6 }] },
+  ] } as unknown as Partial<Composition>);
+
+  it('removes every element, cancels every animation, releases media and layer frames, deletes its fonts', () => {
+    const root = document.getElementById('ms-root')!;
+    const before = root.childNodes.length;
+    const { player } = run(full(), 'preview');
+    const medias = [...root.querySelectorAll<HTMLMediaElement>('video, audio')];
+    const frames = [...root.querySelectorAll('iframe')];
+    expect(medias.length).toBe(3); // the video, its derived sound and the music
+    expect(frames.length).toBe(1);
+    expect(created.length).toBeGreaterThan(0);
+    expect(fontSet.size).toBe(1);
+    player.destroy();
+    expect(root.childNodes.length).toBe(before);
+    expect(created.every((a) => a.cancelled)).toBe(true);
+    expect(medias.every((m) => !m.hasAttribute('src') && !m.isConnected)).toBe(true);
+    expect(frames.every((f) => !f.hasAttribute('src') && !f.isConnected)).toBe(true);
+    expect(fontSet.size).toBe(0);
+    player.destroy(); // idempotent
+  });
+
+  it('a destroyed player reports nothing more, ignores commands and never calls back', async () => {
+    const { player, errors } = run(full(), 'preview');
+    const calls: string[] = [];
+    player.onTime = () => calls.push('time');
+    player.onBounds = () => calls.push('bounds');
+    player.destroy();
+    const n = errors.length;
+    player.play();
+    player.select('title');
+    player.setScale(2);
+    player.setMuted(true);
+    await player.seek(1);
+    await new Promise((r) => setTimeout(r, 120)); // past every load and layer timeout of run()
+    expect(calls).toEqual([]);
+    expect(errors.length).toBe(n);
+    expect(player.playing).toBe(false);
+  });
+
+  it('many mounts and destroys leave the root, fonts and live animations as they were', () => {
+    const root = document.getElementById('ms-root')!;
+    const before = root.childNodes.length;
+    for (let i = 0; i < 50; i++) run(full(), 'preview').player.destroy();
+    expect(root.childNodes.length).toBe(before);
+    expect(fontSet.size).toBe(0);
+    expect(created.filter((a) => !a.cancelled)).toEqual([]);
   });
 });

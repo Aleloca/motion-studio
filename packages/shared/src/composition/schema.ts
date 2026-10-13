@@ -33,6 +33,9 @@ export const COMPOSITION_LIMITS = {
 
 /** Composition pixel coordinates are bounded so a typo cannot ask the renderer for absurd layouts. */
 const COORD = 100_000;
+/** The numeric bounds of the editable properties, for the editor's controls (one copy: the schema below uses them). */
+export const COMPOSITION_BOUNDS = { coord: COORD, size: COORD, rotation: 3600, opacity: 1, fontSize: 2000, trimStart: 36_000, volume: 2 } as const;
+export const TEXT_ALIGNS = ['left', 'center', 'right'] as const;
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const COLOR_RE = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
@@ -101,7 +104,7 @@ export type Animation = z.infer<typeof animationSchema>;
 
 const boxShape = {
   x: coord.optional(), y: coord.optional(), width: z.number().min(0).max(COORD).optional(), height: z.number().min(0).max(COORD).optional(),
-  rotation: z.number().min(-3600).max(3600).optional(), scale: z.number().min(0).max(100).optional(), opacity: z.number().min(0).max(1).optional(),
+  rotation: z.number().min(-COMPOSITION_BOUNDS.rotation).max(COMPOSITION_BOUNDS.rotation).optional(), scale: z.number().min(0).max(100).optional(), opacity: z.number().min(0).max(1).optional(),
 };
 const box = z.strictObject(boxShape).describe('Composition pixels; rotation (degrees) and scale apply around the box centre.');
 const clipBase = {
@@ -110,6 +113,8 @@ const clipBase = {
   scene: id.optional().describe('The scene this clip belongs to: moving the scene moves the clip. The clip must lie inside it.'),
   start: seconds.describe('Seconds, absolute on the composition timeline.'),
   duration: seconds,
+  hidden: z.boolean().optional().describe('The editor hides the clip: it is not rendered. Set by the user; leave it as it is.'),
+  locked: z.boolean().optional().describe('The user locked the clip against direct edits in the editor. Set by the user; leave it as it is.'),
 };
 const animations = z.array(animationSchema).max(COMPOSITION_LIMITS.animations).optional();
 const kenBurnsEnd = z.strictObject({ scale: z.number().min(0).max(100).optional(), x: coord.optional(), y: coord.optional() });
@@ -120,10 +125,10 @@ const textClip = z.strictObject({
     ...boxShape,
     text: z.string().max(COMPOSITION_LIMITS.text),
     fontFamily: family.optional(),
-    fontSize: z.number().gt(0).max(2000).optional(),
+    fontSize: z.number().gt(0).max(COMPOSITION_BOUNDS.fontSize).optional(),
     fontWeight: weight.optional(),
     color: color.optional(),
-    align: z.enum(['left', 'center', 'right']).optional(),
+    align: z.enum(TEXT_ALIGNS).optional(),
   }),
   animations,
 });
@@ -141,9 +146,9 @@ const imageClip = z.strictObject({ ...clipBase, type: z.literal('image'), src: p
 const svgClip = z.strictObject({ ...clipBase, type: z.literal('svg'), src: path, props: pictureProps, animations });
 const videoClip = z.strictObject({
   ...clipBase, type: z.literal('video'), src: path,
-  trimStart: z.number().min(0).max(36_000).optional().describe('Seconds skipped at the start of the source.'),
+  trimStart: z.number().min(0).max(COMPOSITION_BOUNDS.trimStart).optional().describe('Seconds skipped at the start of the source.'),
   sourceFps: z.number().gt(0).max(240).optional(),
-  volume: z.number().min(0).max(2).optional(),
+  volume: z.number().min(0).max(COMPOSITION_BOUNDS.volume).optional(),
   props: box, animations,
 });
 const htmlParam = z.discriminatedUnion('type', [
@@ -161,8 +166,8 @@ const htmlClip = z.strictObject({
 });
 const audioClip = z.strictObject({
   ...clipBase, type: z.literal('audio'), src: path,
-  trimStart: z.number().min(0).max(36_000).optional(),
-  volume: z.number().min(0).max(2).optional(),
+  trimStart: z.number().min(0).max(COMPOSITION_BOUNDS.trimStart).optional(),
+  volume: z.number().min(0).max(COMPOSITION_BOUNDS.volume).optional(),
   fadeIn: seconds.optional(),
   fadeOut: seconds.optional(),
   role: z.enum(['voice', 'music', 'sfx']).optional().describe('Lets the mixer duck music under voice.'),

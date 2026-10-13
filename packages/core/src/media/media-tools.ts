@@ -9,6 +9,8 @@ export interface MediaInfo { width: number; height: number; durationSec: number 
 export interface MediaTools {
   readonly available: boolean;
   probe(file: string): Promise<MediaInfo | null>;
+  /** An audio file's duration (null when unknown); null when it has no audio stream or cannot be read. Optional: test doubles. */
+  probeAudio?(file: string): Promise<{ durationSec: number | null } | null>;
   poster(video: string, out: string, atSec?: number): Promise<boolean>;
   /** One frame at `atSec` (or the first one when the clip is shorter). `width`: shrink to at most this width (never enlarge). */
   frame(video: string, out: string, atSec: number, opts?: { width?: number }): Promise<boolean>;
@@ -62,6 +64,19 @@ export async function createFfmpegTools(exec: CommandExec = execCommand): Promis
         const [num, den] = (s.avg_frame_rate ?? '').split('/').map(Number);
         const fps = num && den && Number.isFinite(num / den) ? num / den : undefined;
         return { width: s.width, height: s.height, durationSec: !still && Number.isFinite(d) && d > 0 ? d : null, ...(fps && !still ? { fps } : {}) };
+      } catch {
+        return null;
+      }
+    },
+    async probeAudio(file) {
+      if (isSvgName(file) || !isRegularFileNow(file)) return null;
+      const r = await execFfVia(exec, 'ffprobe', ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', ...mediaInput({ file })], { timeoutMs: 30_000 });
+      if (r.code !== 0) return null;
+      try {
+        const data = JSON.parse(r.stdout) as { streams?: Array<{ codec_type?: string }>; format?: { duration?: string } };
+        if (!data.streams?.some((x) => x.codec_type === 'audio')) return null;
+        const d = Number(data.format?.duration);
+        return { durationSec: Number.isFinite(d) && d > 0 ? d : null };
       } catch {
         return null;
       }

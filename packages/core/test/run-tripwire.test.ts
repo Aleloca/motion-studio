@@ -1,4 +1,4 @@
-import { appendFile, chmod, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -70,6 +70,62 @@ describe('armTripwire (decisions log 141)', () => {
     expect((await trip.check()).moved).toEqual([]);
     await writeFile(join(c, 'stray.txt'), 'x');
     expect((await trip.check()).moved).toContain(join('creatives', slug));
+  });
+  describe('Claude Code\'s empty .claude/.cc-writes/ (decisions log 259)', () => {
+    it('an empty real .cc-writes alone in a new .claude gives no notice', async () => {
+      const { p, c } = await project();
+      const trip = await armTripwire(p, { logs: false });
+      await tick();
+      await mkdir(join(c, '.claude', '.cc-writes'), { recursive: true });
+      expect((await trip.check()).moved).toEqual([]);
+    });
+    it('a file inside .cc-writes gives the notice', async () => {
+      const { p, c, slug } = await project();
+      const trip = await armTripwire(p, { logs: false });
+      await tick();
+      await mkdir(join(c, '.claude', '.cc-writes'), { recursive: true });
+      await writeFile(join(c, '.claude', '.cc-writes', 'x'), 'x');
+      expect((await trip.check()).moved).toContain(join('creatives', slug));
+    });
+    it('a .cc-writes that is a symlink gives the notice', async () => {
+      const { p, c, slug } = await project();
+      const trip = await armTripwire(p, { logs: false });
+      await tick();
+      await mkdir(join(c, '.claude'));
+      await mkdir(join(p, 'elsewhere'));
+      await symlink(join(p, 'elsewhere'), join(c, '.claude', '.cc-writes'));
+      expect((await trip.check()).moved).toContain(join('creatives', slug));
+    });
+    it('a .claude that is a symlink to a folder holding an empty .cc-writes gives the notice', async () => {
+      const { p, c, slug } = await project();
+      const trip = await armTripwire(p, { logs: false });
+      await tick();
+      await mkdir(join(p, 'other', '.cc-writes'), { recursive: true });
+      await symlink(join(p, 'other'), join(c, '.claude'));
+      expect((await trip.check()).moved).toContain(join('creatives', slug));
+    });
+    it('other entries in .claude, or .cc-writes as a file, give the notice', async () => {
+      const { p, c, slug } = await project();
+      const trip = await armTripwire(p, { logs: false });
+      await tick();
+      await mkdir(join(c, '.claude', '.cc-writes'), { recursive: true });
+      await writeFile(join(c, '.claude', 'settings.json'), '{}');
+      expect((await trip.check()).moved).toContain(join('creatives', slug));
+      const second = await project();
+      const trip2 = await armTripwire(second.p, { logs: false });
+      await tick();
+      await mkdir(join(second.c, '.claude'));
+      await writeFile(join(second.c, '.claude', '.cc-writes'), '');
+      expect((await trip2.check()).moved).toContain(join('creatives', second.slug));
+    });
+    it('anything else that came alongside it still gives the notice', async () => {
+      const { p, c, slug } = await project();
+      const trip = await armTripwire(p, { logs: false });
+      await tick();
+      await mkdir(join(c, '.claude', '.cc-writes'), { recursive: true });
+      await writeFile(join(c, 'stray.txt'), 'x');
+      expect((await trip.check()).moved).toContain(join('creatives', slug));
+    });
   });
   it('with logs: a rewritten or cut history is reported, an append is not', async () => {
     const { p, store, c, slug } = await project();

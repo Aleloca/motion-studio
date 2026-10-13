@@ -1,6 +1,7 @@
+import { declaredWeights, weightNumber } from './fonts.ts';
 import type { FormatPreset } from '../formats.ts';
 import { compositionProblem, type CompositionProblem } from './problems.ts';
-import { implicitSceneId } from './normalize.ts';
+import { implicitSceneId, normalizeComposition } from './normalize.ts';
 import { COMPOSITION_LIMITS, compositionSchema, type Composition } from './schema.ts';
 
 /** Default size limit of a composition folder (every file together): 500 MB. Callers may pass another `maxBytes`. */
@@ -33,6 +34,20 @@ const secs = (n: number) => Math.round(n * 1000) / 1000;
  * Decodes `composition.json`: rejects a file over `COMPOSITION_LIMITS.jsonBytes`, bytes that are not valid UTF-8, an empty
  * (or BOM-only, or whitespace-only) file and invalid JSON, each with one translated problem. A leading UTF-8 BOM is skipped.
  */
+/**
+ * The one size rule of a draft (final review M5): the UTF-8 bytes of the COMPACT JSON of its normalised form, against
+ * `COMPOSITION_LIMITS.jsonBytes`. The editor checks it before Save, the core at save (it then writes the file indented
+ * only when that still fits), the runtime on the same compact text.
+ */
+export function draftJsonBytes(c: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(normalizeComposition(c))).length;
+}
+/** `composition.jsonTooLarge` for a draft over the limit (see `draftJsonBytes`), else null. */
+export function draftSizeProblem(c: unknown): CompositionProblem | null {
+  const bytes = draftJsonBytes(c);
+  return bytes > COMPOSITION_LIMITS.jsonBytes ? p('jsonTooLarge', { sizeMB: round1(bytes / MB), maxMB: round1(COMPOSITION_LIMITS.jsonBytes / MB) }) : null;
+}
+
 export function parseCompositionText(bytes: Uint8Array): { ok: true; value: unknown } | { ok: false; problems: CompositionProblem[] } {
   if (bytes.length > COMPOSITION_LIMITS.jsonBytes) {
     return { ok: false, problems: [p('jsonTooLarge', { sizeMB: round1(bytes.length / MB), maxMB: round1(COMPOSITION_LIMITS.jsonBytes / MB) })] };
@@ -269,6 +284,13 @@ function semantic(c: Composition, ctx: CompositionContext): { problems: Composit
         const family = k.props.fontFamily ?? c.fonts[0]?.family;
         if (family === undefined) out.push(p('fontMissing', { clip: k.id }));
         else if (!families.has(family.toLowerCase())) out.push(p('unknownFont', { clip: k.id, family }));
+        else {
+          // A weight the family does not declare is drawn synthesised or from a neighbour: a warning, not a problem (one file for
+          // regular and bold is common and renders), and only for families that declare weights at all.
+          const declared = declaredWeights(c.fonts, family);
+          const weight = weightNumber(k.props.fontWeight);
+          if (declared && !declared.includes(weight)) warnings.push(p('fontWeightUndeclared', { clip: k.id, family, weight, declared: declared.join(', ') }));
+        }
       }
       if (k.type === 'html') {
         if (!k.src.startsWith('layers/') || !k.src.toLowerCase().endsWith('.html')) out.push(p('layerNotHtml', { clip: k.id, src: k.src }));

@@ -201,7 +201,7 @@ export function CreativeTop({ back, crumbs, right, slots, claimed }: { back: { l
 function barKey(r: Route): string {
   switch (r.name) {
     case 'project': return `project:${r.slug}`;
-    case 'new-creative': case 'creative': case 'format': return `creative:${r.slug}`;
+    case 'new-creative': case 'creative': case 'format': case 'edit': return `creative:${r.slug}`;
     default: return 'global';
   }
 }
@@ -243,6 +243,13 @@ export function TopBar() {
       // bar's own back button and the format id.
       const claimed = owner === routeKey(r);
       content = <CreativeTop back={claimed ? null : { label: t.web.shell.backAllFormats, hash: href.creative(r.slug, r.creative) }} slots claimed={claimed}
+        crumbs={claimed ? [projectName(r.slug), creativeTitle(r.slug, r.creative)] : [projectName(r.slug), creativeTitle(r.slug, r.creative), <span className="ms-mono">{r.format}</span>]} />;
+      break;
+    }
+    case 'edit': {
+      // The editor claims the bar like the format view (its own back button, the format, the version and Export).
+      const claimed = owner === routeKey(r);
+      content = <CreativeTop back={claimed ? null : { label: t.web.editor.back, hash: href.format(r.slug, r.creative, r.format) }} slots claimed={claimed}
         crumbs={claimed ? [projectName(r.slug), creativeTitle(r.slug, r.creative)] : [projectName(r.slug), creativeTitle(r.slug, r.creative), <span className="ms-mono">{r.format}</span>]} />;
       break;
     }

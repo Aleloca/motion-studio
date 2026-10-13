@@ -17,6 +17,8 @@ export interface DesktopBridge {
   setBadge?(n: number): Promise<void>;
   /** How many renders are queued or running: closing the window with one asks first (Task 8). Missing before Phase 10. */
   setRendersRunning?(n: number): Promise<void>;
+  /** How many editor drafts have edits not saved yet: closing the window with one asks first (Phase 10b). Missing before Phase 10b. */
+  setDraftsUnsaved?(n: number): Promise<void>;
   /** Calls `cb` when one of the app's native notifications is clicked; returns the unsubscribe. Missing before Phase 7. */
   onAttentionClick?(cb: () => void): () => void;
   /** Integrated title bar: recolours the window controls overlay and background for the page's theme. Missing before Phase 9. */

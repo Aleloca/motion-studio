@@ -254,6 +254,18 @@ describe('audio graph', () => {
     expect(mixClips({ ...comp([]), duration: 0 })).toEqual([]);
   });
 
+  it('hidden clips and the clips of hidden tracks are not heard (the editor\'s eye, Phase 10b), as in the preview', () => {
+    const clips = mixClips(comp([
+      { id: 'a', kind: 'audio', clips: [
+        { id: 'm', type: 'audio', src: 'assets/m.wav', start: 0, duration: 1 },
+        { id: 'h', type: 'audio', src: 'assets/h.wav', start: 0, duration: 1, hidden: true },
+      ] },
+      { id: 'v', kind: 'video', clips: [{ id: 'v', type: 'video', src: 'assets/v.mp4', start: 0, duration: 1, hidden: true, props: {} }] },
+      { id: 'ht', kind: 'audio', hidden: true, clips: [{ id: 'x', type: 'audio', src: 'assets/x.wav', start: 0, duration: 1 }] },
+    ]));
+    expect(clips.map((c) => c.src)).toEqual(['assets/m.wav']);
+  });
+
   it('places clips in samples and mixes without normalisation, then limits, at exactly the composition length', () => {
     const [flag, g] = filterArgv(mixGraph([{ start: 0.5, duration: 1, trimStart: 0.25, volume: 0.8, fadeIn: 0.1, fadeOut: 0.2 }], 3 * 48_000))!;
     expect(flag).toBe('-filter_complex');

@@ -15,7 +15,7 @@ export const COMPOSITION_DATA_ID = 'ms-composition';
 /** Attribute that marks the injected bootstrap script. */
 export const LAYER_BOOTSTRAP_ATTR = 'data-ms-layer-bootstrap';
 /** The files of `dist/` the core serves under `/<token>/runtime/`. */
-export const RUNTIME_FILES = ['index.html', 'runtime.js', 'layer.js', 'clock.js'] as const;
+export const RUNTIME_FILES = ['index.html', 'runtime.js', 'layer.js', 'clock.js', 'preview.js'] as const;
 
 export interface CompositionData {
   /**

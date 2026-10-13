@@ -110,6 +110,12 @@ export const versionCompositionSchema = z.object({
    * format from a broken one in the same v2 version (`starOf`). Absent: the version-level `problems` count for it.
    */
   problems: z.array(z.string()).optional(),
+  /**
+   * A duration far from the brief that the USER chose in the editor (decisions log 270): the duration, and the brief's duration
+   * it was chosen against. Carried while the composition keeps that duration; an agent turn is not told to bring it back to
+   * the brief only while the brief still says `briefDurationSec`. Absent: no such choice.
+   */
+  userDuration: z.object({ durationSec: z.number().positive(), briefDurationSec: z.number().positive() }).optional(),
 });
 export type VersionComposition = z.infer<typeof versionCompositionSchema>;
 
@@ -131,6 +137,8 @@ export const versionEntrySchema = z.object({
    * (`formatHistory`). Absent on legacy versions, whose identity is the file's `sha256`.
    */
   compositions: z.array(versionCompositionSchema).optional(),
+  /** Who wrote the version: the agent (default when absent) or a direct edit in the editor (Phase 10b). */
+  origin: z.enum(['agent', 'editor']).optional(),
 });
 export type VersionEntry = z.infer<typeof versionEntrySchema>;
 
@@ -177,12 +185,32 @@ export type ManifestV2 = z.infer<typeof manifestV2Schema>;
 export const anyManifestSchema = z.discriminatedUnion('schemaVersion', [manifestSchema, manifestV2Schema]);
 export type AnyManifest = z.infer<typeof anyManifestSchema>;
 
+/**
+ * Whether a video lasts far from the brief's duration (the phase 8 rule: more than 1 s and more than 10 % off): the agent's
+ * compositions are checked with it; a direct edit's duration is the user's choice (decisions log 262) and only shown.
+ */
+export function isDurationOffBrief(duration: number, briefDurationSec: number | null | undefined): boolean {
+  return briefDurationSec !== null && briefDurationSec !== undefined && duration > 0 && Math.abs(duration - briefDurationSec) > Math.max(1, briefDurationSec * 0.1);
+}
+
+/** C0 and C1 control characters (newlines included), DEL and the Unicode line/paragraph separators: never in a pin's clip id or name. */
+const PIN_LABEL_FORBIDDEN = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+/** A clip name as a pin may carry it: control characters and separators become spaces, at most 200 characters. */
+export const pinClipName = (name: string): string => name.replace(new RegExp(PIN_LABEL_FORBIDDEN.source, 'g'), ' ').slice(0, 200);
+const pinLabel = (max: number) => z.string().max(max).refine((s) => !PIN_LABEL_FORBIDDEN.test(s), { message: 'control characters are not allowed' });
+
 export const pinSchema = z.object({
   format: z.string().min(1),
   x: z.number().min(0).max(1),
   y: z.number().min(0).max(1),
   timeSec: z.number().min(0).nullable(),
   note: z.string().optional(),
+  /** The composition clip the comment is about (Phase 10b). Absent on older pins. */
+  clipId: pinLabel(64).optional(),
+  /** The clip's name when the comment was placed (for the chip and the agent's prompt; the clip may be renamed or gone later). */
+  clipName: pinLabel(200).optional(),
+  /** The time range, in seconds, the comment is about (Phase 10b): `0 <= start < end`. */
+  range: z.object({ start: z.number().min(0), end: z.number() }).refine((r) => r.start < r.end).optional(),
 });
 export type Pin = z.infer<typeof pinSchema>;
 

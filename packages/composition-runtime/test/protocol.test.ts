@@ -1,6 +1,8 @@
+import { COMPOSITION_LIMITS, type Composition } from '@motion-studio/shared';
 import { describe, expect, it, vi } from 'vitest';
 import { parseLayerReply } from '../src/layer-protocol.ts';
-import { parseIncoming, parseOutgoing, parseParentOrigin } from '../src/protocol.ts';
+import { parseDraft } from '../src/draft.ts';
+import { parseIncoming, parseIncoming as parseIncomingRaw, parseOutgoing, parseParentOrigin } from '../src/protocol.ts';
 import { createPreviewBridge } from '../src/preview-bridge.ts';
 
 describe('incoming messages', () => {
@@ -28,7 +30,81 @@ describe('incoming messages', () => {
   });
 });
 
+function smallComp(over: Record<string, unknown> = {}): Composition {
+  return {
+    $schema: 'motion-studio/composition@1', width: 320, height: 180, fps: 30, duration: 4, background: '#000000', fonts: [],
+    scenes: [{ id: 's', start: 0, duration: 4 }],
+    tracks: [{ id: 't', kind: 'visual', clips: [{ id: 'logo', type: 'svg', src: 'assets/logo.svg', start: 0, duration: 4, hidden: true, props: {} }] }],
+    ...over,
+  } as Composition;
+}
+
+describe('setComposition (incoming)', () => {
+  const parseIncoming = (d: unknown) => parseIncomingRaw(d, parseDraft);
+  it('is refused without a draft parser (protocol.ts carries no zod: the render runtime has none)', () => {
+    expect(parseIncomingRaw({ type: 'setComposition', composition: smallComp(), seq: 1 })).toBeNull();
+  });
+  it('accepts a structurally valid composition with a seq and an optional keepTime, and returns a clean copy', () => {
+    const c = smallComp();
+    const parsed = parseIncoming({ type: 'setComposition', composition: c, keepTime: true, seq: 7 });
+    expect(parsed).toEqual({ type: 'setComposition', composition: c, keepTime: true, seq: 7 });
+    expect(parsed && parsed.type === 'setComposition' && parsed.composition).not.toBe(c); // a copy, never the sender's object
+    expect(parseIncoming({ type: 'setComposition', composition: c, seq: 0 })).toEqual({ type: 'setComposition', composition: c, seq: 0 });
+  });
+  it('refuses a malformed composition, extra fields, a bad seq or keepTime', () => {
+    const c = smallComp();
+    for (const bad of [
+      { type: 'setComposition', seq: 1 },
+      { type: 'setComposition', composition: c },
+      { type: 'setComposition', composition: c, seq: -1 }, { type: 'setComposition', composition: c, seq: 1.5 },
+      { type: 'setComposition', composition: c, seq: 2 ** 31 }, { type: 'setComposition', composition: c, seq: '1' },
+      { type: 'setComposition', composition: c, seq: 1, keepTime: 'yes' },
+      { type: 'setComposition', composition: c, seq: 1, extra: true },
+      { type: 'setComposition', composition: { ...c, width: 10 }, seq: 1 },
+      { type: 'setComposition', composition: { ...c, script: 'x' }, seq: 1 },
+      { type: 'setComposition', composition: 'json', seq: 1 },
+      { type: 'setComposition', composition: null, seq: 1 },
+      // No src outside assets/ or layers/: no scheme, no parent folder, no core media path.
+      ...['https://evil.test/x.svg', '../x.svg', 'media/0.mp4', '/abs.svg', 'assets/../../x.svg'].map((src) => ({
+        type: 'setComposition', seq: 1, composition: smallComp({ tracks: [{ id: 't', kind: 'visual', clips: [{ id: 'logo', type: 'svg', src, start: 0, duration: 4, props: {} }] }] }),
+      })),
+      // Core-only video fields are not part of the schema.
+      { type: 'setComposition', seq: 1, composition: smallComp({ tracks: [{ id: 't', kind: 'video', clips: [{ id: 'v', type: 'video', src: 'assets/v.mp4', sourceTrusted: true, start: 0, duration: 4, props: {} }] }] }) },
+    ]) expect(parseIncoming(bad)).toBeNull();
+  });
+  it('refuses a cyclic or non-JSON value without throwing', () => {
+    const cyclic: Record<string, unknown> = { ...smallComp() };
+    cyclic.self = cyclic;
+    expect(parseIncoming({ type: 'setComposition', composition: cyclic, seq: 1 })).toBeNull();
+    expect(parseIncoming({ type: 'setComposition', composition: { ...smallComp(), n: 10n }, seq: 1 })).toBeNull();
+  });
+  it('refuses a composition above COMPOSITION_LIMITS.jsonBytes (UTF-8), accepts one just below', () => {
+    const name = (n: number) => smallComp({ scenes: [{ id: 's', name: 'x'.repeat(10), start: 0, duration: 4 }], tracks: [{ id: 't', kind: 'visual', name: 'é'.repeat(n), clips: [] }] });
+    // Track names are bounded by the schema (200), so the size is reached with many text clips instead.
+    const big = (count: number, text: string) => smallComp({ tracks: Array.from({ length: 4 }, (_, k) => ({ id: `t${k}`, kind: 'text', clips: Array.from({ length: count }, (_, i) => ({
+      id: `c${k}-${i}`, type: 'text', start: 0, duration: 4, props: { text } })) })) });
+    expect(parseIncoming({ type: 'setComposition', composition: name(10), seq: 1 })).not.toBeNull();
+    const huge = big(500, 'é'.repeat(1990)); // 2000 clips × ~4 KB of UTF-8: about 8 MB
+    expect(JSON.stringify(huge).length).toBeLessThan(COMPOSITION_LIMITS.jsonBytes); // UTF-16 length is below the bound…
+    expect(new TextEncoder().encode(JSON.stringify(huge)).length).toBeGreaterThan(COMPOSITION_LIMITS.jsonBytes); // …its bytes are not
+    expect(parseIncoming({ type: 'setComposition', composition: huge, seq: 1 })).toBeNull();
+    const fits = big(500, 'a'.repeat(1990)); // about 4.2 MB
+    expect(new TextEncoder().encode(JSON.stringify(fits)).length).toBeLessThan(COMPOSITION_LIMITS.jsonBytes);
+    expect(parseIncoming({ type: 'setComposition', composition: fits, seq: 1 })).not.toBeNull();
+  });
+});
+
 describe('outgoing messages (for the UI side)', () => {
+  it('validates compositionApplied: an integer seq and bounded errors', () => {
+    expect(parseOutgoing({ type: 'compositionApplied', seq: 3, errors: [{ code: 'assetLoadFailed', message: 'x', clipId: 'a' }], k: 1 }))
+      .toEqual({ type: 'compositionApplied', seq: 3, errors: [{ code: 'assetLoadFailed', message: 'x', clipId: 'a' }] });
+    for (const bad of [
+      { type: 'compositionApplied', seq: -1, errors: [] }, { type: 'compositionApplied', seq: 1.5, errors: [] },
+      { type: 'compositionApplied', seq: 1 }, { type: 'compositionApplied', seq: 1, errors: [{ code: 'nope', message: 'x' }] },
+      { type: 'compositionApplied', seq: 1, errors: Array.from({ length: 201 }, () => ({ code: 'layerError', message: 'x' })) },
+    ]) expect(parseOutgoing(bad)).toBeNull();
+  });
+
   it('validates what the runtime sends', () => {
     expect(parseOutgoing({ type: 'time', t: 1, playing: true })).toEqual({ type: 'time', t: 1, playing: true });
     expect(parseOutgoing({ type: 'error', error: { code: 'fontLoadFailed', message: 'x' } })).not.toBeNull();
@@ -62,12 +138,32 @@ describe('parent origin', () => {
   });
 });
 
+describe('sessionMedia (Phase 10b: a staged video normalised by the core)', () => {
+  const ok = { type: 'sessionMedia', src: 'assets/lib/0a1b2c3d-clip.mp4', index: 2, sourceFps: 30, sourceStart: 0, sourceVideoEnd: 4.5 };
+  it('accepts the fields the core gives, with or without its sound', () => {
+    expect(parseIncoming(ok)).toEqual(ok);
+    expect(parseIncoming({ ...ok, audioStart: 0.02 })).toEqual({ ...ok, audioStart: 0.02 });
+    expect(parseIncoming({ ...ok, index: 0, sourceStart: 0.5 })).toEqual({ ...ok, index: 0, sourceStart: 0.5 });
+  });
+  it('refuses a bad source, index or field, and any extra field', () => {
+    for (const src of ['media/0.mp4', 'layers/x.html', 'assets/../x.mp4', 'assets//x.mp4', 'assets/a\\b.mp4', 'assets/a:b.mp4', 'assets/%2e.mp4', 'assets/a?.mp4',
+      'assets/a#b', 'assets/\u0000x', '/assets/x.mp4', 'https://evil.example/x.mp4', `assets/${'x'.repeat(520)}`, 7, null]) {
+      expect(parseIncoming({ ...ok, src }), String(src)).toBeNull();
+    }
+    for (const index of [-1, 1.5, 10_000, '1', null]) expect(parseIncoming({ ...ok, index })).toBeNull();
+    for (const bad of [{ sourceFps: 0 }, { sourceFps: 241 }, { sourceFps: Number.NaN }, { sourceStart: -1 }, { sourceVideoEnd: 0 }, { sourceVideoEnd: 36_001 },
+      { audioStart: -0.1 }, { audioStart: Number.POSITIVE_INFINITY }, { extra: 1 }, { sourceTrusted: true }]) {
+      expect(parseIncoming({ ...ok, ...bad }), JSON.stringify(bad)).toBeNull();
+    }
+  });
+});
+
 describe('preview bridge', () => {
   const ORIGIN = 'http://127.0.0.1:4317';
   function setup() {
     const parent = { postMessage: vi.fn() };
-    const player = { seek: vi.fn(async () => {}), play: vi.fn(), pause: vi.fn(), select: vi.fn(), setScale: vi.fn(), setMuted: vi.fn() };
-    const bridge = createPreviewBridge({ parent, parentOrigin: ORIGIN, player });
+    const player = { seek: vi.fn(async () => {}), play: vi.fn(), pause: vi.fn(), select: vi.fn(), setScale: vi.fn(), setMuted: vi.fn(), setComposition: vi.fn(), addSessionMedia: vi.fn() };
+    const bridge = createPreviewBridge({ parent, parentOrigin: ORIGIN, player, parseDraft: () => parseDraft });
     return { parent, player, bridge };
   }
   it('runs commands from the parent at its origin', () => {
@@ -84,6 +180,47 @@ describe('preview bridge', () => {
     expect(player.pause).toHaveBeenCalled();
     expect(player.select).toHaveBeenCalledWith('title');
     expect(player.setScale).toHaveBeenCalledWith('fit');
+  });
+  it('passes a valid setComposition (a validated copy) to the player, ignores an invalid one or one not from the parent', () => {
+    const { parent, player, bridge } = setup();
+    const c = smallComp();
+    bridge.handle({ data: { type: 'setComposition', composition: c, keepTime: true, seq: 4 }, origin: ORIGIN, source: parent });
+    expect(player.setComposition).toHaveBeenCalledWith(c, { keepTime: true, seq: 4 });
+    expect(player.setComposition.mock.calls[0]![0]).not.toBe(c);
+    bridge.handle({ data: { type: 'setComposition', composition: c, seq: 5 }, origin: ORIGIN, source: {} });
+    bridge.handle({ data: { type: 'setComposition', composition: c, seq: 6 }, origin: 'null', source: parent });
+    bridge.handle({ data: { type: 'setComposition', composition: { ...c, fps: 7 }, seq: 7 }, origin: ORIGIN, source: parent });
+    expect(player.setComposition).toHaveBeenCalledTimes(1);
+    bridge.handle({ data: { type: 'setComposition', composition: c, seq: 8 }, origin: ORIGIN, source: parent });
+    expect(player.setComposition).toHaveBeenLastCalledWith(c, { keepTime: false, seq: 8 });
+  });
+  it('a draft that comes before the parser has loaded waits for it (the latest only), then applies', () => {
+    const parent = { postMessage: vi.fn() };
+    const player = { seek: vi.fn(async () => {}), play: vi.fn(), pause: vi.fn(), select: vi.fn(), setScale: vi.fn(), setMuted: vi.fn(), setComposition: vi.fn(), addSessionMedia: vi.fn() };
+    let parser: typeof parseDraft | undefined;
+    const bridge = createPreviewBridge({ parent, parentOrigin: ORIGIN, player, parseDraft: () => parser });
+    bridge.handle({ data: { type: 'setComposition', composition: smallComp(), seq: 1 }, origin: ORIGIN, source: parent });
+    bridge.handle({ data: { type: 'setComposition', composition: smallComp(), seq: 2 }, origin: ORIGIN, source: {} }); // not the parent
+    bridge.handle({ data: { type: 'setComposition', composition: smallComp(), seq: 3 }, origin: ORIGIN, source: parent });
+    bridge.handle({ data: { type: 'seek', t: 1 }, origin: ORIGIN, source: parent }); // other commands go on
+    expect(player.seek).toHaveBeenCalledWith(1);
+    expect(player.setComposition).not.toHaveBeenCalled();
+    parser = parseDraft;
+    bridge.parserReady();
+    expect(player.setComposition).toHaveBeenCalledTimes(1);
+    expect(player.setComposition.mock.calls[0]![1]).toEqual({ keepTime: false, seq: 3 });
+    bridge.parserReady(); // nothing left
+    expect(player.setComposition).toHaveBeenCalledTimes(1);
+  });
+  it('passes a valid sessionMedia from the parent to the player, and nothing else', () => {
+    const { parent, player, bridge } = setup();
+    const m = { type: 'sessionMedia', src: 'assets/lib/0a1b2c3d-clip.mp4', index: 1, sourceFps: 25, sourceStart: 0, sourceVideoEnd: 2 };
+    bridge.handle({ data: m, origin: ORIGIN, source: {} });
+    bridge.handle({ data: m, origin: 'null', source: parent });
+    bridge.handle({ data: { ...m, index: -1 }, origin: ORIGIN, source: parent });
+    expect(player.addSessionMedia).not.toHaveBeenCalled();
+    bridge.handle({ data: m, origin: ORIGIN, source: parent });
+    expect(player.addSessionMedia).toHaveBeenCalledWith(m);
   });
   it('ignores a wrong origin, a source other than the parent and unknown types', () => {
     const { parent, player, bridge } = setup();

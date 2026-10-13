@@ -37,6 +37,14 @@ export interface PromptInput {
    * format. When some brief formats are left out (carried over or followers), the prompt says Motion Studio handles them.
    */
   formats?: string[];
+  /**
+   * The version this turn builds on holds direct edits by the user (Phase 10b, decisions log 263): its number, the edit
+   * summary (its `request`, and those of the editor versions right before it in its line), and the formats copied to
+   * `work/editor/<format>/`.
+   */
+  directEdit?: { version: number; summary: string; copies: string[] };
+  /** Durations far from the brief that the base keeps by the user's choice (decisions log 262), per format. */
+  keptDurations?: Array<{ format: string; durationSec: number }>;
 }
 export interface StudioBlock {
   outputDir: string; workDir: string; durationSec: number | null;
@@ -117,6 +125,49 @@ function contextSections(c: CreativeContext, contract: AgentContract = 'composit
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 
 /**
+ * A JSON string literal (quotes, backslash and every control character escaped), with DEL, the C1 controls and U+2028/U+2029,
+ * which JSON.stringify leaves as they are, escaped too: the quoted value never ends the line or the quotes early
+ * (decisions log 260). The schema already refuses control characters; this holds for anything that reaches the prompt.
+ */
+export function quotePromptString(s: string): string {
+  return JSON.stringify(s).replace(/[\u007f-\u009f\u2028\u2029]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+
+/** One line of user-derived text: every control character and line separator becomes a space, at most `max` characters. */
+const oneLine = (s: string, max: number) => s.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').trim().slice(0, max);
+
+/** The section on the user's direct edits and kept durations (decisions log 262 and 263); empty when there is none. */
+export function directEditSection(i: Pick<PromptInput, 'slug' | 'directEdit' | 'keptDurations' | 'creative'>): string[] {
+  const base = `creatives/${i.slug}`;
+  const out: string[] = [];
+  const d = i.directEdit;
+  if (d) {
+    const n = d.version;
+    out.push('## Direct edits by the user',
+      `v${n} contains direct edits by the user: ${oneLine(d.summary, 2000)}. Build on v${n}; keep those edits unless the user asks to change them.`,
+      ...(d.copies.length > 0
+        ? [`- \`${base}/work/editor/<format-id>/\` is the current source of ${d.copies.length === 1 ? 'that format' : 'those formats'} (${d.copies.join(', ')}): an exact copy of \`${base}/outputs/v${n}/compositions/<format-id>/\` with the user's edits. Build on it; any other copy of ${d.copies.length === 1 ? 'its composition' : 'their compositions'} elsewhere in \`${base}/work/\` is superseded.`]
+        : [`- Start from its compositions: \`${base}/outputs/v${n}/compositions/<format-id>/\` (read-only).`]),
+      `- Your generators and scripts in \`${base}/work/\` predate these edits: if you run one again, reapply the edits to what it produces; otherwise edit the composition directly.`,
+      `- Keep the values the user set (texts, colours, fonts, positions, timing, durations) and keep the files under \`assets/lib/\` of those compositions: copy them with the composition.`);
+  }
+  if (i.keptDurations?.length) {
+    const list = i.keptDurations.map((k) => `${k.format}: ${Math.round(k.durationSec * 10) / 10}s`).join(', ');
+    const brief = i.creative.brief.durationSec;
+    out.push(...(d ? [] : ['## Durations']),
+      `- Keep the current duration (${list}) unless the user explicitly asks for another one${brief ? `, even though the brief says about ${brief}s` : ''}: the user chose it.`);
+  }
+  return out;
+}
+
+/** `- <format> @ <t>s, point (x%, y%)[, clip "<clipId>" "<name>"][, range <a>–<b>s]: <note>` (Phase 10b adds the last two). */
+function pinLine(p: Pin): string {
+  const clip = p.clipId ? `, clip ${quotePromptString(p.clipId)}${p.clipName ? ` ${quotePromptString(p.clipName)}` : ''}` : '';
+  const range = p.range ? `, range ${p.range.start.toFixed(1)}\u2013${p.range.end.toFixed(1)}s` : '';
+  return `- ${p.format}${p.timeSec !== null ? ` @ ${p.timeSec.toFixed(1)}s` : ''}, point (${pct(p.x)}, ${pct(p.y)})${clip}${range}${p.note ? `: ${p.note}` : ''}`;
+}
+
+/**
  * The composition format in short (the full JSON Schema is `.studio/composition.schema.json`, about 27 KB, so it is not
  * inlined). The examples are minimal and valid; `.studio/context.md` has more.
  */
@@ -133,17 +184,18 @@ export const COMPOSITION_SECTION = [
   '  - clip types: `text` (props text, fontFamily, fontSize, fontWeight, color, align), `shape` (fill, radius), `image`/`svg` (src, props fit, kenBurns {from, to}), `video` (src, trimStart, volume), `html` (src `layers/x.html`, params), `audio` (src, volume, fadeIn, fadeOut, role voice|music|sfx; on audio tracks only, no props);',
   '  - every visual clip has a box in props: x, y, width, height, rotation, scale, opacity (composition pixels);',
   '  - animations (times relative to the clip): `{ preset: fadeIn|fadeOut|slideUp|slideDown|slideLeft|slideRight|popIn|scaleIn|wipe, duration, start?, ease? }`, `{ prop, from, to, duration, start?, ease? }` or `{ prop, keyframes: [{ t: 0..1, v }], duration }`; props: opacity, x, y, scale, rotation, color, blur;',
-  '  - paths are relative, under `assets/` or `layers/`, without `..`, schemes or absolute paths.',
+  '  - paths are relative, under `assets/` or `layers/`, without `..`, schemes or absolute paths;',
+  '  - `assets/lib/` is reserved for the files Motion Studio\'s editor adds (library assets and brand fonts the user picked): keep them and their names as they are, never put your own files there.',
   '- html layers (`layers/*.html`) are for effects the clips cannot express: pure in time (CSS/WAAPI animations, or `window.msSeek = (t) => …` / `window.msTimeline`), signal loading with `window.msReady` (a promise), read `window.msParams`; no network, no Worker, no AudioContext, no media playing on its own.',
   '- Minimal example (a 1080×1920, 6 s video):',
   '```json',
   '{ "$schema": "motion-studio/composition@1", "width": 1080, "height": 1920, "fps": 30, "duration": 6, "background": "#101828",',
-  '  "fonts": [{ "family": "Inter", "src": "assets/Inter-700.woff2", "weight": 700 }],',
+  '  "fonts": [{ "family": "Inter", "src": "assets/Inter-400.woff2", "weight": 400 }, { "family": "Inter", "src": "assets/Inter-700.woff2", "weight": 700 }],',
   '  "scenes": [{ "id": "intro", "start": 0, "duration": 3 }, { "id": "cta", "start": 3, "duration": 3 }],',
   '  "tracks": [',
   '    { "id": "bg", "kind": "visual", "clips": [{ "id": "photo", "type": "image", "src": "assets/photo.jpg", "start": 0, "duration": 6, "props": { "x": 0, "y": 0, "width": 1080, "height": 1920, "fit": "cover", "kenBurns": { "from": { "scale": 1 }, "to": { "scale": 1.15 } } } }] },',
   '    { "id": "text", "kind": "text", "clips": [',
-  '      { "id": "title", "type": "text", "scene": "intro", "start": 0.3, "duration": 2.7, "props": { "text": "Book in 3 taps", "x": 90, "y": 760, "width": 900, "fontFamily": "Inter", "fontSize": 110, "color": "#ffffff", "align": "center" }, "animations": [{ "preset": "slideUp", "duration": 0.6 }, { "preset": "fadeIn", "duration": 0.4 }] },',
+  '      { "id": "title", "type": "text", "scene": "intro", "start": 0.3, "duration": 2.7, "props": { "text": "Book in 3 taps", "x": 90, "y": 760, "width": 900, "fontFamily": "Inter", "fontSize": 110, "fontWeight": 700, "color": "#ffffff", "align": "center" }, "animations": [{ "preset": "slideUp", "duration": 0.6 }, { "preset": "fadeIn", "duration": 0.4 }] },',
   '      { "id": "cta-text", "type": "text", "scene": "cta", "start": 3, "duration": 3, "props": { "text": "Download now", "x": 90, "y": 1500, "width": 900, "fontFamily": "Inter", "fontSize": 80, "color": "#fbbf24", "align": "center" }, "animations": [{ "preset": "popIn", "duration": 0.5 }] }] },',
   '    { "id": "music", "kind": "audio", "clips": [{ "id": "bed", "type": "audio", "src": "assets/music.mp3", "start": 0, "duration": 6, "volume": 0.4, "fadeOut": 1, "role": "music" }] }',
   '  ] }',
@@ -206,10 +258,12 @@ export function buildCreativePrompt(i: PromptInput): string {
     parts.push(`New request for the creative "${i.creative.title}": produce version ${i.version}.`, '', '## Request', i.userText ?? '');
     if (i.pins?.length) {
       parts.push('', '## Pinned comments');
-      for (const p of i.pins) parts.push(`- ${p.format}${p.timeSec !== null ? ` @ ${p.timeSec.toFixed(1)}s` : ''}, point (${pct(p.x)}, ${pct(p.y)})${p.note ? `: ${p.note}` : ''}`);
+      for (const p of i.pins) parts.push(pinLine(p));
     }
     if (i.attachments?.length) parts.push('', '## Attached frames (read them)', ...i.attachments.map((a) => `- ${a}`));
     if (i.conversion && contract === 'compositions') parts.push('', ...conversionSection(i.conversion));
+    const edits = contract === 'compositions' ? directEditSection(i) : [];
+    if (edits.length > 0) parts.push('', ...edits);
   } else if (contract === 'compositions') {
     parts.push(
       `The compositions of version ${i.version} do not meet the contract. Fix these problems in the same folders (${outputDir}/compositions/<format-id>/), then call validate_composition again:`,

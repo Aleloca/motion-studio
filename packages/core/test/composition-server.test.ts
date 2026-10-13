@@ -76,6 +76,7 @@ beforeAll(async () => {
   writeFileSync(join(dist, 'index.html'), `<!doctype html><html><head>${COMPOSITION_PLACEHOLDER}<script src="runtime.js"></script></head><body></body></html>`);
   writeFileSync(join(dist, 'runtime.js'), '/* runtime */');
   writeFileSync(join(dist, 'layer.js'), '/* layer */');
+  writeFileSync(join(dist, 'preview.js'), '/* preview */');
   writeFileSync(join(dist, 'clock.js'), '/* clock */');
   writeFileSync(join(dist, 'secret.js'), '/* not a runtime file */');
   const outside = join(work, 'outside');
@@ -222,9 +223,9 @@ describe('the runtime', () => {
     expect(all(await send(`/${render.token}/runtime/index.html`), 'content-security-policy')).toEqual([`${CSP}; frame-ancestors 'none'`]);
   });
 
-  it('serves the three scripts as JavaScript, nothing else from dist', async () => {
+  it('serves the four scripts as JavaScript, nothing else from dist', async () => {
     const s = await mint();
-    for (const f of ['runtime.js', 'layer.js', 'clock.js']) {
+    for (const f of ['runtime.js', 'layer.js', 'clock.js', 'preview.js']) {
       const r = await send(`/${s.token}/runtime/${f}`);
       expect(r.status, f).toBe(200);
       expect(r.headers['content-type']).toBe('text/javascript; charset=utf-8');
@@ -494,7 +495,7 @@ describe('normalised media (Task 5)', () => {
     ...COMPOSITION, tracks: [{ id: 't', kind: 'video', clips: [
       { id: 'a', type: 'video', src: 'assets/clip.mp4', start: 0, duration: 1, sourceFps: 24, props: {} },
       { id: 'b', type: 'video', src: 'assets/clip.mp4', start: 1, duration: 1, props: {} },
-      { id: 'c', type: 'video', src: 'assets/other.mp4', start: 2, duration: 1, sourceTrusted: true, sourceVideoEnd: 9, sourceStart: 0.5, props: {} },
+      { id: 'c', type: 'video', src: 'assets/other.mp4', start: 2, duration: 1, sourceTrusted: true, sourceVideoEnd: 9, sourceStart: 0.5, originalSrc: 'assets/x.mp4', props: {} },
       { id: 'd', type: 'image', src: 'assets/big.png', start: 0, duration: 1, props: {} },
     ] }],
   };
@@ -516,8 +517,8 @@ describe('normalised media (Task 5)', () => {
       const s = await mint({ composition: VIDEO_COMP, mode, ...(mode === 'render' ? { parentOrigin: undefined } : {}), media: media([['assets/clip.mp4', { file: join(mediaDir, NAME), ...fields }]]) });
       const page = await send(new URL(s.url).pathname);
       const clips = inlined(page.body.toString('utf8')).composition.tracks[0]!.clips as Array<Record<string, unknown>>;
-      expect(clips[0]).toMatchObject({ src: 'media/0.mp4', sourceFps: 30, sourceStart: 0, sourceVideoEnd: 2.5, sourceTrusted: true, audioSrc: 'assets/clip.mp4', audioStart: 0.25 });
-      expect(clips[1]).toMatchObject({ src: 'media/0.mp4', sourceTrusted: true });
+      expect(clips[0]).toMatchObject({ src: 'media/0.mp4', sourceFps: 30, sourceStart: 0, sourceVideoEnd: 2.5, sourceTrusted: true, audioSrc: 'assets/clip.mp4', audioStart: 0.25, originalSrc: 'assets/clip.mp4' });
+      expect(clips[1]).toMatchObject({ src: 'media/0.mp4', sourceTrusted: true, originalSrc: 'assets/clip.mp4' });
       // Not mapped (its normalisation failed): its own file, and no core-only field survives (the lenient rule).
       expect(clips[2]).toEqual({ id: 'c', type: 'video', src: 'assets/other.mp4', start: 2, duration: 1, props: {} });
       expect(clips[3]).toEqual(VIDEO_COMP.tracks[0]!.clips[3]);

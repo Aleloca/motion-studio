@@ -141,6 +141,12 @@ export function setRendersRunning(n: number): void {
   if (typeof d?.setRendersRunning === 'function') quietly(() => d.setRendersRunning!(Math.max(0, Math.min(1000, Math.trunc(n)))));
 }
 
+/** Desktop: the editor drafts with edits not saved yet, so closing the window asks first (Phase 10b); nothing on the web. */
+export function setDraftsUnsaved(n: number): void {
+  const d = desktop();
+  if (typeof d?.setDraftsUnsaved === 'function') quietly(() => d.setDraftsUnsaved!(Math.max(0, Math.min(1000, Math.trunc(n)))));
+}
+
 /** Whether to offer "Turn on notifications" (web only: the desktop app notifies from the main process). */
 export function canAskNotifications(): boolean {
   return !desktop() && typeof Notification !== 'undefined' && Notification.permission === 'default';

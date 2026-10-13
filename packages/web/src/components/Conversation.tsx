@@ -4,6 +4,7 @@ import { api, ApiError } from '../api.ts';
 import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
 import { enter, isSubmitChord } from '../motion/index.ts';
 import { isMac } from '../platform.ts';
+import { clipRangeChip } from '../screens/pinModel.ts';
 import { Button, Chip, Empty, Icon, Markdown, Textarea, Typing, cx, type IconName } from '../ui/index.ts';
 import { defaultTargets } from '../screens/versionModel.ts';
 import { errorCode, versionErrorText } from '../screens/versionErrors.ts';
@@ -53,11 +54,15 @@ export interface ConversationProps {
   canGenerate?: boolean;
   /** After a successful send, with the pins that went with it (pins added meanwhile stay pending). */
   onSent?(sent: { pins: Pin[] }): void;
+  /** Asked before a message goes out; false (or a rejection) keeps the text in the box (the editor's unsaved-draft prompt). */
+  beforeSend?(): boolean | Promise<boolean>;
   onSelectVersion?(n: number): void;
   /** Extra content of a version card, e.g. its token usage (nothing when it returns null). */
   versionExtra?(n: number): ReactNode;
   /** A note under a version card, e.g. its large-file warnings (nothing when it returns null). */
   versionNote?(n: number): ReactNode;
+  /** The edit summary of a version saved from the editor (its request), shown on its card; null for an agent's version. */
+  versionSummary?(n: number): string | null;
   /** Socket snapshots received (EventsState.snapshots): a new one is the core's whole state, so stop waiting. */
   snapshots?: number;
   /** The composer's "Applies to" (spec §2.5): absent when there is nothing to choose (one primary, no version yet). */
@@ -155,7 +160,7 @@ function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], r
  * only in "Activity details", the job's approvals in the flow, typing dots while the agent works (T9), and the
  * composer with the pending comment chips and ⌘↵.
  */
-export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, onSelectVersion, versionExtra, versionNote, snapshots, appliesTo }: ConversationProps) {
+export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, onSelectVersion, versionExtra, versionNote, versionSummary, snapshots, appliesTo }: ConversationProps) {
   const t = useT();
   const c = t.web.chat;
   const working = active(job);
@@ -279,11 +284,11 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
         {empty && <li className="ms-convo-empty"><Empty icon="comment" title={c.emptyTitle} sub={c.emptySub} /></li>}
         {items.map((item) => (
           <Row key={item.key} animate={mounted.current && item.kind !== 'approval'}>
-            <ItemView item={item} formatName={formatName} onToggleFold={toggleFold} onToggleDetails={toggleDetails} onOpenDetails={openDetails} onSelectVersion={onSelectVersion} versionExtra={versionExtra} versionNote={versionNote} onGone={gone} />
+            <ItemView item={item} formatName={formatName} onToggleFold={toggleFold} onToggleDetails={toggleDetails} onOpenDetails={openDetails} onSelectVersion={onSelectVersion} versionExtra={versionExtra} versionNote={versionNote} versionSummary={versionSummary} onGone={gone} />
           </Row>
         ))}
       </ol>
-      <Composer slug={slug} creative={creative} job={working ? job : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} onEditPin={onEditPin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} appliesTo={appliesTo} />
+      <Composer slug={slug} creative={creative} job={working ? job : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} onEditPin={onEditPin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} beforeSend={beforeSend} appliesTo={appliesTo} />
     </div>
   );
 }
@@ -311,7 +316,11 @@ const AgentMark = () => (
 );
 
 function pinText(p: Pin, n: number, formatName: ((id: string) => string) | undefined, t: ReturnType<typeof useT>, locale: ReturnType<typeof useLocale>) {
-  const base = t.web.chat.pin({ n, format: formatName?.(p.format) ?? p.format });
+  const format = formatName?.(p.format) ?? p.format;
+  // A comment on a clip or a time range reads `Reel · "Title" clip` / `Reel · 2.0–3.5 s` (Phase 10b); older ones as always.
+  const special = clipRangeChip(p, format, t, locale);
+  if (special) return special;
+  const base = t.web.chat.pin({ n, format });
   if (p.timeSec === null) return base;
   return `${base} ${t.web.conversation.atSeconds({ time: formatNumber(locale, p.timeSec, { minimumFractionDigits: 1, maximumFractionDigits: 1 }) })}`;
 }
@@ -326,9 +335,9 @@ function PinLabel({ pin, text }: { pin: Pin; text: string }) {
   );
 }
 
-function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetails, onSelectVersion, versionExtra, versionNote, onGone }: {
+function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetails, onSelectVersion, versionExtra, versionNote, versionSummary, onGone }: {
   item: Item; formatName?(id: string): string; onToggleFold(jobId: string): void; onToggleDetails(jobId: string): void; onOpenDetails(jobId: string): void;
-  onSelectVersion?(n: number): void; versionExtra?(n: number): ReactNode; versionNote?(n: number): ReactNode; onGone(id: string): void;
+  onSelectVersion?(n: number): void; versionExtra?(n: number): ReactNode; versionNote?(n: number): ReactNode; versionSummary?(n: number): string | null; onGone(id: string): void;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -386,16 +395,19 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
       return <Details jobId={item.jobId} entries={item.entries} open={item.open} onToggle={() => onToggleDetails(item.jobId)} />;
     case 'autoline':
       return <AutoLine jobId={item.jobId} log={item.log} onOpen={onOpenDetails} />;
-    case 'version':
+    case 'version': {
+      const summary = versionSummary?.(item.n) ?? null;
       return (
         <div className="ms-convo-version">
           <span className={cx('ms-pill', item.complete ? 'ms-ok' : 'ms-warn')}>v{item.n} · {item.complete ? t.web.status.ready : t.web.status.incomplete}</span>
+          {summary ? <span className="ms-convo-version-summary">{summary}</span> : null}
           <span className="ms-grow" />
           {versionExtra?.(item.n) ?? null}
           <Button size="sm" variant="outline" onClick={() => onSelectVersion?.(item.n)}>{t.web.conversation.viewVersion({ n: item.n })}</Button>
           {versionNote?.(item.n) ?? null}
         </div>
       );
+    }
     case 'system':
       if (item.level === 'error') return <p role="alert" className="ms-convo-system ms-error">{item.text}</p>;
       // Something to know that did not fail the turn (an unlinked follower, earlier outputs that changed): set apart.
@@ -512,8 +524,8 @@ const SEND_CODES = new Set(['formats-not-in-brief', 'job-running']);
 /** Longest wait for the job a send started before the composer unlocks anyway. */
 export const AWAIT_JOB_MS = 10_000;
 
-function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemovePin, onEditPin, formatName, canGenerate, onSent, appliesTo }: {
-  slug: string; creative: string; job: JobSummary | undefined; latestJobId: string | undefined; snapshots: number | undefined; pins: Pin[]; onRemovePin?(i: number): void; onEditPin?(i: number): void; formatName?(id: string): string; canGenerate?: boolean; onSent?(sent: { pins: Pin[] }): void;
+function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, appliesTo }: {
+  slug: string; creative: string; job: JobSummary | undefined; latestJobId: string | undefined; snapshots: number | undefined; pins: Pin[]; onRemovePin?(i: number): void; onEditPin?(i: number): void; formatName?(id: string): string; canGenerate?: boolean; onSent?(sent: { pins: Pin[] }): void; beforeSend?(): boolean | Promise<boolean>;
   appliesTo?: AppliesTo;
 }) {
   const t = useT();
@@ -575,6 +587,7 @@ function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemoveP
     inFlight.current = true;
     setError(null); setSending(true);
     try {
+      if (beforeSend && !(await beforeSend())) { inFlight.current = false; return; }
       const started = await api.sendCreativeTurn(slug, creative, body);
       if (started && typeof started.id === 'string' && started.id !== latestJobId) setAwaiting(started.id);
       else inFlight.current = false;

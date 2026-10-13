@@ -7,6 +7,8 @@
 // FAKE_CLAUDE_NO_SCENES=1: compositions without scenes (normalisation adds one). FAKE_CLAUDE_SYMLINKS=<json [[name, target], …]>:
 // composition turns then plant those symlinks under the version folder.
 // FAKE_CLAUDE_STRAY=1: composition turns also write a media file and a manifest.json next to the compositions.
+// FAKE_CLAUDE_FONT=<file>: composition turns declare that font (family Mono, weight 700) and copy it into assets/.
+// FAKE_CLAUDE_TEXT=1 / FAKE_CLAUDE_IMAGE=1: composition turns add a text clip `title` / an svg clip `logo` (assets/logo.svg).
 // FAKE_CLAUDE_BRIDGE_CALLS=<json [[tool, args], …]>: before finishing, calls the studio bridge (as the MCP server would) and
 // appends `{ tool, status, body }` per call to FAKE_CLAUDE_BRIDGE_LOG.
 // FAKE_CLAUDE_NO_FFMPEG=1: render placeholder media even with ffmpeg installed, each file with its own content.
@@ -24,7 +26,7 @@
 // FAKE_CLAUDE_USAGE_FILE=<path> the fake counts its runs there and reports run count × the per-run values.
 // usage_stream: two assistant events sharing one message id (with usage), like the real stream-json.
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, linkSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -100,7 +102,7 @@ rl.once('line', async (line) => {
       const dir = f.compositionDir ?? join(block.outputDir, 'compositions', f.id);
       mkdirSync(dir, { recursive: true });
       const still = f.kind === 'image';
-      let duration = still ? 0 : (block.durationSec ?? 10);
+      let duration = still ? 0 : (process.env.FAKE_CLAUDE_DURATION ? Number(process.env.FAKE_CLAUDE_DURATION) : (block.durationSec ?? 10));
       if (f.maxDurationSec) duration = Math.min(duration, f.maxDurationSec);
       const half = Math.round(duration * 5) / 10;
       const clips = [{ id: 'bg', name: `${tag}`, type: 'shape', start: 0, duration, props: { x: 0, y: 0, width: f.width, height: f.height, fill: '#2060c0' } }];
@@ -109,8 +111,18 @@ rl.once('line', async (line) => {
         writeFileSync(join(dir, 'layers', 'fx.html'), '<!doctype html><html><body><script>\nfetch("https://example.com/data.json");\n</script></body></html>');
         clips.push({ id: 'fx', type: 'html', src: 'layers/fx.html', start: 0, duration, props: { x: 0, y: 0, width: f.width, height: f.height } });
       }
+      // FAKE_CLAUDE_TEXT=1: a text clip `title` ("Hello"); FAKE_CLAUDE_IMAGE=1: an svg clip `logo` (assets/logo.svg).
+      if (process.env.FAKE_CLAUDE_TEXT) clips.push({ id: 'title', name: 'Title', type: 'text', start: 0, duration, props: { x: 10, y: 10, width: 200, height: 40, text: 'Hello', fontSize: 20, color: '#ffffff' } });
+      if (process.env.FAKE_CLAUDE_IMAGE) {
+        mkdirSync(join(dir, 'assets'), { recursive: true });
+        writeFileSync(join(dir, 'assets', 'logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"/>');
+        clips.push({ id: 'logo', type: 'svg', src: 'assets/logo.svg', start: 0, duration, props: { x: 0, y: 0, width: 40, height: 20 } });
+      }
+      // FAKE_CLAUDE_FONT=<file>: the composition declares that font (copied to assets/Mono.woff2, weight 700).
+      const fonts = process.env.FAKE_CLAUDE_FONT ? [{ family: 'Mono', src: 'assets/Mono.woff2', weight: 700 }] : [];
+      if (fonts.length) { mkdirSync(join(dir, 'assets'), { recursive: true }); copyFileSync(process.env.FAKE_CLAUDE_FONT, join(dir, 'assets', 'Mono.woff2')); }
       const composition = {
-        $schema: 'motion-studio/composition@1', width: f.width, height: f.height, fps: mode === 'invalid' ? 7 : 30, duration, background: '#101010', fonts: [],
+        $schema: 'motion-studio/composition@1', width: f.width, height: f.height, fps: mode === 'invalid' ? 7 : 30, duration, background: '#101010', fonts,
         scenes: still || process.env.FAKE_CLAUDE_NO_SCENES ? [] : [{ id: 'one', start: 0, duration: half }, { id: 'two', start: half, duration: Math.round((duration - half) * 10) / 10 }],
         tracks: [{ id: 'visual', kind: 'visual', clips }],
       };

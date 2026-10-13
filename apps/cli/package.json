@@ -32,7 +32,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsup && node -e \"require('node:fs').cpSync('../../packages/web/dist','dist/web',{recursive:true})\" && node -e \"require('node:fs').copyFileSync('../../packages/mcp-studio/src/server.mjs','dist/mcp-studio.mjs')\" && node -e \"const fs=require('node:fs');fs.cpSync('../../packages/composition-runtime/dist','dist/runtime',{recursive:true});for(const f of ['index.html','runtime.js','layer.js','clock.js'])if(!fs.existsSync('dist/runtime/'+f))throw new Error('composition runtime not built: '+f)\"",
+    "build": "tsup && node -e \"require('node:fs').cpSync('../../packages/web/dist','dist/web',{recursive:true})\" && node -e \"require('node:fs').copyFileSync('../../packages/mcp-studio/src/server.mjs','dist/mcp-studio.mjs')\" && node -e \"const fs=require('node:fs');fs.cpSync('../../packages/composition-runtime/dist','dist/runtime',{recursive:true});for(const f of ['index.html','runtime.js','layer.js','clock.js','preview.js'])if(!fs.existsSync('dist/runtime/'+f))throw new Error('composition runtime not built: '+f)\"",
     "typecheck": "tsc -p tsconfig.json",
     "prepack": "pnpm run build && node scripts/prepack.ts"
   },

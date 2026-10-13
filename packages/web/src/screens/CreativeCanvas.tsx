@@ -35,6 +35,7 @@ import './canvas.css';
 import { message } from './common.tsx';
 import { isVideoFile } from '../media.ts';
 import { usePinFrames } from './pinFrames.ts';
+import { rangeSeconds } from './pinModel.ts';
 
 const ZOOM_MIN = 0.5;
 /** T4 only while the player's rect is fresh (boards that arrive later cascade in). */
@@ -564,6 +565,7 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
             onSelectVersion={viewAll} snapshots={live.snapshots}
             appliesTo={appliesTo}
             versionExtra={(n) => <UsageBadge usage={versions.find((v) => v.n === n)?.usage} billing={live.today?.billing ?? null} />}
+            versionSummary={(n) => { const v = versions.find((x) => x.n === n); return v?.origin === 'editor' && v.request ? v.request : null; }}
             versionNote={(n) => <OutputWarnings outputs={versions.find((v) => v.n === n)?.outputs ?? []} formatLabel={formatLabel} />} />
         ) : null}
         {tab === 'comments' ? <CommentsTab slug={slug} creative={creative} sent={sent} working={working} formatLabel={formatLabel} onStart={() => { setTool('comment'); }} /> : null}
@@ -667,29 +669,29 @@ function StatePill({ status, needs, working }: { status: CreativeStatus; needs: 
  * `frame`: the feedback frame the core cut for it (`<n>-<i>.jpg`, the i-th pin of its message, carry 9), known only for the
  * pins of the message the version answered (an earlier message whose turn made no version shares its number).
  */
-interface SentComment { pin: Pin; at: string; frame?: string }
+interface SentComment { pin: Pin; at: string; frame?: string; /** A range comment's end frame (`<n>-<i>e.jpg`). */ frameEnd?: string }
 interface SentComments { applied: Array<{ n: number; items: SentComment[] }>; open: SentComment[]; count: number }
 
 /** Comments the user sent, grouped by the version that applied them (the next version after the message). */
 export function sentComments(entries: ConversationEntry[]): SentComments {
   const applied: SentComments['applied'] = [];
-  let open: Array<SentComment & { message: number }> = [];
+  let open: Array<SentComment & { message: number; end?: boolean }> = [];
   let count = 0;
   let message = 0;
   for (const e of entries) {
     if (e.type === 'user' && e.pins.length) {
       message += 1;
       const m = message;
-      open = [...open, ...e.pins.map((pin, i) => ({ pin, at: e.at, message: m, frame: pin.timeSec !== null ? `${i + 1}` : undefined }))];
+      open = [...open, ...e.pins.map((pin, i) => ({ pin, at: e.at, message: m, frame: pin.timeSec !== null || pin.range ? `${i + 1}` : undefined, end: Boolean(pin.range) }))];
       count += e.pins.length;
     }
     if (e.type === 'version' && open.length) {
       const n = e.n;
-      applied.push({ n, items: open.map(({ message: m, frame, ...k }) => ({ ...k, ...(m === message && frame ? { frame: `${n}-${frame}.jpg` } : {}) })) });
+      applied.push({ n, items: open.map(({ message: m, frame, end, ...k }) => ({ ...k, ...(m === message && frame ? { frame: `${n}-${frame}.jpg`, ...(end ? { frameEnd: `${n}-${frame}e.jpg` } : {}) } : {}) })) });
       open = [];
     }
   }
-  return { applied: applied.reverse(), open: open.map(({ message: _m, frame: _f, ...k }) => k), count };
+  return { applied: applied.reverse(), open: open.map(({ message: _m, frame: _f, end: _e, ...k }) => k), count };
 }
 
 function CommentsTab({ slug, creative, sent, working, formatLabel, onStart }: { slug: string; creative: string; sent: SentComments; working: boolean; formatLabel(id: string): string; onStart(): void }) {
@@ -707,7 +709,8 @@ function CommentsTab({ slug, creative, sent, working, formatLabel, onStart }: { 
   const card = (k: SentComment, i: number, state: ReactNode, n?: number) => (
     <div key={i} className="ms-card ms-cv-comment">
       {n !== undefined && k.frame && frames[n]?.[k.frame] ? <img className="ms-cv-comment-frame" src={frames[n]![k.frame]} alt={t.web.render.pinFrame({ n: i + 1 })} draggable={false} /> : null}
-      <span className="ms-cv-comment-head">{state}<span className="ms-cv-comment-where">{formatLabel(k.pin.format)}{k.pin.timeSec ? ` · ${t.web.conversation.atSeconds({ time: formatNumber(locale, k.pin.timeSec, { maximumFractionDigits: 1 }) })}` : ''}</span>
+      {n !== undefined && k.frameEnd && frames[n]?.[k.frameEnd] ? <img className="ms-cv-comment-frame" src={frames[n]![k.frameEnd]} alt={t.web.render.pinFrame({ n: i + 1 })} draggable={false} /> : null}
+      <span className="ms-cv-comment-head">{state}<span className="ms-cv-comment-where">{formatLabel(k.pin.format)}{k.pin.clipId ? ` · ${k.pin.clipName ?? k.pin.clipId}` : ''}{k.pin.range ? ` · ${rangeSeconds(t, locale, k.pin.range)}` : k.pin.timeSec ? ` · ${t.web.conversation.atSeconds({ time: formatNumber(locale, k.pin.timeSec, { maximumFractionDigits: 1 }) })}` : ''}</span>
         <span className="ms-cv-comment-at">{formatDate(locale, k.at, TIME_OF_DAY)}</span></span>
       <span className={cx('ms-cv-comment-text', !k.pin.note && 'ms-faint')}>{k.pin.note || c.noText}</span>
     </div>

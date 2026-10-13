@@ -95,6 +95,51 @@ Details: `docs/superpowers/notes/2026-10-12-phase10a-live-checks.md`.
 
 A ★ whose v2 version has no current render (or whose render file is gone) is rendered first: `POST …/export` enqueues the render job of that version (or joins the active one), waits for it, then copies; the response lists what was rendered (`rendered`). `POST …/export/prepare` starts those renders at once and returns their jobs, so the UI can show their progress before the copy. A render that fails is `409 export-render-failed` and nothing is copied. Legacy versions export their media as before. In the per-format summary `starRender` is `rendered`, `notRendered` or `stale`; `starFileMissing` is only for legacy files (or a follower with no qualifying version).
 
+### Direct edits (the editor, phase 10b)
+
+The editor changes a composition without the agent. Saving (`POST …/creatives/:c/edits`) makes a **normal v2 version**:
+- `manifest.json` v2;
+- in `versions.json`, `origin: "editor"` (absent means `"agent"`), `request` = the summary of the edits ("Direct edits: Title text, font Schibsted Grotesk and 2 more"), `basedOn` = the version edited, no `usage`;
+- a `version` chat entry and a git commit.
+
+Followers, carried primaries and carried renders follow the targeted-turn rules above. The composition goes through the same `validateComposition` (with the format) and `loadComposition` as an agent's (size, kind and the format's maximum duration stay hard rules), but NOT the check of the duration against the brief's: a direct edit's duration is the user's choice. The save records that choice on the format's entry (`userDuration: { durationSec, briefDurationSec }`, only when far from the brief). An agent turn that keeps that duration is not asked to bring it back to the brief, and its version carries the record on; this holds only while the brief still says `briefDurationSec`. An agent's own duration is never accepted this way, and a brief changed since the choice ends it. On top of those, the core refuses an editor save when:
+- a `src` (of a clip or a font) is neither a file of the base version under `assets/` nor a file staged for this draft in the same preview session;
+- an `html` clip's `src` changes, or an `html` clip is added;
+- the `layers/` files are not byte-identical to the base's;
+- a turn or a render of the creative is queued or running (`409 editor-busy`);
+- the edited format's latest composition is no longer the draft's base (`409 editor-base-changed`; the draft is kept).
+
+**`assets/lib/` is reserved for files the editor adds:** library assets and brand font files picked in the editor.
+- They are named `assets/lib/<first 8 hex of the sha256>-<name>`.
+- While the draft is open they live in the preview session's staging folder, `.studio/cache/editor-staging/<creative>/<id>/assets/lib/`. The composition server serves a session's `assets/lib/…` path from there only when the composition folder has no such file (the version always wins).
+- At save, only the staged files the composition uses are copied into the new version, verified.
+- An agent that edits such a composition keeps these files and their names. It should put its own files elsewhere under `assets/`: the prompt and `.studio/context.md` say so, but no check enforces it. A staged name that a version holds with other content is refused at save (`409 editor-staged-collision`).
+
+**The next agent turn after a direct edit.** It builds on the editor version, never on what the agent remembers:
+- At save, the core copies each own composition of the new version, byte for byte and verified, to `creatives/<slug>/work/editor/<format>/`, and the copy is in the version's commit (a restart from that version finds it). Before every agent turn the core aligns `work/editor/` with the base: an editor base gets its copies (an identical copy is kept), any other base leaves no `work/editor/`.
+- The iteration prompt has a section "Direct edits by the user": `vN contains direct edits by the user: <summary>. Build on vN; keep those edits unless the user asks to change them.` (the summaries of consecutive editor versions in the base's line, oldest first, on one line), that `work/editor/<format-id>/` is the current source of those formats (an exact copy of `outputs/vN/compositions/<format-id>/`; any other copy elsewhere in `work/` is superseded), that generators and scripts in `work/` predate the edits (rerun one only reapplying them, or edit the composition directly), and to keep the user's values and the `assets/lib/` files.
+- A duration far from the brief that the base keeps by the user's choice adds "Keep the current duration (…) unless the user explicitly asks for another one".
+- The session is resumed as before (the agent's last session): the prompt section tells it explicitly what changed.
+
+**User flags on clips and tracks.** They are optional, and the agent leaves them as they are (the schema's descriptions say so):
+- `hidden` on a clip: it is not drawn, and an audio clip is not heard;
+- `hidden` on a track: its clips are neither drawn nor heard;
+- `muted` on a track: its audio is silent;
+- `locked`: the editor refuses edits of that clip or track; scene operations still carry a locked clip with its scene.
+
+**Comments (pins).** A pin may also carry:
+- `clipId` (up to 64 characters) and `clipName` (up to 200; the name when the comment was made), neither with control characters, newlines or the Unicode line/paragraph separators;
+- `range: { start, end }`, in seconds, `0 ≤ start < end`.
+
+Older pins without them are read as before. The prompt line is `- <format> @ <t>s, point (x%, y%)[, clip "<id>" "<name>"][, range <a>–<b>s]: <note>`; id and name are JSON string literals (quotes, backslashes and any control character escaped). A range comment has two frames in the pin-frame cache: `<n>-<i>.jpg` at its start and `<n>-<i>e.jpg` at its end.
+
+*Verified live (phase 10b, 2026-10-13):*
+- editor saves made versions with `origin: editor` and no agent run;
+- a staged upload and a brand font ended up under `assets/lib/`;
+- Haiku received the clip and range lines above and edited that clip.
+
+Details: `docs/superpowers/notes/2026-10-13-phase10b-live-checks.md`.
+
 ---
 
 ## Version 1: rendered media (legacy)

@@ -236,3 +236,20 @@ describe('composition problem texts', () => {
     }
   });
 });
+
+describe('font weights', () => {
+  const titleOf = (c: Composition) => c.tracks.flatMap((t) => t.clips).find((k) => k.id === 'title') as unknown as AnyClip;
+  const declaring = (w: number | 'bold') => mutate((c) => { c.fonts = [{ family: 'SpikeFont', src: 'assets/spikefont.ttf', weight: 400 }]; titleOf(c).props!.fontWeight = w; });
+  it('warns (does not fail) about a weight the family declares it does not have', () => {
+    const r = validateComposition(declaring(700), ctx());
+    expect(keysOf(r)).not.toContain('composition.fontWeightUndeclared');
+    expect(r.problems).toEqual([]);
+    expect(r.warnings.map((w) => w.key)).toContain('composition.fontWeightUndeclared');
+    expect(compositionProblemText(r.warnings.find((w) => w.key === 'composition.fontWeightUndeclared')!, 'it')).toMatch(/peso 700/);
+  });
+  it('is silent for a declared weight and for families that declare none', () => {
+    expect(validateComposition(declaring(400), ctx()).warnings.map((w) => w.key)).not.toContain('composition.fontWeightUndeclared');
+    const free = mutate((c) => { titleOf(c).props!.fontWeight = 700; });
+    expect(validateComposition(free, ctx()).warnings.map((w) => w.key)).not.toContain('composition.fontWeightUndeclared');
+  });
+});

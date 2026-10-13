@@ -2,7 +2,7 @@ import type { ApprovalRequest, JobSummary } from '@motion-studio/shared';
 import { useEffect, useRef } from 'react';
 import { useT } from '../i18n.tsx';
 import { toast } from '../ui/index.ts';
-import { APP_TITLE, appInBackground, notifyApprovalsEnabled, notifyReadyEnabled, onNotificationClick, setBadge, setRendersRunning, showNotification } from './notify.ts';
+import { APP_TITLE, appInBackground, notifyApprovalsEnabled, notifyReadyEnabled, onNotificationClick, setBadge, setDraftsUnsaved, setRendersRunning, showNotification } from './notify.ts';
 
 export interface AttentionOptions {
   /** "Review" on a toast. */
@@ -104,4 +104,20 @@ export function useRenderCloseGuard(jobs: Record<string, JobSummary>): void {
   const count = Object.values(jobs).filter((j) => j.kind === 'render' && (j.state === 'queued' || j.state === 'running')).length;
   useEffect(() => { setRendersRunning(count); }, [count]);
   useEffect(() => () => setRendersRunning(0), []);
+}
+
+/**
+ * Unsaved editor drafts (Phase 10b): the desktop app learns the count (its close confirmation is the render guard's, with
+ * a draft question), and `beforeunload` holds back a reload or a tab close: a browser asks itself, the desktop app answers
+ * through its `will-prevent-unload` handler with the same "Discard / Keep editing" dialog (final review I3). 0 when the page goes.
+ */
+export function useDraftCloseGuard(count: number): void {
+  useEffect(() => { setDraftsUnsaved(count); }, [count]);
+  useEffect(() => () => setDraftsUnsaved(0), []);
+  useEffect(() => {
+    if (count === 0) return;
+    const on = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    addEventListener('beforeunload', on);
+    return () => removeEventListener('beforeunload', on);
+  }, [count]);
 }

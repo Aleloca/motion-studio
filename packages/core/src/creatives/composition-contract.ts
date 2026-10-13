@@ -2,7 +2,7 @@ import { rename, rm, writeFile } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import {
-  COMPOSITION_LIMITS, compositionHash, compositionProblem, compositionProblemText, formatLabel, messages, normalizeComposition, staticLayerCheck,
+  COMPOSITION_LIMITS, compositionHash, compositionProblem, compositionProblemText, formatLabel, isDurationOffBrief, messages, normalizeComposition, staticLayerCheck,
   type Composition, type CompositionProblem, type FormatPreset, type Locale,
 } from '@motion-studio/shared';
 import { readConfinedFile, withConfinedFile } from '../brand/agent-guard.ts';
@@ -64,8 +64,12 @@ async function layerWarnings(compDir: string, folder: CompositionFolder): Promis
   return out.slice(0, 50);
 }
 
-/** Checks one format's composition folder (see the module comment). `briefDurationSec`: the brief's target, if any. */
-export async function checkComposition(compDir: string, format: string, preset: FormatPreset, briefDurationSec: number | null): Promise<CompositionCheck> {
+/**
+ * Checks one format's composition folder (see the module comment). `briefDurationSec`: the brief's target, if any (null:
+ * not checked, as for a direct edit, decisions log 262). `acceptedDuration`: a duration the version being built on already
+ * had for this format and recorded without a problem (a direct edit's): kept as it is, it is not off the brief again.
+ */
+export async function checkComposition(compDir: string, format: string, preset: FormatPreset, briefDurationSec: number | null, acceptedDuration?: number): Promise<CompositionCheck> {
   const dir = compositionDirOf(format);
   const loaded = await loadComposition(compDir, preset);
   let folder: CompositionFolder | null = loaded.ok ? loaded.folder : null;
@@ -75,7 +79,8 @@ export async function checkComposition(compDir: string, format: string, preset: 
   if (!loaded.ok) return { format, dir, ok: false, hash: loaded.hash, finalHash, problems: loaded.problems, warnings, composition: null, folder };
   const problems: CompositionProblem[] = [];
   const c = loaded.composition;
-  if (preset.kind === 'video' && briefDurationSec !== null && c.duration > 0 && Math.abs(c.duration - briefDurationSec) > Math.max(1, briefDurationSec * 0.1)) {
+  const kept = acceptedDuration !== undefined && Math.abs(c.duration - acceptedDuration) < 0.0005;
+  if (preset.kind === 'video' && briefDurationSec !== null && !kept && isDurationOffBrief(c.duration, briefDurationSec)) {
     problems.push(compositionProblem('composition.durationOffBrief', { duration: Math.round(c.duration * 10) / 10, target: briefDurationSec }));
   }
   return { format, dir, ok: problems.length === 0, hash: loaded.hash, finalHash, problems, warnings, composition: c, folder };
@@ -94,7 +99,11 @@ export interface TargetsCheck {
 }
 
 /** Checks the target formats' compositions in `versionDir` (`…/outputs/vN`). A missing folder is a problem of its format. */
-export async function checkTargets(o: { versionDir: string; targets: readonly string[]; presets: FormatPreset[]; briefDurationSec: number | null; locale: Locale }): Promise<TargetsCheck> {
+export async function checkTargets(o: {
+  versionDir: string; targets: readonly string[]; presets: FormatPreset[]; briefDurationSec: number | null; locale: Locale;
+  /** Per format: the accepted duration of the base (see `checkComposition`). */
+  acceptedDurations?: ReadonlyMap<string, number>;
+}): Promise<TargetsCheck> {
   const v = messages(o.locale).validation;
   const out: TargetsCheck = { checks: [], problems: [], byFormat: new Map(), warnings: [], unknownPresets: [] };
   const add = (format: string, text: string) => {
@@ -111,7 +120,7 @@ export async function checkTargets(o: { versionDir: string; targets: readonly st
     const chain = await isRealDirChain(creativeDir, ['outputs', basename(o.versionDir), 'compositions', id]);
     if (chain === 'missing') { add(id, v.compositionMissing({ label: formatLabel(preset, 'en'), id, dir })); continue; }
     if (chain === 'unsafe') { add(id, v.compositionProblem({ dir, text: compositionProblemText(compositionProblem('composition.folderUnreadable', { path: dir }), o.locale) })); continue; }
-    const check = await checkComposition(join(o.versionDir, 'compositions', id), id, preset, o.briefDurationSec);
+    const check = await checkComposition(join(o.versionDir, 'compositions', id), id, preset, o.briefDurationSec, o.acceptedDurations?.get(id));
     out.checks.push(check);
     const missing = check.hash !== null && check.folder !== null && check.folder.files.length === 0;
     if (check.problems.some((p) => p.key === 'composition.jsonMissing') && (check.hash === null || missing)) {

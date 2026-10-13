@@ -31,9 +31,12 @@ export interface Player {
   readonly playing: boolean;
   /** Fonts, media and layers loaded, then t = 0 shown. */
   ready(): Promise<ReadyInfo>;
+  /** Fonts, media and layers loaded, nothing shown yet (a re-mount seeks straight to its kept time). */
+  load(): Promise<void>;
   /** Deterministic seek; concurrent calls coalesce to the latest time. Pauses playback. */
   seek(t: number): Promise<void>;
-  play(o?: { loop?: boolean; rate?: number }): void;
+  /** `from`: start there instead of the time shown (a re-mount resumes where the old mount had got to). */
+  play(o?: { loop?: boolean; rate?: number; from?: number }): void;
   pause(): void;
   select(clipId: string | null): void;
   setScale(scale: number | 'fit'): void;
@@ -48,6 +51,12 @@ export interface Player {
   onTime?: (t: number, playing: boolean) => void;
   /** Called when the selected clip's bounds may have changed. */
   onBounds?: () => void;
+  /**
+   * Tears the mount down (preview `setComposition`): stops playback, cancels every animation, releases every media element
+   * and layer frame, deletes its font faces, removes its elements and listeners. Afterwards the player reports nothing,
+   * ignores every command and never calls back. Idempotent.
+   */
+  destroy(): void;
 }
 
 type VisualClip = Exclude<Clip, { type: 'audio' }>;
@@ -97,7 +106,10 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
   const timeouts = { ...DEFAULTS, ...opts.timeouts };
   const c = composition;
   const still = !(c.duration > 0);
-  const report = (code: RuntimeErrorCode, message: string, clipId?: string) => opts.report({ code, message, ...(clipId ? { clipId } : {}) });
+  let destroyed = false;
+  const report = (code: RuntimeErrorCode, message: string, clipId?: string) => {
+    if (!destroyed) opts.report({ code, message, ...(clipId ? { clipId } : {}) });
+  };
   registerProperties(w);
 
   /**
@@ -121,6 +133,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
   const declaredFamilies = new Set<string>();
   const layerFonts: LayerFont[] = [];
   const fontLoads: Array<Promise<void>> = [];
+  const faces: FontFace[] = [];
   for (const f of c.fonts ?? []) {
     const url = assetUrl(f.src);
     if (!url) continue;
@@ -130,6 +143,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     try {
       const face = new w.FontFace(f.family, `url("${url}")`, { ...(weight ? { weight } : {}), ...(f.style ? { style: f.style } : {}) });
       doc.fonts.add(face);
+      faces.push(face);
       fontLoads.push(face.load().then(() => {}, (e: unknown) => report('fontLoadFailed', `font ${f.family} (${f.src}) failed to load: ${String(e)}`)));
     } catch (e) {
       report('fontLoadFailed', `font ${f.family}: ${String(e)}`);
@@ -338,6 +352,8 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
 
   for (const track of c.tracks) {
     for (const clip of track.clips) {
+      // Hidden (the editor's eye, Phase 10b): neither drawn nor heard, in both modes (the core's mix skips them too).
+      if (clip.hidden || track.hidden) continue;
       if (clip.type === 'audio') {
         if (opts.mode !== 'preview' || still) continue; // render: the core mixes audio with ffmpeg
         const url = assetUrl(clip.src, clip.id);
@@ -349,7 +365,6 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
         audios.push({ clip, el, muted: !!track.muted });
         continue;
       }
-      if (track.hidden) continue;
       mountVisual(clip, track);
     }
   }
@@ -517,9 +532,11 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
   };
 
   const doSeek = async (t: number) => {
+    if (destroyed) return;
     time = clampT(t);
     opts.clock?.advanceTo(time * 1000);
     await fontsLoaded;
+    if (destroyed) return;
     applyStatic(time);
     const work: Array<Promise<void>> = [];
     for (const m of mounted) {
@@ -555,6 +572,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
   let seekLoop: Promise<void> | null = null;
   let pendingSeek: number | null = null;
   const seek = (t: number): Promise<void> => {
+    if (destroyed) return Promise.resolve();
     if (playing) stopPlayback();
     pendingSeek = t;
     if (!seekLoop) {
@@ -572,6 +590,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
           seekLoop = null;
         }
         // The real state: a `play` that arrived while the seek ran keeps playing (A5: the parent must not read it as an end).
+        if (destroyed) return;
         player.onTime?.(time, playing);
         player.onBounds?.();
       })();
@@ -617,7 +636,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     });
   };
   const frame = () => {
-    if (!playing) return;
+    if (!playing || destroyed) return;
     let t = tStart + ((n.performanceNow() - wallStart) / 1000) * rate;
     if (t >= c.duration) {
       if (loop) {
@@ -654,9 +673,46 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     stage.style.transform = `translate(${ox}px, ${oy}px) scale(${scale})`;
   };
   applyScale();
-  if (opts.mode === 'preview') w.addEventListener('resize', () => { applyScale(); player.onBounds?.(); });
+  const onResize = () => { applyScale(); player.onBounds?.(); };
+  if (opts.mode === 'preview') w.addEventListener('resize', onResize);
+
+  /** Stops a media element and lets go of its resource (`src` removed, then `load()` resets it to empty). */
+  const releaseMedia = (el: HTMLMediaElement) => {
+    try { el.pause(); } catch { /* not playing */ }
+    el.removeAttribute('src');
+    try { el.load(); } catch { /* jsdom */ }
+    el.remove();
+  };
+  const destroy = () => {
+    if (destroyed) return;
+    destroyed = true;
+    playing = false;
+    pendingSeek = null;
+    player.onTime = undefined;
+    player.onBounds = undefined;
+    if (opts.mode === 'preview') w.removeEventListener('resize', onResize);
+    for (const m of mounted) {
+      for (const { anim } of m.anims) { try { anim.cancel(); } catch { /* already gone */ } }
+      if (m.video) releaseMedia(m.video);
+      if (m.canvas) { m.canvas.width = 0; m.canvas.height = 0; }
+      m.layer?.dispose();
+      for (const f of m.content.querySelectorAll('iframe')) { f.removeAttribute('src'); f.remove(); }
+      for (const img of m.content.querySelectorAll('img')) img.removeAttribute('src');
+    }
+    for (const a of audios) releaseMedia(a.el);
+    for (const f of faces) { try { doc.fonts.delete(f); } catch { /* not in the set */ } }
+    mounted.length = 0;
+    audios.length = 0;
+    faces.length = 0;
+    ownMuted.clear();
+    stage.remove();
+    audioBin.remove();
+  };
 
   let readyPromise: Promise<ReadyInfo> | null = null;
+  let loadPromise: Promise<void> | null = null;
+  const load = () => (loadPromise ??= Promise.all([fontsLoaded, ...mounted.map((m) => m.prepare),
+    ...audios.map((a) => (a.derived ? loadDerivedAudio(a) : loadMedia(a.el, a.clip.id, a.clip.src)))]).then(() => {}));
   const player: Player = {
     duration: still ? 0 : c.duration,
     fps: c.fps,
@@ -668,17 +724,19 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     get selected() { return selected; },
     ready() {
       readyPromise ??= (async () => {
-        await Promise.all([fontsLoaded, ...mounted.map((m) => m.prepare), ...audios.map((a) => (a.derived ? loadDerivedAudio(a) : loadMedia(a.el, a.clip.id, a.clip.src)))]);
+        await load();
         await seek(0);
         return { duration: player.duration, fps: c.fps, width: c.width, height: c.height, frames: frameCount(c.duration, c.fps) };
       })();
       return readyPromise;
     },
+    load,
     seek,
     play(o = {}) {
-      if (opts.mode !== 'preview' || still) return;
+      if (destroyed || opts.mode !== 'preview' || still) return;
       loop = o.loop ?? true;
       rate = o.rate ?? 1;
+      if (o.from !== undefined && Number.isFinite(o.from)) time = clampT(o.from);
       if (playing) { tStart = time; wallStart = n.performanceNow(); return; }
       playing = true;
       tStart = time >= c.duration ? 0 : time;
@@ -686,14 +744,14 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
       n.requestAnimationFrame(frame);
     },
     pause() {
-      if (!playing) return;
+      if (destroyed || !playing) return;
       stopPlayback();
       seek(time).catch(() => {});
     },
-    select(clipId) { selected = clipId; player.onBounds?.(); },
-    setScale(s) { scaleMode = s; applyScale(); player.onBounds?.(); },
+    select(clipId) { if (destroyed) return; selected = clipId; player.onBounds?.(); },
+    setScale(s) { if (destroyed) return; scaleMode = s; applyScale(); player.onBounds?.(); },
     setMuted(m) {
-      if (opts.mode !== 'preview' || m === allMuted) return;
+      if (destroyed || opts.mode !== 'preview' || m === allMuted) return;
       allMuted = m;
       for (const x of mounted) {
         const v = x.video;
@@ -709,6 +767,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
       const r = m.content.getBoundingClientRect();
       return { x: r.x, y: r.y, width: r.width, height: r.height };
     },
+    destroy,
   };
   return player;
 }

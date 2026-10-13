@@ -1,7 +1,7 @@
 import { lstat, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
-  anyManifestSchema, canFollow, messages, normalizeComposition, renderState,
+  anyManifestSchema, canFollow, isDurationOffBrief, messages, normalizeComposition, renderState,
   type FormatPreset, type Locale, type ManifestV2, type OutputFileInfo, type VersionComposition, type VersionEntry,
 } from '@motion-studio/shared';
 import { readCompositionFolder, readCompositionJson, type CompositionFile } from '../compositions/composition-files.ts';
@@ -9,7 +9,8 @@ import { findPreset } from '../formats/format-catalog.ts';
 import { readJsonFile, writeJsonFileAtomic } from '../json-file.ts';
 import { checkTargets, compositionDirOf, writeNormalized, type TargetsCheck } from './composition-contract.ts';
 import { confinedSha, copyVerified, versionDirReady, type FollowFailure } from './carry-over.ts';
-import { realDirChain, writeThroughTemp } from './core-files.ts';
+import { isRealDirChain, realDirChain, writeThroughTemp } from './core-files.ts';
+import { noteCoreChange } from '../core-changes.ts';
 
 /**
  * A turn under output contract v2 (Task 5b): what phase 9's carry-over and links become with composition folders.
@@ -45,6 +46,36 @@ export async function carriableComposition(creativeDir: string, base: VersionEnt
   return { entry, files: folder.files, duration: await compositionDuration(compDir) };
 }
 
+/**
+ * The durations the user chose in the editor that `base` still carries for `targets` (decisions log 262, 270): only an own
+ * composition with a recorded `userDuration`, no problem, and a brief that still says the duration it was chosen against. An
+ * agent's own off-brief duration is never accepted, and a brief changed since the choice ends it. An agent turn that keeps
+ * an accepted duration is not told to bring it back to the brief; one that changes it to another off-brief duration is.
+ */
+export function acceptedDurationsOf(base: VersionEntry | undefined, targets: readonly string[], presets: FormatPreset[], briefDurationSec: number | null): Map<string, number> {
+  const out = new Map<string, number>();
+  if (!base || briefDurationSec === null) return out;
+  for (const f of targets) {
+    const entry = base.compositions?.find((c) => c.format === f && c.followsFormat === undefined);
+    const u = entry?.userDuration;
+    if (!entry || !u || (entry.problems ?? []).length > 0 || findPreset(presets, f)?.kind !== 'video') continue;
+    if (u.briefDurationSec !== briefDurationSec || !isDurationOffBrief(u.durationSec, briefDurationSec)) continue;
+    out.set(f, u.durationSec);
+  }
+  return out;
+}
+
+/**
+ * A direct save records the duration as the user's choice only when the user changed it (it differs from the base's) or the
+ * base already carries that very choice. A text-only save over an agent's off-brief version records nothing, so the next
+ * agent turn is still told to bring the duration back (Q8). With no base information the older rule applies.
+ */
+function directChoseDuration(base: { durationSec: number | null; userDuration?: { durationSec: number } } | undefined, d: number): boolean {
+  if (!base) return true;
+  if (base.userDuration && Math.abs(base.userDuration.durationSec - d) < 0.0005) return true;
+  return base.durationSec === null || Math.abs(base.durationSec - d) >= 0.0005;
+}
+
 /** The (normalised) duration of a composition folder, or null when `composition.json` cannot be read. */
 export async function compositionDuration(compDir: string): Promise<number | null> {
   const parsed = await readCompositionJson(compDir).catch(() => null);
@@ -73,6 +104,14 @@ export async function assembleCompositions(o: {
   projectDir: string; creativeSlug: string; creativeDir: string; n: number; base: VersionEntry | undefined; formats: readonly string[]; targets: readonly string[];
   carried: readonly string[]; carriedComps: ReadonlyMap<string, CarriedComposition>; links: Readonly<Record<string, string>>;
   presets: FormatPreset[]; briefDurationSec: number | null; locale: Locale; label: (id: string) => string;
+  /** Durations of the base kept without a problem (see `checkComposition`). */
+  acceptedDurations?: ReadonlyMap<string, number>;
+  /** A direct save (decisions log 270): the brief's duration, to record a target's duration far from it as the user's choice. */
+  direct?: {
+    briefDurationSec: number | null;
+    /** The edited format's duration in the base composition, and the user's duration the base already carries (Q8). */
+    base?: { durationSec: number | null; userDuration?: { durationSec: number } };
+  };
 }): Promise<AssembledCompositions> {
   const m = messages(o.locale);
   const j = m.jobs;
@@ -115,13 +154,21 @@ export async function assembleCompositions(o: {
         if (dir) await writeThroughTemp(dir, `${t}.json`, async (temp) => { await writeFile(temp, bytes, { flag: 'wx' }); return true; });
       }).catch(() => {});
     }
-    check = await checkTargets({ versionDir: vdir, targets: o.targets, presets: o.presets, briefDurationSec: o.briefDurationSec, locale: o.locale });
+    check = await checkTargets({ versionDir: vdir, targets: o.targets, presets: o.presets, briefDurationSec: o.briefDurationSec, locale: o.locale, acceptedDurations: o.acceptedDurations });
     for (const p of check.problems) problem(p);
     for (const c of check.checks) {
       const own = check.byFormat.get(c.format) ?? [];
       const present = c.hash !== null && c.folder !== null && c.folder.files.some((f) => f.path === 'composition.json');
       if (!present) continue;
-      entries.set(c.format, { format: c.format, dir: compositionDirOf(c.format), hash: c.hash!, problems: own });
+      // The user's duration choice (decisions log 270): recorded by a direct save when far from the brief, kept by an agent
+      // turn that keeps the accepted duration.
+      const d = c.composition?.duration;
+      const accepted = o.acceptedDurations?.get(c.format);
+      const brief = o.direct ? o.direct.briefDurationSec : o.briefDurationSec;
+      const userDuration = d === undefined || brief === null || findPreset(o.presets, c.format)?.kind !== 'video' ? undefined
+        : o.direct && isDurationOffBrief(d, brief) && directChoseDuration(o.direct.base, d) ? { durationSec: d, briefDurationSec: brief }
+          : accepted !== undefined && Math.abs(d - accepted) < 0.0005 ? { durationSec: accepted, briefDurationSec: brief } : undefined;
+      entries.set(c.format, { format: c.format, dir: compositionDirOf(c.format), hash: c.hash!, problems: own, ...(userDuration ? { userDuration } : {}) });
       durations.set(c.format, c.composition ? c.composition.duration : undefined);
     }
   }
@@ -130,30 +177,14 @@ export async function assembleCompositions(o: {
   for (const p of o.carried) {
     const cc = o.carriedComps.get(p);
     if (!cc || !base) continue;
-    const destRel = `${vRel}/${compositionDirOf(p)}`;
-    const dest = join(creativeDir, ...destRel.split('/'));
-    let ok = true;
-    let changed = false;
-    await mkdir(dest, { recursive: true });
-    for (const f of cc.files) {
-      const fromRel = `outputs/v${base.n}/${cc.entry.dir}/${f.path}`;
-      await mkdir(dirname(join(dest, ...f.path.split('/'))), { recursive: true });
-      const sha = await copyVerified(creativeDir, fromRel, `${destRel}/${f.path}`, f.sha256);
-      if (sha === null) {
-        ok = false;
-        const now = await confinedSha(creativeDir, fromRel);
-        changed = now !== null && now !== f.sha256;
-        break;
-      }
+    const r = await copyComposition(creativeDir, base.n, cc, `${vRel}/${compositionDirOf(p)}`);
+    if (r !== 'ok') {
+      problem(r === 'changedAfter' ? j.copyChangedAfter({ format: o.label(p) }) : r === 'changed' ? j.carriedChanged({ format: o.label(p), n: base.n }) : j.copyFailed({ format: o.label(p) }));
+      continue;
     }
-    if (ok) {
-      const copy = await readCompositionFolder(dest).catch(() => null);
-      if (!copy || copy.hash !== cc.entry.hash) { ok = false; problem(j.copyChangedAfter({ format: o.label(p) })); }
-    } else problem(changed ? j.carriedChanged({ format: o.label(p), n: base.n }) : j.copyFailed({ format: o.label(p) }));
-    if (!ok) { await rm(dest, { recursive: true, force: true }); continue; }
     const inherited = cc.entry.problems ?? [];
     for (const x of inherited) problem(x);
-    entries.set(p, { format: p, dir: compositionDirOf(p), hash: cc.entry.hash, problems: [...inherited] });
+    entries.set(p, { format: p, dir: compositionDirOf(p), hash: cc.entry.hash, problems: [...inherited], ...(cc.entry.userDuration ? { userDuration: cc.entry.userDuration } : {}) });
     durations.set(p, cc.duration ?? undefined);
   }
 
@@ -212,8 +243,78 @@ export async function assembleCompositions(o: {
   return { compositions, outputs, problems, notDelivered, stray, touched, check };
 }
 
+/**
+ * Copies the composition `cc` of version `baseN` to `destRel` (under `creativeDir`, a folder that must not hold those
+ * files yet): every file with `copyVerified` against the sha256 read when `cc` was taken (never the source's bytes now),
+ * then the copied folder must hash to the recorded hash. Anything short of that removes the copy: `changed` (a source file
+ * is no longer the one read), `changedAfter` (the copy does not hash to the recorded hash), `failed`. Shared by carried
+ * primaries and by a direct edit's base folder (`DirectEditService.save`).
+ */
+export async function copyComposition(creativeDir: string, baseN: number, cc: CarriedComposition, destRel: string): Promise<'ok' | 'changed' | 'changedAfter' | 'failed'> {
+  const dest = join(creativeDir, ...destRel.split('/'));
+  let result: 'ok' | 'changed' | 'changedAfter' | 'failed' = 'ok';
+  await mkdir(dest, { recursive: true });
+  for (const f of cc.files) {
+    const fromRel = `outputs/v${baseN}/${cc.entry.dir}/${f.path}`;
+    await mkdir(dirname(join(dest, ...f.path.split('/'))), { recursive: true });
+    const sha = await copyVerified(creativeDir, fromRel, `${destRel}/${f.path}`, f.sha256);
+    if (sha === null) {
+      const now = await confinedSha(creativeDir, fromRel);
+      result = now !== null && now !== f.sha256 ? 'changed' : 'failed';
+      break;
+    }
+  }
+  if (result === 'ok') {
+    const copy = await readCompositionFolder(dest).catch(() => null);
+    if (!copy || copy.hash !== cc.entry.hash) result = 'changedAfter';
+  }
+  if (result !== 'ok') await rm(dest, { recursive: true, force: true });
+  return result;
+}
+
 /** `format:sha256` → `renderedAt` of the base's manifest v2 renders (a carried render keeps its date). */
 async function baseRenders(creativeDir: string, n: number): Promise<Map<string, string>> {
   const m = await readJsonFile(join(creativeDir, 'outputs', `v${n}`, 'manifest.json'), anyManifestSchema).catch(() => null);
   return new Map(m?.schemaVersion === 2 ? m.renders.map((r) => [`${r.format}:${r.sha256}`, r.renderedAt] as const) : []);
+}
+
+/** `creatives/<slug>/work/editor/`: the core's copies of an editor version's compositions (decisions log 263). */
+export const EDITOR_WORK_DIR = ['work', 'editor'] as const;
+
+/**
+ * Aligns `work/editor/<format>/` with `version` (decisions log 263): after a direct edit the agent's workspace holds an exact
+ * copy of each of that version's own compositions, so the next turn starts from the edited files and not from sources in
+ * `work/` that predate the edits. A copy already identical (same composition hash) is kept; any other entry of
+ * `work/editor/` is removed. A version that is not an editor one leaves no `work/editor/` (a stale copy would mislead).
+ * Runs only while no agent runs (under the creative's lock); `work/` is the agent's folder, so every folder is a real one
+ * (`realDirChain`) and a link anywhere is removed as an entry, never followed. Returns the formats copied there.
+ */
+export async function alignEditorCopies(creativeDir: string, version: VersionEntry | undefined): Promise<string[]> {
+  const editorDir = join(creativeDir, ...EDITOR_WORK_DIR);
+  const st = await lstat(editorDir).catch(() => null);
+  const own = version?.origin === 'editor' ? (version.compositions ?? []).filter((c) => c.followsFormat === undefined) : [];
+  if (own.length === 0) {
+    if (st) { await rm(editorDir, { recursive: true, force: true }); await noteCoreChange(join(creativeDir, 'work')).catch(() => {}); }
+    return [];
+  }
+  if (st && !st.isDirectory()) await rm(editorDir, { force: true });
+  const root = await realDirChain(creativeDir, [...EDITOR_WORK_DIR]);
+  if (!root) return [];
+  const wanted = new Map(own.map((c) => [c.format, c] as const));
+  for (const name of await readdir(root).catch(() => [] as string[])) {
+    const entry = wanted.get(name);
+    const here = join(root, name);
+    const kept = entry !== undefined && (await isRealDirChain(root, [name])) === 'ok' && (await readCompositionFolder(here).catch(() => null))?.hash === entry.hash;
+    if (!kept) await rm(here, { recursive: true, force: true });
+  }
+  const copied: string[] = [];
+  for (const c of own) {
+    const here = join(root, c.format);
+    if (await lstat(here).catch(() => null)) { copied.push(c.format); continue; } // identical, kept above
+    const cc = await carriableComposition(creativeDir, version!, c.format);
+    if (!cc) continue;
+    if ((await copyComposition(creativeDir, version!.n, cc, `${EDITOR_WORK_DIR.join('/')}/${c.format}`)) === 'ok') copied.push(c.format);
+  }
+  await noteCoreChange(root).catch(() => {});
+  return copied;
 }

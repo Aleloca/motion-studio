@@ -9,6 +9,9 @@ import { AppSettings } from './screens/AppSettings.tsx';
 import { Assets } from './screens/Assets.tsx';
 import { Brand } from './screens/Brand.tsx';
 import { CreativeCanvas } from './screens/CreativeCanvas.tsx';
+import { EditorScreen } from './screens/editor/EditorScreen.tsx';
+import { leaveRefused } from './screens/editor/leaveGuard.ts';
+import { useUnsavedDrafts } from './screens/editor/draftStore.ts';
 import { FormatView } from './screens/FormatView.tsx';
 import { NewCreative } from './screens/NewCreative.tsx';
 import { Pairing } from './screens/Pairing.tsx';
@@ -23,7 +26,7 @@ import { DragStrip } from './shell/DragStrip.tsx';
 import { go, ShellContext, type ActivityTab, type Shell } from './shell/ShellContext.tsx';
 import { isMac } from './platform.ts';
 import { TopBar } from './shell/TopBars.tsx';
-import { useAttention, useReadyNotice, useRenderCloseGuard } from './shell/useAttention.ts';
+import { useAttention, useDraftCloseGuard, useReadyNotice, useRenderCloseGuard } from './shell/useAttention.ts';
 import { applyTheme } from './theme.ts';
 import { Spinner, Toasts } from './ui/index.ts';
 import { usePairingNeeded } from './uiToken.ts';
@@ -40,10 +43,20 @@ function currentHash(): string {
   return to;
 }
 
-function useHashRoute(): string {
+export function useHashRoute(): string {
   const [hash, setHash] = useState(currentHash);
+  const shown = useRef(hash);
+  shown.current = hash;
   useEffect(() => {
-    const on = () => setHash(currentHash());
+    const on = () => {
+      const next = currentHash();
+      // An open editor draft refuses the move (the editor then asks to save or discard): the address goes back to the editor's.
+      if (next !== shown.current && leaveRefused(next)) {
+        history.replaceState(history.state, '', shown.current);
+        return;
+      }
+      setHash(next);
+    };
     addEventListener('hashchange', on);
     return () => removeEventListener('hashchange', on);
   }, []);
@@ -96,6 +109,8 @@ function AppBody({ live, language, systemLocale, onLanguage }: Props) {
   useReadyNotice(live.jobs);
   // Desktop: closing the window while a render runs asks first.
   useRenderCloseGuard(live.jobs);
+  // ...and while an editor draft has edits not saved: the desktop asks too; a browser asks before a reload or a tab close.
+  useDraftCloseGuard(useUnsavedDrafts());
 
   // A recheck keeps the previous checks on screen (no step jump in the setup) and flags `checking`; `checkRun` counts
   // the completed runs, so the setup reveals the rows again only after an actual recheck (not a language reload).
@@ -244,6 +259,7 @@ function AppShell({ route, live, settings, checks, activity, setActivity, langua
       case 'new-creative': return <NewCreative key={r.slug} slug={r.slug} />;
       case 'creative': return <CreativeCanvas key={`${r.slug}/${r.creative}`} slug={r.slug} creative={r.creative} live={live} exportNamePattern={settings?.exportNamePattern} onSettings={onSettings} />;
       case 'format': return <FormatView key={`${r.slug}/${r.creative}/${r.format}`} slug={r.slug} creative={r.creative} format={r.format} live={live} exportNamePattern={settings?.exportNamePattern} onSettings={onSettings} />;
+      case 'edit': return <EditorScreen key={`${r.slug}/${r.creative}/${r.format}`} slug={r.slug} creative={r.creative} format={r.format} live={live} />;
       case 'settings': return settings ? (
         <AppSettings section={r.section} settings={settings} checks={checks} checking={Boolean(setup.checking)} checksRun={setup.checksRun ?? 0}
           loadError={setup.loadError ?? null} onRecheck={setup.onRecheck} language={language} systemLocale={systemLocale} onLanguage={onLanguage} onSettings={onSettings} />

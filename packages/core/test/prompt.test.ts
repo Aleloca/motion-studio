@@ -1,7 +1,7 @@
 import { DEFAULT_FORMATS, normalizeComposition, validateComposition, type CreativeFile } from '@motion-studio/shared';
 import { homedir } from 'node:os';
 import { describe, expect, it } from 'vitest';
-import { buildCreativePrompt, parseStudioBlock } from '../src/creatives/prompt.ts';
+import { quotePromptString, buildCreativePrompt, parseStudioBlock } from '../src/creatives/prompt.ts';
 import { buildBrandPrompt, buildDescribePrompt } from '../src/brand/brand-prompt.ts';
 import { CONTEXT_MD } from '../src/project-template.ts';
 
@@ -43,6 +43,33 @@ describe('buildCreativePrompt', () => {
     expect(p).toContain('instagram-post-1x1 @ 4.2s, point (25%, 50%): qui');
     expect(p).toContain('work/.feedback/p1.jpg');
     expect(p).toContain('outputs/v2/');
+  });
+  it('iteration: pin lines for a plain, a clip, a range and a clip-and-range comment', () => {
+    const at = { format: 'instagram-post-1x1', x: 0.25, y: 0.5 };
+    const p = buildCreativePrompt({ ...base, kind: 'iteration', userText: 'x', pins: [
+      { ...at, timeSec: 4.2, note: 'plain' },
+      { ...at, timeSec: 1, clipId: 'title', clipName: 'Headline', note: 'clip' },
+      { ...at, timeSec: 2, range: { start: 2, end: 3.5 }, note: 'range' },
+      { ...at, timeSec: 2, clipId: 'logo', clipName: 'Logo', range: { start: 2, end: 3.5 }, note: 'both' },
+      { ...at, timeSec: 1, clipId: 'bare' },
+    ] });
+    expect(p).toContain('- instagram-post-1x1 @ 4.2s, point (25%, 50%): plain\n');
+    expect(p).toContain('- instagram-post-1x1 @ 1.0s, point (25%, 50%), clip "title" "Headline": clip\n');
+    expect(p).toContain('- instagram-post-1x1 @ 2.0s, point (25%, 50%), range 2.0\u20133.5s: range\n');
+    expect(p).toContain('- instagram-post-1x1 @ 2.0s, point (25%, 50%), clip "logo" "Logo", range 2.0\u20133.5s: both\n');
+    expect(p).toContain('- instagram-post-1x1 @ 1.0s, point (25%, 50%), clip "bare"\n');
+  });
+  it('iteration: clip id and name are quoted JSON-style; no control character, separator or quote breaks the line', () => {
+    const at = { format: 'instagram-post-1x1', x: 0.25, y: 0.5, timeSec: 1 };
+    const p = buildCreativePrompt({ ...base, kind: 'iteration', userText: 'x', pins: [
+      { ...at, clipId: 'a"b\\c\nd', clipName: 'Say "hi"\r\n\t\u0007\u007f\u0085\u2028\u2029end', note: 'n' },
+    ] });
+    expect(p).toContain('- instagram-post-1x1 @ 1.0s, point (25%, 50%), clip "a\\"b\\\\c\\nd" "Say \\"hi\\"\\r\\n\\t\\u0007\\u007f\\u0085\\u2028\\u2029end": n\n');
+    const line = p.split('\n').find((l) => l.includes('clip "a'))!;
+    expect(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(line)).toBe(false);
+  });
+  it('quotePromptString round-trips through JSON.parse', () => {
+    for (const s of ['plain', 'quo"te', 'back\\slash', 'nl\nx', '\u0000\u001f\u007f\u009f\u2028\u2029']) expect(JSON.parse(quotePromptString(s))).toBe(s);
   });
   it('fix: lists the problems', () => {
     const p = buildCreativePrompt({ ...base, kind: 'fix', problems: ['Manca il formato Web · Banner 300×250 (web-banner-300x250)'] });
@@ -110,6 +137,8 @@ describe('CONTEXT_MD', () => {
     const files = new Map([['assets/Inter-700.woff2', { size: 10 }], ['assets/photo.jpg', { size: 10 }]]);
     const r = validateComposition(normalizeComposition(c), { format: { id: 'sq', channel: 'T', name: 'Sq', width: 1080, height: 1080, kind: 'image', extensions: ['png'] }, files });
     expect(r.problems).toEqual([]);
+    // Every text uses a declared weight (no fontWeightUndeclared warning).
+    expect(r.warnings).toEqual([]);
   });
 });
 
@@ -265,9 +294,31 @@ describe('buildCreativePrompt, output contract v2 (Task 5b)', () => {
     const p = buildCreativePrompt({ ...v2, kind: 'first' });
     const start = p.indexOf('```json\n') + 8;
     const c = JSON.parse(p.slice(start, p.indexOf('\n```', start)));
-    const files = new Map(['assets/Inter-700.woff2', 'assets/photo.jpg', 'assets/music.mp3'].map((f) => [f, { size: 10 }] as const));
+    const files = new Map(['assets/Inter-400.woff2', 'assets/Inter-700.woff2', 'assets/photo.jpg', 'assets/music.mp3'].map((f) => [f, { size: 10 }] as const));
     const r = validateComposition(normalizeComposition(c), { format: { id: 'reel', channel: 'T', name: 'Reel', width: 1080, height: 1920, kind: 'video', extensions: ['mp4'] }, files });
     expect(r.problems).toEqual([]);
+    // Inter is declared at 400 and 700: the text without a weight (400) and the bold title use declared weights.
+    expect(r.warnings).toEqual([]);
+  });
+  it('assets/lib/ is reserved in the agent context and in the prompt', () => {
+    expect(buildCreativePrompt({ ...v2, kind: 'first' })).toContain('`assets/lib/` is reserved for the files Motion Studio\'s editor adds');
+    expect(CONTEXT_MD).toContain('`assets/lib/`** inside a composition folder is reserved');
+  });
+  it('direct edits: the exact sentence, the folders, assets/lib, control characters flattened; kept durations', () => {
+    const p = buildCreativePrompt({ ...v2, kind: 'iteration', userText: 'louder', directEdit: { version: 4, summary: 'Direct edits: title\ntext\u2028x', copies: ['instagram-post-1x1'] },
+      keptDurations: [{ format: 'instagram-post-1x1', durationSec: 7.04 }] });
+    expect(p).toContain('## Direct edits by the user\nv4 contains direct edits by the user: Direct edits: title text x. Build on v4; keep those edits unless the user asks to change them.');
+    expect(p).toContain('outputs/v4/compositions/<format-id>/');
+    expect(p).toContain('work/editor/<format-id>/` is the current source of that format (instagram-post-1x1): an exact copy of `creatives/');
+    expect(p).toContain('is superseded.');
+    expect(p).toContain('predate these edits: if you run one again, reapply the edits to what it produces; otherwise edit the composition directly.');
+    expect(p).toMatch(/Keep the current duration \(instagram-post-1x1: 7s\) unless the user explicitly asks for another one/);
+    const alone = buildCreativePrompt({ ...v2, kind: 'iteration', userText: 'x', keptDurations: [{ format: 'instagram-post-1x1', durationSec: 7 }] });
+    expect(alone).toContain('## Durations');
+    expect(alone).not.toContain('direct edits by the user');
+    expect(buildCreativePrompt({ ...v2, kind: 'iteration', userText: 'x' })).not.toMatch(/## Durations|## Direct edits/);
+    // Never in a fix prompt: it repeats the problems only.
+    expect(buildCreativePrompt({ ...v2, kind: 'fix', problems: ['p'], directEdit: { version: 4, summary: 's', copies: [] } })).not.toContain('## Direct edits');
   });
   it('the sandbox section of a composition turn has no rendering-engine advice', () => {
     const p = buildCreativePrompt({ ...v2, kind: 'first', sandboxed: true });

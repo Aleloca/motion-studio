@@ -1,10 +1,11 @@
 // The video transport under a player (format view, Compare): play/pause (Space), the timecode, frame by frame (←/→,
 // 1/30 s), loop and speed (visual test point 39), and the scrub bar with a ruler and the comment markers.
 import type { Pin } from '@motion-studio/shared';
-import { useRef, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent } from 'react';
+import { useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent } from 'react';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { useClock, type Clock } from '../ui/clock.ts';
 import { Button, Icon, Select, cx } from '../ui/index.ts';
+import { MIN_RANGE, rangeTimes } from './pinModel.ts';
 import './format.css';
 
 /** Frame step of ←/→ (spec: 1/30 s). */
@@ -34,8 +35,10 @@ export interface Mark { pin: Pin; number: number }
 export const SPEEDS = ['0.5', '1', '1.5', '2'] as const;
 export type Speed = (typeof SPEEDS)[number];
 
-export function Transport({ clock, duration, playing, disabled, marks = [], hint, onToggle, onStep, onSeek, onPause, onResume, loop, onLoop, speed, onSpeed }: {
+export function Transport({ clock, duration, playing, disabled, marks = [], onRange, hint, onToggle, onStep, onSeek, onPause, onResume, loop, onLoop, speed, onSpeed }: {
   clock: Clock; duration: number; playing: boolean; disabled: boolean; marks?: Mark[];
+  /** A Shift + drag on the bar ended on this range (seconds): a range comment (Phase 10b). Absent: Shift + drag scrubs. */
+  onRange?(r: { start: number; end: number }): void;
   /** The keys line at the end of the controls. */
   hint: string;
   onToggle(): void; onStep(dir: 1 | -1): void; onSeek(t: number): void; onPause(): void; onResume(): void;
@@ -46,7 +49,10 @@ export function Transport({ clock, duration, playing, disabled, marks = [], hint
   const locale = useLocale();
   const { time, settled } = useClock(clock);
   const track = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ resume: boolean } | null>(null);
+  const drag = useRef<{ resume: boolean; from?: number } | null>(null);
+  /** The range being picked with Shift + drag. */
+  const [picking, setPicking] = useState<{ a: number; b: number } | null>(null);
+  const cv = t.web.conversation;
   const pct = (s: number) => (duration ? Math.min(100, Math.max(0, (s / duration) * 100)) : 0);
   const at = (clientX: number) => {
     const r = track.current?.getBoundingClientRect();
@@ -56,6 +62,13 @@ export function Transport({ clock, duration, playing, disabled, marks = [], hint
   const down = (e: PointerEvent<HTMLDivElement>) => {
     if (disabled || e.button !== 0) return;
     e.currentTarget.setPointerCapture?.(e.pointerId);
+    if (e.shiftKey && onRange) {
+      const a = at(e.clientX);
+      if (a === null) return;
+      drag.current = { resume: false, from: a };
+      setPicking({ a, b: a });
+      return;
+    }
     drag.current = { resume: playing };
     if (playing) onPause();
     const s = at(e.clientX);
@@ -64,11 +77,18 @@ export function Transport({ clock, duration, playing, disabled, marks = [], hint
   const move = (e: PointerEvent<HTMLDivElement>) => {
     if (!drag.current) return;
     const s = at(e.clientX);
+    if (drag.current.from !== undefined) { if (s !== null) setPicking({ a: drag.current.from, b: s }); return; }
     if (s !== null) onSeek(s);
   };
-  const up = () => {
+  const up = (e: PointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     drag.current = null;
+    if (d?.from !== undefined) {
+      const b = e.type === 'pointerup' ? at(e.clientX) ?? d.from : d.from;
+      setPicking(null);
+      if (e.type === 'pointerup' && Math.abs(b - d.from) >= MIN_RANGE) onRange?.({ start: Math.min(b, d.from), end: Math.max(b, d.from) });
+      return;
+    }
     if (d?.resume) onResume();
   };
   const keys = (e: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -105,6 +125,14 @@ export function Transport({ clock, duration, playing, disabled, marks = [], hint
           </div>
           <div className="ms-fv-track" aria-hidden="true"><i style={{ width: `${pct(time)}%` }} /></div>
           <span className="ms-fv-head" style={{ left: `${pct(time)}%` }} aria-hidden="true" />
+        </div>
+        <div className="ms-fv-spans">
+          {picking ? <span className="ms-fv-span ms-picking" aria-hidden="true" style={{ left: `${pct(Math.min(picking.a, picking.b))}%`, width: `${pct(Math.abs(picking.b - picking.a))}%` }} /> : null}
+          {marks.filter((m) => m.pin.range).map(({ pin, number }) => {
+            const { a, b } = rangeTimes(locale, pin.range!);
+            return <span key={number} className="ms-fv-span" role="img" aria-label={cv.rangeSpan({ a, b, note: pin.note ?? '' })}
+              style={{ left: `${pct(pin.range!.start)}%`, width: `${pct(pin.range!.end - pin.range!.start)}%` }} />;
+          })}
         </div>
         <div className="ms-fv-marks">
           {marks.filter((m) => m.pin.timeSec !== null).map(({ pin, number }) => (

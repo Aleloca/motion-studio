@@ -13,7 +13,7 @@ import { appSigned, setupUpdates } from './updater.ts';
 import { registerFullscreenQuery, registerTitleBar, registerUiTokenQuery, sendFullscreen } from './titlebar.ts';
 import { ipcSenderTrusted, isAppUrl, windowOpenToBrowser, windowOptions, type IpcSender } from './window.ts';
 import { desktopRenderOptions, shutdownForQuit } from './render-window.ts';
-import { createRenderGuard, registerRenderGuard, renderRunningPrompt } from './render-guard.ts';
+import { createRenderGuard, registerRenderGuard, reloadPrompt, renderRunningPrompt, unloadWithoutAsking } from './render-guard.ts';
 import { frameChain, hardenUiWindow, installPreviewFilter, pollCompositionOrigin, subframeNavigationBlocked, type FilterContext } from './preview-filter.ts';
 
 const execFileAsync = promisify(execFile);
@@ -230,22 +230,31 @@ async function run() {
   // A render running when the window closes or the app quits: ask first (carry 11). Attached, the renders belong to the
   // other instance and go on without this window: nothing to ask.
   const renders = createRenderGuard({
-    ask: async (count) => {
-      if (server.attached || win.isDestroyed()) return true;
-      const { response } = await dialog.showMessageBox(win, { type: 'warning', ...renderRunningPrompt(t().desktop, count) });
+    ask: async (count, drafts) => {
+      // Unsaved drafts live in this window: attached or not, closing loses them. Renders belong to the other instance then.
+      if (win.isDestroyed() || (server.attached && drafts === 0)) return true;
+      const { response } = await dialog.showMessageBox(win, { type: 'warning', ...renderRunningPrompt(t().desktop, server.attached ? 0 : count, drafts) });
       return response === 0;
     },
   });
   registerRenderGuard(ipcMain, { trusted, guard: renders, invalid: () => new Error(t().desktop.invalidRequest) });
+  // A reload (⌘R, View → Reload) with unsaved drafts: the page's `beforeunload` holds the unload back and the answer is asked
+  // here (final review I3). `preventDefault()` here lets the unload go on; a close the user already agreed to is not asked twice.
+  win.webContents.on('will-prevent-unload', (e) => {
+    if (win.isDestroyed()) return;
+    if (unloadWithoutAsking(renders, closing)) { e.preventDefault(); return; }
+    const response = dialog.showMessageBoxSync(win, { type: 'warning', ...reloadPrompt(t().desktop, renders.drafts()) });
+    if (response === 0) e.preventDefault();
+  });
   win.on('close', (e) => {
-    if (closing || renders.running() === 0 || renders.confirmed()) return;
+    if (closing || renders.pending() === 0 || renders.confirmed()) return;
     e.preventDefault();
     void renders.mayClose().then((yes) => { if (yes && !win.isDestroyed()) win.close(); });
   });
   app.on('before-quit', (e) => {
     if (closing) return;
     e.preventDefault();
-    if (renders.running() > 0 && !renders.confirmed()) {
+    if (renders.pending() > 0 && !renders.confirmed()) {
       void renders.mayClose().then((yes) => { if (yes) app.quit(); });
       return;
     }

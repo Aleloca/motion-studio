@@ -61,33 +61,35 @@ function realish(p: string): string {
   }
 }
 /**
- * macOS and Windows volumes are case-insensitive by default: compare folded there. NFKC first, then upper and lower case
- * (M1): `ſ` (U+017F, which APFS folds to `s`) and compatibility forms meet their plain spelling.
+ * Compared folded on every platform (decisions log 268): macOS and Windows volumes are case-insensitive by default, and a
+ * Linux one may be too (a mounted case-insensitive volume, ext4 casefold); on a case-sensitive one the fold only adds
+ * harmless refusals. NFKC first, then upper and lower case (M1): `ſ` (U+017F, which APFS folds to `s`) and compatibility
+ * forms meet their plain spelling.
  */
 const foldName = (p: string) => p.normalize('NFKC').toUpperCase().toLowerCase();
-const fold = (p: string, platform: string) => (platform === 'darwin' || platform === 'win32' ? foldName(p) : p);
+const fold = (p: string) => foldName(p);
 const within = (child: string, parent: string) => { const r = relative(parent, child); return r === '' || (!r.startsWith('..') && !isAbsolute(r)); };
 
 /**
  * `MOTION_STUDIO_USER_DATA_DIR` (final wave B1), read before `ready`: the folder for Electron's userData, sessionData and
- * logs. null when unset; `{ error }` when it is not absolute, or when (real paths resolved, compared without case on macOS
- * and Windows) it is, is inside, or contains the default data folder or any `Motion Studio*` folder of `appData` (the
+ * logs. null when unset; `{ error }` when it is not absolute, or when (real paths resolved, compared without case on every
+ * platform) it is, is inside, or contains the default data folder or any `Motion Studio*` folder of `appData` (the
  * config, the Electron data, other channels), however it is spelt.
  */
-export function userDataOverride(env: NodeJS.ProcessEnv, appData: string, platform: string = process.platform): { dir: string } | { error: string } | null {
+export function userDataOverride(env: NodeJS.ProcessEnv, appData: string): { dir: string } | { error: string } | null {
   const value = env[USER_DATA_ENV];
   if (!value) return null;
   if (!isAbsolute(value)) return { error: `${USER_DATA_ENV} must be an absolute path: ${value}` };
-  const insensitive = platform === 'darwin' || platform === 'win32';
+  // Without case on every platform, Linux included (decisions log 268).
   let names: string[] = [];
-  try { names = readdirSync(appData).filter((n) => (insensitive ? foldName(n) : n).startsWith(insensitive ? 'motion studio' : 'Motion Studio')); } catch { /* no appData yet */ }
-  const real = new Set([userDataDir(appData), join(appData, 'Motion Studio'), ...names.map((n) => join(appData, n))].map((p) => fold(realish(p), platform)));
-  const dir = fold(realish(value), platform);
+  try { names = readdirSync(appData).filter((n) => foldName(n).startsWith('motion studio')); } catch { /* no appData yet */ }
+  const real = new Set([userDataDir(appData), join(appData, 'Motion Studio'), ...names.map((n) => join(appData, n))].map((p) => fold(realish(p))));
+  const dir = fold(realish(value));
   // Any spelling of a Motion Studio* folder directly in appData (a folder that does not exist yet included).
-  const appReal = fold(realish(appData), platform);
+  const appReal = fold(realish(appData));
   const first = relative(appReal, dir).split(/[\\/]/)[0] ?? '';
   const inAppData = within(dir, appReal) && first !== '';
-  if (inAppData && (insensitive ? foldName(first) : first).startsWith(insensitive ? 'motion studio' : 'Motion Studio')) {
+  if (inAppData && foldName(first).startsWith('motion studio')) {
     return { error: `${USER_DATA_ENV} must not be, be inside or contain a real Motion Studio folder (${join(appData, first)}): ${value}` };
   }
   for (const r of real) {
