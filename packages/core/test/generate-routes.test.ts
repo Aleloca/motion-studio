@@ -184,4 +184,33 @@ describe('generate route', () => {
     expect((await app.inject({ method: 'POST', url: '/api/projects/ghost/generate', payload: { kind: 'sfx', provider: 'elevenlabs', prompt: 'x' } })).statusCode).toBe(404);
     expect(calls).toEqual([]);
   });
+  it('refuses at POST a voice of the other provider, before any job, confirmation or request (final review I1)', async () => {
+    await boot(undefined, { confirmPaidProviders: true });
+    const refused = async (payload: unknown) => { const r = await post(payload); expect(r.statusCode).toBe(400); return r.json().error as string; };
+    expect(await refused({ kind: 'voice', provider: 'openai', text: 'Ciao', options: { voice: 'JBFqnCBsd6RMkjVDRZzb' } })).toBe('La voce JBFqnCBsd6RMkjVDRZzb non è una voce OpenAI: scegline una fra le voci OpenAI');
+    expect(await refused({ kind: 'voice', provider: 'elevenlabs', text: 'Ciao', options: { voice: 'alloy' } })).toContain('ElevenLabs');
+    expect((await app.inject('/api/jobs')).json()).toEqual([]);
+    expect(broker.pending()).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+  it('ElevenLabs with no voice: the default voice is read before the confirmation, so a key without voices_read gets no approval card (M3)', async () => {
+    await boot(undefined, { confirmPaidProviders: true });
+    voicesDenied = true;
+    const created = vi.spyOn(broker, 'request');
+    const job = await settle((await post({ kind: 'voice', provider: 'elevenlabs', text: 'Ciao a tutti', options: {} })).json().jobId);
+    expect(job.state).toBe('failed');
+    expect(created).not.toHaveBeenCalled();
+    expect(calls.some((c) => c.url.includes('/v1/text-to-speech/'))).toBe(false);
+  });
+  it('a result that comes back after the key was replaced is not recorded for the new key (M2)', async () => {
+    await boot(undefined, { confirmPaidProviders: true });
+    status = 401;
+    const jobId = (await post({ kind: 'image', provider: 'openai', prompt: 'x' })).json().jobId;
+    await vi.waitFor(() => expect(broker.pending()).toHaveLength(1), { timeout: 10_000 });
+    // The user saves another key while the card waits: the route sets it and forgets what was known.
+    expect((await app.inject({ method: 'PUT', url: '/api/secrets/openai', payload: { value: 'sk-test-other-0123456789', check: false } })).statusCode).toBe(200);
+    await broker.decide(broker.pending()[0]!.id, 'once');
+    expect((await settle(jobId)).state).toBe('failed');
+    expect(keyChecks.get('openai')).toBeNull();
+  });
 });

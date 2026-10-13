@@ -3,6 +3,8 @@ import { t } from '../i18n.ts';
 
 /** The OpenAI speech model Motion Studio uses (the key check reads it, read-only). */
 export const OPENAI_TTS_MODEL = 'gpt-4o-mini-tts';
+/** The ElevenLabs speech model Motion Studio uses. */
+export const ELEVENLABS_TTS_MODEL = 'eleven_multilingual_v2';
 export interface TtsRequest { text: string; voice?: string; instructions?: string; format: 'mp3' | 'wav' }
 const MAX = 50 * 1024 * 1024;
 
@@ -37,7 +39,7 @@ export async function elevenlabsSpeech(deps: HttpDeps & { apiKey: string }, req:
   const voice = req.voice || await elevenlabsDefaultVoice(deps);
   const format = req.format === 'wav' ? 'wav_44100' : 'mp3_44100_128';
   const { bytes } = await requestBytes(deps, `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}?output_format=${format}`, {
-    method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ text: req.text, model_id: 'eleven_multilingual_v2' }),
+    method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ text: req.text, model_id: ELEVENLABS_TTS_MODEL }),
   }, { provider: 'ElevenLabs', secrets: [deps.apiKey], maxBytes: MAX });
   return { bytes, voice };
 }

@@ -14,8 +14,9 @@ import { elevenlabsMusic, elevenlabsSoundEffect, MUSIC_MODEL, SFX_MODEL, validat
 import { saveGeneratedFile } from '../providers/files.ts';
 import { ProviderError, type HttpDeps } from '../providers/http.ts';
 import { KEY_PERMISSIONS, type KeyCheckCache } from '../providers/key-check.ts';
-import { generateImage, normalizeImageSize } from '../providers/openai-images.ts';
-import { elevenlabsDefaultVoice, elevenlabsSpeech, openaiSpeech } from '../providers/tts.ts';
+import { generateImage, normalizeImageSize, OPENAI_IMAGE_MODEL } from '../providers/openai-images.ts';
+import { ELEVENLABS_TTS_MODEL, elevenlabsDefaultVoice, elevenlabsSpeech, OPENAI_TTS_MODEL, openaiSpeech } from '../providers/tts.ts';
+import { voiceProviderOf } from '../providers/voices.ts';
 import type { SecretsVault } from '../secrets/vault.ts';
 import { WorkspaceError, type WorkspaceStore } from '../workspace-store.ts';
 import { t } from '../i18n.ts';
@@ -70,6 +71,9 @@ export function registerGenerateRoutes(app: FastifyInstance, ctx: GenerateRoutes
       if (b.kind === 'voice') {
         const text = b.text.trim();
         if (!text) throw new ProviderError(400, t().providers.writeText);
+        // A voice of the other provider would be refused only after the paid confirmation (I1): refused here.
+        const v = b.options.voice;
+        if (v && voiceProviderOf(v) !== b.provider) throw new ProviderError(400, t().providers.voiceWrongProvider({ voice: v, provider: LABEL[b.provider] }));
         return { prompt: text, size: null };
       }
       if (b.kind === 'sfx') return { prompt: validateSoundEffect({ prompt: b.prompt, ...b.options }), size: null };
@@ -109,12 +113,18 @@ export function registerGenerateRoutes(app: FastifyInstance, ctx: GenerateRoutes
     const paid = (rule: string, title: string, detail: string) => confirmPaid({ approvals: ctx.approvals, settings: () => ctx.requireWorkspace().readSettings() }, { jobId: r.jobId, projectSlug, projectDir, creativeSlug: null, signal }, rule, title, detail);
     const http = { ...jobHttp(ctx.http, { signal }), ...(ctx.http.timeoutMs ? { timeoutMs: ctx.http.timeoutMs } : {}), apiKey };
     /** A 401/403 from the provider means the key lacks this capability: remembered in memory, then the error goes on. */
+    // Recorded only while the key read at POST is still the vault's (M2): the job may wait in the queue and for the
+    // confirmation while the user replaces the key.
+    const lease = keyChecks.lease(b.provider, apiKey);
     const checkedCall = async <T>(provider: Provider, capability: KeyCapability, call: () => Promise<T>): Promise<T> => {
-      try { const out = await call(); keyChecks.record(provider, capability, 'ok'); return out; }
+      let out: T;
+      try { out = await call(); }
       catch (e) {
-        if (e instanceof ProviderError && (e.upstreamStatus === 401 || e.upstreamStatus === 403)) keyChecks.record(provider, capability, 'missing', KEY_PERMISSIONS[provider][capability]);
+        if (e instanceof ProviderError && (e.upstreamStatus === 401 || e.upstreamStatus === 403)) await keyChecks.recordUse(ctx.vault, { ...lease, provider }, capability, 'missing', KEY_PERMISSIONS[provider][capability]);
         throw e;
       }
+      await keyChecks.recordUse(ctx.vault, { ...lease, provider }, capability, 'ok');
+      return out;
     };
     const fileName = (ext: string) => `${b.options.name || slug(checked.prompt)}.${ext}`;
     const store = async (dir: 'generated' | 'audio', ext: string, bytes: Uint8Array, item: (f: string) => Parameters<LibraryStore['registerAssets']>[0][number]) => {
@@ -137,19 +147,20 @@ export function registerGenerateRoutes(app: FastifyInstance, ctx: GenerateRoutes
         await paid('provider:openai-images', t().approvals.generateImage, t().approvals.imageDetail({ width: size.width, height: size.height, refs: 0, prompt: checked.prompt.slice(0, 300) }));
         alive();
         const img = await checkedCall('openai', 'images', () => generateImage(http, { prompt: checked.prompt, width: size.width, height: size.height, quality: b.options.quality, background: b.options.background }));
-        await store('generated', 'png', img.bytes, (f) => ({ file: f, origin: 'generated', description: checked.prompt.slice(0, 2000), tags: ['gpt-image-2'], provider: 'openai', model: 'gpt-image-2' }));
+        await store('generated', 'png', img.bytes, (f) => ({ file: f, origin: 'generated', description: checked.prompt.slice(0, 2000), tags: ['gpt-image-2'], provider: 'openai', model: OPENAI_IMAGE_MODEL }));
       } else if (b.kind === 'voice') {
         const text = checked.prompt;
-        await paid(`provider:tts-${b.provider}`, t().approvals.generateVoice({ provider: LABEL[b.provider] }), text.slice(0, 300));
-        alive();
-        // ElevenLabs with no voice: the account's first voice, read under `voices` (a refused list is not a missing text_to_speech).
+        // ElevenLabs with no voice: the account's first voice, a free read under `voices`, BEFORE the confirmation (M3): a key
+        // that cannot list voices fails the job without an approval card (and a refused list is not a missing text_to_speech).
         const voice = b.provider === 'elevenlabs' && !b.options.voice ? await checkedCall('elevenlabs', 'voices', () => elevenlabsDefaultVoice(http)) : b.options.voice;
+        alive();
+        await paid(`provider:tts-${b.provider}`, t().approvals.generateVoice({ provider: LABEL[b.provider] }), text.slice(0, 300));
         alive();
         const speech = { text, voice, instructions: b.options.instructions || undefined, format: b.options.format } as const;
         const out = b.provider === 'openai'
           ? await checkedCall('openai', 'tts', () => openaiSpeech(http, speech))
           : await checkedCall('elevenlabs', 'tts', () => elevenlabsSpeech(http, speech));
-        const model = b.provider === 'openai' ? 'gpt-4o-mini-tts' : 'eleven_multilingual_v2';
+        const model = b.provider === 'openai' ? OPENAI_TTS_MODEL : ELEVENLABS_TTS_MODEL;
         await store('audio', b.options.format, out.bytes, (f) => ({ file: f, origin: 'generated', description: text.slice(0, 2000), tags: [t().providers.voiceTag, b.provider], attribution: t().providers.voiceAttribution({ provider: LABEL[b.provider] }), provider: b.provider, model }));
       } else if (b.kind === 'sfx') {
         await paid('provider:sfx-elevenlabs', t().approvals.generateSfx({ provider: LABEL.elevenlabs }), t().approvals.audioDetail({ provider: LABEL.elevenlabs, seconds: b.options.durationSec ?? null, prompt: checked.prompt.slice(0, 300) }));

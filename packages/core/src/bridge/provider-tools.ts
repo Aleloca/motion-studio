@@ -14,9 +14,10 @@ import { elevenlabsMusic, elevenlabsSoundEffect, elevenlabsVoices, MUSIC_MODEL, 
 import { ProviderError } from '../providers/http.ts';
 import { KEY_PERMISSIONS, KeyCheckCache } from '../providers/key-check.ts';
 import { fetchTransport, nodeTransport, type LookupFn, type Transport } from '../providers/safe-fetch.ts';
-import { generateImage, normalizeImageSize } from '../providers/openai-images.ts';
+import { generateImage, normalizeImageSize, OPENAI_IMAGE_MODEL } from '../providers/openai-images.ts';
 import { stockDownload, stockSearch, type StockProvider } from '../providers/stock.ts';
-import { elevenlabsDefaultVoice, elevenlabsSpeech, openaiSpeech } from '../providers/tts.ts';
+import { ELEVENLABS_TTS_MODEL, elevenlabsDefaultVoice, elevenlabsSpeech, OPENAI_TTS_MODEL, openaiSpeech } from '../providers/tts.ts';
+import { voiceProviderOf } from '../providers/voices.ts';
 import type { SecretsVault } from '../secrets/vault.ts';
 import { overrideNote, refusalText, resolveService } from '../services/service-policy.ts';
 import type { BridgeContext } from './bridge.ts';
@@ -91,14 +92,16 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
    * What a real call says about the key (Task 8): a 401/403 means the key lacks this capability's permission, a success that
    * it has it. Remembered in memory only; the error goes on unchanged.
    */
-  const withKeyCheck = async <T>(provider: ProviderId, capability: KeyCapability, run: () => Promise<T>): Promise<T> => {
+  const withKeyCheck = async <T>(provider: ProviderId, apiKey: string, capability: KeyCapability, run: () => Promise<T>): Promise<T> => {
+    // Only while the key used is still the current one (M2): the user may replace it while a confirmation waits.
+    const lease = keyChecks.lease(provider, apiKey);
     let out: T;
     try { out = await run(); }
     catch (e) {
-      if (e instanceof ProviderError && (e.upstreamStatus === 401 || e.upstreamStatus === 403)) keyChecks.record(provider, capability, 'missing', KEY_PERMISSIONS[provider][capability]);
+      if (e instanceof ProviderError && (e.upstreamStatus === 401 || e.upstreamStatus === 403)) await keyChecks.recordUse(deps.vault, lease, capability, 'missing', KEY_PERMISSIONS[provider][capability]);
       throw e;
     }
-    keyChecks.record(provider, capability, 'ok');
+    await keyChecks.recordUse(deps.vault, lease, capability, 'ok');
     return out;
   };
   /** The sound voice of the project's brand kit, when one is set (unreadable or invalid kits count as none). */
@@ -156,42 +159,55 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       const refs = await readReferences(c, a.references);
       await confirmPaid(c, 'provider:openai-images', t().approvals.generateImage, t().approvals.imageDetail({ width: size.width, height: size.height, refs: refs.length, prompt: prompt.slice(0, 300) }));
       alive(c);
-      const img = await withKeyCheck('openai', 'images', () => generateImage({ ...httpFor(c), apiKey }, { prompt, width: size.width, height: size.height, quality, background, references: refs }));
+      const img = await withKeyCheck('openai', apiKey, 'images', () => generateImage({ ...httpFor(c), apiKey }, { prompt, width: size.width, height: size.height, quality, background, references: refs }));
       alive(c);
       const file = await saveGeneratedFile(c.projectDir, 'generated', `${s(a.name, 60) || slug(prompt)}.png`, img.bytes);
-      await register(c, [file], (f) => ({ file: f, origin: 'generated', description: prompt.slice(0, 2000), tags: ['gpt-image-2'] }));
+      await register(c, [file], (f) => ({ file: f, origin: 'generated', description: prompt.slice(0, 2000), tags: ['gpt-image-2'], provider: 'openai', model: OPENAI_IMAGE_MODEL }));
       const changed = size.width !== Number(a.width) || size.height !== Number(a.height);
       return { file: `assets/${file}`, width: img.width, height: img.height, ...(changed ? { note: t().providers.nearestSize } : {}) };
     },
     tts: async (c, a) => {
       allowed(c, 'tts');
-      const chosen = await service(c, 'voice', a.provider);
+      // A voice names its provider (I1): OpenAI's voices are a fixed list, any other id is an ElevenLabs one. With no
+      // provider asked, the voice's own provider is the one asked, so an ElevenLabs id never goes to OpenAI.
+      const rawVoice = s(a.voice, 100) || undefined;
+      const voiceOwner = rawVoice === undefined ? null : voiceProviderOf(rawVoice);
+      const chosen = await service(c, 'voice', a.provider ?? voiceOwner ?? undefined);
       const text = s(a.text, 5000);
       if (!text) throw new ProviderError(400, t().providers.writeText);
       const requested = oneOf(a.provider, ['openai', 'elevenlabs'] as const, () => t().providers.optionProvider) ?? null;
-      // A provider named by the brief wins over the agent's; the agent's voice then belongs to the other provider and is dropped.
+      // A provider named by the brief wins over the agent's.
       const forced = effectiveServices(c).voice !== 'auto' ? (chosen as 'openai' | 'elevenlabs') : null;
       const overridden = forced !== null && requested !== null && requested !== forced;
-      const voice = overridden ? undefined : s(a.voice, 100) || undefined;
+      const fixed = forced ?? requested ?? voiceOwner;
+      // No usable voice asked: the brand kit's voice, with its provider when the caller did not pick one and that key is set.
+      const brand = fixed !== null && voiceOwner === fixed ? null : await brandVoice(c);
+      const provider = fixed ?? (brand && (await deps.vault.get(brand.provider)) ? brand.provider : (await deps.vault.get('openai')) ? 'openai' : (await deps.vault.get('elevenlabs')) ? 'elevenlabs' : 'openai');
+      // A voice of the other provider is dropped before any confirmation, with a note in the result.
+      const voice = voiceOwner === provider ? rawVoice : undefined;
       if (voice !== undefined && !VOICE.test(voice)) throw new ProviderError(400, t().providers.invalidVoice);
-      // No voice asked: the brand kit's voice, with its provider when the caller did not pick one and that key is set.
-      const brand = voice === undefined ? await brandVoice(c) : null;
-      const provider = forced ?? requested ?? (brand && (await deps.vault.get(brand.provider)) ? brand.provider : (await deps.vault.get('openai')) ? 'openai' : (await deps.vault.get('elevenlabs')) ? 'elevenlabs' : 'openai');
-      const voiceId = voice ?? (brand && brand.provider === provider ? brand.id : undefined);
+      const brandUsed = voice === undefined && brand !== null && brand.provider === provider;
+      const voiceId = voice ?? (brandUsed ? brand.id : undefined);
       const apiKey = await keyOf(provider);
       const format = a.format === 'wav' ? 'wav' : 'mp3';
+      const http = { ...httpFor(c), apiKey };
+      // ElevenLabs with no voice: the account's first voice, a free read under `voices`, BEFORE the confirmation (M3): a key
+      // that cannot list voices is refused without an approval card (and a refused list is not a missing text_to_speech).
+      const resolved = provider === 'elevenlabs' && !voiceId ? await withKeyCheck('elevenlabs', apiKey, 'voices', () => elevenlabsDefaultVoice(http)) : voiceId;
+      alive(c);
       await confirmPaid(c, `provider:tts-${provider}`, t().approvals.generateVoice({ provider: LABEL[provider] }), text.slice(0, 300));
       alive(c);
-      const http = { ...httpFor(c), apiKey };
-      // ElevenLabs with no voice: the account's first voice, read under `voices` (a refused list is not a missing text_to_speech).
-      const resolved = provider === 'elevenlabs' && !voiceId ? await withKeyCheck('elevenlabs', 'voices', () => elevenlabsDefaultVoice(http)) : voiceId;
-      alive(c);
       const req = { text, voice: resolved, instructions: s(a.instructions, 1000) || undefined, format } as const;
-      const out = await withKeyCheck(provider, 'tts', () => (provider === 'openai' ? openaiSpeech(http, req) : elevenlabsSpeech(http, req)));
+      const out = await withKeyCheck(provider, apiKey, 'tts', () => (provider === 'openai' ? openaiSpeech(http, req) : elevenlabsSpeech(http, req)));
       alive(c);
       const file = await saveGeneratedFile(c.projectDir, 'audio', `${s(a.name, 60) || slug(text)}.${format}`, out.bytes);
-      await register(c, [file], (f) => ({ file: f, origin: 'generated', description: text.slice(0, 2000), tags: [t().providers.voiceTag, provider], attribution: t().providers.voiceAttribution({ provider: LABEL[provider] }) }));
-      return { file: `assets/${file}`, provider, voice: out.voice, ...(overridden ? { note: overrideNote('voice', requested!, provider) } : {}) };
+      const model = provider === 'openai' ? OPENAI_TTS_MODEL : ELEVENLABS_TTS_MODEL;
+      await register(c, [file], (f) => ({ file: f, origin: 'generated', description: text.slice(0, 2000), tags: [t().providers.voiceTag, provider], attribution: t().providers.voiceAttribution({ provider: LABEL[provider] }), provider, model }));
+      const notes = [
+        ...(overridden ? [overrideNote('voice', requested!, provider)] : []),
+        ...(rawVoice !== undefined && voice === undefined ? [t().providers.voiceDropped({ voice: rawVoice, owner: LABEL[voiceOwner!], provider: LABEL[provider], brand: brandUsed })] : []),
+      ];
+      return { file: `assets/${file}`, provider, voice: out.voice, ...(notes.length ? { note: notes.join(' ') } : {}) };
     },
     sound_effect: async (c, a) => {
       allowed(c, 'sound_effect');
@@ -201,7 +217,7 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       const apiKey = await keyOf('elevenlabs');
       await confirmPaid(c, 'provider:sfx-elevenlabs', t().approvals.generateSfx({ provider: LABEL.elevenlabs }), t().approvals.audioDetail({ provider: LABEL.elevenlabs, seconds: req.durationSec ?? null, prompt: prompt.slice(0, 300) }));
       alive(c);
-      const out = await withKeyCheck('elevenlabs', 'sfx', () => elevenlabsSoundEffect({ ...httpFor(c), apiKey }, { ...req, prompt }));
+      const out = await withKeyCheck('elevenlabs', apiKey, 'sfx', () => elevenlabsSoundEffect({ ...httpFor(c), apiKey }, { ...req, prompt }));
       alive(c);
       const file = await saveGeneratedFile(c.projectDir, 'audio', `${s(a.name, 60) || slug(prompt)}.mp3`, Buffer.from(out.bytes));
       await register(c, [file], (f) => ({ file: f, origin: 'generated', description: prompt, tags: [t().providers.soundTag, 'elevenlabs'], attribution: t().providers.audioAttribution({ provider: LABEL.elevenlabs }), provider: 'elevenlabs', model: SFX_MODEL, ...(req.loop !== undefined ? { loop: req.loop } : {}) }));
@@ -215,7 +231,7 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       const apiKey = await keyOf('elevenlabs');
       await confirmPaid(c, 'provider:music-elevenlabs', t().approvals.generateMusic({ provider: LABEL.elevenlabs }), t().approvals.audioDetail({ provider: LABEL.elevenlabs, seconds: req.durationSec, prompt: prompt.slice(0, 300) }));
       alive(c);
-      const out = await withKeyCheck('elevenlabs', 'music', () => elevenlabsMusic({ ...httpFor(c), apiKey }, { ...req, prompt }));
+      const out = await withKeyCheck('elevenlabs', apiKey, 'music', () => elevenlabsMusic({ ...httpFor(c), apiKey }, { ...req, prompt }));
       alive(c);
       const file = await saveGeneratedFile(c.projectDir, 'audio', `${s(a.name, 60) || slug(prompt)}.mp3`, Buffer.from(out.bytes));
       await register(c, [file], (f) => ({ file: f, origin: 'generated', description: prompt, tags: [t().providers.musicTag, 'elevenlabs'], attribution: t().providers.audioAttribution({ provider: LABEL.elevenlabs }), provider: 'elevenlabs', model: MUSIC_MODEL }));
@@ -227,7 +243,7 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       if (effectiveServices(c).voice === 'openai') throw new ProviderError(403, t().providers.serviceVoicesUnused);
       await service(c, 'voice', 'elevenlabs');
       const apiKey = await keyOf('elevenlabs');
-      const voices = await withKeyCheck('elevenlabs', 'voices', () => elevenlabsVoices({ ...httpFor(c), apiKey }, { search: s(a.search, 100) || undefined, pageSize: num(a.limit) }));
+      const voices = await withKeyCheck('elevenlabs', apiKey, 'voices', () => elevenlabsVoices({ ...httpFor(c), apiKey }, { search: s(a.search, 100) || undefined, pageSize: num(a.limit) }));
       alive(c);
       return { voices };
     },
@@ -239,7 +255,7 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       if (!query) throw new ProviderError(400, t().providers.searchWhat);
       const orientation = oneOf(a.orientation, ['landscape', 'portrait', 'square'] as const, () => t().providers.optionOrientation);
       const apiKey = await keyOf(provider);
-      const results = await withKeyCheck(provider, 'search', () => stockSearch({ ...httpFor(c), apiKey }, { provider, query, kind: a.kind === 'video' ? 'video' : 'photo', orientation, limit: Number(a.limit) || 10 }));
+      const results = await withKeyCheck(provider, apiKey, 'search', () => stockSearch({ ...httpFor(c), apiKey }, { provider, query, kind: a.kind === 'video' ? 'video' : 'photo', orientation, limit: Number(a.limit) || 10 }));
       return { results };
     },
     stock_download: async (c, a) => {
@@ -248,7 +264,7 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       const provider = stockProvider(a.provider);
       const id = s(a.id, 64);
       const apiKey = await keyOf(provider);
-      const d = await withKeyCheck(provider, 'search', () => stockDownload({ ...httpFor(c), apiKey }, { provider, id, kind: a.kind === 'video' ? 'video' : 'photo' }));
+      const d = await withKeyCheck(provider, apiKey, 'search', () => stockDownload({ ...httpFor(c), apiKey }, { provider, id, kind: a.kind === 'video' ? 'video' : 'photo' }));
       alive(c);
       const file = await saveGeneratedFile(c.projectDir, 'stock', `${provider}-${id}.${d.ext}`, d.bytes);
       await register(c, [file], (f) => ({ file: f, origin: 'stock', sourceUrl: d.sourceUrl, description: d.attribution, tags: ['stock', provider], attribution: d.attribution }));

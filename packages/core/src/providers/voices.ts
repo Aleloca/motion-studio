@@ -5,6 +5,12 @@ import { t } from '../i18n.ts';
 /** The voices OpenAI documents for text to speech (`gpt-4o-mini-tts`); there is no endpoint that lists them. */
 export const OPENAI_VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse', 'marin', 'cedar'] as const;
 
+/**
+ * The provider a voice id belongs to: OpenAI's voices are a fixed, documented list; any other id is an ElevenLabs one (their
+ * ids are opaque strings, never one of OpenAI's names).
+ */
+export const voiceProviderOf = (voice: string): 'openai' | 'elevenlabs' => ((OPENAI_VOICES as readonly string[]).includes(voice) ? 'openai' : 'elevenlabs');
+
 /** A voice id as the providers write it; anything else never reaches a URL or the brand kit. */
 export const VOICE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 

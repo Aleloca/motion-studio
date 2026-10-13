@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { EMPTY_BRAND_SOUND, type BrandSound, type SecretStatus } from '@motion-studio/shared';
 import { api, type GenerateRequest } from '../../api.ts';
 import type { EventsState } from '../../eventsReducer.ts';
@@ -25,6 +25,14 @@ export function soundStylePrompt(s: BrandSound | undefined): string {
   if (!s) return '';
   const parts = [s.genre.trim(), s.energy ? `${s.energy} energy` : '', s.instruments.length ? `instruments: ${s.instruments.join(', ')}` : '', s.avoid.length ? `avoid: ${s.avoid.join(', ')}` : ''].filter(Boolean);
   return parts.join(', ');
+}
+
+/**
+ * The Voice field after the voice-over provider changes: the brand voice when it belongs to the new provider, else empty. An
+ * id of one provider never goes to the other (the core refuses it too, before any confirmation).
+ */
+export function voiceOnProviderChange(next: Provider, sound: BrandSound): string {
+  return sound.voice && sound.voice.provider === next ? sound.voice.id : '';
 }
 
 export interface GenerateDialogProps { open: boolean; onClose(): void; slug: string; live: EventsState }
@@ -76,6 +84,15 @@ function Body({ onClose, slug, live }: GenerateDialogProps) {
     }).catch(() => { /* nothing to prefill */ });
     return () => { alive = false; };
   }, [slug]);
+
+  // Whatever changes the voice-over provider (the Select, the brand prefill, a provider without its key), the voice follows.
+  const voiceProvider = useRef(provider.voice);
+  useEffect(() => {
+    if (voiceProvider.current === provider.voice) return;
+    voiceProvider.current = provider.voice;
+    setVoice(voiceOnProviderChange(provider.voice, sound));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only a provider change resets the voice
+  }, [provider.voice]);
 
   const has = (pr: Provider) => Boolean(secrets?.find((s) => s.provider === pr)?.configured);
   const usable = (k: Kind) => PROVIDERS[k].some(has);

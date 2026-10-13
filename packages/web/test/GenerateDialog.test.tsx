@@ -72,6 +72,40 @@ describe('GenerateDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Generate' }));
     await waitFor(() => expect(sent()).toMatchObject({ kind: 'voice', provider: 'elevenlabs', text: 'Hello', options: { voice: 'v1', format: 'mp3' } }));
   });
+  it('clears the voice when the provider changes, unless it is the brand voice of the new provider', async () => {
+    overview.kit.sound = { genre: '', energy: null, instruments: [], avoid: [], voice: { provider: 'elevenlabs', id: 'v1', name: 'Rachel' } };
+    const user = userEvent.setup();
+    render(ui());
+    await user.click(await screen.findByRole('tab', { name: 'Voice-over' }));
+    const field = () => screen.getByLabelText('Voice ID') as HTMLInputElement;
+    await waitFor(() => expect(field().value).toBe('v1'));
+    // ElevenLabs → OpenAI: the ElevenLabs id is not carried over.
+    await user.click(screen.getByRole('button', { name: /Provider/ }));
+    await user.click(await screen.findByRole('option', { name: 'OpenAI' }));
+    await waitFor(() => expect(field().value).toBe(''));
+    await user.type(field(), 'alloy');
+    // OpenAI → ElevenLabs: the OpenAI name is dropped and the brand's ElevenLabs voice comes back.
+    await user.click(screen.getByRole('button', { name: /Provider/ }));
+    await user.click(await screen.findByRole('option', { name: 'ElevenLabs' }));
+    await waitFor(() => expect(field().value).toBe('v1'));
+    await user.type(screen.getByLabelText('Text to speak'), 'Hello');
+    await user.click(screen.getByRole('button', { name: 'Generate' }));
+    await waitFor(() => expect(sent()).toMatchObject({ kind: 'voice', provider: 'elevenlabs', options: { voice: 'v1' } }));
+  });
+  it('the brand voice of a provider without its key is not prefilled for the other provider', async () => {
+    secrets = [secret('openai', true), secret('elevenlabs', false)];
+    overview.kit.sound = { genre: '', energy: null, instruments: [], avoid: [], voice: { provider: 'elevenlabs', id: 'v1', name: 'Rachel' } };
+    const user = userEvent.setup();
+    render(ui());
+    await user.click(await screen.findByRole('tab', { name: 'Voice-over' }));
+    await waitFor(() => expect(screen.getByText(/Made by OpenAI \(gpt-4o-mini-tts\)/)).toBeTruthy());
+    expect((screen.getByLabelText('Voice ID') as HTMLInputElement).value).toBe('');
+    await user.type(screen.getByLabelText('Text to speak'), 'Hello');
+    await user.click(screen.getByRole('button', { name: 'Generate' }));
+    await waitFor(() => expect(api.generateAsset).toHaveBeenCalled());
+    expect(sent()).toMatchObject({ kind: 'voice', provider: 'openai' });
+    expect((sent().options as Record<string, unknown>).voice).toBeUndefined();
+  });
   it('prefills the music prompt from the brand sound style and shows the duration limits', async () => {
     overview.kit.sound = { genre: 'warm electronic', energy: 'low', instruments: ['piano'], avoid: ['brass'], voice: null };
     const user = userEvent.setup();

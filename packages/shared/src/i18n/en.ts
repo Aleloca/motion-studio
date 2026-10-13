@@ -659,6 +659,8 @@ export const en = {
     serviceNoKey: (p: { provider: string; service: string }) => `This creative's brief chooses ${p.provider} for ${p.service}, but the ${p.provider} key is not set: add it in the Motion Studio settings, or the user can change the service with the Services button`,
     serviceOverridden: (p: { provider: string; service: string; requested: string }) => `This creative's brief chooses ${p.provider} for ${p.service}: used instead of ${p.requested}`,
     serviceVoicesUnused: "This creative's brief chooses OpenAI for voice: ElevenLabs voices cannot be used, so there is nothing to list",
+    voiceDropped: (p: { voice: string; owner: string; provider: string; brand: boolean }) => `The voice ${p.voice} belongs to ${p.owner} and this voice-over uses ${p.provider}: it was not used, the ${p.brand ? `brand's ${p.provider} voice` : `${p.provider} default voice`} was used instead`,
+    voiceWrongProvider: (p: { voice: string; provider: string }) => `The voice ${p.voice} is not a ${p.provider} voice: choose one of the ${p.provider} voices`,
   },
   issues: {
     id: 'invalid id (lowercase letters, digits and hyphens)',

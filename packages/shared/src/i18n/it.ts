@@ -651,6 +651,8 @@ export const it: Messages = {
     serviceNoKey: (p) => `Il brief di questo creativo sceglie ${p.provider} per ${p.service}, ma la chiave ${p.provider} non è impostata: aggiungila nelle Impostazioni di Motion Studio, oppure l'utente può cambiare il servizio con il pulsante Servizi`,
     serviceOverridden: (p) => `Il brief di questo creativo sceglie ${p.provider} per ${p.service}: usato al posto di ${p.requested}`,
     serviceVoicesUnused: "Il brief di questo creativo sceglie OpenAI per la voce: le voci ElevenLabs non si possono usare, quindi non c'è nulla da elencare",
+    voiceDropped: (p) => `La voce ${p.voice} è una voce ${p.owner} e questa voce fuori campo usa ${p.provider}: non è stata usata, al suo posto c'è ${p.brand ? `la voce ${p.provider} del brand` : `la voce predefinita di ${p.provider}`}`,
+    voiceWrongProvider: (p) => `La voce ${p.voice} non è una voce ${p.provider}: scegline una fra le voci ${p.provider}`,
   },
   issues: {
     id: 'identificativo non valido (minuscole, cifre e trattini)',

@@ -561,7 +561,7 @@ describe('brief services (Review Focus 2)', () => {
     await approvals.decide(req!.id, 'once');
     const out = await pending as { provider: string; note?: string };
     expect(out.provider).toBe('openai');
-    expect(out.note).toBe("This creative's brief chooses OpenAI for voice: used instead of ElevenLabs");
+    expect(out.note).toBe("This creative's brief chooses OpenAI for voice: used instead of ElevenLabs The voice JBFqnCBsd6RMkjVDRZzb belongs to ElevenLabs and this voice-over uses OpenAI: it was not used, the OpenAI default voice was used instead");
     expect(sent.every((u) => u.startsWith('https://api.openai.com/'))).toBe(true);
     expect(sent.length).toBeGreaterThan(0);
     // The ElevenLabs voice id did not travel to OpenAI.
@@ -616,5 +616,128 @@ describe('brief services (Review Focus 2)', () => {
     const out = await tools({ confirmPaidProviders: false }, ALL_KEYS, recording).tts!(withServices({ voice: 'openai' }), { text: 'Ciao' }) as { provider: string };
     expect(out.provider).toBe('openai');
     expect(seenBodies.join('\n')).not.toContain('JBFqnCBsd6RMkjVDRZzb');
+  });
+});
+
+describe('tts: a voice of the other provider never reaches a provider nor costs a confirmation (final review I1, M3)', () => {
+  const BOTH = { OPENAI_API_KEY: 'sk-test', ELEVENLABS_API_KEY: 'el-test' };
+  const EL_ID = 'JBFqnCBsd6RMkjVDRZzb';
+  const withServices = (services: BriefServices | undefined): BridgeContext => ({ ...ctx, ...(services ? { services: effectiveServices({ services }) } : {}) });
+  let bodies: string[];
+  const recording = (async (url: string, init?: RequestInit) => { bodies.push(`${url} ${String(init?.body ?? '')}`); return fakeFetch(url, init); }) as unknown as typeof fetch;
+  const setBrandVoice = async (provider: string, id: string) => {
+    const { EMPTY_BRAND_KIT } = await import('@motion-studio/shared');
+    await mkdir(join(projectDir, 'brand'), { recursive: true });
+    await writeFile(join(projectDir, 'brand', 'brand-kit.json'), JSON.stringify({ ...EMPTY_BRAND_KIT, sound: { genre: '', energy: null, instruments: [], avoid: [], voice: { provider, id } } }));
+  };
+  /** Runs a tts call that asks for confirmation; returns the rule asked and the result. */
+  const confirmed = async (run: Promise<unknown>) => {
+    await waitForPending();
+    const [req] = approvals.pending();
+    await approvals.decide(req!.id, 'once');
+    return { rule: req!.toolName, out: await run as { provider: string; voice: string; note?: string } };
+  };
+  beforeEach(() => { setLocale('en'); bodies = []; });
+  afterEach(() => setLocale('it'));
+
+  it('auto, both keys, no provider: an ElevenLabs id goes to ElevenLabs (asked as ElevenLabs), never to OpenAI', async () => {
+    const t = tools({}, BOTH, recording);
+    const { rule, out } = await confirmed(t.tts!(withServices({ voice: 'auto' }), { text: 'Ciao', voice: EL_ID }));
+    expect(rule).toBe('provider:tts-elevenlabs');
+    expect(out).toMatchObject({ provider: 'elevenlabs', voice: EL_ID });
+    expect(out.note).toBeUndefined();
+    expect(sent.some((u) => u.includes(`/v1/text-to-speech/${EL_ID}`))).toBe(true);
+    expect(sent.some((u) => u.startsWith('https://api.openai.com/'))).toBe(false);
+  });
+  it('the same with no services at all (old brief, console job)', async () => {
+    const out = await tools({ confirmPaidProviders: false }, BOTH, recording).tts!(withServices(undefined), { text: 'Ciao', voice: EL_ID }) as { provider: string };
+    expect(out.provider).toBe('elevenlabs');
+    expect(sent.some((u) => u.startsWith('https://api.openai.com/'))).toBe(false);
+  });
+  it('auto, both keys, no provider: an OpenAI voice name goes to OpenAI', async () => {
+    const t = tools({}, BOTH, recording);
+    const { rule, out } = await confirmed(t.tts!(withServices({ voice: 'auto' }), { text: 'Ciao', voice: 'alloy' }));
+    expect(rule).toBe('provider:tts-openai');
+    expect(out).toMatchObject({ provider: 'openai', voice: 'alloy' });
+    expect(sent.every((u) => u.startsWith('https://api.openai.com/'))).toBe(true);
+  });
+  it('auto, the provider asked does not own the voice: the voice is dropped with a note, before the confirmation', async () => {
+    const t = tools({}, BOTH, recording);
+    const { rule, out } = await confirmed(t.tts!(withServices({ voice: 'auto' }), { text: 'Ciao', provider: 'openai', voice: EL_ID }));
+    expect(rule).toBe('provider:tts-openai');
+    expect(out).toMatchObject({ provider: 'openai', voice: 'marin' });
+    expect(out.note).toBe(`The voice ${EL_ID} belongs to ElevenLabs and this voice-over uses OpenAI: it was not used, the OpenAI default voice was used instead`);
+    expect(bodies.join('\n')).not.toContain(EL_ID);
+  });
+  it('forced ElevenLabs, an OpenAI voice and no provider: dropped with a note, the brand\'s ElevenLabs voice used', async () => {
+    await setBrandVoice('elevenlabs', 'brandVoice1');
+    const t = tools({}, BOTH, recording);
+    const { rule, out } = await confirmed(t.tts!(withServices({ voice: 'elevenlabs' }), { text: 'Ciao', voice: 'alloy' }));
+    expect(rule).toBe('provider:tts-elevenlabs');
+    expect(out).toMatchObject({ provider: 'elevenlabs', voice: 'brandVoice1' });
+    expect(out.note).toBe("The voice alloy belongs to OpenAI and this voice-over uses ElevenLabs: it was not used, the brand's ElevenLabs voice was used instead");
+    expect(sent.some((u) => u.startsWith('https://api.openai.com/'))).toBe(false);
+  });
+  it('forced OpenAI, an ElevenLabs id and no provider: dropped with a note only about the voice', async () => {
+    const t = tools({}, BOTH, recording);
+    const { rule, out } = await confirmed(t.tts!(withServices({ voice: 'openai' }), { text: 'Ciao', voice: EL_ID }));
+    expect(rule).toBe('provider:tts-openai');
+    expect(out.provider).toBe('openai');
+    expect(out.note).toBe(`The voice ${EL_ID} belongs to ElevenLabs and this voice-over uses OpenAI: it was not used, the OpenAI default voice was used instead`);
+    expect(bodies.join('\n')).not.toContain(EL_ID);
+  });
+  it('auto with only the OpenAI key: an ElevenLabs id is refused before any confirmation or request', async () => {
+    const e = await tools({}, { OPENAI_API_KEY: 'sk-test' }, recording).tts!(withServices({ voice: 'auto' }), { text: 'Ciao', voice: EL_ID }).then(() => null, (x: unknown) => x);
+    expect(e).toMatchObject({ status: 400 });
+    expect(approvals.pending()).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+  it('M3: ElevenLabs with no voice and a key that cannot list voices is refused before the confirmation', async () => {
+    const { KeyCheckCache } = await import('../src/providers/key-check.ts');
+    const cache = new KeyCheckCache();
+    const restricted = (async (url: string, init?: RequestInit) => (url.startsWith('https://api.elevenlabs.io/v2/voices')
+      ? new Response(JSON.stringify({ detail: { status: 'missing_permissions', message: 'missing the permission voices_read' } }), { status: 401 })
+      : fakeFetch(url, init))) as unknown as typeof fetch;
+    const t = providerTools({
+      vault: new MemoryVault({ ELEVENLABS_API_KEY: 'xi-tts-only-0123456789' }), approvals, media: NoMediaTools, fetch: restricted, lookup: publicLookup,
+      broadcast: () => {}, keyChecks: cache, settings: async () => workspaceSettingsSchema.parse({ schemaVersion: 1 }),
+    });
+    const created = vi.spyOn(approvals, 'request');
+    await expect(t.tts!(ctx, { text: 'Ciao', provider: 'elevenlabs' })).rejects.toBeTruthy();
+    expect(created).not.toHaveBeenCalled();
+    expect(cache.capabilities('elevenlabs').voices).toMatchObject({ status: 'missing', permission: 'voices_read' });
+  });
+  it('M6: an agent image and voice-over register their provider and model', async () => {
+    const t = tools({ confirmPaidProviders: false }, BOTH);
+    const img = await t.generate_image!(ctx, { prompt: 'x', width: 1024, height: 1024 }) as { file: string };
+    const tts = await t.tts!(ctx, { text: 'Ciao', provider: 'elevenlabs', voice: EL_ID }) as { file: string };
+    const tts2 = await t.tts!(ctx, { text: 'Hello', voice: 'alloy' }) as { file: string };
+    const assets = await new LibraryStore(projectDir, NoMediaTools).listAssets();
+    const byFile = (f: string) => assets.find((a) => `assets/${a.file}` === f);
+    expect(byFile(img.file)).toMatchObject({ provider: 'openai', model: 'gpt-image-2' });
+    expect(byFile(tts.file)).toMatchObject({ provider: 'elevenlabs', model: 'eleven_multilingual_v2' });
+    expect(byFile(tts2.file)).toMatchObject({ provider: 'openai', model: 'gpt-4o-mini-tts' });
+  });
+});
+
+describe('key checks follow only the current key (final review M2)', () => {
+  it('a 401 that comes back after the key was replaced during the confirmation is not recorded', async () => {
+    const { KeyCheckCache } = await import('../src/providers/key-check.ts');
+    const cache = new KeyCheckCache();
+    const vault = new MemoryVault();
+    await vault.set('openai', 'sk-old-0123456789');
+    const denied = (async () => new Response('nope', { status: 401 })) as unknown as typeof fetch;
+    const t = providerTools({
+      vault, approvals, media: NoMediaTools, fetch: denied, lookup: publicLookup, broadcast: () => {}, keyChecks: cache,
+      settings: async () => workspaceSettingsSchema.parse({ schemaVersion: 1 }),
+    });
+    const run = t.generate_image!(ctx, { prompt: 'x', width: 1024, height: 1024 }).then(() => null, (e: unknown) => e);
+    await waitForPending();
+    // The user saves a new key while the approval waits (the settings route sets the key, then clears the cache).
+    await vault.set('openai', 'sk-new-0123456789');
+    cache.clear('openai');
+    await approvals.decide(approvals.pending()[0]!.id, 'once');
+    expect(await run).toBeTruthy();
+    expect(cache.get('openai')).toBeNull();
   });
 });
