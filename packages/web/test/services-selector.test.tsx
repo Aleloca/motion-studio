@@ -92,6 +92,28 @@ describe('ServicesSelector', () => {
     await waitFor(() => expect(option('Voice', 'ElevenLabs').disabled).toBe(true));
     expect(option('Voice', 'OpenAI').disabled).toBe(false);
   });
+  it('under auto, says which provider is skipped for a missing permission and links to Settings; the chip says it too (fix round 2)', async () => {
+    secrets = [secret('openai', true), secret('elevenlabs', true), secret('pexels', false), secret('unsplash', false)];
+    keyChecks = { openai: null, elevenlabs: { provider: 'elevenlabs', checkedAt: '', capabilities: [{ capability: 'key', status: 'ok' }, { capability: 'tts', status: 'missing', permission: 'text_to_speech' }] }, pexels: null, unsplash: null };
+    const { ServicesChip } = await import('../src/components/ServicesSelector.tsx');
+    const user = userEvent.setup();
+    render(en(<ServicesChip slug="acme" creative="c1" brief={brief} busy={false} onSaved={() => {}} />));
+    await waitFor(() => expect(screen.getByRole('button', { name: /Services/ }).textContent).toContain('Voice: ElevenLabs unavailable'));
+    await user.click(screen.getByRole('button', { name: /Services/ }));
+    await waitFor(() => expect(option('Voice', 'ElevenLabs').disabled).toBe(true));
+    const note = document.getElementById(group('Voice').getAttribute('aria-describedby')!)!;
+    expect(note.textContent).toContain('ElevenLabs voice: missing permission text_to_speech · Auto skips it until the key is fixed.');
+    const link = within(note).getByRole('link', { name: 'Test in Settings' });
+    expect(link.getAttribute('href')).toBe('#/settings/paid');
+    // The same reason is not repeated for the ElevenLabs choice.
+    expect(note.textContent!.match(/text_to_speech/g)).toHaveLength(1);
+  });
+  it('nothing known, or unverified/error: no auto line and the plain summary', () => {
+    const checks = { elevenlabs: { provider: 'elevenlabs' as const, checkedAt: '', capabilities: [{ capability: 'tts' as const, status: 'unverified' as const }] } };
+    render(en(<ServicesSelector value={undefined} configured={new Set(['elevenlabs'])} checks={checks} onChange={() => {}} />));
+    expect(group('Voice').getAttribute('aria-describedby') === null || !document.getElementById(group('Voice').getAttribute('aria-describedby')!)?.textContent?.includes('Auto skips')).toBe(true);
+    expect(servicesSummary(undefined, messages('en'), () => [])).toBe('all auto');
+  });
   it('changes one kind, keeping the others; arrows skip a disabled provider', async () => {
     const onChange = vi.fn();
     render(en(<ServicesSelector value={{ images: 'stock' }} configured={new Set(['openai', 'pexels'])} onChange={onChange} />));

@@ -4,6 +4,7 @@
 import { effectiveServices, missingCapability, SERVICE_CHOICES, SERVICE_KINDS, serviceCapability, type Brief, type BriefServices, type KeyCheckResult, type Messages, type ProviderId, type ServiceKind } from '@motion-studio/shared';
 import { useEffect, useId, useRef, useState } from 'react';
 import { api } from '../api.ts';
+import { href } from '../routes.ts';
 import { message } from '../errors.ts';
 import { useT } from '../i18n.tsx';
 import { Button, Icon, Popover, Segmented } from '../ui/index.ts';
@@ -49,12 +50,30 @@ export function useKeyChecks(): KeyChecks | null {
   return checks;
 }
 
+/** The providers `auto` can use per kind (stock is a tool choice, not one `auto` picks for generation). */
+const AUTO_PROVIDERS: Record<ServiceKind, ProviderId[]> = { images: ['openai'], voice: ['openai', 'elevenlabs'], music: ['elevenlabs'], sfx: ['elevenlabs'] };
+
+/**
+ * The providers `auto` skips for a kind because the key checks know the key lacks the capability (F5, fix round 2): their
+ * key is set (or unknown), but the capability is `missing`. Empty when nothing is known.
+ */
+export function autoSkipped(kind: ServiceKind, configured: ReadonlySet<ProviderId> | null, checks: KeyChecks | null | undefined): Array<{ provider: ProviderId; permission?: string }> {
+  return AUTO_PROVIDERS[kind].flatMap((p) => {
+    if (configured && !configured.has(p)) return [];
+    const m = missingCapability(checks?.[p], serviceCapability(kind, p));
+    return m ? [{ provider: p, ...(m.permission ? { permission: m.permission } : {}) }] : [];
+  });
+}
+
 /** The short summary of the chip: the kinds that are not `auto` ("Voice Off · Images Stock only"), else "all auto". */
-export function servicesSummary(services: BriefServices | undefined, t: Messages): string {
+export function servicesSummary(services: BriefServices | undefined, t: Messages, skipped?: (kind: ServiceKind) => Array<{ provider: ProviderId }>): string {
   const sv = t.web.services;
   const s = effectiveServices({ services });
   const parts = SERVICE_KINDS.filter((k) => s[k] !== 'auto').map((k) => sv.summaryPart({ kind: sv.kinds[k], choice: sv.choices[s[k]] }));
-  return parts.length ? parts.join(' · ') : sv.summaryAuto;
+  // Under auto, a provider skipped for a missing permission is said on the chip too (the selector says why).
+  const skips = skipped ? SERVICE_KINDS.filter((k) => s[k] === 'auto').flatMap((k) => skipped(k).map((x) => sv.summarySkipped({ kind: sv.kinds[k], provider: PROVIDER_LABEL[x.provider] }))) : [];
+  const all = [...parts, ...skips];
+  return all.length ? all.join(' · ') : sv.summaryAuto;
 }
 
 export interface ServicesSelectorProps {
@@ -95,18 +114,26 @@ export function ServicesSelector({ value, onChange, configured, checks, disabled
       {SERVICE_KINDS.map((kind) => {
         const choices = SERVICE_CHOICES[kind] as readonly Choice[];
         const reasons = choices.map((c) => unavailable(kind, c)).filter((r): r is string => r !== null);
+        // Under auto, say which provider it skips for a missing permission, and where to fix it (fix round 2).
+        const skipped = s[kind] === 'auto' ? autoSkipped(kind, configured, checks) : [];
         const noteId = `${id}-${kind}-why`;
         return (
           <div key={kind} className="ms-services-row">
             <span className="ms-services-kind" aria-hidden="true">{sv.kinds[kind]}</span>
             <Segmented<Choice> className="ms-services-seg" label={sv.group({ kind: sv.kinds[kind] })} value={s[kind]} disabled={disabled}
-              describedBy={reasons.length ? noteId : undefined}
+              describedBy={reasons.length || skipped.length ? noteId : undefined}
               onChange={(c) => onChange({ ...value, [kind]: c })}
               options={choices.map((c) => {
                 const why = unavailable(kind, c);
                 return { value: c, label: sv.choices[c], ...(why ? { disabled: true, title: why } : {}) };
               })} />
-            {reasons.length ? <p id={noteId} className="ms-services-why">{reasons.join(' ')}</p> : null}
+            {reasons.length || skipped.length ? (
+              <p id={noteId} className="ms-services-why">
+                {skipped.map((x) => sv.autoSkipped({ kind: sv.kinds[kind], provider: PROVIDER_LABEL[x.provider], why: x.permission ? sv.whyPermission({ permission: x.permission }) : sv.whyKeyRefused })).join(' ')}
+                {skipped.length ? <> <a href={href.settings('paid')}>{sv.testInSettings}</a> </> : null}
+                {choices.filter((c) => !skipped.some((x) => x.provider === c)).map((c) => unavailable(kind, c)).filter((r): r is string => r !== null).join(' ')}
+              </p>
+            ) : null}
           </div>
         );
       })}
@@ -132,7 +159,7 @@ export function ServicesChip({ slug, creative, brief, busy, onSaved }: { slug: s
   const checks = useKeyChecks();
   const current = pending ?? brief.services;
   useEffect(() => { setPending(null); }, [brief]);
-  const summary = servicesSummary(current, t);
+  const summary = servicesSummary(current, t, (k) => autoSkipped(k, configured, checks));
   const save = async (services: BriefServices) => {
     setError(null); setSaving(true); setPending(services);
     try {
