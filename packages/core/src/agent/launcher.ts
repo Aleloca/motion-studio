@@ -24,7 +24,7 @@ export const MCP_SERVER = 'studio';
 export const MCP_TOOLS: Record<AgentJobKind, string[]> = {
   creative: ['report_progress', 'validate_composition', 'preview_frames', 'read_brand_kit', 'generate_image', 'tts', 'stock_search', 'stock_download', 'fonts_fetch'],
   console: ['report_progress', 'read_brand_kit', 'generate_image', 'tts', 'stock_search', 'stock_download', 'fonts_fetch'],
-  'brand-analysis': ['report_progress', 'read_brand_kit', 'fonts_fetch', 'download_file'],
+  'brand-analysis': ['report_progress', 'read_brand_kit', 'fonts_fetch', 'download_file', 'inspect_site_fonts'],
   describe: ['report_progress'],
 };
 
@@ -68,6 +68,9 @@ export interface LaunchInput {
   onEvent(e: AgentEvent): void;
   validateComposition?: BridgeContext['validateComposition'];
   previewFrames?: BridgeContext['previewFrames'];
+  /** Brand analysis: the job's language and where its tools' notes go (see BridgeContext). */
+  locale?: BridgeContext['locale'];
+  addNotes?: BridgeContext['addNotes'];
   /** What the run's ledger line is about (a creative's version and fix-loop attempt); null for other jobs. */
   usage?: { version: number | null; attempt: number | null };
   /**
@@ -189,6 +192,7 @@ export class AgentLauncher {
           // The same value as the policy's autoAllowBashIfSandboxed: a setting turned on later never reaches this job.
           autoApproveAtStart,
           emit: i.onEvent, signal: abort.signal, ...(i.validateComposition ? { validateComposition: i.validateComposition } : {}), ...(i.previewFrames ? { previewFrames: i.previewFrames } : {}),
+          ...(i.locale ? { locale: i.locale } : {}), ...(i.addNotes ? { addNotes: i.addNotes } : {}),
         });
         // The paths are recorded before writing, so release() also removes a half-written pair.
         const files = await prepareRunFiles(configDir, i.jobId);

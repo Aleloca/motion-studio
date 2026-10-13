@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { EMPTY_BRAND_KIT, brandKitSchema } from '@motion-studio/shared';
+import { EMPTY_BRAND_KIT, brandKitSchema, type BrandPhase } from '@motion-studio/shared';
 import { MCP_SERVER, MCP_TOOLS } from '../agent/launcher.ts';
 import type { ApprovalBroker } from '../approvals/broker.ts';
 import { readConfinedFile } from '../brand/agent-guard.ts';
@@ -20,6 +20,9 @@ export interface BridgeRoutesContext {
   /** Claude Code's per-user temp root (tests only; default: claudeTmpRootFor(process.env, uid)). null: no Read is auto-allowed. */
   claudeTmpRoot?: string | null;
 }
+
+/** The analysis phases the agent reports; `queued` and `done` are the core's own markers. */
+export const AGENT_PHASES: readonly BrandPhase[] = ['reading', 'fonts', 'colors', 'logos', 'tone', 'writing'];
 
 const denyMessage = (d: 'deny' | 'expired' | 'cancelled'): string => (d === 'deny' ? t().approvals.denied : d === 'expired' ? t().approvals.expired : t().errors.jobCancelled);
 const MAX_GUIDELINES = 50_000;
@@ -105,6 +108,12 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
     report_progress: async (c, a) => {
       const text = typeof a.message === 'string' ? cleanProgress(a.message) : '';
       if (!text || text.length > 300) throw new WorkspaceError(400, t().errors.invalidProgress);
+      // A phase only means something in a brand analysis; other jobs keep their text and the field is dropped.
+      if (c.kind === 'brand-analysis' && a.phase !== undefined && a.phase !== null) {
+        if (typeof a.phase !== 'string' || !AGENT_PHASES.includes(a.phase as BrandPhase)) throw new WorkspaceError(400, t().errors.invalidPhase);
+        c.emit({ kind: 'progress', text, phase: a.phase as BrandPhase });
+        return { ok: true };
+      }
       c.emit({ kind: 'progress', text });
       return { ok: true };
     },

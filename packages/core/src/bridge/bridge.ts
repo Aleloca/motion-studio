@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import type { AgentEvent } from '@motion-studio/shared';
+import type { AgentEvent, Locale } from '@motion-studio/shared';
 import type { AgentJobKind } from '../agent/policy.ts';
 
 /** What a bridge token gives access to: the job that owns it. */
@@ -23,6 +23,10 @@ export interface BridgeContext {
   validateComposition?: (format?: string) => Promise<unknown>;
   /** Creative turns: a few PNG frames of a composition (`preview_frames`), rate-limited per turn. */
   previewFrames?: (args: { format: unknown; times: unknown }) => Promise<unknown>;
+  /** The language the job started with (brand analysis): tool notes that end up in its proposal use it. */
+  locale?: Locale;
+  /** Brand analysis: notes a tool adds to the proposal (e.g. inspect_site_fonts warnings), already in `locale`. */
+  addNotes?: (lines: string[]) => void;
 }
 
 /** Per-job tokens that let the `studio` MCP server call back into the core on behalf of one agent job. */

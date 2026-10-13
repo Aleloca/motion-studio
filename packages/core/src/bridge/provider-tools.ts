@@ -1,10 +1,11 @@
 import { extname, join } from 'node:path';
 import { rm } from 'node:fs/promises';
-import { relativeFileSchema, type ServerMessage, type WorkspaceSettings } from '@motion-studio/shared';
+import { relativeFileSchema, webUrlSchema, type ServerMessage, type WorkspaceSettings } from '@motion-studio/shared';
 import { MCP_TOOLS } from '../agent/launcher.ts';
 import type { ApprovalBroker } from '../approvals/broker.ts';
 import { isAllowedRule, PermissionsStore } from '../approvals/permissions-store.ts';
 import { MAX_AGENT_BYTES, readConfinedBytes } from '../brand/agent-guard.ts';
+import { inspectSiteFonts } from '../brand/site-fonts.ts';
 import { LibraryStore } from '../library/library-store.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { saveGeneratedFile } from '../providers/files.ts';
@@ -173,6 +174,17 @@ export function providerTools(deps: ProviderToolsDeps): Record<string, BridgeHan
       const { files } = await installGoogleFont({ http: httpFor(c), projectDir: c.projectDir, media: deps.media, family, weights, italic: a.italic === true, alive: () => alive(c) });
       deps.broadcast({ type: 'library', project: c.projectSlug });
       return { files: files.map((f) => `assets/${f}`), license: t().providers.fontsLicense };
+    },
+    // Brand analysis only: the core reads the site's HTML and CSS (safeFetch, caps, deadline) and lists its fonts.
+    inspect_site_fonts: async (c, a) => {
+      allowed(c, 'inspect_site_fonts');
+      const url = a.url;
+      if (typeof url !== 'string' || url.length > 2000 || !webUrlSchema.safeParse(url).success) throw new ProviderError(400, t().providers.invalidUrl);
+      const { transport, lookup } = httpFor(c);
+      const out = await inspectSiteFonts({ fetch: { transport, lookup }, signal: c.signal, ...(c.locale ? { locale: c.locale } : {}) }, url);
+      alive(c);
+      if (out.warnings.length) c.addNotes?.(out.warnings);
+      return out;
     },
   };
   // Once the job is cancelled, whatever failed is reported as the cancellation.

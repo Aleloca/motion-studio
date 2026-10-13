@@ -176,10 +176,12 @@ describe('AgentLauncher', () => {
     expect(cfg.mcpServers.studio.env.MOTION_STUDIO_TOOLS).toBe('report_progress');
     expect(args).not.toContain('mcp__studio__read_brand_kit');
     const brand = await launch({ bridge, mcpCommand: ['node', '/x/server.mjs'] }, 'brand-analysis');
-    expect(JSON.parse(brand.mcpConfigFile!.content!).mcpServers.studio.env.MOTION_STUDIO_TOOLS).toBe('report_progress,read_brand_kit,fonts_fetch,download_file');
+    expect(JSON.parse(brand.mcpConfigFile!.content!).mcpServers.studio.env.MOTION_STUDIO_TOOLS).toBe('report_progress,read_brand_kit,fonts_fetch,download_file,inspect_site_fonts');
     expect(brand.args).toContain('mcp__studio__download_file');
+    expect(brand.args).toContain('mcp__studio__inspect_site_fonts');
     const creative = await launch({ bridge, mcpCommand: ['node', '/x/server.mjs'] }, 'creative');
     expect(creative.args).not.toContain('mcp__studio__download_file');
+    expect(creative.args).not.toContain('mcp__studio__inspect_site_fonts');
   });
   it('protects .studio (and its real path) from edits for every job kind, sandbox or not', { timeout: 90_000 }, async () => {
     const real = await newProject();
@@ -340,6 +342,22 @@ describe('AgentLauncher', () => {
     expect(tokenAtRunnerCancel).toBeNull(); // revoked before the runner is told
     await vi.waitFor(() => expect(existsSync(configPath)).toBe(false));
     expect(existsSync(tokenPath)).toBe(false);
+  });
+  it('hands the job language and the notes sink to the bridge context', async () => {
+    const bridge = new AgentBridge();
+    bridge.setOrigin('http://127.0.0.1:4317');
+    let token = '';
+    const runner: AgentRunner = { start: (req) => {
+      token = readFileSync(req.mcpConfigPath!.replace(/\.mcp\.json$/, '.token'), 'utf8');
+      return { done: new Promise(() => {}), cancel: () => {} };
+    } };
+    const notes: string[] = [];
+    const run = await testLauncher(runner, { bridge, mcpCommand: ['node', '/x/server.mjs'] }).start({ kind: 'brand-analysis', jobId: 'j9', projectSlug: 'acme', projectDir: await newProject(), request: { prompt: 'x' }, onEvent: () => {}, locale: 'en', addNotes: (l) => notes.push(...l) });
+    const c = bridge.resolve(token)!;
+    expect(c.locale).toBe('en');
+    c.addNotes!(['a']);
+    expect(notes).toEqual(['a']);
+    run.cancel();
   });
   it('frees the token and the MCP config file when the runner fails to start', async () => {
     const bridge = new AgentBridge();

@@ -1,5 +1,5 @@
 // Brand page model: pure helpers shared by the Brand page and the proposal review (no React, no API).
-import { LOCALES, messages, type AgentEvent, type BrandChange, type BrandKit, type BrandOverview, type BrandSource, type JobSummary, type SourceRef } from '@motion-studio/shared';
+import { BRAND_PHASES, LOCALES, messages, type AgentEvent, type BrandChange, type BrandPhase, type BrandKit, type BrandOverview, type BrandSource, type JobSummary, type SourceRef } from '@motion-studio/shared';
 
 export const MANUAL: SourceRef = { kind: 'manual', ref: null };
 
@@ -112,8 +112,23 @@ export function latestBrandJob(jobs: Record<string, JobSummary>, key: string): J
  */
 export function analysisSteps(events: AgentEvent[] | undefined): string[] {
   const out: string[] = [];
-  for (const e of events ?? []) if (e.kind === 'progress' && e.text !== out[out.length - 1]) out.push(e.text);
+  // The core's phase markers carry no text: they feed the stepper only.
+  for (const e of events ?? []) if (e.kind === 'progress' && e.text && e.text !== out[out.length - 1]) out.push(e.text);
   return out;
+}
+
+export type PhaseState = 'done' | 'current' | 'pending';
+/**
+ * The analysis phases (Phase 11) from the job's events: the latest phase reported is the current one, the phases before
+ * it are completed, the rest pending (`done` completes them all). null when no phase was ever reported (older cores,
+ * jobs from before): the card then shows only the free-text steps, as before.
+ */
+export function analysisPhases(events: AgentEvent[] | undefined): Array<{ phase: BrandPhase; state: PhaseState }> | null {
+  let current: BrandPhase | null = null;
+  for (const e of events ?? []) if (e.kind === 'progress' && e.phase && (BRAND_PHASES as readonly string[]).includes(e.phase)) current = e.phase;
+  if (current === null) return null;
+  const at = BRAND_PHASES.indexOf(current);
+  return BRAND_PHASES.map((phase, i) => ({ phase, state: i < at || current === 'done' ? 'done' : i === at ? 'current' : 'pending' }));
 }
 
 export function hostOf(url: string | null): string {

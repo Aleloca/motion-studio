@@ -197,6 +197,16 @@
 .ms-bbar > i { position: absolute; top: 0; bottom: 0; left: 0; width: 34%; border-radius: 2px; background: var(--accent); animation: ms-bbar 1.4s var(--e-std) infinite; }
 @keyframes ms-bbar { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
 @media (prefers-reduced-motion: reduce) { .ms-bbar > i { animation: none; width: 100%; opacity: .45; } }
+/* Analysis phases (Phase 11): completed / current / pending, wrapping in the narrow side column. */
+.ms-bphases { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; }
+.ms-bphase { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); line-height: 1.4; }
+.ms-bphase-mark { width: 14px; height: 14px; flex: none; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; box-shadow: inset 0 0 0 1px var(--line2); }
+.ms-bphase-mark > i { width: 6px; height: 6px; border-radius: 50%; }
+.ms-bphase[data-state="done"] { color: var(--text); }
+.ms-bphase[data-state="done"] .ms-bphase-mark { background: var(--okBg); color: var(--ok); box-shadow: none; }
+.ms-bphase[data-state="current"] { color: var(--text); font-weight: 600; }
+.ms-bphase[data-state="current"] .ms-bphase-mark { box-shadow: inset 0 0 0 1px var(--accent); }
+.ms-bphase[data-state="current"] .ms-bphase-mark > i { background: var(--accent); }
 .ms-bsteps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
 .ms-bstep { display: flex; gap: 8px; align-items: flex-start; line-height: 1.4; overflow-wrap: anywhere; }
 .ms-bstep-mark { width: 14px; height: 17px; flex: none; display: flex; align-items: center; justify-content: center; color: var(--ok); }

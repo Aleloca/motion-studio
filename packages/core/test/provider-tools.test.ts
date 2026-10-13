@@ -125,6 +125,39 @@ describe('fonts_fetch', () => {
   });
 });
 
+describe('inspect_site_fonts', () => {
+  const siteFetch = (async (url: string) => {
+    sent.push(url);
+    if (url === 'https://acme.example/') return new Response('<link rel="stylesheet" href="/s.css"><link rel="stylesheet" href="https://tracker.example/t.css">', { status: 200 });
+    if (url === 'https://acme.example/s.css') return new Response('h1{font-family:"Acme Display"}', { status: 200 });
+    return new Response('', { status: 404 });
+  }) as unknown as typeof fetch;
+  const brandCtx = (notes: string[]): BridgeContext => ({ ...ctx, kind: 'brand-analysis', creativeSlug: null, locale: 'en', addNotes: (l) => notes.push(...l) });
+
+  it('lists the site fonts and adds its warnings to the proposal notes, in the job language', async () => {
+    const notes: string[] = [];
+    const out = await tools({}, {}, siteFetch).inspect_site_fonts!(brandCtx(notes), { url: 'https://acme.example/' }) as { fonts: Array<{ family: string; source: string }>; warnings: string[] };
+    expect(out.fonts).toEqual([expect.objectContaining({ family: 'Acme Display', source: 'system', roles: ['heading'] })]);
+    expect(out.warnings).toEqual(['Site fonts: tracker.example/t.css not read (stylesheet on another site)']);
+    expect(notes).toEqual(out.warnings);
+    expect(sent).toEqual(['https://acme.example/', 'https://acme.example/s.css']);
+  });
+  it.each(['creative', 'console', 'describe'] as const)('is not available to %s jobs and sends nothing', async (kind) => {
+    expect(await tools({}, {}, siteFetch).inspect_site_fonts!({ ...ctx, kind }, { url: 'https://acme.example/' }).catch(status)).toBe(403);
+    expect(sent).toEqual([]);
+  });
+  it.each([undefined, 42, 'file:///etc/passwd', 'javascript:alert(1)', 'acme.example', `https://acme.example/${'a'.repeat(2000)}`])('refuses the url %j with 400', async (url) => {
+    expect(await tools({}, {}, siteFetch).inspect_site_fonts!(brandCtx([]), { url }).catch(status)).toBe(400);
+    expect(sent).toEqual([]);
+  });
+  it('reports a cancelled job as cancelled', async () => {
+    const hang = (async (_u: string, init: RequestInit) => new Promise((_ok, fail) => init.signal?.addEventListener('abort', () => fail(new Error('aborted'))))) as unknown as typeof fetch;
+    const pending = tools({}, {}, hang).inspect_site_fonts!(brandCtx([]), { url: 'https://acme.example/' });
+    controller.abort();
+    expect(await pending.catch(status)).toBe(499);
+  });
+});
+
 describe('availableTools', () => {
   it('reports configured and missing providers', async () => {
     const lines = await availableTools(new MemoryVault({ OPENAI_API_KEY: 'k' }));

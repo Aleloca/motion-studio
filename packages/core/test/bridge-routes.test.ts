@@ -189,6 +189,35 @@ describe('bridge', () => {
     expect(body.kit).toMatchObject({ schemaVersion: 1, colors: [] });
     expect(body.guidelines).toHaveLength(50_000);
   });
+  it('report_progress: a brand analysis reports its phase; other jobs drop it', async () => {
+    const brandEvents: AgentEvent[] = [];
+    const brandToken = bridge.register({ jobId: 'jb', kind: 'brand-analysis', projectSlug: 'acme', projectDir, creativeSlug: null, sandboxed: false, autoApproveAtStart: false, emit: (e) => brandEvents.push(e), signal: new AbortController().signal });
+    expect((await call('report_progress', { message: 'Reading the fonts', phase: 'fonts' }, brandToken)).json()).toEqual({ ok: true });
+    expect((await call('report_progress', { message: 'No phase' }, brandToken)).statusCode).toBe(200);
+    expect(brandEvents).toEqual([{ kind: 'progress', text: 'Reading the fonts', phase: 'fonts' }, { kind: 'progress', text: 'No phase' }]);
+    for (const phase of ['queued', 'done', 'Fonts', 3, {}, '']) {
+      const res = await call('report_progress', { message: 'x', phase }, brandToken);
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toMatch(/^Fase di analisi non valida/);
+    }
+    expect(brandEvents).toHaveLength(2);
+    await call('report_progress', { message: 'Rendering', phase: 'fonts' });
+    expect(events.at(-1)).toEqual({ kind: 'progress', text: 'Rendering' });
+  });
+  it('inspect_site_fonts is reachable only from brand-analysis jobs', async () => {
+    let called = 0;
+    await app.close();
+    app = Fastify();
+    registerBridgeRoutes(app, { bridge, approvals, extraTools: { inspect_site_fonts: async () => { called++; return { fonts: [], warnings: [] }; } } });
+    const brandToken = bridge.register({ jobId: 'jb', kind: 'brand-analysis', projectSlug: 'acme', projectDir, creativeSlug: null, sandboxed: false, autoApproveAtStart: false, emit: () => {}, signal: new AbortController().signal });
+    expect((await call('inspect_site_fonts', { url: 'https://acme.example' }, brandToken)).statusCode).toBe(200);
+    for (const kind of ['describe', 'console'] as const) {
+      const other = bridge.register({ jobId: `j-${kind}`, kind, projectSlug: 'acme', projectDir, creativeSlug: null, sandboxed: false, autoApproveAtStart: false, emit: () => {}, signal: new AbortController().signal });
+      expect((await call('inspect_site_fonts', { url: 'https://acme.example' }, other)).statusCode).toBe(403);
+    }
+    expect((await call('inspect_site_fonts', { url: 'https://acme.example' })).statusCode).toBe(403); // creative
+    expect(called).toBe(1);
+  });
   it('refuses tools that are not part of the job kind', async () => {
     const describeToken = bridge.register({ jobId: 'j2', kind: 'describe', projectSlug: 'acme', projectDir, creativeSlug: null, sandboxed: false, autoApproveAtStart: false, emit: () => {}, signal: new AbortController().signal });
     const res = await call('read_brand_kit', {}, describeToken);
