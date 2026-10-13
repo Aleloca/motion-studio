@@ -236,12 +236,14 @@ describe('pickVideoFrame (the read loop)', () => {
   it('lenient: a pre-seek frame that never changes is drawn with a warning once the settle window passes, long before the deadline', async () => {
     const { r, clock } = await run([old], { target: 0.82, trusted: false, preSeekTs: 0.76, span: F25, settleMs: 160, deadlineReads: 1000 });
     expect(r.verdict).toBe('warn');
+    expect(r.heldOut).toBe(true); // the caller remembers it: that frame is not held again in this video
     expect(r.frame).not.toBeNull();
     expect(clock).toBe(160); // the first read at or past the window: at most one animation frame more
   });
   it('lenient: another stable frame that is not the pre-seek one keeps the old rule (warn on stability)', async () => {
     const { r, reads } = await run([{ ts: 0.72, dur: F25 }], { target: 0.82, trusted: false, preSeekTs: 0.76, span: F25 });
     expect(r.verdict).toBe('warn');
+    expect(r.heldOut).toBeUndefined();
     expect(reads).toBe(2);
   });
   it('lenient: the load frame keeps its rule (held to the deadline), even when it is also the pre-seek frame', async () => {

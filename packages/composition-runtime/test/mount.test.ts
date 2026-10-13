@@ -381,6 +381,26 @@ describe('render mode video frames (fake VideoFrame)', () => {
     expect(waited).toBeLessThan(5_000);
   });
 
+  it('untrusted source: a frame once held out for the window is not held again in that video (a legitimately repeated frame); the race fix still works for other frames', async () => {
+    const { player, errors } = run(videoComp({}), 'render', 10_000);
+    await player.seek(0);
+    held = { timestamp: 400_000, duration: 33_333 };
+    await player.seek(0.4);
+    let t0 = performance.now();
+    await player.seek(0.5); // the frame at 0.4 s stays (its real duration is longer than reported): held out once
+    expect(performance.now() - t0).toBeGreaterThanOrEqual(PRE_SEEK_SETTLE_MS - 50);
+    t0 = performance.now();
+    await player.seek(0.6); // the same frame again: drawn on stability, no second window
+    expect(performance.now() - t0).toBeLessThan(PRE_SEEK_SETTLE_MS / 2);
+    expect(errors.map((e) => e.code)).toEqual(['videoFrameMismatch', 'videoFrameMismatch']);
+    // Another frame: the decoder moves to 0.7 s, then Chrome is late by 100 ms on the next seek: still waited out, no warning.
+    onSeek = () => { held = { timestamp: 700_000, duration: 33_333 }; };
+    await player.seek(0.7);
+    onSeek = () => { setTimeout(() => { held = { timestamp: 733_333, duration: 33_333 }; }, 100); };
+    await player.seek(0.74);
+    expect(errors.map((e) => e.code)).toEqual(['videoFrameMismatch', 'videoFrameMismatch']);
+  });
+
   it('untrusted source: a pre-seek frame replaced by the seek\'s frame within the window is never drawn', async () => {
     const { player, errors } = run(videoComp({}), 'render', 10_000);
     await player.seek(0);

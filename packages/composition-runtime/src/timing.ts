@@ -136,16 +136,19 @@ export function frameVerdict(o: {
 
 /**
  * How long (native ms) a lenient source's pre-seek frame is held waiting for Chrome to hand out the seek's frame
- * (`frameVerdict`): the most a frame can cost, plus one animation frame, when that old frame is in fact the right one (a
- * container whose frame durations are wrong).
+ * (`frameVerdict`): the most a frame can cost, plus one animation frame, when the old frame stays (it is in fact the right
+ * one, its container duration being wrong, or Chrome never hands out the new one). The runtime holds a given frame of a
+ * video at most once: a pre-seek frame released after the window is not held again (`mount.ts`), so a source frame that is
+ * legitimately repeated over several output frames costs one window, not one per output frame.
  */
 export const PRE_SEEK_SETTLE_MS = 1000;
 
 /**
  * Reads the frame a video holds until `frameVerdict` accepts it (`draw`, or `warn` in lenient mode), one native animation
  * frame apart, up to `deadline` (native ms). `stable` is the same timestamp as the previous read. Returns the accepted
- * frame (the caller draws and closes it). A `hold` frame is returned as `warn`: the lenient load frame at the deadline, the
- * lenient pre-seek frame (`preSeekTsUs`, the load frame's rule first) once `settleUntil` (native ms) has passed; otherwise
+ * frame (the caller draws and closes it). A `hold` frame is returned as `warn` with `heldOut`: the lenient load frame at
+ * the deadline, the lenient pre-seek frame (`preSeekTsUs`, the load frame's rule first) once `settleUntil` (native ms) has
+ * passed; otherwise
  * at the deadline no frame and the last verdict (`stale`, `wait` or `none`): a frame that is not accepted is never drawn.
  * DOM-free, so it is unit tested.
  */
@@ -154,7 +157,7 @@ export async function pickVideoFrame<F>(o: {
   nextFrame(): Promise<void>; now(): number; deadline: number;
   targetUs: number; trusted: boolean; videoEndUs: number | null; atEnd(): boolean; loadTsUs: number | null; spanUs: number | null;
   preSeekTsUs?: number | null; settleUntil?: number;
-}): Promise<{ frame: F | null; verdict: FrameVerdict | 'none'; tsUs: number | null }> {
+}): Promise<{ frame: F | null; verdict: FrameVerdict | 'none'; tsUs: number | null; heldOut?: true }> {
   let previous: number | null = null;
   let last: { verdict: 'stale' | 'wait' | 'none'; tsUs: number | null } = { verdict: 'none', tsUs: null };
   for (;;) {
@@ -169,7 +172,7 @@ export async function pickVideoFrame<F>(o: {
         stable: tsUs === previous, loadFrame, spanUs: o.spanUs, preSeekFrame,
       });
       if (verdict === 'draw' || verdict === 'warn') return { frame: f, verdict, tsUs };
-      if (verdict === 'hold' && (late || (preSeekFrame && o.now() >= (o.settleUntil ?? -Infinity)))) return { frame: f, verdict: 'warn', tsUs };
+      if (verdict === 'hold' && (late || (preSeekFrame && o.now() >= (o.settleUntil ?? -Infinity)))) return { frame: f, verdict: 'warn', tsUs, heldOut: true };
       o.close(f);
       previous = tsUs;
       last = { verdict: verdict === 'hold' ? 'wait' : verdict, tsUs };

@@ -421,6 +421,11 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
   const loadStamps = new WeakMap<HTMLVideoElement, number>();
   /** Videos that have drawn a frame after a seek: their load frame is no longer suspect. */
   const drawnOnce = new WeakSet<HTMLVideoElement>();
+  /**
+   * Per video, the pre-seek frames (µs) already held out for the whole settle window and drawn with a warning: that frame
+   * evidently is what this source shows there (its metadata under-reports its duration), so it is not held again.
+   */
+  const settledFrames = new WeakMap<HTMLVideoElement, Set<number>>();
 
   /**
    * Draws the frame shown at `target` into the clip's canvas. `drawImage(video)` right after `seeked` can still read the
@@ -450,6 +455,11 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
       loadTsUs: drawnOnce.has(v) ? null : (loadStamps.get(v) ?? null), spanUs: span === null ? null : Math.round(span * 1e6),
       preSeekTsUs, settleUntil,
     });
+    if (r.frame && r.heldOut && preSeekTsUs !== null && r.tsUs === preSeekTsUs) {
+      let seen = settledFrames.get(v);
+      if (!seen) settledFrames.set(v, seen = new Set());
+      seen.add(preSeekTsUs);
+    }
     const at = (us: number) => (us / 1e6).toFixed(3);
     if (r.frame) {
       drawnOnce.add(v);
@@ -483,7 +493,8 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
     if (!v.paused) v.pause();
     const moves = !(Math.abs(v.currentTime - target) < 1e-6 && !v.seeking && v.readyState >= 2);
     // The frame shown before this seek: the load frame (first seek), and for an untrusted source moving to another target
-    // the pre-seek frame, which Chrome may still hand out for a while after `seeked` (frameVerdict).
+    // the pre-seek frame, which Chrome may still hand out for a while after `seeked` (frameVerdict), unless that very
+    // frame was already held out once in this video (`settledFrames`).
     let preSeekTsUs: number | null = null;
     if (m.canvas && (!loadStamps.has(v) || (moves && !sourceTrustedOf(m.clip)))) {
       const f = grabFrame(v);
@@ -491,7 +502,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
         const ts = Math.round(f.timestamp);
         f.close();
         if (!loadStamps.has(v)) loadStamps.set(v, ts);
-        if (moves && !sourceTrustedOf(m.clip)) preSeekTsUs = ts;
+        if (moves && !sourceTrustedOf(m.clip) && !settledFrames.get(v)?.has(ts)) preSeekTsUs = ts;
       }
     }
     if (moves) {
