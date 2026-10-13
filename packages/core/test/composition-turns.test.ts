@@ -649,7 +649,7 @@ describe('review fixes (Task 5b)', { timeout: 150_000 }, () => {
 
   it('T10: a range ending at the duration of a composition never rendered gets its end frame, grabbed at the last frame', async () => {
     const slug = await create(['test-wide']);
-    const c = JSON.parse(readFileSync(join(store().dir(slug), 'outputs', 'v1', 'compositions', 'test-wide', 'composition.json'), 'utf8')) as { duration: number; fps: number };
+    const c = JSON.parse(readFileSync(join(store().dir(slug), 'outputs', 'v1', 'compositions', 'test-wide', 'composition.json'), 'utf8')) as { duration: number; fps: 24 | 25 | 30 | 50 | 60 };
     expect(renderState((await store().readVersions(slug))[0]!, 'test-wide')).not.toBe('rendered');
     const before = fake.frames.length;
     await turn(slug, { text: 'end', pins: [{ format: 'test-wide', x: 0.5, y: 0.5, timeSec: 1, range: { start: 1, end: c.duration } }] });
