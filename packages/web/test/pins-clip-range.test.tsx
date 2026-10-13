@@ -413,6 +413,23 @@ describe('the editor', () => {
     expect(pending()).toHaveLength(0);
   });
 
+  it('a latest version that carried the format unchanged: the editor opens its history entry and comments go on the latest', async () => {
+    // Live check (Task 11): v2 changed another format only, so the Reel's history is [1] and the editor opens v1; the pin source
+    // is v2, which has the very same composition (as in the format view, `entryAt`).
+    detail = makeDetail([v2(1), { ...v2(2), compositions: [{ format: REEL, dir: `compositions/${REEL}`, hash: hashOf(1) }] }]);
+    render(<Page kind="edit" />);
+    await opened();
+    await waitFor(() => expect(api.getEditorComposition).toHaveBeenCalledWith('acme', 'lancio', 1, REEL));
+    await pick('title');
+    key({ key: 'c' });
+    expect(getToasts().map((t) => t.text)).not.toContain('Comments apply to v2: open that version to comment.');
+    await userEvent.type(within(await dialog()).getByLabelText('Your comment'), 'più grande');
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Add comment' }));
+    const pins = pending();
+    expect(pins).toHaveLength(1);
+    expect(pins[0]).toMatchObject({ version: 2, pin: { format: REEL, clipId: 'title', note: 'più grande' } });
+  });
+
   it('editing a chip re-opens its note; cancelling makes no pin', async () => {
     render(<Page kind="edit" />);
     await opened();

@@ -43,7 +43,7 @@ import { boardLabel } from '../CanvasBoard.tsx';
 import { ExportDialog, type ExportSnapshot } from '../ExportDialog.tsx';
 import { compositionOf } from '../renderModel.ts';
 import { FPS as DEFAULT_FPS, type Mark, type Speed } from '../Transport.tsx';
-import { boardSource, followersOf, formatStates } from '../versionModel.ts';
+import { boardSource, entryAt, followersOf, formatStates } from '../versionModel.ts';
 import { compactOps } from './opsCompact.ts';
 import { DraftPill, SAVED_MS } from './DraftPill.tsx';
 import { draftKey, isDirty, peekDraft, useDraft, type Draft } from './draftStore.ts';
@@ -343,9 +343,10 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
     .filter((m) => m.pin.format === format || m.pin.format === primary), [storedPins, n, format, primary]);
 
   // Comments on clips and ranges (Task 10). Like the format view's, they go on the pin source (the version resumed from, else
-  // the latest) and become chips in the conversation; the note is asked in a small dialog.
+  // the latest) and become chips in the conversation; the note is asked in a small dialog. The version edited is the format's
+  // history entry: a pin source that carried the format unchanged (another format changed) has the same composition.
   const pinSource = detail ? detail.creative.resumeFrom?.version ?? latest?.n ?? null : null;
-  const canComment = n !== null && n === pinSource;
+  const canComment = n !== null && entryAt(versions, states[primary], pinSource) === n;
   const sourcePins = useMemo(() => storedPins.flatMap((p, i) => (p.version === pinSource ? [{ pin: p.pin, at: i }] : [])), [storedPins, pinSource]);
   const [rangeOpen, setRangeOpen] = useState(false);
   const askRange = () => { if (commentVideo) setRangeOpen(true); };
