@@ -107,6 +107,21 @@ export interface PreviewServiceDeps {
   sessionTtlMs?: number;
   /** Tests: how long an ended session's staging waits for a renewal (default {@link STAGING_GRACE_MS}). */
   stagingGraceMs?: number;
+  /** Tests: how long a save waits for a staging in progress (default {@link STAGING_WAIT_MS}). */
+  stagingWaitMs?: number;
+  /** Tests: the time limit of a staged video's encode, from its duration (default {@link stagingEncodeLimitMs}). */
+  stagingEncodeLimitMs?: (durationSec: number | null | undefined) => number;
+}
+
+/** How long a direct save waits for the session's staging in progress before answering 409 (decisions log 265). */
+export const STAGING_WAIT_MS = 5000;
+/**
+ * A staged video's encode time limit (decisions log 265): one minute plus ten times its duration, at most 20 minutes (an
+ * unknown duration gets the cap). Normalising for a preview is far faster than real time on any recent machine.
+ */
+export function stagingEncodeLimitMs(durationSec: number | null | undefined): number {
+  const cap = 20 * 60_000;
+  return typeof durationSec === 'number' && Number.isFinite(durationSec) && durationSec > 0 ? Math.min(cap, 60_000 + durationSec * 10_000) : cap;
 }
 
 export interface VersionFormatRef { projectDir: string; creativeDir: string; creativeSlug: string; n: number }
@@ -518,17 +533,32 @@ export class PreviewService {
    * meanwhile): only a session of this creative's version `n` showing the composition folder `format`, else `fn(null)`.
    * For a direct save (`DirectEditService.save`), which copies the files the draft uses into the new version.
    */
-  async withStaging<T>(ref: Pick<VersionFormatRef, 'creativeDir' | 'creativeSlug' | 'n'>, token: string, format: string, fn: (staging: StagingView | null) => Promise<T>): Promise<T> {
+  async withStaging<T>(ref: Pick<VersionFormatRef, 'creativeDir' | 'creativeSlug' | 'n'>, token: string, format: string, fn: (staging: StagingView | null) => Promise<T>, locale: Locale = 'en'): Promise<T> {
     const pick = () => {
       const s = this.sessions.get(token);
       return s && s.creativeDir === ref.creativeDir && s.creativeSlug === ref.creativeSlug && s.n === ref.n && s.format === format && s.session.live() && !s.handedOver
         ? s.staging : null;
     };
     if (!this.sessions.has(token)) return fn(null);
-    return this.stageLocks.run(token, () => {
+    // A staging in progress (a large video converting) holds the lock: the save (which holds the creative's lock) waits a
+    // few seconds at most, then answers 409 instead of holding the creative for the whole encode (final review M3).
+    let started = false;
+    let abandoned = false;
+    const run = this.stageLocks.run(token, async () => {
+      if (abandoned) return { skipped: true as const };
+      started = true;
       const st = pick();
-      return fn(st ? { root: st.root, assets: st.assets } : null);
+      return { value: await fn(st ? { root: st.root, assets: st.assets } : null) };
     });
+    let timer: NodeJS.Timeout | undefined;
+    const waited = await Promise.race([run, new Promise<'late'>((r) => { timer = setTimeout(() => r('late'), this.deps.stagingWaitMs ?? STAGING_WAIT_MS); })]).finally(() => clearTimeout(timer));
+    if (waited === 'late' && !started) {
+      abandoned = true;
+      throw new CodedError(409, messages(locale).editor.stagingBusy, 'editor-staging-busy');
+    }
+    const r = waited === 'late' ? await run : waited;
+    if ('skipped' in r) throw new CodedError(409, messages(locale).editor.stagingBusy, 'editor-staging-busy');
+    return r.value;
   }
 
   /** Whether `dir` is the staging folder of a live session (the cache sweep leaves it alone). */
@@ -586,12 +616,17 @@ export class PreviewService {
       tracks: [{ id: 'staged', kind: 'video', clips: [{ id: 'staged', type: 'video', src: asset.path, start: 0, duration: 1, props: {} }] }],
     };
     let prepared;
+    // Its own time limit, from the video's duration (decisions log 265): an encode that runs away never holds the session's
+    // staging (and a save waiting on it) for long.
+    const limitMs = (this.deps.stagingEncodeLimitMs ?? stagingEncodeLimitMs)(asset.durationSec);
+    const limit = AbortSignal.timeout(limitMs);
     try {
-      // Stops at app close and when this session ends (revoke, eviction, expiry).
-      prepared = await this.deps.normalizer.prepare({ projectDir: s.projectDir, compDir: staging.root, composition: c, signal: AbortSignal.any([this.closing.signal, s.ended.signal]) });
+      // Stops at app close, when this session ends (revoke, eviction, expiry) and at the time limit.
+      prepared = await this.deps.normalizer.prepare({ projectDir: s.projectDir, compDir: staging.root, composition: c, signal: AbortSignal.any([this.closing.signal, s.ended.signal, limit]) });
     } catch (err) {
       if (err instanceof RenderError && err.code === 'mediaUnreadable') throw new CodedError(400, messages(locale).editor.stageNotMedia({ file: asset.path }), 'editor-not-media');
       if (s.ended.signal.aborted) throw new CodedError(404, messages(locale).editor.stageNoSession, 'editor-no-session');
+      if (limit.aborted && !this.closing.signal.aborted) throw new CodedError(422, messages(locale).editor.stageTimeout({ file: asset.path.replace(/^assets\/lib\/[0-9a-f]{8}-/, ''), minutes: Math.max(1, Math.round(limitMs / 60_000)) }), 'editor-stage-timeout');
       throw err;
     }
     const file = prepared.media.clips.get(asset.path);

@@ -370,6 +370,8 @@ export const en = {
     summary: (p: { items: string; more: number }) => `Direct edits: ${p.items}${p.more > 0 ? ` and ${p.more} more` : ''}`,
     /** Staging (Task 3): a library asset or a brand font copied for a draft, served to its preview session. */
     stageNoSession: 'This preview has ended: open the editor again',
+    stagingBusy: 'A file is still being prepared for this draft: save again when it is ready.',
+    stageTimeout: (p: { file: string; minutes: number }) => `Preparing ${p.file} took too long (more than ${p.minutes} min): try a shorter or smaller video.`,
     stageNotRegistered: (p: { file: string }) => `${p.file} is not an asset of the project library`,
     stageUnreadable: (p: { file: string }) => `${p.file} cannot be read safely: it must be a regular file inside the project assets folder`,
     stageUnsupported: (p: { file: string }) => `${p.file} cannot be used in a composition: use an image, SVG, video, audio or font file`,

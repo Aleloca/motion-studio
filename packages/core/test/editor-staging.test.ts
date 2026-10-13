@@ -16,7 +16,7 @@ import { readCompositionFolder } from '../src/compositions/composition-files.ts'
 import { startCompositionServer } from '../src/compositions/composition-server.ts';
 import { sweepEditorStaging } from '../src/creatives/cache-sweep.ts';
 import { editorFonts, STAGING_MAX_FILES, stagingDirOf, stagingIdOf } from '../src/creatives/editor-staging.ts';
-import { PreviewService } from '../src/creatives/previews.ts';
+import { PreviewService, stagingEncodeLimitMs } from '../src/creatives/previews.ts';
 import { createFfmpegTools, NoMediaTools, type MediaTools } from '../src/media/media-tools.ts';
 import { findFfmpeg, type FfmpegInfo } from '../src/render/encode.ts';
 import { RenderError } from '../src/render/errors.ts';
@@ -63,11 +63,13 @@ function brand(fonts: Array<{ id: string; family: string; file: string | null; w
 }
 
 /** `graceMs`: how long an ended session's staging waits for a renewal; 0 here unless a test checks the grace itself. */
-async function makeService(o: { ttlMs?: number; media?: MediaTools; normalizer?: MediaNormalizer; graceMs?: number } = {}) {
+async function makeService(o: { ttlMs?: number; media?: MediaTools; normalizer?: MediaNormalizer; graceMs?: number; waitMs?: number; encodeLimitMs?: number } = {}) {
   normalizer = o.normalizer ?? new MediaNormalizer({ ffmpeg: async () => ffmpeg });
   previews = new PreviewService({
     engine: undefined, normalizer, presets: async () => [PRESET], uiOrigins: () => [UI], media: o.media ?? media,
     ...(o.ttlMs ? { sessionTtlMs: o.ttlMs } : {}), stagingGraceMs: o.graceMs ?? 0,
+    ...(o.waitMs !== undefined ? { stagingWaitMs: o.waitMs } : {}),
+    ...(o.encodeLimitMs !== undefined ? { stagingEncodeLimitMs: () => o.encodeLimitMs! } : {}),
   });
 }
 const ref = (c = 'launch') => ({ projectDir, creativeDir: join(projectDir, 'creatives', c), creativeSlug: c, n: 1 });
@@ -613,6 +615,63 @@ describe('a late renewal adopts an ended session\'s staging (decisions log 264)'
     expect((await served(b.url, `media/${b.staged![0]!.media!.index}.mp4`, { headers: { range: 'bytes=0-7' } })).status).toBe(206);
     expect(readdirSync(join(projectDir, '.studio', 'cache', 'media')).filter((n) => n.endsWith('.mp4'))).toEqual(cached);
   }, 60_000);
+});
+
+describe('a staged video never holds a save for long (decisions log 265)', () => {
+  it('stagingEncodeLimitMs: one minute plus ten times the duration, at most 20 minutes; unknown: the cap', () => {
+    expect(stagingEncodeLimitMs(6)).toBe(120_000);
+    expect(stagingEncodeLimitMs(3600)).toBe(20 * 60_000);
+    expect(stagingEncodeLimitMs(null)).toBe(20 * 60_000);
+    expect(stagingEncodeLimitMs(undefined)).toBe(20 * 60_000);
+  });
+
+  it('an encode past its time limit is stopped: translated 422, its slot free, nothing staged', async () => {
+    writeFileSync(join(projectDir, 'assets', 'slow.mp4'), 'a video the double never finishes');
+    register(['slow.mp4']);
+    await previews.close();
+    await normalizer.close();
+    const { normalizer: hanging, slots } = hangingNormalizer();
+    await makeService({ media: NoMediaTools, normalizer: hanging, encodeLimitMs: 300 });
+    const s = await mint();
+    const t0 = Date.now();
+    const r = await refused(stage(s.token, { kind: 'library', file: 'slow.mp4' }));
+    expect(Date.now() - t0).toBeLessThan(3000);
+    expect(r).toMatchObject({ status: 422, code: 'editor-stage-timeout', message: 'Preparing slow.mp4 took too long (more than 1 min): try a shorter or smaller video.' });
+    expect(slots).toMatchObject({ active: 0, started: 1, cancelled: 1 });
+    // The session lives on and stages other files.
+    register(['slow.mp4', 'logo.svg']);
+    expect(await stage(s.token, { kind: 'library', file: 'logo.svg' })).toMatchObject({ kind: 'svg' });
+  });
+
+  it('a save waits a few seconds at most for a staging in progress, then 409 editor-staging-busy (the encode goes on)', async () => {
+    writeFileSync(join(projectDir, 'assets', 'slow.mp4'), 'a video the double never finishes');
+    register(['slow.mp4']);
+    await previews.close();
+    await normalizer.close();
+    const { normalizer: hanging, slots } = hangingNormalizer();
+    await makeService({ media: NoMediaTools, normalizer: hanging, waitMs: 200 });
+    const s = await mint();
+    const pending = refused(stage(s.token, { kind: 'library', file: 'slow.mp4' }));
+    expect(await until(() => slots.active === 1)).toBe(true);
+    let ran = false;
+    const t0 = Date.now();
+    const r = await refused(previews.withStaging(ref(), s.token, 'test-wide', async () => { ran = true; return 1; }, 'en'));
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(r).toMatchObject({ status: 409, code: 'editor-staging-busy', message: 'A file is still being prepared for this draft: save again when it is ready.' });
+    expect(slots.active).toBe(1);
+    previews.revokePreview(ref(), s.token);
+    await pending;
+    // The abandoned call never runs later.
+    await new Promise((res) => setTimeout(res, 50));
+    expect(ran).toBe(false);
+  });
+
+  it('with no staging in progress the save runs at once', async () => {
+    register(['logo.svg']);
+    const s = await mint();
+    await stage(s.token, { kind: 'library', file: 'logo.svg' });
+    expect(await previews.withStaging(ref(), s.token, 'test-wide', async (st) => st?.assets.size ?? -1, 'en')).toBe(1);
+  });
 });
 
 describe('editor fonts', () => {

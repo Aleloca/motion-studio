@@ -209,7 +209,7 @@ export class DirectEditService {
     // hold the same content: `stagedCollision`).
     const needsStaging = [...referenced].some((p) => declared.has(p));
     const withStaging = <T>(fn: (st: StagingView | null) => Promise<T>): Promise<T> => (needsStaging && this.deps.previews
-      ? this.deps.previews.withStaging({ creativeDir, creativeSlug: slug, n: body.baseVersion }, body.token, format, fn)
+      ? this.deps.previews.withStaging({ creativeDir, creativeSlug: slug, n: body.baseVersion }, body.token, format, fn, locale)
       : fn(null));
 
     return withStaging(async (staging) => {

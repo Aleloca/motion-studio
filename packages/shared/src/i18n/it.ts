@@ -364,6 +364,8 @@ export const it: Messages = {
     itemFont: (p) => `font ${p.family}`,
     summary: (p) => `Modifiche dirette: ${p.items}${p.more > 0 ? ` e altre ${p.more}` : ''}`,
     stageNoSession: "Quest'anteprima è terminata: riapri l'editor",
+    stagingBusy: 'Un file di questa bozza è ancora in preparazione: salva di nuovo quando è pronto.',
+    stageTimeout: (p) => `La preparazione di ${p.file} ha richiesto troppo tempo (oltre ${p.minutes} min): prova un video più corto o più piccolo.`,
     stageNotRegistered: (p) => `${p.file} non è un asset della libreria del progetto`,
     stageUnreadable: (p) => `${p.file} non si può leggere in modo sicuro: deve essere un file normale dentro la cartella assets del progetto`,
     stageUnsupported: (p) => `${p.file} non si può usare in una composizione: usa un file immagine, SVG, video, audio o font`,
