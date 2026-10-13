@@ -288,7 +288,8 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
       if (lost) setStageError(e.stagedLost({ file: lost }));
       else toast.show(e.stagedRestored);
     })().finally(() => { if (alive) setRestaging(false); });
-    return () => { alive = false; };
+    // A renewal during the re-stage ends this run: its flag must not stay up (the next run raises it again if needed).
+    return () => { alive = false; setRestaging(false); };
   }, [session?.token, key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Save as vN.

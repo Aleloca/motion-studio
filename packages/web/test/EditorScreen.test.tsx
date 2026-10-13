@@ -856,6 +856,31 @@ describe('EditorScreen · staging and session renewal', () => {
     expect(await screen.findByText(`A file added to the draft is no longer available (${asset.path}): choose it again.`)).toBeTruthy();
   });
 
+  it('a renewal that arrives while a file is staged again (B then C) does not leave Save disabled (Q9)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const sess = (tok: string, staged?: StagedAsset[]) => async (_s: string, _c: string, n: number, format: string) => ({
+      url: `http://127.0.0.1:61234/${tok}/runtime/index.html?mode=preview&parentOrigin=x`, token: tok, origin: 'http://127.0.0.1:61234',
+      expiresAt: new Date(Date.now() + 66_000).toISOString(), format, hash: hashOf(n), width: 1080, height: 1920, duration: 6, fps: 30, ...(staged ? { staged } : {}),
+    });
+    api.previewSession.mockImplementationOnce(sess('tok-a'));
+    api.previewSession.mockImplementationOnce(sess('tok-b')); // did not take the staging along
+    api.previewSession.mockImplementationOnce(sess('tok-c', [asset])); // took it along from B
+    render(<Harness />);
+    await opened();
+    api.stageEditorAsset.mockResolvedValueOnce(asset);
+    await act(async () => { await probe.ctx!.stageAsset({ kind: 'library', file: 'assets/clip.mp4' }); });
+    store().apply({ kind: 'clipMedia', clipId: 'bgv', src: asset.path });
+    // B: staged again, and never answers while C arrives.
+    api.stageEditorAsset.mockImplementationOnce(() => new Promise<StagedAsset>(() => {}));
+    await act(async () => { await vi.advanceTimersByTimeAsync(7000); });
+    await waitFor(() => expect(api.stageEditorAsset).toHaveBeenCalledTimes(2));
+    expect((await screen.findByRole('button', { name: 'Save as v3' }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => { await vi.advanceTimersByTimeAsync(7000); });
+    await waitFor(() => expect(peekDraft(KEY)!.stagedIn).toBe('tok-c'));
+    // At once (a short wait): B's re-stage never answers, and its flag must not outlive it.
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Save as v3' }) as HTMLButtonElement).disabled).toBe(false), { timeout: 600 });
+  });
+
   it('a staging failure shows the translated error and stages nothing', async () => {
     api.stageEditorAsset.mockRejectedValueOnce(new ApiError(400, 'clip.mp4 is not a readable media file', 'editor-not-media'));
     render(<Harness />);
