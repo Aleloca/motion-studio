@@ -153,6 +153,7 @@ beforeEach(() => {
   __resetToasts();
   vi.clearAllMocks();
   // A test that queued a one-off answer it never used must not leak it into the next.
+  api.getConversation.mockReset().mockImplementation(async () => []);
   api.saveEdits.mockReset().mockImplementation(async () => ({ version: 3 }));
   api.getEditorComposition.mockReset().mockImplementation(async (_s, _c, n) => view(n));
   api.stageEditorAsset.mockReset().mockImplementation(async () => ({ path: 'assets/lib/ab12cd34-clip.mp4', size: 99, kind: 'video' }));
@@ -374,6 +375,24 @@ describe('EditorScreen · save', () => {
     expect(SAVED_MS).toBe(1800);
     await waitFor(() => expect(screen.queryByText(/Saved as/)).toBeNull(), { timeout: 4000 });
     expect(api.sendCreativeTurn).not.toHaveBeenCalled();
+  });
+
+  it('after an editor save the chat shows the edit summary on the version card, and an agent version shows none (D1)', async () => {
+    api.saveEdits.mockImplementationOnce(async () => {
+      detail = makeDetail([v2(1), v2(2), { ...v2(3), origin: 'editor', request: 'Edited title text' }]);
+      return { version: 3 };
+    });
+    api.getConversation.mockResolvedValue([
+      { type: 'version', at, n: 2, status: 'complete' }, { type: 'version', at, n: 3, status: 'complete' },
+    ] as never);
+    render(<Harness />);
+    await opened();
+    store().apply(move(111));
+    await userEvent.click(await screen.findByRole('button', { name: 'Save as v3' }));
+    await waitFor(() => expect(api.saveEdits).toHaveBeenCalledTimes(1));
+    await userEvent.click(await screen.findByRole('tab', { name: 'Chat' }));
+    expect(await screen.findByText('Edited title text')).toBeTruthy();
+    expect(document.querySelectorAll('.ms-convo-version-summary')).toHaveLength(1);
   });
 
   it('a staged file the composition does not use is not sent; a used one is', async () => {

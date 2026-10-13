@@ -61,6 +61,8 @@ export interface ConversationProps {
   versionExtra?(n: number): ReactNode;
   /** A note under a version card, e.g. its large-file warnings (nothing when it returns null). */
   versionNote?(n: number): ReactNode;
+  /** The edit summary of a version saved from the editor (its request), shown on its card; null for an agent's version. */
+  versionSummary?(n: number): string | null;
   /** Socket snapshots received (EventsState.snapshots): a new one is the core's whole state, so stop waiting. */
   snapshots?: number;
   /** The composer's "Applies to" (spec §2.5): absent when there is nothing to choose (one primary, no version yet). */
@@ -158,7 +160,7 @@ function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], r
  * only in "Activity details", the job's approvals in the flow, typing dots while the agent works (T9), and the
  * composer with the pending comment chips and ⌘↵.
  */
-export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, onSelectVersion, versionExtra, versionNote, snapshots, appliesTo }: ConversationProps) {
+export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, onSelectVersion, versionExtra, versionNote, versionSummary, snapshots, appliesTo }: ConversationProps) {
   const t = useT();
   const c = t.web.chat;
   const working = active(job);
@@ -282,7 +284,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
         {empty && <li className="ms-convo-empty"><Empty icon="comment" title={c.emptyTitle} sub={c.emptySub} /></li>}
         {items.map((item) => (
           <Row key={item.key} animate={mounted.current && item.kind !== 'approval'}>
-            <ItemView item={item} formatName={formatName} onToggleFold={toggleFold} onToggleDetails={toggleDetails} onOpenDetails={openDetails} onSelectVersion={onSelectVersion} versionExtra={versionExtra} versionNote={versionNote} onGone={gone} />
+            <ItemView item={item} formatName={formatName} onToggleFold={toggleFold} onToggleDetails={toggleDetails} onOpenDetails={openDetails} onSelectVersion={onSelectVersion} versionExtra={versionExtra} versionNote={versionNote} versionSummary={versionSummary} onGone={gone} />
           </Row>
         ))}
       </ol>
@@ -333,9 +335,9 @@ function PinLabel({ pin, text }: { pin: Pin; text: string }) {
   );
 }
 
-function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetails, onSelectVersion, versionExtra, versionNote, onGone }: {
+function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetails, onSelectVersion, versionExtra, versionNote, versionSummary, onGone }: {
   item: Item; formatName?(id: string): string; onToggleFold(jobId: string): void; onToggleDetails(jobId: string): void; onOpenDetails(jobId: string): void;
-  onSelectVersion?(n: number): void; versionExtra?(n: number): ReactNode; versionNote?(n: number): ReactNode; onGone(id: string): void;
+  onSelectVersion?(n: number): void; versionExtra?(n: number): ReactNode; versionNote?(n: number): ReactNode; versionSummary?(n: number): string | null; onGone(id: string): void;
 }) {
   const t = useT();
   const locale = useLocale();
@@ -393,16 +395,19 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
       return <Details jobId={item.jobId} entries={item.entries} open={item.open} onToggle={() => onToggleDetails(item.jobId)} />;
     case 'autoline':
       return <AutoLine jobId={item.jobId} log={item.log} onOpen={onOpenDetails} />;
-    case 'version':
+    case 'version': {
+      const summary = versionSummary?.(item.n) ?? null;
       return (
         <div className="ms-convo-version">
           <span className={cx('ms-pill', item.complete ? 'ms-ok' : 'ms-warn')}>v{item.n} · {item.complete ? t.web.status.ready : t.web.status.incomplete}</span>
+          {summary ? <span className="ms-convo-version-summary">{summary}</span> : null}
           <span className="ms-grow" />
           {versionExtra?.(item.n) ?? null}
           <Button size="sm" variant="outline" onClick={() => onSelectVersion?.(item.n)}>{t.web.conversation.viewVersion({ n: item.n })}</Button>
           {versionNote?.(item.n) ?? null}
         </div>
       );
+    }
     case 'system':
       if (item.level === 'error') return <p role="alert" className="ms-convo-system ms-error">{item.text}</p>;
       // Something to know that did not fail the turn (an unlinked follower, earlier outputs that changed): set apart.

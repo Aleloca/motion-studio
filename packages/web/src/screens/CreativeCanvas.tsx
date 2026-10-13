@@ -565,6 +565,7 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
             onSelectVersion={viewAll} snapshots={live.snapshots}
             appliesTo={appliesTo}
             versionExtra={(n) => <UsageBadge usage={versions.find((v) => v.n === n)?.usage} billing={live.today?.billing ?? null} />}
+            versionSummary={(n) => { const v = versions.find((x) => x.n === n); return v?.origin === 'editor' && v.request ? v.request : null; }}
             versionNote={(n) => <OutputWarnings outputs={versions.find((v) => v.n === n)?.outputs ?? []} formatLabel={formatLabel} />} />
         ) : null}
         {tab === 'comments' ? <CommentsTab slug={slug} creative={creative} sent={sent} working={working} formatLabel={formatLabel} onStart={() => { setTool('comment'); }} /> : null}
