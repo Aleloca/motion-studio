@@ -28,7 +28,7 @@ import { countVideoFrames } from '../src/render/encode.ts';
 import { createRenderEngine } from '../src/render/renderer.ts';
 import { liveGroupCount } from '../src/render/watchdog.ts';
 import { buildServer } from '../src/server/app.ts';
-import { buildRuntime, decodeStrips, frameCodedVideo, leftovers, readCode, renderTools } from './helpers/render-env.ts';
+import { buildRuntime, decodeStrips, frameCodedVideo, framePts, leftovers, readCode, renderTools } from './helpers/render-env.ts';
 
 const tools = await renderTools('render job tests');
 const TOKEN = 'cd'.repeat(32);
@@ -97,7 +97,14 @@ describe.skipIf(!tools.ok)('render jobs in real Chrome', () => {
     // 25 fps, 50 frames (2 s), first frame at 0.1 s, a 2.5 s audio track: audio longer than the video.
     frameCodedVideo(tools.ffmpeg!, join(dir, 'assets', 'code25.mp4'), { fps: 25, frames: 50, offset: 0.1, audioSeconds: 2.5 });
     if (legacy) {
-      execFileSync(tools.ffmpeg!.path, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-i', join(dir, 'assets', 'code25.mp4'), '-map', '0:v', '-c:v', 'mpeg4', '-q:v', '1', join(dir, 'assets', 'legacy.mp4')]);
+      // `-fps_mode passthrough`: one output frame per source frame, on every ffmpeg. The source starts at 0.078 s (the AAC
+      // priming of its audio) and its first video frame at 0.1 s; the default mode for MP4 differs between ffmpeg versions:
+      // 6.1 (Ubuntu 24.04) picks `cfr`, which fills the 0.022 s gap by duplicating the first frame (51 frames, code 1 twice),
+      // a newer one keeps the 50 frames. The expected codes below assume the 50 frames, checked right here.
+      execFileSync(tools.ffmpeg!.path, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-i', join(dir, 'assets', 'code25.mp4'), '-map', '0:v', '-c:v', 'mpeg4', '-q:v', '1', '-fps_mode', 'passthrough', join(dir, 'assets', 'legacy.mp4')]);
+      const pts = framePts(tools.ffmpeg!, join(dir, 'assets', 'legacy.mp4'));
+      expect(pts.length, 'MPEG-4 fixture: one frame per source frame').toBe(50);
+      pts.forEach((p, i) => expect(p - pts[0]!, `MPEG-4 fixture, frame ${i}`).toBeCloseTo(i / 25, 3));
     }
     writeFileSync(join(dir, 'composition.json'), JSON.stringify(composition(duration, legacy)));
     const hash = (await readCompositionFolder(dir)).hash;
