@@ -38,6 +38,10 @@ import { channelOf, lastStep } from './creativeState.ts';
 import { ExportDialog, type ExportSnapshot } from './ExportDialog.tsx';
 import { activatesControl, bare, inOverlay, isTyping } from './keys.ts';
 import { pinsKey, usePendingPins } from './pendingPins.ts';
+import { LanguagesButton } from './creative/LanguagesButton.tsx';
+import { creativeLocales } from './creative/languagesModel.ts';
+import { LocaleOutline, LocaleSwitcher } from './creative/LocaleSwitcher.tsx';
+import { useLocalePreview } from './creative/useLocalePreview.ts';
 import { RangeDialog } from './editor/RangeDialog.tsx';
 import { clipLabel, clipPin, clipsAt, rangePin, rangeTimes } from './pinModel.ts';
 import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from './FormatVersions.tsx';
@@ -180,6 +184,12 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   const media = useRef<PlayerMedia | null>(null);
   const [player, setPlayer] = useState<CompositionMedia | null>(null);
   const [playerReady, setPlayerReady] = useState(false);
+  // The language shown (Phase 12): a creative without languages in its brief has no switcher.
+  const localePreview = useLocalePreview({
+    slug, creative, n: livePlayer && version ? version.n : null, format: source.format, rows: version?.localizations ?? [], player,
+    token: preview.state.kind === 'ready' ? preview.state.session.token : null, original: () => clipComp,
+  });
+
   const [playing, setPlaying] = useState(false);
   const [metaDuration, setMetaDuration] = useState<number | null>(null);
   const duration = metaDuration ?? out?.durationSec ?? 0;
@@ -541,6 +551,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
           {versions.length && cr ? (
             <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={actions} buttonRef={versionButton} />
           ) : null}
+          <LanguagesButton slug={slug} creative={creative} detail={detail} version={latest} presets={presets} live={live} onChanged={reload} />
           {comp !== null && !working ? (
             <Button variant="outline" className="ms-fv-duplicate" title={t.web.instances.duplicateHint({ label })} loading={duplicating} onClick={() => void duplicate()}>
               <Icon name="copy" size={13} strokeWidth={1.7} />{t.web.instances.duplicate}
@@ -599,6 +610,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
                     <CompositionPlayer key={attempt} session={preview.state.session} title={t.web.render.playerFrame({ label: `${label} v${n}` })}
                       onMedia={setPlayer} onStall={preview.stalled} onShowing={preview.showing} />
                   ) : null}
+                  <LocaleOutline player={player} preview={localePreview} />
                   {preview.state.kind === 'loading' || preview.state.kind === 'busy' || preview.state.kind === 'idle' ? (
                     <span className="ms-cplayer-state" role="status">{preview.state.kind === 'busy' ? t.web.render.busy : t.web.render.loading}</span>
                   ) : null}
@@ -667,6 +679,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
             <button type="button" className={cx('ms-fv-zoom-btn', zoom === 1 && 'ms-on')} aria-pressed={zoom === 1} aria-label={f.actual} onClick={() => setZoom(1)}>100%</button>
           </div>
         ) : null}
+        {livePlayer && cr ? <LocaleSwitcher brief={cr.brief} preview={localePreview} className="ms-fv-locales" /> : null}
         {video ? (
           <Transport clock={clock} duration={duration} playing={playing} disabled={!ready} marks={canComment ? marks : []} onRange={canComment ? commentRange : undefined} hint={canComment ? f.keys : f.keysLocked}
             onToggle={toggle} onStep={stepFrame} onSeek={seek} onPause={pause} onResume={play}
@@ -690,7 +703,8 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
           versions={versions} presets={presets} labels={cr?.brief.formatLabels} states={states} format={source.format} initial={compare.init} actions={actions} />
       ) : null}
       <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
-        title={cr?.title ?? ''} snapshot={exporting?.snapshot ?? null} presets={presets} labels={cr?.brief.formatLabels} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} />
+        title={cr?.title ?? ''} snapshot={exporting?.snapshot ?? null} presets={presets} labels={cr?.brief.formatLabels} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings}
+        {...(cr && creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
     </div>
   );
 }

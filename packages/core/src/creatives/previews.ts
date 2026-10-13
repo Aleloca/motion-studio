@@ -643,6 +643,23 @@ export class PreviewService {
     });
   }
 
+  /**
+   * Phase 12: makes the files of a localized preview (the overlay's fallback fonts and translated voices, project files under
+   * `assets/fonts/` and `assets/audio/`) servable by the live session `token`: only `paths` that the row recorded a hash for
+   * (`hashes`), which the composition server checks against the bytes at every request. The paths served are returned.
+   * 404 `editor-no-session` when the token is not a live session of this creative.
+   */
+  async attachLocale(ref: Pick<VersionFormatRef, 'projectDir' | 'creativeDir' | 'creativeSlug'>, token: string, paths: Iterable<string>, hashes: Readonly<Record<string, string>>, locale: Locale): Promise<string[]> {
+    const s = this.sessions.get(token);
+    if (!s || s.creativeDir !== ref.creativeDir || s.creativeSlug !== ref.creativeSlug || !s.session.live() || this.closing.signal.aborted) {
+      throw new CodedError(404, messages(locale).editor.stageNoSession, 'editor-no-session');
+    }
+    const files: Record<string, string> = {};
+    for (const p of paths) if (/^assets\/(?:audio|fonts)\/[^/]+$/.test(p) && typeof hashes[p] === 'string') files[p] = hashes[p]!;
+    await s.session.attachLocaleAssets(ref.projectDir, files);
+    return Object.keys(files);
+  }
+
   /** A staged video normalised as at a preview (the session's frame and rate) and added to the session's media. */
   private async normaliseStaged(s: LiveSession, staging: SessionStaging, asset: StagedAsset, locale: Locale): Promise<StagedAsset> {
     // One video clip over the whole frame: what `videoNeeds` sizes the normalised file for.

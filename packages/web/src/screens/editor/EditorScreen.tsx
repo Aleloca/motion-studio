@@ -23,6 +23,10 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState, type CSS
 import { createPortal } from 'react-dom';
 import { api, ApiError } from '../../api.ts';
 import { CompositionPlayer, type CompositionMedia } from '../../components/CompositionPlayer.tsx';
+import { LocaleOutline, LocaleSwitcher } from '../creative/LocaleSwitcher.tsx';
+import { useLocalePreview } from '../creative/useLocalePreview.ts';
+import { LanguagesButton } from '../creative/LanguagesButton.tsx';
+import { creativeLocales } from '../creative/languagesModel.ts';
 import { usePreviewSession } from '../../components/compositionPreview.ts';
 import { Conversation } from '../../components/Conversation.tsx';
 import { IntegrityNotice, useIntegrity } from '../../components/IntegrityNotice.tsx';
@@ -186,17 +190,25 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   const [loop, setLoop] = useState(false);
   useEffect(() => { if (player) { player.loop = loop; player.playbackRate = Number(rate); } }, [player, loop, rate]);
 
+  // The language shown (Phase 12): a read-only preview of a translation; the draft is shown again on the way back.
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const localePreview = useLocalePreview({
+    slug, creative, n: hasComp ? n : null, format, rows: version?.localizations ?? [], player, token, original: () => draftRef.current?.composition ?? null,
+  });
+  const localeActive = localePreview.locale !== null;
+
   // The draft → the player, once per change (the player coalesces per animation frame).
   const lastSeq = useRef(0);
   const sent = useRef<{ player: CompositionMedia | null; composition: Composition | null }>({ player: null, composition: null });
   useEffect(() => {
-    if (!player || !draft) return;
+    if (!player || !draft || localeActive) return;
     if (sent.current.player === player && sent.current.composition === draft.composition) return;
     const first = sent.current.player !== player;
     sent.current = { player, composition: draft.composition };
     if (first && draft.ops.length === 0) return; // the frame shows the session's own composition
     lastSeq.current = player.setComposition(draft.composition);
-  }, [player, draft?.composition]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [player, draft?.composition, localeActive]); // eslint-disable-line react-hooks/exhaustive-deps
   // The runtime's answer to the latest draft: a refusal is shown (carry 6), never ignored.
   const [previewProblem, setPreviewProblem] = useState<string | null>(null);
   useEffect(() => {
@@ -562,6 +574,7 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
         <>
           {followers.length > 0 ? <Pill tone="neutral" className="ms-ed-also">{e.alsoUsedBy({ list: alsoList })}</Pill> : null}
           {n !== null ? <Pill tone="neutral" className="ms-ed-version">{e.version({ n })}</Pill> : null}
+          <LanguagesButton slug={slug} creative={creative} detail={detail} version={latest} presets={presets} live={live} onChanged={reload} />
           <Button variant="ink" className="ms-cv-export" disabled={!latest} onClick={() => { if (latest) setExporting({ open: true, snapshot: { versions, states } }); }}>
             <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
           </Button>
@@ -612,9 +625,12 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
                 </span>
               ) : null}
             </div>
-            {draft ? <Stage /> : null}
+            {draft && !localeActive ? <Stage /> : null}
+            <LocaleOutline player={player} preview={localePreview} />
           </div>
         </section>
+        {detail ? <LocaleSwitcher brief={detail.creative.brief} preview={localePreview} className="ms-ed-locales" /> : null}
+        {localeActive ? <p className="ms-cv-note ms-info" role="status">{t.web.languages.editorPreviewNote}</p> : null}
         {draft && (dirty || saved) ? (
           <DraftPill edits={draft.ops.length} nextN={nextN} blocked={blocked} saving={saving} saved={saved} onSave={() => { void save(); }} onDiscard={discardDraft} />
         ) : null}
@@ -698,7 +714,8 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
         </div>
       </Modal>
       <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
-        title={detail?.creative.title ?? ''} snapshot={exporting?.snapshot ?? null} presets={presets} labels={detail?.creative.brief.formatLabels} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} />
+        title={detail?.creative.title ?? ''} snapshot={exporting?.snapshot ?? null} presets={presets} labels={detail?.creative.brief.formatLabels} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings}
+        {...(detail && creativeLocales(detail.creative.brief) ? { locales: creativeLocales(detail.creative.brief)! } : {})} />
     </div>
   );
   // Tasks 6 to 10 read the draft, the player and the selection from here (`useEditor()`).

@@ -1,0 +1,87 @@
+/* Languages (Phase 12): the panel, the review table, the preview switcher, the render dialog, the batch card. Tokens only. */
+.ms-lp { display: flex; flex-direction: column; gap: 14px; padding: 18px 22px; max-height: min(780px, 90vh); overflow: auto; min-width: 0; }
+.ms-lp-head { display: flex; align-items: flex-start; gap: 12px; }
+.ms-lp-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ms-lp-titles h2 { margin: 0; font-size: 17px; color: var(--text); }
+.ms-lp-sub { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.ms-lp-note { margin: 0; font-size: 12.5px; color: var(--muted); }
+.ms-lp-error { margin: 0; font-size: 12.5px; color: var(--danger); overflow-wrap: anywhere; }
+.ms-lp-muted { font-size: 12px; color: var(--muted); }
+.ms-lp-formats { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.ms-lp-format { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
+.ms-lp-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.ms-lp-lang { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 10px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line); min-width: 0; }
+.ms-lp-line { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-width: 0; }
+.ms-lp-name { font-size: 14px; color: var(--text); }
+.ms-lp-voice { margin-left: auto; }
+.ms-lp-reason { display: flex; align-items: flex-start; gap: 6px; margin: 0; font-size: 12px; line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }
+.ms-lp-reason > svg { flex: none; margin-top: 2px; color: var(--warn); }
+.ms-lp-review { display: flex; flex-wrap: wrap; gap: 6px; }
+.ms-lp-cards { display: flex; flex-direction: column; gap: 10px; }
+.ms-lp-foot { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
+
+/* Review table */
+.ms-lt { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 10px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); min-width: 0; }
+.ms-lt-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.ms-lt-head > b { flex: 1; min-width: 0; font-size: 13px; color: var(--text); overflow-wrap: anywhere; }
+.ms-lt-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.ms-lt-table th, .ms-lt-table td { padding: 8px 8px 8px 0; vertical-align: top; text-align: left; border-top: 1px solid var(--line2); min-width: 0; }
+.ms-lt-table thead th { border-top: 0; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.ms-lt-table th[scope='col']:nth-child(1) { width: 30%; }
+.ms-lt-table th[scope='col']:nth-child(3) { width: 14%; }
+.ms-lt-table th[scope='col']:nth-child(4) { width: 18%; }
+.ms-lt-src { font-weight: 400; display: flex; flex-direction: column; gap: 2px; border-top: 0; }
+.ms-lt-name { font-size: 11px; font-weight: 600; color: var(--muted); overflow-wrap: anywhere; }
+.ms-lt-text { font-size: 13px; color: var(--text); overflow-wrap: anywhere; white-space: pre-wrap; }
+.ms-lt-table .ms-textarea { width: 100%; min-height: 56px; }
+.ms-lt-inline { margin: 4px 0 0; font-size: 12px; line-height: 1.4; color: var(--warn); overflow-wrap: anywhere; }
+.ms-lt-over .ms-input { box-shadow: inset 0 0 0 1px var(--warnLine); }
+.ms-lt-stale .ms-lt-name::after { content: ' ·'; }
+.ms-lt-fit { display: flex; align-items: center; gap: 8px; }
+.ms-lt-fit .ms-slider { flex: 1; width: auto; min-width: 60px; }
+.ms-lt-fit-value { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ms-lt-general, .ms-lt-warnings { margin: 0; padding: 8px 10px 8px 26px; border-radius: 8px; background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); font-size: 12px; line-height: 1.45; color: var(--text); overflow-wrap: anywhere; }
+.ms-lt-noscript { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.ms-lt-noscript ul { margin: 0; padding-left: 18px; }
+.ms-lt-empty { margin: 0; font-size: 12.5px; color: var(--muted); }
+.ms-lt-error { font-size: 12.5px; color: var(--danger); overflow-wrap: anywhere; }
+.ms-lt-saved { font-size: 12.5px; color: var(--ok); }
+.ms-lt-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+
+/* Preview switcher and outline */
+.ms-loc { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 6px 0; min-width: 0; }
+.ms-loc-state { font-size: 12px; color: var(--muted); }
+.ms-loc-error { font-size: 12px; color: var(--danger); overflow-wrap: anywhere; }
+.ms-loc-flags { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.ms-loc-flag { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 999px; border: 0; background: var(--field); box-shadow: inset 0 0 0 1px var(--line); font: inherit; font-size: 12px; color: var(--text); cursor: pointer; }
+.ms-loc-flag.ms-on { box-shadow: inset 0 0 0 1px var(--warn); }
+.ms-loc-flag:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ms-loc-flag-name { overflow-wrap: anywhere; }
+.ms-loc-outline-layer { position: absolute; inset: 0; z-index: 3; pointer-events: none; overflow: hidden; }
+.ms-loc-outline { position: absolute; box-sizing: border-box; border: 2px dashed var(--warn); border-radius: 3px; }
+.ms-loc-outline-label { position: absolute; left: -2px; top: 0; transform: translateY(-100%); padding: 1px 6px; border-radius: 4px 4px 0 0; background: var(--warnBg); color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.ms-loc-outline.ms-stale .ms-loc-outline-label { top: auto; bottom: 0; transform: translateY(100%); border-radius: 0 0 4px 4px; }
+
+/* Render dialog, export languages */
+.ms-rl-list { display: flex; flex-direction: column; gap: 8px; }
+.ms-rl-refused, .ms-exp-refused { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 8px; background: var(--warnBg); box-shadow: inset 0 0 0 1px var(--warnLine); font-size: 12.5px; color: var(--text); overflow-wrap: anywhere; }
+.ms-rl-refused ul, .ms-exp-refused ul { margin: 0; padding-left: 18px; }
+.ms-exp-refused { margin: 0 22px; align-items: flex-start; }
+.ms-exp-langs { display: flex; flex-direction: column; gap: 6px; padding: 0 22px 8px; }
+.ms-exp-langs-list { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.ms-exp-lang { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
+
+/* Brief languages */
+.ms-brief-langs { display: flex; flex-direction: column; gap: 6px; }
+.ms-brief-rtl { margin-top: 2px; }
+
+/* Paid batch card */
+.ms-batch-calls { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 160px; overflow: auto; font-size: 12.5px; }
+.ms-batch-calls li { display: flex; justify-content: space-between; gap: 10px; min-width: 0; }
+.ms-batch-label { min-width: 0; overflow-wrap: anywhere; color: var(--text); }
+.ms-batch-chars { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+@media (max-width: 640px) {
+  .ms-lt-table, .ms-lt-table tbody, .ms-lt-table tr, .ms-lt-table th, .ms-lt-table td { display: block; width: auto !important; }
+  .ms-lt-table thead { display: none; }
+}

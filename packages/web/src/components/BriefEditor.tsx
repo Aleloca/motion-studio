@@ -7,6 +7,7 @@ import { instanceName, presetFor, presetNameOf } from '../instances.ts';
 import { useLocale, useT } from '../i18n.tsx';
 import { Button, ChannelMark, Chip, channelOf, cx, Icon, Input, Modal, Segmented, Textarea } from '../ui/index.ts';
 import { CodebaseList } from './CodebaseList.tsx';
+import { BriefLanguages } from '../screens/creative/BriefLanguages.tsx';
 import { ServicesSelector, useConfiguredProviders, useKeyChecks } from './ServicesSelector.tsx';
 import './brief.css';
 import { message } from '../errors.ts';
@@ -247,6 +248,8 @@ export function BriefEditor({ slug, detail, presets, disabled, onChanged, onRefr
           </div>
         </div>
       </Modal>
+      <BriefLanguages value={brief.locales} disabled={disabled}
+        onChange={(next) => setBrief((b) => { const { locales: _l, ...rest } = b; return next ? { ...rest, locales: next } : rest; })} />
       <span className="ms-brief-lbl">{t.web.services.title}</span>
       <p className="ms-brief-hint">{t.web.services.hint}</p>
       <ServicesSelector value={services ?? c.brief.services} configured={configured} checks={keyChecks} disabled={disabled} onChange={setServices} />

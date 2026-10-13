@@ -189,6 +189,14 @@ export interface CompositionSession {
    * Throws when refused, when the session ended or when it already serves 1000 media files.
    */
   addMedia(src: string, media: SessionMediaFile): Promise<AddedMedia>;
+  /**
+   * Preview only (Phase 12): the files a localized preview needs from the creative's PROJECT folder, `files` by project path
+   * (`assets/audio/…` voices and `assets/fonts/…` fallback fonts only) with the sha256 recorded for each. A request for one of
+   * them that the composition folder lacks is served from the project, after the bytes are read through the confined-read
+   * checks and found equal to the hash; anything else (not listed, changed, a link) is 404. `projectDir` must be the real
+   * project of the session's creative. Attaching again replaces the list. Throws when refused or when the session ended.
+   */
+  attachLocaleAssets(projectDir: string, files: Readonly<Record<string, string>>): Promise<void>;
 }
 
 export interface CompositionServer {
@@ -225,7 +233,15 @@ interface Session {
   realCreative: string;
   /** The staging overlay (preview only): the real staging folder and its identity. */
   staging: { dir: string; dev: number; ino: number } | null;
+  /** The localized preview's project files (preview only): the real project folder and the sha256 of each served path. */
+  locale: { dir: string; dev: number; ino: number; files: Map<string, string> } | null;
 }
+
+/** Project folders a localized preview may serve from, and the largest such file. */
+const LOCALE_ASSET_RE = /^assets\/(?:audio|fonts)\/[^/]+$/;
+const MAX_LOCALE_ASSET_BYTES = 64 * 1024 * 1024;
+const MAX_LOCALE_ASSETS = 400;
+const HEX64 = /^[0-9a-f]{64}$/;
 
 const VIDEO_SOURCE_FIELDS = ['sourceStart', 'sourceVideoEnd', 'sourceTrusted', 'audioSrc', 'audioStart', 'originalSrc'] as const;
 
@@ -473,6 +489,41 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
     if (!ok) send(res, 404, headers);
   }
 
+  /** One project file of a localized preview: read whole through the confined checks, served only when its sha256 is the recorded one. */
+  async function serveLocaleAsset(req: IncomingMessage, res: ServerResponse, loc: NonNullable<Session['locale']>, rel: string, sha256: string,
+    headers: Record<string, string | string[]>): Promise<boolean> {
+    const stillThere = async () => {
+      if ((await realpath(loc.dir).catch(() => null)) !== loc.dir) return false;
+      const st = await lstat(loc.dir).catch(() => null);
+      return st !== null && st.isDirectory() && st.dev === loc.dev && st.ino === loc.ino;
+    };
+    if (!(await stillThere())) return false;
+    const r = await withConfinedFile(loc.dir, rel, true, async (fh: FileHandle, info: Stats) => {
+      if (info.size > MAX_LOCALE_ASSET_BYTES) return { skipped: 'too-large' as const };
+      const buf = Buffer.alloc(info.size + 1);
+      let n = 0;
+      for (;;) {
+        const { bytesRead } = await fh.read(buf, n, buf.length - n, n);
+        if (bytesRead === 0) break;
+        n += bytesRead;
+        if (n > info.size) return { skipped: 'too-large' as const };
+      }
+      const bytes = buf.subarray(0, n);
+      if (createHash('sha256').update(bytes).digest('hex') !== sha256) return { skipped: 'outside' as const };
+      const range = parseRange(req.headers.range, n);
+      if (range === 'unsatisfiable') { send(res, 416, { ...headers, 'content-range': `bytes */${n}` }); return true as const; }
+      const { start, end } = range ?? { start: 0, end: n - 1 };
+      const body = n === 0 ? Buffer.alloc(0) : bytes.subarray(start, end + 1);
+      res.writeHead(range ? 206 : 200, {
+        ...headers, 'accept-ranges': 'bytes', 'content-length': String(body.length),
+        ...(range ? { 'content-range': `bytes ${start}-${end}/${n}` } : {}),
+      });
+      res.end(req.method === 'HEAD' ? undefined : body);
+      return true as const;
+    });
+    return r === true;
+  }
+
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const headers = baseHeaders();
     if (req.headers.host !== expectedHost) return send(res, 421, headers);
@@ -545,6 +596,13 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
         return served ? undefined : notFound();
       }
     }
+    // A localized preview's fallback fonts and voices (project files, listed with their hash); the composition folder wins.
+    const wanted = session.locale?.files.get(rel);
+    if (session.locale && wanted !== undefined) {
+      const inBase = await lstat(join(session.compDir, ...rel.split('/'))).then(() => true, (e: NodeJS.ErrnoException) => (e.code === 'ENOENT' || e.code === 'ENOTDIR' ? false : null));
+      if (inBase === null) return notFound();
+      if (!inBase) return (await serveLocaleAsset(req, res, session.locale, rel, wanted, fileHeaders)) ? undefined : notFound();
+    }
     const ok = await serveFile(req, res, session.compDir, rel, fileHeaders, layer
       ? { maxBytes: maxLayerBytes, ranges: false, check: stillThere, transform: (html) => injectLayerBootstrap(html, `/${target.token}/runtime/layer.js`) }
       : { maxBytes: maxFileBytes, ranges: true, check: stillThere });
@@ -605,7 +663,7 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
       const data: Session = {
         versionSegments: segs, versionDir: segs.join('/'), format: o.format, compDir, compDev: dirInfo.dev, compIno: dirInfo.ino,
         composition: media ? withSessionMedia(o.composition, media.bySrc) : o.composition, frameAncestors, sandboxed: o.mode === 'preview',
-        media: media?.session ?? null, realCreative, staging: null,
+        media: media?.session ?? null, realCreative, staging: null, locale: null,
       };
       const { token, expiresAt } = tokens.mint(data, ttl);
       const preview = o.mode === 'preview';
@@ -632,6 +690,20 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
           const info = await lstat(real);
           if (!info.isDirectory()) throw new Error('composition server: the staging folder is not a directory');
           liveData().staging = { dir: real, dev: info.dev, ino: info.ino };
+        },
+        async attachLocaleAssets(projectDir, files) {
+          liveData();
+          const entries = Object.entries(files ?? {});
+          if (entries.length > MAX_LOCALE_ASSETS) throw new Error('composition server: too many locale assets');
+          for (const [rel, hash] of entries) {
+            if (!LOCALE_ASSET_RE.test(rel) || !isCompositionPath(rel) || rel.normalize('NFC') !== rel || !HEX64.test(hash)) throw new Error('composition server: bad locale asset');
+          }
+          if (typeof projectDir !== 'string' || basename(dirname(realCreative)) !== 'creatives') throw new Error('composition server: not the creative\'s project');
+          const real = await realpath(projectDir);
+          if (real !== dirname(dirname(realCreative))) throw new Error('composition server: not the creative\'s project');
+          const info = await lstat(real);
+          if (!info.isDirectory()) throw new Error('composition server: the project folder is not a directory');
+          liveData().locale = { dir: real, dev: info.dev, ino: info.ino, files: new Map(entries) };
         },
         async addMedia(src, f) {
           liveData();

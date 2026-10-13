@@ -7,8 +7,9 @@ import {
 import { CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeRef, CreativeTurnService } from '../creatives/creative-turns.ts';
 import { editorCompositionView } from '../creatives/editor-staging.ts';
-import { emptyOverlay, finishOverlay, resolveFallbackFont, instanceComposition, localizedComposition, readOverlay, rowAssetHashes, attachedFontHashes, setLocalizationRow, voiceRootsOf, writeOverlay } from '../localization/store.ts';
+import { emptyOverlay, finishOverlay, overlayAssetPaths, resolveFallbackFont, instanceComposition, localizedComposition, readOverlay, rowAssetHashes, attachedFontHashes, setLocalizationRow, voiceRootsOf, writeOverlay } from '../localization/store.ts';
 import { checkedInstance, checkedLocale } from '../localization/validate.ts';
+import type { PreviewService } from '../creatives/previews.ts';
 import type { LocalizeService } from '../localization/localize-turn.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import type { InstallIo } from '../providers/google-fonts.ts';
@@ -32,6 +33,8 @@ export interface LocalizationRoutesContext {
   fontsIo?: InstallIo;
   /** Localize turns (Task 4): `POST …/versions/:n/localize`. */
   localize: LocalizeService;
+  /** The live previews (a localized preview serves the overlay's fonts and voices). */
+  previews: PreviewService;
 }
 
 const clipId = z.string().max(COMPOSITION_LIMITS.id);
@@ -144,6 +147,22 @@ export function registerLocalizationRoutes(app: FastifyInstance, ctx: Localizati
     const ref = await refOf(req.params.slug, req.params.c);
     const job = await ctx.localize.start(ref, versionNumber(req.params.n), req.body);
     return reply.status(202).send({ jobId: job.id });
+  });
+
+  // The fallback fonts and translated voices of a localized preview (Phase 12, Task 5): the live preview session `token` serves
+  // exactly the files the row recorded a hash for (and the overlay uses), verified against it at every request.
+  app.post<{ Params: PL }>(`${base}/:locale/:instanceId/preview-assets`, async (req) => {
+    const ui = currentLocale();
+    const ref = await refOf(req.params.slug, req.params.c);
+    const body = z.strictObject({ token: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).safeParse(req.body);
+    if (!body.success) throw new CodedError(400, messages(ui).variants.localizationInvalid({ detail: 'token' }), 'localization-invalid');
+    const v = await versionOf(ref.store, ref.creativeSlug, req.params.n);
+    const tag = checkedLocale(req.params.locale, ui);
+    const instanceId = checkedInstance(req.params.instanceId, v, ui);
+    const { row, overlay } = await rowOverlay(ref.store.dir(ref.creativeSlug), v, tag, instanceId, ui);
+    const files = await ctx.previews.attachLocale({ projectDir: ref.projectDir, creativeDir: ref.store.dir(ref.creativeSlug), creativeSlug: ref.creativeSlug },
+      body.data.token, overlayAssetPaths(overlay, row), row.assetHashes ?? {}, ui);
+    return { files };
   });
 
   app.get<{ Params: P }>(base, async (req) => {

@@ -7,6 +7,7 @@ import { Button, CountdownRing, Icon, Tag, toast } from '../ui/index.ts';
 import { message } from '../errors.ts';
 import { explanationView, RiskChips } from './RiskChips.tsx';
 import { ruleLabel } from './ruleLabel.ts';
+import { PaidBatchCard } from '../screens/creative/PaidBatchCard.tsx';
 
 /**
  * Lengths at which the core cuts the detail, mirrored from packages/core/src/approvals/broker.ts (`describeRequest`
@@ -45,7 +46,12 @@ export interface ApprovalCardProps {
  * Approval card (spec §6.3, T8, T15). The detail is agent-controlled text: it is rendered as plain text only, never as
  * HTML, and always in full behind "Show command" (wrapped, with its line count and visible scrolling, point 6).
  */
-export function ApprovalCard({ approval, context, leaving = false, onGone }: ApprovalCardProps) {
+export function ApprovalCard(props: ApprovalCardProps) {
+  // Several paid calls confirmed together (Phase 12): their own card, everywhere approvals are shown.
+  return props.approval.kind === 'paid-batch' && props.approval.paidBatch ? <PaidBatchCard {...props} /> : <ToolApprovalCard {...props} />;
+}
+
+function ToolApprovalCard({ approval, context, leaving = false, onGone }: ApprovalCardProps) {
   const t = useT();
   const a = t.web.approvalUi;
   const locale = useLocale();

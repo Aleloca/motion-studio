@@ -6,10 +6,10 @@
 // them (ruling R6).
 import {
   EXPORT_NAME_TOKENS, exportDate, exportExtension, exportNameCollisions, exportNameVars, renderName, renderProblems, renderState, separateInstanceNames,
-  type FormatPreset, type JobSummary, type VersionEntry, type WorkspaceSettings,
+  type FormatPreset, type JobSummary, type LocaleTag, type VersionEntry, type WorkspaceSettings,
 } from '@motion-studio/shared';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { api } from '../api.ts';
+import { api, ApiError } from '../api.ts';
 import { desktop } from '../desktop.ts';
 import { useLocale, useT } from '../i18n.tsx';
 import { pop } from '../motion/index.ts';
@@ -23,6 +23,7 @@ import { message } from './common.tsx';
 import { abortableWait, exportErrorText, withHashRetry } from './versionErrors.ts';
 import type { FormatState } from './versionModel.ts';
 import { compositionOf, renderPct, shortProblems } from './renderModel.ts';
+import { localeName } from './creative/languagesModel.ts';
 
 /** The last destination folder, kept in this browser only. */
 export const EXPORT_FOLDER_KEY = 'ms.exportFolder';
@@ -50,6 +51,8 @@ export interface ExportDialogProps {
   onSettings?(next: WorkspaceSettings): void;
   /** The live jobs (the render jobs a ★ export waits for show their progress, Task 8). */
   jobs?: Record<string, JobSummary>;
+  /** The creative's languages (Phase 12): with extra languages the dialog offers a multiselect; absent: as before. */
+  locales?: { primary: LocaleTag; extra: LocaleTag[] };
 }
 
 /** The extension a render will have (core render-jobs `renderExtension`): the preset's first H.264 container or image type. */
@@ -117,7 +120,7 @@ interface Row {
   problems: string[];
 }
 
-function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels, pattern: initialPattern, onSettings, onBusy, jobs = {} }: ExportDialogProps & { snapshot: ExportSnapshot; onBusy(busy: boolean): void }) {
+function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels, pattern: initialPattern, onSettings, onBusy, jobs = {}, locales }: ExportDialogProps & { snapshot: ExportSnapshot; onBusy(busy: boolean): void }) {
   const t = useT();
   const x = t.web.exportUi;
   const locale = useLocale();
@@ -150,6 +153,11 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
   const remembered = folder !== '' && folder === readFolder();
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
   const [error, setError] = useState<string | null>(null);
+  // Languages (Phase 12): the original is on, the translations are chosen. A translation with open problems or outdated texts
+  // is refused by the core with the list; "Render anyway" sends `force`.
+  const withLanguages = Boolean(locales && locales.extra.length > 0);
+  const [langs, setLangs] = useState<Record<string, boolean>>(() => (locales ? { [locales.primary]: true } : {}));
+  const [refused, setRefused] = useState<string[] | null>(null);
   const field = useRef<HTMLInputElement>(null);
   const running = phase.kind === 'run' || phase.kind === 'render';
   const labelId = useId();
@@ -215,10 +223,14 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
     } catch (e) { setError(message(e)); }
   };
   const canRun = chosen.length > 0 && folder.trim() !== '' && nameProblem === null && !running;
-  const run = async () => {
+  const wanted = locales && withLanguages ? [locales.primary, ...locales.extra].filter((tag) => langs[tag]) : [];
+  const otherLanguages = locales ? wanted.some((tag) => tag !== locales.primary) : false;
+  const languageBody = otherLanguages ? { locales: wanted } : {};
+  const run = async (force = false) => {
     const dest = folder.trim();
     if (!canRun) return;
     setError(null);
+    setRefused(null);
     setPhase({ kind: 'run' });
     // Followers are never picked on their own: they go with the version whose file the row shows (resolved from their
     // primary's ★), which the core checks against the primary version it exports.
@@ -230,8 +242,8 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
     try {
       // A ★ v2 version without a render is rendered first (Task 8): the jobs start now and show their progress here; the
       // export below waits for them on the core's side.
-      if (chosen.some((c) => c.row.needsRender)) {
-        const prep = await withHashRetry(() => api.prepareExport(slug, creative, { picks, ...followed }), abortableWait(signal));
+      if (chosen.some((c) => c.row.needsRender) || otherLanguages) {
+        const prep = await withHashRetry(() => api.prepareExport(slug, creative, { picks, ...followed, ...languageBody, ...(force ? { force: true } : {}) }), abortableWait(signal));
         if (signal.aborted) return;
         if (prep.renders.length) {
           setPhase({ kind: 'render', jobs: prep.renders.map((r) => r.job.id), count: prep.renders.reduce((k, r) => k + r.formats.length, 0) });
@@ -239,7 +251,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
       }
       // A follower's version is decided on hashes: while old versions are still hashed the core answers hashes-pending,
       // retried after its Retry-After (bounded, like a ★ pick).
-      const r = await withHashRetry(() => api.exportPicks(slug, creative, { destination: dest, picks, ...followed, pattern, date }),
+      const r = await withHashRetry(() => api.exportPicks(slug, creative, { destination: dest, picks, ...followed, pattern, date, ...languageBody, ...(force ? { force: true } : {}) }),
         abortableWait(signal));
       if (signal.aborted) return;
       writeFolder(dest);
@@ -252,6 +264,11 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
       setPhase({ kind: 'done', destination: r.destination, count: r.files.length, skipped: r.skipped ?? [], excluded });
     } catch (e) {
       if (signal.aborted) return;
+      if (e instanceof ApiError && e.code === 'localization-needs-force') {
+        setRefused(e.problems?.length ? e.problems : [e.message]);
+        setPhase({ kind: 'idle' });
+        return;
+      }
       setError(exportErrorText(e, t));
       setPhase({ kind: 'idle' });
     }
@@ -324,6 +341,27 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
           })}
         </div>
       ) : <p className="ms-exp-empty">{x.empty}</p>}
+      {locales && withLanguages ? (
+        <div className="ms-exp-langs" role="group" aria-label={t.web.languages.exportLanguages}>
+          <span className="ms-exp-dest-label">{t.web.languages.exportLanguages}</span>
+          <div className="ms-exp-langs-list">
+            {[locales.primary, ...locales.extra].map((tag) => (
+              <label key={tag} className="ms-exp-lang">
+                <Check on={Boolean(langs[tag])} label={tag === locales.primary ? t.web.languages.renderOriginal({ language: localeName(tag, locale) }) : localeName(tag, locale)}
+                  disabled={running} onChange={(v) => { setRefused(null); setLangs((s) => ({ ...s, [tag]: v })); }} />
+                <span>{tag === locales.primary ? t.web.languages.renderOriginal({ language: localeName(tag, locale) }) : localeName(tag, locale)}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {refused ? (
+        <div className="ms-exp-refused" role="alert">
+          <b>{t.web.languages.needsForceTitle}</b>
+          <ul>{refused.map((r) => <li key={r}>{r}</li>)}</ul>
+          <Button variant="outline" size="sm" disabled={running} onClick={() => void run(true)}>{t.web.languages.renderAnyway}</Button>
+        </div>
+      ) : null}
       <div className="ms-exp-dest">
         <span className="ms-exp-dest-label" id={labelId}>{x.saveTo}</span>
         <div className="ms-exp-dest-field">
@@ -381,7 +419,7 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
           </div>
         )}
         <Button size="lg" variant="ghost" disabled={running} onClick={onClose}>{t.common.cancel}</Button>
-        <Button size="lg" variant="ink" loading={running} disabled={!canRun} onClick={() => void run()}>
+        <Button size="lg" variant="ink" loading={running} disabled={!canRun || (withLanguages && wanted.length === 0)} onClick={() => void run()}>
           {x.run({ count: chosen.length })}
         </Button>
       </div>
