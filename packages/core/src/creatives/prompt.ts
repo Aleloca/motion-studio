@@ -116,9 +116,18 @@ function contextSections(c: CreativeContext, contract: AgentContract = 'composit
 
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 
-/** `- <format> @ <t>s, point (x%, y%)[, clip <clipId> "<name>"][, range <a>–<b>s]: <note>` (Phase 10b adds the last two). */
+/**
+ * A JSON string literal (quotes, backslash and every control character escaped), with DEL, the C1 controls and U+2028/U+2029,
+ * which JSON.stringify leaves as they are, escaped too: the quoted value never ends the line or the quotes early
+ * (decisions log 260). The schema already refuses control characters; this holds for anything that reaches the prompt.
+ */
+export function quotePromptString(s: string): string {
+  return JSON.stringify(s).replace(/[\u007f-\u009f\u2028\u2029]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+
+/** `- <format> @ <t>s, point (x%, y%)[, clip "<clipId>" "<name>"][, range <a>–<b>s]: <note>` (Phase 10b adds the last two). */
 function pinLine(p: Pin): string {
-  const clip = p.clipId ? `, clip ${p.clipId.replace(/[\r\n"]+/g, ' ')}${p.clipName ? ` "${p.clipName.replace(/[\r\n"]+/g, ' ')}"` : ''}` : '';
+  const clip = p.clipId ? `, clip ${quotePromptString(p.clipId)}${p.clipName ? ` ${quotePromptString(p.clipName)}` : ''}` : '';
   const range = p.range ? `, range ${p.range.start.toFixed(1)}\u2013${p.range.end.toFixed(1)}s` : '';
   return `- ${p.format}${p.timeSec !== null ? ` @ ${p.timeSec.toFixed(1)}s` : ''}, point (${pct(p.x)}, ${pct(p.y)})${clip}${range}${p.note ? `: ${p.note}` : ''}`;
 }

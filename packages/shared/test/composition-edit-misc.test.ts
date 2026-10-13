@@ -77,6 +77,13 @@ describe('schema additions', () => {
     expect(pinSchema.safeParse(base).success).toBe(true);
     expect(pinSchema.safeParse({ ...base, clipId: 'title', range: { start: 0, end: 1.5 } }).success).toBe(true);
     expect(pinSchema.safeParse({ ...base, clipId: 'x'.repeat(65) }).success).toBe(false);
+    expect(pinSchema.safeParse({ ...base, clipId: 'x'.repeat(64), clipName: 'n'.repeat(200) }).success).toBe(true);
+    expect(pinSchema.safeParse({ ...base, clipName: 'n'.repeat(201) }).success).toBe(false);
+    expect(pinSchema.safeParse({ ...base, clipId: 'tit"le', clipName: 'Il "titolo" — ok' }).success).toBe(true);
+    for (const bad of ['a\nb', 'a\rb', 'a\tb', 'a\u0000b', 'a\u007fb', 'a\u0085b', 'a\u2028b', 'a\u2029b']) {
+      expect(pinSchema.safeParse({ ...base, clipId: bad }).success).toBe(false);
+      expect(pinSchema.safeParse({ ...base, clipName: bad }).success).toBe(false);
+    }
     expect(pinSchema.safeParse({ ...base, range: { start: 1, end: 1 } }).success).toBe(false);
     expect(pinSchema.safeParse({ ...base, range: { start: 2, end: 1 } }).success).toBe(false);
     expect(pinSchema.safeParse({ ...base, range: { start: -1, end: 1 } }).success).toBe(false);

@@ -403,7 +403,7 @@ describe('CreativeTurnService', { timeout: 90_000 }, () => {
     const sent = (await prompts()).find((p) => p.prompt.includes('## Pinned comments'))!.prompt;
     expect(sent).toContain(`pin-frames/${ref.creativeSlug}/v2/2-1.jpg`);
     expect(sent).toContain(`pin-frames/${ref.creativeSlug}/v2/2-1e.jpg`);
-    expect(sent).toContain('clip title "Titolo"');
+    expect(sent).toContain('clip "title" "Titolo"');
     expect(sent).toContain('range 2.0\u20133.5s');
   });
 
@@ -423,7 +423,7 @@ describe('CreativeTurnService', { timeout: 90_000 }, () => {
     expect(asked[1]).toBeCloseTo(10 - 1 / 30, 6);
     const dir = join(ref.projectDir, '.studio', 'cache', 'pin-frames', ref.creativeSlug, 'v2');
     expect((await readdir(dir)).filter((f) => f.endsWith('.jpg')).sort()).toEqual(['2-1.jpg', '2-1e.jpg']);
-    expect((await prompts()).find((p) => p.prompt.includes('## Pinned comments'))!.prompt).toContain(', clip a b, range 8.0\u201310.0s');
+    expect((await prompts()).find((p) => p.prompt.includes('## Pinned comments'))!.prompt).toContain(', clip "a\\nb", range 8.0\u201310.0s');
   });
 
   it('a pins-only message uses a neutral instruction as request and prompt', async () => {

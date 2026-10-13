@@ -179,6 +179,10 @@ export type ManifestV2 = z.infer<typeof manifestV2Schema>;
 export const anyManifestSchema = z.discriminatedUnion('schemaVersion', [manifestSchema, manifestV2Schema]);
 export type AnyManifest = z.infer<typeof anyManifestSchema>;
 
+/** C0 and C1 control characters (newlines included), DEL and the Unicode line/paragraph separators: never in a pin's clip id or name. */
+const PIN_LABEL_FORBIDDEN = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+const pinLabel = (max: number) => z.string().max(max).refine((s) => !PIN_LABEL_FORBIDDEN.test(s), { message: 'control characters are not allowed' });
+
 export const pinSchema = z.object({
   format: z.string().min(1),
   x: z.number().min(0).max(1),
@@ -186,9 +190,9 @@ export const pinSchema = z.object({
   timeSec: z.number().min(0).nullable(),
   note: z.string().optional(),
   /** The composition clip the comment is about (Phase 10b). Absent on older pins. */
-  clipId: z.string().max(64).optional(),
+  clipId: pinLabel(64).optional(),
   /** The clip's name when the comment was placed (for the chip and the agent's prompt; the clip may be renamed or gone later). */
-  clipName: z.string().max(200).optional(),
+  clipName: pinLabel(200).optional(),
   /** The time range, in seconds, the comment is about (Phase 10b): `0 <= start < end`. */
   range: z.object({ start: z.number().min(0), end: z.number() }).refine((r) => r.start < r.end).optional(),
 });

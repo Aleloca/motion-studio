@@ -1,7 +1,7 @@
 import { DEFAULT_FORMATS, normalizeComposition, validateComposition, type CreativeFile } from '@motion-studio/shared';
 import { homedir } from 'node:os';
 import { describe, expect, it } from 'vitest';
-import { buildCreativePrompt, parseStudioBlock } from '../src/creatives/prompt.ts';
+import { quotePromptString, buildCreativePrompt, parseStudioBlock } from '../src/creatives/prompt.ts';
 import { buildBrandPrompt, buildDescribePrompt } from '../src/brand/brand-prompt.ts';
 import { CONTEXT_MD } from '../src/project-template.ts';
 
@@ -54,10 +54,22 @@ describe('buildCreativePrompt', () => {
       { ...at, timeSec: 1, clipId: 'bare' },
     ] });
     expect(p).toContain('- instagram-post-1x1 @ 4.2s, point (25%, 50%): plain\n');
-    expect(p).toContain('- instagram-post-1x1 @ 1.0s, point (25%, 50%), clip title "Headline": clip\n');
+    expect(p).toContain('- instagram-post-1x1 @ 1.0s, point (25%, 50%), clip "title" "Headline": clip\n');
     expect(p).toContain('- instagram-post-1x1 @ 2.0s, point (25%, 50%), range 2.0\u20133.5s: range\n');
-    expect(p).toContain('- instagram-post-1x1 @ 2.0s, point (25%, 50%), clip logo "Logo", range 2.0\u20133.5s: both\n');
-    expect(p).toContain('- instagram-post-1x1 @ 1.0s, point (25%, 50%), clip bare\n');
+    expect(p).toContain('- instagram-post-1x1 @ 2.0s, point (25%, 50%), clip "logo" "Logo", range 2.0\u20133.5s: both\n');
+    expect(p).toContain('- instagram-post-1x1 @ 1.0s, point (25%, 50%), clip "bare"\n');
+  });
+  it('iteration: clip id and name are quoted JSON-style; no control character, separator or quote breaks the line', () => {
+    const at = { format: 'instagram-post-1x1', x: 0.25, y: 0.5, timeSec: 1 };
+    const p = buildCreativePrompt({ ...base, kind: 'iteration', userText: 'x', pins: [
+      { ...at, clipId: 'a"b\\c\nd', clipName: 'Say "hi"\r\n\t\u0007\u007f\u0085\u2028\u2029end', note: 'n' },
+    ] });
+    expect(p).toContain('- instagram-post-1x1 @ 1.0s, point (25%, 50%), clip "a\\"b\\\\c\\nd" "Say \\"hi\\"\\r\\n\\t\\u0007\\u007f\\u0085\\u2028\\u2029end": n\n');
+    const line = p.split('\n').find((l) => l.includes('clip "a'))!;
+    expect(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(line)).toBe(false);
+  });
+  it('quotePromptString round-trips through JSON.parse', () => {
+    for (const s of ['plain', 'quo"te', 'back\\slash', 'nl\nx', '\u0000\u001f\u007f\u009f\u2028\u2029']) expect(JSON.parse(quotePromptString(s))).toBe(s);
   });
   it('fix: lists the problems', () => {
     const p = buildCreativePrompt({ ...base, kind: 'fix', problems: ['Manca il formato Web · Banner 300×250 (web-banner-300x250)'] });

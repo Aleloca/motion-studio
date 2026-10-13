@@ -122,10 +122,10 @@ Followers, carried primaries and carried renders follow the targeted-turn rules 
 - `locked`: the editor refuses edits of that clip or track; scene operations still carry a locked clip with its scene.
 
 **Comments (pins).** A pin may also carry:
-- `clipId` (up to 64 characters) and `clipName` (up to 200; the name when the comment was made);
+- `clipId` (up to 64 characters) and `clipName` (up to 200; the name when the comment was made), neither with control characters, newlines or the Unicode line/paragraph separators;
 - `range: { start, end }`, in seconds, `0 ≤ start < end`.
 
-Older pins without them are read as before. The prompt line is `- <format> @ <t>s, point (x%, y%)[, clip <id> "<name>"][, range <a>–<b>s]: <note>`. A range comment has two frames in the pin-frame cache: `<n>-<i>.jpg` at its start and `<n>-<i>e.jpg` at its end.
+Older pins without them are read as before. The prompt line is `- <format> @ <t>s, point (x%, y%)[, clip "<id>" "<name>"][, range <a>–<b>s]: <note>`; id and name are JSON string literals (quotes, backslashes and any control character escaped). A range comment has two frames in the pin-frame cache: `<n>-<i>.jpg` at its start and `<n>-<i>e.jpg` at its end.
 
 *Verified live (phase 10b, 2026-10-13):*
 - editor saves made versions with `origin: editor` and no agent run;
