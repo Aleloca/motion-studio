@@ -9,6 +9,7 @@ const api = {
   editQueued: vi.fn(async (..._a: unknown[]) => ({})),
   reorderQueue: vi.fn(async (..._a: unknown[]) => ({})),
   runNext: vi.fn(async (..._a: unknown[]) => ({})),
+  postLiveMessage: vi.fn(async (..._a: unknown[]) => ({})),
 };
 class ApiError extends Error { constructor(public status: number, m: string, public code?: string) { super(m); } }
 vi.mock('../src/api.ts', () => ({ api, ApiError }));
@@ -159,5 +160,50 @@ describe('QueuedRequests', () => {
     render(<I18nProvider locale="it"><QueuedRequests slug="a" creative="c" queued={three} working={false} onChanged={() => {}} /></I18nProvider>);
     expect(screen.getByRole('button', { name: 'Avvia la prossima' })).toBeTruthy();
     expect(screen.getByRole('list', { name: 'Richieste in coda' })).toBeTruthy();
+  });
+});
+
+describe('an edit the queue overtook is kept (final wave P3)', () => {
+  const rerenderWith = (rerender: (ui: React.ReactElement) => void, queued: QueuedRequest[]) => rerender(
+    <I18nProvider locale="en"><QueuedRequests slug="acme" creative="c1" queued={queued} working={false} onChanged={onChanged} /></I18nProvider>,
+  );
+  const startEditing = async (to: string) => {
+    await userEvent.click(screen.getByRole('button', { name: 'Edit queued request 1' }));
+    const field = screen.getByRole('textbox', { name: 'Queued request text' });
+    await userEvent.clear(field);
+    await userEvent.type(field, to);
+  };
+
+  it('the request starts while it is being edited: the draft stays, with the reason, also when the queue empties', async () => {
+    const pins = [{ format: 'f', x: 0.1, y: 0.2, timeSec: 1, note: 'n' } as never];
+    const { rerender } = view([item(1, { pins })]);
+    await startEditing('Better words');
+    rerenderWith(rerender, []);
+    const kept = screen.getByRole('group', { name: 'Your unsaved edit' });
+    expect(within(kept).getByText(/started before your edit was saved/)).toBeTruthy();
+    expect((within(kept).getByRole('textbox', { name: 'Your unsaved edit' }) as HTMLTextAreaElement).value).toBe('Better words');
+    await userEvent.click(within(kept).getByRole('button', { name: 'Queue as a new request' }));
+    await waitFor(() => expect(api.postLiveMessage).toHaveBeenCalledWith('acme', 'c1', expect.objectContaining({ text: 'Better words', pins, mode: 'queued' })));
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Your unsaved edit' })).toBeNull());
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it('Save answered "no longer queued": the edit is kept, not dropped; Discard removes it', async () => {
+    api.editQueued.mockRejectedValueOnce(new ApiError(404, 'gone', 'not-queued'));
+    view([item(1), item(2)]);
+    await startEditing('Too late');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    const kept = await screen.findByRole('group', { name: 'Your unsaved edit' });
+    expect((within(kept).getByRole('textbox', { name: 'Your unsaved edit' }) as HTMLTextAreaElement).value).toBe('Too late');
+    await userEvent.click(within(kept).getByRole('button', { name: 'Discard' }));
+    expect(screen.queryByRole('group', { name: 'Your unsaved edit' })).toBeNull();
+  });
+
+  it('an edit with no change is not kept when its request starts', async () => {
+    const { rerender } = view([item(1), item(2)]);
+    await userEvent.click(screen.getByRole('button', { name: 'Edit queued request 1' }));
+    rerenderWith(rerender, [item(2)]);
+    expect(screen.queryByRole('group', { name: 'Your unsaved edit' })).toBeNull();
+    expect(order()).toEqual(['Request 2']);
   });
 });
