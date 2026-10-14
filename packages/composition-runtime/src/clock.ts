@@ -33,6 +33,8 @@ export interface VirtualClock {
   runDueTimers(): number;
   /** Fires one animation frame at `now`, without moving time. */
   runFrame(): void;
+  /** The due time of the earliest pending timer, or null when no timer is pending (read-only: nothing fires). */
+  nextTimerDue(): number | null;
   readonly native: Natives;
 }
 
@@ -126,6 +128,11 @@ export function installVirtualClock(w: Window & typeof globalThis): VirtualClock
     },
     runDueTimers: () => runTimers(now),
     runFrame,
+    nextTimerDue() {
+      let due: number | null = null;
+      for (const tm of timers.values()) if (due === null || tm.due < due) due = tm.due;
+      return due;
+    },
   };
   Object.defineProperty(win, '__msClock', { value: clock, configurable: false, enumerable: false, writable: false });
   return clock;

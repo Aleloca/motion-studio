@@ -1,7 +1,7 @@
 import { DEFAULT_FORMATS, normalizeComposition, validateComposition, type CreativeFile } from '@motion-studio/shared';
 import { homedir } from 'node:os';
 import { describe, expect, it } from 'vitest';
-import { quotePromptString, buildCreativePrompt, parseStudioBlock } from '../src/creatives/prompt.ts';
+import { COMPOSITION_SECTION, quotePromptString, buildCreativePrompt, parseStudioBlock } from '../src/creatives/prompt.ts';
 import { buildBrandPrompt, buildDescribePrompt } from '../src/brand/brand-prompt.ts';
 import { CONTEXT_MD } from '../src/project-template.ts';
 
@@ -152,6 +152,10 @@ describe('CONTEXT_MD', () => {
     for (const x of ['msReady', 'msSeek', 'msTimeline', 'msParams', 'FontFace', 'Ken Burns', 'subtitles', 'Transitions between scenes', 'Logo']) expect(CONTEXT_MD).toContain(x);
     expect(CONTEXT_MD).not.toContain('renderCommand');
     expect(CONTEXT_MD).not.toMatch(/Remotion works well|rendered with Playwright/);
+  });
+  it('tells html layers never to wait on time in msReady/msSeek, in context.md and in the prompt (task 2b, decision 709)', () => {
+    expect(CONTEXT_MD).toContain('`msReady` and `msSeek` must never wait on time: no `setTimeout`, `setInterval`, `Date` or `performance.now` waits');
+    expect(COMPOSITION_SECTION.join('\n')).toContain('`msReady` and `msSeek` never wait on time (no setTimeout, setInterval, Date or performance.now waits');
   });
   it('its still example is a valid composition', () => {
     const json = CONTEXT_MD.slice(CONTEXT_MD.indexOf('```json\n') + 8, CONTEXT_MD.indexOf('\n```', CONTEXT_MD.indexOf('```json\n')));

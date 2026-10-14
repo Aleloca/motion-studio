@@ -10,6 +10,9 @@ import { decodeLayerConfig, LAYER_PROTOCOL_VERSION, type LayerConfig, type Layer
  * - answers the runtime: `ready` (every font face of the layer and of the composition `FontFace.load()`ed, then
  *   `msReady` awaited), `seek(t)` (clock to t, every animation of the document paused at t, `msTimeline` to t,
  *   `await msSeek(t)`, then two native animation frames), `tick(t)` (the same without waiting, for playback).
+ * Render mode: an `msReady` or `msSeek` that waits on a timer the frozen clock never fires fails after `CLOCK_STALL_MS`
+ *   with a diagnostic (and, for `msSeek`, every later seek fails at once), instead of holding the render for the 60 s
+ *   layer timeout (decision 709).
  * The layer contract (spec §3.2): `msSeek(t)` (may be async) or a paused timeline in `msTimeline` (GSAP-style `seek(t)`,
  * or WAAPI-style `currentTime` in ms), and an optional `msReady` promise. `t` is the layer's local time in seconds.
  */
@@ -28,24 +31,53 @@ const MAX_PUMPS = 20_000;
 export const PUMP_FRAME_EVERY = 50;
 
 /**
+ * Render mode (UX feedback 1, task 2b, decision 709): how long, in native time, `msReady` or `msSeek` may stay pending
+ * while no timer fires and only timers due later are pending. The render clock never moves while layer code is awaited,
+ * so such a wait would otherwise last until the runtime's layer timeout (60 s). Honest waits (images, fonts) end on
+ * native events, not on the clock.
+ */
+export const CLOCK_STALL_MS = 5_000;
+
+/** A layer promise that waits on a timer the frozen render clock never fires. */
+export class ClockStallError extends Error {
+  constructor(what: string, stallMs: number, dueInMs: number) {
+    super(`${what} waited ${stallMs / 1000} s for a timer (due in ${Math.round(dueInMs)} ms) that the render clock never fires: `
+      + 'time does not pass while a frame is rendered, so msReady and msSeek must not wait on setTimeout, setInterval, Date or performance.now');
+    this.name = 'ClockStallError';
+  }
+}
+
+type PumpClock = Pick<VirtualClock, 'native' | 'runDueTimers' | 'runFrame' | 'now' | 'nextTimerDue'>;
+
+/**
  * Awaits `value` while pumping a frozen clock: on every native macrotask the timers already due fire; after a macrotask
  * in which no timer fired, one animation frame fires. A layer whose code re-arms `setTimeout(0)` forever would never see
  * an idle macrotask, so a frame is also forced every `PUMP_FRAME_EVERY` busy ones: a `requestAnimationFrame` awaited next
  * to such a chain is not starved until `maxPumps` runs out. Time never moves.
+ *
+ * `stall` (render mode): once `stall.ms` of native time pass in which no timer fired while a timer due later is pending,
+ * the wait rejects with a `ClockStallError` naming `stall.what`, instead of running on until the runtime's layer timeout.
  */
-export async function pumpUntilDone<T>(value: T, clock: Pick<VirtualClock, 'native' | 'runDueTimers' | 'runFrame'>, maxPumps = MAX_PUMPS): Promise<Awaited<T>> {
+export async function pumpUntilDone<T>(value: T, clock: PumpClock, maxPumps = MAX_PUMPS, stall?: { ms: number; what: string }): Promise<Awaited<T>> {
   if (!value || typeof (value as { then?: unknown }).then !== 'function') return value as Awaited<T>;
   let done = false;
   const p = Promise.resolve(value).finally(() => { done = true; });
   p.catch(() => {});
   let idle = false; // the previous macrotask fired no timer
   let busy = 0; // macrotasks in a row in which a timer fired
+  let stallSince: number | null = null; // native time since which no timer fired while only later timers are pending
   for (let i = 0; !done && i < maxPumps; i++) {
     await new Promise<void>((r) => clock.native.setTimeout(r, 0));
     if (done) break;
     if (idle || busy >= PUMP_FRAME_EVERY) { clock.runFrame(); idle = false; busy = 0; continue; }
     idle = clock.runDueTimers() === 0;
     busy = idle ? 0 : busy + 1;
+    if (!stall) continue;
+    const due = clock.nextTimerDue();
+    if (!idle || due === null || due <= clock.now) { stallSince = null; continue; }
+    const at = clock.native.performanceNow();
+    if (stallSince === null) stallSince = at;
+    else if (at - stallSince >= stall.ms) throw new ClockStallError(stall.what, stall.ms, due - clock.now);
   }
   return p;
 }
@@ -92,9 +124,14 @@ export function startLayerAgent(w: Window & typeof globalThis): void {
    * time). Without it, `msSeek` or `msReady` code that awaits a `setTimeout(0)` or a `requestAnimationFrame` would wait
    * forever on the virtual clock. Time never moves.
    */
-  const pumping = <T>(value: T): Promise<Awaited<T>> => pumpUntilDone(value, clock);
+  const pumping = <T>(value: T, what: string): Promise<Awaited<T>> =>
+    pumpUntilDone(value, clock, MAX_PUMPS, config.mode === 'render' ? { ms: CLOCK_STALL_MS, what } : undefined);
+  /** Render mode: set once an `msSeek` stalled on the clock; later seeks fail at once instead of waiting again. */
+  let seekStalled: string | null = null;
   const callSeek = async (t: number) => {
-    if (typeof lw.msSeek === 'function') await pumping(lw.msSeek(t));
+    if (typeof lw.msSeek === 'function') {
+      try { await pumping(lw.msSeek(t), 'msSeek'); } catch (err) { if (err instanceof ClockStallError) seekStalled = err.message; throw err; }
+    }
     syncAnimations(t); // msSeek may have created animations
   };
 
@@ -102,7 +139,7 @@ export function startLayerAgent(w: Window & typeof globalThis): void {
     const warnings: string[] = [];
     const faces = new Set<FontFace>([...declared, ...w.document.fonts]);
     await Promise.all([...faces].map((f) => f.load().catch(() => { warnings.push(`font ${f.family} failed to load`); })));
-    await pumping(lw.msReady);
+    await pumping(lw.msReady, 'msReady');
     return warnings;
   }
 
@@ -122,6 +159,7 @@ export function startLayerAgent(w: Window & typeof globalThis): void {
         port?.postMessage({ id: req.id, ok: true, warnings });
       } else if (req.op === 'seek') {
         applyTime(req.t);
+        if (seekStalled !== null) throw new Error(`msSeek not called again: ${seekStalled}`);
         await callSeek(req.t);
         await twoFrames(clock.native, frameWait);
         port?.postMessage({ id: req.id, ok: true });

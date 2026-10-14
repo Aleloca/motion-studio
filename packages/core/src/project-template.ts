@@ -55,6 +55,7 @@ The full JSON Schema is \`.studio/composition.schema.json\`. In short:
 For effects the clips cannot express (particles, charts, custom typography). A layer runs in an isolated frame, in time with the composition:
 - it must be **pure in time**: CSS animations and transitions and WAAPI animations are seeked automatically; or expose \`window.msTimeline\` (a paused timeline) or \`window.msSeek = async (t) => { … }\` (t: seconds from the clip start) and draw the frame for t;
 - signal loading with \`window.msReady = (async () => { … })()\` (images and fonts loaded);
+- \`msReady\` and \`msSeek\` must never wait on time: no \`setTimeout\`, \`setInterval\`, \`Date\` or \`performance.now\` waits (time does not pass while Motion Studio renders a frame, so such a layer fails the render);
 - read its parameters from \`window.msParams\`;
 - **forbidden**: network (fetch, XMLHttpRequest, WebSocket, external URLs), Worker, AudioContext, \`<video>\`/\`<audio>\` playing on their own. Put files in \`assets/\` and reference them relatively (\`../assets/x.png\`).
 

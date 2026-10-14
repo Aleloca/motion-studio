@@ -102,4 +102,20 @@ describe('virtual clock', () => {
     expect(log).toEqual(['now', 'raf@500']);
     expect(w.performance.now()).toBe(500);
   });
+
+  it('nextTimerDue gives the earliest pending timer without firing it, or null (task 2b)', () => {
+    const w = freshWindow();
+    const clock = installVirtualClock(w);
+    expect(clock.nextTimerDue()).toBeNull();
+    clock.advanceTo(100);
+    let fired = 0;
+    const a = w.setTimeout(() => fired++, 300);
+    w.setInterval(() => fired++, 50);
+    expect(clock.nextTimerDue()).toBe(150);
+    expect(clock.nextTimerDue()).toBe(150);
+    expect(fired).toBe(0);
+    w.clearTimeout(a);
+    clock.advanceTo(160);
+    expect(clock.nextTimerDue()).toBe(200);
+  });
 });
