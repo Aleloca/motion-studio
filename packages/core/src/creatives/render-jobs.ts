@@ -708,8 +708,11 @@ export class RenderJobService {
       // language. A clip that shows the source text (not translated, or outdated: the stale rule) overflows with the original's
       // words: a note on the row (`sourceTextOverflow`, live F4), never a problem of the translation nor a reason to force.
       const translated = (id: string) => Object.hasOwn(read.overlay.texts, id) && !row.stale.includes(id);
+      // A translated clip whose SOURCE already overflows (noted when the translation was judged, fix round 1 N1) keeps its note:
+      // the source-relative estimate judged the translation itself. Any other translated clip that overflows is a problem.
+      const sourceNoted = new Set((row.issues ?? []).filter((i) => i.code === 'sourceTextOverflow' && i.clipId !== undefined && translated(i.clipId)).map((i) => i.clipId!));
       const measured = (result.textOverflows ?? []).filter((e) => e.clipId !== undefined).map((e) => e.clipId!);
-      const overflowIssues: LocalizationIssue[] = [...new Set(measured)].map((id): LocalizationIssue => (translated(id)
+      const overflowIssues: LocalizationIssue[] = [...new Set([...measured, ...sourceNoted])].map((id): LocalizationIssue => (translated(id) && !sourceNoted.has(id)
         ? { code: 'textOverflowMeasured', clipId: id, message: m.variants.textOverflowMeasured({ clip: clipLabel(ic.composition, id), fit: Math.round((read.overlay.fit[id] ?? 1) * 100) }) }
         : { code: 'sourceTextOverflow', clipId: id, message: m.variants.sourceTextOverflow({ clip: clipLabel(ic.composition, id) }) }));
       const overflows = overflowIssues.filter((i) => i.code === 'textOverflowMeasured').map((i) => i.message);

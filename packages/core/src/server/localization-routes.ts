@@ -219,8 +219,8 @@ export function registerLocalizationRoutes(app: FastifyInstance, ctx: Localizati
       const voice: LocalizationRow['voice'] = edit.voice ?? row?.voice ?? (Object.keys(overlay.voices).length > 0 ? 'translated' : 'original');
       // The browser's measure when a renderer is free (final wave P5): it decides the core's fit and the overflow of the texts
       // it measures, as in a turn; otherwise the estimate does. The render's own measure stays the last check.
-      const measure = (c: Composition) => ctx.previews.measureTextOverflow({ ref: { projectDir: ref.projectDir, creativeDir, creativeSlug: slug, n: v.n },
-        folder: basename(ic.compDir), preset: ic.preset, composition: c, signal });
+      const measure = (c: Composition, deadline: AbortSignal) => ctx.previews.measureTextOverflow({ ref: { projectDir: ref.projectDir, creativeDir, creativeSlug: slug, n: v.n },
+        folder: basename(ic.compDir), preset: ic.preset, composition: c, signal: AbortSignal.any([signal, deadline]), noWait: true });
       const done = await finishOverlay({
         overlay, base: ic, voice, chooseFit, uiLocale: ui, projectDir: ref.projectDir, voiceRoots: voiceRootsOf(ic, ref.projectDir),
         fallback, measure,

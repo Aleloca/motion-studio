@@ -157,12 +157,15 @@ describe('render problems of a translation (Rulings I, J)', { timeout: 120_000 }
     // Not a problem of the translation: the row and its render have none (only the outdated entry asks for "render anyway").
     expect(row.problems).toBeUndefined();
     expect(row.render!.problems).toBeUndefined();
-    // Translated again (current), the next render measures the translation itself; no overflow now: the note is gone.
+    // Translated again (current): the new English source still overflows its box (the fake browser agrees with the estimate),
+    // so the short German title is judged against it (N1): only the note, no problem, and the render keeps it a note.
     env.fake.overflows = [];
     await put(slug, 2, 'de', 'test-wide', { texts: { title: 'Hallo' } });
     await done(await render(slug, 2, { formats: ['test-wide'], locales: ['de'] }));
     const after = (await env.versionOf(slug, 2))!.localizations!.find((r) => r.locale === 'de')!;
-    expect(after.issues ?? []).toEqual([]);
+    expect(after.issues).toEqual([{ code: 'sourceTextOverflow', clipId: 'title', message: text }]);
+    expect(after.problems).toBeUndefined();
+    expect(after.render!.problems).toBeUndefined();
   });
 
   it('a check that cannot run after the render is a problem, never a clean record', async () => {

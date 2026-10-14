@@ -23,7 +23,7 @@ import type { InstallIo } from '../providers/google-fonts.ts';
 import type { HttpDeps } from '../providers/http.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
 import {
-  emptyOverlay, finishOverlay, instanceComposition, knownVoiceScripts, localizedComposition, readOverlay, resolveFallbackFont, setLocalizationRow,
+  emptyOverlay, finishOverlay, sourceOverflowOf, instanceComposition, knownVoiceScripts, localizedComposition, readOverlay, resolveFallbackFont, setLocalizationRow,
   attachedFontHashes, rowAssetHashes, voiceRootsOf, writeOverlay, type FallbackResult, type InstanceComposition,
 } from './store.ts';
 import { issueFields } from './issues.ts';
@@ -101,7 +101,11 @@ export class ProjectActivity {
 }
 
 /** The instances of a version that show one composition (a primary and its followers): translated once, written for each. */
-interface Group { rep: string; members: string[]; ic: InstanceComposition; scripts: Map<string, string>; label: string }
+interface Group {
+  rep: string; members: string[]; ic: InstanceComposition; scripts: Map<string, string>; label: string;
+  /** The clips whose SOURCE text already overflows in the browser (fix round 1, N1), once known: judged by the estimate, noted. */
+  sourceOver?: string[];
+}
 
 /** One language and group of the turn. */
 interface Pair {
@@ -369,8 +373,8 @@ export class LocalizeService {
           // The browser decides the core's fit and the overflow of the texts it measures, when a renderer is free (P5): the
           // agent's answer then says what the render will show, and a fit the estimate got wrong costs no repair attempt.
           const previews = this.deps.previews;
-          const measure = previews ? (c: Composition) => previews.measureTextOverflow({ ref: { projectDir: ref.projectDir, creativeDir, creativeSlug: slug, n },
-            folder: basename(ic.compDir), preset: ic.preset, composition: c, signal }) : undefined;
+          const measure = previews ? (c: Composition, deadline: AbortSignal) => previews.measureTextOverflow({ ref: { projectDir: ref.projectDir, creativeDir, creativeSlug: slug, n },
+            folder: basename(ic.compDir), preset: ic.preset, composition: c, signal: AbortSignal.any([signal, deadline]), noWait: true }) : undefined;
           const done = await finishOverlay({
             overlay: out, base: ic, voice: row?.voice ?? 'original', chooseFit, uiLocale: ui, projectDir: ref.projectDir,
             voiceRoots: voiceRootsOf(ic, ref.projectDir), fallback, scripts: pair.group.scripts, ...(measure ? { measure } : {}),
@@ -388,6 +392,7 @@ export class LocalizeService {
           const attached = await attachedFontHashes(ref.projectDir, fallback);
           await this.writeRows(store, creativeDir, n, pair, done.overlay, { origin: 'agent', stale: done.stale, issues: done.issues, attached });
           // The measure of what was just stored: `assess` takes it instead of measuring the same overlay again.
+          if (done.sourceOverflow) pair.group.sourceOver = done.sourceOverflow;
           if (done.measured) {
             const stored = await this.current(creativeDir, n, pair.locale, pair.group.rep);
             if (stored) pair.measured = { hash: stored.hash, ids: done.measured };
@@ -688,17 +693,22 @@ export class LocalizeService {
       fixable.push(...missing.map((id) => va.notTranslated({ clip: clipLabel(comp, id) })));
       if (cur) {
         const estimates = new Map(Object.keys(cur.overlay.texts).map((id) => [va.textOverflow({ clip: clipLabel(comp, id) }), id] as const));
-        const measuredClip = (id: string) => measuredByBrowser(comp, id);
         let measured: string[] | null = null;
-        if (this.deps.previews && Object.keys(cur.overlay.texts).length > 0 && !signal.aborted) {
+        const previews = this.deps.previews;
+        if (previews && Object.keys(cur.overlay.texts).length > 0 && !signal.aborted) {
           if (pair.measured?.hash === cur.hash) measured = pair.measured.ids;
           else {
-            const localized = localizedComposition(comp, cur.overlay, cur.row);
-            measured = localized ? await this.deps.previews.measureTextOverflow({ ref: { projectDir: ref.projectDir, creativeDir, creativeSlug: ref.creativeSlug, n },
-              folder: basename(pair.group.ic.compDir), preset: pair.group.ic.preset, composition: localized, signal }) : null;
+            const measure = (c: Composition, s: AbortSignal) => previews.measureTextOverflow({ ref: { projectDir: ref.projectDir, creativeDir, creativeSlug: ref.creativeSlug, n },
+              folder: basename(pair.group.ic.compDir), preset: pair.group.ic.preset, composition: c, signal: s });
+            // Judged against the source (N1): clips whose source already overflows are left to the estimate.
+            pair.group.sourceOver ??= (await sourceOverflowOf(pair.group.ic, measure, signal).catch(() => null)) ?? undefined;
+            const localized = pair.group.sourceOver ? localizedComposition(comp, cur.overlay, cur.row) : null;
+            const ids = localized ? await measure(localized, signal) : null;
+            measured = ids ? ids.filter((id) => !pair.group.sourceOver!.includes(id)) : null;
             if (measured) pair.measured = { hash: cur.hash, ids: measured };
           }
         }
+        const measuredClip = (id: string) => measuredByBrowser(comp, id) && !(pair.group.sourceOver ?? []).includes(id);
         const measuredTexts = new Set(Object.keys(cur.overlay.texts).map((id) => va.textOverflowMeasured({ clip: clipLabel(comp, id), fit: Math.round((cur.overlay.fit[id] ?? 1) * 100) })));
         for (const p of cur.row.problems ?? []) {
           const id = estimates.get(p);
@@ -801,10 +811,10 @@ export class LocalizeService {
         const voice: LocalizationRow['voice'] = pair.choice !== 'translate' ? pair.choice
           : hasVoices && !pair.fallback ? 'translated' : pair.fallback || cur.row.voice === 'translated' ? 'original' : cur.row.voice;
         const done = await finishOverlay({ overlay: cur.overlay, base: ic, voice, chooseFit: new Set(), uiLocale: ui, projectDir: ref.projectDir,
-          voiceRoots: voiceRootsOf(ic, ref.projectDir), scripts: pair.group.scripts });
-        // The estimate's overflow stands only where the browser did not measure (see `assess`); the measured one is added.
+          voiceRoots: voiceRootsOf(ic, ref.projectDir), scripts: pair.group.scripts, ...(pair.group.sourceOver ? { sourceOverflow: pair.group.sourceOver } : {}) });
+        // The estimate's overflow stands only where the browser did not judge (see `assess`); the measured one is added.
         const comp = ic.composition;
-        const measuredClip = (id: string) => measuredByBrowser(comp, id);
+        const measuredClip = (id: string) => measuredByBrowser(comp, id) && !(pair.group.sourceOver ?? []).includes(id);
         const measured = pair.measured;
         const issues: LocalizationIssue[] = done.issues.filter((i) => !(measured && i.code === 'textOverflow' && i.clipId !== undefined && measuredClip(i.clipId)));
         if (measured) {

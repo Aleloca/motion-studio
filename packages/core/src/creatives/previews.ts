@@ -212,7 +212,7 @@ export class PreviewService {
   }
 
   /** Frames through the lane, with the normalised media (released after). */
-  private async frames(o: { ref: VersionFormatRef; folder: string; preset: FormatPreset; composition: Composition; times: number[]; width: number; imageFormat: 'png' | 'jpeg'; signal?: AbortSignal }) {
+  private async frames(o: { ref: VersionFormatRef; folder: string; preset: FormatPreset; composition: Composition; times: number[]; width: number; imageFormat: 'png' | 'jpeg'; signal?: AbortSignal; noWait?: boolean }) {
     const engine = this.deps.engine;
     if (!engine || !(await this.available())) throw new CodedError(503, messages(currentLocale()).errors.previewUnavailable, 'no-renderer');
     const signal = AbortSignal.any([this.closing.signal, ...(o.signal ? [o.signal] : [])]);
@@ -228,7 +228,7 @@ export class PreviewService {
           dir: o.ref.creativeDir, versionDir: `outputs/v${o.ref.n}`, composition: o.composition, format: { ...o.preset, id: o.folder },
           times: o.times, width: o.width, imageFormat: o.imageFormat, quality: 80, signal: laneSignal, ...withMedia(prepared),
           ...(this.deps.distDir ? { distDir: this.deps.distDir } : {}),
-        }), signal);
+        }), signal, { noWait: o.noWait === true });
       } finally {
         prepared.release();
       }
@@ -284,10 +284,14 @@ export class PreviewService {
    * runtime lays out every boxed text clip once and reports a text that needs more room than its box (`textOverflow`).
    * Returns the clip ids that overflow, or null when no renderer can run it now (no engine, busy lane, a failure).
    */
-  async measureTextOverflow(o: { ref: VersionFormatRef; folder: string; preset: FormatPreset; composition: Composition; signal?: AbortSignal }): Promise<string[] | null> {
+  async measureTextOverflow(o: { ref: VersionFormatRef; folder: string; preset: FormatPreset; composition: Composition; signal?: AbortSignal; noWait?: boolean }): Promise<string[] | null> {
     if (!this.deps.engine) return null;
     try {
-      const r = await this.frames({ ref: o.ref, folder: o.folder, preset: o.preset, composition: o.composition, times: [0], width: Math.min(64, o.composition.width), imageFormat: 'jpeg', ...(o.signal ? { signal: o.signal } : {}) });
+      // Only the text clips are laid out (fix round 1, M3): each is placed on its own, so the others change nothing, and no
+      // media is normalised. `noWait`: a busy lane answers null at once (the caller holds a lock; the estimate decides).
+      const textOnly: Composition = { ...o.composition, tracks: o.composition.tracks.map((t) => ({ ...t, clips: t.clips.filter((c) => c.type === 'text') })) as Composition['tracks'] };
+      const r = await this.frames({ ref: o.ref, folder: o.folder, preset: o.preset, composition: textOnly, times: [0], width: Math.min(64, o.composition.width), imageFormat: 'jpeg',
+        ...(o.signal ? { signal: o.signal } : {}), ...(o.noWait ? { noWait: true } : {}) });
       return [...new Set(r.errors.filter((e) => e.code === 'textOverflow' && e.clipId).map((e) => e.clipId!))];
     } catch {
       return null;

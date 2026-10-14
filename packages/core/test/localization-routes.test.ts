@@ -79,13 +79,53 @@ describe('localization routes', { timeout: 120_000 }, () => {
     expect(a.json().overlay.fit).toEqual({});
     expect((await env.versionOf(slug, 1))!.localizations![0]!.issues).toBeUndefined();
     // The browser needs 85% for a short text the estimate fits at 100%: the core's fit is 85%, with no problem.
-    env.fake.measure = (c) => ((c.tracks.flatMap((t) => t.clips).find((x) => x.id === 'title') as { props: { fontSize: number } }).props.fontSize > 17 + 1e-6 ? ['title'] : []);
+    env.fake.measure = (c) => {
+      const p = (c.tracks.flatMap((t) => t.clips).find((x) => x.id === 'title') as { props: { fontSize: number; text: string } }).props;
+      return p.text !== 'Hello' && p.fontSize > 17 + 1e-6 ? ['title'] : [];
+    };
     const b = await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
     expect(b.json()).toMatchObject({ problems: [], overlay: { fit: { title: 0.85 } } });
     // A fit given by hand is measured as it is: at 100% the browser says it overflows.
     const c = await put(slug, 1, 'de', 'test-wide', { fit: { title: 1 } });
     expect(c.json().problems).toEqual([v().textOverflowMeasured({ clip: 'Title', fit: 100 })]);
     expect(c.json().issues).toEqual([{ code: 'textOverflowMeasured', clipId: 'title', message: v().textOverflowMeasured({ clip: 'Title', fit: 100 }) }]);
+  });
+
+  it('a translation is judged against its source: a caption whose source already overflows (an unsafe band) gets only a note (N1)', async () => {
+    const slug = await create();
+    // The browser: the title sits in the unsafe band of the frame, whatever its text (the source too).
+    env.fake.measure = () => ['title'];
+    const calls = () => env.fake.frameCalls.filter((c) => c.times.length === 1 && c.times[0] === 0 && c.width <= 64).length;
+    const start = calls();
+    const r = await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().problems).toEqual([]);
+    expect(r.json().overlay.fit).toEqual({});
+    expect(r.json().issues).toEqual([{ code: 'sourceTextOverflow', clipId: 'title', message: v().sourceTextOverflow({ clip: 'Title' }) }]);
+    // No fit search for it: the source once, the translation once.
+    expect(calls() - start).toBe(2);
+    // A render needs no force for it, and keeps it a note.
+    const job = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/render`, headers: H, payload: { formats: ['test-wide'], locales: ['de'] } });
+    expect(job.statusCode, job.body).toBe(202);
+    const done = await env.waitJob((job.json() as JobSummary).id);
+    expect(done.state, done.error).toBe('succeeded');
+  });
+
+  it('a source that fits while its translation does not is still flagged, after a bisection of the fit (N1, M3)', async () => {
+    const slug = await create();
+    env.fake.measure = (c) => ((c.tracks.flatMap((t) => t.clips).find((x) => x.id === 'title') as { props: { text: string } }).props.text.length > 10 ? ['title'] : []);
+    const long = 'Herzlich willkommen';
+    const calls = () => env.fake.frameCalls.filter((c) => c.times.length === 1 && c.times[0] === 0 && c.width <= 64).length;
+    const start = calls();
+    const r = await put(slug, 1, 'de', 'test-wide', { texts: { title: long } });
+    expect(r.json().problems).toEqual([v().textOverflowMeasured({ clip: 'Title', fit: 70 })]);
+    expect(r.json().overlay.fit).toEqual({ title: 0.7 });
+    // The source once, then 1, then at most three bisection steps (never the seven fits one by one).
+    expect(calls() - start).toBeLessThanOrEqual(5);
+    // The source is measured once per composition: a second edit measures only the translation.
+    const before = calls();
+    await put(slug, 1, 'de', 'test-wide', { fit: { title: 1 } });
+    expect(calls() - before).toBe(1);
   });
 
   it('refuses unknown ids, fields the spec does not allow and bad fits (400), with nothing written', async () => {

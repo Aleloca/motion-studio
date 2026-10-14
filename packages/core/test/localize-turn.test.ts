@@ -399,7 +399,8 @@ describe('localize: repair loop', { timeout: 120_000 }, () => {
   it('with a renderer, the browser measure decides the overflow of boxed texts (Ruling I)', async () => {
     await boot();
     const slug = await create();
-    env.fake.overflows = ['title'];
+    // The browser: every translated title overflows (the source "Hello" fits).
+    env.fake.measure = (c) => (c.tracks.flatMap((t) => t.clips).some((x) => x.id === 'title' && x.type === 'text' && x.props.text !== 'Hello') ? ['title'] : []);
     process.env.FAKE_CLAUDE_LOCALIZE_CALLS = JSON.stringify([submit('de', 'test-wide', { texts: { title: 'Hallo' } })]);
     process.env.FAKE_CLAUDE_LOCALIZE_FIX_CALLS = JSON.stringify([submit('de', 'test-wide', { texts: { title: 'Hi' }, fit: { title: 0.7 } })]);
     await finished(await start(slug, 1, { locales: ['de'] }));
@@ -410,10 +411,10 @@ describe('localize: repair loop', { timeout: 120_000 }, () => {
     expect(env.fake.frameCalls.length).toBeGreaterThan(0);
   });
 
-  /** The fake browser: the title overflows above `max` times its source size (20 px). */
+  /** The fake browser: a translated title (not the source "Hello") overflows above `max` times its source size (20 px). */
   const titleOverflowsAbove = (max: number) => (c: Composition) => {
-    const clip = c.tracks.flatMap((t) => t.clips).find((x) => x.id === 'title') as { props: { fontSize?: number } } | undefined;
-    return clip && (clip.props.fontSize ?? 0) > 20 * max + 1e-6 ? ['title'] : [];
+    const clip = c.tracks.flatMap((t) => t.clips).find((x) => x.id === 'title') as { props: { fontSize?: number; text?: string } } | undefined;
+    return clip && clip.props.text !== 'Hello' && (clip.props.fontSize ?? 0) > 20 * max + 1e-6 ? ['title'] : [];
   };
 
   it('with a renderer, the browser chooses the core\'s fit: the estimate fits at 100%, the browser only at 85%: 85% and no repair (P5)', async () => {

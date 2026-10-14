@@ -29,14 +29,16 @@ const tools = await renderTools('localized render tests');
 const TOKEN = 'ce'.repeat(32);
 const H = { 'x-motion-studio-ui': TOKEN };
 const PRESET: FormatPreset = { id: 'test-still', channel: 'Test', name: 'Still', width: 320, height: 180, kind: 'image', extensions: ['png'] };
+/** A still with a safe zone that leaves out the right 40 px (as a Reels frame leaves out its right band). */
+const SAFE: FormatPreset = { ...PRESET, id: 'test-safe', name: 'Safe', safeZone: { top: 0, bottom: 0, left: 0, right: 40 } };
 const LONG_DE = 'Herzlich willkommen zur brandneuen Version unserer wunderbaren Anwendung';
 
-const composition = (text: string) => ({
+const composition = (text: string, props: Record<string, unknown> = {}) => ({
   $schema: 'motion-studio/composition@1', width: 320, height: 180, fps: 30, duration: 0, background: '#000000',
   fonts: [{ family: 'Mono', src: 'assets/Mono.woff2', weight: 400 }], scenes: [],
   tracks: [{ id: 'v', kind: 'visual', clips: [
     // A narrow box: one line of 20 px text, 140 px wide.
-    { id: 'title', name: 'Title', type: 'text', start: 0, duration: 0, props: { x: 10, y: 10, width: 140, height: 26, text, fontSize: 20, fontFamily: 'Mono', color: '#ffffff' } },
+    { id: 'title', name: 'Title', type: 'text', start: 0, duration: 0, props: { x: 10, y: 10, width: 140, height: 26, text, fontSize: 20, fontFamily: 'Mono', color: '#ffffff', ...props } },
   ] }],
 });
 
@@ -62,7 +64,7 @@ describe.skipIf(!tools.ok)('localized renders in real Chrome', () => {
     });
     await app.inject({ method: 'PUT', url: '/api/workspace', headers: H, payload: { path: ws } });
     await app.inject({ method: 'POST', url: '/api/projects', headers: H, payload: { name: 'Acme' } });
-    await app.inject({ method: 'PUT', url: '/api/formats', headers: H, payload: { presets: [PRESET] } });
+    await app.inject({ method: 'PUT', url: '/api/formats', headers: H, payload: { presets: [PRESET, SAFE] } });
   }, 600_000);
   afterAll(async () => { await app?.close(); if (work) rmSync(work, { recursive: true, force: true }); });
 
@@ -76,21 +78,22 @@ describe.skipIf(!tools.ok)('localized renders in real Chrome', () => {
   }
 
   /** A creative with the `@2` instance of the still preset, its v1 composition showing `source`. */
-  async function creative(source: string) {
-    const format = 'test-still@2';
+  async function creative(source: string, o: { preset?: string; props?: Record<string, unknown> } = {}) {
+    const preset = o.preset ?? 'test-still';
+    const format = `${preset}@2`;
     const r = await app.inject({ method: 'POST', url: '/api/projects/acme/creatives', headers: H, payload: {
-      title: 'Lang', generate: false, brief: { goal: 'g', message: '', formats: ['test-still', format], durationSec: null, assets: [], notes: '', links: {}, locales: { primary: 'en', extra: ['de', 'ja'] } },
+      title: 'Lang', generate: false, brief: { goal: 'g', message: '', formats: [preset, format], durationSec: null, assets: [], notes: '', links: {}, locales: { primary: 'en', extra: ['de', 'ja'] } },
     } });
     expect(r.statusCode, r.body).toBe(201);
     const slug = r.json().slug as string;
     const store = new CreativeStore(join(ws, 'acme'));
     const vdir = store.outputsDir(slug, 1);
     const compositions = [];
-    for (const f of ['test-still', format]) {
+    for (const f of [preset, format]) {
       const dir = join(vdir, 'compositions', f);
       mkdirSync(join(dir, 'assets'), { recursive: true });
       copyFileSync(FONT, join(dir, 'assets', 'Mono.woff2'));
-      writeFileSync(join(dir, 'composition.json'), JSON.stringify(composition(source)));
+      writeFileSync(join(dir, 'composition.json'), JSON.stringify(composition(source, o.props)));
       compositions.push({ format: f, dir: `compositions/${f}`, hash: (await readCompositionFolder(dir)).hash, problems: [] });
     }
     writeFileSync(join(vdir, 'manifest.json'), JSON.stringify({ schemaVersion: 2, compositions, renders: [] } satisfies ManifestV2));
@@ -160,6 +163,23 @@ describe.skipIf(!tools.ok)('localized renders in real Chrome', () => {
     };
     expect(await measure(PRESET)).toEqual(['long', 'narrow']);
     expect(await measure({ ...PRESET, safeZone: { top: 0, bottom: 100, left: 0, right: 0 } })).toEqual(['long', 'low', 'narrow']);
+  });
+
+  it('unboxed text whose source wraps to the frame edge (past a safe zone): a translation of the same length gets only a note (N1)', { timeout: 300_000 }, async () => {
+    const source = 'Welcome to the brand new version of our wonderful app for every device';
+    const { slug, store, format } = await creative(source, { preset: 'test-safe', props: { width: undefined, height: undefined, y: 40 } });
+    const put = await app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}/versions/1/localizations/de/${encodeURIComponent(format)}`, headers: H,
+      payload: { texts: { title: 'Willkommen zur neuen Version unserer App für jedes Gerät, ganz einfach' } } });
+    expect(put.statusCode, put.body).toBe(200);
+    expect(put.json().problems).toEqual([]);
+    expect(put.json().issues).toEqual([{ code: 'sourceTextOverflow', clipId: 'title', message: messages(currentLocale()).variants.sourceTextOverflow({ clip: 'Title' }) }]);
+    // The localized render needs no force for it, and keeps it a note.
+    const r = await app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/render`, headers: H, payload: { formats: [format], locales: ['de'] } });
+    expect(r.statusCode, r.body).toBe(202);
+    expect((await waitJob((r.json() as JobSummary).id)).state).toBe('succeeded');
+    const row = (await store.readVersions(slug))[0]!.localizations!.find((x) => x.locale === 'de')!;
+    expect(row.problems).toBeUndefined();
+    expect(row.render?.problems).toBeUndefined();
   });
 
   it('a short translation: no overflow measured; the primary render of an overflowing source neither fails nor gains a problem', { timeout: 300_000 }, async () => {
