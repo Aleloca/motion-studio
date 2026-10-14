@@ -4,7 +4,7 @@
 // render jobs. A render counts as current only while its composition hash is the version's (`renderState`), so a new
 // version or an editor save (a new version with a new hash) is "Live preview" again with nothing to remember or time out.
 import type { JobSummary, VersionEntry } from '@motion-studio/shared';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api.ts';
 import { desktop } from '../desktop.ts';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
@@ -46,28 +46,34 @@ export function RenderStatus({ slug, creative, version, format, label, jobs, job
   const [starting, setStarting] = useState(false);
   // A new version or format: a start that was in flight is no longer this one's.
   const scope = version ? `${version.n}/${format}` : '';
+  const current = useRef(scope);
+  current.current = scope;
   useEffect(() => { setStarting(false); }, [scope]);
+  useEffect(() => () => { current.current = ''; }, []);
   if (!version || !state) return null;
 
   const start = async () => {
+    const key = scope;
     setStarting(true);
     try { await api.renderVersion(slug, creative, version.n, [format]); }
-    catch (e) { toast.show(r.startFailed({ detail: message(e) })); }
-    finally { setStarting(false); }
+    // Another version or format on screen since the click: its failure is not news here.
+    catch (e) { if (current.current === key) toast.show(r.startFailed({ detail: message(e) })); }
+    finally { if (current.current === key) setStarting(false); }
   };
   const bridge = desktop();
   const reveal = isMac() ? t.web.canvas.versions.showInFinder : t.web.canvas.versions.showInFolder;
   const working = state.kind === 'queued' || state.kind === 'rendering';
-  const size_ = bytes !== null ? sizeLabel(bytes, (n) => formatNumber(locale, n, { maximumFractionDigits: 1 })) : null;
+  const sizeText = bytes !== null ? sizeLabel(bytes, (n) => formatNumber(locale, n, { maximumFractionDigits: 1 })) : null;
 
   // What shows, and what a screen reader hears: the pill ticks every percent, the announcement does not.
   const shown = state.kind === 'rendering' ? r.rendering({ pct: state.pct })
     : state.kind === 'queued' ? (state.ahead ? r.queuedAhead({ count: state.ahead }) : r.queued)
-    : state.kind === 'rendered' ? r.videoReady({ size: size_ })
+    : state.kind === 'rendered' ? r.videoReady({ size: sizeText })
     : state.kind === 'problem' ? r.videoProblems
     : state.kind === 'failed' ? r.failedState
     : r.livePreview;
-  const spoken = state.kind === 'rendering' ? r.renderingVideoSr : shown;
+  // The announcement is the state alone: no percent while rendering, no size when ready (the size is for the eyes).
+  const spoken = state.kind === 'rendering' ? r.renderingVideoSr : state.kind === 'rendered' ? r.videoReady({ size: null }) : shown;
   const tone = state.kind === 'rendered' ? 'ok' : state.kind === 'problem' || state.kind === 'failed' ? 'warn' : working ? 'accent' : 'neutral';
 
   return (

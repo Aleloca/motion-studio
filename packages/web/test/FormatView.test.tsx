@@ -75,6 +75,7 @@ const { __resetPreviewSessions, RELEASE_GRACE_MS } = await import('../src/compon
 const { TopBar } = await import('../src/shell/TopBars.tsx');
 const { ShellContext } = await import('../src/shell/ShellContext.tsx');
 const { __resetPendingPins, pinsKey, usePendingPins } = await import('../src/screens/pendingPins.ts');
+const { __resetToasts, getToasts } = await import('../src/ui/toast.tsx');
 const { setFrameOrigin, setShownVersions, takeFrameOrigin, takeShownVersions } = await import('../src/shell/intents.ts');
 const { D } = await import('../src/motion/motion.ts');
 const { I18nProvider } = await import('../src/i18n.tsx');
@@ -840,6 +841,57 @@ describe('FormatView · render status (UX feedback 1, Task 3)', () => {
     setShownVersions('acme/lancio', { [VIDEO]: 1 });
     render(<Harness format={VIDEO} />);
     await pill(/Video pronto/);
+  });
+
+  it('Render video is disabled while the agent works', async () => {
+    detail = makeDetail([comp(1)]);
+    jobsNow = { j1: { id: 'j1', key: 'creative:/w:acme:lancio', kind: 'creative', label: 'x', state: 'running', createdAt: at } };
+    render(<Harness format={VIDEO} />);
+    await pill('Anteprima dal vivo');
+    const btn = within(bar()).getByRole('button', { name: /Fai il render del video di/ }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+  });
+
+  it('a render that cannot start says so in a toast and the button is usable again', async () => {
+    __resetToasts();
+    api.renderVersion.mockRejectedValueOnce(new Error('Chrome mancante'));
+    detail = makeDetail([comp(1)]);
+    render(<Harness format={VIDEO} />);
+    await pill('Anteprima dal vivo');
+    await userEvent.click(within(bar()).getByRole('button', { name: /Fai il render del video di/ }));
+    await waitFor(() => expect(getToasts().some((x) => x.text.includes('Chrome mancante'))).toBe(true));
+    await waitFor(() => expect((within(bar()).getByRole('button', { name: /Fai il render del video di/ }) as HTMLButtonElement).disabled).toBe(false));
+  });
+
+  it('no toast when another format is on screen by the time the start fails', async () => {
+    __resetToasts();
+    let fail!: (e: Error) => void;
+    api.renderVersion.mockImplementationOnce(() => new Promise((_res, rej) => { fail = rej; }));
+    detail = makeDetail([comp(1)]);
+    const { rerender } = render(<Harness format={VIDEO} />);
+    await pill('Anteprima dal vivo');
+    await userEvent.click(within(bar()).getByRole('button', { name: /Fai il render del video di/ }));
+    // The user moves to another format (the status goes away) before the start fails.
+    rerender(<Harness format={IMAGE} />);
+    await waitFor(() => expect(bar().querySelector('.ms-fv-render')).toBeNull());
+    await act(async () => { fail(new Error('tardi')); });
+    expect(getToasts().some((x) => x.text.includes('tardi'))).toBe(false);
+  });
+
+  it('size unknown (HEAD gives null or fails): plain "Video pronto"', async () => {
+    api.fileBytes.mockResolvedValueOnce(null);
+    detail = makeDetail([comp(1, H1, H1)]);
+    render(<Harness format={VIDEO} />);
+    await pill('Video pronto');
+    await waitFor(() => expect(api.fileBytes).toHaveBeenCalled());
+    expect(within(bar()).queryByText(/MB/)).toBeNull();
+  });
+
+  it('the announcement is "Video pronto" without the size; the size is only visual', async () => {
+    detail = makeDetail([comp(1, H1, H1)]);
+    render(<Harness format={VIDEO} />);
+    await pill('Video pronto · 12,4 MB');
+    expect((bar().querySelector('.ms-fv-render [role="status"]') as HTMLElement).textContent).toBe('Video pronto');
   });
 
   it('a legacy version (no composition) has no status', async () => {
