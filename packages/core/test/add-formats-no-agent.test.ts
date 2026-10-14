@@ -213,7 +213,7 @@ describe('formats added without the agent (spec §2.4)', { timeout: 90_000 }, ()
     await run(service.start(ref, { text: 'da qui', pins: [] }));
     const args = (JSON.parse((await readFile(promptFile, 'utf8')).trim().split('\n').at(-1)!) as { args: string[] }).args;
     expect(args).toContain('--fork-session');
-    expect(args).toContain('--resume=fake-session-1');
+    expect(args.slice(args.indexOf('--resume'), args.indexOf('--resume') + 2)).toEqual(['--resume', 'fake-session-1']);
     const v4 = (await versions())[3]!;
     expect(v4.basedOn).toBe(3);
     expect(out(v4, TIKTOK)!.sha256).toBe(out(v4, REEL)!.sha256);

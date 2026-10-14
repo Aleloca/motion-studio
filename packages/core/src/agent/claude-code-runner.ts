@@ -14,10 +14,10 @@ export function buildClaudeArgs(req: AgentTurnRequest): string[] {
   // Without a prompt tool anything that would prompt is denied; with one, prompts reach the app (phase 4 approvals).
   if (req.permissionPromptTool) args.push('--permission-prompt-tool', req.permissionPromptTool);
   else args.push('--permission-prompts', 'none');
-  // Final review I1: a stored session id reaches argv only when it is a plain id, and as one `--resume=<id>` element, so it
-  // can never be read as a flag. Anything else is ignored (a new session starts).
+  // Final review I1: a stored session id reaches argv only when it is a plain id (never starting with '-', so it can never be
+  // read as a flag). Anything else is ignored (a new session starts). Ruling Y: the verified two-argument form.
   if (isSessionId(req.resumeSessionId)) {
-    args.push(`--resume=${req.resumeSessionId}`);
+    args.push('--resume', req.resumeSessionId);
     if (req.forkSession) args.push('--fork-session');
   }
   for (const d of req.addDirs ?? []) args.push('--add-dir', d);

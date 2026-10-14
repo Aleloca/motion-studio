@@ -125,7 +125,7 @@ describe('CreativeTurnService', { timeout: 90_000 }, () => {
     const all = await prompts();
     expect(all).toHaveLength(2);
     expect(all[1]!.prompt).toContain('Manca il formato Web · Banner 300×250 (web-banner-300x250)');
-    expect(all[1]!.args).toContain('--resume=fake-session-1');
+    expect(all[1]!.args.slice(all[1]!.args.indexOf('--resume'), all[1]!.args.indexOf('--resume') + 2)).toEqual(['--resume', 'fake-session-1']);
     const conv = await store.readConversation(ref.creativeSlug);
     expect(conv.some((e) => e.type === 'system' && e.text.includes('tentativo 2 di 3'))).toBe(true);
   });
@@ -167,7 +167,7 @@ describe('CreativeTurnService', { timeout: 90_000 }, () => {
     expect(versions.map((v) => [v.n, v.request, v.basedOn])).toEqual([[1, 'Generazione dal brief', null], [2, 'Logo più grande', 1]]);
     const last = (await prompts()).at(-1)!;
     expect(last.prompt).toContain('instagram-post-1x1 @ 2.0s, point (50%, 25%): qui');
-    expect(last.args).toContain('--resume=fake-session-1');
+    expect(last.args.slice(last.args.indexOf('--resume'), last.args.indexOf('--resume') + 2)).toEqual(['--resume', 'fake-session-1']);
     expect((await store.readConversation(ref.creativeSlug)).find((e) => e.type === 'user')).toMatchObject({ text: 'Logo più grande' });
   });
 

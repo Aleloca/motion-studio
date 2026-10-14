@@ -59,7 +59,7 @@ describe('buildClaudeArgs', () => {
     expect(buildClaudeArgs({ cwd: '/x', prompt: 'p', resumeSessionId: 's1', addDirs: ['/a b', '/c'], model: 'sonnet', settings: { a: 1 }, mcpConfigPath: '/cfg/run/j1.mcp.json' })).toEqual([
       '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
       '--permission-mode', 'acceptEdits', '--permission-prompts', 'none',
-      '--resume=s1', '--add-dir', '/a b', '--add-dir', '/c', '--model', 'sonnet',
+      '--resume', 's1', '--add-dir', '/a b', '--add-dir', '/c', '--model', 'sonnet',
       '--settings', '{"a":1}', '--strict-mcp-config', '--mcp-config', '/cfg/run/j1.mcp.json',
     ]);
   });
@@ -77,17 +77,18 @@ describe('buildClaudeArgs', () => {
   });
   it('adds --fork-session right after --resume, only when resuming', () => {
     const args = buildClaudeArgs({ cwd: '/x', prompt: 'p', resumeSessionId: 's1', forkSession: true });
-    expect(args.slice(args.indexOf('--resume=s1'), args.indexOf('--resume=s1') + 2)).toEqual(['--resume=s1', '--fork-session']);
+    expect(args.slice(args.indexOf('--resume'), args.indexOf('--resume') + 3)).toEqual(['--resume', 's1', '--fork-session']);
     expect(buildClaudeArgs({ cwd: '/x', prompt: 'p', forkSession: true })).not.toContain('--fork-session');
   });
   it('a malformed session id never reaches the command line (final review I1): no resume, no fork, no flag-like element', () => {
     for (const bad of ['--settings={"sandbox":{"enabled":false}}', '-x', '', 'a b', 'a/b', 'x'.repeat(129), 'id\n--model', 'é']) {
       const args = buildClaudeArgs({ cwd: '/x', prompt: 'p', resumeSessionId: bad, forkSession: true });
-      expect(args.some((a) => a.startsWith('--resume'))).toBe(false);
+      expect(args).not.toContain('--resume');
       expect(args).not.toContain('--fork-session');
       if (bad) expect(args.some((a) => a.includes(bad))).toBe(false);
     }
-    expect(buildClaudeArgs({ cwd: '/x', prompt: 'p', resumeSessionId: 'a1b2-c3' })).toContain('--resume=a1b2-c3');
+    const ok = buildClaudeArgs({ cwd: '/x', prompt: 'p', resumeSessionId: 'a1b2-c3' });
+    expect(ok.slice(ok.indexOf('--resume'), ok.indexOf('--resume') + 2)).toEqual(['--resume', 'a1b2-c3']);
   });
   it('passes allowed tool rules as the last, variadic --allowedTools flag', () => {
     const args = buildClaudeArgs({ cwd: '/x', prompt: 'p', model: 'sonnet', resumeSessionId: 's1', allowedTools: ['Bash(node:*)', 'Bash(ffmpeg:*)'] });
@@ -153,7 +154,7 @@ describe('ClaudeCodeRunner', () => {
     const { handle, cwd } = await run('ok', 'x', { resumeSessionId: 'abc' });
     await expect(handle.done).resolves.toMatchObject({ status: 'succeeded', sessionId: 'abc' });
     const recorded = JSON.parse(await readFile(process.env.FAKE_CLAUDE_ARGS_FILE!, 'utf8'));
-    expect(recorded.args).toContain('--resume=abc');
+    expect(recorded.args.slice(recorded.args.indexOf('--resume'), recorded.args.indexOf('--resume') + 2)).toEqual(['--resume', 'abc']);
     expect(await import('node:fs/promises').then((f) => f.realpath(recorded.cwd))).toBe(await import('node:fs/promises').then((f) => f.realpath(cwd)));
   });
   it('emits parse_error for garbage and still succeeds', async () => {
