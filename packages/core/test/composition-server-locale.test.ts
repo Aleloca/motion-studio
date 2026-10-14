@@ -4,7 +4,7 @@
  * localization row references, from the project folder: only the listed files, verified against the recorded sha256, confined.
  */
 import { createHash } from 'node:crypto';
-import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -123,5 +123,69 @@ describe('attachLocaleAssets', () => {
     await s.attachLocaleAssets(project, LISTED);
     s.revoke();
     expect((await get(at(s, 'assets/audio/voice-ja.mp3'))).status).toBe(404);
+  });
+});
+
+describe('localized preview cost (final wave P8)', () => {
+  it('a listed voice is read and hashed once while it is unchanged; changed in place, it is hashed again and refused', async () => {
+    const hashed: string[] = [];
+    const dist = join(work, 'dist');
+    const own = await startCompositionServer({ uiOrigins: [UI], distDir: dist, onLocaleHash: (rel) => hashed.push(rel) });
+    try {
+      const s = await own.mintSession({ creativeDir: creative, versionDir: 'outputs/v1', format: 'story', composition: { $schema: 'x' }, mode: 'preview', parentOrigin: UI });
+      const voice = join(project, 'assets', 'audio', 'cached.mp3');
+      writeFileSync(voice, VOICE);
+      await s.attachLocaleAssets(project, { 'assets/audio/cached.mp3': sha(VOICE) });
+      const fetch = (range: string) => new Promise<{ status: number; body: Buffer }>((resolve, reject) => {
+        const req = request({ host: '127.0.0.1', port: own.port, path: at(s, 'assets/audio/cached.mp3'), headers: { host: `127.0.0.1:${own.port}`, range }, agent: false }, (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (c: Buffer) => chunks.push(c));
+          res.on('end', () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks) }));
+        });
+        req.on('error', reject);
+        req.end();
+      });
+      for (const [range, want] of [['bytes=0-3', '0123'], ['bytes=4-7', '4567'], ['bytes=16-19', 'ghij']] as const) {
+        const r = await fetch(range);
+        expect(r.status).toBe(206);
+        expect(r.body.toString()).toBe(want);
+      }
+      expect(hashed).toEqual(['assets/audio/cached.mp3']);
+      // Same size, other bytes: a new identity (ctime), so it is read again, and its hash is not the recorded one.
+      writeFileSync(voice, Buffer.from('ABCDEFGHIJKLMNOPQRST'));
+      expect((await fetch('bytes=0-3')).status).toBe(404);
+      expect(hashed).toHaveLength(2);
+    } finally {
+      await own.close();
+    }
+  });
+
+  it('a large video of the composition is served in a localized preview: never hashed, never capped by the locale rule', async () => {
+    const hashed: string[] = [];
+    const own = await startCompositionServer({ uiOrigins: [UI], distDir: join(work, 'dist'), onLocaleHash: (rel) => hashed.push(rel) });
+    try {
+      const big = join(creative, 'outputs', 'v1', 'compositions', 'story', 'assets', 'big.mp4');
+      // A sparse 200 MB file: far over the 64 MB a locale file may have.
+      const size = 200 * 1024 * 1024;
+      writeFileSync(big, '');
+      truncateSync(big, size);
+      const s = await own.mintSession({ creativeDir: creative, versionDir: 'outputs/v1', format: 'story', composition: { $schema: 'x' }, mode: 'preview', parentOrigin: UI });
+      await s.attachLocaleAssets(project, LISTED);
+      const r = await new Promise<{ status: number; body: Buffer; range?: string }>((resolve, reject) => {
+        const req = request({ host: '127.0.0.1', port: own.port, path: at(s, 'assets/big.mp4'), headers: { host: `127.0.0.1:${own.port}`, range: `bytes=${size - 16}-${size - 1}` }, agent: false }, (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (c: Buffer) => chunks.push(c));
+          res.on('end', () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks), range: res.headers['content-range'] as string | undefined }));
+        });
+        req.on('error', reject);
+        req.end();
+      });
+      expect(r.status).toBe(206);
+      expect(r.body.length).toBe(16);
+      expect(r.range).toBe(`bytes ${size - 16}-${size - 1}/${size}`);
+      expect(hashed).toEqual([]);
+    } finally {
+      await own.close();
+    }
   });
 });

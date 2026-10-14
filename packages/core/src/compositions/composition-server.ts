@@ -111,6 +111,8 @@ export interface CompositionServerOptions {
   now?: () => number;
   /** Called after each response with its method, path (no query; the token included) and status: diagnostics and tests. */
   onResponse?: (e: { method: string; path: string; status: number }) => void;
+  /** Called each time a localized preview's file is read whole and hashed (`serveLocaleAsset`): diagnostics and tests. */
+  onLocaleHash?: (rel: string) => void;
 }
 
 export interface MintSessionOptions {
@@ -247,6 +249,13 @@ interface Session {
 /** Project folders a localized preview may serve from, and the largest such file. */
 const LOCALE_ASSET_RE = /^assets\/(?:audio|fonts)\/[^/]+$/;
 const MAX_LOCALE_ASSET_BYTES = 64 * 1024 * 1024;
+/** Locale files whose hash is known, by identity (`localeIdentity`); the oldest goes first past this many. */
+const MAX_LOCALE_HASHES = 512;
+/**
+ * The identity of an open locale file (its fstat): device, inode, size, mtime and ctime. Any write to the file, a rename onto
+ * its name or a metadata change moves ctime, so a known hash is reused only for the very same unchanged file.
+ */
+const localeIdentity = (s: Stats) => `${s.dev}:${s.ino}:${s.size}:${s.mtimeMs}:${s.ctimeMs}`;
 const MAX_LOCALE_ASSETS = 400;
 const HEX64 = /^[0-9a-f]{64}$/;
 
@@ -496,15 +505,44 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
     if (!ok) send(res, 404, headers);
   }
 
+  /** The sha256 of locale files already read whole, by identity (final wave P8: a voice scrubbed by range is hashed once). */
+  const localeHashes = new Map<string, string>();
   /**
-   * One file of a localized preview that has a recorded hash (`dir` is the composition folder or the project): read whole through
-   * the confined checks, served only when its sha256 is the recorded one (anything else is not served, whichever folder it is in).
+   * One file of a localized preview that has a recorded hash (`dir` is the composition folder or the project), through the
+   * confined checks, served only when its sha256 is the recorded one (anything else is not served, whichever folder it is in):
+   * - the first time (or after any change: `localeIdentity`), read whole, hashed, and served from those very bytes;
+   * - while it is that same unchanged file, only the requested range is read, and served once the file's identity is checked
+   *   again after the read (a write meanwhile refuses it). Only these files (voices, fallback fonts, at most 64 MB) are hashed:
+   *   every other file of the session is served as before.
    */
   async function serveLocaleAsset(req: IncomingMessage, res: ServerResponse, dir: string, stillThere: () => Promise<boolean>, rel: string, sha256: string,
     headers: Record<string, string | string[]>): Promise<boolean> {
     if (!(await stillThere())) return false;
     const r = await withConfinedFile(dir, rel, true, async (fh: FileHandle, info: Stats) => {
       if (info.size > MAX_LOCALE_ASSET_BYTES) return { skipped: 'too-large' as const };
+      const identity = localeIdentity(info);
+      if (localeHashes.get(identity) === sha256) {
+        const size = info.size;
+        const range = parseRange(req.headers.range, size);
+        if (range === 'unsatisfiable') { send(res, 416, { ...headers, 'content-range': `bytes */${size}` }); return true as const; }
+        const { start, end } = range ?? { start: 0, end: size - 1 };
+        const length = size === 0 ? 0 : end - start + 1;
+        const body = Buffer.alloc(length);
+        let n = 0;
+        while (n < length) {
+          const { bytesRead } = await fh.read(body, n, length - n, start + n);
+          if (bytesRead === 0) break;
+          n += bytesRead;
+        }
+        if (n !== length || localeIdentity(await fh.stat()) !== identity) { localeHashes.delete(identity); return { skipped: 'outside' as const }; }
+        res.writeHead(range ? 206 : 200, {
+          ...headers, 'accept-ranges': 'bytes', 'content-length': String(length),
+          ...(range ? { 'content-range': `bytes ${start}-${end}/${size}` } : {}),
+        });
+        res.end(req.method === 'HEAD' ? undefined : body);
+        return true as const;
+      }
+      opts.onLocaleHash?.(rel);
       const buf = Buffer.alloc(info.size + 1);
       let n = 0;
       for (;;) {
@@ -515,6 +553,12 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
       }
       const bytes = buf.subarray(0, n);
       if (createHash('sha256').update(bytes).digest('hex') !== sha256) return { skipped: 'outside' as const };
+      // Remembered only for the identity it had before and after the read: a write during the read is never cached.
+      if (n === info.size && localeIdentity(await fh.stat()) === identity) {
+        localeHashes.delete(identity);
+        localeHashes.set(identity, sha256);
+        while (localeHashes.size > MAX_LOCALE_HASHES) localeHashes.delete(localeHashes.keys().next().value!);
+      }
       const range = parseRange(req.headers.range, n);
       if (range === 'unsatisfiable') { send(res, 416, { ...headers, 'content-range': `bytes */${n}` }); return true as const; }
       const { start, end } = range ?? { start: 0, end: n - 1 };
