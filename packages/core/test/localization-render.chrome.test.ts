@@ -152,6 +152,10 @@ describe.skipIf(!tools.ok)('localized renders in real Chrome', () => {
         text('narrow', { x: 170, y: 40, width: 140, fontSize: 20, text: LONG_DE }),
         // No box, inside the frame but below a safe zone that leaves the bottom 100 px out.
         text('low', { x: 10, y: 120, fontSize: 20, text: 'Hallo Welt' }),
+        // No box, inside the frame but above a safe zone that leaves the top 8 px out (fix round 1, M6: every edge).
+        text('high', { x: 200, y: 2, fontSize: 12, text: 'Hi' }),
+        // No box, short, but scaled 3x about its centre: as drawn it reaches past the frame's left edge (M6: scale counts).
+        text('scaled', { x: 4, y: 150, fontSize: 12, text: 'Hallo', scale: 3 }),
       ] }],
     };
     writeFileSync(join(comp, 'composition.json'), JSON.stringify(c));
@@ -161,8 +165,8 @@ describe.skipIf(!tools.ok)('localized renders in real Chrome', () => {
         signal: new AbortController().signal, distDir: dist });
       return r.errors.filter((e) => e.code === 'textOverflow').map((e) => e.clipId).sort();
     };
-    expect(await measure(PRESET)).toEqual(['long', 'narrow']);
-    expect(await measure({ ...PRESET, safeZone: { top: 0, bottom: 100, left: 0, right: 0 } })).toEqual(['long', 'low', 'narrow']);
+    expect(await measure(PRESET)).toEqual(['long', 'narrow', 'scaled']);
+    expect(await measure({ ...PRESET, safeZone: { top: 8, bottom: 100, left: 0, right: 0 } })).toEqual(['high', 'long', 'low', 'narrow', 'scaled']);
   });
 
   it('unboxed text whose source wraps to the frame edge (past a safe zone): a translation of the same length gets only a note (N1)', { timeout: 300_000 }, async () => {
