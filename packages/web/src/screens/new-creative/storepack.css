@@ -73,7 +73,6 @@ p.ms-spw-faint { margin: 0; }
 .ms-sp-error { margin: 0; font-size: 12.5px; color: var(--danger); overflow-wrap: anywhere; }
 
 /* Pack export dialog (the export dialog's own classes do the rest) */
-.ms-spx .ms-exp-path.ms-faint, .ms-spx .ms-exp-last { color: var(--muted); }
 .ms-spx .ms-exp-dest { grid-template-columns: 120px minmax(0, 1fr); }
 .ms-sp-langs { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 10px; align-items: start; padding: 14px 22px; border-top: 1px solid var(--line2); }
 .ms-sp-result { align-items: stretch; text-align: left; overflow: auto; min-height: 0; }
