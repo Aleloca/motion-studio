@@ -5,6 +5,9 @@ import { useT } from '../i18n.tsx';
 import { Button, Icon, Textarea, cx } from '../ui/index.ts';
 import { liveErrorText } from './liveErrors.ts';
 
+/** How long "Run next" stays hidden after a turn ends, while the core decides whether to start the queue itself. */
+export const SETTLE_MS = 1000;
+
 export interface QueuedRequestsProps {
   slug: string;
   creative: string;
@@ -37,8 +40,21 @@ export function QueuedRequests({ slug, creative, queued, working, onChanged }: Q
   const drag = useRef<string | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const edit = useRef<HTMLTextAreaElement>(null);
+  const wasWorking = useRef(working);
+  const [settling, setSettling] = useState(false);
+  useEffect(() => {
+    const ended = wasWorking.current && !working;
+    wasWorking.current = working;
+    if (working) { setSettling(false); return; }
+    if (!ended) return;
+    setSettling(true);
+    const id = setTimeout(() => setSettling(false), SETTLE_MS);
+    return () => clearTimeout(id);
+  }, [working]);
+  useEffect(() => { setSettling(false); }, [queued]);
   useEffect(() => { if (editing) edit.current?.focus(); }, [editing]);
 
+  // Right after a turn ends the core may start the queue by itself: "Run next" waits ~1 s (or the next queue change).
   if (queued.length === 0 && !local?.length) return null;
 
   const fail = (e: unknown) => { setLocal(null); setError(liveErrorText(e, t)); onChanged(); };
@@ -48,7 +64,7 @@ export function QueuedRequests({ slug, creative, queued, working, onChanged }: Q
   };
 
   const moveTo = (from: number, to: number) => {
-    if (from === to || to < 0 || to >= list.length) return;
+    if (busy || from === to || to < 0 || to >= list.length) return;
     const next = [...list];
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved!);
@@ -68,7 +84,7 @@ export function QueuedRequests({ slug, creative, queued, working, onChanged }: Q
     <section className="ms-queue" aria-labelledby={heading}>
       <div className="ms-queue-head">
         <h3 id={heading} className="ms-queue-title">{u.queueTitle({ count: list.length })}</h3>
-        {!working && (
+        {!working && !settling && (
           <>
             <span className="ms-queue-paused">{u.queuePaused}</span>
             <Button size="sm" variant="outline" disabled={busy} onClick={() => void run(() => api.runNext(slug, creative))}>

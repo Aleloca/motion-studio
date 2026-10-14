@@ -51,7 +51,7 @@ export function StopMenu({ job, onRedirect, onError, className }: StopMenuProps)
   return (
     <>
       <SplitAction
-        className={className} groupRef={group} primary={primary} menuLabel={u.stopMenu} disabled={stopping}
+        className={className} groupRef={group} primary={primary} menuLabel={u.stopMenu} groupLabel={u.stop} disabled={stopping}
         items={[
           { key: 'stop', label: u.stop, onSelect: () => void stop() },
           { key: 'redirect', label: u.stopAndRedirect, onSelect: () => (onRedirect ? onRedirect() : setForm(true)) },

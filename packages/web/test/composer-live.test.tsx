@@ -50,9 +50,11 @@ afterEach(() => MAC.mockReset());
 describe('composer while the agent works: capabilities off (the default)', () => {
   it('keeps the box active and offers "Queue for after" as the only send action, with its explanation', async () => {
     render(view({ entries: [], job: running }));
-    await waitFor(() => expect(api.getAgentCapabilities).toHaveBeenCalled());
+    // Until the answer comes the send action is neutral (a disabled, busy button): no flip from the fallback.
+    expect((screen.getByRole('button', { name: 'Send to agent' }) as HTMLButtonElement).disabled).toBe(true);
+    await screen.findByRole('button', { name: 'Queue for after' });
+    expect(screen.queryByRole('button', { name: 'Send to agent' })).toBeNull();
     expect(box().disabled).toBe(false);
-    expect(screen.getByRole('button', { name: 'Queue for after' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Send to agent' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'More ways to send' })).toBeNull();
     expect(screen.getByText(/can’t take messages while it works/)).toBeTruthy();
@@ -61,6 +63,7 @@ describe('composer while the agent works: capabilities off (the default)', () =>
   it('queues the message with Enter and keeps no bubble: it shows in the queue list', async () => {
     outcome = 'queued-unsupported';
     render(view({ entries: [], job: running }));
+    await screen.findByRole('button', { name: 'Queue for after' });
     await userEvent.type(box(), 'Make the logo blue');
     await userEvent.keyboard('{Enter}');
     await waitFor(() => expect(api.postLiveMessage).toHaveBeenCalledTimes(1));
@@ -71,6 +74,12 @@ describe('composer while the agent works: capabilities off (the default)', () =>
     expect(props.onQueueChanged).toHaveBeenCalled();
     expect(screen.queryByText('Make the logo blue')).toBeNull();
     expect(screen.getByText(/^Queued: this Claude Code can’t take messages/).getAttribute('role')).toBe('status');
+  });
+
+  it('a failed capabilities read falls back to the queue-only action', async () => {
+    api.getAgentCapabilities.mockRejectedValueOnce(new Error('down'));
+    render(view({ entries: [], job: running }));
+    await screen.findByRole('button', { name: 'Queue for after' });
   });
 
   it('Shift+Enter writes a new line instead of sending', async () => {
@@ -86,7 +95,7 @@ describe('composer while the agent works: live input on', () => {
 
   it('the primary action is "Send to agent" and a menu offers "Queue for after"', async () => {
     render(view({ entries: [], job: running }));
-    await screen.findByRole('button', { name: 'Send to agent' });
+    await screen.findByRole('button', { name: 'More ways to send' });
     await userEvent.type(box(), 'Use blue');
     await userEvent.click(screen.getByRole('button', { name: 'More ways to send' }));
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Queue for after' }));
@@ -98,7 +107,7 @@ describe('composer while the agent works: live input on', () => {
     let finish!: () => void;
     api.postLiveMessage.mockImplementationOnce((_s, _c, b) => new Promise((res) => { finish = () => res({ entry: { type: 'user', at: at(5), text: b.text, pins: [], attachments: [] }, outcome: 'delivered-pending' }); }));
     const { rerender } = render(view({ entries: [], job: running }));
-    await screen.findByRole('button', { name: 'Send to agent' });
+    await screen.findByRole('button', { name: 'More ways to send' });
     await userEvent.type(box(), 'Use blue');
     await userEvent.keyboard('{Enter}');
     await waitFor(() => expect(screen.getAllByText('Use blue').some((el) => el.closest('article'))).toBe(true));
@@ -126,7 +135,8 @@ describe('composer while the agent works: live input on', () => {
     let finish!: () => void;
     api.postLiveMessage.mockImplementationOnce((_s, _c, b) => new Promise((res) => { finish = () => res({ entry: { type: 'user', at: at(5), text: b.text, pins: [], attachments: [] }, outcome: 'delivered-pending' }); }));
     render(view({ entries: [], job: running }));
-    const send = await screen.findByRole('button', { name: 'Send to agent' });
+    await screen.findByRole('button', { name: 'More ways to send' });
+    const send = screen.getByRole('button', { name: 'Send to agent' });
     await userEvent.type(box(), 'Use blue');
     fireEvent.click(send);
     fireEvent.click(send);
@@ -152,7 +162,7 @@ describe('composer while the agent works: live input on', () => {
   ])('shows the limit error %s translated and keeps the words', async (_n, text) => {
     api.postLiveMessage.mockRejectedValueOnce(new ApiError(409, text, 'limit'));
     render(view({ entries: [], job: running }));
-    await screen.findByRole('button', { name: 'Send to agent' });
+    await screen.findByRole('button', { name: 'More ways to send' });
     await userEvent.type(box(), 'words');
     await userEvent.keyboard('{Enter}');
     expect((await screen.findByRole('alert')).textContent).toBe(text);
@@ -173,7 +183,7 @@ describe('composer while the agent works: live input on', () => {
     outcome = 'queued-after-finish';
     const notice: ConversationEntry = { type: 'system', at: at(6), level: 'info', text: 'Arrived after the agent finished: queued as the next request.' };
     render(view({ entries: [notice], job: running }));
-    await screen.findByRole('button', { name: 'Send to agent' });
+    await screen.findByRole('button', { name: 'More ways to send' });
     await userEvent.type(box(), 'late one');
     await userEvent.keyboard('{Enter}');
     await waitFor(() => expect(box().value).toBe(''));
@@ -181,10 +191,37 @@ describe('composer while the agent works: live input on', () => {
     expect(screen.queryByText('late one')).toBeNull();
   });
 
+  it('a retry in another mode gets a new clientId; the same mode reuses it', async () => {
+    api.postLiveMessage.mockRejectedValueOnce(new ApiError(500, 'boom'));
+    render(view({ entries: [], job: running }));
+    await screen.findByRole('button', { name: 'More ways to send' });
+    await userEvent.type(box(), 'words');
+    await userEvent.keyboard('{Enter}');
+    await screen.findByText(/Your message is kept/);
+    await userEvent.click(screen.getByRole('button', { name: 'More ways to send' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Queue for after' }));
+    await waitFor(() => expect(api.postLiveMessage).toHaveBeenCalledTimes(2));
+    const [a, b] = api.postLiveMessage.mock.calls.map((c) => c[2] as { clientId: string; mode: string });
+    expect([a!.mode, b!.mode]).toEqual(['live', 'queued']);
+    expect(a!.clientId).not.toBe(b!.clientId);
+  });
+
+  it('the send group and the stop group have accessible names', async () => {
+    render(view({ entries: [], job: running }));
+    await screen.findByRole('button', { name: 'More ways to send' });
+    expect(screen.getByRole('group', { name: 'Send to agent' })).toBeTruthy();
+    expect(screen.getByRole('group', { name: 'Stop' })).toBeTruthy();
+  });
+
+  it('shows a visible row for an interrupted step', () => {
+    render(view({ entries: [agent(3, { kind: 'interrupted' })], job: running }));
+    expect(screen.getByText('Interrupted by you')).toBeTruthy();
+  });
+
   it('a pending-start answer says the message joins the agent’s first prompt', async () => {
     outcome = 'pending-start' as never;
     render(view({ entries: [], job: queuedJob }));
-    await screen.findByRole('button', { name: 'Send to agent' });
+    await screen.findByRole('button', { name: 'More ways to send' });
     await userEvent.type(box(), 'before start');
     await userEvent.keyboard('{Enter}');
     expect(await screen.findByText('Will be included when the agent starts')).toBeTruthy();
@@ -192,7 +229,7 @@ describe('composer while the agent works: live input on', () => {
 
   it('Esc in the box never stops the agent', async () => {
     render(view({ entries: [], job: running }));
-    await screen.findByRole('button', { name: 'Send to agent' });
+    await screen.findByRole('button', { name: 'More ways to send' });
     await userEvent.type(box(), 'abc');
     await userEvent.keyboard('{Escape}');
     fireEvent.keyDown(box(), { key: 'Escape' });

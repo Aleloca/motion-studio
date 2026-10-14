@@ -44,11 +44,11 @@ export function ConsoleMessageBox({ jobId, liveInput, job }: ConsoleMessageBoxPr
   return (
     <form className="ms-composer ms-console-box" onSubmit={(e) => { e.preventDefault(); void send(); }}>
       <div className="ms-composer-box">
-        <label htmlFor={id} className="ms-composer-label">{u.send}</label>
+        <label htmlFor={id} className="ms-composer-label">{u.consoleMessage}</label>
         <Textarea id={id} rows={2} maxLength={4000} value={text} disabled={!liveInput} placeholder={u.livePlaceholder}
           onChange={(e) => { setText(e.target.value); clientId.current = null; }}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); } }} />
-        {!liveInput && <p className="ms-composer-note">{t.live.consoleLiveOff}</p>}
+        {!liveInput && <p className="ms-composer-note">{u.consoleUnsupported}</p>}
         {error && <p role="alert" className="ms-composer-error">{error}</p>}
         <div className="ms-composer-foot">
           <span className="ms-composer-hint">{liveInput ? u.liveHint : ''}</span>

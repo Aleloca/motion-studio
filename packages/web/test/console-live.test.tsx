@@ -10,6 +10,7 @@ const api = {
   cancelJob: vi.fn(async () => ({ cancelled: true })),
   sendConsoleMessage: vi.fn(async (_id: string, _b: unknown) => ({ outcome: 'delivered-pending' as const })),
   getConversation: vi.fn(async () => []),
+  getAgentCapabilities: vi.fn(async () => ({ cliVersion: null, liveInput: true, interrupt: false, checkedAt: '2026-10-14T10:00:00.000Z' })),
 };
 class ApiError extends Error { constructor(public status: number, m: string, public code?: string) { super(m); } }
 vi.mock('../src/api.ts', () => ({ api, ApiError }));
@@ -59,6 +60,34 @@ describe('Activity center uses the same Stop menu', () => {
   });
 });
 
+describe('console message in the Activity center', () => {
+  it('a running console row has a Message button that opens the box and sends to the console route', async () => {
+    center(consoleJob);
+    await userEvent.click(screen.getByRole('button', { name: 'Message' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Message to the console turn' });
+    const field = within(dialog).getByRole('textbox') as HTMLTextAreaElement;
+    await waitFor(() => expect(field.disabled).toBe(false));
+    await userEvent.type(field, 'Also the fonts');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Send to agent' }));
+    await waitFor(() => expect(api.sendConsoleMessage).toHaveBeenCalledTimes(1));
+    expect(api.sendConsoleMessage.mock.calls[0]![0]).toBe('k1');
+  });
+
+  it('with live input off the box says live messages are not supported (no queue on the console)', async () => {
+    api.getAgentCapabilities.mockResolvedValueOnce({ cliVersion: null, liveInput: false, interrupt: false, checkedAt: 'x' });
+    center(consoleJob);
+    await userEvent.click(screen.getByRole('button', { name: 'Message' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/aren’t supported for this Claude Code version/)).toBeTruthy();
+    expect(within(dialog).queryByRole('button', { name: 'Queue for after' })).toBeNull();
+  });
+
+  it('creative rows have no Message button', () => {
+    center(creativeJob);
+    expect(screen.queryByRole('button', { name: 'Message' })).toBeNull();
+  });
+});
+
 describe('console message box', () => {
   const box = (props: Partial<React.ComponentProps<typeof ConsoleMessageBox>> = {}) => render(
     <I18nProvider locale="en"><ConsoleMessageBox jobId="k1" liveInput {...props} /></I18nProvider>,
@@ -81,7 +110,7 @@ describe('console message box', () => {
     box({ liveInput: false });
     expect(screen.queryByRole('button', { name: 'Queue for after' })).toBeNull();
     expect((screen.getByRole('textbox') as HTMLTextAreaElement).disabled).toBe(true);
-    expect(screen.getByText(/need live input, which is off/)).toBeTruthy();
+    expect(screen.getByText(/Live messages aren’t supported for this Claude Code version/)).toBeTruthy();
     expect(api.sendConsoleMessage).not.toHaveBeenCalled();
   });
 

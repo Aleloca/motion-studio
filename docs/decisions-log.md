@@ -1109,3 +1109,10 @@ Legenda impatto: 🟢 basso · 🟡 medio · 🔴 alto (sicurezza o prodotto).
     *Costo cambio:* nullo.
 646. 🟡 **La console non ha una schermata nel web.** La vecchia scheda "Agent console" è stata tolta in una fase precedente (resta solo il reindirizzamento del vecchio link): non c'è dove montare un compositore della console. Ho aggiunto il componente `ConsoleMessageBox` (messaggio al turno di console, senza coda, con lo stesso menu Stop) e i metodi di `api.ts`, coperti dai test, ma nessuna schermata lo monta ancora. Stop e redirect di un turno di console funzionano già dal centro attività, che usa le stesse rotte dei job. Da decidere: se la console deve tornare come schermata.
     *Costo cambio:* basso.
+
+### Fase 13 · Task 3, giro di correzioni 1
+
+647. 🟡 **Decisione: orchestratore (2026-10-14). I messaggi dal vivo alla console stanno nel centro attività; una schermata della console è fuori perimetro.** Sulla riga di un job di console in esecuzione c'è il pulsante "Message", che apre in un popover `ConsoleMessageBox` (stesse rotte dei job, stesso menu Stop sulla riga). La console non ha coda: con l'input dal vivo spento il popover dice che i messaggi dal vivo non sono supportati da questa versione di Claude Code. Questa voce risolve la 646.
+    *Costo cambio:* basso.
+648. 🟢 **Rilievi minori della revisione.** Riga visibile "Interrupted by you" per l'evento `interrupted`. Le capacità si azzerano a fine job e, finché la risposta non arriva, il pulsante di invio è neutro (disattivato, in attesa) invece di passare da "Queue for after" al pulsante diviso. Il trascinamento è ignorato mentre un salvataggio è in corso. Tolte le stringhe inutilizzate (`stopHint`, `runNextFailed`, `queueFailed`, `redirectTitle`). Il gruppo di `SplitAction` ha un nome accessibile. Un nuovo tentativo in un'altra modalità ha un `clientId` nuovo. "Run next" resta nascosto per circa 1 s dopo la fine di un turno, o fino al prossimo cambio della coda, per evitare il lampo prima dell'avvio automatico.
+    *Costo cambio:* nullo.

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { QueuedRequest } from '@motion-studio/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -112,6 +112,29 @@ describe('QueuedRequests', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Remove queued request 1' }));
     expect((await screen.findByRole('alert')).textContent).toContain('This request is no longer queued');
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
+  });
+
+  it('hides "Run next" for a moment right after a turn ends, until the queue settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const { rerender } = render(<I18nProvider locale="en"><QueuedRequests slug="acme" creative="c1" queued={three} working onChanged={onChanged} /></I18nProvider>);
+      rerender(<I18nProvider locale="en"><QueuedRequests slug="acme" creative="c1" queued={three} working={false} onChanged={onChanged} /></I18nProvider>);
+      expect(screen.queryByRole('button', { name: 'Run next' })).toBeNull();
+      await act(async () => { vi.advanceTimersByTime(1100); });
+      expect(screen.getByRole('button', { name: 'Run next' })).toBeTruthy();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('ignores a drop while a save is in flight', async () => {
+    let finish!: () => void;
+    api.reorderQueue.mockImplementationOnce(() => new Promise((r) => { finish = () => r({}); }));
+    view(three, true);
+    await userEvent.click(screen.getByRole('button', { name: 'Move queued request 1 down' }));
+    const rows = screen.getAllByRole('listitem');
+    fireEvent.dragStart(rows[0]!, { dataTransfer: { setData() {}, effectAllowed: '' } });
+    fireEvent.drop(rows[2]!, { dataTransfer: {} });
+    expect(api.reorderQueue).toHaveBeenCalledTimes(1);
+    await act(async () => finish());
   });
 
   it('shows "Run next" only when nothing is running, and starts the first request', async () => {

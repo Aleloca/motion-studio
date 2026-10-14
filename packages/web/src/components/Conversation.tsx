@@ -124,7 +124,7 @@ const samePins = (a: Pin[], b: Pin[]) => a.length === b.length
   && a.every((p, i) => { const q = b[i]!; return p.format === q.format && p.x === q.x && p.y === q.y && p.timeSec === q.timeSec && (p.note ?? '') === (q.note ?? ''); });
 
 /** One turn (the agent events of one job) as conversation items: messages, compact steps, summary, details. */
-function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], running: boolean, foldOpen: boolean, detailsOpen: boolean, logOf: (jobId: string, events: AgentEvent[], finished: boolean) => CommandLog): Item[] {
+function turnItems(interruptedText: string, jobId: string, events: { at: string; event: AgentEvent }[], running: boolean, foldOpen: boolean, detailsOpen: boolean, logOf: (jobId: string, events: AgentEvent[], finished: boolean) => CommandLog): Item[] {
   const out: Item[] = [];
   const steps: Item[] = [];
   const technical: DetailEntry[] = [];
@@ -146,6 +146,8 @@ function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], r
       if (!e.text.trim()) return;
       lastAgent = { key, kind: 'agent', at, text: e.text, summary: false };
       out.push(lastAgent);
+    } else if (e.kind === 'interrupted') {
+      out.push({ key, kind: 'system', at, level: 'info', text: interruptedText });
     } else if (e.kind === 'progress') {
       const step: Item = { key, kind: 'step', at, text: e.text };
       steps.push(step);
@@ -249,7 +251,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
       .filter((s) => (jobId === null ? !jobs.has(s.approval.jobId) : s.approval.jobId === jobId))
       .map((s): Item => ({ key: `ap:${s.approval.id}`, kind: 'approval', shown: s }));
     const turn = (jobId: string) => [
-      ...turnItems(jobId, jobs.get(jobId)!, jobId === job?.id && working, unfolded.has(jobId), detailsOpen.has(jobId), logOf),
+      ...turnItems(t.web.liveUi.interruptedRow, jobId, jobs.get(jobId)!, jobId === job?.id && working, unfolded.has(jobId), detailsOpen.has(jobId), logOf),
       ...approvalsOf(jobId),
     ];
 
@@ -288,7 +290,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     const waiting = shownApprovals.some((s) => !s.leaving && s.approval.jobId === job?.id);
     if (working && !waiting) out.push({ key: 'typing', kind: 'typing' });
     return out;
-  }, [entries, job, live, working, unfolded, detailsOpen, shownApprovals, ctx, outbox, queued]);
+  }, [entries, job, live, working, unfolded, detailsOpen, shownApprovals, ctx, outbox, queued, t]);
 
   // Items present at the first render appear with the panel; later ones enter from +8 px (T9).
   const mounted = useRef(false);
@@ -617,26 +619,29 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, latestJobId, sn
   // Phase 13: while the agent works the box stays active. What the running Claude Code can do decides the send action;
   // until it is known (or when it cannot be read) both are off: "Queue for after" is always available.
   const working = Boolean(job);
-  const [caps, setCaps] = useState({ liveInput: false });
+  const [capsNow, setCaps] = useState<{ liveInput: boolean } | null>(null);
   useEffect(() => {
+    setCaps(null);
     if (!working) return;
     let alive = true;
     Promise.resolve().then(() => api.getAgentCapabilities())
       .then((k) => { if (alive) setCaps({ liveInput: k?.liveInput === true }); })
-      .catch(() => { /* off: the fallback path */ });
+      .catch(() => { if (alive) setCaps({ liveInput: false }); /* off: the fallback path */ });
     return () => { alive = false; };
   }, [working]);
+  // Pending (null): a neutral state, so the send action does not flip from the fallback to the split button.
+  const caps = capsNow ?? { liveInput: false };
   const [redirect, setRedirect] = useState(false);
   const field = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { if (!working) setRedirect(false); }, [working]);
   useEffect(() => { if (redirect) field.current?.focus(); }, [redirect]);
   // One client id per message: a double click, or a retry of the same words after a failure, is one message.
-  const draftId = useRef<string | null>(null);
+  const draftId = useRef<{ id: string; kind: string } | null>(null);
 
   const hasContent = text.trim().length > 0 || pins.length > 0;
   const idleBusy = sending || awaiting !== null;
   const busy = working || idleBusy;
-  const canSend = working ? hasContent && !sending : !idleBusy && hasContent;
+  const canSend = working ? hasContent && !sending && (capsNow !== null || redirect) : !idleBusy && hasContent;
 
   // "Applies to": the user's choice (null: All formats) or, until they choose, the comments' formats (else the fallback).
   const [choice, setChoice] = useState<string[] | null | undefined>(undefined);
@@ -686,7 +691,9 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, latestJobId, sn
     if (!job || !canSend || inFlight.current) return;
     inFlight.current = true;
     setError(null); setNotice(null); setSending(true);
-    const clientId = (draftId.current ??= newClientId());
+    // A retry of the same words in another mode is another request: it gets its own id.
+    if (draftId.current?.kind !== kind) draftId.current = { id: newClientId(), kind };
+    const clientId = draftId.current.id;
     const words = text.trim();
     const sentPins = pins;
     if (kind !== 'queued') outbox.add({ clientId, text: words, pins: sentPins, at: new Date().toISOString(), mode: kind === 'redirect' ? 'redirect' : 'live', phase: 'sending' });
@@ -771,7 +778,7 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, latestJobId, sn
         <Textarea id={id} ref={field} rows={2} maxLength={10_000} value={text} onChange={(e) => { setText(e.target.value); draftId.current = null; setNotice(null); }} onKeyDown={onKeyDown}
           placeholder={placeholder} aria-keyshortcuts={isMac() ? 'Meta+Enter' : 'Control+Enter'} />
         {working && redirect && <p className="ms-composer-note">{u.redirectNote}</p>}
-        {working && !redirect && !caps.liveInput && <p className="ms-composer-note">{u.queueOnly}</p>}
+        {working && !redirect && capsNow && !caps.liveInput && <p className="ms-composer-note">{u.queueOnly}</p>}
         {notice && <p role="status" className="ms-composer-note">{notice}</p>}
         {error && <p role="alert" className="ms-composer-error">{error}</p>}
         <div className="ms-composer-foot">
@@ -794,11 +801,14 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, latestJobId, sn
               <Button type="submit" size="sm" variant="accent" aria-label={u.redirect} disabled={!canSend}><Icon name="forward" size={13} />{u.redirect}</Button>
             </>
           )}
-          {working && !redirect && !caps.liveInput && (
+          {working && !redirect && capsNow === null && (
+            <Button type="submit" size="sm" variant="accent" aria-label={u.send} loading disabled><Icon name="upload" size={13} strokeWidth={1.8} />{u.send}</Button>
+          )}
+          {working && !redirect && capsNow && !caps.liveInput && (
             <Button type="submit" size="sm" variant="accent" aria-label={u.queue} disabled={!canSend}><Icon name="upload" size={13} strokeWidth={1.8} />{u.queue}</Button>
           )}
-          {working && !redirect && caps.liveInput && (
-            <SplitAction variant="accent" menuLabel={u.sendMore} disabled={!canSend}
+          {working && !redirect && capsNow && caps.liveInput && (
+            <SplitAction variant="accent" menuLabel={u.sendMore} groupLabel={u.send} disabled={!canSend}
               primary={<Button type="submit" size="sm" variant="accent" aria-label={u.send} disabled={!canSend}><Icon name="upload" size={13} strokeWidth={1.8} />{u.send}</Button>}
               items={[{ key: 'queue', label: u.queue, onSelect: () => void sendWhileWorking('queued') }]} />
           )}

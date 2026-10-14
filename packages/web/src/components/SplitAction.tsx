@@ -15,6 +15,8 @@ export interface SplitActionProps {
   items: SplitItem[];
   /** Accessible name of the chevron button. */
   menuLabel: string;
+  /** Accessible name of the whole group (the main action and its chevron). */
+  groupLabel: string;
   variant?: ButtonVariant;
   size?: ButtonSize;
   disabled?: boolean;
@@ -28,7 +30,7 @@ export interface SplitActionProps {
  * `menu`/`menuitem` roles: it opens on the first item, arrows move, Enter or Space picks, Esc closes (and gives the focus
  * back to the chevron). Picking an item does what it says; nothing is ever done by merely opening the menu.
  */
-export function SplitAction({ primary, items, menuLabel, variant = 'outline', size = 'sm', disabled, className, groupRef }: SplitActionProps) {
+export function SplitAction({ primary, items, menuLabel, groupLabel, variant = 'outline', size = 'sm', disabled, className, groupRef }: SplitActionProps) {
   const [open, setOpen] = useState(false);
   const own = useRef<HTMLSpanElement>(null);
   const group = groupRef ?? own;
@@ -43,7 +45,7 @@ export function SplitAction({ primary, items, menuLabel, variant = 'outline', si
     rows[to]?.focus();
   };
   return (
-    <span ref={group} className={cx('ms-split', className)} role="group">
+    <span ref={group} className={cx('ms-split', className)} role="group" aria-label={groupLabel}>
       {primary}
       <Button ref={chevron} variant={variant} size={size} icon className="ms-split-more" aria-label={menuLabel} aria-haspopup="menu" aria-expanded={open}
         disabled={disabled} onClick={() => setOpen((o) => !o)}>

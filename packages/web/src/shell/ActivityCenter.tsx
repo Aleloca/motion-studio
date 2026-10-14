@@ -4,12 +4,13 @@ import { localeName } from '../screens/creative/languagesModel.ts';
 import { useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api.ts';
 import { ApprovalCard } from '../components/ApprovalCard.tsx';
+import { ConsoleMessageBox } from '../components/ConsoleMessageBox.tsx';
 import { StopMenu } from '../components/StopMenu.tsx';
 import { useApprovalPresence } from '../components/approvalPresence.ts';
 import type { EventsState } from '../eventsReducer.ts';
 import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
 import { href } from '../routes.ts';
-import { Button, Empty, Icon, ProgressBar, Spinner, Tabs, cx, toast } from '../ui/index.ts';
+import { Button, Empty, Icon, Popover, ProgressBar, Spinner, Tabs, cx, toast } from '../ui/index.ts';
 import { renderPct } from '../screens/renderModel.ts';
 import { message } from '../errors.ts';
 import { canAskNotifications } from './notify.ts';
@@ -276,7 +277,12 @@ function RunningRow({ job, step, tokens, partial }: { job: JobSummary; step: str
   const queued = job.state === 'queued';
   return (
     // Phase 13: the same Stop menu as the conversation (a creative or console turn can also be redirected; the others have Stop only).
-    <Row job={job} className="ms-tall" after={<StopMenu job={job} className="ms-activity-cancel" />}>
+    <Row job={job} className="ms-tall" after={(
+      <>
+        {job.kind === 'console' && job.state === 'running' ? <ConsoleMessage job={job} /> : null}
+        <StopMenu job={job} className="ms-activity-cancel" />
+      </>
+    )}>
       <span className={cx('ms-activity-glyph', queued && 'ms-muted')}>{queued ? <Icon name="clock" size={14} /> : <Spinner decorative />}</span>
       <span className="ms-activity-text">
         <b>{job.label}</b>
@@ -284,6 +290,33 @@ function RunningRow({ job, step, tokens, partial }: { job: JobSummary; step: str
       </span>
       <TokenCount tokens={tokens} live partial={partial} className="ms-activity-tokens" />
     </Row>
+  );
+}
+
+/**
+ * A message to a running console turn (Phase 13, spec §2), from its row: a button that opens the message box in a popover.
+ * The console has no queue, so with live input off the box only explains that.
+ */
+function ConsoleMessage({ job }: { job: JobSummary }) {
+  const u = useT().web.liveUi;
+  const [open, setOpen] = useState(false);
+  const [liveInput, setLiveInput] = useState(false);
+  const anchor = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    Promise.resolve().then(() => api.getAgentCapabilities())
+      .then((k) => { if (alive) setLiveInput(k?.liveInput === true); })
+      .catch(() => { if (alive) setLiveInput(false); });
+    return () => { alive = false; };
+  }, [open]);
+  return (
+    <>
+      <Button ref={anchor} size="sm" variant="ghost" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{u.consoleOpen}</Button>
+      <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="bottom-end" width={320} label={u.consoleMessage}>
+        <ConsoleMessageBox jobId={job.id} liveInput={liveInput} />
+      </Popover>
+    </>
   );
 }
 
