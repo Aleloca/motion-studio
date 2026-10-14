@@ -98,6 +98,20 @@ function withSuffix(stem: string, suffix: string): string {
   return `${head}-${suffix}`;
 }
 
+/** `stem-<locale>` (the tag as a slug, `pt-BR` → `pt-br`), the stem cut so the whole stays within EXPORT_NAME_MAX. */
+export function withLocaleSuffix(stem: string, locale: string): string {
+  return withSuffix(stem, slugToken(locale));
+}
+
+/**
+ * The stem of an exported file in a language (Phase 12, final review I2): a translated file (`localized`) whose pattern has
+ * no `{locale}` gets its language appended, whatever else is exported, so it is never named like the original; the primary
+ * language's file keeps its stem. Shared by the core's export and the export dialog's preview.
+ */
+export function localizedStem(pattern: string, stem: string, locale: string | undefined, localized: boolean): string {
+  return localized && locale && !pattern.includes('{locale}') ? withLocaleSuffix(stem, locale) : stem;
+}
+
 /**
  * Format instances (Phase 12, Ruling C): files that would share a name (a pattern without `{format}`, or a preset id equal to
  * an instance's slug, `foo-2` and `foo@2`) are kept apart with the instance's slugged id on each k > 1 instance; a bare

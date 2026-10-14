@@ -323,6 +323,33 @@ describe('Export in several languages', () => {
     expect(api.prepareExport.mock.calls[0]![2]).toMatchObject({ locales: ['en', 'de'] });
   });
 
+  it('the name preview lists the translated files, named with their language when the pattern has no {locale} (final review I2)', async () => {
+    open();
+    const preview = () => document.querySelector('.ms-exp-preview')!;
+    expect(preview().textContent).toContain('launch-instagram-reel-9x16-v3.mp4');
+    expect(preview().textContent).not.toContain('Preview, German');
+    await userEvent.click(screen.getByRole('checkbox', { name: 'German' }));
+    expect(within(preview() as HTMLElement).getByText('Preview, German')).toBeTruthy();
+    expect(within(preview() as HTMLElement).getByText('launch-instagram-reel-9x16-v3-de.mp4')).toBeTruthy();
+    // German alone: the original is not listed, the translation keeps its language.
+    await userEvent.click(screen.getByRole('checkbox', { name: /English/ }));
+    expect(preview().textContent).not.toContain('launch-instagram-reel-9x16-v3.mp4');
+    expect(within(preview() as HTMLElement).getByText('launch-instagram-reel-9x16-v3-de.mp4')).toBeTruthy();
+  });
+
+  it('a pattern with {locale} names the original with the primary tag and each translation with its own, as the core does', async () => {
+    render(
+      <I18nProvider locale="en">
+        <ExportDialog open onClose={() => {}} slug="acme" creative="c1" title="Launch" snapshot={{ versions: [v], states }} presets={DEFAULT_FORMATS} pattern="{title}-{locale}"
+          locales={{ primary: 'en', extra: ['de'] }} />
+      </I18nProvider>,
+    );
+    await userEvent.click(screen.getByRole('checkbox', { name: 'German' }));
+    const preview = document.querySelector('.ms-exp-preview') as HTMLElement;
+    expect(within(preview).getByText('launch-en.mp4')).toBeTruthy();
+    expect(within(preview).getByText('launch-de.mp4')).toBeTruthy();
+  });
+
   it('on a 409 shows the list and "Render anyway", which sends force', async () => {
     api.exportPicks.mockRejectedValueOnce(new ApiError(409, 'raw', 'localization-needs-force', undefined, ['German · Reel: 1 outdated']));
     open();

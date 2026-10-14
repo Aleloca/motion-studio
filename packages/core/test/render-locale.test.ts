@@ -10,7 +10,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFile
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { messages, type JobSummary, type ManifestV2, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_NAME_PATTERN, messages, type JobSummary, type ManifestV2, type VersionEntry } from '@motion-studio/shared';
 import { currentLocale } from '../src/i18n.ts';
 import { H, startInstanceEnv, type InstanceEnv } from './helpers/instance-server.ts';
 import { FONT } from './helpers/render-env.ts';
@@ -261,6 +261,31 @@ describe('export per language', { timeout: 120_000 }, () => {
     expect(renders.map((x) => [x.version, x.formats, x.locales])).toEqual([[1, ['test-wide'], ['de']]]);
     await env.waitJob(renders[0]!.job.id);
     expect(existsSync(join(env.store().dir(slug), 'outputs', 'v1', 'test-wide.de.mp4'))).toBe(true);
+  });
+
+  it('a translation exported alone with the workspace pattern is named with its language; the original keeps today\'s name (final review I2)', async () => {
+    const slug = await create();
+    await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
+    const pattern = '{title}-{format}-v{v}';
+    const de = await exportPicks(slug, { picks: { 'test-wide': 1 }, locales: ['de'], pattern });
+    expect(de.statusCode, de.body).toBe(200);
+    expect(readdirSync(dest)).toEqual(['launch-test-wide-v1-de.mp4']);
+    const en = await exportPicks(slug, { picks: { 'test-wide': 1 }, pattern });
+    expect(en.statusCode, en.body).toBe(200);
+    expect(readdirSync(dest).sort()).toEqual(['launch-test-wide-v1-de.mp4', 'launch-test-wide-v1.mp4']);
+  });
+
+  it('the default pattern sent by the dialog: with extra languages each translation gains its language, the original is unchanged', async () => {
+    const slug = await create();
+    await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
+    const r = await exportPicks(slug, { picks: { 'test-wide': 1 }, locales: ['en', 'de'], pattern: DEFAULT_EXPORT_NAME_PATTERN });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(readdirSync(dest).sort()).toEqual(['launch-test-wide-v1-de.mp4', 'launch-test-wide-v1.mp4']);
+    rmSync(dest, { recursive: true, force: true });
+    const plain = await env.create(['test-wide'], { links: {} });
+    const p = await exportPicks(plain, { picks: { 'test-wide': 1 }, pattern: DEFAULT_EXPORT_NAME_PATTERN });
+    expect(p.statusCode, p.body).toBe(200);
+    expect(readdirSync(dest)).toEqual(['launch-test-wide-v1.mp4']);
   });
 
   it('without extra languages the names are today\'s', async () => {

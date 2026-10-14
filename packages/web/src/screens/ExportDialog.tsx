@@ -5,7 +5,7 @@
 // is remembered; progress, then a success screen with Show in Finder. File sizes are not shown: the API does not report
 // them (ruling R6).
 import {
-  EXPORT_NAME_TOKENS, exportDate, exportExtension, exportNameCollisions, exportNameVars, renderName, renderProblems, renderState, separateInstanceNames,
+  EXPORT_NAME_TOKENS, exportDate, exportExtension, exportNameCollisions, exportNameVars, localizedStem, renderName, renderProblems, renderState, separateInstanceNames,
   type FormatPreset, type JobSummary, type LocaleTag, type VersionEntry, type WorkspaceSettings,
 } from '@motion-studio/shared';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -175,8 +175,10 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
   }, []);
   const reveal = isMac() ? x.showInFinder : x.showInFolder;
 
-  // The final names: the pattern rendered per row with the same shared code as the core, extension added.
-  const vars = (r: Row) => exportNameVars({ title, slug: creative, format: r.id, preset: r.preset ?? undefined, size: r.output ?? undefined, version: r.n, date });
+  // The final names: the pattern rendered per row with the same shared code as the core, extension added. With extra
+  // languages the original's `{locale}` is the primary tag, as the core renders it.
+  const primaryTag: string | undefined = locales && withLanguages ? locales.primary : undefined;
+  const vars = (r: Row, tag: string | undefined = primaryTag) => exportNameVars({ title, slug: creative, format: r.id, preset: r.preset ?? undefined, size: r.output ?? undefined, version: r.n, date, ...(tag ? { locale: tag } : {}) });
   const rendered = rows.map((r) => (r.file ? renderName(pattern, vars(r)) : null));
   // Instances that would share a name are told apart exactly as the core does it on export (shared code).
   const stems = separateInstanceNames(rows.flatMap((r, i) => (rendered[i]?.ok && r.file ? [{ format: r.id, stem: rendered[i]!.name, ext: exportExtension(r.file) }] : [])));
@@ -186,6 +188,20 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
     return { row: r, name: ok ? `${stems[k++]!}${exportExtension(r.file!)}` : null };
   });
   const chosen = named.filter((c) => c.row.blocked === null && on[c.row.id]);
+  // The files of the export as the core names them (final review I2): the original's (when its language is ticked) and each
+  // ticked translation's, which gains its language when the pattern has no `{locale}`; instances kept apart over all of them.
+  const otherTags = locales && withLanguages ? locales.extra.filter((tag) => langs[tag]) : [];
+  const withOriginal = !locales || !withLanguages || Boolean(langs[locales.primary]);
+  const exportEntries = [
+    ...(withOriginal ? chosen.map((c) => ({ row: c.row, tag: undefined as string | undefined })) : []),
+    ...otherTags.flatMap((tag) => chosen.map((c) => ({ row: c.row, tag: tag as string | undefined }))),
+  ].flatMap((e) => {
+    const r = e.row.file ? renderName(pattern, vars(e.row, e.tag ?? primaryTag)) : null;
+    return r?.ok ? [{ ...e, format: e.row.id, stem: localizedStem(pattern, r.name, e.tag, e.tag !== undefined), ext: exportExtension(e.row.file!) }] : [];
+  });
+  const exportStems = separateInstanceNames(exportEntries);
+  const exportNames = exportEntries.map((e, i) => ({ tag: e.tag, name: `${exportStems[i]!}${e.ext}` }));
+  const translatedNames = otherTags.map((tag) => ({ tag, names: exportNames.filter((e) => e.tag === tag).map((e) => e.name) })).filter((x) => x.names.length > 0);
   // Unknown variables are the same on every row: they are left out of the names and flagged here.
   const firstRow = chosen[0]?.row ?? rows[0];
   const unknown = firstRow ? renderName(pattern, vars(firstRow)).unknown : [];
@@ -193,9 +209,9 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
   // Export needs a name for each chosen row only; a default pattern must name every row (blocked or not chosen too).
   const empty = !pattern.trim() || chosen.some((c) => c.name === null);
   const anyRowEmpty = rows.some((r) => !renderName(pattern, vars(r)).ok);
-  const collisions = exportNameCollisions(chosen.flatMap((c) => (c.name ? [c.name] : [])));
+  const collisions = exportNameCollisions(exportNames.map((e) => e.name));
   const nameProblem = tooLong ? x.errors.invalidPattern : empty ? x.emptyName : collisions.length ? x.collision({ list: collisions.join(', ') }) : null;
-  const preview = (chosen[0] ?? named.find((c) => c.name !== null))?.name ?? null;
+  const preview = withOriginal ? (chosen[0] ?? named.find((c) => c.name !== null))?.name ?? null : null;
 
   const insert = (token: string) => {
     const el = field.current;
@@ -393,6 +409,12 @@ function ExportBody({ onClose, slug, creative, title, snapshot, presets, labels,
           </div>
           <div id={previewId} className="ms-exp-preview">
             {preview ? <span className="ms-exp-preview-line"><span className="ms-exp-preview-label">{x.preview}</span><span className="ms-exp-file">{preview}</span></span> : null}
+            {translatedNames.map((l) => (
+              <span key={l.tag} className="ms-exp-preview-line">
+                <span className="ms-exp-preview-label">{x.previewLanguage({ language: localeName(l.tag, locale) })}</span>
+                <span className="ms-exp-file">{l.names.join(', ')}</span>
+              </span>
+            ))}
             {unknown.length ? <span className="ms-exp-hint">{x.unknownVars({ list: unknown.map((u) => `{${u}}`).join(', ') })}</span> : null}
             {nameProblem ? <span role="alert" className="ms-exp-error">{nameProblem}</span> : null}
             {save.kind === 'saved' ? <span role="status" className="ms-exp-note">{x.savedDefault}</span> : null}

@@ -1,6 +1,6 @@
 import { access, constants, lstat, mkdir, realpath, rm, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { DEFAULT_EXPORT_NAME_PATTERN, EXPORT_NAME_MAX, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, hasFormat, renderName, renderState, separateInstanceNames, starOf, type FormatPreset, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_EXPORT_NAME_PATTERN, exportExtension, exportNameCollisions, exportNameVars, followerMatches, followerVersion, hasFormat, localizedStem, renderName, renderState, separateInstanceNames, starOf, type FormatPreset, type VersionEntry } from '@motion-studio/shared';
 import { copyConfinedFile, probeConfinedFile } from '../brand/agent-guard.ts';
 import { findPreset } from '../formats/format-catalog.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
@@ -151,11 +151,9 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
     if (!r.ok) throw new CodedError(400, t().export.nameEmpty, 'export-name-empty');
     return { ...it, stem: r.name, ext: exportExtension(it.file) };
   });
-  // Languages (Phase 12): a pattern without `{locale}` exporting more than one language names each translated file with its
-  // language, so two languages of one format never collide; the primary language's file keeps its name.
-  if (!pattern.includes('{locale}') && new Set(named.map((x) => x.locale ?? '')).size > 1) {
-    for (const x of named) if (x.localized && x.locale) x.stem = withLocaleSuffix(x.stem, x.locale);
-  }
+  // Languages (Phase 12, final review I2): a pattern without `{locale}` names each translated file with its language, also
+  // when it is exported alone, so a translation is never named like the original; the primary language's file keeps its name.
+  for (const x of named) x.stem = localizedStem(pattern, x.stem, x.locale, x.localized === true);
   // Format instances (Phase 12, Ruling C): two files that would share a name (a pattern without `{format}`, or a preset id
   // equal to an instance's slug, `foo-2` and `foo@2`) keep them apart with the instance's slugged id on each k > 1 instance;
   // a bare instance's name never changes. What still collides is refused below, as before.
@@ -180,13 +178,6 @@ async function runExport(items: ExportItem[], opts: ExportCommon, missing: 'refu
   }
   if (!files.length) throw new WorkspaceError(404, t().export.nothingToExport({ n: emptyN }));
   return { destination: dest, files, skipped };
-}
-
-/** `stem-<locale>`, within the name length limit. */
-function withLocaleSuffix(stem: string, locale: string): string {
-  const suffix = locale.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-  const room = EXPORT_NAME_MAX - suffix.length - 1;
-  return `${stem.slice(0, room).replace(/[-_.]+$/, '')}-${suffix}`;
 }
 
 /**
