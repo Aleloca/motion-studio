@@ -186,7 +186,8 @@ export async function renderComposition(o: RenderCompositionOptions): Promise<Re
     if (flatten && !ff) throw new RenderError('noFfmpeg', 'ffmpeg is needed to flatten a store screenshot');
     const distDir = o.distDir ?? RUNTIME_DIST_DIR;
     server = o.server ?? await startCompositionServer({ uiOrigins: [], distDir });
-    session = await server.mintSession({ creativeDir: o.dir, versionDir: o.versionDir, format: o.format.id, composition: c, mode: 'render', ttlMs: (o.timeLimitMs ?? 300_000 + frames * 5_000) + 60_000, ...(o.media ? { media: o.media } : {}) });
+    session = await server.mintSession({ creativeDir: o.dir, versionDir: o.versionDir, format: o.format.id, composition: c, mode: 'render', ttlMs: (o.timeLimitMs ?? 300_000 + frames * 5_000) + 60_000,
+      ...(o.media ? { media: o.media } : {}), ...(o.format.safeZone ? { safeZone: o.format.safeZone } : {}) });
     const clock = await clockSource(distDir);
     const openPage = async () => {
       const p = await o.provider.open({ width: c.width, height: c.height, url: session!.url, signal: ctl.signal, purpose: 'render', ...(clock ? { clockSource: clock } : {}) });

@@ -171,11 +171,11 @@ function overflows(text: string, size: number, source: { text: string; size: num
 export const FITS = [1, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7];
 
 /**
- * Whether the browser measures the text clip `id` of `c` (the runtime's render-mode measure, Ruling I): a text clip with an
- * explicit width or height. For the others only the estimate speaks.
+ * Whether the browser measures the text clip `id` of `c` (the runtime's render-mode measure, Ruling I): every text clip, in
+ * the box it sets, and a dimension it leaves free within the frame or the format's safe zone (final wave P6).
  */
 export function measuredByBrowser(c: Composition, id: string): boolean {
-  for (const t of c.tracks) for (const clip of t.clips) if (clip.id === id) return clip.type === 'text' && (clip.props.width !== undefined || clip.props.height !== undefined);
+  for (const t of c.tracks) for (const clip of t.clips) if (clip.id === id) return clip.type === 'text';
   return false;
 }
 

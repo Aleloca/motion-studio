@@ -74,7 +74,7 @@ export async function renderFrames(o: RenderFramesOptions): Promise<RenderFrames
     server = o.server ?? await startCompositionServer({ uiOrigins: [], distDir });
     session = await server.mintSession({
       creativeDir: o.dir, versionDir: o.versionDir, format: o.format.id, composition: c, mode: 'render', ttlMs: (o.timeLimitMs ?? 300_000) + 60_000,
-      ...(o.media ? { media: o.media } : {}),
+      ...(o.media ? { media: o.media } : {}), ...(o.format.safeZone ? { safeZone: o.format.safeZone } : {}),
     });
     const clock = await readRegularFile(join(distDir, 'clock.js'), 1024 * 1024).catch(() => null);
     page = await o.provider.open({

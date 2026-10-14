@@ -665,9 +665,9 @@ export class LocalizeService {
 
   /**
    * The open problems of every pair, split into those a translation can fix (missing entries, a text out of its box, a voice
-   * longer than its clip) and the others. Overflow: for a clip with an explicit box (width or height), the browser's measure
+   * longer than its clip) and the others. Overflow: for a text clip the browser measures (`measuredByBrowser`), its measure
    * of the localized composition when the preview renderer can run it (Ruling I), else the glyph-width estimate stored with the
-   * overlay; clips without an explicit box keep the estimate (the runtime does not measure them).
+   * overlay. Since the final wave (P6) the runtime measures every text clip (a free dimension within the frame or safe zone).
    */
   private async assess(ref: CreativeRef, creativeDir: string, n: number, pairs: Map<string, Pair>, ui: Locale, signal: AbortSignal):
     Promise<Map<string, { fixable: string[]; other: string[] }>> {
@@ -682,7 +682,7 @@ export class LocalizeService {
       fixable.push(...missing.map((id) => va.notTranslated({ clip: clipLabel(comp, id) })));
       if (cur) {
         const estimates = new Map(Object.keys(cur.overlay.texts).map((id) => [va.textOverflow({ clip: clipLabel(comp, id) }), id] as const));
-        const boxed = (id: string) => measuredByBrowser(comp, id);
+        const measuredClip = (id: string) => measuredByBrowser(comp, id);
         let measured: string[] | null = null;
         if (this.deps.previews && Object.keys(cur.overlay.texts).length > 0 && !signal.aborted) {
           if (pair.measured?.hash === cur.hash) measured = pair.measured.ids;
@@ -697,14 +697,14 @@ export class LocalizeService {
         for (const p of cur.row.problems ?? []) {
           const id = estimates.get(p);
           // The estimate stands only where the browser did not measure.
-          if (id !== undefined) { if (!(measured && boxed(id))) fixable.push(p); continue; }
+          if (id !== undefined) { if (!(measured && measuredClip(id))) fixable.push(p); continue; }
           // A measure recorded earlier (a render, an earlier attempt) is replaced by this one when there is one.
           if (measuredTexts.has(p)) { if (!measured) fixable.push(p); continue; }
           if (!other.includes(p)) other.push(p);
         }
         if (measured) {
           for (const id of measured) {
-            if (!Object.hasOwn(cur.overlay.texts, id) || cur.row.stale.includes(id) || !boxed(id)) continue;
+            if (!Object.hasOwn(cur.overlay.texts, id) || cur.row.stale.includes(id) || !measuredClip(id)) continue;
             fixable.push(va.textOverflowMeasured({ clip: clipLabel(comp, id), fit: Math.round((cur.overlay.fit[id] ?? 1) * 100) }));
           }
         }
@@ -798,11 +798,11 @@ export class LocalizeService {
           voiceRoots: voiceRootsOf(ic, ref.projectDir), scripts: pair.group.scripts });
         // The estimate's overflow stands only where the browser did not measure (see `assess`); the measured one is added.
         const comp = ic.composition;
-        const boxed = (id: string) => measuredByBrowser(comp, id);
+        const measuredClip = (id: string) => measuredByBrowser(comp, id);
         const measured = pair.measured;
-        const issues: LocalizationIssue[] = done.issues.filter((i) => !(measured && i.code === 'textOverflow' && i.clipId !== undefined && boxed(i.clipId)));
+        const issues: LocalizationIssue[] = done.issues.filter((i) => !(measured && i.code === 'textOverflow' && i.clipId !== undefined && measuredClip(i.clipId)));
         if (measured) {
-          for (const id of measured.ids) if (Object.hasOwn(done.overlay.texts, id) && !done.stale.includes(id) && boxed(id)) issues.push({ code: 'textOverflowMeasured', clipId: id, message: va.textOverflowMeasured({ clip: clipLabel(comp, id), fit: Math.round((done.overlay.fit[id] ?? 1) * 100) }) });
+          for (const id of measured.ids) if (Object.hasOwn(done.overlay.texts, id) && !done.stale.includes(id) && measuredClip(id)) issues.push({ code: 'textOverflowMeasured', clipId: id, message: va.textOverflowMeasured({ clip: clipLabel(comp, id), fit: Math.round((done.overlay.fit[id] ?? 1) * 100) }) });
         }
         for (const id of this.missing(pair, done.overlay, done.stale)) issues.push({ code: 'notTranslated', clipId: id, message: va.notTranslated({ clip: clipLabel(comp, id) }) });
         for (const [id, vp] of pair.voiceProblems) issues.push({ code: vp.code, clipId: id, message: vp.text });

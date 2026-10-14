@@ -17,6 +17,8 @@ export interface MountOptions {
   report(e: RuntimeError): void;
   /** Native-time limits (ms). Generous by default: render machines can be heavily loaded. */
   timeouts?: { load?: number; seek?: number; layer?: number };
+  /** The format's safe zone (insets): the room of a text clip without an explicit box (render-mode measure). */
+  safeZone?: { top: number; bottom: number; left: number; right: number };
 }
 
 export interface ReadyInfo { duration: number; fps: number; width: number; height: number; frames: number }
@@ -712,24 +714,38 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
   let readyPromise: Promise<ReadyInfo> | null = null;
   let loadPromise: Promise<void> | null = null;
   /**
-   * Render mode (Phase 12, Ruling I): each text clip with an explicit width or height is laid out once, hidden, with its fonts
-   * loaded, and a text that needs more room than its box (its scroll size past its client size, in the dimensions the clip
-   * sets) is reported as an advisory `textOverflow`. Never throws; nothing is changed on screen.
+   * Render mode (Phase 12, Ruling I): each text clip is laid out once, hidden, with its fonts loaded, and a text that needs
+   * more room than it has is reported as an advisory `textOverflow`. Never throws; nothing is changed on screen.
+   * - A dimension the clip sets (width, height) is its box: the text's scroll size past its client size in it.
+   * - A dimension it leaves free (no height, or neither: final wave P6) is bounded by the frame, or by the format's safe zone
+   *   when it has one: the text, placed at the clip's x/y, must end inside it (right and bottom edges).
    */
+  const room = opts.safeZone
+    ? { right: c.width - opts.safeZone.right, bottom: c.height - opts.safeZone.bottom }
+    : { right: c.width, bottom: c.height };
   const measureText = () => {
     if (opts.mode !== 'render' || destroyed) return;
     for (const m of mounted) {
       if (m.clip.type !== 'text') continue;
       const p = m.clip.props;
-      if (p.width === undefined && p.height === undefined) continue;
       try {
         const { display, visibility } = m.box.style;
         Object.assign(m.box.style, { display: 'block', visibility: 'hidden' });
         const need = { w: m.content.scrollWidth, h: m.content.scrollHeight };
         const box = { w: m.content.clientWidth, h: m.content.clientHeight };
+        const outer = { w: m.box.offsetWidth, h: m.box.offsetHeight };
         Object.assign(m.box.style, { display, visibility });
-        const over = (p.width !== undefined && need.w > box.w + 1) || (p.height !== undefined && need.h > box.h + 1);
-        if (over && box.w > 0 && box.h > 0) report('textOverflow', `text overflows its box: needs ${need.w}x${need.h}, box ${box.w}x${box.h}`, m.clip.id);
+        if (p.width !== undefined || p.height !== undefined) {
+          const over = (p.width !== undefined && need.w > box.w + 1) || (p.height !== undefined && need.h > box.h + 1);
+          if (over && box.w > 0 && box.h > 0) { report('textOverflow', `text overflows its box: needs ${need.w}x${need.h}, box ${box.w}x${box.h}`, m.clip.id); continue; }
+        }
+        if (p.height === undefined) {
+          // The free dimensions end where the frame (or its safe zone) ends.
+          const right = (p.x ?? 0) + Math.max(outer.w, need.w);
+          const bottom = (p.y ?? 0) + Math.max(outer.h, need.h);
+          const over = (p.width === undefined && right > room.right + 1) || bottom > room.bottom + 1;
+          if (over && need.w > 0 && need.h > 0) report('textOverflow', `text overflows the frame: reaches ${Math.round(right)}x${Math.round(bottom)}, room ${room.right}x${room.bottom}`, m.clip.id);
+        }
       } catch { /* advisory only */ }
     }
   };

@@ -6,7 +6,7 @@ import { pipeline } from 'node:stream/promises';
 import type { FileHandle } from 'node:fs/promises';
 import type { Stats } from 'node:fs';
 import { COMPOSITION_MAX_BYTES, INSTANCE_FOLDER_RE, isCompositionPath } from '@motion-studio/shared';
-import { injectLayerBootstrap, renderRuntimePage, RUNTIME_FILES } from '@motion-studio/composition-runtime/page';
+import { injectLayerBootstrap, renderRuntimePage, RUNTIME_FILES, safeZoneOf, type SafeZone } from '@motion-studio/composition-runtime/page';
 import { RUNTIME_DIST_DIR } from '@motion-studio/composition-runtime/dist';
 import { withConfinedFile } from '../brand/agent-guard.ts';
 import { readRegularFile } from '../safe-read.ts';
@@ -134,6 +134,11 @@ export interface MintSessionOptions {
    * lenient rule). Without it the composition is inlined as given (the agent's schema forbids those fields anyway).
    */
   media?: SessionMedia;
+  /**
+   * The format's safe zone (insets), when its preset has one (Phase 12 final wave P6): inlined with the composition, so the
+   * render-mode text measure bounds a text clip without an explicit box by it.
+   */
+  safeZone?: { top: number; bottom: number; left: number; right: number };
 }
 
 /** One normalised video file and the values ffprobe read from it (media-normalize.ts). */
@@ -235,6 +240,8 @@ interface Session {
   staging: { dir: string; dev: number; ino: number } | null;
   /** The localized preview's project files (preview only): the real project folder and the sha256 of each served path. */
   locale: { dir: string; dev: number; ino: number; files: Map<string, string> } | null;
+  /** The format's safe zone, inlined in the runtime page (checked by `safeZoneOf`). */
+  safeZone: SafeZone | undefined;
 }
 
 /** Project folders a localized preview may serve from, and the largest such file. */
@@ -540,6 +547,7 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
         if (page.kind !== 'file') return notFound();
         const html = renderRuntimePage(page.data.toString('utf8'), {
           base: `../${session.versionDir}/compositions/${session.format}/`, composition: session.composition,
+          ...(session.safeZone ? { safeZone: session.safeZone } : {}),
         });
         const body = Buffer.from(html, 'utf8');
         const pageHeaders: Record<string, string | string[]> = {
@@ -669,7 +677,7 @@ export async function startCompositionServer(opts: CompositionServerOptions): Pr
       const data: Session = {
         versionSegments: segs, versionDir: segs.join('/'), format: o.format, compDir, compDev: dirInfo.dev, compIno: dirInfo.ino,
         composition: media ? withSessionMedia(o.composition, media.bySrc) : o.composition, frameAncestors, sandboxed: o.mode === 'preview',
-        media: media?.session ?? null, realCreative, staging: null, locale: null,
+        media: media?.session ?? null, realCreative, staging: null, locale: null, safeZone: safeZoneOf(o.safeZone),
       };
       const { token, expiresAt } = tokens.mint(data, ttl);
       const preview = o.mode === 'preview';

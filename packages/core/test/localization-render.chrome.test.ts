@@ -132,6 +132,36 @@ describe.skipIf(!tools.ok)('localized renders in real Chrome', () => {
     expect(over.map((e) => e.clipId).sort()).toEqual(['title', 'title2']);
   });
 
+  it('a text clip without an explicit box (or with a width only) is measured against the frame, or the safe zone (final wave P6)', { timeout: 300_000 }, async () => {
+    const dir = join(work, 'unboxed-creative');
+    const comp = join(dir, 'outputs', 'v1', 'compositions', PRESET.id);
+    mkdirSync(join(comp, 'assets'), { recursive: true });
+    copyFileSync(FONT, join(comp, 'assets', 'Mono.woff2'));
+    const text = (id: string, props: Record<string, unknown>) => ({ id, name: id, type: 'text', start: 0, duration: 0, props: { fontFamily: 'Mono', color: '#ffffff', ...props } });
+    const c = {
+      ...composition('x'),
+      tracks: [{ id: 'v', kind: 'visual', clips: [
+        // No box: a long German string wraps at the frame's right edge and runs past its bottom.
+        text('long', { x: 10, y: 60, fontSize: 28, text: LONG_DE }),
+        // No box, short: inside the frame.
+        text('short', { x: 10, y: 10, fontSize: 20, text: 'Hallo' }),
+        // A width only: it wraps in its 140 px and runs past the bottom.
+        text('narrow', { x: 170, y: 40, width: 140, fontSize: 20, text: LONG_DE }),
+        // No box, inside the frame but below a safe zone that leaves the bottom 100 px out.
+        text('low', { x: 10, y: 120, fontSize: 20, text: 'Hallo Welt' }),
+      ] }],
+    };
+    writeFileSync(join(comp, 'composition.json'), JSON.stringify(c));
+    const engine = createRenderEngine({ provider: async () => new ChromeProvider({ exe: tools.chrome!.exe, kind: 'system', limits: { timeLimitMs: 10 * 60_000 } }) });
+    const measure = async (format: FormatPreset) => {
+      const r = await engine.frames({ dir, versionDir: 'outputs/v1', composition: c as unknown as Composition, format, times: [0], width: 64, imageFormat: 'jpeg',
+        signal: new AbortController().signal, distDir: dist });
+      return r.errors.filter((e) => e.code === 'textOverflow').map((e) => e.clipId).sort();
+    };
+    expect(await measure(PRESET)).toEqual(['long', 'narrow']);
+    expect(await measure({ ...PRESET, safeZone: { top: 0, bottom: 100, left: 0, right: 0 } })).toEqual(['long', 'low', 'narrow']);
+  });
+
   it('a short translation: no overflow measured; the primary render of an overflowing source neither fails nor gains a problem', { timeout: 300_000 }, async () => {
     const { slug, store, format } = await creative(LONG_DE);
     const put = await app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}/versions/1/localizations/de/${encodeURIComponent(format)}`, headers: H, payload: { texts: { title: 'Hallo' } } });
