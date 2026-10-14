@@ -1167,3 +1167,16 @@ Legenda impatto: 🟢 basso · 🟡 medio · 🔴 alto (sicurezza o prodotto).
     *Costo cambio:* nullo.
 669. 🟢 **Se l'avvio del run fallisce, le parole già nel prompt non si perdono (M3).** Per le creatività tornano in coda; per la console il job fallisce dicendo che il messaggio non è arrivato all'agente.
     *Costo cambio:* nullo.
+
+### Fase 13 · Ondata finale, parte 1, giro di correzioni 2
+
+670. 🟡 **Ruling AA: con la sandbox spenta il blocco delle impostazioni è un rilevamento al meglio, non un confine.** Senza sandbox l'agente ha l'accesso ai file dell'utente, comprese le cartelle di Motion Studio: niente HMAC nel portachiavi. Il blocco ora funziona solo in un verso, cioè può solo stringere. Il record del blocco non viene mai copiato in `settings.json`: per ogni campo tenuto si usa il valore più restrittivo tra il blocco e il file. Un record falsificato quindi non può mai allargare nulla. I campi tenuti sono `sandboxMode`, `autoApproveSandboxed`, `confirmPaidProviders`, `agentLiveInput`, `agentInterrupt`, `extraAllowedDomains` (solo l'intersezione), `model` (solo se coincide, altrimenti quello predefinito della CLI) e `maxConcurrentJobs` (il minore). Dal file arrivano solo i campi estetici. Sostituisce le parti corrispondenti delle voci 663 e 665.
+    *Costo cambio:* basso.
+671. 🟡 **Un blocco che non si può conservare si fa sentire.** Se il record non si può salvare o leggere, oppure la sua cartella non si può usare (per esempio è bloccata con `chflags uchg`), il Doctor mostra una riga. I lavori dell'agente senza sandbox vengono rifiutati con un motivo tradotto (409 `settings-hold-broken`) finché l'utente non salva le impostazioni nell'app. Prima di questo Motion Studio rende di nuovo propri i permessi della cartella e del file. Rimettere `settings.json` all'avvio significa renderlo restrittivo almeno quanto il blocco, mai copiarvi il record.
+    *Costo cambio:* basso.
+672. 🟢 **Salvataggio delle impostazioni con il file non scrivibile.** Prima Motion Studio ripristina i permessi di `.studio` e del file. Se la scrittura fallisce ancora, risponde con un errore tradotto (409 `settings-not-writable`) che nomina il file e dice cosa fare, non con un `EPERM` grezzo.
+    *Costo cambio:* nullo.
+673. 🟢 **Un `creative.json` illeggibile all'avvio ottiene lo stato del core "da migrare alla prima apertura riuscita".** La migrazione dei campi vecchi avviene a quella apertura, poi il segno viene tolto.
+    *Costo cambio:* nullo.
+674. 🟡 **Residuo: riselezionare la stessa area di lavoro durante un lavoro senza sandbox.** `PUT /api/workspace` crea un nuovo `WorkspaceStore`, mentre la protezione del lavoro in corso resta sul vecchio. Durante quel lavoro le impostazioni lette sono quelle del file, e un salvataggio fatto sul nuovo verrebbe annullato dal rilascio del vecchio. Esisteva già prima, non è corretto in quest'ondata: va risolto con un solo store per cartella, o con lo stato della protezione in un registro per cartella.
+    *Costo cambio:* basso.
