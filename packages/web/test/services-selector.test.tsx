@@ -195,11 +195,10 @@ describe('the composer "Services" chip', () => {
 describe('composer footer layout (D1)', () => {
   const css = readFileSync(resolve(import.meta.dirname, '../src/components/conversation.css'), 'utf8');
   const rule = (sel: string) => css.split('}').map((r) => r.trim()).find((r) => r.replace(/\/\*[\s\S]*?\*\//g, '').trim().startsWith(sel + ' {'))!.replace(/\/\*[\s\S]*?\*\//g, '');
-  it('the hint stays on one line with an ellipsis and the Services chip shrinks first', () => {
+  it('the hint stays on one line and the Services chip never shrinks (UX feedback 1: it is no longer clipped)', () => {
     const hint = rule('.ms-composer-hint');
     expect(hint).toMatch(/white-space:\s*nowrap/); expect(hint).toMatch(/text-overflow:\s*ellipsis/); expect(hint).toMatch(/overflow:\s*hidden/);
-    const shrink = (r: string) => Number(/flex:\s*\S+\s+(\d+)/.exec(r)![1]);
-    expect(shrink(rule('.ms-composer-foot > .ms-services-chip'))).toBeGreaterThan(shrink(hint));
+    expect(rule('.ms-composer-foot > .ms-services-chip')).toMatch(/flex:\s*none/);
   });
   it('renders the chip and the hint as siblings in the footer', () => {
     const { container } = render(en(<Conversation slug="acme" creative="c1" entries={[]} approvals={[]} job={undefined} brief={brief} />));

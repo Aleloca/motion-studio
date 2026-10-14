@@ -787,6 +787,7 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, latestJobId, sn
           placeholder={placeholder} aria-keyshortcuts={isMac() ? 'Meta+Enter' : 'Control+Enter'} />
         {working && redirect && <p className="ms-composer-note">{u.redirectNote}</p>}
         {working && !redirect && capsNow && !caps.liveInput && <p className="ms-composer-note">{u.queueOnly}</p>}
+        {working && !redirect && capsNow && caps.liveInput && <p className="ms-composer-note">{u.liveNote}</p>}
         {notice && <p role="status" className="ms-composer-note">{notice}</p>}
         {error && <p role="alert" className="ms-composer-error">{error}</p>}
         <div className="ms-composer-foot">
@@ -805,19 +806,19 @@ function Composer({ outbox, onQueueChanged, slug, creative, job, latestJobId, sn
           )}
           {working && redirect && (
             <>
-              <Button size="sm" variant="ghost" onClick={() => setRedirect(false)}>{u.cancelRedirect}</Button>
-              <Button type="submit" size="sm" variant="accent" aria-label={u.redirect} disabled={!canSend}><Icon name="forward" size={13} />{u.redirect}</Button>
+              <Button size="sm" variant="ghost" className="ms-composer-act" aria-label={u.cancelRedirect} title={u.cancelRedirect} onClick={() => setRedirect(false)}><Icon name="close" size={12} /><span className="ms-composer-text">{u.cancelRedirect}</span></Button>
+              <Button type="submit" size="sm" variant="accent" className="ms-composer-act" aria-label={u.redirect} title={u.redirect} disabled={!canSend}><Icon name="forward" size={13} /><span className="ms-composer-text">{u.redirect}</span></Button>
             </>
           )}
           {working && !redirect && capsNow === null && (
-            <Button type="submit" size="sm" variant="accent" aria-label={u.send} loading disabled><Icon name="upload" size={13} strokeWidth={1.8} />{u.send}</Button>
+            <Button type="submit" size="sm" variant="accent" className="ms-composer-act" aria-label={u.send} title={u.send} loading disabled><Icon name="upload" size={13} strokeWidth={1.8} /><span className="ms-composer-text">{u.send}</span></Button>
           )}
           {working && !redirect && capsNow && !caps.liveInput && (
-            <Button type="submit" size="sm" variant="accent" aria-label={u.queue} disabled={!canSend}><Icon name="upload" size={13} strokeWidth={1.8} />{u.queue}</Button>
+            <Button type="submit" size="sm" variant="accent" className="ms-composer-act" aria-label={u.queue} title={u.queue} disabled={!canSend}><Icon name="upload" size={13} strokeWidth={1.8} /><span className="ms-composer-text">{u.queue}</span></Button>
           )}
           {working && !redirect && capsNow && caps.liveInput && (
             <SplitAction variant="accent" menuLabel={u.sendMore} groupLabel={u.send} disabled={!canSend}
-              primary={<Button type="submit" size="sm" variant="accent" aria-label={u.send} disabled={!canSend}><Icon name="upload" size={13} strokeWidth={1.8} />{u.send}</Button>}
+              primary={<Button type="submit" size="sm" variant="accent" className="ms-composer-act" aria-label={u.send} title={u.send} disabled={!canSend}><Icon name="upload" size={13} strokeWidth={1.8} /><span className="ms-composer-text">{u.send}</span></Button>}
               items={[{ key: 'queue', label: u.queue, onSelect: () => void sendWhileWorking('queued') }]} />
           )}
         </div>

@@ -129,7 +129,7 @@
 .ms-convo-empty { margin: auto 0; }
 
 /* ---------- composer ---------- */
-.ms-composer { padding: 12px 14px; border-top: 1px solid var(--line2); }
+.ms-composer { padding: 12px 14px; border-top: 1px solid var(--line2); container: ms-composer / inline-size; }
 .ms-composer-box {
   display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 12px; background: var(--panel);
   box-shadow: inset 0 0 0 1px var(--line); transition: box-shadow var(--d-s) var(--e-std);
@@ -153,8 +153,25 @@
 .ms-composer .ms-textarea:focus, .ms-composer .ms-textarea:focus-visible { box-shadow: none; }
 .ms-composer-foot { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .ms-composer-hint { font-size: 11px; color: var(--faint); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The Services chip gives way first (its summary ellipsizes); the hint stays on one line. */
-.ms-composer-foot > .ms-services-chip { flex: 0 100 auto; overflow: hidden; }
+/* The chip is never clipped; the hint is the only part that gives way, and it disappears whole rather than being cut. */
+.ms-composer-foot > .ms-services-chip { flex: none; max-width: none; }
+.ms-composer-foot > .ms-services-chip .ms-services-chip-sum { max-width: 24ch; }
+.ms-composer-act { flex: none; white-space: nowrap; }
+/* Narrow behaviour follows the composer's own width (container query), never the viewport: 600 px of content and under, the
+   hint and the services summary go; 470 and under, the chip, the send and the redirect buttons are icon-only (their name and
+   tooltip stay). The Stop button keeps its word. */
+@container ms-composer (max-width: 600px) {
+  .ms-composer-hint { display: none; }
+  .ms-composer-foot > .ms-services-chip .ms-services-chip-sum { display: none; }
+  .ms-composer-foot { justify-content: flex-end; }
+  .ms-composer-foot > .ms-services-chip { margin-right: auto; }
+}
+@container ms-composer (max-width: 470px) {
+  .ms-composer-foot > .ms-services-chip { width: 28px; padding: 0; justify-content: center; }
+  .ms-composer-foot > .ms-services-chip .ms-services-chip-label { display: none; }
+  .ms-composer-act { width: 28px; padding: 0; justify-content: center; }
+  .ms-composer-act .ms-composer-text { display: none; }
+}
 .ms-composer-send { border-radius: 50%; box-shadow: none; }
 .ms-composer-error { margin: 0; font-size: 12px; color: var(--warn); overflow-wrap: anywhere; }
 

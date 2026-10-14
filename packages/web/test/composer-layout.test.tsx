@@ -4,18 +4,16 @@
  * mid-word, the Stop and send buttons have the same height, the Services chip is never cut. Without Chrome the measuring
  * test is skipped (MS_REQUIRE_CHROME=1 makes the missing browser a failure); the CSS-rule tests always run.
  */
-import { execFile } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { AgentCapabilities, Brief, JobSummary } from '@motion-studio/shared';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../src/i18n.tsx';
-import { BASE_FLAGS } from '../../core/src/render/isolation.ts';
-import { findSystemChrome } from '../../core/src/render/system-chrome.ts';
+// The repo's proven Chrome driver (CDP over a pipe; it passes --use-mock-keychain and --password-store=basic, as BASE_FLAGS does).
+import { findChrome, launchChrome, type Browser } from '../../composition-runtime/test/support/chrome.ts';
 
 let caps: AgentCapabilities = { cliVersion: null, liveInput: true, interrupt: true, checkedAt: '2026-10-14T10:00:00.000Z' };
 const api = {
@@ -33,13 +31,13 @@ const running: JobSummary = { id: 'j1', key: 'creative:k', kind: 'creative', lab
 const brief = { services: {} } as unknown as Brief;
 const required = process.env.MS_REQUIRE_CHROME === '1';
 // Real Chrome only on request (MS_REQUIRE_CHROME=1 or MS_LAYOUT_CHROME=1): a launch can raise OS dialogs.
-const chrome = required || process.env.MS_LAYOUT_CHROME === '1' ? await findSystemChrome() : null;
+const chrome = required || process.env.MS_LAYOUT_CHROME === '1' ? findChrome() : null;
 
 describe('busy composer: CSS rules', () => {
   const conv = src('components/conversation.css');
   it('the composer is a size container and narrow behaviour comes from its width, not the viewport', () => {
-    expect(conv).toMatch(/\.ms-composer\s*\{[^}]*container-type:\s*inline-size/);
-    expect(conv).toMatch(/@container[^{]*\(max-width:\s*\d+px\)/);
+    expect(conv).toMatch(/\.ms-composer\s*\{[^}]*container:[^;}]*inline-size/);
+    expect(conv).toMatch(/@container ms-composer[^{]*\(max-width:\s*\d+px\)/);
     expect(conv).not.toMatch(/@media[^{]*(max|min)-width[^{]*\{[^}]*ms-composer/);
   });
   it('the narrow rules go icon-only and drop the hint', () => {
@@ -65,7 +63,7 @@ async function markup(mode: 'live' | 'queue' | 'redirect', locale: 'en' | 'it'):
   return html;
 }
 
-const MEASURE = `
+const MEASURE = `(() => {
 const out = [];
 const form = document.querySelector('form.ms-composer');
 const foot = form.querySelector('.ms-composer-foot');
@@ -89,28 +87,28 @@ const send = h('button[type=submit]');
 if (stop !== null && send !== null && Math.abs(stop - send) > 0.5) problems.push('heights differ ' + stop + ' vs ' + send);
 const chip = foot.querySelector('.ms-services-chip');
 const lines = [...form.querySelectorAll('.ms-composer-note')].filter(vis).length;
-document.getElementById('out').textContent = JSON.stringify({ problems, hint: !!foot.querySelector('.ms-composer-hint') && vis(foot.querySelector('.ms-composer-hint')), chip: !!chip && vis(chip), chipW: chip && chip.getBoundingClientRect().width, notes: lines, stop, send });
-`;
+return ({ problems, hint: !!foot.querySelector('.ms-composer-hint') && vis(foot.querySelector('.ms-composer-hint')), chip: !!chip && vis(chip), chipW: chip && chip.getBoundingClientRect().width, notes: lines, stop, send });
+})()`;
 
 const run = chrome ? describe : describe.skip;
 if (!chrome && required) it('Chrome is required (MS_REQUIRE_CHROME=1)', () => { throw new Error('missing Chrome (set CHROME_PATH)'); });
 
 run('busy composer: real Chrome layout', () => {
   let dir = '';
-  beforeAll(() => { dir = mkdtempSync(join(tmpdir(), 'ms-composer-layout-')); });
-  afterAll(() => { rmSync(dir, { recursive: true, force: true }); });
+  let browser: Browser;
+  beforeAll(async () => { dir = mkdtempSync(join(tmpdir(), 'ms-composer-layout-')); browser = await launchChrome(chrome!); }, 120_000);
+  afterAll(async () => { await browser?.close(); rmSync(dir, { recursive: true, force: true }); }, 60_000);
 
   async function measure(html: string, width: number, name: string) {
     const page = `<!doctype html><html lang="en"><head><meta charset="utf-8"><style>${CSS}
-      body{margin:0} #w{width:${width}px;box-sizing:border-box}</style></head><body><div id="w">${html}</div><pre id="out"></pre><script>${MEASURE}</script></body></html>`;
+      body{margin:0} #w{width:${width}px;box-sizing:border-box}</style></head><body><div id="w">${html}</div></body></html>`;
     const file = join(dir, `${name}-${width}.html`);
-    const profile = join(dir, `profile-${name}-${width}`);
-    mkdirSync(profile);
     writeFileSync(file, page);
-    const { stdout } = await promisify(execFile)(chrome!.exe, [...BASE_FLAGS, '--headless=new', '--disable-gpu', `--user-data-dir=${profile}`, `--window-size=${width},900`, '--dump-dom', `file://${file}`], { timeout: 60_000, maxBuffer: 1 << 24 });
-    const m = />(\{"problems".*?\})<\/pre>/.exec(stdout.replace(/&quot;/g, '"'));
-    if (!m) throw new Error(`no measurement at ${width}: ${stdout.slice(-300)}`);
-    return JSON.parse(m[1]!) as { problems: string[]; hint: boolean; chip: boolean; chipW: number; notes: number; stop: number | null; send: number | null };
+    const tab = await browser.newPage(width, 900);
+    try {
+      await tab.goto(`file://${file}`);
+      return await tab.eval<{ problems: string[]; hint: boolean; chip: boolean; chipW: number; notes: number; stop: number | null; send: number | null }>(MEASURE, 30_000);
+    } finally { await tab.close(); }
   }
 
   for (const locale of ['en', 'it'] as const) {
