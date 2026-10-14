@@ -51,6 +51,8 @@ The `AgentLauncher` is the only place where an agent starts. For each job (`crea
 4. registers the job in the bridge, writes into `<configDir>/run/` (0700) a token file and the MCP configuration (0600; the token never goes through argv or the environment);
 5. starts the runner with `unsetEnv` = provider keys and bridge token, and at the end or on cancellation revokes the token, cancels pending approvals and deletes the files.
 
+Without the sandbox the launcher also guards the workspace settings (`WorkspaceStore.guardSettings`, `settings-hold.ts`). During the run the settings are those it started with, and afterwards the file is put back. If that fails, the security-relevant fields are held tighten-only (the stricter of the hold and the file) in `<configDir>/settings-hold/`, across restarts, until the revert succeeds or the user saves. If the hold itself cannot be kept, unsandboxed runs are refused (409 `settings-hold-broken`) until the user saves. This is best-effort detection: without the sandbox the agent has the user's file access, the config folder included. Console runs keep their process group alive, so a leftover child could still write after the release.
+
 The MCP tools available per job type are in `MCP_TOOLS`. Permissions that go beyond the perimeter reach the interface through the `approve` tool (`--permission-prompt-tool`).
 
 ## What a CodexRunner would need
