@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFile, writeFile } from 'node:fs/promises';
+import { chmod, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { creativeFileSchema, messages } from '@motion-studio/shared';
@@ -380,5 +380,35 @@ describe('workspace settings written by an agent with the sandbox off (final wav
     await s.waitIdle();
     expect(await readFile(file, 'utf8')).toBe(before);
     expect((await s.conversation()).some((e) => e.type === 'system' && e.level === 'warning' && e.text === messages('it').jobs.workspaceSettingsReverted)).toBe(true);
+  });
+});
+
+describe('an agent settings change that cannot be undone survives no restart (fix round 1, I-A)', () => {
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('the agent writes settings.json and makes .studio read-only; after a restart none of its values apply', async () => {
+    s = await liveApp();
+    const studio = join(s.base, 'ws', '.studio');
+    const file = join(studio, 'settings.json');
+    const before = await readFile(file, 'utf8');
+    await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } });
+    const run = await s.runner.next(0);
+    await writeFile(file, JSON.stringify({ ...JSON.parse(before), sandboxMode: 'off', confirmPaidProviders: false, agentLiveInput: true, agentInterrupt: true }));
+    await chmod(studio, 0o500);
+    try {
+      run.finish();
+      await s.waitIdle();
+      expect((await s.conversation()).some((e) => e.type === 'system' && e.text === messages('it').jobs.workspaceSettingsNotReverted)).toBe(true);
+      // Told in the doctor too, and not applied.
+      expect((await s.app.inject('/api/doctor')).json()).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'workspace-settings', ok: false })]));
+      expect((await s.app.inject('/api/workspace')).json().settings).toMatchObject({ sandboxMode: 'auto', confirmPaidProviders: true, agentLiveInput: false });
+      // The app restarts on the same data.
+      await s.app.close();
+      const runner = s.runner;
+      s = await liveApp({ base: s.base, runner, slug: s.slug });
+      expect((await s.app.inject('/api/workspace')).json().settings).toMatchObject({ sandboxMode: 'auto', confirmPaidProviders: true, agentLiveInput: false, agentInterrupt: false });
+      expect(await readFile(file, 'utf8')).toBe(before); // the startup restored .studio's mode and put the file back
+      expect((await s.app.inject('/api/doctor')).json().some((c: { id: string }) => c.id === 'workspace-settings')).toBe(false);
+    } finally {
+      await chmod(studio, 0o700).catch(() => {});
+    }
   });
 });

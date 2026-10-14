@@ -1,6 +1,7 @@
 import { assertNotRealUserData } from './app-config.ts';
 import { randomBytes } from 'node:crypto';
-import { access, constants, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { access, chmod, constants, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import type { SettingsHoldStore } from './settings-hold.ts';
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
@@ -123,6 +124,19 @@ async function writeThroughAtomic(path: string, text: string): Promise<void> {
   }
 }
 
+/**
+ * Fix round 1 (I-A): the fields an agent could use to get more power or to spend without asking; while an undone change is
+ * held, they come from the trusted copy whatever the file says.
+ */
+const HELD_FIELDS = ['sandboxMode', 'autoApproveSandboxed', 'confirmPaidProviders', 'agentLiveInput', 'agentInterrupt'] as const;
+/** The trusted copy's settings; unreadable or absent content holds the defaults (the safe values). */
+function parseHeld(raw: string | null): WorkspaceSettingsView {
+  if (raw !== null) {
+    try { const r = storedWorkspaceSettingsSchema.safeParse(JSON.parse(raw)); if (r.success) return r.data; } catch { /* defaults */ }
+  }
+  return workspaceSettingsSchema.parse({ schemaVersion: 1 });
+}
+
 export class WorkspaceStore {
   private readonly createLock = new KeyedMutex();
   private readonly projectLock = new KeyedMutex();
@@ -135,6 +149,8 @@ export class WorkspaceStore {
   private guarded = 0;
   private trusted: { raw: string | null; settings: WorkspaceSettingsView | null } | null = null;
   private untrusted = false;
+  /** Where a hold that must survive a restart is kept (the core's config folder); absent: memory only. */
+  private hold: SettingsHoldStore | null = null;
   private readonly settingsLock = new KeyedMutex();
   private constructor(public readonly root: string, private readonly git: Git) {}
 
@@ -160,10 +176,59 @@ export class WorkspaceStore {
 
   private settingsPath() { return join(this.root, '.studio', 'settings.json'); }
 
-  /** Never rewrites the file: invalid stored domains are skipped and listed in `droppedDomains`. */
+  /**
+   * Final wave fix round 1 (I-A): attaches the persisted hold (config folder). A hold left by an earlier run of the app (a
+   * change the core could not undo) is honoured from now on, and the revert is retried at once.
+   */
+  async attachSettingsHold(hold: SettingsHoldStore): Promise<void> {
+    this.hold = hold;
+    const rec = await hold.load(this.root).catch(() => null);
+    if (!rec) return;
+    await this.settingsLock.run('settings', async () => {
+      this.trusted = { raw: rec.raw, settings: parseHeld(rec.raw) };
+      this.untrusted = true;
+      await this.retryRevert();
+    });
+  }
+
+  /** Whether the settings file holds a change the core could not undo, so some of its fields are not applied (doctor). */
+  settingsHeld(): boolean { return this.untrusted; }
+
+  /** Under `settingsLock`: puts the trusted content back (`.studio`'s mode restored first); on success the hold ends. */
+  private async retryRevert(): Promise<boolean> {
+    const want = this.trusted;
+    if (!want) return false;
+    const dir = join(this.root, '.studio');
+    const st = await lstat(dir).catch(() => null);
+    if (st?.isDirectory() && !st.isSymbolicLink() && (process.getuid === undefined || st.uid === process.getuid()) && (st.mode & 0o700) !== 0o700) {
+      await chmod(dir, (st.mode & 0o777) | 0o700).catch(() => {});
+    }
+    try {
+      const now = await readFile(this.settingsPath(), 'utf8').catch(() => null);
+      if (now !== want.raw) {
+        if (want.raw === null) await rm(this.settingsPath(), { force: true });
+        else await writeThroughAtomic(this.settingsPath(), want.raw);
+      }
+    } catch { return false; }
+    this.untrusted = false;
+    await this.hold?.clear(this.root).catch(() => {});
+    if (this.guarded === 0) this.trusted = null;
+    return true;
+  }
+
+  /**
+   * Never rewrites the file: invalid stored domains are skipped and listed in `droppedDomains`. During an unsandboxed run
+   * the settings are those it started with; while a change could not be undone, the held fields come from the trusted copy.
+   */
   async readSettings(): Promise<WorkspaceSettingsView> {
     const held = this.trusted?.settings;
-    if (held && (this.guarded > 0 || this.untrusted)) return structuredClone(held);
+    if (held && this.guarded > 0) return structuredClone(held);
+    if (held && this.untrusted) {
+      const file = await readJsonFile<WorkspaceSettingsView>(this.settingsPath(), storedWorkspaceSettingsSchema).catch(() => null);
+      if (!file) return structuredClone(held);
+      const kept = Object.fromEntries(HELD_FIELDS.map((k) => [k, held[k]]));
+      return { ...file, ...kept };
+    }
     return readJsonFile<WorkspaceSettingsView>(this.settingsPath(), storedWorkspaceSettingsSchema);
   }
 
@@ -173,9 +238,11 @@ export class WorkspaceStore {
       const parsed = workspaceSettingsSchema.safeParse({ ...current, ...patch, schemaVersion: 1 });
       if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidSettings({ fields: parsed.error.issues.map((i) => i.path.join('.')).join(', ') }));
       await writeJsonFileAtomic(this.settingsPath(), parsed.data);
-      // The user's own save: it is the trusted content from now on (and confirms it after a change that could not be undone).
-      if (this.trusted) this.trusted = { raw: await readFile(this.settingsPath(), 'utf8').catch(() => null), settings: structuredClone(parsed.data) };
-      this.untrusted = false;
+      // The user's own save: it is the trusted content from now on (and confirms it after a change that could not be
+      // undone). Taken from what was written, never re-read from the file (fix round 1, M1: an agent write could land
+      // between the rename and a read).
+      if (this.trusted) this.trusted = { raw: `${JSON.stringify(parsed.data, null, 2)}\n`, settings: structuredClone(parsed.data) };
+      if (this.untrusted) { this.untrusted = false; await this.hold?.clear(this.root).catch(() => {}); }
       if (this.guarded === 0) this.trusted = null;
       return parsed.data;
     });
@@ -183,14 +250,15 @@ export class WorkspaceStore {
 
   /**
    * Final wave P9: call before an agent run without the sandbox; call the returned function once the run is over. It says
-   * whether the settings file changed meanwhile and whether the change was undone.
+   * whether the settings file changed meanwhile and whether the change was undone. A change not undone earlier is retried
+   * first; while it still cannot be undone, the trusted copy stays the one held.
    */
   async guardSettings(): Promise<() => Promise<SettingsCheck>> {
     await this.settingsLock.run('settings', async () => {
+      if (this.untrusted) await this.retryRevert();
       if (this.guarded === 0 && !this.untrusted) {
         const raw = await readFile(this.settingsPath(), 'utf8').catch(() => null);
-        const settings = await readJsonFile<WorkspaceSettingsView>(this.settingsPath(), storedWorkspaceSettingsSchema).catch(() => null);
-        this.trusted = { raw, settings };
+        this.trusted = { raw, settings: parseHeld(raw) };
       }
       this.guarded++;
     });
@@ -208,8 +276,10 @@ export class WorkspaceStore {
           else await writeThroughAtomic(this.settingsPath(), want.raw);
           out = { changed: true, reverted: true };
         } catch {
-          // Not undone: the trusted content stays in force until the user saves the settings.
+          // Not undone: the trusted copy stays in force, also after a restart (held in the config folder), until the revert
+          // succeeds (retried at startup and at the next guard) or the user saves the settings.
           this.untrusted = true;
+          await this.hold?.save(this.root, want.raw).catch(() => {});
           out = { changed: true, reverted: false };
         }
       }

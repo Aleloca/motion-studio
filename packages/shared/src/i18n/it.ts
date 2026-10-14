@@ -236,6 +236,8 @@ export const it: Messages = {
     shellPathFallback: (p) => `PATH di riserva: ${p.reason}`,
     unknownReason: 'motivo sconosciuto',
     workspacePathLabel: 'Percorso della cartella di lavoro',
+    workspaceSettingsLabel: "Impostazioni dell'area di lavoro",
+    workspaceSettingsFix: 'Apri le impostazioni, controllale e salvale: così le confermi e il blocco finisce.',
     workspacePathGlob: 'Il percorso contiene [ ] * o ?: la sandbox protegge meno i registri di Motion Studio (macOS) o non li protegge affatto (Linux)',
     workspacePathFix: 'Sposta la cartella di lavoro in un percorso senza questi caratteri, poi sceglila di nuovo',
     shellPathFix: 'Se mancano programmi, avvia Motion Studio dal terminale o controlla i file di avvio della shell',

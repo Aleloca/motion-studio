@@ -64,6 +64,7 @@ import { CONSOLE_REDIRECT_NOTE, defuseTags, pinLine, USER_REQUEST_CLOSE, USER_RE
 import { stopJob } from '../jobs/stop.ts';
 import { randomUUID } from 'node:crypto';
 import { CreativeSideStateStore } from '../creatives/creative-side-state.ts';
+import { SettingsHoldStore } from '../settings-hold.ts';
 import { z } from 'zod';
 import { LIVE_LIMITS, pinSchema, SESSION_ID_RE, type RedirectOutcome } from '@motion-studio/shared';
 
@@ -287,11 +288,15 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // Phase 13 (final review I1): each creative's queue and remembered session, in the config folder the agent is denied
   // (in memory without an explicit one, like the integrity records). Made before the workspace recovery, which uses it.
   const sideState = deps.sideState ?? new CreativeSideStateStore(deps.configDir ?? null);
+  // Fix round 1 (I-A): a workspace settings change an unsandboxed agent made and the core could not undo stays held across
+  // restarts (config folder; in memory without an explicit one).
+  const settingsHold = new SettingsHoldStore(deps.configDir ?? null);
   const configured = appConfig.workspacePath;
   if (configured) {
     try {
       // Never recreate a vanished workspace folder nor rewrite corrupt settings: report them instead.
       const ws = await WorkspaceStore.open(configured, deps.git, { create: false });
+      await ws.attachSettingsHold(settingsHold);
       queue.setConcurrency((await ws.readSettings()).maxConcurrentJobs);
       workspace = ws;
       await recoverWorkspace(ws, isJobActive, recoverOptions(ws.root));
@@ -471,7 +476,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // pid: lets a second launch check that the recorded server.json pid is really this server (pids get reused).
   app.get('/api/health', async () => ({ ok: true, pid: process.pid }));
-  app.get('/api/doctor', async () => deps.doctor({ sandbox: effectiveSandbox, workspacePath: workspace?.root ?? null, agentOptIn: await agentOptIn() }));
+  app.get('/api/doctor', async () => {
+    const checks = await deps.doctor({ sandbox: effectiveSandbox, workspacePath: workspace?.root ?? null, agentOptIn: await agentOptIn() });
+    // Fix round 1 (I-A): an agent change to the workspace settings the core could not undo, held across restarts.
+    if (workspace?.settingsHeld()) checks.push({ id: 'workspace-settings', label: t().doctor.workspaceSettingsLabel, required: false, ok: false, message: t().jobs.workspaceSettingsNotReverted, fix: t().doctor.workspaceSettingsFix });
+    return checks;
+  });
   // Phase 13: the effective capabilities (the path the next creative or console turn takes).
   app.get('/api/agent/capabilities', async (): Promise<AgentCapabilities> => capabilitiesFor(await claudeVersion(), await agentOptIn()));
 
@@ -489,6 +499,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const path = typeof raw === 'string' ? expandHome(raw.trim()) : '';
     if (!isAbsolute(path)) throw new WorkspaceError(400, t().errors.workspacePathAbsolute);
     const ws = await WorkspaceStore.open(path, deps.git);
+    await ws.attachSettingsHold(settingsHold);
     const settings = await ws.readSettings(); // corrupt settings → 422 before the choice is persisted
     await deps.appConfig.setWorkspacePath(path);
     // Re-selecting the workspace in use must not mark its running creatives as interrupted.

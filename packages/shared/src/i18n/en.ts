@@ -238,6 +238,8 @@ export const en = {
     shellPathFallback: (p: { reason: string }) => `Fallback PATH: ${p.reason}`,
     unknownReason: 'unknown reason',
     workspacePathLabel: 'Workspace folder path',
+    workspaceSettingsLabel: 'Workspace settings',
+    workspaceSettingsFix: 'Open the settings, check them and save them: that confirms them and ends the hold.',
     workspacePathGlob: 'The path contains [ ] * or ?: the sandbox protects Motion Studio\'s records less well (macOS) or not at all (Linux)',
     workspacePathFix: 'Move the workspace to a folder whose path has none of these characters, then choose it again',
     shellPathFix: 'If programs are missing, start Motion Studio from the terminal or check your shell startup files',

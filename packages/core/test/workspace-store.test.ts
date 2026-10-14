@@ -1,10 +1,11 @@
-import { chmod, mkdir, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { execCommand } from '../src/exec.ts';
 import { Git } from '../src/git.ts';
 import { slugify, WorkspaceError, WorkspaceStore } from '../src/workspace-store.ts';
+import { SettingsHoldStore } from '../src/settings-hold.ts';
 
 let base: string;
 beforeEach(async () => { base = await mkdtemp(join(tmpdir(), 'ms-ws-')); });
@@ -240,5 +241,80 @@ describe('WorkspaceStore settings guard (sandbox off)', () => {
     expect(JSON.parse(await readFile(file(root), 'utf8'))).toMatchObject({ sandboxMode: 'auto', confirmPaidProviders: true, theme: 'light' });
     await writeFile(file(root), JSON.stringify({ ...JSON.parse(await readFile(file(root), 'utf8')), theme: 'dark' }));
     expect((await ws.readSettings()).theme).toBe('dark'); // served from the file again
+  });
+});
+
+// Fix round 1 (I-A): a change the core could not undo stays held across a restart (config folder), and the revert is
+// retried at startup (`.studio`'s mode restored first) and at the next guard.
+describe.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('WorkspaceStore settings hold across a restart', () => {
+  const file = (root: string) => join(root, '.studio', 'settings.json');
+  const agentValues = { sandboxMode: 'off', confirmPaidProviders: false, autoApproveSandboxed: true, agentLiveInput: true, agentInterrupt: true };
+
+  it('chmod 500 .studio: not undone in the run; after a restart the mode is restored, the file put back, nothing of the agent applies', async () => {
+    const root = join(base, 'ws');
+    const config = join(base, 'config');
+    const ws = await WorkspaceStore.open(root, new Git());
+    await ws.attachSettingsHold(new SettingsHoldStore(config));
+    await ws.updateSettings({ autoApproveSandboxed: false });
+    const before = await readFile(file(root), 'utf8');
+    const release = await ws.guardSettings();
+    await writeFile(file(root), JSON.stringify({ ...JSON.parse(before), ...agentValues }));
+    await chmod(join(root, '.studio'), 0o500);
+    try {
+      expect(await release()).toEqual({ changed: true, reverted: false });
+      expect(ws.settingsHeld()).toBe(true);
+      // The app restarts: a new store, the hold read back from the config folder.
+      const ws2 = await WorkspaceStore.open(root, new Git(), { create: false });
+      await ws2.attachSettingsHold(new SettingsHoldStore(config));
+      expect(await readFile(file(root), 'utf8')).toBe(before);
+      expect(await ws2.readSettings()).toMatchObject({ sandboxMode: 'auto', confirmPaidProviders: true, autoApproveSandboxed: false, agentLiveInput: false, agentInterrupt: false });
+      expect(ws2.settingsHeld()).toBe(false);
+      expect(await new SettingsHoldStore(config).load(root)).toBeNull();
+    } finally {
+      await chmod(join(root, '.studio'), 0o700).catch(() => {});
+    }
+  });
+
+  it('still not undoable after the restart: the held fields come from the trusted copy until the user saves', async () => {
+    const root = join(base, 'ws2');
+    const config = join(base, 'config2');
+    const ws = await WorkspaceStore.open(root, new Git());
+    await ws.attachSettingsHold(new SettingsHoldStore(config));
+    const release = await ws.guardSettings();
+    // The agent replaces the file with a folder (a rename onto it fails) and leaves its values next to it.
+    await rm(file(root));
+    await mkdir(file(root));
+    await writeFile(join(file(root), 'x'), 'x');
+    expect(await release()).toEqual({ changed: true, reverted: false });
+    // Restart: the hold is read back, the revert is retried and fails again.
+    const ws2 = await WorkspaceStore.open(root, new Git(), { create: false });
+    await ws2.attachSettingsHold(new SettingsHoldStore(config));
+    expect(ws2.settingsHeld()).toBe(true);
+    expect(await ws2.readSettings()).toMatchObject({ sandboxMode: 'auto', confirmPaidProviders: true });
+    // The file becomes readable with the agent's values: the held fields still win, the others are read.
+    await rm(file(root), { recursive: true });
+    await writeFile(file(root), JSON.stringify({ schemaVersion: 1, theme: 'dark', ...agentValues }));
+    expect(await ws2.readSettings()).toMatchObject({ theme: 'dark', sandboxMode: 'auto', confirmPaidProviders: true, autoApproveSandboxed: true, agentLiveInput: false, agentInterrupt: false });
+    // The next guard retries the revert: it succeeds now, the hold ends.
+    const r2 = await ws2.guardSettings();
+    expect(ws2.settingsHeld()).toBe(false);
+    expect(JSON.parse(await readFile(file(root), 'utf8'))).toMatchObject({ sandboxMode: 'auto', confirmPaidProviders: true });
+    await r2();
+    expect(await new SettingsHoldStore(config).load(root)).toBeNull();
+  });
+
+  it('the user saving the settings confirms them and ends the hold (also on disk)', async () => {
+    const root = join(base, 'ws3');
+    const config = join(base, 'config3');
+    const ws = await WorkspaceStore.open(root, new Git());
+    await ws.attachSettingsHold(new SettingsHoldStore(config));
+    const release = await ws.guardSettings();
+    await rm(file(root));
+    await mkdir(file(root));
+    expect(await release()).toEqual({ changed: true, reverted: false });
+    await rm(file(root), { recursive: true });
+    await ws.updateSettings({ theme: 'light' });
+    expect(ws.settingsHeld()).toBe(false);
+    expect(await new SettingsHoldStore(config).load(root)).toBeNull();
   });
 });
