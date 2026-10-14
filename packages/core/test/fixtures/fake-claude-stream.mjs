@@ -6,6 +6,8 @@
 //   ignores             reads further user messages but never answers them (one result)
 //   interrupt-ack       on a control_request interrupt: control_response success, then an error result; stays alive and
 //                       runs one more turn per later user message
+//   interrupt-result-first  on a control_request interrupt: the interrupted turn's error result first, then the
+//                       control_response success (the ordering the real CLI might use; unverified live)
 //   interrupt-error     on a control_request interrupt: control_response error (the CLI refuses it)
 //   interrupt-no-ack    never answers a control_request; the turn hangs until stdin closes or it is killed
 //   exits-early         exits with code 3 right after the first message, without a result
@@ -61,6 +63,13 @@ async function turn(first) {
   while (Date.now() < until) {
     const c = controlQueue.shift();
     if (c) {
+      if (mode === 'interrupt-result-first') {
+        out({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'ok' }] } });
+        result(false, 'interrupted');
+        await sleep(150); // a separate read for the runner: the result is handled (and closes stdin) before the ack
+        out({ type: 'control_response', response: { subtype: 'success', request_id: c.request_id, response: { still_queued: [] } } });
+        return;
+      }
       if (mode === 'interrupt-ack') { out({ type: 'control_response', response: { subtype: 'success', request_id: c.request_id, response: { still_queued: [] } } }); interrupted = true; break; }
       if (mode === 'interrupt-error') out({ type: 'control_response', response: { subtype: 'error', request_id: c.request_id, error: 'interrupt not supported' } });
       // Never answers and never ends the turn: only a kill stops it.

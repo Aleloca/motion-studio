@@ -174,9 +174,10 @@ export class ClaudeCodeRunner implements AgentRunner {
     const onControl = (r: ControlResponse) => {
       const pending = pendingInterrupts.get(r.requestId);
       if (!pending) return;
+      // The stop is acknowledged even when the interrupted turn's result came first and already closed stdin: that turn
+      // then ends as cancelled, not failed (no redirect can follow it).
+      if (r.ok) { interruptAcked = true; redirectWritten = false; }
       if (r.ok && stdinOpen) {
-        interruptAcked = true;
-        redirectWritten = false;
         awaitingDecision = true;
         interruptedResultPending = true;
         if (backstopTimer) clearTimeout(backstopTimer);

@@ -127,6 +127,18 @@ describe('ClaudeCodeRunner interrupt: capability on (opt-in, unverified live)', 
     await expectNoOrphans(run);
   });
 
+  it('the interrupted turn\'s result arriving before the ack ends as cancelled, not failed; a later send is closed', async () => {
+    const run = await startFake('interrupt-result-first', { capabilities: BOTH, toolMs: 60_000, runner: { redirectBackstopMs: 30_000 } });
+    await waitForEvent(run.events, (e) => e.kind === 'tool_use');
+    await expect(run.handle.interrupt!()).resolves.toBe('interrupted');
+    expect(run.events).toContainEqual({ kind: 'interrupted' });
+    // The result closed stdin first: a redirect cannot be written, the core falls back to the queue.
+    await expect(run.handle.send!({ text: 'too late', clientId: 'r-late' })).resolves.toBe('closed');
+    await expect(run.handle.done).resolves.toMatchObject({ status: 'cancelled' });
+    expect(run.spy.afterClose).toEqual([]);
+    await expectNoOrphans(run);
+  });
+
   it('interrupt no ack: resolves timeout after the timeout, never hangs; cancel then leaves no PID', async () => {
     const run = await startFake('interrupt-no-ack', { capabilities: BOTH, toolMs: 60_000, runner: { interruptTimeoutMs: 300 } });
     await waitForEvent(run.events, (e) => e.kind === 'tool_use');
