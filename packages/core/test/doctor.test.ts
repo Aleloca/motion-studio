@@ -174,7 +174,7 @@ describe('runDoctor Phase 13 agent capabilities (fallback-first, decisions log 6
   it('reports the opt-in as on but not verified', async () => {
     const checks = await runDoctor({ exec: fakeExec(allGood), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', agentOptIn: { liveInput: true, interrupt: true } });
     expect(agentChecks(checks).map((c) => c.message)).toEqual([
-      'attivi dalle impostazioni (non verificati dal vivo)',
+      'attivi dal file delle impostazioni dell’area di lavoro (non verificati dal vivo)',
       'attiva dalle impostazioni (non verificata dal vivo)',
     ]);
   });

@@ -181,7 +181,7 @@ describe('agent capabilities (Phase 13, fallback-first, decisions log 610)', () 
     expect(await rows()).toEqual(['solo in coda (non verificati per questa versione di Claude Code)', 'ferma e riprendi']);
     await other.inject({ method: 'PUT', url: '/api/workspace', payload: { path: join(base, 'ws-caps3') } });
     await other.inject({ method: 'PUT', url: '/api/settings', payload: { agentLiveInput: true } });
-    expect(await rows()).toEqual(['attivi dalle impostazioni (non verificati dal vivo)', 'ferma e riprendi']);
+    expect(await rows()).toEqual(['attivi dal file delle impostazioni dell’area di lavoro (non verificati dal vivo)', 'ferma e riprendi']);
     await other.close();
   });
 });

@@ -251,11 +251,11 @@ export const it: Messages = {
     liveMessagesLabel: 'Messaggi durante il lavoro',
     liveMessagesQueued: 'solo in coda (non verificati per questa versione di Claude Code)',
     liveMessagesSupported: 'supportati',
-    liveMessagesOptIn: 'attivi dalle impostazioni (non verificati dal vivo)',
+    liveMessagesOptIn: 'attivi dal file delle impostazioni dell’area di lavoro (non verificati dal vivo)',
     interruptLabel: 'Interruzione',
     interruptStopResume: 'ferma e riprendi',
     interruptSupported: 'supportata',
-    interruptOptIn: 'attiva dalle impostazioni (non verificata dal vivo)',
+    interruptOptIn: 'attiva dal file delle impostazioni dell’area di lavoro (non verificata dal vivo)',
   },
   approvals: {
     runCommand: 'Eseguire un comando',

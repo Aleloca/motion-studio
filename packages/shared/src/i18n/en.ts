@@ -253,11 +253,11 @@ export const en = {
     liveMessagesLabel: 'Live messages',
     liveMessagesQueued: 'queued only (not verified for this Claude Code version)',
     liveMessagesSupported: 'supported',
-    liveMessagesOptIn: 'on from Settings (not verified live)',
+    liveMessagesOptIn: 'on through the workspace settings file (not verified live)',
     interruptLabel: 'Interrupt',
     interruptStopResume: 'stop and resume',
     interruptSupported: 'supported',
-    interruptOptIn: 'on from Settings (not verified live)',
+    interruptOptIn: 'on through the workspace settings file (not verified live)',
   },
   approvals: {
     runCommand: 'Run a command',
