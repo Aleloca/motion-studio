@@ -118,7 +118,9 @@ describe('render jobs pass the store steps to the engine', { timeout: 120_000 },
     const call = (id: string) => env.fake.renders.find((x) => x.out.endsWith(`/${id}.png`) || x.out.endsWith(`/${id}.mp4`))!;
     expect(call('appstore-iphone-69')).toMatchObject({ flattenOnto: expect.stringMatching(/^#/) });
     expect(call('appstore-iphone-69@2')).toMatchObject({ flattenOnto: expect.stringMatching(/^#/) });
-    expect(call('appstore-preview')).toMatchObject({ storeAudio: true });
+    expect(call('appstore-preview')).toMatchObject({ storeAudio: true, fps: 30 });
+    // The composition given to the render (and to the media normalisation before it) is at the output's 30 fps (M4).
+    expect(call('appstore-preview').composition.fps).toBe(30);
     expect(call('appstore-preview').flattenOnto).toBeUndefined();
     expect(call('test-wide').flattenOnto).toBeUndefined();
     expect(call('test-wide').storeAudio).toBeUndefined();

@@ -47,6 +47,16 @@ export function storeRenderOptions(formatId: string, composition: Pick<Compositi
 }
 
 /**
+ * The composition a render of format instance `formatId` samples (fix round 1, M4): at the store's frame rate when the format
+ * has one (the App Store preview: 30 fps), else as it is. The render jobs give this one to the media normalisation as well as
+ * to the renderer, so the video clips are normalised at the frame rate the output has (no duplicated frames).
+ */
+export function storeComposition(formatId: string, composition: Composition): Composition {
+  const fps = storeRenderOptions(formatId, composition).fps;
+  return fps !== undefined && fps !== composition.fps ? { ...composition, fps } : composition;
+}
+
+/**
  * The six lowercase hex digits of the opaque colour a composition background (`#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`) is
  * flattened onto. Ruling O: a background with alpha is mixed with white (fully transparent: white), as the preview shows it.
  */

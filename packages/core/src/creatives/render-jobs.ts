@@ -23,7 +23,7 @@ import type { MediaTools } from '../media/media-tools.ts';
 import { RenderError } from '../render/errors.ts';
 import { sessionMediaOf, type MediaNormalizer } from '../render/media-normalize.ts';
 import { activeLocaleRenders } from '../render/render-sweep.ts';
-import { storeRenderOptions } from '../store-pack/flatten.ts';
+import { storeComposition, storeRenderOptions } from '../store-pack/flatten.ts';
 import type { RenderCompositionOptions, RenderEngine, RenderResult } from '../render/renderer.ts';
 import { CodedError } from '../workspace-store.ts';
 import { noteCoreOutputWrite } from './carry-over.ts';
@@ -305,7 +305,8 @@ export class RenderJobService {
       throw new Error(m.render.compositionProblems({ format: o.label(format), list }));
     }
     if (loaded.hash !== entry.hash) throw new Error(m.render.compositionChanged({ format: o.label(format) }));
-    const composition = loaded.composition;
+    // At the output's frame rate for the media too (the App Store preview: 30 fps, M4).
+    const composition = storeComposition(format, loaded.composition);
     const prepared = await this.deps.normalizer.prepare({
       projectDir: ref.projectDir, compDir, composition, signal,
       onProgress: (p) => o.progress({ format, phase: 'media', done: p.done, total: p.total }),
@@ -685,14 +686,15 @@ export class RenderJobService {
         this.deps.broadcast({ type: 'creative', project: ref.projectSlug, creative: ref.creativeSlug });
         throw new Error(texts.join('; '));
       }
-      const prepared = await this.deps.normalizer.prepare({ projectDir: ref.projectDir, compDir, composition, signal });
+      const atFps = storeComposition(instanceId, composition);
+      const prepared = await this.deps.normalizer.prepare({ projectDir: ref.projectDir, compDir, composition: atFps, signal });
       const still = !(composition.duration > 0);
       const file = `${instanceId}.${tag}.${renderExtension(preset, still)}`;
       let result: RenderResult;
       try {
         result = await this.deps.engine!.render({
           ...this.deps.renderOptions,
-          dir: root, versionDir: `outputs/v${n}`, composition, format: { ...preset, id: instanceId }, out: join(versionDir, file), signal,
+          dir: root, versionDir: `outputs/v${n}`, composition: atFps, format: { ...preset, id: instanceId }, out: join(versionDir, file), signal,
           ...storeRenderOptions(instanceId, composition),
           ...(sessionMediaOf(prepared) ? { media: sessionMediaOf(prepared)! } : {}),
           beforeRename: (temp) => noteCoreOutputWrite(creativeDir, `outputs/v${n}/${file}`, temp),

@@ -11,11 +11,12 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Composition, FormatPreset } from '@motion-studio/shared';
 import { checkStoreFile, readImageInfo } from '../src/store-pack/requirements.ts';
-import { storeRenderOptions } from '../src/store-pack/flatten.ts';
+import { storeComposition, storeRenderOptions } from '../src/store-pack/flatten.ts';
 import { createFfmpegTools } from '../src/media/media-tools.ts';
 import { ChromeProvider } from '../src/render/chromium-provider.ts';
 import { renderComposition } from '../src/render/renderer.ts';
-import { buildRuntime, renderTools } from './helpers/render-env.ts';
+import { buildRuntime, decodeStrips, frameCodedVideo, readCode, renderTools } from './helpers/render-env.ts';
+import { MediaNormalizer, sessionMediaOf } from '../src/render/media-normalize.ts';
 import { firstPixel } from './helpers/store-images.ts';
 
 const tools = await renderTools('store render steps (renderer)');
@@ -66,6 +67,33 @@ describe.skipIf(!tools.ok)('renderer: store still without alpha, store preview w
     const media = await createFfmpegTools();
     expect((await media.probe(out))?.fps).toBe(30);
     expect(await checkStoreFile('preview', 'appstore', out, { width: 64, height: 128, probe: (f) => media.probe(f) })).toEqual({ ok: true });
+  });
+
+  it('a 25 fps App Store preview with a 30 fps video clip: its media is normalised at 30 fps, no output frame repeats (fix round 1, M4)', async () => {
+    const format: FormatPreset = { id: 'appstore-preview', channel: 'Test', name: 'Preview', width: 64, height: 128, kind: 'video', extensions: ['mp4'], targetBitrateKbps: 2000 };
+    // A project layout (the media cache must be the creative's project's): <project>/creatives/<slug>.
+    const project = join(work, 'project');
+    const own = join(project, 'creatives', 'preview');
+    const compDir = join(own, 'outputs/v3/compositions', format.id);
+    // Frame-coded source: frame i shows code i + 1 (render-env helper), 30 fps, 45 frames.
+    frameCodedVideo(ff!, join(compDir, 'assets', 'v30.mp4'), { fps: 30, frames: 45 });
+    const c = { ...comp(64, 128, 1), fps: 25, tracks: [{ id: 'v', kind: 'video', clips: [{ id: 'clip', type: 'video', src: 'assets/v30.mp4', start: 0, duration: 1, props: { x: 0, y: 0, width: 64, height: 32 } }] }] } as unknown as Composition;
+    const normalizer = new MediaNormalizer({ ffmpeg: async () => ff! });
+    const prepared = await normalizer.prepare({ projectDir: project, compDir, composition: storeComposition(format.id, c), signal });
+    const out = join(own, 'outputs/v3', `${format.id}.mp4`);
+    const provider = new ChromeProvider({ exe: tools.chrome!.exe, kind: 'system', limits: { timeLimitMs: 5 * 60_000 } });
+    try {
+      const r = await renderComposition({ dir: own, versionDir: 'outputs/v3', composition: storeComposition(format.id, c), format, out, provider, signal, distDir: dist, ffmpeg: ff!,
+        encoder: 'libx264', parallel: 1, ...storeRenderOptions(format.id, c), ...(sessionMediaOf(prepared) ? { media: sessionMediaOf(prepared)! } : {}) });
+      expect(r.frames).toBe(30);
+    } finally {
+      prepared.release();
+      await normalizer.close();
+    }
+    const codes = decodeStrips(ff!, out, { x: 0, y: 0, width: 64, height: 32 }, 2).map(readCode);
+    expect(codes).toHaveLength(30);
+    // Every output frame shows its own source frame: no code twice (a 25 fps normalisation would repeat one in five).
+    expect(new Set(codes).size).toBe(30);
   });
 
   it('a video without audio clips gets a silent AAC track when storeAudio is set', async () => {
