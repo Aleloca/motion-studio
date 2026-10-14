@@ -1,4 +1,4 @@
-import type { AgentEvent, ApprovalRequest, Brief, ConversationEntry, ExplainContext, JobSummary, Pin } from '@motion-studio/shared';
+import type { AgentEvent, ApprovalRequest, Brief, ConversationEntry, ExplainContext, JobSummary, LiveMessageOutcome, Pin, QueuedRequest, RedirectOutcome } from '@motion-studio/shared';
 import { useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { api, ApiError } from '../api.ts';
 import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
@@ -6,6 +6,10 @@ import { enter, isSubmitChord } from '../motion/index.ts';
 import { isMac } from '../platform.ts';
 import { clipRangeChip } from '../screens/pinModel.ts';
 import { Button, Chip, Empty, Icon, Markdown, Textarea, Typing, cx, type IconName } from '../ui/index.ts';
+import { liveErrorText, newClientId } from './liveErrors.ts';
+import { QueuedRequests } from './QueuedRequests.tsx';
+import { SplitAction } from './SplitAction.tsx';
+import { StopMenu } from './StopMenu.tsx';
 import { defaultTargets } from '../screens/versionModel.ts';
 import { errorCode, versionErrorText } from '../screens/versionErrors.ts';
 import { message } from '../errors.ts';
@@ -72,7 +76,17 @@ export interface ConversationProps {
   brief?: Brief;
   /** After the chip saved the brief (reload the creative). */
   onBriefSaved?(): void;
+  /** Phase 13: the creative's queued requests (`creative.json` `queued[]`), shown above the composer. */
+  queued?: QueuedRequest[];
+  /** After a message, a queue change or a Run next: the caller reloads the creative and its conversation. */
+  onQueueChanged?(): void;
 }
+
+/** A message sent while the agent works, until the conversation file shows it (Phase 13). */
+interface Outgoing { clientId: string; text: string; pins: Pin[]; at: string; mode: 'live' | 'redirect'; phase: 'sending' | 'pending' | 'pendingStart' }
+/** What a message bubble says about its journey; none for an ordinary message (old conversations have none). */
+type MessageState = 'sending' | 'pending' | 'pendingStart' | 'sent' | 'queued';
+interface OutboxApi { add(o: Outgoing): void; phase(clientId: string, phase: Outgoing['phase']): void; drop(clientId: string): void }
 
 /** What a change can apply to: the primary formats (with their followers' labels) and how a format maps to its primary. */
 export interface AppliesTo {
@@ -84,7 +98,7 @@ export interface AppliesTo {
 }
 
 type Item =
-  | { key: string; kind: 'user'; at: string; text: string; pins: Pin[] }
+  | { key: string; kind: 'user'; at: string; text: string; pins: Pin[]; state?: MessageState; redirect?: boolean }
   | { key: string; kind: 'agent'; at: string; text: string; summary: boolean }
   | { key: string; kind: 'step'; at: string; text: string }
   | { key: string; kind: 'fold'; jobId: string; count: number; open: boolean }
@@ -165,10 +179,16 @@ function turnItems(jobId: string, events: { at: string; event: AgentEvent }[], r
  * only in "Activity details", the job's approvals in the flow, typing dots while the agent works (T9), and the
  * composer with the pending comment chips and ⌘↵.
  */
-export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, onSelectVersion, versionExtra, versionNote, versionSummary, snapshots, appliesTo, brief, onBriefSaved }: ConversationProps) {
+export function Conversation({ slug, creative, entries, approvals, job, live = [], pins = [], onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, onSelectVersion, versionExtra, versionNote, versionSummary, snapshots, appliesTo, brief, onBriefSaved, queued, onQueueChanged }: ConversationProps) {
   const t = useT();
   const c = t.web.chat;
   const working = active(job);
+  const [outbox, setOutbox] = useState<Outgoing[]>([]);
+  const outboxApi = useMemo<OutboxApi>(() => ({
+    add: (o) => setOutbox((l) => [...l.filter((x) => x.clientId !== o.clientId), o].slice(-20)),
+    phase: (clientId, phase) => setOutbox((l) => l.map((x) => (x.clientId === clientId ? { ...x, phase } : x))),
+    drop: (clientId) => setOutbox((l) => l.filter((x) => x.clientId !== clientId)),
+  }), []);
   const [unfolded, setUnfolded] = useState<ReadonlySet<string>>(new Set());
   const [detailsOpen, setDetailsOpen] = useState<ReadonlySet<string>>(new Set());
   const { list: shownApprovals, gone } = useApprovalPresence(approvals);
@@ -210,6 +230,21 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
         return { at: seenAt.current.get(k)!, event };
       }));
     }
+    // Phase 13: a message is "sent" when its `user_message_delivered` marker is in the conversation (persisted or live): the
+    // core cannot know that the agent read it, so it is never "delivered". Still in the queue: "queued".
+    const delivered = new Set<string>();
+    for (const e of entries) if (e.type === 'agent' && e.event.kind === 'user_message_delivered') delivered.add(e.event.clientId);
+    for (const e of live) if (e.kind === 'user_message_delivered') delivered.add(e.clientId);
+    const queuedIds = new Set((queued ?? []).map((q) => q.clientId));
+    const known = new Set<string>();
+    for (const e of entries) if (e.type === 'user' && e.clientId) known.add(e.clientId);
+    const stateOf = (e: Extract<ConversationEntry, { type: 'user' }>): MessageState | undefined => {
+      if (!e.clientId || !e.mode) return undefined;
+      if (delivered.has(e.clientId) || e.deliveredAt) return 'sent';
+      if (queuedIds.has(e.clientId)) return 'queued';
+      if (e.jobId && e.jobId === job?.id && working) return job?.state === 'queued' && e.mode === 'redirect' ? 'pendingStart' : 'pending';
+      return undefined;
+    };
     const approvalsOf = (jobId: string | null) => shownApprovals
       .filter((s) => (jobId === null ? !jobs.has(s.approval.jobId) : s.approval.jobId === jobId))
       .map((s): Item => ({ key: `ap:${s.approval.id}`, kind: 'approval', shown: s }));
@@ -231,7 +266,8 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
       const key = `e${i}`;
       if (e.type === 'user') {
         const retried = lastUser !== null && lastUser.failed && same(lastUser.text, e.text) && samePins(lastUser.pins, e.pins);
-        out.push(retried ? { key, kind: 'retried', at: e.at } : { key, kind: 'user', at: e.at, text: e.text, pins: e.pins });
+        const state = stateOf(e);
+        out.push(retried ? { key, kind: 'retried', at: e.at } : { key, kind: 'user', at: e.at, text: e.text, pins: e.pins, ...(state ? { state } : {}), ...(e.mode === 'redirect' ? { redirect: true } : {}) });
         lastUser = { text: e.text, pins: e.pins, failed: false };
       } else if (e.type === 'version') {
         if (lastUser) lastUser.failed = false;
@@ -244,10 +280,15 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     // A job with nothing persisted yet (only live events) comes last.
     if (job && jobs.has(job.id) && !firstIndex.has(job.id)) out.push(...turn(job.id));
     out.push(...approvalsOf(null));
+    // Messages sent while the agent works that the conversation file does not hold yet.
+    for (const o of outbox) {
+      if (known.has(o.clientId)) continue;
+      out.push({ key: `out:${o.clientId}`, kind: 'user', at: o.at, text: o.text, pins: o.pins, state: delivered.has(o.clientId) ? 'sent' : o.phase, ...(o.mode === 'redirect' ? { redirect: true } : {}) });
+    }
     const waiting = shownApprovals.some((s) => !s.leaving && s.approval.jobId === job?.id);
     if (working && !waiting) out.push({ key: 'typing', kind: 'typing' });
     return out;
-  }, [entries, job, live, working, unfolded, detailsOpen, shownApprovals, ctx]);
+  }, [entries, job, live, working, unfolded, detailsOpen, shownApprovals, ctx, outbox, queued]);
 
   // Items present at the first render appear with the panel; later ones enter from +8 px (T9).
   const mounted = useRef(false);
@@ -293,7 +334,8 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
           </Row>
         ))}
       </ol>
-      <Composer slug={slug} creative={creative} job={working ? job : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} onEditPin={onEditPin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} beforeSend={beforeSend} appliesTo={appliesTo} brief={brief} onBriefSaved={onBriefSaved} />
+      {queued && queued.length > 0 ? <QueuedRequests slug={slug} creative={creative} queued={queued} working={working} onChanged={() => onQueueChanged?.()} /> : null}
+      <Composer outbox={outboxApi} onQueueChanged={onQueueChanged} slug={slug} creative={creative} job={working ? job : undefined} latestJobId={job?.id} snapshots={snapshots} pins={pins} onRemovePin={onRemovePin} onEditPin={onEditPin} formatName={formatName} canGenerate={canGenerate} onSent={onSent} beforeSend={beforeSend} appliesTo={appliesTo} brief={brief} onBriefSaved={onBriefSaved} />
     </div>
   );
 }
@@ -353,7 +395,11 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
         <article className="ms-msg ms-you" aria-label={c.you}>
           <span className="ms-msg-avatar ms-you" aria-hidden="true"><Icon name="user" size={13} /></span>
           <div className="ms-msg-body">
-            <span className="ms-msg-meta"><b>{c.you}</b>·<When at={item.at} /></span>
+            <span className="ms-msg-meta">
+              <b>{c.you}</b>·<When at={item.at} />
+              {item.redirect && <span className="ms-pill ms-accent">{t.web.liveUi.state.redirect}</span>}
+              {item.state && <span className={cx('ms-pill', item.state === 'sent' ? 'ms-ok' : 'ms-neutral')} data-state={item.state}>{t.web.liveUi.state[item.state]}</span>}
+            </span>
             {item.text && <div className="ms-msg-bubble">{item.text}</div>}
             {item.pins.length > 0 && (
               <div className="ms-msg-pins">{item.pins.map((p, k) => <span key={k} className="ms-chip" title={p.note || undefined}><Icon name="comment" size={11} /><PinLabel pin={p} text={pinText(p, k + 1, formatName, t, locale)} /></span>)}</div>
@@ -531,13 +577,15 @@ const SEND_CODES = new Set(['formats-not-in-brief', 'job-running']);
 /** Longest wait for the job a send started before the composer unlocks anyway. */
 export const AWAIT_JOB_MS = 10_000;
 
-function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, appliesTo, brief, onBriefSaved }: {
+function Composer({ outbox, onQueueChanged, slug, creative, job, latestJobId, snapshots, pins, onRemovePin, onEditPin, formatName, canGenerate, onSent, beforeSend, appliesTo, brief, onBriefSaved }: {
+  outbox: OutboxApi; onQueueChanged?(): void;
   slug: string; creative: string; job: JobSummary | undefined; latestJobId: string | undefined; snapshots: number | undefined; pins: Pin[]; onRemovePin?(i: number): void; onEditPin?(i: number): void; formatName?(id: string): string; canGenerate?: boolean; onSent?(sent: { pins: Pin[] }): void; beforeSend?(): boolean | Promise<boolean>;
   appliesTo?: AppliesTo; brief?: Brief; onBriefSaved?(): void;
 }) {
   const t = useT();
   const locale = useLocale();
   const c = t.web.chat;
+  const u = t.web.liveUi;
   const id = useId();
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -546,6 +594,7 @@ function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemoveP
   // Id of the job a successful send started, until that job reaches this panel: no second send in between.
   const [awaiting, setAwaiting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const stopAwaiting = () => { setAwaiting(null); inFlight.current = false; };
   useEffect(() => {
     if (awaiting && latestJobId === awaiting) stopAwaiting();
@@ -564,8 +613,30 @@ function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemoveP
     lastSnapshots.current = snapshots;
     stopAwaiting();
   }, [snapshots]);
-  const busy = Boolean(job) || sending || awaiting !== null;
-  const canSend = !busy && (text.trim().length > 0 || pins.length > 0);
+
+  // Phase 13: while the agent works the box stays active. What the running Claude Code can do decides the send action;
+  // until it is known (or when it cannot be read) both are off: "Queue for after" is always available.
+  const working = Boolean(job);
+  const [caps, setCaps] = useState({ liveInput: false });
+  useEffect(() => {
+    if (!working) return;
+    let alive = true;
+    Promise.resolve().then(() => api.getAgentCapabilities())
+      .then((k) => { if (alive) setCaps({ liveInput: k?.liveInput === true }); })
+      .catch(() => { /* off: the fallback path */ });
+    return () => { alive = false; };
+  }, [working]);
+  const [redirect, setRedirect] = useState(false);
+  const field = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => { if (!working) setRedirect(false); }, [working]);
+  useEffect(() => { if (redirect) field.current?.focus(); }, [redirect]);
+  // One client id per message: a double click, or a retry of the same words after a failure, is one message.
+  const draftId = useRef<string | null>(null);
+
+  const hasContent = text.trim().length > 0 || pins.length > 0;
+  const idleBusy = sending || awaiting !== null;
+  const busy = working || idleBusy;
+  const canSend = working ? hasContent && !sending : !idleBusy && hasContent;
 
   // "Applies to": the user's choice (null: All formats) or, until they choose, the comments' formats (else the fallback).
   const [choice, setChoice] = useState<string[] | null | undefined>(undefined);
@@ -592,7 +663,7 @@ function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemoveP
   const send = async (body: { text?: string; pins?: Pin[]; formats?: string[] }) => {
     if (busy || inFlight.current) return;
     inFlight.current = true;
-    setError(null); setSending(true);
+    setError(null); setNotice(null); setSending(true);
     try {
       if (beforeSend && !(await beforeSend())) { inFlight.current = false; return; }
       const started = await api.sendCreativeTurn(slug, creative, body);
@@ -608,12 +679,58 @@ function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemoveP
       inFlight.current = false;
     } finally { setSending(false); }
   };
-  const submit = () => { if (canSend) void send({ text: text.trim(), pins, ...(targets ? { formats: targets } : {}) }); };
+
+  // A message while the agent works: into the turn (`live`), for after it (`queued`) or a redirect (stop the step, then the
+  // words). The box keeps its words on any refusal, with the core's translated reason.
+  const sendWhileWorking = async (kind: 'live' | 'queued' | 'redirect') => {
+    if (!job || !canSend || inFlight.current) return;
+    inFlight.current = true;
+    setError(null); setNotice(null); setSending(true);
+    const clientId = (draftId.current ??= newClientId());
+    const words = text.trim();
+    const sentPins = pins;
+    if (kind !== 'queued') outbox.add({ clientId, text: words, pins: sentPins, at: new Date().toISOString(), mode: kind === 'redirect' ? 'redirect' : 'live', phase: 'sending' });
+    try {
+      let outcome: LiveMessageOutcome | RedirectOutcome;
+      if (kind === 'redirect') outcome = (await api.redirectJob(job.id, { clientId, text: words, ...(sentPins.length ? { pins: sentPins } : {}) })).outcome;
+      else outcome = (await api.postLiveMessage(slug, creative, { clientId, text: words, ...(sentPins.length ? { pins: sentPins } : {}), mode: kind })).outcome;
+      if (outcome === 'delivered-pending' || outcome === 'restarted' || outcome === 'interrupted') outbox.phase(clientId, 'pending');
+      else if (outcome === 'pending-start') outbox.phase(clientId, 'pendingStart');
+      else outbox.drop(clientId); // queued: the queue list shows it (the core writes the "after the agent finished" notice itself)
+      if (outcome === 'queued' || outcome === 'queued-unsupported' || outcome === 'restarted' || outcome === 'interrupted') setNotice(u.outcome[outcome]);
+      draftId.current = null;
+      setText('');
+      setRedirect(false);
+      onSent?.({ pins: sentPins });
+      onQueueChanged?.();
+    } catch (e) {
+      outbox.drop(clientId);
+      // A refusal of the core (a limit, a turn that is over) is already explained, in the user's language; anything else is a failed send.
+      const detail = liveErrorText(e, t);
+      const refused = e instanceof ApiError && e.status >= 400 && e.status < 500;
+      setError(kind === 'redirect' ? u.redirectFailed({ detail }) : refused ? detail : c.sendFailed({ detail }));
+    } finally { inFlight.current = false; setSending(false); }
+  };
+  const mainKind = redirect ? 'redirect' : caps.liveInput ? 'live' : 'queued';
+  const submit = () => {
+    if (!canSend) return;
+    if (working) void sendWhileWorking(mainKind);
+    else void send({ text: text.trim(), pins, ...(targets ? { formats: targets } : {}) });
+  };
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     // The app-wide submit chord: ⌘↵ on macOS, Ctrl+↵ elsewhere (a held key does not send twice).
-    if (isSubmitChord(e.nativeEvent) && !e.repeat) { e.preventDefault(); submit(); }
+    if (isSubmitChord(e.nativeEvent) && !e.repeat) { e.preventDefault(); submit(); return; }
+    // While the agent works Enter is the primary action (Shift+Enter writes a line). A redirect stops the agent's step, so
+    // it takes the button or the chord: Enter writes a line. Esc does nothing here: stopping is always an explicit click.
+    if (working && !redirect && e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      if (!e.repeat) submit();
+    }
   };
-  const cancel = () => { if (job) api.cancelJob(job.id).catch(() => setError(c.cancelFailed)); };
+
+  const keys = isMac() ? '⌘↵' : 'Ctrl ↵';
+  const placeholder = !working ? c.placeholder : redirect ? u.redirectPlaceholder : caps.liveInput ? u.livePlaceholder : u.queuePlaceholder;
+  const hint = !working ? c.sendHint({ keys }) : redirect ? u.redirectHint({ keys }) : caps.liveInput ? u.liveHint : u.queueHint;
 
   return (
     <form className="ms-composer" onSubmit={(e) => { e.preventDefault(); submit(); }}>
@@ -633,7 +750,7 @@ function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemoveP
             ))}
           </div>
         )}
-        {appliesTo ? (
+        {appliesTo && !working ? (
           <div className="ms-composer-applies" role="group" aria-label={c.appliesTo} title={c.appliesHint}>
             <span className="ms-composer-applies-label" aria-hidden="true">{c.appliesTo}</span>
             <Chip on={targets === null} onClick={() => setChoice(null)}>{c.appliesAll}</Chip>
@@ -647,27 +764,44 @@ function Composer({ slug, creative, job, latestJobId, snapshots, pins, onRemoveP
             ))}
           </div>
         ) : null}
-        {appliesTo && targets ? appliesTo.primaries.filter((p) => targets.includes(p.id)).flatMap((p) => p.followers.map((f) => (
+        {appliesTo && targets && !working ? appliesTo.primaries.filter((p) => targets.includes(p.id)).flatMap((p) => p.followers.map((f) => (
           <p key={`${p.id}:${f}`} className="ms-composer-follows"><Icon name="link" size={11} />{c.followsBoth({ follower: f, primary: p.label })}</p>
         ))) : null}
         <label htmlFor={id} className="ms-composer-label">{t.web.conversation.requestChange}</label>
-        <Textarea id={id} rows={2} maxLength={10_000} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={onKeyDown}
-          placeholder={job ? c.busyPlaceholder : c.placeholder} aria-keyshortcuts={isMac() ? 'Meta+Enter' : 'Control+Enter'} />
+        <Textarea id={id} ref={field} rows={2} maxLength={10_000} value={text} onChange={(e) => { setText(e.target.value); draftId.current = null; setNotice(null); }} onKeyDown={onKeyDown}
+          placeholder={placeholder} aria-keyshortcuts={isMac() ? 'Meta+Enter' : 'Control+Enter'} />
+        {working && redirect && <p className="ms-composer-note">{u.redirectNote}</p>}
+        {working && !redirect && !caps.liveInput && <p className="ms-composer-note">{u.queueOnly}</p>}
+        {notice && <p role="status" className="ms-composer-note">{notice}</p>}
         {error && <p role="alert" className="ms-composer-error">{error}</p>}
         <div className="ms-composer-foot">
           {brief ? <ServicesChip slug={slug} creative={creative} brief={brief} busy={busy} onSaved={() => onBriefSaved?.()} /> : null}
-          {job
-            ? <span className="ms-composer-hint">{c.working}</span>
-            : <span className="ms-composer-hint">{c.sendHint({ keys: isMac() ? '⌘↵' : 'Ctrl ↵' })}</span>}
-          {job && <Button size="sm" variant="ghost" onClick={cancel}>{t.common.cancel}</Button>}
+          <span className="ms-composer-hint">{hint}</span>
+          {job && <StopMenu job={job} onError={setError} onRedirect={() => { setRedirect(true); setError(null); field.current?.focus(); }} />}
           {canGenerate && !job && (
             <Button size="sm" variant="accent" aria-label={t.web.newCreative.generate} disabled={busy} onClick={() => void send({})}>
               <Icon name="sparkle" size={13} />{t.web.newCreative.generate}
             </Button>
           )}
-          <Button type="submit" size="sm" variant="accent" icon className="ms-composer-send" aria-label={t.web.common.send} disabled={!canSend}>
-            <Icon name="upload" size={13} strokeWidth={1.8} />
-          </Button>
+          {!working && (
+            <Button type="submit" size="sm" variant="accent" icon className="ms-composer-send" aria-label={t.web.common.send} disabled={!canSend}>
+              <Icon name="upload" size={13} strokeWidth={1.8} />
+            </Button>
+          )}
+          {working && redirect && (
+            <>
+              <Button size="sm" variant="ghost" onClick={() => setRedirect(false)}>{u.cancelRedirect}</Button>
+              <Button type="submit" size="sm" variant="accent" aria-label={u.redirect} disabled={!canSend}><Icon name="forward" size={13} />{u.redirect}</Button>
+            </>
+          )}
+          {working && !redirect && !caps.liveInput && (
+            <Button type="submit" size="sm" variant="accent" aria-label={u.queue} disabled={!canSend}><Icon name="upload" size={13} strokeWidth={1.8} />{u.queue}</Button>
+          )}
+          {working && !redirect && caps.liveInput && (
+            <SplitAction variant="accent" menuLabel={u.sendMore} disabled={!canSend}
+              primary={<Button type="submit" size="sm" variant="accent" aria-label={u.send} disabled={!canSend}><Icon name="upload" size={13} strokeWidth={1.8} />{u.send}</Button>}
+              items={[{ key: 'queue', label: u.queue, onSelect: () => void sendWhileWorking('queued') }]} />
+          )}
         </div>
       </div>
     </form>

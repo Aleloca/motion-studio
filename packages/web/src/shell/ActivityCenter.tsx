@@ -4,6 +4,7 @@ import { localeName } from '../screens/creative/languagesModel.ts';
 import { useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api.ts';
 import { ApprovalCard } from '../components/ApprovalCard.tsx';
+import { StopMenu } from '../components/StopMenu.tsx';
 import { useApprovalPresence } from '../components/approvalPresence.ts';
 import type { EventsState } from '../eventsReducer.ts';
 import { formatDate, formatNumber, TIME_OF_DAY, useLocale, useT } from '../i18n.tsx';
@@ -274,7 +275,8 @@ function RunningRow({ job, step, tokens, partial }: { job: JobSummary; step: str
   const t = useT();
   const queued = job.state === 'queued';
   return (
-    <Row job={job} className="ms-tall">
+    // Phase 13: the same Stop menu as the conversation (a creative or console turn can also be redirected; the others have Stop only).
+    <Row job={job} className="ms-tall" after={<StopMenu job={job} className="ms-activity-cancel" />}>
       <span className={cx('ms-activity-glyph', queued && 'ms-muted')}>{queued ? <Icon name="clock" size={14} /> : <Spinner decorative />}</span>
       <span className="ms-activity-text">
         <b>{job.label}</b>

@@ -577,7 +577,7 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
             pins={pins} onRemovePin={removePin} onEditPin={(i) => editPin(i + 1)} formatName={formatLabel}
             canGenerate={versions.length === 0} onSent={({ pins: sent }) => { setStored((ps) => ps.filter((p) => !sent.includes(p.pin))); setViewing({}); reload(); }}
             onSelectVersion={viewAll} snapshots={live.snapshots}
-            appliesTo={appliesTo} brief={detail.creative.brief} onBriefSaved={reload}
+            appliesTo={appliesTo} brief={detail.creative.brief} onBriefSaved={reload} queued={detail.creative.queued} onQueueChanged={reload}
             versionExtra={(n) => <UsageBadge usage={versions.find((v) => v.n === n)?.usage} billing={live.today?.billing ?? null} />}
             versionSummary={(n) => { const v = versions.find((x) => x.n === n); return v?.origin === 'editor' && v.request ? v.request : null; }}
             versionNote={(n) => <OutputWarnings outputs={versions.find((v) => v.n === n)?.outputs ?? []} formatLabel={formatLabel} />} />

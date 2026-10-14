@@ -172,3 +172,34 @@
 
 /* C2: a turn sent again after a failure (Try again) is a compact label, not a second identical bubble. */
 .ms-convo-retried { display: flex; align-items: center; gap: 6px; margin-left: 36px; font-size: 11.5px; color: var(--faint); }
+
+/* ---------- Phase 13: talking to the agent while it works ---------- */
+.ms-composer-note { margin: 0; font-size: 11.5px; line-height: 1.4; color: var(--muted); overflow-wrap: anywhere; }
+.ms-split { display: inline-flex; align-items: center; flex: none; }
+.ms-split > .ms-btn:not(:last-child):not(:only-child) { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.ms-split > .ms-split-more { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: 1px; width: 24px; padding: 0; }
+.ms-split-more[aria-expanded="true"] { background: color-mix(in srgb, var(--field) 70%, var(--line)); }
+.ms-msg-meta .ms-pill { height: 18px; padding: 0 7px; font-size: 10.5px; margin-left: 2px; }
+.ms-redirect-form { display: flex; flex-direction: column; gap: 8px; padding: 2px; }
+.ms-redirect-label { font-size: 11px; color: var(--muted); }
+.ms-redirect-note { margin: 0; font-size: 11.5px; line-height: 1.4; color: var(--muted); }
+.ms-redirect-actions { display: flex; justify-content: flex-end; gap: 6px; }
+
+.ms-queue { position: relative; margin: 0 14px; padding: 8px 10px; border-radius: 12px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ms-queue-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.ms-queue-title { margin: 0; font-size: 12px; font-weight: 600; color: var(--text); flex: 1 1 auto; }
+.ms-queue-paused { font-size: 11.5px; color: var(--muted); }
+.ms-queue-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.ms-queue-item { display: flex; align-items: flex-start; gap: 6px; padding: 6px 6px 6px 4px; border-radius: 8px; background: var(--bg); box-shadow: inset 0 0 0 1px var(--line2); min-width: 0; }
+.ms-queue-item[draggable="true"] { cursor: grab; }
+.ms-queue-item.ms-over { box-shadow: inset 0 0 0 1px var(--accent); }
+.ms-queue-grip { flex: none; margin-top: 4px; color: var(--faint); display: inline-flex; }
+.ms-queue-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.ms-queue-text { font-size: 12.5px; line-height: 1.4; color: var(--text); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.ms-queue-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.ms-queue-meta .ms-pill { height: 18px; font-size: 10.5px; padding: 0 7px; }
+.ms-queue-actions { flex: none; display: flex; align-items: center; gap: 0; }
+.ms-queue-up { transform: rotate(180deg); }
+.ms-queue-edit-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.ms-queue-said { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.ms-console-box { border-top: 0; }

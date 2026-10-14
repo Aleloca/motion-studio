@@ -7,6 +7,7 @@ import { I18nProvider } from '../src/i18n.tsx';
 const api = {
   sendCreativeTurn: vi.fn(async () => ({})),
   cancelJob: vi.fn(async () => ({ cancelled: true })),
+  stopJob: vi.fn(async (_id: string) => ({ status: 'stopping' })),
   decideApproval: vi.fn(async () => ({})),
 };
 class ApiError extends Error { constructor(public status: number, m: string) { super(m); } }
@@ -188,14 +189,15 @@ describe('Conversation', () => {
     await waitFor(() => expect(api.sendCreativeTurn).toHaveBeenCalledWith('acme', 'c1', { text: 'Hi', pins: [] }));
   });
 
-  it('removes a pending comment chip and blocks sending while a job runs', async () => {
+  it('removes a pending comment chip; while a job runs the new-turn Send is gone and Stop stops it (Phase 13)', async () => {
     const pins: Pin[] = [{ format: 'story', x: 0.1, y: 0.2, timeSec: null }];
     render(view({ entries: [], pins, job: running }));
     await userEvent.click(screen.getByRole('button', { name: 'Remove comment 1' }));
     expect(props.onRemovePin).toHaveBeenCalledWith(0);
-    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true);
-    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(api.cancelJob).toHaveBeenCalledWith('j1');
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    expect(api.stopJob).toHaveBeenCalledWith('j1');
+    expect(api.cancelJob).not.toHaveBeenCalled();
   });
 
   it('offers Generate before the first version, as an accent button (it acts as Send)', async () => {
@@ -238,7 +240,8 @@ describe('Conversation composer guards', () => {
     expect(api.sendCreativeTurn).toHaveBeenCalledTimes(1);
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true);
     rerender(view({ entries: [], job: { ...running, id: 'j2' } }));
-    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true);
+    // The turn runs: the box now sends messages to it (Phase 13) and the new-turn Send is gone.
+    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
     rerender(view({ entries: [], job: { ...done, id: 'j2' } }));
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(false);
     fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
