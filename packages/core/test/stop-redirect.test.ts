@@ -613,3 +613,21 @@ describe('a redirect before the job starts (Ruling W)', () => {
     expect(others.every((o) => stateOf(o.id) === 'succeeded')).toBe(true);
   });
 });
+
+describe('a start that throws with words in the prompt (fix round 1, M3)', () => {
+  it('the redirect that waited for the first run goes back to the queue, never dropped', async () => {
+    s = await liveApp();
+    await s.app.inject({ method: 'PUT', url: '/api/settings', payload: { maxConcurrentJobs: 1 } });
+    const other = (await s.app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'Altra', brief, generate: false } })).json().slug as string;
+    await s.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${other}/turns`, payload: { text: 'occupa' } });
+    const busy = await s.runner.next(0);
+    const job = (await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Richiesta' } })).json();
+    const clientId = cid();
+    expect((await s.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/redirect`, payload: { clientId, text: 'PAROLE-IN-ATTESA' } })).json()).toEqual({ outcome: 'pending-start' });
+    s.runner.startThrows = (req) => (req.prompt.includes('Richiesta') ? new Error('progetto in quarantena') : null);
+    busy.finish();
+    await s.waitIdle();
+    expect((await s.jobs()).find((j) => j.id === job.id)?.state).toBe('failed');
+    expect((await s.creative()).queued).toEqual([expect.objectContaining({ clientId, text: 'PAROLE-IN-ATTESA' })]);
+  });
+});

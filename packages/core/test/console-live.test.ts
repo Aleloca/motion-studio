@@ -160,3 +160,55 @@ describe('console redirect before the first run (final review I2)', () => {
     expect((await s.jobs()).find((j) => j.id === job.id)?.state).toBe('succeeded');
   });
 });
+
+describe('a console redirect whose resumed run fails before taking it (Ruling Z) and a start that throws (fix round 1, M3)', () => {
+  const jobOf = async (id: string) => (await s.jobs()).find((j) => j.id === id) as { state: string; error?: string } | undefined;
+
+  it('one fresh run with the request and the redirect; when it works, the job succeeds', async () => {
+    s = await liveApp();
+    const job = await startConsole();
+    const run = await s.runner.next(0);
+    await vi.waitFor(async () => expect((await s.jobs()).find((j) => j.id === job.id)?.sessionId).toBe(run.sessionId));
+    s.runner.failStart = (req) => (req.resumeSessionId === run.sessionId ? { error: 'No conversation found with session ID: x' } : null);
+    expect((await s.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/redirect`, payload: { clientId: cid(), text: 'Solo .ts' } })).json()).toEqual({ outcome: 'restarted' });
+    const fresh = await s.runner.next(2);
+    expect(s.runner.runs[1]!.req.resumeSessionId).toBe(run.sessionId);
+    expect(fresh.req.resumeSessionId).toBeUndefined();
+    expect(fresh.req.prompt).toContain('Elenca i file');
+    expect(fresh.req.prompt).toContain('Solo .ts');
+    fresh.finish({ write: false });
+    await s.waitIdle();
+    expect((await jobOf(job.id))?.state).toBe('succeeded');
+    expect(s.runner.runs).toHaveLength(3);
+  });
+
+  it('when the fresh run fails too, the job fails once (no loop) and says the words did not reach the agent', async () => {
+    s = await liveApp();
+    const job = await startConsole();
+    const run = await s.runner.next(0);
+    await vi.waitFor(async () => expect((await s.jobs()).find((j) => j.id === job.id)?.sessionId).toBe(run.sessionId));
+    s.runner.failStart = () => ({ error: 'exit code 1' });
+    await s.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/redirect`, payload: { clientId: cid(), text: 'Solo .ts' } });
+    await s.waitIdle();
+    const j = await jobOf(job.id);
+    expect(j?.state).toBe('failed');
+    expect(j?.error).toMatch(new RegExp(`^${messages('it').live.wordsNotDelivered.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+    expect(s.runner.runs).toHaveLength(3);
+  });
+
+  it('a redirect waiting for the first run, whose start throws: the job fails saying the words did not reach the agent', async () => {
+    s = await liveApp();
+    await s.app.inject({ method: 'PUT', url: '/api/settings', payload: { maxConcurrentJobs: 1 } });
+    await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } });
+    const busy = await s.runner.next(0);
+    const job = await startConsole();
+    expect((await s.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/redirect`, payload: { clientId: cid(), text: 'Solo .ts' } })).json()).toEqual({ outcome: 'pending-start' });
+    s.runner.startThrows = (req) => (req.prompt.includes('Elenca i file') ? new Error('progetto in quarantena') : null);
+    busy.finish();
+    await s.waitIdle();
+    const j = await jobOf(job.id);
+    expect(j?.state).toBe('failed');
+    expect(j?.error).toContain(messages('it').live.wordsNotDelivered);
+    expect(j?.error).toContain('progetto in quarantena');
+  });
+});

@@ -969,7 +969,9 @@ export class CreativeTurnService {
       // Phase 13: whatever no attempt took (a stop, a failure) becomes the next request: never lost.
       await live.serial(async () => {
         if (signal.aborted) live.stopped = true;
-        if (live.phase !== 'finalizing' && live.phase !== 'ended') await this.drainLive(ref, store, live);
+        // Fix round 1 (M3): words in the prompt of a run that never started (launcher.start threw) were not delivered:
+        // they wait again, so the drain queues them instead of dropping them.
+        if (live.phase !== 'finalizing' && live.phase !== 'ended') { live.unconfirmPrompt(); await this.drainLive(ref, store, live); }
         live.phase = 'ended';
         live.run = null;
       }).catch(() => {});

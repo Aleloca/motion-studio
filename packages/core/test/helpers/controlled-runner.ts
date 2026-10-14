@@ -46,6 +46,8 @@ export class ControlledRunner implements AgentRunner {
   readonly transcripts = new Map<string, string[]>();
   /** Final wave P3: runs that start without reporting their session (as a CLI cut before it read its prompt). */
   quietStart: ((req: AgentTurnRequest) => boolean) | null = null;
+  /** Fix round 1 (M3): a start that throws (as the launcher does for a quarantined project), before any run exists. */
+  startThrows: ((req: AgentTurnRequest) => Error | null) | null = null;
   private waiters: Array<(r: ControlledRun) => void> = [];
   private counter = 0;
 
@@ -60,6 +62,8 @@ export class ControlledRunner implements AgentRunner {
   }
 
   start(req: AgentTurnRequest, onEvent: (e: AgentEvent) => void): AgentRun {
+    const thrown = this.startThrows?.(req);
+    if (thrown) throw thrown;
     let settle!: (r: AgentRunResult) => void;
     const done = new Promise<AgentRunResult>((r) => { settle = r; });
     const id = ++this.counter;

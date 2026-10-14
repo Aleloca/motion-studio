@@ -201,6 +201,8 @@ function parseLiveBody(body: unknown): LiveBody {
   if (!r.success) throw new WorkspaceError(400, r.error.issues[0]?.message ?? 'invalid body');
   return r.data;
 }
+/** Console words no run took: given in a prompt whose run never attached (or never read it), or never given. */
+const undeliveredAtEnd = (live: LiveSession) => live.messages.filter((m) => m.state === 'pending' || (m.state === 'prompt' && !m.announced));
 const delimited = (texts: string[]) => texts.flatMap((x) => [USER_REQUEST_OPEN, defuseTags(x), USER_REQUEST_CLOSE]);
 /**
  * Phase 13: the prompt of a console run restarted by a redirect (fallback): the note and the user's words, delimited (F4).
@@ -583,6 +585,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
             let resume = resumeSessionId;
             /** Messages given to a run a redirect cut before it wrote anything as the agent: they go with the next prompt too. */
             let carry: LiveMessage[] = [];
+            /** Ruling Z: the one fresh retry of a redirect whose resumed run failed before taking it (once per turn). */
+            let freshRetryUsed = false;
+            /** A failure: when the user's words reached no run, the job's error says so first (fix round 1, M3 and Ruling Z). */
+            const failure = (detail: string) => new Error(undeliveredAtEnd(live).length > 0 ? `${t().live.wordsNotDelivered} ${detail}` : detail);
             for (;;) {
               // Final review I2: a redirect is taken BEFORE anything is spawned. With no session yet (no run took the request),
               // the request and the user's words go together in one prompt; otherwise the live session is resumed with them.
@@ -602,18 +608,26 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
                 else { prompt = consoleRedirectPrompt(texts); resume = live.sessionId; }
               }
               const sessionBefore = live.sessionId;
+              const resumedWith = resume;
               /** The run reported its session: it read its prompt (the session holds it). */
               let sawSession = false;
-              const run = await launcher.start({
-                kind: 'console', jobId: id, projectSlug: slug, projectDir,
-                codebases: await consoleCodebases(project.linkedCodebases, [projectDir, ws.root]),
-                request: { prompt, resumeSessionId: resume, model: settings.model ?? undefined },
-                onEvent: (event) => {
-                  hub.broadcast({ type: 'agent', jobId: id, event });
-                  const sessionId = event.kind === 'session' ? event.sessionId : event.kind === 'result' ? event.sessionId : undefined;
-                  if (sessionId) { queue.patch(id, { sessionId }); live.sessionId = sessionId; sawSession = true; }
-                },
-              });
+              let run: Awaited<ReturnType<typeof launcher.start>>;
+              try {
+                run = await launcher.start({
+                  kind: 'console', jobId: id, projectSlug: slug, projectDir,
+                  codebases: await consoleCodebases(project.linkedCodebases, [projectDir, ws.root]),
+                  request: { prompt, resumeSessionId: resume, model: settings.model ?? undefined },
+                  onEvent: (event) => {
+                    hub.broadcast({ type: 'agent', jobId: id, event });
+                    const sessionId = event.kind === 'session' ? event.sessionId : event.kind === 'result' ? event.sessionId : undefined;
+                    if (sessionId) { queue.patch(id, { sessionId }); live.sessionId = sessionId; sawSession = true; }
+                  },
+                });
+              } catch (err) {
+                // Fix round 1 (M3): the run never started, so its prompt's words were never delivered (said, never dropped silently).
+                await live.serial(async () => { live.unconfirmPrompt(); });
+                throw failure(err instanceof Error ? err.message : String(err));
+              }
               const onAbort = () => run.cancel();
               signal.addEventListener('abort', onAbort, { once: true });
               if (signal.aborted) run.cancel(); // cancelled while the turn was being prepared
@@ -638,7 +652,22 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
                 else carry = [];
                 continue;
               }
-              if (result.status === 'failed') throw new Error(result.error ?? t().errors.turnFailed);
+              // Ruling Z (console N5): a redirect's run that failed before reporting its session never took the words. Once per
+              // turn, one fresh run carries the request and the words; if that fails too, the job fails and the words are
+              // shown as not delivered.
+              if (result.status === 'failed' && !sawSession && !signal.aborted && given.some((m) => m.mode === 'redirect')) {
+                await live.serial(async () => { for (const m of given) if (m.state === 'prompt') m.state = 'pending'; });
+                if (!freshRetryUsed) {
+                  freshRetryUsed = true;
+                  const lastRedirect = [...given].reverse().find((m) => m.mode === 'redirect')!;
+                  await live.serial(async () => { live.sessionId = undefined; live.redirect ??= lastRedirect; });
+                  // A gone session that was the turn's own starting point is not resumed again: a new session then.
+                  resume = resumeSessionId === resumedWith ? undefined : resumeSessionId;
+                  carry = [];
+                  continue;
+                }
+              }
+              if (result.status === 'failed') throw failure(result.error ?? t().errors.turnFailed);
               // A cancel that arrived after an ok result yields 'succeeded' from the runner: keep it.
               return result.status === 'cancelled' ? 'cancelled' : undefined;
             }
@@ -646,6 +675,8 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
             // In the chain, so a redirect either was taken above or sees `ended`; whatever is left is answered as not
             // delivered (409, the UI keeps the words): the console has no queue (I1).
             await live.serial(async () => { live.phase = 'ended'; live.run = null; });
+            // The words no run took are marked as such (the client may have seen them announced earlier, Ruling Z).
+            for (const m of undeliveredAtEnd(live)) hub.broadcast({ type: 'agent', jobId: id, event: { kind: 'user_message_not_delivered', clientId: m.clientId } });
             for (const m of live.messages) m.settle('dropped');
             live.redirect?.settle('dropped');
             live.redirect = null;

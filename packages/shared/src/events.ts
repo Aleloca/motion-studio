@@ -38,6 +38,11 @@ export type AgentEvent =
    * that the CLI consumed it (spike suspended, decisions log 610), so it means "sent", not "read".
    */
   | { kind: 'user_message_delivered'; clientId: string }
+  /**
+   * Fix round 1 (Ruling Z, M3): a message no run took after all (its run never started, or failed before reading it, and the
+   * turn ended): never delivered, whatever was announced before. Console turns (creative turns queue such words instead).
+   */
+  | { kind: 'user_message_not_delivered'; clientId: string }
   /** Phase 13: the CLI acknowledged an interrupt of the current step. */
   | { kind: 'interrupted' };
 
