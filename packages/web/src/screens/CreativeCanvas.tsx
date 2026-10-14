@@ -31,7 +31,7 @@ import { ExportDialog, type ExportSnapshot } from './ExportDialog.tsx';
 import { StorePackExport } from './creative/StorePackExport.tsx';
 import { LanguagesButton } from './creative/LanguagesButton.tsx';
 import { RenderLanguagesDialog } from './creative/RenderLanguagesDialog.tsx';
-import { creativeLocales } from './creative/languagesModel.ts';
+import { creativeLocales, packLanguageGaps } from './creative/languagesModel.ts';
 import { activatesControl, bare, inOverlay, isTyping } from './keys.ts';
 import { pinsKey, usePendingPins } from './pendingPins.ts';
 import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from './FormatVersions.tsx';
@@ -596,14 +596,14 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
       <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
         title={title} snapshot={exporting?.snapshot ?? null} presets={presets} labels={cr.brief.formatLabels} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} jobs={live.jobs}
         {...(creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
-      {cr.brief.storePack && version ? (
+      {cr.brief.storePack && version ? (() => {
+        const packGaps = packLanguageGaps(cr.brief.formats, version, creativeLocales(cr.brief)?.extra ?? []);
+        return (
         <StorePackExport open={packExport} onClose={() => setPackExport(false)} slug={slug} creative={creative} title={title} version={version.n}
-          untranslated={(creativeLocales(cr.brief)?.extra ?? []).filter((tag) => {
-            const formats = (version.compositions ?? []).map((x) => x.format);
-            return formats.length === 0 || formats.some((f) => !(version.localizations ?? []).some((r) => r.locale === tag && r.instanceId === f));
-          })}
+          untranslated={packGaps.untranslated} needsReview={packGaps.review}
           {...(creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
-      ) : null}
+        );
+      })() : null}
       {renderPlan && creativeLocales(cr.brief) ? (
         <RenderLanguagesDialog open onClose={() => setRenderPlan(null)} slug={slug} creative={creative} plan={renderPlan} locales={creativeLocales(cr.brief)!}
           rowsOf={(n) => versions.find((v) => v.n === n)?.localizations ?? []} labelOf={formatLabel} />

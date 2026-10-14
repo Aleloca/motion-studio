@@ -1,7 +1,7 @@
 // The model of the Languages UI (Phase 12, Task 5): names of languages, the status of a translation, why a voice cannot be
 // translated, which problems belong to which clip. Pure functions, no React.
 import {
-  effectiveServices, isRtlLocale, missingCapability, RTL_LOCALES, SUPPORTED_LOCALES,
+  effectiveServices, isStorePackFormat, isRtlLocale, missingCapability, RTL_LOCALES, SUPPORTED_LOCALES,
   messages, type Brief, type KeyCheckResult, type Locale, type LocaleTag, type LocalizationIssue, type LocalizationRow, type Messages, type ProviderId,
 } from '@motion-studio/shared';
 
@@ -105,12 +105,16 @@ export const overflowOfClip = (row: { issues?: readonly LocalizationIssue[]; pro
 
 /** The sentences of a row that no text row of the table shows: issues of other clips (voices) or of none, else the old row's unmatched ones. */
 export function generalProblems(row: { issues?: readonly LocalizationIssue[]; problems?: readonly string[] }, texts: ReadonlyArray<{ clipId: string; name?: string }>): string[] {
+  const shownInline = new Set(texts.flatMap((t) => legacyOverflowOf(row.problems ?? [], clipDisplay(t))));
   if (row.issues) {
     const ids = new Set(texts.map((t) => t.clipId));
-    return [...new Set(row.issues.filter((i) => i.code !== 'stale' && !(i.clipId !== undefined && ids.has(i.clipId) && (OVERFLOW_CODES.has(i.code) || i.code === 'notTranslated'))).map((i) => i.message))];
+    const coded = new Set(row.issues.map((i) => i.message));
+    const fromIssues = row.issues.filter((i) => i.code !== 'stale' && !(i.clipId !== undefined && ids.has(i.clipId) && (OVERFLOW_CODES.has(i.code) || i.code === 'notTranslated'))).map((i) => i.message);
+    // An old row that got `issues` later keeps its uncoded sentences in `problems`: they stay in the general list.
+    const uncoded = (row.problems ?? []).filter((p) => !coded.has(p) && !shownInline.has(p));
+    return [...new Set([...fromIssues, ...uncoded])];
   }
-  const matched = new Set(texts.flatMap((t) => legacyOverflowOf(row.problems ?? [], clipDisplay(t))));
-  return (row.problems ?? []).filter((p) => !matched.has(p));
+  return (row.problems ?? []).filter((p) => !shownInline.has(p));
 }
 
 /** What name a clip is called in the problems (the core names a clip by its name, else its id). */
@@ -139,4 +143,26 @@ export function flaggedClips(o: { stale: readonly string[]; problems: readonly s
     if (kind) out.push({ clipId: c.clipId, label: clipDisplay(c), kind, messages: [...new Set(PRIORITY.flatMap((k) => kinds.get(k) ?? []).filter(Boolean))] });
   }
   return out;
+}
+
+/**
+ * The languages a store pack export will have trouble with (Q5): `untranslated` have no translation of one of the pack's formats
+ * (the core fails those files); `review` have all of them, but one is outdated or has problems. Only the pack's formats of the
+ * brief count, not other compositions of the version.
+ */
+export function packLanguageGaps(
+  briefFormats: readonly string[], version: { compositions?: ReadonlyArray<{ format: string }>; localizations?: readonly Pick<LocalizationRow, 'locale' | 'instanceId' | 'stale' | 'problems'>[] },
+  extra: readonly LocaleTag[],
+): { untranslated: LocaleTag[]; review: LocaleTag[] } {
+  const inVersion = new Set((version.compositions ?? []).map((x) => x.format));
+  const formats = briefFormats.filter((f) => isStorePackFormat(f) && (inVersion.size === 0 || inVersion.has(f)));
+  const rows = version.localizations ?? [];
+  const untranslated: LocaleTag[] = [];
+  const review: LocaleTag[] = [];
+  for (const tag of extra) {
+    const mine = formats.map((f) => rows.find((r) => r.locale === tag && r.instanceId === f));
+    if (formats.length === 0 || mine.some((r) => !r)) untranslated.push(tag);
+    else if (mine.some((r) => r!.stale.length > 0 || (r!.problems?.length ?? 0) > 0)) review.push(tag);
+  }
+  return { untranslated, review };
 }

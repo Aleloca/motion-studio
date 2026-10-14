@@ -2,7 +2,7 @@
 // formats (one instance per screenshot and device) they stand for.
 import { z } from 'zod';
 import { DEFAULT_FORMATS, type FormatPreset } from './formats.ts';
-import { instanceIdOf } from './format-instance.ts';
+import { instanceIdOf, presetOf } from './format-instance.ts';
 import { assetFilePath } from './localization/schema.ts';
 
 export type StoreId = 'appstore' | 'playstore';
@@ -19,6 +19,12 @@ export const STORE_DEVICE_PRESET = {
 } as const;
 /** Catalog preset of each store's preview video. */
 export const STORE_PREVIEW_PRESET = { appstore: 'appstore-preview', playstore: 'playstore-promo-16x9' } as const;
+
+/** Whether a format instance is one of a store pack's (a device screenshot, the Play feature graphic or a store preview video). */
+export function isStorePackFormat(format: string): boolean {
+  const preset = presetOf(format);
+  return Object.values(STORE_DEVICE_PRESET).some((m) => (Object.values(m) as string[]).includes(preset)) || (Object.values(STORE_PREVIEW_PRESET) as string[]).includes(preset);
+}
 
 export const storePackSchema = z.object({
   app: z.object({ name: z.string().trim().min(1).max(60), tagline: z.string().trim().max(120) }).strict(),

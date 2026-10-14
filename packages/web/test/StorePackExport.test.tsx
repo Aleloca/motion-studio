@@ -12,7 +12,7 @@ vi.mock('../src/api.ts', () => ({ api, ApiError }));
 const { StorePackExport } = await import('../src/screens/creative/StorePackExport.tsx');
 
 const onClose = vi.fn();
-const open = (extra: { locales?: { primary: LocaleTag; extra: LocaleTag[] }; untranslated?: LocaleTag[] } = {}) => render(
+const open = (extra: { locales?: { primary: LocaleTag; extra: LocaleTag[] }; untranslated?: LocaleTag[]; needsReview?: LocaleTag[] } = {}) => render(
   <I18nProvider locale="en">
     <StorePackExport open onClose={onClose} slug="acme" creative="c1" title="Fotonica" version={3} {...extra} />
   </I18nProvider>,
@@ -70,6 +70,15 @@ describe('StorePackExport · untranslated languages', () => {
     expect(de.hasAttribute('disabled')).toBe(false);
     expect(de.closest('label')!.textContent).toContain('not translated: will fail');
     expect(within(group).getByRole('checkbox', { name: 'Italian' }).closest('label')!.textContent).not.toContain('not translated');
+  });
+});
+
+describe('StorePackExport · languages to review', () => {
+  it('marks a language with an outdated or problem translation, apart from the untranslated ones', () => {
+    open({ locales: { primary: 'en', extra: ['it', 'de'] }, untranslated: ['de'], needsReview: ['it'] });
+    const group = screen.getByRole('group', { name: 'Languages' });
+    expect(within(group).getByRole('checkbox', { name: 'Italian' }).closest('label')!.textContent).toContain('outdated or with problems: may fail');
+    expect(within(group).getByRole('checkbox', { name: 'German' }).closest('label')!.textContent).toContain('not translated: will fail');
   });
 });
 
