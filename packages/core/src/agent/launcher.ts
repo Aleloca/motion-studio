@@ -224,7 +224,7 @@ export class AgentLauncher {
       // Every run is metered here, whatever the job: the final usage is held back and re-emitted with per-run values.
       const tracker = new UsageTracker({
         // A translation turn is metered with the creative's turns (the usage report has no kind of its own for it).
-        projectDir: i.projectDir, jobId: i.jobId, kind: i.kind === 'localize' ? 'creative' : i.kind, creativeSlug: i.creativeSlug ?? null,
+        projectDir: i.projectDir, jobId: i.jobId, kind: i.kind, creativeSlug: i.creativeSlug ?? null,
         version: i.usage?.version ?? null, attempt: i.usage?.attempt ?? null,
         ...(i.request.resumeSessionId ? { resumeSessionId: i.request.resumeSessionId } : {}),
       }, this.usageLedger);

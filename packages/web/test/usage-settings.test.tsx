@@ -33,6 +33,7 @@ const full = (): UsageReport => ({
     { kind: 'brand-analysis', tokens: 1500, costUsd: 0.05 },
     { kind: 'describe', tokens: 0, costUsd: null },
     { kind: 'console', tokens: 0, costUsd: null },
+    { kind: 'localize', tokens: 800, costUsd: null },
   ],
   trackedSince: '2026-09-01T09:00:00.000Z',
   billing: 'subscription',
@@ -83,7 +84,7 @@ describe('Settings · Usage', () => {
     const projects = screen.getByRole('list', { name: 'By project' });
     expect(within(projects).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Acme7.0k tokens$0.20', 'Beta3.5k tokens']);
     const kinds = screen.getByRole('list', { name: 'By kind of work' });
-    expect(within(kinds).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Creatives9.0k tokens≥ $0.15', 'Brand analyses1.5k tokens$0.050']);
+    expect(within(kinds).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Creatives9.0k tokens≥ $0.15', 'Brand analyses1.5k tokens$0.050', 'Translations800 tokens']);
     expect(screen.getByText('This counts toward your Claude plan. At API prices it would be at least $0.20.')).toBeTruthy();
     expect(screen.getByText('The cost of some runs is not known, so the real figure may be higher.')).toBeTruthy();
     expect(screen.getByText('Tracked since Sep 1, 2026')).toBeTruthy();

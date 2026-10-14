@@ -19,6 +19,7 @@ import { NoMediaTools, type MediaTools } from '../src/media/media-tools.ts';
 import { LibraryStore } from '../src/library/library-store.ts';
 import { MemoryVault } from '../src/secrets/vault.ts';
 import { H, startInstanceEnv, type InstanceEnv } from './helpers/instance-server.ts';
+import { usageLedgerFile } from '../src/usage/usage-ledger.ts';
 import { multipart } from './helpers/multipart.ts';
 
 let env: InstanceEnv;
@@ -139,6 +140,18 @@ describe('localize: the prompt', { timeout: 120_000 }, () => {
     expect(p2).toMatch(/### German \(de\) · test-wide/);
     expect(p2).toContain(': "Hello there"');
     expect(p2).toContain('no request from the user');
+  });
+
+  it('a translate turn is recorded in the usage ledger as its own kind, not as a creative generation (Q8)', async () => {
+    await boot();
+    const slug = await create();
+    const before = env.agentRuns();
+    await finished(await start(slug, 1, { locales: ['de'] }));
+    expect(env.agentRuns()).toBeGreaterThan(before);
+    const kinds = readFileSync(usageLedgerFile(env.projectDir()), 'utf8').trim().split('\n').filter(Boolean).map((l) => (JSON.parse(l) as { kind: string; version: number | null }));
+    // The creative's own generation stays `creative`; the translation runs are `localize` (version 1, but not a first generation).
+    expect(kinds.filter((k) => k.kind === 'creative')).toHaveLength(1);
+    expect(kinds.filter((k) => k.kind === 'localize').length).toBeGreaterThan(0);
   });
 
   it('runs no agent when every entry is already translated and current', async () => {
