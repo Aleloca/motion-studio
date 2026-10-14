@@ -841,3 +841,16 @@ Legenda impatto: 🟢 basso · 🟡 medio · 🔴 alto (sicurezza o prodotto).
 427. 🟡 **Requisiti degli store verificati dal core prima dell'export, con appiattimento dell'alfa per App Store** (decisione: orchestratore). Dimensioni esatte, niente alfa, anteprima 15–30 s a 30 fps con traccia audio (silenziosa se manca). Un file che non passa non blocca il resto del pacchetto. Google Play vuole un link YouTube: il video si esporta con una nota.
 428. 🟢 **Limiti degli store ricontrollati sulla documentazione pubblica all'inizio del lavoro** (decisione: orchestratore). Solo lettura delle pagine Apple e Google, con la data annotata nei preset; nessuna chiamata ad API.
 429. 🟢 **Fuori perimetro:** caricamento diretto sugli store, testi dei metadati degli store, servizi di traduzione esterni, impaginazione diversa per lingua (decisione: orchestratore).
+
+## Fase 13 · specifica e piano (orchestratore)
+
+520. 🟡 **Durante il lavoro il compositore invia all'agente, con "Queue for after" come seconda azione** (decisione: orchestratore). Il caso più comune è una precisazione ("il logo è quello blu"), che serve subito; la richiesta successiva resta disponibile dal menu. *Alternativa scartata:* solo coda (più semplice, ma l'agente continua nella direzione sbagliata fino alla fine).
+521. 🟡 **Stop ricorda la sessione interrotta** (decisione: orchestratore). Il turno dopo uno Stop riprende quella sessione in un fork, con la nota che i file in `work/` possono essere parziali; se la sessione non esiste più si torna a quella dell'ultima versione con una nota. Oggi l'agente dimentica il turno fermato.
+522. 🟡 **"Stop and redirect" continua lo stesso job** (decisione: orchestratore). Interrompe il passo in corso e consegna il messaggio nella stessa sessione, con i tentativi rimasti; senza supporto all'interruzione, ferma il processo e riparte con `--resume`.
+523. 🟡 **Prima del codice, una prova dal vivo del protocollo stream-json** (decisione: orchestratore). Il comportamento di Claude Code con stdin aperto e con la richiesta `interrupt` non è documentato per la CLI: lo si misura con haiku e configurazione usa e getta (budget ~0,20 $), e ogni comportamento ha un ripiego (coda, ferma e riprendi) indicato dal doctor.
+524. 🟢 **Un messaggio arrivato a turno finito diventa la richiesta successiva** (decisione: orchestratore). Mai perso e mai scritto su uno stdin chiuso; la UI lo dice.
+525. 🟢 **Dopo un riavvio la coda non parte da sola** (decisione: orchestratore). Le richieste in coda restano visibili; parte solo con "Run next", per non spendere tempo o denaro senza che l'utente sia presente.
+526. 🟢 **Limiti:** 4000 caratteri per messaggio, 10 messaggi per turno, 5 richieste in coda; niente allegati nei messaggi durante il lavoro (decisione: orchestratore).
+527. 🟢 **Stop senza conferma, Esc non ferma** (decisione: orchestratore). Fermare è sempre un clic esplicito; il lavoro fermato non si perde grazie alla sessione ricordata.
+528. 🟢 **Nessuna Agent SDK** (decisione: orchestratore). Si resta sulla CLI già usata (`claude -p --input-format stream-json`), senza nuove dipendenze.
+529. 🟢 **Fuori perimetro:** modificare messaggi già consegnati, messaggi all'analisi del brand, turni paralleli della stessa creatività (decisione: orchestratore).
