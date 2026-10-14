@@ -4,7 +4,7 @@
 > - programma `docs/superpowers/specs/2026-10-08-motion-studio-redesign-design.md`, §2, riga della Fase 13: scrivere all'agente o interromperlo mentre lavora;
 > - percorso attuale dei turni: `ClaudeCodeRunner` (CLI `claude -p --input-format stream-json`, un solo messaggio su stdin, poi chiuso), `AgentLauncher`, `JobQueue`, `creative-turns.ts`, il compositore in `Conversation.tsx` (invio disattivato durante il lavoro, pulsante Cancel).
 >
-> **Decisioni prese in autonomia** dall'orchestratore (l'utente dorme e ha chiesto di procedere): voci 520–529 del registro. L'utente le rivede alla fine.
+> **Decisioni prese in autonomia** dall'orchestratore (l'utente dorme e ha chiesto di procedere): voci 600–609 del registro. L'utente le rivede alla fine.
 
 ## 1. Perché
 

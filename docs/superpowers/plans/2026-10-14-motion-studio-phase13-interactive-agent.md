@@ -59,7 +59,7 @@
   `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`
   `Claude-Session: https://claude.ai/code/session_01KxKL6zuy8dbnJieqN1eCNg`
 - `pnpm test`, `pnpm typecheck` and `pnpm check:i18n` stay green. Per-file timeouts only.
-- Decisions-log entries from 530 on (520–529 are the orchestrator's for this phase).
+- Decisions-log entries from 610 on (600–609 are the orchestrator's for this phase).
 - On a safety-classifier stop: stop, report, never rephrase around it.
 
 ## Review Focus
