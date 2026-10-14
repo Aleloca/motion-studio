@@ -1086,3 +1086,11 @@ Legenda impatto: 🟢 basso · 🟡 medio · 🔴 alto (sicurezza o prodotto).
     - l'asserzione debole sullo stato del test di Stop durante il salvataggio.
     
     *Costo cambio:* nullo.
+
+### Fase 13 · Task 2, giro di correzioni 2
+
+640. 🟢 **Redirect prima dell'avvio e ipotesi di ripresa come da Ruling V (Ruling W e X).**
+    - **Ruling W.** Un redirect a una creatività il cui job aspetta ancora un posto libero risponde subito con il nuovo esito `pending-start`, aggiunto senza togliere nulla. Le sue parole entrano nel prompt del primo tentativo, delimitate come parole dell'utente, e diventano "consegnate" (`user_message_delivered`) quando il job parte. Se il job viene annullato prima di partire, finiscono in coda.
+    - **Ruling X.** Questa voce corregge la 638. L'ipotesi di riserva (`guess`) vale solo se il run non ha riportato nessun evento `session` **e** l'agente non ha scritto nulla. Un run ripreso che annuncia la sessione e poi fallisce prima di qualunque testo è un fallimento normale: nessuna nota "sessione non disponibile", `stoppedSession` resta. Così `sawSession` torna a essere letto e non è più codice morto.
+
+    *Costo cambio:* nullo.

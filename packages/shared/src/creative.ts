@@ -103,8 +103,12 @@ export const LIVE_LIMITS = { maxChars: 4000, perTurn: 10, queued: 5 } as const;
  * - `queued-unsupported`: live messages are off for this Claude Code (or this kind of job), so it is the next request.
  */
 export type LiveMessageOutcome = 'delivered-pending' | 'queued' | 'queued-after-finish' | 'queued-unsupported';
-/** What a redirect did (POST /api/jobs/:id/redirect); `queued-after-finish`: it came while the version was being saved. */
-export type RedirectOutcome = 'interrupted' | 'restarted' | 'queued-after-finish';
+/**
+ * What a redirect did (POST /api/jobs/:id/redirect); `queued-after-finish`: it came while the version was being saved;
+ * `pending-start` (Ruling W): the creative job had not started yet — the words join its first prompt, and are marked
+ * delivered (`user_message_delivered`) when it starts.
+ */
+export type RedirectOutcome = 'interrupted' | 'restarted' | 'queued-after-finish' | 'pending-start';
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const FILE_NAME = /^[^/\\]+$/;

@@ -429,16 +429,18 @@ describe('resume-error detection (Ruling V)', () => {
 
   it('the CLI\'s session-not-found wording is matched (unverified live)', () => {
     expect(SESSION_NOT_FOUND.test('No conversation found with session ID: abc')).toBe(true);
-    expect(resumeErrorOf({ status: 'failed', error: 'No conversation found with session ID: abc', startFailed: false }, true)).toBe('not-found');
-    expect(resumeErrorOf({ status: 'failed', error: 'exit code 1' }, false)).toBe('guess');
-    expect(resumeErrorOf({ status: 'failed', error: 'exit code 1' }, true)).toBeNull();
-    expect(resumeErrorOf({ status: 'failed', error: 'claude not found', startFailed: true }, false)).toBeNull();
-    expect(resumeErrorOf({ status: 'cancelled' }, false)).toBeNull();
+    const none = { session: false, output: false };
+    expect(resumeErrorOf({ status: 'failed', error: 'No conversation found with session ID: abc', startFailed: false }, { session: true, output: true })).toBe('not-found');
+    expect(resumeErrorOf({ status: 'failed', error: 'exit code 1' }, none)).toBe('guess');
+    expect(resumeErrorOf({ status: 'failed', error: 'exit code 1' }, { session: false, output: true })).toBeNull();
+    expect(resumeErrorOf({ status: 'failed', error: 'exit code 1' }, { session: true, output: false })).toBeNull();
+    expect(resumeErrorOf({ status: 'failed', error: 'claude not found', startFailed: true }, none)).toBeNull();
+    expect(resumeErrorOf({ status: 'cancelled' }, none)).toBeNull();
   });
 
-  it('the backup guess (failure before any output) falls back once but keeps the remembered session', async () => {
+  it('the backup guess (failure before any session event and any output) falls back once but keeps the remembered session', async () => {
     const v1 = await setup();
-    s.runner.failStart = (req) => (req.resumeSessionId === 'kept-session' ? { error: 'exit code 1', session: true } : null);
+    s.runner.failStart = (req) => (req.resumeSessionId === 'kept-session' ? { error: 'exit code 1' } : null);
     const job = (await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Secondo' } })).json();
     const fallback = await s.runner.next(2);
     expect(fallback.req.resumeSessionId).toBe(v1.sessionId);
@@ -448,6 +450,17 @@ describe('resume-error detection (Ruling V)', () => {
     await s.waitIdle();
     expect((await s.jobs()).find((j) => j.id === job.id)?.state).toBe('failed');
     expect((await s.creative()).stoppedSession).toMatchObject({ sessionId: 'kept-session' });
+  });
+
+  it('a resumed run that reports its session and then fails before any text is an ordinary failure (Ruling X)', async () => {
+    await setup();
+    s.runner.failStart = (req) => (req.resumeSessionId === 'kept-session' ? { error: 'overloaded', session: true } : null);
+    const job = (await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Secondo' } })).json();
+    await s.waitIdle();
+    expect((await s.jobs()).find((j) => j.id === job.id)?.state).toBe('failed');
+    expect(s.runner.runs).toHaveLength(2);
+    expect((await s.creative()).stoppedSession).toMatchObject({ sessionId: 'kept-session' });
+    expect((await s.conversation()).some((e) => e.type === 'system' && e.text === it_.stoppedSessionUnavailable)).toBe(false);
   });
 
   it('a CLI that cannot start is an ordinary failure: no fallback, the remembered session stays', async () => {
@@ -469,5 +482,33 @@ describe('resume-error detection (Ruling V)', () => {
     expect((await s.jobs()).find((j) => j.id === job.id)?.state).toBe('failed');
     expect(s.runner.runs).toHaveLength(2);
     expect((await s.creative()).stoppedSession).toMatchObject({ sessionId: 'kept-session' });
+  });
+});
+
+describe('a redirect before the job starts (Ruling W)', () => {
+  it('answers pending-start at once; the words join the first prompt and are marked delivered when it starts', async () => {
+    await setupService();
+    // One slot, busy with another creative's turn: ours waits in the job queue.
+    queue.setConcurrency(1);
+    const other = await store.create({ title: 'Altro', brief });
+    const others = [await service.start({ ...ref, creativeSlug: other.slug }, { text: 'occupa', pins: [] })];
+    await runner.next(0);
+    const job = await service.start(ref, { text: 'Richiesta', pins: [] });
+    expect(stateOf(job.id)).toBe('queued');
+    const clientId = cid();
+    const t0 = Date.now();
+    expect(await service.redirect(job.id, { clientId, text: 'Cambia tutto', pins: [] })).toEqual({ outcome: 'pending-start' });
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(runner.runs).toHaveLength(1);
+    // A slot frees: our turn starts with the request and the redirect, delimited as the user's words.
+    runner.runs[0]!.finish();
+    const ours = await runner.next(1);
+    expect(ours.req.prompt).toContain('Richiesta');
+    expect(ours.req.prompt).toContain(`${USER_REQUEST_OPEN}\nCambia tutto`);
+    await vi.waitFor(async () => expect((await store.readConversation(ref.creativeSlug)).some((e) => e.type === 'agent' && e.event.kind === 'user_message_delivered' && e.event.clientId === clientId)).toBe(true));
+    ours.finish();
+    await queue.whenIdle();
+    expect(stateOf(job.id)).toBe('succeeded');
+    expect(others.every((o) => stateOf(o.id) === 'succeeded')).toBe(true);
   });
 });

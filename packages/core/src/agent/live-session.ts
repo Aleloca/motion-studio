@@ -136,6 +136,11 @@ export interface RedirectHooks {
   interrupted(): void | Promise<void>;
   /** The redirect as the agent reads it. */
   text(msg: LiveMessage): string;
+  /**
+   * Ruling W (creative turns): before the agent starts, answer at once `pending-start` (the words join the first prompt)
+   * instead of waiting for the job to get a slot. Absent: the answer waits as for any fallback.
+   */
+  answerBeforeStart?: boolean;
 }
 
 /**
@@ -164,6 +169,7 @@ export async function redirectLive(live: LiveSession, m: UserMessageInput, hooks
     live.redirect = msg;
     // Only a run that is really stopped gets the marker (before the agent started, nothing is interrupted).
     if (run) { await hooks.interrupted(); run.cancel(); }
+    if (live.phase === 'preparing' && hooks.answerBeforeStart) return { now: 'pending-start' };
     return { msg };
   });
   if ('now' in step) return step.now;

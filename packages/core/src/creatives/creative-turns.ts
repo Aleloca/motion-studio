@@ -149,15 +149,16 @@ export const SESSION_NOT_FOUND = /no conversation found with session id/i;
 
 /**
  * Ruling V: whether a failed run that resumed a remembered session failed because that session is gone. `not-found`: the
- * CLI said so (the remembered session is then forgotten). `guess`: the backup — the run failed before any output of the
- * agent, so it never really started on that session (the remembered session is kept). A run the CLI could not even start
+ * CLI said so (the remembered session is then forgotten). `guess`: the backup — the run failed before any session event
+ * and any output of the agent, so it never really started on that session (the remembered session is kept). A run the CLI could not even start
  * (missing binary or folder) is an ordinary failure.
  */
-export function resumeErrorOf(outcome: { status: string; error?: string; startFailed?: boolean }, sawOutput: boolean): 'not-found' | 'guess' | null {
+export function resumeErrorOf(outcome: { status: string; error?: string; startFailed?: boolean }, seen: { session: boolean; output: boolean }): 'not-found' | 'guess' | null {
   if (outcome.status !== 'failed') return null;
   if (SESSION_NOT_FOUND.test(outcome.error ?? '')) return 'not-found';
   if (outcome.startFailed) return null;
-  return sawOutput ? null : 'guess';
+  // Ruling V/X: the guess only when the run reported no session and the agent wrote nothing.
+  return seen.session || seen.output ? null : 'guess';
 }
 
 /**
@@ -797,7 +798,7 @@ export class CreativeTurnService {
           // Phase 13 (Review Focus 4, Ruling V): a remembered session Claude Code no longer has falls back to the base
           // version's session, with a note: never a failed turn. Once per turn, and the restart counts as an attempt (C1).
           const resumeError = outcome.status === 'failed' && remembered && !resumeFallbackUsed && !signal.aborted
-            ? resumeErrorOf(outcome, sawOutput) : null;
+            ? resumeErrorOf(outcome, { session: sawSession, output: sawOutput }) : null;
           if (resumeError && attempt < this.maxAttempts) {
             resumeFallbackUsed = true;
             // Only the CLI's own "session not found" clears the remembered session; the backup guess keeps it.
@@ -1520,6 +1521,7 @@ export class CreativeTurnService {
           }
         },
         text: (msg) => liveMessageText(msg.text, msg.pins, pinLine),
+        answerBeforeStart: true,
       });
       return { outcome };
     });
