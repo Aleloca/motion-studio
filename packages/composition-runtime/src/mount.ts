@@ -83,6 +83,11 @@ interface MountedAudio { clip: AudioClip; el: HTMLAudioElement; muted: boolean; 
 const DERIVED_AUDIO_WAIT_MS = 3000;
 
 const DEFAULTS = { load: 120_000, seek: 60_000, layer: 60_000 };
+/**
+ * Preview (final wave P5): how long a paused seek waits for the sought video frame before it shows the `<video>` as it is.
+ * Short, so scrubbing never stalls on a source whose frames cannot be checked.
+ */
+export const PREVIEW_FRAME_WAIT_MS = 5_000;
 /** Ends a `videoFrameMismatch` message when the frame was accepted only after the seek's deadline (a stalled seek). */
 const LATE_FRAME = 'held until the seek deadline';
 
@@ -287,6 +292,11 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
           content.appendChild(canvas);
         } else {
           Object.assign(video.style, { display: 'block', width: '100%', height: '100%', objectFit: 'cover' });
+          // Preview (final wave P5): while paused, the sought frame is drawn into this canvas and shown instead of the
+          // `<video>`, which Chrome may still composite with its load frame (see drawVideoFrame); playback shows the video.
+          canvas = doc.createElement('canvas');
+          Object.assign(canvas.style, { display: 'none', width: '100%', height: '100%' });
+          content.appendChild(canvas);
         }
         content.appendChild(video);
         prepare = loadMedia(video, clip.id, clip.src);
@@ -401,8 +411,12 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
    * compositor asynchronously, and until it does a screenshot shows the frame decoded at load (source frame 0), even
    * after `seeked`, two animation frames, and `requestVideoFrameCallback` reporting the right frame as presented: 11–13 of
    * ~100 first-visible frames were wrong; extra animation frames or keeping the layer at opacity 0 did not help. A canvas
-   * is painted by the main thread like the rest of the page, so the two frames after a seek carry it. The preview keeps
-   * the `<video>` (it plays).
+   * is painted by the main thread like the rest of the page, so the two frames after a seek carry it.
+   *
+   * Preview (final wave P5): the same race left a paused preview on frame 0 after a seek (a paused video presents no new
+   * frame, so the stale load frame could stay for good: the macOS CI failure of the preview test). A paused preview now
+   * shows the checked frame from a canvas too (`presentVideo`), with no error ever reported for it; playback shows the
+   * `<video>` again. If no frame can be checked in time, the `<video>` stays as it was before.
    */
   /**
    * Draws `source` (`vw`×`vh`, a VideoFrame or the video) into the clip's canvas, `object-fit: cover`. The canvas gets the
@@ -452,8 +466,10 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
    * An untrusted source gets the lenient rule: the covering frame, else a stable one with a non-fatal
    * `videoFrameMismatch`. Returns false when nothing was drawn.
    */
-  const paintVideo = async (m: Mounted, target: number, deadline: number, preSeekTsUs: number | null, settleUntil: number): Promise<boolean> => {
+  const paintVideo = async (m: Mounted, target: number, deadline: number, preSeekTsUs: number | null, settleUntil: number, quiet = false): Promise<boolean> => {
     const v = m.video!;
+    // Preview: what the user sees while paused, never a render error (the `<video>` stays shown when nothing is drawn).
+    const say: typeof report = quiet ? () => {} : report;
     if (m.clip.type !== 'video') return true;
     const clip = m.clip;
     if (typeof VideoFrameCtor !== 'function') { drawVideoFrame(m, v, v.videoWidth, v.videoHeight); return true; }
@@ -483,7 +499,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
       if (r.verdict === 'warn') {
         // Accepted only once the seek's deadline passed (a held load frame): the seek stalled, and the message says so.
         const late = n.performanceNow() > deadline ? `, ${LATE_FRAME}` : '';
-        report('videoFrameMismatch', r.tsUs! > Math.round(target * 1e6)
+        say('videoFrameMismatch', r.tsUs! > Math.round(target * 1e6)
           ? `video ${clip.src}: frame at ${at(r.tsUs!)} s drawn for ${target.toFixed(3)} s, before the source starts (sourceStart missing or wrong)${late}`
           : `video ${clip.src}: frame at ${at(r.tsUs!)} s drawn for ${target.toFixed(3)} s although its duration does not reach it (untrusted source)${late}`, clip.id);
       }
@@ -492,7 +508,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
       return true;
     }
     // Not drawn: the render fails rather than capture a frame that is not the target's.
-    report('videoSeekTimeout', r.tsUs === null ? `video ${clip.src} gave no frame at ${target.toFixed(3)} s`
+    say('videoSeekTimeout', r.tsUs === null ? `video ${clip.src} gave no frame at ${target.toFixed(3)} s`
       : `video ${clip.src} still showed the frame at ${at(r.tsUs)} s (${r.verdict}), not ${target.toFixed(3)} s`, clip.id);
     return false;
   };
@@ -528,9 +544,24 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
       await withTimeout(seeked, Math.max(1, deadline - n.performanceNow()), n, `video ${m.clip.src} did not seek to ${target}`)
         .catch((e: unknown) => report('videoSeekTimeout', String(e instanceof Error ? e.message : e), m.clip.id));
     }
-    if (m.canvas && !(await paintVideo(m, target, deadline, preSeekTsUs, n.performanceNow() + PRE_SEEK_SETTLE_MS))) {
+    if (!m.canvas) return;
+    if (opts.mode === 'preview') {
+      // A paused preview shows the checked frame (final wave P5); nothing is reported, and without one the `<video>` stays.
+      const until = Math.min(deadline, n.performanceNow() + PREVIEW_FRAME_WAIT_MS);
+      const ok = await paintVideo(m, target, until, preSeekTsUs, Math.min(until, n.performanceNow() + PRE_SEEK_SETTLE_MS), true);
+      presentVideo(m, ok && !playing ? 'canvas' : 'video');
+      return;
+    }
+    if (!(await paintVideo(m, target, deadline, preSeekTsUs, n.performanceNow() + PRE_SEEK_SETTLE_MS))) {
       throw new Error(`videoSeekTimeout: video ${m.clip.src} has no frame for ${target.toFixed(3)} s`);
     }
+  };
+
+  /** Preview (final wave P5): the canvas with the sought frame while paused, the `<video>` while it plays. */
+  const presentVideo = (m: Mounted, show: 'canvas' | 'video') => {
+    if (opts.mode !== 'preview' || !m.canvas || !m.video) return;
+    m.canvas.style.display = show === 'canvas' ? 'block' : 'none';
+    m.video.style.display = show === 'canvas' ? 'none' : 'block';
   };
 
   const doSeek = async (t: number) => {
@@ -787,6 +818,7 @@ export function mount(root: HTMLElement, composition: Composition, opts: MountOp
       if (o.from !== undefined && Number.isFinite(o.from)) time = clampT(o.from);
       if (playing) { tStart = time; wallStart = n.performanceNow(); return; }
       playing = true;
+      for (const m of mounted) presentVideo(m, 'video');
       tStart = time >= c.duration ? 0 : time;
       wallStart = n.performanceNow();
       n.requestAnimationFrame(frame);
