@@ -1,8 +1,9 @@
+import { basename } from 'node:path';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import {
   COMPOSITION_LIMITS, localizableEntries, messages,
-  type EditorCompositionView, type FormatPreset, type Locale, type LocaleTag, type Localization, type LocalizationIssue, type LocalizationRow, type VersionEntry,
+  type Composition, type EditorCompositionView, type FormatPreset, type Locale, type LocaleTag, type Localization, type LocalizationIssue, type LocalizationRow, type VersionEntry,
 } from '@motion-studio/shared';
 import { CreativeStore } from '../creatives/creative-store.ts';
 import type { CreativeRef, CreativeTurnService } from '../creatives/creative-turns.ts';
@@ -216,9 +217,13 @@ export function registerLocalizationRoutes(app: FastifyInstance, ctx: Localizati
       const current = read && row && read.hash === row.hash ? read.overlay : emptyOverlay(tag, instanceId);
       const { overlay, chooseFit } = applyEdit(current, edit, localizableEntries(ic.composition), ui);
       const voice: LocalizationRow['voice'] = edit.voice ?? row?.voice ?? (Object.keys(overlay.voices).length > 0 ? 'translated' : 'original');
+      // The browser's measure when a renderer is free (final wave P5): it decides the core's fit and the overflow of the texts
+      // it measures, as in a turn; otherwise the estimate does. The render's own measure stays the last check.
+      const measure = (c: Composition) => ctx.previews.measureTextOverflow({ ref: { projectDir: ref.projectDir, creativeDir, creativeSlug: slug, n: v.n },
+        folder: basename(ic.compDir), preset: ic.preset, composition: c, signal });
       const done = await finishOverlay({
         overlay, base: ic, voice, chooseFit, uiLocale: ui, projectDir: ref.projectDir, voiceRoots: voiceRootsOf(ic, ref.projectDir),
-        fallback,
+        fallback, measure,
       });
       const hash = await writeOverlay(creativeDir, v.n, done.overlay);
       const assetHashes = rowAssetHashes({ overlay: done.overlay, ...(row?.assetHashes ? { old: row.assetHashes } : {}),

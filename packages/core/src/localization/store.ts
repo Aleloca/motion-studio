@@ -15,7 +15,7 @@ import { isRealDirChain, realDirChain } from '../creatives/core-files.ts';
 import { noteCoreOutputWrite } from '../creatives/carry-over.ts';
 import type { CreativeStore } from '../creatives/creative-store.ts';
 import { ensureFallbackFont, FallbackFontUnavailable, type ProjectRef } from './fallback-fonts.ts';
-import { checkLocalizedComposition, clipLabel, fitTexts, staleIds, voiceFileOk } from './validate.ts';
+import { checkLocalizedComposition, clipLabel, fitTexts, FITS, measuredByBrowser, staleIds, voiceFileOk } from './validate.ts';
 
 /**
  * The localization store (Phase 12, spec §3.1): one overlay per language and instance,
@@ -258,7 +258,39 @@ export async function resolveFallbackFont(project: ProjectRef, locale: LocaleTag
   }
 }
 
-export interface FinishedOverlay { overlay: Localization; stale: string[]; problems: string[]; /** The same problems with their code and clip, plus the outdated entries (Ruling M). */ issues: LocalizationIssue[]; warnings: string[] }
+export interface FinishedOverlay {
+  overlay: Localization; stale: string[]; problems: string[]; /** The same problems with their code and clip, plus the outdated entries (Ruling M). */ issues: LocalizationIssue[]; warnings: string[];
+  /** With `measure`: the browser-measured clips that overflow at their final fit; null when the browser did not measure. */
+  measured: string[] | null;
+}
+
+/** The browser's measure of a localized composition: the text clip ids that overflow their box, or null when it cannot run now. */
+export type TextMeasure = (localized: Composition) => Promise<string[] | null>;
+
+/**
+ * The fits of `overlay` decided by the browser (final wave P5): for each clip of `chooseFit` the browser measures (translated,
+ * not stale), the largest fit from 1 down to 0.7 at which it lays the text out inside its box, above or below the estimate's
+ * choice; a text that overflows even at 0.7 keeps 0.7. Returns the overlay with those fits and the measured clips that still
+ * overflow, or null when the browser cannot measure (the estimate stands). One measure per fit tried, all clips at once.
+ */
+async function browserFit(base: Composition, overlay: Localization, stale: readonly string[], chooseFit: ReadonlySet<string>,
+  voiceMode: LocalizationRow['voice'], measure: TextMeasure): Promise<{ overlay: Localization; overflowing: string[] } | null> {
+  const measured = new Set(Object.keys(overlay.texts).filter((id) => !stale.includes(id) && measuredByBrowser(base, id)));
+  const fit = { ...overlay.fit };
+  let pending = [...chooseFit].filter((id) => measured.has(id));
+  let last: string[] | null = null;
+  for (const f of FITS) {
+    for (const id of pending) { if (f === 1) delete fit[id]; else fit[id] = f; }
+    let localized: Composition;
+    try { localized = applyLocalization(base, { ...overlay, fit }, { stale, voiceMode }); } catch { return null; }
+    last = await measure(localized);
+    if (last === null) return null;
+    const over = new Set(last);
+    pending = pending.filter((id) => over.has(id));
+    if (pending.length === 0) break;
+  }
+  return { overlay: { ...overlay, fit }, overflowing: (last ?? []).filter((id) => measured.has(id)) };
+}
 
 /**
  * Completes an overlay against its composition before it is stored (shared by the PUT route, the carry-over and Task 4):
@@ -279,6 +311,12 @@ export async function finishOverlay(o: {
    * absent: the fonts the overlay has are kept as they are.
    */
   fallback?: FallbackResult;
+  /**
+   * The browser's measure (Ruling I, final wave P5), when a renderer can run it: for the clips it measures it decides both
+   * the core's fit (`browserFit`) and the overflow (`textOverflowMeasured`), in place of the glyph-width estimate. Absent, or
+   * null from it: the estimate decides.
+   */
+  measure?: TextMeasure;
 }): Promise<FinishedOverlay> {
   const v = messages(o.uiLocale).variants;
   const problems: string[] = [];
@@ -300,8 +338,15 @@ export async function finishOverlay(o: {
   if (font && 'unavailable' in font) add('fallbackFontUnavailable', v.fallbackFontUnavailable({ family: font.unavailable }));
   else if (font) overlay = { ...overlay, fonts: [...overlay.fonts.filter((f) => f.family !== font.family), { family: font.family, files: font.files }] };
   const fitted = fitTexts(o.base.composition, overlay, stale, o.chooseFit);
-  overlay = fitted.overlay;
-  for (const id of fitted.overflowing) add('textOverflow', v.textOverflow({ clip: clipLabel(o.base.composition, id) }), id);
+  const browser = o.measure ? await browserFit(o.base.composition, fitted.overlay, stale, o.chooseFit, o.voice, o.measure) : null;
+  overlay = browser?.overlay ?? fitted.overlay;
+  for (const id of fitted.overflowing) {
+    if (browser && measuredByBrowser(o.base.composition, id)) continue; // the browser decides for it
+    add('textOverflow', v.textOverflow({ clip: clipLabel(o.base.composition, id) }), id);
+  }
+  for (const id of browser?.overflowing ?? []) {
+    add('textOverflowMeasured', v.textOverflowMeasured({ clip: clipLabel(o.base.composition, id), fit: Math.round((overlay.fit[id] ?? 1) * 100) }), id);
+  }
   for (const [id, voice] of Object.entries(overlay.voices)) {
     if (!stale.includes(id) && !(await voiceFileOk(o.voiceRoots, voice.src))) add('voiceFileInvalid', v.voiceFileInvalid({ clip: clipLabel(o.base.composition, id) }), id);
   }
@@ -319,7 +364,7 @@ export async function finishOverlay(o: {
     for (const p of checked.problems) add('invalid', p);
     warnings = checked.warnings;
   }
-  return { overlay, stale, problems, issues, warnings };
+  return { overlay, stale, problems, issues, warnings, measured: browser?.overflowing ?? null };
 }
 
 /** The localized composition shown and rendered for a row: stale ids keep the source (Review Focus 2); null when it no longer applies. */

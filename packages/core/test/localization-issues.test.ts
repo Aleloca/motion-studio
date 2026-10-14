@@ -81,7 +81,8 @@ describe('issues on the routes', { timeout: 120_000 }, () => {
     const long = 'Herzlich willkommen zur brandneuen Version unserer wunderbaren Anwendung für alle Geräte';
     const put = await env.app.inject({ method: 'PUT', url: url(slug, '/de/test-wide'), headers: H, payload: { texts: { title: long } } });
     expect(put.statusCode, put.body).toBe(200);
-    const issue = { code: 'textOverflow', clipId: 'title', message: v().textOverflow({ clip: 'Title' }) };
+    // A renderer is free: the browser's measure decides (P5), at the 70% the core tried last.
+    const issue = { code: 'textOverflowMeasured', clipId: 'title', message: v().textOverflowMeasured({ clip: 'Title', fit: 70 }) };
     expect(put.json().issues).toEqual([issue]);
     expect((await env.versionOf(slug, 1))!.localizations![0]!.issues).toEqual([issue]);
     expect((await env.app.inject({ url: url(slug, '/de/test-wide'), headers: H })).json().issues).toEqual([issue]);

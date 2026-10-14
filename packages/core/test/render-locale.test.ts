@@ -158,8 +158,8 @@ describe('render problems of a translation (Rulings I, J)', { timeout: 120_000 }
     expect(row.problems).toBeUndefined();
     expect(row.render!.problems).toBeUndefined();
     // Translated again (current), the next render measures the translation itself; no overflow now: the note is gone.
-    await put(slug, 2, 'de', 'test-wide', { texts: { title: 'Hallo' } });
     env.fake.overflows = [];
+    await put(slug, 2, 'de', 'test-wide', { texts: { title: 'Hallo' } });
     await done(await render(slug, 2, { formats: ['test-wide'], locales: ['de'] }));
     const after = (await env.versionOf(slug, 2))!.localizations!.find((r) => r.locale === 'de')!;
     expect(after.issues ?? []).toEqual([]);

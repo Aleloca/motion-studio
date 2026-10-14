@@ -82,7 +82,8 @@ describe('submit_localization', { timeout: 120_000 }, () => {
     ]);
     await localize(slug, { locales: ['de'] });
     const [a, b, c] = calls().filter((x) => x.tool === 'submit_localization');
-    expect(a!.body).toEqual({ ok: true, problems: [v().textOverflow({ clip: 'Title' })] });
+    // A renderer is free: the browser's measure decides (P5), at the 70% the core tried last.
+    expect(a!.body).toEqual({ ok: true, problems: [v().textOverflowMeasured({ clip: 'Title', fit: 70 })] });
     expect(b!.body).toEqual({ ok: true, problems: [] });
     expect(c!.body).toEqual({ ok: true, problems: [] });
     const o = overlayOf(slug, 1, 'de', 'test-wide');

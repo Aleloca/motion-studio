@@ -58,13 +58,34 @@ describe('localization routes', { timeout: 120_000 }, () => {
     const long = 'Herzlich willkommen zur brandneuen Version unserer wunderbaren Anwendung für alle Geräte';
     const r = await put(slug, 1, 'de', 'test-wide', { texts: { title: long } });
     expect(r.statusCode, r.body).toBe(200);
-    expect(r.json()).toMatchObject({ problems: [v().textOverflow({ clip: 'Title' })], overlay: { fit: { title: 0.7 }, texts: { title: { text: long } } } });
-    expect((await env.versionOf(slug, 1))!.localizations![0]!.problems).toEqual([v().textOverflow({ clip: 'Title' })]);
+    // A renderer is free: the browser's measure decides (P5), at the 70% the core tried last.
+    const measured = v().textOverflowMeasured({ clip: 'Title', fit: 70 });
+    expect(r.json()).toMatchObject({ problems: [measured], overlay: { fit: { title: 0.7 }, texts: { title: { text: long } } } });
+    expect((await env.versionOf(slug, 1))!.localizations![0]!.problems).toEqual([measured]);
     // Shorter: the core picks the fit, no problem.
     const ok = await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Willkommen zur neuen Version unserer App' } });
     expect(ok.json().problems).toEqual([]);
     expect(ok.json().overlay.fit.title).toBeGreaterThanOrEqual(0.7);
     expect(ok.json().overlay.fit.title).toBeLessThan(1);
+  });
+
+  it('a manual edit gets the browser\'s measure when a renderer is free: it decides the fit and the overflow both ways (P5)', async () => {
+    const slug = await create();
+    // The browser lays the long text out inside the box at 100%: the estimate's overflow is cleared, no fit is needed.
+    env.fake.measure = () => [];
+    const long = 'Herzlich willkommen zur brandneuen Version unserer wunderbaren Anwendung für alle Geräte';
+    const a = await put(slug, 1, 'de', 'test-wide', { texts: { title: long } });
+    expect(a.json().problems).toEqual([]);
+    expect(a.json().overlay.fit).toEqual({});
+    expect((await env.versionOf(slug, 1))!.localizations![0]!.issues).toBeUndefined();
+    // The browser needs 85% for a short text the estimate fits at 100%: the core's fit is 85%, with no problem.
+    env.fake.measure = (c) => ((c.tracks.flatMap((t) => t.clips).find((x) => x.id === 'title') as { props: { fontSize: number } }).props.fontSize > 17 + 1e-6 ? ['title'] : []);
+    const b = await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
+    expect(b.json()).toMatchObject({ problems: [], overlay: { fit: { title: 0.85 } } });
+    // A fit given by hand is measured as it is: at 100% the browser says it overflows.
+    const c = await put(slug, 1, 'de', 'test-wide', { fit: { title: 1 } });
+    expect(c.json().problems).toEqual([v().textOverflowMeasured({ clip: 'Title', fit: 100 })]);
+    expect(c.json().issues).toEqual([{ code: 'textOverflowMeasured', clipId: 'title', message: v().textOverflowMeasured({ clip: 'Title', fit: 100 }) }]);
   });
 
   it('refuses unknown ids, fields the spec does not allow and bad fits (400), with nothing written', async () => {

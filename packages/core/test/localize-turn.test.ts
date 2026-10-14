@@ -9,7 +9,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { messages, type JobSummary, type Localization } from '@motion-studio/shared';
+import { messages, type Composition, type JobSummary, type Localization } from '@motion-studio/shared';
 import { MCP_TOOLS } from '../src/agent/launcher.ts';
 import { buildAgentPolicy } from '../src/agent/policy.ts';
 import { ProjectActivity } from '../src/localization/localize-turn.ts';
@@ -331,9 +331,9 @@ describe('localize: repair loop', { timeout: 120_000 }, () => {
     expect(fix).toContain(`### German (de) · test-wide\n- ${v().textOverflowMeasured({ clip: 'Title', fit: 70 })}`);
     expect(fix).not.toMatch(/### French \(fr\)/);
     expect(fix).toContain(`<user_request>\nUse the formal register\n</user_request>`);
-    // The first submit answered the estimate's problem at once.
+    // The first submit answered the browser's problem at once (a renderer is free, P5).
     const first = calls().find((c) => c.tool === 'submit_localization' && !c.fix)!;
-    expect(first.body).toMatchObject({ ok: true, problems: [v().textOverflow({ clip: 'Title' })] });
+    expect(first.body).toMatchObject({ ok: true, problems: [v().textOverflowMeasured({ clip: 'Title', fit: 70 })] });
     expect(overlayOf(slug, 1, 'de', 'test-wide').texts.title).toEqual({ source: 'Hello', text: 'Hallo' });
     expect(await rowOf(slug, 1, 'de', 'test-wide')).toMatchObject({ origin: 'agent', stale: [], voice: 'original' });
     expect((await rowOf(slug, 1, 'de', 'test-wide'))!.problems).toBeUndefined();
@@ -374,9 +374,42 @@ describe('localize: repair loop', { timeout: 120_000 }, () => {
     process.env.FAKE_CLAUDE_LOCALIZE_CALLS = JSON.stringify([submit('de', 'test-wide', { texts: { title: 'Hallo' } })]);
     process.env.FAKE_CLAUDE_LOCALIZE_FIX_CALLS = JSON.stringify([submit('de', 'test-wide', { texts: { title: 'Hi' }, fit: { title: 0.7 } })]);
     await finished(await start(slug, 1, { locales: ['de'] }));
-    // The estimate says it fits; the measure says it does not, so a repair runs and the measured problem stays (fake engine).
-    expect(env.promptTexts().some((p) => p.includes('still have problems') && p.includes(v().textOverflowMeasured({ clip: 'Title', fit: 100 })))).toBe(true);
+    // The estimate says it fits; the measure says it does not at any fit the core may choose (down to 70%), so a repair runs
+    // and the measured problem stays (fake engine).
+    expect(env.promptTexts().some((p) => p.includes('still have problems') && p.includes(v().textOverflowMeasured({ clip: 'Title', fit: 70 })))).toBe(true);
     expect((await rowOf(slug, 1, 'de', 'test-wide'))!.problems).toEqual([v().textOverflowMeasured({ clip: 'Title', fit: 70 })]);
     expect(env.fake.frameCalls.length).toBeGreaterThan(0);
+  });
+
+  /** The fake browser: the title overflows above `max` times its source size (20 px). */
+  const titleOverflowsAbove = (max: number) => (c: Composition) => {
+    const clip = c.tracks.flatMap((t) => t.clips).find((x) => x.id === 'title') as { props: { fontSize?: number } } | undefined;
+    return clip && (clip.props.fontSize ?? 0) > 20 * max + 1e-6 ? ['title'] : [];
+  };
+
+  it('with a renderer, the browser chooses the core\'s fit: the estimate fits at 100%, the browser only at 85%: 85% and no repair (P5)', async () => {
+    await boot();
+    const slug = await create();
+    env.fake.measure = titleOverflowsAbove(0.85);
+    process.env.FAKE_CLAUDE_LOCALIZE_CALLS = JSON.stringify([submit('de', 'test-wide', { texts: { title: 'Hallo' } })]);
+    await finished(await start(slug, 1, { locales: ['de'] }));
+    expect(env.promptTexts().some((p) => p.includes('still have problems'))).toBe(false);
+    expect(calls().find((c) => c.tool === 'submit_localization')!.body).toMatchObject({ ok: true, problems: [] });
+    expect(overlayOf(slug, 1, 'de', 'test-wide').fit).toEqual({ title: 0.85 });
+    expect((await rowOf(slug, 1, 'de', 'test-wide'))!.problems).toBeUndefined();
+  });
+
+  it('with a renderer, an estimated overflow the browser does not confirm is cleared and the fit stays at 100% (P5)', async () => {
+    await boot();
+    const slug = await create();
+    env.fake.measure = () => [];
+    const long = 'Herzlich willkommen zur neuen Version';
+    process.env.FAKE_CLAUDE_LOCALIZE_CALLS = JSON.stringify([submit('de', 'test-wide', { texts: { title: long } })]);
+    await finished(await start(slug, 1, { locales: ['de'] }));
+    expect(env.promptTexts().some((p) => p.includes('still have problems'))).toBe(false);
+    expect(overlayOf(slug, 1, 'de', 'test-wide').fit).toEqual({});
+    const row = (await rowOf(slug, 1, 'de', 'test-wide'))!;
+    expect(row.problems).toBeUndefined();
+    expect(row.issues ?? []).toEqual([]);
   });
 });

@@ -27,7 +27,7 @@ import {
   attachedFontHashes, rowAssetHashes, voiceRootsOf, writeOverlay, type FallbackResult, type InstanceComposition,
 } from './store.ts';
 import { issueFields } from './issues.ts';
-import { checkedInstance, checkedLocale, clipLabel } from './validate.ts';
+import { checkedInstance, checkedLocale, clipLabel, measuredByBrowser } from './validate.ts';
 
 /**
  * The `localize` turn (Phase 12, Task 4, spec §3.2): an agent turn on an EXISTING version that translates the missing or
@@ -366,9 +366,14 @@ export class LocalizeService {
           else for (const [id] of scripts) if (!pair.group.scripts.has(id)) errors.push(va.voiceNotTranslatable({ clip: id.slice(0, 100) }));
           if (errors.length) return { ok: false, errors };
           const row = current?.row;
+          // The browser decides the core's fit and the overflow of the texts it measures, when a renderer is free (P5): the
+          // agent's answer then says what the render will show, and a fit the estimate got wrong costs no repair attempt.
+          const previews = this.deps.previews;
+          const measure = previews ? (c: Composition) => previews.measureTextOverflow({ ref: { projectDir: ref.projectDir, creativeDir, creativeSlug: slug, n },
+            folder: basename(ic.compDir), preset: ic.preset, composition: c, signal }) : undefined;
           const done = await finishOverlay({
             overlay: out, base: ic, voice: row?.voice ?? 'original', chooseFit, uiLocale: ui, projectDir: ref.projectDir,
-            voiceRoots: voiceRootsOf(ic, ref.projectDir), fallback, scripts: pair.group.scripts,
+            voiceRoots: voiceRootsOf(ic, ref.projectDir), fallback, scripts: pair.group.scripts, ...(measure ? { measure } : {}),
           });
           // A script already voiced as it is (and current) is not voiced again: it would last as long.
           for (const [id, script] of scripts) {
@@ -382,6 +387,11 @@ export class LocalizeService {
           // The fallback font the core attached now is hashed now (Ruling L); a recorded hash is kept.
           const fresh = await attachedFontHashes(ref.projectDir, fallback, row?.assetHashes);
           await this.writeRows(store, creativeDir, n, pair, done.overlay, { origin: 'agent', stale: done.stale, issues: done.issues, fresh });
+          // The measure of what was just stored: `assess` takes it instead of measuring the same overlay again.
+          if (done.measured) {
+            const stored = await this.current(creativeDir, n, pair.locale, pair.group.rep);
+            if (stored) pair.measured = { hash: stored.hash, ids: done.measured };
+          }
           pair.submitted = true;
           this.deps.turns.changed(ref);
           const missing = this.missing(pair, done.overlay, done.stale).map((id) => va.notTranslated({ clip: clipLabel(ic.composition, id) }));
@@ -672,10 +682,7 @@ export class LocalizeService {
       fixable.push(...missing.map((id) => va.notTranslated({ clip: clipLabel(comp, id) })));
       if (cur) {
         const estimates = new Map(Object.keys(cur.overlay.texts).map((id) => [va.textOverflow({ clip: clipLabel(comp, id) }), id] as const));
-        const boxed = (id: string) => {
-          const clip = comp.tracks.flatMap((tr) => tr.clips).find((c) => c.id === id);
-          return clip?.type === 'text' && (clip.props.width !== undefined || clip.props.height !== undefined);
-        };
+        const boxed = (id: string) => measuredByBrowser(comp, id);
         let measured: string[] | null = null;
         if (this.deps.previews && Object.keys(cur.overlay.texts).length > 0 && !signal.aborted) {
           if (pair.measured?.hash === cur.hash) measured = pair.measured.ids;
@@ -791,7 +798,7 @@ export class LocalizeService {
           voiceRoots: voiceRootsOf(ic, ref.projectDir), scripts: pair.group.scripts });
         // The estimate's overflow stands only where the browser did not measure (see `assess`); the measured one is added.
         const comp = ic.composition;
-        const boxed = (id: string) => { const c = comp.tracks.flatMap((tr) => tr.clips).find((x) => x.id === id); return c?.type === 'text' && (c.props.width !== undefined || c.props.height !== undefined); };
+        const boxed = (id: string) => measuredByBrowser(comp, id);
         const measured = pair.measured;
         const issues: LocalizationIssue[] = done.issues.filter((i) => !(measured && i.code === 'textOverflow' && i.clipId !== undefined && boxed(i.clipId)));
         if (measured) {

@@ -168,7 +168,16 @@ function overflows(text: string, size: number, source: { text: string; size: num
 }
 
 /** The fit factors tried when the core chooses one (1 down to 0.7). */
-const FITS = [1, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7];
+export const FITS = [1, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7];
+
+/**
+ * Whether the browser measures the text clip `id` of `c` (the runtime's render-mode measure, Ruling I): a text clip with an
+ * explicit width or height. For the others only the estimate speaks.
+ */
+export function measuredByBrowser(c: Composition, id: string): boolean {
+  for (const t of c.tracks) for (const clip of t.clips) if (clip.id === id) return clip.type === 'text' && (clip.props.width !== undefined || clip.props.height !== undefined);
+  return false;
+}
 
 /**
  * For each translated text clip of `overlay` (not stale): whether it fits its box at its `fit`. `chooseFit`: clips whose

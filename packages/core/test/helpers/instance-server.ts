@@ -20,6 +20,7 @@ import { Git } from '../../src/git.ts';
 import { frameTime, type RenderFramesOptions, type RenderFramesResult } from '../../src/render/frames.ts';
 import type { RenderCompositionOptions, RenderEngine, RenderResult } from '../../src/render/renderer.ts';
 import { buildServer } from '../../src/server/app.ts';
+import { estimateLines } from '../../src/localization/validate.ts';
 import { FONT } from './render-env.ts';
 
 const FAKE = fileURLToPath(new URL('../fixtures/fake-claude.mjs', import.meta.url));
@@ -53,10 +54,28 @@ function png(width: number, height: number): Buffer {
  * `overflows`: clip ids every render reports as advisory `textOverflow` (Phase 12, Ruling I); `after`: runs right after a
  * render's file is in place.
  */
-/** `measure`: when set, the clip ids frames report as `textOverflow` for a given composition (instead of `overflows`). */
+/**
+ * `measure`: when set, the clip ids frames report as `textOverflow` for a given composition (instead of `overflows`). With
+ * neither, frames measure like a browser that agrees with the core's glyph-width estimate (`estimatedOverflows`), so a text
+ * the estimate says overflows also overflows in the preview's measure (final wave P5: the browser decides when it can).
+ */
 /** `content`: when set, the bytes a render writes (Phase 12 Task 6: real PNG headers for the store checks); else a short text. */
 export interface FakeEngine { engine: RenderEngine; renders: RenderCompositionOptions[]; frameCalls: RenderFramesOptions[]; gate: Promise<void> | null; overflows: string[]; measure: ((c: Composition) => string[]) | null; after: ((o: RenderCompositionOptions) => void | Promise<void>) | null;
   content: ((o: Omit<RenderCompositionOptions, 'provider'>) => Buffer | null) | null }
+/** The boxed text clips of `c` whose text needs more room than their box by the core's glyph-width estimate. */
+export function estimatedOverflows(c: Composition): string[] {
+  const out: string[] = [];
+  for (const t of c.tracks) {
+    for (const clip of t.clips) {
+      if (clip.type !== 'text' || (clip.props.width === undefined && clip.props.height === undefined)) continue;
+      const size = clip.props.fontSize ?? 48;
+      const e = estimateLines(clip.props.text, size, clip.props.width ?? c.width);
+      if ((clip.props.height !== undefined && e.lines * size * 1.2 > clip.props.height + 0.5) || (clip.props.width !== undefined && e.widest > clip.props.width + 0.5)) out.push(clip.id);
+    }
+  }
+  return out;
+}
+
 function fakeEngine(): FakeEngine {
   const f: FakeEngine = { renders: [], frameCalls: [], gate: null, overflows: [], measure: null, after: null, content: null, engine: null as unknown as RenderEngine };
   f.engine = {
@@ -68,7 +87,7 @@ function fakeEngine(): FakeEngine {
       f.frameCalls.push(o as RenderFramesOptions);
       // The browser's text measure (Ruling I) reported by frames too: the clips of `overflows` present in the composition.
       const present = new Set(c.tracks.flatMap((t) => t.clips.map((x) => x.id)));
-      const ids = f.measure ? f.measure(c) : f.overflows;
+      const ids = f.measure ? f.measure(c) : f.overflows.length ? f.overflows : estimatedOverflows(c);
       const errors = ids.filter((id) => present.has(id)).map((clipId) => ({ code: 'textOverflow', message: `text overflows its box (${clipId})`, clipId }));
       return { frames: o.times.map((t) => ({ t: frameTime(c, t), data: png(o.width, height), width: o.width, height })), errors };
     },
