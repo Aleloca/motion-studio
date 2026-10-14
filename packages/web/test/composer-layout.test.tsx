@@ -7,7 +7,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { AgentCapabilities, Brief, JobSummary } from '@motion-studio/shared';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -52,8 +52,8 @@ async function markup(mode: 'live' | 'queue' | 'redirect', locale: 'en' | 'it'):
   caps = { ...caps, liveInput: mode !== 'queue' };
   const { container, unmount } = render(
     <I18nProvider locale={locale}><Conversation slug="acme" creative="c1" entries={[]} approvals={[]} pins={[]} job={running} onSent={vi.fn()} brief={brief} /></I18nProvider>);
-  await screen.findByRole('group', { name: locale === 'en' ? 'Send to agent' : 'Invia all’agente' }).catch(() => undefined);
-  await new Promise((r) => setTimeout(r, 30));
+  // The explanation line only exists once the capabilities answered, i.e. the real send action has replaced the neutral one.
+  await waitFor(() => { expect(container.querySelector('.ms-composer-note')).toBeTruthy(); });
   if (mode === 'redirect') {
     await userEvent.click(screen.getByRole('button', { name: /^(Stop options|Opzioni)/ }));
     await userEvent.click(await screen.findByRole('menuitem', { name: /redirect|reindirizz/i }));
@@ -87,7 +87,7 @@ const send = h('button[type=submit]');
 if (stop !== null && send !== null && Math.abs(stop - send) > 0.5) problems.push('heights differ ' + stop + ' vs ' + send);
 const chip = foot.querySelector('.ms-services-chip');
 const lines = [...form.querySelectorAll('.ms-composer-note')].filter(vis).length;
-return ({ problems, hint: !!foot.querySelector('.ms-composer-hint') && vis(foot.querySelector('.ms-composer-hint')), chip: !!chip && vis(chip), chipW: chip && chip.getBoundingClientRect().width, notes: lines, stop, send });
+return ({ problems, hint: !!foot.querySelector('.ms-composer-hint') && vis(foot.querySelector('.ms-composer-hint')), chip: !!chip && vis(chip), chipW: chip && chip.getBoundingClientRect().width, notes: lines, stop, send, label: [...foot.querySelectorAll('.ms-composer-text')].some(vis), sum: [...foot.querySelectorAll('.ms-services-chip-sum')].some(vis) });
 })()`;
 
 const run = chrome ? describe : describe.skip;
@@ -107,7 +107,7 @@ run('busy composer: real Chrome layout', () => {
     const tab = await browser.newPage(width, 900);
     try {
       await tab.goto(`file://${file}`);
-      return await tab.eval<{ problems: string[]; hint: boolean; chip: boolean; chipW: number; notes: number; stop: number | null; send: number | null }>(MEASURE, 30_000);
+      return await tab.eval<{ problems: string[]; hint: boolean; chip: boolean; chipW: number; notes: number; stop: number | null; send: number | null; label: boolean; sum: boolean }>(MEASURE, 30_000);
     } finally { await tab.close(); }
   }
 
@@ -122,7 +122,27 @@ run('busy composer: real Chrome layout', () => {
           expect(r.chipW).toBeGreaterThan(20);
           expect(r.notes, 'one explanation line').toBeLessThanOrEqual(1);
           if (width <= 360) expect(r.hint, `hint hidden @${width}`).toBe(false);
+          if (mode !== 'redirect') {
+            // Never vacuous: the Stop and the send buttons are both there, and as tall as each other (the page checks that).
+            expect(r.stop, `Stop present @${width}`).not.toBeNull();
+            expect(r.send, `send present @${width}`).not.toBeNull();
+          }
         }
+      }, 120_000);
+
+      it(`${locale} ${mode}: between the two thresholds the labels show and the hint stays out; wide, hint and summary show`, async () => {
+        const html = await markup(mode, locale);
+        const mid = await measure(html, 540, `${locale}-${mode}`);
+        expect(mid.problems, `${locale} ${mode} @540`).toEqual([]);
+        expect(mid.label, 'labels shown @540').toBe(true);
+        expect(mid.hint, 'hint hidden @540').toBe(false);
+        expect(mid.sum, 'summary hidden @540').toBe(false);
+        const wide = await measure(html, 760, `${locale}-${mode}`);
+        expect(wide.problems, `${locale} ${mode} @760`).toEqual([]);
+        expect(wide.label, 'labels shown @760').toBe(true);
+        expect(wide.hint, 'hint shown @760').toBe(true);
+        expect(wide.sum, 'summary shown @760').toBe(true);
+        if (mode !== 'redirect') { expect(wide.stop).not.toBeNull(); expect(wide.send).not.toBeNull(); }
       }, 120_000);
     }
   }
