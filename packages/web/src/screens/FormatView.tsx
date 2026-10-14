@@ -690,7 +690,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
         ) : null}
         {livePlayer && cr ? <LocaleSwitcher brief={cr.brief} preview={localePreview} className="ms-fv-locales" /> : null}
         {video ? (
-          <Transport clock={clock} duration={duration} playing={playing} disabled={!ready} marks={canComment ? marks : []} onRange={canComment ? commentRange : undefined} hint={canComment ? f.keys : f.keysLocked}
+          <Transport clock={clock} duration={duration} playing={playing} disabled={!ready} marks={canComment ? marks : []} onRange={canComment ? commentRange : undefined} blocked={rangeOpen || draft !== null} hint={canComment ? f.keys : f.keysLocked}
             extra={canComment && ready ? (
               <>
                 {clipComp ? <ClipPicker clock={clock} comp={clipComp} onPick={commentClip} /> : null}

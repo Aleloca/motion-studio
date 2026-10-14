@@ -107,7 +107,7 @@
 .ms-fv-scrub { position: relative; height: 40px; cursor: ew-resize; touch-action: none; user-select: none; outline: none; border-radius: 6px; }
 .ms-fv-scrub.ms-off { cursor: default; opacity: .5; }
 .ms-fv-scrub:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
-.ms-fv-ruler { position: absolute; left: 0; right: 0; top: 0; height: 18px; }
+.ms-fv-ruler { touch-action: none; position: absolute; left: 0; right: 0; top: 0; height: 18px; }
 .ms-fv-ruler span {
   position: absolute; top: 2px; padding-left: 4px; border-left: 1px solid var(--line); font-family: var(--mono); font-size: 10px; line-height: 14px; color: var(--faint); white-space: nowrap;
 }
@@ -151,11 +151,11 @@
 .ms-fv-span { position: absolute; top: 0; bottom: 0; background: var(--accent); opacity: .18; border-inline: 2px solid var(--accent); box-sizing: border-box; }
 .ms-fv-span.ms-picking { opacity: .32; }
 .ms-fv-clippick { display: inline-flex; flex: none; }
-/* Icon-only: the select keeps its name (aria-label) and list, the value text and chevron go. */
-.ms-fv-clippick .ms-select-value { display: none; }
+/* Icon-only: the select keeps its name (aria-label) and list; the value text and the chevron go (the icon is the whole button). */
+.ms-fv-clippick .ms-select-value, .ms-fv-clippick .ms-select-chev { display: none; }
 .ms-fv-clippick .ms-select { min-width: 0; padding-inline: 8px; gap: 0; }
 .ms-fv-rangebubble {
-  position: absolute; top: -40px; transform: translateX(-50%); z-index: 3; display: flex; align-items: center; gap: 8px; white-space: nowrap;
+  position: absolute; bottom: calc(100% + 6px); transform: translateX(-50%); z-index: 3; display: flex; align-items: center; gap: 8px; white-space: nowrap;
   padding: 4px 4px 4px 10px; border-radius: 8px; background: var(--panel); color: var(--text); box-shadow: 0 0 0 1px var(--line2), 0 4px 14px rgb(0 0 0 / .18);
 }
 .ms-fv-rangebubble.ms-live { pointer-events: none; padding-inline-end: 10px; }
