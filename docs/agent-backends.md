@@ -33,6 +33,16 @@ The live paths are **off for every Claude Code version**: the stream-input spike
 - **Off (default).** The runner writes the prompt and closes stdin at once, exactly as before Phase 13. `send` resolves `'closed'` and `interrupt` resolves `'unsupported'`, and neither writes anything; `endInput()` does nothing.
 - **On.** stdin stays open until the final `result` (or cancel, or exit). `send` writes `{ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null }` and emits `user_message_delivered` once the write is flushed. `interrupt` writes `{ type: 'control_request', request_id, request: { subtype: 'interrupt' } }` and waits up to 5 s for the `control_response` with the same `request_id`. An acknowledgement emits `interrupted`, and stdin then stays open until the core decides. The interrupted turn's own result never closes it. If a `send` comes (a redirect), stdin stays open through the redirect turn, so live messages there are still written, and that turn's result closes it. `endInput()` closes it at once, and cancel ends the run. With no decision, a 45 s backstop (`REDIRECT_BACKSTOP_MS`) closes it. After an acknowledged interrupt with no redirect, a non-ok final result means `cancelled`. A redirect turn that fails is `failed`. An error response resolves `'unsupported'`. If no acknowledgement comes, or the process goes away first, it resolves `'timeout'`. These shapes come from the public docs and are **unverified live**. The tests drive them only with `packages/core/test/fixtures/fake-claude-stream.mjs`.
 
+### Capability table and unverified shapes (Task 4)
+| Path | Default | Opt-in | State |
+|---|---|---|---|
+| Live message to the running agent | off, every Claude Code version | `agentLiveInput` | **unverified live**; fallback "Queue for after" |
+| Interrupt the current step in the same process | off | `agentInterrupt` (needs `agentLiveInput`) | **unverified live**; fallback Stop, then resume the session |
+| Stop and redirect (fallback) | on | none | verified live, haiku: cancel, then `--resume` with the redirect text, same job, no leftover process |
+| Queue, remembered stopped session | on | none | verified live (`--resume --fork-session`) |
+
+The live check (`docs/superpowers/notes/2026-10-14-phase13-live-checks.md`) covered only the fallback paths. Still **UNVERIFIED LIVE**: the user-message and `control_request` shapes, the `control_response` shape, the CLI's "session not found" wording (used to detect a failed resume), and whether an interrupted turn emits a `result`. Do not turn the opt-ins on in a release before a live check of these.
+
 ## AgentLauncher (`launcher.ts`) and policy (`policy.ts`)
 The `AgentLauncher` is the only place where an agent starts. For each job (`creative`, `console`, `brand-analysis`, `describe`):
 1. reads the settings and decides whether to use the sandbox (`sandboxMode === 'auto'` and `detectSandbox()` available: macOS `sandbox-exec`, Linux `bubblewrap` + `socat`);

@@ -51,6 +51,13 @@ Only one Motion Studio runs per configuration folder: if one is already running 
 5. **Render ★** (or an export that needs it) renders the starred versions on your computer, outside the agent's sandbox: an mp4 (H.264, BT.709) for videos, an image file for stills (a png when the format allows it, else a jpg or webp it lists), with the encoding targets of each format. A render never blocks the agent: renders wait in their own queue, one at a time. A later change makes a new version, and the render of another version is never touched; rendering the same version again replaces its file.
 6. Each version is a git commit of the project. From the creative's page you can open a format, add comments on a spot/moment, ask for changes, compare versions and restart from an earlier version. A creative made before compositions keeps its videos; at its next change the agent converts it to a composition (the chat says that this turn costs more tokens).
 
+### Talking to the agent while it works
+The composer stays active while the agent works.
+- **Queue for after.** A message sent during a turn is added to the request queue and runs as the next request. It starts by itself only after a turn that saved a version; after a failure, Stop or cancel it waits for **Run next**. You can edit, remove and reorder queued requests.
+- **Stop** stops the turn at once and cancels any open approval, so nothing is spent after it. The next request resumes the stopped session as a fork, so the agent knows what was left half done.
+- **Stop and redirect** stops the current step and continues the same job with your new text.
+- **Live messages and interrupt** (sent into the running agent without a restart) are **off by default** and **unverified**: two workspace settings, `agentLiveInput` and `agentInterrupt` (in `.studio/settings.json`, no switch in the interface yet), turn them on. They have not been checked against a real Claude Code, so use them at your own risk; the Doctor and `GET /api/agent/capabilities` say which path is active.
+
 ### Usage and tokens
 Every agent job (creative turn, fix attempt, brand analysis, asset description) adds one line to `<project>/.studio/usage.jsonl` with the tokens Claude Code reported for that run and, when known, the cost at API list prices. The file is append-only and protected from the agent.
 - **Tokens first, cost second.** The figure shown is input + output + cache-write tokens; cache reads are only in the details. On a Claude subscription the cost is shown as "at API prices it would be about …", since the usage counts toward your plan.
