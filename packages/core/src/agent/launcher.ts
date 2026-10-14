@@ -377,7 +377,15 @@ export async function ensureRunDir(configDir: string): Promise<string> {
     return dir;
   }
   if (st) await rm(dir, { recursive: true, force: true });
-  await mkdir(dir, { mode: 0o700 });
+  try {
+    await mkdir(dir, { mode: 0o700 });
+  } catch (err) {
+    // Two jobs preparing at once on a fresh config dir: the other one made it first. Accept it only if it is our own real folder.
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    const again = await lstat(dir);
+    if (!isOwnFolder(again)) throw err;
+    if ((again.mode & 0o777) !== 0o700) await chmod(dir, 0o700);
+  }
   return dir;
 }
 

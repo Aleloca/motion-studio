@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { workspaceSettingsSchema, type AgentEvent } from '@motion-studio/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
-import { AgentLauncher, sweepRunDir, type LauncherDeps } from '../src/agent/launcher.ts';
+import { AgentLauncher, ensureRunDir, sweepRunDir, type LauncherDeps } from '../src/agent/launcher.ts';
 import { ProjectQuarantinedError } from '../src/project-integrity.ts';
 import { Git } from '../src/git.ts';
 import type { AgentRunner } from '../src/agent/runner.ts';
@@ -433,6 +433,14 @@ describe('AgentLauncher', () => {
     await sweepRunDir(configDir);
     expect(existsSync(run)).toBe(false);
     await sweepRunDir(join(configDir, 'missing')); // no folder: nothing to do
+  });
+  it('two jobs preparing at once on a fresh config dir both get the private run folder (EEXIST tolerated)', async () => {
+    const configDir = join(await newProject(), 'fresh-config');
+    const dirs = await Promise.all(Array.from({ length: 6 }, () => ensureRunDir(configDir)));
+    expect(new Set(dirs)).toEqual(new Set([join(configDir, 'run')]));
+    const st = await lstat(join(configDir, 'run'));
+    expect(st.isDirectory() && !st.isSymbolicLink()).toBe(true);
+    expect(st.mode & 0o777).toBe(0o700);
   });
   it('replaces a run folder that is a link instead of writing or chmod-ing through it', { timeout: 90_000 }, async () => {
     const bridge = new AgentBridge();
