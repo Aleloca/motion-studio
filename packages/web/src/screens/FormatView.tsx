@@ -166,6 +166,8 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   const pins = useMemo(() => sourcePins.map((p) => p.pin), [sourcePins]);
   const marks = useMemo<Mark[]>(() => pins.map((pin, i) => ({ pin, number: i + 1 })).filter((m) => m.pin.format === format), [pins, format]);
   const [draft, setDraft] = useState<FDraft | null>(null);
+  /** A band is shown on the transport: the comment hint, which can sit over its Comment bubble, steps aside. */
+  const [bandShown, setBandShown] = useState(false);
   useEffect(() => { if (!canComment) setDraft(null); }, [canComment]);
   useEffect(() => { setDraft(null); }, [pinSource]);
 
@@ -496,7 +498,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
     );
   }
 
-  const backButton = <Button className="ms-back" onClick={back}><Icon name="back" size={16} strokeWidth={1.5} />{t.web.shell.backAllFormats}</Button>;
+  const backButton = <Button className="ms-back ms-fold-3" aria-label={t.web.shell.backAllFormats} title={t.web.shell.backAllFormats} onClick={back}><Icon name="back" size={16} strokeWidth={1.5} /><span className="ms-bar-label">{t.web.shell.backAllFormats}</span></Button>;
   if (!loading && !known) {
     return (
       <div ref={root} className="ms-cv-state">
@@ -566,13 +568,13 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
           ) : null}
           <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} />
           {comp !== null && !working ? (
-            <Button variant="outline" className="ms-fv-duplicate" title={t.web.instances.duplicateHint({ label })} loading={duplicating} onClick={() => void duplicate()}>
-              <Icon name="copy" size={13} strokeWidth={1.7} />{t.web.instances.duplicate}
+            <Button variant="outline" className="ms-fv-duplicate ms-fold-2" aria-label={t.web.instances.duplicate} title={t.web.instances.duplicateHint({ label })} loading={duplicating} onClick={() => void duplicate()}>
+              <Icon name="copy" size={13} strokeWidth={1.7} /><span className="ms-bar-label">{t.web.instances.duplicate}</span>
             </Button>
           ) : null}
           {comp !== null && !working && preview.state.kind !== 'legacy' ? (
-            <Button variant="outline" className="ms-cv-edit" aria-label={t.web.editor.editOf({ label })} onClick={openEditor}>
-              <Icon name="edit" size={13} strokeWidth={1.7} />{t.web.editor.edit}
+            <Button variant="outline" className="ms-cv-edit ms-fold-2" aria-label={t.web.editor.editOf({ label })} title={t.web.editor.edit} onClick={openEditor}>
+              <Icon name="edit" size={13} strokeWidth={1.7} /><span className="ms-bar-label">{t.web.editor.edit}</span>
             </Button>
           ) : null}
           <Button variant="ink" className="ms-cv-export" disabled={!latest} onClick={() => { if (latest) setExporting({ open: true, snapshot: { versions, states } }); }}>
@@ -672,7 +674,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
             ) : null}
           </div>
         </section>
-        {canComment && ready && !draft && (!video || !playing) ? <CommentHint clock={clock} video={video} /> : null}
+        {canComment && ready && !draft && !bandShown && (!video || !playing) ? <CommentHint clock={clock} video={video} /> : null}
         {rangeOpen ? <RangeDialog open playhead={media.current?.currentTime ?? clock.get().time} duration={duration} onSubmit={(r) => { setRangeOpen(false); commentRange(r); }} onCancel={() => setRangeOpen(false)} /> : null}
         {lock ? <div className="ms-cv-hint ms-lock ms-fv-hint" id="ms-fv-comment-lock" role="status">{c.versions.commentsOn({ n: pinSource })}</div> : null}
         {preset?.safeZone && (out || livePlayer) ? (
@@ -690,7 +692,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
         ) : null}
         {livePlayer && cr ? <LocaleSwitcher brief={cr.brief} preview={localePreview} className="ms-fv-locales" /> : null}
         {video ? (
-          <Transport clock={clock} duration={duration} playing={playing} disabled={!ready} marks={canComment ? marks : []} onRange={canComment ? commentRange : undefined} blocked={rangeOpen || draft !== null} hint={canComment ? f.keys : f.keysLocked}
+          <Transport clock={clock} duration={duration} playing={playing} disabled={!ready} marks={canComment ? marks : []} onRange={canComment ? commentRange : undefined} onBand={setBandShown} blocked={rangeOpen || draft !== null} hint={canComment ? f.keys : f.keysLocked}
             extra={canComment && ready ? (
               <>
                 {clipComp ? <ClipPicker clock={clock} comp={clipComp} onPick={commentClip} /> : null}

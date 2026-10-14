@@ -661,6 +661,77 @@ describe('the format view', () => {
     expect(screen.queryByRole('group', { name: 'Range selection' })).toBeNull();
   });
 
+  it('the comment hint steps aside while a band is shown, so it cannot cover the Comment bubble; it is back once the band goes', async () => {
+    render(<Page kind="format" />);
+    await ready();
+    await waitFor(() => expect(document.querySelector('.ms-fv-hint')).not.toBeNull());
+    const drag = dragBand(100, 300, { ruler: true });
+    await waitFor(() => expect(document.querySelector('.ms-fv-hint')).toBeNull());
+    drag.release();
+    await screen.findByRole('group', { name: 'Range selection' });
+    expect(document.querySelector('.ms-fv-hint')).toBeNull();
+    key({ key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Range selection' })).toBeNull());
+    await waitFor(() => expect(document.querySelector('.ms-fv-hint')).not.toBeNull());
+  });
+
+  it('a press on the ruler or with Shift while playing pauses; a seek or a Shift press too short for a band resumes, a picked band stays paused', async () => {
+    render(<Page kind="format" />);
+    await ready();
+    const playNow = async () => {
+      await userEvent.click(document.querySelector('.ms-fv-play') as HTMLElement);
+      await waitFor(() => expect(media.paused).toBe(false));
+      media.play.mockClear(); media.pause.mockClear();
+    };
+    await playNow();
+    // A short press on the ruler: pause while pressed, seek, resume.
+    const scrub = document.querySelector('.ms-fv-scrub') as HTMLElement;
+    stubRect(scrub);
+    act(() => { fireEvent.pointerDown(scrub.querySelector('.ms-fv-ruler') as HTMLElement, { clientX: 200, pointerId: 1, button: 0 }); });
+    expect(media.pause).toHaveBeenCalledTimes(1);
+    act(() => { fireEvent.pointerUp(scrub, { clientX: 201, pointerId: 1 }); });
+    expect(media.currentTime).toBeCloseTo(2, 1);
+    await waitFor(() => expect(media.play).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(media.paused).toBe(false));
+    // A Shift press too short for a band: nothing happens and playback goes on.
+    media.play.mockClear(); media.pause.mockClear();
+    act(() => { dragBand(100, 105, { shift: true }).release(); });
+    expect(media.pause).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(media.play).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(media.paused).toBe(false));
+    // A band: paused, and it stays paused for its comment.
+    media.play.mockClear(); media.pause.mockClear();
+    act(() => { dragBand(100, 300, { ruler: true }).release(); });
+    await screen.findByRole('group', { name: 'Range selection' });
+    expect(media.pause).toHaveBeenCalledTimes(1);
+    expect(media.play).not.toHaveBeenCalled();
+    expect(media.paused).toBe(true);
+  });
+
+  it('Esc in an open kit Select (the speed list) closes the list and leaves the band alone', async () => {
+    render(<Page kind="format" />);
+    await ready();
+    dragBand(100, 300, { ruler: true }).release();
+    await screen.findByRole('group', { name: 'Range selection' });
+    await userEvent.click(document.querySelector('.ms-fv-speed') as HTMLElement);
+    const list = await screen.findByRole('listbox');
+    expect(list.closest('.ms-pop')).not.toBeNull();
+    key({ key: 'Escape' }, list);
+    await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+    expect(screen.queryByRole('group', { name: 'Range selection' })).not.toBeNull();
+    // The kit's layer stack already claims that Esc; a popover or modal surface that does not (the same guard as keys.ts inOverlay) is left alone too.
+    for (const cls of ['ms-pop', 'ms-modal']) {
+      const el = document.createElement('div');
+      el.className = cls;
+      const inner = document.createElement('span');
+      el.appendChild(inner);
+      document.body.appendChild(el);
+      key({ key: 'Escape' }, inner);
+      el.remove();
+      expect(screen.queryByRole('group', { name: 'Range selection' }), cls).not.toBeNull();
+    }
+  });
+
   it('the compact buttons next to the timecode: the clip picker is an icon select and the range button carries the R hint', async () => {
     render(<Page kind="format" />);
     await ready();

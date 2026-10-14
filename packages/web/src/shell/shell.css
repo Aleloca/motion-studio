@@ -12,7 +12,7 @@ html, body, #root { height: 100%; }
 .ms-cap { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 
 /* Top bar. */
-.ms-topbar { height: 52px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 14px; min-width: 0; background: var(--panel); border-bottom: 1px solid var(--line); position: relative; z-index: 20; }
+.ms-topbar { height: 52px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 14px; min-width: 0; background: var(--panel); border-bottom: 1px solid var(--line); position: relative; z-index: 20; container: ms-topbar / inline-size; }
 .ms-logo { width: 26px; height: 26px; border-radius: 7px; background: var(--ink); display: flex; align-items: center; justify-content: center; flex: none; transition: transform var(--d-xs) var(--e-std); }
 .ms-logo:active { transform: scale(.94); }
 .ms-logo path { fill: var(--accent); }

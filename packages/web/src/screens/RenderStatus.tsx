@@ -79,24 +79,29 @@ export function RenderStatus({ slug, creative, version, format, label, jobs, job
   return (
     <span className="ms-fv-render">
       <Pill tone={tone} spinner={working} dot={!working && state.kind !== 'rendered'} className="ms-fv-render-pill">
-        <span aria-hidden="true" title={state.kind === 'none' ? r.livePreviewHint : undefined}>{shown}</span>
+        <span aria-hidden="true" title={state.kind === 'none' ? r.livePreviewHint : undefined}>
+          {state.kind === 'rendered' && sizeText !== null
+            // A narrow bar drops the size (format.css, the bar's container query): the long and the short text, one shown.
+            ? <><span className="ms-fv-render-long">{shown}</span><span className="ms-fv-render-short">{r.videoReady({ size: null })}</span></>
+            : shown}
+        </span>
       </Pill>
       {state.kind === 'rendering' ? <ProgressBar value={state.pct} label={r.renderingVideoSr} className="ms-fv-render-bar" /> : null}
       <span className="ms-sr" role="status" aria-live="polite">{spoken}</span>
       {done ? (
         bridge ? (
-          <Button size="sm" variant="outline" onClick={() => { void api.revealVersion(slug, creative, version.n).catch((e: unknown) => toast.show(t.web.canvas.versions.actionFailed({ detail: message(e) }))); }}>
-            <Icon name="folder" size={13} />{reveal}
+          <Button size="sm" variant="outline" className="ms-fold-1" aria-label={reveal} title={reveal} onClick={() => { void api.revealVersion(slug, creative, version.n).catch((e: unknown) => toast.show(t.web.canvas.versions.actionFailed({ detail: message(e) }))); }}>
+            <Icon name="folder" size={13} /><span className="ms-bar-label">{reveal}</span>
           </Button>
         ) : url ? (
-          <Button size="sm" variant="outline" aria-label={r.downloadVideoOf({ label })} onClick={() => download(url, out?.file ?? 'video.mp4')}>
-            <Icon name="download" size={13} />{r.downloadVideo}
+          <Button size="sm" variant="outline" className="ms-fold-1" aria-label={r.downloadVideoOf({ label })} title={r.downloadVideo} onClick={() => download(url, out?.file ?? 'video.mp4')}>
+            <Icon name="download" size={13} /><span className="ms-bar-label">{r.downloadVideo}</span>
           </Button>
         ) : null
       ) : null}
       {!working ? (
-        <Button size="sm" variant={done ? 'ghost' : 'outline'} disabled={busy} loading={starting} aria-label={r.renderVideoOf({ label })} onClick={() => void start()}>
-          <Icon name="video" size={13} />{done ? r.renderAgain : r.renderVideo}
+        <Button size="sm" variant={done ? 'ghost' : 'outline'} className="ms-fold-1" disabled={busy} loading={starting} aria-label={r.renderVideoOf({ label })} title={done ? r.renderAgain : r.renderVideo} onClick={() => void start()}>
+          <Icon name="video" size={13} /><span className="ms-bar-label">{done ? r.renderAgain : r.renderVideo}</span>
         </Button>
       ) : null}
     </span>

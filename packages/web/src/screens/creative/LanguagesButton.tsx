@@ -16,8 +16,8 @@ export function LanguagesButton({ slug, creative, detail, version, presets, live
   if (!detail || !langs || langs.extra.length === 0 || !version) return null;
   return (
     <>
-      <Button variant="outline" className="ms-cv-languages" onClick={() => setOpen(true)}>
-        <Icon name="globe" size={13} strokeWidth={1.7} />{l.button}
+      <Button variant="outline" className="ms-cv-languages ms-fold-2" aria-label={l.button} title={l.button} onClick={() => setOpen(true)}>
+        <Icon name="globe" size={13} strokeWidth={1.7} /><span className="ms-bar-label">{l.button}</span>
       </Button>
       <LanguagesPanel open={open} onClose={() => setOpen(false)} slug={slug} creative={creative} detail={detail} version={version} presets={presets} live={live} {...(onChanged ? { onChanged } : {})} />
     </>

@@ -2,8 +2,10 @@
  * The range Comment bubble on the format view transport (UX feedback batch 1, task 4, fix round 1). The real Transport is
  * rendered in jsdom with a band selected; its markup, given the real stylesheets, is measured in real Chrome at 360, 480
  * and 760 px, en and it, with the band at the left edge, the middle and the right edge: the bubble is fully inside the
- * player area, its text is not clipped and it overlaps neither the timecode nor the clip and range buttons. Chrome only on
- * request (MS_LAYOUT_CHROME=1 or MS_REQUIRE_CHROME=1), through the repo's driver (mock keychain, basic password store).
+ * player area, above the transport (it clears the section's top edge), its text is not clipped, and its Comment button is
+ * the element under its own centre even with the page's comment hint (z 5, at bottom: 108px when notes are shown) on the
+ * page (final wave I1). Chrome only on request (MS_LAYOUT_CHROME=1 or MS_REQUIRE_CHROME=1), through the repo's driver
+ * (mock keychain, basic password store).
  */
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -26,7 +28,7 @@ if (typeof window.PointerEvent === 'undefined') {
 }
 
 const src = (p: string) => readFileSync(join(import.meta.dirname, '../src', p), 'utf8');
-const CSS = ['theme.css', 'ui/ui.css', 'screens/format.css'].map(src).join('\n');
+const CSS = ['theme.css', 'ui/ui.css', 'screens/canvas.css', 'screens/format.css'].map(src).join('\n');
 const required = process.env.MS_REQUIRE_CHROME === '1';
 const chrome = required || process.env.MS_LAYOUT_CHROME === '1' ? findChrome() : null;
 const run = chrome ? describe : describe.skip;
@@ -61,20 +63,28 @@ ${bubbleLeft.toString()}
 const stage = document.querySelector('#main');
 const bub = document.querySelector('.ms-fv-rangebubble');
 const sec = document.querySelector('.ms-fv-transport');
-const w = bub.offsetWidth;
-bub.style.left = bubbleLeft(sec.clientWidth, w, Number(bub.dataset.frac)) + 'px';
-const mr = stage.getBoundingClientRect(); const b = bub.getBoundingClientRect();
 const problems = [];
+const frac = Number(bub.dataset.frac);
+if (bub.dataset.frac === undefined || !Number.isFinite(frac)) problems.push('data-frac not applied');
+const w = bub.offsetWidth;
+bub.style.left = bubbleLeft(sec.clientWidth, w, frac) + 'px';
+const mr = stage.getBoundingClientRect(); const b = bub.getBoundingClientRect();
 if (b.left < mr.left - 0.5 || b.right > mr.right + 0.5 || b.top < mr.top - 0.5 || b.bottom > mr.bottom + 0.5) problems.push('outside the player area ' + JSON.stringify([b.left, b.right, b.top, b.bottom]) + ' in ' + JSON.stringify([mr.left, mr.right, mr.top, mr.bottom]));
 for (const el of bub.querySelectorAll('*')) if (el.scrollWidth > el.clientWidth + 1 && el.children.length === 0 && el.textContent) problems.push('clipped text: ' + el.textContent);
 if (bub.scrollWidth > bub.clientWidth + 1) problems.push('bubble clips');
-const hit = (r, o) => r.left < o.right && r.right > o.left && r.top < o.bottom && r.bottom > o.top;
-for (const sel of ['.ms-fv-tc', '.ms-fv-clippick', '.ms-fv-rangebtn', '.ms-fv-play']) {
-  const el = document.querySelector(sel);
-  if (hit(b, el.getBoundingClientRect())) problems.push('overlaps ' + sel);
-}
+// Above the transport: the bubble clears the section's top edge (so it covers none of its controls).
+const sr = sec.getBoundingClientRect();
+if (b.bottom > sr.top + 0.5) problems.push('not above the transport: bubble bottom ' + b.bottom + ' > section top ' + sr.top);
+// The Comment button is what a click on its centre reaches, even with the comment hint on the page.
+const btn = bub.querySelector('button');
+const cr = btn.getBoundingClientRect();
+const cx = (cr.left + cr.right) / 2, cy = (cr.top + cr.bottom) / 2;
+const top = document.elementFromPoint(cx, cy);
+if (!top || !btn.contains(top)) problems.push('Comment button covered by ' + (top ? top.className : 'nothing'));
+const hr = document.querySelector('.ms-fv-hint').getBoundingClientRect();
+const underHint = cx >= hr.left && cx <= hr.right && cy >= hr.top && cy <= hr.bottom;
 if (document.documentElement.scrollWidth > innerWidth) problems.push('page overflows');
-return { problems, width: b.width };
+return { problems, width: b.width, underHint };
 })()`;
 
 run('range bubble: real Chrome layout', () => {
@@ -84,23 +94,31 @@ run('range bubble: real Chrome layout', () => {
   afterAll(async () => { await browser?.close(); rmSync(dir, { recursive: true, force: true }); }, 60_000);
 
   for (const locale of ['en', 'it'] as const) {
-    it(`${locale}: inside the player area, text not clipped, off the controls at 360, 480 and 760`, async () => {
+    it(`${locale}: inside the player area, above the transport, text not clipped, Comment reachable over the hint at 360, 480 and 760`, async () => {
+      let underHint = 0;
       for (const [name, band] of Object.entries(BANDS)) {
-        const html = markup(locale, band).replace('class="ms-fv-rangebubble"', `data-frac="${(band[0] + band[1]) / 120}" class="ms-fv-rangebubble"`);
+        const raw = markup(locale, band);
+        expect(raw, 'the band is shown: the transport is raised').toContain('ms-fv-transport ms-banded');
+        const html = raw.replace('class="ms-fv-rangebubble"', `data-frac="${(band[0] + band[1]) / 120}" class="ms-fv-rangebubble"`);
+        expect(html).toContain('data-frac=');
         for (const width of [360, 480, 760]) {
           const page = `<!doctype html><html lang="${locale}"><head><meta charset="utf-8"><style>${CSS}
             body{margin:0;background:var(--bg)} #main{position:relative;display:flex;flex-direction:column;width:${width}px;height:320px;overflow:hidden}
-            #stage{flex:1;background:var(--field)}</style></head><body><div id="main"><div id="stage"></div>${html}</div></body></html>`;
+            #stage{flex:1;background:var(--field)}</style></head><body><div id="main"><div class="ms-fv-notes"><div>note</div></div><div id="stage"></div>
+            <div class="ms-cv-hint ms-fv-hint" role="status">${locale === 'en' ? 'Click the spot of the frame at 00:30.00' : 'Clicca il punto del fotogramma a 00:30.00'}</div>${html}</div></body></html>`;
           const file = join(dir, `${locale}-${name}-${width}.html`);
           writeFileSync(file, page);
           const tab = await browser.newPage(width, 700);
           try {
             await tab.goto(`file://${file}`);
-            const r = await tab.eval<{ problems: string[] }>(MEASURE, 30_000);
+            const r = await tab.eval<{ problems: string[]; underHint: boolean }>(MEASURE, 30_000);
             expect(r.problems, `${locale} ${name} @${width}`).toEqual([]);
+            if (r.underHint) underHint++;
           } finally { await tab.close(); }
         }
       }
+      // The hint really sits where the button is in some of the cases (else the reachability check would prove nothing).
+      expect(underHint).toBeGreaterThan(0);
     }, 120_000);
   }
 });

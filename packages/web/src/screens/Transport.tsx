@@ -40,10 +40,12 @@ export interface Mark { pin: Pin; number: number }
 export const SPEEDS = ['0.5', '1', '1.5', '2'] as const;
 export type Speed = (typeof SPEEDS)[number];
 
-export function Transport({ clock, duration, playing, disabled, marks = [], onRange, blocked, extra, hint, onToggle, onStep, onSeek, onPause, onResume, loop, onLoop, speed, onSpeed }: {
+export function Transport({ clock, duration, playing, disabled, marks = [], onRange, onBand, blocked, extra, hint, onToggle, onStep, onSeek, onPause, onResume, loop, onLoop, speed, onSpeed }: {
   clock: Clock; duration: number; playing: boolean; disabled: boolean; marks?: Mark[];
   /** The band picked with a drag on the ruler (or Shift + drag on the track) was confirmed with the bubble's Comment (seconds): a range comment. Absent: no band can be picked; Shift + drag scrubs. */
   onRange?(r: { start: number; end: number }): void;
+  /** A band (being dragged, or released with its Comment bubble) is shown, or no longer: the page hides what would cover the bubble (its comment hint). */
+  onBand?(shown: boolean): void;
   /** Another overlay (the range dialog, a comment draft) is open: a picked band is dropped and none can be started. */
   blocked?: boolean;
   /** Compact controls next to the timecode (the clip and range comment buttons in the format view). */
@@ -75,7 +77,7 @@ export function Transport({ clock, duration, playing, disabled, marks = [], onRa
       if (e.key !== 'Escape' || e.defaultPrevented) return;
       // Esc belongs to a dialog or a text field when it is typed there.
       const el = e.target instanceof Element ? e.target : null;
-      if (el?.closest('[role="dialog"], [aria-modal="true"], dialog, input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
+      if (el?.closest('[role="dialog"], [aria-modal="true"], dialog, .ms-pop, .ms-modal, input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
       const focusTrack = sel !== null && document.activeElement === bubbleBtn.current;
       cancelRange();
       if (focusTrack) track.current?.focus();
@@ -99,7 +101,9 @@ export function Transport({ clock, duration, playing, disabled, marks = [], onRa
     if (onRange && (e.shiftKey || ruler)) {
       const a = at(e.clientX);
       if (a === null) return;
-      drag.current = { resume: false, from: a, px: e.clientX, ruler: ruler && !e.shiftKey };
+      // Like the scrub: playback pauses while the press lasts (it resumes unless a band is picked).
+      drag.current = { resume: playing, from: a, px: e.clientX, ruler: ruler && !e.shiftKey };
+      if (playing) onPause();
       setPicking({ a, b: a });
       return;
     }
@@ -120,10 +124,12 @@ export function Transport({ clock, duration, playing, disabled, marks = [], onRa
     if (d?.from !== undefined) {
       const b = e.type === 'pointerup' ? at(e.clientX) ?? d.from : d.from;
       setPicking(null);
-      if (e.type !== 'pointerup') return;
+      if (e.type !== 'pointerup') { if (d.resume) onResume(); return; }
       // A press, or a drag too short to be a range, on the ruler seeks like a click.
-      if (d.ruler && (Math.abs(e.clientX - (d.px ?? e.clientX)) < 3 || Math.abs(b - d.from) < MIN_RANGE)) { onSeek(b); return; }
+      if (d.ruler && (Math.abs(e.clientX - (d.px ?? e.clientX)) < 3 || Math.abs(b - d.from) < MIN_RANGE)) { onSeek(b); if (d.resume) onResume(); return; }
+      // A band stays paused, for its comment; a Shift press too short for a band changes nothing and playback goes on.
       if (Math.abs(b - d.from) >= MIN_RANGE) setSel({ start: Math.min(b, d.from), end: Math.max(b, d.from) });
+      else if (d.resume) onResume();
       return;
     }
     if (d?.resume) onResume();
@@ -137,6 +143,14 @@ export function Transport({ clock, duration, playing, disabled, marks = [], onRa
   /** The band shown: the one being dragged, else the released one. */
   const bandKey = picking ? `${picking.a}:${picking.b}` : sel ? `${sel.start}:${sel.end}` : '';
   const band = picking ? { start: Math.min(picking.a, picking.b), end: Math.max(picking.a, picking.b) } : sel;
+  const bandShown = band !== null;
+  const onBandRef = useRef(onBand);
+  onBandRef.current = onBand;
+  useEffect(() => {
+    if (!bandShown) return;
+    onBandRef.current?.(true);
+    return () => onBandRef.current?.(false);
+  }, [bandShown]);
   // The bubble is centred on the band and kept inside the bar, whatever its width.
   useLayoutEffect(() => {
     const el = bubbleEl.current; const sec = section.current;
@@ -149,7 +163,7 @@ export function Transport({ clock, duration, playing, disabled, marks = [], onRa
   const every = [1, 2, 5, 10, 15, 30, 60, 120, 300].find((s) => duration / s <= 10) ?? 600;
   const ticks = duration ? Array.from({ length: Math.floor(duration / every + 1e-6) + 1 }, (_, i) => i * every).filter((s) => s / duration <= 0.94) : [];
   return (
-    <section ref={section} className="ms-fv-transport" aria-label={f.transport} data-part="b">
+    <section ref={section} className={cx('ms-fv-transport', bandShown && 'ms-banded')} aria-label={f.transport} data-part="b">
       <div className="ms-fv-controls">
         <button type="button" className="ms-fv-play" aria-label={playing ? f.pause : f.play} aria-keyshortcuts="Space" disabled={disabled} onClick={onToggle}>
           <Icon name={playing ? 'pause' : 'play'} size={13} fill={!playing} strokeWidth={playing ? 2 : 1.4} />

@@ -319,7 +319,7 @@ export function VersionTimeline({ slug, creative, versions, resumeFrom, actions,
     <>
       <button ref={buttonRef} type="button" className={cx('ms-btn ms-outline ms-cv-vbtn ms-no-drag', open && 'ms-open')} aria-haspopup="dialog" aria-expanded={open}
         aria-label={v.timelineMenu({ total: versions.length })} onClick={() => setOpen((o) => !o)}>
-        <span>{v.timeline}</span><span className="ms-cv-vbtn-count">{versions.length}</span><Icon name="chevron" size={11} />
+        <span className="ms-bar-label">{v.timeline}</span><span className="ms-cv-vbtn-count">{versions.length}</span><Icon name="chevron" size={11} />
       </button>
       <Popover open={open} onClose={close} anchor={buttonRef} placement="bottom-end" width={320}>
         <div className="ms-vmenu" role="dialog" aria-label={v.title}>
