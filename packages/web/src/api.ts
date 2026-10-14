@@ -1,4 +1,4 @@
-import type { LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings } from '@motion-studio/shared';
+import type { LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
 
@@ -87,6 +87,8 @@ export interface LocalizationEdit { texts?: Record<string, string | null>; param
 export interface LocalizeRequest { locales: string[]; formats?: string[]; voice?: Record<string, 'translate' | 'original' | 'muted'>; text?: string }
 /** The localized composition of a format (preview): the editor view with the overlay applied, plus the language's state. */
 export type LocalizedCompositionView = EditorCompositionView & { localization: { locale: LocaleTag; stale: string[]; problems: string[]; issues?: LocalizationIssue[]; voice: LocalizationRow['voice'] } };
+/** What a pack export did (Phase 12 §4.3): paths relative to the pack folder; `rendered` lists what was rendered first. */
+export interface StorePackExportResult { folder: string; written: string[]; failed: Array<{ file: string; reason: string }>; rendered?: Array<{ version: number; formats: string[]; locale?: string }> }
 /** "Render anyway" and the languages of a render or an export (Phase 12 §3.5). */
 export interface LocaleOptions { locales?: string[]; force?: boolean }
 
@@ -193,6 +195,12 @@ export const api = {
   listCreatives: (slug: string) => request<CreativeListItem[]>('GET', `${p(slug)}/creatives`),
   createCreative: (slug: string, body: { title: string; brief: Brief; generate: boolean; linkedCodebases?: LinkedCodebase[] }) =>
     request<{ slug: string; creative: CreativeFile; job: JobSummary | null }>('POST', `${p(slug)}/creatives`, body),
+  /** Creates an App store pack creative (Phase 12 §4.1): the core builds the brief from the choices and checks every app screen. */
+  createStorePack: (slug: string, body: { title: string; storePack: StorePack; generate?: boolean }) =>
+    request<{ slug: string; creative: CreativeFile; job: JobSummary | null }>('POST', `${p(slug)}/creatives/store-pack`, body),
+  /** Exports the pack of version n (§4.3): written and failed files are relative to the pack folder. */
+  exportStorePack: (slug: string, creative: string, n: number, body: { destination: string; locales?: string[] }) =>
+    request<StorePackExportResult>('POST', `${c(slug, creative)}/versions/${n}/store-pack/export`, body),
   getCreative: (slug: string, creative: string) => request<CreativeDetail>('GET', c(slug, creative)),
   updateCreative: (slug: string, creative: string, body: {
     title?: string; brief?: Brief; services?: Brief['services']; linkedCodebases?: LinkedCodebase[];

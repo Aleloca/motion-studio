@@ -28,6 +28,7 @@ import { boardsWith, fitBoards, isTall, ratioText, type BoardModel } from './can
 import { CompareDialog } from './CompareDialog.tsx';
 import { channelOf } from './creativeState.ts';
 import { ExportDialog, type ExportSnapshot } from './ExportDialog.tsx';
+import { StorePackExport } from './creative/StorePackExport.tsx';
 import { LanguagesButton } from './creative/LanguagesButton.tsx';
 import { RenderLanguagesDialog } from './creative/RenderLanguagesDialog.tsx';
 import { creativeLocales } from './creative/languagesModel.ts';
@@ -274,6 +275,7 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
     setCompare({ open: true, init: other < shown ? [other, shown] : [shown, other], format });
   };
   const [exporting, setExporting] = useState<{ open: boolean; snapshot: ExportSnapshot } | null>(null);
+  const [packExport, setPackExport] = useState(false);
 
   // Open a board in the format view (T3): its rect goes along for the shared-element transition.
   const openEditor = (id: string, frame: HTMLElement) => {
@@ -456,6 +458,11 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
             </Button>
           ) : null}
           <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} />
+          {cr.brief.storePack ? (
+            <Button variant="outline" className="ms-cv-pack-export" disabled={!version} onClick={() => setPackExport(true)}>
+              <Icon name="download" size={13} strokeWidth={1.7} />{t.web.storePack.export.action}
+            </Button>
+          ) : null}
           <Button variant="ink" className="ms-cv-export" disabled={!version} onClick={() => { if (version) setExporting({ open: true, snapshot: { versions, states } }); }}>
             <Icon name="download" size={13} strokeWidth={1.7} />{c.export}
           </Button>
@@ -589,6 +596,10 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
       <ExportDialog open={Boolean(exporting?.open)} onClose={() => setExporting((s) => (s ? { ...s, open: false } : s))} slug={slug} creative={creative}
         title={title} snapshot={exporting?.snapshot ?? null} presets={presets} labels={cr.brief.formatLabels} pattern={exportNamePattern ?? DEFAULT_EXPORT_NAME_PATTERN} onSettings={onSettings} jobs={live.jobs}
         {...(creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
+      {cr.brief.storePack && version ? (
+        <StorePackExport open={packExport} onClose={() => setPackExport(false)} slug={slug} creative={creative} title={title} version={version.n}
+          {...(creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
+      ) : null}
       {renderPlan && creativeLocales(cr.brief) ? (
         <RenderLanguagesDialog open onClose={() => setRenderPlan(null)} slug={slug} creative={creative} plan={renderPlan} locales={creativeLocales(cr.brief)!}
           rowsOf={(n) => versions.find((v) => v.n === n)?.localizations ?? []} labelOf={formatLabel} />

@@ -14,6 +14,8 @@ import { channelOf } from './creativeState.ts';
 import './newcreative.css';
 import { message as errText } from './common.tsx';
 import { isVideoFile } from '../media.ts';
+import { StorePackWizard } from './new-creative/StorePackWizard.tsx';
+import './new-creative/storepack.css';
 
 
 /** Brief length shown under the field (prototype: "142 / 2000"). */
@@ -167,6 +169,7 @@ export function NewCreative({ slug }: { slug: string }) {
   const [libraryNonce, setLibraryNonce] = useState(0);
   const [brand, setBrand] = useState<Loaded<BrandKit>>({ value: null, error: null });
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [packOpen, setPackOpen] = useState(false);
   // Token totals of the workspace's earlier first generations: the estimate line, absent until there are 3.
   const [history, setHistory] = useState<number[]>([]);
 
@@ -336,6 +339,17 @@ export function NewCreative({ slug }: { slug: string }) {
             <div className="ms-nc-try">
               <span className="ms-nc-faint">{n.tryLabel}</span>
               {SUGGESTIONS.map((k) => <Chip key={k} onClick={() => suggest(k)}>{n.suggestions[k].label}</Chip>)}
+            </div>
+          </section>
+
+          <section className="ms-nc-sec" data-enter>
+            <div className="ms-nc-pack">
+              <span className="ms-nc-pack-marks"><ChannelMark channel="appstore" size={20} /><ChannelMark channel="googleplay" size={20} /></span>
+              <div className="ms-nc-pack-text">
+                <b>{t.web.storePack.cardTitle}</b>
+                <span>{t.web.storePack.cardBody}</span>
+              </div>
+              <Button variant="outline" aria-label={`${t.web.storePack.cardTitle}: ${t.web.storePack.cardAction}`} onClick={() => setPackOpen(true)}>{t.web.storePack.cardAction}</Button>
             </div>
           </section>
 
@@ -539,6 +553,8 @@ export function NewCreative({ slug }: { slug: string }) {
           <Icon name="sparkle" size={14} />{n.generate}<kbd className="ms-nc-kbd" aria-hidden="true">{isMac() ? '⌘↵' : 'Ctrl ↵'}</kbd>
         </Button>
       </footer>
+
+      <StorePackWizard open={packOpen} onClose={() => setPackOpen(false)} slug={slug} />
 
       <Popover open={pickerOpen} onClose={() => setPickerOpen(false)} anchor={pickerAnchor} placement="bottom-end" width={360}>
         <div role="dialog" aria-label={n.libraryTitle({ project: projectName })} className="ms-nc-picker">

@@ -1,0 +1,89 @@
+/* App store pack (Phase 12, spec §4): the card on New creative, the wizard, the app screen picker and the pack export result. Tokens only. */
+
+/* Card on the New creative screen */
+.ms-nc-pack { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); min-width: 0; }
+.ms-nc-pack-marks { display: flex; gap: 4px; flex: none; }
+.ms-nc-pack-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ms-nc-pack-text b { font-size: 13.5px; color: var(--text); }
+.ms-nc-pack-text span { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+
+/* Wizard */
+.ms-spw { display: flex; flex-direction: column; max-height: min(780px, 90vh); min-width: 0; }
+.ms-spw-head { display: flex; align-items: flex-start; gap: 12px; padding: 18px 22px 12px; }
+.ms-spw-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ms-spw-titles h2 { margin: 0; font-size: 18px; letter-spacing: -.01em; color: var(--text); }
+.ms-spw-sub { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+.ms-spw-steps { list-style: none; margin: 0; padding: 0 22px 12px; display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid var(--line2); }
+.ms-spw-step { display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px 5px 6px; border: 0; border-radius: 999px; background: var(--field); color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; }
+.ms-spw-step:hover:not(:disabled) { color: var(--text); }
+.ms-spw-step.ms-on { color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
+.ms-spw-step:disabled { cursor: default; opacity: .6; }
+.ms-spw-step:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ms-spw-num { width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); font-size: 11px; font-variant-numeric: tabular-nums; }
+.ms-spw-step.ms-done .ms-spw-num { background: var(--okBg); color: var(--ok); box-shadow: none; }
+.ms-spw-body { flex: 1; min-height: 0; overflow: auto; padding: 16px 22px; display: flex; flex-direction: column; gap: 14px; }
+.ms-spw-h { margin: 0; font-size: 15px; color: var(--text); }
+.ms-spw-h:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+.ms-spw-fields { display: flex; flex-direction: column; gap: 8px; max-width: 480px; }
+.ms-spw-lbl { font-size: 13px; font-weight: 600; color: var(--text); }
+.ms-spw-faint { font-size: 12.5px; font-weight: 400; color: var(--muted); }
+p.ms-spw-faint { margin: 0; }
+.ms-spw-cap { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.ms-spw-err { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12.5px; color: var(--danger); overflow-wrap: anywhere; }
+.ms-spw-stores { display: flex; flex-direction: column; gap: 14px; }
+.ms-spw-storelist { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+.ms-spw-store, .ms-spw-device { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--text); cursor: pointer; }
+.ms-spw-devices { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 10px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line); }
+.ms-spw-screens { display: flex; flex-direction: column; gap: 12px; }
+.ms-spw-count { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.ms-spw-count .ms-field { width: 96px; }
+.ms-spw-shots { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ms-spw-shot { display: grid; grid-template-columns: 22px minmax(0, 1fr) minmax(0, 1.2fr); align-items: center; gap: 10px; min-width: 0; }
+.ms-spw-n { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); text-align: right; }
+.ms-spw-screen { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ms-spw-thumb { width: 28px; height: 38px; object-fit: cover; border-radius: 4px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line); flex: none; }
+.ms-spw-file { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ms-spw-review { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 10px 14px; margin: 0; font-size: 13px; }
+.ms-spw-review dt { color: var(--muted); }
+.ms-spw-review dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+.ms-spw-marks { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.ms-spw-marks > span { display: inline-flex; align-items: center; gap: 6px; }
+.ms-spw-rshots { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
+.ms-spw-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; padding: 14px 22px; border-top: 1px solid var(--line2); background: var(--bg); border-radius: 0 0 14px 14px; }
+.ms-spw-count-line { font-size: 13px; color: var(--text); }
+.ms-spw-actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; }
+.ms-spw-ferr { flex: 1 1 100%; display: flex; align-items: flex-start; gap: 6px; margin: 0; font-size: 12.5px; color: var(--danger); overflow-wrap: anywhere; }
+.ms-spw-ferr > svg { flex: none; margin-top: 2px; }
+@media (max-width: 640px) { .ms-spw-shot { grid-template-columns: 22px minmax(0, 1fr); } .ms-spw-screen { grid-column: 2; } .ms-spw-review { grid-template-columns: 1fr; } }
+
+/* App screen picker */
+.ms-sp-picker { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px; min-width: 0; }
+.ms-sp-pick-head { display: flex; align-items: center; gap: 10px; }
+.ms-sp-pick-head h2 { flex: 1; margin: 0; font-size: 16px; font-weight: 600; color: var(--text); }
+.ms-sp-pick-state, .ms-sp-pick-empty { margin: 0; padding: 18px 0; font-size: 13px; color: var(--muted); text-align: center; }
+.ms-sp-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 340px; overflow: auto; }
+.ms-sp-item { width: 100%; display: grid; grid-template-columns: 36px minmax(0, 1fr); column-gap: 10px; align-items: center; padding: 8px 10px; border: 0; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.ms-sp-item:hover:not(:disabled) { box-shadow: inset 0 0 0 1px var(--accent); }
+.ms-sp-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ms-sp-item:disabled { cursor: default; opacity: .7; }
+.ms-sp-item .ms-sp-thumb { grid-row: span 2; width: 36px; height: 48px; object-fit: cover; border-radius: 4px; background: var(--panel); }
+.ms-sp-pick-name { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.ms-sp-pick-desc { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.ms-sp-pick-foot { display: flex; justify-content: flex-end; }
+.ms-sp-error { margin: 0; font-size: 12.5px; color: var(--danger); overflow-wrap: anywhere; }
+
+/* Pack export dialog (the export dialog's own classes do the rest) */
+.ms-spx .ms-exp-path.ms-faint, .ms-spx .ms-exp-last { color: var(--muted); }
+.ms-spx .ms-exp-dest { grid-template-columns: 120px minmax(0, 1fr); }
+.ms-sp-langs { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 10px; align-items: start; padding: 14px 22px; border-top: 1px solid var(--line2); }
+.ms-sp-result { align-items: stretch; text-align: left; overflow: auto; min-height: 0; }
+.ms-sp-result > b, .ms-sp-result > .ms-exp-path, .ms-sp-result > .ms-sp-mark { align-self: center; text-align: center; }
+.ms-sp-mark { width: 54px; height: 54px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+.ms-sp-mark.ms-bad { background: var(--dangerBg); color: var(--danger); }
+.ms-sp-note { align-self: center; font-size: 12.5px; color: var(--muted); }
+.ms-sp-files { list-style: none; margin: 0; padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; max-height: 180px; overflow: auto; border-radius: 8px; background: var(--field); font-family: var(--mono); font-size: 12px; color: var(--text); overflow-wrap: anywhere; }
+.ms-sp-files.ms-bad { background: var(--dangerBg); color: var(--danger); }
+.ms-sp-failed { display: flex; flex-direction: column; gap: 6px; }
+.ms-sp-failed > b { font-size: 13px; color: var(--danger); }
+.ms-sp-error { font-size: 12.5px; }
+@media (max-width: 640px) { .ms-sp-langs, .ms-spx .ms-exp-dest { grid-template-columns: 1fr; } }
