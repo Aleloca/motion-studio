@@ -77,7 +77,7 @@ export function reasonText(r: VoiceReason, t: Messages): string {
   return t.web.languages.voiceReason[r];
 }
 
-const OVERFLOW_CODES: ReadonlySet<LocalizationIssue['code']> = new Set(['textOverflow', 'textOverflowMeasured']);
+const OVERFLOW_CODES: ReadonlySet<LocalizationIssue['code']> = new Set(['textOverflow', 'textOverflowMeasured', 'sourceTextOverflow']);
 const VOICE_CODES: ReadonlySet<LocalizationIssue['code']> = new Set(['voiceTooLong', 'voiceFailed', 'voiceDurationUnknown', 'voiceFileInvalid']);
 
 /**

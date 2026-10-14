@@ -704,12 +704,15 @@ export class RenderJobService {
       const info = await this.describe({ creativeDir, versionDir, n, preset, file, composition, sha256: result.sha256, hash: ic.entry.hash, locale, poster: false })
         // A check that could not run is a problem of the render, never a clean record (Ruling J).
         .catch(() => ({ width: result.width, height: result.height, durationSec: result.durationSec, problems: [m.variants.renderCheckFailed({ file })] }));
-      // The browser's own measure (Ruling I): a text that overflows its box at the applied fit is a problem of this language.
-      const overflowIssues: LocalizationIssue[] = (result.textOverflows ?? []).filter((e) => e.clipId !== undefined).map((e) => {
-        const fit = Math.round((read.overlay.fit[e.clipId!] ?? 1) * 100);
-        return { code: 'textOverflowMeasured', clipId: e.clipId!, message: m.variants.textOverflowMeasured({ clip: clipLabel(ic.composition, e.clipId!), fit }) };
-      });
-      const overflows = overflowIssues.map((i) => i.message);
+      // The browser's own measure (Ruling I): a translated text that overflows its box at the applied fit is a problem of this
+      // language. A clip that shows the source text (not translated, or outdated: the stale rule) overflows with the original's
+      // words: a note on the row (`sourceTextOverflow`, live F4), never a problem of the translation nor a reason to force.
+      const translated = (id: string) => Object.hasOwn(read.overlay.texts, id) && !row.stale.includes(id);
+      const measured = (result.textOverflows ?? []).filter((e) => e.clipId !== undefined).map((e) => e.clipId!);
+      const overflowIssues: LocalizationIssue[] = [...new Set(measured)].map((id): LocalizationIssue => (translated(id)
+        ? { code: 'textOverflowMeasured', clipId: id, message: m.variants.textOverflowMeasured({ clip: clipLabel(ic.composition, id), fit: Math.round((read.overlay.fit[id] ?? 1) * 100) }) }
+        : { code: 'sourceTextOverflow', clipId: id, message: m.variants.sourceTextOverflow({ clip: clipLabel(ic.composition, id) }) }));
+      const overflows = overflowIssues.filter((i) => i.code === 'textOverflowMeasured').map((i) => i.message);
       const problems = [...new Set([...(info.problems ?? []), ...overflows])];
       const at = new Date().toISOString();
       const render: NonNullable<LocalizationRow['render']> = {
@@ -720,8 +723,9 @@ export class RenderJobService {
       await store.updateVersion(ref.creativeSlug, n, (x) => ({
         ...x, localizations: (x.localizations ?? []).map((r) => {
           if (r.locale !== tag || r.instanceId !== instanceId) return r;
-          // A measured overflow is also an open problem of the translation (while it is the overlay rendered).
-          return { ...(r.hash === row.hash ? withIssues(r, overflowIssues) : r), render };
+          // A measured overflow is also an open problem of the translation (while it is the overlay rendered). The source-text
+          // notes are this render's measure: the previous render's are replaced.
+          return { ...(r.hash === row.hash ? withIssues(withoutIssues(r, (i) => i.code === 'sourceTextOverflow'), overflowIssues) : r), render };
         }),
       }));
       await updateVersionManifest(creativeDir, n, (found) => {

@@ -159,11 +159,15 @@ export type VersionComposition = z.infer<typeof versionCompositionSchema>;
  * Why a translation has a problem, as the core knows it when it writes the sentence (Phase 12, Ruling M): the UI flags clips by
  * `code` and `clipId` and words the label itself, never by reading the (translated, stored) sentence. `message` is that sentence.
  * `stale`: the entry's source text changed since the translation (only in `issues`, never in `problems`).
+ * `sourceTextOverflow`: the render measured an overflow on a clip that shows the source text (not translated, or outdated):
+ * the original's problem, not the translation's (only in `issues`, never in `problems`: it does not ask for "render anyway").
  */
 export const LOCALIZATION_ISSUE_CODES = [
   'textOverflow', 'textOverflowMeasured', 'notTranslated', 'stale', 'voiceTooLong', 'voiceFailed', 'voiceDurationUnknown', 'voiceFileInvalid',
-  'assetChanged', 'fallbackFontUnavailable', 'renderCheckFailed', 'invalid',
+  'assetChanged', 'fallbackFontUnavailable', 'renderCheckFailed', 'invalid', 'sourceTextOverflow',
 ] as const;
+/** Issue codes that are notes on a row, never its problems (`problems` leaves them out). */
+export const LOCALIZATION_NOTE_CODES: ReadonlySet<string> = new Set(['stale', 'sourceTextOverflow']);
 export const localizationIssueSchema = z.object({
   code: z.enum(LOCALIZATION_ISSUE_CODES), clipId: z.string().max(200).optional(), message: z.string().max(1000),
 });

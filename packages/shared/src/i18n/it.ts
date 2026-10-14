@@ -612,6 +612,7 @@ export const it: Messages = {
     localizationMissing: (p) => `Nessuna traduzione da renderizzare per: ${p.list}`,
     localeStale: (p) => `${p.count} superati`,
     textOverflowMeasured: (p) => `La traduzione di "${p.clip}" esce dal suo riquadro nel render, al ${p.fit}% della dimensione`,
+    sourceTextOverflow: (p) => `Il testo originale di "${p.clip}" esce dal suo riquadro nel render: appare non tradotto o non aggiornato, quindi va corretto nell'originale`,
     renderCheckFailed: (p) => `${p.file} è stato renderizzato ma non si è potuto controllare`,
     assetChanged: (p) => `${p.file} è cambiato da quando Motion Studio l'ha creato o aggiunto per questa traduzione: traduci di nuovo (o ripristina il file) prima del render`,
     staleEntry: (p) => `Il testo originale di "${p.clip}" è cambiato dopo la traduzione: si vede nella lingua originale finché non lo traduci di nuovo`,

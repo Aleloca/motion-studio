@@ -137,6 +137,34 @@ describe('render problems of a translation (Rulings I, J)', { timeout: 120_000 }
     expect((await render(slug, 1, { formats: ['test-wide'], locales: ['de'] })).json().code).toBe('localization-needs-force');
   });
 
+  it('a measured overflow of a clip that shows the source text (outdated) is "source text overflows": never a problem of the translation (live F4)', async () => {
+    const slug = await create();
+    await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
+    // A direct edit changes the source title: in v2 the German title is outdated, the render shows the new English text.
+    const view = (await env.app.inject({ url: `/api/projects/acme/creatives/${slug}/versions/1/compositions/test-wide`, headers: H })).json() as { hash: string; composition: { tracks: Array<{ clips: Array<{ id: string; props: { text?: string } }> }> } };
+    const c = structuredClone(view.composition);
+    c.tracks.flatMap((t) => t.clips).find((k) => k.id === 'title')!.props.text = 'A much longer English title that wraps';
+    const e = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/edits`, headers: H,
+      payload: { baseVersion: 1, format: 'test-wide', baseHash: view.hash, composition: c, staged: [], ops: [], token: 'A'.repeat(43) } });
+    expect(e.statusCode, e.body).toBe(200);
+    expect((await env.versionOf(slug, 2))!.localizations!.find((r) => r.locale === 'de')!.stale).toEqual(['title']);
+    env.fake.overflows = ['title'];
+    await done(await render(slug, 2, { formats: ['test-wide'], locales: ['de'], force: true }));
+    const row = (await env.versionOf(slug, 2))!.localizations!.find((r) => r.locale === 'de')!;
+    const text = v().sourceTextOverflow({ clip: 'Title' });
+    expect(row.issues).toEqual(expect.arrayContaining([{ code: 'sourceTextOverflow', clipId: 'title', message: text }]));
+    expect(row.issues!.some((i) => i.code === 'textOverflowMeasured')).toBe(false);
+    // Not a problem of the translation: the row and its render have none (only the outdated entry asks for "render anyway").
+    expect(row.problems).toBeUndefined();
+    expect(row.render!.problems).toBeUndefined();
+    // Translated again (current), the next render measures the translation itself; no overflow now: the note is gone.
+    await put(slug, 2, 'de', 'test-wide', { texts: { title: 'Hallo' } });
+    env.fake.overflows = [];
+    await done(await render(slug, 2, { formats: ['test-wide'], locales: ['de'] }));
+    const after = (await env.versionOf(slug, 2))!.localizations!.find((r) => r.locale === 'de')!;
+    expect(after.issues ?? []).toEqual([]);
+  });
+
   it('a check that cannot run after the render is a problem, never a clean record', async () => {
     const slug = await create();
     await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });

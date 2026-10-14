@@ -1,10 +1,13 @@
-import type { LocalizationIssue, LocalizationRow } from '@motion-studio/shared';
+import { LOCALIZATION_NOTE_CODES, type LocalizationIssue, type LocalizationRow } from '@motion-studio/shared';
 
-/** The `problems` and `issues` fields of a row for these issues (Ruling M): one sentence per problem, `stale` only in `issues`. */
+/**
+ * The `problems` and `issues` fields of a row for these issues (Ruling M): one sentence per problem; the notes (`stale`,
+ * `sourceTextOverflow`: `LOCALIZATION_NOTE_CODES`) only in `issues`.
+ */
 export function issueFields(issues: readonly LocalizationIssue[]): Pick<LocalizationRow, 'problems' | 'issues'> {
   const seen = new Set<string>();
   const unique = issues.filter((i) => { const k = `${i.code}|${i.clipId ?? ''}|${i.message}`; if (seen.has(k)) return false; seen.add(k); return true; });
-  const problems = [...new Set(unique.filter((i) => i.code !== 'stale').map((i) => i.message))];
+  const problems = [...new Set(unique.filter((i) => !LOCALIZATION_NOTE_CODES.has(i.code)).map((i) => i.message))];
   return { ...(problems.length ? { problems } : {}), ...(unique.length ? { issues: unique.slice(0, 400) } : {}) };
 }
 
