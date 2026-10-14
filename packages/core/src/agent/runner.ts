@@ -22,6 +22,12 @@ export interface AgentTurnRequest {
   allowedTools?: string[];
   /** Permission rules that are always denied (e.g. read-only linked codebases: `Edit(//abs/path/**)`). */
   disallowedTools?: string[];
+  /**
+   * Phase 13: the effective capabilities for this turn (agent-capabilities.ts). Absent or both false: the prompt is
+   * written and stdin closed at once, exactly as before. `liveInput` keeps stdin open until the final result, so `send`
+   * can write; `interrupt` (only with `liveInput`) lets `interrupt` write a control request. Unverified live (decisions log 610).
+   */
+  capabilities?: { liveInput: boolean; interrupt: boolean };
 }
 
 /**
@@ -58,7 +64,21 @@ export interface AgentRun {
    * Called by the core once a run is over and before it touches the run's files. Optional: runners without groups omit it.
    */
   killGroup?(): void;
+  /**
+   * Phase 13: writes a user message into the running session. Resolves 'written' or 'closed' (live input off, stdin
+   * already closed, or the process gone): never throws, never writes to a closed stdin.
+   */
+  send?(msg: { text: string; clientId: string }): Promise<'written' | 'closed'>;
+  /**
+   * Phase 13: asks the CLI to stop the current step. Resolves 'interrupted' on the acknowledgement, 'unsupported' (the
+   * capability is off, the stream is closed, or the CLI refused), or 'timeout' (no acknowledgement within 5 s, or the
+   * process went away first): never throws.
+   */
+  interrupt?(): Promise<'interrupted' | 'unsupported' | 'timeout'>;
 }
+
+/** The plan's name for a running turn's handle. */
+export type AgentRunHandle = AgentRun;
 
 /** Agent-neutral contract; ClaudeCodeRunner is the first implementation. */
 export interface AgentRunner {

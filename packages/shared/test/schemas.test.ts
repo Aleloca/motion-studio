@@ -5,8 +5,14 @@ describe('workspaceSettingsSchema', () => {
   it('fills defaults from an empty versioned object', () => {
     expect(workspaceSettingsSchema.parse({ schemaVersion: 1 })).toEqual({
       schemaVersion: 1, maxConcurrentJobs: 2, expertMode: false, theme: 'system', model: null, sandboxMode: 'auto', extraAllowedDomains: [], confirmPaidProviders: true, autoApproveSandboxed: true,
-      exportNamePattern: '{title}-{format}-v{v}',
+      exportNamePattern: '{title}-{format}-v{v}', agentLiveInput: false, agentInterrupt: false,
     });
+  });
+  it('Phase 13 opt-in: live input and interrupt default off (an old settings.json loads unchanged) and can be turned on', () => {
+    const old = workspaceSettingsSchema.parse({ schemaVersion: 1, maxConcurrentJobs: 3 });
+    expect(old).toMatchObject({ maxConcurrentJobs: 3, agentLiveInput: false, agentInterrupt: false });
+    expect(workspaceSettingsSchema.parse({ schemaVersion: 1, agentLiveInput: true, agentInterrupt: true })).toMatchObject({ agentLiveInput: true, agentInterrupt: true });
+    expect(workspaceSettingsSchema.safeParse({ schemaVersion: 1, agentLiveInput: 'yes' }).success).toBe(false);
   });
   it('autoApproveSandboxed defaults to true when absent and can be turned off', () => {
     expect(workspaceSettingsSchema.parse({ schemaVersion: 1 }).autoApproveSandboxed).toBe(true);

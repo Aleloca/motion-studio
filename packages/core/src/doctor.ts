@@ -4,6 +4,7 @@ import type { SandboxSupport } from './agent/sandbox.ts';
 import type { CommandExec, CommandResult } from './exec.ts';
 import { t } from './i18n.ts';
 import { execFfVia } from './media/ffmpeg-exec.ts';
+import { capabilitiesFor, type CapabilityOptIn } from './agent/agent-capabilities.ts';
 
 const versionIn = (s: string) => s.match(/(\d+\.\d+(?:\.\d+)?)/)?.[1];
 const firstLine = (s: string) => s.split('\n').map((l) => l.trim()).find(Boolean);
@@ -26,6 +27,11 @@ export async function runDoctor(opts: {
    * Rosetta on Apple Silicon is named (it renders, slower). Absent or failing: the plain version.
    */
   ffmpegInfo?: () => Promise<{ arch: BinaryArch; hostArch: string; translated: boolean } | null>;
+  /**
+   * Phase 13: the workspace's opt-in for live messages and interrupt. When given (even `{}`), the report says which path
+   * is active: the fallback (queued only, stop and resume) for every version unless opted in (decisions log 610).
+   */
+  agentOptIn?: CapabilityOptIn;
 }): Promise<DoctorCheck[]> {
   const { exec } = opts;
   const [claudeBin, ...claudePrefix] = opts.claudeCommand;
@@ -82,6 +88,20 @@ export async function runDoctor(opts: {
     checks.push(loggedIn
       ? { id: 'claude-auth', label: d.claudeAuthLabel, required: true, ok: true, message: d.authenticated }
       : { id: 'claude-auth', label: d.claudeAuthLabel, required: true, ok: false, message: d.notAuthenticated, fix: 'claude auth login' });
+  }
+  if (opts.agentOptIn) {
+    // Informational rows (ok, optional): the fallback is a working path, not a problem.
+    const version = claudeOk ? versionIn(claude.stdout) ?? null : null;
+    const effective = capabilitiesFor(version, opts.agentOptIn);
+    const verified = capabilitiesFor(version);
+    checks.push({
+      id: 'live-messages', label: d.liveMessagesLabel, required: false, ok: true,
+      message: !effective.liveInput ? d.liveMessagesQueued : verified.liveInput ? d.liveMessagesSupported : d.liveMessagesOptIn,
+    });
+    checks.push({
+      id: 'interrupt', label: d.interruptLabel, required: false, ok: true,
+      message: !effective.interrupt ? d.interruptStopResume : verified.interrupt ? d.interruptSupported : d.interruptOptIn,
+    });
   }
   if (opts.sandbox) {
     const s = await opts.sandbox();

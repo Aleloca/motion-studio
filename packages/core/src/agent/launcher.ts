@@ -15,6 +15,7 @@ import { CREATIVE_CORE_FILES, detachProtectedLinks, PROPOSAL_LOG } from './prote
 import { armTripwire } from './run-tripwire.ts';
 import { IntegrityStore, ProjectQuarantinedError, snapshotDiff } from '../project-integrity.ts';
 import type { AgentRun, AgentRunner, AgentTurnRequest } from './runner.ts';
+import { capabilitiesFor } from './agent-capabilities.ts';
 import type { SandboxSupport } from './sandbox.ts';
 import { UsageLedger } from '../usage/usage-ledger.ts';
 import { UsageTracker } from '../usage/usage-tracker.ts';
@@ -62,7 +63,15 @@ export interface LauncherDeps {
   integrity?: IntegrityStore;
   /** Where every run's token and cost usage is recorded (`<project>/.studio/usage.jsonl`); defaults to a private one. */
   usageLedger?: UsageLedger;
+  /**
+   * Phase 13: the installed Claude Code version (`claude --version`), cached by the caller; null or absent = unknown,
+   * which keeps live input and interrupt off whatever the settings say (agent-capabilities.ts, decisions log 610).
+   */
+  claudeVersion?: () => Promise<string | null>;
 }
+
+/** Phase 13: the jobs whose turns can take messages or an interrupt while they run (spec §2; never brand analysis, describe, localize). */
+const LIVE_JOB_KINDS: ReadonlySet<AgentJobKind> = new Set(['creative', 'console']);
 export interface LaunchInput {
   kind: AgentJobKind; jobId: string; projectSlug: string; projectDir: string; creativeSlug?: string | null;
   codebases?: string[]; protectedFiles?: string[];
@@ -136,6 +145,12 @@ export class AgentLauncher {
     const detected = settings.sandboxMode === 'auto' && (await this.deps.sandbox()).available;
     const sandbox = i.sandboxed === false ? false : detected;
     const autoApproveAtStart = settings.autoApproveSandboxed === true;
+    // Phase 13: off unless the user opted in for a known version (no version is verified live, decisions log 610).
+    // Both off: the request carries no capabilities and the runner behaves exactly as before.
+    const liveCaps = LIVE_JOB_KINDS.has(i.kind) && (settings.agentLiveInput || settings.agentInterrupt)
+      ? capabilitiesFor(await this.deps.claudeVersion?.().catch(() => null) ?? null, { liveInput: settings.agentLiveInput, interrupt: settings.agentInterrupt })
+      : null;
+    const capabilities = liveCaps && (liveCaps.liveInput || liveCaps.interrupt) ? { liveInput: liveCaps.liveInput, interrupt: liveCaps.interrupt } : null;
     const home = this.deps.home ?? homedir();
     const { configDir, bridge, mcpCommand, approvals } = this.deps;
     // The file is agent-reachable in the fallback mode: only rules that "Sempre" could have produced are honoured;
@@ -270,6 +285,7 @@ export class AgentLauncher {
         addDirs: policy.addDirs, allowedTools: policy.allowedTools, disallowedTools: policy.disallowedTools,
         ...(policy.settings ? { settings: policy.settings } : {}), ...mcp,
         env: { MCP_TOOL_TIMEOUT: '900000', ...policy.env }, unsetEnv: AGENT_UNSET_ENV,
+        ...(capabilities ? { capabilities } : {}),
       }, forward);
       const done = run.done.then(async (r) => {
         // Leftover processes are killed before the checks, so nothing can make a link or move a folder after them. Console
@@ -309,6 +325,9 @@ export class AgentLauncher {
         // Revoked before the process is told to stop: it may keep calling the bridge until it exits.
         cancel: () => { void release(); run.cancel(); },
         killGroup: () => run.killGroup?.(),
+        // Phase 13: always present, so callers never branch on the runner; a runner without them answers like a closed stream.
+        send: (m) => run.send?.(m) ?? Promise.resolve('closed' as const),
+        interrupt: () => run.interrupt?.() ?? Promise.resolve('unsupported' as const),
       };
     } catch (err) {
       await release();

@@ -454,6 +454,8 @@ function Details({ jobId, entries, open, onToggle }: { jobId: string; entries: D
       case 'parse_error': return [k.unreadable, e.line, true];
       // `usage` and `approval_decided` are never handed to Details (see TECHNICAL); commands have their own row below.
       case 'usage': case 'auto_approved': case 'approval_decided': return ['', ''];
+      // Phase 13 markers: shown by the conversation's own rows (Task 3), never as a detail line.
+      case 'user_message_delivered': case 'interrupted': return ['', ''];
       case 'result': return e.ok ? [k.done, e.text ?? ''] : [k.failed, e.error ?? '', true];
     }
   };

@@ -6,20 +6,31 @@ Motion Studio does not talk to an agent directly: it goes through a neutral cont
 
 ```ts
 interface AgentRunner { start(req: AgentTurnRequest, onEvent: (e: AgentEvent) => void): AgentRun }
-interface AgentRun { done: Promise<AgentRunResult>; cancel(): void }
+interface AgentRun {
+  done: Promise<AgentRunResult>; cancel(): void; killGroup?(): void;
+  send?(msg: { text: string; clientId: string }): Promise<'written' | 'closed'>;      // Phase 13
+  interrupt?(): Promise<'interrupted' | 'unsupported' | 'timeout'>;                   // Phase 13
+}
 interface AgentRunResult { status: 'succeeded' | 'failed' | 'cancelled'; sessionId?: string; error?: string }
 ```
 
-`AgentTurnRequest` describes a turn: `cwd`, `prompt`, `resumeSessionId` (and `forkSession` to restart from a past session), `addDirs` (read-only folders), `model`, `settings` (sandbox), `mcpConfigPath` (private file with the `studio` MCP server), `permissionPromptTool`, `env` and `unsetEnv` (variables removed), `allowedTools` and `disallowedTools` (permission rules). A runner must: start the turn, emit normalized events as they come, resolve `done` exactly once, and really stop the process and its descendants on `cancel()`.
+`AgentTurnRequest` describes a turn: `cwd`, `prompt`, `resumeSessionId` (and `forkSession` to restart from a past session), `addDirs` (read-only folders), `model`, `settings` (sandbox), `mcpConfigPath` (private file with the `studio` MCP server), `permissionPromptTool`, `env` and `unsetEnv` (variables removed), `allowedTools` and `disallowedTools` (permission rules), and `capabilities` (Phase 13, see below). A runner must: start the turn, emit normalized events as they come, resolve `done` exactly once, and really stop the process and its descendants on `cancel()`.
 
 ## Language of the prompts
 The instructions sent to the agent are always in English. The prompts of creatives, brand analysis and asset description end with an explicit request to reply, and to write every text meant for the user (conversation messages, brand guidelines, asset descriptions, problem reports), in the language chosen in Settings (`English` or `Italian`, from `languageName`). A new backend gets this for free as long as it forwards `prompt` unchanged; the language can change between turns, and a turn already running keeps the language it started with.
 
 ## Normalized events (`AgentEvent`, `packages/shared/src/events.ts`)
-`session` (session id, model), `text`, `tool_use`, `tool_result`, `rate_limit`, `progress` (from `report_progress`), `stderr`, `parse_error`, `result` (`ok`, `sessionId`, `text`, `costUsd`, `error`). The interface and the conversation log only know these events. `ClaudeCodeRunner` derives them from Claude Code's `stream-json` flow with `claude-stream-parser.ts` (invalid lines become `parse_error`, never exceptions).
+`session` (session id, model), `text`, `tool_use`, `tool_result`, `rate_limit`, `progress` (from `report_progress`), `stderr`, `parse_error`, `result` (`ok`, `sessionId`, `text`, `costUsd`, `error`), and since Phase 13 `user_message_delivered` (`clientId`: a message written into the running session, meaning "sent") and `interrupted` (the CLI acknowledged an interrupt). The interface and the conversation log only know these events. `ClaudeCodeRunner` derives them from Claude Code's `stream-json` flow with `claude-stream-parser.ts` (invalid lines become `parse_error`, never exceptions).
 
 ## ClaudeCodeRunner (`claude-code-runner.ts`)
 Starts `claude -p --input-format stream-json --output-format stream-json --verbose --permission-mode acceptEdits` in the project folder, with the prompt on stdin and the arguments built by `buildClaudeArgs` (`--resume`/`--fork-session`, `--add-dir`, `--model`, `--settings`, `--strict-mcp-config --mcp-config`, `--permission-prompt-tool`, `--disallowedTools`, `--allowedTools`). On POSIX the process has its own group, and `cancel()` sends SIGTERM then SIGKILL to the whole group. The command is `claude` or the one in `MOTION_STUDIO_CLAUDE_COMMAND` (JSON array, used by tests for the fake `claude`).
+
+## Live messages and interrupt (Phase 13, fallback-first)
+The live paths are **off for every Claude Code version**: the stream-input spike was suspended (decisions log 610, `docs/superpowers/notes/2026-10-14-phase13-stream-input-spike.md`), so no version is verified. `capabilitiesFor(version, optIn)` (`agent-capabilities.ts`) returns the effective `{ cliVersion, liveInput, interrupt, checkedAt }`; its table of verified versions is empty.
+- **Opt-in.** Two workspace settings, both default `false`, turn the paths on: `agentLiveInput` and `agentInterrupt` (interrupt also needs `agentLiveInput`: the control request travels on the open stdin). There is no switch in the interface yet: set them in the workspace's `settings.json` or with `PUT /api/settings`. An unknown version (`claude --version` does not answer) keeps both off whatever the settings say. Only creative and console turns get them.
+- **Report.** `GET /api/agent/capabilities` returns the effective values; the Doctor shows "Live messages: queued only (not verified for this Claude Code version)" and "Interrupt: stop and resume" (or "on from Settings (not verified live)" after the opt-in).
+- **Off (default).** The runner writes the prompt and closes stdin at once, exactly as before Phase 13. `send` resolves `'closed'` and `interrupt` resolves `'unsupported'`, and neither writes anything.
+- **On.** stdin stays open until the final `result` (or cancel, or exit). `send` writes `{ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null }` and emits `user_message_delivered` once the write is flushed. `interrupt` writes `{ type: 'control_request', request_id, request: { subtype: 'interrupt' } }` and waits up to 5 s for the `control_response` with the same `request_id`. An acknowledgement emits `interrupted` and keeps stdin open for 5 s after the interrupted turn's result, for a redirect message. An error response resolves `'unsupported'`. If no acknowledgement comes, or the process goes away first, it resolves `'timeout'`. These shapes come from the public docs and are **unverified live**. The tests drive them only with `packages/core/test/fixtures/fake-claude-stream.mjs`.
 
 ## AgentLauncher (`launcher.ts`) and policy (`policy.ts`)
 The `AgentLauncher` is the only place where an agent starts. For each job (`creative`, `console`, `brand-analysis`, `describe`):

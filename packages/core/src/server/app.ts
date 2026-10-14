@@ -58,13 +58,19 @@ import { UsageLedger } from '../usage/usage-ledger.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 import { tokenMatches } from './ui-token.ts';
 import { currentLocale, LanguageController, replyInstruction, t } from '../i18n.ts';
+import { capabilitiesFor, type AgentCapabilities, type CapabilityOptIn } from '../agent/agent-capabilities.ts';
 
 export interface ServerDeps {
   appConfig: AppConfigStore;
   git: Git;
   runner: AgentRunner;
   /** Receives the server's (cached) sandbox detection, so the report includes the sandbox check. */
-  doctor: (extra: { sandbox: () => Promise<SandboxSupport>; workspacePath?: string | null }) => Promise<DoctorCheck[]>;
+  doctor: (extra: { sandbox: () => Promise<SandboxSupport>; workspacePath?: string | null; agentOptIn?: CapabilityOptIn }) => Promise<DoctorCheck[]>;
+  /**
+   * Phase 13: the installed Claude Code version (`claude --version`), null when it does not answer. Cached by the server
+   * for a minute; absent = unknown, so live input and interrupt stay off (agent-capabilities.ts, decisions log 610).
+   */
+  claudeVersion?: () => Promise<string | null>;
   webDir?: string;
   media?: MediaTools;
   openPath?: (path: string) => Promise<void>;
@@ -254,6 +260,17 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const sandbox = deps.sandbox ?? cachedSandboxDetection();
   const bridge = deps.bridge ?? new AgentBridge();
   const currentSettings = async () => (workspace ? workspace.readSettings() : workspaceSettingsSchema.parse({ schemaVersion: 1 }));
+  // Phase 13: the opt-in of the workspace (unreadable settings = no opt-in) and the CLI version, cached for a minute.
+  const agentOptIn = async (): Promise<CapabilityOptIn> => currentSettings().then(
+    (s) => ({ liveInput: s.agentLiveInput, interrupt: s.agentInterrupt }), () => ({}));
+  let versionCache: { at: number; value: Promise<string | null> } | null = null;
+  const claudeVersion = (): Promise<string | null> => {
+    if (!deps.claudeVersion) return Promise.resolve(null);
+    if (!versionCache || Date.now() - versionCache.at > 60_000) {
+      versionCache = { at: Date.now(), value: deps.claudeVersion().catch(() => null) };
+    }
+    return versionCache.value;
+  };
   // What the Doctor reports is what the agent gets: the workspace setting wins over the system support.
   const effectiveSandbox = async (): Promise<SandboxSupport> => {
     const mode = await currentSettings().then((s) => s.sandboxMode, () => 'auto' as const);
@@ -267,6 +284,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     configDir, integrity,
     mcpCommand: deps.mcpCommand ?? null,
     ...(deps.mcpEnv ? { mcpEnv: deps.mcpEnv } : {}),
+    claudeVersion,
   });
 
   const vault = deps.vault ?? new MemoryVault();
@@ -353,7 +371,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // pid: lets a second launch check that the recorded server.json pid is really this server (pids get reused).
   app.get('/api/health', async () => ({ ok: true, pid: process.pid }));
-  app.get('/api/doctor', async () => deps.doctor({ sandbox: effectiveSandbox, workspacePath: workspace?.root ?? null }));
+  app.get('/api/doctor', async () => deps.doctor({ sandbox: effectiveSandbox, workspacePath: workspace?.root ?? null, agentOptIn: await agentOptIn() }));
+  // Phase 13: the effective capabilities (the path the next creative or console turn takes).
+  app.get('/api/agent/capabilities', async (): Promise<AgentCapabilities> => capabilitiesFor(await claudeVersion(), await agentOptIn()));
 
   app.get('/api/workspace', async (): Promise<WorkspaceInfo> => {
     if (!workspace) return { path: workspaceProblem?.path ?? null, settings: null, error: workspaceProblem?.error ?? null };

@@ -38,6 +38,13 @@ export const workspaceSettingsSchema = z.object({
   autoApproveSandboxed: z.boolean().default(true),
   /** File name pattern of exports; tokens `{title} {channel} {format} {ratio} {v} {date}`. Absent in an old settings.json: the default. */
   exportNamePattern: z.string().min(1).max(200).default('{title}-{format}-v{v}'),
+  /**
+   * Phase 13 opt-in (default off): write messages into the running agent session. Not verified live for any Claude Code
+   * version (decisions log 610); off means a message sent while the agent works is queued as the next request.
+   */
+  agentLiveInput: z.boolean().default(false),
+  /** Phase 13 opt-in (default off, needs agentLiveInput): interrupt the current step in the same process; off means stop and resume. */
+  agentInterrupt: z.boolean().default(false),
 });
 export type WorkspaceSettings = z.infer<typeof workspaceSettingsSchema>;
 

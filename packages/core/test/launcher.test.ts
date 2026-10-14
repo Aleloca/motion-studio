@@ -691,3 +691,62 @@ describe('Integrity with the sandbox off (decisions log 141, round 4)', () => {
     await expect((await start(loud, dir)).done).rejects.toThrow('.studio/permissions.json');
   });
 });
+
+describe('AgentLauncher Phase 13 capabilities (fallback-first, decisions log 610)', () => {
+  const capture = () => {
+    const seen: Parameters<AgentRunner['start']>[0][] = [];
+    const calls: string[] = [];
+    const runner: AgentRunner = { start: (req) => {
+      seen.push(req);
+      return {
+        done: Promise.resolve({ status: 'succeeded' as const }), cancel: () => {},
+        send: async (m) => { calls.push(`send:${m.clientId}`); return 'written' as const; },
+        interrupt: async () => { calls.push('interrupt'); return 'interrupted' as const; },
+      };
+    } };
+    return { runner, seen, calls };
+  };
+  const start = async (runner: AgentRunner, over: Parameters<typeof testLauncher>[1], kind: 'creative' | 'console' | 'describe' | 'brand-analysis' | 'localize' = 'creative') =>
+    testLauncher(runner, over).start({ kind, jobId: `j-${kind}`, projectSlug: 'acme', projectDir: await newProject(), request: { prompt: 'x' }, onEvent: () => {} });
+
+  it('without the opt-in the request carries no capabilities (today\'s request, stdin closed after the prompt)', async () => {
+    const { runner, seen } = capture();
+    await (await start(runner, { claudeVersion: async () => '2.1.299' })).done;
+    expect(seen[0]).not.toHaveProperty('capabilities');
+  });
+
+  it('with the opt-in, creative and console turns get the effective capabilities; other jobs never do', async () => {
+    const settings = { agentLiveInput: true, agentInterrupt: true };
+    for (const kind of ['creative', 'console'] as const) {
+      const { runner, seen } = capture();
+      await (await start(runner, { settings, claudeVersion: async () => '2.1.299' }, kind)).done;
+      expect(seen[0]?.capabilities, kind).toEqual({ liveInput: true, interrupt: true });
+    }
+    for (const kind of ['describe', 'brand-analysis', 'localize'] as const) {
+      const { runner, seen } = capture();
+      await (await start(runner, { settings, claudeVersion: async () => '2.1.299' }, kind)).done;
+      expect(seen[0], kind).not.toHaveProperty('capabilities');
+    }
+  });
+
+  it('an unknown or failing version keeps both off, even with the opt-in', async () => {
+    const settings = { agentLiveInput: true, agentInterrupt: true };
+    for (const claudeVersion of [async () => null, async () => { throw new Error('no claude'); }, undefined]) {
+      const { runner, seen } = capture();
+      await (await start(runner, { settings, ...(claudeVersion ? { claudeVersion } : {}) })).done;
+      expect(seen[0]).not.toHaveProperty('capabilities');
+    }
+  });
+
+  it('forwards send and interrupt to the run; a runner without them answers closed / unsupported', async () => {
+    const { runner, calls } = capture();
+    const run = await start(runner, {});
+    await expect(run.send!({ text: 'hi', clientId: 'c1' })).resolves.toBe('written');
+    await expect(run.interrupt!()).resolves.toBe('interrupted');
+    expect(calls).toEqual(['send:c1', 'interrupt']);
+    const bare: AgentRunner = { start: () => ({ done: Promise.resolve({ status: 'succeeded' as const }), cancel: () => {} }) };
+    const run2 = await start(bare, {});
+    await expect(run2.send!({ text: 'hi', clientId: 'c2' })).resolves.toBe('closed');
+    await expect(run2.interrupt!()).resolves.toBe('unsupported');
+  });
+});

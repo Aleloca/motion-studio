@@ -122,6 +122,24 @@ function eventsOf(msg: Json): AgentEvent[] {
   }
 }
 
+/** A `control_response` line: the answer to a control request the runner wrote (Phase 13 interrupt). */
+export interface ControlResponse { requestId: string; ok: boolean; error?: string }
+
+/**
+ * Reads a `control_response` line. Shape from the public Agent SDK docs (the `{ type: "control_request", request_id,
+ * request }` envelope and its `control_response` echoing `request_id`), UNVERIFIED LIVE for the installed CLI (decisions
+ * log 610): https://code.claude.com/docs/en/agent-sdk/typescript . The id is read from `response.request_id`, or from a
+ * top-level `request_id`. Anything else is null (and the line yields no event, as before).
+ */
+export function controlResponseOf(msg: Json): ControlResponse | null {
+  if (msg.type !== 'control_response') return null;
+  const r = isObj(msg.response) ? msg.response : {};
+  const requestId = typeof r.request_id === 'string' ? r.request_id : typeof msg.request_id === 'string' ? msg.request_id : null;
+  if (!requestId) return null;
+  const ok = r.subtype === 'success';
+  return ok ? { requestId, ok } : { requestId, ok, error: typeof r.error === 'string' ? r.error : String(r.subtype ?? 'error') };
+}
+
 const sameTokens = (a: TokenCounts, b: TokenCounts) => a.input === b.input && a.output === b.output && a.cacheRead === b.cacheRead && a.cacheWrite === b.cacheWrite;
 
 /**
@@ -143,16 +161,23 @@ export class ClaudeStreamParser {
   private readonly interval: number;
   private readonly onLive: ((e: AgentEvent) => void) | null;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private readonly onControlResponse: ((r: ControlResponse) => void) | null;
 
-  /** `onLive`: receives a held-back estimate from the trailing timer (at most one per interval); without it, no timer. */
-  constructor(opts: { now?: () => number; liveIntervalMs?: number; onLive?: (e: AgentEvent) => void } = {}) {
+  /**
+   * `onLive`: receives a held-back estimate from the trailing timer (at most one per interval); without it, no timer.
+   * `onControlResponse` (Phase 13): receives each `control_response` line (never an AgentEvent).
+   */
+  constructor(opts: { now?: () => number; liveIntervalMs?: number; onLive?: (e: AgentEvent) => void; onControlResponse?: (r: ControlResponse) => void } = {}) {
     this.now = opts.now ?? Date.now;
     this.interval = opts.liveIntervalMs ?? 1000;
     this.onLive = opts.onLive ?? null;
+    this.onControlResponse = opts.onControlResponse ?? null;
   }
 
   parse(line: string): AgentEvent[] {
     const { events, msg } = parseLine(line);
+    const control = msg ? controlResponseOf(msg) : null;
+    if (control) { try { this.onControlResponse?.(control); } catch { /* a faulty listener must not break the parser */ } }
     if (events.some((e) => e.kind === 'usage' && !e.live)) { this.final = true; this.pending = false; this.stop(); return events; }
     if (msg && msg.type === 'assistant' && isObj(msg.message) && isObj(msg.message.usage)) {
       const id = typeof msg.message.id === 'string' && msg.message.id !== '' ? msg.message.id : `#${this.anonymous++}`;
