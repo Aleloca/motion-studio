@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { MemoryVault } from '../src/secrets/vault.ts';
 import { sweepRunDir } from '../src/agent/launcher.ts';
 import { AlreadyRunningError, startServer, uiOriginsOf } from '../src/server/main.ts';
@@ -174,18 +174,32 @@ describe('startServer single instance per config dir', () => {
     const silent = createServer(() => { /* accepts, never answers */ });
     const port = await listen(silent);
     const { configDir } = await configWith({ port, pid: process.ppid });
-    const t0 = Date.now();
-    const s = await startServer({ port: 0, configDir, claudeCommand: ['true'], vault: new MemoryVault(), healthTimeoutMs: 200 });
+    // The wait is checked on the logic, not on the wall clock (a loaded machine stretches any time limit): one health request to
+    // the silent port, carrying a timeout signal, which is what ended the wait. An unbounded wait would hang until the test's timeout.
+    const seen: Array<{ url: string; signal: AbortSignal | undefined }> = [];
+    const realFetch = globalThis.fetch;
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes(`:${port}/`)) seen.push({ url, signal: init?.signal ?? undefined });
+      return realFetch(input, init);
+    }) as typeof fetch);
+    let s: Awaited<ReturnType<typeof startServer>> | undefined;
     try {
-      expect(Date.now() - t0).toBeLessThan(2500);
+      s = await startServer({ port: 0, configDir, claudeCommand: ['true'], vault: new MemoryVault(), healthTimeoutMs: 200 });
+      expect(seen).toHaveLength(1);
+      expect(seen[0]!.url).toBe(`http://127.0.0.1:${port}/api/health`);
+      expect(seen[0]!.signal).toBeDefined();
+      expect(seen[0]!.signal!.aborted).toBe(true);
+      expect((seen[0]!.signal!.reason as Error).name).toBe('TimeoutError');
       expect(existsSync(join(configDir, 'run', 'old.mcp.json'))).toBe(false);
       expect((await readServerInfo(configDir))?.pid).toBe(process.pid);
     } finally {
-      await s.close();
+      spy.mockRestore();
+      await s?.close();
       silent.close();
       await rm(configDir, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
   it('close() leaves another instance\'s server.json in place', async () => {
     const configDir = await mkdtemp(join(tmpdir(), 'ms-ss-'));
     const s = await startServer({ port: 0, configDir, claudeCommand: ['true'], vault: new MemoryVault() });

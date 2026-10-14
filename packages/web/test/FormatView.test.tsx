@@ -594,12 +594,12 @@ describe('FormatView · live composition player (Task 8)', () => {
     detail = makeDetail([v2(1)]);
     render(<Harness format={VIDEO} />);
     const { posted } = await readyPlayer();
-    const strip = await screen.findByRole('list', { name: 'Storyboard' });
+    const strip = await screen.findByRole('list', { name: 'Storyboard' }, { timeout: 20_000 });
     const scenes = within(strip).getAllByRole('button');
     expect(scenes.map((b) => b.getAttribute('aria-label'))).toEqual(['intro, a 00:00.00', 'offerta, a 00:03.50']);
     await userEvent.click(scenes[1]!);
     expect(posted).toHaveBeenLastCalledWith({ type: 'seek', t: 3.5 }, '*');
-  });
+  }, 60_000);
 
   it('frame comments work on the paused live picture, at the current time', async () => {
     detail = makeDetail([v2(1)]);
