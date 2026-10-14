@@ -285,11 +285,14 @@ describe('the queue and the remembered session are out of the agent\'s reach (fi
 
   it('old creative.json files: their queue and remembered session move to the core once, and still load', async () => {
     s = await liveApp();
-    // Written before this change: in creative.json, with the old boot id.
+    // Written before this change: in creative.json, with the old boot id, and no side record yet (the app restarts on it).
+    await s.app.close();
+    await rm(join(s.base, 'config', 'creative-state'), { recursive: true, force: true });
     await writeRaw({
       queued: [{ clientId: cid(), text: 'Vecchia richiesta', pins: [], at: '2026-10-01T00:00:00.000Z', bootId: 'old-boot' }],
       stoppedSession: { sessionId: 'legacy-session', at: '2026-10-01T00:00:00.000Z', jobId: 'old-job' },
     });
+    s = await liveApp({ base: s.base, runner: s.runner, slug: s.slug });
     expect(await s.creative()).toMatchObject({ queued: [{ text: 'Vecchia richiesta' }], stoppedSession: { sessionId: 'legacy-session', jobId: 'old-job' } });
     expect((await s.creative()).queued![0]).not.toHaveProperty('bootId');
     const raw = await rawCreative();
