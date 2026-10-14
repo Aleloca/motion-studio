@@ -1,5 +1,7 @@
 import { assertNotRealUserData } from './app-config.ts';
-import { access, constants, mkdir, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { access, chmod, constants, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { HELD_FIELDS, heldOf, SettingsHoldError, tightenHeld, type HeldSettings, type SettingsHoldStore } from './settings-hold.ts';
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
@@ -107,9 +109,50 @@ export function slugify(name: string): string {
   return s || 'project';
 }
 
+/** What an unsandboxed agent run did to the workspace settings (final wave P9). */
+/** `holdBroken`: the change could not be undone and its hold could not be saved either (loud, Ruling AA). */
+export interface SettingsCheck { changed: boolean; reverted: boolean; holdBroken?: boolean }
+
+/** Puts back exactly `text` at `path`, through a temp file and a rename (never a half-written settings file). */
+async function writeThroughAtomic(path: string, text: string): Promise<void> {
+  const tmp = `${path}.${randomBytes(6).toString('hex')}.tmp`;
+  try {
+    await writeFile(tmp, text, 'utf8');
+    await rename(tmp, path);
+  } catch (err) {
+    await rm(tmp, { force: true }).catch(() => {});
+    throw err;
+  }
+}
+
+const defaultView = (): WorkspaceSettingsView => workspaceSettingsSchema.parse({ schemaVersion: 1 });
+
 export class WorkspaceStore {
   private readonly createLock = new KeyedMutex();
   private readonly projectLock = new KeyedMutex();
+  /**
+   * Final wave P9: `.studio/settings.json` is protected by the sandbox only; an agent run with the sandbox off can write it
+   * (e.g. through `Bash(node:*)`). While such runs are going (`guardSettings`), the settings are served from the content
+   * they had when the first one started, and after each one any change is undone. If undoing fails, the trusted content
+   * keeps being served (no changed sandbox mode, opt-in or paid-provider field applies) until the user saves the settings.
+   */
+  private guarded = 0;
+  /** The settings when the first of the current unsandboxed runs started: what each release puts back. */
+  private snapshot: { raw: string | null; settings: WorkspaceSettingsView } | null = null;
+  /**
+   * Ruling AA: the held values while a change could not be undone (tighten-only: each held field is the stricter of these
+   * and the file's). Null: nothing held.
+   */
+  private held: HeldSettings | null = null;
+  /** The hold could not be saved or read: loud (doctor row) and unsandboxed agent runs are refused until the user saves. */
+  private holdBroken = false;
+  /** Fix round 3 (R2-2): held fields this process made stricter in the file (said in the doctor until the user saves). */
+  private adjusted: string[] = [];
+  /** Fix round 3 (R2-3): a record path the core could not clear (the user is told to remove it). */
+  private stuckRecord: string | null = null;
+  /** Where a hold that must survive a restart is kept (the core's config folder); absent: memory only. */
+  private hold: SettingsHoldStore | null = null;
+  private readonly settingsLock = new KeyedMutex();
   private constructor(public readonly root: string, private readonly git: Git) {}
 
   /** `create: false` (used at startup) refuses to recreate a workspace folder that disappeared. */
@@ -134,17 +177,180 @@ export class WorkspaceStore {
 
   private settingsPath() { return join(this.root, '.studio', 'settings.json'); }
 
-  /** Never rewrites the file: invalid stored domains are skipped and listed in `droppedDomains`. */
-  readSettings(): Promise<WorkspaceSettingsView> {
+  /**
+   * Final wave P9 (fix rounds 1–2, Ruling AA): attaches the persisted hold (config folder). A hold left by an earlier run of
+   * the app is honoured from now on and the revert is retried at once. A hold that cannot be read, or a hold folder the
+   * core cannot write, makes the hold unreliable: loud, and unsandboxed runs are refused until the user saves the settings.
+   */
+  async attachSettingsHold(hold: SettingsHoldStore): Promise<void> {
+    this.hold = hold;
+    await this.settingsLock.run('settings', async () => {
+      if (!(await hold.usable())) { this.holdBroken = true; return; }
+      let rec: HeldSettings | null;
+      try { rec = await hold.load(this.root); } catch (err) { this.clearFailed(err); return; }
+      if (!rec) return;
+      this.held = rec;
+      await this.retryRevert();
+    });
+  }
+
+  /** Whether some settings fields are held (a change the core could not undo) or the hold itself is unreliable (doctor). */
+  settingsHeld(): boolean { return this.held !== null || this.holdBroken; }
+
+  /**
+   * Fix round 3: what the doctor says about the settings. `broken`: the hold is unreliable (and `stuck`, a record path to
+   * remove by hand); `held`: a change is held; `adjusted`: fields were made stricter in the file. `fields`: the held fields
+   * whose value in use differs from the file's, or that were made stricter (never a silent change). Null: nothing to say.
+   */
+  async settingsNotice(): Promise<{ kind: 'broken' | 'held' | 'adjusted'; fields: string[]; stuck: string | null } | null> {
+    const hold = this.effectiveHold();
+    if (!hold && this.adjusted.length === 0) return null;
+    const fields = new Set(this.adjusted);
+    if (hold) {
+      const file = await this.fileSettings();
+      const inFile = file ? heldOf(file) : null;
+      const used = inFile ? tightenHeld(hold, inFile) : hold;
+      for (const k of HELD_FIELDS) if (!inFile || JSON.stringify(inFile[k]) !== JSON.stringify(used[k])) fields.add(k);
+    }
+    return { kind: this.holdBroken ? 'broken' : hold ? 'held' : 'adjusted', fields: HELD_FIELDS.filter((k) => fields.has(k)), stuck: this.stuckRecord };
+  }
+
+  /**
+   * The values held now: the hold record's; with the hold unreliable and no record (fix round 3, R2-1), the defaults, so
+   * every run (sandboxed ones too) uses safe values until the user saves.
+   */
+  private effectiveHold(): HeldSettings | null {
+    return this.held ?? (this.holdBroken ? heldOf(defaultView()) : null);
+  }
+
+  /** A failed clear of the record: loud, and the path is remembered for the doctor when known. */
+  private clearFailed(err: unknown): void {
+    this.holdBroken = true;
+    this.stuckRecord = err instanceof SettingsHoldError && err.path ? err.path : this.stuckRecord;
+  }
+  /** The hold could not be saved or read: unsandboxed agent runs are refused until the user saves the settings. */
+  settingsHoldBroken(): boolean { return this.holdBroken; }
+
+  /** The settings file as it is, parsed; null when missing or unreadable. */
+  private async fileSettings(): Promise<WorkspaceSettingsView | null> {
+    return readJsonFile<WorkspaceSettingsView>(this.settingsPath(), storedWorkspaceSettingsSchema).catch(() => null);
+  }
+
+  /** `.studio` and the settings file made writable by their owner again (a mode the agent changed; BSD flags stay). */
+  private async restoreModes(): Promise<void> {
+    const dir = join(this.root, '.studio');
+    for (const [path, bits] of [[dir, 0o700], [this.settingsPath(), 0o600]] as const) {
+      const st = await lstat(path).catch(() => null);
+      if (!st || st.isSymbolicLink() || (process.getuid !== undefined && st.uid !== process.getuid())) continue;
+      if ((st.mode & bits) !== bits) await chmod(path, (st.mode & 0o777) | bits).catch(() => {});
+    }
+  }
+
+  /**
+   * Under `settingsLock`, while held: makes the file at least as strict as the hold (modes restored first). The held record
+   * is never copied into the file: only its stricter values are written, so a forged record can only restrict. On success
+   * the hold ends.
+   */
+  private async retryRevert(): Promise<boolean> {
+    if (!this.held) return true;
+    await this.restoreModes();
+    const file = await this.fileSettings();
+    const { droppedDomains: _d, ...base } = file ?? defaultView();
+    const strict = tightenHeld(this.held, heldOf(base));
+    const changed = HELD_FIELDS.filter((k) => JSON.stringify(heldOf(base)[k]) !== JSON.stringify(strict[k]));
+    try {
+      if (!file || changed.length > 0) await writeJsonFileAtomic(this.settingsPath(), { ...base, ...strict });
+    } catch { return false; }
+    // Never silent (R2-2): the fields made stricter are named in the doctor until the user saves.
+    for (const k of changed) if (!this.adjusted.includes(k)) this.adjusted.push(k);
+    this.held = null;
+    try { await this.hold?.clear(this.root); } catch (err) { this.clearFailed(err); }
+    return true;
+  }
+
+  /**
+   * Never rewrites the file: invalid stored domains are skipped and listed in `droppedDomains`. During an unsandboxed run
+   * the settings are those it started with. While something is held, each held field is the stricter of the hold and the
+   * file; only the cosmetic fields come from the file alone.
+   */
+  async readSettings(): Promise<WorkspaceSettingsView> {
+    const hold = this.effectiveHold();
+    if (hold) {
+      const file = (await this.fileSettings()) ?? this.snapshot?.settings ?? defaultView();
+      return { ...structuredClone(file), ...tightenHeld(hold, heldOf(file)) };
+    }
+    if (this.snapshot && this.guarded > 0) return structuredClone(this.snapshot.settings);
     return readJsonFile<WorkspaceSettingsView>(this.settingsPath(), storedWorkspaceSettingsSchema);
   }
 
   async updateSettings(patch: Partial<Omit<WorkspaceSettings, 'schemaVersion'>>): Promise<WorkspaceSettings> {
-    const { droppedDomains: _dropped, ...current } = await this.readSettings();
-    const parsed = workspaceSettingsSchema.safeParse({ ...current, ...patch, schemaVersion: 1 });
-    if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidSettings({ fields: parsed.error.issues.map((i) => i.path.join('.')).join(', ') }));
-    await writeJsonFileAtomic(this.settingsPath(), parsed.data);
-    return parsed.data;
+    return this.settingsLock.run('settings', async () => {
+      const { droppedDomains: _dropped, ...current } = await this.readSettings();
+      const parsed = workspaceSettingsSchema.safeParse({ ...current, ...patch, schemaVersion: 1 });
+      if (!parsed.success) throw new WorkspaceError(400, t().errors.invalidSettings({ fields: parsed.error.issues.map((i) => i.path.join('.')).join(', ') }));
+      // Fix round 2 (N3): a file or folder an agent made read-only is made writable again first; if it still cannot be
+      // written, the user gets a translated reason and what to do, not a raw EPERM.
+      await this.restoreModes();
+      try {
+        await writeJsonFileAtomic(this.settingsPath(), parsed.data);
+      } catch {
+        throw new CodedError(409, t().errors.settingsNotWritable({ path: this.settingsPath() }), 'settings-not-writable');
+      }
+      // The user's own save: it is the trusted content from now on (and confirms it after a change that could not be
+      // undone). Taken from what was written, never re-read from the file (M1).
+      if (this.guarded > 0) this.snapshot = { raw: `${JSON.stringify(parsed.data, null, 2)}\n`, settings: structuredClone(parsed.data) };
+      this.adjusted = [];
+      if (this.held || this.holdBroken) {
+        this.held = null;
+        this.holdBroken = false;
+        this.stuckRecord = null;
+        // A record left behind would tighten the user's own choice at the next start: its removal failing is loud too.
+        try { await this.hold?.clear(this.root); } catch (err) { this.clearFailed(err); }
+      }
+      return parsed.data;
+    });
+  }
+
+  /**
+   * Final wave P9: call before an agent run without the sandbox; call the returned function once the run is over. It says
+   * whether the settings file changed meanwhile, whether the change was undone, and whether its hold could be kept.
+   * Refused (409 `settings-hold-broken`) while the hold is unreliable, until the user saves the settings (Ruling AA).
+   */
+  async guardSettings(): Promise<() => Promise<SettingsCheck>> {
+    await this.settingsLock.run('settings', async () => {
+      if (this.holdBroken) throw new CodedError(409, t().jobs.settingsHoldBroken, 'settings-hold-broken');
+      if (this.held) await this.retryRevert();
+      if (this.guarded === 0) {
+        const raw = await readFile(this.settingsPath(), 'utf8').catch(() => null);
+        this.snapshot = { raw, settings: await this.readSettings().catch(() => defaultView()) };
+      }
+      this.guarded++;
+    });
+    let released = false;
+    return () => this.settingsLock.run('settings', async (): Promise<SettingsCheck> => {
+      if (released) return { changed: false, reverted: false };
+      released = true;
+      this.guarded--;
+      const want = this.snapshot;
+      const now = await readFile(this.settingsPath(), 'utf8').catch(() => null);
+      let out: SettingsCheck = { changed: false, reverted: false };
+      if (want && now !== want.raw) {
+        try {
+          if (want.raw === null) await rm(this.settingsPath(), { force: true });
+          else await writeThroughAtomic(this.settingsPath(), want.raw);
+          out = { changed: true, reverted: true };
+        } catch {
+          // Not undone: the run's starting values are held (tighten-only), also across a restart (config folder), until the
+          // revert succeeds (retried at startup and at the next guard) or the user saves. A hold that cannot be saved is loud.
+          const start = heldOf(want.settings);
+          this.held = this.held ? tightenHeld(this.held, start) : start;
+          out = { changed: true, reverted: false };
+          try { await this.hold?.save(this.root, this.held); } catch { this.holdBroken = true; out = { ...out, holdBroken: true }; }
+        }
+      }
+      if (this.guarded === 0) this.snapshot = null;
+      return out;
+    });
   }
 
   projectDir(slug: string): string {

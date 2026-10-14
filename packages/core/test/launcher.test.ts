@@ -1,12 +1,12 @@
 import { existsSync, linkSync, readFileSync } from 'node:fs';
 import { appendFile, chmod, link, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { workspaceSettingsSchema, type AgentEvent } from '@motion-studio/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
-import { AgentLauncher, sweepRunDir, type LauncherDeps } from '../src/agent/launcher.ts';
+import { AgentLauncher, ensureRunDir, sweepRunDir, type LauncherDeps } from '../src/agent/launcher.ts';
 import { ProjectQuarantinedError } from '../src/project-integrity.ts';
 import { Git } from '../src/git.ts';
 import type { AgentRunner } from '../src/agent/runner.ts';
@@ -182,6 +182,26 @@ describe('AgentLauncher', () => {
     const creative = await launch({ bridge, mcpCommand: ['node', '/x/server.mjs'] }, 'creative');
     expect(creative.args).not.toContain('mcp__studio__download_file');
     expect(creative.args).not.toContain('mcp__studio__inspect_site_fonts');
+  });
+  it('protects the workspace .studio (settings.json with the Phase 13 opt-ins), plain and realpath, for every job kind', { timeout: 90_000 }, async () => {
+    const real = await newProject();
+    const linkParent = await newProject();
+    const linked = join(linkParent, 'link');
+    await symlink(real, linked);
+    const realDir = await realpath(linked);
+    // Final wave P9: the workspace's own .studio under its real spelling too (the project folder itself is the link here,
+    // so the target's parent is not the workspace; on macOS the temp folder is itself reached through /var → /private/var).
+    const workspaceReal = await realpath(linkParent);
+    for (const kind of ['creative', 'console', 'brand-analysis', 'describe'] as const) {
+      for (const available of [false, true]) {
+        const { args } = await launch({ sandbox: async () => ({ available, reason: 'x' }) }, kind, linked);
+        expect(args).toEqual(expect.arrayContaining([...protectedDirRules(dirname(linked), '.studio'), ...protectedDirRules(workspaceReal, '.studio'), ...protectedDirRules(dirname(realDir), '.studio')]));
+        if (available) {
+          const settings = JSON.parse(args[args.indexOf('--settings') + 1]!);
+          expect(settings.sandbox.filesystem.denyWrite).toEqual(expect.arrayContaining([join(dirname(linked), '.studio'), join(workspaceReal, '.studio'), join(dirname(realDir), '.studio')]));
+        }
+      }
+    }
   });
   it('protects .studio (and its real path) from edits for every job kind, sandbox or not', { timeout: 90_000 }, async () => {
     const real = await newProject();
@@ -416,6 +436,14 @@ describe('AgentLauncher', () => {
     await sweepRunDir(configDir);
     expect(existsSync(run)).toBe(false);
     await sweepRunDir(join(configDir, 'missing')); // no folder: nothing to do
+  });
+  it('two jobs preparing at once on a fresh config dir both get the private run folder (EEXIST tolerated)', async () => {
+    const configDir = join(await newProject(), 'fresh-config');
+    const dirs = await Promise.all(Array.from({ length: 6 }, () => ensureRunDir(configDir)));
+    expect(new Set(dirs)).toEqual(new Set([join(configDir, 'run')]));
+    const st = await lstat(join(configDir, 'run'));
+    expect(st.isDirectory() && !st.isSymbolicLink()).toBe(true);
+    expect(st.mode & 0o777).toBe(0o700);
   });
   it('replaces a run folder that is a link instead of writing or chmod-ing through it', { timeout: 90_000 }, async () => {
     const bridge = new AgentBridge();
@@ -689,5 +717,67 @@ describe('Integrity with the sandbox off (decisions log 141, round 4)', () => {
     const forged = JSON.stringify({ schemaVersion: 1, allow: [{ rule: 'WebFetch(domain:evil.example)', label: 'x', addedAt: new Date().toISOString() }] });
     const loud = testLauncher(acting(async () => { await writeFile(join(dir, '.studio', 'permissions.json'), forged); }), off);
     await expect((await start(loud, dir)).done).rejects.toThrow('.studio/permissions.json');
+  });
+});
+
+describe('AgentLauncher Phase 13 capabilities (fallback-first, decisions log 610)', () => {
+  const capture = () => {
+    const seen: Parameters<AgentRunner['start']>[0][] = [];
+    const calls: string[] = [];
+    const runner: AgentRunner = { start: (req) => {
+      seen.push(req);
+      return {
+        done: Promise.resolve({ status: 'succeeded' as const }), cancel: () => {},
+        send: async (m) => { calls.push(`send:${m.clientId}`); return 'written' as const; },
+        interrupt: async () => { calls.push('interrupt'); return 'interrupted' as const; },
+        endInput: () => { calls.push('endInput'); },
+      };
+    } };
+    return { runner, seen, calls };
+  };
+  const start = async (runner: AgentRunner, over: Parameters<typeof testLauncher>[1], kind: 'creative' | 'console' | 'describe' | 'brand-analysis' | 'localize' = 'creative') =>
+    testLauncher(runner, over).start({ kind, jobId: `j-${kind}`, projectSlug: 'acme', projectDir: await newProject(), request: { prompt: 'x' }, onEvent: () => {} });
+
+  it('without the opt-in the request carries no capabilities (today\'s request, stdin closed after the prompt)', async () => {
+    const { runner, seen } = capture();
+    await (await start(runner, { claudeVersion: async () => '2.1.299' })).done;
+    expect(seen[0]).not.toHaveProperty('capabilities');
+  });
+
+  it('with the opt-in, creative and console turns get the effective capabilities; other jobs never do', async () => {
+    const settings = { agentLiveInput: true, agentInterrupt: true };
+    for (const kind of ['creative', 'console'] as const) {
+      const { runner, seen } = capture();
+      await (await start(runner, { settings, claudeVersion: async () => '2.1.299' }, kind)).done;
+      expect(seen[0]?.capabilities, kind).toEqual({ liveInput: true, interrupt: true });
+    }
+    for (const kind of ['describe', 'brand-analysis', 'localize'] as const) {
+      const { runner, seen } = capture();
+      await (await start(runner, { settings, claudeVersion: async () => '2.1.299' }, kind)).done;
+      expect(seen[0], kind).not.toHaveProperty('capabilities');
+    }
+  });
+
+  it('an unknown or failing version keeps both off, even with the opt-in', async () => {
+    const settings = { agentLiveInput: true, agentInterrupt: true };
+    for (const claudeVersion of [async () => null, async () => { throw new Error('no claude'); }, undefined]) {
+      const { runner, seen } = capture();
+      await (await start(runner, { settings, ...(claudeVersion ? { claudeVersion } : {}) })).done;
+      expect(seen[0]).not.toHaveProperty('capabilities');
+    }
+  });
+
+  it('forwards send and interrupt to the run; a runner without them answers closed / unsupported', async () => {
+    const { runner, calls } = capture();
+    const run = await start(runner, {});
+    await expect(run.send!({ text: 'hi', clientId: 'c1' })).resolves.toBe('written');
+    await expect(run.interrupt!()).resolves.toBe('interrupted');
+    run.endInput!();
+    expect(calls).toEqual(['send:c1', 'interrupt', 'endInput']);
+    const bare: AgentRunner = { start: () => ({ done: Promise.resolve({ status: 'succeeded' as const }), cancel: () => {} }) };
+    const run2 = await start(bare, {});
+    await expect(run2.send!({ text: 'hi', clientId: 'c2' })).resolves.toBe('closed');
+    await expect(run2.interrupt!()).resolves.toBe('unsupported');
+    expect(() => run2.endInput!()).not.toThrow();
   });
 });

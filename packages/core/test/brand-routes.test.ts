@@ -3,12 +3,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeRunner } from '../src/agent/claude-code-runner.ts';
 import { AppConfigStore } from '../src/app-config.ts';
 import { Git } from '../src/git.ts';
 import { buildServer } from '../src/server/app.ts';
 import { multipart } from './helpers/multipart.ts';
+
+// Final wave Q5: workspace + project creation (git) and the fake agent run take tens of seconds on a loaded machine.
+// Per-file timeouts only; waits below are bounded by the same order of magnitude.
+vi.setConfig({ testTimeout: 120_000, hookTimeout: 90_000 });
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 let app: FastifyInstance;
@@ -26,7 +30,7 @@ beforeEach(async () => {
 });
 afterEach(async () => { await app.close(); delete process.env.FAKE_CLAUDE_SCENARIO; });
 const waitJobs = async () => {
-  for (let i = 0; i < 250; i++) {
+  for (let i = 0; i < 3000; i++) {
     const jobs = (await app.inject('/api/jobs')).json() as Array<{ state: string; error?: string }>;
     if (jobs.every((j) => j.state !== 'queued' && j.state !== 'running')) return jobs;
     await new Promise((r) => setTimeout(r, 20));

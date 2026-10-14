@@ -15,6 +15,7 @@ import { CREATIVE_CORE_FILES, detachProtectedLinks, PROPOSAL_LOG } from './prote
 import { armTripwire } from './run-tripwire.ts';
 import { IntegrityStore, ProjectQuarantinedError, snapshotDiff } from '../project-integrity.ts';
 import type { AgentRun, AgentRunner, AgentTurnRequest } from './runner.ts';
+import { capabilitiesFor } from './agent-capabilities.ts';
 import type { SandboxSupport } from './sandbox.ts';
 import { UsageLedger } from '../usage/usage-ledger.ts';
 import { UsageTracker } from '../usage/usage-tracker.ts';
@@ -62,7 +63,21 @@ export interface LauncherDeps {
   integrity?: IntegrityStore;
   /** Where every run's token and cost usage is recorded (`<project>/.studio/usage.jsonl`); defaults to a private one. */
   usageLedger?: UsageLedger;
+  /**
+   * Phase 13: the installed Claude Code version (`claude --version`), cached by the caller; null or absent = unknown,
+   * which keeps live input and interrupt off whatever the settings say (agent-capabilities.ts, decisions log 610).
+   */
+  claudeVersion?: () => Promise<string | null>;
+  /**
+   * Final wave P9: holds the workspace settings for a run without the sandbox (WorkspaceStore.guardSettings); the returned
+   * function, called once the run is over, says whether the agent changed them and whether that was undone. Absent or null:
+   * no workspace (nothing to guard).
+   */
+  guardSettings?: () => Promise<(() => Promise<{ changed: boolean; reverted: boolean; holdBroken?: boolean }>) | null>;
 }
+
+/** Phase 13: the jobs whose turns can take messages or an interrupt while they run (spec §2; never brand analysis, describe, localize). */
+const LIVE_JOB_KINDS: ReadonlySet<AgentJobKind> = new Set(['creative', 'console']);
 export interface LaunchInput {
   kind: AgentJobKind; jobId: string; projectSlug: string; projectDir: string; creativeSlug?: string | null;
   codebases?: string[]; protectedFiles?: string[];
@@ -128,6 +143,17 @@ export class AgentLauncher {
     return (await this.deps.settings()).sandboxMode === 'auto' && (await this.deps.sandbox()).available;
   }
 
+  /**
+   * Phase 13: what a run of `kind` started now would get (the same computation as `start`): on only for creative and
+   * console turns, with the user's opt-in and a known Claude Code version (decisions log 610).
+   */
+  async liveCapabilities(kind: AgentJobKind, read?: WorkspaceSettings): Promise<{ liveInput: boolean; interrupt: boolean }> {
+    const settings = read ?? await this.deps.settings();
+    if (!LIVE_JOB_KINDS.has(kind) || !(settings.agentLiveInput || settings.agentInterrupt)) return { liveInput: false, interrupt: false };
+    const c = capabilitiesFor(await this.deps.claudeVersion?.().catch(() => null) ?? null, { liveInput: settings.agentLiveInput, interrupt: settings.agentInterrupt });
+    return { liveInput: c.liveInput, interrupt: c.interrupt };
+  }
+
   async start(i: LaunchInput): Promise<AgentRun> {
     // A quarantined project gets no agent (its .claude/.mcp.json/CLAUDE.md may be tampered); it clears by itself once
     // the protected files match the recorded state again.
@@ -136,6 +162,10 @@ export class AgentLauncher {
     const detected = settings.sandboxMode === 'auto' && (await this.deps.sandbox()).available;
     const sandbox = i.sandboxed === false ? false : detected;
     const autoApproveAtStart = settings.autoApproveSandboxed === true;
+    // Phase 13: off unless the user opted in for a known version (no version is verified live, decisions log 610).
+    // Both off: the request carries no capabilities and the runner behaves exactly as before.
+    const liveCaps = await this.liveCapabilities(i.kind, settings);
+    const capabilities = liveCaps.liveInput || liveCaps.interrupt ? liveCaps : null;
     const home = this.deps.home ?? homedir();
     const { configDir, bridge, mcpCommand, approvals } = this.deps;
     // The file is agent-reachable in the fallback mode: only rules that "Sempre" could have produced are honoured;
@@ -148,6 +178,12 @@ export class AgentLauncher {
     const realDir = await realpath(i.projectDir).catch(() => i.projectDir);
     const roots = [...new Set([i.projectDir, realDir])];
     const protectedDirs = roots.flatMap((d) => PROTECTED_PROJECT_DIRS.map((n) => join(d, n)));
+    // The workspace's own .studio (settings.json: sandbox mode, paid-provider confirmation, the Phase 13 opt-ins) is never
+    // the agent's to write: the workspace is the project folder's parent, under its plain and its real spelling (final wave
+    // P9: when the project folder itself is a link, the target's parent is not the workspace; it stays protected too).
+    const workspace = dirname(i.projectDir);
+    const workspaceReal = await realpath(workspace).catch(() => workspace);
+    protectedDirs.push(...[...new Set([workspace, workspaceReal, dirname(realDir)].map((d) => join(d, '.studio')))]);
     // Caller-supplied files get both spellings (plain and realpath) like the project entries.
     const spellings = (f: string) => (f.startsWith(`${i.projectDir}/`) && realDir !== i.projectDir ? [f, join(realDir, f.slice(i.projectDir.length + 1))] : [f]);
     const protectedFiles = [...(i.protectedFiles ?? []).flatMap(spellings), ...roots.flatMap((d) => [...PROTECTED_PROJECT_FILES, RENAME_JOURNAL_FILE].map((n) => join(d, n)))];
@@ -169,6 +205,12 @@ export class AgentLauncher {
     const mcpOn = this.mcpActive();
     // Aborted on cancel and when the run settles: provider calls started by the agent's tools stop with the job.
     const abort = new AbortController();
+    // Phase 13: live turns also have a tool abort a redirect fires (and renews), so running core tools stop while the run
+    // goes on. Each generation's signal is the run's abort combined with it.
+    const live = LIVE_JOB_KINDS.has(i.kind);
+    let tools = new AbortController();
+    let toolSignal = AbortSignal.any([abort.signal, tools.signal]);
+    const abortTools = () => { tools.abort(); tools = new AbortController(); toolSignal = AbortSignal.any([abort.signal, tools.signal]); };
     const policy = buildAgentPolicy({
       kind: i.kind, sandbox, projectDir: i.projectDir, home, configDir,
       codebases: i.codebases ?? [], protectedFiles, protectedDirs, protectedGlobs: logGlobs, sandboxGlobs,
@@ -191,7 +233,19 @@ export class AgentLauncher {
       if (first) await Promise.all([configFile, tokenFile].map((f) => (f ? rm(f, { force: true }).catch(() => {}) : undefined)));
     };
     let mcp: Pick<AgentTurnRequest, 'mcpConfigPath' | 'permissionPromptTool'> = {};
+    // Final wave P9: without the sandbox the agent can write the workspace settings: they are held for the run and any
+    // change is undone (or, if it cannot be, ignored until the user saves them) and reported after it.
+    let settingsGuard: (() => Promise<{ changed: boolean; reverted: boolean; holdBroken?: boolean }>) | null = null;
+    const releaseSettings = () => (settingsGuard ? settingsGuard().catch(() => null) : Promise.resolve(null));
     try {
+      // An unreliable hold refuses the run (Ruling AA: translated 409 `settings-hold-broken`); any other guard error is not
+      // the run's problem.
+      if (!sandbox) {
+        settingsGuard = await this.deps.guardSettings?.().catch((e: unknown) => {
+          if ((e as { apiCode?: unknown }).apiCode === 'settings-hold-broken') throw e;
+          return null;
+        }) ?? null;
+      }
       if (mcpOn && mcpCommand) {
         token = bridge.register({
           jobId: i.jobId, kind: i.kind, projectSlug: i.projectSlug, projectDir: i.projectDir, creativeSlug: i.creativeSlug ?? null,
@@ -199,7 +253,7 @@ export class AgentLauncher {
           sandboxed: sandbox,
           // The same value as the policy's autoAllowBashIfSandboxed: a setting turned on later never reaches this job.
           autoApproveAtStart,
-          emit: i.onEvent, signal: abort.signal, ...(i.validateComposition ? { validateComposition: i.validateComposition } : {}), ...(i.previewFrames ? { previewFrames: i.previewFrames } : {}),
+          emit: i.onEvent, signal: abort.signal, ...(live ? { toolSignal: () => toolSignal } : {}), ...(i.validateComposition ? { validateComposition: i.validateComposition } : {}), ...(i.previewFrames ? { previewFrames: i.previewFrames } : {}),
           ...(i.submitLocalization ? { submitLocalization: i.submitLocalization } : {}),
           ...(i.locale ? { locale: i.locale } : {}), ...(i.addNotes ? { addNotes: i.addNotes } : {}),
           ...(i.services ? { services: i.services } : {}),
@@ -270,12 +324,16 @@ export class AgentLauncher {
         addDirs: policy.addDirs, allowedTools: policy.allowedTools, disallowedTools: policy.disallowedTools,
         ...(policy.settings ? { settings: policy.settings } : {}), ...mcp,
         env: { MCP_TOOL_TIMEOUT: '900000', ...policy.env }, unsetEnv: AGENT_UNSET_ENV,
+        ...(capabilities ? { capabilities } : {}),
       }, forward);
       const done = run.done.then(async (r) => {
         // Leftover processes are killed before the checks, so nothing can make a link or move a folder after them. Console
         // turns are the exception (decisions log 141): the user's own agent may leave a dev server or preview running on
         // purpose, so their group is left alone; the detach and the tripwire still run.
         if (i.kind !== 'console') run.killGroup?.();
+        const settingsCheck = await releaseSettings();
+        if (settingsCheck?.changed) await warn(settingsCheck.reverted ? t().jobs.workspaceSettingsReverted : t().jobs.workspaceSettingsNotReverted);
+        if (settingsCheck?.holdBroken) await warn(t().jobs.settingsHoldBroken);
         await detachLinks();
         // The check fails closed: if it cannot run, the project is quarantined against the pre-run state.
         const tw = await tripwire.check().catch(() => null);
@@ -305,12 +363,19 @@ export class AgentLauncher {
         return { ...r, usage: record };
       });
       return {
-        done: done.finally(release),
+        done: done.finally(async () => { await releaseSettings(); await release(); }),
         // Revoked before the process is told to stop: it may keep calling the bridge until it exits.
         cancel: () => { void release(); run.cancel(); },
         killGroup: () => run.killGroup?.(),
+        // Phase 13: always present, so callers never branch on the runner; a runner without them answers like a closed stream.
+        send: (m) => run.send?.(m) ?? Promise.resolve('closed' as const),
+        interrupt: () => run.interrupt?.() ?? Promise.resolve('unsupported' as const),
+        endInput: () => run.endInput?.(),
+        abortTools,
+        capabilities: capabilities ?? { liveInput: false, interrupt: false },
       };
     } catch (err) {
+      await releaseSettings();
       await release();
       throw err;
     }
@@ -337,7 +402,15 @@ export async function ensureRunDir(configDir: string): Promise<string> {
     return dir;
   }
   if (st) await rm(dir, { recursive: true, force: true });
-  await mkdir(dir, { mode: 0o700 });
+  try {
+    await mkdir(dir, { mode: 0o700 });
+  } catch (err) {
+    // Two jobs preparing at once on a fresh config dir: the other one made it first. Accept it only if it is our own real folder.
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+    const again = await lstat(dir);
+    if (!isOwnFolder(again)) throw err;
+    if ((again.mode & 0o777) !== 0o700) await chmod(dir, 0o700);
+  }
   return dir;
 }
 

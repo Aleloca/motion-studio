@@ -80,6 +80,16 @@ describe('buildClaudeArgs', () => {
     expect(args.slice(args.indexOf('--resume'), args.indexOf('--resume') + 3)).toEqual(['--resume', 's1', '--fork-session']);
     expect(buildClaudeArgs({ cwd: '/x', prompt: 'p', forkSession: true })).not.toContain('--fork-session');
   });
+  it('a malformed session id never reaches the command line (final review I1): no resume, no fork, no flag-like element', () => {
+    for (const bad of ['--settings={"sandbox":{"enabled":false}}', '-x', '', 'a b', 'a/b', 'x'.repeat(129), 'id\n--model', 'é']) {
+      const args = buildClaudeArgs({ cwd: '/x', prompt: 'p', resumeSessionId: bad, forkSession: true });
+      expect(args).not.toContain('--resume');
+      expect(args).not.toContain('--fork-session');
+      if (bad) expect(args.some((a) => a.includes(bad))).toBe(false);
+    }
+    const ok = buildClaudeArgs({ cwd: '/x', prompt: 'p', resumeSessionId: 'a1b2-c3' });
+    expect(ok.slice(ok.indexOf('--resume'), ok.indexOf('--resume') + 2)).toEqual(['--resume', 'a1b2-c3']);
+  });
   it('passes allowed tool rules as the last, variadic --allowedTools flag', () => {
     const args = buildClaudeArgs({ cwd: '/x', prompt: 'p', model: 'sonnet', resumeSessionId: 's1', allowedTools: ['Bash(node:*)', 'Bash(ffmpeg:*)'] });
     expect(args.slice(-3)).toEqual(['--allowedTools', 'Bash(node:*)', 'Bash(ffmpeg:*)']);
@@ -87,6 +97,12 @@ describe('buildClaudeArgs', () => {
     expect(args).toContain('--permission-prompts');
     expect(buildClaudeArgs({ cwd: '/x', prompt: 'p' })).not.toContain('--allowedTools');
     expect(buildClaudeArgs({ cwd: '/x', prompt: 'p', allowedTools: [] })).not.toContain('--allowedTools');
+  });
+  it('Phase 13: capabilities never change the args (no new flags, e.g. no --replay-user-messages)', () => {
+    const req = { cwd: '/p', prompt: 'x', model: 'haiku', resumeSessionId: 's', allowedTools: ['Read'] };
+    for (const capabilities of [{ liveInput: true, interrupt: true }, { liveInput: true, interrupt: false }, { liveInput: false, interrupt: false }]) {
+      expect(buildClaudeArgs({ ...req, capabilities })).toEqual(buildClaudeArgs(req));
+    }
   });
   it('puts deny rules before the allow group', () => {
     const args = buildClaudeArgs({ cwd: '/x', prompt: 'p', addDirs: ['/a b'], disallowedTools: ['Edit(//a b/**)'], allowedTools: ['Bash(node:*)'] });
@@ -138,7 +154,7 @@ describe('ClaudeCodeRunner', () => {
     const { handle, cwd } = await run('ok', 'x', { resumeSessionId: 'abc' });
     await expect(handle.done).resolves.toMatchObject({ status: 'succeeded', sessionId: 'abc' });
     const recorded = JSON.parse(await readFile(process.env.FAKE_CLAUDE_ARGS_FILE!, 'utf8'));
-    expect(recorded.args).toContain('--resume');
+    expect(recorded.args.slice(recorded.args.indexOf('--resume'), recorded.args.indexOf('--resume') + 2)).toEqual(['--resume', 'abc']);
     expect(await import('node:fs/promises').then((f) => f.realpath(recorded.cwd))).toBe(await import('node:fs/promises').then((f) => f.realpath(cwd)));
   });
   it('emits parse_error for garbage and still succeeds', async () => {
@@ -227,17 +243,31 @@ describe('ClaudeCodeRunner', () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+  it('Phase 13: capabilities never change the environment or the unset keys', async () => {
+    process.env.MS_TEST_ENV = 'kept';
+    try {
+      const plain = await run('ok', 'x', { env: { A: '1' }, unsetEnv: ['MS_TEST_ENV'] });
+      await plain.handle.done;
+      const before = JSON.parse(await readFile(process.env.FAKE_CLAUDE_ARGS_FILE!, 'utf8')) as { envKeys: string[]; args: string[] };
+      const live = await run('ok', 'x', { env: { A: '1' }, unsetEnv: ['MS_TEST_ENV'], capabilities: { liveInput: true, interrupt: true } });
+      await live.handle.done;
+      const after = JSON.parse(await readFile(process.env.FAKE_CLAUDE_ARGS_FILE!, 'utf8')) as { envKeys: string[]; args: string[] };
+      expect(after.envKeys.sort()).toEqual(before.envKeys.sort());
+      expect(after.envKeys).not.toContain('MS_TEST_ENV');
+      expect(after.args).toEqual(before.args);
+    } finally { delete process.env.MS_TEST_ENV; }
+  });
   it('survives a throwing event listener', async () => {
     const { handle } = await run('ok', 'x', {}, { onEvent: () => { throw new Error('listener boom'); } });
     await expect(handle.done).resolves.toMatchObject({ status: 'succeeded' });
   });
   it('reports a missing project folder without spawning', async () => {
     const res = await runner().start({ cwd: join(tmpdir(), 'ms-does-not-exist-xyz'), prompt: 'x' }, () => {}).done;
-    expect(res).toEqual({ status: 'failed', error: `Cartella del progetto non trovata: ${join(tmpdir(), 'ms-does-not-exist-xyz')}` });
+    expect(res).toEqual({ status: 'failed', error: `Cartella del progetto non trovata: ${join(tmpdir(), 'ms-does-not-exist-xyz')}`, startFailed: true });
   });
   it('fails clearly when the claude binary does not exist', async () => {
     const r = new ClaudeCodeRunner(['definitely-not-claude-ms']);
     const res = await r.start({ cwd: tmpdir(), prompt: 'x' }, () => {}).done;
-    expect(res).toEqual({ status: 'failed', error: 'Comando claude non trovato (definitely-not-claude-ms). Installa Claude Code o controlla il Doctor.' });
+    expect(res).toEqual({ status: 'failed', error: 'Comando claude non trovato (definitely-not-claude-ms). Installa Claude Code o controlla il Doctor.', startFailed: true });
   });
 });

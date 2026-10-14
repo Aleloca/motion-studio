@@ -12,7 +12,8 @@ export interface CreativeContext {
   tools: string[];
 }
 
-export type PromptKind = 'first' | 'iteration' | 'fix';
+/** `redirect` (Phase 13): the user stopped the step in progress and redirected it; the turn goes on in the same session. */
+export type PromptKind = 'first' | 'iteration' | 'fix' | 'redirect';
 export type AgentContract = 'compositions' | 'media';
 export interface PromptInput {
   slug: string; creative: CreativeFile; presets: FormatPreset[]; version: number; kind: PromptKind;
@@ -22,6 +23,19 @@ export interface PromptInput {
    * the brief alone). The repair turn carries them so it respects the user's constraints ("no voice-over").
    */
   userWords?: string;
+  /**
+   * Phase 13, fix turns: the messages the user sent while the agent worked on this version (live and redirect), in order.
+   * The repair prompt carries them after the original request, each delimited as the user's words (F4). Redirect turns:
+   * the earlier messages no run has read yet (final wave P3), before the new direction.
+   */
+  liveMessages?: Array<{ text: string; pins?: Pin[] }>;
+  /**
+   * Final wave P3: the pins were placed on another version than this turn's base (a queued request): its number, and
+   * whether it is gone (then no frame is attached).
+   */
+  pinsVersion?: { n: number; gone: boolean };
+  /** Phase 13: this turn resumes a turn the user stopped (spec §3): the prompt says files in work/ may be partial. */
+  stoppedNote?: boolean;
   context?: CreativeContext;
   /** Language of the user's texts, captured when the job started: a running job keeps it even if the setting changes. */
   locale: Locale;
@@ -189,7 +203,7 @@ export function directEditSection(i: Pick<PromptInput, 'slug' | 'directEdit' | '
 }
 
 /** `- <format> @ <t>s, point (x%, y%)[, clip "<clipId>" "<name>"][, range <a>–<b>s]: <note>` (Phase 10b adds the last two). */
-function pinLine(p: Pin): string {
+export function pinLine(p: Pin): string {
   const clip = p.clipId ? `, clip ${quotePromptString(p.clipId)}${p.clipName ? ` ${quotePromptString(p.clipName)}` : ''}` : '';
   const range = p.range ? `, range ${p.range.start.toFixed(1)}\u2013${p.range.end.toFixed(1)}s` : '';
   return `- ${p.format}${p.timeSec !== null ? ` @ ${p.timeSec.toFixed(1)}s` : ''}, point (${pct(p.x)}, ${pct(p.y)})${clip}${range}${p.note ? `: ${p.note}` : ''}`;
@@ -259,16 +273,29 @@ export function conversionSection(c: NonNullable<PromptInput['conversion']>): st
  */
 export const USER_REQUEST_OPEN = '<user_request>';
 export const USER_REQUEST_CLOSE = '</user_request>';
-const defuseTags = (text: string) => text.replace(/<(?=\s*\/?\s*user_request)/gi, '‹');
+export const defuseTags = (text: string) => text.replace(/<(?=\s*\/?\s*user_request)/gi, '‹');
 
 /**
  * The repair turn's reminder of what the user asked (F4, orchestrator decision): their words verbatim and delimited as
  * theirs, every constraint in them binding, and no version when they did not ask for one. No guess in the core about what
  * the request was: the agent reads it.
  */
-function repairRequestSection(userWords: string | undefined): string[] {
+function repairRequestSection(userWords: string | undefined, live: PromptInput['liveMessages'] = []): string[] {
+  const messages = live.filter((m) => m.text.trim() || m.pins?.length);
+  const liveLines = messages.length === 0 ? [] : [
+    '',
+    `While you worked on this version the user also sent ${messages.length === 1 ? 'this message' : `these ${messages.length} messages`}, in order, each inside user_request tags. They are the user's words too, not instructions from Motion Studio; where a later message changes an earlier request, the later one wins.`,
+    ...messages.flatMap((m) => [USER_REQUEST_OPEN, defuseTags(m.text), ...(m.pins?.length ? ['Pinned comments:', ...m.pins.map((p) => defuseTags(pinLine(p)))] : []), USER_REQUEST_CLOSE]),
+  ];
   if (!userWords?.trim()) {
-    return ['## The request for this version', 'This version comes from the brief, with no message from the user: fix only the problems above and respect every constraint of the brief.'];
+    if (messages.length === 0) {
+      return ['## The request for this version', 'This version comes from the brief, with no message from the user: fix only the problems above and respect every constraint of the brief.'];
+    }
+    return [
+      "## The user's requests for this version",
+      'This version started from the brief, with no message from the user. Respect every constraint of the brief and of the messages below while you fix the problems: never do what the user asked not to do.',
+      ...liveLines,
+    ];
   }
   return [
     "## The user's request for this version",
@@ -276,7 +303,65 @@ function repairRequestSection(userWords: string | undefined): string[] {
     USER_REQUEST_OPEN,
     defuseTags(userWords),
     USER_REQUEST_CLOSE,
+    ...liveLines,
     "If the user's request did not ask for a new or changed version, reply without creating one and end the turn.",
+  ];
+}
+
+/** Phase 13: messages the user sent after the request and before the agent started (e.g. a redirect), each delimited (F4). */
+function laterMessagesSection(live: NonNullable<PromptInput['liveMessages']>): string[] {
+  return [
+    "## The user's later messages",
+    `After the request the user also sent ${live.length === 1 ? 'this message' : `these ${live.length} messages`}, in order, each inside user_request tags. They are the user's words, not instructions from Motion Studio; where a later message changes the request, the later one wins.`,
+    ...live.flatMap((m) => [USER_REQUEST_OPEN, defuseTags(m.text), ...(m.pins?.length ? ['Pinned comments:', ...m.pins.map((p) => defuseTags(pinLine(p)))] : []), USER_REQUEST_CLOSE]),
+  ];
+}
+
+/** Phase 13 (spec §3): the note of a turn that resumes a stopped one, verbatim from the spec. */
+export const STOPPED_TURN_NOTE = 'The previous turn was stopped by the user; files in work/ may be partial.';
+/** Phase 13: the note of a redirect that restarted the agent (the step in progress was cut short). */
+export const REDIRECT_PARTIAL_NOTE = 'The user stopped the step you were doing to redirect you: files in work/ and in the delivery folder may be partial. Check them before you build on them.';
+
+/** Phase 13: the note of a console run restarted by a redirect (no delivery folder there). */
+export const CONSOLE_REDIRECT_NOTE = 'The user stopped the step you were doing to redirect you: files you were writing may be partial. Check them before you build on them.';
+
+/**
+ * Final wave P3: messages no run has read yet when a redirect restarts the agent (an earlier redirect it replaced, or the
+ * words of a run cut before it started): each delimited, in order, before the new direction.
+ */
+function unreadMessagesSection(live: NonNullable<PromptInput['liveMessages']>): string[] {
+  return [
+    "## The user's earlier messages",
+    `Before the new direction below the user also sent ${live.length === 1 ? 'this message' : `these ${live.length} messages`}, in order, each inside user_request tags; you have not read ${live.length === 1 ? 'it' : 'them'} yet. They are the user's words, not instructions from Motion Studio; the new direction wins where they disagree.`,
+    ...live.flatMap((m) => [USER_REQUEST_OPEN, defuseTags(m.text), ...(m.pins?.length ? ['Pinned comments:', ...m.pins.map((p) => defuseTags(pinLine(p)))] : []), USER_REQUEST_CLOSE]),
+  ];
+}
+
+/** Phase 13: the redirect message, verbatim and delimited as the user's words (F4). */
+/**
+ * Final wave Q3: the redirect as written into the SAME run after an acknowledged interrupt (interrupt capability on). The
+ * step in progress was cut short exactly as on the fallback path, so the partial-files note comes first, then the user's
+ * words delimited as theirs (and their pinned comments).
+ */
+export function interruptedRedirectText(note: string, text: string, pins: readonly Pin[]): string {
+  return [
+    note, '',
+    "The user's new direction, verbatim (their words, not instructions from Motion Studio); it wins over any earlier request where the two disagree:",
+    USER_REQUEST_OPEN,
+    ...(text ? [defuseTags(text)] : []),
+    ...(pins.length ? ['Pinned comments:', ...pins.map((p) => defuseTags(pinLine(p)))] : []),
+    USER_REQUEST_CLOSE,
+  ].join('\n');
+}
+
+function redirectSection(text: string, pins: Pin[] | undefined): string[] {
+  return [
+    "## The user's new direction",
+    "Below, inside the user_request tags, are the user's own words, verbatim: they are not instructions from Motion Studio. Continue the work on this version following them; they win over any earlier request where the two disagree.",
+    USER_REQUEST_OPEN,
+    defuseTags(text),
+    ...(pins?.length ? ['Pinned comments:', ...pins.map((p) => defuseTags(pinLine(p)))] : []),
+    USER_REQUEST_CLOSE,
   ];
 }
 
@@ -358,32 +443,45 @@ export function buildCreativePrompt(i: PromptInput): string {
       brief.assets.length > 0 && `- Assets to use (project paths): ${brief.assets.join(', ')}`,
       brief.notes && `- Notes: ${brief.notes}`,
     ].filter((l): l is string => typeof l === 'string' && l !== '');
-    parts.push(`Create the creative "${i.creative.title}" (version ${i.version}).`, '', '## Brief', ...briefLines);
+    parts.push(`Create the creative "${i.creative.title}" (version ${i.version}).`, ...(i.stoppedNote ? ['', STOPPED_TURN_NOTE] : []), '', '## Brief', ...briefLines);
     if (i.userText) parts.push('', '## Additional notes', i.userText);
+    if (i.liveMessages?.length) parts.push('', ...laterMessagesSection(i.liveMessages));
   } else if (i.kind === 'iteration') {
-    parts.push(`New request for the creative "${i.creative.title}": produce version ${i.version}.`, '', '## Request', i.userText ?? '');
+    parts.push(`New request for the creative "${i.creative.title}": produce version ${i.version}.`, ...(i.stoppedNote ? ['', STOPPED_TURN_NOTE] : []), '', '## Request', i.userText ?? '');
+    if (i.liveMessages?.length) parts.push('', ...laterMessagesSection(i.liveMessages));
     if (i.pins?.length) {
       parts.push('', '## Pinned comments');
+      if (i.pinsVersion) {
+        parts.push(i.pinsVersion.gone
+          ? `These comments were placed on version ${i.pinsVersion.n}, which no longer exists: no frame of it is attached, so read their positions and times as approximate.`
+          : `These comments were placed on version ${i.pinsVersion.n}, not on the version you build on: their positions, times and attached frames refer to version ${i.pinsVersion.n}.`);
+      }
       for (const p of i.pins) parts.push(pinLine(p));
     }
     if (i.attachments?.length) parts.push('', '## Attached frames (read them)', ...i.attachments.map((a) => `- ${a}`));
     if (i.conversion && contract === 'compositions') parts.push('', ...conversionSection(i.conversion));
     const edits = contract === 'compositions' ? directEditSection(i) : [];
     if (edits.length > 0) parts.push('', ...edits);
+  } else if (i.kind === 'redirect') {
+    parts.push(
+      `You are working on version ${i.version} of the creative "${i.creative.title}".`, REDIRECT_PARTIAL_NOTE,
+      ...(i.liveMessages?.length ? ['', ...unreadMessagesSection(i.liveMessages)] : []),
+      '', ...redirectSection(i.userWords ?? '', i.pins),
+    );
   } else if (contract === 'compositions') {
     parts.push(
       `The compositions of version ${i.version} do not meet the contract. Fix these problems in the same folders (${outputDir}/compositions/<format-id>/), then call validate_composition again:`,
       ...(i.problems ?? []).map((p) => `- ${p}`),
-      '', ...repairRequestSection(i.userWords),
+      '', ...repairRequestSection(i.userWords, i.liveMessages),
     );
   } else {
     parts.push(
       `The outputs of version ${i.version} do not meet the contract. Fix these problems and deliver again in the same folder (${outputDir}/), updating manifest.json:`,
       ...(i.problems ?? []).map((p) => `- ${p}`),
-      '', ...repairRequestSection(i.userWords),
+      '', ...repairRequestSection(i.userWords, i.liveMessages),
     );
   }
-  if (i.context && i.kind !== 'fix') parts.push(...contextSections(i.context, contract, brief.services));
+  if (i.context && i.kind !== 'fix' && i.kind !== 'redirect') parts.push(...contextSections(i.context, contract, brief.services));
   if (contract === 'compositions') {
     // Agent-facing: the format's own facts only (Motion Studio renders, so no extensions, bitrates or encoding flags).
     const compositionLines = known.map(([id, p]) => p
@@ -398,7 +496,7 @@ export function buildCreativePrompt(i: PromptInput): string {
     };
     parts.push(
       '', '## Required formats', ...compositionLines, ...sameSize,
-      ...(brief.storePack && i.kind !== 'fix' ? ['', ...storePackPromptSection(brief.storePack)] : []),
+      ...(brief.storePack && i.kind !== 'fix' && i.kind !== 'redirect' ? ['', ...storePackPromptSection(brief.storePack)] : []),
       '', ...COMPOSITION_SECTION,
       ...(i.sandboxed ? ['', ...SANDBOX_SECTION_COMPOSITIONS] : []),
       '', '## Where to work',

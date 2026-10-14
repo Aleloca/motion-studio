@@ -694,7 +694,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
           <Conversation slug={slug} creative={creative} entries={conversation} approvals={myApprovals} job={job} live={chatLive}
             pins={pins} onRemovePin={removePin} onEditPin={onEditChip} formatName={formatLabel}
             canGenerate={versions.length === 0} onSent={onSent} onSelectVersion={onSelectVersion} snapshots={live.snapshots} appliesTo={appliesTo}
-            brief={detail.creative.brief} onBriefSaved={reload}
+            brief={detail.creative.brief} onBriefSaved={reload} queued={detail.creative.queued} onQueueChanged={reload}
             versionSummary={(vn) => { const v = versions.find((x) => x.n === vn); return v?.origin === 'editor' && v.request ? v.request : null; }} />
         ) : <div className="ms-cv-state"><Spinner size={16} label={c.loading} /></div>}
       </aside>

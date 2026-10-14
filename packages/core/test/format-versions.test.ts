@@ -436,7 +436,10 @@ describe('hashing: scheduling, de-duplication and safety', () => {
     await lazy(0);
     await h.waitCalls(2);
     const recorded = hashVersionOutputs(store.dir(slug), 2, [output('a', 'new.mp4')]);
-    await new Promise((r) => setTimeout(r, 20));
+    // Deterministic, not a sleep: the priority task joins its lane after a file check; release only once it waits there (and
+    // the lazy backlog waits in its own), however slow the machine is.
+    for (let i = 0; i < 1000 && !(hashTesting.waiting().high === 1 && hashTesting.waiting().low === 2); i++) await new Promise((r) => setTimeout(r, 5));
+    expect(hashTesting.waiting()).toEqual({ high: 1, low: 2 });
     for (let i = 0; i < 5; i++) { h.release(); await new Promise((r) => setTimeout(r, 20)); }
     expect((await recorded)[0]!.sha256).toBe(sha('new'));
     expect(h.calls[2]).toBe('outputs/v2/new.mp4');

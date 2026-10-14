@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
+import type { CreativeSideStateStore, StoppedSession } from '../creatives/creative-side-state.ts';
 import { exportResolved, exportVersion, pendingRenders, resolveExportPicks, resolveLocalizedItems, type ExportItem } from '../creatives/export.ts';
 import { assertLocalesInBrief, checkedLocale } from '../localization/validate.ts';
 import { storyboardDir, storyboardSchema, sweepStoryboardTemps, type PreviewService } from '../creatives/previews.ts';
@@ -70,6 +71,15 @@ function pruneLabelsOfRemovedFormats(raw: unknown): unknown {
   const kept = Object.fromEntries(Object.entries(b.formatLabels).filter(([k]) => (b.formats as unknown[]).includes(k)));
   return { ...(raw as object), brief: { ...b, formatLabels: kept } };
 }
+/**
+ * Phase 13: a message sent while a turn runs (`live`) or queued for after it (`queued`). The text limit is checked by the
+ * core (a translated 409 `limit`); this cap only bounds the request. No attachments: pins only (spec §2).
+ */
+const messageBody = z.object({
+  clientId: z.uuid(), text: z.string().max(20_000), pins: z.array(pinSchema).max(50).optional(), mode: z.enum(['live', 'queued']),
+}).strict();
+const queueEditBody = z.object({ text: z.string().max(20_000), pins: z.array(pinSchema).max(50).optional() }).strict();
+const queueOrderBody = z.object({ order: z.array(z.string().min(1).max(100)).max(100) }).strict();
 const pickBody = z.object({ format: z.string().min(1).max(200), version: z.number().int().min(1).nullable() });
 /**
  * Export of the ★ versions (spec §3.3): `picks` (format → vN), `follow` (followers, exported in their primary's version),
@@ -161,13 +171,26 @@ export interface RecoverOptions {
   stagingInUse?: (dir: string) => boolean;
   /** Commits what finishing an interrupted asset rename changed. */
   git?: Git;
+  /** Phase 13: where a cut turn's session is remembered (the core's side state, out of the agent's reach). */
+  sideState?: CreativeSideStateStore;
 }
 
 export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: string) => boolean = () => false, ro: RecoverOptions = {}): Promise<void> {
   for (const p of await ws.listProjects()) {
     if (!p.ok) continue;
     const dir = ws.projectDir(p.slug);
-    await new CreativeStore(dir).recoverInterrupted((slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug))).catch((err: Error) => {
+    const side = ro.sideState;
+    // Fix round 1 (M2): every creative gets its side record now, before any agent can run, so `queued`/`stoppedSession`
+    // written into a creative.json later (by anyone) are never taken as the user's, even in a creative nobody opened yet.
+    if (side) {
+      for (const c of await new CreativeStore(dir).list().catch(() => [])) {
+        // A creative.json that cannot be read now is migrated on its first successful open (fix round 2).
+        if (c.ok) await side.read(dir, c.slug).catch(() => {});
+        else await side.markPendingMigration(dir, c.slug).catch(() => {});
+      }
+    }
+    const remember = side ? (slug: string, s: StoppedSession) => side.update(dir, slug, () => ({ stoppedSession: s })) : undefined;
+    await new CreativeStore(dir).recoverInterrupted((slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug)), remember).catch((err: Error) => {
       console.warn(`Motion Studio: creative recovery failed in project ${p.slug}: ${err.message}`);
     });
     // Render and media temp files left by a render the app was killed during, and the media cache's garbage. This also runs
@@ -253,6 +276,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const links = initialLinks(body.brief, (await catalog().load()).presets);
     const created = await store.create({ title: body.title, brief: { ...body.brief, links } });
     const slug = created.slug;
+    // Fix round 1 (M2): its side record exists from the start (nothing written into its creative.json later is trusted).
+    await ctx.turns.side.read(ws.projectDir(req.params.slug), slug);
     const creative = linkedCodebases ? await store.update(slug, { linkedCodebases }) : created.creative;
     const ref = { root: ws.root, projectSlug: req.params.slug, projectDir: ws.projectDir(req.params.slug), creativeSlug: slug };
     const job = body.generate ? await ctx.turns.start(ref) : null;
@@ -273,7 +298,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       onBackgroundDone: () => ctx.broadcast?.({ type: 'creative', project: ref.projectSlug, creative: ref.creativeSlug }),
     });
     return {
-      slug: ref.creativeSlug, creative, versions,
+      // Phase 13: the queue and remembered session are kept by the core outside the project (final review I1).
+      slug: ref.creativeSlug, creative: await ctx.turns.side.merged(ref.projectDir, ref.creativeSlug, creative), versions,
       jobKey: creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug),
       formats: await formatSummaries(creativeDir, creative, versions, (await catalog().load()).presets),
     };
@@ -315,6 +341,36 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const pins = body.pins ?? [];
     const job = await ctx.turns.start(ref, text || pins.length ? { text, pins } : undefined, body.formats ? { formats: body.formats } : {});
     return reply.status(202).send(job);
+  });
+
+  // Phase 13 (spec §2): messages while the agent works, and the request queue (Rulings S and T).
+  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/messages', async (req) => {
+    const body = parse(messageBody, req.body);
+    const ref = await refOf(req.params.slug, req.params.c);
+    await ref.store.get(ref.creativeSlug); // 404 for unknown creatives
+    return ctx.turns.postMessage(ref, { clientId: body.clientId, text: body.text, pins: body.pins ?? [], mode: body.mode });
+  });
+
+  app.delete<{ Params: { slug: string; c: string; clientId: string } }>('/api/projects/:slug/creatives/:c/queue/:clientId', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    return ctx.turns.removeQueued(ref, req.params.clientId);
+  });
+
+  app.put<{ Params: { slug: string; c: string; clientId: string } }>('/api/projects/:slug/creatives/:c/queue/:clientId', async (req) => {
+    const body = parse(queueEditBody, req.body);
+    const ref = await refOf(req.params.slug, req.params.c);
+    return ctx.turns.editQueued(ref, req.params.clientId, { text: body.text, pins: body.pins ?? [] });
+  });
+
+  app.put<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/queue', async (req) => {
+    const body = parse(queueOrderBody, req.body);
+    const ref = await refOf(req.params.slug, req.params.c);
+    return ctx.turns.reorderQueue(ref, body.order);
+  });
+
+  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/queue/run-next', async (req, reply) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    return reply.status(202).send(await ctx.turns.runNext(ref));
   });
 
   app.post<{ Params: { slug: string; c: string; n: string } }>('/api/projects/:slug/creatives/:c/versions/:n/restore', async (req) => {

@@ -1,4 +1,4 @@
-import type { LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, ApprovalDecision, ApprovalRequest, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack } from '@motion-studio/shared';
+import type { LocaleTag, Localization, LocalizationIssue, LocalizationRow, BrandFont, EditOp, EditorCompositionView, StagedAsset, StageRequest, ChromeDownloadOffer, OutputIssue, ExportPrepareResult, PinFramesView, PreviewSessionInfo, RenderEngineStatus, StoryboardView, AgentCapabilities, ApprovalDecision, ApprovalRequest, LiveMessageOutcome, RedirectOutcome, ProposalActivity, LanguageSetting, Locale, AssetEntry, BrandKit, BrandOverview, BrandProposal, BrandSource, Brief, LinkedCodebase, ReferenceEntry, ConversationEntry, CreativeDetail, CreativeFile, CreativeListItem, RecentCreative, DoctorCheck, FormatPreset, JobSummary, Pin, ProjectDetail, ProjectFile, ProjectIntegrity, PermissionsFile, ProjectListItem, SecretStatus, KeyCheckResult, ProviderId, UsageReport, VersionEntry, WorkspaceInfo, WorkspaceSettings, StorePack } from '@motion-studio/shared';
 import { currentMessages } from './i18n.tsx';
 import { markPairingNeeded, renewUiToken, uiToken } from './uiToken.ts';
 
@@ -190,6 +190,14 @@ export const api = {
   projectFileUrl: (slug: string, rel: string) => `${p(slug)}/files/${enc(rel)}`,
   generateAsset: (slug: string, body: GenerateRequest) => request<{ jobId: string }>('POST', `${p(slug)}/generate`, body),
   cancelJob: (id: string) => request<{ cancelled: boolean }>('POST', `/api/jobs/${encodeURIComponent(id)}/cancel`),
+  /** Phase 13: what the running Claude Code can do mid-turn. Both false by default (fallback-first). */
+  getAgentCapabilities: () => request<AgentCapabilities>('GET', '/api/agent/capabilities'),
+  /** Stop (no confirmation): the job's open approvals are cancelled first, a creative turn remembers its session. */
+  stopJob: (id: string) => request<{ status: string }>('POST', `/api/jobs/${encodeURIComponent(id)}/stop`),
+  /** Stop and redirect: creative and console turns. `clientId` makes a double click one redirect. */
+  redirectJob: (id: string, body: { clientId: string; text: string; pins?: Pin[] }) => request<{ outcome: RedirectOutcome }>('POST', `/api/jobs/${encodeURIComponent(id)}/redirect`, body),
+  /** A message to a turn console (live input only; the console has no queue). */
+  sendConsoleMessage: (jobId: string, body: { clientId: string; text: string; pins?: Pin[] }) => request<{ outcome: LiveMessageOutcome }>('POST', `/api/console/${encodeURIComponent(jobId)}/messages`, body),
   getFormats: () => request<CatalogState>('GET', '/api/formats'),
   recentCreatives: (limit?: number) => request<RecentCreative[]>('GET', `/api/recent-creatives${limit === undefined ? '' : `?limit=${limit}`}`),
   listCreatives: (slug: string) => request<CreativeListItem[]>('GET', `${p(slug)}/creatives`),
@@ -219,6 +227,14 @@ export const api = {
   getConversation: (slug: string, creative: string) => request<ConversationEntry[]>('GET', `${c(slug, creative)}/conversation`),
   /** `formats`: the formats the change applies to (spec §2.5); absent means all of them. */
   sendCreativeTurn: (slug: string, creative: string, body: { text?: string; pins?: Pin[]; formats?: string[] }) => request<JobSummary>('POST', `${c(slug, creative)}/turns`, body),
+  /** Phase 13: a message while the agent works (`live`) or for after it (`queued`). Idempotent on `clientId`. */
+  postLiveMessage: (slug: string, creative: string, body: { clientId: string; text: string; pins?: Pin[]; mode: 'live' | 'queued' }) =>
+    request<{ entry: ConversationEntry; outcome: LiveMessageOutcome }>('POST', `${c(slug, creative)}/messages`, body),
+  removeQueued: (slug: string, creative: string, clientId: string) => request<CreativeFile>('DELETE', `${c(slug, creative)}/queue/${encodeURIComponent(clientId)}`),
+  editQueued: (slug: string, creative: string, clientId: string, body: { text: string; pins?: Pin[] }) => request<CreativeFile>('PUT', `${c(slug, creative)}/queue/${encodeURIComponent(clientId)}`, body),
+  /** Saves the queue's order (a permutation of the current queue; 409 `queue-changed` otherwise). */
+  reorderQueue: (slug: string, creative: string, order: string[]) => request<CreativeFile>('PUT', `${c(slug, creative)}/queue`, { order }),
+  runNext: (slug: string, creative: string) => request<JobSummary>('POST', `${c(slug, creative)}/queue/run-next`),
   restoreVersion: (slug: string, creative: string, n: number) => request<CreativeFile>('POST', `${c(slug, creative)}/versions/${n}/restore`),
   revealVersion: (slug: string, creative: string, n: number) => request<{ ok: true }>('POST', `${c(slug, creative)}/versions/${n}/reveal`),
   /**

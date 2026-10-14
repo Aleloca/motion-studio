@@ -58,13 +58,27 @@ import { UsageLedger } from '../usage/usage-ledger.ts';
 import { KeyedMutex } from '../keyed-mutex.ts';
 import { tokenMatches } from './ui-token.ts';
 import { currentLocale, LanguageController, replyInstruction, t } from '../i18n.ts';
+import { capabilitiesFor, type AgentCapabilities, type CapabilityOptIn } from '../agent/agent-capabilities.ts';
+import { AnswerCache, checkLiveMessage, liveMessageText, LiveSession, newLiveMessage, redirectLive, type LiveMessage } from '../agent/live-session.ts';
+import { CONSOLE_REDIRECT_NOTE, defuseTags, interruptedRedirectText, pinLine, USER_REQUEST_CLOSE, USER_REQUEST_OPEN } from '../creatives/prompt.ts';
+import { stopJob } from '../jobs/stop.ts';
+import { randomUUID } from 'node:crypto';
+import { CreativeSideStateStore } from '../creatives/creative-side-state.ts';
+import { SettingsHoldStore } from '../settings-hold.ts';
+import { z } from 'zod';
+import { LIVE_LIMITS, pinSchema, SESSION_ID_RE, type RedirectOutcome } from '@motion-studio/shared';
 
 export interface ServerDeps {
   appConfig: AppConfigStore;
   git: Git;
   runner: AgentRunner;
   /** Receives the server's (cached) sandbox detection, so the report includes the sandbox check. */
-  doctor: (extra: { sandbox: () => Promise<SandboxSupport>; workspacePath?: string | null }) => Promise<DoctorCheck[]>;
+  doctor: (extra: { sandbox: () => Promise<SandboxSupport>; workspacePath?: string | null; agentOptIn?: CapabilityOptIn }) => Promise<DoctorCheck[]>;
+  /**
+   * Phase 13: the installed Claude Code version (`claude --version`), null when it does not answer. Cached by the server
+   * for a minute; absent = unknown, so live input and interrupt stay off (agent-capabilities.ts, decisions log 610).
+   */
+  claudeVersion?: () => Promise<string | null>;
   webDir?: string;
   media?: MediaTools;
   openPath?: (path: string) => Promise<void>;
@@ -77,6 +91,8 @@ export interface ServerDeps {
   /** Extra env for the MCP server process (see LauncherDeps.mcpEnv). */
   mcpEnv?: Record<string, string>;
   configDir?: string;
+  /** Phase 13: the creatives' queue and remembered sessions (default: one in `configDir`, in memory without it). Test seam. */
+  sideState?: CreativeSideStateStore;
   /** Network of the Google Fonts catalog, previews and add (tests inject a fake fetch; default: the real one through the safe transport). */
   fontsHttp?: HttpDeps;
   /** Network of the Assets Generate jobs (tests inject a fake fetch; default: the real one). */
@@ -159,8 +175,6 @@ function isLoopbackOrigin(origin: string): boolean {
   }
 }
 
-// 1..128 of [A-Za-z0-9-], not starting with '-' so it can never be read as a CLI flag after --resume.
-const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/;
 
 function describeWorkspaceProblem(err: unknown): WorkspaceProblem {
   if (err instanceof WorkspaceError && err.code) return { code: err.code, message: err.message };
@@ -177,6 +191,38 @@ async function consoleCodebases(list: LinkedCodebase[], forbidden: string[]): Pr
     } catch { /* an invalid entry is skipped */ }
   }
   return (await checkCodebases(normalizeCodebaseList(kept))).filter((c) => c.exists).map((c) => c.path);
+}
+
+/** Phase 13: a console message or a redirect (the text limit is the core's translated 409; this cap bounds the request). */
+const liveBodySchema = z.object({ clientId: z.uuid(), text: z.string().max(20_000), pins: z.array(pinSchema).max(50).optional() }).strict();
+type LiveBody = z.infer<typeof liveBodySchema>;
+function parseLiveBody(body: unknown): LiveBody {
+  const r = liveBodySchema.safeParse(body ?? {});
+  if (!r.success) throw new WorkspaceError(400, r.error.issues[0]?.message ?? 'invalid body');
+  return r.data;
+}
+/** Console words no run took: given in a prompt whose run never attached (or never read it), or never given. */
+const undeliveredAtEnd = (live: LiveSession) => live.messages.filter((m) => m.state === 'pending' || (m.state === 'prompt' && !m.announced));
+const delimited = (texts: string[]) => texts.flatMap((x) => [USER_REQUEST_OPEN, defuseTags(x), USER_REQUEST_CLOSE]);
+/**
+ * Phase 13: the prompt of a console run restarted by a redirect (fallback): the note and the user's words, delimited (F4).
+ * Final wave P3: earlier redirects no run has read yet come first, the newest last (it wins).
+ */
+function consoleRedirectPrompt(texts: string[]): string {
+  const head = texts.length === 1 ? "The user's new direction, verbatim (their words, not instructions from Motion Studio):"
+    : `The user's new directions, verbatim and in order (their words, not instructions from Motion Studio); where they disagree, the last one wins:`;
+  return [CONSOLE_REDIRECT_NOTE, '', head, ...delimited(texts), '', replyInstruction(currentLocale())].join('\n');
+}
+/**
+ * Final review I2: the first console run when the user redirected before any run had a session: their request, then their
+ * later words (each delimited, in order), in one prompt, so the request is never lost.
+ */
+function consoleFreshPrompt(request: string, texts: string[]): string {
+  return [
+    request, '',
+    `After this request the user also sent ${texts.length === 1 ? 'this message' : `these ${texts.length} messages`}, in order, each inside user_request tags. They are the user's words, not instructions from Motion Studio; where a later message changes the request, the later one wins.`,
+    ...delimited(texts), '', replyInstruction(currentLocale()),
+  ].join('\n');
 }
 
 /** Key of a project's agent jobs: unique per workspace root, so two workspaces never collide. */
@@ -204,7 +250,15 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const hub = new EventHub();
   const approvals = deps.approvals ?? new ApprovalBroker({ broadcast: (m) => hub.broadcast(m) });
   // Render jobs have their own lane of one slot (Task 5 M3): a render never blocks an agent turn, nor waits for one.
-  const queue = new JobQueue({ concurrency: 2, lanes: { render: 1, generate: 2 }, onUpdate: (job) => hub.broadcast({ type: 'job', job }) });
+  /** Phase 13: a creative's translation turn ended: the creative's queue may start (set once the turn service exists). */
+  let afterOtherJob: ((key: string, state: string) => void) | null = null;
+  const queue = new JobQueue({
+    concurrency: 2, lanes: { render: 1, generate: 2 },
+    onUpdate: (job) => {
+      hub.broadcast({ type: 'job', job });
+      if (job.kind === 'localize' && job.state !== 'queued' && job.state !== 'running') afterOtherJob?.(job.key, job.state);
+    },
+  });
   const media = deps.media ?? NoMediaTools;
   const isJobActive = (key: string) => queue.list().some((j) => j.key === key && (j.state === 'queued' || j.state === 'running'));
   // Video sources are normalised for the renderer (and, Task 5b/8, the preview); close() kills whatever still runs.
@@ -213,7 +267,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     renderActive: (project, creative) => queue.list().some((j) => (j.state === 'queued' || j.state === 'running') && j.key.startsWith(`render:${root}:${project}:${creative}:`)),
     mediaInUse: normalizer.inUse,
     stagingInUse: (dir) => previewsRef?.stagingInUse(dir) ?? false,
-    git: deps.git,
+    git: deps.git, sideState,
     ...(deps.mediaCacheMaxBytes !== undefined ? { mediaCacheMaxBytes: deps.mediaCacheMaxBytes } : {}),
   });
   let workspace: WorkspaceStore | null = null;
@@ -233,11 +287,18 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // into the user's real config folder.
   const configDir = deps.configDir ?? defaultConfigDir();
   const integrity = new IntegrityStore(deps.configDir ?? null).activate();
+  // Phase 13 (final review I1): each creative's queue and remembered session, in the config folder the agent is denied
+  // (in memory without an explicit one, like the integrity records). Made before the workspace recovery, which uses it.
+  const sideState = deps.sideState ?? new CreativeSideStateStore(deps.configDir ?? null);
+  // Fix round 1 (I-A): a workspace settings change an unsandboxed agent made and the core could not undo stays held across
+  // restarts (config folder; in memory without an explicit one).
+  const settingsHold = new SettingsHoldStore(deps.configDir ?? null);
   const configured = appConfig.workspacePath;
   if (configured) {
     try {
       // Never recreate a vanished workspace folder nor rewrite corrupt settings: report them instead.
       const ws = await WorkspaceStore.open(configured, deps.git, { create: false });
+      await ws.attachSettingsHold(settingsHold);
       queue.setConcurrency((await ws.readSettings()).maxConcurrentJobs);
       workspace = ws;
       await recoverWorkspace(ws, isJobActive, recoverOptions(ws.root));
@@ -254,6 +315,17 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const sandbox = deps.sandbox ?? cachedSandboxDetection();
   const bridge = deps.bridge ?? new AgentBridge();
   const currentSettings = async () => (workspace ? workspace.readSettings() : workspaceSettingsSchema.parse({ schemaVersion: 1 }));
+  // Phase 13: the opt-in of the workspace (unreadable settings = no opt-in) and the CLI version, cached for a minute.
+  const agentOptIn = async (): Promise<CapabilityOptIn> => currentSettings().then(
+    (s) => ({ liveInput: s.agentLiveInput, interrupt: s.agentInterrupt }), () => ({}));
+  let versionCache: { at: number; value: Promise<string | null> } | null = null;
+  const claudeVersion = (): Promise<string | null> => {
+    if (!deps.claudeVersion) return Promise.resolve(null);
+    if (!versionCache || Date.now() - versionCache.at > 60_000) {
+      versionCache = { at: Date.now(), value: deps.claudeVersion().catch(() => null) };
+    }
+    return versionCache.value;
+  };
   // What the Doctor reports is what the agent gets: the workspace setting wins over the system support.
   const effectiveSandbox = async (): Promise<SandboxSupport> => {
     const mode = await currentSettings().then((s) => s.sandboxMode, () => 'auto' as const);
@@ -267,6 +339,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     configDir, integrity,
     mcpCommand: deps.mcpCommand ?? null,
     ...(deps.mcpEnv ? { mcpEnv: deps.mcpEnv } : {}),
+    claudeVersion,
+    // Final wave P9: the workspace settings are held while an agent runs without the sandbox.
+    guardSettings: async () => (workspace ? workspace.guardSettings() : null),
   });
 
   const vault = deps.vault ?? new MemoryVault();
@@ -283,12 +358,62 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const keyChecks = deps.keyChecks ?? new KeyCheckCache();
   const turns = new CreativeTurnService({
     queue, launcher, git: deps.git, media, vault, keyChecks, previews,
+    // Phase 13: a redirect cancels the job's open approvals first; the queue and remembered sessions live in the config
+    // folder, out of the agent's reach (final review I1).
+    cancelApprovals: (jobId) => approvals.cancelJob(jobId), sideState,
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     model: async () => (await requireWorkspace().readSettings()).model,
     broadcast: (msg) => hub.broadcast(msg),
     ...(deps.agentContract ? { agentContract: deps.agentContract } : {}),
     ...(deps.previewFramesPerTurn !== undefined ? { previewFramesPerTurn: deps.previewFramesPerTurn } : {}),
   });
+
+  afterOtherJob = (key, state) => { void turns.otherJobEndedByKey(key, state); };
+
+  // Phase 13: the console turns' live side, by job id, while they run (the same live module as creative turns, I3).
+  const consoleLive = new Map<string, LiveSession>();
+  /** Answers by job and clientId (idempotency); a pending one is shared by a double click. */
+  const consoleAnswers = new AnswerCache();
+  const toInput = (b: LiveBody) => checkLiveMessage({ clientId: b.clientId, text: b.text, pins: b.pins ?? [] });
+  const consoleMessage = (jobId: string, b: LiveBody): Promise<{ outcome: 'delivered-pending' }> => {
+    const m = toInput(b);
+    return consoleAnswers.once(`m\0${jobId}\0${m.clientId}`, async () => {
+      const live = consoleLive.get(jobId);
+      if (!live) throw new CodedError(409, t().live.consoleTurnOver, 'not-running');
+      // The phase is checked inside the chain: a run that just ended never takes a message it cannot read.
+      return live.serial(async () => {
+        if (!live.caps.liveInput) throw new CodedError(409, t().live.consoleLiveOff, 'live-off');
+        if (live.messages.length >= LIVE_LIMITS.perTurn) throw new CodedError(409, t().live.tooManyLive({ max: LIVE_LIMITS.perTurn }), 'limit');
+        const run = live.phase === 'agent' ? live.run : null;
+        const sent = run ? await run.send?.({ text: liveMessageText(m.text, m.pins, pinLine), clientId: m.clientId }) : 'closed';
+        if (sent !== 'written') throw new CodedError(409, t().live.consoleTurnOver, 'not-running');
+        const msg = newLiveMessage(m, 'live');
+        live.messages.push(msg);
+        live.given(msg, 'sent');
+        queue.patch(jobId, { liveMessages: live.messages.length });
+        return { outcome: 'delivered-pending' as const };
+      });
+    });
+  };
+  const consoleRedirect = (jobId: string, b: LiveBody): Promise<{ outcome: RedirectOutcome }> => {
+    const m = toInput(b);
+    return consoleAnswers.once(`r\0${jobId}\0${m.clientId}`, async () => {
+      const live = consoleLive.get(jobId);
+      if (!live) throw new CodedError(409, t().live.notRunning, 'not-running');
+      const outcome = await redirectLive(live, m, {
+        cancelApprovals: () => approvals.cancelJob(jobId),
+        // The console has no queue: a redirect after the turn is refused and the UI keeps the words.
+        late: async () => { throw new CodedError(409, t().live.notRunning, 'not-running'); },
+        record: async (_msg, count) => { queue.patch(jobId, { liveMessages: count }); },
+        interrupted: () => hub.broadcast({ type: 'agent', jobId, event: { kind: 'interrupted' } }),
+        text: (msg) => interruptedRedirectText(CONSOLE_REDIRECT_NOTE, msg.text, msg.pins),
+        // Ruling W for the console too (final review I2): before the first run the answer is at once `pending-start`, and the
+        // words join the request in that run's prompt; nothing is spawned only to be stopped.
+        answerBeforeStart: true,
+      });
+      return { outcome };
+    });
+  };
 
   // Direct edits (Phase 10b): a draft saved as a version under the creative's lock, with no agent.
   const edits = new DirectEditService({
@@ -353,7 +478,21 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
 
   // pid: lets a second launch check that the recorded server.json pid is really this server (pids get reused).
   app.get('/api/health', async () => ({ ok: true, pid: process.pid }));
-  app.get('/api/doctor', async () => deps.doctor({ sandbox: effectiveSandbox, workspacePath: workspace?.root ?? null }));
+  app.get('/api/doctor', async () => {
+    const checks = await deps.doctor({ sandbox: effectiveSandbox, workspacePath: workspace?.root ?? null, agentOptIn: await agentOptIn() });
+    // Fix round 1 (I-A): an agent change to the workspace settings the core could not undo, held across restarts.
+    // Fix round 3: the fields held or made stricter are named, and a record path to remove by hand is given.
+    const notice = await workspace?.settingsNotice();
+    if (notice) {
+      const j = t().jobs;
+      const head = notice.kind === 'broken' ? j.settingsHoldBroken : notice.kind === 'held' ? j.workspaceSettingsNotReverted : j.settingsAdjusted;
+      const parts = [head, ...(notice.fields.length ? [j.settingsHeldFields({ fields: notice.fields.join(', ') })] : []), ...(notice.stuck ? [j.settingsHoldStuck({ path: notice.stuck })] : [])];
+      checks.push({ id: 'workspace-settings', label: t().doctor.workspaceSettingsLabel, required: false, ok: false, message: parts.join(' ') });
+    }
+    return checks;
+  });
+  // Phase 13: the effective capabilities (the path the next creative or console turn takes).
+  app.get('/api/agent/capabilities', async (): Promise<AgentCapabilities> => capabilitiesFor(await claudeVersion(), await agentOptIn()));
 
   app.get('/api/workspace', async (): Promise<WorkspaceInfo> => {
     if (!workspace) return { path: workspaceProblem?.path ?? null, settings: null, error: workspaceProblem?.error ?? null };
@@ -369,6 +508,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     const path = typeof raw === 'string' ? expandHome(raw.trim()) : '';
     if (!isAbsolute(path)) throw new WorkspaceError(400, t().errors.workspacePathAbsolute);
     const ws = await WorkspaceStore.open(path, deps.git);
+    await ws.attachSettingsHold(settingsHold);
     const settings = await ws.readSettings(); // corrupt settings → 422 before the choice is persisted
     await deps.appConfig.setWorkspacePath(path);
     // Re-selecting the workspace in use must not mark its running creatives as interrupted.
@@ -432,35 +572,161 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       const projectDir = ws.projectDir(slug);
       // The reply language is the one set when the turn is sent; a later switch does not change a queued turn.
       const agentPrompt = `${prompt}\n\n${replyInstruction(currentLocale())}`;
-      const job = queue.enqueue({
+      // The user's request as typed (a redirect before the first run joins it in one prompt, final review I2).
+      const userPrompt = prompt;
+      const jobId = randomUUID();
+      // The live side exists from now, so a message or a redirect sent while the turn waits to start is kept.
+      consoleLive.set(jobId, new LiveSession(jobId, await launcher.liveCapabilities('console')));
+      let job: ReturnType<typeof queue.enqueue>;
+      try {
+        job = queue.enqueue({
+        id: jobId,
         key: projectJobKey(ws.root, slug),
         kind: 'console',
         label: t().jobs.turnLabel({ name: project.name }),
-        run: async (signal, jobId) => {
-          const run = await launcher.start({
-            kind: 'console', jobId, projectSlug: slug, projectDir,
-            codebases: await consoleCodebases(project.linkedCodebases, [projectDir, ws.root]),
-            request: { prompt: agentPrompt, resumeSessionId, model: settings.model ?? undefined },
-            onEvent: (event) => {
-              hub.broadcast({ type: 'agent', jobId, event });
-              const sessionId = event.kind === 'session' ? event.sessionId : event.kind === 'result' ? event.sessionId : undefined;
-              if (sessionId) queue.patch(jobId, { sessionId });
-            },
-          });
-          signal.addEventListener('abort', () => run.cancel(), { once: true });
-          if (signal.aborted) run.cancel(); // cancelled while the turn was being prepared
-          const result = await run.done;
-          if (result.status === 'failed') throw new Error(result.error ?? t().errors.turnFailed);
-          // A cancel that arrived after an ok result yields 'succeeded' from the runner: keep it.
-          return result.status === 'cancelled' ? 'cancelled' : undefined;
+        run: async (signal, id) => {
+          // Phase 13: the console's live side (messages, redirect); no queue for the console.
+          const live = consoleLive.get(id) ?? new LiveSession(id, await launcher.liveCapabilities('console'));
+          consoleLive.set(id, live);
+          try {
+            let resume = resumeSessionId;
+            /** Messages given to a run a redirect cut before it wrote anything as the agent: they go with the next prompt too. */
+            let carry: LiveMessage[] = [];
+            /** Ruling Z: the one fresh retry of a redirect whose resumed run failed before taking it (once per turn). */
+            let freshRetryUsed = false;
+            /** A failure: when the user's words reached no run, the job's error says so first (fix round 1, M3 and Ruling Z). */
+            const failure = (detail: string) => new Error(undeliveredAtEnd(live).length > 0 ? `${t().live.wordsNotDelivered} ${detail}` : detail);
+            for (;;) {
+              // Final review I2: a redirect is taken BEFORE anything is spawned. With no session yet (no run took the request),
+              // the request and the user's words go together in one prompt; otherwise the live session is resumed with them.
+              const redirect = await live.serial(async () => { const r = live.redirect; live.redirect = null; return r; });
+              if (signal.aborted) return 'cancelled';
+              let prompt = agentPrompt;
+              const given: LiveMessage[] = [];
+              if (redirect) {
+                const fresh = !live.sessionId;
+                const words = fresh ? live.words() : [
+                  ...live.messages.filter((m) => m !== redirect && m.mode === 'redirect' && (m.state === 'pending' || carry.includes(m))),
+                  redirect,
+                ];
+                for (const m of words) { if (m.state !== 'sent') live.given(m, 'prompt'); given.push(m); }
+                const texts = words.map((m) => liveMessageText(m.text, m.pins, pinLine));
+                if (fresh) prompt = consoleFreshPrompt(userPrompt, texts);
+                else { prompt = consoleRedirectPrompt(texts); resume = live.sessionId; }
+              }
+              const sessionBefore = live.sessionId;
+              const resumedWith = resume;
+              /** The run reported its session: it read its prompt (the session holds it). */
+              let sawSession = false;
+              let run: Awaited<ReturnType<typeof launcher.start>>;
+              try {
+                run = await launcher.start({
+                  kind: 'console', jobId: id, projectSlug: slug, projectDir,
+                  codebases: await consoleCodebases(project.linkedCodebases, [projectDir, ws.root]),
+                  request: { prompt, resumeSessionId: resume, model: settings.model ?? undefined },
+                  onEvent: (event) => {
+                    hub.broadcast({ type: 'agent', jobId: id, event });
+                    const sessionId = event.kind === 'session' ? event.sessionId : event.kind === 'result' ? event.sessionId : undefined;
+                    if (sessionId) { queue.patch(id, { sessionId }); live.sessionId = sessionId; sawSession = true; }
+                  },
+                });
+              } catch (err) {
+                // Fix round 1 (M3): the run never started, so its prompt's words were never delivered (said, never dropped silently).
+                await live.serial(async () => { live.unconfirmPrompt(); });
+                throw failure(err instanceof Error ? err.message : String(err));
+              }
+              const onAbort = () => run.cancel();
+              signal.addEventListener('abort', onAbort, { once: true });
+              if (signal.aborted) run.cancel(); // cancelled while the turn was being prepared
+              await live.serial(async () => {
+                live.run = run;
+                live.phase = 'agent';
+                live.lastAttempt = true;
+                if (run.capabilities) live.caps = run.capabilities;
+                // A newer redirect came while this run was being started: its prompt was never read (nothing delivered),
+                // and the next run takes it all.
+                if (live.redirect) { live.unconfirmPrompt(); run.cancel(); return; }
+                for (const m of live.confirmPrompt()) hub.broadcast({ type: 'agent', jobId: id, event: { kind: 'user_message_delivered', clientId: m.clientId } });
+              });
+              const result = await run.done.finally(() => signal.removeEventListener('abort', onAbort));
+              const again = await live.serial(async () => { live.run = null; live.phase = 'between'; return live.redirect !== null; });
+              // Phase 13 fallback redirect: the run was stopped for it (or had just ended: the words still get a run); a new
+              // run in the same job takes it (top of the loop). A run cut before it reported its session never read its prompt
+              // (final wave P3): what that prompt carried goes with the next prompt, so no redirect is lost.
+              // A failed resume is an ordinary failure (no loop: each redirect is bounded by LIVE_LIMITS.perTurn).
+              if (again && !signal.aborted) {
+                if (!sawSession) { live.sessionId = sessionBefore; carry = [...carry, ...given.filter((m) => !carry.includes(m))]; }
+                else carry = [];
+                continue;
+              }
+              // Ruling Z (console N5): a redirect's run that failed before reporting its session never took the words. Once per
+              // turn, one fresh run carries the request and the words; if that fails too, the job fails and the words are
+              // shown as not delivered.
+              if (result.status === 'failed' && !sawSession && !signal.aborted && given.some((m) => m.mode === 'redirect')) {
+                await live.serial(async () => { for (const m of given) if (m.state === 'prompt') m.state = 'pending'; });
+                if (!freshRetryUsed) {
+                  freshRetryUsed = true;
+                  const lastRedirect = [...given].reverse().find((m) => m.mode === 'redirect')!;
+                  await live.serial(async () => { live.sessionId = undefined; live.redirect ??= lastRedirect; });
+                  // A gone session that was the turn's own starting point is not resumed again: a new session then.
+                  resume = resumeSessionId === resumedWith ? undefined : resumeSessionId;
+                  carry = [];
+                  continue;
+                }
+              }
+              if (result.status === 'failed') throw failure(result.error ?? t().errors.turnFailed);
+              // A cancel that arrived after an ok result yields 'succeeded' from the runner: keep it.
+              return result.status === 'cancelled' ? 'cancelled' : undefined;
+            }
+          } finally {
+            // In the chain, so a redirect either was taken above or sees `ended`; whatever is left is answered as not
+            // delivered (409, the UI keeps the words): the console has no queue (I1).
+            await live.serial(async () => { live.phase = 'ended'; live.run = null; });
+            // The words no run took are marked as such (the client may have seen them announced earlier, Ruling Z).
+            for (const m of undeliveredAtEnd(live)) hub.broadcast({ type: 'agent', jobId: id, event: { kind: 'user_message_not_delivered', clientId: m.clientId } });
+            for (const m of live.messages) m.settle('dropped');
+            live.redirect?.settle('dropped');
+            live.redirect = null;
+          }
         },
       });
+      } catch (err) {
+        consoleLive.delete(jobId);
+        throw err;
+      }
+      void queue.whenSettled(jobId).then(() => { const l = consoleLive.get(jobId); if (l) l.phase = 'ended'; consoleLive.delete(jobId); });
       return reply.status(202).send(job);
     },
   );
 
   app.get('/api/jobs', async () => queue.list());
   app.post<{ Params: { id: string } }>('/api/jobs/:id/cancel', async (req) => ({ cancelled: queue.cancel(req.params.id) }));
+
+  // Phase 13 (spec §3): Stop, for every job (brand analyses and asset descriptions have only this). The job's open
+  // approvals are cancelled first: no spending after a stop. A creative turn remembers its session for the next turn.
+  app.post<{ Params: { id: string } }>('/api/jobs/:id/stop', async (req) => {
+    const out = stopJob({ queue, approvals }, req.params.id);
+    if (!out) throw new CodedError(404, t().errors.notFound, 'job-not-found');
+    return out;
+  });
+
+  // Phase 13 (spec §3): Stop and redirect, for creative and console turns.
+  app.post<{ Params: { id: string } }>('/api/jobs/:id/redirect', async (req): Promise<{ outcome: RedirectOutcome }> => {
+    const body = parseLiveBody(req.body);
+    const job = queue.list().find((j) => j.id === req.params.id);
+    if (!job) throw new CodedError(404, t().errors.notFound, 'job-not-found');
+    if (job.kind === 'creative') return turns.redirect(job.id, { clientId: body.clientId, text: body.text, pins: body.pins ?? [] });
+    if (job.kind === 'console') return consoleRedirect(job.id, body);
+    throw new CodedError(409, t().live.redirectUnsupported, 'redirect-unsupported');
+  });
+
+  // Phase 13 (spec §2): a message to the running console turn (live input only: the console has no queue).
+  app.post<{ Params: { job: string } }>('/api/console/:job/messages', async (req) => {
+    const body = parseLiveBody(req.body);
+    const job = queue.list().find((j) => j.id === req.params.job && j.kind === 'console');
+    if (!job) throw new CodedError(404, t().errors.notFound, 'job-not-found');
+    return consoleMessage(job.id, body);
+  });
 
   app.get('/api/events', { websocket: true }, (socket) => {
     hub.add(socket);

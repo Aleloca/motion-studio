@@ -22,6 +22,12 @@ export interface AgentTurnRequest {
   allowedTools?: string[];
   /** Permission rules that are always denied (e.g. read-only linked codebases: `Edit(//abs/path/**)`). */
   disallowedTools?: string[];
+  /**
+   * Phase 13: the effective capabilities for this turn (agent-capabilities.ts). Absent or both false: the prompt is
+   * written and stdin closed at once, exactly as before. `liveInput` keeps stdin open until the final result, so `send`
+   * can write; `interrupt` (only with `liveInput`) lets `interrupt` write a control request. Unverified live (decisions log 610).
+   */
+  capabilities?: { liveInput: boolean; interrupt: boolean };
 }
 
 /**
@@ -46,6 +52,8 @@ export interface AgentRunResult {
   status: 'succeeded' | 'failed' | 'cancelled';
   sessionId?: string;
   error?: string;
+  /** The CLI could not be started at all (missing binary or project folder, spawn error): never a resume error (Ruling V). */
+  startFailed?: boolean;
   /** Set by AgentLauncher: the run's ledger record (per-run values), null when the run reported no usage at all. */
   usage?: UsageRecord | null;
 }
@@ -58,7 +66,33 @@ export interface AgentRun {
    * Called by the core once a run is over and before it touches the run's files. Optional: runners without groups omit it.
    */
   killGroup?(): void;
+  /**
+   * Phase 13: writes a user message into the running session. Resolves 'written' or 'closed' (live input off, stdin
+   * already closed, or the process gone): never throws, never writes to a closed stdin.
+   */
+  send?(msg: { text: string; clientId: string }): Promise<'written' | 'closed'>;
+  /**
+   * Phase 13: asks the CLI to stop the current step. Resolves 'interrupted' on the acknowledgement, 'unsupported' (the
+   * capability is off, the stream is closed, or the CLI refused), or 'timeout' (no acknowledgement within 5 s, or the
+   * process went away first): never throws. After 'interrupted' the input stays open for the core's decision (see endInput).
+   */
+  interrupt?(): Promise<'interrupted' | 'unsupported' | 'timeout'>;
+  /**
+   * Phase 13: closes the session's input now (the core's "no redirect" after an interrupt). After an acknowledged
+   * interrupt stdin stays open until `send` (a redirect), `endInput`, cancel, or a 45 s backstop. No-op when live input is off.
+   */
+  endInput?(): void;
+  /**
+   * Phase 13 (set by AgentLauncher for creative and console turns): aborts the core tools this run's agent is running now
+   * (preview frames, provider calls, downloads) without ending the run; later calls get a fresh signal. Used by a redirect.
+   */
+  abortTools?(): void;
+  /** Phase 13 (set by AgentLauncher): the capabilities this run was started with; absent or both false: none. */
+  capabilities?: { liveInput: boolean; interrupt: boolean };
 }
+
+/** The plan's name for a running turn's handle. */
+export type AgentRunHandle = AgentRun;
 
 /** Agent-neutral contract; ClaudeCodeRunner is the first implementation. */
 export interface AgentRunner {

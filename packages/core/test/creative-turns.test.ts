@@ -125,7 +125,7 @@ describe('CreativeTurnService', { timeout: 90_000 }, () => {
     const all = await prompts();
     expect(all).toHaveLength(2);
     expect(all[1]!.prompt).toContain('Manca il formato Web · Banner 300×250 (web-banner-300x250)');
-    expect(all[1]!.args).toContain('--resume');
+    expect(all[1]!.args.slice(all[1]!.args.indexOf('--resume'), all[1]!.args.indexOf('--resume') + 2)).toEqual(['--resume', 'fake-session-1']);
     const conv = await store.readConversation(ref.creativeSlug);
     expect(conv.some((e) => e.type === 'system' && e.text.includes('tentativo 2 di 3'))).toBe(true);
   });

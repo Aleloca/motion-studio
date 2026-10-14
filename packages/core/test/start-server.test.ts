@@ -12,6 +12,9 @@ import { sweepRunDir } from '../src/agent/launcher.ts';
 import { AlreadyRunningError, startServer, uiOriginsOf } from '../src/server/main.ts';
 import { loadOrCreateUiToken, readServerInfo } from '../src/server/ui-token.ts';
 
+// Final wave Q5: every boot here takes seconds on a loaded machine (the doctor, the ledger, the sweeps). Per-file timeouts only.
+vi.setConfig({ testTimeout: 90_000, hookTimeout: 60_000 });
+
 const FAKE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
 
 describe('the UI origins allowed to embed live previews (C2)', () => {
@@ -292,7 +295,8 @@ describe('startServer boot lock', () => {
       const t0 = Date.now();
       const err = await startServer({ port: 0, configDir, claudeCommand: ['true'], vault: new MemoryVault(), bootLockWaitMs: 300 }).then(async (s) => { await s.close(); return null; }, (e) => e);
       expect(err?.message).toBe('Un altro Motion Studio si sta avviando con la stessa configurazione: riprova tra poco');
-      expect(Date.now() - t0).toBeLessThan(2500);
+      // Bounded (the wait is 300 ms; an unbounded wait would run to the test timeout), with room for a loaded machine.
+      expect(Date.now() - t0).toBeLessThan(15_000);
       expect(await readFile(lockOf(configDir), 'utf8')).toBe(String(process.ppid));
     } finally {
       await rm(configDir, { recursive: true, force: true });

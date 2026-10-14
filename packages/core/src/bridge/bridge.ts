@@ -19,6 +19,12 @@ export interface BridgeContext {
   emit(e: AgentEvent): void;
   /** Aborted when the job is cancelled or ends: in-flight provider calls must stop. */
   signal: AbortSignal;
+  /**
+   * Phase 13, creative and console turns: the signal of the tool calls started now. It is `signal` combined with the
+   * turn's tool abort, which a redirect fires (and renews) so running core tools stop while the job goes on. The bridge
+   * hands it to each call as its `signal`. Absent: `signal`.
+   */
+  toolSignal?: () => AbortSignal;
   /** Creative turns (output contract v2): the checks of the turn's compositions, all or one format's (`validate_composition`). */
   validateComposition?: (format?: string) => Promise<unknown>;
   /** Creative turns: a few PNG frames of a composition (`preview_frames`), rate-limited per turn. */

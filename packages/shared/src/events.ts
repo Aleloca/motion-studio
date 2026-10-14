@@ -32,7 +32,30 @@ export type AgentEvent =
    * `cumulativeCostUsd` is Claude Code's `total_cost_usd`: CUMULATIVE over a resumed session, never this run's cost
    * (that is the final `usage` event, re-emitted by the core with per-run values). Older stored events may carry it as `costUsd`.
    */
-  | { kind: 'result'; ok: boolean; sessionId?: string; text?: string; cumulativeCostUsd?: number; error?: string; durationMs?: number; numTurns?: number };
+  | { kind: 'result'; ok: boolean; sessionId?: string; text?: string; cumulativeCostUsd?: number; error?: string; durationMs?: number; numTurns?: number }
+  /**
+   * Phase 13: a message sent while the agent works was written to the running session. There is no verified evidence
+   * that the CLI consumed it (spike suspended, decisions log 610), so it means "sent", not "read".
+   */
+  | { kind: 'user_message_delivered'; clientId: string }
+  /**
+   * Fix round 1 (Ruling Z, M3): a message no run took after all (its run never started, or failed before reading it, and the
+   * turn ended): never delivered, whatever was announced before. Console turns (creative turns queue such words instead).
+   */
+  | { kind: 'user_message_not_delivered'; clientId: string }
+  /** Phase 13: the CLI acknowledged an interrupt of the current step. */
+  | { kind: 'interrupted' };
+
+/**
+ * Phase 13: what the running Claude Code can do while a turn runs (GET /api/agent/capabilities). Effective values: a
+ * capability is on only for a verified version or with the explicit opt-in in Settings (decisions log 610).
+ */
+export interface AgentCapabilities {
+  cliVersion: string | null;
+  liveInput: boolean;
+  interrupt: boolean;
+  checkedAt: string;
+}
 
 export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
@@ -71,6 +94,8 @@ export interface JobSummary {
   progress?: JobProgress;
   /** Queued render jobs: how many render jobs are ahead of this one in the render lane (running or queued earlier). */
   queuePosition?: number;
+  /** Phase 13: messages the user sent to this running turn (live and redirect); absent: none. */
+  liveMessages?: number;
 }
 
 export type ApprovalKind = 'tool' | 'provider' | 'paid-batch';
@@ -114,7 +139,7 @@ export type ServerMessage =
   | { type: 'project'; project: string };
 
 export interface DoctorCheck {
-  id: 'node' | 'git' | 'ffmpeg' | 'claude' | 'claude-auth' | 'sandbox' | 'shell-path' | 'workspace-path';
+  id: 'node' | 'git' | 'ffmpeg' | 'claude' | 'claude-auth' | 'sandbox' | 'shell-path' | 'workspace-path' | 'live-messages' | 'interrupt' | 'workspace-settings';
   label: string;
   ok: boolean;
   required: boolean;

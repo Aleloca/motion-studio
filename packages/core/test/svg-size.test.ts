@@ -53,7 +53,10 @@ describe('svgSizeOf', () => {
 });
 
 describe('svgSizeOf stays linear on hostile input (S1)', () => {
-  const time = (text: string) => { const t0 = performance.now(); svgSizeOf(text); return performance.now() - t0; };
+  // CPU time of this worker process, not wall time, best of three (as the css scan, decisions log 325): under a saturated
+  // full suite a linear scan can look slow on the clock, while a quadratic case still costs seconds of CPU and fails.
+  const cpuMs = (text: string) => { const t0 = process.cpuUsage(); svgSizeOf(text); const d = process.cpuUsage(t0); return (d.user + d.system) / 1000; };
+  const time = (text: string) => Math.min(cpuMs(text), cpuMs(text), cpuMs(text));
   it.each([
     ['repeated unterminated comments', '<!--'.repeat(65536)],
     ['repeated <svg with no >', '<svg'.repeat(65536)],
@@ -63,7 +66,7 @@ describe('svgSizeOf stays linear on hostile input (S1)', () => {
     ['many attributes', `<svg ${'x="1" '.repeat(2500)}width="10" height="20">`],
     ['comments and tags alternating', '<!-- --><svg'.repeat(20000)],
     ['an open comment then a tag', `<!--${'<svg width="1" height="1">'.repeat(9000)}`],
-  ])('%s: well under 100 ms', (_name, text) => {
+  ])('%s: well under 100 ms of CPU', (_name, text) => {
     svgSizeOf(text); // warm
     expect(time(text)).toBeLessThan(100);
   });

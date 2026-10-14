@@ -1,7 +1,7 @@
 import { appendFile, lstat, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import {
-  creativeFileSchema, versionsFileSchema,
+  creativeFileSchema, isSessionId, versionsFileSchema,
   type Brief, type ConversationEntry, type CreativeFile, type CreativeListItem, type VersionEntry,
   issuesText,
 } from '@motion-studio/shared';
@@ -104,7 +104,7 @@ export class CreativeStore {
     }
   }
 
-  update(slug: string, patch: Partial<Pick<CreativeFile, 'title' | 'brief' | 'status' | 'error' | 'resumeFrom' | 'linkedCodebases' | 'exportPicks' | 'freedInstances'>>): Promise<CreativeFile> {
+  update(slug: string, patch: Partial<Pick<CreativeFile, 'title' | 'brief' | 'status' | 'error' | 'resumeFrom' | 'linkedCodebases' | 'exportPicks' | 'freedInstances' | 'queued' | 'stoppedSession'>>): Promise<CreativeFile> {
     return this.lock.run(`c:${slug}`, async () => {
       const current = await this.get(slug);
       const nowIso = new Date().toISOString();
@@ -234,11 +234,33 @@ export class CreativeStore {
     return out;
   }
 
-  async recoverInterrupted(isActive: (slug: string) => boolean = () => false): Promise<string[]> {
+  /** The session the agent reported in the turn after the last version (the latest one), with its job; null: none. */
+  async lastTurnSession(slug: string): Promise<{ sessionId: string; at: string; jobId: string } | null> {
+    const entries = await this.readConversation(slug);
+    // Only the cut turn's job (the last agent job after the last version): never an earlier, failed turn's session.
+    let cut: string | null = null;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i]!;
+      if (e.type === 'version') return null;
+      if (e.type !== 'agent' || typeof e.jobId !== 'string' || !e.jobId) continue;
+      cut ??= e.jobId;
+      if (e.jobId !== cut) return null;
+      const sid = e.event?.kind === 'session' || e.event?.kind === 'result' ? e.event.sessionId : undefined;
+      if (isSessionId(sid)) return { sessionId: sid, at: new Date().toISOString(), jobId: e.jobId };
+    }
+    return null;
+  }
+
+  /** `remember`: where the cut turn's session goes (the core's side state, creative-side-state.ts); absent: not remembered. */
+  async recoverInterrupted(isActive: (slug: string) => boolean = () => false, remember?: (slug: string, s: NonNullable<CreativeFile['stoppedSession']>) => Promise<unknown>): Promise<string[]> {
     const recovered: string[] = [];
     for (const item of await this.list()) {
       if (!item.ok || item.status !== 'working' || isActive(item.slug)) continue;
       try {
+        // Phase 13 (spec §5): the session of the turn the restart cut is remembered like a stopped one, so the next turn
+        // resumes it as a fork. Only a session this turn's agent reported (after the last version) counts.
+        const stopped = remember ? await this.lastTurnSession(item.slug).catch(() => null) : null;
+        if (stopped) await remember!(item.slug, stopped);
         await this.update(item.slug, { status: 'interrupted', error: t().jobs.interruptedError });
         await this.appendConversation(item.slug, {
           type: 'system', at: new Date().toISOString(), level: 'error',

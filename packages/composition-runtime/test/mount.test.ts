@@ -434,6 +434,39 @@ describe('render mode video frames (fake VideoFrame)', () => {
     expect(errors.some((e) => e.code === 'videoFrameMismatch')).toBe(false);
   }, 20_000);
 
+  // Final wave P5: a paused preview shows the sought frame from a canvas (Chrome may keep compositing the load frame of a
+  // `<video>` shown for the first time), plays with the `<video>`, and never reports a frame error.
+  const shown = (root: HTMLElement) => ({
+    video: root.querySelector<HTMLVideoElement>('video')!.style.display,
+    canvas: root.querySelector<HTMLCanvasElement>('[data-clip-id="vid"] canvas')!.style.display,
+  });
+
+  it('preview: after a paused seek the checked frame is shown from the canvas; playback shows the video; pause shows the canvas again', async () => {
+    const { player, errors } = run(videoComp({ sourceTrusted: true, sourceVideoEnd: 6 }), 'preview', 10_000);
+    const root = document.getElementById('ms-root')!;
+    expect(shown(root)).toEqual({ video: 'block', canvas: 'none' });
+    onSeek = () => { held = { timestamp: 1_500_000, duration: 33_333 }; };
+    await player.seek(1.5);
+    expect(shown(root)).toEqual({ video: 'none', canvas: 'block' });
+    player.play({ loop: false });
+    expect(shown(root)).toEqual({ video: 'block', canvas: 'none' });
+    player.pause();
+    await new Promise((r) => setTimeout(r, 50));
+    await player.seek(1.5);
+    expect(shown(root)).toEqual({ video: 'none', canvas: 'block' });
+    expect(errors).toEqual([]);
+    player.destroy();
+  });
+
+  it('preview: a frame that cannot be checked in time leaves the video shown, with no error and no failed seek', async () => {
+    const { player, errors } = run(videoComp({ sourceTrusted: true, sourceVideoEnd: 6 }), 'preview', 300);
+    const root = document.getElementById('ms-root')!;
+    await expect(player.seek(1)).resolves.toBeUndefined(); // the decoder never moves: the stale frame is never drawn
+    expect(shown(root)).toEqual({ video: 'block', canvas: 'none' });
+    expect(errors).toEqual([]);
+    player.destroy();
+  });
+
   it('untrusted source: a load frame far before the target is held to the deadline, then drawn with a warning', async () => {
     const { player, errors } = run(videoComp({}));
     await player.seek(2);

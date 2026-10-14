@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
-import { LineSplitter, parseClaudeLine } from '../src/agent/claude-stream-parser.ts';
+import { ClaudeStreamParser, LineSplitter, parseClaudeLine } from '../src/agent/claude-stream-parser.ts';
 
 describe('LineSplitter', () => {
   it('rejoins lines split across chunks and drops blanks', () => {
@@ -58,5 +58,21 @@ describe('parseClaudeLine', () => {
   it('emits parse_error for JSON lines that are not objects', () => {
     expect(parseClaudeLine('123')).toEqual([{ kind: 'parse_error', line: '123' }]);
     expect(parseClaudeLine('[1]')).toEqual([{ kind: 'parse_error', line: '[1]' }]);
+  });
+});
+
+describe('control_response (Phase 13, shape unverified live)', () => {
+  it('reads the request id and outcome, never as an event', () => {
+    const seen: unknown[] = [];
+    const p = new ClaudeStreamParser({ onControlResponse: (r) => seen.push(r) });
+    expect(p.parse(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: 'r1', response: { still_queued: [] } } }))).toEqual([]);
+    p.parse(JSON.stringify({ type: 'control_response', response: { subtype: 'error', request_id: 'r2', error: 'nope' } }));
+    p.parse(JSON.stringify({ type: 'control_response', request_id: 'r3', response: { subtype: 'success' } }));
+    p.parse(JSON.stringify({ type: 'control_response', response: { subtype: 'success' } }));
+    expect(seen).toEqual([{ requestId: 'r1', ok: true }, { requestId: 'r2', ok: false, error: 'nope' }, { requestId: 'r3', ok: true }]);
+  });
+  it('a throwing listener does not break parsing', () => {
+    const p = new ClaudeStreamParser({ onControlResponse: () => { throw new Error('x'); } });
+    expect(p.parse(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: 'r' } }))).toEqual([]);
   });
 });
