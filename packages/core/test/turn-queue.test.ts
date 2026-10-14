@@ -489,3 +489,24 @@ describe('a settings hold that cannot be kept is loud and refuses unsandboxed ru
     }
   });
 });
+
+describe('a creative.json unreadable at startup (fix round 2)', () => {
+  it('is recorded as "migrate on first successful open", and migrated then', async () => {
+    s = await liveApp();
+    const slug = (await s.app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'Rotta', brief, generate: false } })).json().slug as string;
+    const f = join(s.projectDir, 'creatives', slug, 'creative.json');
+    const good = JSON.parse(await readFile(f, 'utf8'));
+    await s.app.close();
+    await rm(join(s.base, 'config', 'creative-state'), { recursive: true, force: true }); // a pre-upgrade workspace
+    await writeFile(f, '{oops');
+    s = await liveApp({ base: s.base, runner: s.runner, slug: s.slug });
+    const record = await s.side.fileFor(s.projectDir, slug);
+    expect(JSON.parse(await readFile(record!, 'utf8'))).toEqual({ schemaVersion: 1, pendingMigration: true });
+    // Repaired (it held the user's pre-upgrade queue): its first successful open migrates it.
+    await writeFile(f, JSON.stringify({ ...good, queued: [{ clientId: cid(), text: 'PRIMA-DEL-GUASTO', pins: [], at: '2026-10-01T00:00:00.000Z' }] }));
+    const c = (await s.app.inject(`/api/projects/acme/creatives/${slug}`)).json().creative;
+    expect(c.queued.map((q: { text: string }) => q.text)).toEqual(['PRIMA-DEL-GUASTO']);
+    expect(JSON.parse(await readFile(record!, 'utf8')).pendingMigration).toBeUndefined();
+    expect(JSON.parse(await readFile(f, 'utf8')).queued).toBeUndefined();
+  });
+});

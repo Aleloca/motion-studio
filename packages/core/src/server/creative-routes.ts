@@ -183,7 +183,11 @@ export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: st
     // Fix round 1 (M2): every creative gets its side record now, before any agent can run, so `queued`/`stoppedSession`
     // written into a creative.json later (by anyone) are never taken as the user's, even in a creative nobody opened yet.
     if (side) {
-      for (const c of await new CreativeStore(dir).list().catch(() => [])) await side.read(dir, c.slug).catch(() => {});
+      for (const c of await new CreativeStore(dir).list().catch(() => [])) {
+        // A creative.json that cannot be read now is migrated on its first successful open (fix round 2).
+        if (c.ok) await side.read(dir, c.slug).catch(() => {});
+        else await side.markPendingMigration(dir, c.slug).catch(() => {});
+      }
     }
     const remember = side ? (slug: string, s: StoppedSession) => side.update(dir, slug, () => ({ stoppedSession: s })) : undefined;
     await new CreativeStore(dir).recoverInterrupted((slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug)), remember).catch((err: Error) => {

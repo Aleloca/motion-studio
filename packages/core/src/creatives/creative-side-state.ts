@@ -24,6 +24,11 @@ const recordSchema = z.object({
   schemaVersion: z.literal(1),
   queued: z.array(queuedRequestSchema).optional(),
   stoppedSession: stoppedSchema.optional(),
+  /**
+   * Fix round 2: the creative's creative.json could not be read when the record was made (a corrupt file at startup). Its
+   * legacy fields are migrated on the first successful open, then the flag is dropped.
+   */
+  pendingMigration: z.literal(true).optional(),
 });
 type SideRecord = z.infer<typeof recordSchema>;
 
@@ -96,7 +101,7 @@ export class CreativeSideStateStore {
     const store = new CreativeStore(projectDir);
     const legacy = await store.get(slug);
     let rec = existing;
-    if (!rec) {
+    if (!rec || rec.pendingMigration) {
       rec = { schemaVersion: 1 };
       const queued = (legacy.queued ?? []).map(clean);
       if (queued.length > 0) rec.queued = queued;
@@ -108,6 +113,18 @@ export class CreativeSideStateStore {
       await store.update(slug, { queued: undefined, stoppedSession: undefined });
     }
     return rec;
+  }
+
+  /**
+   * Fix round 2: a creative whose creative.json is unreadable at startup gets a record saying "migrate on the first
+   * successful open" (its legacy fields, if it is repaired, are the user's pre-upgrade ones and are migrated then).
+   */
+  async markPendingMigration(projectDir: string, slug: string): Promise<void> {
+    const key = await this.key(projectDir, slug);
+    await this.lock.run(key, async () => {
+      if (await this.load(key)) return;
+      await this.save(key, { schemaVersion: 1, pendingMigration: true });
+    });
   }
 
   /** The creative's queue and remembered session (both absent when none). */
