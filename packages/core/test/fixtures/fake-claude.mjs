@@ -177,6 +177,8 @@ rl.once('line', async (line) => {
       }
     }
     if (process.env.FAKE_CLAUDE_LOCALIZE_WRITE) { try { writeFileSync(process.env.FAKE_CLAUDE_LOCALIZE_WRITE, 'agent'); } catch { /* refused */ } }
+    // FAKE_CLAUDE_LOCALIZE_WAIT_FILE=<path>: the run holds until that file exists (a test changes the project meanwhile).
+    if (process.env.FAKE_CLAUDE_LOCALIZE_WAIT_FILE) { while (!existsSync(process.env.FAKE_CLAUDE_LOCALIZE_WAIT_FILE)) await sleep(20); }
   }
   // An entry the agent makes at the top of its creative folder (final wave B6: the tripwire's documented trigger).
   if (block && process.env.FAKE_CLAUDE_STRAY_ROOT) mkdirSync(join(dirname(block.workDir.replace(/\/+$/, '')), process.env.FAKE_CLAUDE_STRAY_ROOT), { recursive: true });

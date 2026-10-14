@@ -9,6 +9,7 @@ import {
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { CREATIVE_CORE_FILES, detachLinksUnder } from '../agent/protected-links.ts';
 import { BrandStore } from '../brand/brand-store.ts';
+import { LibraryStore } from '../library/library-store.ts';
 import type { VoiceBatchContext, VoiceBatchItem, VoiceBatchResult, VoiceUnavailable } from '../bridge/provider-tools.ts';
 import { earlierOutputDirs, snapshotChanges, snapshotOutputs, withoutCoreWrites } from '../creatives/carry-over.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
@@ -131,10 +132,48 @@ const UNWATCHED = new Set(['.git', '.studio', '.cache', 'node_modules']);
 /** At most this many entries are fingerprinted; a larger project is compared on what fits (deepest entries last). */
 const MAX_WATCHED = 50_000;
 
+/** The library's index files (`LibraryStore`): rewritten by every library change. */
+const LIBRARY_INDEX = 'assets/assets.json';
+const REFERENCES_INDEX = 'references/references.json';
+/** The brand store's own files (`BrandStore`), besides its analysis proposals. */
+const BRAND_FILES = new Set(['brand', 'brand/brand-kit.json', 'brand/guidelines.md', 'brand/sources.json']);
+/** How deep the project is walked; a folder at this depth is fingerprinted with its mtime (its entries are not compared). */
+const MAX_DEPTH = 12;
+
 /**
- * Path (project-relative) → type, size, mtime, inode of the project's entries, without `UNWATCHED`, the creative's `outputs/`
- * (compared on its own, core writes left out) and its records (`CREATIVE_CORE_FILES`, written by the core while the agent runs).
+ * Path (project-relative) → fingerprint of the project's entries, without `UNWATCHED`, the creative's `outputs/` (compared on
+ * its own, core writes left out) and its records (`CREATIVE_CORE_FILES`, written by the core while the agent runs):
+ * - a file or link: type, size, mtime, inode (each one compared on its own);
+ * - a folder that is walked: type and inode only. Its mtime moves whenever an entry is created, renamed or removed in it,
+ *   which the core's own atomic writes do (versions.json, the conversation: temp file, then rename) although those entries
+ *   are left out; its entries are compared one by one instead (final review I3, live F1: a warning on every turn);
+ * - a folder at `MAX_DEPTH`, whose entries are not walked: with its mtime, the only trace of a change below it.
  */
+function entryStamp(info: { isDirectory(): boolean; isSymbolicLink(): boolean; size: number; mtimeMs: number; ino: number }, walked: boolean): string {
+  return walked ? `d:${info.ino}` : `${info.isDirectory() ? 'd' : info.isSymbolicLink() ? 'l' : 'f'}:${info.size}:${info.mtimeMs}:${info.ino}`;
+}
+
+/**
+ * The core's own writes in the project during a localize turn (fallback fonts, voices, the library entries they get), by
+ * project-relative path → the fingerprint the core left (`entryStamp`), with their folders: the stray-write check leaves an
+ * entry out only while it is still exactly what the core wrote (final review I3).
+ */
+class OwnWrites {
+  private readonly stamps = new Map<string, string>();
+  constructor(private readonly projectDir: string) {}
+  async note(rels: Iterable<string>): Promise<void> {
+    for (const rel of rels) {
+      const parts = rel.split('/');
+      for (let i = parts.length; i >= 1; i--) {
+        const sub = parts.slice(0, i).join('/');
+        const info = await lstat(join(this.projectDir, ...parts.slice(0, i))).catch(() => null);
+        if (info) this.stamps.set(sub, entryStamp(info, info.isDirectory() && i - 1 < MAX_DEPTH));
+      }
+    }
+  }
+  has(rel: string, stamp: string | undefined): boolean { return stamp !== undefined && this.stamps.get(rel) === stamp; }
+}
+
 async function snapshotProject(projectDir: string, creativeRel: string): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   const skip = new Set([`${creativeRel}/outputs`, ...CREATIVE_CORE_FILES.map((f) => `${creativeRel}/${f}`)]);
@@ -146,8 +185,9 @@ async function snapshotProject(projectDir: string, creativeRel: string): Promise
       if ((!rel && UNWATCHED.has(name)) || skip.has(child)) continue;
       const info = await lstat(join(projectDir, ...child.split('/'))).catch(() => null);
       if (!info) continue;
-      out.set(child, `${info.isDirectory() ? 'd' : info.isSymbolicLink() ? 'l' : 'f'}:${info.size}:${info.mtimeMs}:${info.ino}`);
-      if (info.isDirectory() && depth < 12) await walk(child, depth + 1);
+      const walked = info.isDirectory() && depth < MAX_DEPTH;
+      out.set(child, entryStamp(info, walked));
+      if (walked) await walk(child, depth + 1);
     }
   };
   await walk('', 0);
@@ -270,9 +310,15 @@ export class LocalizeService {
       for (const line of noScriptLines) await say('warning', line);
       if (noScriptLines.length) this.deps.queue.patch(jobId, { notes: noScriptLines });
 
+      const own = new OwnWrites(ref.projectDir);
       const fallbackFonts = new Map<LocaleTag, FallbackResult>();
       const fontOf = async (locale: LocaleTag) => {
-        if (!fallbackFonts.has(locale)) fallbackFonts.set(locale, await resolveFallbackFont({ projectDir: ref.projectDir, http: this.deps.fonts.http, media: this.deps.media, ...(this.deps.fonts.io ? { io: this.deps.fonts.io } : {}) }, locale, signal));
+        if (!fallbackFonts.has(locale)) {
+          const font = await resolveFallbackFont({ projectDir: ref.projectDir, http: this.deps.fonts.http, media: this.deps.media, ...(this.deps.fonts.io ? { io: this.deps.fonts.io } : {}) }, locale, signal);
+          fallbackFonts.set(locale, font);
+          // A font fetched while the agent runs (a language it submits that was not asked) is the core's write, not a stray one.
+          if (font && 'files' in font) await own.note([...font.files, LIBRARY_INDEX]);
+        }
         return fallbackFonts.get(locale)!;
       };
 
@@ -397,7 +443,7 @@ export class LocalizeService {
             locale: ui,
           });
           const sandboxed = await this.deps.launcher.sandboxed();
-          const watch = await this.watchProject(ref, jobId);
+          const watch = await this.watchProject(ref, jobId, own);
           const run = await this.deps.launcher.start({
             kind: 'localize', jobId, projectSlug: ref.projectSlug, projectDir: ref.projectDir, creativeSlug: slug,
             // The version translated is not "earlier" for this turn: it and every other version folder are read-only for the agent.
@@ -432,7 +478,7 @@ export class LocalizeService {
           const textOpen = [...problems.values()].some((x) => x.fixable.length > 0);
           // Voices once the texts are final: nothing left to fix in them, or no attempt left.
           if (!textOpen || attempt === this.maxAttempts) {
-            await this.voicePhase(ref, store, creativeDir, n, pairs, presets, ui, signal, jobId, services, say);
+            await this.voicePhase(ref, store, creativeDir, n, pairs, presets, ui, signal, jobId, services, say, own);
             problems = await this.assess(ref, creativeDir, n, pairs, ui, signal);
           }
           const fixable = [...problems.values()].reduce((s, x) => s + x.fixable.length, 0);
@@ -484,7 +530,7 @@ export class LocalizeService {
    * the areas a user action changed during the run (`activity`: a library upload, a brand edit, another creative's edit) are
    * left out. Attribution stays a best effort: the warning says files changed during the turn, never who wrote them.
    */
-  private async watchProject(ref: CreativeRef, jobId: string): Promise<() => Promise<string[]>> {
+  private async watchProject(ref: CreativeRef, jobId: string, own: OwnWrites): Promise<() => Promise<string[]>> {
     const creativeRel = `creatives/${ref.creativeSlug}`;
     const creativeDir = join(ref.projectDir, 'creatives', ref.creativeSlug);
     const ownRender = `:${ref.projectSlug}:${ref.creativeSlug}:`;
@@ -495,20 +541,34 @@ export class LocalizeService {
     const busyBefore = othersBusy();
     const since = Date.now();
     const outputsOf = async () => snapshotOutputs(creativeDir, await earlierOutputDirs(creativeDir, -1));
-    const [projBefore, outBefore] = [await snapshotProject(ref.projectDir, creativeRel), await outputsOf()];
+    const library = new LibraryStore(ref.projectDir, this.deps.media);
+    // The library's files (registered in its index) before and after the run: what a library change may have touched.
+    const registered = async () => {
+      const [a, r] = await Promise.all([library.listAssets().catch(() => []), library.listReferences().catch(() => [])]);
+      return [...a.map((x) => `assets/${x.file}`), ...r.map((x) => `references/${x.file}`)];
+    };
+    const [projBefore, outBefore, libBefore] = [await snapshotProject(ref.projectDir, creativeRel), await outputsOf(), await registered()];
     return async () => {
       const [projAfter, outAfter] = [await snapshotProject(ref.projectDir, creativeRel), await outputsOf()];
       const busy = busyBefore || othersBusy();
       const touched = this.deps.activity?.since(ref.projectSlug, since) ?? new Set<string>();
+      // A library or brand change during the run explains only the entries that area writes (Task 4 minor): the library's
+      // index files and the files it registers (and their folders); the brand store's own files. Any other entry of
+      // `assets/`, `references/` or `brand/` is still compared.
+      const libraryFiles = touched.has('library') ? new Set([...libBefore, ...(await registered())]) : new Set<string>();
+      const libraryEntry = (p: string) => p === LIBRARY_INDEX || p === REFERENCES_INDEX || libraryFiles.has(p)
+        || [...libraryFiles].some((f) => f.startsWith(`${p}/`));
+      const brandEntry = (p: string) => BRAND_FILES.has(p) || p === 'brand/proposals' || p.startsWith('brand/proposals/');
       const someoneElse = (p: string) => {
         const top = p.split('/')[0]!;
-        if (touched.has('library') && top === 'assets') return true;
-        if (touched.has('brand') && top === 'brand') return true;
+        if (touched.has('library') && (top === 'assets' || top === 'references') && libraryEntry(p)) return true;
+        if (touched.has('brand') && top === 'brand' && brandEntry(p)) return true;
         if (touched.has('project') && !p.includes('/')) return true;
         const other = top === 'creatives' ? p.split('/')[1] : undefined;
         return other !== undefined && other !== ref.creativeSlug && touched.has(`creative:${other}`);
       };
-      const proj = snapshotChanges(projBefore, projAfter).filter((p) => (!busy || p === creativeRel || p.startsWith(`${creativeRel}/`)) && !someoneElse(p));
+      const proj = snapshotChanges(projBefore, projAfter).filter((p) => (!busy || p === creativeRel || p.startsWith(`${creativeRel}/`)) && !someoneElse(p)
+        && !own.has(p, projAfter.get(p)));
       const outs = withoutCoreWrites(creativeDir, snapshotChanges(outBefore, outAfter), outAfter).map((p) => `${creativeRel}/${p}`);
       return [...proj, ...outs];
     };
@@ -654,7 +714,7 @@ export class LocalizeService {
    * voice is asked again in this turn.
    */
   private async voicePhase(ref: CreativeRef, store: CreativeStore, creativeDir: string, n: number, pairs: Map<string, Pair>, presets: FormatPreset[], ui: Locale,
-    signal: AbortSignal, jobId: string, services: VoiceBatchContext['services'], say: (level: 'info' | 'warning', text: string) => Promise<void>): Promise<void> {
+    signal: AbortSignal, jobId: string, services: VoiceBatchContext['services'], say: (level: 'info' | 'warning', text: string) => Promise<void>, own: OwnWrites): Promise<void> {
     const va = messages(ui).variants;
     const waiting = [...pairs.values()].filter((p) => p.voices && p.pending.size > 0);
     if (waiting.length === 0) return;
@@ -692,6 +752,7 @@ export class LocalizeService {
         made.push({ clipId, src: r.file, script, sha256: r.sha256 });
       }
       if (made.length === 0) continue;
+      await own.note([...made.map((x) => x.src), LIBRARY_INDEX]);
       await this.deps.turns.runLocked(ref, async () => {
         const v = (await store.readVersions(ref.creativeSlug)).find((x) => x.n === n);
         const ic = v ? await instanceComposition(creativeDir, v, p.group.rep, presets) : null;

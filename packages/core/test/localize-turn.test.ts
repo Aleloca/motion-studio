@@ -18,6 +18,7 @@ import { currentLocale } from '../src/i18n.ts';
 import { NoMediaTools, type MediaTools } from '../src/media/media-tools.ts';
 import { MemoryVault } from '../src/secrets/vault.ts';
 import { H, startInstanceEnv, type InstanceEnv } from './helpers/instance-server.ts';
+import { multipart } from './helpers/multipart.ts';
 
 let env: InstanceEnv;
 let sent: Array<{ url: string; input: string }>;
@@ -221,6 +222,83 @@ describe('localize: tools and sandbox', { timeout: 120_000 }, () => {
     await finished(await start(slug, 1, { locales: ['de'] }));
     const conv = await env.store().readConversation(slug);
     expect(conv.some((e) => e.type === 'system' && e.level === 'warning' && e.text.includes('outputs/v1/locales/stray.json'))).toBe(true);
+  });
+});
+
+describe('localize: the stray-write check (final review I3, live F1)', { timeout: 120_000 }, () => {
+  const strayWarnings = async (slug: string) => (await env.store().readConversation(slug))
+    .filter((e) => e.type === 'system' && e.level === 'warning' && e.text.startsWith(messages(currentLocale()).jobs.localizeVersionChanged({ list: '' }).split('(')[0]!));
+
+  it('a clean turn, whose core writes the rows and overlays during the run, reports nothing', async () => {
+    await boot();
+    const slug = await create();
+    process.env.FAKE_CLAUDE_LOCALIZE_CALLS = JSON.stringify([submit('de', 'test-wide', { texts: { title: 'Hallo' } }), submit('fr', 'test-wide', { texts: { title: 'Bonjour' } })]);
+    const job = await finished(await start(slug, 1, { locales: ['de', 'fr'] }));
+    expect(calls().filter((c) => c.tool === 'submit_localization').every((c) => c.status === 200)).toBe(true);
+    expect(await rowOf(slug, 1, 'de', 'test-wide')).toBeTruthy();
+    expect(await strayWarnings(slug)).toEqual([]);
+    expect(job.notes ?? []).toEqual([]);
+  });
+
+  it('a file planted in the creative\'s own folder is reported', async () => {
+    await boot();
+    const slug = await create();
+    process.env.FAKE_CLAUDE_LOCALIZE_CALLS = JSON.stringify([submit('de', 'test-wide', { texts: { title: 'Hallo' } })]);
+    process.env.FAKE_CLAUDE_LOCALIZE_WRITE = join(env.store().dir(slug), 'planted.txt');
+    await finished(await start(slug, 1, { locales: ['de'] }));
+    expect(calls().filter((c) => c.tool === 'submit_localization')).toHaveLength(1);
+    const w = await strayWarnings(slug);
+    expect(w).toHaveLength(1);
+    expect(w[0]!.type === 'system' && w[0]!.text).toContain(`creatives/${slug}/planted.txt`);
+  });
+
+  it('a library upload during the turn is not reported, but it does not hide a file planted in assets/ either', async () => {
+    await boot();
+    const slug = await create();
+    const gate = join(env.base, 'go');
+    const planted = join(env.projectDir(), 'assets', 'stray.txt');
+    // One attempt only (everything translated): the upload and the planted file fall in the same run.
+    process.env.FAKE_CLAUDE_LOCALIZE_CALLS = JSON.stringify([submit('de', 'test-wide', { texts: { title: 'Hallo' } })]);
+    process.env.FAKE_CLAUDE_LOCALIZE_WRITE = planted;
+    process.env.FAKE_CLAUDE_LOCALIZE_WAIT_FILE = gate;
+    const id = await start(slug, 1, { locales: ['de'] });
+    for (let i = 0; i < 500 && !existsSync(planted); i++) await new Promise((r) => setTimeout(r, 20));
+    const m = multipart([{ name: 'Uploaded.png', content: 'png' }]);
+    const up = await env.app.inject({ method: 'POST', url: '/api/projects/acme/assets', payload: m.payload, headers: { ...H, ...m.headers } });
+    expect([200, 201]).toContain(up.statusCode);
+    writeFileSync(gate, '');
+    await finished(id);
+    expect(calls().filter((c) => c.tool === 'submit_localization')).toHaveLength(1);
+    const w = await strayWarnings(slug);
+    expect(w).toHaveLength(1);
+    const text = w[0]!.type === 'system' ? w[0]!.text : '';
+    expect(text).toContain('assets/stray.txt');
+    expect(text).not.toContain('Uploaded');
+    expect(text).not.toContain('assets.json');
+  });
+});
+
+describe('localize: a brand edit during the turn', { timeout: 120_000 }, () => {
+  it('is not reported, but it does not hide a file planted in brand/ either', async () => {
+    await boot();
+    const slug = await create();
+    const gate = join(env.base, 'go');
+    mkdirSync(join(env.projectDir(), 'brand'), { recursive: true });
+    const planted = join(env.projectDir(), 'brand', 'stray.txt');
+    process.env.FAKE_CLAUDE_LOCALIZE_CALLS = JSON.stringify([submit('de', 'test-wide', { texts: { title: 'Hallo' } })]);
+    process.env.FAKE_CLAUDE_LOCALIZE_WRITE = planted;
+    process.env.FAKE_CLAUDE_LOCALIZE_WAIT_FILE = gate;
+    const id = await start(slug, 1, { locales: ['de'] });
+    for (let i = 0; i < 500 && !existsSync(planted); i++) await new Promise((r) => setTimeout(r, 20));
+    const edit = await env.app.inject({ method: 'PUT', url: '/api/projects/acme/brand/guidelines', headers: H, payload: { text: 'Friendly and short.' } });
+    expect(edit.statusCode, edit.body).toBe(200);
+    writeFileSync(gate, '');
+    await finished(id);
+    const warnings = (await env.store().readConversation(slug)).filter((e) => e.type === 'system' && e.level === 'warning' && e.text.includes('brand/'));
+    expect(warnings).toHaveLength(1);
+    const text = warnings[0]!.type === 'system' ? warnings[0]!.text : '';
+    expect(text).toContain('brand/stray.txt');
+    expect(text).not.toContain('guidelines.md');
   });
 });
 

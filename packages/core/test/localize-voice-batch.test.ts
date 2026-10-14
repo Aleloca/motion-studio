@@ -253,6 +253,10 @@ describe('translated voices in a localize turn', { timeout: 120_000 }, () => {
     const cant = vt().voiceNoScript({ clip: 'Second voice', format: 'test-wide' });
     expect(job.notes).toContain(cant);
     expect((await env.store().readConversation(slug)).some((e) => e.type === 'system' && e.text === cant)).toBe(true);
+    // The voices the core wrote (and their library entries) are not stray writes (final review I3).
+    const stray = messages(currentLocale()).jobs.localizeVersionChanged({ list: '' }).split('(')[0]!;
+    expect((await env.store().readConversation(slug)).filter((e) => e.type === 'system' && e.text.startsWith(stray))).toEqual([]);
+    expect(job.notes!.filter((x) => x.startsWith(stray))).toEqual([]);
     // The localized render copies the generated voice into its private copy.
     let copied = false;
     env.fake.after = async (o) => {
