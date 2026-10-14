@@ -630,6 +630,46 @@ describe('FormatView · live composition player (Task 8)', () => {
     await frame();
   });
 
+  it('a composition that cannot be read says so (not "no storyboard")', async () => {
+    api.getEditorComposition.mockRejectedValueOnce(new ApiError(500, 'broken'));
+    detail = makeDetail([v2(1)]);
+    render(<Harness format={VIDEO} />);
+    expect(await screen.findByText('Non riesco a leggere le scene di questa versione')).toBeTruthy();
+    expect(screen.queryByText('Nessuno storyboard per questa versione')).toBeNull();
+    expect(screen.queryByRole('list', { name: 'Storyboard' })).toBeNull();
+    await frame();
+  });
+
+  it('another version never shows the previous version’s scenes while its own are read', async () => {
+    const base = api.getEditorComposition.getMockImplementation()!;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    api.getEditorComposition.mockImplementation(async (...a: Parameters<typeof base>) => {
+      const v = await base(...a);
+      if (a[2] === 2) await gate;
+      return { ...v, composition: { ...v.composition, scenes: [{ id: `only${a[2]}`, name: `Scena della v${a[2]}`, start: 0, duration: 8 }] } };
+    });
+    try {
+      // v2 changed this format (another composition hash), so it is a version of it of its own.
+      detail = makeDetail([v2(1), { ...v2(2), compositions: [{ format: VIDEO, dir: `compositions/${VIDEO}`, hash: 'c'.repeat(64) }] }]);
+      setShownVersions('acme/lancio', { [VIDEO]: 1 });
+      render(<Harness format={VIDEO} />);
+      const strip = await screen.findByRole('list', { name: 'Storyboard' });
+      expect(within(strip).getByText('Scena della v1')).toBeTruthy();
+      const bar = document.querySelector('.ms-topbar') as HTMLElement;
+      await userEvent.click(await within(bar).findByRole('button', { name: /Apri le sue versioni$/ }));
+      const pop = await screen.findByRole('dialog', { name: /^Versioni di / });
+      await userEvent.click(within(pop).getByRole('button', { name: /^Guarda la v2 / }));
+      // Right after the switch (no waiting): v2's own scenes are still being read, v1's are gone.
+      expect(screen.queryByText('Scena della v1')).toBeNull();
+      expect(screen.getByText('Carico le scene…')).toBeTruthy();
+      await act(async () => { release(); });
+      expect(await screen.findByText('Scena della v2')).toBeTruthy();
+    } finally {
+      api.getEditorComposition.mockImplementation(base);
+    }
+  }, 60_000);
+
   it('no storyboard: the rows stay, each with a placeholder', async () => {
     api.getStoryboard.mockRejectedValueOnce(new ApiError(404, 'none', 'storyboard-unavailable'));
     detail = makeDetail([v2(1)]);

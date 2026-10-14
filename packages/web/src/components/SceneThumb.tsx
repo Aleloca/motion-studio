@@ -18,10 +18,14 @@ export function sceneRows(c: Pick<Composition, 'scenes' | 'duration'>, label: { 
 }
 
 const EPS = 1e-6;
-/** The index of the row under time `t` (the last one at the very end). */
-export function rowAt(rows: Array<Pick<SceneRow, 'start' | 'duration'>>, t: number): number {
-  const i = rows.findIndex((r) => t >= r.start - EPS && t < r.start + r.duration - EPS);
-  return i >= 0 ? i : rows.length - 1;
+/**
+ * The index of the row the playhead is in: the last row (in time order) that starts at or before `t`, so a gap between
+ * scenes keeps the scene before it and the time before the first scene marks the first row (fix round 1). 0 when empty.
+ */
+export function rowAt(rows: Array<Pick<SceneRow, 'start'>>, t: number): number {
+  let at = 0;
+  rows.forEach((r, i) => { if (r.start <= t + EPS) at = i; });
+  return at;
 }
 
 type Frame = StoryboardView['frames'][number];
@@ -42,7 +46,7 @@ export function SceneThumb({ frame, state, width, height }: { frame: Frame | nul
   const style = { aspectRatio: `${width} / ${height}`, ...(portrait ? { height: 64 } : { width: 64 }) };
   const waiting = state === 'loading' || state === 'busy';
   return (
-    <span className={cx('ms-fv-sb-thumb', !frame && waiting && 'ms-loading', !frame && !waiting && 'ms-none')} style={style} aria-hidden="true" data-thumb={frame ? 'frame' : waiting ? 'loading' : 'none'}>
+    <span className={cx('ms-fv-sb-thumb', !frame && waiting && 'ms-loading')} style={style} aria-hidden="true" data-thumb={frame ? 'frame' : waiting ? 'loading' : 'none'}>
       {frame ? <img src={frame.url} alt="" draggable={false} /> : waiting ? null : <Icon name="image" size={14} />}
     </span>
   );

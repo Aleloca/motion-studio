@@ -6,7 +6,7 @@
 import { compositionProblem, editProblemText, sceneOrderAllowed, type Clip, type Scene } from '@motion-studio/shared';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { useStoryboard } from '../../components/compositionPreview.ts';
-import { frameFor, SceneThumb } from '../../components/SceneThumb.tsx';
+import { frameFor, rowAt, sceneRows, SceneThumb } from '../../components/SceneThumb.tsx';
 import { formatNumber, useLocale, useT } from '../../i18n.tsx';
 import { Icon, cx } from '../../ui/index.ts';
 import { useClock } from '../../ui/clock.ts';
@@ -20,9 +20,9 @@ export function clipsOverlapping(tracks: Array<{ clips: Clip[] }>, scene: Scene)
   return tracks.flatMap((t) => t.clips).filter((c) => c.start < scene.start + scene.duration - EPS && c.start + c.duration > scene.start + EPS);
 }
 
-/** The scene under time `t` (the last one at the very end). */
+/** The scene the playhead is in (`scenes` in time order): the last one starting at or before `t`, else the first. */
 export function sceneAt(scenes: Scene[], t: number): Scene | undefined {
-  return scenes.find((s) => t >= s.start - EPS && t < s.start + s.duration - EPS) ?? scenes.at(-1);
+  return scenes[rowAt(scenes, t)];
 }
 
 export function ScenesColumn() {
@@ -45,7 +45,9 @@ export function ScenesColumn() {
   const { storyboard, state } = useStoryboard({ slug, creative, n: draft.base.n, format: primary, hash: draft.base.hash, enabled: true });
   const waiting = state === 'loading' || state === 'busy';
 
-  const nameOf = (s: Scene) => s.name ?? r.scene({ n: scenes.indexOf(s) + 1 });
+  // The names (a scene's own, else its number) come from the shared rows, as in the format view.
+  const rows = useMemo(() => sceneRows(comp, r), [comp, r]);
+  const nameOf = (s: Scene) => rows.find((row) => row.id === s.id)?.name ?? s.id;
   const [said, setSaid] = useState('');
   const [over, setOver] = useState<number | null>(null);
   const list = useRef<HTMLOListElement>(null);

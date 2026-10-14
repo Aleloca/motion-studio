@@ -2920,6 +2920,8 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
       wholeVideo: 'Whole video',
       /** The Scenes column while the composition's scene list is read (the thumbnails come later). */
       scenesLoading: 'Loading the scenes…',
+      /** The Scenes column when the composition's scene list could not be read. */
+      scenesUnavailable: 'The scenes of this version could not be read',
       framesProgress: (p: { format: string; done: string; total: string }) => `${p.format} · ${p.done} / ${p.total} frames`,
       mediaProgress: (p: { format: string; done: number; total: number }) => `${p.format} · preparing media ${p.done}/${p.total}`,
       finishing: (p: { format: string }) => `${p.format} · finishing`,

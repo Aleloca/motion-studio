@@ -172,14 +172,18 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   // thumbnails fill in later), and the picker of "Comment on clip" lists the clips playing at the playhead (on the pin source
   // only). A version without an editable composition (a legacy one) simply has neither.
   const compOf = livePlayer && version ? version.n : null;
-  const [viewComp, setViewComp] = useState<Composition | 'failed' | null>(null);
+  // Keyed by what it was read for: another version (or format) shows nothing of the previous one, from its first render.
+  const compKey = compOf === null ? null : `${slug}/${creative}/${compOf}/${source.format}`;
+  const [readComp, setReadComp] = useState<{ key: string; comp: Composition | 'failed' } | null>(null);
   useEffect(() => {
-    setViewComp(null);
-    if (compOf === null) return;
+    if (compOf === null || compKey === null) return;
     let alive = true;
-    Promise.resolve().then(() => api.getEditorComposition(slug, creative, compOf, source.format)).then((v) => { if (alive) setViewComp(v.composition); }, () => { if (alive) setViewComp('failed'); });
+    Promise.resolve().then(() => api.getEditorComposition(slug, creative, compOf, source.format)).then(
+      (v) => { if (alive) setReadComp({ key: compKey, comp: v.composition }); },
+      () => { if (alive) setReadComp({ key: compKey, comp: 'failed' }); });
     return () => { alive = false; };
-  }, [slug, creative, compOf, source.format]);
+  }, [slug, creative, compOf, source.format, compKey]);
+  const viewComp = readComp && readComp.key === compKey ? readComp.comp : null;
   const loadedComp = viewComp === 'failed' ? null : viewComp;
   const clipComp = canComment ? loadedComp : null;
 
@@ -775,7 +779,7 @@ function Storyboard({ comp, storyboard, state, clock, onSeek, disabled }: {
   const { time } = useClock(clock);
   const rows = useMemo(() => (comp && comp !== 'failed' ? sceneRows(comp, r) : []), [comp, r]);
   if (comp === null) return <p className="ms-fv-sb-note" role="status">{r.scenesLoading}</p>;
-  if (comp === 'failed') return <p className="ms-fv-sb-note" role="status">{r.storyboardNone}</p>;
+  if (comp === 'failed') return <p className="ms-fv-sb-note" role="status">{r.scenesUnavailable}</p>;
   const current = rowAt(rows, time);
   const waiting = state === 'loading' || state === 'busy';
   return (
