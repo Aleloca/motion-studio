@@ -1154,3 +1154,16 @@ Legenda impatto: 🟢 basso · 🟡 medio · 🔴 alto (sicurezza o prodotto).
     *Costo cambio:* basso.
 664. 🟢 **Un `result` del turno interrotto arrivato prima della conferma finisce come `cancelled`.** Se la CLI manda il `result` del turno interrotto prima della `control_response`, il `result` chiude stdin; la conferma ora segna comunque l'interruzione, così l'esito è `cancelled` e non `failed`. Un redirect in quel caso riceve `closed` e il core ripiega sulla coda, come prima. Ordine non verificato dal vivo.
     *Costo cambio:* nullo.
+
+### Fase 13 · Ondata finale, parte 1, giro di correzioni 1
+
+665. 🟡 **Una modifica di `settings.json` che il core non riesce ad annullare resta bloccata anche dopo un riavvio (I-A).** La copia fidata e il blocco stanno nella cartella di configurazione (`settings-hold/`, come i registri d'integrità). All'avvio e alla protezione successiva il core rimette i permessi di `.studio` e riprova a rimettere il file; finché non ci riesce o finché l'utente non salva le impostazioni, `sandboxMode`, `autoApproveSandboxed`, `confirmPaidProviders`, `agentLiveInput` e `agentInterrupt` vengono dalla copia fidata, gli altri campi dal file. Il Doctor mostra una riga "Impostazioni dell'area di lavoro" finché il blocco resta. Dopo un salvataggio dell'utente la copia fidata è il testo scritto, non una nuova lettura del file (M1). Completa la voce 663.
+    *Costo cambio:* basso.
+666. 🟢 **Ruling Y: di nuovo `--resume <id>` in due argomenti.** Il controllo dell'id in `buildClaudeArgs` resta (un id valido non comincia mai con `-`). Sostituisce la parte "`--resume=<id>`" della voce 654.
+    *Costo cambio:* nullo.
+667. 🟡 **Ruling Z: redirect della console con ripresa fallita.** Se il run che riprende la sessione per un redirect fallisce prima di riportare la sessione, la console fa una sola corsa nuova per turno con la richiesta originale e le parole del redirect (come il C1 delle creatività). Se fallisce anche quella, il job fallisce e il suo errore comincia con "Il tuo messaggio non è arrivato all'agente."; un nuovo evento `user_message_not_delivered` segna le parole non arrivate. Completa la voce 656 per la console.
+    *Costo cambio:* basso.
+668. 🟢 **Ogni creatività ha il suo stato del core prima che un agente parta (M2).** All'avvio il core migra una volta tutte le creatività dell'area di lavoro, e una creatività nuova ha il suo stato dalla creazione: `queued`/`stoppedSession` scritti dopo in un `creative.json` non sono mai presi come dell'utente, anche in una creatività mai aperta. Resta il caso di una cartella di creatività creata da un agente (con la sandbox spenta) prima che il core la veda: tutto il suo contenuto è dell'agente, e nulla parte da solo.
+    *Costo cambio:* nullo.
+669. 🟢 **Se l'avvio del run fallisce, le parole già nel prompt non si perdono (M3).** Per le creatività tornano in coda; per la console il job fallisce dicendo che il messaggio non è arrivato all'agente.
+    *Costo cambio:* nullo.
