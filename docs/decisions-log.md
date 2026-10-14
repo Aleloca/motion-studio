@@ -1180,3 +1180,12 @@ Legenda impatto: 🟢 basso · 🟡 medio · 🔴 alto (sicurezza o prodotto).
     *Costo cambio:* nullo.
 674. 🟡 **Residuo: riselezionare la stessa area di lavoro durante un lavoro senza sandbox.** `PUT /api/workspace` crea un nuovo `WorkspaceStore`, mentre la protezione del lavoro in corso resta sul vecchio. Durante quel lavoro le impostazioni lette sono quelle del file, e un salvataggio fatto sul nuovo verrebbe annullato dal rilascio del vecchio. Esisteva già prima, non è corretto in quest'ondata: va risolto con un solo store per cartella, o con lo stato della protezione in un registro per cartella.
     *Costo cambio:* basso.
+
+### Fase 13 · Ondata finale, parte 1, giro di correzioni 3
+
+675. 🟡 **Blocco inaffidabile senza record: valgono i valori predefiniti (R2-1).** Se il blocco non è affidabile e non c'è un record leggibile, ogni campo tenuto è il più restrittivo tra il valore predefinito e il file, per tutti i lavori, anche quelli con sandbox, finché l'utente non salva le impostazioni una volta. Così non si applicano mai i domini, la conferma dei costi o le altre scelte dell'agente.
+    *Costo cambio:* nullo.
+676. 🟢 **Nessun cambio silenzioso (R2-2).** La riga del Doctor elenca i campi tenuti o resi più restrittivi (per esempio `model` riportato al predefinito della CLI), finché l'utente non salva.
+    *Costo cambio:* nullo.
+677. 🟢 **Il percorso del record si libera in modo sicuro (R2-3).** Al salvataggio dell'utente un collegamento al posto del record viene tolto come collegamento, mai seguito, e una cartella viene spostata di lato, dentro la cartella di configurazione. Il record non viene mai letto attraverso un collegamento. Se non si riesce a liberarlo, il Doctor indica il percorso da togliere a mano.
+    *Costo cambio:* nullo.
