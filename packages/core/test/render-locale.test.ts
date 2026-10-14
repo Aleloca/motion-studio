@@ -227,6 +227,22 @@ describe('render problems of a translation (Rulings I, J)', { timeout: 120_000 }
     expect(row.issues).toEqual([{ code: 'sourceTextOverflow', clipId: 'title', message: v().sourceLayoutOverflow({ clip: 'Title' }) }]);
   });
 
+  it('the source measure of a follower\'s localized render uses the follower\'s own preset, as its render does (Q9)', async () => {
+    // Two presets of the same size (a link needs it) whose safe zones differ (a follower's may only be the larger).
+    const safeZone = { top: 5, bottom: 7, left: 11, right: 13 };
+    const wide = { id: 'test-wide', channel: 'Test', name: 'Wide', width: 320, height: 180, kind: 'video', extensions: ['mp4'], safeZone: { top: 20, bottom: 20, left: 20, right: 20 } };
+    const f = await env.app.inject({ method: 'PUT', url: '/api/formats', headers: H, payload: { presets: [wide, { ...wide, id: 'test-wide-b', name: 'Wide B', safeZone }, { id: 'test-tall', channel: 'Test', name: 'Tall', width: 180, height: 320, kind: 'video', extensions: ['mp4'] }] } });
+    expect(f.statusCode, f.body).toBe(200);
+    const slug = await env.create(['test-wide', 'test-wide-b'], { links: { 'test-wide-b': 'test-wide' }, locales: { primary: 'en', extra: ['de'] } });
+    expect((await put(slug, 1, 'de', 'test-wide-b', { texts: { title: 'Hallo' } })).statusCode).toBe(200);
+    env.fake.frameCalls.length = 0;
+    await done(await render(slug, 1, { formats: ['test-wide-b'], locales: ['de'] }));
+    // Every measure of the source (the original text) carries the follower's safe zone, never the lead's.
+    const sourceMeasures = env.fake.frameCalls.filter((c) => c.composition.tracks.flatMap((t) => t.clips).some((x) => x.type === 'text' && x.props.text === 'Hello'));
+    expect(sourceMeasures.length).toBeGreaterThan(0);
+    for (const c of sourceMeasures) expect(c.format.safeZone).toEqual(safeZone);
+  });
+
   it('after carry, a source that fits while its translation overflows is still flagged at render (fix round 2)', async () => {
     const slug = await env.create(['test-wide'], { links: {}, locales: { primary: 'en', extra: ['de'] } });
     // The browser: only a translated title overflows (the source "Hello" fits).

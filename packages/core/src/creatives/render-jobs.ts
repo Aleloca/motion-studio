@@ -721,8 +721,8 @@ export class RenderJobService {
       // when the translation was judged, or carried) only when the browser cannot measure now. Any other translated clip that
       // overflows is a problem: nothing is exported silently.
       const measureText = this.deps.measureText;
-      const sourceOver = measureText ? await sourceOverflowOf(ic, (c, s) => measureText({ ref: { projectDir: ref.projectDir, creativeDir, creativeSlug: ref.creativeSlug, n },
-        folder: basename(ic.compDir), preset: ic.preset, composition: c, signal: s }), signal).catch(() => null) : null;
+      const sourceOver = measureText ? await sourceOverflowOf({ ...ic, preset }, (c, s) => measureText({ ref: { projectDir: ref.projectDir, creativeDir, creativeSlug: ref.creativeSlug, n },
+        folder: basename(ic.compDir), preset, composition: c, signal: s }), signal).catch(() => null) : null;
       const sourceNoted = new Set((sourceOver ?? (row.issues ?? []).filter((i) => i.code === 'sourceTextOverflow' && i.clipId !== undefined).map((i) => i.clipId!)).filter((id) => translated(id)));
       const measured = (result.textOverflows ?? []).filter((e) => e.clipId !== undefined).map((e) => e.clipId!);
       const overflowIssues: LocalizationIssue[] = [...new Set([...measured, ...sourceNoted])].map((id): LocalizationIssue => (translated(id) && !sourceNoted.has(id)
