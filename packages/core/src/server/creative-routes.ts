@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
+import type { CreativeSideStateStore, StoppedSession } from '../creatives/creative-side-state.ts';
 import { exportResolved, exportVersion, pendingRenders, resolveExportPicks, resolveLocalizedItems, type ExportItem } from '../creatives/export.ts';
 import { assertLocalesInBrief, checkedLocale } from '../localization/validate.ts';
 import { storyboardDir, storyboardSchema, sweepStoryboardTemps, type PreviewService } from '../creatives/previews.ts';
@@ -170,13 +171,17 @@ export interface RecoverOptions {
   stagingInUse?: (dir: string) => boolean;
   /** Commits what finishing an interrupted asset rename changed. */
   git?: Git;
+  /** Phase 13: where a cut turn's session is remembered (the core's side state, out of the agent's reach). */
+  sideState?: CreativeSideStateStore;
 }
 
 export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: string) => boolean = () => false, ro: RecoverOptions = {}): Promise<void> {
   for (const p of await ws.listProjects()) {
     if (!p.ok) continue;
     const dir = ws.projectDir(p.slug);
-    await new CreativeStore(dir).recoverInterrupted((slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug))).catch((err: Error) => {
+    const side = ro.sideState;
+    const remember = side ? (slug: string, s: StoppedSession) => side.update(dir, slug, () => ({ stoppedSession: s })) : undefined;
+    await new CreativeStore(dir).recoverInterrupted((slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug)), remember).catch((err: Error) => {
       console.warn(`Motion Studio: creative recovery failed in project ${p.slug}: ${err.message}`);
     });
     // Render and media temp files left by a render the app was killed during, and the media cache's garbage. This also runs
@@ -282,7 +287,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
       onBackgroundDone: () => ctx.broadcast?.({ type: 'creative', project: ref.projectSlug, creative: ref.creativeSlug }),
     });
     return {
-      slug: ref.creativeSlug, creative, versions,
+      // Phase 13: the queue and remembered session are kept by the core outside the project (final review I1).
+      slug: ref.creativeSlug, creative: await ctx.turns.side.merged(ref.projectDir, ref.creativeSlug, creative), versions,
       jobKey: creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug),
       formats: await formatSummaries(creativeDir, creative, versions, (await catalog().load()).presets),
     };

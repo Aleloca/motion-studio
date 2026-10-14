@@ -137,7 +137,9 @@ describe('Stop with a paid approval open (service level)', () => {
     expect(stateOf(job.id)).toBe('cancelled');
     expect(sent).toEqual([]);
     expect(run.cancelled).toBe(true);
-    expect((await store.get(ref.creativeSlug)).stoppedSession).toMatchObject({ sessionId: run.sessionId, jobId: job.id });
+    expect((await service.side.read(ref.projectDir, ref.creativeSlug)).stoppedSession).toMatchObject({ sessionId: run.sessionId, jobId: job.id });
+    // Never in creative.json (agent-readable, committed): only in the core's side state (final review I1).
+    expect((await store.get(ref.creativeSlug)).stoppedSession).toBeUndefined();
   });
 
   it('Stop still ends the job when the CLI never sends a result for an interrupted turn', async () => {
@@ -307,8 +309,7 @@ describe('remembered session (routes)', () => {
     v1.finish();
     await s.waitIdle();
     // A turn was stopped in a session Claude Code has since lost (e.g. its transcripts were cleared).
-    const store = new CreativeStore(join(s.base, 'ws', 'acme'));
-    await store.update(s.slug, { stoppedSession: { sessionId: 'gone-session', at: new Date().toISOString(), jobId: 'old-job' } });
+    await s.remember('gone-session');
     s.runner.missingSessions.add('gone-session');
     const next = (await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Secondo' } })).json();
     const failed = await s.runner.next(1);
@@ -422,8 +423,7 @@ describe('resume-error detection (Ruling V)', () => {
     const v1 = await s.runner.next(0);
     v1.finish();
     await s.waitIdle();
-    const store = new CreativeStore(join(s.base, 'ws', 'acme'));
-    await store.update(s.slug, { stoppedSession: { sessionId: 'kept-session', at: new Date().toISOString(), jobId: 'old' } });
+    await s.remember('kept-session', 'old');
     return v1;
   };
 

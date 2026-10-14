@@ -63,6 +63,7 @@ import { AnswerCache, checkLiveMessage, liveMessageText, LiveSession, newLiveMes
 import { CONSOLE_REDIRECT_NOTE, defuseTags, pinLine, USER_REQUEST_CLOSE, USER_REQUEST_OPEN } from '../creatives/prompt.ts';
 import { stopJob } from '../jobs/stop.ts';
 import { randomUUID } from 'node:crypto';
+import { CreativeSideStateStore } from '../creatives/creative-side-state.ts';
 import { z } from 'zod';
 import { LIVE_LIMITS, pinSchema, SESSION_ID_RE, type RedirectOutcome } from '@motion-studio/shared';
 
@@ -89,6 +90,8 @@ export interface ServerDeps {
   /** Extra env for the MCP server process (see LauncherDeps.mcpEnv). */
   mcpEnv?: Record<string, string>;
   configDir?: string;
+  /** Phase 13: the creatives' queue and remembered sessions (default: one in `configDir`, in memory without it). Test seam. */
+  sideState?: CreativeSideStateStore;
   /** Network of the Google Fonts catalog, previews and add (tests inject a fake fetch; default: the real one through the safe transport). */
   fontsHttp?: HttpDeps;
   /** Network of the Assets Generate jobs (tests inject a fake fetch; default: the real one). */
@@ -227,8 +230,6 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const hub = new EventHub();
   const approvals = deps.approvals ?? new ApprovalBroker({ broadcast: (m) => hub.broadcast(m) });
   // Render jobs have their own lane of one slot (Task 5 M3): a render never blocks an agent turn, nor waits for one.
-  // Phase 13, Ruling T: this start of the core (queued requests made under another one wait for "Run next").
-  const bootId = randomUUID();
   /** Phase 13: a creative's translation turn ended: the creative's queue may start (set once the turn service exists). */
   let afterOtherJob: ((key: string, state: string) => void) | null = null;
   const queue = new JobQueue({
@@ -246,7 +247,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     renderActive: (project, creative) => queue.list().some((j) => (j.state === 'queued' || j.state === 'running') && j.key.startsWith(`render:${root}:${project}:${creative}:`)),
     mediaInUse: normalizer.inUse,
     stagingInUse: (dir) => previewsRef?.stagingInUse(dir) ?? false,
-    git: deps.git,
+    git: deps.git, sideState,
     ...(deps.mediaCacheMaxBytes !== undefined ? { mediaCacheMaxBytes: deps.mediaCacheMaxBytes } : {}),
   });
   let workspace: WorkspaceStore | null = null;
@@ -266,6 +267,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // into the user's real config folder.
   const configDir = deps.configDir ?? defaultConfigDir();
   const integrity = new IntegrityStore(deps.configDir ?? null).activate();
+  // Phase 13 (final review I1): each creative's queue and remembered session, in the config folder the agent is denied
+  // (in memory without an explicit one, like the integrity records). Made before the workspace recovery, which uses it.
+  const sideState = deps.sideState ?? new CreativeSideStateStore(deps.configDir ?? null);
   const configured = appConfig.workspacePath;
   if (configured) {
     try {
@@ -328,8 +332,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const keyChecks = deps.keyChecks ?? new KeyCheckCache();
   const turns = new CreativeTurnService({
     queue, launcher, git: deps.git, media, vault, keyChecks, previews,
-    // Phase 13: a redirect cancels the job's open approvals first; queued requests carry this start's id (Ruling T).
-    cancelApprovals: (jobId) => approvals.cancelJob(jobId), bootId,
+    // Phase 13: a redirect cancels the job's open approvals first; the queue and remembered sessions live in the config
+    // folder, out of the agent's reach (final review I1).
+    cancelApprovals: (jobId) => approvals.cancelJob(jobId), sideState,
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     model: async () => (await requireWorkspace().readSettings()).model,
     broadcast: (msg) => hub.broadcast(msg),

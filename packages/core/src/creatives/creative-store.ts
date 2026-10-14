@@ -251,15 +251,17 @@ export class CreativeStore {
     return null;
   }
 
-  async recoverInterrupted(isActive: (slug: string) => boolean = () => false): Promise<string[]> {
+  /** `remember`: where the cut turn's session goes (the core's side state, creative-side-state.ts); absent: not remembered. */
+  async recoverInterrupted(isActive: (slug: string) => boolean = () => false, remember?: (slug: string, s: NonNullable<CreativeFile['stoppedSession']>) => Promise<unknown>): Promise<string[]> {
     const recovered: string[] = [];
     for (const item of await this.list()) {
       if (!item.ok || item.status !== 'working' || isActive(item.slug)) continue;
       try {
         // Phase 13 (spec §5): the session of the turn the restart cut is remembered like a stopped one, so the next turn
         // resumes it as a fork. Only a session this turn's agent reported (after the last version) counts.
-        const stopped = await this.lastTurnSession(item.slug).catch(() => null);
-        await this.update(item.slug, { status: 'interrupted', error: t().jobs.interruptedError, ...(stopped ? { stoppedSession: stopped } : {}) });
+        const stopped = remember ? await this.lastTurnSession(item.slug).catch(() => null) : null;
+        if (stopped) await remember!(item.slug, stopped);
+        await this.update(item.slug, { status: 'interrupted', error: t().jobs.interruptedError });
         await this.appendConversation(item.slug, {
           type: 'system', at: new Date().toISOString(), level: 'error',
           text: t().jobs.interruptedNote,

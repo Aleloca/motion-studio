@@ -6,11 +6,18 @@ import { expect, vi } from 'vitest';
 import { AppConfigStore } from '../../src/app-config.ts';
 import { Git } from '../../src/git.ts';
 import { buildServer } from '../../src/server/app.ts';
+import { CreativeSideStateStore } from '../../src/creatives/creative-side-state.ts';
 import { ControlledRunner } from './controlled-runner.ts';
 
 /** Phase 13: a server on a temp workspace with the controlled runner, a project `acme` and a draft creative. */
 export interface LiveApp {
   app: FastifyInstance; runner: ControlledRunner; base: string; slug: string;
+  /** The server's store of queues and remembered sessions (in the config folder, out of the agent's reach). */
+  side: CreativeSideStateStore;
+  /** The project folder of `acme`. */
+  projectDir: string;
+  /** Remembers `sessionId` as a stopped turn's session, as a Stop would (the core's side state, never creative.json). */
+  remember(sessionId: string, jobId?: string): Promise<void>;
   /** `/api/projects/acme/creatives/<slug>` */
   url: string;
   jobs(): Promise<Array<{ id: string; kind: string; state: string; sessionId?: string; liveMessages?: number }>>;
@@ -29,7 +36,9 @@ export const brief = { goal: 'Lancio app', message: '', formats: ['instagram-pos
 export async function liveApp(o: { live?: boolean; base?: string; runner?: ControlledRunner; slug?: string } = {}): Promise<LiveApp> {
   const base = o.base ?? await mkdtemp(join(tmpdir(), 'ms-live-'));
   const runner = o.runner ?? new ControlledRunner();
+  const side = new CreativeSideStateStore(join(base, 'config'));
   const app = await buildServer({
+    sideState: side,
     agentContract: 'media', uiToken: null, sandbox: async () => ({ available: false, reason: 'test' }),
     appConfig: new AppConfigStore(join(base, 'config')), configDir: join(base, 'config'),
     git: new Git(), runner, doctor: async () => [], claudeVersion: async () => '2.1.0',
@@ -43,8 +52,10 @@ export async function liveApp(o: { live?: boolean; base?: string; runner?: Contr
   }
   const url = `/api/projects/acme/creatives/${slug}`;
   const jobs = async () => (await app.inject('/api/jobs')).json();
+  const projectDir = join(base, 'ws', 'acme');
   return {
-    app, runner, base, slug, url, jobs,
+    app, runner, base, slug, url, jobs, side, projectDir,
+    remember: async (sessionId, jobId = 'old-job') => { await side.update(projectDir, slug, () => ({ stoppedSession: { sessionId, at: new Date().toISOString(), jobId } })); },
     waitIdle: () => vi.waitFor(async () => expect((await jobs()).every((j: { state: string }) => j.state !== 'queued' && j.state !== 'running')).toBe(true), { timeout: 20_000, interval: 20 }),
     creative: async () => (await app.inject(url)).json().creative,
     conversation: async () => (await app.inject(`${url}/conversation`)).json(),

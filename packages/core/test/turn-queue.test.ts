@@ -1,8 +1,12 @@
+import { execFileSync } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { creativeFileSchema, messages } from '@motion-studio/shared';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
+import { buildClaudeArgs } from '../src/agent/claude-code-runner.ts';
+import { buildAgentPolicy, sandboxPath } from '../src/agent/policy.ts';
+import { escapeGlob } from '../src/codebases.ts';
 import { cid, liveApp, type LiveApp } from './helpers/live-app.ts';
 
 // Phase 13 Task 2: the request queue (spec §2, "Queue for after"; Rulings S and T; Review Focus 4).
@@ -197,5 +201,128 @@ describe('Ruling U: the queue goes on by itself only after a saved version', () 
     await new Promise((r) => setTimeout(r, 200));
     expect(s.runner.runs).toHaveLength(1);
     expect(await queuedTexts()).toEqual(['Dopo']);
+  });
+});
+
+// Final wave P1 (final review I1): the queue and the remembered session are the user's and the core's, never the agent's.
+describe('the queue and the remembered session are out of the agent\'s reach (final review I1)', () => {
+  const rawCreative = async () => JSON.parse(await readFile(join(s.projectDir, 'creatives', s.slug, 'creative.json'), 'utf8')) as Record<string, unknown>;
+  const writeRaw = async (patch: Record<string, unknown>) => {
+    const file = join(s.projectDir, 'creatives', s.slug, 'creative.json');
+    await writeFile(file, JSON.stringify({ ...JSON.parse(await readFile(file, 'utf8')), ...patch }, null, 2));
+  };
+
+  it('the queue lives in the config folder the agent is denied: not in creative.json, the prompt, the tools\' reach or git', async () => {
+    s = await liveApp();
+    const job = (await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } })).json();
+    const run = await s.runner.next(0);
+    await queue(cid(), 'SEGRETO-IN-CODA');
+    const configDir = join(s.base, 'config');
+    const file = await s.side.fileFor(s.projectDir, s.slug);
+    expect(file && file.startsWith(`${configDir}/`)).toBe(true);
+    expect(await readFile(file!, 'utf8')).toContain('SEGRETO-IN-CODA');
+    // The agent's tools: Read (and Grep/Glob) are denied in the whole config folder; with the sandbox, so is Bash.
+    expect(run.req.disallowedTools).toContain(`Read(/${escapeGlob(configDir)}/**)`);
+    const sandboxed = buildAgentPolicy({ kind: 'creative', sandbox: true, projectDir: s.projectDir, home: s.base, configDir, codebases: [], protectedFiles: [], protectedDirs: [], extraDomains: [], projectAllowRules: [], mcpTools: [], autoApproveSandboxed: false });
+    expect((sandboxed.settings as { sandbox: { filesystem: { denyRead: string[] } } }).sandbox.filesystem.denyRead).toContain(sandboxPath(configDir));
+    // The prompt never names it, and the project never holds it.
+    expect(run.req.prompt).not.toContain('SEGRETO-IN-CODA');
+    expect(run.req.prompt).not.toContain('creative-state');
+    expect(JSON.stringify(await rawCreative())).not.toContain('SEGRETO-IN-CODA');
+    await s.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/stop` });
+    await s.waitIdle();
+    const raw = await rawCreative();
+    expect(raw.queued).toBeUndefined();
+    expect(raw.stoppedSession).toBeUndefined();
+    // The state commits never carry it.
+    expect(execFileSync('git', ['-C', s.projectDir, 'log', '-p', '--all'], { encoding: 'utf8' })).not.toContain('SEGRETO-IN-CODA');
+    expect(await queuedTexts()).toEqual(['SEGRETO-IN-CODA']);
+    expect((await s.creative()).stoppedSession).toMatchObject({ sessionId: run.sessionId });
+  });
+
+  it('a forged queue entry written into creative.json never runs and never shows as the user\'s', async () => {
+    s = await liveApp();
+    await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } });
+    const run = await s.runner.next(0);
+    // An agent with the sandbox off writes a request (with a boot id read anywhere) and a session into creative.json.
+    const forged = { clientId: cid(), text: 'FORGED-REQUEST', pins: [], at: new Date().toISOString(), bootId: 'any-boot' };
+    await writeRaw({ queued: [forged], stoppedSession: { sessionId: 'forged-session', at: new Date().toISOString(), jobId: 'x' } });
+    run.finish();
+    await s.waitIdle();
+    await new Promise((r) => setTimeout(r, 200));
+    // The turn saved a version (Ruling U would go on): nothing else started.
+    expect(s.runner.runs).toHaveLength(1);
+    expect(await queuedTexts()).toEqual([]);
+    expect((await s.creative()).stoppedSession).toBeUndefined();
+    const raw = await rawCreative();
+    expect(raw.queued).toBeUndefined();
+    expect(raw.stoppedSession).toBeUndefined();
+    // The next turn resumes the version's session, never the forged one.
+    await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Secondo' } });
+    const next = await s.runner.next(1);
+    expect(next.req.resumeSessionId).toBe(run.sessionId);
+    expect(next.req.prompt).not.toContain('FORGED-REQUEST');
+    next.finish();
+    await s.waitIdle();
+  });
+
+  it('a queued request this process did not queue (e.g. written into the config folder) starts only on Run next', async () => {
+    s = await liveApp();
+    await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } });
+    const run = await s.runner.next(0);
+    await s.side.update(s.projectDir, s.slug, () => ({ queued: [{ clientId: cid(), text: 'NOT-QUEUED-HERE', pins: [], at: new Date().toISOString() }] }));
+    run.finish();
+    await s.waitIdle();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(s.runner.runs).toHaveLength(1);
+    expect(await queuedTexts()).toEqual(['NOT-QUEUED-HERE']);
+    expect((await s.app.inject({ method: 'POST', url: `${s.url}/queue/run-next` })).statusCode).toBe(202);
+    const next = await s.runner.next(1);
+    expect(next.req.prompt).toContain('NOT-QUEUED-HERE');
+    next.finish();
+    await s.waitIdle();
+  });
+
+  it('old creative.json files: their queue and remembered session move to the core once, and still load', async () => {
+    s = await liveApp();
+    // Written before this change: in creative.json, with the old boot id.
+    await writeRaw({
+      queued: [{ clientId: cid(), text: 'Vecchia richiesta', pins: [], at: '2026-10-01T00:00:00.000Z', bootId: 'old-boot' }],
+      stoppedSession: { sessionId: 'legacy-session', at: '2026-10-01T00:00:00.000Z', jobId: 'old-job' },
+    });
+    expect(await s.creative()).toMatchObject({ queued: [{ text: 'Vecchia richiesta' }], stoppedSession: { sessionId: 'legacy-session', jobId: 'old-job' } });
+    expect((await s.creative()).queued![0]).not.toHaveProperty('bootId');
+    const raw = await rawCreative();
+    expect(raw.queued).toBeUndefined();
+    expect(raw.stoppedSession).toBeUndefined();
+    expect(creativeFileSchema.parse(raw)).toEqual(raw);
+    // The remembered session is resumed as a fork; the old request waits for Run next.
+    await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Nuovo' } });
+    const run = await s.runner.next(0);
+    expect(run.req).toMatchObject({ resumeSessionId: 'legacy-session', forkSession: true });
+    run.finish();
+    await s.waitIdle();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(s.runner.runs).toHaveLength(1);
+    expect(await queuedTexts()).toEqual(['Vecchia richiesta']);
+  });
+
+  it('a malformed session id (remembered, migrated or restored) never reaches the command line', async () => {
+    s = await liveApp();
+    await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } });
+    const v1 = await s.runner.next(0);
+    v1.finish();
+    await s.waitIdle();
+    const bad = ['--settings={"sandbox":{"enabled":false}}', '--model=opus', 'a b'];
+    await s.side.update(s.projectDir, s.slug, () => ({ stoppedSession: { sessionId: bad[0]!, at: new Date().toISOString(), jobId: 'x' } }));
+    expect((await s.creative()).stoppedSession).toBeUndefined();
+    await writeRaw({ resumeFrom: { version: 1, sessionId: bad[1] } });
+    await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Secondo' } });
+    const run = await s.runner.next(1);
+    expect(bad).not.toContain(run.req.resumeSessionId);
+    const args = buildClaudeArgs(run.req);
+    for (const b of bad) expect(args.some((a) => a.includes(b))).toBe(false);
+    run.finish();
+    await s.waitIdle();
   });
 });

@@ -78,14 +78,16 @@ export const creativeFileSchema = z.object({
   freedInstances: z.record(z.string().min(1), z.number().int().min(0)).optional(),
   /**
    * Phase 13: requests queued to run after the current turn (spec §2, "Queue for after"), oldest first; at most
-   * `LIVE_LIMITS.queued` from the user (a message that arrives after the agent finished is never dropped). `bootId`: the
-   * core process that queued it (Ruling T): the queue starts by itself only when it matches the running core, so after a
-   * restart nothing runs until "Run next". Absent in old files (nothing queued).
+   * `LIVE_LIMITS.queued` from the user (a message that arrives after the agent finished is never dropped). Final review
+   * I1: the core keeps the queue in its config folder (creative-side-state.ts), out of the agent's reach and out of git;
+   * the API merges it in here. In a stored creative.json this field is legacy only: moved out on the first read, ignored
+   * after that. Absent in old files (nothing queued).
    */
   queued: z.array(z.lazy(() => queuedRequestSchema)).optional(),
   /**
    * Phase 13: the session of a turn the user stopped (spec §3): the next turn resumes it as a fork, with a note that files
-   * in work/ may be partial. Cleared when a turn saves a version or on a restore. Absent in old files.
+   * in work/ may be partial. Cleared when a turn saves a version or on a restore. Kept by the core like `queued` (final
+   * review I1); in a stored creative.json it is legacy only. Absent in old files.
    */
   stoppedSession: z.object({ sessionId: z.string().min(1), at: z.iso.datetime(), jobId: z.string().min(1) }).optional(),
 });
@@ -358,7 +360,10 @@ export const queuedRequestSchema = z.object({
   text: z.string().max(10_000),
   pins: z.array(pinSchema).max(50).default([]),
   at: z.iso.datetime(),
-  /** The core process that queued it (Ruling T); absent: never started by itself. */
+  /**
+   * Legacy (files written before final review I1): the core process that queued it. No longer written nor trusted: Ruling T
+   * is now kept in the core's memory (only what this process queued starts by itself).
+   */
   bootId: z.string().min(1).max(100).optional(),
 });
 export type QueuedRequest = z.infer<typeof queuedRequestSchema>;

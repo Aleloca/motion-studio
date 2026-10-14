@@ -1,4 +1,4 @@
-import { creativeJobKey, LIVE_LIMITS, type ConversationEntry, type LiveMessageOutcome, type QueuedRequest, type RedirectOutcome } from '@motion-studio/shared';
+import { creativeJobKey, isSessionId, LIVE_LIMITS, type ConversationEntry, type LiveMessageOutcome, type QueuedRequest, type RedirectOutcome } from '@motion-studio/shared';
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
@@ -21,6 +21,7 @@ import type { SecretsVault } from '../secrets/vault.ts';
 import { compositionSchemaFile, CONTEXT_MD } from '../project-template.ts';
 import { CodedError, WorkspaceError } from '../workspace-store.ts';
 import { CreativeStore } from './creative-store.ts';
+import { CreativeSideStateStore } from './creative-side-state.ts';
 import { validateOutputs, type ValidationResult } from './output-contract.ts';
 import { confinedSha, copyVerified, earlierOutputDirs, followCheck, isConfinedFile, normalizeTargets, snapshotChanges, snapshotOutputs, versionDirReady, withoutCoreWrites, type FollowFailure } from './carry-over.ts';
 import { outputFileExists } from './format-summary.ts';
@@ -60,8 +61,11 @@ export interface CreativeTurnDeps {
   previewFramesPerTurn?: number;
   /** Phase 13: cancels the open approvals of a job (`ApprovalBroker.cancelJob`); a redirect calls it before anything else. */
   cancelApprovals?: (jobId: string) => void;
-  /** Phase 13, Ruling T: this core process's id (random per start); queued requests start by themselves only under it. */
-  bootId?: string;
+  /**
+   * Phase 13 (final review I1): where each creative's queue and remembered session live — the core's config folder, out
+   * of the agent's reach and out of git. Absent: in memory only.
+   */
+  sideState?: CreativeSideStateStore;
 }
 
 /** Phase 13: what POST …/messages answers (and answers again for the same `clientId`). */
@@ -205,8 +209,14 @@ export function freedSince(freed: Record<string, number> | undefined, base: numb
 export class CreativeTurnService {
   private readonly maxAttempts: number;
   private readonly locks = new KeyedMutex();
-  /** Phase 13, Ruling T: queued requests made under another id (an earlier start of the app) wait for "Run next". */
-  readonly bootId: string;
+  /**
+   * Phase 13, Ruling T (final review I1): the queued requests this process queued, by creative key + clientId. Only these
+   * start by themselves: one queued before a restart, or written by anyone else, waits for "Run next". Never persisted,
+   * so nothing on disk can make a request start by itself.
+   */
+  private readonly queuedHere = new Set<string>();
+  /** Phase 13: each creative's queue and remembered session (creative-side-state.ts). */
+  readonly side: CreativeSideStateStore;
   /** Phase 13: the live side of each creative turn, by job id, from its start until it settles. */
   private readonly live = new Map<string, LiveTurn>();
   /** Phase 13: creatives whose last turn was stopped or cancelled: their queue waits for "Run next" (decisions log). */
@@ -217,7 +227,7 @@ export class CreativeTurnService {
   private readonly refs = new Map<string, CreativeRef>();
   constructor(private readonly deps: CreativeTurnDeps) {
     this.maxAttempts = deps.maxAttempts ?? 3;
-    this.bootId = deps.bootId ?? randomUUID();
+    this.side = deps.sideState ?? new CreativeSideStateStore(null);
   }
 
   /**
@@ -503,14 +513,15 @@ export class CreativeTurnService {
     // Restoring work/ may recreate the creative's work/ folder: note the creative folder so the tripwire does not read it as a move (FP4).
     await noteCoreChange(store.dir(ref.creativeSlug));
     // A restore is the user's choice of base: it replaces a stopped turn's memory (Phase 13).
-    const updated = await store.update(ref.creativeSlug, { resumeFrom: { version: n, sessionId: version.sessionId }, stoppedSession: undefined });
+    const updated = await store.update(ref.creativeSlug, { resumeFrom: { version: n, sessionId: version.sessionId } });
+    await this.side.update(ref.projectDir, ref.creativeSlug, () => ({ stoppedSession: undefined }));
     if (removed > 0) {
       await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: t().jobs.removedUnsaved({ count: removed }) });
     }
     await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: t().jobs.restartedFrom({ n }) });
     await this.commitState(ref, t().jobs.restartCommit({ title: updated.title, n }));
     this.changed(ref);
-    return updated;
+    return this.side.merged(ref.projectDir, ref.creativeSlug, updated);
   }
 
   private async run(ref: CreativeRef, store: CreativeStore, previous: CreativeStatus, message: { text: string; pins: Pin[] } | undefined, signal: AbortSignal, jobId: string, requestedFormats?: string[]): Promise<void | 'cancelled'> {
@@ -569,8 +580,10 @@ export class CreativeTurnService {
 
       // Phase 13 (spec §3): a turn the user stopped is resumed as a fork, with a note; the session of the base version is the
       // fallback when it no longer exists in Claude Code (Review Focus 4).
-      const stopped = creative.stoppedSession;
-      const baseSessionId = creative.resumeFrom?.sessionId ?? latest?.sessionId ?? undefined;
+      // Kept by the core out of the agent's reach (creative-side-state.ts); every id is checked again where argv is built.
+      const stopped = (await this.side.read(ref.projectDir, slug)).stoppedSession;
+      const baseCandidate = creative.resumeFrom?.sessionId ?? latest?.sessionId ?? undefined;
+      const baseSessionId = isSessionId(baseCandidate) ? baseCandidate : undefined;
       let resumeSessionId = stopped?.sessionId ?? baseSessionId;
       // Durations of the base the agent keeps without being told to bring them back to the brief (decisions log 262).
       let accepted: ReadonlyMap<string, number> = new Map();
@@ -802,7 +815,7 @@ export class CreativeTurnService {
           if (resumeError && attempt < this.maxAttempts) {
             resumeFallbackUsed = true;
             // Only the CLI's own "session not found" clears the remembered session; the backup guess keeps it.
-            if (remembered === 'stopped' && resumeError === 'not-found') await store.update(slug, { stoppedSession: undefined });
+            if (remembered === 'stopped' && resumeError === 'not-found') await this.side.update(ref.projectDir, slug, () => ({ stoppedSession: undefined }));
             if (remembered === 'redirect') {
               // The live session cannot be resumed: the redirect starts afresh from the base session, with the request
               // and every message of the turn in the prompt (C1: never the same resume again).
@@ -899,7 +912,8 @@ export class CreativeTurnService {
       // restored session (from this new version, which it now builds on).
       const resumeFrom = noAgent && creative.resumeFrom ? { version: n, sessionId: creative.resumeFrom.sessionId } : null;
       // A saved version ends the stopped turn's memory (Phase 13): the next turn builds on this version's session.
-      await store.update(slug, { status: status === 'complete' ? 'ready' : 'incomplete', error: null, resumeFrom, stoppedSession: undefined });
+      await store.update(slug, { status: status === 'complete' ? 'ready' : 'incomplete', error: null, resumeFrom });
+      await this.side.update(ref.projectDir, slug, () => ({ stoppedSession: undefined }));
       if (signal.aborted) {
         await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: t().jobs.lateCancel({ n }) });
       }
@@ -1279,7 +1293,7 @@ export class CreativeTurnService {
   /** The answer already given for `clientId` (this process), or rebuilt from the queue or the conversation (an earlier one). */
   private async knownAnswer(ref: CreativeRef, clientId: string): Promise<MessageAnswer | null> {
     const store = new CreativeStore(ref.projectDir);
-    const q = (await store.get(ref.creativeSlug)).queued?.find((x) => x.clientId === clientId);
+    const q = (await this.side.read(ref.projectDir, ref.creativeSlug)).queued?.find((x) => x.clientId === clientId);
     if (q) return { entry: this.queuedEntry(q), outcome: 'queued' };
     const e = (await store.readConversation(ref.creativeSlug)).find((x) => x.type === 'user' && x.clientId === clientId);
     if (e && e.type === 'user') return { entry: e, outcome: e.mode === 'queued' ? 'queued' : 'delivered-pending' };
@@ -1364,15 +1378,17 @@ export class CreativeTurnService {
    */
   private async queueRequest(ref: CreativeRef, m: UserMessageInput, outcome: Exclude<LiveMessageOutcome, 'delivered-pending'>, o: { limit?: boolean; note?: boolean } = {}): Promise<MessageAnswer> {
     const store = new CreativeStore(ref.projectDir);
-    const item: QueuedRequest = { clientId: m.clientId, text: m.text, pins: m.pins, at: now(), bootId: this.bootId };
-    this.refs.set(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), ref);
-    await this.runLocked(ref, async () => {
-      const c = await store.get(ref.creativeSlug);
+    const item: QueuedRequest = { clientId: m.clientId, text: m.text, pins: m.pins, at: now() };
+    const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
+    this.refs.set(key, ref);
+    await this.runLocked(ref, () => this.side.update(ref.projectDir, ref.creativeSlug, (c) => {
       const queued = c.queued ?? [];
-      if (queued.some((x) => x.clientId === m.clientId)) return;
+      if (queued.some((x) => x.clientId === m.clientId)) return {};
       if (o.limit !== false && queued.length >= LIVE_LIMITS.queued) throw new CodedError(409, t().live.queueFull({ max: LIVE_LIMITS.queued }), 'limit');
-      await store.update(ref.creativeSlug, { queued: [...queued, item] });
-    });
+      // Ruling T: queued by this process, so it may start by itself (in memory only).
+      this.queuedHere.add(`${key}\0${m.clientId}`);
+      return { queued: [...queued, item] };
+    }));
     if (outcome === 'queued-after-finish' && o.note !== false) {
       await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: t().live.queuedAfterFinish });
     }
@@ -1408,13 +1424,12 @@ export class CreativeTurnService {
 
   private async editQueue(ref: CreativeRef, fn: (q: QueuedRequest[]) => QueuedRequest[]): Promise<CreativeFile> {
     const store = new CreativeStore(ref.projectDir);
-    const updated = await this.runLocked(ref, async () => {
-      const c = await store.get(ref.creativeSlug);
+    await this.runLocked(ref, () => this.side.update(ref.projectDir, ref.creativeSlug, (c) => {
       const next = fn(c.queued ?? []);
-      return store.update(ref.creativeSlug, { queued: next.length > 0 ? next : undefined });
-    });
+      return { queued: next.length > 0 ? next : undefined };
+    }));
     this.changed(ref);
-    return updated;
+    return this.side.merged(ref.projectDir, ref.creativeSlug, await store.get(ref.creativeSlug));
   }
 
   /** POST …/queue/run-next: starts the first queued request now (after a restart or a stop, the only way it starts). */
@@ -1430,31 +1445,37 @@ export class CreativeTurnService {
 
   /** Takes the queue's first request off and starts it as a normal turn; it goes back to the front if the start fails. */
   private async startQueuedLocked(ref: CreativeRef): Promise<JobSummary | null> {
-    const store = new CreativeStore(ref.projectDir);
-    const c = await store.get(ref.creativeSlug);
-    const [head, ...rest] = c.queued ?? [];
-    if (!head) return null;
-    await store.update(ref.creativeSlug, { queued: rest.length > 0 ? rest : undefined });
+    let head: QueuedRequest | undefined;
+    await this.side.update(ref.projectDir, ref.creativeSlug, (c) => {
+      const [first, ...rest] = c.queued ?? [];
+      head = first;
+      return first ? { queued: rest.length > 0 ? rest : undefined } : {};
+    });
+    const taken = head;
+    if (!taken) return null;
+    const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     try {
-      return await this.startLocked(ref, { text: head.text, pins: head.pins }, undefined, { clientId: head.clientId });
+      const job = await this.startLocked(ref, { text: taken.text, pins: taken.pins }, undefined, { clientId: taken.clientId });
+      this.queuedHere.delete(`${key}\0${taken.clientId}`);
+      return job;
     } catch (err) {
-      const now2 = await store.get(ref.creativeSlug);
-      await store.update(ref.creativeSlug, { queued: [head, ...(now2.queued ?? []).filter((x) => x.clientId !== head.clientId)] });
+      await this.side.update(ref.projectDir, ref.creativeSlug, (c) => ({ queued: [taken, ...(c.queued ?? []).filter((x) => x.clientId !== taken.clientId)] }));
       throw err;
     }
   }
 
   /**
-   * Starts the queue's first request when nothing runs for the creative, its last turn was not stopped, and it was queued
-   * by this core process (Ruling T: after a restart the queue waits for "Run next"). Never throws.
+   * Starts the queue's first request when nothing runs for the creative, its last turn was not stopped, and this core
+   * process queued it (Ruling T, kept in memory: after a restart, or for anything it did not queue, the queue waits for
+   * "Run next"). Never throws.
    */
   async maybeAutoRun(ref: CreativeRef): Promise<JobSummary | null> {
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     try {
       return await this.locks.run(key, async () => {
         if (this.isActive(key) || this.paused.has(key)) return null;
-        const head = (await new CreativeStore(ref.projectDir).get(ref.creativeSlug)).queued?.[0];
-        if (!head || head.bootId !== this.bootId) return null;
+        const head = (await this.side.read(ref.projectDir, ref.creativeSlug)).queued?.[0];
+        if (!head || !this.queuedHere.has(`${key}\0${head.clientId}`)) return null;
         return this.startQueuedLocked(ref);
       });
     } catch {
@@ -1537,7 +1558,8 @@ export class CreativeTurnService {
     const restored: CreativeStatus = previous === 'ready' || previous === 'incomplete' || previous === 'draft'
       ? previous : hasVersions ? 'ready' : 'draft';
     // Phase 13 (spec §3): the stopped turn's session is remembered for the next turn (only when its agent had started one).
-    await store.update(ref.creativeSlug, { status: restored, error: null, ...(stopped ? { stoppedSession: stopped } : {}) });
+    await store.update(ref.creativeSlug, { status: restored, error: null });
+    if (stopped) await this.side.update(ref.projectDir, ref.creativeSlug, () => ({ stoppedSession: stopped }));
     await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: t().jobs.cancelledNote });
     await this.commitState(ref, t().jobs.stateCommit({ title: await this.titleOf(store, ref.creativeSlug) }));
     this.changed(ref);
