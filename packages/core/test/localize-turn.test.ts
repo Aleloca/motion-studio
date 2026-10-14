@@ -16,6 +16,7 @@ import { ProjectActivity } from '../src/localization/localize-turn.ts';
 import { AgentBridge } from '../src/bridge/bridge.ts';
 import { currentLocale } from '../src/i18n.ts';
 import { NoMediaTools, type MediaTools } from '../src/media/media-tools.ts';
+import { LibraryStore } from '../src/library/library-store.ts';
 import { MemoryVault } from '../src/secrets/vault.ts';
 import { H, startInstanceEnv, type InstanceEnv } from './helpers/instance-server.ts';
 import { multipart } from './helpers/multipart.ts';
@@ -299,6 +300,34 @@ describe('localize: a brand edit during the turn', { timeout: 120_000 }, () => {
     const text = warnings[0]!.type === 'system' ? warnings[0]!.text : '';
     expect(text).toContain('brand/stray.txt');
     expect(text).not.toContain('guidelines.md');
+  });
+});
+
+describe('localize: a follower\'s recorded font hash (Task 4 minor, final wave P9)', { timeout: 120_000 }, () => {
+  it('is never replaced by today\'s file through its group lead\'s submit', async () => {
+    await boot();
+    const projectDir = () => env.projectDir();
+    const slug = await env.create(['test-wide', 'test-wide@2'], { links: { 'test-wide@2': 'test-wide' }, locales: { primary: 'en', extra: ['ja'] } });
+    const v1 = (await env.versionOf(slug, 1))!;
+    expect(v1.compositions!.find((c) => c.format === 'test-wide@2')!.followsFormat).toBe('test-wide');
+    // The fallback font is already in the library: no download.
+    mkdirSync(join(projectDir(), 'assets', 'fonts'), { recursive: true });
+    const font = join(projectDir(), 'assets', 'fonts', 'NotoSansJP-400.woff2');
+    writeFileSync(font, 'font bytes A');
+    await new LibraryStore(projectDir(), NoMediaTools).registerAssets([{ file: 'fonts/NotoSansJP-400.woff2', origin: 'google-fonts', tags: ['font', 'Noto Sans JP'], description: 'Font Noto Sans JP' }]);
+    // The follower alone has a row (a manual edit): its font hash is A's.
+    const put = await env.app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}/versions/1/localizations/ja/${encodeURIComponent('test-wide@2')}`, headers: H, payload: { texts: { title: 'こんにちは' } } });
+    expect(put.statusCode, put.body).toBe(200);
+    const path = 'assets/fonts/NotoSansJP-400.woff2';
+    const recorded = (await rowOf(slug, 1, 'ja', 'test-wide@2'))!.assetHashes![path];
+    expect(recorded).toMatch(/^[0-9a-f]{64}$/);
+    // The font file changes; the lead (no row yet) is translated in a turn and its overlay is written for the follower too.
+    writeFileSync(font, 'font bytes B, another file');
+    process.env.FAKE_CLAUDE_LOCALIZE_CALLS = JSON.stringify([submit('ja', 'test-wide', { texts: { title: 'やあ' } })]);
+    await finished(await start(slug, 1, { locales: ['ja'] }));
+    expect((await rowOf(slug, 1, 'ja', 'test-wide@2'))!.assetHashes![path]).toBe(recorded);
+    // The lead had no recorded hash: it gets today's file's.
+    expect((await rowOf(slug, 1, 'ja', 'test-wide'))!.assetHashes![path]).not.toBe(recorded);
   });
 });
 

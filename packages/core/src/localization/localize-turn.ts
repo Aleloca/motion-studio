@@ -384,9 +384,9 @@ export class LocalizeService {
             // attempt's batch, never left for a later attempt (fix I2).
             pair.voiceProblems.delete(id);
           }
-          // The fallback font the core attached now is hashed now (Ruling L); a recorded hash is kept.
-          const fresh = await attachedFontHashes(ref.projectDir, fallback, row?.assetHashes);
-          await this.writeRows(store, creativeDir, n, pair, done.overlay, { origin: 'agent', stale: done.stale, issues: done.issues, fresh });
+          // The fallback font the core attached now is hashed now (Ruling L); each member's recorded hash is kept (`writeRows`).
+          const attached = await attachedFontHashes(ref.projectDir, fallback);
+          await this.writeRows(store, creativeDir, n, pair, done.overlay, { origin: 'agent', stale: done.stale, issues: done.issues, attached });
           // The measure of what was just stored: `assess` takes it instead of measuring the same overlay again.
           if (done.measured) {
             const stored = await this.current(creativeDir, n, pair.locale, pair.group.rep);
@@ -608,16 +608,22 @@ export class LocalizeService {
     return localizedComposition(pair.group.ic.composition, cur.overlay, cur.row) ?? pair.group.ic.composition;
   }
 
-  /** Writes the overlay and the row of every instance of the pair's group (the caller holds the creative's lock). */
+  /**
+   * Writes the overlay and the row of every instance of the pair's group (the caller holds the creative's lock). Hashes per
+   * member (Ruling L): `fresh` (files the core just wrote: voices) replace a recorded hash; `attached` (the fallback font files
+   * as they are now) only fill a path the member's OWN row has no hash for, so a follower's recorded font hash is never
+   * replaced by today's file through its group lead (final wave P9).
+   */
   private async writeRows(store: CreativeStore, creativeDir: string, n: number, pair: Pair, overlay: Localization,
-    o: { origin: LocalizationRow['origin']; stale: string[]; issues: LocalizationIssue[]; voice?: LocalizationRow['voice']; final?: boolean; fresh?: Record<string, string> }): Promise<void> {
+    o: { origin: LocalizationRow['origin']; stale: string[]; issues: LocalizationIssue[]; voice?: LocalizationRow['voice']; final?: boolean; fresh?: Record<string, string>; attached?: Record<string, string> }): Promise<void> {
     const versions = await store.readVersions(basename(creativeDir));
     const rows = versions.find((v) => v.n === n)?.localizations ?? [];
     for (const member of pair.group.members) {
       const old = rows.find((r) => r.locale === pair.locale && r.instanceId === member);
       const hash = await writeOverlay(creativeDir, n, { ...overlay, instanceId: member });
       const voice = o.voice ?? old?.voice ?? 'original';
-      const assetHashes = rowAssetHashes({ overlay, ...(old?.assetHashes ? { old: old.assetHashes } : {}), ...(o.fresh ? { fresh: o.fresh } : {}) });
+      const recorded = { ...(o.attached ?? {}), ...(old?.assetHashes ?? {}) };
+      const assetHashes = rowAssetHashes({ overlay, ...(Object.keys(recorded).length ? { old: recorded } : {}), ...(o.fresh ? { fresh: o.fresh } : {}) });
       const row: LocalizationRow = {
         locale: pair.locale, instanceId: member, hash, origin: o.origin, stale: o.stale, voice,
         ...issueFields(o.issues),
