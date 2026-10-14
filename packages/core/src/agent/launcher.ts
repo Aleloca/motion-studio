@@ -73,7 +73,7 @@ export interface LauncherDeps {
    * function, called once the run is over, says whether the agent changed them and whether that was undone. Absent or null:
    * no workspace (nothing to guard).
    */
-  guardSettings?: () => Promise<(() => Promise<{ changed: boolean; reverted: boolean }>) | null>;
+  guardSettings?: () => Promise<(() => Promise<{ changed: boolean; reverted: boolean; holdBroken?: boolean }>) | null>;
 }
 
 /** Phase 13: the jobs whose turns can take messages or an interrupt while they run (spec §2; never brand analysis, describe, localize). */
@@ -235,10 +235,17 @@ export class AgentLauncher {
     let mcp: Pick<AgentTurnRequest, 'mcpConfigPath' | 'permissionPromptTool'> = {};
     // Final wave P9: without the sandbox the agent can write the workspace settings: they are held for the run and any
     // change is undone (or, if it cannot be, ignored until the user saves them) and reported after it.
-    let settingsGuard: (() => Promise<{ changed: boolean; reverted: boolean }>) | null = null;
+    let settingsGuard: (() => Promise<{ changed: boolean; reverted: boolean; holdBroken?: boolean }>) | null = null;
     const releaseSettings = () => (settingsGuard ? settingsGuard().catch(() => null) : Promise.resolve(null));
     try {
-      if (!sandbox) settingsGuard = await this.deps.guardSettings?.().catch(() => null) ?? null;
+      // An unreliable hold refuses the run (Ruling AA: translated 409 `settings-hold-broken`); any other guard error is not
+      // the run's problem.
+      if (!sandbox) {
+        settingsGuard = await this.deps.guardSettings?.().catch((e: unknown) => {
+          if ((e as { apiCode?: unknown }).apiCode === 'settings-hold-broken') throw e;
+          return null;
+        }) ?? null;
+      }
       if (mcpOn && mcpCommand) {
         token = bridge.register({
           jobId: i.jobId, kind: i.kind, projectSlug: i.projectSlug, projectDir: i.projectDir, creativeSlug: i.creativeSlug ?? null,
@@ -326,6 +333,7 @@ export class AgentLauncher {
         if (i.kind !== 'console') run.killGroup?.();
         const settingsCheck = await releaseSettings();
         if (settingsCheck?.changed) await warn(settingsCheck.reverted ? t().jobs.workspaceSettingsReverted : t().jobs.workspaceSettingsNotReverted);
+        if (settingsCheck?.holdBroken) await warn(t().jobs.settingsHoldBroken);
         await detachLinks();
         // The check fails closed: if it cannot run, the project is quarantined against the pre-run state.
         const tw = await tripwire.check().catch(() => null);

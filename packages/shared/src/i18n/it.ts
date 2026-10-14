@@ -173,6 +173,7 @@ export const it: Messages = {
     bootBusy: 'Un altro Motion Studio si sta avviando con la stessa configurazione: riprova tra poco',
     formatCatalogInvalid: (p) => `Catalogo formati non valido: ${p.detail}`,
     invalidLanguage: 'Scegli una lingua dall\'elenco.',
+    settingsNotWritable: (p) => `Motion Studio non riesce a scrivere il file delle impostazioni (${p.path}). Controlla che il file e la sua cartella siano scrivibili e non bloccati (Finder: Ottieni informazioni, Bloccato), poi salva di nuovo.`,
   },
   brand: {
     droppedKeepFailed: (p) => `${p.name}: versione attuale non mantenuta (troppe voci, massimo ${p.limit})`,
@@ -237,7 +238,6 @@ export const it: Messages = {
     unknownReason: 'motivo sconosciuto',
     workspacePathLabel: 'Percorso della cartella di lavoro',
     workspaceSettingsLabel: "Impostazioni dell'area di lavoro",
-    workspaceSettingsFix: 'Apri le impostazioni, controllale e salvale: così le confermi e il blocco finisce.',
     workspacePathGlob: 'Il percorso contiene [ ] * o ?: la sandbox protegge meno i registri di Motion Studio (macOS) o non li protegge affatto (Linux)',
     workspacePathFix: 'Sposta la cartella di lavoro in un percorso senza questi caratteri, poi sceglila di nuovo',
     shellPathFix: 'Se mancano programmi, avvia Motion Studio dal terminale o controlla i file di avvio della shell',
@@ -494,6 +494,7 @@ export const it: Messages = {
     logHistoryRewritten: (p) => `Attenzione: durante questa esecuzione sono state modificate o rimosse righe precedenti di ${p.list}. Quella cronologia non è più quella registrata da Motion Studio.`,
     workspaceSettingsReverted: "Attenzione: le impostazioni dell'area di lavoro (.studio/settings.json) sono cambiate mentre l'agente lavorava senza sandbox. Motion Studio le ha rimesse com'erano. Se la modifica era tua, rifalla ora dalle impostazioni.",
     workspaceSettingsNotReverted: "Attenzione: le impostazioni dell'area di lavoro (.studio/settings.json) sono cambiate mentre l'agente lavorava senza sandbox, e Motion Studio non è riuscito a rimetterle com'erano. Finché non salvi di nuovo le impostazioni, Motion Studio continua a usare quelle di prima (sandbox, conferme e opzioni).",
+    settingsHoldBroken: "Motion Studio non è riuscito a conservare la sua copia protetta delle impostazioni dell'area di lavoro: un agente potrebbe averle cambiate senza che si vedesse. Gli agenti senza sandbox sono rifiutati finché non controlli le impostazioni e le salvi nell'app.",
     protectedLinksDetached: (p) => `Attenzione: alcuni registri di Motion Studio avevano un secondo nome sul disco (un hard link), quindi potevano essere modificati a sua insaputa (${p.list}). Motion Studio li ha staccati e ne ha tenuto il contenuto così com'era, che potrebbe essere già stato modificato.`,
     followerNotDelivered: (p) => `${p.follower} non è stato consegnato: non può seguire ${p.primary} (${p.reason}). Non è più collegato, quindi il prossimo turno ne fa una versione dedicata.`,
     versionFolderUnsafe: (p) => `La cartella outputs/v${p.n} non è una cartella della creatività (un collegamento?): la versione non può essere salvata`,

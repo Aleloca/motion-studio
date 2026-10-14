@@ -1,4 +1,6 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -266,7 +268,8 @@ describe.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('Works
       // The app restarts: a new store, the hold read back from the config folder.
       const ws2 = await WorkspaceStore.open(root, new Git(), { create: false });
       await ws2.attachSettingsHold(new SettingsHoldStore(config));
-      expect(await readFile(file(root), 'utf8')).toBe(before);
+      // The file is made at least as strict as the hold (Ruling AA: the record is never copied in as such).
+      expect(JSON.parse(await readFile(file(root), 'utf8'))).toMatchObject({ sandboxMode: 'auto', confirmPaidProviders: true, autoApproveSandboxed: false, agentLiveInput: false, agentInterrupt: false });
       expect(await ws2.readSettings()).toMatchObject({ sandboxMode: 'auto', confirmPaidProviders: true, autoApproveSandboxed: false, agentLiveInput: false, agentInterrupt: false });
       expect(ws2.settingsHeld()).toBe(false);
       expect(await new SettingsHoldStore(config).load(root)).toBeNull();
@@ -316,5 +319,116 @@ describe.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('Works
     await ws.updateSettings({ theme: 'light' });
     expect(ws.settingsHeld()).toBe(false);
     expect(await new SettingsHoldStore(config).load(root)).toBeNull();
+  });
+});
+
+// Fix round 2 (Ruling AA): with the sandbox off the hold is best-effort detection. It is tighten-only, it holds every
+// security-relevant field, and a hold that cannot be kept is loud and refuses unsandboxed runs until the user saves.
+describe.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('WorkspaceStore settings hold, tighten-only and loud', () => {
+  const file = (root: string) => join(root, '.studio', 'settings.json');
+  // The agent keeps the user's domain and adds its own: only the user's survives (the intersection).
+  const evil = { sandboxMode: 'off', confirmPaidProviders: false, autoApproveSandboxed: true, agentLiveInput: true, agentInterrupt: true, extraAllowedDomains: ['ok.example.com', 'evil.example.com'], model: 'opus', maxConcurrentJobs: 8 };
+  const holdDir = (config: string) => join(config, 'settings-hold');
+  const holdFile = async (config: string, root: string) => join(holdDir(config), `${createHash('sha256').update(await realpath(root)).digest('hex').slice(0, 32)}.json`);
+  const setup = async (name: string) => {
+    const root = join(base, name);
+    const config = join(base, `${name}-config`);
+    const ws = await WorkspaceStore.open(root, new Git());
+    await ws.attachSettingsHold(new SettingsHoldStore(config));
+    await ws.updateSettings({ extraAllowedDomains: ['ok.example.com'], autoApproveSandboxed: false });
+    return { root, config, ws, before: await readFile(file(root), 'utf8') };
+  };
+  const restart = async (root: string, config: string) => {
+    const ws = await WorkspaceStore.open(root, new Git(), { create: false });
+    await ws.attachSettingsHold(new SettingsHoldStore(config));
+    return ws;
+  };
+
+  it('probe A: a forged hold record can never loosen anything (it is never copied into settings.json)', async () => {
+    const { root, config, ws, before } = await setup('a');
+    const release = await ws.guardSettings();
+    await writeFile(file(root), JSON.stringify({ ...JSON.parse(before), ...evil }));
+    await mkdir(holdDir(config), { recursive: true });
+    await writeFile(await holdFile(config, root), JSON.stringify({ schemaVersion: 2, root: await realpath(root), held: { ...evil, extraAllowedDomains: ['ok.example.com', 'evil.example.com'] }, at: new Date().toISOString() }));
+    expect(await release()).toEqual({ changed: true, reverted: true });
+    const ws2 = await restart(root, config);
+    expect(await ws2.readSettings()).toMatchObject({ sandboxMode: 'auto', confirmPaidProviders: true, autoApproveSandboxed: false, agentLiveInput: false, extraAllowedDomains: ['ok.example.com'] });
+    expect(JSON.parse(await readFile(file(root), 'utf8'))).toMatchObject({ sandboxMode: 'auto', confirmPaidProviders: true, extraAllowedDomains: ['ok.example.com'] });
+  });
+
+  it('probe B: the hold folder made read-only is made ours again: the hold is saved and survives the restart', async () => {
+    const { root, config, ws, before } = await setup('b');
+    const release = await ws.guardSettings();
+    await writeFile(file(root), JSON.stringify({ ...JSON.parse(before), ...evil }));
+    await mkdir(holdDir(config), { recursive: true });
+    await chmod(holdDir(config), 0o500);
+    await chmod(join(root, '.studio'), 0o500);
+    try {
+      expect(await release()).toEqual({ changed: true, reverted: false });
+      expect(ws.settingsHoldBroken()).toBe(false);
+      await chmod(await holdFile(config, root), 0o000); // the agent hides the record: it is made readable again
+      const ws2 = await restart(root, config);
+      expect(await ws2.readSettings()).toMatchObject({ sandboxMode: 'auto', confirmPaidProviders: true, agentLiveInput: false, extraAllowedDomains: ['ok.example.com'], model: null, maxConcurrentJobs: 2 });
+    } finally {
+      await chmod(join(root, '.studio'), 0o700).catch(() => {});
+      await chmod(holdDir(config), 0o700).catch(() => {});
+    }
+  });
+
+  it.skipIf(process.platform !== 'darwin')('a hold that cannot be saved (folder locked) is loud: unsandboxed runs refused until the user saves, also after a restart', async () => {
+    const { root, config, ws, before } = await setup('b2');
+    const release = await ws.guardSettings();
+    await writeFile(file(root), JSON.stringify({ ...JSON.parse(before), ...evil }));
+    await mkdir(holdDir(config), { recursive: true });
+    execFileSync('chflags', ['uchg', holdDir(config)]);
+    execFileSync('chflags', ['uchg', file(root)]);
+    try {
+      expect(await release()).toEqual({ changed: true, reverted: false, holdBroken: true });
+      expect(ws.settingsHoldBroken()).toBe(true);
+      await expect(ws.guardSettings()).rejects.toMatchObject({ apiCode: 'settings-hold-broken', status: 409 });
+      // Restart: nothing on disk, but the locked hold folder is seen: still loud, still refused.
+      const ws2 = await restart(root, config);
+      expect(ws2.settingsHoldBroken()).toBe(true);
+      await expect(ws2.guardSettings()).rejects.toMatchObject({ apiCode: 'settings-hold-broken' });
+      execFileSync('chflags', ['nouchg', holdDir(config)]);
+      execFileSync('chflags', ['nouchg', file(root)]);
+      await ws2.updateSettings({ sandboxMode: 'auto', confirmPaidProviders: true, agentLiveInput: false, agentInterrupt: false });
+      expect(ws2.settingsHoldBroken()).toBe(false);
+      await (await ws2.guardSettings())();
+    } finally {
+      execFileSync('chflags', ['nouchg', holdDir(config)]);
+      execFileSync('chflags', ['nouchg', file(root)]);
+    }
+  });
+
+  it.skipIf(process.platform !== 'darwin')('probe C: settings.json locked (uchg): every security field held (domains, model, jobs too); a save says what to do', async () => {
+    const { root, config, ws, before } = await setup('c');
+    const release = await ws.guardSettings();
+    await writeFile(file(root), JSON.stringify({ ...JSON.parse(before), ...evil, theme: 'dark' }));
+    execFileSync('chflags', ['uchg', file(root)]);
+    try {
+      expect(await release()).toEqual({ changed: true, reverted: false });
+      const held = { sandboxMode: 'auto', confirmPaidProviders: true, autoApproveSandboxed: false, agentLiveInput: false, agentInterrupt: false, extraAllowedDomains: ['ok.example.com'], model: null, maxConcurrentJobs: 2 };
+      expect(await ws.readSettings()).toMatchObject({ ...held, theme: 'dark' }); // only the cosmetic field from the file
+      const ws2 = await restart(root, config);
+      expect(ws2.settingsHeld()).toBe(true);
+      expect(await ws2.readSettings()).toMatchObject(held);
+      const err = await ws2.updateSettings({ theme: 'light' }).catch((e: unknown) => e) as { apiCode?: string; message: string };
+      expect(err.apiCode).toBe('settings-not-writable');
+      expect(err.message).toContain('settings.json');
+      expect(err.message).not.toMatch(/EPERM/);
+    } finally {
+      execFileSync('chflags', ['nouchg', file(root)]);
+    }
+  });
+
+  it('a save while .studio and the file were made read-only: the modes are restored and the save works', async () => {
+    const { root, ws } = await setup('d');
+    await chmod(file(root), 0o400);
+    await chmod(join(root, '.studio'), 0o500);
+    try {
+      await ws.updateSettings({ theme: 'dark' });
+      expect(JSON.parse(await readFile(file(root), 'utf8')).theme).toBe('dark');
+    } finally { await chmod(join(root, '.studio'), 0o700).catch(() => {}); }
   });
 });

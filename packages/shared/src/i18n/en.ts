@@ -175,6 +175,7 @@ export const en = {
     bootBusy: 'Another Motion Studio is starting with the same configuration: try again shortly',
     formatCatalogInvalid: (p: { detail: string }) => `Invalid format catalog: ${p.detail}`,
     invalidLanguage: 'Choose a language from the list.',
+    settingsNotWritable: (p: { path: string }) => `Motion Studio cannot write the settings file (${p.path}). Check that the file and its folder are writable and not locked (Finder: Get Info, Locked), then save again.`,
   },
   brand: {
     droppedKeepFailed: (p: { name: string; limit: number }) => `${p.name}: the current version was not kept (too many entries, maximum ${p.limit})`,
@@ -239,7 +240,6 @@ export const en = {
     unknownReason: 'unknown reason',
     workspacePathLabel: 'Workspace folder path',
     workspaceSettingsLabel: 'Workspace settings',
-    workspaceSettingsFix: 'Open the settings, check them and save them: that confirms them and ends the hold.',
     workspacePathGlob: 'The path contains [ ] * or ?: the sandbox protects Motion Studio\'s records less well (macOS) or not at all (Linux)',
     workspacePathFix: 'Move the workspace to a folder whose path has none of these characters, then choose it again',
     shellPathFix: 'If programs are missing, start Motion Studio from the terminal or check your shell startup files',
@@ -501,6 +501,7 @@ export const en = {
     logHistoryRewritten: (p: { list: string }) => `Warning: during this run, earlier lines of ${p.list} were changed or removed. That history is no longer what Motion Studio recorded.`,
     workspaceSettingsReverted: 'Warning: the workspace settings (.studio/settings.json) changed while the agent ran without the sandbox. Motion Studio put them back as they were. If you made that change yourself, make it again now from the settings.',
     workspaceSettingsNotReverted: 'Warning: the workspace settings (.studio/settings.json) changed while the agent ran without the sandbox, and Motion Studio could not put them back. Until you save the settings again, Motion Studio keeps using the settings as they were before (sandbox, confirmations and opt-ins).',
+    settingsHoldBroken: 'Motion Studio could not keep its protected copy of the workspace settings, so an agent may have changed them unseen. Agents without the sandbox are refused until you check the settings and save them in the app.',
     protectedLinksDetached: (p: { list: string }) => `Warning: Motion Studio's own records had a second name on disk (a hard link), so they could be changed without Motion Studio knowing (${p.list}). Motion Studio detached them and kept their content as it was, which may already have been changed.`,
     followerNotDelivered: (p: { follower: string; primary: string; reason: string }) => `${p.follower} was not delivered: it cannot follow ${p.primary} (${p.reason}). It is no longer linked, so the next turn makes a dedicated version.`,
     versionFolderUnsafe: (p: { n: number }) => `The folder outputs/v${p.n} is not a folder of the creative (a link?): the version cannot be saved`,

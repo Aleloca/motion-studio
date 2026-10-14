@@ -481,7 +481,9 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.get('/api/doctor', async () => {
     const checks = await deps.doctor({ sandbox: effectiveSandbox, workspacePath: workspace?.root ?? null, agentOptIn: await agentOptIn() });
     // Fix round 1 (I-A): an agent change to the workspace settings the core could not undo, held across restarts.
-    if (workspace?.settingsHeld()) checks.push({ id: 'workspace-settings', label: t().doctor.workspaceSettingsLabel, required: false, ok: false, message: t().jobs.workspaceSettingsNotReverted, fix: t().doctor.workspaceSettingsFix });
+    if (workspace?.settingsHeld()) {
+      checks.push({ id: 'workspace-settings', label: t().doctor.workspaceSettingsLabel, required: false, ok: false, message: workspace.settingsHoldBroken() ? t().jobs.settingsHoldBroken : t().jobs.workspaceSettingsNotReverted });
+    }
     return checks;
   });
   // Phase 13: the effective capabilities (the path the next creative or console turn takes).

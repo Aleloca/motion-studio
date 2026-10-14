@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmod, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { creativeFileSchema, messages } from '@motion-studio/shared';
@@ -408,7 +408,8 @@ describe('an agent settings change that cannot be undone survives no restart (fi
       const runner = s.runner;
       s = await liveApp({ base: s.base, runner, slug: s.slug });
       expect((await s.app.inject('/api/workspace')).json().settings).toMatchObject({ sandboxMode: 'auto', confirmPaidProviders: true, agentLiveInput: false, agentInterrupt: false });
-      expect(await readFile(file, 'utf8')).toBe(before); // the startup restored .studio's mode and put the file back
+      // The startup restored .studio's mode and made the file at least as strict as the hold.
+      expect(JSON.parse(await readFile(file, 'utf8'))).toMatchObject({ sandboxMode: 'auto', confirmPaidProviders: true, agentLiveInput: false, agentInterrupt: false });
       expect((await s.app.inject('/api/doctor')).json().some((c: { id: string }) => c.id === 'workspace-settings')).toBe(false);
     } finally {
       await chmod(studio, 0o700).catch(() => {});
@@ -449,5 +450,42 @@ describe('every creative has its side record before any agent runs (fix round 1,
     const c = await get(old);
     expect(c.queued.map((q: { text: string }) => q.text)).toEqual(['LEGITTIMA']);
     expect(c.stoppedSession).toBeUndefined();
+  });
+});
+
+describe('a settings hold that cannot be kept is loud and refuses unsandboxed runs (fix round 2, Ruling AA)', () => {
+  it.skipIf(process.platform !== 'darwin' || process.getuid?.() === 0)('doctor row, the next unsandboxed turn refused with the reason, until the user saves the settings', async () => {
+    s = await liveApp();
+    const file = join(s.base, 'ws', '.studio', 'settings.json');
+    const holdDir = join(s.base, 'config', 'settings-hold');
+    const before = await readFile(file, 'utf8');
+    await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } });
+    const run = await s.runner.next(0);
+    await writeFile(file, JSON.stringify({ ...JSON.parse(before), sandboxMode: 'off', confirmPaidProviders: false }));
+    await mkdir(holdDir, { recursive: true });
+    execFileSync('chflags', ['uchg', file]);
+    execFileSync('chflags', ['uchg', holdDir]);
+    try {
+      run.finish();
+      await s.waitIdle();
+      const it_ = messages('it').jobs;
+      expect((await s.conversation()).some((e) => e.type === 'system' && e.text === it_.settingsHoldBroken)).toBe(true);
+      expect((await s.app.inject('/api/doctor')).json()).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'workspace-settings', message: it_.settingsHoldBroken })]));
+      const refused = (await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Secondo' } })).json();
+      await s.waitIdle();
+      expect((await s.jobs()).find((j) => j.id === refused.id)?.state).toBe('failed');
+      expect((await s.conversation()).some((e) => e.type === 'system' && e.level === 'error' && String(e.text).includes(it_.settingsHoldBroken))).toBe(true);
+      expect(s.runner.runs).toHaveLength(1);
+      execFileSync('chflags', ['nouchg', file]);
+      execFileSync('chflags', ['nouchg', holdDir]);
+      expect((await s.app.inject({ method: 'PUT', url: '/api/settings', payload: { theme: 'dark' } })).statusCode).toBe(200);
+      await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Terzo' } });
+      (await s.runner.next(1)).finish();
+      await s.waitIdle();
+      expect((await s.app.inject('/api/doctor')).json().some((c: { id: string }) => c.id === 'workspace-settings')).toBe(false);
+    } finally {
+      execFileSync('chflags', ['nouchg', file]);
+      execFileSync('chflags', ['nouchg', holdDir]);
+    }
   });
 });
