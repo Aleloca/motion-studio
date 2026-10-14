@@ -18,7 +18,7 @@ import { compositionDirOf } from './composition-contract.ts';
 import { alignEditorCopies, carriableComposition, compositionDuration, copyComposition, type CarriedComposition } from './composition-turn.ts';
 import { writeThroughTemp } from './core-files.ts';
 import { CreativeStore } from './creative-store.ts';
-import { withoutFormatState, type CreativeRef, type CreativeTurnService } from './creative-turns.ts';
+import { withFreedInstances, withoutFormatState, type CreativeRef, type CreativeTurnService } from './creative-turns.ts';
 import type { PreviewService, StagingView } from './previews.ts';
 
 /**
@@ -224,7 +224,8 @@ export class DirectEditService {
     const fresh = (c: CreativeFile) => {
       const pruned = withoutFormatState(c.brief.links, c.exportPicks, new Set([instanceId]));
       const brief: Brief = { ...c.brief, formats: nextFormats, ...(labels ? { formatLabels: labels } : {}), ...(pruned.links ? { links: pruned.links } : {}) };
-      return { brief, exportPicks: pruned.exportPicks };
+      // Nor the old instance's translations (final review I1): its rows up to the latest version are not carried.
+      return { brief, exportPicks: pruned.exportPicks, ...withFreedInstances(c.freedInstances, [instanceId], latest.n) };
     };
     const newLabel = (id: string) => label(id, labels);
 
@@ -233,16 +234,16 @@ export class DirectEditService {
     await versionDirReady(creativeDir, newN);
     const vdir = store.outputsDir(slug, newN);
     let recorded = false;
-    let before: { brief: Brief; exportPicks: CreativeFile['exportPicks'] } | null = null;
+    let before: { brief: Brief; exportPicks: CreativeFile['exportPicks']; freedInstances: CreativeFile['freedInstances'] } | null = null;
     try {
       if ((await copyComposition(creativeDir, n, cc, `outputs/v${newN}/${compositionDirOf(instanceId)}`)) !== 'ok') throw carryFailed(source, n);
-      const plan = { creative: { ...creative, brief: fresh(creative).brief }, targets: [instanceId], carried, carriedComps, links };
+      const plan = { creative: { ...creative, ...fresh(creative) }, targets: [instanceId], carried, carriedComps, links };
       const saved = await this.deps.turns.finishCompositions(ref, store, plan, presets, latest, newN, newLabel, locale,
         { direct: true, base: { durationSec: cc.duration, ...(srcEntry.userDuration ? { userDuration: srcEntry.userDuration } : {}) } });
       const status = saved.problems.length === 0 ? 'complete' : 'incomplete';
       // The brief as stored now (a follower unlinked by the save above stays unlinked), with the new instance.
       const stored = await store.get(slug);
-      before = { brief: stored.brief, exportPicks: stored.exportPicks };
+      before = { brief: stored.brief, exportPicks: stored.exportPicks, freedInstances: stored.freedInstances };
       await store.update(slug, fresh(stored));
       await alignEditorCopies(creativeDir, { n: newN, origin: 'editor', compositions: saved.compositions } as VersionEntry).catch(() => []);
       const commit = await this.deps.git.commitAll(ref.projectDir, `${creative.title}: v${newN}`);

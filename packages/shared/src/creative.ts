@@ -69,6 +69,13 @@ export const creativeFileSchema = z.object({
    * means the default rule (see `starOf`). Picking the latest version of a format's history clears its entry.
    */
   exportPicks: z.record(z.string().min(1), z.number().int().min(1)).optional(),
+  /**
+   * Instance ids freed since a version (Phase 12, final review I1): instance id → the number of the latest version when the
+   * id was removed from the brief or added to it (0 before any version). A version's localization rows for that id, up to
+   * that number, belong to the old instance and are never carried into a new version: a freed id taken again starts clean,
+   * as its links and picks do. Absent in old files (nothing freed).
+   */
+  freedInstances: z.record(z.string().min(1), z.number().int().min(0)).optional(),
 });
 export type CreativeFile = z.infer<typeof creativeFileSchema>;
 

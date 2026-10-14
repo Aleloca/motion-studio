@@ -3,11 +3,11 @@
  * Carry-over of localization overlays into a new version (Phase 12, Task 3, spec §3.3, Review Focus 2): kept, stale,
  * dropped, voice stale, for every way a version is made (turns, duplicates; direct edits share `finishCompositions`).
  */
-import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { Composition, FormatPreset, VersionEntry } from '@motion-studio/shared';
+import type { Composition, CreativeDetail, FormatPreset, VersionEntry } from '@motion-studio/shared';
 import { readCompositionFolder } from '../src/compositions/composition-files.ts';
 import { currentLocale } from '../src/i18n.ts';
 import { carryLocalizations } from '../src/localization/carry.ts';
@@ -96,6 +96,18 @@ describe('carryLocalizations', () => {
     v1.localizations[0]!.hash = 'f'.repeat(64);
     expect(await carryLocalizations({ creativeDir: base, n: 1, version: v1 }, { creativeDir: base, n: 2 }, new Map([['test-wide', await ic(v2)]]), { projectDir: base, uiLocale: currentLocale() })).toBeUndefined();
   });
+
+  it('a row whose instance has no composition in the base version is never carried (final review I1 guard)', async () => {
+    const v1 = await folder(1, comp({}));
+    const hash = await writeOverlay(base, 1, { ...emptyOverlay('de', 'test-wide'), texts: { title: { source: 'Hello', text: 'Hallo' } } });
+    v1.localizations = [{ locale: 'de', instanceId: 'test-wide', hash, origin: 'agent', stale: [], voice: 'original' }];
+    const v2 = await folder(2, comp({}));
+    const without = { ...v1, compositions: [] };
+    expect(await carryLocalizations({ creativeDir: base, n: 1, version: without }, { creativeDir: base, n: 2 }, new Map([['test-wide', await ic(v2)]]), { projectDir: base, uiLocale: currentLocale() })).toBeUndefined();
+    // And a row of an instance freed after the base (`exclude`) is not carried either.
+    expect(await carryLocalizations({ creativeDir: base, n: 1, version: v1 }, { creativeDir: base, n: 2 }, new Map([['test-wide', await ic(v2)]]), { projectDir: base, uiLocale: currentLocale(), exclude: new Set(['test-wide']) })).toBeUndefined();
+    expect(await carryLocalizations({ creativeDir: base, n: 1, version: v1 }, { creativeDir: base, n: 2 }, new Map([['test-wide', await ic(v2)]]), { projectDir: base, uiLocale: currentLocale() })).toHaveLength(1);
+  });
 });
 
 describe('carry-over on every new version', { timeout: 120_000 }, () => {
@@ -148,6 +160,58 @@ describe('carry-over on every new version', { timeout: 120_000 }, () => {
     expect(loc.localization.stale).toEqual(['title']);
     expect(JSON.stringify(loc.composition)).toContain('Goodbye');
     expect(JSON.stringify(loc.composition)).not.toContain('Hallo');
+  });
+
+  const putRow = (slug: string, n: number, instance: string, payload: object) =>
+    env.app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}/versions/${n}/localizations/de/${instance}`, headers: H, payload });
+  const rowsOf = async (slug: string, n: number) => ((await env.versionOf(slug, n))!.localizations ?? []).map((x) => `${x.locale}/${x.instanceId}`).sort();
+
+  it('a freed id taken again by a duplicate does not bring back the old instance\'s translations (final review I1 probe)', async () => {
+    const slug = await env.create(['test-wide'], { links: {}, locales: { primary: 'en', extra: ['de'] } });
+    expect((await putRow(slug, 1, 'test-wide', { texts: { title: 'Hallo' } })).statusCode).toBe(200);
+    const dup = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/1/duplicate-format`, headers: H, payload: { instanceId: 'test-wide' } });
+    expect(dup.json().instanceId).toBe('test-wide@2');
+    const own = await putRow(slug, 2, 'test-wide@2', { texts: { title: 'Alt' } });
+    expect(own.statusCode, own.body).toBe(200);
+    const v2Before = readFileSync(join(env.store().dir(slug), 'versions.json'), 'utf8');
+    const removed = await env.app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}`, headers: H, payload: { formats: ['test-wide'] } });
+    expect(removed.statusCode, removed.body).toBe(200);
+    const again = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/versions/2/duplicate-format`, headers: H, payload: { instanceId: 'test-wide' } });
+    expect(again.statusCode, again.body).toBe(200);
+    expect(again.json().instanceId).toBe('test-wide@2');
+    // v3's @2 is a new instance: no row; the bare instance keeps its translation.
+    expect(await rowsOf(slug, 3)).toEqual(['de/test-wide']);
+    expect(existsSync(join(env.store().dir(slug), 'outputs', 'v3', 'locales', 'de', 'test-wide@2.json'))).toBe(false);
+    // Saved versions are untouched: v2 still has both rows.
+    expect(await rowsOf(slug, 2)).toEqual(['de/test-wide', 'de/test-wide@2']);
+    expect(JSON.parse(v2Before).versions.find((x: VersionEntry) => x.n === 2)).toEqual((await env.store().readVersions(slug)).find((x) => x.n === 2));
+  });
+
+  it('an id removed from the brief and added again ("Add another") then made by a turn starts with no translation', async () => {
+    const slug = await env.create(['test-wide', 'test-wide@2'], { links: {}, locales: { primary: 'en', extra: ['de'] } });
+    expect((await putRow(slug, 1, 'test-wide', { texts: { title: 'Hallo' } })).statusCode).toBe(200);
+    expect((await putRow(slug, 1, 'test-wide@2', { texts: { title: 'Alt' } })).statusCode).toBe(200);
+    const url = `/api/projects/acme/creatives/${slug}`;
+    expect((await env.app.inject({ method: 'PUT', url, headers: H, payload: { formats: ['test-wide'] } })).statusCode).toBe(200);
+    const d = (await env.app.inject({ url, headers: H })).json() as CreativeDetail;
+    const back = await env.app.inject({ method: 'PUT', url, headers: H, payload: { brief: { ...d.creative.brief, formats: ['test-wide', 'test-wide@2'] } } });
+    expect(back.statusCode, back.body).toBe(200);
+    await env.turn(slug, { text: 'again' });
+    expect(await rowsOf(slug, 2)).toEqual(['de/test-wide']);
+    // The next turn carries what the new instance gets from then on.
+    expect((await putRow(slug, 2, 'test-wide@2', { texts: { title: 'Neu' } })).statusCode).toBe(200);
+    await env.turn(slug, { text: 'once more' });
+    expect(await rowsOf(slug, 3)).toEqual(['de/test-wide', 'de/test-wide@2']);
+  });
+
+  it('an id that stays in the brief keeps its translations across turns (no false freeing)', async () => {
+    const slug = await env.create(['test-wide', 'test-wide@2'], { links: {}, locales: { primary: 'en', extra: ['de'] } });
+    expect((await putRow(slug, 1, 'test-wide@2', { texts: { title: 'Alt' } })).statusCode).toBe(200);
+    const url = `/api/projects/acme/creatives/${slug}`;
+    const d = (await env.app.inject({ url, headers: H })).json() as CreativeDetail;
+    expect((await env.app.inject({ method: 'PUT', url, headers: H, payload: { brief: { ...d.creative.brief, goal: 'Another goal' } } })).statusCode).toBe(200);
+    await env.turn(slug, { text: 'again' });
+    expect(await rowsOf(slug, 2)).toEqual(['de/test-wide@2']);
   });
 
   it('a duplicate carries the overlays of the other instances', async () => {

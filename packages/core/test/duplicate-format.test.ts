@@ -232,7 +232,9 @@ describe('duplicating a format', { timeout: 120_000 }, () => {
       expect((await duplicate(slug, 1, payload)).statusCode, JSON.stringify(payload)).toBe(400);
     }
     expect((await env.store().readVersions(slug)).map((x) => x.n)).toEqual([1]);
-    expect(readFileSync(join(env.store().dir(slug), 'creative.json'), 'utf8')).not.toContain('@2"');
+    // No refused duplicate left an instance behind (the ids the brief saves freed are recorded in `freedInstances`, final review I1).
+    const stored = JSON.parse(readFileSync(join(env.store().dir(slug), 'creative.json'), 'utf8'));
+    expect(JSON.stringify({ brief: stored.brief, exportPicks: stored.exportPicks })).not.toContain('@2"');
   });
 
   it('a source or carried folder that is no longer the recorded one is refused (409) with nothing saved', async () => {

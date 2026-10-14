@@ -14,15 +14,20 @@ export interface VersionDir { creativeDir: string; n: number; version?: VersionE
  *   translation), and "Translate" redoes it;
  * - entries whose clip is gone are dropped (with their `fit`);
  * - a voice whose clip's script changed is `stale`, and so is one whose file the new version does not have;
- * - an overlay left with no entry, or whose file is unreadable or no longer the recorded one, is not carried.
+ * - an overlay left with no entry, or whose file is unreadable or no longer the recorded one, is not carried;
+ * - nor is a row of an instance in `o.exclude` (freed since `prev`) or without a composition in `prev`.
  * The overlays are written into `next` (`writeOverlay`) and the rows returned for its `VersionEntry.localizations`, with
  * the problems of the localized composition checked again (`finishOverlay`). Nothing of `prev` is changed.
  */
 export async function carryLocalizations(prev: VersionDir, next: VersionDir, nextCompositions: Map<string, InstanceComposition>,
-  o: { projectDir: string; uiLocale: Locale }): Promise<VersionEntry['localizations']> {
+  o: { projectDir: string; uiLocale: Locale; exclude?: ReadonlySet<string> }): Promise<VersionEntry['localizations']> {
   const rows = prev.version?.localizations ?? [];
   const out: NonNullable<VersionEntry['localizations']> = [];
   for (const row of rows) {
+    // Final review I1: a row of an instance freed since `prev` (removed from the brief, or its id taken again) belongs to the
+    // old instance; a row whose instance has no composition in `prev` describes nothing that version has. Neither is carried.
+    if (o.exclude?.has(row.instanceId)) continue;
+    if (!prev.version?.compositions?.some((c) => c.format === row.instanceId)) continue;
     const base = nextCompositions.get(row.instanceId);
     if (!base) continue;
     const read = await readOverlay(prev.creativeDir, prev.n, row.locale, row.instanceId);
