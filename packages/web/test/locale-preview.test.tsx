@@ -180,3 +180,37 @@ describe('the language switcher of the preview', () => {
     expect(within(flags).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['suboutside the box']);
   });
 });
+
+describe('the version a preview takes its translations from (live F3)', () => {
+  const comp = (format: string, hash: string) => ({ format, dir: `compositions/${format}`, hash });
+  const ver = (n: number, hashes: Record<string, string>, rows: LocalizationRow[] = []) => ({
+    n, compositions: Object.entries(hashes).map(([f, h]) => comp(f, h)), ...(rows.length ? { localizations: rows } : {}),
+  }) as never;
+  const h1 = '1'.repeat(64), h2 = '2'.repeat(64), h3 = '3'.repeat(64);
+
+  it('uses the shown version when it has the translations', async () => {
+    const { localePreviewSource } = await import('../src/screens/creative/useLocalePreview.ts');
+    const v1 = ver(1, { reel: h1 }, [row('de')]);
+    expect(localePreviewSource([v1, ver(2, { reel: h1 }, [row('ja')])], v1, 'reel')).toEqual({ n: 1, rows: [row('de')] });
+  });
+
+  it('takes the latest later version that carries the same composition and has translations of the format', async () => {
+    const { localePreviewSource } = await import('../src/screens/creative/useLocalePreview.ts');
+    const v1 = ver(1, { reel: h1, other: h1 });
+    const v2 = ver(2, { reel: h1, other: h2 }, [row('de'), row('ja')]);
+    const v3 = ver(3, { reel: h3, other: h2 }, [row('fr')]);
+    expect(localePreviewSource([v1, v2, v3], v1, 'reel')).toEqual({ n: 2, rows: [row('de'), row('ja')] });
+  });
+
+  it('ignores a later version whose composition of the format changed, and one without translations of it', async () => {
+    const { localePreviewSource } = await import('../src/screens/creative/useLocalePreview.ts');
+    const v1 = ver(1, { reel: h1 });
+    expect(localePreviewSource([v1, ver(2, { reel: h2 }, [row('de')]), ver(3, { reel: h1 }, [row('de', { instanceId: 'other' })])], v1, 'reel')).toEqual({ n: 1, rows: [] });
+  });
+
+  it('keeps the shown version for a legacy version without compositions', async () => {
+    const { localePreviewSource } = await import('../src/screens/creative/useLocalePreview.ts');
+    const v1 = { n: 1 } as never;
+    expect(localePreviewSource([v1, ver(2, { reel: h1 }, [row('de')])], v1, 'reel')).toEqual({ n: 1, rows: [] });
+  });
+});

@@ -24,7 +24,7 @@ import { createPortal } from 'react-dom';
 import { api, ApiError } from '../../api.ts';
 import { CompositionPlayer, type CompositionMedia } from '../../components/CompositionPlayer.tsx';
 import { LocaleOutline, LocaleSwitcher } from '../creative/LocaleSwitcher.tsx';
-import { useLocalePreview } from '../creative/useLocalePreview.ts';
+import { localePreviewSource, useLocalePreview } from '../creative/useLocalePreview.ts';
 import { LanguagesButton } from '../creative/LanguagesButton.tsx';
 import { creativeLocales } from '../creative/languagesModel.ts';
 import { usePreviewSession } from '../../components/compositionPreview.ts';
@@ -193,8 +193,9 @@ export function EditorScreen({ slug, creative, format, live, exportNamePattern, 
   // The language shown (Phase 12): a read-only preview of a translation; the draft is shown again on the way back.
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  const localeSource = useMemo(() => (version ? localePreviewSource(versions, version, format) : null), [versions, version, format]);
   const localePreview = useLocalePreview({
-    slug, creative, n: hasComp ? n : null, format, rows: version?.localizations ?? [], player, token, original: () => draftRef.current?.composition ?? null,
+    slug, creative, n: hasComp && localeSource ? localeSource.n : null, format, rows: localeSource?.rows ?? [], player, token, original: () => draftRef.current?.composition ?? null,
   });
   const localeActive = localePreview.locale !== null;
 

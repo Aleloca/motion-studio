@@ -2,12 +2,32 @@
 // entries keep the source text) is sent to the live player with `setComposition`, after the core is told to serve the
 // translation's fallback fonts and voices under the session (hash-checked there). The overlay's stored problems and outdated
 // entries come back with it, to flag the clips. Back to the original: the base composition is sent again.
-import type { Composition, LocaleTag, LocalizationRow } from '@motion-studio/shared';
+import type { Composition, LocaleTag, LocalizationRow, VersionEntry } from '@motion-studio/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, type LocalizedCompositionView } from '../../api.ts';
 import type { CompositionMedia } from '../../components/CompositionPlayer.tsx';
 import { message } from '../../errors.ts';
 import { flaggedClips, type FlaggedClip } from './languagesModel.ts';
+
+/**
+ * The version a format's preview takes its translations from (live F3). Translations are stored per version, but a format the
+ * translated version did not change keeps its older composition: its own view shows that older version. Its translation is the
+ * one of the latest later version that carries the very same composition of the format (same hash) and has rows for it; the
+ * core serves the localized composition of that version. The shown version wins when it has rows itself.
+ */
+export function localePreviewSource(versions: readonly Pick<VersionEntry, 'n' | 'compositions' | 'localizations'>[], shown: Pick<VersionEntry, 'n' | 'compositions' | 'localizations'>, format: string): { n: number; rows: LocalizationRow[] } {
+  const own = shown.localizations ?? [];
+  if (own.some((r) => r.instanceId === format)) return { n: shown.n, rows: own };
+  const hash = shown.compositions?.find((c) => c.format === format)?.hash;
+  if (hash) {
+    for (const v of [...versions].filter((x) => x.n > shown.n).sort((a, b) => b.n - a.n)) {
+      if (v.compositions?.find((c) => c.format === format)?.hash !== hash) continue;
+      const rows = v.localizations ?? [];
+      if (rows.some((r) => r.instanceId === format)) return { n: v.n, rows };
+    }
+  }
+  return { n: shown.n, rows: own };
+}
 
 export interface LocalePreviewOptions {
   slug: string; creative: string;

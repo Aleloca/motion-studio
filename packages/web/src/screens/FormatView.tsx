@@ -41,7 +41,7 @@ import { pinsKey, usePendingPins } from './pendingPins.ts';
 import { LanguagesButton } from './creative/LanguagesButton.tsx';
 import { creativeLocales } from './creative/languagesModel.ts';
 import { LocaleOutline, LocaleSwitcher } from './creative/LocaleSwitcher.tsx';
-import { useLocalePreview } from './creative/useLocalePreview.ts';
+import { localePreviewSource, useLocalePreview } from './creative/useLocalePreview.ts';
 import { RangeDialog } from './editor/RangeDialog.tsx';
 import { clipLabel, clipPin, clipsAt, rangePin, rangeTimes } from './pinModel.ts';
 import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from './FormatVersions.tsx';
@@ -185,8 +185,9 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   const [player, setPlayer] = useState<CompositionMedia | null>(null);
   const [playerReady, setPlayerReady] = useState(false);
   // The language shown (Phase 12): a creative without languages in its brief has no switcher.
+  const localeSource = useMemo(() => (version ? localePreviewSource(versions, version, source.format) : null), [versions, version, source.format]);
   const localePreview = useLocalePreview({
-    slug, creative, n: livePlayer && version ? version.n : null, format: source.format, rows: version?.localizations ?? [], player,
+    slug, creative, n: livePlayer && localeSource ? localeSource.n : null, format: source.format, rows: localeSource?.rows ?? [], player,
     token: preview.state.kind === 'ready' ? preview.state.session.token : null, original: () => clipComp,
   });
 
