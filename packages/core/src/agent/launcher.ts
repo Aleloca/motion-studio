@@ -173,8 +173,11 @@ export class AgentLauncher {
     const roots = [...new Set([i.projectDir, realDir])];
     const protectedDirs = roots.flatMap((d) => PROTECTED_PROJECT_DIRS.map((n) => join(d, n)));
     // The workspace's own .studio (settings.json: sandbox mode, paid-provider confirmation, the Phase 13 opt-ins) is never
-    // the agent's to write, through either spelling of the project folder.
-    protectedDirs.push(...[...new Set(roots.map((d) => join(dirname(d), '.studio')))]);
+    // the agent's to write: the workspace is the project folder's parent, under its plain and its real spelling (final wave
+    // P9: when the project folder itself is a link, the target's parent is not the workspace; it stays protected too).
+    const workspace = dirname(i.projectDir);
+    const workspaceReal = await realpath(workspace).catch(() => workspace);
+    protectedDirs.push(...[...new Set([workspace, workspaceReal, dirname(realDir)].map((d) => join(d, '.studio')))]);
     // Caller-supplied files get both spellings (plain and realpath) like the project entries.
     const spellings = (f: string) => (f.startsWith(`${i.projectDir}/`) && realDir !== i.projectDir ? [f, join(realDir, f.slice(i.projectDir.length + 1))] : [f]);
     const protectedFiles = [...(i.protectedFiles ?? []).flatMap(spellings), ...roots.flatMap((d) => [...PROTECTED_PROJECT_FILES, RENAME_JOURNAL_FILE].map((n) => join(d, n)))];

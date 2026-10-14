@@ -189,13 +189,16 @@ describe('AgentLauncher', () => {
     const linked = join(linkParent, 'link');
     await symlink(real, linked);
     const realDir = await realpath(linked);
+    // Final wave P9: the workspace's own .studio under its real spelling too (the project folder itself is the link here,
+    // so the target's parent is not the workspace; on macOS the temp folder is itself reached through /var → /private/var).
+    const workspaceReal = await realpath(linkParent);
     for (const kind of ['creative', 'console', 'brand-analysis', 'describe'] as const) {
       for (const available of [false, true]) {
         const { args } = await launch({ sandbox: async () => ({ available, reason: 'x' }) }, kind, linked);
-        expect(args).toEqual(expect.arrayContaining([...protectedDirRules(dirname(linked), '.studio'), ...protectedDirRules(dirname(realDir), '.studio')]));
+        expect(args).toEqual(expect.arrayContaining([...protectedDirRules(dirname(linked), '.studio'), ...protectedDirRules(workspaceReal, '.studio'), ...protectedDirRules(dirname(realDir), '.studio')]));
         if (available) {
           const settings = JSON.parse(args[args.indexOf('--settings') + 1]!);
-          expect(settings.sandbox.filesystem.denyWrite).toEqual(expect.arrayContaining([join(dirname(linked), '.studio'), join(dirname(realDir), '.studio')]));
+          expect(settings.sandbox.filesystem.denyWrite).toEqual(expect.arrayContaining([join(dirname(linked), '.studio'), join(workspaceReal, '.studio'), join(dirname(realDir), '.studio')]));
         }
       }
     }
