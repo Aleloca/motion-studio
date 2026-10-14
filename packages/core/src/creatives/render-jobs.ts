@@ -13,7 +13,7 @@ import { loadComposition, readCompositionFolder } from '../compositions/composit
 import { withIssues, withoutIssues } from '../localization/issues.ts';
 import { sourceOverflowOf } from '../localization/store.ts';
 import { changedAssets, instanceComposition, isAssetChangedProblem, localizedComposition, overlayAssetPaths, readOverlay } from '../localization/store.ts';
-import { checkedLocale, clipLabel, voiceFileOk } from '../localization/validate.ts';
+import { assertLocalesInBrief, checkedLocale, clipLabel, voiceFileOk } from '../localization/validate.ts';
 import { realDirChain } from './core-files.ts';
 import { noteCoreChange } from '../core-changes.ts';
 import { noteCoreTemp } from '../core-temps.ts';
@@ -177,6 +177,7 @@ export class RenderJobService {
     if (comps.length === 0) throw new CodedError(400, m.render.notV2({ n }), 'version-not-v2');
     const full = renderPlan(comps, creative.brief, requested);
     if (full.unknown.length > 0) throw new CodedError(400, m.render.formatsNotInVersion({ list: full.unknown.join(', ') }), 'formats-not-in-version');
+    if (opts.locales && opts.locales.length > 0) assertLocalesInBrief(creative.brief, opts.locales.map((x) => checkedLocale(x, locale)), locale);
     if (opts.locales && opts.locales.length > 0) return this.startLocalized(ref, version, creative.title, requested, opts.locales, opts.force === true, locale);
     if (!this.deps.engine) throw new CodedError(503, m.render.noRenderer, 'no-renderer');
     if ((await this.deps.engine.info()).kind === null) throw new CodedError(409, m.render.noBrowser, 'no-browser');

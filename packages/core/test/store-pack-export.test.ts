@@ -202,6 +202,41 @@ describe('store pack export', { timeout: 120_000 }, () => {
     expect(readme).toContain(`AppStore/en/iPhone-6.9/03-screenshot.png: ${c().notInVersion({ n: 1 })}`);
   });
 
+  const editBrief = (slug: string, f: (b: { formats: string[] }) => void) => {
+    const file = join(env.store().dir(slug), 'creative.json');
+    const cf = JSON.parse(readFileSync(file, 'utf8')) as { brief: { formats: string[]; formatLabels?: Record<string, string>; links?: Record<string, string> } };
+    f(cf.brief);
+    for (const k of ['formatLabels', 'links'] as const) {
+      if (cf.brief[k]) cf.brief[k] = Object.fromEntries(Object.entries(cf.brief[k]!).filter(([a, b]) => cf.brief.formats.includes(a) && (k === 'formatLabels' || cf.brief.formats.includes(b))));
+    }
+    writeFileSync(file, JSON.stringify(cf));
+  };
+  const threeShots = () => pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] }, preview: false,
+    screenshots: [{ caption: 'One', screen: null }, { caption: 'Two', screen: null }, { caption: 'Three', screen: null }] });
+
+  it('numbers the screenshots by their place in the brief, and a removed one leaves no gap (Q6)', async () => {
+    const slug = await createPack(threeShots());
+    editBrief(slug, (b) => { b.formats = ['appstore-iphone-69@3', 'appstore-iphone-69']; });
+    const res = await exportPack(slug);
+    expect(res.statusCode, res.body).toBe(200);
+    const body = res.json() as { written: string[]; failed: unknown[] };
+    // The caption stays with its instance; the number is the upload order of the brief.
+    expect([...body.written].sort()).toEqual(['AppStore/iPhone-6.9/01-three.png', 'AppStore/iPhone-6.9/02-one.png']);
+    expect(body.failed).toEqual([]);
+  });
+
+  it('checks the number of screenshots per device against the store (Q6)', async () => {
+    const slug = await createPack(pack({ stores: ['playstore'], devices: { playstore: ['phone'] }, preview: false }));
+    editBrief(slug, (b) => { b.formats = ['playstore-phone-9x16']; });
+    const few = (await exportPack(slug)).json() as { failed: Array<{ file: string; reason: string }> };
+    expect(few.failed).toEqual([{ file: 'GooglePlay/Phone', reason: c().tooFewScreenshots({ count: 1, min: 2 }) }]);
+    editBrief(slug, (b) => { b.formats = ['playstore-phone-9x16', ...Array.from({ length: 8 }, (_, i) => `playstore-phone-9x16@${i + 2}`)]; });
+    const many = (await exportPack(slug)).json() as { written: string[]; failed: Array<{ file: string; reason: string }> };
+    expect(many.written).toHaveLength(2);
+    expect(many.failed.find((f) => f.file === 'GooglePlay/Phone/09-screenshot.png')?.reason).toBe(c().tooManyScreenshots({ count: 9, max: 8 }));
+    expect(many.failed.find((f) => f.file === 'GooglePlay/Phone/08-screenshot.png')?.reason).toBe(c().notInVersion({ n: 1 }));
+  });
+
   it('a preview without an audio track is refused at export (the render adds one: store-flatten)', async () => {
     const slug = await createPack(pack({ stores: ['appstore'], devices: { appstore: ['iphone-69'] } }));
     await renderAll(slug);

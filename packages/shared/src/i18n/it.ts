@@ -658,6 +658,8 @@ export const it: Messages = {
         copyFailed: (p) => `non si è potuto copiare: ${p.reason}`,
         notRendered: 'non renderizzato',
         notInVersion: (p) => `non è nella versione ${p.n}`,
+        tooFewScreenshots: (p) => `${p.count} screenshot: lo store ne chiede almeno ${p.min}`,
+        tooManyScreenshots: (p) => `screenshot ${p.count}: lo store ne accetta al massimo ${p.max}`,
       },
       readme: {
         title: (p) => `${p.app}: pacchetto App Store e Google Play`,

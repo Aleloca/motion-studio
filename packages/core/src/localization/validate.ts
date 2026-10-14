@@ -218,3 +218,15 @@ export async function checkLocalizedComposition(localized: Composition, o: { pre
   const r = await checkCompositionObject(localized, { preset: o.preset, compDir: o.compDir, folder: o.folder, files: o.files });
   return { problems: r.problems.map((p) => compositionProblemText(p, o.uiLocale)), warnings: r.warnings.map((p) => compositionProblemText(p, o.uiLocale)) };
 }
+
+/**
+ * The languages a request asks for must still be the creative's own (`brief.locales`): the primary or one of the extras, else
+ * 400 `locale-not-in-brief` with the translated reason. One rule for the render, the export, the export preparation and the
+ * store pack (a language removed from the brief keeps its stored translations, but nothing new is made from them).
+ */
+export function assertLocalesInBrief(brief: { locales?: { primary: string; extra: readonly string[] } }, tags: readonly string[], locale: Locale): void {
+  const l = brief.locales;
+  for (const tag of tags) {
+    if (!l || (tag !== l.primary && !l.extra.includes(tag))) throw new CodedError(400, messages(locale).variants.localeNotInBrief({ tag }), 'locale-not-in-brief');
+  }
+}

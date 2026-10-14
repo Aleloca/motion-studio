@@ -10,7 +10,7 @@ import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
 import { CreativeStore } from '../creatives/creative-store.ts';
 import { exportResolved, exportVersion, pendingRenders, resolveExportPicks, resolveLocalizedItems, type ExportItem } from '../creatives/export.ts';
-import { checkedLocale } from '../localization/validate.ts';
+import { assertLocalesInBrief, checkedLocale } from '../localization/validate.ts';
 import { storyboardDir, storyboardSchema, sweepStoryboardTemps, type PreviewService } from '../creatives/previews.ts';
 import { readJsonFile } from '../json-file.ts';
 import { isRealDirChain } from '../creatives/core-files.ts';
@@ -383,6 +383,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     // today's, and each translated file gets its language (`localizedStem`), exactly as the dialog sends and shows them.
     const pattern = typeof body.pattern === 'string' ? body.pattern : (await ctx.requireWorkspace().readSettings()).exportNamePattern;
     const tags = body.locales ? [...new Set(body.locales.map((x) => checkedLocale(x, currentLocale())))] : null;
+    if (tags) assertLocalesInBrief(creative.brief, tags, currentLocale());
     // The brief's primary language is today's file, also for a creative whose extra languages were all removed.
     const briefPrimary = creative.brief.locales?.primary;
     const includeSource = tags === null || (briefPrimary !== undefined && tags.includes(briefPrimary));
@@ -516,6 +517,7 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     // Languages (Phase 12): the primary one is today's file; the others' translations without a current render are started too.
     const briefPrimary = creative.brief.locales?.primary;
     const tags = r.data.locales ? [...new Set(r.data.locales.map((x) => checkedLocale(x, currentLocale())))] : null;
+    if (tags) assertLocalesInBrief(creative.brief, tags, currentLocale());
     const includeSource = tags === null || (briefPrimary !== undefined && tags.includes(briefPrimary));
     const otherTags = tags === null ? [] : tags.filter((x) => x !== briefPrimary);
     const pending = includeSource ? await pendingRenders(creativeDir, versions, items) : new Map<number, string[]>();

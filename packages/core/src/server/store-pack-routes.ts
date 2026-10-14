@@ -9,7 +9,7 @@ import { checkDestination, pendingRenders, plainName, resolveLocalizedItems, typ
 import type { RenderJobService } from '../creatives/render-jobs.ts';
 import { reconcileRenders, renderFileMatches } from '../creatives/render-stamps.ts';
 import { FormatCatalog, findPreset } from '../formats/format-catalog.ts';
-import { checkedLocale } from '../localization/validate.ts';
+import { assertLocalesInBrief, checkedLocale } from '../localization/validate.ts';
 import type { MediaTools } from '../media/media-tools.ts';
 import { storePackBrief, verifyScreens } from '../store-pack/brief.ts';
 import { exportStorePack, packEntry, type PackFile } from '../store-pack/pack-export.ts';
@@ -91,7 +91,7 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
     const locales = creative.brief.locales;
     const tags = body.locales ? [...new Set(body.locales.map((x) => checkedLocale(x, currentLocale())))] : locales ? [locales.primary, ...locales.extra] : [];
     const primary = locales?.primary;
-    for (const tag of tags) if (!locales || (tag !== primary && !locales.extra.includes(tag))) throw new CodedError(400, t().variants.localeNotInBrief({ tag }), 'locale-not-in-brief');
+    assertLocalesInBrief(creative.brief, tags, currentLocale());
     const includeSource = !locales || tags.includes(primary!);
     const others = locales ? tags.filter((x) => x !== primary) : [];
 
@@ -176,7 +176,7 @@ export function registerStorePackRoutes(app: FastifyInstance, ctx: StorePackRout
     // The checks always use the format's size from the catalog (the store's size), never the size the render recorded.
     for (const f of files) Object.assign(f, sizeOf(f.format));
     const result = await exportStorePack({
-      creativeDir, n, destination, title: creative.title, storePack: pack, presets: catalog, files,
+      creativeDir, n, destination, title: creative.title, storePack: pack, presets: catalog, files, order: creative.brief.formats,
       probe: (file) => (ctx.media.available ? ctx.media.probe(file) : Promise.resolve(null)), date: localDay(),
     });
     return rendered.length > 0 ? { ...result, rendered } : result;

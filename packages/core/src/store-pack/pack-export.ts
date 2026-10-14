@@ -1,7 +1,7 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import {
-  instanceIndex, presetOf, STORE_DEVICE_PRESET, STORE_LIMITS, STORE_PREVIEW_PRESET, type FormatPreset, type StoreId, type StorePack,
+  instanceIndex, presetOf, STORE_DEVICE_PRESET, STORE_LIMITS, STORE_SCREENSHOTS, STORE_PREVIEW_PRESET, type FormatPreset, type StoreId, type StorePack,
 } from '@motion-studio/shared';
 import { copyConfinedFile } from '../brand/agent-guard.ts';
 import { copyUnique, ensureDestination, reasonOf } from '../creatives/export.ts';
@@ -46,16 +46,17 @@ export interface PackEntry {
 
 /**
  * Where format instance `format` goes in the pack, for `locale` (none: no language level); null for a format that is not part
- * of a pack (left out). Screenshot k is `NN-<slug(caption k)>`.
+ * of a pack (left out). Screenshot k is `NN-<slug(caption k)>`: k picks the caption (the instance's own), `position` the number NN
+ * (its place among the brief's instances of the device, the upload order; absent: k).
  */
-export function packEntry(p: StorePack, format: string, locale: string | undefined): PackEntry | null {
+export function packEntry(p: StorePack, format: string, locale: string | undefined, position?: number): PackEntry | null {
   const preset = presetOf(format);
   const loc = locale ? [locale] : [];
   const device = DEVICE_FOLDER[preset];
   if (device) {
     const k = instanceIndex(format);
     const caption = p.screenshots[k - 1]?.caption ?? '';
-    return { stem: [STORE_FOLDER[device.store], ...loc, device.folder, `${String(k).padStart(2, '0')}-${packSlug(caption, 'screenshot')}`].join('/'), kind: 'screenshot', store: device.store };
+    return { stem: [STORE_FOLDER[device.store], ...loc, device.folder, `${String(position ?? k).padStart(2, '0')}-${packSlug(caption, 'screenshot')}`].join('/'), kind: 'screenshot', store: device.store };
   }
   if (format === STORE_DEVICE_PRESET.playstore.feature) return { stem: [STORE_FOLDER.playstore, ...loc, 'feature-graphic'].join('/'), kind: 'feature', store: 'playstore' };
   if (format === STORE_PREVIEW_PRESET.appstore) return { stem: [STORE_FOLDER.appstore, ...loc, 'preview'].join('/'), kind: 'preview', store: 'appstore' };
@@ -78,6 +79,8 @@ export interface PackExportOptions {
   destination: string;
   title: string; storePack: StorePack; presets: readonly FormatPreset[];
   files: PackFile[];
+  /** The brief's formats in order: screenshots are numbered by their place among those of the same device (the upload order). */
+  order?: readonly string[];
   probe: (file: string) => Promise<MediaInfo | null>;
   /** The export day (README), `YYYY-MM-DD`. */
   date: string;
@@ -104,10 +107,36 @@ export async function exportStorePack(o: PackExportOptions): Promise<PackExportR
   const c = t().variants.storePack.check;
   const written: string[] = [];
   const failed: PackExportResult['failed'] = [];
+  const positionOf = (format: string): number | undefined => {
+    const same = (o.order ?? []).filter((x) => presetOf(x) === presetOf(format));
+    const at = same.indexOf(format);
+    return at < 0 ? undefined : at + 1;
+  };
+  // The store's screenshot count per device: the instances of the brief, beyond the maximum are left out, below the minimum is said.
+  const limits = (format: string) => {
+    const device = DEVICE_FOLDER[presetOf(format)];
+    return device && device.store ? { device, ...STORE_SCREENSHOTS[device.store] } : null;
+  };
+  if (o.order) {
+    const seen = new Set<string>();
+    for (const f of o.order) {
+      const lim = limits(f);
+      const preset = presetOf(f);
+      if (!lim || seen.has(preset)) continue;
+      seen.add(preset);
+      const count = o.order.filter((x) => presetOf(x) === preset).length;
+      if (count < lim.min) {
+        for (const loc of [...new Set(o.files.map((x) => x.locale))]) failed.push({ file: [STORE_FOLDER[lim.device.store], ...(loc ? [loc] : []), lim.device.folder].join('/'), reason: c.tooFewScreenshots({ count, min: lim.min }) });
+      }
+    }
+  }
   for (const f of o.files) {
-    const entry = packEntry(o.storePack, f.format, f.locale);
+    const position = positionOf(f.format);
+    const entry = packEntry(o.storePack, f.format, f.locale, position);
     if (!entry) continue;
     const planned = `${entry.stem}.${f.file ? extOf(f.file) : entry.kind === 'preview' ? 'mp4' : 'png'}`;
+    const lim = limits(f.format);
+    if (entry.kind === 'screenshot' && lim && position !== undefined && position > lim.max) { failed.push({ file: planned, reason: c.tooManyScreenshots({ count: position, max: lim.max }) }); continue; }
     if (f.failure || !f.file) { failed.push({ file: planned, reason: f.failure ?? c.notRendered }); continue; }
     const parts = entry.stem.split('/');
     const dir = join(folder, ...parts.slice(0, -1));

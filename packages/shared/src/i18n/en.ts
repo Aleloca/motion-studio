@@ -665,6 +665,8 @@ export const en = {
         copyFailed: (p: { reason: string }) => `could not be copied: ${p.reason}`,
         notRendered: 'not rendered',
         notInVersion: (p: { n: number }) => `not in version ${p.n}`,
+        tooFewScreenshots: (p: { count: number; min: number }) => `${p.count} screenshot${p.count === 1 ? '' : 's'}: the store needs at least ${p.min}`,
+        tooManyScreenshots: (p: { count: number; max: number }) => `screenshot ${p.count}: the store accepts at most ${p.max}`,
       },
       readme: {
         title: (p: { app: string }) => `${p.app}: App Store and Google Play pack`,

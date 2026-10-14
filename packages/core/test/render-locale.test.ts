@@ -77,6 +77,21 @@ describe('render per language', { timeout: 120_000 }, () => {
     } finally { release(); env.fake.gate = null; }
   });
 
+  it('refuses a language that is not in the brief, for the render and the export, with the translated reason (Q6)', async () => {
+    const slug = await create();
+    const reason = v().localeNotInBrief({ tag: 'ja' });
+    const r = await render(slug, 1, { formats: ['test-wide'], locales: ['ja'] });
+    expect(r.statusCode, r.body).toBe(400);
+    expect(r.json()).toMatchObject({ code: 'locale-not-in-brief', error: reason });
+    const body = { picks: { 'test-wide': 1 }, destination: dest, locales: ['ja'] };
+    const e = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, headers: H, payload: body });
+    expect(e.statusCode, e.body).toBe(400);
+    expect(e.json()).toMatchObject({ code: 'locale-not-in-brief' });
+    const p = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export/prepare`, headers: H, payload: { picks: { 'test-wide': 1 }, locales: ['ja'] } });
+    expect(p.statusCode, p.body).toBe(400);
+    expect(p.json()).toMatchObject({ code: 'locale-not-in-brief' });
+  });
+
   it('without a locale: today\'s file and manifest entry (no language fields), and a later render keeps the localized entries', async () => {
     const slug = await create();
     await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
