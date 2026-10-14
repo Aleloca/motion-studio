@@ -101,6 +101,8 @@ describe('series prompt section', () => {
     const s = section();
     expect(s).toMatch(/15 to 30 seconds/);
     expect(s).toMatch(/30 fps/);
+    // The composition's own frame rate is named (final wave P7).
+    expect(s).toContain('`"fps": 30` in its composition');
     expect(s).toMatch(/no transparency/i);
   });
 

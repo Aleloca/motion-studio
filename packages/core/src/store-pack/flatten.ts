@@ -1,5 +1,5 @@
 import { rm } from 'node:fs/promises';
-import { presetOf, STORE_DEVICE_PRESET, STORE_PREVIEW_PRESET, type Composition } from '@motion-studio/shared';
+import { presetOf, STORE_DEVICE_PRESET, STORE_LIMITS, STORE_PREVIEW_PRESET, type Composition } from '@motion-studio/shared';
 import { MP4_DEMUXERS, ownInput } from '../media/ffmpeg-exec.ts';
 import { flattenFilter, silentAudioInput } from '../media/ffmpeg-filters.ts';
 import { runFfmpeg, type FfmpegInfo } from '../render/encode.ts';
@@ -12,6 +12,9 @@ import { readImageInfo } from './requirements.ts';
  *   colour type is 2. Through the ffmpeg helper and the typed filter builders only.
  * - **Store audio.** The App Store preview needs an audio track: the render muxes the mix at 256 kbps AAC (Apple's figure)
  *   and, when the composition has no audio at all, adds a silent stereo AAC track of the video's exact length.
+ * - **Store frame rate.** The App Store preview is rendered at Apple's 30 fps whatever the composition says (final wave P7):
+ *   the renderer samples the composition's timeline at that rate, so a 24, 25, 50 or 60 fps composition still passes the
+ *   export's check, which stays as the last guard.
  */
 
 /** Presets whose render is flattened (store screenshots and the Play feature graphic). */
@@ -30,6 +33,8 @@ export interface StoreRenderOptions {
   flattenOnto?: string;
   /** An App Store preview: audio at 256 kbps, and a silent track when the composition has none. */
   storeAudio?: boolean;
+  /** The frame rate to render at, in place of the composition's (the App Store preview: 30). */
+  fps?: Composition['fps'];
 }
 
 /** The store steps for a render of format instance `formatId` of `composition` (none for any other format). */
@@ -37,7 +42,7 @@ export function storeRenderOptions(formatId: string, composition: Pick<Compositi
   const preset = presetOf(formatId);
   const still = !(composition.duration > 0);
   if (still && STORE_FLATTEN_PRESETS.has(preset)) return { flattenOnto: composition.background };
-  if (!still && STORE_AUDIO_PRESETS.has(preset)) return { storeAudio: true };
+  if (!still && STORE_AUDIO_PRESETS.has(preset)) return { storeAudio: true, fps: STORE_LIMITS.appstore.preview.fps as Composition['fps'] };
   return {};
 }
 

@@ -99,6 +99,11 @@ export interface RenderCompositionOptions {
   flattenOnto?: string;
   /** An App Store preview (Phase 12): the audio is muxed at 256 kbps, and a silent track is added when there is no audio. */
   storeAudio?: boolean;
+  /**
+   * Renders at this frame rate in place of the composition's (final wave P7: the App Store preview at 30 fps). The page gets
+   * the composition with this `fps`, so every frame count, sampling time and encoder setting follows it.
+   */
+  fps?: Composition['fps'];
 }
 
 /** The hidden temp file a render writes next to its output (`.<name>.render-<hex>.tmp`): the startup sweep removes old ones. */
@@ -142,7 +147,7 @@ async function clockSource(distDir: string): Promise<string | undefined> {
 
 /** Renders one format of a composition version (see the module comment). */
 export async function renderComposition(o: RenderCompositionOptions): Promise<RenderResult> {
-  const c = o.composition;
+  const c = o.fps !== undefined && o.fps !== o.composition.fps ? { ...o.composition, fps: o.fps } : o.composition;
   const still = !(c.duration > 0);
   const ext = extname(o.out).toLowerCase();
   const ctl = new AbortController();

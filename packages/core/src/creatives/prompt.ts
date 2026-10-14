@@ -311,7 +311,7 @@ export function storePackPromptSection(p: StorePack): string[] {
     `- The story progresses from screenshot 1 to ${n}: each one shows the next step or benefit; screenshot 1 is the strongest.`,
     ...(adapted.length > 0 ? [`- ${adapted.join(', ')}: each screenshot adapts the ${lead} screenshot of the same number: same caption, same story beat, re-laid-out for its own size (never a crop or a scaled copy).`] : []),
     '- Opaque backgrounds only: store screenshots and the feature graphic must have no transparency.',
-    ...(p.preview && p.stores.includes('appstore') ? ['- App Store preview (appstore-preview): 15 to 30 seconds at 30 fps, the app in use in the same style as the screenshots; Motion Studio adds a silent audio track when it has no sound.'] : []),
+    ...(p.preview && p.stores.includes('appstore') ? ['- App Store preview (appstore-preview): 15 to 30 seconds, `"fps": 30` in its composition (Apple accepts 30 fps only; Motion Studio renders it at 30 fps in any case), the app in use in the same style as the screenshots; Motion Studio adds a silent audio track when it has no sound.'] : []),
     ...(p.preview && p.stores.includes('playstore') ? ['- Google Play promo video (playstore-promo-16x9): 16:9, for YouTube; the first 30 seconds matter most.'] : []),
     ...(has('playstore', 'feature') ? [`- Google Play feature graphic (playstore-feature, 1024×500): the app name and tagline in the series style, no device frame needed, nothing important near the edges.`] : []),
   ];

@@ -34,7 +34,8 @@ describe('storeRenderOptions and backgroundRgb', () => {
     for (const id of ['appstore-iphone-69', 'appstore-iphone-69@3', 'appstore-iphone-65', 'appstore-ipad-13@2', 'playstore-phone-9x16', 'playstore-tablet@2', 'playstore-feature']) {
       expect(storeRenderOptions(id, comp('#112233')), id).toEqual({ flattenOnto: '#112233' });
     }
-    expect(storeRenderOptions('appstore-preview', comp('#000', 20))).toEqual({ storeAudio: true });
+    // The App Store preview is rendered at Apple's 30 fps whatever the composition says (final wave P7).
+    expect(storeRenderOptions('appstore-preview', comp('#000', 20))).toEqual({ storeAudio: true, fps: 30 });
     for (const id of ['instagram-post-1x1', 'playstore-promo-16x9', 'appstore-icon', 'test-wide']) expect(storeRenderOptions(id, comp('#fff')), id).toEqual({});
   });
   it('reads the rgb part of any composition colour', () => {

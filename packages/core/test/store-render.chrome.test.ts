@@ -10,7 +10,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Composition, FormatPreset } from '@motion-studio/shared';
-import { readImageInfo } from '../src/store-pack/requirements.ts';
+import { checkStoreFile, readImageInfo } from '../src/store-pack/requirements.ts';
+import { storeRenderOptions } from '../src/store-pack/flatten.ts';
+import { createFfmpegTools } from '../src/media/media-tools.ts';
 import { ChromeProvider } from '../src/render/chromium-provider.ts';
 import { renderComposition } from '../src/render/renderer.ts';
 import { buildRuntime, renderTools } from './helpers/render-env.ts';
@@ -50,6 +52,20 @@ describe.skipIf(!tools.ok)('renderer: store still without alpha, store preview w
     // (an Electron provider, a transparent default background): the result is always an RGB PNG of the format size.
     expect(firstPixel(readFileSync(out)).pixel).toHaveLength(3);
     expect(readdirSync(join(creative, 'outputs/v1')).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('a 25 fps composition rendered as the App Store preview comes out at 30 fps and passes the store check (final wave P7)', async () => {
+    const format: FormatPreset = { id: 'appstore-preview', channel: 'Test', name: 'Preview', width: 64, height: 128, kind: 'video', extensions: ['mp4'], targetBitrateKbps: 400 };
+    mkdirSync(join(creative, 'outputs/v2/compositions', format.id), { recursive: true });
+    const out = join(creative, 'outputs/v2', `${format.id}.mp4`);
+    const provider = new ChromeProvider({ exe: tools.chrome!.exe, kind: 'system', limits: { timeLimitMs: 5 * 60_000 } });
+    const c = { ...comp(64, 128, 15), fps: 25 } as Composition;
+    const r = await renderComposition({ dir: creative, versionDir: 'outputs/v2', composition: c, format, out, provider, signal, distDir: dist, ffmpeg: ff!, encoder: 'libx264', parallel: 4,
+      ...storeRenderOptions(format.id, c) });
+    expect(r.frames).toBe(450);
+    const media = await createFfmpegTools();
+    expect((await media.probe(out))?.fps).toBe(30);
+    expect(await checkStoreFile('preview', 'appstore', out, { width: 64, height: 128, probe: (f) => media.probe(f) })).toEqual({ ok: true });
   });
 
   it('a video without audio clips gets a silent AAC track when storeAudio is set', async () => {
