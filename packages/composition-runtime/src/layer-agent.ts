@@ -47,7 +47,7 @@ export class ClockStallError extends Error {
   }
 }
 
-type PumpClock = Pick<VirtualClock, 'native' | 'runDueTimers' | 'runFrame' | 'now' | 'nextTimerDue'>;
+type PumpClock = Pick<VirtualClock, 'native' | 'runDueTimers' | 'runFrame' | 'now' | 'nextTimerDue' | 'pendingFrames'>;
 
 /**
  * Awaits `value` while pumping a frozen clock: on every native macrotask the timers already due fire; after a macrotask
@@ -55,8 +55,8 @@ type PumpClock = Pick<VirtualClock, 'native' | 'runDueTimers' | 'runFrame' | 'no
  * an idle macrotask, so a frame is also forced every `PUMP_FRAME_EVERY` busy ones: a `requestAnimationFrame` awaited next
  * to such a chain is not starved until `maxPumps` runs out. Time never moves.
  *
- * `stall` (render mode): once `stall.ms` of native time pass in which no timer fired and no animation frame ran a callback
- * while a timer due later is pending, the wait rejects with a `ClockStallError` naming `stall.what`, instead of running on
+ * `stall` (render mode): once `stall.ms` of native time pass in which no timer fired and no animation frame ended the
+ * layer's frame work (ran callbacks and left none queued) while a timer due later is pending, the wait rejects with a `ClockStallError` naming `stall.what`, instead of running on
  * until the runtime's layer timeout.
  */
 export async function pumpUntilDone<T>(value: T, clock: PumpClock, maxPumps = MAX_PUMPS, stall?: { ms: number; what: string }): Promise<Awaited<T>> {
@@ -71,8 +71,9 @@ export async function pumpUntilDone<T>(value: T, clock: PumpClock, maxPumps = MA
     await new Promise<void>((r) => clock.native.setTimeout(r, 0));
     if (done) break;
     if (idle || busy >= PUMP_FRAME_EVERY) {
-      // Layer code that ran on this frame is progress, like a timer that fired: the stall count starts again.
-      if (clock.runFrame() > 0) stallSince = null;
+      // A frame is progress only when the layer's frame work ended with it (a finite rAF wait resolved): a frame that
+      // re-arms itself (a GSAP ticker, a canvas or three.js loop) runs forever and must not keep the watchdog off (Ruling AF).
+      if (clock.runFrame() > 0 && clock.pendingFrames() === 0) stallSince = null;
       idle = false; busy = 0; continue;
     }
     idle = clock.runDueTimers() === 0;

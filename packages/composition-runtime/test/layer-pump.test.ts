@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { JSDOM } from 'jsdom';
+import { installVirtualClock } from '../src/clock.ts';
 import { ClockStallError, pumpUntilDone, PUMP_FRAME_EVERY } from '../src/layer-agent.ts';
+
+const freshWindow = () => new JSDOM('<!doctype html><p>x</p>', { pretendToBeVisual: true }).window as unknown as Window & typeof globalThis;
 
 // Final wave C8: a layer that re-arms setTimeout(0) forever must not starve the animation frame it awaits.
 function fakeClock() {
@@ -43,12 +47,13 @@ describe('pumpUntilDone (C8)', () => {
 // UX feedback 1, task 2b (decision 709): a layer promise waiting on a timer the frozen render clock never fires.
 describe('pumpUntilDone stall (render mode)', () => {
   /** A frozen clock at `now` with one timer due at `due` (null: none); `firing` makes every macrotask fire a timer. */
-  function frozen(due: number | null, o: { firing?: () => boolean; frames?: () => number } = {}) {
+  function frozen(due: number | null, o: { firing?: () => boolean; frames?: () => number; pending?: () => number } = {}) {
     return {
       now: 100,
       native: { setTimeout: (fn: () => void) => setTimeout(fn, 0), performanceNow: () => performance.now() },
       runDueTimers: () => (o.firing?.() ? 1 : 0),
       runFrame: () => o.frames?.() ?? 0,
+      pendingFrames: () => o.pending?.() ?? 0,
       nextTimerDue: () => due,
     } as never;
   }
@@ -82,16 +87,32 @@ describe('pumpUntilDone stall (render mode)', () => {
     await expect(plain).resolves.toBeUndefined();
   });
 
-  it('an animation frame that runs a callback starts the stall count again; an empty frame does not (final wave M1)', async () => {
-    // A layer that keeps a requestAnimationFrame loop going while it waits: every frame runs a callback, so no stall.
+  it('a finite rAF-only wait restarts the stall count: frames that run callbacks and leave none queued (final wave M1)', async () => {
+    // Each frame runs the layer's callback and the queue is then empty: the frame work ended, which is progress.
     let resolve!: () => void;
     const waiting = new Promise<void>((r) => { resolve = r; });
-    const run = pumpUntilDone(waiting, frozen(400, { frames: () => 1 }), 20_000, { ms: 20, what: 'msSeek' });
+    const run = pumpUntilDone(waiting, frozen(400, { frames: () => 1, pending: () => 0 }), 20_000, { ms: 20, what: 'msSeek' });
     await new Promise((r) => setTimeout(r, 120));
     resolve();
     await expect(run).resolves.toBeUndefined();
     // Frames with no callback are not progress: the wait still stalls.
     const err = await pumpUntilDone(never(), frozen(400, { frames: () => 0 }), 20_000, { ms: 20, what: 'msSeek' }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ClockStallError);
+  });
+
+  it('a perpetual rAF loop next to msReady waiting on setTimeout(300) still stalls, fast (Ruling AF)', async () => {
+    // The real clock: a layer with a ticker that re-arms every frame, and an msReady on a timer the frozen clock never fires.
+    const w = freshWindow();
+    const clock = installVirtualClock(w);
+    let ticks = 0;
+    const loop = () => { ticks++; w.requestAnimationFrame(loop); };
+    w.requestAnimationFrame(loop);
+    const ready = new Promise<void>((r) => { w.setTimeout(r, 300); });
+    const t0 = performance.now();
+    const err = await pumpUntilDone(ready, clock, 20_000, { ms: 40, what: 'msReady' }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ClockStallError);
+    expect((err as Error).message).toMatch(/^msReady waited 0\.04 s for a timer \(due in 300 ms\)/);
+    expect(ticks).toBeGreaterThan(0); // the loop did run on the pumped frames
+    expect(performance.now() - t0).toBeLessThan(5_000);
   });
 });

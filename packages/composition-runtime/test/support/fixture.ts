@@ -84,7 +84,9 @@ export function writeFixture(root: string, fontFile: string, ffmpeg: string | nu
 
 /**
  * UX feedback 1, task 2b: layers timed to the clock. `ready-clock` waits 300 ms of timer time in `msReady`; `seek-clock`
- * waits 50 ms of timer time in `msSeek`. Under the render clock time never passes, so neither wait can end on its own.
+ * waits 50 ms of timer time in `msSeek`; `raf-clock` (final wave, Ruling AF) keeps a perpetual requestAnimationFrame loop
+ * (a ticker, as GSAP or a canvas loop has) and waits 300 ms of timer time in `msReady`. Under the render clock time never
+ * passes, so no wait can end on its own. All three sit inside the frame: an iframe outside it gets no native frames.
  */
 export const CLOCK_PATH = 'v1/compositions/clock';
 const READY_CLOCK_LAYER = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#0f0}</style></head><body>
@@ -92,17 +94,23 @@ const READY_CLOCK_LAYER = `<!doctype html><html><head><meta charset="utf-8"><sty
 const SEEK_CLOCK_LAYER = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#00f}</style></head><body>
 <script>window.msSeek = (t) => new Promise((r) => setTimeout(() => { document.body.dataset.t = String(t); r(); }, 50));</script></body></html>`;
 
+const RAF_CLOCK_LAYER = `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#f0f}</style></head><body>
+<script>const tick = () => requestAnimationFrame(tick); requestAnimationFrame(tick);
+window.msReady = new Promise((r) => setTimeout(r, 300)); window.msSeek = () => {};</script></body></html>`;
+
 export function writeClockFixture(root: string): void {
   const dir = join(root, CLOCK_PATH);
   mkdirSync(join(dir, 'layers'), { recursive: true });
   writeFileSync(join(dir, 'layers', 'ready-clock.html'), READY_CLOCK_LAYER);
   writeFileSync(join(dir, 'layers', 'seek-clock.html'), SEEK_CLOCK_LAYER);
+  writeFileSync(join(dir, 'layers', 'raf-clock.html'), RAF_CLOCK_LAYER);
   const composition = {
     $schema: 'motion-studio/composition@1', width: W, height: H, fps: 30, duration: 2, background: '#000000', fonts: [],
     scenes: [{ id: 'all', start: 0, duration: 2 }],
     tracks: [{ id: 'layers', kind: 'visual', clips: [
-      { id: 'ready-clock', type: 'html', src: 'layers/ready-clock.html', start: 0, duration: 2, props: { x: 0, y: 0, width: 160, height: 180 } },
-      { id: 'seek-clock', type: 'html', src: 'layers/seek-clock.html', start: 0, duration: 2, props: { x: 160, y: 0, width: 160, height: 180 } },
+      { id: 'ready-clock', type: 'html', src: 'layers/ready-clock.html', start: 0, duration: 2, props: { x: 0, y: 0, width: 107, height: 180 } },
+      { id: 'seek-clock', type: 'html', src: 'layers/seek-clock.html', start: 0, duration: 2, props: { x: 107, y: 0, width: 106, height: 180 } },
+      { id: 'raf-clock', type: 'html', src: 'layers/raf-clock.html', start: 0, duration: 2, props: { x: 213, y: 0, width: 107, height: 180 } },
     ] }],
   };
   writeFileSync(join(dir, 'composition.json'), JSON.stringify(composition, null, 2));

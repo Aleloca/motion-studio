@@ -35,6 +35,8 @@ export interface VirtualClock {
   runFrame(): number;
   /** The due time of the earliest pending timer, or null when no timer is pending (read-only: nothing fires). */
   nextTimerDue(): number | null;
+  /** How many animation frame callbacks are queued for the next frame (read-only: nothing fires). */
+  pendingFrames(): number;
   readonly native: Natives;
 }
 
@@ -134,6 +136,7 @@ export function installVirtualClock(w: Window & typeof globalThis): VirtualClock
       for (const tm of timers.values()) if (due === null || tm.due < due) due = tm.due;
       return due;
     },
+    pendingFrames: () => frames.size,
   };
   Object.defineProperty(win, '__msClock', { value: clock, configurable: false, enumerable: false, writable: false });
   return clock;
