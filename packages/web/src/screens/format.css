@@ -152,3 +152,8 @@
 .ms-fv-span.ms-picking { opacity: .32; }
 .ms-fv-clippick { display: inline-flex; margin: 4px 0 0 8px; }
 .ms-fv-rangebtn { margin: 4px 0 0 8px; }
+
+/* Render status (UX feedback 1, task 3): the pill, a thin progress bar while rendering, and the actions, in the bar by the version. */
+.ms-fv-render { display: inline-flex; align-items: center; gap: 6px; flex: none; min-width: 0; }
+.ms-fv-render-bar { width: 56px; flex: none; }
+@media (max-width: 760px) { .ms-fv-render-bar { display: none; } }

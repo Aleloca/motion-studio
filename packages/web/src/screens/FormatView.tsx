@@ -45,6 +45,7 @@ import { LocaleOutline, LocaleSwitcher } from './creative/LocaleSwitcher.tsx';
 import { localePreviewSource, useLocalePreview } from './creative/useLocalePreview.ts';
 import { RangeDialog } from './editor/RangeDialog.tsx';
 import { clipLabel, clipPin, clipsAt, rangePin, rangeTimes } from './pinModel.ts';
+import { RenderStatus } from './RenderStatus.tsx';
 import { FollowerChip, FormatBadge, useNewVersionNotice, useVersionActions, VersionTimeline } from './FormatVersions.tsx';
 import { boardSource, entryAt, followersOf, formatStates, isRendering, renderingOf, shownOf, type FormatState } from './versionModel.ts';
 import { compositionOf } from './renderModel.ts';
@@ -559,6 +560,9 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
           ) : null}
           {versions.length && cr ? (
             <VersionTimeline slug={slug} creative={creative} versions={versions} resumeFrom={cr.resumeFrom?.version ?? null} actions={actions} buttonRef={versionButton} />
+          ) : null}
+          {video && cr && detail ? (
+            <RenderStatus slug={slug} creative={creative} version={version} format={source.format} label={label} jobs={Object.values(live.jobs)} jobKey={detail.jobKey} busy={working} />
           ) : null}
           <LanguagesButton slug={slug} creative={creative} detail={detail} version={version ?? latest} presets={presets} live={live} onChanged={reload} />
           {comp !== null && !working ? (

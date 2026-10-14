@@ -1,6 +1,6 @@
 import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { DEFAULT_FORMATS, type CreativeDetail, type OutputFileInfo, type VersionEntry } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, renderJobKeyOf, type CreativeDetail, type OutputFileInfo, type VersionEntry } from '@motion-studio/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EventsState } from '../src/eventsReducer.ts';
 import type { Route } from '../src/routes.ts';
@@ -31,6 +31,9 @@ const api = {
   sendCreativeTurn: vi.fn(async () => ({ id: 'j9', key: 'k', kind: 'creative', label: 'x', state: 'queued', createdAt: at })),
   restoreVersion: vi.fn(async () => detail.creative),
   revealVersion: vi.fn(async () => ({ ok: true })),
+  // UX feedback 1, Task 3: the render status.
+  fileBytes: vi.fn(async (..._a: unknown[]): Promise<number | null> => 12_400_000),
+  renderVersion: vi.fn(async (..._a: unknown[]) => ({ id: 'r1', key: 'k', kind: 'render', label: 'x', state: 'queued', createdAt: at })),
   exportPicks: vi.fn(async () => ({ destination: '/d', files: [], skipped: [] })),
   cancelJob: vi.fn(async () => ({ cancelled: true })),
   setExportPick: vi.fn(async (..._a: unknown[]) => detail),
@@ -77,7 +80,8 @@ const { D } = await import('../src/motion/motion.ts');
 const { I18nProvider } = await import('../src/i18n.tsx');
 
 let jobsNow: Record<string, unknown> = {};
-const emptyLive = (): EventsState => ({ approvals: {}, jobs: jobsNow, events: {}, creativeTicks: {}, projectTicks: {} } as unknown as EventsState);
+let ticksNow = 0;
+const emptyLive = (): EventsState => ({ approvals: {}, jobs: jobsNow, events: {}, creativeTicks: { 'acme/lancio': ticksNow }, projectTicks: {} } as unknown as EventsState);
 const VIDEO = 'tiktok-9x16';
 const IMAGE = 'instagram-post-1x1';
 
@@ -128,6 +132,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   detail = makeDetail([version(1)]);
   jobsNow = {};
+  ticksNow = 0;
   __resetPendingPins();
   location.hash = '#/p/acme/c/lancio/f/tiktok-9x16';
   play = vi.fn(() => Promise.resolve());
@@ -755,5 +760,99 @@ describe('FormatView · Edit button', () => {
     render(<Harness format={VIDEO} />);
     await waitFor(() => expect(document.querySelector('.ms-cv-export')).not.toBeNull());
     expect(editButton()).toBeNull();
+  });
+});
+
+describe('FormatView · render status (UX feedback 1, Task 3)', () => {
+  const H1 = 'b'.repeat(64), H2 = 'c'.repeat(64);
+  const comp = (n: number, hash = H1, rendered: string | null = null): VersionEntry => ({
+    ...version(n),
+    outputs: [out('instagram-post-1x1', 'post.png'), ...(rendered ? [{ ...out(VIDEO, 'tiktok.mp4', 8), sha256: 'd'.repeat(64), fromComposition: rendered }] : [])],
+    compositions: [{ format: VIDEO, dir: `compositions/${VIDEO}`, hash }],
+  });
+  const bar = () => document.querySelector('.ms-topbar') as HTMLElement;
+  const pill = async (text: string | RegExp) => waitFor(() => expect(within(bar()).getAllByText(text).length).toBeGreaterThan(0));
+  const renderJob = (over: Record<string, unknown>) => ({ id: 'r1', key: renderJobKeyOf('creative:/w:acme:lancio', 1)!, kind: 'render', label: 'x', state: 'running', createdAt: at, formats: [VIDEO], ...over });
+
+  it('a version without a render is the live preview, and Render video starts the render of this format', async () => {
+    detail = makeDetail([comp(1)]);
+    render(<Harness format={VIDEO} />);
+    await pill('Anteprima dal vivo');
+    await userEvent.click(within(bar()).getByRole('button', { name: /Fai il render del video di/ }));
+    expect(api.renderVersion).toHaveBeenCalledWith('acme', 'lancio', 1, [VIDEO]);
+  });
+
+  it('while rendering: the percent on the pill, a progress bar, and a calm announcement without the percent', async () => {
+    detail = makeDetail([comp(1)]);
+    jobsNow = { r1: renderJob({ progress: { format: VIDEO, phase: 'frames', done: 42, total: 100 } }) };
+    render(<Harness format={VIDEO} />);
+    await pill('Render 42%');
+    expect(within(bar()).getByRole('progressbar').getAttribute('aria-valuenow')).toBe('42');
+    const live = bar().querySelector('.ms-fv-render [role="status"]') as HTMLElement;
+    expect(live.getAttribute('aria-live')).toBe('polite');
+    expect(live.textContent).toBe('Render del video in corso');
+    expect(within(bar()).queryByRole('button', { name: /Fai il render del video di/ })).toBeNull();
+  });
+
+  it('a current render: "Video pronto" with its size, a download in the browser, and no live-preview label', async () => {
+    detail = makeDetail([comp(1, H1, H1)]);
+    render(<Harness format={VIDEO} />);
+    await pill('Video pronto · 12,4 MB');
+    expect(api.fileBytes).toHaveBeenCalledWith('/f/acme/lancio/outputs/v1/tiktok.mp4');
+    expect(within(bar()).queryByText('Anteprima dal vivo')).toBeNull();
+    expect(within(bar()).getByRole('button', { name: /Scarica il video di/ })).not.toBeNull();
+    expect(within(bar()).getByRole('button', { name: /Fai il render del video di/ })).not.toBeNull();
+  });
+
+  it('in the desktop app: show in folder instead of a download', async () => {
+    (window as unknown as { motionStudio: unknown }).motionStudio = { isDesktop: true, platform: 'linux', pickFolder: async () => null, revealPath: async () => {} };
+    try {
+      detail = makeDetail([comp(1, H1, H1)]);
+      render(<Harness format={VIDEO} />);
+      await pill(/Video pronto/);
+      await userEvent.click(within(bar()).getByRole('button', { name: /Mostra nella cartella|Mostra nel Finder/ }));
+      expect(api.revealVersion).toHaveBeenCalledWith('acme', 'lancio', 1);
+      expect(within(bar()).queryByRole('button', { name: /Scarica il video di/ })).toBeNull();
+    } finally { delete (window as unknown as { motionStudio?: unknown }).motionStudio; }
+  });
+
+  it('a render of an older composition is out of date: back to the live preview', async () => {
+    detail = makeDetail([comp(1, H2, H1)]);
+    render(<Harness format={VIDEO} />);
+    await pill('Anteprima dal vivo');
+    expect(within(bar()).queryByText(/Video pronto/)).toBeNull();
+  });
+
+  it('a new version (or an editor save) returns the pill to the live preview; the old version keeps its video', async () => {
+    detail = makeDetail([comp(1, H1, H1)]);
+    const { rerender } = render(<Harness format={VIDEO} />);
+    await pill(/Video pronto/);
+    // The agent (or an editor save) makes v2 with another composition hash: the page reads the creative again.
+    detail = makeDetail([comp(1, H1, H1), comp(2, H2)]);
+    ticksNow = 1;
+    rerender(<Harness format={VIDEO} />);
+    await pill('Anteprima dal vivo');
+    expect(within(bar()).queryByText(/Video pronto/)).toBeNull();
+  });
+
+  it('the old version, viewed again, still has its video', async () => {
+    detail = makeDetail([comp(1, H1, H1), comp(2, H2)]);
+    setShownVersions('acme/lancio', { [VIDEO]: 1 });
+    render(<Harness format={VIDEO} />);
+    await pill(/Video pronto/);
+  });
+
+  it('a legacy version (no composition) has no status', async () => {
+    detail = makeDetail([version(1)]);
+    render(<Harness format={VIDEO} />);
+    await screen.findByLabelText('TikTok · Video 9:16 v1', { selector: 'video' });
+    expect(bar().querySelector('.ms-fv-render')).toBeNull();
+  });
+
+  it('an image format has no video status', async () => {
+    detail = makeDetail([comp(1)]);
+    render(<Harness format={IMAGE} />);
+    await waitFor(() => expect(document.querySelector('.ms-cv-export')).not.toBeNull());
+    expect(bar().querySelector('.ms-fv-render')).toBeNull();
   });
 });
