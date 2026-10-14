@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { chmod, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, readFile, realpath, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { workspaceSettingsSchema, type WorkspaceSettings } from '@motion-studio/shared';
@@ -44,7 +44,10 @@ const heldSchema = workspaceSettingsSchema.pick({
 const recordSchema = z.object({ schemaVersion: z.literal(2), root: z.string(), held: heldSchema, at: z.string() });
 
 /** The hold record could not be read or written: the hold is not reliable (loud: doctor row, unsandboxed runs refused). */
-export class SettingsHoldError extends Error {}
+export class SettingsHoldError extends Error {
+  /** The record path that could not be dealt with, when known (the user is told what to remove). */
+  constructor(message: string, readonly path?: string) { super(message); }
+}
 
 /** A folder or file of ours, made private again (a mode the agent changed); BSD flags such as `uchg` are not cleared. */
 export async function ownMode(path: string, mode: number): Promise<void> {
@@ -80,6 +83,9 @@ export class SettingsHoldStore {
     if (file === null) return null;
     await ownMode(this.dir()!, 0o700);
     await ownMode(file, 0o600);
+    // Never followed: a link or anything but a plain file at the record path makes the hold unreliable.
+    const st = await lstat(file).catch(() => null);
+    if (st && (st.isSymbolicLink() || !st.isFile())) throw new SettingsHoldError('settings hold record is not a regular file', file);
     let text: string;
     try { text = await readFile(file, 'utf8'); } catch (e) {
       if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
@@ -118,7 +124,16 @@ export class SettingsHoldStore {
     const file = this.file(key);
     if (file === null) return;
     await ownMode(this.dir()!, 0o700);
-    try { await rm(file, { force: true }); } catch (err) { throw new SettingsHoldError(`settings hold not cleared: ${(err as Error).message}`); }
+    // Fix round 3 (R2-3): whatever sits at the record path goes, inside the config folder only: a link is removed as a link
+    // (never followed), a folder is moved aside next to it (never deleted recursively), a file is removed.
+    try {
+      const st = await lstat(file).catch(() => null);
+      if (!st) return;
+      if (st.isDirectory()) await rename(file, `${file}.moved-${randomBytes(6).toString('hex')}`);
+      else await unlink(file);
+    } catch (err) {
+      throw new SettingsHoldError(`settings hold not cleared: ${(err as Error).message}`, file);
+    }
   }
 
   /**

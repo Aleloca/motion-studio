@@ -1,7 +1,7 @@
 import { assertNotRealUserData } from './app-config.ts';
 import { randomBytes } from 'node:crypto';
 import { access, chmod, constants, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { heldOf, tightenHeld, type HeldSettings, type SettingsHoldStore } from './settings-hold.ts';
+import { HELD_FIELDS, heldOf, SettingsHoldError, tightenHeld, type HeldSettings, type SettingsHoldStore } from './settings-hold.ts';
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import {
@@ -126,7 +126,6 @@ async function writeThroughAtomic(path: string, text: string): Promise<void> {
 }
 
 const defaultView = (): WorkspaceSettingsView => workspaceSettingsSchema.parse({ schemaVersion: 1 });
-const sameHeld = (a: HeldSettings, b: HeldSettings) => JSON.stringify(a) === JSON.stringify(b);
 
 export class WorkspaceStore {
   private readonly createLock = new KeyedMutex();
@@ -147,6 +146,10 @@ export class WorkspaceStore {
   private held: HeldSettings | null = null;
   /** The hold could not be saved or read: loud (doctor row) and unsandboxed agent runs are refused until the user saves. */
   private holdBroken = false;
+  /** Fix round 3 (R2-2): held fields this process made stricter in the file (said in the doctor until the user saves). */
+  private adjusted: string[] = [];
+  /** Fix round 3 (R2-3): a record path the core could not clear (the user is told to remove it). */
+  private stuckRecord: string | null = null;
   /** Where a hold that must survive a restart is kept (the core's config folder); absent: memory only. */
   private hold: SettingsHoldStore | null = null;
   private readonly settingsLock = new KeyedMutex();
@@ -184,7 +187,7 @@ export class WorkspaceStore {
     await this.settingsLock.run('settings', async () => {
       if (!(await hold.usable())) { this.holdBroken = true; return; }
       let rec: HeldSettings | null;
-      try { rec = await hold.load(this.root); } catch { this.holdBroken = true; return; }
+      try { rec = await hold.load(this.root); } catch (err) { this.clearFailed(err); return; }
       if (!rec) return;
       this.held = rec;
       await this.retryRevert();
@@ -193,6 +196,38 @@ export class WorkspaceStore {
 
   /** Whether some settings fields are held (a change the core could not undo) or the hold itself is unreliable (doctor). */
   settingsHeld(): boolean { return this.held !== null || this.holdBroken; }
+
+  /**
+   * Fix round 3: what the doctor says about the settings. `broken`: the hold is unreliable (and `stuck`, a record path to
+   * remove by hand); `held`: a change is held; `adjusted`: fields were made stricter in the file. `fields`: the held fields
+   * whose value in use differs from the file's, or that were made stricter (never a silent change). Null: nothing to say.
+   */
+  async settingsNotice(): Promise<{ kind: 'broken' | 'held' | 'adjusted'; fields: string[]; stuck: string | null } | null> {
+    const hold = this.effectiveHold();
+    if (!hold && this.adjusted.length === 0) return null;
+    const fields = new Set(this.adjusted);
+    if (hold) {
+      const file = await this.fileSettings();
+      const inFile = file ? heldOf(file) : null;
+      const used = inFile ? tightenHeld(hold, inFile) : hold;
+      for (const k of HELD_FIELDS) if (!inFile || JSON.stringify(inFile[k]) !== JSON.stringify(used[k])) fields.add(k);
+    }
+    return { kind: this.holdBroken ? 'broken' : hold ? 'held' : 'adjusted', fields: HELD_FIELDS.filter((k) => fields.has(k)), stuck: this.stuckRecord };
+  }
+
+  /**
+   * The values held now: the hold record's; with the hold unreliable and no record (fix round 3, R2-1), the defaults, so
+   * every run (sandboxed ones too) uses safe values until the user saves.
+   */
+  private effectiveHold(): HeldSettings | null {
+    return this.held ?? (this.holdBroken ? heldOf(defaultView()) : null);
+  }
+
+  /** A failed clear of the record: loud, and the path is remembered for the doctor when known. */
+  private clearFailed(err: unknown): void {
+    this.holdBroken = true;
+    this.stuckRecord = err instanceof SettingsHoldError && err.path ? err.path : this.stuckRecord;
+  }
   /** The hold could not be saved or read: unsandboxed agent runs are refused until the user saves the settings. */
   settingsHoldBroken(): boolean { return this.holdBroken; }
 
@@ -222,11 +257,14 @@ export class WorkspaceStore {
     const file = await this.fileSettings();
     const { droppedDomains: _d, ...base } = file ?? defaultView();
     const strict = tightenHeld(this.held, heldOf(base));
+    const changed = HELD_FIELDS.filter((k) => JSON.stringify(heldOf(base)[k]) !== JSON.stringify(strict[k]));
     try {
-      if (!file || !sameHeld(heldOf(base), strict)) await writeJsonFileAtomic(this.settingsPath(), { ...base, ...strict });
+      if (!file || changed.length > 0) await writeJsonFileAtomic(this.settingsPath(), { ...base, ...strict });
     } catch { return false; }
+    // Never silent (R2-2): the fields made stricter are named in the doctor until the user saves.
+    for (const k of changed) if (!this.adjusted.includes(k)) this.adjusted.push(k);
     this.held = null;
-    try { await this.hold?.clear(this.root); } catch { this.holdBroken = true; }
+    try { await this.hold?.clear(this.root); } catch (err) { this.clearFailed(err); }
     return true;
   }
 
@@ -236,9 +274,10 @@ export class WorkspaceStore {
    * file; only the cosmetic fields come from the file alone.
    */
   async readSettings(): Promise<WorkspaceSettingsView> {
-    if (this.held) {
+    const hold = this.effectiveHold();
+    if (hold) {
       const file = (await this.fileSettings()) ?? this.snapshot?.settings ?? defaultView();
-      return { ...structuredClone(file), ...tightenHeld(this.held, heldOf(file)) };
+      return { ...structuredClone(file), ...tightenHeld(hold, heldOf(file)) };
     }
     if (this.snapshot && this.guarded > 0) return structuredClone(this.snapshot.settings);
     return readJsonFile<WorkspaceSettingsView>(this.settingsPath(), storedWorkspaceSettingsSchema);
@@ -260,11 +299,13 @@ export class WorkspaceStore {
       // The user's own save: it is the trusted content from now on (and confirms it after a change that could not be
       // undone). Taken from what was written, never re-read from the file (M1).
       if (this.guarded > 0) this.snapshot = { raw: `${JSON.stringify(parsed.data, null, 2)}\n`, settings: structuredClone(parsed.data) };
+      this.adjusted = [];
       if (this.held || this.holdBroken) {
         this.held = null;
         this.holdBroken = false;
+        this.stuckRecord = null;
         // A record left behind would tighten the user's own choice at the next start: its removal failing is loud too.
-        try { await this.hold?.clear(this.root); } catch { this.holdBroken = true; }
+        try { await this.hold?.clear(this.root); } catch (err) { this.clearFailed(err); }
       }
       return parsed.data;
     });

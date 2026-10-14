@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -430,5 +430,101 @@ describe.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('Works
       await ws.updateSettings({ theme: 'dark' });
       expect(JSON.parse(await readFile(file(root), 'utf8')).theme).toBe('dark');
     } finally { await chmod(join(root, '.studio'), 0o700).catch(() => {}); }
+  });
+});
+
+// Fix round 3: with the hold unreliable and no record the defaults act as the hold (R2-1); every held or tightened field is
+// named (R2-2); a user save clears whatever sits at the record path, inside the config folder only (R2-3).
+describe.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('WorkspaceStore settings hold, fix round 3', () => {
+  const file = (root: string) => join(root, '.studio', 'settings.json');
+  const holdDir = (config: string) => join(config, 'settings-hold');
+  const holdFile = async (config: string, root: string) => join(holdDir(config), `${createHash('sha256').update(await realpath(root)).digest('hex').slice(0, 32)}.json`);
+  const evil = { sandboxMode: 'off', confirmPaidProviders: false, autoApproveSandboxed: true, agentLiveInput: true, agentInterrupt: true, extraAllowedDomains: ['ok.example.com', 'evil.example.com'], model: 'opus', maxConcurrentJobs: 8 };
+  const safe = { sandboxMode: 'auto', confirmPaidProviders: true, agentLiveInput: false, agentInterrupt: false, extraAllowedDomains: [], model: null, maxConcurrentJobs: 2 };
+  const setup = async (name: string) => {
+    const root = join(base, name);
+    const config = join(base, `${name}-config`);
+    const ws = await WorkspaceStore.open(root, new Git());
+    await ws.attachSettingsHold(new SettingsHoldStore(config));
+    await ws.updateSettings({ extraAllowedDomains: ['ok.example.com'], autoApproveSandboxed: false, model: 'sonnet' });
+    return { root, config, ws, before: await readFile(file(root), 'utf8') };
+  };
+  const restart = async (root: string, config: string) => {
+    const ws = await WorkspaceStore.open(root, new Git(), { create: false });
+    await ws.attachSettingsHold(new SettingsHoldStore(config));
+    return ws;
+  };
+
+  it.skipIf(process.platform !== 'darwin')('probe D: broken with no record after a restart: the defaults hold, also for sandboxed runs, until one user save', async () => {
+    const { root, config, ws, before } = await setup('d');
+    const release = await ws.guardSettings();
+    await writeFile(file(root), JSON.stringify({ ...JSON.parse(before), sandboxMode: 'auto', autoApproveSandboxed: true, extraAllowedDomains: ['evil.example.com'], confirmPaidProviders: false }));
+    await mkdir(await holdFile(config, root), { recursive: true }); // a folder where the record goes
+    execFileSync('chflags', ['uchg', file(root)]);
+    try {
+      expect(await release()).toEqual({ changed: true, reverted: false, holdBroken: true });
+      const ws2 = await restart(root, config);
+      expect(ws2.settingsHoldBroken()).toBe(true);
+      // Every held field at the stricter of the defaults and the file: no agent domain, paid calls confirmed.
+      expect(await ws2.readSettings()).toMatchObject({ sandboxMode: 'auto', confirmPaidProviders: true, extraAllowedDomains: [], agentLiveInput: false, model: null, maxConcurrentJobs: 2 });
+      const notice = await ws2.settingsNotice();
+      expect(notice).toMatchObject({ kind: 'broken' });
+      expect(notice!.fields).toEqual(expect.arrayContaining(['confirmPaidProviders', 'extraAllowedDomains']));
+      execFileSync('chflags', ['nouchg', file(root)]);
+      // One user save: the folder at the record path is moved aside (inside the config folder), the hold ends.
+      await ws2.updateSettings({ theme: 'dark' });
+      expect(ws2.settingsHoldBroken()).toBe(false);
+      expect(await ws2.settingsNotice()).toBeNull();
+      expect((await readdir(holdDir(config))).some((n) => n.includes('.moved-'))).toBe(true);
+    } finally {
+      execFileSync('chflags', ['nouchg', file(root)]);
+    }
+  });
+
+  it.skipIf(process.platform !== 'darwin')('probe E: a forged loose record that cannot be cleared, and a locked file: safe values and the path to remove', async () => {
+    const { root, config } = await setup('e');
+    await writeFile(file(root), JSON.stringify({ schemaVersion: 1, ...evil }));
+    const record = await holdFile(config, root);
+    await mkdir(holdDir(config), { recursive: true });
+    await writeFile(record, JSON.stringify({ schemaVersion: 2, root: await realpath(root), held: evil, at: new Date().toISOString() }));
+    execFileSync('chflags', ['uchg', record]);
+    execFileSync('chflags', ['uchg', file(root)]);
+    try {
+      const ws2 = await restart(root, config);
+      expect(ws2.settingsHoldBroken()).toBe(true);
+      expect(await ws2.readSettings()).toMatchObject(safe);
+      expect(await ws2.settingsNotice()).toMatchObject({ kind: 'broken', stuck: record });
+      await expect(ws2.guardSettings()).rejects.toMatchObject({ apiCode: 'settings-hold-broken' });
+    } finally {
+      execFileSync('chflags', ['nouchg', record]);
+      execFileSync('chflags', ['nouchg', file(root)]);
+    }
+  });
+
+  it('a forged record that tightens the file is never silent: the changed fields are named until the user saves', async () => {
+    const { root, config } = await setup('a');
+    await mkdir(holdDir(config), { recursive: true });
+    await writeFile(await holdFile(config, root), JSON.stringify({ schemaVersion: 2, root: await realpath(root), held: { ...safe, autoApproveSandboxed: false, extraAllowedDomains: ['ok.example.com'], model: 'opus' }, at: new Date().toISOString() }));
+    const ws2 = await restart(root, config);
+    expect(JSON.parse(await readFile(file(root), 'utf8')).model).toBeNull(); // 'sonnet' vs 'opus': the CLI default
+    expect(await ws2.settingsNotice()).toEqual({ kind: 'adjusted', fields: ['model'], stuck: null });
+    await ws2.updateSettings({ model: 'sonnet' });
+    expect(await ws2.settingsNotice()).toBeNull();
+  });
+
+  it('a link at the record path is never followed: the hold is unreliable, and a user save removes the link only', async () => {
+    const { root, config } = await setup('l');
+    const outside = join(base, 'outside-target.json');
+    await writeFile(outside, JSON.stringify({ schemaVersion: 2, root: 'x', held: evil, at: 'x' }));
+    await mkdir(holdDir(config), { recursive: true });
+    const record = await holdFile(config, root);
+    await symlink(outside, record);
+    const ws2 = await restart(root, config);
+    expect(ws2.settingsHoldBroken()).toBe(true);
+    expect(await ws2.readSettings()).toMatchObject({ confirmPaidProviders: true, extraAllowedDomains: [] }); // the defaults hold
+    await ws2.updateSettings({ theme: 'light' });
+    expect(ws2.settingsHoldBroken()).toBe(false);
+    await expect(lstat(record)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(JSON.parse(await readFile(outside, 'utf8')).held.model).toBe('opus'); // the target is untouched
   });
 });

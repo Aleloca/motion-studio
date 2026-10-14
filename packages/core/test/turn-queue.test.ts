@@ -410,6 +410,11 @@ describe('an agent settings change that cannot be undone survives no restart (fi
       expect((await s.app.inject('/api/workspace')).json().settings).toMatchObject({ sandboxMode: 'auto', confirmPaidProviders: true, agentLiveInput: false, agentInterrupt: false });
       // The startup restored .studio's mode and made the file at least as strict as the hold.
       expect(JSON.parse(await readFile(file, 'utf8'))).toMatchObject({ sandboxMode: 'auto', confirmPaidProviders: true, agentLiveInput: false, agentInterrupt: false });
+      // Never silent (fix round 3, R2-2): the fields made stricter are named until the user saves the settings.
+      const row = (await s.app.inject('/api/doctor')).json().find((c: { id: string }) => c.id === 'workspace-settings');
+      expect(row.message).toContain(messages('it').jobs.settingsAdjusted);
+      expect(row.message).toContain('sandboxMode, confirmPaidProviders, agentLiveInput, agentInterrupt');
+      await s.app.inject({ method: 'PUT', url: '/api/settings', payload: { theme: 'dark' } });
       expect((await s.app.inject('/api/doctor')).json().some((c: { id: string }) => c.id === 'workspace-settings')).toBe(false);
     } finally {
       await chmod(studio, 0o700).catch(() => {});
@@ -470,7 +475,7 @@ describe('a settings hold that cannot be kept is loud and refuses unsandboxed ru
       await s.waitIdle();
       const it_ = messages('it').jobs;
       expect((await s.conversation()).some((e) => e.type === 'system' && e.text === it_.settingsHoldBroken)).toBe(true);
-      expect((await s.app.inject('/api/doctor')).json()).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'workspace-settings', message: it_.settingsHoldBroken })]));
+      expect((await s.app.inject('/api/doctor')).json()).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'workspace-settings', message: expect.stringContaining(it_.settingsHoldBroken) })]));
       const refused = (await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Secondo' } })).json();
       await s.waitIdle();
       expect((await s.jobs()).find((j) => j.id === refused.id)?.state).toBe('failed');

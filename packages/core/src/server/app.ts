@@ -481,8 +481,13 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   app.get('/api/doctor', async () => {
     const checks = await deps.doctor({ sandbox: effectiveSandbox, workspacePath: workspace?.root ?? null, agentOptIn: await agentOptIn() });
     // Fix round 1 (I-A): an agent change to the workspace settings the core could not undo, held across restarts.
-    if (workspace?.settingsHeld()) {
-      checks.push({ id: 'workspace-settings', label: t().doctor.workspaceSettingsLabel, required: false, ok: false, message: workspace.settingsHoldBroken() ? t().jobs.settingsHoldBroken : t().jobs.workspaceSettingsNotReverted });
+    // Fix round 3: the fields held or made stricter are named, and a record path to remove by hand is given.
+    const notice = await workspace?.settingsNotice();
+    if (notice) {
+      const j = t().jobs;
+      const head = notice.kind === 'broken' ? j.settingsHoldBroken : notice.kind === 'held' ? j.workspaceSettingsNotReverted : j.settingsAdjusted;
+      const parts = [head, ...(notice.fields.length ? [j.settingsHeldFields({ fields: notice.fields.join(', ') })] : []), ...(notice.stuck ? [j.settingsHoldStuck({ path: notice.stuck })] : [])];
+      checks.push({ id: 'workspace-settings', label: t().doctor.workspaceSettingsLabel, required: false, ok: false, message: parts.join(' ') });
     }
     return checks;
   });
