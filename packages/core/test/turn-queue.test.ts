@@ -326,3 +326,41 @@ describe('the queue and the remembered session are out of the agent\'s reach (fi
     await s.waitIdle();
   });
 });
+
+describe('pins of a queued request refer to the version they were placed on (final wave P3)', () => {
+  const pin = { format: 'instagram-post-1x1', x: 0.5, y: 0.25, timeSec: 1, note: 'QUI' };
+
+  it('queued while v2 is being made, it runs on v2 but its pins still name v1', async () => {
+    s = await liveApp();
+    await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } });
+    (await s.runner.next(0)).finish();
+    await s.waitIdle();
+    await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Secondo' } });
+    const second = await s.runner.next(1);
+    const res = await s.app.inject({ method: 'POST', url: `${s.url}/messages`, payload: { clientId: cid(), text: 'Sposta il logo', pins: [pin], mode: 'queued' } });
+    expect(res.json().outcome).toBe('queued');
+    expect((await s.creative()).queued).toEqual([expect.objectContaining({ text: 'Sposta il logo', pinsVersion: 1 })]);
+    second.finish();
+    const third = await s.runner.next(2);
+    expect(third.req.prompt).toContain('These comments were placed on version 1');
+    expect(third.req.prompt).toContain('QUI');
+    third.finish();
+    await s.waitIdle();
+    expect(await s.versions()).toHaveLength(3);
+  });
+
+  it('when that version is gone the pins go as text only, and the chat says so', async () => {
+    s = await liveApp();
+    await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } });
+    (await s.runner.next(0)).finish();
+    await s.waitIdle();
+    await s.side.update(s.projectDir, s.slug, () => ({ queued: [{ clientId: cid(), text: 'Con pin', pins: [pin], at: new Date().toISOString(), pinsVersion: 7 }] }));
+    expect((await s.app.inject({ method: 'POST', url: `${s.url}/queue/run-next` })).statusCode).toBe(202);
+    const run = await s.runner.next(1);
+    expect(run.req.prompt).toContain('placed on version 7, which no longer exists');
+    expect(run.req.prompt).not.toContain('## Attached frames');
+    await vi.waitFor(async () => expect((await s.conversation()).some((e) => e.type === 'system' && e.text === messages('it').live.queuedPinsVersionGone({ n: 7 }))).toBe(true));
+    run.finish();
+    await s.waitIdle();
+  });
+});

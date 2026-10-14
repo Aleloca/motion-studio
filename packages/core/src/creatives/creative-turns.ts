@@ -417,7 +417,7 @@ export class CreativeTurnService {
     });
   }
 
-  private async startLocked(ref: CreativeRef, message: { text: string; pins: Pin[] } | undefined, formats: string[] | undefined, queued?: { clientId: string }): Promise<JobSummary> {
+  private async startLocked(ref: CreativeRef, message: { text: string; pins: Pin[]; pinsVersion?: number } | undefined, formats: string[] | undefined, queued?: { clientId: string }): Promise<JobSummary> {
     const store = new CreativeStore(ref.projectDir);
     const before = await store.get(ref.creativeSlug);
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
@@ -524,7 +524,7 @@ export class CreativeTurnService {
     return this.side.merged(ref.projectDir, ref.creativeSlug, updated);
   }
 
-  private async run(ref: CreativeRef, store: CreativeStore, previous: CreativeStatus, message: { text: string; pins: Pin[] } | undefined, signal: AbortSignal, jobId: string, requestedFormats?: string[]): Promise<void | 'cancelled'> {
+  private async run(ref: CreativeRef, store: CreativeStore, previous: CreativeStatus, message: { text: string; pins: Pin[]; pinsVersion?: number } | undefined, signal: AbortSignal, jobId: string, requestedFormats?: string[]): Promise<void | 'cancelled'> {
     const slug = ref.creativeSlug;
     // The agent's language is fixed when the job starts: a setting change mid-turn does not affect it.
     const locale = currentLocale();
@@ -548,7 +548,13 @@ export class CreativeTurnService {
       const creativeDir = store.dir(slug);
       // Pins, the carried files and the add-formats base refer to the version on screen: the one being resumed from, else the latest.
       const base = initial.resumeFrom ? versions.find((v) => v.n === initial.resumeFrom!.version) : latest;
-      const attachments = await this.extractPinFrames(ref, store, message?.pins ?? [], base, n);
+      // Final wave P3: a queued request's pins refer to the version they were placed on (not a newer base); if it is gone,
+      // they travel as text only, and the chat says so.
+      const pinsAt = message?.pins.length && message.pinsVersion !== undefined ? message.pinsVersion : undefined;
+      const pinSource = pinsAt !== undefined ? versions.find((v) => v.n === pinsAt) : base;
+      if (pinsAt !== undefined && !pinSource) await store.appendConversation(slug, { type: 'system', at: now(), level: 'warning', text: t().live.queuedPinsVersionGone({ n: pinsAt }) });
+      const attachments = await this.extractPinFrames(ref, store, message?.pins ?? [], pinSource, n);
+      const pinsVersionNote = pinsAt !== undefined && pinsAt !== base?.n ? { n: pinsAt, gone: !pinSource } : undefined;
       const hasMessage = Boolean(message?.text || message?.pins.length);
       // Final review I4, ruling A: on a legacy base (phase 9 media, no compositions), a turn that only adds LINKED followers
       // (no message, no explicit formats) keeps the phase 9 no-agent path: the followers are copies of their primaries'
@@ -750,6 +756,7 @@ export class CreativeTurnService {
             liveMessages: resumed ? (earlierWords?.length ? earlierWords : undefined) : liveWords,
             stoppedNote: Boolean(stopped) && !resumed && kind !== 'fix',
             pins: resumed ? resumed.pins : kind === 'iteration' ? message?.pins : undefined,
+            pinsVersion: !resumed && kind === 'iteration' ? pinsVersionNote : undefined,
             attachments: kind === 'iteration' && !resumed ? attachments : undefined,
             problems, context, locale, sandboxed, contract: turnContract,
             conversion: kind === 'iteration' ? conversion : undefined,
@@ -1405,7 +1412,8 @@ export class CreativeTurnService {
    */
   private async queueRequest(ref: CreativeRef, m: UserMessageInput, outcome: Exclude<LiveMessageOutcome, 'delivered-pending'>, o: { limit?: boolean; note?: boolean } = {}): Promise<MessageAnswer> {
     const store = new CreativeStore(ref.projectDir);
-    const item: QueuedRequest = { clientId: m.clientId, text: m.text, pins: m.pins, at: now() };
+    const pinsVersion = m.pins.length > 0 ? await this.pinsBase(ref) : undefined;
+    const item: QueuedRequest = { clientId: m.clientId, text: m.text, pins: m.pins, at: now(), ...(pinsVersion !== undefined ? { pinsVersion } : {}) };
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     this.refs.set(key, ref);
     await this.runLocked(ref, () => this.side.update(ref.projectDir, ref.creativeSlug, (c) => {
@@ -1431,13 +1439,27 @@ export class CreativeTurnService {
     });
   }
 
-  /** PUT …/queue/:clientId: new text and pins, only while it waits. */
+  /** PUT …/queue/:clientId: new text and pins, only while it waits. Changed pins refer to the version on screen now. */
   async editQueued(ref: CreativeRef, clientId: string, patch: { text: string; pins: Pin[] }): Promise<CreativeFile> {
     const m = checkLiveMessage({ clientId, ...patch });
+    const now2 = m.pins.length > 0 ? await this.pinsBase(ref) : undefined;
     return this.editQueue(ref, (q) => {
       if (!q.some((x) => x.clientId === clientId)) throw new CodedError(404, t().live.notQueued, 'not-queued');
-      return q.map((x) => (x.clientId === clientId ? { ...x, text: m.text, pins: m.pins } : x));
+      return q.map((x) => {
+        if (x.clientId !== clientId) return x;
+        const same = JSON.stringify(x.pins) === JSON.stringify(m.pins);
+        const { pinsVersion: _old, ...rest } = x;
+        const pinsVersion = m.pins.length === 0 ? undefined : same ? x.pinsVersion : now2;
+        return { ...rest, text: m.text, pins: m.pins, ...(pinsVersion !== undefined ? { pinsVersion } : {}) };
+      });
     });
+  }
+
+  /** The version a pin placed now refers to: the one a turn started now would build on (a restore's, else the latest). */
+  private async pinsBase(ref: CreativeRef): Promise<number | undefined> {
+    const store = new CreativeStore(ref.projectDir);
+    const c = await store.get(ref.creativeSlug);
+    return c.resumeFrom?.version ?? (await store.readVersions(ref.creativeSlug)).at(-1)?.n;
   }
 
   /** PUT …/queue { order } (Ruling S): a permutation of the queue as it is now; anything else is refused. */
@@ -1482,7 +1504,7 @@ export class CreativeTurnService {
     if (!taken) return null;
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
     try {
-      const job = await this.startLocked(ref, { text: taken.text, pins: taken.pins }, undefined, { clientId: taken.clientId });
+      const job = await this.startLocked(ref, { text: taken.text, pins: taken.pins, ...(taken.pinsVersion !== undefined ? { pinsVersion: taken.pinsVersion } : {}) }, undefined, { clientId: taken.clientId });
       this.queuedHere.delete(`${key}\0${taken.clientId}`);
       return job;
     } catch (err) {

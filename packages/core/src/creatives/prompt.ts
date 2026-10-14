@@ -29,6 +29,11 @@ export interface PromptInput {
    * the earlier messages no run has read yet (final wave P3), before the new direction.
    */
   liveMessages?: Array<{ text: string; pins?: Pin[] }>;
+  /**
+   * Final wave P3: the pins were placed on another version than this turn's base (a queued request): its number, and
+   * whether it is gone (then no frame is attached).
+   */
+  pinsVersion?: { n: number; gone: boolean };
   /** Phase 13: this turn resumes a turn the user stopped (spec §3): the prompt says files in work/ may be partial. */
   stoppedNote?: boolean;
   context?: CreativeContext;
@@ -430,6 +435,11 @@ export function buildCreativePrompt(i: PromptInput): string {
     if (i.liveMessages?.length) parts.push('', ...laterMessagesSection(i.liveMessages));
     if (i.pins?.length) {
       parts.push('', '## Pinned comments');
+      if (i.pinsVersion) {
+        parts.push(i.pinsVersion.gone
+          ? `These comments were placed on version ${i.pinsVersion.n}, which no longer exists: no frame of it is attached, so read their positions and times as approximate.`
+          : `These comments were placed on version ${i.pinsVersion.n}, not on the version you build on: their positions, times and attached frames refer to version ${i.pinsVersion.n}.`);
+      }
       for (const p of i.pins) parts.push(pinLine(p));
     }
     if (i.attachments?.length) parts.push('', '## Attached frames (read them)', ...i.attachments.map((a) => `- ${a}`));

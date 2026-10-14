@@ -569,6 +569,7 @@ export const en = {
     consoleLiveOff: 'Messages during a console turn need live input, which is off: send it when the turn ends.',
     consoleTurnOver: 'The console turn has already finished: send it as a new message.',
     stoppedSessionUnavailable: 'The stopped turn\'s session is no longer available: continuing from the last version\'s session.',
+    queuedPinsVersionGone: (p: { n: number }) => `The pinned comments of this request were placed on version ${p.n}, which no longer exists: they go to the agent as text, without frames.`,
   },
   formats: {
     'instagram-post-1x1': 'Post 1:1',

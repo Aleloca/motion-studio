@@ -562,6 +562,7 @@ export const it: Messages = {
     consoleLiveOff: 'I messaggi durante un turno della console richiedono i messaggi dal vivo, che sono spenti: invialo a turno finito.',
     consoleTurnOver: 'Il turno della console è già finito: invialo come nuovo messaggio.',
     stoppedSessionUnavailable: "La sessione del turno fermato non è più disponibile: si riprende dalla sessione dell'ultima versione.",
+    queuedPinsVersionGone: (p) => `I commenti fissati di questa richiesta erano sulla versione ${p.n}, che non esiste più: arrivano all'agente come testo, senza fotogrammi.`,
   },
   formats: {
     'instagram-post-1x1': 'Post 1:1',

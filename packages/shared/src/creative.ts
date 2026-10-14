@@ -361,6 +361,11 @@ export const queuedRequestSchema = z.object({
   pins: z.array(pinSchema).max(50).default([]),
   at: z.iso.datetime(),
   /**
+   * Final wave P3: the version the pins were placed on (the version on screen when it was queued or edited). When it runs,
+   * the pins' frames come from that version, not from a newer base; absent (no pins, older items): the turn's base.
+   */
+  pinsVersion: z.number().int().min(1).optional(),
+  /**
    * Legacy (files written before final review I1): the core process that queued it. No longer written nor trusted: Ruling T
    * is now kept in the core's memory (only what this process queued starts by itself).
    */
