@@ -76,8 +76,35 @@ export const creativeFileSchema = z.object({
    * as its links and picks do. Absent in old files (nothing freed).
    */
   freedInstances: z.record(z.string().min(1), z.number().int().min(0)).optional(),
+  /**
+   * Phase 13: requests queued to run after the current turn (spec §2, "Queue for after"), oldest first; at most
+   * `LIVE_LIMITS.queued` from the user (a message that arrives after the agent finished is never dropped). `bootId`: the
+   * core process that queued it (Ruling T): the queue starts by itself only when it matches the running core, so after a
+   * restart nothing runs until "Run next". Absent in old files (nothing queued).
+   */
+  queued: z.array(z.lazy(() => queuedRequestSchema)).optional(),
+  /**
+   * Phase 13: the session of a turn the user stopped (spec §3): the next turn resumes it as a fork, with a note that files
+   * in work/ may be partial. Cleared when a turn saves a version or on a restore. Absent in old files.
+   */
+  stoppedSession: z.object({ sessionId: z.string().min(1), at: z.iso.datetime(), jobId: z.string().min(1) }).optional(),
 });
 export type CreativeFile = z.infer<typeof creativeFileSchema>;
+
+/** Phase 13 limits (spec §2, decisions log 606): characters per message, live messages per turn, queued requests per creative. */
+export const LIVE_LIMITS = { maxChars: 4000, perTurn: 10, queued: 5 } as const;
+
+/**
+ * What happened to a message sent while a turn runs (POST …/messages):
+ * - `delivered-pending`: it goes to the agent in this turn (written to the running session, or in the next repair attempt's
+ *   prompt; the `user_message_delivered` event says when);
+ * - `queued`: put in the queue as asked;
+ * - `queued-after-finish`: the agent had already finished (or no attempt was left), so it is the next request;
+ * - `queued-unsupported`: live messages are off for this Claude Code (or this kind of job), so it is the next request.
+ */
+export type LiveMessageOutcome = 'delivered-pending' | 'queued' | 'queued-after-finish' | 'queued-unsupported';
+/** What a redirect did (POST /api/jobs/:id/redirect); `queued-after-finish`: it came while the version was being saved. */
+export type RedirectOutcome = 'interrupted' | 'restarted' | 'queued-after-finish';
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const FILE_NAME = /^[^/\\]+$/;
@@ -314,8 +341,24 @@ export const pinSchema = z.object({
 });
 export type Pin = z.infer<typeof pinSchema>;
 
+/** A request queued for after the current turn (Phase 13, creative.json `queued[]`). */
+export const queuedRequestSchema = z.object({
+  clientId: z.string().min(1).max(100),
+  text: z.string().max(10_000),
+  pins: z.array(pinSchema).max(50).default([]),
+  at: z.iso.datetime(),
+  /** The core process that queued it (Ruling T); absent: never started by itself. */
+  bootId: z.string().min(1).max(100).optional(),
+});
+export type QueuedRequest = z.infer<typeof queuedRequestSchema>;
+
 export type ConversationEntry =
-  | { type: 'user'; at: string; text: string; pins: Pin[]; attachments: string[] }
+  /**
+   * Phase 13 (all optional, absent in older logs): `mode` says how a message sent while the agent worked was given
+   * (`live`: into the running turn; `queued`: a queued request that started; `redirect`: Stop and redirect), `clientId` the
+   * client's id of it (idempotency), `jobId` the turn it belongs to, `deliveredAt` when it went into a prompt.
+   */
+  | { type: 'user'; at: string; text: string; pins: Pin[]; attachments: string[]; jobId?: string; mode?: 'live' | 'queued' | 'redirect'; clientId?: string; deliveredAt?: string }
   | { type: 'agent'; at: string; jobId: string; event: AgentEvent }
   | { type: 'version'; at: string; n: number; status: 'complete' | 'incomplete' }
   /** `warning`: something the user should know that did not fail the turn (e.g. a link removed); shown like `info`. */

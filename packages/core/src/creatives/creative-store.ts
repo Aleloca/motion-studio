@@ -104,7 +104,7 @@ export class CreativeStore {
     }
   }
 
-  update(slug: string, patch: Partial<Pick<CreativeFile, 'title' | 'brief' | 'status' | 'error' | 'resumeFrom' | 'linkedCodebases' | 'exportPicks' | 'freedInstances'>>): Promise<CreativeFile> {
+  update(slug: string, patch: Partial<Pick<CreativeFile, 'title' | 'brief' | 'status' | 'error' | 'resumeFrom' | 'linkedCodebases' | 'exportPicks' | 'freedInstances' | 'queued' | 'stoppedSession'>>): Promise<CreativeFile> {
     return this.lock.run(`c:${slug}`, async () => {
       const current = await this.get(slug);
       const nowIso = new Date().toISOString();
@@ -234,12 +234,28 @@ export class CreativeStore {
     return out;
   }
 
+  /** The session the agent reported in the turn after the last version (the latest one), with its job; null: none. */
+  async lastTurnSession(slug: string): Promise<{ sessionId: string; at: string; jobId: string } | null> {
+    const entries = await this.readConversation(slug);
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i]!;
+      if (e.type === 'version') return null;
+      if (e.type !== 'agent' || typeof e.jobId !== 'string' || !e.jobId) continue;
+      const sid = e.event?.kind === 'session' || e.event?.kind === 'result' ? e.event.sessionId : undefined;
+      if (typeof sid === 'string' && /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/.test(sid)) return { sessionId: sid, at: new Date().toISOString(), jobId: e.jobId };
+    }
+    return null;
+  }
+
   async recoverInterrupted(isActive: (slug: string) => boolean = () => false): Promise<string[]> {
     const recovered: string[] = [];
     for (const item of await this.list()) {
       if (!item.ok || item.status !== 'working' || isActive(item.slug)) continue;
       try {
-        await this.update(item.slug, { status: 'interrupted', error: t().jobs.interruptedError });
+        // Phase 13 (spec §5): the session of the turn the restart cut is remembered like a stopped one, so the next turn
+        // resumes it as a fork. Only a session this turn's agent reported (after the last version) counts.
+        const stopped = await this.lastTurnSession(item.slug).catch(() => null);
+        await this.update(item.slug, { status: 'interrupted', error: t().jobs.interruptedError, ...(stopped ? { stoppedSession: stopped } : {}) });
         await this.appendConversation(item.slug, {
           type: 'system', at: new Date().toISOString(), level: 'error',
           text: t().jobs.interruptedNote,

@@ -70,6 +70,15 @@ function pruneLabelsOfRemovedFormats(raw: unknown): unknown {
   const kept = Object.fromEntries(Object.entries(b.formatLabels).filter(([k]) => (b.formats as unknown[]).includes(k)));
   return { ...(raw as object), brief: { ...b, formatLabels: kept } };
 }
+/**
+ * Phase 13: a message sent while a turn runs (`live`) or queued for after it (`queued`). The text limit is checked by the
+ * core (a translated 409 `limit`); this cap only bounds the request. No attachments: pins only (spec §2).
+ */
+const messageBody = z.object({
+  clientId: z.uuid(), text: z.string().max(20_000), pins: z.array(pinSchema).max(50).optional(), mode: z.enum(['live', 'queued']),
+}).strict();
+const queueEditBody = z.object({ text: z.string().max(20_000), pins: z.array(pinSchema).max(50).optional() }).strict();
+const queueOrderBody = z.object({ order: z.array(z.string().min(1).max(100)).max(100) }).strict();
 const pickBody = z.object({ format: z.string().min(1).max(200), version: z.number().int().min(1).nullable() });
 /**
  * Export of the ★ versions (spec §3.3): `picks` (format → vN), `follow` (followers, exported in their primary's version),
@@ -315,6 +324,36 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const pins = body.pins ?? [];
     const job = await ctx.turns.start(ref, text || pins.length ? { text, pins } : undefined, body.formats ? { formats: body.formats } : {});
     return reply.status(202).send(job);
+  });
+
+  // Phase 13 (spec §2): messages while the agent works, and the request queue (Rulings S and T).
+  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/messages', async (req) => {
+    const body = parse(messageBody, req.body);
+    const ref = await refOf(req.params.slug, req.params.c);
+    await ref.store.get(ref.creativeSlug); // 404 for unknown creatives
+    return ctx.turns.postMessage(ref, { clientId: body.clientId, text: body.text, pins: body.pins ?? [], mode: body.mode });
+  });
+
+  app.delete<{ Params: { slug: string; c: string; clientId: string } }>('/api/projects/:slug/creatives/:c/queue/:clientId', async (req) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    return ctx.turns.removeQueued(ref, req.params.clientId);
+  });
+
+  app.put<{ Params: { slug: string; c: string; clientId: string } }>('/api/projects/:slug/creatives/:c/queue/:clientId', async (req) => {
+    const body = parse(queueEditBody, req.body);
+    const ref = await refOf(req.params.slug, req.params.c);
+    return ctx.turns.editQueued(ref, req.params.clientId, { text: body.text, pins: body.pins ?? [] });
+  });
+
+  app.put<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/queue', async (req) => {
+    const body = parse(queueOrderBody, req.body);
+    const ref = await refOf(req.params.slug, req.params.c);
+    return ctx.turns.reorderQueue(ref, body.order);
+  });
+
+  app.post<{ Params: { slug: string; c: string } }>('/api/projects/:slug/creatives/:c/queue/run-next', async (req, reply) => {
+    const ref = await refOf(req.params.slug, req.params.c);
+    return reply.status(202).send(await ctx.turns.runNext(ref));
   });
 
   app.post<{ Params: { slug: string; c: string; n: string } }>('/api/projects/:slug/creatives/:c/versions/:n/restore', async (req) => {

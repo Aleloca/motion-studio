@@ -1,7 +1,8 @@
-import { creativeJobKey } from '@motion-studio/shared';
+import { creativeJobKey, LIVE_LIMITS, type ConversationEntry, type LiveMessageOutcome, type QueuedRequest, type RedirectOutcome } from '@motion-studio/shared';
+import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
-import { canFollow, effectiveServices, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, formatDisplayName, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
+import { canFollow, effectiveServices, checkLink, effectiveLinks, legacyTurnKind, linksAfterBriefSave, formatHistory, formatDisplayName, hasFormat, manifestSchema, messages, renderState, starOf, EMPTY_BRAND_KIT, projectFileSchema, type Brief, type LinkedCodebase, type CreativeFile, type CreativeStatus, type FormatPreset, type JobSummary, type AgentEvent, type Locale, type ManifestFile, type OutputFileInfo, type Pin, type ServerMessage, type UsageRecord, type VersionComposition, type VersionEntry } from '@motion-studio/shared';
 import type { AgentLauncher } from '../agent/launcher.ts';
 import { detachLinksUnder } from '../agent/protected-links.ts';
 import { noteCoreChange } from '../core-changes.ts';
@@ -26,7 +27,8 @@ import { outputFileExists } from './format-summary.ts';
 import { hashVersionOutputs, LAZY_HASH_BUDGET_MS, withLazyHashes } from './output-hashes.ts';
 import { legacyProblemsOf } from './legacy-problems.ts';
 import { clearReferenceFrames, conversionPlan, extractReferenceFrames } from './legacy-conversion.ts';
-import { buildCreativePrompt, type AgentContract, type CreativeContext, type PromptKind } from './prompt.ts';
+import { liveMessageText, LiveSession, NO_LIVE, type LiveMessage } from '../agent/live-session.ts';
+import { buildCreativePrompt, pinLine, type AgentContract, type CreativeContext, type PromptKind } from './prompt.ts';
 import { checkTargets } from './composition-contract.ts';
 import { realDirChain, writeThroughTemp } from './core-files.ts';
 import { acceptedDurationsOf, alignEditorCopies, assembleCompositions, carriableComposition, type CarriedComposition } from './composition-turn.ts';
@@ -56,7 +58,27 @@ export interface CreativeTurnDeps {
   previews?: PreviewService;
   /** `preview_frames` calls allowed per turn (default 10). */
   previewFramesPerTurn?: number;
+  /** Phase 13: cancels the open approvals of a job (`ApprovalBroker.cancelJob`); a redirect calls it before anything else. */
+  cancelApprovals?: (jobId: string) => void;
+  /** Phase 13, Ruling T: this core process's id (random per start); queued requests start by themselves only under it. */
+  bootId?: string;
 }
+
+/** Phase 13: what POST …/messages answers (and answers again for the same `clientId`). */
+export interface MessageAnswer { entry: ConversationEntry; outcome: LiveMessageOutcome }
+/** Phase 13: a message sent while a turn runs (live or queued), or a redirect, as the routes pass it. */
+export interface UserMessageInput { clientId: string; text: string; pins: Pin[] }
+
+/** Phase 13: the live side of a creative turn. */
+class LiveTurn extends LiveSession {
+  /** Set by the turn once its agent runs start: the core's own markers go the same way as the agent's events. */
+  emit: ((e: AgentEvent) => void) | null = null;
+  /** The job was stopped or cancelled (also late, while the version was being saved): its queue waits for "Run next". */
+  stopped = false;
+  constructor(jobId: string, caps: LiveSession['caps'], readonly ref: CreativeRef) { super(jobId, caps); }
+}
+/** How many idempotency answers are kept (per process; older ones are found again in the conversation or the queue). */
+const MAX_ANSWERS = 1000;
 export interface CreativeRef { root: string; projectSlug: string; projectDir: string; creativeSlug: string }
 
 /** Shared with the web (render keys are derived from it): @motion-studio/shared `creativeJobKey`. */
@@ -160,7 +182,20 @@ export function freedSince(freed: Record<string, number> | undefined, base: numb
 export class CreativeTurnService {
   private readonly maxAttempts: number;
   private readonly locks = new KeyedMutex();
-  constructor(private readonly deps: CreativeTurnDeps) { this.maxAttempts = deps.maxAttempts ?? 3; }
+  /** Phase 13, Ruling T: queued requests made under another id (an earlier start of the app) wait for "Run next". */
+  readonly bootId: string;
+  /** Phase 13: the live side of each creative turn, by job id, from its start until it settles. */
+  private readonly live = new Map<string, LiveTurn>();
+  /** Phase 13: creatives whose last turn was stopped or cancelled: their queue waits for "Run next" (decisions log). */
+  private readonly paused = new Set<string>();
+  /** Phase 13: answers by creative key + clientId (idempotency, Review Focus 3); a pending one is shared by a double click. */
+  private readonly answers = new Map<string, Promise<unknown>>();
+  /** Phase 13: the creatives whose queue this process changed, by job key (for `otherJobEndedByKey`). */
+  private readonly refs = new Map<string, CreativeRef>();
+  constructor(private readonly deps: CreativeTurnDeps) {
+    this.maxAttempts = deps.maxAttempts ?? 3;
+    this.bootId = deps.bootId ?? randomUUID();
+  }
 
   /**
    * Starts a turn. `opts.formats`: the formats the request applies to (spec §2.5); formats outside the brief are dropped, a
@@ -349,7 +384,7 @@ export class CreativeTurnService {
     });
   }
 
-  private async startLocked(ref: CreativeRef, message: { text: string; pins: Pin[] } | undefined, formats: string[] | undefined): Promise<JobSummary> {
+  private async startLocked(ref: CreativeRef, message: { text: string; pins: Pin[] } | undefined, formats: string[] | undefined, queued?: { clientId: string }): Promise<JobSummary> {
     const store = new CreativeStore(ref.projectDir);
     const before = await store.get(ref.creativeSlug);
     const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
@@ -357,24 +392,51 @@ export class CreativeTurnService {
     if (this.isActive(key)) throw new WorkspaceError(409, t().errors.generationRunning);
     // A request for formats none of which is in the brief is a mistake, not "all formats".
     if (formats?.length && !formats.some((f) => before.brief.formats.includes(f))) throw new CodedError(400, t().errors.formatsNotInBrief, 'formats-not-in-brief');
-    if (message) await store.appendConversation(ref.creativeSlug, { type: 'user', at: now(), text: message.text, pins: message.pins, attachments: [] });
+    const jobId = randomUUID();
+    if (message) {
+      // A queued request starts as a user entry with `mode: 'queued'`. One that was first written as a live message (it
+      // arrived when the agent had finished) is not written twice, unless it was edited in the queue meanwhile.
+      const written = queued && (await store.readConversation(ref.creativeSlug)).some((e) => e.type === 'user' && e.clientId === queued.clientId
+        && e.text === message.text && JSON.stringify(e.pins) === JSON.stringify(message.pins));
+      if (!written) {
+        await store.appendConversation(ref.creativeSlug, {
+          type: 'user', at: now(), text: message.text, pins: message.pins, attachments: [],
+          ...(queued ? { jobId, mode: 'queued' as const, clientId: queued.clientId, deliveredAt: now() } : {}),
+        });
+      }
+    }
     await store.update(ref.creativeSlug, { status: 'working', error: null });
     this.changed(ref);
     // What the turn targets, said up front (the web marks only those boards and their followers as rendering): the same
     // resolution `planTurn` makes (a first generation targets every primary). Untargeted: absent.
     const targets = formats?.length && (await store.readVersions(ref.creativeSlug)).length > 0 ? normalizeTargets(formats, before.brief.formats, effectiveLinks(before.brief.links, before.brief.formats)) : undefined;
-    return this.deps.queue.enqueue({
-      key,
-      kind: 'creative',
-      label: t().jobs.creativeLabel({ title: before.title }),
-      ...(targets ? { formats: targets } : {}),
-      run: (signal, jobId) => this.run(ref, store, before.status, message, signal, jobId, formats),
-      onCancelledBeforeStart: () => this.locks.run(key, async () => {
-        // A new start() may have won the lock after the cancel: the creative belongs to that job now.
-        if (this.isActive(key)) return;
-        await this.cancelled(ref, store, before.status, (await store.readVersions(ref.creativeSlug)).length > 0);
-      }),
-    });
+    // Phase 13: the turn's live side exists from now, so a message sent while it waits in the job queue is kept.
+    const caps = await this.deps.launcher.liveCapabilities?.('creative').catch(() => NO_LIVE) ?? NO_LIVE;
+    const live = new LiveTurn(jobId, caps, ref);
+    this.live.set(jobId, live);
+    this.paused.delete(key);
+    let job: JobSummary;
+    try {
+      job = this.deps.queue.enqueue({
+        id: jobId,
+        key,
+        kind: 'creative',
+        label: t().jobs.creativeLabel({ title: before.title }),
+        ...(targets ? { formats: targets } : {}),
+        run: (signal, id) => this.run(ref, store, before.status, message, signal, id, formats),
+        onCancelledBeforeStart: () => this.locks.run(key, async () => {
+          // A new start() may have won the lock after the cancel: the creative belongs to that job now.
+          if (this.isActive(key)) return;
+          await live.serial(async () => { await this.drainLive(ref, store, live); live.phase = 'ended'; });
+          await this.cancelled(ref, store, before.status, (await store.readVersions(ref.creativeSlug)).length > 0);
+        }),
+      });
+    } catch (err) {
+      this.live.delete(jobId);
+      throw err;
+    }
+    void this.deps.queue.whenSettled(job.id).then((settled) => this.turnSettled(ref, job.id, settled?.state));
+    return job;
   }
 
   /**
@@ -410,7 +472,8 @@ export class CreativeTurnService {
     const removed = await this.deps.git.restorePath(ref.projectDir, version.commit, relative(ref.projectDir, store.workDir(ref.creativeSlug)));
     // Restoring work/ may recreate the creative's work/ folder: note the creative folder so the tripwire does not read it as a move (FP4).
     await noteCoreChange(store.dir(ref.creativeSlug));
-    const updated = await store.update(ref.creativeSlug, { resumeFrom: { version: n, sessionId: version.sessionId } });
+    // A restore is the user's choice of base: it replaces a stopped turn's memory (Phase 13).
+    const updated = await store.update(ref.creativeSlug, { resumeFrom: { version: n, sessionId: version.sessionId }, stoppedSession: undefined });
     if (removed > 0) {
       await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: t().jobs.removedUnsaved({ count: removed }) });
     }
@@ -426,6 +489,9 @@ export class CreativeTurnService {
     const locale = currentLocale();
     // Set once the last agent turn is over: from then on an abort no longer cancels (the version gets saved).
     let finalizing = false;
+    // Phase 13: the turn's live side (made at start; a stand-in when the job was enqueued some other way).
+    const live = this.live.get(jobId) ?? new LiveTurn(jobId, NO_LIVE, ref);
+    this.live.set(jobId, live);
     try {
       await writeFile(join(ref.projectDir, '.studio', 'context.md'), CONTEXT_MD);
       const contract = this.deps.agentContract ?? 'compositions';
@@ -471,7 +537,11 @@ export class CreativeTurnService {
           : (addFormatsRequest(targets.filter((f) => plan.added.includes(f)), base, n, turnContract)
             ?? (targets.length < primaries.length ? j.regenerateFormatsRequest({ formats: listText(targets.map(label), locale) }) : j.regenerateRequest)));
 
-      let resumeSessionId = creative.resumeFrom?.sessionId ?? latest?.sessionId ?? undefined;
+      // Phase 13 (spec §3): a turn the user stopped is resumed as a fork, with a note; the session of the base version is the
+      // fallback when it no longer exists in Claude Code (Review Focus 4).
+      const stopped = creative.stoppedSession;
+      const baseSessionId = creative.resumeFrom?.sessionId ?? latest?.sessionId ?? undefined;
+      let resumeSessionId = stopped?.sessionId ?? baseSessionId;
       // Durations of the base the agent keeps without being told to bring them back to the brief (decisions log 262).
       let accepted: ReadonlyMap<string, number> = new Map();
       let result = null as ValidationResult | null;
@@ -503,7 +573,9 @@ export class CreativeTurnService {
         }
         accepted = turnContract === 'compositions' ? acceptedDurationsOf(base, targets, presets, creative.brief.durationSec) : new Map();
         const uncheckable = new Set<string>();
-        let forkSession = Boolean(creative.resumeFrom);
+        let forkSession = Boolean(creative.resumeFrom || stopped);
+        /** A remembered session is resumed (stopped turn, or a redirect's live session): a resume error falls back once. */
+        let remembered: 'stopped' | 'redirect' | null = stopped ? 'stopped' : null;
         let kind: PromptKind = versions.length === 0 ? 'first' : 'iteration';
         let problems: string[] = [];
         let lastWrite: Promise<void> = Promise.resolve();
@@ -537,7 +609,8 @@ export class CreativeTurnService {
             if (previewCalls >= previewLimit) throw new CodedError(429, t().errors.previewFramesLimit({ max: previewLimit }), 'preview-limit');
             previewCalls++;
             try {
-              return await previews.agentFrames({ ref: { projectDir: ref.projectDir, creativeDir, creativeSlug: slug, n }, format: a.format, times: a.times, locale, signal });
+              // Phase 13: a redirect aborts it (the turn's tool signal), not only the job's end.
+              return await previews.agentFrames({ ref: { projectDir: ref.projectDir, creativeDir, creativeSlug: slug, n }, format: a.format, times: a.times, locale, signal: AbortSignal.any([signal, live.toolSignal]) });
             } catch (e) {
               // A full lane is Motion Studio's limit, not the agent's: that call does not count (fix minor 6).
               if (e instanceof CodedError && e.apiCode === 'preview-busy') previewCalls--;
@@ -572,16 +645,49 @@ export class CreativeTurnService {
         }
         const earlierBefore = await snapshotOutputs(creativeDir, earlier);
 
-        for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
+        let attempt = 1;
+        let sawSession = false;
+        // The agent's events (and the core's own markers) go to the clients and, in order, to the conversation.
+        const emit = (event: AgentEvent) => {
+          this.deps.broadcast({ type: 'agent', jobId, event });
+          // Live usage estimates are only for the UI (up to one a second): the final usage event is the one kept.
+          if (event.kind === 'usage' && event.live) return;
+          // Chained so writes stay ordered and a failure surfaces when the chain is awaited after the turn.
+          lastWrite = lastWrite.then(() => store.appendConversation(slug, { type: 'agent', at: now(), jobId, event }));
+          lastWrite.catch(() => {}); // observed here; the same rejection is rethrown by the await below
+        };
+        live.emit = emit;
+        for (;;) {
+          sawSession = false;
+          // Phase 13: a redirect waiting for this attempt (the fallback: the last run was cancelled) is its prompt.
+          const redirect = await live.serial(async () => { const r = live.redirect; live.redirect = null; return r; });
+          if (signal.aborted) return await this.cancelled(ref, store, previous, versions.length > 0, this.stoppedOf(jobId));
           // One decision per attempt, shared by the prompt's claims and the launched policy.
           const sandboxed = await this.deps.launcher.sandboxed();
+          // With no session to go on (the agent has not started yet), a redirect joins the request in the attempt's prompt.
+          const fresh = Boolean(redirect) && !live.sessionId;
+          // A repair turn carries every message the user sent while the agent worked, after their request (F4).
+          const liveWords = (kind === 'fix' && !redirect) || fresh ? await live.serial(async () => {
+            const words = live.words();
+            for (const m of words) if (m.state === 'pending') m.state = 'prompt';
+            return words.map((m) => ({ text: m.text, pins: m.pins }));
+          }) : undefined;
+          if (redirect && !fresh) {
+            redirect.state = 'prompt';
+            // The live session goes on (not a fork): the agent keeps what it did so far.
+            if (live.sessionId) { resumeSessionId = live.sessionId; forkSession = false; remembered = 'redirect'; }
+          }
+          const resumed = redirect && !fresh ? redirect : null;
+          if (fresh) redirect!.state = 'prompt';
           const prompt = buildCreativePrompt({
-            slug, creative, presets, version: n, kind, formats: targets,
-            userText: kind === 'fix' ? undefined : request,
+            slug, creative, presets, version: n, kind: resumed ? 'redirect' : kind, formats: targets,
+            userText: kind === 'fix' || resumed ? undefined : request,
             // A repair turn carries the user's own words (F4): only what they wrote, never a request the core made up.
-            userWords: kind === 'fix' ? message?.text || undefined : undefined,
-            pins: kind === 'iteration' ? message?.pins : undefined,
-            attachments: kind === 'iteration' ? attachments : undefined,
+            userWords: resumed ? resumed.text : kind === 'fix' ? message?.text || undefined : undefined,
+            liveMessages: liveWords,
+            stoppedNote: Boolean(stopped) && !resumed && kind !== 'fix',
+            pins: resumed ? resumed.pins : kind === 'iteration' ? message?.pins : undefined,
+            attachments: kind === 'iteration' && !resumed ? attachments : undefined,
             problems, context, locale, sandboxed, contract: turnContract,
             conversion: kind === 'iteration' ? conversion : undefined,
             directEdit: kind === 'iteration' ? directEdit : undefined,
@@ -608,21 +714,34 @@ export class CreativeTurnService {
               return lastWrite;
             },
             onEvent: (event) => {
-              this.deps.broadcast({ type: 'agent', jobId, event });
-              // Live usage estimates are only for the UI (up to one a second): the final usage event is the one kept.
-              if (event.kind === 'usage' && event.live) return;
-              // Chained so writes stay ordered and a failure surfaces when the chain is awaited after the turn.
-              lastWrite = lastWrite.then(() => store.appendConversation(slug, { type: 'agent', at: now(), jobId, event }));
-              lastWrite.catch(() => {}); // observed here; the same rejection is rethrown by the await below
+              if (event.kind === 'session') sawSession = true;
+              if (event.kind === 'user_message_delivered') { const m = live.messages.find((x) => x.clientId === event.clientId); if (m) m.announced = true; }
+              emit(event);
               const sid = event.kind === 'session' || event.kind === 'result' ? event.sessionId : undefined;
-              if (sid) this.deps.queue.patch(jobId, { sessionId: sid });
+              if (sid) { this.deps.queue.patch(jobId, { sessionId: sid }); live.sessionId = sid; }
             },
             ...compositionTools,
           });
           const onAbort = () => run.cancel();
           signal.addEventListener('abort', onAbort, { once: true });
           if (signal.aborted) onAbort(); // cancelled before the listener existed (e.g. while preparing the turn)
+          // Phase 13: messages given in this attempt's prompt are delivered now; those that waited for the run are sent.
+          await live.serial(async () => {
+            live.run = run;
+            live.phase = 'agent';
+            live.lastAttempt = attempt >= this.maxAttempts;
+            if (run.capabilities) live.caps = run.capabilities;
+            // A redirect that came while this run was being started: it stops now and the next attempt takes it.
+            if (live.redirect) { run.cancel(); return; }
+            for (const m of live.messages) {
+              if (m.state === 'prompt' && !m.announced) { m.announced = true; emit({ kind: 'user_message_delivered', clientId: m.clientId }); }
+            }
+            for (const m of live.pending()) {
+              if ((await run.send?.({ text: liveMessageText(m.text, m.pins, pinLine), clientId: m.clientId })) === 'written') m.state = 'sent';
+            }
+          });
           const outcome = await run.done.finally(() => signal.removeEventListener('abort', onAbort));
+          await live.serial(async () => { live.run = null; live.phase = 'between'; });
           // Whatever the agent left running (a background render, a watcher) stops here: nothing writes in the version
           // folder while it is checked, completed and hashed.
           run.killGroup?.();
@@ -638,10 +757,27 @@ export class CreativeTurnService {
               await store.appendConversation(slug, { type: 'system', at: now(), level: 'error', text: t().jobs.codebaseChanged({ path: p }) });
             }
           }
-          if (outcome.status === 'cancelled') return await this.cancelled(ref, store, previous, versions.length > 0);
+          // Phase 13: the run was cancelled for a redirect (not the job): the next attempt of the same number resumes it.
+          if (outcome.status !== 'succeeded' && live.redirect && !signal.aborted) continue;
+          // Phase 13 (Review Focus 4): a remembered session Claude Code no longer has (the run failed before any session
+          // started) falls back to the base version's session once, with a note: never a failed turn.
+          if (outcome.status === 'failed' && remembered && !sawSession && !signal.aborted) {
+            if (remembered === 'stopped') await store.update(slug, { stoppedSession: undefined });
+            if (redirect) await live.serial(async () => { live.redirect ??= redirect; });
+            remembered = null;
+            // The base session itself may be the one that is gone (a stopped turn resumed it without a fork): then a new session.
+            const gone = resumeSessionId;
+            resumeSessionId = baseSessionId === gone ? undefined : baseSessionId;
+            forkSession = resumeSessionId !== undefined && Boolean(creative.resumeFrom);
+            await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: t().live.stoppedSessionUnavailable });
+            this.changed(ref);
+            continue;
+          }
+          if (outcome.status === 'cancelled') return await this.cancelled(ref, store, previous, versions.length > 0, this.stoppedOf(jobId));
           if (outcome.status === 'failed') throw new AgentFailure(outcome.error ?? t().errors.turnFailed);
           resumeSessionId = outcome.sessionId ?? resumeSessionId;
           forkSession = false;
+          remembered = null;
 
           let unknown: number;
           if (turnContract === 'compositions') {
@@ -653,11 +789,16 @@ export class CreativeTurnService {
             problems = result.problems;
             unknown = result.unknownPresets.length;
           }
+          // Phase 13: a redirect that arrived while the outputs were checked is the next attempt.
+          if (live.redirect && !signal.aborted) continue;
           // A preset missing from the catalog cannot be fixed by the agent: retrying would only waste turns.
-          if (problems.length === unknown || attempt === this.maxAttempts) break;
+          if (problems.length === unknown || attempt >= this.maxAttempts) break;
           await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: t().jobs.checkingOutputs({ count: problems.length, attempt: attempt + 1, max: this.maxAttempts }) });
           this.changed(ref);
           kind = 'fix';
+          attempt++;
+          // From here a message the run refuses goes to the repair attempt's prompt (or, at the last one, to the queue).
+          await live.serial(async () => { live.lastAttempt = attempt >= this.maxAttempts; });
         }
         // A render job may record a render in an earlier version meanwhile (Task 5): the core's own writes are left out.
         const earlierAfter = await snapshotOutputs(creativeDir, earlier);
@@ -671,6 +812,8 @@ export class CreativeTurnService {
       }
 
       finalizing = true;
+      // Phase 13: from now on a message is the next request; those no attempt took are queued now (Review Focus 1).
+      await live.serial(async () => { live.phase = 'finalizing'; await this.drainLive(ref, store, live); });
       let saved: { outputs: OutputFileInfo[]; problems: string[]; tools: string[]; renderCommand: string | null; compositions?: VersionComposition[]; localizations?: VersionEntry['localizations'] };
       if (turnContract === 'compositions') saved = await this.finishCompositions(ref, store, plan, presets, base, n, label, locale, { accepted });
       else {
@@ -708,7 +851,8 @@ export class CreativeTurnService {
       // A version made without the agent after a restart keeps the restart's intent: the next agent turn still forks the
       // restored session (from this new version, which it now builds on).
       const resumeFrom = noAgent && creative.resumeFrom ? { version: n, sessionId: creative.resumeFrom.sessionId } : null;
-      await store.update(slug, { status: status === 'complete' ? 'ready' : 'incomplete', error: null, resumeFrom });
+      // A saved version ends the stopped turn's memory (Phase 13): the next turn builds on this version's session.
+      await store.update(slug, { status: status === 'complete' ? 'ready' : 'incomplete', error: null, resumeFrom, stoppedSession: undefined });
       if (signal.aborted) {
         await store.appendConversation(slug, { type: 'system', at: now(), level: 'info', text: t().jobs.lateCancel({ n }) });
       }
@@ -718,7 +862,7 @@ export class CreativeTurnService {
       // creative's lock, best effort; nothing it does can mark the turn as failed (fix minor 3).
       if (saved.compositions && !signal.aborted) this.storyboardsLater(ref, store, n);
     } catch (err) {
-      if (signal.aborted && !finalizing) return await this.cancelled(ref, store, previous, (await store.readVersions(slug)).length > 0);
+      if (signal.aborted && !finalizing) return await this.cancelled(ref, store, previous, (await store.readVersions(slug)).length > 0, this.stoppedOf(jobId));
       const text = err instanceof Error ? err.message : String(err);
       await store.update(slug, { status: 'error', error: text }).catch(() => {});
       await store.appendConversation(slug, { type: 'system', at: now(), level: 'error', text: t().jobs.generationFailed({ text }) }).catch(() => {});
@@ -726,6 +870,14 @@ export class CreativeTurnService {
       this.changed(ref);
       // After a late abort the queue would read a plain rejection as a cancel: this failure is real.
       throw finalizing ? new JobFailedError(text) : err;
+    } finally {
+      // Phase 13: whatever no attempt took (a stop, a failure) becomes the next request: never lost.
+      await live.serial(async () => {
+        if (signal.aborted) live.stopped = true;
+        if (live.phase !== 'finalizing' && live.phase !== 'ended') await this.drainLive(ref, store, live);
+        live.phase = 'ended';
+        live.run = null;
+      }).catch(() => {});
     }
   }
 
@@ -1065,10 +1217,305 @@ export class CreativeTurnService {
     };
   }
 
-  private async cancelled(ref: CreativeRef, store: CreativeStore, previous: CreativeStatus, hasVersions: boolean): Promise<'cancelled'> {
+  // ---------------------------------------------------------------------------------------------------------------------
+  // Phase 13: messages while the agent works, the request queue, redirect.
+
+  /** The live side of the creative's running (or queued) turn, if any. */
+  private liveOf(key: string): LiveTurn | undefined {
+    const job = this.deps.queue.list().find((j) => j.key === key && j.kind === 'creative' && (j.state === 'queued' || j.state === 'running'));
+    return job ? this.live.get(job.id) : undefined;
+  }
+
+  /** A message's text and pins checked against the limits (Review Focus 3): every refusal is a translated 409 `limit`. */
+  private checkMessage(m: UserMessageInput): UserMessageInput {
+    const text = m.text.trim();
+    if (!text && m.pins.length === 0) throw new CodedError(400, t().live.emptyMessage, 'empty-message');
+    if (text.length > LIVE_LIMITS.maxChars) throw new CodedError(409, t().live.tooLong({ max: LIVE_LIMITS.maxChars }), 'limit');
+    return { clientId: m.clientId, text, pins: m.pins };
+  }
+
+  /** The answer already given for `clientId` (this process), or rebuilt from the queue or the conversation (an earlier one). */
+  private async knownAnswer(ref: CreativeRef, clientId: string): Promise<MessageAnswer | null> {
+    const store = new CreativeStore(ref.projectDir);
+    const q = (await store.get(ref.creativeSlug)).queued?.find((x) => x.clientId === clientId);
+    if (q) return { entry: this.queuedEntry(q), outcome: 'queued' };
+    const e = (await store.readConversation(ref.creativeSlug)).find((x) => x.type === 'user' && x.clientId === clientId);
+    if (e && e.type === 'user') return { entry: e, outcome: e.mode === 'queued' ? 'queued' : 'delivered-pending' };
+    return null;
+  }
+
+  /** Runs `fn` once per creative and `clientId`: a repeat (a double click, a retry) gets the same answer. */
+  private once<T>(ref: CreativeRef, clientId: string, fn: () => Promise<T>, known: () => Promise<T | null>): Promise<T> {
+    const id = `${creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug)}\0${clientId}`;
+    const had = this.answers.get(id);
+    if (had) return had as Promise<T>;
+    const p = (async () => (await known()) ?? fn())();
+    this.answers.set(id, p);
+    if (this.answers.size > MAX_ANSWERS) this.answers.delete(this.answers.keys().next().value!);
+    p.catch(() => { if (this.answers.get(id) === p) this.answers.delete(id); });
+    return p;
+  }
+
+  /** The user entry a queued request will be written as when it starts (the queue is not in the conversation). */
+  private queuedEntry(q: Pick<QueuedRequest, 'clientId' | 'text' | 'pins' | 'at'>): ConversationEntry {
+    return { type: 'user', at: q.at, text: q.text, pins: q.pins, attachments: [], mode: 'queued', clientId: q.clientId };
+  }
+
+  /**
+   * POST …/messages (spec §2). `queued`: into the queue (at most `LIVE_LIMITS.queued`). `live`: into the running turn — written
+   * to the agent's session when live input is on (or kept for the next repair attempt's prompt when the run has ended),
+   * queued when it is off (`queued-unsupported`) or when the agent has finished (`queued-after-finish`, never refused).
+   */
+  async postMessage(ref: CreativeRef, input: UserMessageInput & { mode: 'live' | 'queued' }): Promise<MessageAnswer> {
+    const m = this.checkMessage(input);
+    const answer = await this.once(ref, m.clientId, async (): Promise<MessageAnswer> => {
+      const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
+      if (input.mode === 'queued') return this.queueRequest(ref, m, 'queued');
+      const live = this.liveOf(key);
+      if (!live) {
+        // Another job of the creative (a translation) takes no messages; with no job at all, the turn is over.
+        return this.queueRequest(ref, m, this.isActive(key) ? 'queued-unsupported' : 'queued-after-finish');
+      }
+      return live.serial(() => this.liveMessage(ref, live, m));
+    }, () => this.knownAnswer(ref, m.clientId));
+    if (answer.outcome !== 'delivered-pending') void this.maybeAutoRun(ref);
+    return answer;
+  }
+
+  private async liveMessage(ref: CreativeRef, live: LiveTurn, m: UserMessageInput): Promise<MessageAnswer> {
+    if (live.messages.length >= LIVE_LIMITS.perTurn) throw new CodedError(409, t().live.tooManyLive({ max: LIVE_LIMITS.perTurn }), 'limit');
+    if (!live.caps.liveInput) return this.queueRequest(ref, m, 'queued-unsupported');
+    if (live.phase === 'finalizing' || live.phase === 'ended') return this.queueRequest(ref, m, 'queued-after-finish');
+    const store = new CreativeStore(ref.projectDir);
+    const entry: ConversationEntry = { type: 'user', at: now(), text: m.text, pins: m.pins, attachments: [], jobId: live.jobId, mode: 'live', clientId: m.clientId };
+    await store.appendConversation(ref.creativeSlug, entry);
+    const msg: LiveMessage = { ...m, mode: 'live', state: 'pending' };
+    live.messages.push(msg);
+    this.deps.queue.patch(live.jobId, { liveMessages: live.messages.length });
+    this.changed(ref);
+    if (live.phase === 'agent' && live.run) {
+      const sent = await live.run.send?.({ text: liveMessageText(m.text, m.pins, pinLine), clientId: m.clientId });
+      if (sent === 'written') { msg.state = 'sent'; return { entry, outcome: 'delivered-pending' }; }
+      // The run's input is closed (its result came): the next attempt takes it, or, when none follows, the queue.
+      if (live.lastAttempt) { await this.queueAfterFinish(ref, store, live, [msg]); return { entry, outcome: 'queued-after-finish' }; }
+    } else if (live.phase === 'between' && live.lastAttempt) {
+      await this.queueAfterFinish(ref, store, live, [msg]);
+      return { entry, outcome: 'queued-after-finish' };
+    }
+    // Waiting for the run to start (sent then) or for the next attempt (in its prompt).
+    return { entry, outcome: 'delivered-pending' };
+  }
+
+  /** Messages no attempt will take (the turn is saving, failed or stopped): queued as the next requests, with a note. */
+  private async drainLive(ref: CreativeRef, store: CreativeStore, live: LiveTurn): Promise<void> {
+    const left = live.messages.filter((m) => m.state === 'pending');
+    if (live.redirect) { if (!left.includes(live.redirect)) left.push(live.redirect); live.redirect = null; }
+    if (left.length > 0) await this.queueAfterFinish(ref, store, live, left);
+  }
+
+  private async queueAfterFinish(ref: CreativeRef, store: CreativeStore, live: LiveTurn, msgs: LiveMessage[]): Promise<void> {
+    for (const m of msgs) {
+      m.state = 'queued';
+      await this.queueRequest(ref, m, 'queued-after-finish', { limit: false, note: false });
+    }
+    await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: t().live.queuedAfterFinish });
+    this.changed(ref);
+    void live;
+  }
+
+  /**
+   * Appends a request to the creative's queue under its lock; the user limit applies unless `limit: false` (never lost). A
+   * request that arrived after the agent finished gets the chat's notice (unless `note: false`: the caller writes one).
+   */
+  private async queueRequest(ref: CreativeRef, m: UserMessageInput, outcome: Exclude<LiveMessageOutcome, 'delivered-pending'>, o: { limit?: boolean; note?: boolean } = {}): Promise<MessageAnswer> {
+    const store = new CreativeStore(ref.projectDir);
+    const item: QueuedRequest = { clientId: m.clientId, text: m.text, pins: m.pins, at: now(), bootId: this.bootId };
+    this.refs.set(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug), ref);
+    await this.runLocked(ref, async () => {
+      const c = await store.get(ref.creativeSlug);
+      const queued = c.queued ?? [];
+      if (queued.some((x) => x.clientId === m.clientId)) return;
+      if (o.limit !== false && queued.length >= LIVE_LIMITS.queued) throw new CodedError(409, t().live.queueFull({ max: LIVE_LIMITS.queued }), 'limit');
+      await store.update(ref.creativeSlug, { queued: [...queued, item] });
+    });
+    if (outcome === 'queued-after-finish' && o.note !== false) {
+      await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: t().live.queuedAfterFinish });
+    }
+    this.changed(ref);
+    return { entry: this.queuedEntry(item), outcome };
+  }
+
+  /** DELETE …/queue/:clientId: only while it waits. */
+  async removeQueued(ref: CreativeRef, clientId: string): Promise<CreativeFile> {
+    return this.editQueue(ref, (q) => {
+      if (!q.some((x) => x.clientId === clientId)) throw new CodedError(404, t().live.notQueued, 'not-queued');
+      return q.filter((x) => x.clientId !== clientId);
+    });
+  }
+
+  /** PUT …/queue/:clientId: new text and pins, only while it waits. */
+  async editQueued(ref: CreativeRef, clientId: string, patch: { text: string; pins: Pin[] }): Promise<CreativeFile> {
+    const m = this.checkMessage({ clientId, ...patch });
+    return this.editQueue(ref, (q) => {
+      if (!q.some((x) => x.clientId === clientId)) throw new CodedError(404, t().live.notQueued, 'not-queued');
+      return q.map((x) => (x.clientId === clientId ? { ...x, text: m.text, pins: m.pins } : x));
+    });
+  }
+
+  /** PUT …/queue { order } (Ruling S): a permutation of the queue as it is now; anything else is refused. */
+  async reorderQueue(ref: CreativeRef, order: string[]): Promise<CreativeFile> {
+    return this.editQueue(ref, (q) => {
+      const same = order.length === q.length && new Set(order).size === order.length && order.every((id) => q.some((x) => x.clientId === id));
+      if (!same) throw new CodedError(409, t().live.queueChanged, 'queue-changed');
+      return order.map((id) => q.find((x) => x.clientId === id)!);
+    });
+  }
+
+  private async editQueue(ref: CreativeRef, fn: (q: QueuedRequest[]) => QueuedRequest[]): Promise<CreativeFile> {
+    const store = new CreativeStore(ref.projectDir);
+    const updated = await this.runLocked(ref, async () => {
+      const c = await store.get(ref.creativeSlug);
+      const next = fn(c.queued ?? []);
+      return store.update(ref.creativeSlug, { queued: next.length > 0 ? next : undefined });
+    });
+    this.changed(ref);
+    return updated;
+  }
+
+  /** POST …/queue/run-next: starts the first queued request now (after a restart or a stop, the only way it starts). */
+  async runNext(ref: CreativeRef): Promise<JobSummary> {
+    const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
+    return this.locks.run(key, async () => {
+      if (this.isActive(key)) throw new CodedError(409, t().errors.generationRunning, 'job-running');
+      const job = await this.startQueuedLocked(ref);
+      if (!job) throw new CodedError(409, t().live.queueEmpty, 'queue-empty');
+      return job;
+    });
+  }
+
+  /** Takes the queue's first request off and starts it as a normal turn; it goes back to the front if the start fails. */
+  private async startQueuedLocked(ref: CreativeRef): Promise<JobSummary | null> {
+    const store = new CreativeStore(ref.projectDir);
+    const c = await store.get(ref.creativeSlug);
+    const [head, ...rest] = c.queued ?? [];
+    if (!head) return null;
+    await store.update(ref.creativeSlug, { queued: rest.length > 0 ? rest : undefined });
+    try {
+      return await this.startLocked(ref, { text: head.text, pins: head.pins }, undefined, { clientId: head.clientId });
+    } catch (err) {
+      const now2 = await store.get(ref.creativeSlug);
+      await store.update(ref.creativeSlug, { queued: [head, ...(now2.queued ?? []).filter((x) => x.clientId !== head.clientId)] });
+      throw err;
+    }
+  }
+
+  /**
+   * Starts the queue's first request when nothing runs for the creative, its last turn was not stopped, and it was queued
+   * by this core process (Ruling T: after a restart the queue waits for "Run next"). Never throws.
+   */
+  async maybeAutoRun(ref: CreativeRef): Promise<JobSummary | null> {
+    const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
+    try {
+      return await this.locks.run(key, async () => {
+        if (this.isActive(key) || this.paused.has(key)) return null;
+        const head = (await new CreativeStore(ref.projectDir).get(ref.creativeSlug)).queued?.[0];
+        if (!head || head.bootId !== this.bootId) return null;
+        return this.startQueuedLocked(ref);
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  /** A creative turn settled: a stop or a cancel pauses the queue (until "Run next"); any other end starts the next request. */
+  private async turnSettled(ref: CreativeRef, jobId: string, state: string | undefined): Promise<void> {
+    const live = this.live.get(jobId);
+    if (live) live.phase = 'ended';
+    this.live.delete(jobId);
+    const key = creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug);
+    if (state === 'cancelled' || live?.stopped) { this.paused.add(key); return; }
+    await this.maybeAutoRun(ref);
+  }
+
+  /**
+   * Another job of the creative (a translation) ended: its queue may start (Ruling T applies). Known creatives only: a
+   * queue made in this process has been seen here (its ref is kept), and an older one waits for "Run next" anyway.
+   */
+  async otherJobEndedByKey(key: string): Promise<void> {
+    const ref = this.refs.get(key);
+    if (ref && !this.paused.has(key)) await this.maybeAutoRun(ref);
+  }
+
+  /** Whether a job is a creative turn this service runs (its live side exists). */
+  hasLiveTurn(jobId: string): boolean { return this.live.has(jobId); }
+
+  /**
+   * POST /api/jobs/:id/redirect for a creative turn (spec §3): cancels the job's open approvals first, aborts its running
+   * core tools (the job goes on), then interrupts the step and writes the message (interrupt on) or, the fallback, cancels
+   * the run and starts a new attempt in the same job resuming the live session (not a fork) with the message as prompt.
+   */
+  async redirect(jobId: string, input: UserMessageInput): Promise<{ outcome: RedirectOutcome }> {
+    const m = this.checkMessage(input);
+    // Idempotent per job and clientId, also once the turn is over.
+    const id = `redirect\0${jobId}\0${m.clientId}`;
+    const had = this.answers.get(id);
+    if (had) return had as Promise<{ outcome: RedirectOutcome }>;
+    const live = this.live.get(jobId);
+    if (!live) throw new CodedError(409, t().live.notRunning, 'not-running');
+    const ref = live.ref;
+    const p = (async () => {
+      if (live.messages.length >= LIVE_LIMITS.perTurn) throw new CodedError(409, t().live.tooManyLive({ max: LIVE_LIMITS.perTurn }), 'limit');
+      // No spending after a redirect: the open approvals go first, then the running tools.
+      this.deps.cancelApprovals?.(jobId);
+      live.abortTools();
+      return live.serial(async (): Promise<{ outcome: RedirectOutcome }> => {
+        const store = new CreativeStore(ref.projectDir);
+        if (live.phase === 'finalizing' || live.phase === 'ended') {
+          await this.queueRequest(ref, m, 'queued-after-finish', { limit: false });
+          return { outcome: 'queued-after-finish' };
+        }
+        await store.appendConversation(ref.creativeSlug, { type: 'user', at: now(), text: m.text, pins: m.pins, attachments: [], jobId, mode: 'redirect', clientId: m.clientId });
+        const msg: LiveMessage = { ...m, mode: 'redirect', state: 'pending' };
+        live.messages.push(msg);
+        this.deps.queue.patch(jobId, { liveMessages: live.messages.length });
+        const run = live.phase === 'agent' ? live.run : null;
+        if (run && live.caps.interrupt && (await run.interrupt?.()) === 'interrupted') {
+          if ((await run.send?.({ text: liveMessageText(m.text, m.pins, pinLine), clientId: m.clientId })) === 'written') {
+            msg.state = 'sent';
+            this.changed(ref);
+            return { outcome: 'interrupted' };
+          }
+        }
+        // Fallback: the run stops (if one runs) and the next attempt of the same number resumes its session.
+        live.redirect = msg;
+        const marker: AgentEvent = { kind: 'interrupted' };
+        if (live.emit) live.emit(marker);
+        else {
+          this.deps.broadcast({ type: 'agent', jobId, event: marker });
+          await store.appendConversation(ref.creativeSlug, { type: 'agent', at: now(), jobId, event: marker });
+        }
+        run?.cancel();
+        this.changed(ref);
+        return { outcome: 'restarted' };
+      });
+    })();
+    this.answers.set(id, p);
+    if (this.answers.size > MAX_ANSWERS) this.answers.delete(this.answers.keys().next().value!);
+    p.catch(() => { if (this.answers.get(id) === p) this.answers.delete(id); });
+    return p;
+  }
+
+  /** Phase 13: the session a stopped turn leaves to the next one (the one its agent reported), with the job. */
+  private stoppedOf(jobId: string): CreativeFile['stoppedSession'] {
+    const sessionId = this.deps.queue.list().find((j) => j.id === jobId)?.sessionId;
+    return sessionId ? { sessionId, at: now(), jobId } : undefined;
+  }
+
+  private async cancelled(ref: CreativeRef, store: CreativeStore, previous: CreativeStatus, hasVersions: boolean, stopped?: CreativeFile['stoppedSession']): Promise<'cancelled'> {
     const restored: CreativeStatus = previous === 'ready' || previous === 'incomplete' || previous === 'draft'
       ? previous : hasVersions ? 'ready' : 'draft';
-    await store.update(ref.creativeSlug, { status: restored, error: null });
+    // Phase 13 (spec §3): the stopped turn's session is remembered for the next turn (only when its agent had started one).
+    await store.update(ref.creativeSlug, { status: restored, error: null, ...(stopped ? { stoppedSession: stopped } : {}) });
     await store.appendConversation(ref.creativeSlug, { type: 'system', at: now(), level: 'info', text: t().jobs.cancelledNote });
     await this.commitState(ref, t().jobs.stateCommit({ title: await this.titleOf(store, ref.creativeSlug) }));
     this.changed(ref);

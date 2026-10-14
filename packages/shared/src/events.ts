@@ -89,6 +89,8 @@ export interface JobSummary {
   progress?: JobProgress;
   /** Queued render jobs: how many render jobs are ahead of this one in the render lane (running or queued earlier). */
   queuePosition?: number;
+  /** Phase 13: messages the user sent to this running turn (live and redirect); absent: none. */
+  liveMessages?: number;
 }
 
 export type ApprovalKind = 'tool' | 'provider' | 'paid-batch';

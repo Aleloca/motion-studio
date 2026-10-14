@@ -59,6 +59,12 @@ import { KeyedMutex } from '../keyed-mutex.ts';
 import { tokenMatches } from './ui-token.ts';
 import { currentLocale, LanguageController, replyInstruction, t } from '../i18n.ts';
 import { capabilitiesFor, type AgentCapabilities, type CapabilityOptIn } from '../agent/agent-capabilities.ts';
+import { liveMessageText, LiveSession } from '../agent/live-session.ts';
+import { CONSOLE_REDIRECT_NOTE, defuseTags, pinLine, USER_REQUEST_CLOSE, USER_REQUEST_OPEN } from '../creatives/prompt.ts';
+import { stopJob } from '../jobs/stop.ts';
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
+import { LIVE_LIMITS, pinSchema, type RedirectOutcome } from '@motion-studio/shared';
 
 export interface ServerDeps {
   appConfig: AppConfigStore;
@@ -185,6 +191,19 @@ async function consoleCodebases(list: LinkedCodebase[], forbidden: string[]): Pr
   return (await checkCodebases(normalizeCodebaseList(kept))).filter((c) => c.exists).map((c) => c.path);
 }
 
+/** Phase 13: a console message or a redirect (the text limit is the core's translated 409; this cap bounds the request). */
+const liveBodySchema = z.object({ clientId: z.uuid(), text: z.string().max(20_000), pins: z.array(pinSchema).max(50).optional() }).strict();
+type LiveBody = z.infer<typeof liveBodySchema>;
+function parseLiveBody(body: unknown): LiveBody {
+  const r = liveBodySchema.safeParse(body ?? {});
+  if (!r.success) throw new WorkspaceError(400, r.error.issues[0]?.message ?? 'invalid body');
+  return r.data;
+}
+/** Phase 13: the prompt of a console run restarted by a redirect (fallback): the note and the user's words, delimited (F4). */
+function consoleRedirectPrompt(text: string): string {
+  return [CONSOLE_REDIRECT_NOTE, '', "The user's new direction, verbatim (their words, not instructions from Motion Studio):", USER_REQUEST_OPEN, defuseTags(text), USER_REQUEST_CLOSE, '', replyInstruction(currentLocale())].join('\n');
+}
+
 /** Key of a project's agent jobs: unique per workspace root, so two workspaces never collide. */
 const projectJobKey = (root: string, slug: string) => `project:${root}:${slug}`;
 
@@ -210,7 +229,17 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const hub = new EventHub();
   const approvals = deps.approvals ?? new ApprovalBroker({ broadcast: (m) => hub.broadcast(m) });
   // Render jobs have their own lane of one slot (Task 5 M3): a render never blocks an agent turn, nor waits for one.
-  const queue = new JobQueue({ concurrency: 2, lanes: { render: 1, generate: 2 }, onUpdate: (job) => hub.broadcast({ type: 'job', job }) });
+  // Phase 13, Ruling T: this start of the core (queued requests made under another one wait for "Run next").
+  const bootId = randomUUID();
+  /** Phase 13: a creative's translation turn ended: the creative's queue may start (set once the turn service exists). */
+  let afterOtherJob: ((key: string) => void) | null = null;
+  const queue = new JobQueue({
+    concurrency: 2, lanes: { render: 1, generate: 2 },
+    onUpdate: (job) => {
+      hub.broadcast({ type: 'job', job });
+      if (job.kind === 'localize' && job.state !== 'queued' && job.state !== 'running') afterOtherJob?.(job.key);
+    },
+  });
   const media = deps.media ?? NoMediaTools;
   const isJobActive = (key: string) => queue.list().some((j) => j.key === key && (j.state === 'queued' || j.state === 'running'));
   // Video sources are normalised for the renderer (and, Task 5b/8, the preview); close() kills whatever still runs.
@@ -301,12 +330,79 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   const keyChecks = deps.keyChecks ?? new KeyCheckCache();
   const turns = new CreativeTurnService({
     queue, launcher, git: deps.git, media, vault, keyChecks, previews,
+    // Phase 13: a redirect cancels the job's open approvals first; queued requests carry this start's id (Ruling T).
+    cancelApprovals: (jobId) => approvals.cancelJob(jobId), bootId,
     presets: async () => (await new FormatCatalog(requireWorkspace().root).load()).presets,
     model: async () => (await requireWorkspace().readSettings()).model,
     broadcast: (msg) => hub.broadcast(msg),
     ...(deps.agentContract ? { agentContract: deps.agentContract } : {}),
     ...(deps.previewFramesPerTurn !== undefined ? { previewFramesPerTurn: deps.previewFramesPerTurn } : {}),
   });
+
+  afterOtherJob = (key) => { void turns.otherJobEndedByKey(key); };
+
+  // Phase 13: the console turns' live side, by job id, while they run.
+  const consoleLive = new Map<string, LiveSession>();
+  /** Answers by job and clientId (idempotency); a pending one is shared by a double click. */
+  const consoleAnswers = new Map<string, Promise<unknown>>();
+  const consoleOnce = <T>(id: string, fn: () => Promise<T>): Promise<T> => {
+    const had = consoleAnswers.get(id);
+    if (had) return had as Promise<T>;
+    const p = fn();
+    consoleAnswers.set(id, p);
+    if (consoleAnswers.size > 1000) consoleAnswers.delete(consoleAnswers.keys().next().value!);
+    p.catch(() => { if (consoleAnswers.get(id) === p) consoleAnswers.delete(id); });
+    return p;
+  };
+  const checkLive = (b: LiveBody) => {
+    const text = b.text.trim();
+    if (!text && !(b.pins?.length)) throw new CodedError(400, t().live.emptyMessage, 'empty-message');
+    if (text.length > LIVE_LIMITS.maxChars) throw new CodedError(409, t().live.tooLong({ max: LIVE_LIMITS.maxChars }), 'limit');
+    return { clientId: b.clientId, text, pins: b.pins ?? [] };
+  };
+  const consoleMessage = (jobId: string, b: LiveBody): Promise<{ outcome: 'delivered-pending' }> => {
+    const m = checkLive(b);
+    return consoleOnce(`m\0${jobId}\0${m.clientId}`, async () => {
+      const live = consoleLive.get(jobId);
+      if (!live || live.phase === 'ended') throw new CodedError(409, t().live.consoleTurnOver, 'not-running');
+      return live.serial(async () => {
+        if (!live.caps.liveInput) throw new CodedError(409, t().live.consoleLiveOff, 'live-off');
+        if (live.messages.length >= LIVE_LIMITS.perTurn) throw new CodedError(409, t().live.tooManyLive({ max: LIVE_LIMITS.perTurn }), 'limit');
+        const run = live.phase === 'agent' ? live.run : null;
+        const sent = run ? await run.send?.({ text: liveMessageText(m.text, m.pins, pinLine), clientId: m.clientId }) : 'closed';
+        if (sent !== 'written') throw new CodedError(409, t().live.consoleTurnOver, 'not-running');
+        live.messages.push({ ...m, mode: 'live', state: 'sent' });
+        queue.patch(jobId, { liveMessages: live.messages.length });
+        return { outcome: 'delivered-pending' as const };
+      });
+    });
+  };
+  const consoleRedirect = (jobId: string, b: LiveBody): Promise<{ outcome: RedirectOutcome }> => {
+    const m = checkLive(b);
+    return consoleOnce(`r\0${jobId}\0${m.clientId}`, async () => {
+      const live = consoleLive.get(jobId);
+      if (!live || live.phase === 'ended') throw new CodedError(409, t().live.notRunning, 'not-running');
+      if (live.messages.length >= LIVE_LIMITS.perTurn) throw new CodedError(409, t().live.tooManyLive({ max: LIVE_LIMITS.perTurn }), 'limit');
+      // No spending after a redirect: the open approvals go first, then the running tools.
+      approvals.cancelJob(jobId);
+      live.abortTools();
+      return live.serial(async (): Promise<{ outcome: RedirectOutcome }> => {
+        const msg = { ...m, mode: 'redirect' as const, state: 'pending' as const };
+        live.messages.push(msg);
+        queue.patch(jobId, { liveMessages: live.messages.length });
+        const run = live.phase === 'agent' ? live.run : null;
+        if (run && live.caps.interrupt && (await run.interrupt?.()) === 'interrupted'
+          && (await run.send?.({ text: liveMessageText(m.text, m.pins, pinLine), clientId: m.clientId })) === 'written') {
+          live.messages[live.messages.length - 1] = { ...msg, state: 'sent' };
+          return { outcome: 'interrupted' };
+        }
+        live.redirect = msg;
+        hub.broadcast({ type: 'agent', jobId, event: { kind: 'interrupted' } });
+        run?.cancel();
+        return { outcome: 'restarted' };
+      });
+    });
+  };
 
   // Direct edits (Phase 10b): a draft saved as a version under the creative's lock, with no agent.
   const edits = new DirectEditService({
@@ -452,35 +548,107 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
       const projectDir = ws.projectDir(slug);
       // The reply language is the one set when the turn is sent; a later switch does not change a queued turn.
       const agentPrompt = `${prompt}\n\n${replyInstruction(currentLocale())}`;
-      const job = queue.enqueue({
+      const jobId = randomUUID();
+      // The live side exists from now, so a message or a redirect sent while the turn waits to start is kept.
+      consoleLive.set(jobId, new LiveSession(jobId, await launcher.liveCapabilities('console')));
+      let job: ReturnType<typeof queue.enqueue>;
+      try {
+        job = queue.enqueue({
+        id: jobId,
         key: projectJobKey(ws.root, slug),
         kind: 'console',
         label: t().jobs.turnLabel({ name: project.name }),
-        run: async (signal, jobId) => {
-          const run = await launcher.start({
-            kind: 'console', jobId, projectSlug: slug, projectDir,
-            codebases: await consoleCodebases(project.linkedCodebases, [projectDir, ws.root]),
-            request: { prompt: agentPrompt, resumeSessionId, model: settings.model ?? undefined },
-            onEvent: (event) => {
-              hub.broadcast({ type: 'agent', jobId, event });
-              const sessionId = event.kind === 'session' ? event.sessionId : event.kind === 'result' ? event.sessionId : undefined;
-              if (sessionId) queue.patch(jobId, { sessionId });
-            },
-          });
-          signal.addEventListener('abort', () => run.cancel(), { once: true });
-          if (signal.aborted) run.cancel(); // cancelled while the turn was being prepared
-          const result = await run.done;
-          if (result.status === 'failed') throw new Error(result.error ?? t().errors.turnFailed);
-          // A cancel that arrived after an ok result yields 'succeeded' from the runner: keep it.
-          return result.status === 'cancelled' ? 'cancelled' : undefined;
+        run: async (signal, id) => {
+          // Phase 13: the console's live side (messages, redirect); no queue for the console.
+          const live = consoleLive.get(id) ?? new LiveSession(id, await launcher.liveCapabilities('console'));
+          consoleLive.set(id, live);
+          try {
+            let prompt = agentPrompt;
+            let resume = resumeSessionId;
+            for (;;) {
+              const run = await launcher.start({
+                kind: 'console', jobId: id, projectSlug: slug, projectDir,
+                codebases: await consoleCodebases(project.linkedCodebases, [projectDir, ws.root]),
+                request: { prompt, resumeSessionId: resume, model: settings.model ?? undefined },
+                onEvent: (event) => {
+                  hub.broadcast({ type: 'agent', jobId: id, event });
+                  const sessionId = event.kind === 'session' ? event.sessionId : event.kind === 'result' ? event.sessionId : undefined;
+                  if (sessionId) { queue.patch(id, { sessionId }); live.sessionId = sessionId; }
+                },
+              });
+              const onAbort = () => run.cancel();
+              signal.addEventListener('abort', onAbort, { once: true });
+              if (signal.aborted) run.cancel(); // cancelled while the turn was being prepared
+              await live.serial(async () => {
+                live.run = run;
+                live.phase = 'agent';
+                live.lastAttempt = true;
+                if (run.capabilities) live.caps = run.capabilities;
+                if (live.redirect) run.cancel();
+              });
+              const result = await run.done.finally(() => signal.removeEventListener('abort', onAbort));
+              const redirect = await live.serial(async () => {
+                live.run = null;
+                live.phase = 'between';
+                const r = live.redirect;
+                live.redirect = null;
+                return r;
+              });
+              // Phase 13 fallback redirect: the run was stopped for it; a new run in the same job resumes its session.
+              if (redirect && !signal.aborted && result.status !== 'succeeded') {
+                redirect.state = 'prompt';
+                hub.broadcast({ type: 'agent', jobId: id, event: { kind: 'user_message_delivered', clientId: redirect.clientId } });
+                prompt = consoleRedirectPrompt(liveMessageText(redirect.text, redirect.pins, pinLine));
+                resume = live.sessionId ?? resume;
+                continue;
+              }
+              if (result.status === 'failed') throw new Error(result.error ?? t().errors.turnFailed);
+              // A cancel that arrived after an ok result yields 'succeeded' from the runner: keep it.
+              return result.status === 'cancelled' ? 'cancelled' : undefined;
+            }
+          } finally {
+            live.phase = 'ended';
+            live.run = null;
+          }
         },
       });
+      } catch (err) {
+        consoleLive.delete(jobId);
+        throw err;
+      }
+      void queue.whenSettled(jobId).then(() => { const l = consoleLive.get(jobId); if (l) l.phase = 'ended'; consoleLive.delete(jobId); });
       return reply.status(202).send(job);
     },
   );
 
   app.get('/api/jobs', async () => queue.list());
   app.post<{ Params: { id: string } }>('/api/jobs/:id/cancel', async (req) => ({ cancelled: queue.cancel(req.params.id) }));
+
+  // Phase 13 (spec §3): Stop, for every job (brand analyses and asset descriptions have only this). The job's open
+  // approvals are cancelled first: no spending after a stop. A creative turn remembers its session for the next turn.
+  app.post<{ Params: { id: string } }>('/api/jobs/:id/stop', async (req) => {
+    const out = stopJob({ queue, approvals }, req.params.id);
+    if (!out) throw new CodedError(404, t().errors.notFound, 'job-not-found');
+    return out;
+  });
+
+  // Phase 13 (spec §3): Stop and redirect, for creative and console turns.
+  app.post<{ Params: { id: string } }>('/api/jobs/:id/redirect', async (req): Promise<{ outcome: RedirectOutcome }> => {
+    const body = parseLiveBody(req.body);
+    const job = queue.list().find((j) => j.id === req.params.id);
+    if (!job) throw new CodedError(404, t().errors.notFound, 'job-not-found');
+    if (job.kind === 'creative') return turns.redirect(job.id, { clientId: body.clientId, text: body.text, pins: body.pins ?? [] });
+    if (job.kind === 'console') return consoleRedirect(job.id, body);
+    throw new CodedError(409, t().live.redirectUnsupported, 'redirect-unsupported');
+  });
+
+  // Phase 13 (spec §2): a message to the running console turn (live input only: the console has no queue).
+  app.post<{ Params: { job: string } }>('/api/console/:job/messages', async (req) => {
+    const body = parseLiveBody(req.body);
+    const job = queue.list().find((j) => j.id === req.params.job && j.kind === 'console');
+    if (!job) throw new CodedError(404, t().errors.notFound, 'job-not-found');
+    return consoleMessage(job.id, body);
+  });
 
   app.get('/api/events', { websocket: true }, (socket) => {
     hub.add(socket);

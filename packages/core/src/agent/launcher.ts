@@ -137,6 +137,17 @@ export class AgentLauncher {
     return (await this.deps.settings()).sandboxMode === 'auto' && (await this.deps.sandbox()).available;
   }
 
+  /**
+   * Phase 13: what a run of `kind` started now would get (the same computation as `start`): on only for creative and
+   * console turns, with the user's opt-in and a known Claude Code version (decisions log 610).
+   */
+  async liveCapabilities(kind: AgentJobKind, read?: WorkspaceSettings): Promise<{ liveInput: boolean; interrupt: boolean }> {
+    const settings = read ?? await this.deps.settings();
+    if (!LIVE_JOB_KINDS.has(kind) || !(settings.agentLiveInput || settings.agentInterrupt)) return { liveInput: false, interrupt: false };
+    const c = capabilitiesFor(await this.deps.claudeVersion?.().catch(() => null) ?? null, { liveInput: settings.agentLiveInput, interrupt: settings.agentInterrupt });
+    return { liveInput: c.liveInput, interrupt: c.interrupt };
+  }
+
   async start(i: LaunchInput): Promise<AgentRun> {
     // A quarantined project gets no agent (its .claude/.mcp.json/CLAUDE.md may be tampered); it clears by itself once
     // the protected files match the recorded state again.
@@ -147,10 +158,8 @@ export class AgentLauncher {
     const autoApproveAtStart = settings.autoApproveSandboxed === true;
     // Phase 13: off unless the user opted in for a known version (no version is verified live, decisions log 610).
     // Both off: the request carries no capabilities and the runner behaves exactly as before.
-    const liveCaps = LIVE_JOB_KINDS.has(i.kind) && (settings.agentLiveInput || settings.agentInterrupt)
-      ? capabilitiesFor(await this.deps.claudeVersion?.().catch(() => null) ?? null, { liveInput: settings.agentLiveInput, interrupt: settings.agentInterrupt })
-      : null;
-    const capabilities = liveCaps && (liveCaps.liveInput || liveCaps.interrupt) ? { liveInput: liveCaps.liveInput, interrupt: liveCaps.interrupt } : null;
+    const liveCaps = await this.liveCapabilities(i.kind, settings);
+    const capabilities = liveCaps.liveInput || liveCaps.interrupt ? liveCaps : null;
     const home = this.deps.home ?? homedir();
     const { configDir, bridge, mcpCommand, approvals } = this.deps;
     // The file is agent-reachable in the fallback mode: only rules that "Sempre" could have produced are honoured;
@@ -187,6 +196,12 @@ export class AgentLauncher {
     const mcpOn = this.mcpActive();
     // Aborted on cancel and when the run settles: provider calls started by the agent's tools stop with the job.
     const abort = new AbortController();
+    // Phase 13: live turns also have a tool abort a redirect fires (and renews), so running core tools stop while the run
+    // goes on. Each generation's signal is the run's abort combined with it.
+    const live = LIVE_JOB_KINDS.has(i.kind);
+    let tools = new AbortController();
+    let toolSignal = AbortSignal.any([abort.signal, tools.signal]);
+    const abortTools = () => { tools.abort(); tools = new AbortController(); toolSignal = AbortSignal.any([abort.signal, tools.signal]); };
     const policy = buildAgentPolicy({
       kind: i.kind, sandbox, projectDir: i.projectDir, home, configDir,
       codebases: i.codebases ?? [], protectedFiles, protectedDirs, protectedGlobs: logGlobs, sandboxGlobs,
@@ -217,7 +232,7 @@ export class AgentLauncher {
           sandboxed: sandbox,
           // The same value as the policy's autoAllowBashIfSandboxed: a setting turned on later never reaches this job.
           autoApproveAtStart,
-          emit: i.onEvent, signal: abort.signal, ...(i.validateComposition ? { validateComposition: i.validateComposition } : {}), ...(i.previewFrames ? { previewFrames: i.previewFrames } : {}),
+          emit: i.onEvent, signal: abort.signal, ...(live ? { toolSignal: () => toolSignal } : {}), ...(i.validateComposition ? { validateComposition: i.validateComposition } : {}), ...(i.previewFrames ? { previewFrames: i.previewFrames } : {}),
           ...(i.submitLocalization ? { submitLocalization: i.submitLocalization } : {}),
           ...(i.locale ? { locale: i.locale } : {}), ...(i.addNotes ? { addNotes: i.addNotes } : {}),
           ...(i.services ? { services: i.services } : {}),
@@ -332,6 +347,8 @@ export class AgentLauncher {
         send: (m) => run.send?.(m) ?? Promise.resolve('closed' as const),
         interrupt: () => run.interrupt?.() ?? Promise.resolve('unsupported' as const),
         endInput: () => run.endInput?.(),
+        abortTools,
+        capabilities: capabilities ?? { liveInput: false, interrupt: false },
       };
     } catch (err) {
       await release();

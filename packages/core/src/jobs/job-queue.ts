@@ -22,6 +22,8 @@ export class JobFailedError extends Error {
 }
 
 export interface JobSpec {
+  /** The job's id, when the caller needs it before the job starts (Phase 13: a turn's user entry names it); default: a new UUID. */
+  id?: string;
   key: string;
   kind: JobKind;
   label: string;
@@ -75,7 +77,7 @@ export class JobQueue {
       spec,
       controller: new AbortController(),
       summary: {
-        id: randomUUID(), key: spec.key, kind: spec.kind, label: spec.label, state: 'queued', createdAt: new Date().toISOString(),
+        id: spec.id ?? randomUUID(), key: spec.key, kind: spec.kind, label: spec.label, state: 'queued', createdAt: new Date().toISOString(),
         ...(spec.formats ? { formats: [...spec.formats] } : {}),
       },
     };
@@ -99,7 +101,7 @@ export class JobQueue {
   }
 
   /** Records agent-neutral details learnt while the job runs (e.g. the session id) and broadcasts them. */
-  patch(id: string, fields: Partial<Pick<JobSummary, 'sessionId' | 'notes' | 'formats' | 'progress'>>): void {
+  patch(id: string, fields: Partial<Pick<JobSummary, 'sessionId' | 'notes' | 'formats' | 'progress' | 'liveMessages'>>): void {
     const entry = this.entries.find((e) => e.summary.id === id);
     const same = (k: keyof typeof fields) => JSON.stringify(entry!.summary[k]) === JSON.stringify(fields[k]);
     if (!entry || (Object.keys(fields) as Array<keyof typeof fields>).every(same)) return;

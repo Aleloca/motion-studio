@@ -173,7 +173,9 @@ export function registerBridgeRoutes(app: FastifyInstance, ctx: BridgeRoutesCont
     // Defence in depth for a leaked token: a job only reaches the tools of its kind.
     if (tool !== 'approve' && !MCP_TOOLS[c.kind].includes(tool)) return reply.status(403).send({ error: t().errors.toolUnavailable });
     try {
-      return await handler(c, (req.body ?? {}) as Record<string, unknown>);
+      // Phase 13: a call of a live turn gets the signal of the current tool generation (a redirect aborts it, not the job).
+      const call: BridgeContext = c.toolSignal ? Object.freeze({ ...c, signal: c.toolSignal() }) : c;
+      return await handler(call, (req.body ?? {}) as Record<string, unknown>);
     } catch (err) {
       if (err instanceof WorkspaceError || err instanceof ProviderError) return reply.status(err.status).send({ error: err.message });
       return reply.status(500).send({ error: t().errors.internalError });

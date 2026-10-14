@@ -80,6 +80,13 @@ export interface AgentRun {
    * interrupt stdin stays open until `send` (a redirect), `endInput`, cancel, or a 45 s backstop. No-op when live input is off.
    */
   endInput?(): void;
+  /**
+   * Phase 13 (set by AgentLauncher for creative and console turns): aborts the core tools this run's agent is running now
+   * (preview frames, provider calls, downloads) without ending the run; later calls get a fresh signal. Used by a redirect.
+   */
+  abortTools?(): void;
+  /** Phase 13 (set by AgentLauncher): the capabilities this run was started with; absent or both false: none. */
+  capabilities?: { liveInput: boolean; interrupt: boolean };
 }
 
 /** The plan's name for a running turn's handle. */
