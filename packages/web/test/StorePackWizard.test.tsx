@@ -127,13 +127,37 @@ describe('StorePackWizard · steps', () => {
     await userEvent.type(caps[2]!, 'Share');
     expect(next().hasAttribute('disabled')).toBe(true);
     await userEvent.type(caps[1]!, 'Find it');
+    // Captions alone are not enough: every row also needs an app screen or an explicit "No app screen".
+    expect(next().hasAttribute('disabled')).toBe(true);
+    for (const n of [1, 2, 3]) await userEvent.click(screen.getByRole('button', { name: `Screenshot ${n}: no app screen` }));
     expect(next().hasAttribute('disabled')).toBe(false);
+  });
+
+  it('names the rows still missing a screen, and clears them as each is decided or picked', async () => {
+    open();
+    await toScreens();
+    for (const [i, c] of screen.getAllByLabelText(/^Caption of screenshot/).entries()) await userEvent.type(c, `C${i + 1}`);
+    expect(screen.getByText('Choose an app screen, or “No app screen”, for: 1, 2, 3')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Screenshot 2: no app screen' }));
+    expect(screen.getByRole('button', { name: 'Screenshot 2: no app screen' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByText('Choose an app screen, or “No app screen”, for: 1, 3')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Choose the app screen of screenshot 1' }));
+    const picker = await screen.findByRole('dialog', { name: 'App screen from the library' });
+    await userEvent.click(await within(picker).findByRole('button', { name: /home\.png/ }));
+    await waitFor(() => expect(screen.getByText('Choose an app screen, or “No app screen”, for: 3')).toBeTruthy());
+    // Picking a screen on a row marked "No app screen" takes the mark off; toggling the mark again undoes it.
+    await userEvent.click(screen.getByRole('button', { name: 'Screenshot 2: no app screen' }));
+    expect(screen.getByText('Choose an app screen, or “No app screen”, for: 2, 3')).toBeTruthy();
   });
 });
 
 describe('StorePackWizard · app screens', () => {
   const fillCaptions = async () => {
     for (const [i, c] of screen.getAllByLabelText(/^Caption of screenshot/).entries()) await userEvent.type(c, `Caption ${i + 1}`);
+  };
+  /** Marks every row that has no screen yet as "No app screen". */
+  const decideRest = async () => {
+    for (const b of screen.getAllByRole('button', { name: /^Screenshot \d+: no app screen$/ })) if (b.getAttribute('aria-pressed') !== 'true' && !b.closest('li')!.querySelector('img')) await userEvent.click(b);
   };
 
   it('picks an app screen from the library (images only) and can remove it', async () => {
@@ -183,6 +207,7 @@ describe('StorePackWizard · app screens', () => {
     const picker = await screen.findByRole('dialog', { name: 'App screen from the library' });
     await userEvent.click(await within(picker).findByRole('button', { name: /home\.png/ }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'App screen from the library' })).toBeNull());
+    await decideRest();
     await userEvent.click(next());
     // Step 4: the preview.
     expect(within(dialog()).getByRole('heading', { name: 'Preview video' })).toBeTruthy();
@@ -194,6 +219,7 @@ describe('StorePackWizard · app screens', () => {
     // 3 screenshots on 2 devices + the preview video.
     expect(within(dlg).getByText('7 formats will be created')).toBeTruthy();
     expect(within(dlg).getByText(/1 · Caption 1/)).toBeTruthy();
+    expect(within(dlg).getByText('Without an app screen: screenshots 2, 3')).toBeTruthy();
     await userEvent.click(within(dlg).getByRole('button', { name: 'Generate' }));
     await waitFor(() => expect(api.createStorePack).toHaveBeenCalledTimes(1));
     const [slug, body] = api.createStorePack.mock.calls[0]! as [string, { title: string; storePack: unknown; generate: boolean }];
@@ -216,6 +242,7 @@ describe('StorePackWizard · app screens', () => {
     open();
     await toScreens();
     await fillCaptions();
+    await decideRest();
     await userEvent.click(next());
     await userEvent.click(next());
     await userEvent.click(screen.getByRole('button', { name: 'Save draft' }));
@@ -238,6 +265,50 @@ describe('StorePackWizard · app screens', () => {
     await userEvent.keyboard('{Enter}');
     expect(within(dialog()).getByRole('heading', { name: 'Stores and devices' })).toBeTruthy();
     expect(document.activeElement?.tagName).toBe('H3');
+  });
+});
+
+describe('StorePackWizard · picker types and closing', () => {
+  it('lists only the image types the core accepts (PNG, JPEG, WebP), not SVG or GIF', async () => {
+    api.listAssets.mockResolvedValueOnce({ assets: [asset('a.png'), asset('b.JPG'), asset('c.webp'), asset('d.gif'), asset('e.svg'), asset('f.svg', { kind: 'svg' })], error: null, unregistered: [] });
+    open();
+    await toScreens();
+    await userEvent.click(screen.getByRole('button', { name: 'Choose the app screen of screenshot 1' }));
+    const list = await screen.findByRole('list', { name: 'Library images' });
+    expect(within(list).getAllByRole('button').map((b) => b.textContent)).toEqual(['a.png', 'b.JPG', 'c.webp']);
+  });
+
+  it('an inline upload of another type says why in the picker of that row and keeps it open', async () => {
+    api.uploadFiles.mockResolvedValueOnce({ assets: [asset('anim.gif')] });
+    open();
+    await toScreens();
+    await userEvent.click(screen.getByRole('button', { name: 'Choose the app screen of screenshot 2' }));
+    const picker = await screen.findByRole('dialog', { name: 'App screen from the library' });
+    fireEvent.change(within(picker).getByLabelText('Image file to upload'), { target: { files: [new File(['x'], 'anim.gif')] } });
+    expect((await within(picker).findByRole('alert')).textContent).toBe('Only images (PNG, JPEG or WebP) can be an app screen');
+    expect(screen.queryByText('anim.gif', { selector: '.ms-spw-file' })).toBeNull();
+  });
+
+  it('closing an empty wizard needs no confirmation', async () => {
+    open();
+    await userEvent.click(within(dialog()).getByRole('button', { name: 'Cancel' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog', { name: 'Discard this pack?' })).toBeNull();
+  });
+
+  it('closing with a draft asks first: Keep editing keeps it, Discard closes', async () => {
+    open();
+    await userEvent.type(screen.getByLabelText('App name'), 'Fotonica');
+    await userEvent.click(within(dialog()).getByRole('button', { name: 'Cancel' }));
+    const ask = await screen.findByRole('dialog', { name: 'Discard this pack?' });
+    expect(onClose).not.toHaveBeenCalled();
+    await userEvent.click(within(ask).getByRole('button', { name: 'Keep editing' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Discard this pack?' })).toBeNull());
+    expect((screen.getByLabelText('App name') as HTMLInputElement).value).toBe('Fotonica');
+    await userEvent.keyboard('{Escape}');
+    const again = await screen.findByRole('dialog', { name: 'Discard this pack?' });
+    await userEvent.click(within(again).getByRole('button', { name: 'Discard' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
 

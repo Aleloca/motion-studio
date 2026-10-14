@@ -28,6 +28,8 @@ export interface StorePackExportProps {
   version: number;
   /** The brief's languages: with extra ones the dialog offers a multiselect; absent: the pack is exported as before. */
   locales?: { primary: LocaleTag; extra: LocaleTag[] };
+  /** The extra languages the version has no (complete) translation for: marked, still selectable. */
+  untranslated?: readonly LocaleTag[];
 }
 
 const readFolder = () => { try { return localStorage.getItem(EXPORT_FOLDER_KEY) ?? ''; } catch { return ''; } };
@@ -44,7 +46,7 @@ export function StorePackExport(p: StorePackExportProps) {
   );
 }
 
-function Body({ onClose, slug, creative, version, locales, onBusy }: StorePackExportProps & { onBusy(busy: boolean): void }) {
+function Body({ onClose, slug, creative, version, locales, untranslated = [], onBusy }: StorePackExportProps & { onBusy(busy: boolean): void }) {
   const t = useT();
   const x = t.web.storePack.export;
   const ui = useLocale();
@@ -157,6 +159,7 @@ function Body({ onClose, slug, creative, version, locales, onBusy }: StorePackEx
                 <label key={tag} className="ms-exp-lang">
                   <Check on={Boolean(langs[tag])} label={name} disabled={running} onChange={(v) => setLangs((s) => ({ ...s, [tag]: v }))} />
                   <span>{name}</span>
+                  {untranslated.includes(tag) ? <span className="ms-sp-untr">{x.notTranslated}</span> : null}
                 </label>
               );
             })}

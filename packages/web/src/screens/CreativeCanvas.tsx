@@ -598,6 +598,10 @@ export function CreativeCanvas({ slug, creative, live, exportNamePattern, onSett
         {...(creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
       {cr.brief.storePack && version ? (
         <StorePackExport open={packExport} onClose={() => setPackExport(false)} slug={slug} creative={creative} title={title} version={version.n}
+          untranslated={(creativeLocales(cr.brief)?.extra ?? []).filter((tag) => {
+            const formats = (version.compositions ?? []).map((x) => x.format);
+            return formats.length === 0 || formats.some((f) => !(version.localizations ?? []).some((r) => r.locale === tag && r.instanceId === f));
+          })}
           {...(creativeLocales(cr.brief) ? { locales: creativeLocales(cr.brief)! } : {})} />
       ) : null}
       {renderPlan && creativeLocales(cr.brief) ? (

@@ -19,7 +19,8 @@ import './storepack.css';
 
 type AppstoreDevice = (typeof APPSTORE_DEVICES)[number];
 type PlaystoreDevice = (typeof PLAYSTORE_DEVICES)[number];
-export interface Shot { caption: string; screen: string | null }
+/** `noScreen`: the user chose, explicitly, to have no app screen for this row (Ruling P); `screen` is then null. */
+export interface Shot { caption: string; screen: string | null; noScreen?: boolean }
 export interface PackDraft {
   name: string;
   tagline: string;
@@ -62,21 +63,40 @@ export function buildStorePack(d: PackDraft): StorePack {
   };
 }
 
-const blankShots = () => Array.from({ length: STORE_SCREENSHOTS.appstore.max }, (): Shot => ({ caption: '', screen: null }));
+const blankShots = () => Array.from({ length: STORE_SCREENSHOTS.appstore.max }, (): Shot => ({ caption: '', screen: null, noScreen: false }));
+const decided = (x: Shot) => x.screen !== null || x.noScreen === true;
 const baseName = (path: string) => path.split('/').pop() ?? path;
 
 export interface StorePackWizardProps { open: boolean; onClose(): void; slug: string }
 
 export function StorePackWizard(p: StorePackWizardProps) {
   const t = useT();
+  const s = t.web.storePack;
+  // Closing with something typed asks first (Esc, the scrim, Close and Cancel all come here); the draft lives in Body.
+  const dirty = useRef(false);
+  const [confirm, setConfirm] = useState(false);
+  useEffect(() => { if (!p.open) setConfirm(false); }, [p.open]);
+  const request = () => { if (dirty.current) setConfirm(true); else p.onClose(); };
   return (
-    <Modal open={p.open} onClose={p.onClose} label={t.web.storePack.title} width={760}>
-      {p.open ? <Body {...p} /> : null}
-    </Modal>
+    <>
+      <Modal open={p.open} onClose={request} label={s.title} width={760}>
+        {p.open ? <Body slug={p.slug} onClose={request} onDone={p.onClose} dirty={dirty} /> : null}
+      </Modal>
+      <Modal open={p.open && confirm} onClose={() => setConfirm(false)} label={s.closeTitle} width={420}>
+        <div className="ms-spw-close">
+          <h2>{s.closeTitle}</h2>
+          <p>{s.closeBody}</p>
+          <div className="ms-spw-close-actions">
+            <Button variant="outline" onClick={() => setConfirm(false)}>{s.keepEditing}</Button>
+            <Button variant="ink" onClick={() => { setConfirm(false); p.onClose(); }}>{s.discard}</Button>
+          </div>
+        </div>
+      </Modal>
+    </>
   );
 }
 
-function Body({ onClose, slug }: StorePackWizardProps) {
+function Body({ onClose, onDone, slug, dirty }: { onClose(): void; onDone(): void; slug: string; dirty: { current: boolean } }) {
   const t = useT();
   const s = t.web.storePack;
   const [step, setStep] = useState(0);
@@ -93,6 +113,7 @@ function Body({ onClose, slug }: StorePackWizardProps) {
   const taglineId = useId();
   const hintId = useId();
 
+  dirty.current = draft.name.trim() !== '' || draft.tagline.trim() !== '' || draft.shots.some((x) => x.caption.trim() !== '' || decided(x));
   const set = (patch: Partial<PackDraft>) => setDraft((d) => ({ ...d, ...patch }));
   const bounds = storeBounds(draft.stores);
   const count = clamp(draft.count, bounds);
@@ -102,11 +123,13 @@ function Body({ onClose, slug }: StorePackWizardProps) {
   const valid: Record<Step, boolean> = {
     app: draft.name.trim() !== '',
     stores: draft.stores.length > 0,
-    screens: shots.every((x) => x.caption.trim() !== ''),
+    screens: shots.every((x) => x.caption.trim() !== '' && decided(x)),
     preview: true,
     review: true,
   };
   // A step can be opened when every step before it is done.
+  const captionsOk = shots.every((x) => x.caption.trim() !== '');
+  const undecided = shots.flatMap((x, i) => (decided(x) ? [] : [i + 1]));
   const reachable = (i: number) => STEPS.slice(0, i).every((k) => valid[k]);
   const goTo = (i: number) => { if (reachable(i)) setStep(i); };
   const current = STEPS[step]!;
@@ -145,7 +168,7 @@ function Body({ onClose, slug }: StorePackWizardProps) {
         toast.show(s.draftSaved({ title }), { tone: 'ok', action: { label: t.web.newCreative.open, run: () => go(href.creative(slug, created.slug)) } });
         go(href.project(slug));
       }
-      onClose();
+      onDone();
       // Success: stay busy; the page is leaving.
     } catch (e) {
       inFlight.current = false;
@@ -228,10 +251,11 @@ function Body({ onClose, slug }: StorePackWizardProps) {
               <NumberField label={s.count} value={count} min={bounds.min} max={bounds.max} decimals={0} onChange={(n) => set({ count: n })} />
               <span className="ms-spw-faint">{s.countRange(bounds)}</span>
             </div>
-            {!valid.screens ? <p className="ms-spw-err"><Icon name="warn" size={13} />{s.captionRequired}</p> : null}
+            {!captionsOk ? <p className="ms-spw-err"><Icon name="warn" size={13} />{s.captionRequired}</p> : null}
+            {undecided.length > 0 ? <p className="ms-spw-err" role="status"><Icon name="warn" size={13} />{s.screenMissing({ list: undecided.join(', ') })}</p> : null}
             <ol className="ms-spw-shots">
               {shots.map((shot, i) => (
-                <li key={i} className="ms-spw-shot">
+                <li key={i} className={cx('ms-spw-shot', shot.noScreen && 'ms-nos')}>
                   <span className="ms-spw-n" aria-hidden="true">{i + 1}</span>
                   <Input aria-label={s.captionOf({ n: i + 1 })} placeholder={s.caption} value={shot.caption} maxLength={80}
                     aria-invalid={shot.caption.trim() === '' || undefined} onChange={(e) => setShot(i, { caption: e.target.value })} />
@@ -246,6 +270,8 @@ function Body({ onClose, slug }: StorePackWizardProps) {
                     ) : (
                       <Button size="sm" variant="outline" aria-label={s.chooseScreen({ n: i + 1 })} onClick={() => setPicking(i)}><Icon name="image" size={13} />{s.screen}</Button>
                     )}
+                    <Button size="sm" variant={shot.noScreen ? 'ink' : 'ghost'} aria-pressed={shot.noScreen === true} aria-label={s.noScreenOf({ n: i + 1 })}
+                      onClick={() => setShot(i, shot.noScreen ? { noScreen: false } : { noScreen: true, screen: null })}>{s.noScreenChoice}</Button>
                   </div>
                 </li>
               ))}
@@ -282,6 +308,12 @@ function Body({ onClose, slug }: StorePackWizardProps) {
                 ))}
               </ol>
             </dd>
+            {pack.screenshots.some((x) => x.screen === null) ? (
+              <>
+                <dt>{s.noScreenChoice}</dt>
+                <dd>{s.reviewNoScreenRows({ list: pack.screenshots.flatMap((x, i) => (x.screen === null ? [i + 1] : [])).join(', ') })}</dd>
+              </>
+            ) : null}
             <dt>{s.reviewPreview}</dt>
             <dd>{pack.preview ? s.yes : s.no}</dd>
           </dl>
@@ -306,7 +338,7 @@ function Body({ onClose, slug }: StorePackWizardProps) {
       </footer>
 
       <ScreenPicker open={picking !== null} onClose={() => setPicking(null)} slug={slug}
-        onPick={(path) => { if (picking !== null) setShot(picking, { screen: path }); setPicking(null); }} />
+        onPick={(path) => { if (picking !== null) setShot(picking, { screen: path, noScreen: false }); setPicking(null); }} />
     </div>
   );
 }

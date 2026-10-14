@@ -12,7 +12,7 @@ vi.mock('../src/api.ts', () => ({ api, ApiError }));
 const { StorePackExport } = await import('../src/screens/creative/StorePackExport.tsx');
 
 const onClose = vi.fn();
-const open = (extra: { locales?: { primary: LocaleTag; extra: LocaleTag[] } } = {}) => render(
+const open = (extra: { locales?: { primary: LocaleTag; extra: LocaleTag[] }; untranslated?: LocaleTag[] } = {}) => render(
   <I18nProvider locale="en">
     <StorePackExport open onClose={onClose} slug="acme" creative="c1" title="Fotonica" version={3} {...extra} />
   </I18nProvider>,
@@ -58,6 +58,18 @@ describe('StorePackExport · request', () => {
     expect(run().hasAttribute('disabled')).toBe(false);
     await userEvent.click(screen.getByRole('checkbox', { name: 'Italian' }));
     expect(run().hasAttribute('disabled')).toBe(true);
+  });
+});
+
+describe('StorePackExport · untranslated languages', () => {
+  it('marks the languages without a translation and leaves them selectable', async () => {
+    open({ locales: { primary: 'en', extra: ['it', 'de'] }, untranslated: ['de'] });
+    const group = screen.getByRole('group', { name: 'Languages' });
+    expect(within(group).getAllByText('not translated: will fail')).toHaveLength(1);
+    const de = within(group).getByRole('checkbox', { name: 'German' });
+    expect(de.hasAttribute('disabled')).toBe(false);
+    expect(de.closest('label')!.textContent).toContain('not translated: will fail');
+    expect(within(group).getByRole('checkbox', { name: 'Italian' }).closest('label')!.textContent).not.toContain('not translated');
   });
 });
 

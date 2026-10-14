@@ -10,7 +10,9 @@ import { message } from '../common.tsx';
 
 /** Brief paths are project paths; the library lists files inside `assets/`. */
 export const assetPath = (file: string) => `assets/${file}`;
-const isImage = (a: AssetEntry) => a.kind === 'image';
+/** The core accepts PNG, JPEG and WebP as an app screen (it reads the bytes); the library kind alone also lists SVG and GIF. */
+export const isScreenFile = (a: AssetEntry) => a.kind === 'image' && /\.(png|jpe?g|webp)$/i.test(a.file);
+const isImage = isScreenFile;
 
 export interface ScreenPickerProps {
   open: boolean;
@@ -69,7 +71,7 @@ export function ScreenPicker({ open, onClose, slug, onPick }: ScreenPickerProps)
         <header className="ms-sp-pick-head">
           <h2>{s.pickerTitle}</h2>
           <Button size="sm" variant="outline" disabled={uploading} onClick={() => input.current?.click()}><Icon name="upload" size={13} />{uploading ? s.pickerUploading : s.pickerUpload}</Button>
-          <input ref={input} type="file" accept="image/png,image/jpeg" hidden aria-label={s.pickerUploadInput} onChange={(ev) => { void upload(Array.from(ev.target.files ?? [])); ev.target.value = ''; }} />
+          <input ref={input} type="file" accept="image/png,image/jpeg,image/webp" hidden aria-label={s.pickerUploadInput} onChange={(ev) => { void upload(Array.from(ev.target.files ?? [])); ev.target.value = ''; }} />
         </header>
         {error ? <p className="ms-sp-error" role="alert">{error}</p> : null}
         {entries === null && !error ? <div className="ms-sp-pick-state"><Spinner size={16} label={s.pickerLoading} /></div> : null}

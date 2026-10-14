@@ -16,7 +16,7 @@
 .ms-spw-steps { list-style: none; margin: 0; padding: 0 22px 12px; display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid var(--line2); }
 .ms-spw-step { display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px 5px 6px; border: 0; border-radius: 999px; background: var(--field); color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; }
 .ms-spw-step:hover:not(:disabled) { color: var(--text); }
-.ms-spw-step.ms-on { color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
+.ms-spw-step.ms-on { color: var(--text); font-weight: 600; box-shadow: inset 0 0 0 2px var(--text); }
 .ms-spw-step:disabled { cursor: default; opacity: .6; }
 .ms-spw-step:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .ms-spw-num { width: 18px; height: 18px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -40,7 +40,7 @@ p.ms-spw-faint { margin: 0; }
 .ms-spw-shots { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .ms-spw-shot { display: grid; grid-template-columns: 22px minmax(0, 1fr) minmax(0, 1.2fr); align-items: center; gap: 10px; min-width: 0; }
 .ms-spw-n { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); text-align: right; }
-.ms-spw-screen { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ms-spw-screen { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
 .ms-spw-thumb { width: 28px; height: 38px; object-fit: cover; border-radius: 4px; background: var(--field); box-shadow: inset 0 0 0 1px var(--line); flex: none; }
 .ms-spw-file { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-spw-review { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 10px 14px; margin: 0; font-size: 13px; }
@@ -87,3 +87,10 @@ p.ms-spw-faint { margin: 0; }
 .ms-sp-failed > b { font-size: 13px; color: var(--danger); }
 .ms-sp-error { font-size: 12.5px; }
 @media (max-width: 640px) { .ms-sp-langs, .ms-spx .ms-exp-dest { grid-template-columns: 1fr; } }
+
+.ms-sp-untr { font-size: 12px; color: var(--warn); }
+.ms-spw-shot.ms-nos .ms-spw-file { color: var(--muted); }
+.ms-spw-close { display: flex; flex-direction: column; gap: 10px; padding: 20px 22px; }
+.ms-spw-close h2 { margin: 0; font-size: 16px; color: var(--text); }
+.ms-spw-close p { margin: 0; font-size: 13px; color: var(--muted); }
+.ms-spw-close-actions { display: flex; justify-content: flex-end; gap: 8px; }
