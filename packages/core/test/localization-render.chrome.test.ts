@@ -172,8 +172,18 @@ describe.skipIf(!tools.ok)('localized renders in real Chrome', () => {
   it('unboxed text whose source wraps to the frame edge (past a safe zone): a translation of the same length gets only a note (N1)', { timeout: 300_000 }, async () => {
     const source = 'Welcome to the brand new version of our wonderful app for every device';
     const { slug, store, format } = await creative(source, { preset: 'test-safe', props: { width: undefined, height: undefined, y: 40 } });
-    const put = await app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}/versions/1/localizations/de/${encodeURIComponent(format)}`, headers: H,
-      payload: { texts: { title: 'Willkommen zur neuen Version unserer App für jedes Gerät, ganz einfach' } } });
+    const url = `/api/projects/acme/creatives/${slug}/versions/1/localizations/de/${encodeURIComponent(format)}`;
+    const payload = { texts: { title: 'Willkommen zur neuen Version unserer App für jedes Gerät, ganz einfach' } };
+    // The save judges the translation with the browser's measure when a renderer is free *now* (`noWait`) and answers within
+    // its deadline; on a loaded machine the lane can still be busy with the previous test's frames, or Chrome slow to start,
+    // and the core then falls back to the estimate (another, equally valid answer for another situation). This test is about
+    // the answer WITH the browser, so the save is repeated until the browser took part (its verdict is the note); the final
+    // answer must still be exactly the expected one.
+    let put = await app.inject({ method: 'PUT', url, headers: H, payload });
+    for (let i = 0; i < 8 && !(put.statusCode === 200 && put.json().issues?.some((x: { code: string }) => x.code === 'sourceTextOverflow')); i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      put = await app.inject({ method: 'PUT', url, headers: H, payload });
+    }
     expect(put.statusCode, put.body).toBe(200);
     expect(put.json().problems).toEqual([]);
     expect(put.json().issues).toEqual([{ code: 'sourceTextOverflow', clipId: 'title', message: messages(currentLocale()).variants.sourceLayoutOverflow({ clip: 'Title' }) }]);

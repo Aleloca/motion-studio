@@ -269,9 +269,13 @@ describe('saving a draft as a new version', { timeout: 120_000 }, () => {
     for (let i = 0; i < 500 && !existsSync(sb); i++) await new Promise((res) => setTimeout(res, 20));
     expect(JSON.parse(readFileSync(sb, 'utf8')).hash).toBe(wide2.hash);
     expect(fake.frames.length).toBeGreaterThan(framesBefore);
-    await new Promise((res) => setTimeout(res, 200));
+    // The storyboards' event follows their file by a beat that grows under load: wait until both events are in (bounded), then
+    // a quiet period, so the count below still proves there are no more than the save and its storyboards.
+    const creativeOf = () => events.filter((m) => m.type === 'creative' && m.creative === slug);
+    for (let i = 0; i < 750 && creativeOf().length < 2; i++) await new Promise((res) => setTimeout(res, 20));
+    await new Promise((res) => setTimeout(res, 300));
     sock.close();
-    const creativeEvents = events.filter((m) => m.type === 'creative' && m.creative === slug);
+    const creativeEvents = creativeOf();
     expect(creativeEvents).toHaveLength(2); // the save, then its storyboards
     // No agent, no tokens.
     expect(agentRuns()).toBe(runs);

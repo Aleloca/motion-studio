@@ -185,10 +185,16 @@ describe.skipIf(!tools.ok)('render jobs in real Chrome', () => {
     expect(await leftovers({ pgids: [pgid] })).not.toEqual([]);
     // Quit: the app closes the server (the desktop app does this on quit), which cancels every job and waits for it.
     await app.close();
-    expect(await leftovers({ pgids: [pgid], markers: [profile, renderTemp, join(ws, 'acme', '.studio', 'cache', 'media')] })).toEqual([]);
+    // `close` has waited for every job; the process table lags it by the kernel's reaping, which a loaded machine stretches. So
+    // the process checks get a short bounded grace (a leak never goes away, so a real one still fails); the files do not.
+    const gone = async (check: () => Promise<boolean> | boolean) => { for (let i = 0; i < 100 && !(await check()); i++) await new Promise((r) => setTimeout(r, 100)); };
+    const markers = [profile, renderTemp, join(ws, 'acme', '.studio', 'cache', 'media')];
+    await gone(async () => (await leftovers({ pgids: [pgid], markers })).length === 0);
+    expect(await leftovers({ pgids: [pgid], markers })).toEqual([]);
     expect(readdirSync(vdir).sort()).toEqual(['compositions', 'manifest.json']);
     expect(readdirSync(renderTemp)).toEqual([]);
     // Every ffmpeg and ffprobe the core started (they read their input by fd, so no path marker shows them) is gone.
+    await gone(() => liveGroupCount() === 0);
     expect(liveGroupCount()).toBe(0);
     expect((await store.readVersions(slug))[0]!.outputs).toEqual([]);
     // A new server (the app restarted): the retry renders it.

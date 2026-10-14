@@ -33,7 +33,7 @@ function limiter(max: number) {
   let active = 0;
   const high: Array<() => void> = [];
   const low: Array<() => void> = [];
-  return async <T>(fn: () => Promise<T>, priority = false): Promise<T> => {
+  const run = async <T>(fn: () => Promise<T>, priority = false): Promise<T> => {
     // A released slot is handed straight to the next waiter, so `active` never exceeds `max`.
     if (active < max) active++;
     else await new Promise<void>((resolve) => (priority ? high : low).push(resolve));
@@ -42,6 +42,8 @@ function limiter(max: number) {
       if (next) next(); else active--;
     }
   };
+  /** How many tasks wait in each lane (tests: a deterministic "it is queued now", not a sleep). */
+  return Object.assign(run, { waiting: () => ({ high: high.length, low: low.length }) });
 }
 const limit = limiter(HASH_PARALLELISM);
 
@@ -79,6 +81,8 @@ export const hashTesting = {
   setHasher(fn: ((base: string, rel: string) => Promise<HashResult>) | null) { hashFile = fn ?? hashConfinedFile; },
   setMemoryMax(n: number) { memoryMax = n; },
   memorySize: () => memory.size,
+  /** Tasks waiting for a hashing slot, by lane. */
+  waiting: () => limit.waiting(),
 };
 
 export const hashCachePath = (projectDir: string, creativeSlug: string, n: number) =>
