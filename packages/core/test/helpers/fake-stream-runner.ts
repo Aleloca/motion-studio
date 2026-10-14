@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,8 +11,11 @@ import type { AgentRun, AgentTurnRequest } from '../../src/agent/runner.ts';
 /** Phase 13 Task 1: helpers for the runner tests against `fake-claude-stream.mjs` (never a real `claude`). */
 export const FAKE_STREAM = fileURLToPath(new URL('../fixtures/fake-claude-stream.mjs', import.meta.url));
 
-/** Every PID a test started (fake leader and its children, read from the fake's stderr). Only these are ever signalled. */
-export const startedPids = new Set<number>();
+/**
+ * Every PID a test started (fake leader and its children, read from the fake's stderr), mapped to the leader whose
+ * process group it belongs to. Only these are ever signalled, and only while verified alive and still in that group.
+ */
+export const startedPids = new Map<number, number>();
 
 export const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
@@ -34,18 +37,20 @@ export async function startFake(
     capabilities?: AgentTurnRequest['capabilities'];
     prompt?: string;
     toolMs?: number;
-    runner?: { killGraceMs?: number; interruptTimeoutMs?: number; redirectWindowMs?: number };
+    ackGapMs?: number;
+    runner?: { killGraceMs?: number; interruptTimeoutMs?: number; redirectBackstopMs?: number };
   } = {},
 ): Promise<FakeRun> {
   const dir = await mkdtemp(join(tmpdir(), 'ms-stream-'));
   const logFile = join(dir, 'stdin.jsonl');
   const spy: StdinSpy = { writes: [], ends: [], afterClose: [] };
+  let leader = 0;
   const spawnSpy = ((cmd: string, args: string[], o: Parameters<typeof spawn>[2]) => {
     const child = spawn(cmd, args, {
       ...o,
-      env: { ...o?.env, FAKE_STREAM_MODE: mode, FAKE_STREAM_LOG: logFile, FAKE_STREAM_TOOL_MS: String(opts.toolMs ?? 400) },
+      env: { ...o?.env, FAKE_STREAM_MODE: mode, FAKE_STREAM_LOG: logFile, FAKE_STREAM_TOOL_MS: String(opts.toolMs ?? 400), FAKE_STREAM_ACK_GAP_MS: String(opts.ackGapMs ?? 0) },
     }) as ChildProcess;
-    if (child.pid) startedPids.add(child.pid);
+    if (child.pid) { leader = child.pid; startedPids.set(child.pid, child.pid); }
     const stdin = child.stdin!;
     let ended = false;
     const write = stdin.write.bind(stdin) as (...a: unknown[]) => boolean;
@@ -69,7 +74,7 @@ export async function startFake(
     events.push(e);
     if (e.kind === 'stderr') {
       const m = /^(?:fake|child)-pid: (\d+)$/.exec(e.text);
-      if (m) startedPids.add(Number(m[1]));
+      if (m && leader) startedPids.set(Number(m[1]), leader);
     }
   });
   const pids = () => events.flatMap((e) => {
@@ -94,10 +99,24 @@ export async function expectNoOrphans(run: FakeRun, timeout = 5_000) {
   const pids = run.pids();
   if (pids.length === 0) throw new Error('the fake reported no pid');
   await vi.waitFor(() => { for (const p of pids) if (alive(p)) throw new Error(`pid ${p} still alive`); }, { timeout, interval: 25 });
+  // Confirmed gone: never signalled again (the number may be reused by another process).
+  for (const p of pids) startedPids.delete(p);
 }
 
-/** afterEach: SIGKILL only the PIDs the tests started (never by pattern). */
+/** Process group of a live pid, or null (gone or unreadable). */
+function groupOf(pid: number): number | null {
+  const r = spawnSync('ps', ['-o', 'pgid=', '-p', String(pid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  const g = Number.parseInt(r.stdout.trim(), 10);
+  return r.status === 0 && Number.isSafeInteger(g) ? g : null;
+}
+
+/**
+ * afterEach: SIGKILL a recorded own PID only when it is verified alive at that moment and still in the process group of
+ * the fake leader that started it (never by pattern, never a PID already confirmed dead).
+ */
 export function killStarted() {
-  for (const pid of startedPids) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
+  for (const [pid, leaderPid] of startedPids) {
+    if (alive(pid) && groupOf(pid) === leaderPid) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
+  }
   startedPids.clear();
 }

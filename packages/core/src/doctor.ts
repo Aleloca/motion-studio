@@ -4,7 +4,7 @@ import type { SandboxSupport } from './agent/sandbox.ts';
 import type { CommandExec, CommandResult } from './exec.ts';
 import { t } from './i18n.ts';
 import { execFfVia } from './media/ffmpeg-exec.ts';
-import { capabilitiesFor, type CapabilityOptIn } from './agent/agent-capabilities.ts';
+import { capabilitiesFor, parseClaudeVersion, type CapabilityOptIn } from './agent/agent-capabilities.ts';
 
 const versionIn = (s: string) => s.match(/(\d+\.\d+(?:\.\d+)?)/)?.[1];
 const firstLine = (s: string) => s.split('\n').map((l) => l.trim()).find(Boolean);
@@ -91,7 +91,8 @@ export async function runDoctor(opts: {
   }
   if (opts.agentOptIn) {
     // Informational rows (ok, optional): the fallback is a working path, not a problem.
-    const version = claudeOk ? versionIn(claude.stdout) ?? null : null;
+    // Same parsing as the route and the launcher (x.y.z), so the reports cannot disagree.
+    const version = claudeOk ? parseClaudeVersion(claude.stdout) : null;
     const effective = capabilitiesFor(version, opts.agentOptIn);
     const verified = capabilitiesFor(version);
     checks.push({

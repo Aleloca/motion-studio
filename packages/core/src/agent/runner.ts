@@ -72,9 +72,14 @@ export interface AgentRun {
   /**
    * Phase 13: asks the CLI to stop the current step. Resolves 'interrupted' on the acknowledgement, 'unsupported' (the
    * capability is off, the stream is closed, or the CLI refused), or 'timeout' (no acknowledgement within 5 s, or the
-   * process went away first): never throws.
+   * process went away first): never throws. After 'interrupted' the input stays open for the core's decision (see endInput).
    */
   interrupt?(): Promise<'interrupted' | 'unsupported' | 'timeout'>;
+  /**
+   * Phase 13: closes the session's input now (the core's "no redirect" after an interrupt). After an acknowledged
+   * interrupt stdin stays open until `send` (a redirect), `endInput`, cancel, or a 45 s backstop. No-op when live input is off.
+   */
+  endInput?(): void;
 }
 
 /** The plan's name for a running turn's handle. */

@@ -9,7 +9,7 @@ Date: 2026-10-14. Installed CLI: Claude Code **2.1.299**. Branch `feat/phase13-i
 - The probe `scripts/spike/stream-input-probe.mjs` was written to mirror the product's `claude -p --input-format stream-json …` flags, keep stdin open and log every line sent and received.
 - The auto-mode safety classifier refused the **first live call** of the probe (experiment 3, the cheapest) with "[Security Weaken]". No `claude` process started, and the cost was $0.
 - The implementer stopped there. **Nobody ran a variant** of the probe: no rephrased command, no other flags, no other entry point. The controller did not run it either.
-- The probe script **stays untracked** in the worktree (`scripts/spike/`). It is not committed. The user can run it later themselves with `!` in the session; the usage line is in the script header.
+- The probe script **stays untracked** in the worktree (`scripts/spike/`). It is not committed. Whether and when it is run is the user's decision; agents do not run it.
 
 ## What the experiments were meant to answer
 

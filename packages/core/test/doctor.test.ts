@@ -185,9 +185,16 @@ describe('runDoctor Phase 13 agent capabilities (fallback-first, decisions log 6
     expect(agentChecks(checks).map((c) => c.message)).toEqual(['solo in coda (non verificati per questa versione di Claude Code)', 'ferma e riprendi']);
   });
 
-  it('the English texts are the plan\'s wording', async () => {
+  it('the English texts are the orchestrator\'s wording (decisions log 610)', async () => {
     const en = (await import('@motion-studio/shared')).messages('en');
     expect(`${en.doctor.liveMessagesLabel}: ${en.doctor.liveMessagesQueued}`).toBe('Live messages: queued only (not verified for this Claude Code version)');
     expect(`${en.doctor.interruptLabel}: ${en.doctor.interruptStopResume}`).toBe('Interrupt: stop and resume');
+  });
+});
+
+describe('runDoctor Phase 13: version parsing shared with the route', () => {
+  it('an x.y version (not x.y.z) is unknown for the capability rows, as for /api/agent/capabilities', async () => {
+    const checks = await runDoctor({ exec: fakeExec({ ...allGood, 'claude --version': ok('2.1 (Claude Code)') }), claudeCommand: ['claude'], nodeVersion: 'v24.9.0', agentOptIn: { liveInput: true } });
+    expect(checks.find((c) => c.id === 'live-messages')?.message).toBe('solo in coda (non verificati per questa versione di Claude Code)');
   });
 });

@@ -163,6 +163,9 @@ export class AgentLauncher {
     const realDir = await realpath(i.projectDir).catch(() => i.projectDir);
     const roots = [...new Set([i.projectDir, realDir])];
     const protectedDirs = roots.flatMap((d) => PROTECTED_PROJECT_DIRS.map((n) => join(d, n)));
+    // The workspace's own .studio (settings.json: sandbox mode, paid-provider confirmation, the Phase 13 opt-ins) is never
+    // the agent's to write, through either spelling of the project folder.
+    protectedDirs.push(...[...new Set(roots.map((d) => join(dirname(d), '.studio')))]);
     // Caller-supplied files get both spellings (plain and realpath) like the project entries.
     const spellings = (f: string) => (f.startsWith(`${i.projectDir}/`) && realDir !== i.projectDir ? [f, join(realDir, f.slice(i.projectDir.length + 1))] : [f]);
     const protectedFiles = [...(i.protectedFiles ?? []).flatMap(spellings), ...roots.flatMap((d) => [...PROTECTED_PROJECT_FILES, RENAME_JOURNAL_FILE].map((n) => join(d, n)))];
@@ -328,6 +331,7 @@ export class AgentLauncher {
         // Phase 13: always present, so callers never branch on the runner; a runner without them answers like a closed stream.
         send: (m) => run.send?.(m) ?? Promise.resolve('closed' as const),
         interrupt: () => run.interrupt?.() ?? Promise.resolve('unsupported' as const),
+        endInput: () => run.endInput?.(),
       };
     } catch (err) {
       await release();

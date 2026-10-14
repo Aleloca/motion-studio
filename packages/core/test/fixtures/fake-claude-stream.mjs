@@ -14,12 +14,15 @@
 // Every line read is appended to FAKE_STREAM_LOG (JSON per line: { at, line } or { at, eof: true }).
 // stderr: `fake-pid: <pid>` at start; `child-pid: <pid>` in child-ignores-term.
 // The "tool step" lasts FAKE_STREAM_TOOL_MS (default 400) and is announced with a tool_use event.
+// FAKE_STREAM_ACK_GAP_MS (interrupt-ack): delay between the control_response and the interrupted turn's result (default 0).
+// A user message whose text starts with `fail:` ends its turn with an error result (error_max_turns).
 import { spawn } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
 const mode = process.env.FAKE_STREAM_MODE ?? 'mid-turn';
 const toolMs = Number(process.env.FAKE_STREAM_TOOL_MS ?? 400);
+const ackGapMs = Number(process.env.FAKE_STREAM_ACK_GAP_MS ?? 0);
 const log = (o) => { if (process.env.FAKE_STREAM_LOG) appendFileSync(process.env.FAKE_STREAM_LOG, `${JSON.stringify({ at: Date.now(), ...o })}\n`); };
 const out = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -71,7 +74,8 @@ async function turn(first) {
     await waitLine(Math.max(1, until - Date.now()));
   }
   out({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'ok' }] } });
-  if (interrupted) result(false, 'interrupted');
+  if (interrupted) { if (ackGapMs > 0) await sleep(ackGapMs); result(false, 'interrupted'); }
+  else if (textOf(first).startsWith('fail:')) out({ type: 'result', subtype: 'error_max_turns', is_error: true, session_id: SESSION, result: `failed: ${textOf(first)}` });
   else result(true, `done: ${textOf(first)}`);
 }
 

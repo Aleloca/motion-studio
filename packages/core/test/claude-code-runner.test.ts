@@ -88,6 +88,12 @@ describe('buildClaudeArgs', () => {
     expect(buildClaudeArgs({ cwd: '/x', prompt: 'p' })).not.toContain('--allowedTools');
     expect(buildClaudeArgs({ cwd: '/x', prompt: 'p', allowedTools: [] })).not.toContain('--allowedTools');
   });
+  it('Phase 13: capabilities never change the args (no new flags, e.g. no --replay-user-messages)', () => {
+    const req = { cwd: '/p', prompt: 'x', model: 'haiku', resumeSessionId: 's', allowedTools: ['Read'] };
+    for (const capabilities of [{ liveInput: true, interrupt: true }, { liveInput: true, interrupt: false }, { liveInput: false, interrupt: false }]) {
+      expect(buildClaudeArgs({ ...req, capabilities })).toEqual(buildClaudeArgs(req));
+    }
+  });
   it('puts deny rules before the allow group', () => {
     const args = buildClaudeArgs({ cwd: '/x', prompt: 'p', addDirs: ['/a b'], disallowedTools: ['Edit(//a b/**)'], allowedTools: ['Bash(node:*)'] });
     expect(args.slice(-4)).toEqual(['--disallowedTools', 'Edit(//a b/**)', '--allowedTools', 'Bash(node:*)']);
@@ -226,6 +232,20 @@ describe('ClaudeCodeRunner', () => {
       delete process.env.MS_TEST_SECRET;
       await rm(dir, { recursive: true, force: true });
     }
+  });
+  it('Phase 13: capabilities never change the environment or the unset keys', async () => {
+    process.env.MS_TEST_ENV = 'kept';
+    try {
+      const plain = await run('ok', 'x', { env: { A: '1' }, unsetEnv: ['MS_TEST_ENV'] });
+      await plain.handle.done;
+      const before = JSON.parse(await readFile(process.env.FAKE_CLAUDE_ARGS_FILE!, 'utf8')) as { envKeys: string[]; args: string[] };
+      const live = await run('ok', 'x', { env: { A: '1' }, unsetEnv: ['MS_TEST_ENV'], capabilities: { liveInput: true, interrupt: true } });
+      await live.handle.done;
+      const after = JSON.parse(await readFile(process.env.FAKE_CLAUDE_ARGS_FILE!, 'utf8')) as { envKeys: string[]; args: string[] };
+      expect(after.envKeys.sort()).toEqual(before.envKeys.sort());
+      expect(after.envKeys).not.toContain('MS_TEST_ENV');
+      expect(after.args).toEqual(before.args);
+    } finally { delete process.env.MS_TEST_ENV; }
   });
   it('survives a throwing event listener', async () => {
     const { handle } = await run('ok', 'x', {}, { onEvent: () => { throw new Error('listener boom'); } });

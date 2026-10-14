@@ -1,7 +1,7 @@
 import { existsSync, linkSync, readFileSync } from 'node:fs';
 import { appendFile, chmod, link, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { workspaceSettingsSchema, type AgentEvent } from '@motion-studio/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -182,6 +182,23 @@ describe('AgentLauncher', () => {
     const creative = await launch({ bridge, mcpCommand: ['node', '/x/server.mjs'] }, 'creative');
     expect(creative.args).not.toContain('mcp__studio__download_file');
     expect(creative.args).not.toContain('mcp__studio__inspect_site_fonts');
+  });
+  it('protects the workspace .studio (settings.json with the Phase 13 opt-ins), plain and realpath, for every job kind', { timeout: 90_000 }, async () => {
+    const real = await newProject();
+    const linkParent = await newProject();
+    const linked = join(linkParent, 'link');
+    await symlink(real, linked);
+    const realDir = await realpath(linked);
+    for (const kind of ['creative', 'console', 'brand-analysis', 'describe'] as const) {
+      for (const available of [false, true]) {
+        const { args } = await launch({ sandbox: async () => ({ available, reason: 'x' }) }, kind, linked);
+        expect(args).toEqual(expect.arrayContaining([...protectedDirRules(dirname(linked), '.studio'), ...protectedDirRules(dirname(realDir), '.studio')]));
+        if (available) {
+          const settings = JSON.parse(args[args.indexOf('--settings') + 1]!);
+          expect(settings.sandbox.filesystem.denyWrite).toEqual(expect.arrayContaining([join(dirname(linked), '.studio'), join(dirname(realDir), '.studio')]));
+        }
+      }
+    }
   });
   it('protects .studio (and its real path) from edits for every job kind, sandbox or not', { timeout: 90_000 }, async () => {
     const real = await newProject();
@@ -702,6 +719,7 @@ describe('AgentLauncher Phase 13 capabilities (fallback-first, decisions log 610
         done: Promise.resolve({ status: 'succeeded' as const }), cancel: () => {},
         send: async (m) => { calls.push(`send:${m.clientId}`); return 'written' as const; },
         interrupt: async () => { calls.push('interrupt'); return 'interrupted' as const; },
+        endInput: () => { calls.push('endInput'); },
       };
     } };
     return { runner, seen, calls };
@@ -743,10 +761,12 @@ describe('AgentLauncher Phase 13 capabilities (fallback-first, decisions log 610
     const run = await start(runner, {});
     await expect(run.send!({ text: 'hi', clientId: 'c1' })).resolves.toBe('written');
     await expect(run.interrupt!()).resolves.toBe('interrupted');
-    expect(calls).toEqual(['send:c1', 'interrupt']);
+    run.endInput!();
+    expect(calls).toEqual(['send:c1', 'interrupt', 'endInput']);
     const bare: AgentRunner = { start: () => ({ done: Promise.resolve({ status: 'succeeded' as const }), cancel: () => {} }) };
     const run2 = await start(bare, {});
     await expect(run2.send!({ text: 'hi', clientId: 'c2' })).resolves.toBe('closed');
     await expect(run2.interrupt!()).resolves.toBe('unsupported');
+    expect(() => run2.endInput!()).not.toThrow();
   });
 });

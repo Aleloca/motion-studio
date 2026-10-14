@@ -48,8 +48,11 @@ const STDERR_TAIL = 20;
 
 /** How long `interrupt()` waits for the matching `control_response` (plan Task 1: 5 s). */
 export const INTERRUPT_TIMEOUT_MS = 5000;
-/** After an acknowledged interrupt, how long stdin stays open past the interrupted turn's result for a redirect message. */
-export const REDIRECT_WINDOW_MS = 5000;
+/**
+ * After an acknowledged interrupt stdin stays open until the core decides: a redirect message (`send`), `endInput()`
+ * or cancel. This backstop closes it when no decision came, so a crashed caller cannot leave the CLI idling forever.
+ */
+export const REDIRECT_BACKSTOP_MS = 45_000;
 
 /*
  * Phase 13 message shapes, from the public docs and UNVERIFIED LIVE for the installed CLI (the spike was suspended,
@@ -72,22 +75,22 @@ export class ClaudeCodeRunner implements AgentRunner {
   private readonly killGraceMs: number;
   private readonly drainMs: number;
   private readonly interruptTimeoutMs: number;
-  private readonly redirectWindowMs: number;
+  private readonly redirectBackstopMs: number;
   private readonly spawnFn: typeof spawn;
   /**
    * killGraceMs: SIGTERM → SIGKILL delay on cancel.
    * drainMs: how long to wait for stdout/stderr to close after claude exited before giving up on them
    * (a descendant that inherited the pipes can keep them open forever).
-   * interruptTimeoutMs / redirectWindowMs: see INTERRUPT_TIMEOUT_MS / REDIRECT_WINDOW_MS. spawn: test seam (stdin spy).
+   * interruptTimeoutMs / redirectBackstopMs: see INTERRUPT_TIMEOUT_MS / REDIRECT_BACKSTOP_MS. spawn: test seam (stdin spy).
    */
   constructor(
     private readonly claudeCommand: string[] = ['claude'],
-    opts: { killGraceMs?: number; drainMs?: number; interruptTimeoutMs?: number; redirectWindowMs?: number; spawn?: typeof spawn } = {},
+    opts: { killGraceMs?: number; drainMs?: number; interruptTimeoutMs?: number; redirectBackstopMs?: number; spawn?: typeof spawn } = {},
   ) {
     this.killGraceMs = opts.killGraceMs ?? 3000;
     this.drainMs = opts.drainMs ?? 1500;
     this.interruptTimeoutMs = opts.interruptTimeoutMs ?? INTERRUPT_TIMEOUT_MS;
-    this.redirectWindowMs = opts.redirectWindowMs ?? REDIRECT_WINDOW_MS;
+    this.redirectBackstopMs = opts.redirectBackstopMs ?? REDIRECT_BACKSTOP_MS;
     this.spawnFn = opts.spawn ?? spawn;
   }
 
@@ -102,6 +105,7 @@ export class ClaudeCodeRunner implements AgentRunner {
         cancel: () => {},
         send: async () => 'closed',
         interrupt: async () => 'unsupported',
+        endInput: () => {},
       };
     }
     const posix = process.platform !== 'win32';
@@ -134,14 +138,19 @@ export class ClaudeCodeRunner implements AgentRunner {
     const liveInput = req.capabilities?.liveInput === true;
     const canInterrupt = liveInput && req.capabilities?.interrupt === true;
     let stdinOpen = false;
-    /** An interrupt was acknowledged in this run: a final non-ok result then means "stopped", not "failed". */
+    /** An interrupt was acknowledged in this run. */
     let interruptAcked = false;
-    /** The next result is the interrupted turn's: stdin stays open for a redirect message (REDIRECT_WINDOW_MS). */
-    let holdForRedirect = false;
-    let redirectTimer: NodeJS.Timeout | undefined;
+    /** A user message was written after the last acknowledgement (a redirect): its turn's outcome is the real one. */
+    let redirectWritten = false;
+    /** Acknowledged, and the core has not decided yet (send, endInput, cancel): no result closes stdin. */
+    let awaitingDecision = false;
+    /** The next result is the interrupted turn's own: it never closes stdin (the decision, if any, follows it). */
+    let interruptedResultPending = false;
+    let backstopTimer: NodeJS.Timeout | undefined;
     const pendingInterrupts = new Map<string, (r: 'interrupted' | 'unsupported' | 'timeout') => void>();
     const closeStdin = () => {
-      if (redirectTimer) { clearTimeout(redirectTimer); redirectTimer = undefined; }
+      awaitingDecision = false;
+      if (backstopTimer) { clearTimeout(backstopTimer); backstopTimer = undefined; }
       if (!stdinOpen) return;
       stdinOpen = false;
       try { child.stdin.end(); } catch { /* already gone */ }
@@ -155,22 +164,25 @@ export class ClaudeCodeRunner implements AgentRunner {
         onEvent(e);
       } catch { /* a faulty listener must not crash the process nor lose the turn outcome */ }
       // The final result closes stdin (a message written before it is already in the pipe and is still read). After an
-      // acknowledged interrupt the interrupted turn's result keeps it open for a short window, for the redirect message.
+      // acknowledged interrupt, the interrupted turn's own result never closes it, and no result does until the core
+      // decides (a redirect `send`, `endInput()`, cancel) or the backstop fires: then the redirect turn's result closes it.
       if (e.kind === 'result' && stdinOpen) {
-        if (holdForRedirect && !redirectTimer) {
-          holdForRedirect = false;
-          redirectTimer = setTimeout(closeStdin, this.redirectWindowMs);
-        } else if (!redirectTimer) closeStdin();
+        if (interruptedResultPending) interruptedResultPending = false;
+        else if (!awaitingDecision) closeStdin();
       }
     };
     const onControl = (r: ControlResponse) => {
       const pending = pendingInterrupts.get(r.requestId);
       if (!pending) return;
-      if (r.ok) {
+      if (r.ok && stdinOpen) {
         interruptAcked = true;
-        holdForRedirect = true;
-        emit({ kind: 'interrupted' });
+        redirectWritten = false;
+        awaitingDecision = true;
+        interruptedResultPending = true;
+        if (backstopTimer) clearTimeout(backstopTimer);
+        backstopTimer = setTimeout(closeStdin, this.redirectBackstopMs);
       }
+      if (r.ok) emit({ kind: 'interrupted' });
       pending(r.ok ? 'interrupted' : 'unsupported');
     };
     child.stdout.setEncoding('utf8').on('data', (c: string) => stdout.push(c).flatMap((l) => parser.parse(l)).forEach(emit));
@@ -181,7 +193,9 @@ export class ClaudeCodeRunner implements AgentRunner {
         emit({ kind: 'stderr', text });
       }
     });
-    child.stdin.on('error', () => { /* process may exit before reading stdin */ });
+    // The process may exit before reading stdin: an errored or closed stdin is never written again.
+    child.stdin.on('error', () => { closeStdin(); });
+    child.stdin.on('close', () => { closeStdin(); });
     const firstLine = `${JSON.stringify({ type: 'user', message: { role: 'user', content: req.prompt } })}\n`;
     if (liveInput) { stdinOpen = true; child.stdin.write(firstLine); } else child.stdin.end(firstLine);
 
@@ -205,8 +219,8 @@ export class ClaudeCodeRunner implements AgentRunner {
         // An ok result is the real outcome even if a cancel arrived afterwards.
         if (result?.ok) return settle({ status: 'succeeded' });
         if (cancelled) return settle({ status: 'cancelled' });
-        // The user stopped the step and no later turn succeeded: a stop, not a failure.
-        if (interruptAcked && result) return settle({ status: 'cancelled' });
+        // The user stopped the step and no redirect followed: a stop, not a failure. A redirect turn's failure is its own.
+        if (interruptAcked && !redirectWritten && result) return settle({ status: 'cancelled' });
         if (result) return settle({ status: 'failed', error: result.error ?? t().errors.turnFailed });
         const tail = stderrTail.join('\n');
         settle({ status: 'failed', error: `${t().providers.claudeExited({ code: String(exited?.code ?? exited?.signal) })}${tail ? `: ${tail}` : ''}` });
@@ -249,10 +263,17 @@ export class ClaudeCodeRunner implements AgentRunner {
         const [cmd, args] = treeKillCommand(child.pid);
         try { spawn(cmd, args, { stdio: 'ignore', windowsHide: true }).on('error', () => {}); } catch { /* best effort */ }
       },
+      // Phase 13: the core's "no redirect" decision after an interrupt (or any time): close stdin now. No-op when off.
+      endInput: () => { if (liveInput) closeStdin(); },
       send: ({ text, clientId }) => {
         if (!liveInput || !stdinOpen || exited || settled || cancelled) return Promise.resolve('closed' as const);
-        // A redirect message arrived within the window: the next result (its turn's) closes stdin as usual.
-        if (redirectTimer) { clearTimeout(redirectTimer); redirectTimer = undefined; }
+        // After an acknowledged interrupt this is the core's decision (a redirect): the backstop is off, and the redirect
+        // turn's result closes stdin as usual (live sends during that turn are still written).
+        if (awaitingDecision) {
+          awaitingDecision = false;
+          redirectWritten = true;
+          if (backstopTimer) { clearTimeout(backstopTimer); backstopTimer = undefined; }
+        } else if (interruptAcked) redirectWritten = true;
         return new Promise<'written' | 'closed'>((resolve) => {
           try {
             child.stdin.write(userMessageLine(text), (err) => {

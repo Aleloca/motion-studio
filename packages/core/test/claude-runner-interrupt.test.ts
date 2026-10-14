@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { INTERRUPT_TIMEOUT_MS } from '../src/agent/claude-code-runner.ts';
+import { INTERRUPT_TIMEOUT_MS, REDIRECT_BACKSTOP_MS } from '../src/agent/claude-code-runner.ts';
 import { expectNoOrphans, killStarted, startFake, waitForEvent } from './helpers/fake-stream-runner.ts';
 
 // Phase 13 Task 1: interrupt on the Claude Code runner, against the fake CLI only (decisions log 610).
@@ -29,26 +29,59 @@ describe('ClaudeCodeRunner interrupt: capability off', () => {
 });
 
 describe('ClaudeCodeRunner interrupt: capability on (opt-in, unverified live)', () => {
-  it('waits 5 s for the acknowledgement by default', () => {
+  it('waits 5 s for the acknowledgement by default; the redirect backstop is 45 s', () => {
     expect(INTERRUPT_TIMEOUT_MS).toBe(5000);
+    expect(REDIRECT_BACKSTOP_MS).toBe(45_000);
   });
 
   it('interrupt ack: writes the control_request, matches the control_response by request_id, emits interrupted', async () => {
-    const run = await startFake('interrupt-ack', { capabilities: BOTH, toolMs: 60_000, runner: { redirectWindowMs: 200 } });
+    const run = await startFake('interrupt-ack', { capabilities: BOTH, toolMs: 60_000, runner: { redirectBackstopMs: 30_000 } });
     await waitForEvent(run.events, (e) => e.kind === 'tool_use');
     await expect(run.handle.interrupt!()).resolves.toBe('interrupted');
     expect(run.events).toContainEqual({ kind: 'interrupted' });
     const [req] = controlRequests((await run.received()).lines);
     expect(req).toMatchObject({ type: 'control_request', request: { subtype: 'interrupt' } });
     expect(typeof req!.request_id).toBe('string');
-    // No redirect within the window: stdin closes, the CLI exits; the user stopped the turn, so it is cancelled.
+    run.handle.cancel();
+    await run.handle.done;
+    await expectNoOrphans(run);
+  });
+
+  it('no decision after the ack: stdin stays open past the interrupted result until the backstop, then the run is cancelled', async () => {
+    const run = await startFake('interrupt-ack', { capabilities: BOTH, toolMs: 60_000, runner: { redirectBackstopMs: 600 } });
+    await waitForEvent(run.events, (e) => e.kind === 'tool_use');
+    const t0 = Date.now();
+    await expect(run.handle.interrupt!()).resolves.toBe('interrupted');
+    await waitForEvent(run.events, (e) => e.kind === 'result');
+    expect(run.spy.ends).toEqual([]); // the interrupted turn's result does not close stdin
     await expect(run.handle.done).resolves.toMatchObject({ status: 'cancelled' });
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(550);
+    expect(run.spy.ends).toEqual([undefined]);
     expect(run.spy.afterClose).toEqual([]);
     await expectNoOrphans(run);
   });
 
-  it('redirect: after the ack stdin stays open for the next message, which runs in the same process and succeeds', async () => {
-    const run = await startFake('interrupt-ack', { capabilities: BOTH, toolMs: 300, runner: { redirectWindowMs: 10_000 } });
+  it('plan order: interrupt then send(redirect) before the interrupted result; stdin stays open through the redirect turn and a live send there is written', async () => {
+    const run = await startFake('interrupt-ack', { capabilities: BOTH, toolMs: 800, ackGapMs: 300, runner: { redirectBackstopMs: 400 } });
+    await waitForEvent(run.events, (e) => e.kind === 'tool_use');
+    await expect(run.handle.interrupt!()).resolves.toBe('interrupted');
+    expect(run.events.some((e) => e.kind === 'result')).toBe(false); // the ack came first
+    await expect(run.handle.send!({ text: 'redirect', clientId: 'r-1' })).resolves.toBe('written');
+    await waitForEvent(run.events, (e) => e.kind === 'text' && e.text === 'working on: redirect');
+    // Well past the 400 ms backstop: a decision was taken, so the backstop never closes stdin.
+    await new Promise((r) => setTimeout(r, 500));
+    expect(run.spy.ends).toEqual([]);
+    await expect(run.handle.send!({ text: 'also this', clientId: 'l-1' })).resolves.toBe('written');
+    await expect(run.handle.done).resolves.toMatchObject({ status: 'succeeded' });
+    const results = run.events.filter((e) => e.kind === 'result').map((e) => e.kind === 'result' && e.text);
+    expect(results).toEqual(['interrupted', 'done: redirect', 'done: also this']);
+    expect(run.spy.ends).toEqual([undefined]);
+    expect(run.spy.afterClose).toEqual([]);
+    await expectNoOrphans(run);
+  });
+
+  it('redirect after the interrupted result: the next message runs in the same process and succeeds', async () => {
+    const run = await startFake('interrupt-ack', { capabilities: BOTH, toolMs: 300, runner: { redirectBackstopMs: 30_000 } });
     await waitForEvent(run.events, (e) => e.kind === 'tool_use');
     await expect(run.handle.interrupt!()).resolves.toBe('interrupted');
     await waitForEvent(run.events, (e) => e.kind === 'result');
@@ -58,6 +91,39 @@ describe('ClaudeCodeRunner interrupt: capability on (opt-in, unverified live)', 
     const results = run.events.filter((e) => e.kind === 'result').map((e) => e.kind === 'result' && e.text);
     expect(results).toEqual(['interrupted', 'done: go right']);
     expect(run.spy.afterClose).toEqual([]);
+    await expectNoOrphans(run);
+  });
+
+  it('endInput() after the ack closes stdin at once: the CLI exits, the run is cancelled, later sends are closed', async () => {
+    const run = await startFake('interrupt-ack', { capabilities: BOTH, toolMs: 60_000, runner: { redirectBackstopMs: 30_000 } });
+    await waitForEvent(run.events, (e) => e.kind === 'tool_use');
+    await expect(run.handle.interrupt!()).resolves.toBe('interrupted');
+    await waitForEvent(run.events, (e) => e.kind === 'result');
+    const t0 = Date.now();
+    run.handle.endInput!();
+    await expect(run.handle.done).resolves.toMatchObject({ status: 'cancelled' });
+    expect(Date.now() - t0).toBeLessThan(5000);
+    expect(run.spy.ends).toEqual([undefined]);
+    await expect(run.handle.send!({ text: 'late', clientId: 'x' })).resolves.toBe('closed');
+    expect(run.spy.afterClose).toEqual([]);
+    await expectNoOrphans(run);
+  });
+
+  it('endInput() with the capability off is a no-op (stdin was closed with the prompt)', async () => {
+    const run = await startFake('mid-turn');
+    run.handle.endInput!();
+    await expect(run.handle.done).resolves.toMatchObject({ status: 'succeeded' });
+    expect(run.spy.ends).toHaveLength(1);
+    expect(run.spy.writes).toEqual([]);
+    expect(run.spy.afterClose).toEqual([]);
+  });
+
+  it('a redirect turn that genuinely fails is failed, not cancelled', async () => {
+    const run = await startFake('interrupt-ack', { capabilities: BOTH, toolMs: 300, runner: { redirectBackstopMs: 30_000 } });
+    await waitForEvent(run.events, (e) => e.kind === 'tool_use');
+    await expect(run.handle.interrupt!()).resolves.toBe('interrupted');
+    await expect(run.handle.send!({ text: 'fail: please', clientId: 'r-3' })).resolves.toBe('written');
+    await expect(run.handle.done).resolves.toMatchObject({ status: 'failed', error: 'failed: fail: please' });
     await expectNoOrphans(run);
   });
 
