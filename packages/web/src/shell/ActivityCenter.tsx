@@ -1,5 +1,6 @@
-import { DEFAULT_FORMATS, type AgentEvent, type ApprovalRequest, type ConversationEntry, type JobSummary } from '@motion-studio/shared';
+import { DEFAULT_FORMATS, SUPPORTED_LOCALES, type AgentEvent, type ApprovalRequest, type ConversationEntry, type JobSummary } from '@motion-studio/shared';
 import { instanceName, presetFor } from '../instances.ts';
+import { localeName } from '../screens/creative/languagesModel.ts';
 import { useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api } from '../api.ts';
 import { ApprovalCard } from '../components/ApprovalCard.tsx';
@@ -208,7 +209,13 @@ function useFormatLabel(job: JobSummary) {
   // The creative's labels of format instances, from the catalog of the projects visited (absent: "Name #k").
   const at = jobPlace(job);
   const labels = at?.creative ? shell?.catalog.creatives[at.project]?.find((c) => c.slug === at.creative)?.formatLabels : undefined;
-  return (id: string) => instanceName(presetFor(DEFAULT_FORMATS, id), id, locale, labels);
+  const name = (id: string) => instanceName(presetFor(DEFAULT_FORMATS, id), id, locale, labels);
+  // A localized render's format is `<instance>.<language tag>` (Phase 12): the instance's name and the language's.
+  return (id: string) => {
+    const dot = id.lastIndexOf('.');
+    const tag = dot > 0 ? id.slice(dot + 1) : '';
+    return SUPPORTED_LOCALES.some((l) => l.tag === tag) ? `${name(id.slice(0, dot))} (${localeName(tag, locale)})` : name(id);
+  };
 }
 
 /**

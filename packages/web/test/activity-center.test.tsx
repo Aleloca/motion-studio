@@ -88,6 +88,13 @@ describe('Activity center · render lane (Task 8)', () => {
     expect(within(list).getByText('Queued · 2 renders ahead')).toBeTruthy();
   });
 
+  it('a localized render shows its progress with the format and the language named (Q6)', () => {
+    en(live([render1({ id: 'r1', formats: ['tiktok-9x16.de'], progress: { format: 'tiktok-9x16.de', phase: 'frames', done: 1200, total: 2400 } })]), 'running');
+    const list = screen.getByRole('list');
+    expect(within(list).getByText('Video 9:16 (German) · 1,200 / 2,400 frames')).toBeTruthy();
+    expect(within(list).getByRole('progressbar').getAttribute('aria-valuenow')).toBe('50');
+  });
+
   it('preparing media and finishing are said as such', () => {
     en(live([
       render1({ id: 'r1', progress: { format: 'tiktok-9x16', phase: 'media', done: 1, total: 3 } }),

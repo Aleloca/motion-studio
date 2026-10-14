@@ -604,16 +604,31 @@ export class RenderJobService {
       label: m.render.jobLabel({ title, n: version.n }),
       // `<instance>.<locale>`: never taken for a primary-language format by a later request's coverage check.
       formats: items.map((x) => `${x.id}.${x.tag}`),
-      run: async (signal) => {
+      run: async (signal, jobId) => {
         const failures: string[] = [];
-        for (const it of items) {
-          if (signal.aborted) throw new RenderError('cancelled', 'cancelled');
-          try {
-            await this.renderLocalized(ref, version.n, it.id, it.tag, force, presets, locale, signal);
-          } catch (e) {
-            if (signal.aborted || (e instanceof RenderError && e.code === 'cancelled')) throw e;
-            failures.push(m.render.formatFailed({ format: label(it.id, it.tag), reason: errorText(e) }));
+        // The same throttle as the primary renders; the format is the job's own `<instance>.<locale>`.
+        let last = 0;
+        let lastKey = '';
+        const progress = (p: JobProgress) => {
+          const now = Date.now();
+          const key = `${p.format}:${p.phase}`;
+          if (key === lastKey && p.done < p.total && now - last < (this.deps.progressIntervalMs ?? 250)) return;
+          last = now;
+          lastKey = key;
+          this.deps.queue.patch(jobId, { progress: p });
+        };
+        try {
+          for (const it of items) {
+            if (signal.aborted) throw new RenderError('cancelled', 'cancelled');
+            try {
+              await this.renderLocalized(ref, version.n, it.id, it.tag, force, presets, locale, signal, progress);
+            } catch (e) {
+              if (signal.aborted || (e instanceof RenderError && e.code === 'cancelled')) throw e;
+              failures.push(m.render.formatFailed({ format: label(it.id, it.tag), reason: errorText(e) }));
+            }
           }
+        } finally {
+          this.deps.queue.patch(jobId, { progress: undefined });
         }
         if (failures.length > 0) throw new JobFailedError(m.render.someFailed({ list: failures.join('; ') }));
       },
@@ -627,7 +642,7 @@ export class RenderJobService {
    * fallback font files from the project), removed afterwards. Recorded in the row (`render`) and in the manifest's
    * `renders[]` with `locale`, `forced` and `stale`.
    */
-  private async renderLocalized(ref: CreativeRef, n: number, instanceId: string, tag: LocaleTag, force: boolean, presets: FormatPreset[], locale: Locale, signal: AbortSignal): Promise<void> {
+  private async renderLocalized(ref: CreativeRef, n: number, instanceId: string, tag: LocaleTag, force: boolean, presets: FormatPreset[], locale: Locale, signal: AbortSignal, progress?: (p: JobProgress) => void): Promise<void> {
     const m = messages(locale);
     const store = new CreativeStore(ref.projectDir);
     const creativeDir = store.dir(ref.creativeSlug);
@@ -703,6 +718,7 @@ export class RenderJobService {
           dir: root, versionDir: `outputs/v${n}`, composition: atFps, format: { ...preset, id: instanceId }, out: join(versionDir, file), signal,
           ...storeRenderOptions(instanceId, composition),
           ...(sessionMediaOf(prepared) ? { media: sessionMediaOf(prepared)! } : {}),
+          ...(progress ? { onProgress: (p: { frames: number; total: number }) => progress({ format: `${instanceId}.${tag}`, phase: 'frames', done: p.frames, total: p.total }) } : {}),
           beforeRename: (temp) => noteCoreOutputWrite(creativeDir, `outputs/v${n}/${file}`, temp),
         });
       } finally {

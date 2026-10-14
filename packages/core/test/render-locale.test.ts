@@ -58,6 +58,25 @@ describe('render per language', { timeout: 120_000 }, () => {
     expect(ver.outputs).toEqual([]);
   });
 
+  it('a localized render job reports its progress under the <instance>.<locale> format (Q6)', async () => {
+    const slug = await create();
+    await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
+    let release: () => void = () => {};
+    env.fake.gate = new Promise<void>((res) => { release = res; });
+    try {
+      const r = await render(slug, 1, { formats: ['test-wide'], locales: ['de'] });
+      expect(r.statusCode, r.body).toBe(202);
+      const id = (r.json() as JobSummary).id;
+      await env.waitRunning(id);
+      for (let i = 0; i < 500 && env.fake.renders.length === 0; i++) await new Promise((res) => setTimeout(res, 20));
+      const call = env.fake.renders.at(-1)!;
+      expect(typeof call.onProgress).toBe('function');
+      call.onProgress!({ frames: 4, total: 30 } as never);
+      const seen = ((await env.app.inject({ url: '/api/jobs', headers: H })).json() as JobSummary[]).find((x) => x.id === id)!;
+      expect(seen.progress).toEqual({ format: 'test-wide.de', phase: 'frames', done: 4, total: 30 });
+    } finally { release(); env.fake.gate = null; }
+  });
+
   it('without a locale: today\'s file and manifest entry (no language fields), and a later render keeps the localized entries', async () => {
     const slug = await create();
     await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
