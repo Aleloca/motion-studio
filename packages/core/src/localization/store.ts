@@ -242,7 +242,7 @@ async function extraFiles(o: { projectDir: string; voiceRoots: readonly string[]
 
 /** `warnings`: advisory (the html layers' static checks), never stored as problems, as in a turn. */
 /** A language's fallback font: its family and files, `unavailable` (offline), or null when its script needs none. */
-export type FallbackResult = { family: string; files: string[] } | { unavailable: string } | null;
+export type FallbackResult = { family: string; files: string[]; installed?: true } | { unavailable: string } | null;
 
 /**
  * The fallback font of `locale` (`ensureFallbackFont`), as `finishOverlay` takes it: offline it is `unavailable` (a problem,

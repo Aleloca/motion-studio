@@ -164,10 +164,12 @@ rl.once('line', async (line) => {
   }
   // Localize turns (Phase 12): FAKE_CLAUDE_LOCALIZE_CALLS (first attempt) or FAKE_CLAUDE_LOCALIZE_FIX_CALLS (repair attempts),
   // `[[tool, args], …]`, called on the studio bridge like FAKE_CLAUDE_BRIDGE_CALLS and logged to FAKE_CLAUDE_BRIDGE_LOG.
-  // FAKE_CLAUDE_LOCALIZE_WRITE=<path>: the agent also tries to write that file (the sandbox would refuse it).
+  // FAKE_CLAUDE_LOCALIZE_WRITE=<path>: the agent first tries to write that file (the sandbox would refuse it).
   const localizeBlock = /```motion-studio-localize\n/.test(prompt);
   if (localizeBlock) {
     const fix = prompt.includes('still have problems');
+    // The write comes first (fix round 1 M2: a file changed before the core resolves a font must still be reported).
+    if (process.env.FAKE_CLAUDE_LOCALIZE_WRITE) { try { writeFileSync(process.env.FAKE_CLAUDE_LOCALIZE_WRITE, 'agent'); } catch { /* refused */ } }
     const calls = JSON.parse((fix ? process.env.FAKE_CLAUDE_LOCALIZE_FIX_CALLS : process.env.FAKE_CLAUDE_LOCALIZE_CALLS) ?? '[]');
     if (calls.length) {
       const env = JSON.parse(mcpConfigFile.content).mcpServers.studio.env;
@@ -176,7 +178,6 @@ rl.once('line', async (line) => {
         appendFileSync(process.env.FAKE_CLAUDE_BRIDGE_LOG, `${JSON.stringify({ tool, fix, status: res.status, body: await res.json().catch(() => null) })}\n`);
       }
     }
-    if (process.env.FAKE_CLAUDE_LOCALIZE_WRITE) { try { writeFileSync(process.env.FAKE_CLAUDE_LOCALIZE_WRITE, 'agent'); } catch { /* refused */ } }
     // FAKE_CLAUDE_LOCALIZE_WAIT_FILE=<path>: the run holds until that file exists (a test changes the project meanwhile).
     if (process.env.FAKE_CLAUDE_LOCALIZE_WAIT_FILE) { while (!existsSync(process.env.FAKE_CLAUDE_LOCALIZE_WAIT_FILE)) await sleep(20); }
   }

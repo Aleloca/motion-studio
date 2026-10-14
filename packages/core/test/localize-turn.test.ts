@@ -331,6 +331,26 @@ describe('localize: a follower\'s recorded font hash (Task 4 minor, final wave P
   });
 });
 
+describe('localize: own-write notes (fix round 1, M2)', { timeout: 120_000 }, () => {
+  it('a fallback font already installed, resolved during the run, is compared like any other file: a change to it is reported', async () => {
+    await boot();
+    const projectDir = env.projectDir();
+    mkdirSync(join(projectDir, 'assets', 'fonts'), { recursive: true });
+    const font = join(projectDir, 'assets', 'fonts', 'NotoSansJP-400.woff2');
+    writeFileSync(font, 'font bytes');
+    await new LibraryStore(projectDir, NoMediaTools).registerAssets([{ file: 'fonts/NotoSansJP-400.woff2', origin: 'google-fonts', tags: ['font', 'Noto Sans JP'], description: 'Font Noto Sans JP' }]);
+    const slug = await env.create(['test-wide'], { links: {}, locales: { primary: 'en', extra: ['de', 'ja'] } });
+    // Japanese is already translated: the turn asks only German, so the Japanese font is first resolved during the run.
+    expect((await env.app.inject({ method: 'PUT', url: `/api/projects/acme/creatives/${slug}/versions/1/localizations/ja/test-wide`, headers: H, payload: { texts: { title: 'こんにちは' } } })).statusCode).toBe(200);
+    process.env.FAKE_CLAUDE_LOCALIZE_WRITE = font;
+    process.env.FAKE_CLAUDE_LOCALIZE_CALLS = JSON.stringify([submit('de', 'test-wide', { texts: { title: 'Hallo' } }), submit('ja', 'test-wide', { texts: { title: 'やあ' } })]);
+    await finished(await start(slug, 1, { locales: ['de', 'ja'] }));
+    expect(calls().filter((c) => c.tool === 'submit_localization').map((c) => c.status)).toEqual([200, 200]);
+    const conv = await env.store().readConversation(slug);
+    expect(conv.some((e) => e.type === 'system' && e.level === 'warning' && e.text.includes('assets/fonts/NotoSansJP-400.woff2'))).toBe(true);
+  });
+});
+
 describe('project activity (stray-write attribution)', () => {
   it('tells which areas of a project the server announced as changed since a time', () => {
     const a = new ProjectActivity();

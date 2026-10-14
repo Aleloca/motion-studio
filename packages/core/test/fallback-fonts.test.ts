@@ -48,7 +48,8 @@ describe('ensureFallbackFont', () => {
 
   it('downloads the Noto family once per project and registers it with origin google-fonts', async () => {
     const a = await ensureFallbackFont(project(), 'ja', new AbortController().signal);
-    expect(a).toEqual({ family: 'Noto Sans JP', files: ['assets/fonts/NotoSansJP-400.ttf', 'assets/fonts/NotoSansJP-700.ttf'] });
+    // `installed`: the core wrote it now (fix round 1, M2: only such a font is the core's own write in a turn).
+    expect(a).toEqual({ family: 'Noto Sans JP', files: ['assets/fonts/NotoSansJP-400.ttf', 'assets/fonts/NotoSansJP-700.ttf'], installed: true });
     for (const f of a!.files) expect(existsSync(join(projectDir, f))).toBe(true);
     const lib = await new LibraryStore(projectDir, NoMediaTools).listAssets();
     expect(lib.map((e) => [e.file, e.origin])).toEqual([['fonts/NotoSansJP-400.ttf', 'google-fonts'], ['fonts/NotoSansJP-700.ttf', 'google-fonts']]);
@@ -56,8 +57,9 @@ describe('ensureFallbackFont', () => {
     expect(fetched).toBe(3);
     // Again, and twice at once: no new request.
     const [b, c] = await Promise.all([ensureFallbackFont(project(), 'ja', new AbortController().signal), ensureFallbackFont(project(), 'ja', new AbortController().signal)]);
-    expect(b).toEqual(a);
-    expect(c).toEqual(a);
+    // Found in the library: not written now.
+    expect(b).toEqual({ family: a!.family, files: a!.files });
+    expect(c).toEqual({ family: a!.family, files: a!.files });
     expect(urls).toHaveLength(fetched);
     // Another script is another family.
     expect((await ensureFallbackFont(project(), 'ko', new AbortController().signal))!.family).toBe('Noto Sans KR');

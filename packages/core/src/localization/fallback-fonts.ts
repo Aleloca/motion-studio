@@ -50,9 +50,10 @@ async function inLibrary(projectDir: string, media: MediaTools, family: string):
 /**
  * The fallback font of `locale` for the project: null when its script needs none; else the family and its files
  * (`assets/fonts/…`, paths relative to the project, which are also the paths a composition folder gets them under). Throws
- * `FallbackFontUnavailable` when it is not in the library and cannot be downloaded.
+ * `FallbackFontUnavailable` when it is not in the library and cannot be downloaded. `installed`: the core downloaded and wrote
+ * it now (and registered it in the library); absent when the library already had it.
  */
-export async function ensureFallbackFont(project: ProjectRef, locale: LocaleTag, signal: AbortSignal): Promise<{ family: string; files: string[] } | null> {
+export async function ensureFallbackFont(project: ProjectRef, locale: LocaleTag, signal: AbortSignal): Promise<{ family: string; files: string[]; installed?: true } | null> {
   const family = fallbackFontFor(locale);
   if (family === null) return null;
   return installs.run(`${project.projectDir}\0${family}`, async () => {
@@ -63,7 +64,7 @@ export async function ensureFallbackFont(project: ProjectRef, locale: LocaleTag,
         http: project.http, projectDir: project.projectDir, media: project.media, family, weights: FALLBACK_WEIGHTS, italic: false, signal,
         ...(project.io ? { io: project.io } : {}),
       });
-      return { family, files: files.map((f) => `assets/${f}`).slice(0, 8) };
+      return { family, files: files.map((f) => `assets/${f}`).slice(0, 8), installed: true };
     } catch (e) {
       throw new FallbackFontUnavailable(family, e);
     }

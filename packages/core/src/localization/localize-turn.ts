@@ -320,8 +320,9 @@ export class LocalizeService {
         if (!fallbackFonts.has(locale)) {
           const font = await resolveFallbackFont({ projectDir: ref.projectDir, http: this.deps.fonts.http, media: this.deps.media, ...(this.deps.fonts.io ? { io: this.deps.fonts.io } : {}) }, locale, signal);
           fallbackFonts.set(locale, font);
-          // A font fetched while the agent runs (a language it submits that was not asked) is the core's write, not a stray one.
-          if (font && 'files' in font) await own.note([...font.files, LIBRARY_INDEX]);
+          // A font the core downloads while the agent runs (a language it submits that was not asked) is the core's write, not a
+          // stray one. A font the library already had was not written: it is compared like any other file (fix round 1, M2).
+          if (font && 'files' in font && font.installed) await own.note([...font.files, LIBRARY_INDEX]);
         }
         return fallbackFonts.get(locale)!;
       };
