@@ -41,6 +41,14 @@ const api = {
     url: `http://127.0.0.1:61234/tok-${format}-v${n}/runtime/index.html?mode=preview&parentOrigin=x`, token: `tok-${format}-v${n}`, origin: 'http://127.0.0.1:61234',
     expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(), format, hash: 'b'.repeat(64), width: 1080, height: 1920, duration: 8, fps: 30,
   })),
+  // UX feedback 1, Task 2: the Scenes column lists the composition's scenes at once (one named, one numbered).
+  getEditorComposition: vi.fn(async (_s: string, _c: string, n: number, format: string) => ({
+    n, format, primaryFormat: format, hash: 'b'.repeat(64), files: [], fonts: [],
+    composition: {
+      $schema: 'motion-studio/composition@1', width: 1080, height: 1920, fps: 30, duration: 8, background: '#000000', fonts: [],
+      scenes: [{ id: 'offerta', start: 3.5, duration: 4.5 }, { id: 'intro', name: 'Intro', start: 0, duration: 3.5 }], tracks: [],
+    },
+  })),
   getStoryboard: vi.fn(async (_s: string, _c: string, n: number, format: string) => ({
     format, hash: 'b'.repeat(64), width: 270, expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
     frames: [
@@ -596,9 +604,58 @@ describe('FormatView · live composition player (Task 8)', () => {
     const { posted } = await readyPlayer();
     const strip = await screen.findByRole('list', { name: 'Storyboard' }, { timeout: 20_000 });
     const scenes = within(strip).getAllByRole('button');
-    expect(scenes.map((b) => b.getAttribute('aria-label'))).toEqual(['intro, a 00:00.00', 'offerta, a 00:03.50']);
+    // From the composition, in time order: a scene's name, else its number (UX feedback 1, Task 2).
+    expect(scenes.map((b) => b.getAttribute('aria-label'))).toEqual(['Intro, a 00:00.00', 'Scena 2, a 00:03.50']);
+    expect(scenes[1]!.textContent).toContain('4,5 s');
+    await waitFor(() => expect(strip.querySelectorAll('img')).toHaveLength(2));
     await userEvent.click(scenes[1]!);
     expect(posted).toHaveBeenLastCalledWith({ type: 'seek', t: 3.5 }, '*');
+  }, 60_000);
+
+  it('the scenes never wait for the storyboard: a skeleton per row until it arrives, then the thumbnails', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => { release = r; });
+    const real = api.getStoryboard.getMockImplementation()!;
+    api.getStoryboard.mockImplementationOnce(async (...a: Parameters<typeof real>) => { await gate; return real(...a); });
+    detail = makeDetail([v2(1)]);
+    render(<Harness format={VIDEO} />);
+    const strip = await screen.findByRole('list', { name: 'Storyboard' });
+    expect(within(strip).getAllByRole('listitem')).toHaveLength(2);
+    expect([...strip.querySelectorAll('[data-thumb]')].map((x) => x.getAttribute('data-thumb'))).toEqual(['loading', 'loading']);
+    expect(strip.querySelector('img')).toBeNull();
+    expect(screen.getByText('Preparo lo storyboard…').className).toBe('ms-sr');
+    await waitFor(() => expect(api.getStoryboard).toHaveBeenCalled());
+    await act(async () => { release(); });
+    await waitFor(() => expect([...strip.querySelectorAll('[data-thumb]')].map((x) => x.getAttribute('data-thumb'))).toEqual(['frame', 'frame']));
+    await frame();
+  });
+
+  it('no storyboard: the rows stay, each with a placeholder', async () => {
+    api.getStoryboard.mockRejectedValueOnce(new ApiError(404, 'none', 'storyboard-unavailable'));
+    detail = makeDetail([v2(1)]);
+    render(<Harness format={VIDEO} />);
+    const strip = await screen.findByRole('list', { name: 'Storyboard' });
+    await waitFor(() => expect([...strip.querySelectorAll('[data-thumb]')].map((x) => x.getAttribute('data-thumb'))).toEqual(['none', 'none']));
+    expect(within(strip).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(['Intro, a 00:00.00', 'Scena 2, a 00:03.50']);
+    await frame();
+  });
+
+  it('a composition without scenes shows one "Whole video" row with the poster; a click goes to the start', async () => {
+    const base = api.getEditorComposition.getMockImplementation()!;
+    api.getEditorComposition.mockImplementation(async (...a: Parameters<typeof base>) => { const v = await base(...a); return { ...v, composition: { ...v.composition, scenes: [] } }; });
+    try {
+      detail = makeDetail([v2(1)]);
+      render(<Harness format={VIDEO} />);
+      const { posted } = await readyPlayer();
+      const strip = await screen.findByRole('list', { name: 'Storyboard' });
+      const rows = within(strip).getAllByRole('button');
+      expect(rows.map((b) => b.getAttribute('aria-label'))).toEqual(['Tutto il video, a 00:00.00']);
+      await waitFor(() => expect(strip.querySelector('img')?.getAttribute('src')).toBe('/sb/tiktok-9x16/v1/f-2.jpg?s=1'));
+      await userEvent.click(rows[0]!);
+      expect(posted).toHaveBeenLastCalledWith({ type: 'seek', t: 0 }, '*');
+    } finally {
+      api.getEditorComposition.mockImplementation(base);
+    }
   }, 60_000);
 
   it('frame comments work on the paused live picture, at the current time', async () => {

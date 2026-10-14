@@ -11,7 +11,7 @@
 // (Transport.tsx, shared with Compare), the comment layer and the hint read, so the page (bar, chat) does not
 // re-render while the video plays.
 import { IntegrityNotice, useIntegrity } from '../components/IntegrityNotice.tsx';
-import { channelName, isDurationOffBrief, pinClipName, DEFAULT_EXPORT_NAME_PATTERN, DEFAULT_FORMATS, type Composition, type FormatPreset, type Pin, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
+import { channelName, isDurationOffBrief, pinClipName, DEFAULT_EXPORT_NAME_PATTERN, DEFAULT_FORMATS, type Composition, type FormatPreset, type Pin, type StoryboardView, type VersionEntry, type WorkspaceSettings } from '@motion-studio/shared';
 import {
   useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState,
   type CSSProperties, type MouseEvent,
@@ -19,7 +19,8 @@ import {
 import { createPortal } from 'react-dom';
 import { api } from '../api.ts';
 import { CompositionPlayer, type CompositionMedia } from '../components/CompositionPlayer.tsx';
-import { posterOf, usePreviewSession, useStoryboard } from '../components/compositionPreview.ts';
+import { posterOf, usePreviewSession, useStoryboard, type StoryboardState } from '../components/compositionPreview.ts';
+import { frameFor, rowAt, sceneRows, SceneThumb } from '../components/SceneThumb.tsx';
 import { Conversation } from '../components/Conversation.tsx';
 import type { EventsState } from '../eventsReducer.ts';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
@@ -167,17 +168,20 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
   useEffect(() => { if (!canComment) setDraft(null); }, [canComment]);
   useEffect(() => { setDraft(null); }, [pinSource]);
 
-  // The composition's clips (Phase 10b): the picker of "Comment on clip" lists those playing at the playhead. A version without
-  // an editable composition (a legacy one) simply has no picker.
-  const clipsOf = livePlayer && canComment && version ? version.n : null;
-  const [clipComp, setClipComp] = useState<Composition | null>(null);
+  // The version's composition (Phase 10b; UX feedback 1, Task 2): the Scenes column lists its scenes at once (the storyboard's
+  // thumbnails fill in later), and the picker of "Comment on clip" lists the clips playing at the playhead (on the pin source
+  // only). A version without an editable composition (a legacy one) simply has neither.
+  const compOf = livePlayer && version ? version.n : null;
+  const [viewComp, setViewComp] = useState<Composition | 'failed' | null>(null);
   useEffect(() => {
-    setClipComp(null);
-    if (clipsOf === null) return;
+    setViewComp(null);
+    if (compOf === null) return;
     let alive = true;
-    Promise.resolve().then(() => api.getEditorComposition(slug, creative, clipsOf, source.format)).then((v) => { if (alive) setClipComp(v.composition); }).catch(() => {});
+    Promise.resolve().then(() => api.getEditorComposition(slug, creative, compOf, source.format)).then((v) => { if (alive) setViewComp(v.composition); }, () => { if (alive) setViewComp('failed'); });
     return () => { alive = false; };
-  }, [slug, creative, clipsOf, source.format]);
+  }, [slug, creative, compOf, source.format]);
+  const loadedComp = viewComp === 'failed' ? null : viewComp;
+  const clipComp = canComment ? loadedComp : null;
 
   // Playback (video). jsdom and some codecs never fire `play`: the state follows the call and the media events.
   const [clock] = useState(createClock);
@@ -574,7 +578,7 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
         <aside className="ms-fv-side ms-fv-scenes" aria-label={f.scenes} data-part="l">
           <div className="ms-fv-side-head"><b>{f.scenes}</b>{duration ? <span>{c.seconds({ n: formatNumber(locale, duration, { maximumFractionDigits: 1 }) })}</span> : null}</div>
           {livePlayer ? (
-            <Storyboard frames={storyboard?.frames.filter((x) => x.kind === 'scene') ?? []} state={storyboardState} clock={clock}
+            <Storyboard comp={viewComp} storyboard={storyboard} state={storyboardState} clock={clock}
               onSeek={(time) => { if (playing) pause(); seek(time); }} disabled={!ready} />
           ) : (
             <div className="ms-fv-soon">
@@ -757,33 +761,37 @@ function CommentHint({ clock, video }: { clock: Clock; video: boolean }) {
 }
 
 /**
- * The storyboard strip of a v2 version (Task 8): one frame per scene start, in time order; a click seeks there. The scene
- * the playhead is in is marked.
+ * The Scenes column of a v2 version (Task 8; UX feedback 1, Task 2): one row per scene of the composition, in time order (a
+ * composition without scenes: one "Whole video" row), built from the composition at once; a click seeks there and the
+ * scene the playhead is in is marked. The storyboard's thumbnails fill the rows in when they arrive (a skeleton until then,
+ * a placeholder when there is none): the list never waits for them.
  */
-function Storyboard({ frames, state, clock, onSeek, disabled }: {
-  frames: Array<{ t: number; scene?: string; url: string; width: number; height: number }>; state: string; clock: Clock; onSeek(t: number): void; disabled: boolean;
+function Storyboard({ comp, storyboard, state, clock, onSeek, disabled }: {
+  comp: Composition | 'failed' | null; storyboard: StoryboardView | null; state: StoryboardState; clock: Clock; onSeek(t: number): void; disabled: boolean;
 }) {
   const t = useT();
   const r = t.web.render;
+  const locale = useLocale();
   const { time } = useClock(clock);
-  if (!frames.length) {
-    return <p className="ms-fv-sb-note" role="status">{state === 'loading' || state === 'busy' ? r.storyboardLoading : r.storyboardNone}</p>;
-  }
-  const current = frames.reduce((at, f, i) => (f.t <= time + 1e-6 ? i : at), 0);
+  const rows = useMemo(() => (comp && comp !== 'failed' ? sceneRows(comp, r) : []), [comp, r]);
+  if (comp === null) return <p className="ms-fv-sb-note" role="status">{r.scenesLoading}</p>;
+  if (comp === 'failed') return <p className="ms-fv-sb-note" role="status">{r.storyboardNone}</p>;
+  const current = rowAt(rows, time);
+  const waiting = state === 'loading' || state === 'busy';
   return (
-    <ol className="ms-fv-sb" aria-label={r.storyboard}>
-      {frames.map((f, i) => {
-        const name = f.scene ?? r.scene({ n: i + 1 });
-        return (
-          <li key={`${f.t}-${i}`}>
+    <>
+      <ol className="ms-fv-sb" aria-label={r.storyboard}>
+        {rows.map((row, i) => (
+          <li key={row.id ?? 'whole'}>
             <button type="button" className={cx('ms-fv-sb-item', i === current && 'ms-on')} aria-current={i === current || undefined} disabled={disabled}
-              aria-label={r.sceneAt({ name, time: timecode(f.t) })} onClick={() => onSeek(f.t)}>
-              <img src={f.url} alt="" draggable={false} style={{ aspectRatio: `${f.width} / ${f.height}` }} />
-              <span className="ms-fv-sb-text"><b>{name}</b><span>{timecode(f.t)}</span></span>
+              aria-label={r.sceneAt({ name: row.name, time: timecode(row.start) })} onClick={() => onSeek(row.start)}>
+              <SceneThumb frame={frameFor(storyboard, row)} state={state} width={comp.width} height={comp.height} />
+              <span className="ms-fv-sb-text"><b>{row.name}</b><span>{timecode(row.start)} · {t.web.editor.sceneLength({ seconds: formatNumber(locale, row.duration, { maximumFractionDigits: 2 }) })}</span></span>
             </button>
           </li>
-        );
-      })}
-    </ol>
+        ))}
+      </ol>
+      <span className="ms-sr" role="status" aria-live="polite">{waiting ? r.storyboardLoading : ''}</span>
+    </>
   );
 }

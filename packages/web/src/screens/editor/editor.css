@@ -76,7 +76,6 @@
 .ms-sc-card { position: relative; display: flex; align-items: center; gap: 2px; border-radius: 8px; }
 .ms-sc-card .ms-fv-sb-item { flex: 1; min-width: 0; }
 .ms-sc-card.ms-over { box-shadow: 0 0 0 2px var(--accent); }
-.ms-sc-thumb { width: 64px; height: 36px; flex: none; border-radius: 4px; background: var(--field); }
 .ms-sc-grip-wrap { flex: none; }
 .ms-sc-grip {
   width: 24px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted);

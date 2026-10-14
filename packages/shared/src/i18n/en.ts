@@ -2916,6 +2916,10 @@ Variables: MOTION_STUDIO_CONFIG_DIR, MOTION_STUDIO_CLAUDE_COMMAND (JSON array)`,
       sceneAt: (p: { name: string; time: string }) => `${p.name}, at ${p.time}`,
       storyboardLoading: 'Preparing the storyboard…',
       storyboardNone: 'No storyboard for this version',
+      /** The single row of the Scenes column when the composition has no scenes. */
+      wholeVideo: 'Whole video',
+      /** The Scenes column while the composition's scene list is read (the thumbnails come later). */
+      scenesLoading: 'Loading the scenes…',
       framesProgress: (p: { format: string; done: string; total: string }) => `${p.format} · ${p.done} / ${p.total} frames`,
       mediaProgress: (p: { format: string; done: number; total: number }) => `${p.format} · preparing media ${p.done}/${p.total}`,
       finishing: (p: { format: string }) => `${p.format} · finishing`,

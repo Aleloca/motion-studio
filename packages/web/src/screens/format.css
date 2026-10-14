@@ -31,6 +31,12 @@
 .ms-fv-sb-text b { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-fv-sb-text span { font-size: 11px; color: var(--faint); font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .ms-fv-sb-note { margin: 12px; font-size: 12px; color: var(--muted); }
+/* A scene row's thumbnail box (SceneThumb): at most 64 px either way, the same box loading, loaded or without a frame. */
+.ms-fv-sb-thumb { flex: none; border-radius: 4px; background: var(--field); overflow: hidden; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.ms-fv-sb-item .ms-fv-sb-thumb img { width: 100%; height: 100%; max-height: none; object-fit: contain; border-radius: 0; background: transparent; }
+.ms-fv-sb-thumb.ms-loading { animation: ms-sb-skel 1.4s var(--e-std) infinite alternate; }
+@keyframes ms-sb-skel { from { opacity: 1; } to { opacity: .5; } }
+@media (prefers-reduced-motion: reduce) { .ms-fv-sb-thumb.ms-loading { animation: none; } }
 .ms-fv-media .ms-fv-poster { position: absolute; inset: 0; }
 .ms-fv-panel { border-left: 1px solid var(--line); }
 .ms-fv-tabs { flex: none; }
