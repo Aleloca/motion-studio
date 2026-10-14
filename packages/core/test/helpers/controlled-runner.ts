@@ -33,6 +33,11 @@ export class ControlledRunner implements AgentRunner {
   interruptAnswer: 'interrupted' | 'unsupported' | 'timeout' = 'interrupted';
   /** Resumed sessions that "no longer exist": a run resuming one fails before any session event. */
   readonly missingSessions = new Set<string>();
+  /**
+   * Fix round 1: decides, per started run, an immediate failure (`null`: none). `output`: the run first writes some text as
+   * the agent; `session`: it first reports its session; `startFailed`: the CLI could not even start.
+   */
+  failStart: ((req: AgentTurnRequest) => { error: string; startFailed?: boolean; output?: boolean; session?: boolean } | null) | null = null;
   private waiters: Array<(r: ControlledRun) => void> = [];
   private counter = 0;
 
@@ -83,7 +88,14 @@ export class ControlledRunner implements AgentRunner {
       end: () => finishWith({ status: 'succeeded', sessionId }),
     };
     this.runs.push(run);
-    if (req.resumeSessionId && this.missingSessions.has(req.resumeSessionId)) {
+    const failure = this.failStart?.(req) ?? null;
+    if (failure) {
+      queueMicrotask(() => {
+        if (failure.session) onEvent({ kind: 'session', sessionId });
+        if (failure.output) onEvent({ kind: 'text', text: 'working' });
+        finishWith({ status: 'failed', error: failure.error, ...(failure.startFailed ? { startFailed: true } : {}) });
+      });
+    } else if (req.resumeSessionId && this.missingSessions.has(req.resumeSessionId)) {
       queueMicrotask(() => finishWith({ status: 'failed', error: `No conversation found with session ID: ${req.resumeSessionId}` }));
     } else {
       queueMicrotask(() => onEvent({ kind: 'session', sessionId }));

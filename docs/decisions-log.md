@@ -1059,3 +1059,30 @@ Legenda impatto: 🟢 basso · 🟡 medio · 🔴 alto (sicurezza o prodotto).
 631. 🟢 **Console.** `POST /api/console/:job/messages` accetta solo messaggi dal vivo, con gli stessi limiti e la stessa idempotenza. Senza la capacità, o a turno finito, risponde con un 409 tradotto: la console non ha coda e le parole restano nel compositore. Stop e redirect passano dalle stesse rotte dei job; il redirect di ripiego riparte nello stesso job con la sessione viva e una nota propria. La console non ha `conversation.jsonl`, quindi i messaggi arrivano solo come eventi. *Costo cambio:* basso.
 632. 🟢 **Traduzioni, analisi del brand, descrizioni degli asset.** Il launcher non dà messaggi dal vivo ai turni `localize` (decisione 614). Un messaggio dal vivo durante una traduzione diventa quindi una richiesta in coda (`queued-unsupported`). Analisi del brand e descrizioni hanno solo Stop; il redirect risponde con un 409 tradotto. *Costo cambio:* nullo.
 633. 🟢 **Prove con un runner controllato.** `test/helpers/controlled-runner.ts` è un `AgentRunner` in processo: il test decide quando ogni run manda il `result` e quando finisce. Il runner accetta `send` e `interrupt` solo se il launcher gli ha passato le capacità, e simula una sessione persa. Con un Git a cancello si prova il messaggio durante il salvataggio. L'unico processo figlio è quello della "anteprima" nei test di redirect, controllato e chiuso per PID. Fornitori a pagamento solo con `fetch` finto e `MemoryVault`. *Costo cambio:* nullo.
+
+### Fase 13 · Task 2, giro di correzioni 1
+
+634. 🔴 **Redirect su una sessione viva che non riparte: mai un ciclo (C1).** Se il run del redirect non riesce a riprendere la sessione viva, il core dimentica quella sessione (`live.sessionId`): il redirect riparte da zero sulla sessione della versione di base, con nel prompt la richiesta, i messaggi del turno e il redirect. Il ripiego per un errore di ripresa avviene al massimo una volta per turno e consuma un tentativo; un secondo errore è un fallimento normale. Una prova mostra che i run restano pochi anche quando ogni avvio fallisce. *Costo cambio:* basso.
+635. 🟡 **Un solo modulo per i messaggi dal vivo (I3).** `agent/live-session.ts` contiene la verifica del messaggio, la cache delle risposte e la sequenza del redirect (`redirectLive`), usate sia dalle creatività sia dalla console. La sequenza è: approvazioni, strumenti, poi tutto nella catena seriale, con la fase ricontrollata lì. Ogni messaggio ha uno stato finale (`delivered`, `queued`, `dropped`). La risposta del redirect di ripiego aspetta quello stato: `restarted` solo se un run ha preso le parole, `queued-after-finish` se sono finite in coda, 409 `not-running` se non potevano andare da nessuna parte. Nella console un redirect arrivato appena dopo la fine del run fa partire un run, se il ciclo non è ancora uscito, oppure riceve un 409: le parole restano nel compositore (I1). *Costo cambio:* basso.
+636. 🟡 **Ogni messaggio arriva a uno stato finale (I2).** Un messaggio arrivato dopo il `result` di un tentativo, quando un altro tentativo è ancora possibile, aspetta la decisione del core prima di rispondere. La risposta è `delivered-pending` se un tentativo di riparazione lo porta, `queued-after-finish` se i controlli passano e diventa la richiesta successiva. Prima che il run parta la risposta è immediata: il job può aspettare un posto libero. Quando parte una richiesta in coda la cui voce era già stata scritta, il core aggiunge `user_message_delivered` con quel `clientId`, sotto il nuovo job. Regola per il Task 3:
+    - un messaggio è "consegnato" quando nella conversazione c'è il marcatore `user_message_delivered` con il suo `clientId`;
+    - è "in coda" finché il suo `clientId` è in `creative.json.queued`;
+    - è "tolto" se esce dalla coda senza marcatore;
+    - un 409 lascia le parole nel compositore.
+    
+    *Costo cambio:* basso.
+637. 🟡 **Ruling U: la coda prosegue da sola solo dopo una versione salvata.** Dopo un fallimento, uno Stop o un annullamento (anche `/cancel`) la coda aspetta "Run next". Lo stesso vale per una traduzione fallita o annullata; dopo una traduzione riuscita la coda parte. Questa voce sostituisce la parte della decisione 625 sui turni falliti. *Costo cambio:* nullo.
+638. 🟡 **Ruling V: come si riconosce un errore di ripresa.** Prima si cerca nel testo dell'errore la frase della CLI "No conversation found with session ID", presa dal messaggio della CLI riportato pubblicamente e **non verificata dal vivo**: in quel caso `stoppedSession` viene cancellata. Come riserva, un run fallito prima di qualsiasi testo o chiamata a strumento dell'agente fa ripiegare una volta, ma tiene `stoppedSession`. Un run che la CLI non riesce nemmeno ad avviare (binario o cartella mancante, errore di spawn: nuovo campo `startFailed` del risultato) è un fallimento normale. Il Task 4 elenca la frase tra le cose non verificate. *Costo cambio:* basso.
+639. 🟢 **Rilievi minori risolti.**
+    - Le note dei pin contano nei 4000 caratteri.
+    - Il marcatore `interrupted` compare solo quando si ferma davvero un run.
+    - `lastTurnSession` guarda solo il job tagliato dal riavvio.
+    - Rimosso il testo inutilizzato `redirectedNote`.
+    - Tolti il parametro inutile e il `void` di prova.
+    
+    Restano per dopo:
+    - la separazione della coda in un servizio a parte;
+    - la nota sui file parziali nel percorso di interruzione dal vivo, dove le parole vanno all'agente così come sono;
+    - l'asserzione debole sullo stato del test di Stop durante il salvataggio.
+    
+    *Costo cambio:* nullo.

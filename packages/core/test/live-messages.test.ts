@@ -105,9 +105,12 @@ describe('live messages, capability on (opt-in, fake runner)', () => {
     // The agent's result came (stdin closed) but the run has not ended yet: no write to a closed input.
     run.resultOnly({ write: false });
     const second = cid();
-    expect((await post({ clientId: second, text: 'Secondo messaggio', mode: 'live' })).json().outcome).toBe('delivered-pending');
+    // The answer waits for the core's decision (I2): the outputs fail the checks, so a repair attempt carries it.
+    const pending = post({ clientId: second, text: 'Secondo messaggio', mode: 'live' });
+    await vi.waitFor(async () => expect((await s.conversation()).some((e) => e.clientId === second)).toBe(true));
     expect(run.sent.map((m) => m.clientId)).toEqual([first]);
     run.end();
+    expect((await pending).json().outcome).toBe('delivered-pending');
     // Nothing delivered: the repair attempt carries the request and both messages, in order.
     const fix = await s.runner.next(1);
     const p = fix.req.prompt;
@@ -158,7 +161,44 @@ describe('live messages, capability on (opt-in, fake runner)', () => {
   });
 });
 
+describe('every message reaches a final state (fix round 1, I2)', () => {
+  it('after attempt 1\'s result with the checks passing, the answer says queued, and its start marks it delivered', async () => {
+    s = await liveApp({ live: true });
+    await startTurn();
+    const run = await s.runner.next(0);
+    run.resultOnly({ write: true });
+    const clientId = cid();
+    const pending = post({ clientId, text: 'Ultimo', mode: 'live' });
+    await vi.waitFor(async () => expect((await s.conversation()).some((e) => e.clientId === clientId)).toBe(true));
+    run.end();
+    expect((await pending).json().outcome).toBe('queued-after-finish');
+    // v1 saved: the request starts by itself and its (already written) entry gets the delivered marker under the new job.
+    const next = await s.runner.next(1);
+    expect(next.req.prompt).toContain('Ultimo');
+    await vi.waitFor(async () => {
+      const jobs = await s.jobs();
+      const marker = (await s.conversation()).find((e) => e.type === 'agent' && (e.event as { kind: string; clientId?: string }).kind === 'user_message_delivered' && (e.event as { clientId: string }).clientId === clientId);
+      expect(marker?.jobId).toBe(jobs.find((j) => j.state === 'running')?.id);
+    });
+    expect((await s.conversation()).filter((e) => e.type === 'user' && e.clientId === clientId)).toHaveLength(1);
+    next.finish();
+    await s.waitIdle();
+  });
+});
+
 describe('limits and idempotency (Review Focus 3)', () => {
+  it('pin notes count with the text', async () => {
+    s = await liveApp({ live: true });
+    await startTurn();
+    const run = await s.runner.next(0);
+    const pin = (note: string) => ({ format: 'instagram-post-1x1', x: 0.5, y: 0.5, timeSec: null, note });
+    const res = await post({ clientId: cid(), text: 'x'.repeat(3000), pins: [pin('y'.repeat(600)), pin('z'.repeat(600))], mode: 'live' });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('limit');
+    run.finish();
+    await s.waitIdle();
+  });
+
   it('refuses a 4001-character message with a translated 409 limit', async () => {
     s = await liveApp({ live: true });
     await startTurn();
@@ -227,8 +267,8 @@ describe('limits and idempotency (Review Focus 3)', () => {
     expect((await post({ clientId: cid(), text: 'dal vivo', mode: 'live' })).statusCode).toBe(409);
     expect((await post({ clientId: cid(), text: '   ', mode: 'live' })).statusCode).toBe(400);
     expect((await post({ clientId: 'x', text: 'ok', mode: 'sideways' })).statusCode).toBe(400);
+    expect(run.sent).toEqual([]);
     await s.app.inject({ method: 'POST', url: `/api/jobs/${(await s.jobs())[0]!.id}/stop` });
-    void run;
     await s.waitIdle();
   });
 });

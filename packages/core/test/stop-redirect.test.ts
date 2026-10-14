@@ -10,7 +10,7 @@ import { AgentBridge } from '../src/bridge/bridge.ts';
 import { registerBridgeRoutes } from '../src/bridge/bridge-routes.ts';
 import { providerTools } from '../src/bridge/provider-tools.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
-import { CreativeTurnService, type CreativeRef } from '../src/creatives/creative-turns.ts';
+import { CreativeTurnService, resumeErrorOf, SESSION_NOT_FOUND, type CreativeRef } from '../src/creatives/creative-turns.ts';
 import type { PreviewService } from '../src/creatives/previews.ts';
 import { REDIRECT_PARTIAL_NOTE, STOPPED_TURN_NOTE, USER_REQUEST_OPEN } from '../src/creatives/prompt.ts';
 import { Git } from '../src/git.ts';
@@ -365,5 +365,109 @@ describe('remembered session (routes)', () => {
     expect(late.json()).toEqual({ code: 'not-running', error: it_.notRunning });
     expect((await s.app.inject({ method: 'POST', url: '/api/jobs/nope/redirect', payload: { clientId: cid(), text: 'x' } })).statusCode).toBe(404);
     expect((await s.app.inject({ method: 'POST', url: '/api/jobs/nope/stop' })).statusCode).toBe(404);
+  });
+});
+
+describe('redirect when the live session cannot be resumed (fix round 1, C1)', () => {
+  it('ends in exactly one fresh run from the base, with the request and the redirect, and no spawn loop', async () => {
+    s = await liveApp();
+    const job = (await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } })).json();
+    const run = await s.runner.next(0);
+    await vi.waitFor(async () => expect((await s.jobs()).find((j) => j.id === job.id)?.sessionId).toBe(run.sessionId));
+    s.runner.missingSessions.add(run.sessionId);
+    const res = await s.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/redirect`, payload: { clientId: cid(), text: 'Altra strada' } });
+    expect(res.json()).toEqual({ outcome: 'restarted' });
+    const fresh = await s.runner.next(2);
+    expect(s.runner.runs[1]!.req.resumeSessionId).toBe(run.sessionId);
+    // No base version yet: a new session, with the request and the redirect as the user's words.
+    expect(fresh.req.resumeSessionId).toBeUndefined();
+    expect(fresh.req.prompt).toContain('Primo');
+    expect(fresh.req.prompt).toContain('Altra strada');
+    await new Promise((r) => setTimeout(r, 500));
+    expect(s.runner.runs).toHaveLength(3);
+    fresh.finish();
+    await s.waitIdle();
+    expect((await s.jobs()).find((j) => j.id === job.id)?.state).toBe('succeeded');
+    expect((await s.conversation()).filter((e) => e.type === 'system' && e.text === it_.stoppedSessionUnavailable)).toHaveLength(1);
+  });
+
+  it('with every start failing as well, the runs stay bounded and the turn fails', async () => {
+    s = await liveApp();
+    await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } });
+    (await s.runner.next(0)).finish();
+    await s.waitIdle();
+    const job = (await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Secondo' } })).json();
+    const run = await s.runner.next(1);
+    await vi.waitFor(async () => expect((await s.jobs()).find((j) => j.id === job.id)?.sessionId).toBe(run.sessionId));
+    // From now on every run fails before any output: resumes of the live session and of the base, and fresh ones.
+    s.runner.missingSessions.add(run.sessionId);
+    s.runner.failStart = () => ({ error: 'exit code 1' });
+    for (const text of ['Uno', 'Due']) {
+      const r = await s.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/redirect`, payload: { clientId: cid(), text } });
+      expect([200, 409]).toContain(r.statusCode);
+    }
+    await s.waitIdle();
+    await new Promise((r) => setTimeout(r, 300));
+    expect((await s.jobs()).find((j) => j.id === job.id)?.state).toBe('failed');
+    // The first turn's run, this turn's run, then at most one redirect run and one fallback per redirect.
+    expect(s.runner.runs.length).toBeLessThanOrEqual(5);
+    expect((await s.conversation()).filter((e) => e.type === 'system' && e.text === it_.stoppedSessionUnavailable).length).toBeLessThanOrEqual(1);
+  });
+});
+
+describe('resume-error detection (Ruling V)', () => {
+  const setup = async () => {
+    s = await liveApp();
+    await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } });
+    const v1 = await s.runner.next(0);
+    v1.finish();
+    await s.waitIdle();
+    const store = new CreativeStore(join(s.base, 'ws', 'acme'));
+    await store.update(s.slug, { stoppedSession: { sessionId: 'kept-session', at: new Date().toISOString(), jobId: 'old' } });
+    return v1;
+  };
+
+  it('the CLI\'s session-not-found wording is matched (unverified live)', () => {
+    expect(SESSION_NOT_FOUND.test('No conversation found with session ID: abc')).toBe(true);
+    expect(resumeErrorOf({ status: 'failed', error: 'No conversation found with session ID: abc', startFailed: false }, true)).toBe('not-found');
+    expect(resumeErrorOf({ status: 'failed', error: 'exit code 1' }, false)).toBe('guess');
+    expect(resumeErrorOf({ status: 'failed', error: 'exit code 1' }, true)).toBeNull();
+    expect(resumeErrorOf({ status: 'failed', error: 'claude not found', startFailed: true }, false)).toBeNull();
+    expect(resumeErrorOf({ status: 'cancelled' }, false)).toBeNull();
+  });
+
+  it('the backup guess (failure before any output) falls back once but keeps the remembered session', async () => {
+    const v1 = await setup();
+    s.runner.failStart = (req) => (req.resumeSessionId === 'kept-session' ? { error: 'exit code 1', session: true } : null);
+    const job = (await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Secondo' } })).json();
+    const fallback = await s.runner.next(2);
+    expect(fallback.req.resumeSessionId).toBe(v1.sessionId);
+    // The fallback run fails too (after writing): an ordinary failure, the remembered session stays.
+    fallback.emit({ kind: 'text', text: 'lavoro' });
+    fallback.finish({ ok: false, write: false, error: 'boom' });
+    await s.waitIdle();
+    expect((await s.jobs()).find((j) => j.id === job.id)?.state).toBe('failed');
+    expect((await s.creative()).stoppedSession).toMatchObject({ sessionId: 'kept-session' });
+  });
+
+  it('a CLI that cannot start is an ordinary failure: no fallback, the remembered session stays', async () => {
+    await setup();
+    s.runner.failStart = () => ({ error: 'claude not found', startFailed: true });
+    const job = (await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Secondo' } })).json();
+    await s.waitIdle();
+    expect((await s.jobs()).find((j) => j.id === job.id)?.state).toBe('failed');
+    expect(s.runner.runs).toHaveLength(2);
+    expect((await s.creative()).stoppedSession).toMatchObject({ sessionId: 'kept-session' });
+    expect((await s.conversation()).some((e) => e.type === 'system' && e.text === it_.stoppedSessionUnavailable)).toBe(false);
+  });
+
+  it('a failure after the agent wrote something is an ordinary failure even when resuming', async () => {
+    await setup();
+    s.runner.failStart = () => ({ error: 'exit code 1', session: true, output: true });
+    const job = (await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Secondo' } })).json();
+    await s.waitIdle();
+    expect((await s.jobs()).find((j) => j.id === job.id)?.state).toBe('failed');
+    expect(s.runner.runs).toHaveLength(2);
+    expect((await s.creative()).stoppedSession).toMatchObject({ sessionId: 'kept-session' });
   });
 });

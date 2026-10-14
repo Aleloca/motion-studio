@@ -101,7 +101,7 @@ export class ClaudeCodeRunner implements AgentRunner {
     try { cwdIsDir = statSync(req.cwd).isDirectory(); } catch { /* reported below */ }
     if (!cwdIsDir) {
       return {
-        done: Promise.resolve({ status: 'failed', error: t().providers.projectFolderMissing({ path: req.cwd }) }),
+        done: Promise.resolve({ status: 'failed', error: t().providers.projectFolderMissing({ path: req.cwd }), startFailed: true }),
         cancel: () => {},
         send: async () => 'closed',
         interrupt: async () => 'unsupported',
@@ -237,8 +237,8 @@ export class ClaudeCodeRunner implements AgentRunner {
       });
       child.on('error', (err: NodeJS.ErrnoException) => {
         settle(err.code === 'ENOENT'
-          ? { status: 'failed', error: t().providers.claudeNotFound({ bin }) }
-          : { status: 'failed', error: t().providers.claudeCannotStart({ detail: err.message }) });
+          ? { status: 'failed', error: t().providers.claudeNotFound({ bin }), startFailed: true }
+          : { status: 'failed', error: t().providers.claudeCannotStart({ detail: err.message }), startFailed: true });
       });
       child.on('close', (code, sig) => { exited ??= { code, signal: sig }; finish(); });
     });

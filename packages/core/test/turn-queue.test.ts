@@ -159,3 +159,43 @@ describe('a Stop while the version is being saved', () => {
     expect(await queuedTexts()).toEqual(['Dopo']);
   });
 });
+
+describe('Ruling U: the queue goes on by itself only after a saved version', () => {
+  it('after a failed turn the queue waits for Run next', async () => {
+    s = await liveApp();
+    const job = (await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } })).json();
+    const run = await s.runner.next(0);
+    await queue(cid(), 'Dopo il fallimento');
+    run.finish({ ok: false, write: false, error: 'boom' });
+    await s.waitIdle();
+    expect((await s.jobs()).find((j) => j.id === job.id)?.state).toBe('failed');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(s.runner.runs).toHaveLength(1);
+    expect(await queuedTexts()).toEqual(['Dopo il fallimento']);
+    // A message to the idle creative does not start it either: Run next does.
+    await queue(cid(), 'Ancora');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(s.runner.runs).toHaveLength(1);
+    expect((await s.app.inject({ method: 'POST', url: `${s.url}/queue/run-next` })).statusCode).toBe(202);
+    const next = await s.runner.next(1);
+    expect(next.req.prompt).toContain('Dopo il fallimento');
+    next.finish();
+    // That turn saved a version: the second request starts by itself.
+    const third = await s.runner.next(2);
+    expect(third.req.prompt).toContain('Ancora');
+    third.finish();
+    await s.waitIdle();
+  });
+
+  it('after a /cancel the queue waits too', async () => {
+    s = await liveApp();
+    const job = (await s.app.inject({ method: 'POST', url: `${s.url}/turns`, payload: { text: 'Primo' } })).json();
+    await s.runner.next(0);
+    await queue(cid(), 'Dopo');
+    await s.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/cancel` });
+    await s.waitIdle();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(s.runner.runs).toHaveLength(1);
+    expect(await queuedTexts()).toEqual(['Dopo']);
+  });
+});

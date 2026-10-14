@@ -52,6 +52,8 @@ export interface AgentRunResult {
   status: 'succeeded' | 'failed' | 'cancelled';
   sessionId?: string;
   error?: string;
+  /** The CLI could not be started at all (missing binary or project folder, spawn error): never a resume error (Ruling V). */
+  startFailed?: boolean;
   /** Set by AgentLauncher: the run's ledger record (per-run values), null when the run reported no usage at all. */
   usage?: UsageRecord | null;
 }

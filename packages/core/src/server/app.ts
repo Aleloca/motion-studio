@@ -59,7 +59,7 @@ import { KeyedMutex } from '../keyed-mutex.ts';
 import { tokenMatches } from './ui-token.ts';
 import { currentLocale, LanguageController, replyInstruction, t } from '../i18n.ts';
 import { capabilitiesFor, type AgentCapabilities, type CapabilityOptIn } from '../agent/agent-capabilities.ts';
-import { liveMessageText, LiveSession } from '../agent/live-session.ts';
+import { AnswerCache, checkLiveMessage, liveMessageText, LiveSession, newLiveMessage, redirectLive } from '../agent/live-session.ts';
 import { CONSOLE_REDIRECT_NOTE, defuseTags, pinLine, USER_REQUEST_CLOSE, USER_REQUEST_OPEN } from '../creatives/prompt.ts';
 import { stopJob } from '../jobs/stop.ts';
 import { randomUUID } from 'node:crypto';
@@ -232,12 +232,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
   // Phase 13, Ruling T: this start of the core (queued requests made under another one wait for "Run next").
   const bootId = randomUUID();
   /** Phase 13: a creative's translation turn ended: the creative's queue may start (set once the turn service exists). */
-  let afterOtherJob: ((key: string) => void) | null = null;
+  let afterOtherJob: ((key: string, state: string) => void) | null = null;
   const queue = new JobQueue({
     concurrency: 2, lanes: { render: 1, generate: 2 },
     onUpdate: (job) => {
       hub.broadcast({ type: 'job', job });
-      if (job.kind === 'localize' && job.state !== 'queued' && job.state !== 'running') afterOtherJob?.(job.key);
+      if (job.kind === 'localize' && job.state !== 'queued' && job.state !== 'running') afterOtherJob?.(job.key, job.state);
     },
   });
   const media = deps.media ?? NoMediaTools;
@@ -339,68 +339,47 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
     ...(deps.previewFramesPerTurn !== undefined ? { previewFramesPerTurn: deps.previewFramesPerTurn } : {}),
   });
 
-  afterOtherJob = (key) => { void turns.otherJobEndedByKey(key); };
+  afterOtherJob = (key, state) => { void turns.otherJobEndedByKey(key, state); };
 
-  // Phase 13: the console turns' live side, by job id, while they run.
+  // Phase 13: the console turns' live side, by job id, while they run (the same live module as creative turns, I3).
   const consoleLive = new Map<string, LiveSession>();
   /** Answers by job and clientId (idempotency); a pending one is shared by a double click. */
-  const consoleAnswers = new Map<string, Promise<unknown>>();
-  const consoleOnce = <T>(id: string, fn: () => Promise<T>): Promise<T> => {
-    const had = consoleAnswers.get(id);
-    if (had) return had as Promise<T>;
-    const p = fn();
-    consoleAnswers.set(id, p);
-    if (consoleAnswers.size > 1000) consoleAnswers.delete(consoleAnswers.keys().next().value!);
-    p.catch(() => { if (consoleAnswers.get(id) === p) consoleAnswers.delete(id); });
-    return p;
-  };
-  const checkLive = (b: LiveBody) => {
-    const text = b.text.trim();
-    if (!text && !(b.pins?.length)) throw new CodedError(400, t().live.emptyMessage, 'empty-message');
-    if (text.length > LIVE_LIMITS.maxChars) throw new CodedError(409, t().live.tooLong({ max: LIVE_LIMITS.maxChars }), 'limit');
-    return { clientId: b.clientId, text, pins: b.pins ?? [] };
-  };
+  const consoleAnswers = new AnswerCache();
+  const toInput = (b: LiveBody) => checkLiveMessage({ clientId: b.clientId, text: b.text, pins: b.pins ?? [] });
   const consoleMessage = (jobId: string, b: LiveBody): Promise<{ outcome: 'delivered-pending' }> => {
-    const m = checkLive(b);
-    return consoleOnce(`m\0${jobId}\0${m.clientId}`, async () => {
+    const m = toInput(b);
+    return consoleAnswers.once(`m\0${jobId}\0${m.clientId}`, async () => {
       const live = consoleLive.get(jobId);
-      if (!live || live.phase === 'ended') throw new CodedError(409, t().live.consoleTurnOver, 'not-running');
+      if (!live) throw new CodedError(409, t().live.consoleTurnOver, 'not-running');
+      // The phase is checked inside the chain: a run that just ended never takes a message it cannot read.
       return live.serial(async () => {
         if (!live.caps.liveInput) throw new CodedError(409, t().live.consoleLiveOff, 'live-off');
         if (live.messages.length >= LIVE_LIMITS.perTurn) throw new CodedError(409, t().live.tooManyLive({ max: LIVE_LIMITS.perTurn }), 'limit');
         const run = live.phase === 'agent' ? live.run : null;
         const sent = run ? await run.send?.({ text: liveMessageText(m.text, m.pins, pinLine), clientId: m.clientId }) : 'closed';
         if (sent !== 'written') throw new CodedError(409, t().live.consoleTurnOver, 'not-running');
-        live.messages.push({ ...m, mode: 'live', state: 'sent' });
+        const msg = newLiveMessage(m, 'live');
+        live.messages.push(msg);
+        live.given(msg, 'sent');
         queue.patch(jobId, { liveMessages: live.messages.length });
         return { outcome: 'delivered-pending' as const };
       });
     });
   };
   const consoleRedirect = (jobId: string, b: LiveBody): Promise<{ outcome: RedirectOutcome }> => {
-    const m = checkLive(b);
-    return consoleOnce(`r\0${jobId}\0${m.clientId}`, async () => {
+    const m = toInput(b);
+    return consoleAnswers.once(`r\0${jobId}\0${m.clientId}`, async () => {
       const live = consoleLive.get(jobId);
-      if (!live || live.phase === 'ended') throw new CodedError(409, t().live.notRunning, 'not-running');
-      if (live.messages.length >= LIVE_LIMITS.perTurn) throw new CodedError(409, t().live.tooManyLive({ max: LIVE_LIMITS.perTurn }), 'limit');
-      // No spending after a redirect: the open approvals go first, then the running tools.
-      approvals.cancelJob(jobId);
-      live.abortTools();
-      return live.serial(async (): Promise<{ outcome: RedirectOutcome }> => {
-        const msg = { ...m, mode: 'redirect' as const, state: 'pending' as const };
-        live.messages.push(msg);
-        queue.patch(jobId, { liveMessages: live.messages.length });
-        const run = live.phase === 'agent' ? live.run : null;
-        if (run && live.caps.interrupt && (await run.interrupt?.()) === 'interrupted'
-          && (await run.send?.({ text: liveMessageText(m.text, m.pins, pinLine), clientId: m.clientId })) === 'written') {
-          live.messages[live.messages.length - 1] = { ...msg, state: 'sent' };
-          return { outcome: 'interrupted' };
-        }
-        live.redirect = msg;
-        hub.broadcast({ type: 'agent', jobId, event: { kind: 'interrupted' } });
-        run?.cancel();
-        return { outcome: 'restarted' };
+      if (!live) throw new CodedError(409, t().live.notRunning, 'not-running');
+      const outcome = await redirectLive(live, m, {
+        cancelApprovals: () => approvals.cancelJob(jobId),
+        // The console has no queue: a redirect after the turn is refused and the UI keeps the words.
+        late: async () => { throw new CodedError(409, t().live.notRunning, 'not-running'); },
+        record: async (_msg, count) => { queue.patch(jobId, { liveMessages: count }); },
+        interrupted: () => hub.broadcast({ type: 'agent', jobId, event: { kind: 'interrupted' } }),
+        text: (msg) => liveMessageText(msg.text, msg.pins, pinLine),
       });
+      return { outcome };
     });
   };
 
@@ -594,9 +573,10 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
                 live.redirect = null;
                 return r;
               });
-              // Phase 13 fallback redirect: the run was stopped for it; a new run in the same job resumes its session.
-              if (redirect && !signal.aborted && result.status !== 'succeeded') {
-                redirect.state = 'prompt';
+              // Phase 13 fallback redirect: the run was stopped for it (or had just ended: the words still get a run); a new
+              // run in the same job resumes its session. A failed resume is an ordinary failure (no loop).
+              if (redirect && !signal.aborted) {
+                live.given(redirect, 'prompt');
                 hub.broadcast({ type: 'agent', jobId: id, event: { kind: 'user_message_delivered', clientId: redirect.clientId } });
                 prompt = consoleRedirectPrompt(liveMessageText(redirect.text, redirect.pins, pinLine));
                 resume = live.sessionId ?? resume;
@@ -607,8 +587,12 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
               return result.status === 'cancelled' ? 'cancelled' : undefined;
             }
           } finally {
-            live.phase = 'ended';
-            live.run = null;
+            // In the chain, so a redirect either was taken above or sees `ended`; whatever is left is answered as not
+            // delivered (409, the UI keeps the words): the console has no queue (I1).
+            await live.serial(async () => { live.phase = 'ended'; live.run = null; });
+            for (const m of live.messages) m.settle('dropped');
+            live.redirect?.settle('dropped');
+            live.redirect = null;
           }
         },
       });

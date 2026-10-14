@@ -79,3 +79,36 @@ describe('console live messages', () => {
     expect(s.runner.runs).toHaveLength(1);
   });
 });
+
+describe('console redirect at the edge of the run (fix round 1, I1)', () => {
+  it('right after the run ended: a run takes the words, or the answer is a 409 (never a lost restarted)', async () => {
+    s = await liveApp();
+    const job = await startConsole();
+    const run = await s.runner.next(0);
+    await vi.waitFor(async () => expect((await s.jobs()).find((j) => j.id === job.id)?.sessionId).toBe(run.sessionId));
+    run.finish({ write: false });
+    const res = await s.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/redirect`, payload: { clientId: cid(), text: 'Solo .ts' } });
+    if (res.statusCode === 200) {
+      expect(res.json()).toEqual({ outcome: 'restarted' });
+      const next = await s.runner.next(1);
+      expect(next.req.prompt).toContain('Solo .ts');
+      next.finish({ write: false });
+    } else {
+      expect(res.statusCode).toBe(409);
+      expect(res.json().code).toBe('not-running');
+    }
+    await s.waitIdle();
+    expect((await s.jobs()).find((j) => j.id === job.id)?.state).toBe('succeeded');
+  });
+
+  it('after the turn settled: a translated 409, nothing started', async () => {
+    s = await liveApp();
+    const job = await startConsole();
+    (await s.runner.next(0)).finish({ write: false });
+    await s.waitIdle();
+    const res = await s.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/redirect`, payload: { clientId: cid(), text: 'tardi' } });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({ code: 'not-running', error: it_.notRunning });
+    expect(s.runner.runs).toHaveLength(1);
+  });
+});

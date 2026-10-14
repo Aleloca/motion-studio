@@ -253,11 +253,11 @@ describe('ClaudeCodeRunner', () => {
   });
   it('reports a missing project folder without spawning', async () => {
     const res = await runner().start({ cwd: join(tmpdir(), 'ms-does-not-exist-xyz'), prompt: 'x' }, () => {}).done;
-    expect(res).toEqual({ status: 'failed', error: `Cartella del progetto non trovata: ${join(tmpdir(), 'ms-does-not-exist-xyz')}` });
+    expect(res).toEqual({ status: 'failed', error: `Cartella del progetto non trovata: ${join(tmpdir(), 'ms-does-not-exist-xyz')}`, startFailed: true });
   });
   it('fails clearly when the claude binary does not exist', async () => {
     const r = new ClaudeCodeRunner(['definitely-not-claude-ms']);
     const res = await r.start({ cwd: tmpdir(), prompt: 'x' }, () => {}).done;
-    expect(res).toEqual({ status: 'failed', error: 'Comando claude non trovato (definitely-not-claude-ms). Installa Claude Code o controlla il Doctor.' });
+    expect(res).toEqual({ status: 'failed', error: 'Comando claude non trovato (definitely-not-claude-ms). Installa Claude Code o controlla il Doctor.', startFailed: true });
   });
 });

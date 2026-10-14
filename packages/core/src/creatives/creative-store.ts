@@ -237,10 +237,14 @@ export class CreativeStore {
   /** The session the agent reported in the turn after the last version (the latest one), with its job; null: none. */
   async lastTurnSession(slug: string): Promise<{ sessionId: string; at: string; jobId: string } | null> {
     const entries = await this.readConversation(slug);
+    // Only the cut turn's job (the last agent job after the last version): never an earlier, failed turn's session.
+    let cut: string | null = null;
     for (let i = entries.length - 1; i >= 0; i--) {
       const e = entries[i]!;
       if (e.type === 'version') return null;
       if (e.type !== 'agent' || typeof e.jobId !== 'string' || !e.jobId) continue;
+      cut ??= e.jobId;
+      if (e.jobId !== cut) return null;
       const sid = e.event?.kind === 'session' || e.event?.kind === 'result' ? e.event.sessionId : undefined;
       if (typeof sid === 'string' && /^[A-Za-z0-9][A-Za-z0-9-]{0,127}$/.test(sid)) return { sessionId: sid, at: new Date().toISOString(), jobId: e.jobId };
     }
