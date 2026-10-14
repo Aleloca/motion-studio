@@ -184,13 +184,13 @@ describe('render problems of a translation (Rulings I, J)', { timeout: 120_000 }
     const r = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, headers: H, payload: { destination: dest, picks: { 'test-wide': 1 }, locales: ['en', 'de'] } });
     expect(r.statusCode, r.body).toBe(200);
     const body = r.json();
-    expect(readdirSync(dest)).toEqual(['launch-test-wide-en-v1.mp4']);
+    expect(readdirSync(dest)).toEqual(['launch-test-wide-v1.mp4']);
     expect(body.excluded).toEqual([{ format: 'test-wide', version: 1, locale: 'de', problems: [v().textOverflowMeasured({ clip: 'Title', fit: 100 })], issues: [] }]);
     expect(body.rendered).toEqual(expect.arrayContaining([{ version: 1, formats: ['test-wide'], locale: 'de' }]));
     // Asked again (the user has seen the problems): copied.
     const again = await env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, headers: H, payload: { destination: dest, picks: { 'test-wide': 1 }, locales: ['de'] } });
     expect(again.statusCode, again.body).toBe(200);
-    expect(readdirSync(dest).sort()).toEqual(['launch-test-wide-de-v1.mp4', 'launch-test-wide-en-v1.mp4']);
+    expect(readdirSync(dest).sort()).toEqual(['launch-test-wide-v1-de.mp4', 'launch-test-wide-v1.mp4']);
   });
 });
 
@@ -225,12 +225,13 @@ describe('fallback font hashes (Ruling L)', { timeout: 120_000 }, () => {
 describe('export per language', { timeout: 120_000 }, () => {
   const exportPicks = (slug: string, payload: object) => env.app.inject({ method: 'POST', url: `/api/projects/acme/creatives/${slug}/export`, headers: H, payload: { destination: dest, ...payload } });
 
-  it('exports the chosen languages; the default pattern gains {locale} for a creative with extra languages, rendering first', async () => {
+  it('exports the chosen languages with no pattern sent: the workspace default, as the dialog (Ruling R), rendering first', async () => {
     const slug = await create();
     await put(slug, 1, 'de', 'test-wide', { texts: { title: 'Hallo' } });
     const r = await exportPicks(slug, { picks: { 'test-wide': 1 }, locales: ['en', 'de'], date: '2026-10-13' });
     expect(r.statusCode, r.body).toBe(200);
-    expect(readdirSync(dest).sort()).toEqual(['launch-test-wide-de-v1.mp4', 'launch-test-wide-en-v1.mp4']);
+    // The original keeps today's name; the translation gets its language (the same names the dialog sends and shows).
+    expect(readdirSync(dest).sort()).toEqual(['launch-test-wide-v1-de.mp4', 'launch-test-wide-v1.mp4']);
     // Only the German file was rendered for the translation, from the localized composition.
     expect(env.fake.renders.map((x) => x.out.split('/').pop()).sort()).toEqual(['test-wide.de.mp4', 'test-wide.mp4']);
   });
@@ -257,7 +258,7 @@ describe('export per language', { timeout: 120_000 }, () => {
     expect(readdirSync(dest)).toEqual([]);
     const ok = await exportPicks(slug, { picks: { 'test-wide': 1 }, locales: ['de'], force: true });
     expect(ok.statusCode, ok.body).toBe(200);
-    expect(readdirSync(dest)).toEqual([expect.stringMatching(/^launch-test-wide-de-v1\.mp4$/)]);
+    expect(readdirSync(dest)).toEqual(['launch-test-wide-v1-de.mp4']);
     const none = await exportPicks(slug, { picks: { 'test-tall': 1 }, locales: ['de'] });
     expect(none.statusCode).toBe(409);
     expect(none.json().code).toBe('localization-missing');

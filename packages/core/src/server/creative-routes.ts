@@ -4,7 +4,7 @@ import { lstat, readdir, realpath } from 'node:fs/promises';
 import { basename, dirname, join, sep } from 'node:path';
 import { changedAssets, overlayAssetPaths, readOverlay } from '../localization/store.ts';
 import type { FastifyInstance } from 'fastify';
-import { DEFAULT_EXPORT_NAME_PATTERN, defaultPattern, messages, type JobSummary, INSTANCE_FOLDER_RE, briefSchema, briefWriteSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow } from '@motion-studio/shared';
+import { messages, type JobSummary, INSTANCE_FOLDER_RE, briefSchema, briefWriteSchema, type PinFramesView, checkLink, defaultLinks, effectiveLinks, formatDisplayName, isExportDate, issuesText, renderProblems, linkedCodebaseSchema, pinSchema, type Brief, type CreativeDetail, type OutputIssue, type FormatPreset, type RecentCreative, type ServerMessage, type LocalizationRow } from '@motion-studio/shared';
 import { z } from 'zod';
 import { brandJobKey } from '../brand/brand-analysis.ts';
 import { assertCodebasesOutside, normalizeCodebaseList } from '../codebases.ts';
@@ -376,12 +376,12 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const creativeDir = ref.store.dir(ref.creativeSlug);
     const presets = (await catalog().load()).presets;
     // The pattern sent (else the workspace's) and the date the client previewed (else today) apply to both payloads.
-    // Languages (Phase 12): the default pattern names the language when the creative has extra languages.
+    // Languages (Phase 12): with extra languages the original's `{locale}` is the primary tag.
     const extraLocales = creative.brief.locales?.extra ?? [];
     const primaryLocale = extraLocales.length > 0 ? creative.brief.locales?.primary : undefined;
-    const settingsPattern = typeof body.pattern === 'string' ? null : (await ctx.requireWorkspace().readSettings()).exportNamePattern;
-    const pattern = typeof body.pattern === 'string' ? body.pattern
-      : settingsPattern === DEFAULT_EXPORT_NAME_PATTERN ? defaultPattern(extraLocales.length > 0) : settingsPattern!;
+    // Ruling R: one naming rule for the dialog and this default. The workspace pattern as it is: the original's names stay
+    // today's, and each translated file gets its language (`localizedStem`), exactly as the dialog sends and shows them.
+    const pattern = typeof body.pattern === 'string' ? body.pattern : (await ctx.requireWorkspace().readSettings()).exportNamePattern;
     const tags = body.locales ? [...new Set(body.locales.map((x) => checkedLocale(x, currentLocale())))] : null;
     // The brief's primary language is today's file, also for a creative whose extra languages were all removed.
     const briefPrimary = creative.brief.locales?.primary;

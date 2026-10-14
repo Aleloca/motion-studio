@@ -319,7 +319,9 @@ describe('Export in several languages', () => {
     await userEvent.click(screen.getByRole('checkbox', { name: 'German' }));
     await userEvent.click(screen.getByRole('button', { name: 'Export 1 file' }));
     await waitFor(() => expect(api.exportPicks).toHaveBeenCalledOnce());
-    expect(api.exportPicks.mock.calls[0]![2]).toMatchObject({ locales: ['en', 'de'] });
+    // Ruling R: the workspace pattern as it is (the core names the translation `…-de`, the original as today), the same
+    // rule as the core's default when no pattern is sent.
+    expect(api.exportPicks.mock.calls[0]![2]).toMatchObject({ locales: ['en', 'de'], pattern: '{title}-{format}-v{v}' });
     expect(api.prepareExport.mock.calls[0]![2]).toMatchObject({ locales: ['en', 'de'] });
   });
 

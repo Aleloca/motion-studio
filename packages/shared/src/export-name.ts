@@ -9,7 +9,10 @@ export type ExportNameToken = (typeof EXPORT_NAME_TOKENS)[number];
 /** `locale` is optional: absent or empty, the token renders as nothing (a creative without extra languages). */
 export type ExportNameVars = Record<Exclude<ExportNameToken, 'locale'>, string | number> & { locale?: string | number };
 export const DEFAULT_EXPORT_NAME_PATTERN = '{title}-{format}-v{v}';
-/** The default pattern; with languages (a creative with extra locales) the file name carries the language. */
+/**
+ * The default pattern with `{locale}` for a creative with extra locales. Since Ruling R (final wave) the export does not use it
+ * as a default: the workspace pattern applies, and translated files get their language through `localizedStem`.
+ */
 export const defaultPattern = (hasLocales: boolean): string => (hasLocales ? '{title}-{format}-{locale}-v{v}' : DEFAULT_EXPORT_NAME_PATTERN);
 /** The longest name, extension excluded. */
 export const EXPORT_NAME_MAX = 120;
