@@ -180,6 +180,11 @@ export async function recoverWorkspace(ws: WorkspaceStore, isJobActive: (key: st
     if (!p.ok) continue;
     const dir = ws.projectDir(p.slug);
     const side = ro.sideState;
+    // Fix round 1 (M2): every creative gets its side record now, before any agent can run, so `queued`/`stoppedSession`
+    // written into a creative.json later (by anyone) are never taken as the user's, even in a creative nobody opened yet.
+    if (side) {
+      for (const c of await new CreativeStore(dir).list().catch(() => [])) await side.read(dir, c.slug).catch(() => {});
+    }
     const remember = side ? (slug: string, s: StoppedSession) => side.update(dir, slug, () => ({ stoppedSession: s })) : undefined;
     await new CreativeStore(dir).recoverInterrupted((slug) => isJobActive(creativeJobKey(ws.root, p.slug, slug)), remember).catch((err: Error) => {
       console.warn(`Motion Studio: creative recovery failed in project ${p.slug}: ${err.message}`);
@@ -267,6 +272,8 @@ export function registerCreativeRoutes(app: FastifyInstance, ctx: CreativeRoutes
     const links = initialLinks(body.brief, (await catalog().load()).presets);
     const created = await store.create({ title: body.title, brief: { ...body.brief, links } });
     const slug = created.slug;
+    // Fix round 1 (M2): its side record exists from the start (nothing written into its creative.json later is trusted).
+    await ctx.turns.side.read(ws.projectDir(req.params.slug), slug);
     const creative = linkedCodebases ? await store.update(slug, { linkedCodebases }) : created.creative;
     const ref = { root: ws.root, projectSlug: req.params.slug, projectDir: ws.projectDir(req.params.slug), creativeSlug: slug };
     const job = body.generate ? await ctx.turns.start(ref) : null;

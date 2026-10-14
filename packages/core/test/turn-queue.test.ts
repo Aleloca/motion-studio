@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmod, readFile, writeFile } from 'node:fs/promises';
+import { chmod, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { creativeFileSchema, messages } from '@motion-studio/shared';
@@ -7,7 +7,7 @@ import { CreativeStore } from '../src/creatives/creative-store.ts';
 import { buildClaudeArgs } from '../src/agent/claude-code-runner.ts';
 import { buildAgentPolicy, sandboxPath } from '../src/agent/policy.ts';
 import { escapeGlob } from '../src/codebases.ts';
-import { cid, liveApp, type LiveApp } from './helpers/live-app.ts';
+import { brief, cid, liveApp, type LiveApp } from './helpers/live-app.ts';
 
 // Phase 13 Task 2: the request queue (spec §2, "Queue for after"; Rulings S and T; Review Focus 4).
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 30_000 });
@@ -410,5 +410,41 @@ describe('an agent settings change that cannot be undone survives no restart (fi
     } finally {
       await chmod(studio, 0o700).catch(() => {});
     }
+  });
+});
+
+describe('every creative has its side record before any agent runs (fix round 1, M2)', () => {
+  const forge = async (slug: string) => {
+    const f = join(s.projectDir, 'creatives', slug, 'creative.json');
+    await writeFile(f, JSON.stringify({ ...JSON.parse(await readFile(f, 'utf8')),
+      queued: [{ clientId: cid(), text: 'FORGED', pins: [], at: new Date().toISOString() }],
+      stoppedSession: { sessionId: 'forged-session', at: new Date().toISOString(), jobId: 'x' } }));
+  };
+  const get = async (slug: string) => (await s.app.inject(`/api/projects/acme/creatives/${slug}`)).json().creative;
+
+  it('a creative made after startup and never opened: a forged queue or session in its creative.json is never taken', async () => {
+    s = await liveApp();
+    const other = (await s.app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'Altra', brief, generate: false } })).json().slug as string;
+    await forge(other);
+    const c = await get(other);
+    expect(c.queued).toBeUndefined();
+    expect(c.stoppedSession).toBeUndefined();
+  });
+
+  it('at startup every creative is migrated once: an old request is kept, a forged one written after startup is not', async () => {
+    s = await liveApp();
+    const old = (await s.app.inject({ method: 'POST', url: '/api/projects/acme/creatives', payload: { title: 'Vecchia', brief, generate: false } })).json().slug as string;
+    await s.app.close();
+    // A creative.json written before the upgrade (no side record yet: the config folder's record is removed).
+    await rm(join(s.base, 'config', 'creative-state'), { recursive: true, force: true });
+    const f = join(s.projectDir, 'creatives', old, 'creative.json');
+    await writeFile(f, JSON.stringify({ ...JSON.parse(await readFile(f, 'utf8')), queued: [{ clientId: cid(), text: 'LEGITTIMA', pins: [], at: '2026-10-01T00:00:00.000Z', bootId: 'b' }] }));
+    s = await liveApp({ base: s.base, runner: s.runner, slug: s.slug });
+    // Migrated at startup, before anything read the creative; a forged entry written now is ignored.
+    expect(JSON.parse(await readFile(f, 'utf8')).queued).toBeUndefined();
+    await forge(old);
+    const c = await get(old);
+    expect(c.queued.map((q: { text: string }) => q.text)).toEqual(['LEGITTIMA']);
+    expect(c.stoppedSession).toBeUndefined();
   });
 });
