@@ -170,24 +170,28 @@
 @media (max-width: 760px) { .ms-fv-render-bar { display: none; } }
 .ms-fv-render-short { display: none; }
 
-/* A narrow bar (final wave I2, decision 713). The bar is a size container (shell.css): the steps read its content width,
-   so the macOS title bar's 80 px count. Measured in Italian, the longest, with everything it carries
-   (topbar-render-layout.test.tsx): the actions fold to their icons in three steps, each keeping its name (aria-label) and
-   a tooltip (title); the format's name keeps room. Esporta, the primary action, keeps its label. */
+/* The format view's bar, narrow (final wave I2, decision 713). Only the bar the format view claimed (`.ms-bar-fv`, set by
+   TopBars.tsx) is a size container and folds: the creative board, the editor and every other bar are unchanged. The steps
+   read the bar's content width, so the macOS title bar's 80 px count. Measured in Italian, the longest, with everything
+   the bar carries (topbar-render-layout.test.tsx): the actions fold to their icons in three steps, each keeping its name
+   (aria-label) and a tooltip (title); the format's name keeps room. Esporta, the primary action, keeps its label; so does
+   "Render video" (live preview, failed render) down to the last step. */
+.ms-topbar.ms-bar-fv { container: ms-topbar / inline-size; }
 @container ms-topbar (max-width: 1760px) {
-  .ms-fold-1 > .ms-bar-label, .ms-fv-render-long { display: none; }
-  .ms-fv-render-short { display: inline; }
-  .ms-btn.ms-fold-1 { width: 28px; padding: 0; gap: 0; }
+  .ms-bar-fv .ms-fold-1 > .ms-bar-label, .ms-bar-fv .ms-fv-render-long { display: none; }
+  .ms-bar-fv .ms-fv-render-short { display: inline; }
+  .ms-bar-fv .ms-btn.ms-fold-1 { width: 28px; padding: 0; gap: 0; }
 }
 @container ms-topbar (max-width: 1500px) {
-  .ms-fold-2 > .ms-bar-label, .ms-cv-vbtn > .ms-bar-label, .ms-fv-meta { display: none; }
-  .ms-btn.ms-fold-2 { width: 32px; padding: 0; gap: 0; }
+  .ms-bar-fv .ms-fold-2 > .ms-bar-label, .ms-bar-fv .ms-cv-vbtn > .ms-bar-label, .ms-bar-fv .ms-fv-meta { display: none; }
+  .ms-bar-fv .ms-btn.ms-fold-2 { width: 32px; padding: 0; gap: 0; }
 }
 @container ms-topbar (max-width: 1100px) {
-  .ms-fold-3 > .ms-bar-label { display: none; }
-  .ms-btn.ms-fold-3 { width: 32px; padding: 0; gap: 0; }
-  /* The project and creative crumbs give way before the page's own name. */
-  .ms-crumbs > .ms-crumb:not(.ms-last) { flex-shrink: 8; }
+  .ms-bar-fv .ms-fold-3 > .ms-bar-label { display: none; }
+  .ms-bar-fv .ms-btn.ms-fold-3 { width: 32px; padding: 0; gap: 0; }
+  .ms-bar-fv .ms-btn.ms-sm.ms-fold-3 { width: 28px; }
+  /* The project and creative crumbs give way before the format's name. */
+  .ms-bar-fv .ms-crumbs > .ms-crumb:not(.ms-last) { flex-shrink: 8; }
 }
 /* While one of them is busy its spinner sits next to the icon. */
-.ms-btn.ms-busy:is(.ms-fold-1, .ms-fold-2, .ms-fold-3) { width: auto; padding-inline: 6px; }
+.ms-bar-fv .ms-btn.ms-busy:is(.ms-fold-1, .ms-fold-2, .ms-fold-3) { width: auto; padding-inline: 6px; }

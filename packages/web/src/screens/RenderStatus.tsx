@@ -100,7 +100,7 @@ export function RenderStatus({ slug, creative, version, format, label, jobs, job
         ) : null
       ) : null}
       {!working ? (
-        <Button size="sm" variant={done ? 'ghost' : 'outline'} className="ms-fold-1" disabled={busy} loading={starting} aria-label={r.renderVideoOf({ label })} title={done ? r.renderAgain : r.renderVideo} onClick={() => void start()}>
+        <Button size="sm" variant={done ? 'ghost' : 'outline'} className={done ? 'ms-fold-1' : 'ms-fold-3'} disabled={busy} loading={starting} aria-label={r.renderVideoOf({ label })} title={done ? r.renderAgain : r.renderVideo} onClick={() => void start()}>
           <Icon name="video" size={13} /><span className="ms-bar-label">{done ? r.renderAgain : r.renderVideo}</span>
         </Button>
       ) : null}

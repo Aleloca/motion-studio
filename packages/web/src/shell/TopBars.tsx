@@ -224,6 +224,8 @@ export function TopBar() {
   const projectName = (slug: string) => catalog.projects?.find((p) => p.slug === slug)?.name ?? slug;
   const creativeTitle = (slug: string, c: string) => catalog.creatives[slug]?.find((x) => x.slug === c)?.title || c;
   let content: ReactNode;
+  /** The format view claimed the bar: only that bar folds its actions by its width (format.css, decision 713). */
+  let formatBar = false;
   switch (r.name) {
     case 'project':
       content = <ProjectTop slug={r.slug} tab={r.tab} />;
@@ -242,6 +244,7 @@ export function TopBar() {
       // The format view puts "← All formats" (T4), the format and the version controls in the bar; until it does, the
       // bar's own back button and the format id.
       const claimed = owner === routeKey(r);
+      formatBar = claimed;
       content = <CreativeTop back={claimed ? null : { label: t.web.shell.backAllFormats, hash: href.creative(r.slug, r.creative) }} slots claimed={claimed}
         crumbs={claimed ? [projectName(r.slug), creativeTitle(r.slug, r.creative)] : [projectName(r.slug), creativeTitle(r.slug, r.creative), <span className="ms-mono">{r.format}</span>]} />;
       break;
@@ -260,5 +263,5 @@ export function TopBar() {
       content = <GlobalTop />;
   }
   // Desktop: the bar is the window's title bar (drag region, room for the window controls); no change in a browser.
-  return <header ref={ref} className={cx('ms-topbar', titleBar)}>{content}</header>;
+  return <header ref={ref} className={cx('ms-topbar', formatBar && 'ms-bar-fv', titleBar)}>{content}</header>;
 }

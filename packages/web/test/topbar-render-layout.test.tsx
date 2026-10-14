@@ -30,17 +30,19 @@ const version = (n: number, rendered: boolean): VersionEntry => ({
   outputs: rendered ? [{ ...out(VIDEO, 'tiktok.mp4', 8), sha256: 'd'.repeat(64), fromComposition: H }] : [],
   compositions: [{ format: VIDEO, dir: `compositions/${VIDEO}`, hash: H }],
 });
-const detail: CreativeDetail = {
-  slug: 'lancio', jobKey: 'creative:/w:acme:lancio', versions: [version(1, true), version(2, true)],
+/** `ready`: the shown version has a current render; `live`: none yet (the live preview, "Render video"). */
+let rendered = true;
+const detailOf = (): CreativeDetail => ({
+  slug: 'lancio', jobKey: 'creative:/w:acme:lancio', versions: [version(1, rendered), version(2, rendered)],
   creative: {
     schemaVersion: 1, title: 'Lancio estivo', status: 'ready', error: null, createdAt: at, updatedAt: at, resumeFrom: null, linkedCodebases: [],
     brief: { goal: 'g', message: 'm', formats: [VIDEO], durationSec: 8, assets: [], notes: '', locales: { primary: 'it', extra: ['en'] } },
   },
-} as unknown as CreativeDetail;
+} as unknown as CreativeDetail);
 
 const api = {
   getFormats: vi.fn(async () => ({ presets: DEFAULT_FORMATS, error: null, path: '/x' })),
-  getCreative: vi.fn(async () => detail),
+  getCreative: vi.fn(async () => detailOf()),
   getConversation: vi.fn(async () => []),
   fileUrl: (s: string, c: string, rel: string) => `/f/${s}/${c}/${rel}`,
   fileBytes: vi.fn(async () => 12_400_000),
@@ -62,8 +64,7 @@ const { TopBar } = await import('../src/shell/TopBars.tsx');
 const { ShellContext } = await import('../src/shell/ShellContext.tsx');
 
 const live = { approvals: {}, jobs: {}, events: {}, creativeTicks: {}, projectTicks: {} } as unknown as EventsState;
-function Harness() {
-  const route: Route = { name: 'format', slug: 'acme', creative: 'lancio', format: VIDEO };
+function Harness({ route = { name: 'format', slug: 'acme', creative: 'lancio', format: VIDEO }, page = true }: { route?: Route; page?: boolean }) {
   const shell = {
     route, live,
     catalog: { projects: [{ slug: 'acme', name: 'Acme' }], creatives: {}, refresh: () => {} },
@@ -73,25 +74,29 @@ function Harness() {
   return (
     <ShellContext.Provider value={shell}>
       <TopBar />
-      <FormatView slug="acme" creative="lancio" format={VIDEO} live={live} />
+      {page ? <FormatView slug="acme" creative="lancio" format={VIDEO} live={live} /> : null}
     </ShellContext.Provider>
   );
 }
 
-/** The bar's markup with a ready render, in the browser (Scarica) or in the desktop app (Mostra nel Finder). */
-async function barMarkup(desktopApp: boolean): Promise<string> {
+/**
+ * The bar's markup, in the browser (Scarica) or in the desktop app (Mostra nel Finder): with a ready render (Rifai il render)
+ * or on the live preview (Render video).
+ */
+async function barMarkup(desktopApp: boolean, state: 'ready' | 'live' = 'ready'): Promise<string> {
+  rendered = state === 'ready';
   location.hash = `#/p/acme/c/lancio/f/${VIDEO}`;
   const platform = vi.spyOn(navigator, 'platform', 'get').mockReturnValue('MacIntel');
   if (desktopApp) (window as unknown as { motionStudio: unknown }).motionStudio = { isDesktop: true, platform: 'darwin', pickFolder: async () => null, revealPath: async () => {} };
   try {
     render(<Harness />);
     const bar = () => document.querySelector('.ms-topbar') as HTMLElement;
-    await waitFor(() => expect(within(bar()).getAllByText('Video pronto · 12,4 MB').length).toBeGreaterThan(0));
+    await waitFor(() => expect(within(bar()).getAllByText(state === 'ready' ? 'Video pronto · 12,4 MB' : 'Anteprima dal vivo').length).toBeGreaterThan(0));
     await waitFor(() => expect(bar().querySelector('.ms-cv-edit')).not.toBeNull());
-    for (const name of [/^Rifai il render|Fai il render del video di/, desktopApp ? /Mostra nel Finder/ : /Scarica il video di/, /^Lingue/, /^Duplica/, /^Modifica/, /^Esporta/]) {
-      expect(within(bar()).getAllByRole('button', { name }).length, String(name)).toBeGreaterThan(0);
-    }
-    expect(screen.getAllByText('Rifai il render').length).toBeGreaterThan(0);
+    const names = [/Fai il render del video di/, /^Lingue/, /^Duplica/, /^Modifica/, /^Esporta/, ...(state === 'ready' ? [desktopApp ? /Mostra nel Finder/ : /Scarica il video di/] : [])];
+    for (const name of names) expect(within(bar()).getAllByRole('button', { name }).length, String(name)).toBeGreaterThan(0);
+    expect(screen.getAllByText(state === 'ready' ? 'Rifai il render' : 'Render video').length).toBeGreaterThan(0);
+    expect(bar().classList.contains('ms-bar-fv')).toBe(true);
     return bar().outerHTML;
   } finally {
     cleanup();
@@ -136,10 +141,11 @@ for (let i = 0; i < solid.length; i++) for (let j = i + 1; j < solid.length; j++
 }
 const name = bar.querySelector('.ms-fv-crumb b');
 const nameWidth = name ? name.getBoundingClientRect().width : 0;
-const iconOnly = [...bar.querySelectorAll('.ms-fv-render button')].filter(vis).map((b) => b.getBoundingClientRect().width);
+const iconOnly = [...bar.querySelectorAll('.ms-fv-render button.ms-fold-1')].filter(vis).map((b) => b.getBoundingClientRect().width);
+const renderLabel = [...bar.querySelectorAll('.ms-fv-render button.ms-fold-3 > .ms-bar-label')].some(vis);
 const unnamed = [...bar.querySelectorAll('button')].filter(vis).filter((b) => !(b.getAttribute('aria-label') || [...b.querySelectorAll('*')].concat([b]).some((n) => vis(n) && [...n.childNodes].some((c) => c.nodeType === 3 && c.textContent.trim())))).map((b) => b.className);
 const widths = [...bar.children].flatMap((c) => c.classList.contains('ms-bar-slot') ? [...c.children] : [c]).filter(vis).map((el) => (el.getAttribute('aria-label') || el.textContent || el.className).slice(0, 18) + '=' + Math.round(el.getBoundingClientRect().width));
-return { problems, widths, nameWidth: Math.round(nameWidth), slack: bar.clientWidth - bar.scrollWidth, iconOnly, unnamed };
+return { problems, widths, nameWidth: Math.round(nameWidth), slack: bar.clientWidth - bar.scrollWidth, iconOnly, renderLabel, unnamed };
 })()`;
 
 const required = process.env.MS_REQUIRE_CHROME === '1';
@@ -147,27 +153,52 @@ const chrome = required || process.env.MS_LAYOUT_CHROME === '1' ? findChrome() :
 const run = chrome ? describe : describe.skip;
 if (!chrome && required) it('Chrome is required (MS_REQUIRE_CHROME=1)', () => { throw new Error('missing Chrome (set CHROME_PATH)'); });
 
-describe('format view bar: CSS rules', () => {
-  it('the render actions go icon-only by the width of the bar, keeping their names (aria-label, title)', () => {
-    expect(src('shell/shell.css')).toMatch(/\.ms-topbar\s*\{[^}]*container:\s*ms-topbar\s*\/\s*inline-size/);
-    const fmt = src('screens/format.css');
-    const narrow = fmt.slice(fmt.indexOf('@container ms-topbar'));
-    expect(narrow).toMatch(/@container ms-topbar[^{]*\(max-width:\s*\d+px\)/);
-    expect(narrow).toMatch(/\.ms-fold-1 > \.ms-bar-label[^{]*\{[^}]*display:\s*none/);
+describe('format view bar: CSS rules (scoped to the format view, Ruling AG)', () => {
+  const fmt = src('screens/format.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  /** Every selector of every rule inside the bar's container queries. */
+  const foldSelectors = () => [...fmt.matchAll(/@container ms-topbar[^{]*\{((?:[^{}]*\{[^}]*\})*)\s*\}/g)]
+    .flatMap((m) => [...m[1]!.matchAll(/([^{}]+)\{[^}]*\}/g)].flatMap((r) => r[1]!.split(',').map((x) => x.trim())));
+  it('only the format view\'s bar is a size container: no other bar declares one', () => {
+    expect(src('shell/shell.css')).not.toMatch(/container/);
+    expect(fmt).toMatch(/\.ms-topbar\.ms-bar-fv\s*\{\s*container:\s*ms-topbar\s*\/\s*inline-size/);
+    expect([...fmt.matchAll(/container:\s*ms-topbar/g)]).toHaveLength(1);
+  });
+  it('every fold rule is under .ms-bar-fv, the crumb rule included; the render actions go icon-only', () => {
+    const sels = foldSelectors();
+    expect(sels.length).toBeGreaterThan(8);
+    for (const sel of sels) expect(sel, sel).toMatch(/^\.ms-bar-fv /);
+    expect(sels).toContain('.ms-bar-fv .ms-fold-1 > .ms-bar-label');
+    expect(sels).toContain('.ms-bar-fv .ms-crumbs > .ms-crumb:not(.ms-last)');
+    for (const m of fmt.matchAll(/^([^@/\n][^{\n]*ms-fold[^{\n]*)\{/gm)) expect(m[1]!.trim(), m[1]).toMatch(/^\.ms-bar-fv /);
     expect(fmt).not.toMatch(/@media[^{]*(max|min)-width[^{]*\{[^}]*ms-fold/);
   });
 });
 
-describe('format view bar: what it carries with a ready render', () => {
-  it('in Italian: the version badge, Versions, the ready pill, Scarica, Rifai il render, Lingue, Duplica, Modifica, Esporta', async () => {
+describe('format view bar: what it carries, and which bars fold', () => {
+  it('ready, in Italian: the version badge, Versions, the ready pill, Scarica, Rifai il render, Lingue, Duplica, Modifica, Esporta', async () => {
     const html = await barMarkup(false);
     expect(html).toContain('ms-fv-render');
     expect(html).toContain('ms-cv-languages');
     expect(html).toContain('ms-fv-duplicate');
   });
+  it('"Render video" (live preview, failed) folds only at the last step; Scarica, Mostra nel Finder and Rifai il render at the first', async () => {
+    const live = await barMarkup(false, 'live');
+    expect(live).toMatch(/<button aria-label="Fai il render del video di[^>]*class="[^"]*ms-fold-3"/);
+    expect(live).not.toContain('ms-fold-1');
+    const ready = await barMarkup(true);
+    expect([...ready.matchAll(/class="ms-btn [^"]*ms-fold-1"/g)]).toHaveLength(2);
+  });
+  it('the creative board\'s and the editor\'s bars are not the format view\'s: no .ms-bar-fv, so no fold rule reaches them', () => {
+    for (const route of [{ name: 'creative', slug: 'acme', creative: 'lancio' }, { name: 'edit', slug: 'acme', creative: 'lancio', format: VIDEO }] as Route[]) {
+      render(<Harness route={route} page={false} />);
+      const bar = document.querySelector('header.ms-topbar') as HTMLElement;
+      expect(bar.className, route.name).not.toContain('ms-bar-fv');
+      cleanup();
+    }
+  });
 });
 
-run('format view bar with a ready render: real Chrome layout', () => {
+run('format view bar: real Chrome layout', () => {
   let dir = '';
   let browser: Browser;
   beforeAll(async () => { dir = mkdtempSync(join(tmpdir(), 'ms-topbar-')); browser = await launchChrome(chrome!); });
@@ -175,29 +206,32 @@ run('format view bar with a ready render: real Chrome layout', () => {
 
   // 1024 is the desktop window's minimum width (apps/desktop/src/window.ts), 1440 its default; 1129, 1529 and 1789 put the
   // browser bar's content (28 px of padding) just above a folding step (1100, 1500, 1760), where it is at its fullest.
-  const WIDTHS = [1024, 1129, 1280, 1440, 1529, 1789, 1920];
-  for (const desktopApp of [false, true]) {
-    it(`${desktopApp ? 'desktop (macOS title bar)' : 'browser'}: Italian, ${WIDTHS.join(', ')} px, everything fits`, async () => {
-      const html = await barMarkup(desktopApp);
+  // The live preview (Render video) at the widths of the round 2 review.
+  const CASES = [{ state: 'ready', widths: [1024, 1129, 1280, 1440, 1529, 1789, 1920] }, { state: 'live', widths: [1024, 1280, 1440] }] as const;
+  for (const { state, widths: WIDTHS } of CASES) for (const desktopApp of [false, true]) {
+    it(`${state}, ${desktopApp ? 'desktop (macOS title bar)' : 'browser'}: Italian, ${WIDTHS.join(', ')} px, everything fits`, async () => {
+      const html = await barMarkup(desktopApp, state);
       // The desktop title bar classes come from the app's own titleBar.ts; a browser run has none.
       const header = desktopApp && !html.includes('ms-tb-mac') ? html.replace('class="ms-topbar"', 'class="ms-topbar ms-titlebar ms-tb-mac"') : html;
       const failures: string[] = [];
       for (const width of WIDTHS) {
         const page = `<!doctype html><html lang="it"><head><meta charset="utf-8"><style>${FONTS()}\n${ALL_CSS()}
           body{margin:0;background:var(--bg)}</style></head><body>${header}</body></html>`;
-        const file = join(dir, `${desktopApp ? 'desktop' : 'web'}-${width}.html`);
+        const file = join(dir, `${state}-${desktopApp ? 'desktop' : 'web'}-${width}.html`);
         writeFileSync(file, page);
         const tab = await browser.newPage(width, 400);
         try {
           await tab.goto(`file://${file}`);
-          const r = await tab.eval<{ problems: string[]; widths: string[]; nameWidth: number; slack: number; iconOnly: number[]; unnamed: string[] }>(MEASURE, 30_000);
-          console.info(`[topbar] ${desktopApp ? 'desktop' : 'web'} @${width}: ${JSON.stringify(r)}`);
-          const where = `${desktopApp ? 'desktop' : 'web'} @${width}`;
+          const r = await tab.eval<{ problems: string[]; widths: string[]; nameWidth: number; slack: number; iconOnly: number[]; renderLabel: boolean; unnamed: string[] }>(MEASURE, 30_000);
+          console.info(`[topbar] ${state} ${desktopApp ? 'desktop' : 'web'} @${width}: ${JSON.stringify(r)}`);
+          const where = `${state} ${desktopApp ? 'desktop' : 'web'} @${width}`;
           for (const p of r.problems) failures.push(`${where}: ${p}`);
           for (const u of r.unnamed) failures.push(`${where}: a button without a name: ${u}`);
           if (r.nameWidth < 60) failures.push(`${where}: the format name has ${r.nameWidth} px`);
           // With a bar content of 1760 px or less the render actions are their icons (28 px).
           if (width - 28 <= 1760 && r.iconOnly.some((w) => w > 28.5)) failures.push(`${where}: render actions not folded ${JSON.stringify(r.iconOnly)}`);
+          // Live preview: "Render video" keeps its label from 1280 px up.
+          if (state === 'live' && width >= 1280 && !r.renderLabel) failures.push(`${where}: "Render video" lost its label`);
         } finally { await tab.close(); }
       }
       expect(failures).toEqual([]);
