@@ -159,6 +159,9 @@ describe('a Stop while the version is being saved', () => {
     const state = (await s.jobs()).find((j) => j.id === job.id)?.state;
     // Either way (stopped before or after the save started) nothing starts by itself.
     expect(['succeeded', 'cancelled']).toContain(state);
+    // Final wave Q2: the version of the finished run is saved either way, exactly once, and the conversation records it.
+    const versions = (await s.conversation()).filter((e) => e.type === 'version');
+    expect(versions).toEqual([expect.objectContaining({ n: 1 })]);
     expect(s.runner.runs).toHaveLength(1);
     expect(await queuedTexts()).toEqual(['Dopo']);
   });

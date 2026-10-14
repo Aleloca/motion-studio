@@ -74,6 +74,21 @@ export class SettingsHoldStore {
     return dir === null ? null : join(dir, `${createHash('sha256').update(key).digest('hex').slice(0, 32)}.json`);
   }
 
+  /**
+   * Final wave Q6 (M3-1): the hold folder, looked at right now (never remembered from attach time): missing (null), or a real
+   * folder of ours. A link, a file or a folder of another user is refused with the folder's path: a save or a clear would
+   * otherwise act outside the config folder.
+   */
+  private async realDir(): Promise<string | null> {
+    const dir = this.dir()!;
+    const st = await lstat(dir).catch(() => null);
+    if (!st) return null;
+    if (st.isSymbolicLink() || !st.isDirectory() || (process.getuid !== undefined && st.uid !== process.getuid())) {
+      throw new SettingsHoldError('settings hold folder is not a real folder of ours', dir);
+    }
+    return dir;
+  }
+
   /** The held values, or null when nothing is held. Throws `SettingsHoldError` when a record exists but cannot be read. */
   async load(root: string): Promise<HeldSettings | null> {
     const key = await this.key(root);
@@ -110,11 +125,14 @@ export class SettingsHoldStore {
     try {
       await mkdir(dir, { recursive: true, mode: 0o700 });
       await ownMode(dir, 0o700);
+      await this.realDir();
       await writeFile(tmp, `${JSON.stringify({ schemaVersion: 2, root: key, held, at: new Date().toISOString() })}\n`, { mode: 0o600 });
       await rename(tmp, file);
     } catch (err) {
-      await rm(tmp, { force: true }).catch(() => {});
-      throw new SettingsHoldError(`settings hold not saved: ${(err as Error).message}`);
+      // The temp name is ours and sits in the folder just checked; a refused (swapped) folder is never written to, so no cleanup there.
+      if (!(err instanceof SettingsHoldError)) await rm(tmp, { force: true }).catch(() => {});
+      if (err instanceof SettingsHoldError) throw err;
+      throw new SettingsHoldError(`settings hold not saved: ${(err as Error).message}`, dir);
     }
   }
 
@@ -123,6 +141,8 @@ export class SettingsHoldStore {
     this.memory.delete(key);
     const file = this.file(key);
     if (file === null) return;
+    // Q6 (M3-1): nothing to clear in a missing folder; a swapped one (link, file) is refused before anything is touched.
+    if ((await this.realDir()) === null) return;
     await ownMode(this.dir()!, 0o700);
     // Fix round 3 (R2-3): whatever sits at the record path goes, inside the config folder only: a link is removed as a link
     // (never followed), a folder is moved aside next to it (never deleted recursively), a file is removed.

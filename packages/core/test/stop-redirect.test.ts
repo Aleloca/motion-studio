@@ -10,7 +10,7 @@ import { AgentBridge } from '../src/bridge/bridge.ts';
 import { registerBridgeRoutes } from '../src/bridge/bridge-routes.ts';
 import { providerTools } from '../src/bridge/provider-tools.ts';
 import { CreativeStore } from '../src/creatives/creative-store.ts';
-import { CreativeTurnService, resumeErrorOf, SESSION_NOT_FOUND, type CreativeRef } from '../src/creatives/creative-turns.ts';
+import { CreativeTurnService, creativeJobKey, resumeErrorOf, SESSION_NOT_FOUND, type CreativeRef } from '../src/creatives/creative-turns.ts';
 import type { PreviewService } from '../src/creatives/previews.ts';
 import { REDIRECT_PARTIAL_NOTE, STOPPED_TURN_NOTE, USER_REQUEST_OPEN } from '../src/creatives/prompt.ts';
 import { Git } from '../src/git.ts';
@@ -70,7 +70,7 @@ const previews = {
   storyboardsFor: async () => {},
 } as unknown as PreviewService;
 
-const setupService = async (o: { live?: boolean; contract?: 'media' | 'compositions' } = {}) => {
+const setupService = async (o: { live?: boolean; contract?: 'media' | 'compositions'; onUpdate?: (job: import('@motion-studio/shared').JobSummary) => void } = {}) => {
   const base = await mkdtemp(join(tmpdir(), 'ms-stop è '));
   const git = new Git();
   const ws = await WorkspaceStore.open(join(base, 'ws'), git);
@@ -84,7 +84,7 @@ const setupService = async (o: { live?: boolean; contract?: 'media' | 'compositi
   bridge = new AgentBridge();
   bridge.setOrigin('http://127.0.0.1:9');
   runner = new ControlledRunner();
-  queue = new JobQueue({ concurrency: 2 });
+  queue = new JobQueue({ concurrency: 2, ...(o.onUpdate ? { onUpdate: o.onUpdate } : {}) });
   service = new CreativeTurnService({
     agentContract: o.contract ?? 'media', queue, git, media: NoMediaTools, vault: new MemoryVault(), previews,
     launcher: testLauncher(runner, {
@@ -227,7 +227,10 @@ describe('Stop and redirect (service level)', () => {
     expect((await call).statusCode).toBeGreaterThanOrEqual(400);
     expect(sent).toEqual([]);
     expect(run.interrupts).toBe(1);
-    expect(run.sent).toEqual([{ clientId, text: 'Solo testo' }]);
+    // Final wave Q3: the same partial-files note as on the fallback path, then the user's words delimited as theirs.
+    expect(run.sent).toEqual([{ clientId, text: expect.stringContaining(REDIRECT_PARTIAL_NOTE) }]);
+    expect(run.sent[0]!.text).toContain(`${USER_REQUEST_OPEN}\nSolo testo\n`);
+    expect(run.sent[0]!.text.split('Solo testo')).toHaveLength(2);
     expect(run.cancelled).toBe(false);
     run.finish();
     await queue.whenIdle();
@@ -604,8 +607,11 @@ describe('a redirect before the job starts (Ruling W)', () => {
     // A slot frees: our turn starts with the request and the redirect, delimited as the user's words.
     runner.runs[0]!.finish();
     const ours = await runner.next(1);
-    expect(ours.req.prompt).toContain('Richiesta');
-    expect(ours.req.prompt).toContain(`${USER_REQUEST_OPEN}\nCambia tutto`);
+    // Final wave Q2: each text appears exactly once (a count, not a toContain), and the redirect is the delimited user's words.
+    const occurrences = (text: string) => ours.req.prompt.split(text).length - 1;
+    expect(occurrences('Richiesta')).toBe(1);
+    expect(occurrences('Cambia tutto')).toBe(1);
+    expect(occurrences(`${USER_REQUEST_OPEN}\nCambia tutto`)).toBe(1);
     await vi.waitFor(async () => expect((await store.readConversation(ref.creativeSlug)).some((e) => e.type === 'agent' && e.event.kind === 'user_message_delivered' && e.event.clientId === clientId)).toBe(true));
     ours.finish();
     await queue.whenIdle();
@@ -629,5 +635,37 @@ describe('a start that throws with words in the prompt (fix round 1, M3)', () =>
     await s.waitIdle();
     expect((await s.jobs()).find((j) => j.id === job.id)?.state).toBe('failed');
     expect((await s.creative()).queued).toEqual([expect.objectContaining({ clientId, text: 'PAROLE-IN-ATTESA' })]);
+  });
+});
+
+// Final wave Q8 (final review minor 6, Ruling U): the queue must not start in the instant between a turn's terminal state and
+// the service learning of it. A message arriving exactly then (here: the job's own terminal update calls maybeAutoRun, as
+// a postMessage would) finds the creative already paused.
+describe('Ruling U micro-race: no auto-run between the terminal state and the settle hook', () => {
+  it.each([
+    ['a failed turn', (run: ControlledRun) => run.finish({ ok: false, write: false, error: 'boom' })],
+    ['a cancelled turn', null],
+  ])('%s: a maybeAutoRun called by the job\'s own terminal update starts nothing', async (_name, end) => {
+    let jobId = '';
+    let triggered = 0;
+    let pausedAtTerminal: boolean | null = null;
+    await setupService({ onUpdate: (j) => {
+      if (j.id !== jobId || j.state === 'queued' || j.state === 'running') return;
+      triggered++;
+      // The very instant the job turns terminal (before the settle hook runs): the creative is already paused.
+      pausedAtTerminal = (service as unknown as { paused: Set<string> }).paused.has(creativeJobKey(ref.root, ref.projectSlug, ref.creativeSlug));
+      void service.maybeAutoRun(ref);
+    } });
+    const job = await service.start(ref, { text: 'Primo', pins: [] });
+    jobId = job.id;
+    const run = await runner.next(0);
+    expect((await service.postMessage(ref, { clientId: cid(), text: 'Dopo', pins: [], mode: 'queued' })).outcome).toBe('queued');
+    if (end) end(run); else stopJob({ queue, approvals }, job.id);
+    await queue.whenIdle();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(triggered).toBeGreaterThan(0);
+    expect(pausedAtTerminal).toBe(true);
+    expect(runner.runs).toHaveLength(1);
+    expect((await service.side.read(ref.projectDir, ref.creativeSlug)).queued).toEqual([expect.objectContaining({ text: 'Dopo' })]);
   });
 });

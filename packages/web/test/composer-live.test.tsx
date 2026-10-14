@@ -131,6 +131,15 @@ describe('composer while the agent works: live input on', () => {
     expect(within(screen.getByText('Use blue').closest('article')!).getByText('Sent')).toBeTruthy();
   });
 
+  it('a message the core reports as not delivered shows "Not delivered" with the reason, even after "Sent" was announced', () => {
+    const persisted: ConversationEntry = { type: 'user', at: at(5), text: 'Use blue', pins: [], attachments: [], jobId: 'j1', mode: 'live', clientId: CID };
+    render(view({ entries: [persisted], job: running, live: [{ kind: 'user_message_delivered', clientId: CID }, { kind: 'user_message_not_delivered', clientId: CID }] }));
+    const a = within(screen.getByText('Use blue').closest('article')!);
+    expect(a.getByText('Not delivered')).toBeTruthy();
+    expect(a.getByText(/before the agent read it/)).toBeTruthy();
+    expect(a.queryByText('Sent')).toBeNull();
+  });
+
   it('a double click sends once (one clientId); a retry after a failure reuses it', async () => {
     let finish!: () => void;
     api.postLiveMessage.mockImplementationOnce((_s, _c, b) => new Promise((res) => { finish = () => res({ entry: { type: 'user', at: at(5), text: b.text, pins: [], attachments: [] }, outcome: 'delivered-pending' }); }));

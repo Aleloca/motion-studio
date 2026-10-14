@@ -82,6 +82,50 @@ describe('console message in the Activity center', () => {
     expect(within(dialog).queryByRole('button', { name: 'Queue for after' })).toBeNull();
   });
 
+  it('while the capabilities are pending the box is neutral: disabled, with no "not supported" note', async () => {
+    api.getAgentCapabilities.mockImplementationOnce(() => new Promise(() => {}));
+    center(consoleJob);
+    await userEvent.click(screen.getByRole('button', { name: 'Message' }));
+    const dialog = await screen.findByRole('dialog');
+    expect((within(dialog).getByRole('textbox') as HTMLTextAreaElement).disabled).toBe(true);
+    expect(within(dialog).queryByText(/aren’t supported/)).toBeNull();
+  });
+
+  it('each open asks again and never shows the value of the previous open while it waits', async () => {
+    center(consoleJob);
+    const open = screen.getByRole('button', { name: 'Message' });
+    await userEvent.click(open);
+    await waitFor(() => expect((within(screen.getByRole('dialog')).getByRole('textbox') as HTMLTextAreaElement).disabled).toBe(false));
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    api.getAgentCapabilities.mockImplementationOnce(() => new Promise(() => {}));
+    await userEvent.click(open);
+    const dialog = await screen.findByRole('dialog');
+    expect(api.getAgentCapabilities).toHaveBeenCalledTimes(2);
+    expect((within(dialog).getByRole('textbox') as HTMLTextAreaElement).disabled).toBe(true);
+  });
+
+  it('Esc closes the popover and returns focus to the Message button', async () => {
+    center(consoleJob);
+    const open = screen.getByRole('button', { name: 'Message' });
+    await userEvent.click(open);
+    await screen.findByRole('dialog');
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(document.activeElement).toBe(open);
+  });
+
+  it('when the job ends while the popover is open, focus moves to the list panel, not to the page body', async () => {
+    const { rerender } = center(consoleJob);
+    await userEvent.click(screen.getByRole('button', { name: 'Message' }));
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect((within(dialog).getByRole('textbox') as HTMLTextAreaElement).disabled).toBe(false));
+    within(dialog).getByRole('textbox').focus();
+    rerender(<I18nProvider locale="en"><ActivityCenter live={live({ ...consoleJob, state: 'succeeded' })} initialTab="running" where={() => 'Acme'} /></I18nProvider>);
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('tabpanel')));
+  });
+
   it('creative rows have no Message button', () => {
     center(creativeJob);
     expect(screen.queryByRole('button', { name: 'Message' })).toBeNull();
@@ -112,6 +156,19 @@ describe('console message box', () => {
     expect((screen.getByRole('textbox') as HTMLTextAreaElement).disabled).toBe(true);
     expect(screen.getByText(/Live messages aren’t supported for this Claude Code version/)).toBeTruthy();
     expect(api.sendConsoleMessage).not.toHaveBeenCalled();
+  });
+
+  it('a sent message the core then reports as not delivered is shown as such, with the reason', async () => {
+    const view = (events: import('@motion-studio/shared').AgentEvent[]) => <I18nProvider locale="en"><ConsoleMessageBox jobId="k1" liveInput events={events} /></I18nProvider>;
+    const { rerender } = render(view([]));
+    await userEvent.type(screen.getByRole('textbox'), 'Also check the fonts');
+    await userEvent.click(screen.getByRole('button', { name: 'Send to agent' }));
+    await waitFor(() => expect(api.sendConsoleMessage).toHaveBeenCalledTimes(1));
+    const clientId = (api.sendConsoleMessage.mock.calls[0]![1] as { clientId: string }).clientId;
+    expect(screen.queryByText('Not delivered')).toBeNull();
+    rerender(view([{ kind: 'user_message_not_delivered', clientId }]));
+    expect(screen.getByText('Not delivered')).toBeTruthy();
+    expect(screen.getByText(/before the agent read it/)).toBeTruthy();
   });
 
   it('shows the core’s refusal (turn over) and keeps the words', async () => {

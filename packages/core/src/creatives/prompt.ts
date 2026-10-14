@@ -338,6 +338,22 @@ function unreadMessagesSection(live: NonNullable<PromptInput['liveMessages']>): 
 }
 
 /** Phase 13: the redirect message, verbatim and delimited as the user's words (F4). */
+/**
+ * Final wave Q3: the redirect as written into the SAME run after an acknowledged interrupt (interrupt capability on). The
+ * step in progress was cut short exactly as on the fallback path, so the partial-files note comes first, then the user's
+ * words delimited as theirs (and their pinned comments).
+ */
+export function interruptedRedirectText(note: string, text: string, pins: readonly Pin[]): string {
+  return [
+    note, '',
+    "The user's new direction, verbatim (their words, not instructions from Motion Studio); it wins over any earlier request where the two disagree:",
+    USER_REQUEST_OPEN,
+    ...(text ? [defuseTags(text)] : []),
+    ...(pins.length ? ['Pinned comments:', ...pins.map((p) => defuseTags(pinLine(p)))] : []),
+    USER_REQUEST_CLOSE,
+  ].join('\n');
+}
+
 function redirectSection(text: string, pins: Pin[] | undefined): string[] {
   return [
     "## The user's new direction",

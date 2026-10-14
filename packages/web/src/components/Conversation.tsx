@@ -85,7 +85,7 @@ export interface ConversationProps {
 /** A message sent while the agent works, until the conversation file shows it (Phase 13). */
 interface Outgoing { clientId: string; text: string; pins: Pin[]; at: string; mode: 'live' | 'redirect'; phase: 'sending' | 'pending' | 'pendingStart' }
 /** What a message bubble says about its journey; none for an ordinary message (old conversations have none). */
-type MessageState = 'sending' | 'pending' | 'pendingStart' | 'sent' | 'queued';
+type MessageState = 'sending' | 'pending' | 'pendingStart' | 'sent' | 'queued' | 'notDelivered';
 interface OutboxApi { add(o: Outgoing): void; phase(clientId: string, phase: Outgoing['phase']): void; drop(clientId: string): void }
 
 /** What a change can apply to: the primary formats (with their followers' labels) and how a format maps to its primary. */
@@ -237,6 +237,10 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     const delivered = new Set<string>();
     for (const e of entries) if (e.type === 'agent' && e.event.kind === 'user_message_delivered') delivered.add(e.event.clientId);
     for (const e of live) if (e.kind === 'user_message_delivered') delivered.add(e.clientId);
+    // Final wave Q7: the core says that no run took the words after all (the console turn ended first). It wins over "Sent".
+    const notDelivered = new Set<string>();
+    for (const e of entries) if (e.type === 'agent' && e.event.kind === 'user_message_not_delivered') notDelivered.add(e.event.clientId);
+    for (const e of live) if (e.kind === 'user_message_not_delivered') notDelivered.add(e.clientId);
     const queuedIds = new Set((queued ?? []).map((q) => q.clientId));
     const known = new Set<string>();
     for (const e of entries) if (e.type === 'user' && e.clientId) known.add(e.clientId);
@@ -244,6 +248,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
       if (!e.clientId || !e.mode) return undefined;
       // Still in the queue wins (final wave P3): a message given to a run that never read it goes back to the queue.
       if (queuedIds.has(e.clientId)) return 'queued';
+      if (notDelivered.has(e.clientId)) return 'notDelivered';
       if (delivered.has(e.clientId) || e.deliveredAt) return 'sent';
       if (e.jobId && e.jobId === job?.id && working) return job?.state === 'queued' && e.mode === 'redirect' ? 'pendingStart' : 'pending';
       return undefined;
@@ -286,7 +291,7 @@ export function Conversation({ slug, creative, entries, approvals, job, live = [
     // Messages sent while the agent works that the conversation file does not hold yet.
     for (const o of outbox) {
       if (known.has(o.clientId)) continue;
-      out.push({ key: `out:${o.clientId}`, kind: 'user', at: o.at, text: o.text, pins: o.pins, state: delivered.has(o.clientId) ? 'sent' : o.phase, ...(o.mode === 'redirect' ? { redirect: true } : {}) });
+      out.push({ key: `out:${o.clientId}`, kind: 'user', at: o.at, text: o.text, pins: o.pins, state: notDelivered.has(o.clientId) ? 'notDelivered' : delivered.has(o.clientId) ? 'sent' : o.phase, ...(o.mode === 'redirect' ? { redirect: true } : {}) });
     }
     const waiting = shownApprovals.some((s) => !s.leaving && s.approval.jobId === job?.id);
     if (working && !waiting) out.push({ key: 'typing', kind: 'typing' });
@@ -402,9 +407,10 @@ function ItemView({ item, formatName, onToggleFold, onToggleDetails, onOpenDetai
             <span className="ms-msg-meta">
               <b>{c.you}</b>·<When at={item.at} />
               {item.redirect && <span className="ms-pill ms-accent">{t.web.liveUi.state.redirect}</span>}
-              {item.state && <span className={cx('ms-pill', item.state === 'sent' ? 'ms-ok' : 'ms-neutral')} data-state={item.state}>{t.web.liveUi.state[item.state]}</span>}
+              {item.state && <span className={cx('ms-pill', item.state === 'sent' ? 'ms-ok' : item.state === 'notDelivered' ? 'ms-warn' : 'ms-neutral')} data-state={item.state}>{t.web.liveUi.state[item.state]}</span>}
             </span>
             {item.text && <div className="ms-msg-bubble">{item.text}</div>}
+            {item.state === 'notDelivered' && <p className="ms-composer-note" role="status">{t.web.liveUi.notDeliveredReason}</p>}
             {item.pins.length > 0 && (
               <div className="ms-msg-pins">{item.pins.map((p, k) => <span key={k} className="ms-chip" title={p.note || undefined}><Icon name="comment" size={11} /><PinLabel pin={p} text={pinText(p, k + 1, formatName, t, locale)} /></span>)}</div>
             )}

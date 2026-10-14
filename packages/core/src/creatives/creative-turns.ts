@@ -29,7 +29,7 @@ import { hashVersionOutputs, LAZY_HASH_BUDGET_MS, withLazyHashes } from './outpu
 import { legacyProblemsOf } from './legacy-problems.ts';
 import { clearReferenceFrames, conversionPlan, extractReferenceFrames } from './legacy-conversion.ts';
 import { AnswerCache, checkLiveMessage, liveMessageText, LiveSession, newLiveMessage, NO_LIVE, redirectLive, type LiveMessage, type UserMessageInput } from '../agent/live-session.ts';
-import { buildCreativePrompt, pinLine, type AgentContract, type CreativeContext, type PromptKind } from './prompt.ts';
+import { buildCreativePrompt, interruptedRedirectText, pinLine, REDIRECT_PARTIAL_NOTE, type AgentContract, type CreativeContext, type PromptKind } from './prompt.ts';
 import { checkTargets } from './composition-contract.ts';
 import { realDirChain, writeThroughTemp } from './core-files.ts';
 import { acceptedDurationsOf, alignEditorCopies, assembleCompositions, carriableComposition, type CarriedComposition } from './composition-turn.ts';
@@ -462,7 +462,18 @@ export class CreativeTurnService {
         kind: 'creative',
         label: t().jobs.creativeLabel({ title: before.title }),
         ...(targets ? { formats: targets } : {}),
-        run: (signal, id) => this.run(ref, store, before.status, message, signal, id, formats),
+        // Final wave Q8 (Ruling U micro-race): a failed or cancelled turn pauses its queue HERE, before the job turns terminal,
+        // not in `turnSettled` after it: a message arriving in between can no longer start the queue after a failure or Stop.
+        run: async (signal, id) => {
+          try {
+            const outcome = await this.run(ref, store, before.status, message, signal, id, formats);
+            if (outcome === 'cancelled' || signal.aborted) this.paused.add(key);
+            return outcome;
+          } catch (err) {
+            this.paused.add(key);
+            throw err;
+          }
+        },
         onCancelledBeforeStart: () => this.locks.run(key, async () => {
           // A new start() may have won the lock after the cancel: the creative belongs to that job now.
           if (this.isActive(key)) return;
@@ -1592,7 +1603,7 @@ export class CreativeTurnService {
             await store.appendConversation(ref.creativeSlug, { type: 'agent', at: now(), jobId, event: marker });
           }
         },
-        text: (msg) => liveMessageText(msg.text, msg.pins, pinLine),
+        text: (msg) => interruptedRedirectText(REDIRECT_PARTIAL_NOTE, msg.text, msg.pins),
         answerBeforeStart: true,
       });
       return { outcome };

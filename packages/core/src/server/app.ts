@@ -60,7 +60,7 @@ import { tokenMatches } from './ui-token.ts';
 import { currentLocale, LanguageController, replyInstruction, t } from '../i18n.ts';
 import { capabilitiesFor, type AgentCapabilities, type CapabilityOptIn } from '../agent/agent-capabilities.ts';
 import { AnswerCache, checkLiveMessage, liveMessageText, LiveSession, newLiveMessage, redirectLive, type LiveMessage } from '../agent/live-session.ts';
-import { CONSOLE_REDIRECT_NOTE, defuseTags, pinLine, USER_REQUEST_CLOSE, USER_REQUEST_OPEN } from '../creatives/prompt.ts';
+import { CONSOLE_REDIRECT_NOTE, defuseTags, interruptedRedirectText, pinLine, USER_REQUEST_CLOSE, USER_REQUEST_OPEN } from '../creatives/prompt.ts';
 import { stopJob } from '../jobs/stop.ts';
 import { randomUUID } from 'node:crypto';
 import { CreativeSideStateStore } from '../creatives/creative-side-state.ts';
@@ -406,7 +406,7 @@ export async function buildServer(deps: ServerDeps): Promise<FastifyInstance> {
         late: async () => { throw new CodedError(409, t().live.notRunning, 'not-running'); },
         record: async (_msg, count) => { queue.patch(jobId, { liveMessages: count }); },
         interrupted: () => hub.broadcast({ type: 'agent', jobId, event: { kind: 'interrupted' } }),
-        text: (msg) => liveMessageText(msg.text, msg.pins, pinLine),
+        text: (msg) => interruptedRedirectText(CONSOLE_REDIRECT_NOTE, msg.text, msg.pins),
         // Ruling W for the console too (final review I2): before the first run the answer is at once `pending-start`, and the
         // words join the request in that run's prompt; nothing is spawned only to be stopped.
         answerBeforeStart: true,

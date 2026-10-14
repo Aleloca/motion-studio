@@ -205,3 +205,4 @@
 .ms-queue-kept-why { margin: 0; font-size: 12px; line-height: 1.4; color: var(--muted); }
 .ms-queue-said { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .ms-console-box { border-top: 0; }
+.ms-console-lost { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; overflow-wrap: anywhere; }

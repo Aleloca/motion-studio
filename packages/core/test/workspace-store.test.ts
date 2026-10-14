@@ -8,6 +8,7 @@ import { execCommand } from '../src/exec.ts';
 import { Git } from '../src/git.ts';
 import { slugify, WorkspaceError, WorkspaceStore } from '../src/workspace-store.ts';
 import { SettingsHoldStore } from '../src/settings-hold.ts';
+import { setLocale, t } from '../src/i18n.ts';
 
 let base: string;
 beforeEach(async () => { base = await mkdtemp(join(tmpdir(), 'ms-ws-')); });
@@ -501,6 +502,15 @@ describe.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('Works
     }
   });
 
+  it('M3-4: the "stuck" message tells the user to clear the Finder "Locked" flag first (both languages)', () => {
+    for (const locale of ['en', 'it'] as const) {
+      setLocale(locale);
+      expect(t().jobs.settingsHoldStuck({ path: '/x/record.json' })).toMatch(/Locked|Bloccato/);
+      expect(t().jobs.settingsHoldStuck({ path: '/x/record.json' })).toContain('/x/record.json');
+    }
+    setLocale('en');
+  });
+
   it('a forged record that tightens the file is never silent: the changed fields are named until the user saves', async () => {
     const { root, config } = await setup('a');
     await mkdir(holdDir(config), { recursive: true });
@@ -526,5 +536,47 @@ describe.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('Works
     expect(ws2.settingsHoldBroken()).toBe(false);
     await expect(lstat(record)).rejects.toMatchObject({ code: 'ENOENT' });
     expect(JSON.parse(await readFile(outside, 'utf8')).held.model).toBe('opus'); // the target is untouched
+  });
+
+  // Final wave Q6 (re-review 3, M3-1): the hold folder is checked at every save and clear, not only at attach.
+  it('M3-1: a hold folder swapped for a link after attach is refused by save and clear; nothing is written or removed outside', async () => {
+    const { root, config } = await setup('m31');
+    const outside = join(base, 'm31-outside');
+    await mkdir(outside, { recursive: true });
+    const planted = join(outside, (await holdFile(config, root)).split('/').pop()!);
+    await writeFile(planted, 'planted');
+    const store = new SettingsHoldStore(config);
+    await store.save(root, { ...safe, autoApproveSandboxed: true } as never); // a real folder: fine
+    await rm(holdDir(config), { recursive: true, force: true });
+    await symlink(outside, holdDir(config));
+    await expect(store.save(root, { ...safe, autoApproveSandboxed: true } as never)).rejects.toMatchObject({ name: 'Error', path: holdDir(config) });
+    await expect(store.clear(root)).rejects.toMatchObject({ path: holdDir(config) });
+    expect(await readFile(planted, 'utf8')).toBe('planted');
+    expect(await readdir(outside)).toEqual([planted.split('/').pop()]);
+  });
+
+  it('M3-1: a hold "folder" that is a plain file is refused too', async () => {
+    const { root, config } = await setup('m31f');
+    const store = new SettingsHoldStore(config);
+    await rm(holdDir(config), { recursive: true, force: true });
+    await mkdir(config, { recursive: true });
+    await writeFile(holdDir(config), 'not a folder');
+    await expect(store.save(root, { ...safe, autoApproveSandboxed: true } as never)).rejects.toMatchObject({ path: holdDir(config) });
+    await expect(store.clear(root)).rejects.toMatchObject({ path: holdDir(config) });
+  });
+
+  // Final wave Q6 (M3-3): the fields a user submits are written exactly, even in the broken state.
+  it('M3-3: a user save in the broken state writes exactly the domains and model submitted, not the tightened view', async () => {
+    const { root, config } = await setup('m33');
+    const outside = join(base, 'm33-target.json');
+    await writeFile(outside, JSON.stringify({ schemaVersion: 2, root: 'x', held: evil, at: 'x' }));
+    await mkdir(holdDir(config), { recursive: true });
+    await symlink(outside, await holdFile(config, root)); // makes the hold unreliable at the restart
+    const ws2 = await restart(root, config);
+    expect(ws2.settingsHoldBroken()).toBe(true);
+    expect(await ws2.readSettings()).toMatchObject({ extraAllowedDomains: [], model: null }); // what the user sees
+    await ws2.updateSettings({ extraAllowedDomains: ['ok.example.com'], model: 'sonnet', theme: 'dark' });
+    expect(JSON.parse(await readFile(file(root), 'utf8'))).toMatchObject({ extraAllowedDomains: ['ok.example.com'], model: 'sonnet', theme: 'dark' });
+    expect(ws2.settingsHoldBroken()).toBe(false);
   });
 });

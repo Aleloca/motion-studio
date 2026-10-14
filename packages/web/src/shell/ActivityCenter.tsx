@@ -152,7 +152,7 @@ export function ActivityCenter({ live, initialTab, request = 0, where }: { live:
           ]}
         />
       </div>
-      <div id={panel} role="tabpanel" className="ms-activity-body">
+      <div id={panel} role="tabpanel" tabIndex={-1} className="ms-activity-body">
         {tab === 'needs' && canAskNotifications() && (
           <Button size="sm" variant="outline" className="ms-activity-ask" onClick={askNotifications}>
             <Icon name="bell" size={13} />{a.enableNotifications}
@@ -165,7 +165,7 @@ export function ActivityCenter({ live, initialTab, request = 0, where }: { live:
           <ul className="ms-activity-list">
             {running.map((j) => (j.kind === 'render'
               ? <RenderRow key={j.id} job={j} />
-              : <RunningRow key={j.id} job={j} step={lastStep(live.events[j.id])} tokens={jobLiveTokens(live, j.id)} partial={jobUsagePartial(live, j.id)} />))}
+              : <RunningRow key={j.id} job={j} step={lastStep(live.events[j.id])} tokens={jobLiveTokens(live, j.id)} partial={jobUsagePartial(live, j.id)} events={live.events[j.id]} />))}
           </ul>
         ) : <Empty icon="clock" title={a.emptyRunning} sub={a.emptyRunningSub} />)}
         {tab === 'done' && (done.length ? (
@@ -272,14 +272,14 @@ function TodayFooter({ tokens }: { tokens: number | null }) {
   );
 }
 
-function RunningRow({ job, step, tokens, partial }: { job: JobSummary; step: string | null; tokens: number | null; partial: boolean }) {
+function RunningRow({ job, step, tokens, partial, events }: { job: JobSummary; step: string | null; tokens: number | null; partial: boolean; events?: AgentEvent[] }) {
   const t = useT();
   const queued = job.state === 'queued';
   return (
     // Phase 13: the same Stop menu as the conversation (a creative or console turn can also be redirected; the others have Stop only).
     <Row job={job} className="ms-tall" after={(
       <>
-        {job.kind === 'console' && job.state === 'running' ? <ConsoleMessage job={job} /> : null}
+        {job.kind === 'console' && job.state === 'running' ? <ConsoleMessage job={job} events={events} /> : null}
         <StopMenu job={job} className="ms-activity-cancel" />
       </>
     )}>
@@ -297,24 +297,37 @@ function RunningRow({ job, step, tokens, partial }: { job: JobSummary; step: str
  * A message to a running console turn (Phase 13, spec §2), from its row: a button that opens the message box in a popover.
  * The console has no queue, so with live input off the box only explains that.
  */
-function ConsoleMessage({ job }: { job: JobSummary }) {
+function ConsoleMessage({ job, events }: { job: JobSummary; events?: AgentEvent[] }) {
   const u = useT().web.liveUi;
   const [open, setOpen] = useState(false);
-  const [liveInput, setLiveInput] = useState(false);
+  // null = the capabilities are being asked (neutral state); it is reset on every open so the previous value is never shown.
+  const [liveInput, setLiveInput] = useState<boolean | null>(null);
   const anchor = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLElement | null>(null);
+  const openNow = useRef(false);
+  openNow.current = open;
   useEffect(() => {
     if (!open) return;
+    setLiveInput(null);
+    panel.current = anchor.current?.closest<HTMLElement>('[role="tabpanel"]') ?? null;
     let alive = true;
     Promise.resolve().then(() => api.getAgentCapabilities())
       .then((k) => { if (alive) setLiveInput(k?.liveInput === true); })
       .catch(() => { if (alive) setLiveInput(false); });
     return () => { alive = false; };
   }, [open]);
+  // The job ended while the popover was open: the row (and the popover with it) goes away. Focus moves to the list panel
+  // instead of falling to the page body.
+  useEffect(() => () => {
+    if (!openNow.current) return;
+    const a = document.activeElement;
+    if (!a || a === document.body) panel.current?.focus({ preventScroll: true });
+  }, []);
   return (
     <>
       <Button ref={anchor} size="sm" variant="ghost" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{u.consoleOpen}</Button>
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="bottom-end" width={320} label={u.consoleMessage}>
-        <ConsoleMessageBox jobId={job.id} liveInput={liveInput} />
+        <ConsoleMessageBox jobId={job.id} liveInput={liveInput} events={events} />
       </Popover>
     </>
   );

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { messages } from '@motion-studio/shared';
-import { CONSOLE_REDIRECT_NOTE } from '../src/creatives/prompt.ts';
+import { CONSOLE_REDIRECT_NOTE, USER_REQUEST_OPEN } from '../src/creatives/prompt.ts';
 import { cid, liveApp, type LiveApp } from './helpers/live-app.ts';
 
 // Phase 13 Task 2: the console takes live messages, Stop and redirect through the same job routes; it has no queue.
@@ -72,7 +72,10 @@ describe('console live messages', () => {
     const res = await s.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/redirect`, payload: { clientId: cid(), text: 'Fermati e dimmi' } });
     expect(res.json()).toEqual({ outcome: 'interrupted' });
     expect(run.interrupts).toBe(1);
-    expect(run.sent.map((m) => m.text)).toEqual(['Fermati e dimmi']);
+    // Final wave Q3: the partial-files note comes with the user's words, as on the fallback path.
+    expect(run.sent).toHaveLength(1);
+    expect(run.sent[0]!.text).toContain(CONSOLE_REDIRECT_NOTE);
+    expect(run.sent[0]!.text).toContain(`${USER_REQUEST_OPEN}\nFermati e dimmi\n`);
     expect((await s.app.inject({ method: 'POST', url: `/api/jobs/${job.id}/stop` })).json()).toEqual({ status: 'stopping' });
     await s.waitIdle();
     expect((await s.jobs()).find((j) => j.id === job.id)?.state).toBe('cancelled');
