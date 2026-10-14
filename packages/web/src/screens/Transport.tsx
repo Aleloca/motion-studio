@@ -1,7 +1,7 @@
 // The video transport under a player (format view, Compare): play/pause (Space), the timecode, frame by frame (←/→,
 // 1/30 s), loop and speed (visual test point 39), and the scrub bar with a ruler and the comment markers.
 import type { Pin } from '@motion-studio/shared';
-import { useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useRef, useState, type ReactNode, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent } from 'react';
 import { formatNumber, useLocale, useT } from '../i18n.tsx';
 import { useClock, type Clock } from '../ui/clock.ts';
 import { Button, Icon, Select, cx } from '../ui/index.ts';
@@ -35,10 +35,12 @@ export interface Mark { pin: Pin; number: number }
 export const SPEEDS = ['0.5', '1', '1.5', '2'] as const;
 export type Speed = (typeof SPEEDS)[number];
 
-export function Transport({ clock, duration, playing, disabled, marks = [], onRange, hint, onToggle, onStep, onSeek, onPause, onResume, loop, onLoop, speed, onSpeed }: {
+export function Transport({ clock, duration, playing, disabled, marks = [], onRange, extra, hint, onToggle, onStep, onSeek, onPause, onResume, loop, onLoop, speed, onSpeed }: {
   clock: Clock; duration: number; playing: boolean; disabled: boolean; marks?: Mark[];
-  /** A Shift + drag on the bar ended on this range (seconds): a range comment (Phase 10b). Absent: Shift + drag scrubs. */
+  /** The band picked with a drag on the ruler (or Shift + drag on the track) was confirmed with the bubble's Comment (seconds): a range comment. Absent: no band can be picked; Shift + drag scrubs. */
   onRange?(r: { start: number; end: number }): void;
+  /** Compact controls next to the timecode (the clip and range comment buttons in the format view). */
+  extra?: ReactNode;
   /** The keys line at the end of the controls. */
   hint: string;
   onToggle(): void; onStep(dir: 1 | -1): void; onSeek(t: number): void; onPause(): void; onResume(): void;
@@ -49,10 +51,27 @@ export function Transport({ clock, duration, playing, disabled, marks = [], onRa
   const locale = useLocale();
   const { time, settled } = useClock(clock);
   const track = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ resume: boolean; from?: number } | null>(null);
+  const drag = useRef<{ resume: boolean; from?: number; px?: number; ruler?: boolean } | null>(null);
   /** The range being picked with Shift + drag. */
   const [picking, setPicking] = useState<{ a: number; b: number } | null>(null);
+  /** The band picked and released: it stays, with a Comment bubble, until it is used, replaced or cancelled (Esc). */
+  const [sel, setSel] = useState<{ start: number; end: number } | null>(null);
+  const bubbleBtn = useRef<HTMLButtonElement>(null);
   const cv = t.web.conversation;
+  const cancelRange = () => { drag.current = null; setPicking(null); setSel(null); };
+  useEffect(() => { if (disabled || !onRange) { setPicking(null); setSel(null); } }, [disabled, onRange]);
+  useEffect(() => {
+    if (!picking && !sel) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const focusTrack = sel !== null && document.activeElement === bubbleBtn.current;
+      cancelRange();
+      if (focusTrack) track.current?.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [picking, sel]);
+  useEffect(() => { if (sel) bubbleBtn.current?.focus(); }, [sel]);
   const pct = (s: number) => (duration ? Math.min(100, Math.max(0, (s / duration) * 100)) : 0);
   const at = (clientX: number) => {
     const r = track.current?.getBoundingClientRect();
@@ -62,10 +81,13 @@ export function Transport({ clock, duration, playing, disabled, marks = [], onRa
   const down = (e: PointerEvent<HTMLDivElement>) => {
     if (disabled || e.button !== 0) return;
     e.currentTarget.setPointerCapture?.(e.pointerId);
-    if (e.shiftKey && onRange) {
+    setSel(null);
+    // A drag on the ruler, or Shift + drag anywhere on the bar, picks a band; a short press on the ruler still seeks.
+    const ruler = Boolean((e.target as Element).closest?.('.ms-fv-ruler'));
+    if (onRange && (e.shiftKey || ruler)) {
       const a = at(e.clientX);
       if (a === null) return;
-      drag.current = { resume: false, from: a };
+      drag.current = { resume: false, from: a, px: e.clientX, ruler: ruler && !e.shiftKey };
       setPicking({ a, b: a });
       return;
     }
@@ -86,7 +108,10 @@ export function Transport({ clock, duration, playing, disabled, marks = [], onRa
     if (d?.from !== undefined) {
       const b = e.type === 'pointerup' ? at(e.clientX) ?? d.from : d.from;
       setPicking(null);
-      if (e.type === 'pointerup' && Math.abs(b - d.from) >= MIN_RANGE) onRange?.({ start: Math.min(b, d.from), end: Math.max(b, d.from) });
+      if (e.type !== 'pointerup') return;
+      if (d.ruler && Math.abs(e.clientX - (d.px ?? e.clientX)) < 3) { onSeek(d.from); return; }
+      // Under two frames: ignored, nothing is selected.
+      if (Math.abs(b - d.from) >= MIN_RANGE) setSel({ start: Math.min(b, d.from), end: Math.max(b, d.from) });
       return;
     }
     if (d?.resume) onResume();
@@ -97,6 +122,8 @@ export function Transport({ clock, duration, playing, disabled, marks = [], onRa
     if (e.key === 'End') { e.preventDefault(); onSeek(duration); }
     if (e.key === 'PageUp' || e.key === 'PageDown') { e.preventDefault(); onSeek(clock.get().time + (e.key === 'PageUp' ? 1 : -1)); }
   };
+  /** The band shown: the one being dragged, else the released one. */
+  const band = picking ? { start: Math.min(picking.a, picking.b), end: Math.max(picking.a, picking.b) } : sel;
   // Ruler: at most ~10 labels; the last one would be cut by the end of the bar.
   const every = [1, 2, 5, 10, 15, 30, 60, 120, 300].find((s) => duration / s <= 10) ?? 600;
   const ticks = duration ? Array.from({ length: Math.floor(duration / every + 1e-6) + 1 }, (_, i) => i * every).filter((s) => s / duration <= 0.94) : [];
@@ -113,6 +140,7 @@ export function Transport({ clock, duration, playing, disabled, marks = [], onRa
         <Button size="sm" variant="outline" icon className={cx('ms-fv-loop', loop && 'ms-on')} aria-label={f.loop} title={f.loop} aria-pressed={loop} onClick={() => onLoop(!loop)}><Icon name="refresh" size={13} /></Button>
         <Select className="ms-fv-speed" variant="pill" label={f.speed} value={speed} onChange={onSpeed}
           options={SPEEDS.map((v) => ({ value: v, label: f.speedValue({ n: formatNumber(locale, Number(v)) }) }))} />
+        {extra}
         <span className="ms-grow" />
         <span className="ms-fv-keys">{hint}</span>
       </div>
@@ -127,13 +155,26 @@ export function Transport({ clock, duration, playing, disabled, marks = [], onRa
           <span className="ms-fv-head" style={{ left: `${pct(time)}%` }} aria-hidden="true" />
         </div>
         <div className="ms-fv-spans">
-          {picking ? <span className="ms-fv-span ms-picking" aria-hidden="true" style={{ left: `${pct(Math.min(picking.a, picking.b))}%`, width: `${pct(Math.abs(picking.b - picking.a))}%` }} /> : null}
+          {band ? <span className="ms-fv-span ms-picking" aria-hidden="true" style={{ left: `${pct(band.start)}%`, width: `${pct(band.end - band.start)}%` }} /> : null}
           {marks.filter((m) => m.pin.range).map(({ pin, number }) => {
             const { a, b } = rangeTimes(locale, pin.range!);
             return <span key={number} className="ms-fv-span" role="img" aria-label={cv.rangeSpan({ a, b, note: pin.note ?? '' })}
               style={{ left: `${pct(pin.range!.start)}%`, width: `${pct(pin.range!.end - pin.range!.start)}%` }} />;
           })}
         </div>
+        {band ? (
+          sel ? (
+            <div className="ms-fv-rangebubble" role="group" aria-label={cv.rangeBubble} style={{ left: `${Math.min(88, Math.max(12, pct((band.start + band.end) / 2)))}%` }}>
+              <span className="ms-fv-rangetc">{timecode(band.start)} – {timecode(band.end)}</span>
+              <Button ref={bubbleBtn} size="sm" variant="ink" onClick={() => { const r = sel; setSel(null); onRange?.(r); }}><Icon name="comment" size={12} />{cv.rangeBubbleAction}</Button>
+              <span className="ms-fv-rangeesc">{cv.rangeBubbleEsc}</span>
+            </div>
+          ) : (
+            <div className="ms-fv-rangebubble ms-live" aria-hidden="true" style={{ left: `${Math.min(88, Math.max(12, pct((band.start + band.end) / 2)))}%` }}>
+              <span className="ms-fv-rangetc">{timecode(band.start)} – {timecode(band.end)}</span>
+            </div>
+          )
+        ) : null}
         <div className="ms-fv-marks">
           {marks.filter((m) => m.pin.timeSec !== null).map(({ pin, number }) => (
             <button key={number} type="button" className="ms-fv-mark" style={{ left: `${pct(pin.timeSec!)}%` }} title={pin.note}

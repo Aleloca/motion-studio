@@ -673,10 +673,6 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
           </div>
         </section>
         {canComment && ready && !draft && (!video || !playing) ? <CommentHint clock={clock} video={video} /> : null}
-        {video && canComment && ready && clipComp ? <ClipPicker clock={clock} comp={clipComp} onPick={commentClip} /> : null}
-        {video && canComment && ready && duration > 0 ? (
-          <Button size="sm" variant="outline" className="ms-fv-rangebtn" aria-keyshortcuts="R" disabled={draft !== null} onClick={() => { if (playing) pause(); setRangeOpen(true); }}><Icon name="comment" size={13} />{t.web.conversation.rangeComment}</Button>
-        ) : null}
         {rangeOpen ? <RangeDialog open playhead={media.current?.currentTime ?? clock.get().time} duration={duration} onSubmit={(r) => { setRangeOpen(false); commentRange(r); }} onCancel={() => setRangeOpen(false)} /> : null}
         {lock ? <div className="ms-cv-hint ms-lock ms-fv-hint" id="ms-fv-comment-lock" role="status">{c.versions.commentsOn({ n: pinSource })}</div> : null}
         {preset?.safeZone && (out || livePlayer) ? (
@@ -695,6 +691,15 @@ export function FormatView({ slug, creative, format, live, exportNamePattern, on
         {livePlayer && cr ? <LocaleSwitcher brief={cr.brief} preview={localePreview} className="ms-fv-locales" /> : null}
         {video ? (
           <Transport clock={clock} duration={duration} playing={playing} disabled={!ready} marks={canComment ? marks : []} onRange={canComment ? commentRange : undefined} hint={canComment ? f.keys : f.keysLocked}
+            extra={canComment && ready ? (
+              <>
+                {clipComp ? <ClipPicker clock={clock} comp={clipComp} onPick={commentClip} /> : null}
+                {duration > 0 ? (
+                  <Button size="sm" variant="outline" icon className="ms-fv-rangebtn" aria-label={t.web.conversation.rangeComment} title={t.web.conversation.rangeTip({ keys: 'R' })} aria-keyshortcuts="R" disabled={draft !== null}
+                    onClick={() => { if (playing) pause(); setRangeOpen(true); }}><Icon name="comment" size={13} /></Button>
+                ) : null}
+              </>
+            ) : undefined}
             onToggle={toggle} onStep={stepFrame} onSeek={seek} onPause={pause} onResume={play}
             loop={loop} onLoop={setLoop} speed={rate} onSpeed={setRate} />
         ) : null}
@@ -755,7 +760,7 @@ function ClipPicker({ clock, comp, onPick }: { clock: Clock; comp: Composition; 
   const clips = clipsAt(comp, settled);
   return (
     <span className="ms-fv-clippick" data-part="clip-picker">
-      <Select<string> variant="pill" label={cv.clipPick} value="" display={clips.length ? cv.clipPick : cv.clipPickNone} disabled={clips.length === 0}
+      <Select<string> variant="pill" icon="comment" label={cv.clipPick} value="" display={clips.length ? cv.clipPick : cv.clipPickNone} disabled={clips.length === 0}
         options={[{ value: '', label: cv.clipPick, disabled: true }, ...[...clips].reverse().map((x) => ({ value: x.id, label: clipLabel(x) }))]}
         onChange={(id) => { if (id) onPick(id); }} />
     </span>

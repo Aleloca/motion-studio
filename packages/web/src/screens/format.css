@@ -150,8 +150,17 @@
 .ms-fv-spans { position: absolute; left: 16px; right: 16px; top: 4px; height: 40px; pointer-events: none; }
 .ms-fv-span { position: absolute; top: 0; bottom: 0; background: var(--accent); opacity: .18; border-inline: 2px solid var(--accent); box-sizing: border-box; }
 .ms-fv-span.ms-picking { opacity: .32; }
-.ms-fv-clippick { display: inline-flex; margin: 4px 0 0 8px; }
-.ms-fv-rangebtn { margin: 4px 0 0 8px; }
+.ms-fv-clippick { display: inline-flex; flex: none; }
+/* Icon-only: the select keeps its name (aria-label) and list, the value text and chevron go. */
+.ms-fv-clippick .ms-select-value { display: none; }
+.ms-fv-clippick .ms-select { min-width: 0; padding-inline: 8px; gap: 0; }
+.ms-fv-rangebubble {
+  position: absolute; top: -40px; transform: translateX(-50%); z-index: 3; display: flex; align-items: center; gap: 8px; white-space: nowrap;
+  padding: 4px 4px 4px 10px; border-radius: 8px; background: var(--panel); color: var(--text); box-shadow: 0 0 0 1px var(--line2), 0 4px 14px rgb(0 0 0 / .18);
+}
+.ms-fv-rangebubble.ms-live { pointer-events: none; padding-inline-end: 10px; }
+.ms-fv-rangetc { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+.ms-fv-rangeesc { font-size: 12px; color: var(--muted); padding-inline-end: 6px; }
 
 /* Render status (UX feedback 1, task 3): the pill, a thin progress bar while rendering, and the actions, in the bar by the version. */
 .ms-fv-render { display: inline-flex; align-items: center; gap: 6px; flex: none; min-width: 0; }
